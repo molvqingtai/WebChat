@@ -1,0 +1,43 @@
+{
+  "root": true,
+  "env": {
+    "es2021": true,
+    "browser": true,
+    "node": true
+  },
+  "extends": [
+    "standard-with-typescript",
+    "plugin:react/recommended",
+    "plugin:react/jsx-runtime",
+    "plugin:react-hooks/recommended",
+    "prettier"
+  ],
+
+  "parser": "@typescript-eslint/parser",
+  "plugins": ["@typescript-eslint", "react", "react-hooks", "prettier"],
+  "parserOptions": {
+    "ecmaFeatures": {
+      "jsx": true
+    },
+    "ecmaVersion": "latest",
+    "sourceType": "module",
+    "project": "./tsconfig.eslint.json",
+    "warnOnUnsupportedTypeScriptVersion": false
+  },
+  "settings": {
+    "react": {
+      "version": "detect"
+    }
+  },
+  "rules": {
+    "prettier/prettier": "error",
+    "@typescript-eslint/naming-convention": "off",
+    "@typescript-eslint/no-non-null-assertion": "off",
+    "@typescript-eslint/explicit-function-return-type": "off",
+    "@typescript-eslint/no-confusing-void-expression": "off",
+    "@typescript-eslint/strict-boolean-expressions": "off",
+    "@typescript-eslint/no-floating-promises": "off",
+    "@typescript-eslint/restrict-template-expressions": "off",
+    "@typescript-eslint/no-misused-promises": "off"
+  }
+}

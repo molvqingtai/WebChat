@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "module": "ESNext",
+    "target": "ESNext",
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "strict": true,
+    "esModuleInterop": true,
+    "incremental": false,
+    "skipLibCheck": true,
+    "jsx": "react-jsx",
+    "moduleResolution": "Node",
+    "resolveJsonModule": true,
+    "noUnusedLocals": true,
+    "forceConsistentCasingInFileNames": true,
+    "types": ["vite/client", "unplugin-icons/types/react"],
+    "paths": {
+      "@/*": ["src/*"]
+    }
+  },
+  "exclude": ["dist", "node_modules"]
+}
