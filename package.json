@@ -20,8 +20,18 @@
     "url": "git+https://github.com/molvqingtai/WebChat.git"
   },
   "keywords": [
+    "WebChat",
     "Chat",
-    "Browser"
+    "Browser",
+    "Browser Extension",
+    "Chrome",
+    "Chrome Extension",
+    "Firefox",
+    "Firefox Extension",
+    "Extension",
+    "WebRTC",
+    "P2P",
+    "Peer to Peer"
   ],
   "author": "molvqingtai",
   "license": "MIT",
@@ -80,5 +90,8 @@
     "tailwind-merge": "^1.13.2",
     "tailwindcss-animate": "^1.0.6",
     "type-fest": "^3.13.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }

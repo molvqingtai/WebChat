@@ -1,0 +1,9 @@
+version: 3
+updates:
+  # Enable version updates for pnpm
+  - package-ecosystem: 'pnpm'
+    # Look for `package.json` and `lock` files in the `root` directory
+    directory: '/'
+    # Check the npm registry for updates every day (weekdays)
+    schedule:
+      interval: 'weekly'
