@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import IconPower from '~icons/pixelarticons/power'
 
-import '@/styles/main.css'
+import Sidebar from './Sidebar'
 
-export default function App({ frameUrl }: { frameUrl: string }) {
+export default function App() {
   const [open, setOpen] = useState(false)
   const [openedOnce, setOpenedOnce] = useState(false)
 
@@ -26,7 +26,7 @@ export default function App({ frameUrl }: { frameUrl: string }) {
             open ? 'translate-x-0' : 'translate-x-full'
           }`}
         >
-          <iframe src={frameUrl} className="w-full h-full border-0" />
+          <Sidebar></Sidebar>
         </div>
       )}
     </div>
