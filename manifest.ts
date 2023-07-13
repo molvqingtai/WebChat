@@ -1,14 +1,14 @@
 import { defineManifest } from '@crxjs/vite-plugin'
-import pkgJson from './package.json'
+import packageJson from './package.json'
 
 export default defineManifest({
   manifest_version: 3,
-  name: pkgJson.displayName,
-  version: pkgJson.version,
+  name: packageJson.displayName,
+  version: packageJson.version,
   content_scripts: [
     {
-      js: ['src/content/main.tsx'],
-      matches: ['*://www.example.com//*']
+      js: ['src/main.tsx'],
+      matches: ['*://www.example.com/*']
     }
   ]
 })

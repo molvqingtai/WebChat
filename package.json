@@ -5,7 +5,13 @@
   "description": "Chatting Anonymously with People on the Same Website.",
   "scripts": {
     "dev": "vite",
+    "build": "vite build",
+    "pack": "cross-env NODE_ENV=production run-p pack:*",
+    "pack:zip": "rimraf dist.zip && jszip-cli add dist/* -o ./dist.zip",
+    "pack:crx": "crx pack dist -o ./dist.crx",
+    "pack:xpi": "cross-env WEB_EXT_ARTIFACTS_DIR=./ web-ext build --source-dir ./dist --filename dist.xpi --overwrite-dest",
     "lint": "npx eslint . --ext .js,.jsx,.ts,.tsx --cache --fix",
+    "clear": "rimraf dist dist.*",
     "tsc:check": "tsc --noEmit",
     "prepare": "husky install"
   },
@@ -27,6 +33,7 @@
     "@commitlint/cli": "^17.6.6",
     "@commitlint/config-conventional": "^17.6.6",
     "@crxjs/vite-plugin": "1.0.14",
+    "@ffflorian/jszip-cli": "^3.4.1",
     "@iconify/json": "^2.2.90",
     "@svgr/core": "^8.0.0",
     "@svgr/plugin-jsx": "^8.0.1",
@@ -36,6 +43,8 @@
     "@types/webextension-polyfill": "^0.10.1",
     "@vitejs/plugin-react": "^4.0.3",
     "autoprefixer": "^10.4.14",
+    "cross-env": "^7.0.3",
+    "crx": "^5.0.1",
     "eslint": "^8.44.0",
     "eslint-config-prettier": "^8.8.0",
     "eslint-config-standard-with-typescript": "^36.0.0",
@@ -47,14 +56,17 @@
     "eslint-plugin-react-hooks": "^4.6.0",
     "husky": "^8.0.3",
     "lint-staged": "^13.2.3",
+    "npm-run-all": "^4.1.5",
     "postcss": "^8.4.25",
     "prettier": "^3.0.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
+    "rimraf": "^5.0.1",
     "tailwindcss": "^3.3.2",
     "typescript": "^5.1.6",
     "unplugin-icons": "^0.16.5",
     "vite": "^4.4.3",
+    "web-ext": "^7.6.2",
     "webext-bridge": "^6.0.1",
     "webextension-polyfill": "^0.10.0"
   },
@@ -66,6 +78,7 @@
     "class-variance-authority": "^0.6.1",
     "clsx": "^1.2.1",
     "tailwind-merge": "^1.13.2",
-    "tailwindcss-animate": "^1.0.6"
+    "tailwindcss-animate": "^1.0.6",
+    "type-fest": "^3.13.0"
   }
 }
