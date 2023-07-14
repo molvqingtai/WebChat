@@ -10,8 +10,8 @@ export interface RootOptions {
 
 const createShadowRoot = (name: string, options: RootOptions): Root => {
   const { mode = 'open', style = '', script = '' } = options ?? {}
-  const shadowApp = createElement(`<${name}></${name}>`)
-  const shadowRoot = shadowApp.attachShadow({ mode })
+  const shadowHost = createElement(`<${name}></${name}>`)
+  const shadowRoot = shadowHost.attachShadow({ mode })
   const appRoot = createElement(`<div id="app"></div>`)
   const appStyle = style && createElement(`<style type="text/css">${style}</style>`)
   const appScript = script && createElement(`<script type="application/javascript">${script}</script>`)
@@ -22,7 +22,7 @@ const createShadowRoot = (name: string, options: RootOptions): Root => {
   return {
     ...reactRoot,
     render: (children: ReactNode) => {
-      document.body.appendChild(shadowApp)
+      document.body.appendChild(shadowHost)
       reactRoot.render(children)
     }
   }

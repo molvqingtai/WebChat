@@ -7,6 +7,9 @@ import manifest from './manifest'
 import packageJson from './package.json'
 
 export default defineConfig({
+  server: {
+    open: './index.html'
+  },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src')
