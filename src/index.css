@@ -74,5 +74,9 @@
   }
   :host {
     @apply bg-background text-foreground;
+
+    /* Disabled inherit */
+    all: initial;
+    direction: ltr;
   }
 }

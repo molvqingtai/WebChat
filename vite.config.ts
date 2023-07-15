@@ -6,17 +6,16 @@ import Icons from 'unplugin-icons/vite'
 import manifest from './manifest'
 import packageJson from './package.json'
 
+const isDev = process.env.NODE_ENV === 'development'
+
 export default defineConfig({
-  server: {
-    open: './index.html'
-  },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src')
     }
   },
   define: {
-    __DEV__: process.env.NODE_ENV !== 'production',
+    __DEV__: isDev,
     __NAME__: JSON.stringify(packageJson.name)
   },
   plugins: [

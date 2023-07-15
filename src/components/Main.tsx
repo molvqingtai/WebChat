@@ -1,7 +1,7 @@
 import { type FC } from 'react'
 
-const Sidebar: FC = () => {
+const Main: FC = () => {
   return <div></div>
 }
 
-export default Sidebar
+export default Main
