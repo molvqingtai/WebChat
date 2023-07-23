@@ -1,18 +1,17 @@
 import Header from '@/components/Header'
 import Footer from '@/components/Footer'
 import Main from '@/components/Main'
-import Sidebar from '@/components/Sidebar'
-import AppButton from './components/AppButton'
+import AppButton from '@/components/AppButton'
+import AppContainer from '@/components/AppContainer'
 
 export default function App() {
   return (
     <>
-      <main className="main">
+      <AppContainer>
         <Header />
         <Main />
-        <Sidebar />
         <Footer />
-      </main>
+      </AppContainer>
       <AppButton></AppButton>
     </>
 

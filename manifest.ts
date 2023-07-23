@@ -10,7 +10,7 @@ export default defineManifest({
   content_scripts: [
     {
       js: ['src/main.tsx'],
-      matches: [isDev ? `*://localhost/*` : '<all_urls>']
+      matches: isDev ? ['*://localhost/*', 'https://www.example.com/*'] : ['https://*/*']
     }
   ]
 })

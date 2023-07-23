@@ -1,14 +1,12 @@
-/** @type {import('tailwindcss').Config} */
-module.exports = {
+import { type Config } from 'tailwindcss'
+
+export default {
   darkMode: ['class'],
-  content: ['./src/**/*.{ts,tsx}'],
+  content: ['./src/**/*.{ts,tsx,css}', './index.html'],
   theme: {
     container: {
       center: true,
-      padding: '2rem',
-      screens: {
-        '2xl': '1400px'
-      }
+      padding: '2rem'
     },
     extend: {
       zIndex: {
@@ -56,12 +54,12 @@ module.exports = {
       },
       keyframes: {
         'accordion-down': {
-          from: { height: 0 },
+          from: { height: '0' },
           to: { height: 'var(--radix-accordion-content-height)' }
         },
         'accordion-up': {
           from: { height: 'var(--radix-accordion-content-height)' },
-          to: { height: 0 }
+          to: { height: '0' }
         }
       },
       animation: {
@@ -69,6 +67,5 @@ module.exports = {
         'accordion-up': 'accordion-up 0.2s ease-out'
       }
     }
-  },
-  plugins: [require('tailwindcss-animate')]
-}
+  }
+} satisfies Config

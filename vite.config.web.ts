@@ -1,9 +1,7 @@
 import path from 'node:path'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
-import { crx } from '@crxjs/vite-plugin'
 import Icons from 'unplugin-icons/vite'
-import manifest from './manifest'
 import packageJson from './package.json'
 
 const isDev = process.env.NODE_ENV === 'development'
@@ -21,10 +19,6 @@ export default defineConfig({
   plugins: [
     react(),
     // https://github.com/antfu/unplugin-icons
-    Icons({ compiler: 'jsx', jsx: 'react' }),
-    // @ts-expect-error use local package
-    crx({
-      manifest
-    })
+    Icons({ compiler: 'jsx', jsx: 'react' })
   ]
 })
