@@ -1,4 +1,14 @@
-const getWebSiteInfo = () => {
+export interface WebSiteInfo {
+  host: string
+  hostname: string
+  href: string
+  origin: string
+  title: string
+  icon: string
+  description: string
+}
+
+const getWebSiteInfo = (): WebSiteInfo => {
   return {
     host: document.location.host,
     hostname: document.location.hostname,

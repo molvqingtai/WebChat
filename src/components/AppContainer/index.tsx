@@ -6,7 +6,7 @@ export interface AppContainerProps {
 
 const AppContainer: FC<AppContainerProps> = ({ children }) => {
   return (
-    <div className="fixed bottom-10 right-10 top-10 z-top box-border grid w-1/4 grid-flow-col grid-rows-[auto_1fr_auto]  overflow-hidden rounded-xl bg-white shadow-2xl transition-transform">
+    <div className="fixed bottom-10 right-10 top-10 z-top box-border grid w-1/4 grid-flow-col grid-rows-[auto_1fr_auto] overflow-hidden  rounded-xl bg-slate-50 shadow-2xl transition-transform">
       {children}
     </div>
   )

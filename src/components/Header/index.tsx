@@ -1,18 +1,18 @@
-import { useState, type FC } from 'react'
+import { type FC } from 'react'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/HoverCard'
 import { Button } from '@/components/ui/Button'
 import getWebSiteInfo from '@/utils/getWebsiteInfo'
 
-const Header: FC = ({ ...props }) => {
-  const [websiteInfo] = useState(getWebSiteInfo())
+const Header: FC = () => {
+  const websiteInfo = getWebSiteInfo()
 
   return (
-    <div className="flex h-12  items-center px-4 shadow-sm 2xl:h-14">
+    <div className="shadow-xs flex  h-12 items-center bg-white px-4 2xl:h-14">
       <img className="h-8 w-8 overflow-hidden rounded-full" src={websiteInfo.icon} />
       <HoverCard>
         <HoverCardTrigger asChild>
-          <Button className="overflow-hidden text-xl" variant="link">
-            <h1 className="truncate">{websiteInfo.hostname}</h1>
+          <Button className="overflow-hidden" variant="link">
+            <span className="truncate text-lg font-medium text-slate-600">{websiteInfo.hostname}</span>
           </Button>
         </HoverCardTrigger>
         <HoverCardContent className="w-80">
