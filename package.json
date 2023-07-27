@@ -100,7 +100,7 @@
     "react-nice-avatar": "^1.4.1",
     "react-use": "^17.4.0",
     "tailwind-merge": "^1.13.2",
-    "type-fest": "^3.13.0"
+    "type-fest": "^4.0.0"
   },
   "engines": {
     "node": ">=18.0.0"
