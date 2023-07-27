@@ -7,7 +7,7 @@ const Header: FC = () => {
   const websiteInfo = getWebSiteInfo()
 
   return (
-    <div className="shadow-xs flex  h-12 items-center bg-white px-4 2xl:h-14">
+    <div className="shadow-xs grid h-12 grid-cols-[auto_1fr_auto] items-center bg-white px-4 backdrop-blur-lg 2xl:h-14">
       <img className="h-8 w-8 overflow-hidden rounded-full" src={websiteInfo.icon} />
       <HoverCard>
         <HoverCardTrigger asChild>
@@ -16,16 +16,16 @@ const Header: FC = () => {
           </Button>
         </HoverCardTrigger>
         <HoverCardContent className="w-80">
-          <div className="flex justify-between space-x-4">
-            <img className="h-14 w-14 flex-shrink-0 overflow-hidden rounded-full" src={websiteInfo.icon} />
-            <div className="space-y-1">
+          <div className="grid grid-cols-[auto_1fr] gap-x-4">
+            <img className="h-14 w-14 overflow-hidden rounded-full" src={websiteInfo.icon} />
+            <div className="grid">
               <h4 className="text-sm font-semibold">{websiteInfo.title}</h4>
               <p className="text-xs text-slate-500">{websiteInfo.description}</p>
             </div>
           </div>
         </HoverCardContent>
       </HoverCard>
-      <div className="ml-auto flex-shrink-0 text-sm text-slate-500">Online 99</div>
+      <div className="text-sm text-slate-500">Online 99</div>
     </div>
   )
 }

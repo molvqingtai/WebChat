@@ -26,19 +26,19 @@ const Main: FC = () => {
       hateCount: 0
     },
     {
-      id: '1',
+      id: '3',
       body: 'Do you like XJP?',
       username: 'molvqingtai',
       avatar: 'https://github.com/shadcn.png',
       date: Date.now(),
       likeChecked: false,
       hateChecked: false,
-      likeCount: 98,
+      likeCount: 9999,
       hateCount: 2
     }
   ]
   return (
-    <div className="flex flex-col gap-y-4 p-4">
+    <div className="grid content-start p-4">
       {messages.map((message) => (
         <Message key={message.id} data={message} />
       ))}

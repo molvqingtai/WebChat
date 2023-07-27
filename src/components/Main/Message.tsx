@@ -34,13 +34,13 @@ const Message: FC<MessageProps> = ({ data }) => {
   }
 
   return (
-    <div className="flex w-full gap-x-2">
+    <div className="grid grid-cols-[auto_1fr] gap-x-2">
       <Avatar>
         <AvatarImage src={formatData.avatar} />
         <AvatarFallback>{formatData.username}</AvatarFallback>
       </Avatar>
-      <div className="flex-1">
-        <div className="flex items-baseline gap-x-2 leading-none">
+      <div className="grid">
+        <div className="grid grid-cols-[auto_1fr] items-baseline gap-x-2 leading-none">
           <div className="text-sm font-medium text-slate-600">{formatData.username}</div>
           <div className="text-xs text-slate-400">{formatData.date}</div>
         </div>
@@ -48,7 +48,7 @@ const Message: FC<MessageProps> = ({ data }) => {
           <div className="pb-2">
             <pre className="text-sm">{formatData.body}</pre>
           </div>
-          <div className="flex justify-end gap-x-2 leading-none">
+          <div className="grid grid-flow-col justify-end gap-x-2 leading-none">
             <LikeButton
               type="like"
               checked={formatData.likeChecked}

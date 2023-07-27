@@ -29,13 +29,14 @@ const LikeButton: FC<LikeButtonProps> = ({ type, checked, count, onClick, onChan
       onClick={handleOnClick}
       variant="secondary"
       className={cn(
-        'flex items-center gap-x-1 rounded-full transition-all ',
-        checked ? 'text-orange-500' : 'text-slate-500'
+        'grid items-center overflow-hidden rounded-full leading-none transition-all',
+        checked ? 'text-orange-500' : 'text-slate-500',
+        count ? 'grid-cols-[auto_1fr] gap-x-1' : 'grid-cols-[auto_0fr] gap-x-0'
       )}
       size="xs"
     >
       <Icon size={14} />
-      {!!count && <span className="text-xs">{count}</span>}
+      {!!count && <span className="min-w-0 text-xs">{count}</span>}
     </Button>
   )
 }

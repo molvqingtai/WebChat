@@ -13,23 +13,27 @@ const Footer: FC = () => {
   }
 
   return (
-    <div className="grid grid-cols-2 gap-y-2  p-4">
+    <div className="grid gap-y-2 p-4">
       <Textarea
-        className="col-span-2 rounded-lg bg-gray-50"
+        className="rounded-lg bg-gray-50"
         rows={is2XL ? 3 : 2}
         value={message}
         placeholder="Type your message here."
         onInput={handleInput}
       />
-
-      <Button variant="ghost" size="icon" className="place-self-start">
-        <SmileIcon size={20} />
-      </Button>
-      <Button size="sm" className="place-self-end">
-        <span className="mr-2">Send</span>
-        <CommandIcon className="text-slate-400" size={12}></CommandIcon>
-        <CornerDownLeftIcon className="text-slate-400" size={12}></CornerDownLeftIcon>
-      </Button>
+      <div className="grid grid-cols-[auto_auto_1fr] items-center justify-items-end">
+        <Button variant="ghost" size="icon">
+          <SmileIcon size={20} />
+        </Button>
+        <Button variant="ghost" size="icon">
+          <SmileIcon size={20} />
+        </Button>
+        <Button size="sm">
+          <span className="mr-2">Send</span>
+          <CommandIcon className="text-slate-400" size={12}></CommandIcon>
+          <CornerDownLeftIcon className="text-slate-400" size={12}></CornerDownLeftIcon>
+        </Button>
+      </div>
     </div>
   )
 }
