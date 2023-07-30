@@ -38,7 +38,7 @@ const Main: FC = () => {
     }
   ]
   return (
-    <div className="grid content-start p-4">
+    <div className="grid content-start overflow-y-auto p-4">
       {messages.map((message) => (
         <Message key={message.id} data={message} />
       ))}

@@ -1,4 +1,5 @@
 import { type Config } from 'tailwindcss'
+import typography from '@tailwindcss/typography'
 
 export default {
   darkMode: ['class'],
@@ -67,5 +68,6 @@ export default {
         'accordion-up': 'accordion-up 0.2s ease-out'
       }
     }
-  }
+  },
+  plugins: [typography()]
 } satisfies Config
