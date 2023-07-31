@@ -3,6 +3,7 @@ import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/Avatar'
 import { format } from 'date-fns'
 
 import LikeButton from './LikeButton'
+import { FrownIcon, ThumbsUpIcon } from 'lucide-react'
 export interface MessageProps {
   data: {
     id: string
@@ -50,17 +51,23 @@ const Message: FC<MessageProps> = ({ data }) => {
           </div>
           <div className="grid grid-flow-col justify-end gap-x-2 leading-none">
             <LikeButton
-              type="like"
               checked={formatData.likeChecked}
               onChange={(...args) => handleLikeChange('like', ...args)}
               count={formatData.likeCount}
-            ></LikeButton>
+            >
+              <LikeButton.Icon>
+                <ThumbsUpIcon size={14}></ThumbsUpIcon>
+              </LikeButton.Icon>
+            </LikeButton>
             <LikeButton
-              type="hate"
               checked={formatData.hateChecked}
               onChange={(...args) => handleLikeChange('hate', ...args)}
               count={formatData.hateCount}
-            ></LikeButton>
+            >
+              <LikeButton.Icon>
+                <FrownIcon size={14}></FrownIcon>
+              </LikeButton.Icon>
+            </LikeButton>
           </div>
         </div>
       </div>
@@ -69,5 +76,4 @@ const Message: FC<MessageProps> = ({ data }) => {
 }
 
 Message.displayName = 'Message'
-
 export default Message

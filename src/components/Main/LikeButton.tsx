@@ -1,24 +1,28 @@
-import { FrownIcon, type LucideIcon, ThumbsUpIcon } from 'lucide-react'
-import { type MouseEvent, type FC } from 'react'
+import { type MouseEvent, type FC, type ReactElement } from 'react'
 import { Button } from '@/components/ui/Button'
 import { cn } from '@/utils'
 
+export interface LikeButtonIconProps {
+  children: JSX.Element
+}
+
+export const LikeButtonIcon: FC<LikeButtonIconProps> = ({ children }) => children
+
 export interface LikeButtonProps {
-  type: 'like' | 'hate'
   count: number
   checked: boolean
   onClick?: (e: MouseEvent<HTMLButtonElement>) => void
   onChange?: (checked: boolean, count: number) => void
+  children: ReactElement<LikeButtonIconProps>
 }
 
-const iconMapping: Record<LikeButtonProps['type'], LucideIcon> = {
-  like: ThumbsUpIcon,
-  hate: FrownIcon
-}
-
-const LikeButton: FC<LikeButtonProps> = ({ type, checked, count, onClick, onChange }) => {
-  const Icon = iconMapping[type]
-
+const LikeButton: FC<LikeButtonProps> & { Icon: FC<LikeButtonIconProps> } = ({
+  checked,
+  count,
+  onClick,
+  onChange,
+  children
+}) => {
   const handleOnClick = (e: MouseEvent<HTMLButtonElement>) => {
     onClick?.(e)
     onChange?.(!checked, checked ? count - 1 : count + 1)
@@ -35,11 +39,13 @@ const LikeButton: FC<LikeButtonProps> = ({ type, checked, count, onClick, onChan
       )}
       size="xs"
     >
-      <Icon size={14} />
+      {children}
       {!!count && <span className="min-w-0 text-xs">{count}</span>}
     </Button>
   )
 }
+
+LikeButton.Icon = LikeButtonIcon
 
 LikeButton.displayName = 'LikeButton'
 

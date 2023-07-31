@@ -15,3 +15,5 @@ export const BREAKPOINTS = {
   '2xl': '1536px'
   // => @media (min-width: 1536px) { ... }
 } as const
+
+export const MESSAGE_MAX_LENGTH = 500 as const

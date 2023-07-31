@@ -32,7 +32,7 @@ const Main: FC = () => {
       avatar: 'https://github.com/shadcn.png',
       date: Date.now(),
       likeChecked: false,
-      hateChecked: false,
+      hateChecked: true,
       likeCount: 9999,
       hateCount: 2
     }

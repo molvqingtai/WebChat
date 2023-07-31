@@ -2,14 +2,23 @@ import React from 'react'
 import App from './App'
 import createShadowRoot from './createShadowRoot'
 import style from './index.css?inline'
+import { RemeshRoot } from 'remesh-react'
+import { RemeshLogger } from 'remesh-logger'
+import { Remesh } from 'remesh'
 
 void (async () => {
+  const store = Remesh.store({
+    inspectors: [RemeshLogger()]
+  })
+
   createShadowRoot(__NAME__, {
     style: __DEV__ ? '' : style,
     mode: __DEV__ ? 'open' : 'closed'
   }).render(
     <React.StrictMode>
-      <App />
+      <RemeshRoot store={store}>
+        <App />
+      </RemeshRoot>
     </React.StrictMode>
   )
 

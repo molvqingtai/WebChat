@@ -53,6 +53,18 @@ dependencies:
   remark-gfm:
     specifier: ^3.0.1
     version: 3.0.1
+  remesh:
+    specifier: ^4.2.0
+    version: 4.2.0(rxjs@7.8.1)
+  remesh-logger:
+    specifier: ^4.1.0
+    version: 4.1.0(remesh@4.2.0)
+  remesh-react:
+    specifier: ^4.1.0
+    version: 4.1.0(react-dom@18.2.0)(react@18.2.0)(remesh@4.2.0)(rxjs@7.8.1)
+  rxjs:
+    specifier: ^7.8.1
+    version: 7.8.1
   tailwind-merge:
     specifier: ^1.13.2
     version: 1.13.2
@@ -4527,6 +4539,11 @@ packages:
     engines: {node: '>=12'}
     dev: false
 
+  /is-plain-object@5.0.0:
+    resolution: {integrity: sha512-VRSzKkbMm5jMDoKLbltAkFQ5Qr7VDiTFGXxYFXXowVj387GeGNOCsOH6Msy00SGZ3Fp84b1Naa1psqgcCIEP5Q==}
+    engines: {node: '>=0.10.0'}
+    dev: false
+
   /is-regex@1.1.4:
     resolution: {integrity: sha512-kvRdxDsxZjhzUX07ZnLydzS1TU/TJlTUHHY4YLL87e37oUA49DfkLqgy+VjFocowy29cKvcSiu+kIv728jTTVg==}
     engines: {node: '>= 0.4'}
@@ -6726,6 +6743,53 @@ packages:
       unified: 10.1.2
     dev: false
 
+  /remesh-debugger-helper@4.1.0(remesh@4.2.0):
+    resolution: {integrity: sha512-nBbfznOEuu9Z1tpLIBOKEYcYrQvOCc+JyyPWYRG3H79JO/jxIUEAGg6YzAw59EUE/nhMPyx6qwyB7exJwFsZug==}
+    peerDependencies:
+      remesh: ^4.0.0
+    dependencies:
+      remesh: 4.2.0(rxjs@7.8.1)
+      tslib: 2.6.0
+    dev: false
+
+  /remesh-logger@4.1.0(remesh@4.2.0):
+    resolution: {integrity: sha512-OEmmBFk6KVtv0JahVhh29JbcF5IeMhxqiBaz2UAqY5x5d8W6UJtYmQFat2/2HUYV/Y1C+ooGi/kzh3Ka6NoyMQ==}
+    peerDependencies:
+      remesh: ^4.0.0
+    dependencies:
+      remesh: 4.2.0(rxjs@7.8.1)
+      remesh-debugger-helper: 4.1.0(remesh@4.2.0)
+      tslib: 2.6.0
+    dev: false
+
+  /remesh-react@4.1.0(react-dom@18.2.0)(react@18.2.0)(remesh@4.2.0)(rxjs@7.8.1):
+    resolution: {integrity: sha512-VaTZ2y3A84tiPNxb2/wgDt6i65zSfsxlAP1sTSDC+5C5vnhTy8Q8O8AaYJMOKqXUDtUNI9ld9Qu0wqfdxig/dg==}
+    peerDependencies:
+      react: ^16.10.0 || ^17.0.0 || ^18.0.0
+      react-dom: ^16.10.0 || ^17.0.0 || ^18.0.0
+      remesh: ^4.0.0
+      rxjs: ^7.0.0
+    dependencies:
+      react: 18.2.0
+      react-dom: 18.2.0(react@18.2.0)
+      remesh: 4.2.0(rxjs@7.8.1)
+      rxjs: 7.8.1
+      tslib: 2.6.0
+      use-sync-external-store: 1.2.0(react@18.2.0)
+    dev: false
+
+  /remesh@4.2.0(rxjs@7.8.1):
+    resolution: {integrity: sha512-t2xwtFYnEwrcWddxtEb/NF7kR+x62Er52gfk+sCa4HmaQC+J5zg41pYZz6TTl4PrDghs2et1tr1dYZpbYGAu6g==}
+    engines: {node: '>=14.x'}
+    peerDependencies:
+      rxjs: ^7.0.0
+    dependencies:
+      is-plain-object: 5.0.0
+      rxjs: 7.8.1
+      shallowequal: 1.1.0
+      tslib: 2.6.0
+    dev: false
+
   /request@2.88.2:
     resolution: {integrity: sha512-MsvtOrfG9ZcrOwAW+Qi+F6HbD0CWXEh9ou77uOb7FM2WPhwT7smM833PzanhJLsgXjN89Ir6V2PczXNnMpwKhw==}
     engines: {node: '>= 6'}
@@ -6894,7 +6958,6 @@ packages:
     resolution: {integrity: sha512-AA3TVj+0A2iuIoQkWEK/tqFjBq2j+6PO6Y0zJcvzLAFhEFIO3HL0vls9hWLncZbAAbK0mar7oZ4V079I/qPMxg==}
     dependencies:
       tslib: 2.6.0
-    dev: true
 
   /sade@1.8.1:
     resolution: {integrity: sha512-xal3CZX1Xlo/k4ApwCFrHVACi9fBqJ7V+mwhBsuf/1IOKbBy098Fex+Wa/5QMubw09pSZ/u8EY8PWgevJsXp1A==}
@@ -7016,6 +7079,10 @@ packages:
       inherits: 2.0.4
       safe-buffer: 5.2.1
     dev: true
+
+  /shallowequal@1.1.0:
+    resolution: {integrity: sha512-y0m1JoUZSlPAjXVtPPW70aZWfIL/dSP7AFkRnniLCrK/8MDKog3TySTBmckD+RObVxH0v4Tox67+F14PdED2oQ==}
+    dev: false
 
   /shebang-command@1.2.0:
     resolution: {integrity: sha512-EV3L1+UQWGor21OmnvojK36mhg+TyIKDh3iFBKBohr5xeXIhNBcx8oWdgkTEEQ+BEFFYdLRuqMfd5L84N1V5Vg==}
@@ -7920,6 +7987,14 @@ packages:
     dependencies:
       punycode: 2.3.0
     dev: true
+
+  /use-sync-external-store@1.2.0(react@18.2.0):
+    resolution: {integrity: sha512-eEgnFxGQ1Ife9bzYs6VLi8/4X6CObHMw9Qr9tPY43iKwsPw8xE8+EFsf/2cFZ5S3esXgpWgtSCtLNS41F+sKPA==}
+    peerDependencies:
+      react: ^16.8.0 || ^17.0.0 || ^18.0.0
+    dependencies:
+      react: 18.2.0
+    dev: false
 
   /util-deprecate@1.0.2:
     resolution: {integrity: sha512-EPD5q1uXyFxJpCrLnCc1nHnq3gOa6DZBocAIiI2TaSCA7VCJ1UJDMagCzIkXNsUYfD1daK//LTEQ8xiIbrHtcw==}
