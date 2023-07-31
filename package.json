@@ -104,7 +104,7 @@
     "remesh-logger": "^4.1.0",
     "remesh-react": "^4.1.0",
     "rxjs": "^7.8.1",
-    "tailwind-merge": "^1.13.2",
+    "tailwind-merge": "^1.14.0",
     "type-fest": "^3.13.0"
   },
   "engines": {
