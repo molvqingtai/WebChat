@@ -13,7 +13,7 @@
     "resolveJsonModule": true,
     "noUnusedLocals": true,
     "forceConsistentCasingInFileNames": true,
-    "types": ["vite/client", "unplugin-icons/types/react"],
+    "types": ["vite/client"],
     "paths": {
       "@/*": ["src/*"]
     }

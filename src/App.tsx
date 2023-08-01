@@ -1,8 +1,8 @@
-import Header from '@/components/Header'
-import Footer from '@/components/Footer'
-import Main from '@/components/Main'
-import AppButton from '@/components/AppButton'
-import AppContainer from '@/components/AppContainer'
+import Header from '@/views/Header'
+import Footer from '@/views/Footer'
+import Main from '@/views/Main'
+import AppButton from '@/views/AppButton'
+import AppContainer from '@/views/AppContainer'
 
 export default function App() {
   return (
