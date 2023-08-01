@@ -1,6 +1,6 @@
-import { createElement } from '@/utils'
 import { type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { createElement } from '@/utils'
 
 export interface RootOptions {
   mode?: ShadowRootMode

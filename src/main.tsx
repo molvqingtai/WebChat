@@ -1,10 +1,10 @@
 import React from 'react'
-import App from './App'
-import createShadowRoot from './createShadowRoot'
-import style from './index.css?inline'
 import { RemeshRoot } from 'remesh-react'
 import { RemeshLogger } from 'remesh-logger'
 import { Remesh } from 'remesh'
+import App from './App'
+import createShadowRoot from './createShadowRoot'
+import style from './index.css?inline'
 
 void (async () => {
   const store = Remesh.store({

@@ -1,8 +1,8 @@
 import { type FC } from 'react'
-import { Button } from '@/components/ui/Button'
 import { SmileIcon, CornerDownLeftIcon, ImageIcon } from 'lucide-react'
-import MessageInput from '@/components/MessageInput'
 import { useRemeshDomain, useRemeshEvent, useRemeshSend } from 'remesh-react'
+import { Button } from '@/components/ui/Button'
+import MessageInput from '@/components/MessageInput'
 import MessageInputDomain from '@/domain/MessageInput'
 
 const Footer: FC = () => {

@@ -1,8 +1,8 @@
 import { type FC, type ChangeEvent, type KeyboardEvent } from 'react'
+import { useRemeshDomain, useRemeshQuery, useRemeshSend } from 'remesh-react'
 import { Textarea } from '@/components/ui/Textarea'
 import { Markdown } from '@/components/ui/Markdown'
 import { cn } from '@/utils'
-import { useRemeshDomain, useRemeshQuery, useRemeshSend } from 'remesh-react'
 import MessageInputDomain from '@/domain/MessageInput'
 import { MESSAGE_MAX_LENGTH } from '@/constants'
 

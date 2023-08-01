@@ -1,7 +1,7 @@
-import { cn } from '@/utils'
 import { type FC } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { cn } from '@/utils'
 
 export interface MarkdownProps {
   children?: string
