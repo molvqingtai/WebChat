@@ -4,9 +4,11 @@ import InputModule from './modules/Input'
 const MessageInputDomain = Remesh.domain({
   name: 'MessageInputDomain',
   impl: (domain) => {
-    const inputModule = InputModule(domain, {
-      name: 'MessageInput'
+    const MessageInputModule = InputModule(domain, {
+      name: 'MessageInputModule'
     })
+
+    const MessageQuery = MessageInputModule.query.ValueQuery
 
     const PreviewState = domain.state({
       name: 'MessageInput.PreviewState',
@@ -28,7 +30,10 @@ const MessageInputDomain = Remesh.domain({
     })
 
     const EnterEvent = domain.event({
-      name: 'MessageInput.EnterEvent'
+      name: 'MessageInput.EnterEvent',
+      impl: ({ get }) => {
+        return get(MessageInputModule.query.ValueQuery())
+      }
     })
 
     const EnterCommand = domain.command({
@@ -41,23 +46,23 @@ const MessageInputDomain = Remesh.domain({
     const ClearCommand = domain.command({
       name: 'MessageInput.ClearCommand',
       impl: () => {
-        return inputModule.command.InputCommand('')
+        return MessageInputModule.command.InputCommand('')
       }
     })
 
     return {
       query: {
-        ...inputModule.query,
+        MessageQuery,
         PreviewQuery
       },
       command: {
-        ...inputModule.command,
+        ...MessageInputModule.command,
         EnterCommand,
         ClearCommand,
         PreviewCommand
       },
       event: {
-        ...inputModule.event,
+        ...MessageInputModule.event,
         EnterEvent
       }
     }

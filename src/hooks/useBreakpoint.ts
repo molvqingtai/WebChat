@@ -1,7 +1,7 @@
 import { useMedia } from 'react-use'
 import { BREAKPOINTS } from '@/constants'
 
-export function useBreakpoint() {
+const useBreakpoint = () => {
   const isSM = useMedia(`(min-width: ${BREAKPOINTS.sm})`)
   const isMD = useMedia(`(min-width: ${BREAKPOINTS.md})`)
   const isLG = useMedia(`(min-width: ${BREAKPOINTS.lg})`)
@@ -15,3 +15,5 @@ export function useBreakpoint() {
     is2XL
   }
 }
+
+export default useBreakpoint

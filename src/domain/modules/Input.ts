@@ -1,7 +1,7 @@
-import { Remesh, type Capitalize, type RemeshDomainContext } from 'remesh'
+import { Remesh, type DomainConceptName, type RemeshDomainContext } from 'remesh'
 
 export interface InputModuleOptions {
-  name: Capitalize
+  name: DomainConceptName<'InputModule'>
   value?: string
   disabled?: boolean
 }
@@ -19,27 +19,31 @@ const InputModule = (domain: RemeshDomainContext, options: InputModuleOptions) =
     }
   })
 
-  const InputEvent = domain.event<string>({
-    name: `${options.name}.InputEvent`
+  const InputEvent = domain.event({
+    name: `${options.name}.InputEvent`,
+    impl: ({ get }) => {
+      return get(ValueState())
+    }
   })
 
   const InputCommand = domain.command({
     name: `${options.name}.InputCommand`,
     impl: (_, value: string) => {
-      InputEvent(value)
-      return ValueState().new(value)
+      return [ValueState().new(value), InputEvent()]
     }
   })
 
-  const ChangeEvent = domain.event<string>({
-    name: `${options.name}.ChangeEvent`
+  const ChangeEvent = domain.event({
+    name: `${options.name}.ChangeEvent`,
+    impl: ({ get }) => {
+      return get(ValueState())
+    }
   })
 
   const ChangeCommand = domain.command({
     name: `${options.name}.ChangeCommand`,
     impl: (_, value: string) => {
-      ChangeEvent(value)
-      return ValueState().new(value)
+      return [ValueState().new(value), ChangeEvent()]
     }
   })
 
@@ -55,27 +59,25 @@ const InputModule = (domain: RemeshDomainContext, options: InputModuleOptions) =
     }
   })
 
-  const FocusEvent = domain.event<boolean>({
+  const FocusEvent = domain.event({
     name: `${options.name}.FocusEvent`
   })
 
-  const BlurEvent = domain.event<boolean>({
+  const BlurEvent = domain.event({
     name: `${options.name}.BlurEvent`
   })
 
   const BlurCommand = domain.command({
     name: `${options.name}.BlurCommand`,
     impl: () => {
-      BlurEvent(false)
-      return FocusState().new(false)
+      return [FocusState().new(false), BlurEvent()]
     }
   })
 
   const FocusCommand = domain.command({
     name: `${options.name}.FocusCommand`,
     impl: () => {
-      FocusEvent(true)
-      return FocusState().new(true)
+      return [FocusState().new(true), FocusEvent()]
     }
   })
 

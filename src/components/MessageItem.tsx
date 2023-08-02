@@ -4,22 +4,13 @@ import { FrownIcon, ThumbsUpIcon } from 'lucide-react'
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/Avatar'
 
 import LikeButton from '@/components/LikeButton'
+import { type Message } from '@/domain/MessageList'
 
-export interface MessageProps {
-  data: {
-    id: string
-    body: string
-    username: string
-    avatar: string
-    date: number
-    likeChecked: boolean
-    hateChecked: boolean
-    likeCount: number
-    hateCount: number
-  }
+export interface MessageItemProps {
+  data: Message
 }
 
-const Message: FC<MessageProps> = ({ data }) => {
+const MessageItem: FC<MessageItemProps> = ({ data }) => {
   const [formatData, setFormatData] = useState({
     ...data,
     date: format(data.date, 'yyyy/MM/dd HH:mm:ss')
@@ -76,5 +67,5 @@ const Message: FC<MessageProps> = ({ data }) => {
   )
 }
 
-Message.displayName = 'Message'
-export default Message
+MessageItem.displayName = 'MessageItem'
+export default MessageItem
