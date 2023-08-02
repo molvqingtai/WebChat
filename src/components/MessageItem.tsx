@@ -5,6 +5,7 @@ import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/Avatar'
 
 import LikeButton from '@/components/LikeButton'
 import { type Message } from '@/domain/MessageList'
+import { Markdown } from '@/components/ui/Markdown'
 
 export interface MessageItemProps {
   data: Message
@@ -39,7 +40,7 @@ const MessageItem: FC<MessageItemProps> = ({ data }) => {
         </div>
         <div>
           <div className="pb-2">
-            <pre className="text-sm">{formatData.body}</pre>
+            <Markdown>{formatData.body}</Markdown>
           </div>
           <div className="grid grid-flow-col justify-end gap-x-2 leading-none">
             <LikeButton

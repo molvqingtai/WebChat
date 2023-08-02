@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/Button'
 import MessageInput from '@/components/MessageInput'
 import MessageInputDomain from '@/domain/MessageInput'
 import MessageListDomain from '@/domain/MessageList'
+import { MESSAGE_MAX_LENGTH } from '@/constants'
 
 const Footer: FC = () => {
   const send = useRemeshSend()
@@ -36,7 +37,13 @@ const Footer: FC = () => {
 
   return (
     <div className="grid gap-y-2 p-4">
-      <MessageInput value={message} preview={isPreview} onEnter={handleSend} onInput={handleInput}></MessageInput>
+      <MessageInput
+        value={message}
+        preview={isPreview}
+        onEnter={handleSend}
+        onInput={handleInput}
+        maxLength={MESSAGE_MAX_LENGTH}
+      ></MessageInput>
       <div className="grid grid-cols-[auto_auto_1fr] items-center justify-items-end">
         <Button variant="ghost" size="icon">
           <SmileIcon size={20} />
