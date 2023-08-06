@@ -4,10 +4,12 @@ import { RemeshLogger } from 'remesh-logger'
 import { Remesh } from 'remesh'
 import App from './App'
 import createShadowRoot from './createShadowRoot'
+import StorageImpl from './impl/Storage'
 import style from './index.css?inline'
 
 void (async () => {
   const store = Remesh.store({
+    externs: [StorageImpl],
     inspectors: [RemeshLogger()]
   })
 

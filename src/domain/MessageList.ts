@@ -1,102 +1,130 @@
 import { Remesh } from 'remesh'
 import { ListModule } from 'remesh/modules/list'
 import { nanoid } from 'nanoid'
+import { from, map, tap, merge } from 'rxjs'
+import mem from 'mem'
+import Storage from './externs/Storage'
 
 export interface Message {
   id: string
-  body: string
-  username: string
-  avatar: string
-  date: number
-  likeChecked: boolean
-  hateChecked: boolean
-  likeCount: number
-  hateCount: number
+  [key: string]: any
 }
 
-const MessageListDomain = Remesh.domain({
-  name: 'MessageListDomain',
-  impl: (domain) => {
-    const MessageListModule = ListModule<Message>(domain, {
-      name: 'MessageListModule',
-      key: (message) => message.id
-    })
+const MessageListDomain = <T extends Message>() =>
+  Remesh.domain({
+    name: 'MessageListDomain',
+    impl: (domain) => {
+      const storage = domain.getExtern(Storage)
+      const storageKey = `${storage.name}.MESSAGE_LIST`
 
-    const ListQuery = MessageListModule.query.ItemListQuery
+      const MessageListModule = ListModule<T>(domain, {
+        name: 'MessageListModule',
+        key: (message) => message.id
+      })
 
-    const ItemQuery = MessageListModule.query.ItemQuery
+      const ListQuery = MessageListModule.query.ItemListQuery
 
-    const ChangeEvent = domain.event({
-      name: 'MessageList.ChangeEvent',
-      impl: ({ get }) => {
-        return get(ListQuery())
-      }
-    })
+      const ItemQuery = MessageListModule.query.ItemQuery
 
-    const CreateEvent = domain.event({
-      name: 'MessageList.CreateEvent'
-    })
+      const ChangeListEvent = domain.event({
+        name: 'MessageList.ChangeListEvent',
+        impl: ({ get }) => {
+          return get(ListQuery())
+        }
+      })
 
-    const CreateCommand = domain.command({
-      name: 'MessageList.CreateCommand',
-      impl: (_, message: Omit<Message, 'id'>) => {
-        const id = nanoid()
-        return [MessageListModule.command.AddItemCommand({ ...message, id }), CreateEvent(), ChangeEvent()]
-      }
-    })
+      const CreateItemEvent = domain.event<T>({
+        name: 'MessageList.CreateItemEvent'
+      })
 
-    const UpdateEvent = domain.event({
-      name: 'MessageList.UpdateEvent'
-    })
+      const CreateItemCommand = domain.command({
+        name: 'MessageList.CreateItemCommand',
+        impl: (_, message: Omit<T, 'id'>) => {
+          const newMessage = { ...message, id: nanoid() } as T
+          return [MessageListModule.command.AddItemCommand(newMessage), CreateItemEvent(newMessage), ChangeListEvent()]
+        }
+      })
 
-    const UpdateCommand = domain.command({
-      name: 'MessageList.UpdateCommand',
-      impl: (_, message: Message) => {
-        return [MessageListModule.command.UpdateItemCommand(message), UpdateEvent(), ChangeEvent()]
-      }
-    })
+      const UpdateItemEvent = domain.event<T>({
+        name: 'MessageList.UpdateItemEvent'
+      })
 
-    const DeleteEvent = domain.event({
-      name: 'MessageList.DeleteEvent'
-    })
+      const UpdateItemCommand = domain.command({
+        name: 'MessageList.UpdateItemCommand',
+        impl: (_, message: T) => {
+          return [MessageListModule.command.UpdateItemCommand(message), UpdateItemEvent(message), ChangeListEvent()]
+        }
+      })
 
-    const DeleteCommand = domain.command({
-      name: 'MessageList.DeleteCommand',
-      impl: (_, id: string) => {
-        return [MessageListModule.command.DeleteItemCommand(id), DeleteEvent(), ChangeEvent()]
-      }
-    })
+      const DeleteItemEvent = domain.event<string>({
+        name: 'MessageList.DeleteItemEvent'
+      })
 
-    const ClearEvent = domain.event({
-      name: 'MessageList.ClearEvent'
-    })
+      const DeleteItemCommand = domain.command({
+        name: 'MessageList.DeleteItemCommand',
+        impl: (_, id: string) => {
+          return [MessageListModule.command.DeleteItemCommand(id), DeleteItemEvent(id), ChangeListEvent()]
+        }
+      })
 
-    const ClearCommand = domain.command({
-      name: 'MessageList.ClearCommand',
-      impl: () => {
-        return [MessageListModule.command.SetListCommand([]), ClearEvent(), ChangeEvent()]
-      }
-    })
+      const ClearListEvent = domain.event({
+        name: 'MessageList.ClearListEvent'
+      })
 
-    return {
-      query: {
-        ItemQuery,
-        ListQuery
-      },
-      command: {
-        CreateCommand,
-        UpdateCommand,
-        DeleteCommand,
-        ClearCommand
-      },
-      event: {
-        CreateEvent,
-        UpdateEvent,
-        DeleteEvent,
-        ClearEvent
+      const ClearListCommand = domain.command({
+        name: 'MessageList.ClearListCommand',
+        impl: () => {
+          return [MessageListModule.command.DeleteAllCommand(), ClearListEvent(), ChangeListEvent()]
+        }
+      })
+
+      const InitListEvent = domain.event<T[]>({
+        name: 'MessageList.InitListEvent'
+      })
+
+      const InitListCommand = domain.command({
+        name: 'MessageList.InitListCommand',
+        impl: (_, messages: T[]) => {
+          return [MessageListModule.command.SetListCommand(messages), InitListEvent(messages)]
+        }
+      })
+
+      domain.effect({
+        name: 'FormStorageToStateEffect',
+        impl: () => {
+          return from(storage.get<T[]>(storageKey)).pipe(map((messages) => InitListCommand(messages ?? [])))
+        }
+      })
+
+      domain.effect({
+        name: 'FormStateToStorageEffect',
+        impl: ({ fromEvent }) => {
+          const createItem$ = fromEvent(ChangeListEvent).pipe(
+            tap(async (messages) => await storage.set<T[]>(storageKey, messages))
+          )
+          return merge(createItem$).pipe(map(() => null))
+        }
+      })
+
+      return {
+        query: {
+          ItemQuery,
+          ListQuery
+        },
+        command: {
+          CreateItemCommand,
+          UpdateItemCommand,
+          DeleteItemCommand,
+          ClearListCommand
+        },
+        event: {
+          CreateItemEvent,
+          UpdateItemEvent,
+          DeleteItemEvent,
+          ClearListEvent
+        }
       }
     }
-  }
-})
+  })()
 
-export default MessageListDomain
+export default mem(MessageListDomain)

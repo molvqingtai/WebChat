@@ -17,3 +17,5 @@ export const BREAKPOINTS = {
 } as const
 
 export const MESSAGE_MAX_LENGTH = 500 as const
+
+export const STORAGE_NAME = 'WEB_CHAT' as const

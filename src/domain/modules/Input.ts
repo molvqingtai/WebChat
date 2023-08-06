@@ -19,31 +19,25 @@ const InputModule = (domain: RemeshDomainContext, options: InputModuleOptions) =
     }
   })
 
-  const InputEvent = domain.event({
-    name: `${options.name}.InputEvent`,
-    impl: ({ get }) => {
-      return get(ValueState())
-    }
+  const InputEvent = domain.event<string>({
+    name: `${options.name}.InputEvent`
   })
 
   const InputCommand = domain.command({
     name: `${options.name}.InputCommand`,
     impl: (_, value: string) => {
-      return [ValueState().new(value), InputEvent()]
+      return [ValueState().new(value), InputEvent(value)]
     }
   })
 
-  const ChangeEvent = domain.event({
-    name: `${options.name}.ChangeEvent`,
-    impl: ({ get }) => {
-      return get(ValueState())
-    }
+  const ChangeEvent = domain.event<string>({
+    name: `${options.name}.ChangeEvent`
   })
 
   const ChangeCommand = domain.command({
     name: `${options.name}.ChangeCommand`,
     impl: (_, value: string) => {
-      return [ValueState().new(value), ChangeEvent()]
+      return [ValueState().new(value), ChangeEvent(value)]
     }
   })
 
