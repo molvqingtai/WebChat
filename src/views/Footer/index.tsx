@@ -36,7 +36,7 @@ const Footer: FC = () => {
   }
 
   return (
-    <div className="grid gap-y-2 p-4">
+    <div className="grid gap-y-2 px-4 pb-4">
       <MessageInput
         value={text}
         preview={isPreview}

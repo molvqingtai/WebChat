@@ -28,7 +28,7 @@ const MessageItem: FC<MessageItemProps> = ({ data }) => {
   }
 
   return (
-    <div className="grid grid-cols-[auto_1fr] gap-x-2">
+    <div className="grid grid-cols-[auto_1fr] gap-x-2 px-4 first:pt-4 last:pb-4">
       <Avatar>
         <AvatarImage src={formatData.avatar} />
         <AvatarFallback>{formatData.username}</AvatarFallback>
