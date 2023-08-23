@@ -3,6 +3,5 @@
   "singleQuote": true,
   "trailingComma": "none",
   "printWidth": 120,
-  "plugins": ["prettier-plugin-tailwindcss"],
   "tailwindFunction": ["clsx"]
 }
