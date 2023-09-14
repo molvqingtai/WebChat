@@ -5,7 +5,6 @@ import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/Avatar'
 
 import LikeButton from '@/components/LikeButton'
 import { type Message } from '@/types'
-import { Markdown } from '@/components/ui/Markdown'
 
 export interface MessageItemProps {
   data: Message
@@ -39,9 +38,7 @@ const MessageItem: FC<MessageItemProps> = ({ data }) => {
           <div className="text-xs text-slate-400">{formatData.date}</div>
         </div>
         <div>
-          <div className="pb-2">
-            <Markdown>{formatData.body}</Markdown>
-          </div>
+          <div className="prose prose-sm prose-slate pb-2" dangerouslySetInnerHTML={{ __html: formatData.body }}></div>
           <div className="grid grid-flow-col justify-end gap-x-2 leading-none">
             <LikeButton
               checked={formatData.likeChecked}
