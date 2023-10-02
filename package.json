@@ -46,7 +46,7 @@
     "@commitlint/config-conventional": "^17.6.6",
     "@crxjs/vite-plugin": "2.0.0-beta.18",
     "@ffflorian/jszip-cli": "^3.4.1",
-    "@types/node": "^20.4.2",
+    "@types/node": "^20.8.0",
     "@types/react": "^18.2.14",
     "@types/react-dom": "^18.2.7",
     "@types/webextension-polyfill": "^0.10.1",
