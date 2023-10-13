@@ -108,7 +108,7 @@
     "remesh-react": "^4.1.0",
     "rxjs": "^7.8.1",
     "tailwind-merge": "^1.13.2",
-    "type-fest": "^3.13.0"
+    "type-fest": "^4.4.0"
   },
   "engines": {
     "node": ">=18.0.0"
