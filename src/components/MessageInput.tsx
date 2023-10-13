@@ -1,65 +1,52 @@
-import { type FC } from 'react'
+import { type FC, type ChangeEvent, type KeyboardEvent } from 'react'
 
-import Highlight from '@tiptap/extension-highlight'
-import Typography from '@tiptap/extension-typography'
-import { EditorContent, Extension, useEditor } from '@tiptap/react'
-import StarterKit from '@tiptap/starter-kit'
-import CharacterCount from '@tiptap/extension-character-count'
+import { Textarea } from '@/components/ui/Textarea'
+import { Markdown } from '@/components/ui/Markdown'
 import { cn } from '@/utils'
 
 export interface MessageInputProps {
   value?: string
   className?: string
   maxLength?: number
-  enterClear?: boolean
+  preview?: boolean
   onInput?: (value: string) => void
   onEnter?: (value: string) => void
 }
 
-const MessageInput: FC<MessageInputProps> = ({
-  value = '',
-  className,
-  maxLength = 500,
-  enterClear = false,
-  onInput,
-  onEnter
-}) => {
-  const editor = useEditor({
-    extensions: [
-      StarterKit,
-      Highlight,
-      Typography,
-      CharacterCount.configure({
-        limit: maxLength
-      }),
-      Extension.create({
-        addKeyboardShortcuts: () => ({
-          Enter: ({ editor }) => {
-            onEnter?.(editor.getHTML())
-            enterClear && editor.commands.clearContent()
-            return true
-          }
-        })
-      })
-    ],
-    content: value,
-    editorProps: {
-      attributes: {
-        class: cn(
-          'prose prose-sm prose-slate box-border text-sm break-words max-h-28 overflow-y-auto overflow-x-hidden min-h-[60px] w-full rounded-lg border border-input bg-gray-50 px-3 py-2 pb-5 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 2xl:max-h-4'
-        )
-      }
-    },
-    onUpdate({ editor }) {
-      onInput?.(editor.getHTML())
+const MessageInput: FC<MessageInputProps> = ({ value = '', className, maxLength = 500, onInput, onEnter, preview }) => {
+  const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !(e.shiftKey || e.ctrlKey || e.altKey || e.metaKey)) {
+      e.preventDefault()
+      onEnter?.(value)
     }
-  })
+  }
+  const handleInput = (e: ChangeEvent<HTMLTextAreaElement>) => {
+    onInput?.(e.target.value)
+  }
 
   return (
     <div className={cn('relative', className)}>
-      <EditorContent editor={editor} />
+      {preview ? (
+        <Markdown className="max-h-32 rounded-lg border border-input bg-gray-50 2xl:max-h-40">{value}</Markdown>
+      ) : (
+        // Hack: Auto-Growing Textarea
+        <div
+          data-value={value}
+          className="grid after:pointer-events-none after:invisible after:col-start-1 after:col-end-2 after:row-start-1 after:row-end-2 after:box-border after:max-h-28 after:w-full after:overflow-x-hidden after:whitespace-pre-wrap after:break-words after:rounded-lg after:border after:px-3 after:py-2 after:pb-5 after:text-sm after:content-[attr(data-value)] after:2xl:max-h-40"
+        >
+          <Textarea
+            onKeyDown={handleKeyDown}
+            maxLength={maxLength}
+            className="col-start-1 col-end-2 row-start-1 row-end-2 box-border max-h-28 resize-none overflow-x-hidden break-words rounded-lg bg-gray-50 pb-5 text-sm 2xl:max-h-40"
+            rows={2}
+            value={value}
+            placeholder="Type your message here."
+            onInput={handleInput}
+          />
+        </div>
+      )}
       <div className="absolute bottom-1 right-3 rounded-lg text-xs text-slate-400">
-        {editor?.storage.characterCount.characters()}/{maxLength}
+        {value?.length ?? 0}/{maxLength}
       </div>
     </div>
   )

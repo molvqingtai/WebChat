@@ -12,6 +12,39 @@ const MessageInputDomain = Remesh.domain({
 
     const MessageQuery = MessageInputModule.query.ValueQuery
 
+    const PreviewState = domain.state({
+      name: 'MessageInput.PreviewState',
+      default: false
+    })
+
+    const PreviewQuery = domain.query({
+      name: 'MessageInput.PreviewQuery',
+      impl: ({ get }) => {
+        return get(PreviewState())
+      }
+    })
+
+    const PreviewCommand = domain.command({
+      name: 'MessageInput.PreviewCommand',
+      impl: (_, value: boolean) => {
+        return PreviewState().new(value)
+      }
+    })
+
+    const EnterEvent = domain.event({
+      name: 'MessageInput.EnterEvent',
+      impl: ({ get }) => {
+        return get(MessageInputModule.query.ValueQuery())
+      }
+    })
+
+    const EnterCommand = domain.command({
+      name: 'MessageInput.EnterCommand',
+      impl: () => {
+        return EnterEvent()
+      }
+    })
+
     const ClearCommand = domain.command({
       name: 'MessageInput.ClearCommand',
       impl: () => {
@@ -21,14 +54,18 @@ const MessageInputDomain = Remesh.domain({
 
     return {
       query: {
-        MessageQuery
+        MessageQuery,
+        PreviewQuery
       },
       command: {
         ...MessageInputModule.command,
-        ClearCommand
+        EnterCommand,
+        ClearCommand,
+        PreviewCommand
       },
       event: {
-        ...MessageInputModule.event
+        ...MessageInputModule.event,
+        EnterEvent
       }
     }
   }

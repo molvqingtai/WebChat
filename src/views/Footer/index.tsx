@@ -6,12 +6,18 @@ import MessageInput from '@/components/MessageInput'
 import MessageInputDomain from '@/domain/MessageInput'
 import MessageListDomain from '@/domain/MessageList'
 import { MESSAGE_MAX_LENGTH } from '@/constants'
+import { type Message } from '@/types'
 
 const Footer: FC = () => {
   const send = useRemeshSend()
-  const messageListDomain = useRemeshDomain(MessageListDomain())
+  const messageListDomain = useRemeshDomain(MessageListDomain<Message>())
   const messageInputDomain = useRemeshDomain(MessageInputDomain())
   const text = useRemeshQuery(messageInputDomain.query.MessageQuery())
+  const isPreview = useRemeshQuery(messageInputDomain.query.PreviewQuery())
+
+  const handleInput = (value: string) => {
+    send(messageInputDomain.command.InputCommand(value))
+  }
 
   const message = {
     username: '墨绿青苔',
@@ -24,19 +30,16 @@ const Footer: FC = () => {
     hateCount: 0
   }
 
-  const handleInput = (value: string) => {
-    send(messageInputDomain.command.InputCommand(value))
-  }
-
   const handleSend = () => {
     send(messageListDomain.command.CreateItemCommand(message))
+    send(messageInputDomain.command.ClearCommand())
   }
 
   return (
     <div className="grid gap-y-2 px-4 pb-4">
       <MessageInput
         value={text}
-        enterClear={true}
+        preview={isPreview}
         onEnter={handleSend}
         onInput={handleInput}
         maxLength={MESSAGE_MAX_LENGTH}

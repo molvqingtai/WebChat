@@ -23,14 +23,14 @@ const LikeButton: FC<LikeButtonProps> & { Icon: FC<LikeButtonIconProps> } = ({
   onChange,
   children
 }) => {
-  const handleClick = (e: MouseEvent<HTMLButtonElement>) => {
+  const handleOnClick = (e: MouseEvent<HTMLButtonElement>) => {
     onClick?.(e)
     onChange?.(!checked, checked ? count - 1 : count + 1)
   }
 
   return (
     <Button
-      onClick={handleClick}
+      onClick={handleOnClick}
       variant="secondary"
       className={cn(
         'grid items-center overflow-hidden rounded-full leading-none transition-all',
