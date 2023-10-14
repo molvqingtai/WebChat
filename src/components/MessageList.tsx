@@ -6,8 +6,9 @@ import { ScrollArea } from '@/components/ui/ScrollArea'
 export interface MessageListProps {
   children?: Array<ReactElement<MessageItemProps>>
 }
+// [&>div>div]:!block fix word-break: break-word;
 const MessageList: FC<MessageListProps> = ({ children }) => {
-  return <ScrollArea>{children}</ScrollArea>
+  return <ScrollArea className="[&>div>div]:!block">{children}</ScrollArea>
 }
 
 MessageList.displayName = 'MessageList'

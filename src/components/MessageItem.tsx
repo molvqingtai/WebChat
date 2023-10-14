@@ -28,12 +28,12 @@ const MessageItem: FC<MessageItemProps> = ({ data }) => {
   }
 
   return (
-    <div className="grid grid-cols-[auto_1fr] gap-x-2 px-4 first:pt-4 last:pb-4">
+    <div className="box-border grid grid-cols-[auto_1fr] gap-x-2 px-4 first:pt-4 last:pb-4">
       <Avatar>
         <AvatarImage src={formatData.avatar} />
         <AvatarFallback>{formatData.username}</AvatarFallback>
       </Avatar>
-      <div className="grid">
+      <div className="overflow-hidden">
         <div className="grid grid-cols-[auto_1fr] items-baseline gap-x-2 leading-none">
           <div className="text-sm font-medium text-slate-600">{formatData.username}</div>
           <div className="text-xs text-slate-400">{formatData.date}</div>

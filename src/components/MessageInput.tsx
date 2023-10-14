@@ -37,7 +37,7 @@ const MessageInput: FC<MessageInputProps> = ({ value = '', className, maxLength 
           <Textarea
             onKeyDown={handleKeyDown}
             maxLength={maxLength}
-            className="col-start-1 col-end-2 row-start-1 row-end-2 box-border max-h-28 resize-none overflow-x-hidden break-words rounded-lg bg-gray-50 pb-5 text-sm 2xl:max-h-40"
+            className="col-start-1 col-end-2 row-start-1 row-end-2 box-border max-h-28 resize-none overflow-x-hidden whitespace-pre-wrap break-words rounded-lg bg-gray-50 pb-5 text-sm 2xl:max-h-40"
             rows={2}
             value={value}
             placeholder="Type your message here."
