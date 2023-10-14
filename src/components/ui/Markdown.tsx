@@ -13,8 +13,10 @@ const Markdown: FC<MarkdownProps> = ({ children = '', className }) => {
   return (
     <ReactMarkdown
       components={{
-        h1: ({ className, ...props }) => <h1 className={cn('mb-2 mt-0 text-2xl', className)} {...props} />,
-        h2: ({ className, ...props }) => <h2 className={cn('mb-2 mt-0', className)} {...props} />,
+        h1: ({ className, ...props }) => (
+          <h1 className={cn('mb-2 mt-0 font-semibold text-2xl', className)} {...props} />
+        ),
+        h2: ({ className, ...props }) => <h2 className={cn('mb-2 mt-0 font-semibold', className)} {...props} />,
         img: ({ className, alt, ...props }) => (
           <img className={cn('my-2 max-w-[50%]', className)} alt={alt} {...props} />
         ),

@@ -34,8 +34,8 @@ const Footer: FC = () => {
     send(messageInputDomain.command.ClearCommand())
   }
 
-  const handleEmojiSelect = (value: string) => {
-    send(messageInputDomain.command.InputCommand(messageText + value))
+  const handleEmojiSelect = (emoji: string) => {
+    send(messageInputDomain.command.InputCommand(`${messageText}${emoji}`))
   }
 
   return (
