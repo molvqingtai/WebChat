@@ -11,8 +11,7 @@ const Footer: FC = () => {
   const send = useRemeshSend()
   const messageListDomain = useRemeshDomain(MessageListDomain())
   const messageInputDomain = useRemeshDomain(MessageInputDomain())
-  const text = useRemeshQuery(messageInputDomain.query.MessageQuery())
-  const isPreview = useRemeshQuery(messageInputDomain.query.PreviewQuery())
+  const messageText = useRemeshQuery(messageInputDomain.query.MessageQuery())
 
   const handleInput = (value: string) => {
     send(messageInputDomain.command.InputCommand(value))
@@ -21,7 +20,7 @@ const Footer: FC = () => {
   const message = {
     username: '墨绿青苔',
     avatar: 'https://avatars.githubusercontent.com/u/10251037?v=4',
-    body: text,
+    body: messageText.trim(),
     date: Date.now(),
     likeChecked: false,
     likeCount: 0,
@@ -37,8 +36,7 @@ const Footer: FC = () => {
   return (
     <div className="grid gap-y-2 px-4 pb-4">
       <MessageInput
-        value={text}
-        preview={isPreview}
+        value={messageText}
         onEnter={handleSend}
         onInput={handleInput}
         maxLength={MESSAGE_MAX_LENGTH}

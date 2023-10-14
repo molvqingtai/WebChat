@@ -1,6 +1,7 @@
 import { type FC } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import remarkBreaks from 'remark-breaks'
 import { cn } from '@/utils'
 
 export interface MarkdownProps {
@@ -57,7 +58,7 @@ const Markdown: FC<MarkdownProps> = ({ children = '', className }) => {
           )
         }
       }}
-      remarkPlugins={[remarkGfm]}
+      remarkPlugins={[remarkGfm, remarkBreaks]}
       className={cn(className, 'prose prose-sm prose-slate')}
     >
       {children}

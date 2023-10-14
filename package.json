@@ -101,6 +101,7 @@
     "react-markdown": "^8.0.7",
     "react-nice-avatar": "^1.4.1",
     "react-use": "^17.4.0",
+    "remark-breaks": "^4.0.0",
     "remark-gfm": "^3.0.1",
     "remesh": "^4.2.0",
     "remesh-logger": "^4.1.0",
