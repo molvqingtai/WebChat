@@ -9,7 +9,10 @@ export interface RootOptions {
   element?: Element
 }
 
-const createShadowRoot = (name: string, options: RootOptions): Root => {
+const createShadowRoot = (
+  name: string,
+  options: RootOptions
+): Root & { shadowHost: Element; shadowRoot: ShadowRoot; appRoot: Element } => {
   const { mode = 'open', style = '', script = '', element = '' } = options ?? {}
   const shadowHost = createElement(`<${name}></${name}>`)
   const shadowRoot = shadowHost.attachShadow({ mode })
@@ -21,10 +24,16 @@ const createShadowRoot = (name: string, options: RootOptions): Root => {
   shadowRoot.append(appStyle, appRoot, appScript, element)
 
   return {
-    ...reactRoot,
+    shadowHost,
+    shadowRoot,
+    appRoot,
     render: (children: ReactNode) => {
       document.body.appendChild(shadowHost)
-      reactRoot.render(children)
+      return reactRoot.render(children)
+    },
+    unmount: () => {
+      reactRoot.unmount()
+      shadowHost.remove()
     }
   }
 }

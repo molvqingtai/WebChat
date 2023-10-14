@@ -1,11 +1,12 @@
 import { type FC } from 'react'
-import { SmileIcon, CornerDownLeftIcon, ImageIcon } from 'lucide-react'
+import { CornerDownLeftIcon, ImageIcon } from 'lucide-react'
 import { useRemeshDomain, useRemeshQuery, useRemeshSend } from 'remesh-react'
 import { Button } from '@/components/ui/Button'
 import MessageInput from '@/components/MessageInput'
 import MessageInputDomain from '@/domain/MessageInput'
 import MessageListDomain from '@/domain/MessageList'
 import { MESSAGE_MAX_LENGTH } from '@/constants'
+import EmojiButton from '@/components/EmojiButton'
 
 const Footer: FC = () => {
   const send = useRemeshSend()
@@ -33,6 +34,10 @@ const Footer: FC = () => {
     send(messageInputDomain.command.ClearCommand())
   }
 
+  const handleEmojiSelect = (value: string) => {
+    send(messageInputDomain.command.InputCommand(messageText + value))
+  }
+
   return (
     <div className="grid gap-y-2 px-4 pb-4">
       <MessageInput
@@ -42,9 +47,7 @@ const Footer: FC = () => {
         maxLength={MESSAGE_MAX_LENGTH}
       ></MessageInput>
       <div className="grid grid-cols-[auto_auto_1fr] items-center justify-items-end">
-        <Button variant="ghost" size="icon">
-          <SmileIcon size={20} />
-        </Button>
+        <EmojiButton onSelect={handleEmojiSelect}></EmojiButton>
         <Button variant="ghost" size="icon">
           <ImageIcon size={20} />
         </Button>
