@@ -6,11 +6,10 @@ import MessageInput from '@/components/MessageInput'
 import MessageInputDomain from '@/domain/MessageInput'
 import MessageListDomain from '@/domain/MessageList'
 import { MESSAGE_MAX_LENGTH } from '@/constants'
-import { type Message } from '@/types'
 
 const Footer: FC = () => {
   const send = useRemeshSend()
-  const messageListDomain = useRemeshDomain(MessageListDomain<Message>())
+  const messageListDomain = useRemeshDomain(MessageListDomain())
   const messageInputDomain = useRemeshDomain(MessageInputDomain())
   const text = useRemeshQuery(messageInputDomain.query.MessageQuery())
   const isPreview = useRemeshQuery(messageInputDomain.query.PreviewQuery())

@@ -3,10 +3,9 @@ import { useRemeshDomain, useRemeshQuery } from 'remesh-react'
 import MessageList from '@/components/MessageList'
 import MessageItem from '@/components/MessageItem'
 import MessageListDomain from '@/domain/MessageList'
-import { type Message } from '@/types'
 
 const Main: FC = () => {
-  const messageListDomain = useRemeshDomain(MessageListDomain<Message>())
+  const messageListDomain = useRemeshDomain(MessageListDomain())
   const messageList = useRemeshQuery(messageListDomain.query.ListQuery())
 
   return (

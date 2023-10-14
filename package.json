@@ -96,7 +96,6 @@
     "date-fns": "^2.30.0",
     "idb-keyval": "^6.2.1",
     "lucide-react": "^0.263.0",
-    "mem": "^9.0.2",
     "nanoid": "^4.0.2",
     "peerjs": "^1.4.7",
     "react-markdown": "^8.0.7",
