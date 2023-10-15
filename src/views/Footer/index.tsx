@@ -1,5 +1,5 @@
-import { type FC } from 'react'
-import { CornerDownLeftIcon, ImageIcon } from 'lucide-react'
+import { useRef, type FC } from 'react'
+import { CornerDownLeftIcon } from 'lucide-react'
 import { useRemeshDomain, useRemeshQuery, useRemeshSend } from 'remesh-react'
 import { Button } from '@/components/ui/Button'
 import MessageInput from '@/components/MessageInput'
@@ -12,7 +12,9 @@ const Footer: FC = () => {
   const send = useRemeshSend()
   const messageListDomain = useRemeshDomain(MessageListDomain())
   const messageInputDomain = useRemeshDomain(MessageInputDomain())
-  const messageText = useRemeshQuery(messageInputDomain.query.MessageQuery())
+  const messageBody = useRemeshQuery(messageInputDomain.query.MessageQuery())
+
+  const inputRef = useRef<HTMLTextAreaElement>(null)
 
   const handleInput = (value: string) => {
     send(messageInputDomain.command.InputCommand(value))
@@ -21,7 +23,7 @@ const Footer: FC = () => {
   const message = {
     username: '墨绿青苔',
     avatar: 'https://avatars.githubusercontent.com/u/10251037?v=4',
-    body: messageText.trim(),
+    body: messageBody.trim(),
     date: Date.now(),
     likeChecked: false,
     likeCount: 0,
@@ -35,23 +37,25 @@ const Footer: FC = () => {
   }
 
   const handleEmojiSelect = (emoji: string) => {
-    send(messageInputDomain.command.InputCommand(`${messageText}${emoji}`))
+    send(messageInputDomain.command.InputCommand(`${messageBody}${emoji}`))
+    inputRef.current?.focus()
   }
 
   return (
     <div className="relative z-10 grid gap-y-2 px-4 pb-4 pt-2 before:absolute before:-top-4 before:left-0 before:h-4 before:w-full before:bg-gradient-to-t before:from-slate-50 before:from-30% before:to-transparent">
       <MessageInput
-        value={messageText}
+        ref={inputRef}
+        value={messageBody}
         onEnter={handleSend}
         onInput={handleInput}
         maxLength={MESSAGE_MAX_LENGTH}
       ></MessageInput>
-      <div className="grid grid-cols-[auto_auto_1fr] items-center justify-items-end">
+      <div className="flex items-center">
         <EmojiButton onSelect={handleEmojiSelect}></EmojiButton>
-        <Button variant="ghost" size="icon">
+        {/* <Button variant="ghost" size="icon">
           <ImageIcon size={20} />
-        </Button>
-        <Button size="sm" onClick={handleSend}>
+        </Button> */}
+        <Button className="ml-auto" size="sm" onClick={handleSend}>
           <span className="mr-2">Send</span>
           <CornerDownLeftIcon className="text-slate-400" size={12}></CornerDownLeftIcon>
         </Button>

@@ -9,9 +9,10 @@ import { Markdown } from '@/components/ui/Markdown'
 
 export interface MessageItemProps {
   data: Message
+  index?: number
 }
 
-const MessageItem: FC<MessageItemProps> = ({ data }) => {
+const MessageItem: FC<MessageItemProps> = ({ data, index }) => {
   const [formatData, setFormatData] = useState({
     ...data,
     date: format(data.date, 'yyyy/MM/dd HH:mm:ss')
@@ -28,7 +29,10 @@ const MessageItem: FC<MessageItemProps> = ({ data }) => {
   }
 
   return (
-    <div className="box-border grid grid-cols-[auto_1fr] gap-x-2 px-4 first:pt-4 last:pb-4">
+    <div
+      data-index={index}
+      className="box-border grid grid-cols-[auto_1fr] gap-x-2 px-4 [content-visibility:auto] first:pt-4 last:pb-4"
+    >
       <Avatar>
         <AvatarImage src={formatData.avatar} />
         <AvatarFallback>{formatData.username}</AvatarFallback>

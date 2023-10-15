@@ -18,9 +18,15 @@ const EmojiButton: FC<EmojiButtonProps> = ({ onSelect }) => {
   const [open, setOpen] = useState(false)
 
   const handleSelect = (value: string) => {
-    onSelect?.(value)
     setOpen(false)
+    onSelect?.(value)
   }
+
+  const handleCloseAutoFocus = (event: Event) => {
+    // Close does not trigger focus
+    event.preventDefault()
+  }
+
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
@@ -28,7 +34,7 @@ const EmojiButton: FC<EmojiButtonProps> = ({ onSelect }) => {
           <SmileIcon size={20} />
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="z-top w-72 px-0">
+      <PopoverContent className="z-top w-72 px-0" onCloseAutoFocus={handleCloseAutoFocus}>
         <ScrollArea className="h-72 w-72 px-3">
           {emojiGroups.map((group, index) => {
             return (
