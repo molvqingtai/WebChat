@@ -4,7 +4,7 @@ import { FrownIcon, ThumbsUpIcon } from 'lucide-react'
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/Avatar'
 
 import LikeButton from '@/components/LikeButton'
-import { type Message } from '@/types'
+import { type Message } from '@/@types'
 import { Markdown } from '@/components/ui/Markdown'
 
 export interface MessageItemProps {
