@@ -6,11 +6,11 @@ import { RemeshLogger } from 'remesh-logger'
 import App from './App'
 import StorageImpl from '@/impl/Storage'
 
-import './style.css'
+import '@/assets/styles/tailwind.css'
 
 export default defineContentScript({
   cssInjectionMode: 'ui',
-  matches: ['*://*.example.com/*'],
+  matches: ['*://*.example.com/*', '*://*.google.com/*', '*://*.v2ex.com/*'],
   async main(ctx) {
     const store = Remesh.store({
       externs: [StorageImpl],

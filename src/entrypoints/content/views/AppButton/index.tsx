@@ -7,7 +7,7 @@ export interface AppButtonProps {
 
 const AppButton: FC<AppButtonProps> = ({ children }) => {
   return (
-    <Button className="fixed bottom-5 right-5 z-top h-10 w-10 select-none rounded-full bg-yellow-400 text-xs">
+    <Button className="fixed bottom-5 right-5 z-top h-10 w-10 select-none rounded-full bg-blue-400 text-xs">
       {children}
     </Button>
   )

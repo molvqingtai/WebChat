@@ -16,7 +16,6 @@ const Main: FC = () => {
     const lastMessageRef = messageListRef.current?.querySelector('[data-index]:last-child')
     const timerId = setTimeout(() => {
       requestAnimationFrame(() => {
-        console.log(isUpdate.current)
         lastMessageRef?.scrollIntoView({ behavior: isUpdate.current ? 'smooth' : 'instant', block: 'end' })
         isUpdate.current = true
       })

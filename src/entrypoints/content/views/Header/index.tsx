@@ -1,7 +1,7 @@
 import { type FC } from 'react'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/HoverCard'
 import { Button } from '@/components/ui/Button'
-import getWebSiteInfo from '@/utils/getWebsiteInfo'
+import { getWebSiteInfo } from '@/utils'
 
 const Header: FC = () => {
   const websiteInfo = getWebSiteInfo()
@@ -18,9 +18,11 @@ const Header: FC = () => {
         <HoverCardContent className="w-80">
           <div className="grid grid-cols-[auto_1fr] gap-x-4">
             <img className="h-14 w-14 overflow-hidden rounded-full" src={websiteInfo.icon} />
-            <div className="grid">
-              <h4 className="text-sm font-semibold">{websiteInfo.title}</h4>
-              <p className="text-xs text-slate-500">{websiteInfo.description}</p>
+            <div className="grid items-center">
+              <h4 className="truncate text-sm font-semibold">{websiteInfo.title}</h4>
+              {websiteInfo.description && (
+                <p className="line-clamp-2 h-8 text-xs text-slate-500">{websiteInfo.description}</p>
+              )}
             </div>
           </div>
         </HoverCardContent>
