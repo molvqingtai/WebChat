@@ -32,6 +32,7 @@ const Footer: FC = () => {
   }
 
   const handleSend = () => {
+    if (!message.body) return
     send(messageListDomain.command.CreateItemCommand(message))
     send(messageInputDomain.command.ClearCommand())
   }

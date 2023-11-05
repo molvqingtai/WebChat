@@ -76,7 +76,7 @@
     "@commitlint/cli": "^18.2.0",
     "@commitlint/config-conventional": "^18.1.0",
     "@types/node": "^20.8.10",
-    "@types/react": "^18.2.34",
+    "@types/react": "^18.2.35",
     "@types/react-dom": "^18.2.14",
     "@vitejs/plugin-react": "^4.1.1",
     "autoprefixer": "^10.4.16",

@@ -5,7 +5,6 @@ import { RemeshRoot } from 'remesh-react'
 import { RemeshLogger } from 'remesh-logger'
 import App from './App'
 import StorageImpl from '@/impl/Storage'
-
 import '@/assets/styles/tailwind.css'
 
 export default defineContentScript({
