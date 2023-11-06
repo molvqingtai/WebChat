@@ -7,6 +7,7 @@ import MessageInputDomain from '@/domain/MessageInput'
 import MessageListDomain from '@/domain/MessageList'
 import { MESSAGE_MAX_LENGTH } from '@/constants'
 import EmojiButton from '@/components/EmojiButton'
+import { type Message } from '@/types'
 
 const Footer: FC = () => {
   const send = useRemeshSend()
@@ -20,14 +21,17 @@ const Footer: FC = () => {
     send(messageInputDomain.command.InputCommand(value))
   }
 
-  const message = {
+  const message: Omit<Message, 'id'> = {
     username: '墨绿青苔',
-    avatar: 'https://avatars.githubusercontent.com/u/10251037?v=4',
+    userId: '10251037',
+    userAvatar: 'https://avatars.githubusercontent.com/u/10251037?v=4',
     body: messageBody.trim(),
     date: Date.now(),
     likeChecked: false,
     likeCount: 0,
+    linkUsers: [],
     hateChecked: false,
+    hateUsers: [],
     hateCount: 0
   }
 

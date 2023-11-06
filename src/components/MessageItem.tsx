@@ -4,8 +4,8 @@ import { FrownIcon, ThumbsUpIcon } from 'lucide-react'
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/Avatar'
 
 import LikeButton from '@/components/LikeButton'
-import { type Message } from '@/@types'
 import { Markdown } from '@/components/ui/Markdown'
+import { type Message } from '@/types'
 
 export interface MessageItemProps {
   data: Message
@@ -34,7 +34,7 @@ const MessageItem: FC<MessageItemProps> = ({ data, index }) => {
       className="box-border grid grid-cols-[auto_1fr] gap-x-2 px-4 [content-visibility:auto] first:pt-4 last:pb-4"
     >
       <Avatar>
-        <AvatarImage src={formatData.avatar} />
+        <AvatarImage src={formatData.userAvatar} />
         <AvatarFallback>{formatData.username}</AvatarFallback>
       </Avatar>
       <div className="overflow-hidden">
