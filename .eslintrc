@@ -43,6 +43,7 @@
     "@typescript-eslint/restrict-template-expressions": "off",
     "@typescript-eslint/no-misused-promises": "off",
     "@typescript-eslint/consistent-type-assertions": "off",
-    "import/no-absolute-path": "off"
+    "import/no-absolute-path": "off",
+    "@typescript-eslint/no-unused-vars": "warn"
   }
 }

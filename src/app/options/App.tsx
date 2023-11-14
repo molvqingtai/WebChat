@@ -1,10 +1,21 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
+import { useClickAway } from 'react-use'
 import wxtLogo from '/wxt.svg'
 import reactLogo from '@/assets/react.svg'
 import './App.css'
 
 function App() {
   const [count, setCount] = useState(0)
+  const menuRef = useRef<HTMLDivElement>(null)
+  useClickAway(
+    menuRef,
+    (...params) => {
+      console.log(params)
+
+      // setOpen(false)
+    },
+    ['click']
+  )
 
   return (
     <>
@@ -16,7 +27,9 @@ function App() {
           <img src={reactLogo} className="logo react" alt="React logo" />
         </a>
       </div>
-      <h1>WXT + React</h1>
+      <h1 ref={menuRef}>
+        <button> WXT + React</button>
+      </h1>
       <div className="card">
         <button onClick={() => setCount((count) => count + 1)}>count is {count}</button>
         <p>

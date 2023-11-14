@@ -7,7 +7,7 @@ const Header: FC = () => {
   const websiteInfo = getWebSiteInfo()
 
   return (
-    <div className="z-10 grid h-12 grid-flow-col items-center justify-between gap-x-4 bg-white px-4 backdrop-blur-lg 2xl:h-14">
+    <div className="z-10 grid h-12 grid-flow-col items-center justify-between gap-x-4 rounded-t-xl bg-white px-4 backdrop-blur-lg 2xl:h-14">
       <img className="h-8 w-8 overflow-hidden rounded-full" src={websiteInfo.icon} />
       <HoverCard>
         <HoverCardTrigger asChild>

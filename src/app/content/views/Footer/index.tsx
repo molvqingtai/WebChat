@@ -47,7 +47,7 @@ const Footer: FC = () => {
   }
 
   return (
-    <div className="relative z-10 grid gap-y-2 px-4 pb-4 pt-2 before:absolute before:-top-4 before:left-0 before:h-4 before:w-full before:bg-gradient-to-t before:from-slate-50 before:from-30% before:to-transparent">
+    <div className="relative z-10 grid gap-y-2 px-4 pb-4 pt-2 before:pointer-events-none before:absolute before:inset-x-4 before:-top-4 before:h-4 before:bg-gradient-to-t before:from-slate-50 before:from-30% before:to-transparent">
       <MessageInput
         ref={inputRef}
         value={messageBody}

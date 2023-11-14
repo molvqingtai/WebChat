@@ -1,4 +1,5 @@
 // https://www.webfx.com/tools/emoji-cheat-sheet/
+
 export const EMOJI_LIST = [
   '😀',
   '😃',
@@ -185,3 +186,7 @@ export const BREAKPOINTS = {
 export const MESSAGE_MAX_LENGTH = 500 as const
 
 export const STORAGE_NAME = 'WEB_CHAT' as const
+
+export enum EVENTS {
+  OPEN_OPTIONS_PAGE = 'OPEN_OPTIONS_PAGE'
+}
