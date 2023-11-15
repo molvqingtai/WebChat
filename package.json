@@ -61,7 +61,7 @@
     "peerjs": "^1.5.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "react-markdown": "^9.0.0",
+    "react-markdown": "^9.0.1",
     "react-nice-avatar": "^1.4.1",
     "react-use": "^17.4.0",
     "remark-breaks": "^4.0.0",
@@ -74,7 +74,7 @@
     "type-fest": "^4.7.1"
   },
   "devDependencies": {
-    "@commitlint/cli": "^18.4.0",
+    "@commitlint/cli": "^18.4.1",
     "@commitlint/config-conventional": "^18.4.0",
     "@types/node": "^20.9.0",
     "@types/react": "^18.2.37",
@@ -96,13 +96,13 @@
     "lint-staged": "^15.1.0",
     "npm-run-all": "^4.1.5",
     "postcss": "^8.4.31",
-    "prettier": "^3.0.3",
+    "prettier": "^3.1.0",
     "rimraf": "^5.0.5",
     "tailwindcss": "^3.3.5",
     "tailwindcss-animate": "^1.0.7",
     "typescript": "^5.2.2",
     "webext-bridge": "^6.0.1",
-    "wxt": "^0.9.0"
+    "wxt": "^0.10.0"
   },
   "lint-staged": {
     "*.{js,jsx,ts,tsx}": "eslint --fix"

@@ -22,6 +22,9 @@ export const createElement = <T extends Element>(template: string) => {
 export const chunk = <T = any>(array: T[], size: number) =>
   Array.from({ length: Math.ceil(array.length / size) }, (_v, i) => array.slice(i * size, i * size + size))
 
+export const clamp = (number: number, min: number, max: number) => Math.min(Math.max(number, min), max)
+export const isInRange = (number: number, min: number, max: number) => number >= min && number <= max
+
 export const getWebSiteInfo = (): WebSiteInfo => {
   return {
     host: document.location.host,

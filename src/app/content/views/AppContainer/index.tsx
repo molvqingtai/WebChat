@@ -7,7 +7,7 @@ export interface AppContainerProps {
 const AppContainer: FC<AppContainerProps> = ({ children }) => {
   const { size, ref } = useResizable({
     initSize: 375,
-    maxSize: 1000,
+    maxSize: 750,
     minSize: 375,
     direction: 'left'
   })

@@ -12,8 +12,8 @@ export default defineContentScript({
   matches: ['*://*.example.com/*', '*://*.google.com/*', '*://*.v2ex.com/*'],
   async main(ctx) {
     const store = Remesh.store({
-      externs: [StorageImpl],
-      inspectors: [RemeshLogger()]
+      externs: [StorageImpl]
+      // inspectors: [RemeshLogger()]
     })
 
     const ui = await createContentScriptUi(ctx, {
