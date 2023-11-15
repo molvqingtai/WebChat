@@ -17,7 +17,7 @@ const AppContainer: FC<AppContainerProps> = ({ children }) => {
       style={{
         width: `${size}px`
       }}
-      className="fixed bottom-10 right-10 top-5 z-top box-border grid  grid-flow-col grid-rows-[auto_1fr_auto] rounded-xl bg-slate-50  font-sans shadow-2xl"
+      className="fixed bottom-10 right-10 top-5 z-top box-border grid min-h-[375px] grid-flow-col grid-rows-[auto_1fr_auto] rounded-xl bg-slate-50  font-sans shadow-2xl"
     >
       {children}
       <div

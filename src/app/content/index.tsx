@@ -1,5 +1,5 @@
-import ReactDOM from 'react-dom/client'
 import React from 'react'
+import { createRoot } from 'react-dom/client'
 import { Remesh } from 'remesh'
 import { RemeshRoot } from 'remesh-react'
 import { RemeshLogger } from 'remesh-logger'
@@ -12,15 +12,15 @@ export default defineContentScript({
   matches: ['*://*.example.com/*', '*://*.google.com/*', '*://*.v2ex.com/*'],
   async main(ctx) {
     const store = Remesh.store({
-      externs: [StorageImpl]
-      // inspectors: [RemeshLogger()]
+      externs: [StorageImpl],
+      inspectors: [RemeshLogger()]
     })
 
     const ui = await createContentScriptUi(ctx, {
       name: __NAME__,
       type: 'overlay',
       mount(container) {
-        const root = ReactDOM.createRoot(container)
+        const root = createRoot(container)
         root.render(
           <React.StrictMode>
             <RemeshRoot store={store}>

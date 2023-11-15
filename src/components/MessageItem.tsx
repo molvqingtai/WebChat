@@ -34,8 +34,8 @@ const MessageItem: FC<MessageItemProps> = ({ data, index }) => {
       className="box-border grid grid-cols-[auto_1fr] gap-x-2 px-4 [content-visibility:auto] first:pt-4 last:pb-4"
     >
       <Avatar>
-        <AvatarImage src={formatData.userAvatar} />
-        <AvatarFallback>{formatData.username}</AvatarFallback>
+        <AvatarImage src={formatData.userAvatar} alt="avatar" />
+        <AvatarFallback>{formatData.username.at(0)}</AvatarFallback>
       </Avatar>
       <div className="overflow-hidden">
         <div className="grid grid-cols-[auto_1fr] items-baseline gap-x-2 leading-none">

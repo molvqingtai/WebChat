@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from 'react'
-import { isInRange } from '@/utils'
+import { clamp, isInRange } from '@/utils'
 
 export interface ResizableOptions {
   minSize: number
