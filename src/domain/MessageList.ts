@@ -9,7 +9,7 @@ const MessageListDomain = Remesh.domain({
   name: 'MessageListDomain',
   impl: (domain) => {
     const storage = domain.getExtern(Storage)
-    const storageKey = `${storage.name}.MESSAGE_LIST`
+    const storageKey = `MESSAGE_LIST`
 
     const MessageListModule = ListModule<Message>(domain, {
       name: 'MessageListModule',

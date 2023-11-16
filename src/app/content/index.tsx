@@ -4,7 +4,7 @@ import { Remesh } from 'remesh'
 import { RemeshRoot } from 'remesh-react'
 import { RemeshLogger } from 'remesh-logger'
 import App from './App'
-import StorageImpl from '@/impl/Storage'
+import { StorageIndexDBImpl } from '@/impl/Storage'
 import '@/assets/styles/tailwind.css'
 
 export default defineContentScript({
@@ -12,7 +12,7 @@ export default defineContentScript({
   matches: ['*://*.example.com/*', '*://*.google.com/*', '*://*.v2ex.com/*'],
   async main(ctx) {
     const store = Remesh.store({
-      externs: [StorageImpl],
+      externs: [StorageIndexDBImpl],
       inspectors: [RemeshLogger()]
     })
 
