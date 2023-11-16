@@ -3,7 +3,7 @@ import { ListModule } from 'remesh/modules/list'
 import { nanoid } from 'nanoid'
 import { from, map, tap, merge } from 'rxjs'
 import Storage from './externs/Storage'
-import { type Message } from '@/types'
+import { type Message } from '@/types/global'
 
 const MessageListDomain = Remesh.domain({
   name: 'MessageListDomain',

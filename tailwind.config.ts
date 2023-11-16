@@ -49,6 +49,9 @@ export default {
           foreground: 'hsl(var(--card-foreground))'
         }
       },
+      minWidth: {
+        screen: '100vw'
+      },
       borderRadius: {
         lg: 'var(--radius)',
         md: 'calc(var(--radius) - 2px)',

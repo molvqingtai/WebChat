@@ -13,7 +13,7 @@ const Header: FC = () => {
       <Avatar className="h-8 w-8">
         <AvatarImage src={websiteInfo.icon} alt="favicon" />
         <AvatarFallback>
-          <Globe2Icon size="100%" className="text-gray-500" />
+          <Globe2Icon size="100%" className="text-gray-400" />
         </AvatarFallback>
       </Avatar>
       <HoverCard>
@@ -29,7 +29,7 @@ const Header: FC = () => {
             <Avatar className="h-14 w-14">
               <AvatarImage src={websiteInfo.icon} alt="favicon" />
               <AvatarFallback>
-                <Globe2Icon size="100%" className="text-gray-500" />
+                <Globe2Icon size="100%" className="text-gray-400" />
               </AvatarFallback>
             </Avatar>
             <div className="grid items-center">

@@ -1,8 +1,8 @@
 import { useEffect, type FC, useRef } from 'react'
 import { useRemeshDomain, useRemeshQuery } from 'remesh-react'
 
-import MessageList from '@/components/MessageList'
-import MessageItem from '@/components/MessageItem'
+import MessageList from '../../components/MessageList'
+import MessageItem from '../../components/MessageItem'
 import MessageListDomain from '@/domain/MessageList'
 
 const Main: FC = () => {

@@ -1,11 +1,11 @@
 import { type FC, useState } from 'react'
 import { format } from 'date-fns'
 import { FrownIcon, ThumbsUpIcon } from 'lucide-react'
+import LikeButton from './LikeButton'
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/Avatar'
 
-import LikeButton from '@/components/LikeButton'
 import { Markdown } from '@/components/ui/Markdown'
-import { type Message } from '@/types'
+import { type Message } from '@/types/global'
 
 export interface MessageItemProps {
   data: Message

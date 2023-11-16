@@ -1,13 +1,13 @@
 import { useRef, type FC } from 'react'
 import { CornerDownLeftIcon } from 'lucide-react'
 import { useRemeshDomain, useRemeshQuery, useRemeshSend } from 'remesh-react'
+import MessageInput from '../../components/MessageInput'
+import EmojiButton from '../../components/EmojiButton'
 import { Button } from '@/components/ui/Button'
-import MessageInput from '@/components/MessageInput'
 import MessageInputDomain from '@/domain/MessageInput'
 import MessageListDomain from '@/domain/MessageList'
 import { MESSAGE_MAX_LENGTH } from '@/constants'
-import EmojiButton from '@/components/EmojiButton'
-import { type Message } from '@/types'
+import { type Message } from '@/types/global'
 
 const Footer: FC = () => {
   const send = useRemeshSend()

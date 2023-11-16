@@ -2,12 +2,12 @@ import indexedDbDriver from 'unstorage/drivers/indexedb'
 import StorageExtern from '@/domain/externs/Storage'
 import { STORAGE_NAME } from '@/constants'
 
-const browserLocalStorage = createStorage({
-  driver: webExtensionDriver({ storageArea: 'local' })
-})
-
 const indexDBStorage = createStorage({
   driver: indexedDbDriver({ base: `${STORAGE_NAME}:` })
+})
+
+const browserSyncStorage = createStorage({
+  driver: webExtensionDriver({ storageArea: 'sync' })
 })
 
 export const StorageIndexDBImpl = StorageExtern.impl({
@@ -17,9 +17,9 @@ export const StorageIndexDBImpl = StorageExtern.impl({
   clear: indexDBStorage.clear
 })
 
-export const StorageBrowserLocalImpl = StorageExtern.impl({
+export const StorageBrowserSyncImpl = StorageExtern.impl({
   name: STORAGE_NAME,
-  get: browserLocalStorage.getItem,
-  set: browserLocalStorage.setItem,
-  clear: browserLocalStorage.clear
+  get: browserSyncStorage.getItem,
+  set: browserSyncStorage.setItem,
+  clear: browserSyncStorage.clear
 })
