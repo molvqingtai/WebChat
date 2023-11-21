@@ -4,7 +4,7 @@ import animate from 'tailwindcss-animate'
 
 export default {
   darkMode: ['class'],
-  content: ['./src/**/*.{ts,tsx,css}', './index.html'],
+  content: ['./src/**/*.{ts,tsx,css,html}'],
   theme: {
     container: {
       center: true,

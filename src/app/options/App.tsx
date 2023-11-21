@@ -1,7 +1,12 @@
 import Layout from './components/Layout'
+import ProfileForm from './components/ProfileForm'
 
 function App() {
-  return <Layout>11</Layout>
+  return (
+    <Layout>
+      <ProfileForm></ProfileForm>
+    </Layout>
+  )
 }
 
 export default App

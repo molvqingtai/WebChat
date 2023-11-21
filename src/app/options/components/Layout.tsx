@@ -7,9 +7,7 @@ export interface AppLayoutProps {
 const Layout: FC<AppLayoutProps> = ({ children }) => {
   return (
     <main className="grid min-h-screen min-w-screen items-center justify-center bg-gray-50 bg-[url(@/assets/images/texture.png)]">
-      <div className="relative h-[90vh] w-[90vw] max-w-screen-2xl overflow-hidden rounded-xl bg-slate-50 shadow-lg">
-        {children}
-      </div>
+      <div className="relative rounded-xl bg-slate-50 shadow-lg">{children}</div>
     </main>
   )
 }
