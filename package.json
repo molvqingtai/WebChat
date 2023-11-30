@@ -54,7 +54,6 @@
     "@radix-ui/react-scroll-area": "^1.0.5",
     "@radix-ui/react-slot": "^1.0.2",
     "@radix-ui/react-switch": "^1.0.3",
-    "@radix-ui/react-toast": "^1.1.5",
     "@tailwindcss/typography": "^0.5.10",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.0.0",
@@ -75,6 +74,7 @@
     "remesh-logger": "^4.1.0",
     "remesh-react": "^4.1.0",
     "rxjs": "^7.8.1",
+    "sonner": "^1.2.4",
     "tailwind-merge": "^2.0.0",
     "type-fest": "^4.8.2",
     "valibot": "^0.21.0"

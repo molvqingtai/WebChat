@@ -2,6 +2,7 @@ import { object, string, type Output, minBytes, maxBytes, toTrimmed, boolean, no
 import { useForm } from 'react-hook-form'
 import { valibotResolver } from '@hookform/resolvers/valibot'
 
+import { toast } from 'sonner'
 import AvatarSelect from './AvatarSelect'
 import { Button } from '@/components/ui/Button'
 import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/Form'
@@ -31,6 +32,15 @@ const ProfileForm = () => {
   const handleSubmit = (data: Output<typeof formSchema>) => {
     console.log(data)
     console.log(data.avatar.length * 0.001)
+    toast.success('Saved successfully!')
+  }
+
+  const handleWarning = (error: Error) => {
+    toast.warning(error.message)
+  }
+
+  const handleError = (error: Error) => {
+    toast.error(error.message)
   }
 
   return (
@@ -40,9 +50,14 @@ const ProfileForm = () => {
           control={form.control}
           name="avatar"
           render={({ field }) => (
-            <FormItem className="absolute left-1/2 top-0 grid -translate-x-1/2 -translate-y-1/2 justify-items-center pb-8">
+            <FormItem className="absolute left-1/2 top-0 grid -translate-x-1/2 -translate-y-1/2 justify-items-center">
               <FormControl>
-                <AvatarSelect className="shadow-lg" {...field}></AvatarSelect>
+                <AvatarSelect
+                  onError={handleError}
+                  onWarning={handleWarning}
+                  className="shadow-lg"
+                  {...field}
+                ></AvatarSelect>
               </FormControl>
               <FormMessage />
             </FormItem>

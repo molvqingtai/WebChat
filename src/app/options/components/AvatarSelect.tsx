@@ -1,47 +1,43 @@
 import { type ChangeEvent } from 'react'
 import { ImagePlusIcon } from 'lucide-react'
 import React from 'react'
-
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/Avatar'
 import { Label } from '@/components/ui/Label'
 import { cn, compressImage } from '@/utils'
-import { useToast } from '@/components/ui/useToast'
 
 export interface AvatarSelectProps {
   value?: string
   className?: string
   disabled?: boolean
-  onload?: ((this: FileReader, ev: ProgressEvent<FileReader>) => any) | null
-  onerror?: ((this: FileReader, ev: ProgressEvent) => any) | null
+  onSuccess?: (blob: Blob) => void
+  onWarning?: (error: Error) => void
+  onError?: (error: Error) => void
   onChange?: (src: string) => void
 }
 
 const AvatarSelect = React.forwardRef<HTMLInputElement, AvatarSelectProps>(
-  ({ onChange, value, onerror, onload, className, disabled }, ref) => {
-    const { toast } = useToast()
-
+  ({ onChange, value, onError, onWarning, onSuccess, className, disabled }, ref) => {
     const handleChange = async (e: ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0]
       if (file) {
         if (!/image\/(png|jpeg)/.test(file.type)) {
-          toast({
-            variant: 'destructive',
-            title: 'Invalid file type',
-            description: 'Only PNG and JPEG files are supported'
-          })
+          onWarning?.(new Error('Only PNG and JPEG image are supported.'))
           return
         }
 
-        // Compress to 10kb
-        const blob = await compressImage(file, 10 * 1024)
-        const reader = new FileReader()
-        reader.onload = (e) => {
-          onload?.call(reader, e)
-          const src = e.target?.result as string
-          onChange?.(src)
+        try {
+          // Compress to 10kb
+          const blob = await compressImage(file, 10 * 1024)
+          const reader = new FileReader()
+          reader.onload = (e) => {
+            onSuccess?.(blob)
+            onChange?.(e.target?.result as string)
+          }
+          reader.onerror = () => onError?.(new Error('Failed to read image file.'))
+          reader.readAsDataURL(blob)
+        } catch (error) {
+          onError?.(error as Error)
         }
-        reader.onerror = (e) => onerror?.call(reader, e)
-        reader.readAsDataURL(blob)
       }
     }
     return (
