@@ -5,6 +5,7 @@ import React from 'react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/Avatar'
 import { Label } from '@/components/ui/Label'
 import { cn, compressImage } from '@/utils'
+import { useToast } from '@/components/ui/useToast'
 
 export interface AvatarSelectProps {
   value?: string
@@ -17,10 +18,20 @@ export interface AvatarSelectProps {
 
 const AvatarSelect = React.forwardRef<HTMLInputElement, AvatarSelectProps>(
   ({ onChange, value, onerror, onload, className, disabled }, ref) => {
+    const { toast } = useToast()
+
     const handleChange = async (e: ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0]
-
       if (file) {
+        if (!/image\/(png|jpeg)/.test(file.type)) {
+          toast({
+            variant: 'destructive',
+            title: 'Invalid file type',
+            description: 'Only PNG and JPEG files are supported'
+          })
+          return
+        }
+
         // Compress to 10kb
         const blob = await compressImage(file, 10 * 1024)
         const reader = new FileReader()
@@ -28,7 +39,6 @@ const AvatarSelect = React.forwardRef<HTMLInputElement, AvatarSelectProps>(
           onload?.call(reader, e)
           const src = e.target?.result as string
           onChange?.(src)
-          console.log(file.size, blob.size)
         }
         reader.onerror = (e) => onerror?.call(reader, e)
         reader.readAsDataURL(blob)
@@ -52,7 +62,7 @@ const AvatarSelect = React.forwardRef<HTMLInputElement, AvatarSelectProps>(
             <ImagePlusIcon size={30} className="text-slate-400 group-hover:text-slate-500" />
           </AvatarFallback>
         </Avatar>
-        <input ref={ref} hidden disabled={disabled} type="file" accept="image/*" onChange={handleChange} />
+        <input ref={ref} hidden disabled={disabled} type="file" accept="image/png,image/jpeg" onChange={handleChange} />
       </Label>
     )
   }

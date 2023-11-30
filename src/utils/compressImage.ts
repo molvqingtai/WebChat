@@ -46,14 +46,14 @@ const compressImage = async (inputBlob: Blob, targetSize: number) => {
     return inputBlob
   }
 
-  const imageBitmap = await createImageBitmap(inputBlob)
-
   // Initialize the range of quality
   const low = 0
   const high = 1
 
   // Initialize bestBlob with the original input Blob
   const bestBlob = inputBlob
+
+  const imageBitmap = await createImageBitmap(inputBlob)
 
   // Call the recursive function
   return await compress(imageBitmap, targetSize, low, high, bestBlob)
