@@ -1,4 +1,4 @@
-export interface WebSiteInfo {
+export interface SiteInfo {
   host: string
   hostname: string
   href: string
@@ -8,7 +8,7 @@ export interface WebSiteInfo {
   description: string
 }
 
-const getWebSiteInfo = (): WebSiteInfo => {
+const getSiteInfo = (): SiteInfo => {
   return {
     host: document.location.host,
     hostname: document.location.hostname,
@@ -31,4 +31,4 @@ const getWebSiteInfo = (): WebSiteInfo => {
   }
 }
 
-export default getWebSiteInfo
+export default getSiteInfo
