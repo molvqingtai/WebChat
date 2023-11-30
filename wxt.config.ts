@@ -7,6 +7,7 @@ const isDev = process.env.NODE_ENV === 'development'
 
 export default defineConfig({
   srcDir: path.resolve('src'),
+  imports: false,
   entrypointsDir: path.resolve('src', 'app'),
   runner: {
     startUrls: ['https://www.example.com/']

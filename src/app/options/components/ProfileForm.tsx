@@ -1,6 +1,7 @@
-import { object, string, type Output, minLength, maxLength, toTrimmed, boolean } from 'valibot'
+import { object, string, type Output, minBytes, maxBytes, toTrimmed, boolean, notLength } from 'valibot'
 import { useForm } from 'react-hook-form'
 import { valibotResolver } from '@hookform/resolvers/valibot'
+
 import AvatarSelect from './AvatarSelect'
 import { Button } from '@/components/ui/Button'
 import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/Form'
@@ -10,10 +11,10 @@ import { Switch } from '@/components/ui/Switch'
 const formSchema = object({
   username: string([
     toTrimmed(),
-    minLength(1, 'Please enter your username.'),
-    maxLength(8, 'Your username must have 8 characters or more.')
+    minBytes(1, 'Please enter your username.'),
+    maxBytes(20, 'Your username cannot exceed 20 bytes.')
   ]),
-  avatar: string(),
+  avatar: string([notLength(0, 'Please select your avatar.')]),
   darkMode: boolean()
 })
 
@@ -29,21 +30,19 @@ const ProfileForm = () => {
 
   const handleSubmit = (data: Output<typeof formSchema>) => {
     console.log(data)
+    console.log(data.avatar.length * 0.001)
   }
 
   return (
     <Form {...form}>
-      <form onSubmit={form.handleSubmit(handleSubmit)} className="relative w-96 space-y-8 p-10">
+      <form onSubmit={form.handleSubmit(handleSubmit)} autoComplete="off" className="relative w-96 space-y-8 p-10">
         <FormField
           control={form.control}
           name="avatar"
           render={({ field }) => (
-            <FormItem>
+            <FormItem className="absolute left-1/2 top-0 grid -translate-x-1/2 -translate-y-1/2 justify-items-center pb-8">
               <FormControl>
-                <AvatarSelect
-                  className="absolute left-1/2 top-0 -translate-x-1/2 -translate-y-1/2 shadow-lg"
-                  {...field}
-                ></AvatarSelect>
+                <AvatarSelect className="shadow-lg" {...field}></AvatarSelect>
               </FormControl>
               <FormMessage />
             </FormItem>
@@ -69,15 +68,19 @@ const ProfileForm = () => {
           render={({ field }) => (
             <FormItem>
               <FormLabel>DarkMode</FormLabel>
-              <FormControl>
-                <Switch checked={field.value} onCheckedChange={field.onChange}></Switch>
-              </FormControl>
-              <FormDescription>This is your public display name.</FormDescription>
-              <FormMessage />
+              <div className="flex items-center gap-x-2">
+                <FormControl>
+                  <Switch checked={field.value} onCheckedChange={field.onChange}></Switch>
+                </FormControl>
+                <FormDescription>Enable dark mode</FormDescription>
+                <FormMessage />
+              </div>
             </FormItem>
           )}
         />
-        <Button type="submit">Submit</Button>
+        <Button className="w-full" type="submit">
+          Save
+        </Button>
       </form>
     </Form>
   )

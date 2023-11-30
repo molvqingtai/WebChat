@@ -1,3 +1,6 @@
+import { browser } from 'wxt/browser'
+import { defineBackground } from 'wxt/client'
+
 export default defineBackground({
   // Set manifest options
   persistent: true,

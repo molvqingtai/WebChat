@@ -59,15 +59,15 @@
     "clsx": "^2.0.0",
     "date-fns": "^2.30.0",
     "idb-keyval": "^6.2.1",
-    "lucide-react": "^0.292.0",
+    "lucide-react": "^0.294.0",
     "nanoid": "^5.0.3",
     "peerjs": "^1.5.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-hook-form": "^7.48.2",
     "react-markdown": "^9.0.1",
-    "react-nice-avatar": "^1.4.1",
-    "react-use": "^17.4.0",
+    "react-nice-avatar": "^1.5.0",
+    "react-use": "^17.4.1",
     "remark-breaks": "^4.0.0",
     "remark-gfm": "^4.0.0",
     "remesh": "^4.2.0",
@@ -82,9 +82,9 @@
   "devDependencies": {
     "@commitlint/cli": "^18.4.3",
     "@commitlint/config-conventional": "^18.4.3",
-    "@types/node": "^20.9.3",
-    "@types/react": "^18.2.38",
-    "@types/react-dom": "^18.2.16",
+    "@types/node": "^20.10.0",
+    "@types/react": "^18.2.39",
+    "@types/react-dom": "^18.2.17",
     "@vitejs/plugin-react": "^4.2.0",
     "autoprefixer": "^10.4.16",
     "cross-env": "^7.0.3",
@@ -108,7 +108,7 @@
     "tailwindcss-animate": "^1.0.7",
     "typescript": "^5.3.2",
     "webext-bridge": "^6.0.1",
-    "wxt": "^0.10.2"
+    "wxt": "^0.10.3"
   },
   "lint-staged": {
     "*.{js,jsx,ts,tsx}": "eslint --fix"

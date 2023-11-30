@@ -1,4 +1,5 @@
 import indexedDbDriver from 'unstorage/drivers/indexedb'
+import { webExtensionDriver, createStorage } from 'wxt/storage'
 import StorageExtern from '@/domain/externs/Storage'
 import { STORAGE_NAME } from '@/constants'
 

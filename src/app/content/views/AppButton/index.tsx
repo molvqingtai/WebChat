@@ -1,6 +1,7 @@
 import { type ReactNode, type FC, useState, type MouseEvent, useRef } from 'react'
 import { SettingsIcon, MoonIcon, SunIcon } from 'lucide-react'
 import { useClickAway } from 'react-use'
+import { browser } from 'wxt/browser'
 import { Button } from '@/components/ui/Button'
 import { EVENTS } from '@/constants'
 
