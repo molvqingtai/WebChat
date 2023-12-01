@@ -1,4 +1,4 @@
-export interface Message {
+declare interface Message {
   id: string
   userId: string
   body: string
@@ -11,4 +11,11 @@ export interface Message {
   likeCount: number
   hateUsers: string[]
   hateCount: number
+}
+
+declare interface UserInfo {
+  id: string
+  name: string
+  avatar: string
+  darkMode: boolean
 }

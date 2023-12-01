@@ -5,7 +5,6 @@ import LikeButton from './LikeButton'
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/Avatar'
 
 import { Markdown } from '@/components/ui/Markdown'
-import { type Message } from '@/types/global'
 
 export interface MessageItemProps {
   data: Message

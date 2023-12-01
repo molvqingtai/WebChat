@@ -1,6 +1,6 @@
 const compress = async (
   imageBitmap: ImageBitmap,
-  size: number,
+  targetSize: number,
   low: number,
   high: number,
   bestBlob: Blob
@@ -22,21 +22,21 @@ const compress = async (
   // Calculate the current size based on the current quality
   const currentSize = outputBlob.size
 
-  // If the current size is close to the target size, update the bestResult
-  if (Math.abs(currentSize - size) < Math.abs(bestBlob.size - size)) {
+  // If the current size is close to the target size, update the bestBlob
+  if (currentSize <= targetSize && Math.abs(currentSize - targetSize) < Math.abs(bestBlob.size - targetSize)) {
     bestBlob = outputBlob
   }
 
-  // If the current size is close to the target size or the range of low and high is too small, return the result
-  if (Math.abs(currentSize - size) < 100 || high - low < 0.01) {
+  // If the current size is between -1024 ~ 0, return the result
+  if ((currentSize - targetSize <= 0 && currentSize - targetSize >= -1024) || high - low < 0.01) {
     return bestBlob
   }
 
   // Adjust the range for recursion based on the current quality and size
-  if (currentSize > size) {
-    return await compress(imageBitmap, size, low, mid, bestBlob)
+  if (currentSize > targetSize) {
+    return await compress(imageBitmap, targetSize, low, mid, bestBlob)
   } else {
-    return await compress(imageBitmap, size, mid, high, bestBlob)
+    return await compress(imageBitmap, targetSize, mid, high, bestBlob)
   }
 }
 

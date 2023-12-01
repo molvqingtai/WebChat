@@ -7,7 +7,6 @@ import { Button } from '@/components/ui/Button'
 import MessageInputDomain from '@/domain/MessageInput'
 import MessageListDomain from '@/domain/MessageList'
 import { MESSAGE_MAX_LENGTH } from '@/constants'
-import { type Message } from '@/types/global'
 
 const Footer: FC = () => {
   const send = useRemeshSend()

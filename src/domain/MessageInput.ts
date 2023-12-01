@@ -1,8 +1,6 @@
 import { Remesh } from 'remesh'
 import InputModule from './modules/Input'
 
-export const MESSAGE_INPUT_STORAGE_KEY = 'MESSAGE_INPUT'
-
 const MessageInputDomain = Remesh.domain({
   name: 'MessageInputDomain',
   impl: (domain) => {

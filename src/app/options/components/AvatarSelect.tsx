@@ -9,6 +9,7 @@ export interface AvatarSelectProps {
   value?: string
   className?: string
   disabled?: boolean
+  compressSize?: number
   onSuccess?: (blob: Blob) => void
   onWarning?: (error: Error) => void
   onError?: (error: Error) => void
@@ -16,7 +17,7 @@ export interface AvatarSelectProps {
 }
 
 const AvatarSelect = React.forwardRef<HTMLInputElement, AvatarSelectProps>(
-  ({ onChange, value, onError, onWarning, onSuccess, className, disabled }, ref) => {
+  ({ onChange, value, onError, onWarning, onSuccess, className, compressSize = 8 * 1024, disabled }, ref) => {
     const handleChange = async (e: ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0]
       if (file) {
@@ -26,8 +27,11 @@ const AvatarSelect = React.forwardRef<HTMLInputElement, AvatarSelectProps>(
         }
 
         try {
-          // Compress to 10kb
-          const blob = await compressImage(file, 10 * 1024)
+          /**
+           * In chrome storage.sync, each key-value pair supports a maximum storage of 8kb
+           * and all key-value pairs support a maximum storage of 100kb.
+           */
+          const blob = await compressImage(file, compressSize)
           const reader = new FileReader()
           reader.onload = (e) => {
             onSuccess?.(blob)

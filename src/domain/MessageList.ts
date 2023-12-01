@@ -3,13 +3,12 @@ import { ListModule } from 'remesh/modules/list'
 import { nanoid } from 'nanoid'
 import { from, map, tap, merge } from 'rxjs'
 import Storage from './externs/Storage'
-import { type Message } from '@/types/global'
 
 const MessageListDomain = Remesh.domain({
   name: 'MessageListDomain',
   impl: (domain) => {
     const storage = domain.getExtern(Storage)
-    const storageKey = `MESSAGE_LIST`
+    const storageKey = `MESSAGE_LIST` as const
 
     const MessageListModule = ListModule<Message>(domain, {
       name: 'MessageListModule',
@@ -93,10 +92,10 @@ const MessageListDomain = Remesh.domain({
     domain.effect({
       name: 'FormStateToStorageEffect',
       impl: ({ fromEvent }) => {
-        const createItem$ = fromEvent(ChangeListEvent).pipe(
+        const changeList$ = fromEvent(ChangeListEvent).pipe(
           tap(async (messages) => await storage.set<Message[]>(storageKey, messages))
         )
-        return merge(createItem$).pipe(map(() => null))
+        return merge(changeList$).pipe(map(() => null))
       }
     })
 

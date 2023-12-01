@@ -12,6 +12,9 @@ export default defineConfig({
   runner: {
     startUrls: ['https://www.example.com/']
   },
+  manifest: {
+    permissions: ['storage']
+  },
   vite: () => ({
     define: {
       __DEV__: isDev,
