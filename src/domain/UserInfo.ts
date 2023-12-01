@@ -11,7 +11,7 @@ const UserInfoDomain = Remesh.domain({
       USER_INFO_ID: 'USER_INFO_ID',
       USER_INFO_NAME: 'USER_INFO_NAME',
       USER_INFO_AVATAR: 'USER_INFO_AVATAR',
-      USER_INFO_DARK_MODE: 'USER_INFO_DARK_MODE'
+      USER_INFO_THEME_MODE: 'USER_INFO_THEME_MODE'
     } as const
 
     const UserInfoState = domain.state<UserInfo | null>({
@@ -47,14 +47,14 @@ const UserInfoDomain = Remesh.domain({
           id: from(storage.get<UserInfo['id']>(storageKeys.USER_INFO_ID)),
           name: from(storage.get<UserInfo['name']>(storageKeys.USER_INFO_NAME)),
           avatar: from(storage.get<UserInfo['avatar']>(storageKeys.USER_INFO_AVATAR)),
-          darkMode: from(storage.get<UserInfo['darkMode']>(storageKeys.USER_INFO_DARK_MODE))
+          themeMode: from(storage.get<UserInfo['themeMode']>(storageKeys.USER_INFO_THEME_MODE))
         }).pipe(
           map((userInfo) => {
             if (
               !isEmpty(userInfo.id) &&
               !isEmpty(userInfo.name) &&
               !isEmpty(userInfo.avatar) &&
-              !isEmpty(userInfo.darkMode)
+              !isEmpty(userInfo.themeMode)
             ) {
               return SetUserInfoCommand(userInfo as UserInfo)
             } else {
@@ -74,7 +74,7 @@ const UserInfoDomain = Remesh.domain({
               storage.set<UserInfo['id'] | null>(storageKeys.USER_INFO_ID, userInfo?.id ?? null),
               storage.set<UserInfo['name'] | null>(storageKeys.USER_INFO_NAME, userInfo?.name ?? null),
               storage.set<UserInfo['avatar'] | null>(storageKeys.USER_INFO_AVATAR, userInfo?.avatar ?? null),
-              storage.set<UserInfo['darkMode'] | null>(storageKeys.USER_INFO_DARK_MODE, userInfo?.darkMode ?? null)
+              storage.set<UserInfo['themeMode'] | null>(storageKeys.USER_INFO_THEME_MODE, userInfo?.themeMode ?? null)
             ])
           })
         )

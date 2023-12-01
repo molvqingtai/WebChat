@@ -1,4 +1,4 @@
-import { object, string, type Output, minBytes, maxBytes, toTrimmed, boolean, notLength } from 'valibot'
+import { object, string, type Output, minBytes, maxBytes, toTrimmed, union, literal, notLength } from 'valibot'
 import { useForm } from 'react-hook-form'
 import { valibotResolver } from '@hookform/resolvers/valibot'
 
@@ -10,8 +10,10 @@ import AvatarSelect from './AvatarSelect'
 import { Button } from '@/components/ui/Button'
 import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/Form'
 import { Input } from '@/components/ui/Input'
-import { Switch } from '@/components/ui/Switch'
 import UserInfoDomain from '@/domain/UserInfo'
+import { checkSystemDarkMode } from '@/utils'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/RadioGroup'
+import { Label } from '@/components/ui/Label'
 
 // In chrome storage.sync, each key-value pair supports a maximum storage of 8kb
 // Image is encoded as base64, and the size is increased by about 33%.
@@ -25,8 +27,15 @@ const formSchema = object({
     maxBytes(20, 'Your username cannot exceed 20 bytes.')
   ]),
   avatar: string([notLength(0, 'Please select your avatar.'), maxBytes(8 * 1024, 'Your avatar cannot exceed 8kb.')]),
-  darkMode: boolean()
+  themeMode: union([literal('system'), literal('light'), literal('dark')])
 })
+
+const defaultUserInfo: UserInfo = {
+  id: nanoid(),
+  name: '',
+  avatar: '',
+  themeMode: checkSystemDarkMode() ? 'dark' : 'system'
+}
 
 const ProfileForm = () => {
   const send = useRemeshSend()
@@ -35,12 +44,7 @@ const ProfileForm = () => {
 
   const form = useForm({
     resolver: valibotResolver(formSchema),
-    defaultValues: userInfo ?? {
-      id: nanoid(),
-      name: '',
-      avatar: '',
-      darkMode: window.matchMedia('(prefers-color-scheme: dark)').matches
-    }
+    defaultValues: userInfo ?? defaultUserInfo
   })
 
   useEffect(() => {
@@ -97,17 +101,30 @@ const ProfileForm = () => {
         />
         <FormField
           control={form.control}
-          name="darkMode"
+          name="themeMode"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>DarkMode</FormLabel>
-              <div className="flex items-center gap-x-2">
-                <FormControl>
-                  <Switch checked={field.value} onCheckedChange={field.onChange}></Switch>
-                </FormControl>
-                <FormDescription>Enable dark mode</FormDescription>
-                <FormMessage />
-              </div>
+              <FormLabel>Theme Mode</FormLabel>
+              <FormControl>
+                <RadioGroup className="flex gap-x-4" onValueChange={field.onChange} value={field.value}>
+                  <div className="flex items-center space-x-2">
+                    <RadioGroupItem value="system" id="r1" />
+                    <Label htmlFor="r1">System</Label>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <RadioGroupItem value="light" id="r2" />
+                    <Label htmlFor="r2">Light</Label>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <RadioGroupItem value="dark" id="r3" />
+                    <Label htmlFor="r3">Dark</Label>
+                  </div>
+                </RadioGroup>
+              </FormControl>
+              <FormDescription>
+                The theme mode of the extension. If you choose the system, will follow the system theme.
+              </FormDescription>
+              <FormMessage />
             </FormItem>
           )}
         />

@@ -17,5 +17,5 @@ declare interface UserInfo {
   id: string
   name: string
   avatar: string
-  darkMode: boolean
+  themeMode: 'system' | 'light' | 'dark'
 }
