@@ -1,16 +1,17 @@
 import { Remesh } from 'remesh'
 import { forkJoin, from, map, merge, tap } from 'rxjs'
-import Storage from './externs/Storage'
-import { isEmpty } from '@/utils'
+import { BrowserSyncStorageExtern } from './externs/Storage'
+import { isNullish } from '@/utils'
 
 const UserInfoDomain = Remesh.domain({
   name: 'UserInfoDomain',
   impl: (domain) => {
-    const storage = domain.getExtern(Storage)
+    const storage = domain.getExtern(BrowserSyncStorageExtern)
     const storageKeys = {
       USER_INFO_ID: 'USER_INFO_ID',
       USER_INFO_NAME: 'USER_INFO_NAME',
       USER_INFO_AVATAR: 'USER_INFO_AVATAR',
+      USER_INFO_CREATE_TIME: 'USER_INFO_CREATE_TIME',
       USER_INFO_THEME_MODE: 'USER_INFO_THEME_MODE'
     } as const
 
@@ -29,12 +30,12 @@ const UserInfoDomain = Remesh.domain({
     const SetUserInfoCommand = domain.command({
       name: 'UserInfo.SetUserInfoCommand',
       impl: (_, userInfo: UserInfo | null) => {
-        return [UserInfoState().new(userInfo), ChangeUserInfoEvent()]
+        return [UserInfoState().new(userInfo), UpdateUserInfoEvent()]
       }
     })
 
-    const ChangeUserInfoEvent = domain.event({
-      name: 'UserInfo.ChangeUserInfoEvent',
+    const UpdateUserInfoEvent = domain.event({
+      name: 'UserInfo.UpdateUserInfoEvent',
       impl: ({ get }) => {
         return get(UserInfoQuery())
       }
@@ -47,14 +48,16 @@ const UserInfoDomain = Remesh.domain({
           id: from(storage.get<UserInfo['id']>(storageKeys.USER_INFO_ID)),
           name: from(storage.get<UserInfo['name']>(storageKeys.USER_INFO_NAME)),
           avatar: from(storage.get<UserInfo['avatar']>(storageKeys.USER_INFO_AVATAR)),
+          createTime: from(storage.get<UserInfo['createTime']>(storageKeys.USER_INFO_CREATE_TIME)),
           themeMode: from(storage.get<UserInfo['themeMode']>(storageKeys.USER_INFO_THEME_MODE))
         }).pipe(
           map((userInfo) => {
             if (
-              !isEmpty(userInfo.id) &&
-              !isEmpty(userInfo.name) &&
-              !isEmpty(userInfo.avatar) &&
-              !isEmpty(userInfo.themeMode)
+              !isNullish(userInfo.id) &&
+              !isNullish(userInfo.name) &&
+              !isNullish(userInfo.avatar) &&
+              !isNullish(userInfo.createTime) &&
+              !isNullish(userInfo.themeMode)
             ) {
               return SetUserInfoCommand(userInfo as UserInfo)
             } else {
@@ -68,12 +71,13 @@ const UserInfoDomain = Remesh.domain({
     domain.effect({
       name: 'FormStateToStorageEffect',
       impl: ({ fromEvent }) => {
-        const changeUserInfo$ = fromEvent(ChangeUserInfoEvent).pipe(
+        const changeUserInfo$ = fromEvent(UpdateUserInfoEvent).pipe(
           tap(async (userInfo) => {
             return await Promise.all([
               storage.set<UserInfo['id'] | null>(storageKeys.USER_INFO_ID, userInfo?.id ?? null),
               storage.set<UserInfo['name'] | null>(storageKeys.USER_INFO_NAME, userInfo?.name ?? null),
               storage.set<UserInfo['avatar'] | null>(storageKeys.USER_INFO_AVATAR, userInfo?.avatar ?? null),
+              storage.set<UserInfo['createTime'] | null>(storageKeys.USER_INFO_CREATE_TIME, userInfo?.createTime ?? null),
               storage.set<UserInfo['themeMode'] | null>(storageKeys.USER_INFO_THEME_MODE, userInfo?.themeMode ?? null)
             ])
           })
@@ -91,7 +95,7 @@ const UserInfoDomain = Remesh.domain({
         SetUserInfoCommand
       },
       event: {
-        ChangeUserInfoEvent
+        UpdateUserInfoEvent
       }
     }
   }

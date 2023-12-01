@@ -2,16 +2,21 @@ import { type ReactNode, type FC, useState, type MouseEvent, useRef } from 'reac
 import { SettingsIcon, MoonIcon, SunIcon } from 'lucide-react'
 import { useClickAway } from 'react-use'
 import { browser } from 'wxt/browser'
+import { useRemeshDomain, useRemeshQuery } from 'remesh-react'
 import { Button } from '@/components/ui/Button'
 import { EVENTS } from '@/constants'
+import UserInfoDomain from '@/domain/UserInfo'
 
 export interface AppButtonProps {
   children?: ReactNode
 }
 
 const AppButton: FC<AppButtonProps> = ({ children }) => {
+  const userInfoDomain = useRemeshDomain(UserInfoDomain())
+  const userInfo = useRemeshQuery(userInfoDomain.query.UserInfoQuery())
+  console.log(userInfo)
+
   const [open, setOpen] = useState(false)
-  const [isDarkMode, setIsDarkMode] = useState(window.matchMedia('(prefers-color-scheme: dark)').matches)
 
   const menuRef = useRef<HTMLDivElement>(null)
 

@@ -2,6 +2,6 @@
   "semi": false,
   "singleQuote": true,
   "trailingComma": "none",
-  "printWidth": 120,
+  "printWidth": 160,
   "tailwindFunction": ["clsx"]
 }

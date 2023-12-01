@@ -74,11 +74,13 @@
     "remesh": "^4.2.0",
     "remesh-logger": "^4.1.0",
     "remesh-react": "^4.1.0",
+    "remesh-yjs": "^4.1.0",
     "rxjs": "^7.8.1",
     "sonner": "^1.2.4",
     "tailwind-merge": "^2.0.0",
     "type-fest": "^4.8.2",
-    "valibot": "^0.21.0"
+    "valibot": "^0.21.0",
+    "y-webrtc": "^10.2.6"
   },
   "devDependencies": {
     "@commitlint/cli": "^18.4.3",

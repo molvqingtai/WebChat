@@ -4,16 +4,24 @@ import { Remesh } from 'remesh'
 import { RemeshRoot } from 'remesh-react'
 import { RemeshLogger } from 'remesh-logger'
 import { defineContentScript, createContentScriptUi } from 'wxt/client'
+import * as Y from 'yjs'
+import { RemeshYjs, RemeshYjsExtern } from 'remesh-yjs'
+import { WebrtcProvider } from 'y-webrtc'
 import App from './App'
-import { StorageIndexDBImpl } from '@/impl/Storage'
+import { IndexDBStorageImpl, BrowserSyncStorageImpl } from '@/impl/Storage'
+
 import '@/assets/styles/tailwind.css'
 
 export default defineContentScript({
   cssInjectionMode: 'ui',
   matches: ['*://*.example.com/*', '*://*.google.com/*', '*://*.v2ex.com/*'],
   async main(ctx) {
+    const doc = new Y.Doc()
+    // eslint-disable-next-line no-new
+    new WebrtcProvider(__NAME__, doc)
+
     const store = Remesh.store({
-      externs: [StorageIndexDBImpl],
+      externs: [IndexDBStorageImpl, BrowserSyncStorageImpl, RemeshYjsExtern.impl({ doc })],
       inspectors: [RemeshLogger()]
     })
 

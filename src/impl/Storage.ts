@@ -1,6 +1,6 @@
 import indexedDbDriver from 'unstorage/drivers/indexedb'
 import { webExtensionDriver, createStorage } from 'wxt/storage'
-import StorageExtern from '@/domain/externs/Storage'
+import { IndexDBStorageExtern, BrowserSyncStorageExtern } from '@/domain/externs/Storage'
 import { STORAGE_NAME } from '@/constants'
 
 const indexDBStorage = createStorage({
@@ -11,16 +11,22 @@ const browserSyncStorage = createStorage({
   driver: webExtensionDriver({ storageArea: 'sync' })
 })
 
-export const StorageIndexDBImpl = StorageExtern.impl({
+export const IndexDBStorageImpl = IndexDBStorageExtern.impl({
   name: STORAGE_NAME,
   get: indexDBStorage.getItem,
   set: indexDBStorage.setItem,
-  clear: indexDBStorage.clear
+  remove: indexDBStorage.removeItem,
+  clear: indexDBStorage.clear,
+  watch: indexDBStorage.watch,
+  unwatch: indexDBStorage.unwatch
 })
 
-export const StorageBrowserSyncImpl = StorageExtern.impl({
+export const BrowserSyncStorageImpl = BrowserSyncStorageExtern.impl({
   name: STORAGE_NAME,
   get: browserSyncStorage.getItem,
   set: browserSyncStorage.setItem,
-  clear: browserSyncStorage.clear
+  remove: browserSyncStorage.removeItem,
+  clear: browserSyncStorage.clear,
+  watch: browserSyncStorage.watch,
+  unwatch: browserSyncStorage.unwatch
 })
