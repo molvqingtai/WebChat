@@ -1,6 +1,7 @@
 import { Remesh } from 'remesh'
 import { forkJoin, from, map, merge, tap } from 'rxjs'
 import Storage from './externs/Storage'
+import { isEmpty } from '@/utils'
 
 const UserInfoDomain = Remesh.domain({
   name: 'UserInfoDomain',
@@ -49,7 +50,12 @@ const UserInfoDomain = Remesh.domain({
           darkMode: from(storage.get<UserInfo['darkMode']>(storageKeys.USER_INFO_DARK_MODE))
         }).pipe(
           map((userInfo) => {
-            if (userInfo.id && userInfo.name && userInfo.avatar && userInfo.darkMode) {
+            if (
+              !isEmpty(userInfo.id) &&
+              !isEmpty(userInfo.name) &&
+              !isEmpty(userInfo.avatar) &&
+              !isEmpty(userInfo.darkMode)
+            ) {
               return SetUserInfoCommand(userInfo as UserInfo)
             } else {
               return SetUserInfoCommand(null)
