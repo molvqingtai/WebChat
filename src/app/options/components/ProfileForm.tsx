@@ -1,7 +1,6 @@
 import { type Output, object, string, minBytes, maxBytes, toTrimmed, union, literal, notLength, number } from 'valibot'
 import { useForm } from 'react-hook-form'
 import { valibotResolver } from '@hookform/resolvers/valibot'
-
 import { toast } from 'sonner'
 import { useRemeshDomain, useRemeshQuery, useRemeshSend } from 'remesh-react'
 import { nanoid } from 'nanoid'
@@ -32,7 +31,11 @@ const formSchema = object({
   createTime: number(),
   // Pure numeric strings will be converted to number
   // Issues: https://github.com/unjs/unstorage/issues/277
-  name: string([toTrimmed(), minBytes(1, 'Please enter your username.'), maxBytes(20, 'Your username cannot exceed 20 bytes.')]),
+  name: string([
+    toTrimmed(),
+    minBytes(1, 'Please enter your username.'),
+    maxBytes(20, 'Your username cannot exceed 20 bytes.')
+  ]),
   avatar: string([notLength(0, 'Please select your avatar.'), maxBytes(8 * 1024, 'Your avatar cannot exceed 8kb.')]),
   themeMode: union([literal('system'), literal('light'), literal('dark')], 'Please select extension theme mode.')
 })
@@ -47,12 +50,13 @@ const ProfileForm = () => {
     defaultValues: userInfo ?? defaultUserInfo
   })
 
+  // Update defaultValues
   useEffect(() => {
     userInfo && form.reset(userInfo)
   }, [userInfo, form])
 
   const handleSubmit = (userInfo: Output<typeof formSchema>) => {
-    send(userInfoDomain.command.SetUserInfoCommand(userInfo))
+    send(userInfoDomain.command.UpdateUserInfoCommand(userInfo))
     toast.success('Saved successfully!')
   }
 
@@ -73,7 +77,13 @@ const ProfileForm = () => {
           render={({ field }) => (
             <FormItem className="absolute left-1/2 top-0 grid -translate-x-1/2 -translate-y-1/2 justify-items-center">
               <FormControl>
-                <AvatarSelect compressSize={COMPRESS_SIZE} onError={handleError} onWarning={handleWarning} className="shadow-lg" {...field}></AvatarSelect>
+                <AvatarSelect
+                  compressSize={COMPRESS_SIZE}
+                  onError={handleError}
+                  onWarning={handleWarning}
+                  className="shadow-lg"
+                  {...field}
+                ></AvatarSelect>
               </FormControl>
               <FormMessage />
             </FormItem>
@@ -115,7 +125,9 @@ const ProfileForm = () => {
                   </div>
                 </RadioGroup>
               </FormControl>
-              <FormDescription>The theme mode of the extension. If you choose the system, will follow the system theme.</FormDescription>
+              <FormDescription>
+                The theme mode of the extension. If you choose the system, will follow the system theme.
+              </FormDescription>
               <FormMessage />
             </FormItem>
           )}

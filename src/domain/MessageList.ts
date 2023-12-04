@@ -2,6 +2,7 @@ import { Remesh } from 'remesh'
 import { ListModule } from 'remesh/modules/list'
 import { nanoid } from 'nanoid'
 import { from, map, tap, merge } from 'rxjs'
+import { RemeshYjs } from 'remesh-yjs'
 import { IndexDBStorageExtern } from './externs/Storage'
 
 const MessageListDomain = Remesh.domain({
@@ -92,8 +93,21 @@ const MessageListDomain = Remesh.domain({
     domain.effect({
       name: 'FormStateToStorageEffect',
       impl: ({ fromEvent }) => {
-        const changeList$ = fromEvent(ChangeListEvent).pipe(tap(async (messages) => await storage.set<Message[]>(storageKey, messages)))
+        const changeList$ = fromEvent(ChangeListEvent).pipe(
+          tap(async (messages) => await storage.set<Message[]>(storageKey, messages))
+        )
         return merge(changeList$).pipe(map(() => null))
+      }
+    })
+
+    RemeshYjs(domain, {
+      key: 'MessageList',
+      dataType: 'array',
+      onSend: ({ get }): Message[] => {
+        return get(ListQuery())
+      },
+      onReceive: (_, messages: Message[]) => {
+        return InitListCommand(messages)
       }
     })
 

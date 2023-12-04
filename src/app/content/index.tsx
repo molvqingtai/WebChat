@@ -18,7 +18,7 @@ export default defineContentScript({
   async main(ctx) {
     const doc = new Y.Doc()
     // eslint-disable-next-line no-new
-    new WebrtcProvider(__NAME__, doc)
+    new WebrtcProvider(__NAME__, doc, { signaling: ['ws://localhost:4444'] })
 
     const store = Remesh.store({
       externs: [IndexDBStorageImpl, BrowserSyncStorageImpl, RemeshYjsExtern.impl({ doc })],

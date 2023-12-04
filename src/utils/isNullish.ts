@@ -1,3 +1,3 @@
-const isNullish = (value: any) => value === undefined || value === null
+const isNullish = <T = any>(value: T) => value === undefined || value === null
 
 export default isNullish

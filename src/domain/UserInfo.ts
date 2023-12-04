@@ -1,7 +1,7 @@
 import { Remesh } from 'remesh'
-import { forkJoin, from, map, merge, tap } from 'rxjs'
+import { forkJoin, from, map, merge, switchMap, tap } from 'rxjs'
 import { BrowserSyncStorageExtern } from './externs/Storage'
-import { isNullish } from '@/utils'
+import { isNullish, storageToObservable } from '@/utils'
 
 const UserInfoDomain = Remesh.domain({
   name: 'UserInfoDomain',
@@ -27,8 +27,8 @@ const UserInfoDomain = Remesh.domain({
       }
     })
 
-    const SetUserInfoCommand = domain.command({
-      name: 'UserInfo.SetUserInfoCommand',
+    const UpdateUserInfoCommand = domain.command({
+      name: 'UserInfo.UpdateUserInfoCommand',
       impl: (_, userInfo: UserInfo | null) => {
         return [UserInfoState().new(userInfo), UpdateUserInfoEvent()]
       }
@@ -59,9 +59,9 @@ const UserInfoDomain = Remesh.domain({
               !isNullish(userInfo.createTime) &&
               !isNullish(userInfo.themeMode)
             ) {
-              return SetUserInfoCommand(userInfo as UserInfo)
+              return UpdateUserInfoCommand(userInfo as UserInfo)
             } else {
-              return SetUserInfoCommand(null)
+              return UpdateUserInfoCommand(null)
             }
           })
         )
@@ -77,13 +77,46 @@ const UserInfoDomain = Remesh.domain({
               storage.set<UserInfo['id'] | null>(storageKeys.USER_INFO_ID, userInfo?.id ?? null),
               storage.set<UserInfo['name'] | null>(storageKeys.USER_INFO_NAME, userInfo?.name ?? null),
               storage.set<UserInfo['avatar'] | null>(storageKeys.USER_INFO_AVATAR, userInfo?.avatar ?? null),
-              storage.set<UserInfo['createTime'] | null>(storageKeys.USER_INFO_CREATE_TIME, userInfo?.createTime ?? null),
+              storage.set<UserInfo['createTime'] | null>(
+                storageKeys.USER_INFO_CREATE_TIME,
+                userInfo?.createTime ?? null
+              ),
               storage.set<UserInfo['themeMode'] | null>(storageKeys.USER_INFO_THEME_MODE, userInfo?.themeMode ?? null)
             ])
           })
         )
-
         return merge(changeUserInfo$).pipe(map(() => null))
+      }
+    })
+
+    domain.effect({
+      name: 'WatchStorageEffect',
+      impl: () => {
+        return storageToObservable(storage).pipe(
+          switchMap(() => {
+            return forkJoin({
+              id: from(storage.get<UserInfo['id']>(storageKeys.USER_INFO_ID)),
+              name: from(storage.get<UserInfo['name']>(storageKeys.USER_INFO_NAME)),
+              avatar: from(storage.get<UserInfo['avatar']>(storageKeys.USER_INFO_AVATAR)),
+              createTime: from(storage.get<UserInfo['createTime']>(storageKeys.USER_INFO_CREATE_TIME)),
+              themeMode: from(storage.get<UserInfo['themeMode']>(storageKeys.USER_INFO_THEME_MODE))
+            }).pipe(
+              map((userInfo) => {
+                if (
+                  !isNullish(userInfo.id) &&
+                  !isNullish(userInfo.name) &&
+                  !isNullish(userInfo.avatar) &&
+                  !isNullish(userInfo.createTime) &&
+                  !isNullish(userInfo.themeMode)
+                ) {
+                  return UpdateUserInfoCommand(userInfo as UserInfo)
+                } else {
+                  return UpdateUserInfoCommand(null)
+                }
+              })
+            )
+          })
+        )
       }
     })
 
@@ -92,7 +125,7 @@ const UserInfoDomain = Remesh.domain({
         UserInfoQuery
       },
       command: {
-        SetUserInfoCommand
+        UpdateUserInfoCommand
       },
       event: {
         UpdateUserInfoEvent

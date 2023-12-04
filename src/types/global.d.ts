@@ -1,4 +1,5 @@
-declare interface Message {
+// eslint-disable-next-line @typescript-eslint/consistent-type-definitions
+declare type Message = {
   id: string
   userId: string
   body: string
@@ -20,3 +21,5 @@ declare interface UserInfo {
   createTime: number
   themeMode: 'system' | 'light' | 'dark'
 }
+
+declare type SafeAny = any
