@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/Button'
 import { EVENTS } from '@/constants'
 import UserInfoDomain from '@/domain/UserInfo'
 import useClickAway from '@/hooks/useClickAway'
+import { checkSystemDarkMode, cn } from '@/utils'
 
 export interface AppButtonProps {
   children?: ReactNode
@@ -18,11 +19,7 @@ const AppButton: FC<AppButtonProps> = ({ children }) => {
   const userInfo = useRemeshQuery(userInfoDomain.query.UserInfoQuery())
 
   const isDarkMode =
-    userInfo?.themeMode === 'dark'
-      ? true
-      : userInfo?.themeMode === 'light'
-        ? false
-        : window.matchMedia('(prefers-color-scheme: dark)').matches
+    userInfo?.themeMode === 'dark' ? true : userInfo?.themeMode === 'light' ? false : checkSystemDarkMode()
 
   const [open, setOpen] = useState(false)
 
@@ -65,16 +62,24 @@ const AppButton: FC<AppButtonProps> = ({ children }) => {
           onClick={handleSwitchTheme}
           variant="outline"
           data-state={open ? 'open' : 'closed'}
-          className="pointer-events-auto h-10 w-10 rounded-full p-0 shadow fill-mode-forwards data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out data-[state=open]:fade-in data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom"
+          className="pointer-events-auto relative h-10 w-10 overflow-hidden rounded-full p-0 shadow fill-mode-forwards data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out data-[state=open]:fade-in data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom"
         >
-          <MoonIcon size={20} />
-          {/* <SunIcon size={20} /> */}
+          <div
+            className={cn(
+              'absolute -top-10 grid grid-rows-[repeat(2,minmax(0,2.5rem))] w-full justify-center items-center transition-all duration-500',
+              isDarkMode ? 'top-0' : '-top-10 ',
+              isDarkMode ? 'bg-slate-800 text-white' : 'bg-white text-orange-400'
+            )}
+          >
+            <MoonIcon size={20} />
+            <SunIcon size={20} />
+          </div>
         </Button>
         <Button
           onClick={handleOpenOptionsPage}
           variant="outline"
           data-state={open ? 'open' : 'closed'}
-          className="pointer-events-auto h-10 w-10 rounded-full p-0 shadow fill-mode-forwards data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out data-[state=open]:fade-in data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom"
+          className="pointer-events-auto h-10 w-10  rounded-full p-0 shadow fill-mode-forwards data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out data-[state=open]:fade-in data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom"
         >
           <SettingsIcon size={20} />
         </Button>
