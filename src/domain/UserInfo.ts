@@ -30,14 +30,26 @@ const UserInfoDomain = Remesh.domain({
     const UpdateUserInfoCommand = domain.command({
       name: 'UserInfo.UpdateUserInfoCommand',
       impl: (_, userInfo: UserInfo | null) => {
-        return [UserInfoState().new(userInfo), UpdateUserInfoEvent()]
+        return [UserInfoState().new(userInfo), UpdateUserInfoEvent(userInfo), SyncToStorageEvent(userInfo)]
       }
     })
 
-    const UpdateUserInfoEvent = domain.event({
-      name: 'UserInfo.UpdateUserInfoEvent',
-      impl: ({ get }) => {
-        return get(UserInfoQuery())
+    const UpdateUserInfoEvent = domain.event<UserInfo | null>({
+      name: 'UserInfo.UpdateUserInfoEvent'
+    })
+
+    const SyncToStorageEvent = domain.event<UserInfo | null>({
+      name: 'UserInfo.SyncToStorageEvent'
+    })
+
+    const SyncToStateEvent = domain.event<UserInfo | null>({
+      name: 'UserInfo.SyncToStateEvent'
+    })
+
+    const SyncToStateCommand = domain.command({
+      name: 'UserInfo.SyncToStateCommand',
+      impl: (_, userInfo: UserInfo | null) => {
+        return [UserInfoState().new(userInfo), UpdateUserInfoEvent(userInfo), SyncToStateEvent(userInfo)]
       }
     })
 
@@ -59,9 +71,9 @@ const UserInfoDomain = Remesh.domain({
               !isNullish(userInfo.createTime) &&
               !isNullish(userInfo.themeMode)
             ) {
-              return UpdateUserInfoCommand(userInfo as UserInfo)
+              return SyncToStateCommand(userInfo as UserInfo)
             } else {
-              return UpdateUserInfoCommand(null)
+              return SyncToStateCommand(null)
             }
           })
         )
@@ -71,7 +83,7 @@ const UserInfoDomain = Remesh.domain({
     domain.effect({
       name: 'FormStateToStorageEffect',
       impl: ({ fromEvent }) => {
-        const changeUserInfo$ = fromEvent(UpdateUserInfoEvent).pipe(
+        const changeUserInfo$ = fromEvent(SyncToStorageEvent).pipe(
           tap(async (userInfo) => {
             return await Promise.all([
               storage.set<UserInfo['id'] | null>(storageKeys.USER_INFO_ID, userInfo?.id ?? null),
@@ -90,7 +102,7 @@ const UserInfoDomain = Remesh.domain({
     })
 
     domain.effect({
-      name: 'WatchStorageEffect',
+      name: 'WatchStorageToStateEffect',
       impl: () => {
         return storageToObservable(storage).pipe(
           switchMap(() => {
@@ -109,9 +121,9 @@ const UserInfoDomain = Remesh.domain({
                   !isNullish(userInfo.createTime) &&
                   !isNullish(userInfo.themeMode)
                 ) {
-                  return UpdateUserInfoCommand(userInfo as UserInfo)
+                  return SyncToStateCommand(userInfo as UserInfo)
                 } else {
-                  return UpdateUserInfoCommand(null)
+                  return SyncToStateCommand(null)
                 }
               })
             )
@@ -128,6 +140,8 @@ const UserInfoDomain = Remesh.domain({
         UpdateUserInfoCommand
       },
       event: {
+        SyncToStateEvent,
+        SyncToStorageEvent,
         UpdateUserInfoEvent
       }
     }
