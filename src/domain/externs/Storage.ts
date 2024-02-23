@@ -20,22 +20,22 @@ export const IndexDBStorageExtern = Remesh.extern<Storage>({
   default: {
     name: 'STORAGE',
     get: async () => {
-      throw new Error('"get" not implemented')
+      throw new Error('"get" not implemented.')
     },
     set: async () => {
-      throw new Error('"set" not implemented')
+      throw new Error('"set" not implemented.')
     },
     remove: async () => {
-      throw new Error('"remove" not implemented')
+      throw new Error('"remove" not implemented.')
     },
     clear: async () => {
-      throw new Error('"clear" not implemented')
+      throw new Error('"clear" not implemented.')
     },
     watch: () => {
-      throw new Error('"watch" not implemented')
+      throw new Error('"watch" not implemented.')
     },
     unwatch: () => {
-      throw new Error('"unwatch" not implemented')
+      throw new Error('"unwatch" not implemented.')
     }
   }
 })
@@ -44,22 +44,22 @@ export const BrowserSyncStorageExtern = Remesh.extern<Storage>({
   default: {
     name: 'STORAGE',
     get: async () => {
-      throw new Error('"get" not implemented')
+      throw new Error('"get" not implemented.')
     },
     set: async () => {
-      throw new Error('"set" not implemented')
+      throw new Error('"set" not implemented.')
     },
     remove: async () => {
-      throw new Error('"remove" not implemented')
+      throw new Error('"remove" not implemented.')
     },
     clear: async () => {
-      throw new Error('"clear" not implemented')
+      throw new Error('"clear" not implemented.')
     },
     watch: () => {
-      throw new Error('"watch" not implemented')
+      throw new Error('"watch" not implemented.')
     },
     unwatch: () => {
-      throw new Error('"unwatch" not implemented')
+      throw new Error('"unwatch" not implemented.')
     }
   }
 })

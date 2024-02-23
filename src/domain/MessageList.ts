@@ -2,14 +2,19 @@ import { Remesh } from 'remesh'
 import { ListModule } from 'remesh/modules/list'
 import { nanoid } from 'nanoid'
 import { from, map, tap, merge } from 'rxjs'
-import { RemeshYjs } from 'remesh-yjs'
 import { IndexDBStorageExtern } from './externs/Storage'
+import { PeerClientExtern } from './externs/PeerClient'
+import { callbackToObservable, stringToHex } from '@/utils'
+
+const hostRoomId = stringToHex(document.location.host)
 
 const MessageListDomain = Remesh.domain({
   name: 'MessageListDomain',
   impl: (domain) => {
     const storage = domain.getExtern(IndexDBStorageExtern)
+    const peerClient = domain.getExtern(PeerClientExtern)
     const storageKey = `MESSAGE_LIST` as const
+    peerClient.connect(hostRoomId)
 
     const MessageListModule = ListModule<Message>(domain, {
       name: 'MessageListModule',
@@ -100,16 +105,30 @@ const MessageListDomain = Remesh.domain({
       }
     })
 
-    RemeshYjs(domain, {
-      key: 'MessageList',
-      dataType: 'array',
-      onSend: ({ get }): Message[] => {
-        return get(ListQuery())
-      },
-      onReceive: (_, messages: Message[]) => {
-        return InitListCommand(messages)
+    domain.effect({
+      name: 'FormStateToPeerClientEffect',
+      impl: ({ fromEvent }) => {
+        const createItem$ = fromEvent(CreateItemEvent).pipe(
+          tap(async (message) => {
+            await peerClient.sendMessage(JSON.stringify(message))
+          })
+        )
+        return merge(createItem$).pipe(map(() => null))
       }
     })
+
+    // domain.effect({
+    //   name: 'FormPeerClientToStateEffect',
+    //   impl: () => {
+    //     return callbackToObservable(peerClient.onMessage.bind(peerClient)).pipe(
+    //       map((message) => {
+    //         console.log(message)
+    //         // debugger
+    //         return CreateItemCommand(message)
+    //       })
+    //     )
+    //   }
+    // })
 
     return {
       query: {

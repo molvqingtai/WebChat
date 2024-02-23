@@ -1,5 +1,5 @@
 import { browser } from 'wxt/browser'
-import { defineBackground } from 'wxt/client'
+import { defineBackground } from 'wxt/sandbox'
 
 export default defineBackground({
   // Set manifest options

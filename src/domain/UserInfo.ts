@@ -1,7 +1,8 @@
 import { Remesh } from 'remesh'
 import { forkJoin, from, map, merge, switchMap, tap } from 'rxjs'
 import { BrowserSyncStorageExtern } from './externs/Storage'
-import { isNullish, storageToObservable } from '@/utils'
+import { isNullish } from '@/utils'
+import callbackToObservable from '@/utils/callbackToObservable'
 
 const UserInfoDomain = Remesh.domain({
   name: 'UserInfoDomain',
@@ -104,7 +105,7 @@ const UserInfoDomain = Remesh.domain({
     domain.effect({
       name: 'WatchStorageToStateEffect',
       impl: () => {
-        return storageToObservable(storage).pipe(
+        return callbackToObservable(storage.watch, storage.unwatch).pipe(
           switchMap(() => {
             return forkJoin({
               id: from(storage.get<UserInfo['id']>(storageKeys.USER_INFO_ID)),

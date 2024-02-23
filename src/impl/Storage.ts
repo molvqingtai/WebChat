@@ -1,7 +1,8 @@
+import { createStorage } from 'unstorage'
 import indexedDbDriver from 'unstorage/drivers/indexedb'
-import { webExtensionDriver, createStorage } from 'wxt/storage'
 import { IndexDBStorageExtern, BrowserSyncStorageExtern } from '@/domain/externs/Storage'
 import { STORAGE_NAME } from '@/constants'
+import { webExtensionDriver } from '@/utils/webExtensionDriver'
 
 const indexDBStorage = createStorage({
   driver: indexedDbDriver({ base: `${STORAGE_NAME}:` })
