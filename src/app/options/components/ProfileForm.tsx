@@ -1,4 +1,4 @@
-import { type Output, object, string, minBytes, maxBytes, toTrimmed, union, literal, notLength, number } from 'valibot'
+import * as v from 'valibot'
 import { useForm } from 'react-hook-form'
 import { valibotResolver } from '@hookform/resolvers/valibot'
 import { toast } from 'sonner'
@@ -26,18 +26,30 @@ const defaultUserInfo: UserInfo = {
   themeMode: checkSystemDarkMode() ? 'dark' : 'system'
 }
 
-const formSchema = object({
-  id: string(),
-  createTime: number(),
+const formSchema = v.object({
+  id: v.string(),
+  createTime: v.number(),
   // Pure numeric strings will be converted to number
   // Issues: https://github.com/unjs/unstorage/issues/277
-  name: string([
-    toTrimmed(),
-    minBytes(1, 'Please enter your username.'),
-    maxBytes(20, 'Your username cannot exceed 20 bytes.')
-  ]),
-  avatar: string([notLength(0, 'Please select your avatar.'), maxBytes(8 * 1024, 'Your avatar cannot exceed 8kb.')]),
-  themeMode: union([literal('system'), literal('light'), literal('dark')], 'Please select extension theme mode.')
+  // name: v.string([
+  //   // toTrimmed(),
+  //   v.minBytes(1, 'Please enter your username.'),
+  //   v.maxBytes(20, 'Your username cannot exceed 20 bytes.')
+  // ]),
+  name: v.pipe(
+    v.string(),
+    v.minBytes(1, 'Please enter your username.'),
+    v.maxBytes(20, 'Your username cannot exceed 20 bytes.')
+  ),
+  avatar: v.pipe(
+    v.string(),
+    v.notLength(0, 'Please select your avatar.'),
+    v.maxBytes(8 * 1024, 'Your avatar cannot exceed 8kb.')
+  ),
+  themeMode: v.pipe(
+    v.string(),
+    v.union([v.literal('system'), v.literal('light'), v.literal('dark')], 'Please select extension theme mode.')
+  )
 })
 
 const ProfileForm = () => {
@@ -55,7 +67,7 @@ const ProfileForm = () => {
     userInfo && form.reset(userInfo)
   }, [userInfo, form])
 
-  const handleSubmit = (userInfo: Output<typeof formSchema>) => {
+  const handleSubmit = (userInfo: UserInfo) => {
     send(userInfoDomain.command.UpdateUserInfoCommand(userInfo))
     toast.success('Saved successfully!')
   }

@@ -80,7 +80,7 @@
     "trystero": "^0.20.0",
     "type-fest": "^4.11.1",
     "unstorage": "^1.10.1",
-    "valibot": "^0.30.0",
+    "valibot": "^0.42.0",
     "webextension-polyfill": "^0.12.0"
   },
   "devDependencies": {
@@ -95,6 +95,7 @@
     "@types/react": "^18.2.64",
     "@types/react-dom": "^18.2.21",
     "@types/webextension-polyfill": "^0.10.7",
+    "@typescript-eslint/parser": "^8.5.0",
     "@vitejs/plugin-react": "^4.2.1",
     "autoprefixer": "^10.4.18",
     "cross-env": "^7.0.3",
