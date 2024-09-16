@@ -1,5 +1,5 @@
-import { type DataPayload, type Room } from 'trystero'
-import { joinRoom } from 'trystero/nostr'
+import { type DataPayload, type Room, joinRoom } from 'trystero'
+
 // import { joinRoom } from 'trystero/firebase'
 import { PeerRoomExtern, type PeerMessage } from '@/domain/externs/PeerRoom'
 import { stringToHex } from '@/utils'
