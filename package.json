@@ -13,10 +13,10 @@
     "pack": "cross-env NODE_ENV=production run-p pack:*",
     "pack:zip": "wxt zip",
     "pack:firefox": "wxt zip -b firefox",
-    "lint": "eslint . --ext .js,.jsx,.ts,.tsx --cache --fix",
+    "lint": "eslint --fix --flag unstable_ts_config",
     "clear": "rimraf .output",
     "tsc:check": "tsc --noEmit",
-    "prepare": "husky install",
+    "prepare": "husky",
     "postinstall": "wxt prepare"
   },
   "repository": {
@@ -63,7 +63,6 @@
     "idb-keyval": "^6.2.1",
     "lucide-react": "^0.350.0",
     "nanoid": "^5.0.6",
-    "peerjs": "^1.5.2",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-hook-form": "^7.51.0",
@@ -72,12 +71,13 @@
     "react-use": "^17.5.0",
     "remark-breaks": "^4.0.0",
     "remark-gfm": "^4.0.0",
-    "remesh": "^4.2.1",
+    "remesh": "^4.2.2",
     "remesh-logger": "^4.1.0",
     "remesh-react": "^4.1.2",
     "rxjs": "^7.8.1",
     "sonner": "^1.4.3",
     "tailwind-merge": "^2.2.1",
+    "trystero": "^0.20.0",
     "type-fest": "^4.11.1",
     "unstorage": "^1.10.1",
     "valibot": "^0.30.0"
@@ -85,6 +85,11 @@
   "devDependencies": {
     "@commitlint/cli": "^19.0.3",
     "@commitlint/config-conventional": "^19.0.3",
+    "@eslint-react/eslint-plugin": "^1.14.1",
+    "@eslint/js": "^9.10.0",
+    "@types/eslint": "^9.6.1",
+    "@types/eslint-plugin-tailwindcss": "^3.17.0",
+    "@types/eslint__js": "^8.42.3",
     "@types/node": "^20.11.25",
     "@types/react": "^18.2.64",
     "@types/react-dom": "^18.2.21",
@@ -92,17 +97,13 @@
     "@vitejs/plugin-react": "^4.2.1",
     "autoprefixer": "^10.4.18",
     "cross-env": "^7.0.3",
-    "eslint": "^8.57.0",
+    "eslint": "^9.10.0",
     "eslint-config-prettier": "^9.1.0",
-    "eslint-config-standard-with-typescript": "^43.0.1",
-    "eslint-plugin-import": "^2.29.1",
-    "eslint-plugin-n": "^16.6.2",
-    "eslint-plugin-prettier": "^5.1.3",
-    "eslint-plugin-promise": "^6.1.1",
-    "eslint-plugin-react": "^7.34.0",
-    "eslint-plugin-react-hooks": "^4.6.0",
-    "eslint-plugin-tailwindcss": "^3.14.3",
+    "eslint-plugin-prettier": "^5.2.1",
+    "eslint-plugin-tailwindcss": "^3.17.4",
+    "globals": "^15.9.0",
     "husky": "^9.0.11",
+    "jiti": "^1.21.6",
     "lint-staged": "^15.2.2",
     "npm-run-all": "^4.1.5",
     "postcss": "^8.4.35",
@@ -110,14 +111,15 @@
     "rimraf": "^5.0.5",
     "tailwindcss": "^3.4.1",
     "tailwindcss-animate": "^1.0.7",
-    "typescript": "^5.4.2",
+    "typescript": "^5.6.2",
+    "typescript-eslint": "^8.5.0",
     "webext-bridge": "^6.0.1",
     "wxt": "^0.17.7"
   },
   "lint-staged": {
-    "*.{js,jsx,ts,tsx}": "eslint --fix"
+    "*.{js,jsx,ts,tsx}": "eslint --fix --flag unstable_ts_config"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.0.0"
   }
 }

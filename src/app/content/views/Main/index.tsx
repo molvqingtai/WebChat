@@ -1,16 +1,35 @@
 import { useEffect, type FC, useRef } from 'react'
-import { useRemeshDomain, useRemeshQuery } from 'remesh-react'
+import { useRemeshDomain, useRemeshQuery, useRemeshSend } from 'remesh-react'
 
 import MessageList from '../../components/MessageList'
 import MessageItem from '../../components/MessageItem'
 import MessageListDomain from '@/domain/MessageList'
+import UserInfoDomain from '@/domain/UserInfo'
+import RoomDomain from '@/domain/Room'
 
 const Main: FC = () => {
+  const send = useRemeshSend()
+  const roomDomain = useRemeshDomain(RoomDomain())
+  const userInfoDomain = useRemeshDomain(UserInfoDomain())
   const messageListDomain = useRemeshDomain(MessageListDomain())
-  const messageList = useRemeshQuery(messageListDomain.query.ListQuery())
+  const _messageList = useRemeshQuery(messageListDomain.query.ListQuery())
+  const userInfo = useRemeshQuery(userInfoDomain.query.UserInfoQuery())
+  const messageList = _messageList.map((message) => ({
+    ...message,
+    like: message.likeUsers.some((likeUser) => likeUser.userId === userInfo?.id),
+    hate: message.hateUsers.some((hateUser) => hateUser.userId === userInfo?.id)
+  }))
   const messageListRef = useRef<HTMLDivElement>(null)
 
   const isUpdate = useRef(false)
+
+  const handleLikeChange = (messageId: string) => {
+    send(roomDomain.command.SendLikeMessageCommand(messageId))
+  }
+
+  const handleHateChange = (messageId: string) => {
+    send(roomDomain.command.SendHateMessageCommand(messageId))
+  }
 
   useEffect(() => {
     const lastMessageRef = messageListRef.current?.querySelector('[data-index]:last-child')
@@ -27,7 +46,15 @@ const Main: FC = () => {
   return (
     <MessageList ref={messageListRef}>
       {messageList.map((message, index) => (
-        <MessageItem key={message.id} data={message} index={index}></MessageItem>
+        <MessageItem
+          key={message.id}
+          data={message}
+          like={message.like}
+          hate={message.hate}
+          index={index}
+          onLikeChange={() => handleLikeChange(message.id)}
+          onHateChange={() => handleHateChange(message.id)}
+        ></MessageItem>
       ))}
     </MessageList>
   )

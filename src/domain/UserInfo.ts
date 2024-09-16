@@ -1,24 +1,37 @@
 import { Remesh } from 'remesh'
-import { forkJoin, from, map, merge, switchMap, tap } from 'rxjs'
-import { BrowserSyncStorageExtern } from './externs/Storage'
-import { isNullish } from '@/utils'
-import callbackToObservable from '@/utils/callbackToObservable'
+import { nanoid } from 'nanoid'
+import { BrowserSyncStorageExtern } from '@/domain/externs/Storage'
+import StorageEffect from '@/domain/modules/StorageEffect'
+
+export interface UserInfo {
+  id: string
+  name: string
+  avatar: string
+  createTime: number
+  themeMode: 'system' | 'light' | 'dark'
+}
+
+export const STORAGE_KEY = 'USER_INFO'
 
 const UserInfoDomain = Remesh.domain({
   name: 'UserInfoDomain',
   impl: (domain) => {
-    const storage = domain.getExtern(BrowserSyncStorageExtern)
-    const storageKeys = {
-      USER_INFO_ID: 'USER_INFO_ID',
-      USER_INFO_NAME: 'USER_INFO_NAME',
-      USER_INFO_AVATAR: 'USER_INFO_AVATAR',
-      USER_INFO_CREATE_TIME: 'USER_INFO_CREATE_TIME',
-      USER_INFO_THEME_MODE: 'USER_INFO_THEME_MODE'
-    } as const
+    const storageEffect = new StorageEffect({
+      domain,
+      extern: BrowserSyncStorageExtern,
+      key: STORAGE_KEY
+    })
 
     const UserInfoState = domain.state<UserInfo | null>({
       name: 'UserInfo.UserInfoState',
-      default: null
+      // defer: true
+      default: {
+        id: nanoid(),
+        name: '游客',
+        avatar: 'https://avatars.githubusercontent.com/u/10354233?v=4',
+        createTime: Date.now(),
+        themeMode: 'system'
+      }
     })
 
     const UserInfoQuery = domain.query({
@@ -28,19 +41,32 @@ const UserInfoDomain = Remesh.domain({
       }
     })
 
-    const UpdateUserInfoCommand = domain.command({
-      name: 'UserInfo.UpdateUserInfoCommand',
-      impl: (_, userInfo: UserInfo | null) => {
-        return [UserInfoState().new(userInfo), UpdateUserInfoEvent(userInfo), SyncToStorageEvent(userInfo)]
+    const IsLoginQuery = domain.query({
+      name: 'UserInfo.IsLoginQuery',
+      impl: ({ get }) => {
+        return !!get(UserInfoState())?.id
       }
     })
 
-    const UpdateUserInfoEvent = domain.event<UserInfo | null>({
-      name: 'UserInfo.UpdateUserInfoEvent'
+    const UpdateUserInfoCommand = domain.command({
+      name: 'UserInfo.UpdateUserInfoCommand',
+      impl: (_, userInfo: UserInfo | null) => {
+        return [UserInfoState().new(userInfo), UpdateUserInfoEvent(), SyncToStorageEvent()]
+      }
     })
 
-    const SyncToStorageEvent = domain.event<UserInfo | null>({
-      name: 'UserInfo.SyncToStorageEvent'
+    const UpdateUserInfoEvent = domain.event({
+      name: 'UserInfo.UpdateUserInfoEvent',
+      impl: ({ get }) => {
+        return get(UserInfoState())
+      }
+    })
+
+    const SyncToStorageEvent = domain.event({
+      name: 'UserInfo.SyncToStorageEvent',
+      impl: ({ get }) => {
+        return get(UserInfoState())
+      }
     })
 
     const SyncToStateEvent = domain.event<UserInfo | null>({
@@ -50,92 +76,19 @@ const UserInfoDomain = Remesh.domain({
     const SyncToStateCommand = domain.command({
       name: 'UserInfo.SyncToStateCommand',
       impl: (_, userInfo: UserInfo | null) => {
-        return [UserInfoState().new(userInfo), UpdateUserInfoEvent(userInfo), SyncToStateEvent(userInfo)]
+        return [UserInfoState().new(userInfo), UpdateUserInfoEvent(), SyncToStateEvent(userInfo)]
       }
     })
 
-    domain.effect({
-      name: 'FormStorageToStateEffect',
-      impl: () => {
-        return forkJoin({
-          id: from(storage.get<UserInfo['id']>(storageKeys.USER_INFO_ID)),
-          name: from(storage.get<UserInfo['name']>(storageKeys.USER_INFO_NAME)),
-          avatar: from(storage.get<UserInfo['avatar']>(storageKeys.USER_INFO_AVATAR)),
-          createTime: from(storage.get<UserInfo['createTime']>(storageKeys.USER_INFO_CREATE_TIME)),
-          themeMode: from(storage.get<UserInfo['themeMode']>(storageKeys.USER_INFO_THEME_MODE))
-        }).pipe(
-          map((userInfo) => {
-            if (
-              !isNullish(userInfo.id) &&
-              !isNullish(userInfo.name) &&
-              !isNullish(userInfo.avatar) &&
-              !isNullish(userInfo.createTime) &&
-              !isNullish(userInfo.themeMode)
-            ) {
-              return SyncToStateCommand(userInfo as UserInfo)
-            } else {
-              return SyncToStateCommand(null)
-            }
-          })
-        )
-      }
-    })
-
-    domain.effect({
-      name: 'FormStateToStorageEffect',
-      impl: ({ fromEvent }) => {
-        const changeUserInfo$ = fromEvent(SyncToStorageEvent).pipe(
-          tap(async (userInfo) => {
-            return await Promise.all([
-              storage.set<UserInfo['id'] | null>(storageKeys.USER_INFO_ID, userInfo?.id ?? null),
-              storage.set<UserInfo['name'] | null>(storageKeys.USER_INFO_NAME, userInfo?.name ?? null),
-              storage.set<UserInfo['avatar'] | null>(storageKeys.USER_INFO_AVATAR, userInfo?.avatar ?? null),
-              storage.set<UserInfo['createTime'] | null>(
-                storageKeys.USER_INFO_CREATE_TIME,
-                userInfo?.createTime ?? null
-              ),
-              storage.set<UserInfo['themeMode'] | null>(storageKeys.USER_INFO_THEME_MODE, userInfo?.themeMode ?? null)
-            ])
-          })
-        )
-        return merge(changeUserInfo$).pipe(map(() => null))
-      }
-    })
-
-    domain.effect({
-      name: 'WatchStorageToStateEffect',
-      impl: () => {
-        return callbackToObservable(storage.watch, storage.unwatch).pipe(
-          switchMap(() => {
-            return forkJoin({
-              id: from(storage.get<UserInfo['id']>(storageKeys.USER_INFO_ID)),
-              name: from(storage.get<UserInfo['name']>(storageKeys.USER_INFO_NAME)),
-              avatar: from(storage.get<UserInfo['avatar']>(storageKeys.USER_INFO_AVATAR)),
-              createTime: from(storage.get<UserInfo['createTime']>(storageKeys.USER_INFO_CREATE_TIME)),
-              themeMode: from(storage.get<UserInfo['themeMode']>(storageKeys.USER_INFO_THEME_MODE))
-            }).pipe(
-              map((userInfo) => {
-                if (
-                  !isNullish(userInfo.id) &&
-                  !isNullish(userInfo.name) &&
-                  !isNullish(userInfo.avatar) &&
-                  !isNullish(userInfo.createTime) &&
-                  !isNullish(userInfo.themeMode)
-                ) {
-                  return SyncToStateCommand(userInfo as UserInfo)
-                } else {
-                  return SyncToStateCommand(null)
-                }
-              })
-            )
-          })
-        )
-      }
-    })
+    // storageEffect
+    //   .set(SyncToStorageEvent)
+    //   .get<UserInfo>((value) => SyncToStateCommand(value))
+    //   .watch<UserInfo>((value) => SyncToStateCommand(value))
 
     return {
       query: {
-        UserInfoQuery
+        UserInfoQuery,
+        IsLoginQuery
       },
       command: {
         UpdateUserInfoCommand

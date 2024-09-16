@@ -7,11 +7,8 @@ export default defineBackground({
   type: 'module',
 
   main() {
-    browser.runtime.onMessage.addListener(async (message, options) => {
-      console.log('Background recieved:', message, options)
-      console.log('Background sending:', 'pong')
+    browser.runtime.onMessage.addListener(async () => {
       browser.runtime.openOptionsPage()
-      return 'pong'
     })
   }
 })

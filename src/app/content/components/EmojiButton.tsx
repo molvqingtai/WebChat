@@ -3,7 +3,7 @@ import { useState, type FC } from 'react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/Popover'
 import { ScrollArea } from '@/components/ui/ScrollArea'
 import { Button } from '@/components/ui/Button'
-import { EMOJI_LIST } from '@/constants'
+import { EMOJI_LIST } from '@/constants/config'
 import { chunk } from '@/utils'
 
 export interface EmojiButtonProps {
@@ -35,7 +35,7 @@ const EmojiButton: FC<EmojiButtonProps> = ({ onSelect }) => {
         </Button>
       </PopoverTrigger>
       <PopoverContent className="z-top w-72 px-0" onCloseAutoFocus={handleCloseAutoFocus}>
-        <ScrollArea className="h-72 w-72 px-3">
+        <ScrollArea className="size-72 px-3">
           {emojiGroups.map((group, index) => {
             return (
               <div key={index} className="grid grid-cols-8">

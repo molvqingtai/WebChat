@@ -1,64 +1,60 @@
-import { type FC, useState } from 'react'
-import { format } from 'date-fns'
+import { type FC } from 'react'
 import { FrownIcon, ThumbsUpIcon } from 'lucide-react'
 import LikeButton from './LikeButton'
+import FormatDate from './FormatDate'
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/Avatar'
 
 import { Markdown } from '@/components/ui/Markdown'
+import { type Message } from '@/domain/MessageList'
 
 export interface MessageItemProps {
   data: Message
   index?: number
+  like: boolean
+  hate: boolean
+  onLikeChange?: (checked: boolean) => void
+  onHateChange?: (checked: boolean) => void
 }
 
-const MessageItem: FC<MessageItemProps> = ({ data, index }) => {
-  const [formatData, setFormatData] = useState({
-    ...data,
-    date: format(data.date, 'yyyy/MM/dd HH:mm:ss')
-  })
-
-  const handleLikeChange = (type: 'like' | 'hate', checked: boolean, count: number) => {
-    setFormatData((prev) => {
-      return {
-        ...prev,
-        [`${type}Checked`]: checked,
-        [`${type}Count`]: count
-      }
-    })
+const MessageItem: FC<MessageItemProps> = (props) => {
+  const handleLikeChange = (checked: boolean) => {
+    props.onLikeChange?.(checked)
   }
-
+  const handleHateChange = (checked: boolean) => {
+    props.onHateChange?.(checked)
+  }
   return (
     <div
-      data-index={index}
+      data-index={props.index}
       className="box-border grid grid-cols-[auto_1fr] gap-x-2 px-4 [content-visibility:auto] first:pt-4 last:pb-4"
     >
       <Avatar>
-        <AvatarImage src={formatData.userAvatar} alt="avatar" />
-        <AvatarFallback>{formatData.username.at(0)}</AvatarFallback>
+        <AvatarImage src={props.data.userAvatar} alt="avatar" />
+        <AvatarFallback>{props.data.username.at(0)}</AvatarFallback>
       </Avatar>
       <div className="overflow-hidden">
         <div className="grid grid-cols-[auto_1fr] items-baseline gap-x-2 leading-none">
-          <div className="text-sm font-medium text-slate-600">{formatData.username}</div>
-          <div className="text-xs text-slate-400">{formatData.date}</div>
+          <div className="text-sm font-medium text-slate-600">{props.data.username}</div>
+          <FormatDate className="text-xs text-slate-400" date={props.data.date}></FormatDate>
         </div>
         <div>
           <div className="pb-2">
-            <Markdown>{formatData.body}</Markdown>
+            <Markdown>{props.data.body}</Markdown>
           </div>
           <div className="grid grid-flow-col justify-end gap-x-2 leading-none">
             <LikeButton
-              checked={formatData.likeChecked}
-              onChange={(...args) => handleLikeChange('like', ...args)}
-              count={formatData.likeCount}
+              checked={props.like}
+              onChange={(checked) => handleLikeChange(checked)}
+              count={props.data.likeUsers.length}
             >
               <LikeButton.Icon>
                 <ThumbsUpIcon size={14}></ThumbsUpIcon>
               </LikeButton.Icon>
             </LikeButton>
             <LikeButton
-              checked={formatData.hateChecked}
-              onChange={(...args) => handleLikeChange('hate', ...args)}
-              count={formatData.hateCount}
+              checked={props.hate}
+              onChange={(checked) => handleHateChange(checked)}
+              count={props.data.hateUsers.length}
             >
               <LikeButton.Icon>
                 <FrownIcon size={14}></FrownIcon>

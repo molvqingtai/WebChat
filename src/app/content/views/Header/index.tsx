@@ -10,7 +10,7 @@ const Header: FC = () => {
 
   return (
     <div className="z-10 grid h-12 grid-flow-col items-center justify-between gap-x-4 rounded-t-xl bg-white px-4 backdrop-blur-lg">
-      <Avatar className="h-8 w-8">
+      <Avatar className="size-8">
         <AvatarImage src={siteInfo.icon} alt="favicon" />
         <AvatarFallback>
           <Globe2Icon size="100%" className="text-gray-400" />
@@ -26,7 +26,7 @@ const Header: FC = () => {
         </HoverCardTrigger>
         <HoverCardContent className="w-80">
           <div className="grid grid-cols-[auto_1fr] gap-x-4">
-            <Avatar className="h-14 w-14">
+            <Avatar className="size-14">
               <AvatarImage src={siteInfo.icon} alt="favicon" />
               <AvatarFallback>
                 <Globe2Icon size="100%" className="text-gray-400" />

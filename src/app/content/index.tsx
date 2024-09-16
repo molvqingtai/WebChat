@@ -7,8 +7,8 @@ import { defineContentScript } from 'wxt/sandbox'
 import { createShadowRootUi } from 'wxt/client'
 
 import App from './App'
-import { IndexDBStorageImpl, BrowserSyncStorageImpl } from '@/impl/Storage'
-import { PeerClientImpl } from '@/impl/PeerClient'
+import { IndexDBStorageImpl, BrowserSyncStorageImpl } from '@/domain/impls/Storage'
+import { PeerRoomImpl } from '@/domain/impls/PeerRoom'
 import '@/assets/styles/tailwind.css'
 
 export default defineContentScript({
@@ -16,7 +16,7 @@ export default defineContentScript({
   matches: ['*://*.example.com/*', '*://*.google.com/*', '*://*.v2ex.com/*'],
   async main(ctx) {
     const store = Remesh.store({
-      externs: [IndexDBStorageImpl, BrowserSyncStorageImpl, PeerClientImpl],
+      externs: [IndexDBStorageImpl, BrowserSyncStorageImpl, PeerRoomImpl],
       inspectors: [RemeshLogger()]
     })
 

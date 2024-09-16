@@ -1,7 +1,7 @@
 import { createStorage } from 'unstorage'
 import indexedDbDriver from 'unstorage/drivers/indexedb'
 import { IndexDBStorageExtern, BrowserSyncStorageExtern } from '@/domain/externs/Storage'
-import { STORAGE_NAME } from '@/constants'
+import { STORAGE_NAME } from '@/constants/config'
 import { webExtensionDriver } from '@/utils/webExtensionDriver'
 
 const indexDBStorage = createStorage({

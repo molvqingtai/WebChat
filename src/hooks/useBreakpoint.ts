@@ -1,5 +1,5 @@
 import { createBreakpoint } from 'react-use'
-import { BREAKPOINTS } from '@/constants'
+import { BREAKPOINTS } from '@/constants/config'
 
 const _useBreakpoint = createBreakpoint(BREAKPOINTS)
 

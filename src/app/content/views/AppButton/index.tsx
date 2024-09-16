@@ -4,7 +4,7 @@ import { SettingsIcon, MoonIcon, SunIcon } from 'lucide-react'
 import { browser } from 'wxt/browser'
 import { useRemeshDomain, useRemeshQuery, useRemeshSend } from 'remesh-react'
 import { Button } from '@/components/ui/Button'
-import { EVENTS } from '@/constants'
+import { EVENT } from '@/constants/event'
 import UserInfoDomain from '@/domain/UserInfo'
 import useClickAway from '@/hooks/useClickAway'
 import { checkSystemDarkMode, cn } from '@/utils'
@@ -51,7 +51,7 @@ const AppButton: FC<AppButtonProps> = ({ children }) => {
   }
 
   const handleOpenOptionsPage = () => {
-    browser.runtime.sendMessage(EVENTS.OPEN_OPTIONS_PAGE)
+    browser.runtime.sendMessage(EVENT.OPEN_OPTIONS_PAGE)
   }
 
   return (
@@ -62,7 +62,7 @@ const AppButton: FC<AppButtonProps> = ({ children }) => {
           onClick={handleSwitchTheme}
           variant="outline"
           data-state={open ? 'open' : 'closed'}
-          className="pointer-events-auto relative h-10 w-10 overflow-hidden rounded-full p-0 shadow fill-mode-forwards data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out data-[state=open]:fade-in data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom"
+          className="pointer-events-auto relative size-10 overflow-hidden rounded-full p-0 shadow fill-mode-forwards data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out data-[state=open]:fade-in data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom"
         >
           <div
             className={cn(
@@ -79,12 +79,12 @@ const AppButton: FC<AppButtonProps> = ({ children }) => {
           onClick={handleOpenOptionsPage}
           variant="outline"
           data-state={open ? 'open' : 'closed'}
-          className="pointer-events-auto h-10 w-10  rounded-full p-0 shadow fill-mode-forwards data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out data-[state=open]:fade-in data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom"
+          className="pointer-events-auto size-10 rounded-full  p-0 shadow fill-mode-forwards data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out data-[state=open]:fade-in data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom"
         >
           <SettingsIcon size={20} />
         </Button>
       </div>
-      <Button onContextMenu={handleToggleMenu} className="relative z-10 h-10 w-10 rounded-full p-0 text-xs shadow">
+      <Button onContextMenu={handleToggleMenu} className="relative z-10 size-10 rounded-full p-0 text-xs shadow">
         {children}
       </Button>
     </div>

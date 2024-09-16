@@ -4,7 +4,7 @@ import { Remesh } from 'remesh'
 import { RemeshRoot } from 'remesh-react'
 import { RemeshLogger } from 'remesh-logger'
 import App from './App'
-import { BrowserSyncStorageImpl } from '@/impl/Storage'
+import { BrowserSyncStorageImpl } from '@/domain/impls/Storage'
 import '@/assets/styles/tailwind.css'
 
 const store = Remesh.store({

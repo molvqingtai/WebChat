@@ -1,0 +1,6 @@
+{
+  "eslint.options": {
+    "flags": ["unstable_ts_config"]
+  },
+  "eslint.useFlatConfig": true
+}

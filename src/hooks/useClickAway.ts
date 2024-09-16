@@ -30,7 +30,9 @@ const useClickAway = <E extends Event = Event>(
       !el.contains(event.target) && event.target.shadowRoot !== rootNode && savedCallback.current(event)
     }
     for (const eventName of events) {
+      // eslint-disable-next-line @eslint-react/web-api/no-leaked-event-listener
       document.addEventListener(eventName, handler)
+      // eslint-disable-next-line @eslint-react/web-api/no-leaked-event-listener
       isInShadow && rootNode.addEventListener(eventName, handler)
     }
     return () => {

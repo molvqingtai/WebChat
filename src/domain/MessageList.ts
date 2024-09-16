@@ -1,20 +1,33 @@
 import { Remesh } from 'remesh'
 import { ListModule } from 'remesh/modules/list'
 import { nanoid } from 'nanoid'
-import { from, map, tap, merge } from 'rxjs'
-import { IndexDBStorageExtern } from './externs/Storage'
-import { PeerClientExtern } from './externs/PeerClient'
-import { callbackToObservable, stringToHex } from '@/utils'
+import { IndexDBStorageExtern } from '@/domain/externs/Storage'
+import StorageEffect from '@/domain/modules/StorageEffect'
 
-const hostRoomId = stringToHex(document.location.host)
+export interface MessageUser {
+  userId: string
+  username: string
+  userAvatar: string
+}
+
+export interface Message extends MessageUser {
+  id: string
+  body: string
+  date: number
+  likeUsers: MessageUser[]
+  hateUsers: MessageUser[]
+}
+
+export const STORAGE_KEY = `MESSAGE_LIST`
 
 const MessageListDomain = Remesh.domain({
   name: 'MessageListDomain',
   impl: (domain) => {
-    const storage = domain.getExtern(IndexDBStorageExtern)
-    const peerClient = domain.getExtern(PeerClientExtern)
-    const storageKey = `MESSAGE_LIST` as const
-    peerClient.connect(hostRoomId)
+    const storageEffect = new StorageEffect({
+      domain,
+      extern: IndexDBStorageExtern,
+      key: STORAGE_KEY
+    })
 
     const MessageListModule = ListModule<Message>(domain, {
       name: 'MessageListModule',
@@ -40,7 +53,12 @@ const MessageListDomain = Remesh.domain({
       name: 'MessageList.CreateItemCommand',
       impl: (_, message: Omit<Message, 'id'>) => {
         const newMessage = { ...message, id: nanoid() }
-        return [MessageListModule.command.AddItemCommand(newMessage), CreateItemEvent(newMessage), ChangeListEvent()]
+        return [
+          MessageListModule.command.AddItemCommand(newMessage),
+          CreateItemEvent(newMessage),
+          ChangeListEvent(),
+          SyncToStorageEvent()
+        ]
       }
     })
 
@@ -51,7 +69,12 @@ const MessageListDomain = Remesh.domain({
     const UpdateItemCommand = domain.command({
       name: 'MessageList.UpdateItemCommand',
       impl: (_, message: Message) => {
-        return [MessageListModule.command.UpdateItemCommand(message), UpdateItemEvent(message), ChangeListEvent()]
+        return [
+          MessageListModule.command.UpdateItemCommand(message),
+          UpdateItemEvent(message),
+          ChangeListEvent(),
+          SyncToStorageEvent()
+        ]
       }
     })
 
@@ -62,7 +85,12 @@ const MessageListDomain = Remesh.domain({
     const DeleteItemCommand = domain.command({
       name: 'MessageList.DeleteItemCommand',
       impl: (_, id: string) => {
-        return [MessageListModule.command.DeleteItemCommand(id), DeleteItemEvent(id), ChangeListEvent()]
+        return [
+          MessageListModule.command.DeleteItemCommand(id),
+          DeleteItemEvent(id),
+          ChangeListEvent(),
+          SyncToStorageEvent()
+        ]
       }
     })
 
@@ -73,62 +101,32 @@ const MessageListDomain = Remesh.domain({
     const ClearListCommand = domain.command({
       name: 'MessageList.ClearListCommand',
       impl: () => {
-        return [MessageListModule.command.DeleteAllCommand(), ClearListEvent(), ChangeListEvent()]
+        return [MessageListModule.command.DeleteAllCommand(), ClearListEvent(), ChangeListEvent(), SyncToStorageEvent()]
       }
     })
 
-    const InitListEvent = domain.event<Message[]>({
-      name: 'MessageList.InitListEvent'
+    const SyncToStorageEvent = domain.event({
+      name: 'MessageList.SyncToStorageEvent',
+      impl: ({ get }) => {
+        return get(ListQuery())
+      }
     })
 
-    const InitListCommand = domain.command({
-      name: 'MessageList.InitListCommand',
+    const SyncToStateEvent = domain.event<Message[]>({
+      name: 'MessageList.SyncToStateEvent'
+    })
+
+    const SyncToStateCommand = domain.command({
+      name: 'MessageList.SyncToStateCommand',
       impl: (_, messages: Message[]) => {
-        return [MessageListModule.command.SetListCommand(messages), InitListEvent(messages)]
+        return [MessageListModule.command.SetListCommand(messages), SyncToStateEvent(messages)]
       }
     })
 
-    domain.effect({
-      name: 'FormStorageToStateEffect',
-      impl: () => {
-        return from(storage.get<Message[]>(storageKey)).pipe(map((messages) => InitListCommand(messages ?? [])))
-      }
-    })
-
-    domain.effect({
-      name: 'FormStateToStorageEffect',
-      impl: ({ fromEvent }) => {
-        const changeList$ = fromEvent(ChangeListEvent).pipe(
-          tap(async (messages) => await storage.set<Message[]>(storageKey, messages))
-        )
-        return merge(changeList$).pipe(map(() => null))
-      }
-    })
-
-    domain.effect({
-      name: 'FormStateToPeerClientEffect',
-      impl: ({ fromEvent }) => {
-        const createItem$ = fromEvent(CreateItemEvent).pipe(
-          tap(async (message) => {
-            await peerClient.sendMessage(JSON.stringify(message))
-          })
-        )
-        return merge(createItem$).pipe(map(() => null))
-      }
-    })
-
-    // domain.effect({
-    //   name: 'FormPeerClientToStateEffect',
-    //   impl: () => {
-    //     return callbackToObservable(peerClient.onMessage.bind(peerClient)).pipe(
-    //       map((message) => {
-    //         console.log(message)
-    //         // debugger
-    //         return CreateItemCommand(message)
-    //       })
-    //     )
-    //   }
-    // })
+    storageEffect
+      .set(SyncToStorageEvent)
+      .get<Message[]>((value) => SyncToStateCommand(value ?? []))
+      .watch<Message[]>((value) => SyncToStateCommand(value ?? []))
 
     return {
       query: {
@@ -142,10 +140,13 @@ const MessageListDomain = Remesh.domain({
         ClearListCommand
       },
       event: {
+        ChangeListEvent,
         CreateItemEvent,
         UpdateItemEvent,
         DeleteItemEvent,
-        ClearListEvent
+        ClearListEvent,
+        SyncToStateEvent,
+        SyncToStorageEvent
       }
     }
   }
