@@ -164,7 +164,7 @@ const RoomDomain = Remesh.domain({
                   hateUsers: []
                 })
               case 'like': {
-                if (!messageListDomain.query.HasItemQuery(message.id)) {
+                if (!get(messageListDomain.query.HasItemQuery(message.id))) {
                   return null
                 }
                 const _message = get(messageListDomain.query.ItemQuery(message.id))
@@ -178,7 +178,7 @@ const RoomDomain = Remesh.domain({
                 })
               }
               case 'hate': {
-                if (!messageListDomain.query.HasItemQuery(message.id)) {
+                if (!get(messageListDomain.query.HasItemQuery(message.id))) {
                   return null
                 }
                 const _message = get(messageListDomain.query.ItemQuery(message.id))
