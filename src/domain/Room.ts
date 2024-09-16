@@ -155,7 +155,6 @@ const RoomDomain = Remesh.domain({
         const onMessage$ = callbackToObservable<RoomMessage>(peerRoom.onMessage.bind(peerRoom))
         return onMessage$.pipe(
           map((message) => {
-            console.log(message)
             switch (message.type) {
               case 'text':
                 return messageListDomain.command.CreateItemCommand({
@@ -165,6 +164,9 @@ const RoomDomain = Remesh.domain({
                   hateUsers: []
                 })
               case 'like': {
+                if (!messageListDomain.query.HasItemQuery(message.id)) {
+                  return null
+                }
                 const _message = get(messageListDomain.query.ItemQuery(message.id))
                 return messageListDomain.command.UpdateItemCommand({
                   ..._message,
@@ -176,6 +178,9 @@ const RoomDomain = Remesh.domain({
                 })
               }
               case 'hate': {
+                if (!messageListDomain.query.HasItemQuery(message.id)) {
+                  return null
+                }
                 const _message = get(messageListDomain.query.ItemQuery(message.id))
                 return messageListDomain.command.UpdateItemCommand({
                   ..._message,

@@ -37,6 +37,8 @@ const MessageListDomain = Remesh.domain({
 
     const ItemQuery = MessageListModule.query.ItemQuery
 
+    const HasItemQuery = MessageListModule.query.HasItemByKeyQuery
+
     const ChangeListEvent = domain.event({
       name: 'MessageList.ChangeListEvent',
       impl: ({ get }) => {
@@ -128,6 +130,7 @@ const MessageListDomain = Remesh.domain({
 
     return {
       query: {
+        HasItemQuery,
         ItemQuery,
         ListQuery
       },

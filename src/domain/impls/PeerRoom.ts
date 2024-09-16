@@ -20,7 +20,7 @@ class PeerRoom {
     this.room = joinRoom({ appId: this.appId }, roomId)
 
     this.room?.onPeerJoin((peerId) => console.log(`${peerId} joined`))
-    this.room?.onPeerLeave((peerId) => console.log(`${peerId} left`))
+    this.room?.onPeerLeave((peerId) => console.log(`${peerId} leaved`))
     console.log(this.room.getPeers())
 
     return this.room
