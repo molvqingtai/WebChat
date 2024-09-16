@@ -1,6 +1,6 @@
 import { type DataPayload, type Room } from 'trystero'
-// import { joinRoom } from 'trystero/torrent'
-import { joinRoom } from 'trystero/firebase'
+import { joinRoom } from 'trystero/nostr'
+// import { joinRoom } from 'trystero/firebase'
 import { PeerRoomExtern, type PeerMessage } from '@/domain/externs/PeerRoom'
 import { stringToHex } from '@/utils'
 
@@ -41,9 +41,6 @@ class PeerRoom {
   }
 }
 
-// const peerRoom = new PeerRoom({ appId: stringToHex(__NAME__) })
-const peerRoom = new PeerRoom({
-  appId: 'https://web-chat-e9964-default-rtdb.asia-southeast1.firebasedatabase.app'
-})
+const peerRoom = new PeerRoom({ appId: stringToHex(__NAME__) })
 
 export const PeerRoomImpl = PeerRoomExtern.impl(peerRoom)
