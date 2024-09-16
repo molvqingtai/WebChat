@@ -1,6 +1,5 @@
 import { Remesh } from 'remesh'
 import { ListModule } from 'remesh/modules/list'
-import { nanoid } from 'nanoid'
 import { IndexDBStorageExtern } from '@/domain/externs/Storage'
 import StorageEffect from '@/domain/modules/StorageEffect'
 
@@ -51,11 +50,10 @@ const MessageListDomain = Remesh.domain({
 
     const CreateItemCommand = domain.command({
       name: 'MessageList.CreateItemCommand',
-      impl: (_, message: Omit<Message, 'id'>) => {
-        const newMessage = { ...message, id: nanoid() }
+      impl: (_, message: Message) => {
         return [
-          MessageListModule.command.AddItemCommand(newMessage),
-          CreateItemEvent(newMessage),
+          MessageListModule.command.AddItemCommand(message),
+          CreateItemEvent(message),
           ChangeListEvent(),
           SyncToStorageEvent()
         ]

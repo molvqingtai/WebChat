@@ -5,6 +5,7 @@ import { PeerRoomExtern } from '@/domain/externs/PeerRoom'
 import MessageListDomain from '@/domain/MessageList'
 import UserInfoDomain from '@/domain/UserInfo'
 import { callbackToObservable, desert, stringToHex } from '@/utils'
+import { nanoid } from 'nanoid'
 
 export enum MessageType {
   Like = 'like',
@@ -14,16 +15,17 @@ export enum MessageType {
 
 export interface LikeMessage extends MessageUser {
   type: MessageType.Like
-  messageId: string
+  id: string
 }
 
 export interface HateMessage extends MessageUser {
   type: MessageType.Hate
-  messageId: string
+  id: string
 }
 
 export interface TextMessage extends MessageUser {
   type: MessageType.Text
+  id: string
   body: string
 }
 
@@ -43,8 +45,10 @@ const RoomDomain = Remesh.domain({
       name: 'RoomSendTextMessageCommand',
       impl: ({ get }, message: string) => {
         const { id: userId, name: username, avatar: userAvatar } = get(userInfoDomain.query.UserInfoQuery())!
+        const id = nanoid()
         return [
           messageListDomain.command.CreateItemCommand({
+            id,
             body: message,
             date: Date.now(),
             userId,
@@ -53,7 +57,7 @@ const RoomDomain = Remesh.domain({
             likeUsers: [],
             hateUsers: []
           }),
-          SendTextMessageEvent({ body: message, userId, username, userAvatar, type: MessageType.Text })
+          SendTextMessageEvent({ id, body: message, userId, username, userAvatar, type: MessageType.Text })
         ]
       }
     })
@@ -76,7 +80,7 @@ const RoomDomain = Remesh.domain({
               userAvatar
             })
           }),
-          SendLikeMessageEvent({ messageId, userId, username, userAvatar, type: MessageType.Like })
+          SendLikeMessageEvent({ id: messageId, userId, username, userAvatar, type: MessageType.Like })
         ]
       }
     })
@@ -100,7 +104,7 @@ const RoomDomain = Remesh.domain({
               userAvatar
             })
           }),
-          SendHateMessageEvent({ messageId, userId, username, userAvatar, type: MessageType.Hate })
+          SendHateMessageEvent({ id: messageId, userId, username, userAvatar, type: MessageType.Hate })
         ]
       }
     })
@@ -151,10 +155,9 @@ const RoomDomain = Remesh.domain({
         const onMessage$ = callbackToObservable<RoomMessage>(peerRoom.onMessage.bind(peerRoom))
         return onMessage$.pipe(
           map((message) => {
+            console.log(message)
             switch (message.type) {
               case 'text':
-                console.log(message)
-
                 return messageListDomain.command.CreateItemCommand({
                   ...message,
                   date: Date.now(),
@@ -162,7 +165,7 @@ const RoomDomain = Remesh.domain({
                   hateUsers: []
                 })
               case 'like': {
-                const _message = get(messageListDomain.query.ItemQuery(message.messageId))
+                const _message = get(messageListDomain.query.ItemQuery(message.id))
                 return messageListDomain.command.UpdateItemCommand({
                   ..._message,
                   likeUsers: desert(_message.likeUsers, 'userId', {
@@ -173,7 +176,7 @@ const RoomDomain = Remesh.domain({
                 })
               }
               case 'hate': {
-                const _message = get(messageListDomain.query.ItemQuery(message.messageId))
+                const _message = get(messageListDomain.query.ItemQuery(message.id))
                 return messageListDomain.command.UpdateItemCommand({
                   ..._message,
                   hateUsers: desert(_message.hateUsers, 'userId', {
