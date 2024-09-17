@@ -4,9 +4,13 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/Avatar'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/HoverCard'
 import { Button } from '@/components/ui/Button'
 import { getSiteInfo } from '@/utils'
+import { useRemeshDomain, useRemeshQuery } from 'remesh-react'
+import RoomDomain from '@/domain/Room'
 
 const Header: FC = () => {
   const siteInfo = getSiteInfo()
+  const roomDomain = useRemeshDomain(RoomDomain())
+  const peerList = useRemeshQuery(roomDomain.query.PeerListQuery())
 
   return (
     <div className="z-10 grid h-12 grid-flow-col items-center justify-between gap-x-4 rounded-t-xl bg-white px-4 backdrop-blur-lg">
@@ -41,7 +45,7 @@ const Header: FC = () => {
           </div>
         </HoverCardContent>
       </HoverCard>
-      <div className="text-sm text-slate-500">Online 99</div>
+      <div className="text-sm text-slate-500">Online {peerList.length}</div>
     </div>
   )
 }

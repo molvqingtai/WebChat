@@ -41,6 +41,19 @@ const RoomDomain = Remesh.domain({
     const peerRoom = domain.getExtern(PeerRoomExtern)
     peerRoom.joinRoom(hostRoomId)
 
+    const PeersListState = domain.state<string[]>({
+      name: 'Room.PeersListState',
+      default: [peerRoom.selfId]
+    })
+
+    const MessageListQuery = messageListDomain.query.ListQuery
+    const PeerListQuery = domain.query({
+      name: 'Room.PeerListQuery',
+      impl: ({ get }) => {
+        return get(PeersListState())
+      }
+    })
+
     const SendTextMessageCommand = domain.command({
       name: 'RoomSendTextMessageCommand',
       impl: ({ get }, message: string) => {
@@ -111,6 +124,21 @@ const RoomDomain = Remesh.domain({
 
     const SendHateMessageEvent = domain.event<RoomMessage>({
       name: 'RoomSendHateMessageEvent'
+    })
+
+    const JoinRoomEvent = domain.event<string>({
+      name: 'RoomJoinRoomEvent'
+    })
+
+    const LeaveRoomEvent = domain.event<string>({
+      name: 'RoomLeaveRoomEvent'
+    })
+
+    const SyncPeersListCommand = domain.command({
+      name: 'RoomSyncPeersListCommand',
+      impl: (_, list: string[]) => {
+        return [PeersListState().new(list)]
+      }
     })
 
     domain.effect({
@@ -200,11 +228,40 @@ const RoomDomain = Remesh.domain({
       }
     })
 
+    domain.effect({
+      name: 'RoomOnJoinRoomEffect',
+      impl: ({ get }) => {
+        const onJoinRoom$ = callbackToObservable<string>(peerRoom.onJoinRoom.bind(peerRoom))
+        return onJoinRoom$.pipe(
+          map((peerId) => {
+            return [SyncPeersListCommand([...get(PeersListState()), peerId]), JoinRoomEvent(peerId)]
+          })
+        )
+      }
+    })
+
+    domain.effect({
+      name: 'RoomOnLeaveRoomEffect',
+      impl: ({ get }) => {
+        const onLeaveRoom$ = callbackToObservable<string>(peerRoom.onLeaveRoom.bind(peerRoom))
+        return onLeaveRoom$.pipe(
+          map((peerId) => {
+            return [SyncPeersListCommand(get(PeersListState()).filter((id) => id !== peerId)), LeaveRoomEvent(peerId)]
+          })
+        )
+      }
+    })
     return {
+      query: {
+        PeerListQuery,
+        MessageListQuery
+      },
       event: {
         SendTextMessageEvent,
         SendLikeMessageEvent,
-        SendHateMessageEvent
+        SendHateMessageEvent,
+        JoinRoomEvent,
+        LeaveRoomEvent
       },
       command: {
         SendTextMessageCommand,

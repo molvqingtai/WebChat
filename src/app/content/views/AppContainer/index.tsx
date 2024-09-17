@@ -1,14 +1,11 @@
 import { type ReactNode, type FC } from 'react'
 import useResizable from '@/hooks/useResizable'
-import useBreakpoint from '@/hooks/useBreakpoint'
+
 export interface AppContainerProps {
   children?: ReactNode
 }
 
 const AppContainer: FC<AppContainerProps> = ({ children }) => {
-  const { breakpoint } = useBreakpoint()
-  console.log(breakpoint)
-
   const { size, ref } = useResizable({
     initSize: Math.max(375, window.innerWidth / 5),
     maxSize: Math.max(750, window.innerWidth / 3),
