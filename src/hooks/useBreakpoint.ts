@@ -11,7 +11,8 @@ const useBreakpoint = () => {
     isMD: breakpoint === 'md',
     isLG: breakpoint === 'lg',
     isXL: breakpoint === 'xl',
-    is2XL: breakpoint === '2xl'
+    is2XL: breakpoint === '2xl',
+    breakpoint
   }
 }
 
