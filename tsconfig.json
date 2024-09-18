@@ -3,6 +3,7 @@
   "compilerOptions": {
     "allowImportingTsExtensions": true,
     "jsx": "react-jsx",
+    "allowJs": true,
     "paths": {
       "@/*": ["./src/*"]
     }

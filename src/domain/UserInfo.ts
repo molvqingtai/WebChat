@@ -2,6 +2,8 @@ import { Remesh } from 'remesh'
 import { nanoid } from 'nanoid'
 import { BrowserSyncStorageExtern } from '@/domain/externs/Storage'
 import StorageEffect from '@/domain/modules/StorageEffect'
+import generateUglyAvatar from '@/lib/uglyAvatar'
+import generateRandomName from '@/utils/generateRandomName'
 
 export interface UserInfo {
   id: string
@@ -24,14 +26,7 @@ const UserInfoDomain = Remesh.domain({
 
     const UserInfoState = domain.state<UserInfo | null>({
       name: 'UserInfo.UserInfoState',
-      // defer: true
-      default: {
-        id: nanoid(),
-        name: '游客',
-        avatar: 'https://avatars.githubusercontent.com/u/10354233?v=4',
-        createTime: Date.now(),
-        themeMode: 'system'
-      }
+      default: null
     })
 
     const UserInfoQuery = domain.query({
@@ -80,10 +75,10 @@ const UserInfoDomain = Remesh.domain({
       }
     })
 
-    // storageEffect
-    //   .set(SyncToStorageEvent)
-    //   .get<UserInfo>((value) => SyncToStateCommand(value))
-    //   .watch<UserInfo>((value) => SyncToStateCommand(value))
+    storageEffect
+      .set(SyncToStorageEvent)
+      .get<UserInfo>((value) => SyncToStateCommand(value))
+      .watch<UserInfo>((value) => SyncToStateCommand(value!))
 
     return {
       query: {

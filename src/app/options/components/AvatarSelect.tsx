@@ -10,7 +10,7 @@ export interface AvatarSelectProps {
   className?: string
   disabled?: boolean
   compressSize?: number
-  onSuccess?: (blob: Blob) => void
+  onSuccess?: (blob: string) => void
   onWarning?: (error: Error) => void
   onError?: (error: Error) => void
   onChange?: (src: string) => void
@@ -34,8 +34,9 @@ const AvatarSelect = React.forwardRef<HTMLInputElement, AvatarSelectProps>(
           const blob = await compressImage(file, compressSize)
           const reader = new FileReader()
           reader.onload = (e) => {
-            onSuccess?.(blob)
-            onChange?.(e.target?.result as string)
+            const base64 = e.target?.result as string
+            onSuccess?.(base64)
+            onChange?.(base64)
           }
           reader.onerror = () => onError?.(new Error('Failed to read image file.'))
           reader.readAsDataURL(blob)

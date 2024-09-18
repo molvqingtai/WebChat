@@ -21,12 +21,6 @@ class PeerRoom {
   async joinRoom(roomId: string) {
     this.room = joinRoom({ appId: this.appId }, roomId)
 
-    this.room?.onPeerJoin((peerId) => {
-      console.log(`${peerId} joined`)
-      console.log(this.room?.getPeers())
-    })
-    this.room?.onPeerLeave((peerId) => console.log(`${peerId} leaved`))
-
     return this.room
   }
 

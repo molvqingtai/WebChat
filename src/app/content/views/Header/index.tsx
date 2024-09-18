@@ -11,6 +11,9 @@ const Header: FC = () => {
   const siteInfo = getSiteInfo()
   const roomDomain = useRemeshDomain(RoomDomain())
   const peerList = useRemeshQuery(roomDomain.query.PeerListQuery())
+  // const peerList = ['1', '2', '3']
+  console.log('peerList', peerList)
+  console.log(111)
 
   return (
     <div className="z-10 grid h-12 grid-flow-col items-center justify-between gap-x-4 rounded-t-xl bg-white px-4 backdrop-blur-lg">

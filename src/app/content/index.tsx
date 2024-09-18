@@ -10,6 +10,7 @@ import App from './App'
 import { IndexDBStorageImpl, BrowserSyncStorageImpl } from '@/domain/impls/Storage'
 import { PeerRoomImpl } from '@/domain/impls/PeerRoom'
 import '@/assets/styles/tailwind.css'
+import { createElement } from '@/utils'
 
 export default defineContentScript({
   cssInjectionMode: 'ui',
@@ -26,8 +27,7 @@ export default defineContentScript({
       // anchor: 'body',
       // append: 'first',
       onMount: (container) => {
-        const app = document.createElement('div')
-        app.id = 'app'
+        const app = createElement('<div id="app"></div>')
         container.append(app)
 
         const root = createRoot(app)

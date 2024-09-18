@@ -10,13 +10,15 @@ import { Button } from '@/components/ui/Button'
 import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/Form'
 import { Input } from '@/components/ui/Input'
 import UserInfoDomain, { type UserInfo } from '@/domain/UserInfo'
-import { checkSystemDarkMode } from '@/utils'
+import { checkSystemDarkMode, compressImage } from '@/utils'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/RadioGroup'
 import { Label } from '@/components/ui/Label'
+import { RefreshCcwIcon } from 'lucide-react'
+import generateUglyAvatar from '@/lib/uglyAvatar'
 
 // In chrome storage.sync, each key-value pair supports a maximum storage of 8kb
 // Image is encoded as base64, and the size is increased by about 33%.
-const COMPRESS_SIZE = 8 * 1024 - 8 * 1024 * 0.33
+const COMPRESS_SIZE = 8 * 1024 * (1 - 0.33)
 
 const defaultUserInfo: UserInfo = {
   id: nanoid(),
@@ -80,6 +82,34 @@ const ProfileForm = () => {
     toast.error(error.message)
   }
 
+  const handleRandomAvatar = async () => {
+    const svgBlob = generateUglyAvatar()
+
+    // compressImage can't directly compress svg, need to convert to jpeg first
+    const jpegBlob = await new Promise<Blob>((resolve, reject) => {
+      const image = new Image()
+      image.onload = async () => {
+        const canvas = new OffscreenCanvas(image.width, image.height)
+        const ctx = canvas.getContext('2d')
+        ctx?.drawImage(image, 0, 0)
+        const blob = await canvas.convertToBlob({ type: 'image/jpeg' })
+        resolve(blob)
+      }
+      image.onerror = () => reject(new Error('Failed to load SVG'))
+      image.src = URL.createObjectURL(svgBlob)
+    })
+    const miniAvatarBlob = await compressImage(jpegBlob, COMPRESS_SIZE)
+    const miniAvatarBase64 = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = (e) => resolve(e.target?.result as string)
+      reader.onerror = () => reject(new Error('Failed to convert Blob to Base64'))
+      reader.readAsDataURL(miniAvatarBlob)
+    })
+    console.log('kb', miniAvatarBase64.length / 1024)
+
+    form.setValue('avatar', miniAvatarBase64)
+  }
+
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit(handleSubmit)} autoComplete="off" className="relative w-96 space-y-8 p-10">
@@ -89,18 +119,30 @@ const ProfileForm = () => {
           render={({ field }) => (
             <FormItem className="absolute left-1/2 top-0 grid -translate-x-1/2 -translate-y-1/2 justify-items-center">
               <FormControl>
-                <AvatarSelect
-                  compressSize={COMPRESS_SIZE}
-                  onError={handleError}
-                  onWarning={handleWarning}
-                  className="shadow-lg"
-                  {...field}
-                ></AvatarSelect>
+                <div className="grid justify-items-center gap-y-2">
+                  <AvatarSelect
+                    compressSize={COMPRESS_SIZE}
+                    onError={handleError}
+                    onWarning={handleWarning}
+                    className="shadow-lg"
+                    {...field}
+                  ></AvatarSelect>
+                  <Button
+                    type="button"
+                    size="xs"
+                    className="mx-auto flex items-center gap-x-2"
+                    onClick={handleRandomAvatar}
+                  >
+                    <RefreshCcwIcon size={14} />
+                    Random Avatar
+                  </Button>
+                </div>
               </FormControl>
               <FormMessage />
             </FormItem>
           )}
         />
+
         <FormField
           control={form.control}
           name="name"

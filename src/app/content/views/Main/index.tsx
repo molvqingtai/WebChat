@@ -3,7 +3,6 @@ import { useRemeshDomain, useRemeshQuery, useRemeshSend } from 'remesh-react'
 
 import MessageList from '../../components/MessageList'
 import MessageItem from '../../components/MessageItem'
-import MessageListDomain from '@/domain/MessageList'
 import UserInfoDomain from '@/domain/UserInfo'
 import RoomDomain from '@/domain/Room'
 
@@ -11,8 +10,7 @@ const Main: FC = () => {
   const send = useRemeshSend()
   const roomDomain = useRemeshDomain(RoomDomain())
   const userInfoDomain = useRemeshDomain(UserInfoDomain())
-  const messageListDomain = useRemeshDomain(MessageListDomain())
-  const _messageList = useRemeshQuery(messageListDomain.query.ListQuery())
+  const _messageList = useRemeshQuery(roomDomain.query.MessageListQuery())
   const userInfo = useRemeshQuery(userInfoDomain.query.UserInfoQuery())
   const messageList = _messageList.map((message) => ({
     ...message,
