@@ -4,6 +4,7 @@ import React from 'react'
 import { Textarea } from '@/components/ui/Textarea'
 import { Markdown } from '@/components/ui/Markdown'
 import { cn } from '@/utils'
+import { ScrollArea } from '@/components/ui/ScrollArea'
 
 export interface MessageInputProps {
   value?: string
@@ -11,12 +12,13 @@ export interface MessageInputProps {
   maxLength?: number
   preview?: boolean
   autoFocus?: boolean
+  disabled?: boolean
   onInput?: (value: string) => void
   onEnter?: (value: string) => void
 }
 
 const MessageInput = React.forwardRef<HTMLTextAreaElement, MessageInputProps>(
-  ({ value = '', className, maxLength = 500, onInput, onEnter, preview, autoFocus }, ref) => {
+  ({ value = '', className, maxLength = 500, onInput, onEnter, preview, autoFocus, disabled }, ref) => {
     const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
       if (e.key === 'Enter' && !(e.shiftKey || e.ctrlKey || e.altKey || e.metaKey)) {
         e.preventDefault()
@@ -30,25 +32,22 @@ const MessageInput = React.forwardRef<HTMLTextAreaElement, MessageInputProps>(
     return (
       <div className={cn('relative', className)}>
         {preview ? (
-          <Markdown className="max-h-32 rounded-lg border border-input bg-gray-50 2xl:max-h-40">{value}</Markdown>
+          <Markdown className="max-h-28 rounded-lg border border-input bg-gray-50 2xl:max-h-40">{value}</Markdown>
         ) : (
-          // Hack: Auto-Growing Textarea
-          <div
-            data-value={value}
-            className="grid after:pointer-events-none after:invisible after:col-start-1 after:col-end-2 after:row-start-1 after:row-end-2 after:box-border after:max-h-28 after:w-full after:overflow-x-hidden after:whitespace-pre-wrap after:break-words after:rounded-lg after:border after:px-3 after:py-2 after:pb-5 after:text-sm after:content-[attr(data-value)] after:2xl:max-h-40"
-          >
+          <ScrollArea className="box-border max-h-28 w-full rounded-lg border border-input bg-background ring-offset-background focus-within:ring-1 focus-within:ring-ring 2xl:max-h-40">
             <Textarea
               ref={ref}
               onKeyDown={handleKeyDown}
               autoFocus={autoFocus}
               maxLength={maxLength}
-              className="col-start-1 col-end-2 row-start-1 row-end-2 box-border max-h-28 resize-none overflow-x-hidden whitespace-pre-wrap break-words rounded-lg bg-gray-50 pb-5 text-sm 2xl:max-h-40"
+              className="box-border resize-none whitespace-pre-wrap break-words border-none bg-gray-50 pb-5 [field-sizing:content] focus:ring-0 focus:ring-offset-0"
               rows={2}
               value={value}
               placeholder="Type your message here."
               onInput={handleInput}
+              disabled={disabled}
             />
-          </div>
+          </ScrollArea>
         )}
         <div className="absolute bottom-1 right-3 rounded-lg text-xs text-slate-400">
           {value?.length ?? 0}/{maxLength}

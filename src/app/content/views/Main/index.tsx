@@ -26,18 +26,6 @@ const Main: FC = () => {
     send(roomDomain.command.SendHateMessageCommand(messageId))
   }
 
-  // useEffect(() => {
-  //   const lastMessageRef = messageListRef.current?.querySelector('[data-index]:last-child')
-  //   const timerId = setTimeout(() => {
-  //     requestAnimationFrame(() => {
-  //       lastMessageRef?.scrollIntoView({ behavior: isUpdate.current ? 'smooth' : 'instant', block: 'end' })
-  //       isUpdate.current = true
-  //     })
-  //   }, 0)
-
-  //   return () => clearTimeout(timerId)
-  // }, [messageList.length])
-
   return (
     <MessageList>
       {messageList.map((message, index) => (

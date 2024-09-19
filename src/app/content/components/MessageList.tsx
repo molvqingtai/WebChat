@@ -8,7 +8,7 @@ export interface MessageListProps {
   children?: Array<ReactElement<MessageItemProps>>
 }
 const MessageList: FC<MessageListProps> = ({ children }) => {
-  const scrollParentRef = useRef<HTMLDivElement | null>(null)
+  const scrollParentRef = useRef<HTMLDivElement>(null)
   return (
     <ScrollArea ref={scrollParentRef}>
       <Virtuoso

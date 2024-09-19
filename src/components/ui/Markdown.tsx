@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
 import { cn } from '@/utils'
+import { ScrollArea, ScrollBar } from './ScrollArea'
 
 export interface MarkdownProps {
   children?: string
@@ -14,11 +15,11 @@ const Markdown: FC<MarkdownProps> = ({ children = '', className }) => {
     <ReactMarkdown
       components={{
         h1: ({ className, ...props }) => (
-          <h1 className={cn('mb-2 mt-0 font-semibold text-2xl', className)} {...props} />
+          <h1 className={cn('my-2 mt-0 font-semibold text-2xl', className)} {...props} />
         ),
         h2: ({ className, ...props }) => <h2 className={cn('mb-2 mt-0 font-semibold', className)} {...props} />,
         img: ({ className, alt, ...props }) => (
-          <img className={cn('my-2 max-w-[50%]', className)} alt={alt} {...props} />
+          <img className={cn('my-2 max-w-[100%] rounded', className)} alt={alt} {...props} />
         ),
         ul: ({ className, ...props }) => {
           Reflect.deleteProperty(props, 'ordered')
@@ -26,18 +27,17 @@ const Markdown: FC<MarkdownProps> = ({ children = '', className }) => {
         },
         input: ({ className, ...props }) => <input className={cn('my-0', className)} {...props} />,
         table: ({ className, ...props }) => (
-          <div className="my-4 w-full overflow-y-auto">
-            <table className={cn('my-0 w-full rounded-md', className)} {...props} />
+          <div className="my-2 w-full">
+            <ScrollArea>
+              <table className={cn('my-0 w-full rounded-md', className)} {...props} />
+              <ScrollBar orientation="horizontal" />
+            </ScrollArea>
           </div>
         ),
         tr: ({ className, ...props }) => {
-          // fix: spell it as lowercase `isheader` warning
-          Reflect.deleteProperty(props, 'isHeader')
           return <tr className={cn('m-0 border-t p-0 even:bg-muted', className)} {...props} />
         },
         th: ({ className, ...props }) => {
-          // fix: spell it as lowercase `isheader` warning
-          Reflect.deleteProperty(props, 'isHeader')
           return (
             <th
               className={cn(
@@ -58,7 +58,14 @@ const Markdown: FC<MarkdownProps> = ({ children = '', className }) => {
               {...props}
             />
           )
-        }
+        },
+        pre: ({ className, ...props }) => <pre className={cn('my-2', className)} {...props} />,
+        code: ({ className, ...props }) => (
+          <ScrollArea>
+            <code className={cn('text-sm', className)} {...props}></code>
+            <ScrollBar orientation="horizontal" />
+          </ScrollArea>
+        )
       }}
       remarkPlugins={[remarkGfm, remarkBreaks]}
       className={cn(className, 'prose prose-sm prose-slate break-words')}

@@ -81,4 +81,11 @@
     all: initial;
     direction: ltr;
   }
+  /**
+   * Fix: scroll area dispay: table
+   * @see https://github.com/radix-ui/primitives/issues/3129
+   */
+  [data-radix-scroll-area-viewport] > div {
+    display: block !important;
+  }
 }

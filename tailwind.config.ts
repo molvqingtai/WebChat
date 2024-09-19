@@ -52,6 +52,9 @@ export default {
       minWidth: {
         screen: '100vw'
       },
+      maxWidth: {
+        layer: 'revert-layer'
+      },
       borderRadius: {
         lg: 'var(--radius)',
         md: 'calc(var(--radius) - 2px)',
