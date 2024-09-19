@@ -17,9 +17,6 @@ const Main: FC = () => {
     like: message.likeUsers.some((likeUser) => likeUser.userId === userInfo?.id),
     hate: message.hateUsers.some((hateUser) => hateUser.userId === userInfo?.id)
   }))
-  const messageListRef = useRef<HTMLDivElement>(null)
-
-  const isUpdate = useRef(false)
 
   const handleLikeChange = (messageId: string) => {
     send(roomDomain.command.SendLikeMessageCommand(messageId))
@@ -29,20 +26,20 @@ const Main: FC = () => {
     send(roomDomain.command.SendHateMessageCommand(messageId))
   }
 
-  useEffect(() => {
-    const lastMessageRef = messageListRef.current?.querySelector('[data-index]:last-child')
-    const timerId = setTimeout(() => {
-      requestAnimationFrame(() => {
-        lastMessageRef?.scrollIntoView({ behavior: isUpdate.current ? 'smooth' : 'instant', block: 'end' })
-        isUpdate.current = true
-      })
-    }, 0)
+  // useEffect(() => {
+  //   const lastMessageRef = messageListRef.current?.querySelector('[data-index]:last-child')
+  //   const timerId = setTimeout(() => {
+  //     requestAnimationFrame(() => {
+  //       lastMessageRef?.scrollIntoView({ behavior: isUpdate.current ? 'smooth' : 'instant', block: 'end' })
+  //       isUpdate.current = true
+  //     })
+  //   }, 0)
 
-    return () => clearTimeout(timerId)
-  }, [messageList.length])
+  //   return () => clearTimeout(timerId)
+  // }, [messageList.length])
 
   return (
-    <MessageList ref={messageListRef}>
+    <MessageList>
       {messageList.map((message, index) => (
         <MessageItem
           key={message.id}

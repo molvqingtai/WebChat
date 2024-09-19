@@ -134,7 +134,7 @@ const ProfileForm = () => {
                     onClick={handleRandomAvatar}
                   >
                     <RefreshCcwIcon size={14} />
-                    Random Avatar
+                    Ugly Avatar
                   </Button>
                 </div>
               </FormControl>

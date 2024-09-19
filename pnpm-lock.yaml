@@ -83,6 +83,9 @@ importers:
       react-use:
         specifier: ^17.5.0
         version: 17.5.1(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+      react-virtuoso:
+        specifier: ^4.10.4
+        version: 4.10.4(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       remark-breaks:
         specifier: ^4.0.0
         version: 4.0.0
@@ -4795,6 +4798,13 @@ packages:
     peerDependencies:
       react: '*'
       react-dom: '*'
+
+  react-virtuoso@4.10.4:
+    resolution: {integrity: sha512-G/gprhTbK+lzMxoo/iStcZxVEGph/cIhc3WANEpt92RuMw+LiCZOmBfKoeoZOHlm/iyftTrDJhGaTCpxyucnkQ==}
+    engines: {node: '>=10'}
+    peerDependencies:
+      react: '>=16 || >=17 || >= 18'
+      react-dom: '>=16 || >=17 || >= 18'
 
   react@18.3.1:
     resolution: {integrity: sha512-wS+hAgJShR0KhEvPJArfuPVN1+Hz1t0Y6n5jLrGQbkb4urgPE/0Rve+1kMB1v/oWgHgm4WIcV+i7F2pTVj+2iQ==}
@@ -11332,6 +11342,11 @@ snapshots:
       throttle-debounce: 3.0.1
       ts-easing: 0.2.0
       tslib: 2.7.0
+
+  react-virtuoso@4.10.4(react-dom@18.3.1(react@18.3.1))(react@18.3.1):
+    dependencies:
+      react: 18.3.1
+      react-dom: 18.3.1(react@18.3.1)
 
   react@18.3.1:
     dependencies:

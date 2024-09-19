@@ -69,6 +69,7 @@
     "react-hook-form": "^7.51.0",
     "react-markdown": "^9.0.1",
     "react-use": "^17.5.0",
+    "react-virtuoso": "^4.10.4",
     "remark-breaks": "^4.0.0",
     "remark-gfm": "^4.0.0",
     "remesh": "^4.2.2",

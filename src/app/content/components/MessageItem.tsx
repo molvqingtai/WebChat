@@ -24,10 +24,7 @@ const MessageItem: FC<MessageItemProps> = (props) => {
     props.onHateChange?.(checked)
   }
   return (
-    <div
-      data-index={props.index}
-      className="box-border grid grid-cols-[auto_1fr] gap-x-2 px-4 [content-visibility:auto] first:pt-4 last:pb-4"
-    >
+    <div data-index={props.index} className="box-border grid grid-cols-[auto_1fr] gap-x-2 px-4  first:pt-4 last:pb-4">
       <Avatar>
         <AvatarImage src={props.data.userAvatar} alt="avatar" />
         <AvatarFallback>{props.data.username.at(0)}</AvatarFallback>

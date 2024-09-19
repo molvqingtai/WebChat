@@ -50,7 +50,7 @@ const AvatarSelect = React.forwardRef<HTMLInputElement, AvatarSelectProps>(
         <Avatar
           tabIndex={disabled ? -1 : 1}
           className={cn(
-            'group h-20 w-20 cursor-pointer border-4 border-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+            'group h-24 w-24 cursor-pointer border-4 border-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
             {
               'cursor-not-allowed': disabled,
               'opacity-50': disabled

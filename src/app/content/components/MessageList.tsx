@@ -1,20 +1,26 @@
-import { type ReactElement } from 'react'
+import { FC, useRef, type ReactElement } from 'react'
 
-import React from 'react'
 import { type MessageItemProps } from './MessageItem'
 import { ScrollArea } from '@/components/ui/ScrollArea'
+import { Virtuoso } from 'react-virtuoso'
 
 export interface MessageListProps {
   children?: Array<ReactElement<MessageItemProps>>
 }
-// [&>div>div]:!block fix word-break: break-word;
-const MessageList = React.forwardRef<HTMLDivElement, MessageListProps>(({ children }, ref) => {
+const MessageList: FC<MessageListProps> = ({ children }) => {
+  const scrollParentRef = useRef<HTMLDivElement | null>(null)
   return (
-    <ScrollArea ref={ref} className="[&>div>div]:!block">
-      {children}
+    <ScrollArea ref={scrollParentRef}>
+      <Virtuoso
+        followOutput={(isAtBottom: boolean) => (isAtBottom ? 'smooth' : 'auto')}
+        initialTopMostItemIndex={{ index: 'LAST', align: 'end' }}
+        data={children}
+        customScrollParent={scrollParentRef.current!}
+        itemContent={(_: any, item: ReactElement<MessageItemProps>) => item}
+      />
     </ScrollArea>
   )
-})
+}
 
 MessageList.displayName = 'MessageList'
 
