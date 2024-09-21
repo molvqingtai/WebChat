@@ -10,15 +10,11 @@ import { Button } from '@/components/ui/Button'
 import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/Form'
 import { Input } from '@/components/ui/Input'
 import UserInfoDomain, { type UserInfo } from '@/domain/UserInfo'
-import { checkSystemDarkMode, compressImage } from '@/utils'
+import { checkSystemDarkMode, generateRandomAvatar } from '@/utils'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/RadioGroup'
 import { Label } from '@/components/ui/Label'
 import { RefreshCcwIcon } from 'lucide-react'
-import generateUglyAvatar from '@/lib/uglyAvatar'
-
-// In chrome storage.sync, each key-value pair supports a maximum storage of 8kb
-// Image is encoded as base64, and the size is increased by about 33%.
-const COMPRESS_SIZE = 8 * 1024 * (1 - 0.33)
+import { MAX_AVATAR_SIZE } from '@/constants/config'
 
 const defaultUserInfo: UserInfo = {
   id: nanoid(),
@@ -82,32 +78,9 @@ const ProfileForm = () => {
     toast.error(error.message)
   }
 
-  const handleRandomAvatar = async () => {
-    const svgBlob = generateUglyAvatar()
-
-    // compressImage can't directly compress svg, need to convert to jpeg first
-    const jpegBlob = await new Promise<Blob>((resolve, reject) => {
-      const image = new Image()
-      image.onload = async () => {
-        const canvas = new OffscreenCanvas(image.width, image.height)
-        const ctx = canvas.getContext('2d')
-        ctx?.drawImage(image, 0, 0)
-        const blob = await canvas.convertToBlob({ type: 'image/jpeg' })
-        resolve(blob)
-      }
-      image.onerror = () => reject(new Error('Failed to load SVG'))
-      image.src = URL.createObjectURL(svgBlob)
-    })
-    const miniAvatarBlob = await compressImage(jpegBlob, COMPRESS_SIZE)
-    const miniAvatarBase64 = await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader()
-      reader.onload = (e) => resolve(e.target?.result as string)
-      reader.onerror = () => reject(new Error('Failed to convert Blob to Base64'))
-      reader.readAsDataURL(miniAvatarBlob)
-    })
-    console.log('kb', miniAvatarBase64.length / 1024)
-
-    form.setValue('avatar', miniAvatarBase64)
+  const handleRefreshAvatar = async () => {
+    const avatarBase64 = await generateRandomAvatar(MAX_AVATAR_SIZE)
+    form.setValue('avatar', avatarBase64)
   }
 
   return (
@@ -121,7 +94,7 @@ const ProfileForm = () => {
               <FormControl>
                 <div className="grid justify-items-center gap-y-2">
                   <AvatarSelect
-                    compressSize={COMPRESS_SIZE}
+                    compressSize={MAX_AVATAR_SIZE}
                     onError={handleError}
                     onWarning={handleWarning}
                     className="shadow-lg"
@@ -131,7 +104,7 @@ const ProfileForm = () => {
                     type="button"
                     size="xs"
                     className="mx-auto flex items-center gap-x-2"
-                    onClick={handleRandomAvatar}
+                    onClick={handleRefreshAvatar}
                   >
                     <RefreshCcwIcon size={14} />
                     Ugly Avatar

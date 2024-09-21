@@ -31,7 +31,7 @@ const AvatarSelect = React.forwardRef<HTMLInputElement, AvatarSelectProps>(
            * In chrome storage.sync, each key-value pair supports a maximum storage of 8kb
            * and all key-value pairs support a maximum storage of 100kb.
            */
-          const blob = await compressImage(file, compressSize)
+          const blob = await compressImage({ input: file, targetSize: compressSize })
           const reader = new FileReader()
           reader.onload = (e) => {
             const base64 = e.target?.result as string

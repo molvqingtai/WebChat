@@ -27,15 +27,11 @@ const AppButton: FC<AppButtonProps> = ({ children }) => {
 
   /**
    * Waiting for PR merge
-   * https://github.com/streamich/react-use/pull/2528
+   * @see https://github.com/streamich/react-use/pull/2528
    */
-  useClickAway(
-    menuRef,
-    () => {
-      setOpen(false)
-    },
-    ['click']
-  )
+  useClickAway(menuRef, () => {
+    setOpen(false)
+  }, ['click'])
 
   const handleToggleMenu = (e: MouseEvent<HTMLButtonElement>) => {
     e.preventDefault()
@@ -55,7 +51,7 @@ const AppButton: FC<AppButtonProps> = ({ children }) => {
   }
 
   return (
-    <div ref={menuRef} className="fixed bottom-5 right-5 z-top grid select-none justify-center gap-y-3">
+    <div ref={menuRef} className="fixed bottom-5 right-5 z-infinity grid select-none justify-center gap-y-3">
       {/* <div className="grid gap-y-3" inert={!open && ''}> */}
       <div className="pointer-events-none grid gap-y-3">
         <Button

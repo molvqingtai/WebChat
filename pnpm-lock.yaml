@@ -44,6 +44,9 @@ importers:
       '@radix-ui/react-switch':
         specifier: ^1.1.0
         version: 1.1.0(@types/react-dom@18.3.0)(@types/react@18.3.7)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+      '@resreq/timer':
+        specifier: ^1.1.5
+        version: 1.1.5
       '@tailwindcss/typography':
         specifier: ^0.5.15
         version: 0.5.15(tailwindcss@3.4.12)
@@ -1642,6 +1645,12 @@ packages:
 
   '@radix-ui/rect@1.1.0':
     resolution: {integrity: sha512-A9+lCBZoaMJlVKcRBz2YByCG+Cp2t6nAnMnNba+XiWxnj6r4JUFqfsgwocMBZU9LPtdxC6wB56ySYpc7LQIoJg==}
+
+  '@resreq/event-hub@1.6.0':
+    resolution: {integrity: sha512-SEzPuAc2bQdMV9cKrBIjW3EvntpU8NcBxdgdEo9yLKAeRfvdM4oM/sG8pFPRZOpYwOytaJqWGqwjc+RSRFFTvQ==}
+
+  '@resreq/timer@1.1.5':
+    resolution: {integrity: sha512-QZrY3+1nbDd3e15muzFGRxJAaKYYJ9xC5+E/cm/B3cEXQbD8pjy/lilsMOaOpvligpUE1jXxiSZzuvH334fq5w==}
 
   '@rollup/pluginutils@5.1.0':
     resolution: {integrity: sha512-XTIWOPPcpvyKI6L1NHo0lFlCyznUEyPmPY1mc3KpPVDYulHSTvyeLNVW00QTLIAFNhR3kYnJTQHeGqU4M3n09g==}
@@ -7709,6 +7718,12 @@ snapshots:
       '@types/react': 18.3.7
 
   '@radix-ui/rect@1.1.0': {}
+
+  '@resreq/event-hub@1.6.0': {}
+
+  '@resreq/timer@1.1.5':
+    dependencies:
+      '@resreq/event-hub': 1.6.0
 
   '@rollup/pluginutils@5.1.0(rollup@4.21.3)':
     dependencies:

@@ -12,7 +12,7 @@ export default {
     },
     extend: {
       zIndex: {
-        top: '2147483647'
+        infinity: 'calc(infinity)'
       },
       colors: {
         border: 'hsl(var(--border))',
@@ -52,8 +52,8 @@ export default {
       minWidth: {
         screen: '100vw'
       },
-      maxWidth: {
-        layer: 'revert-layer'
+      backdropBlur: {
+        xs: '2px'
       },
       borderRadius: {
         lg: 'var(--radius)',

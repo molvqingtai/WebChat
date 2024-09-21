@@ -1,60 +1,80 @@
+export type ImageType = 'image/jpeg' | 'image/png' | 'image/webp'
+
+export interface Options {
+  input: Blob
+  targetSize: number
+  toleranceSize?: number
+  outputType?: ImageType
+}
+
 const compress = async (
   imageBitmap: ImageBitmap,
   targetSize: number,
   low: number,
   high: number,
-  bestBlob: Blob,
-  threshold: number
+  toleranceSize: number,
+  outputType: ImageType
 ): Promise<Blob> => {
-  // Calculate the middle value of quality
+  // Calculate the middle quality value
   const mid = (low + high) / 2
 
   // Calculate the width and height after scaling
-  const width = imageBitmap.width * mid
-  const height = imageBitmap.height * mid
+  const width = Math.round(imageBitmap.width * mid)
+  const height = Math.round(imageBitmap.height * mid)
 
   const offscreenCanvas = new OffscreenCanvas(width, height)
   const offscreenContext = offscreenCanvas.getContext('2d')!
 
-  offscreenContext.drawImage(imageBitmap, 0, 0, width, height)
+  // Draw the scaled image
+  offscreenContext.drawImage(imageBitmap, 0, 0, imageBitmap.width, imageBitmap.height, 0, 0, width, height)
 
-  const outputBlob = await offscreenCanvas.convertToBlob({ type: 'image/jpeg', quality: mid })
+  const outputBlob = await offscreenCanvas.convertToBlob({ type: outputType, quality: mid })
 
-  // Calculate the current size based on the current quality
   const currentSize = outputBlob.size
 
-  // If the current size is close to the target size, update the bestBlob
-  if (currentSize <= targetSize && Math.abs(currentSize - targetSize) < Math.abs(bestBlob.size - targetSize)) {
-    bestBlob = outputBlob
-  }
-
-  // If the current size is between -1024 ~ 0, return the result
-  if ((currentSize - targetSize <= 0 && currentSize - targetSize >= -threshold) || high - low < 0.01) {
-    return bestBlob
-  }
-
-  // Adjust the range for recursion based on the current quality and size
-  if (currentSize > targetSize) {
-    return await compress(imageBitmap, targetSize, low, mid, bestBlob, threshold)
+  // Adjust the logic based on the positive or negative value of toleranceSize
+  if (toleranceSize < 0) {
+    // Negative value: allow results smaller than the target value
+    if (currentSize <= targetSize && currentSize >= targetSize + toleranceSize) {
+      return outputBlob
+    }
   } else {
-    return await compress(imageBitmap, targetSize, mid, high, bestBlob, threshold)
+    // Positive value: allow results larger than the target value
+    if (currentSize >= targetSize && currentSize <= targetSize + toleranceSize) {
+      return outputBlob
+    }
+  }
+
+  // Use relative error
+  if ((high - low) / high < 0.01) {
+    return outputBlob
+  }
+
+  if (currentSize > targetSize) {
+    return await compress(imageBitmap, targetSize, low, mid, toleranceSize, outputType)
+  } else {
+    return await compress(imageBitmap, targetSize, mid, high, toleranceSize, outputType)
   }
 }
 
-const compressImage = async (inputBlob: Blob, targetSize: number, threshold: number = 1024) => {
-  // If the original size already meets the target size, return the original Blob
-  if (inputBlob.size <= targetSize) {
-    return inputBlob
+const compressImage = async (options: Options) => {
+  const { input, targetSize, toleranceSize = -1024 } = options
+  if (!['image/jpeg', 'image/png', 'image/webp'].includes(input.type)) {
+    throw new Error('Invalid input type, only support image/jpeg, image/png, image/webp')
   }
 
-  // Initialize the range of quality
+  if (input.size <= targetSize) {
+    return input
+  }
+
+  const outputType = options.outputType || (input.type as ImageType)
+  const imageBitmap = await createImageBitmap(input)
+
+  // Initialize quality range
   const low = 0
   const high = 1
 
-  const imageBitmap = await createImageBitmap(inputBlob)
-
-  // Call the recursive function
-  return await compress(imageBitmap, targetSize, low, high, inputBlob, threshold)
+  return await compress(imageBitmap, targetSize, low, high, toleranceSize, outputType)
 }
 
 export default compressImage

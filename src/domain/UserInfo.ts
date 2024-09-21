@@ -1,9 +1,6 @@
 import { Remesh } from 'remesh'
-import { nanoid } from 'nanoid'
 import { BrowserSyncStorageExtern } from '@/domain/externs/Storage'
 import StorageEffect from '@/domain/modules/StorageEffect'
-import generateUglyAvatar from '@/lib/uglyAvatar'
-import generateRandomName from '@/utils/generateRandomName'
 
 export interface UserInfo {
   id: string

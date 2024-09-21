@@ -43,7 +43,8 @@ const generateRandomName = (): string => {
     'Bella',
     'Charlie',
     'Daisy',
-    'Ella'
+    'Ella',
+    'JinPing'
   ]
 
   const lastNames = [
@@ -90,7 +91,8 @@ const generateRandomName = (): string => {
     'Lin',
     'Lu',
     'Zheng',
-    'Huang'
+    'Huang',
+    'Xi'
   ]
 
   const randomFirstName = firstNames[Math.floor(Math.random() * firstNames.length)]

@@ -1,5 +1,7 @@
 // https://www.webfx.com/tools/emoji-cheat-sheet/
 
+import { Message } from '@/domain/MessageList'
+
 export const EMOJI_LIST = [
   '😀',
   '😃',
@@ -186,3 +188,10 @@ export const BREAKPOINTS = {
 export const MESSAGE_MAX_LENGTH = 500 as const
 
 export const STORAGE_NAME = 'WEB_CHAT' as const
+
+/**
+ * In chrome storage.sync, each key-value pair supports a maximum storage of 8kb
+ * Image is encoded as base64, and the size is increased by about 33%.
+ * 8kb * (1 - 0.33) = 5488 bytes
+ */
+export const MAX_AVATAR_SIZE = 5488 as const

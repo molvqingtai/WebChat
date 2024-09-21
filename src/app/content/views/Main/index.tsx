@@ -1,4 +1,4 @@
-import { useEffect, type FC, useRef } from 'react'
+import { type FC } from 'react'
 import { useRemeshDomain, useRemeshQuery, useRemeshSend } from 'remesh-react'
 
 import MessageList from '../../components/MessageList'

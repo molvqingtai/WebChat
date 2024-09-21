@@ -48,14 +48,13 @@ const RoomDomain = Remesh.domain({
     const PeerListQuery = domain.query({
       name: 'Room.PeerListQuery',
       impl: ({ get }) => {
-        console.log('PeerListQuery')
         return get(PeerListState())
       }
     })
 
     const JoinRoomCommand = domain.command({
       name: 'RoomJoinRoomCommand',
-      impl: ({ get }, roomId: string) => {
+      impl: (_, roomId: string) => {
         peerRoom.joinRoom(roomId)
         return [JoinRoomEvent(peerRoom.selfId)]
       }
@@ -63,7 +62,7 @@ const RoomDomain = Remesh.domain({
 
     const LeaveRoomCommand = domain.command({
       name: 'RoomLeaveRoomCommand',
-      impl: ({ get }) => {
+      impl: (_) => {
         peerRoom.leaveRoom()
         return [LeaveRoomEvent(peerRoom.selfId)]
       }
@@ -162,16 +161,9 @@ const RoomDomain = Remesh.domain({
       impl: ({ get }, action: { type: 'create' | 'delete'; peerId: string }) => {
         const peerList = get(PeerListState())
         if (action.type === 'create') {
-          console.log('create', [...new Set(peerList).add(action.peerId)])
-
           return [PeerListState().new([...new Set(peerList).add(action.peerId)])]
         }
         if (action.type === 'delete') {
-          console.log(
-            'delete',
-            peerList.filter((peerId) => peerId == action.peerId)
-          )
-
           return [PeerListState().new(peerList.filter((peerId) => peerId == action.peerId))]
         }
         return null

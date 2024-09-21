@@ -14,7 +14,7 @@ import { createElement } from '@/utils'
 
 export default defineContentScript({
   cssInjectionMode: 'ui',
-  matches: ['*://*.example.com/*', '*://*.google.com/*', '*://*.v2ex.com/*'],
+  matches: ['*://*.example.com/*', '*://*.v2ex.com/*'],
   async main(ctx) {
     const store = Remesh.store({
       externs: [IndexDBStorageImpl, BrowserSyncStorageImpl, PeerRoomImpl],
