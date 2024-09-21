@@ -24,8 +24,8 @@ export default defineContentScript({
     const ui = await createShadowRootUi(ctx, {
       name: __NAME__,
       position: 'inline',
-      // anchor: 'body',
-      // append: 'first',
+      anchor: 'body',
+      mode: __DEV__ ? 'open' : 'closed',
       onMount: (container) => {
         const app = createElement('<div id="app"></div>')
         container.append(app)

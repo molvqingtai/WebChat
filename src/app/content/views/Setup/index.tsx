@@ -40,10 +40,8 @@ const generateUserInfo = async (): Promise<UserInfo> => {
   }
 }
 
-const generateMessage = async (): Promise<Message> => {
-  const userAvatar = await generateRandomAvatar(MAX_AVATAR_SIZE)
-  const username = generateRandomName()
-  const userId = nanoid()
+const generateMessage = async (userInfo: UserInfo): Promise<Message> => {
+  const { name: username, avatar: userAvatar, id: userId } = userInfo
   return {
     id: nanoid(),
     body: mockTextList.shift()!,
@@ -67,23 +65,28 @@ const Setup: FC = () => {
     send(messageListDomain.command.ClearListCommand())
   }
 
-  const refreshUserInfo = async () => setUserInfo(await generateUserInfo())
-  const createMessage = async () => {
-    const message = await generateMessage()
+  const refreshUserInfo = async () => {
+    const userInfo = await generateUserInfo()
+    setUserInfo(userInfo)
+    return userInfo
+  }
+  const createMessage = async (userInfo: UserInfo) => {
+    const message = await generateMessage(userInfo!)
     send(messageListDomain.command.CreateItemCommand(message))
   }
 
   useEffect(() => {
     send(messageListDomain.command.ClearListCommand())
-    const userInfoTimer = new Timer(refreshUserInfo, { delay: 2000, immediate: true })
-    const messageTimer = new Timer(createMessage, { delay: 2000, immediate: true, limit: mockTextList.length })
+    const timer = new Timer(
+      async () => {
+        const userInfo = await refreshUserInfo()
+        await createMessage(userInfo)
+      },
+      { delay: 2000, immediate: true, limit: mockTextList.length }
+    )
 
-    userInfoTimer.start()
-    messageTimer.start()
-    return () => {
-      userInfoTimer.stop()
-      messageTimer.stop()
-    }
+    timer.start()
+    return () => timer.stop()
   }, [])
   return (
     <div className="absolute inset-0 z-50 flex  rounded-xl bg-black/10 shadow-2xl  backdrop-blur-sm">
