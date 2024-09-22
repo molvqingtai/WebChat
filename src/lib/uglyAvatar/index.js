@@ -57,8 +57,83 @@ function createAvatarSvg() {
       'rgb(165, 42, 42)', // Red
       'rgb(145, 85, 61)', // Auburn
       'rgb(128, 128, 128)', // Grey
-      'rgb(185, 55, 55)' // Fire
-      // ... 其他颜色
+      'rgb(185, 55, 55)', // Fire
+      'rgb(255, 192, 203)', // Pastel Pink
+      'rgb(255, 105, 180)', // Bright Pink
+      'rgb(230, 230, 250)', // Lavender
+      'rgb(64, 224, 208)', // Turquoise
+      'rgb(0, 191, 255)', // Bright Blue
+      'rgb(148, 0, 211)', // Deep Purple
+      'rgb(50, 205, 50)', // Lime Green
+      'rgb(255, 165, 0)', // Vivid Orange
+      'rgb(220, 20, 60)', // Crimson Red
+      'rgb(192, 192, 192)', // Silver
+      'rgb(255, 215, 0)', // Gold
+      'rgb(255, 255, 255)', // White
+      'rgb(124, 252, 0)', // Lawn Green
+      'rgb(127, 255, 0)', // Chartreuse
+      'rgb(0, 255, 127)', // Spring Green
+      'rgb(72, 209, 204)', // Medium Turquoise
+      'rgb(0, 255, 255)', // Cyan
+      'rgb(0, 206, 209)', // Dark Turquoise
+      'rgb(32, 178, 170)', // Light Sea Green
+      'rgb(95, 158, 160)', // Cadet Blue
+      'rgb(70, 130, 180)', // Steel Blue
+      'rgb(176, 196, 222)', // Light Steel Blue
+      'rgb(30, 144, 255)', // Dodger Blue
+      'rgb(135, 206, 235)', // Sky Blue
+      'rgb(0, 0, 139)', // Dark Blue
+      'rgb(138, 43, 226)', // Blue Violet
+      'rgb(75, 0, 130)', // Indigo
+      'rgb(139, 0, 139)', // Dark Magenta
+      'rgb(153, 50, 204)', // Dark Orchid
+      'rgb(186, 85, 211)', // Medium Orchid
+      'rgb(218, 112, 214)', // Orchid
+      'rgb(221, 160, 221)', // Plum
+      'rgb(238, 130, 238)', // Violet
+      'rgb(255, 0, 255)', // Magenta
+      'rgb(216, 191, 216)', // Thistle
+      'rgb(255, 20, 147)', // Deep Pink
+      'rgb(255, 69, 0)', // Orange Red
+      'rgb(255, 140, 0)', // Dark Orange
+      'rgb(255, 165, 0)', // Orange
+      'rgb(250, 128, 114)', // Salmon
+      'rgb(233, 150, 122)', // Dark Salmon
+      'rgb(240, 128, 128)', // Light Coral
+      'rgb(205, 92, 92)', // Indian Red
+      'rgb(255, 99, 71)', // Tomato
+      'rgb(255, 160, 122)', // Light Salmon
+      'rgb(220, 20, 60)', // Crimson
+      'rgb(139, 0, 0)', // Dark Red
+      'rgb(178, 34, 34)', // Fire Brick
+      'rgb(250, 235, 215)', // Antique White
+      'rgb(255, 239, 213)', // Papaya Whip
+      'rgb(255, 235, 205)', // Blanched Almond
+      'rgb(255, 222, 173)', // Navajo White
+      'rgb(245, 245, 220)', // Beige
+      'rgb(255, 228, 196)', // Bisque
+      'rgb(255, 218, 185)', // Peach Puff
+      'rgb(244, 164, 96)', // Sandy Brown
+      'rgb(210, 180, 140)', // Tan
+      'rgb(222, 184, 135)', // Burly Wood
+      'rgb(250, 250, 210)', // Light Goldenrod Yellow
+      'rgb(255, 250, 205)', // Lemon Chiffon
+      'rgb(255, 245, 238)', // Sea Shell
+      'rgb(253, 245, 230)', // Old Lace
+      'rgb(255, 228, 225)', // Misty Rose
+      'rgb(255, 240, 245)', // Lavender Blush
+      'rgb(250, 240, 230)', // Linen
+      'rgb(255, 228, 181)', // Moccasin
+      'rgb(255, 250, 250)', // Snow
+      'rgb(240, 255, 255)', // Azure
+      'rgb(240, 255, 240)', // Honeydew
+      'rgb(245, 245, 245)', // White Smoke
+      'rgb(245, 255, 250)', // Mint Cream
+      'rgb(240, 248, 255)', // Alice Blue
+      'rgb(240, 248, 255)', // Ghost White
+      'rgb(248, 248, 255)', // Ghost White
+      'rgb(255, 250, 240)', // Floral White
+      'rgb(253, 245, 230)' // Old Lace
     ],
     hairColor: 'black',
     dyeColorOffset: '50%',
@@ -72,8 +147,54 @@ function createAvatarSvg() {
       'rgb(188, 143, 143)', // Dusty Rose
       'rgb(135, 206, 235)', // Sky Blue
       'rgb(245, 255, 250)', // Mint Cream
-      'rgb(245, 222, 179)' // Wheat
-      // ... 其他颜色
+      'rgb(245, 222, 179)', // Wheat
+      'rgb(47, 79, 79)', // Dark Slate Gray
+      'rgb(72, 61, 139)', // Dark Slate Blue
+      'rgb(60, 20, 20)', // Dark Brown
+      'rgb(25, 25, 112)', // Midnight Blue
+      'rgb(139, 0, 0)', // Dark Red
+      'rgb(85, 107, 47)', // Olive Drab
+      'rgb(128, 0, 128)', // Purple
+      'rgb(0, 100, 0)', // Dark Green
+      'rgb(0, 0, 139)', // Dark Blue
+      'rgb(105, 105, 105)', // Dim Gray
+      'rgb(240, 128, 128)', // Light Coral
+      'rgb(255, 160, 122)', // Light Salmon
+      'rgb(255, 218, 185)', // Peach Puff
+      'rgb(255, 228, 196)', // Bisque
+      'rgb(255, 222, 173)', // Navajo White
+      'rgb(255, 250, 205)', // Lemon Chiffon
+      'rgb(250, 250, 210)', // Light Goldenrod Yellow
+      'rgb(255, 239, 213)', // Papaya Whip
+      'rgb(255, 245, 238)', // Sea Shell
+      'rgb(255, 248, 220)', // Cornsilk
+      'rgb(255, 255, 240)', // Ivory
+      'rgb(240, 255, 240)', // Honeydew
+      'rgb(240, 255, 255)', // Azure
+      'rgb(240, 248, 255)', // Alice Blue
+      'rgb(248, 248, 255)', // Ghost White
+      'rgb(255, 250, 250)', // Snow
+      'rgb(255, 240, 245)', // Lavender Blush
+      'rgb(255, 228, 225)', // Misty Rose
+      'rgb(230, 230, 250)', // Lavender
+      'rgb(216, 191, 216)', // Thistle
+      'rgb(221, 160, 221)', // Plum
+      'rgb(238, 130, 238)', // Violet
+      'rgb(218, 112, 214)', // Orchid
+      'rgb(186, 85, 211)', // Medium Orchid
+      'rgb(147, 112, 219)', // Medium Purple
+      'rgb(138, 43, 226)', // Blue Violet
+      'rgb(148, 0, 211)', // Dark Violet
+      'rgb(153, 50, 204)', // Dark Orchid
+      'rgb(139, 69, 19)', // Saddle Brown
+      'rgb(160, 82, 45)', // Sienna
+      'rgb(210, 105, 30)', // Chocolate
+      'rgb(205, 133, 63)', // Peru
+      'rgb(244, 164, 96)', // Sandy Brown
+      'rgb(222, 184, 135)', // Burly Wood
+      'rgb(255, 250, 240)', // Floral White
+      'rgb(253, 245, 230)', // Old Lace
+      'rgb(250, 240, 230)' // Linen
     ],
     mouthPoints: []
   }
@@ -250,7 +371,6 @@ function createAvatarSvg() {
   return createElement(svgTemplate)
 }
 
-// 导出函数
 export default function generateUglyAvatar() {
   const svgElement = createAvatarSvg()
   const serializer = new XMLSerializer()

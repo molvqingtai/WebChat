@@ -1,6 +1,7 @@
 import { Remesh } from 'remesh'
 import { BrowserSyncStorageExtern } from '@/domain/externs/Storage'
 import StorageEffect from '@/domain/modules/StorageEffect'
+import StatusModule from './modules/Status'
 
 export interface UserInfo {
   id: string
@@ -26,6 +27,10 @@ const UserInfoDomain = Remesh.domain({
       default: null
     })
 
+    const UserInfoStatusModule = StatusModule(domain, {
+      name: 'UserInfo.StatusModule'
+    })
+
     const UserInfoQuery = domain.query({
       name: 'UserInfo.UserInfoQuery',
       impl: ({ get }) => {
@@ -33,17 +38,17 @@ const UserInfoDomain = Remesh.domain({
       }
     })
 
-    const IsLoginQuery = domain.query({
-      name: 'UserInfo.IsLoginQuery',
-      impl: ({ get }) => {
-        return !!get(UserInfoState())?.id
-      }
-    })
-
     const UpdateUserInfoCommand = domain.command({
       name: 'UserInfo.UpdateUserInfoCommand',
       impl: (_, userInfo: UserInfo | null) => {
-        return [UserInfoState().new(userInfo), UpdateUserInfoEvent(), SyncToStorageEvent()]
+        return [
+          UserInfoState().new(userInfo),
+          UpdateUserInfoEvent(),
+          SyncToStorageEvent(),
+          userInfo
+            ? UserInfoStatusModule.command.SetFinishedCommand()
+            : UserInfoStatusModule.command.SetInitialCommand()
+        ]
       }
     })
 
@@ -74,21 +79,25 @@ const UserInfoDomain = Remesh.domain({
 
     storageEffect
       .set(SyncToStorageEvent)
-      .get<UserInfo>((value) => SyncToStateCommand(value))
-      .watch<UserInfo>((value) => SyncToStateCommand(value!))
+      .get<UserInfo>((value) => {
+        return [SyncToStateCommand(value), UserInfoStatusModule.command.SetFinishedCommand()]
+      })
+      .watch<UserInfo>((value) => [SyncToStateCommand(value)])
 
     return {
       query: {
         UserInfoQuery,
-        IsLoginQuery
+        ...UserInfoStatusModule.query
       },
       command: {
-        UpdateUserInfoCommand
+        UpdateUserInfoCommand,
+        ...UserInfoStatusModule.command
       },
       event: {
         SyncToStateEvent,
         SyncToStorageEvent,
-        UpdateUserInfoEvent
+        UpdateUserInfoEvent,
+        ...UserInfoStatusModule.event
       }
     }
   }

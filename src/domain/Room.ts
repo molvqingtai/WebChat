@@ -1,11 +1,12 @@
 import { Remesh } from 'remesh'
-import { map, merge, tap } from 'rxjs'
+import { map, merge, switchMap, tap, defer, of, EMPTY, mergeMap } from 'rxjs'
 import { type MessageUser } from './MessageList'
 import { PeerRoomExtern } from '@/domain/externs/PeerRoom'
 import MessageListDomain from '@/domain/MessageList'
 import UserInfoDomain from '@/domain/UserInfo'
 import { callbackToObservable, desert } from '@/utils'
 import { nanoid } from 'nanoid'
+import StatusModule from './modules/Status'
 
 export enum MessageType {
   Like = 'like',
@@ -40,6 +41,10 @@ const RoomDomain = Remesh.domain({
 
     const MessageListQuery = messageListDomain.query.ListQuery
 
+    const RoomStatusState = StatusModule(domain, {
+      name: 'Room.RoomStatusModule'
+    })
+
     const PeerListState = domain.state<string[]>({
       name: 'Room.PeerListState',
       default: [peerRoom.selfId]
@@ -56,15 +61,15 @@ const RoomDomain = Remesh.domain({
       name: 'RoomJoinRoomCommand',
       impl: (_, roomId: string) => {
         peerRoom.joinRoom(roomId)
-        return [JoinRoomEvent(peerRoom.selfId)]
+        return [JoinRoomEvent(roomId), RoomStatusState.command.SetFinishedCommand()]
       }
     })
 
     const LeaveRoomCommand = domain.command({
       name: 'RoomLeaveRoomCommand',
-      impl: (_) => {
+      impl: (_, roomId: string) => {
         peerRoom.leaveRoom()
-        return [LeaveRoomEvent(peerRoom.selfId)]
+        return [LeaveRoomEvent(roomId), RoomStatusState.command.SetInitialCommand()]
       }
     })
 
@@ -156,6 +161,18 @@ const RoomDomain = Remesh.domain({
       name: 'RoomLeaveRoomEvent'
     })
 
+    const OnMessageEvent = domain.event<RoomMessage>({
+      name: 'RoomOnMessageEvent'
+    })
+
+    const OnJoinRoomEvent = domain.event<string>({
+      name: 'RoomOnJoinRoomEvent'
+    })
+
+    const OnLeaveRoomEvent = domain.event<string>({
+      name: 'RoomOnLeaveRoomEvent'
+    })
+
     const UpdatePeerListCommand = domain.command({
       name: 'RoomUpdatePeerListCommand',
       impl: ({ get }, action: { type: 'create' | 'delete'; peerId: string }) => {
@@ -208,106 +225,111 @@ const RoomDomain = Remesh.domain({
 
     domain.effect({
       name: 'RoomOnMessageEffect',
-      impl: ({ get }) => {
-        const onMessage$ = callbackToObservable<RoomMessage>(peerRoom.onMessage.bind(peerRoom))
-        return onMessage$.pipe(
-          map((message) => {
-            switch (message.type) {
-              case 'text':
-                return messageListDomain.command.CreateItemCommand({
-                  ...message,
-                  date: Date.now(),
-                  likeUsers: [],
-                  hateUsers: []
-                })
-              case 'like': {
-                if (!get(messageListDomain.query.HasItemQuery(message.id))) {
-                  return null
-                }
-                const _message = get(messageListDomain.query.ItemQuery(message.id))
-                return messageListDomain.command.UpdateItemCommand({
-                  ..._message,
-                  likeUsers: desert(
-                    _message.likeUsers,
-                    {
-                      userId: message.userId,
-                      username: message.username,
-                      userAvatar: message.userAvatar
-                    },
-                    'userId'
+      impl: ({ fromEvent, get }) => {
+        const onMessage$ = fromEvent(JoinRoomEvent).pipe(
+          switchMap(() => callbackToObservable<RoomMessage>(peerRoom.onMessage.bind(peerRoom))),
+          mergeMap((message) => {
+            console.log('onMessage', message)
+
+            const messageEvent$ = of(OnMessageEvent(message))
+
+            const commandEvent$ = (() => {
+              switch (message.type) {
+                case 'text':
+                  return of(
+                    messageListDomain.command.CreateItemCommand({
+                      ...message,
+                      date: Date.now(),
+                      likeUsers: [],
+                      hateUsers: []
+                    })
                   )
-                })
-              }
-              case 'hate': {
-                if (!get(messageListDomain.query.HasItemQuery(message.id))) {
-                  return null
-                }
-                const _message = get(messageListDomain.query.ItemQuery(message.id))
-                return messageListDomain.command.UpdateItemCommand({
-                  ..._message,
-                  hateUsers: desert(
-                    _message.hateUsers,
-                    {
-                      userId: message.userId,
-                      username: message.username,
-                      userAvatar: message.userAvatar
-                    },
-                    'userId'
+                case 'like':
+                case 'hate': {
+                  if (!get(messageListDomain.query.HasItemQuery(message.id))) {
+                    return EMPTY
+                  }
+                  const _message = get(messageListDomain.query.ItemQuery(message.id))
+                  const users = message.type === 'like' ? 'likeUsers' : 'hateUsers'
+                  return of(
+                    messageListDomain.command.UpdateItemCommand({
+                      ..._message,
+                      [users]: desert(
+                        _message[users],
+                        {
+                          userId: message.userId,
+                          username: message.username,
+                          userAvatar: message.userAvatar
+                        },
+                        'userId'
+                      )
+                    })
                   )
-                })
+                }
+                default:
+                  console.warn('未知消息类型', message)
+                  return EMPTY
               }
-              default:
-                console.warn('unknown message type', message)
-                return null
-            }
+            })()
+            return merge(messageEvent$, commandEvent$)
           })
         )
+        return onMessage$
       }
     })
 
     domain.effect({
       name: 'RoomOnJoinRoomEffect',
-      impl: () => {
-        const onJoinRoom$ = callbackToObservable<string>(peerRoom.onJoinRoom.bind(peerRoom))
-        return onJoinRoom$.pipe(
+      impl: ({ fromEvent }) => {
+        const onJoinRoom$ = fromEvent(JoinRoomEvent).pipe(
+          switchMap(() => callbackToObservable<string>(peerRoom.onJoinRoom.bind(peerRoom))),
           map((peerId) => {
             console.log('onJoinRoom', peerId)
-            return [UpdatePeerListCommand({ type: 'create', peerId }), JoinRoomEvent(peerId)]
+            return [UpdatePeerListCommand({ type: 'create', peerId }), OnJoinRoomEvent(peerId)]
           })
         )
+        return onJoinRoom$
       }
     })
 
     domain.effect({
       name: 'RoomOnLeaveRoomEffect',
-      impl: () => {
-        const onLeaveRoom$ = callbackToObservable<string>(peerRoom.onLeaveRoom.bind(peerRoom))
-        return onLeaveRoom$.pipe(
+      impl: ({ fromEvent }) => {
+        const onLeaveRoom$ = fromEvent(JoinRoomEvent).pipe(
+          switchMap(() => callbackToObservable<string>(peerRoom.onLeaveRoom.bind(peerRoom))),
           map((peerId) => {
             console.log('onLeaveRoom', peerId)
-            return [UpdatePeerListCommand({ type: 'delete', peerId }), LeaveRoomEvent(peerId)]
+            return [UpdatePeerListCommand({ type: 'delete', peerId }), OnLeaveRoomEvent(peerId)]
           })
         )
+        return onLeaveRoom$
       }
     })
+
     return {
       query: {
         PeerListQuery,
-        MessageListQuery
+        MessageListQuery,
+        ...RoomStatusState.query
       },
       event: {
         SendTextMessageEvent,
         SendLikeMessageEvent,
         SendHateMessageEvent,
         JoinRoomEvent,
-        LeaveRoomEvent
+        LeaveRoomEvent,
+        OnMessageEvent,
+        OnJoinRoomEvent,
+        OnLeaveRoomEvent,
+        ...RoomStatusState.event
       },
       command: {
         JoinRoomCommand,
         LeaveRoomCommand,
         SendTextMessageCommand,
         SendLikeMessageCommand,
-        SendHateMessageCommand
+        SendHateMessageCommand,
+        ...RoomStatusState.command
       }
     }
   }

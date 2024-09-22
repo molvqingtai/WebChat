@@ -76,17 +76,18 @@ const Setup: FC = () => {
   }
 
   useEffect(() => {
-    send(messageListDomain.command.ClearListCommand())
     const timer = new Timer(
       async () => {
-        const userInfo = await refreshUserInfo()
-        await createMessage(userInfo)
+        await createMessage(await refreshUserInfo())
       },
       { delay: 2000, immediate: true, limit: mockTextList.length }
     )
 
     timer.start()
-    return () => timer.stop()
+    return () => {
+      timer.stop()
+      send(messageListDomain.command.ClearListCommand())
+    }
   }, [])
   return (
     <div className="absolute inset-0 z-50 flex  rounded-xl bg-black/10 shadow-2xl  backdrop-blur-sm">

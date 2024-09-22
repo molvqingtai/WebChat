@@ -18,7 +18,7 @@ export default defineContentScript({
   async main(ctx) {
     const store = Remesh.store({
       externs: [IndexDBStorageImpl, BrowserSyncStorageImpl, PeerRoomImpl],
-      inspectors: [RemeshLogger()]
+      inspectors: __DEV__ ? [RemeshLogger()] : []
     })
 
     const ui = await createShadowRootUi(ctx, {
