@@ -30,8 +30,8 @@ const MessageItem: FC<MessageItemProps> = (props) => {
         <AvatarFallback>{props.data.username.at(0)}</AvatarFallback>
       </Avatar>
       <div className="overflow-hidden">
-        <div className="grid grid-cols-[1fr_auto] items-baseline gap-x-2 leading-none">
-          <div className="text-sm font-medium text-slate-600">{props.data.username}</div>
+        <div className="grid grid-cols-[1fr_auto] items-center gap-x-2 leading-none">
+          <div className="overflow-hidden text-ellipsis text-sm font-medium text-slate-600">{props.data.username}</div>
           <FormatDate className="text-xs text-slate-400" date={props.data.date}></FormatDate>
         </div>
         <div>

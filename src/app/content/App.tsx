@@ -19,7 +19,7 @@ export default function App() {
   const roomDomain = useRemeshDomain(RoomDomain())
   const userInfoDomain = useRemeshDomain(UserInfoDomain())
   const messageListDomain = useRemeshDomain(MessageListDomain())
-  const joinRoomFinished = useRemeshQuery(roomDomain.query.IsFinishedQuery())
+  const roomFinished = useRemeshQuery(roomDomain.query.IsFinishedQuery())
   const userInfoFinished = useRemeshQuery(userInfoDomain.query.IsFinishedQuery())
 
   const userInfo = useRemeshQuery(userInfoDomain.query.UserInfoQuery())
@@ -29,12 +29,12 @@ export default function App() {
   useEffect(() => {
     if (userInfoFinished) {
       if (userInfo) {
-        !joinRoomFinished && send(roomDomain.command.JoinRoomCommand(hostRoomId))
+        !roomFinished && send(roomDomain.command.JoinRoomCommand(hostRoomId))
       } else {
         send(messageListDomain.command.ClearListCommand())
       }
     }
-  }, [userInfoFinished, userInfo, joinRoomFinished])
+  }, [userInfoFinished, userInfo, roomFinished])
 
   return (
     <>
