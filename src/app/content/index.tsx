@@ -11,14 +11,15 @@ import { IndexDBStorageImpl, BrowserSyncStorageImpl } from '@/domain/impls/Stora
 import { PeerRoomImpl } from '@/domain/impls/PeerRoom'
 import '@/assets/styles/tailwind.css'
 import { createElement } from '@/utils'
+import { ToastImpl } from '@/domain/impls/Toast'
 
 export default defineContentScript({
   cssInjectionMode: 'ui',
   matches: ['*://*.example.com/*', '*://*.v2ex.com/*'],
   async main(ctx) {
     const store = Remesh.store({
-      externs: [IndexDBStorageImpl, BrowserSyncStorageImpl, PeerRoomImpl],
-      inspectors: __DEV__ ? [RemeshLogger()] : []
+      externs: [IndexDBStorageImpl, BrowserSyncStorageImpl, PeerRoomImpl, ToastImpl],
+      inspectors: !__DEV__ ? [RemeshLogger()] : []
     })
 
     const ui = await createShadowRootUi(ctx, {
@@ -32,11 +33,11 @@ export default defineContentScript({
 
         const root = createRoot(app)
         root.render(
-          <React.StrictMode>
-            <RemeshRoot store={store}>
-              <App />
-            </RemeshRoot>
-          </React.StrictMode>
+          // <React.StrictMode>
+          <RemeshRoot store={store}>
+            <App />
+          </RemeshRoot>
+          // </React.StrictMode>
         )
         return root
       },

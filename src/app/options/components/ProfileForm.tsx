@@ -1,7 +1,6 @@
 import * as v from 'valibot'
 import { useForm } from 'react-hook-form'
 import { valibotResolver } from '@hookform/resolvers/valibot'
-import { toast } from 'sonner'
 import { useRemeshDomain, useRemeshQuery, useRemeshSend } from 'remesh-react'
 import { nanoid } from 'nanoid'
 import { useEffect } from 'react'
@@ -15,6 +14,7 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/RadioGroup'
 import { Label } from '@/components/ui/Label'
 import { RefreshCcwIcon } from 'lucide-react'
 import { MAX_AVATAR_SIZE } from '@/constants/config'
+import ToastDomain from '@/domain/Toast'
 
 const defaultUserInfo: UserInfo = {
   id: nanoid(),
@@ -52,6 +52,8 @@ const formSchema = v.object({
 
 const ProfileForm = () => {
   const send = useRemeshSend()
+  const toastDomain = useRemeshDomain(ToastDomain())
+
   const userInfoDomain = useRemeshDomain(UserInfoDomain())
   const userInfo = useRemeshQuery(userInfoDomain.query.UserInfoQuery())
 
@@ -67,15 +69,15 @@ const ProfileForm = () => {
 
   const handleSubmit = (userInfo: UserInfo) => {
     send(userInfoDomain.command.UpdateUserInfoCommand(userInfo))
-    toast.success('Saved successfully!')
+    send(toastDomain.command.SuccessCommand('Saved successfully!'))
   }
 
   const handleWarning = (error: Error) => {
-    toast.warning(error.message)
+    send(toastDomain.command.WarningCommand(error.message))
   }
 
   const handleError = (error: Error) => {
-    toast.error(error.message)
+    send(toastDomain.command.ErrorCommand(error.message))
   }
 
   const handleRefreshAvatar = async () => {

@@ -1,7 +1,7 @@
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/Avatar'
 import { Button } from '@/components/ui/Button'
 import { MAX_AVATAR_SIZE } from '@/constants/config'
-import MessageListDomain, { Message } from '@/domain/MessageList'
+import MessageListDomain, { Message, MessageType } from '@/domain/MessageList'
 import UserInfoDomain, { UserInfo } from '@/domain/UserInfo'
 import { checkSystemDarkMode, generateRandomAvatar, generateRandomName } from '@/utils'
 import { UserIcon } from 'lucide-react'
@@ -46,6 +46,7 @@ const generateMessage = async (userInfo: UserInfo): Promise<Message> => {
     id: nanoid(),
     body: mockTextList.shift()!,
     date: Date.now(),
+    type: MessageType.Normal,
     userId,
     username,
     userAvatar,

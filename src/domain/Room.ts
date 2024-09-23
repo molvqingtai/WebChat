@@ -1,36 +1,48 @@
 import { Remesh } from 'remesh'
-import { map, merge, switchMap, tap, defer, of, EMPTY, mergeMap } from 'rxjs'
-import { type MessageUser } from './MessageList'
+import { map, merge, switchMap, tap, of, EMPTY, mergeMap } from 'rxjs'
+import { NormalMessage, type MessageUser } from './MessageList'
 import { PeerRoomExtern } from '@/domain/externs/PeerRoom'
-import MessageListDomain from '@/domain/MessageList'
+import MessageListDomain, { MessageType } from '@/domain/MessageList'
 import UserInfoDomain from '@/domain/UserInfo'
-import { callbackToObservable, desert } from '@/utils'
+import { callbackToObservable, desert, upsert } from '@/utils'
 import { nanoid } from 'nanoid'
-import StatusModule from './modules/Status'
+import StatusModule from '@/domain/modules/Status'
 
-export enum MessageType {
+export { MessageType }
+
+export enum SendType {
   Like = 'like',
   Hate = 'hate',
-  Text = 'text'
+  Text = 'text',
+  UserSync = 'userSync'
+}
+
+export interface SyncUserMessage extends MessageUser {
+  type: SendType.UserSync
+  id: string
+  peerId: string
+  joinTime: number
 }
 
 export interface LikeMessage extends MessageUser {
-  type: MessageType.Like
+  type: SendType.Like
   id: string
 }
 
 export interface HateMessage extends MessageUser {
-  type: MessageType.Hate
+  type: SendType.Hate
   id: string
 }
 
 export interface TextMessage extends MessageUser {
-  type: MessageType.Text
+  type: SendType.Text
   id: string
   body: string
 }
 
-export type RoomMessage = LikeMessage | HateMessage | TextMessage
+export type RoomMessage = SyncUserMessage | LikeMessage | HateMessage | TextMessage
+
+export type RoomUser = MessageUser & { peerId: string; joinTime: number }
 
 const RoomDomain = Remesh.domain({
   name: 'RoomDomain',
@@ -41,35 +53,51 @@ const RoomDomain = Remesh.domain({
 
     const MessageListQuery = messageListDomain.query.ListQuery
 
-    const RoomStatusState = StatusModule(domain, {
+    const RoomStatusModule = StatusModule(domain, {
       name: 'Room.RoomStatusModule'
     })
 
-    const PeerListState = domain.state<string[]>({
-      name: 'Room.PeerListState',
-      default: [peerRoom.selfId]
+    const UserListState = domain.state<RoomUser[]>({
+      name: 'RoomUserListState',
+      default: []
     })
 
-    const PeerListQuery = domain.query({
-      name: 'Room.PeerListQuery',
+    const UserListQuery = domain.query({
+      name: 'Room.UserListQuery',
       impl: ({ get }) => {
-        return get(PeerListState())
+        return get(UserListState())
       }
     })
 
     const JoinRoomCommand = domain.command({
       name: 'RoomJoinRoomCommand',
-      impl: (_, roomId: string) => {
+      impl: ({ get }, roomId: string) => {
         peerRoom.joinRoom(roomId)
-        return [JoinRoomEvent(roomId), RoomStatusState.command.SetFinishedCommand()]
+        const { id: userId, name: username, avatar: userAvatar } = get(userInfoDomain.query.UserInfoQuery())!
+        return [
+          JoinRoomEvent(roomId),
+          RoomStatusModule.command.SetFinishedCommand(),
+          UpdateUserListCommand({
+            type: 'create',
+            user: { peerId: peerRoom.selfId, joinTime: Date.now(), userId, username, userAvatar }
+          })
+        ]
       }
     })
 
     const LeaveRoomCommand = domain.command({
       name: 'RoomLeaveRoomCommand',
-      impl: (_, roomId: string) => {
+      impl: ({ get }, roomId: string) => {
         peerRoom.leaveRoom()
-        return [LeaveRoomEvent(roomId), RoomStatusState.command.SetInitialCommand()]
+        const { id: userId, name: username, avatar: userAvatar } = get(userInfoDomain.query.UserInfoQuery())!
+        return [
+          LeaveRoomEvent(roomId),
+          RoomStatusModule.command.SetInitialCommand(),
+          UpdateUserListCommand({
+            type: 'delete',
+            user: { peerId: peerRoom.selfId, joinTime: Date.now(), userId, username, userAvatar }
+          })
+        ]
       }
     })
 
@@ -78,31 +106,29 @@ const RoomDomain = Remesh.domain({
       impl: ({ get }, message: string) => {
         const { id: userId, name: username, avatar: userAvatar } = get(userInfoDomain.query.UserInfoQuery())!
         const id = nanoid()
+        const date = Date.now()
         return [
           messageListDomain.command.CreateItemCommand({
             id,
+            type: MessageType.Normal,
             body: message,
-            date: Date.now(),
+            date,
             userId,
             username,
             userAvatar,
             likeUsers: [],
             hateUsers: []
           }),
-          SendTextMessageEvent({ id, body: message, userId, username, userAvatar, type: MessageType.Text })
+          SendTextMessageEvent({ id, body: message, userId, username, userAvatar, type: SendType.Text })
         ]
       }
-    })
-
-    const SendTextMessageEvent = domain.event<RoomMessage>({
-      name: 'RoomSendTextMessageEvent'
     })
 
     const SendLikeMessageCommand = domain.command({
       name: 'RoomSendLikeMessageCommand',
       impl: ({ get }, messageId: string) => {
         const { id: userId, name: username, avatar: userAvatar } = get(userInfoDomain.query.UserInfoQuery())!
-        const _message = get(messageListDomain.query.ItemQuery(messageId))
+        const _message = get(messageListDomain.query.ItemQuery(messageId)) as NormalMessage
         return [
           messageListDomain.command.UpdateItemCommand({
             ..._message,
@@ -116,20 +142,22 @@ const RoomDomain = Remesh.domain({
               'userId'
             )
           }),
-          SendLikeMessageEvent({ id: messageId, userId, username, userAvatar, type: MessageType.Like })
+          SendLikeMessageEvent({
+            id: messageId,
+            userId,
+            username,
+            userAvatar,
+            type: SendType.Like
+          })
         ]
       }
-    })
-
-    const SendLikeMessageEvent = domain.event<RoomMessage>({
-      name: 'RoomSendLikeMessageEvent'
     })
 
     const SendHateMessageCommand = domain.command({
       name: 'RoomSendHateMessageCommand',
       impl: ({ get }, messageId: string) => {
         const { id: userId, name: username, avatar: userAvatar } = get(userInfoDomain.query.UserInfoQuery())!
-        const _message = get(messageListDomain.query.ItemQuery(messageId))
+        const _message = get(messageListDomain.query.ItemQuery(messageId)) as NormalMessage
 
         return [
           messageListDomain.command.UpdateItemCommand({
@@ -144,12 +172,44 @@ const RoomDomain = Remesh.domain({
               'userId'
             )
           }),
-          SendHateMessageEvent({ id: messageId, userId, username, userAvatar, type: MessageType.Hate })
+          SendHateMessageEvent({ id: messageId, userId, username, userAvatar, type: SendType.Hate })
         ]
       }
     })
 
-    const SendHateMessageEvent = domain.event<RoomMessage>({
+    const SendUserSyncMessageCommand = domain.command({
+      name: 'RoomSendUserSyncMessageCommand',
+      impl: ({ get }, targetPeerId: string) => {
+        const { id: userId, name: username, avatar: userAvatar } = get(userInfoDomain.query.UserInfoQuery())!
+        const joinTime = get(UserListQuery()).find((u) => u.peerId === peerRoom.selfId)?.joinTime || Date.now()
+        return [
+          SendUserSyncMessageEvent({
+            id: nanoid(),
+            peerId: peerRoom.selfId,
+            targetPeerId,
+            userId,
+            joinTime,
+            username,
+            userAvatar,
+            type: SendType.UserSync
+          })
+        ]
+      }
+    })
+
+    const SendUserSyncMessageEvent = domain.event<SyncUserMessage & { targetPeerId: string }>({
+      name: 'RoomSendUserSyncMessageEvent'
+    })
+
+    const SendTextMessageEvent = domain.event<TextMessage>({
+      name: 'RoomSendTextMessageEvent'
+    })
+
+    const SendLikeMessageEvent = domain.event<LikeMessage>({
+      name: 'RoomSendLikeMessageEvent'
+    })
+
+    const SendHateMessageEvent = domain.event<HateMessage>({
       name: 'RoomSendHateMessageEvent'
     })
 
@@ -173,17 +233,15 @@ const RoomDomain = Remesh.domain({
       name: 'RoomOnLeaveRoomEvent'
     })
 
-    const UpdatePeerListCommand = domain.command({
-      name: 'RoomUpdatePeerListCommand',
-      impl: ({ get }, action: { type: 'create' | 'delete'; peerId: string }) => {
-        const peerList = get(PeerListState())
+    const UpdateUserListCommand = domain.command({
+      name: 'RoomUpdateUserListCommand',
+      impl: ({ get }, action: { type: 'create' | 'delete'; user: RoomUser }) => {
+        const userList = get(UserListState())
         if (action.type === 'create') {
-          return [PeerListState().new([...new Set(peerList).add(action.peerId)])]
+          return [UserListState().new(upsert(userList, action.user, 'peerId'))]
+        } else {
+          return [UserListState().new(userList.filter(({ peerId }) => peerId !== action.user.peerId))]
         }
-        if (action.type === 'delete') {
-          return [PeerListState().new(peerList.filter((peerId) => peerId == action.peerId))]
-        }
-        return null
       }
     })
 
@@ -204,7 +262,7 @@ const RoomDomain = Remesh.domain({
       impl: ({ fromEvent }) => {
         const likeMessage$ = fromEvent(SendLikeMessageEvent).pipe(
           tap(async (message) => {
-            peerRoom.sendMessage<RoomMessage>(message)
+            return peerRoom.sendMessage<RoomMessage>(message)
           })
         )
         return merge(likeMessage$).pipe(map(() => null))
@@ -224,6 +282,20 @@ const RoomDomain = Remesh.domain({
     })
 
     domain.effect({
+      name: 'RoomSendUserSyncMessageEffect',
+      impl: ({ fromEvent }) => {
+        const userSyncMessage$ = fromEvent(SendUserSyncMessageEvent).pipe(
+          tap(async (message) => {
+            console.log('sendMessage', message)
+
+            peerRoom.sendMessage<RoomMessage>(message, message.targetPeerId)
+          })
+        )
+        return merge(userSyncMessage$).pipe(map(() => null))
+      }
+    })
+
+    domain.effect({
       name: 'RoomOnMessageEffect',
       impl: ({ fromEvent, get }) => {
         const onMessage$ = fromEvent(JoinRoomEvent).pipe(
@@ -235,27 +307,44 @@ const RoomDomain = Remesh.domain({
 
             const commandEvent$ = (() => {
               switch (message.type) {
-                case 'text':
+                case SendType.UserSync: {
+                  const self = get(UserListQuery()).find((user) => user.peerId === peerRoom.selfId)!
+                  if (self.joinTime > message.joinTime) {
+                    return EMPTY
+                  }
+                  return of(
+                    UpdateUserListCommand({ type: 'create', user: message }),
+                    messageListDomain.command.CreateItemCommand({
+                      ...message,
+                      id: nanoid(),
+                      body: `"${message.username}" joined the chat`,
+                      type: MessageType.Prompt,
+                      date: Date.now()
+                    })
+                  )
+                }
+                case SendType.Text:
                   return of(
                     messageListDomain.command.CreateItemCommand({
                       ...message,
+                      type: MessageType.Normal,
                       date: Date.now(),
                       likeUsers: [],
                       hateUsers: []
                     })
                   )
-                case 'like':
-                case 'hate': {
+                case SendType.Like:
+                case SendType.Hate: {
                   if (!get(messageListDomain.query.HasItemQuery(message.id))) {
                     return EMPTY
                   }
-                  const _message = get(messageListDomain.query.ItemQuery(message.id))
-                  const users = message.type === 'like' ? 'likeUsers' : 'hateUsers'
+                  const _message = get(messageListDomain.query.ItemQuery(message.id)) as NormalMessage
+                  const type = message.type === 'like' ? 'likeUsers' : 'hateUsers'
                   return of(
                     messageListDomain.command.UpdateItemCommand({
                       ..._message,
-                      [users]: desert(
-                        _message[users],
+                      [type]: desert(
+                        _message[type],
                         {
                           userId: message.userId,
                           username: message.username,
@@ -280,12 +369,20 @@ const RoomDomain = Remesh.domain({
 
     domain.effect({
       name: 'RoomOnJoinRoomEffect',
-      impl: ({ fromEvent }) => {
+      impl: ({ fromEvent, get }) => {
         const onJoinRoom$ = fromEvent(JoinRoomEvent).pipe(
           switchMap(() => callbackToObservable<string>(peerRoom.onJoinRoom.bind(peerRoom))),
-          map((peerId) => {
+          mergeMap((peerId) => {
             console.log('onJoinRoom', peerId)
-            return [UpdatePeerListCommand({ type: 'create', peerId }), OnJoinRoomEvent(peerId)]
+            const { id: userId, name: username, avatar: userAvatar } = get(userInfoDomain.query.UserInfoQuery())!
+            return [
+              SendUserSyncMessageCommand(peerId),
+              UpdateUserListCommand({
+                type: 'create',
+                user: { peerId, joinTime: Date.now(), userId, username, userAvatar }
+              }),
+              OnJoinRoomEvent(peerId)
+            ]
           })
         )
         return onJoinRoom$
@@ -294,12 +391,27 @@ const RoomDomain = Remesh.domain({
 
     domain.effect({
       name: 'RoomOnLeaveRoomEffect',
-      impl: ({ fromEvent }) => {
+      impl: ({ fromEvent, get }) => {
         const onLeaveRoom$ = fromEvent(JoinRoomEvent).pipe(
           switchMap(() => callbackToObservable<string>(peerRoom.onLeaveRoom.bind(peerRoom))),
           map((peerId) => {
             console.log('onLeaveRoom', peerId)
-            return [UpdatePeerListCommand({ type: 'delete', peerId }), OnLeaveRoomEvent(peerId)]
+            const user = get(UserListQuery()).find((user) => user.peerId === peerId)
+            if (user) {
+              return [
+                UpdateUserListCommand({ type: 'delete', user }),
+                messageListDomain.command.CreateItemCommand({
+                  ...user,
+                  id: nanoid(),
+                  body: `"${user.username}" left the chat`,
+                  type: MessageType.Prompt,
+                  date: Date.now()
+                }),
+                OnLeaveRoomEvent(peerId)
+              ]
+            } else {
+              return [OnLeaveRoomEvent(peerId)]
+            }
           })
         )
         return onLeaveRoom$
@@ -308,20 +420,9 @@ const RoomDomain = Remesh.domain({
 
     return {
       query: {
-        PeerListQuery,
+        UserListQuery,
         MessageListQuery,
-        ...RoomStatusState.query
-      },
-      event: {
-        SendTextMessageEvent,
-        SendLikeMessageEvent,
-        SendHateMessageEvent,
-        JoinRoomEvent,
-        LeaveRoomEvent,
-        OnMessageEvent,
-        OnJoinRoomEvent,
-        OnLeaveRoomEvent,
-        ...RoomStatusState.event
+        ...RoomStatusModule.query
       },
       command: {
         JoinRoomCommand,
@@ -329,7 +430,20 @@ const RoomDomain = Remesh.domain({
         SendTextMessageCommand,
         SendLikeMessageCommand,
         SendHateMessageCommand,
-        ...RoomStatusState.command
+        SendUserSyncMessageCommand,
+        ...RoomStatusModule.command
+      },
+      event: {
+        SendTextMessageEvent,
+        SendLikeMessageEvent,
+        SendHateMessageEvent,
+        SendUserSyncMessageEvent,
+        JoinRoomEvent,
+        LeaveRoomEvent,
+        OnMessageEvent,
+        OnJoinRoomEvent,
+        OnLeaveRoomEvent,
+        ...RoomStatusModule.event
       }
     }
   }

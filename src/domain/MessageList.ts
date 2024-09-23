@@ -3,19 +3,34 @@ import { ListModule } from 'remesh/modules/list'
 import { IndexDBStorageExtern } from '@/domain/externs/Storage'
 import StorageEffect from '@/domain/modules/StorageEffect'
 
+export enum MessageType {
+  Normal = 'normal',
+  Prompt = 'prompt'
+}
+
 export interface MessageUser {
   userId: string
   username: string
   userAvatar: string
 }
 
-export interface Message extends MessageUser {
+export interface NormalMessage extends MessageUser {
+  type: MessageType.Normal
   id: string
   body: string
   date: number
   likeUsers: MessageUser[]
   hateUsers: MessageUser[]
 }
+
+export interface PromptMessage extends MessageUser {
+  type: MessageType.Prompt
+  id: string
+  body: string
+  date: number
+}
+
+export type Message = NormalMessage | PromptMessage
 
 export const STORAGE_KEY = `MESSAGE_LIST`
 

@@ -6,12 +6,11 @@ export type PeerMessage = object | Blob | ArrayBuffer | ArrayBufferView
 export interface PeerRoom {
   readonly selfId: string
   joinRoom: (roomId: string) => Promise<any>
-  sendMessage: <T extends PeerMessage>(message: T) => Promise<any>
+  sendMessage: <T extends PeerMessage>(message: T, id?: string) => Promise<any>
   onMessage: <T extends PeerMessage>(callback: (message: T) => void) => Promisable<void>
   leaveRoom: () => Promisable<void>
   onJoinRoom: (callback: (id: string) => void) => Promisable<void>
   onLeaveRoom: (callback: (id: string) => void) => Promisable<void>
-  getRoomPeers: () => string[]
 }
 
 export const PeerRoomExtern = Remesh.extern<PeerRoom>({
@@ -34,9 +33,6 @@ export const PeerRoomExtern = Remesh.extern<PeerRoom>({
     },
     onLeaveRoom: () => {
       throw new Error('"onLeaveRoom" not implemented.')
-    },
-    getRoomPeers: () => {
-      throw new Error('"getRoomPeers" not implemented.')
     }
   }
 })

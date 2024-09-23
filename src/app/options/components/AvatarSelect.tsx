@@ -1,6 +1,6 @@
+import React from 'react'
 import { type ChangeEvent } from 'react'
 import { ImagePlusIcon } from 'lucide-react'
-import React from 'react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/Avatar'
 import { Label } from '@/components/ui/Label'
 import { cn, compressImage } from '@/utils'

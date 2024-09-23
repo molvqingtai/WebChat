@@ -24,12 +24,12 @@ class PeerRoom {
     return this.room
   }
 
-  async sendMessage<T extends PeerMessage>(message: T) {
+  async sendMessage<T extends PeerMessage>(message: T, id?: string) {
     if (!this.room) {
       throw new Error('Room not joined')
     }
     const [send] = this.room!.makeAction('MESSAGE')
-    return await send(message as DataPayload)
+    return await send(message as DataPayload, id)
   }
 
   onMessage<T extends PeerMessage>(callback: (message: T) => void) {
@@ -52,13 +52,6 @@ class PeerRoom {
       throw new Error('Room not joined')
     }
     this.room.onPeerLeave((peerId) => callback(peerId))
-  }
-
-  getRoomPeers() {
-    if (!this.room) {
-      throw new Error('Room not joined')
-    }
-    return Object.keys(this.room.getPeers()).map((id) => id)
   }
 
   async leaveRoom() {

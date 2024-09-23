@@ -1,19 +1,22 @@
 import { type FC } from 'react'
 import { FrownIcon, ThumbsUpIcon } from 'lucide-react'
+import { Badge } from '@/components/ui/Badge'
 import LikeButton from './LikeButton'
 import FormatDate from './FormatDate'
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/Avatar'
 
 import { Markdown } from '@/components/ui/Markdown'
-import { type Message } from '@/domain/MessageList'
+import { type NormalMessage } from '@/domain/MessageList'
+import { cn } from '@/utils'
 
 export interface MessageItemProps {
-  data: Message
+  data: NormalMessage
   index?: number
   like: boolean
   hate: boolean
   onLikeChange?: (checked: boolean) => void
   onHateChange?: (checked: boolean) => void
+  className?: string
 }
 
 const MessageItem: FC<MessageItemProps> = (props) => {
@@ -24,7 +27,10 @@ const MessageItem: FC<MessageItemProps> = (props) => {
     props.onHateChange?.(checked)
   }
   return (
-    <div data-index={props.index} className="box-border grid grid-cols-[auto_1fr] gap-x-2 px-4  first:pt-4 last:pb-4">
+    <div
+      data-index={props.index}
+      className={cn('box-border grid grid-cols-[auto_1fr] gap-x-2 px-4  first:pt-4 last:pb-4', props.className)}
+    >
       <Avatar>
         <AvatarImage src={props.data.userAvatar} alt="avatar" />
         <AvatarFallback>{props.data.username.at(0)}</AvatarFallback>
@@ -65,4 +71,5 @@ const MessageItem: FC<MessageItemProps> = (props) => {
 }
 
 MessageItem.displayName = 'MessageItem'
+
 export default MessageItem

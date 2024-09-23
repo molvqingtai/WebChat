@@ -1,11 +1,13 @@
 import { type RemeshDomainContext, type DomainConceptName } from 'remesh'
-import { toast } from 'sonner'
+import { ToastExtern } from '../externs/Toast'
 
 export interface ToastOptions {
   name: DomainConceptName<'ToastModule'>
 }
 
-export const ToastModule = (domain: RemeshDomainContext, options: ToastOptions = { name: 'MessageToastModule' }) => {
+const ToastModule = (domain: RemeshDomainContext, options: ToastOptions = { name: 'MessageToastModule' }) => {
+  const toast = domain.getExtern(ToastExtern)
+
   const SuccessEvent = domain.event({
     name: `${options.name}.SuccessEvent`
   })
@@ -69,3 +71,5 @@ export const ToastModule = (domain: RemeshDomainContext, options: ToastOptions =
     }
   }
 }
+
+export default ToastModule

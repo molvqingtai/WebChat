@@ -12,7 +12,7 @@ export interface StatusOptions {
 }
 
 const StatusModule = (domain: RemeshDomainContext, options: StatusOptions) => {
-  const StatusState = domain.state({
+  const RoomStatusModule = domain.state({
     name: `${options.name}.StatusState`,
     default: options.default ?? Status.Initial
   })
@@ -20,14 +20,14 @@ const StatusModule = (domain: RemeshDomainContext, options: StatusOptions) => {
   const StatusQuery = domain.query({
     name: `${options.name}.StatusQuery`,
     impl: ({ get }) => {
-      return get(StatusState())
+      return get(RoomStatusModule())
     }
   })
 
   const IsInitialQuery = domain.query({
     name: `${options.name}.IsInitialQuery`,
     impl: ({ get }) => {
-      const state = get(StatusState())
+      const state = get(RoomStatusModule())
       return (state & Status.Initial) !== 0
     }
   })
@@ -35,7 +35,7 @@ const StatusModule = (domain: RemeshDomainContext, options: StatusOptions) => {
   const IsLoadingQuery = domain.query({
     name: `${options.name}.IsLoadingQuery`,
     impl: ({ get }) => {
-      const state = get(StatusState())
+      const state = get(RoomStatusModule())
       return (state & Status.Loading) !== 0
     }
   })
@@ -43,7 +43,7 @@ const StatusModule = (domain: RemeshDomainContext, options: StatusOptions) => {
   const IsFinishedQuery = domain.query({
     name: `${options.name}.IsFinishedQuery`,
     impl: ({ get }) => {
-      const state = get(StatusState())
+      const state = get(RoomStatusModule())
       return (state & Status.Finished) !== 0
     }
   })
@@ -55,28 +55,28 @@ const StatusModule = (domain: RemeshDomainContext, options: StatusOptions) => {
   const SetInitialCommand = domain.command({
     name: `${options.name}.SetInitialCommand`,
     impl: () => {
-      return [StatusState().new(Status.Initial), UpdateStatusEvent(Status.Initial)]
+      return [RoomStatusModule().new(Status.Initial), UpdateStatusEvent(Status.Initial)]
     }
   })
 
   const SetLoadingCommand = domain.command({
     name: `${options.name}.SetLoadingCommand`,
     impl: () => {
-      return [StatusState().new(Status.Loading), UpdateStatusEvent(Status.Loading)]
+      return [RoomStatusModule().new(Status.Loading), UpdateStatusEvent(Status.Loading)]
     }
   })
 
   const SetFinishedCommand = domain.command({
     name: `${options.name}.SetFinishedCommand`,
     impl: () => {
-      return [StatusState().new(Status.Finished), UpdateStatusEvent(Status.Finished)]
+      return [RoomStatusModule().new(Status.Finished), UpdateStatusEvent(Status.Finished)]
     }
   })
 
   const UpdateStatusCommand = domain.command({
     name: `${options.name}.UpdateStatusCommand`,
     impl: (_, status: Status) => {
-      return [StatusState().new(status), UpdateStatusEvent(status)]
+      return [RoomStatusModule().new(status), UpdateStatusEvent(status)]
     }
   })
 
