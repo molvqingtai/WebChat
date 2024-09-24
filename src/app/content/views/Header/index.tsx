@@ -12,7 +12,7 @@ const Header: FC = () => {
   const roomDomain = useRemeshDomain(RoomDomain())
   const userList = useRemeshQuery(roomDomain.query.UserListQuery())
   const peerId = useRemeshQuery(roomDomain.query.PeerIdQuery())
-  const onlineCount = userList.length > 99 ? '99+' : userList.length
+  const onlineCount = userList.length
 
   return (
     <div className="z-10 grid h-12 grid-flow-col grid-cols-[theme('spacing.20')_auto_theme('spacing.20')] items-center justify-between rounded-t-xl bg-white px-4 backdrop-blur-lg">
@@ -53,17 +53,17 @@ const Header: FC = () => {
           <span
             className={cn(
               'absolute inline-flex size-full animate-ping rounded-full opacity-75',
-              onlineCount === 1 ? 'bg-orange-400' : 'bg-green-400'
+              onlineCount > 1 ? 'bg-green-400' : 'bg-orange-400'
             )}
           ></span>
           <span
             className={cn(
               'relative inline-flex size-2 rounded-full',
-              onlineCount === 1 ? 'bg-orange-500' : 'bg-green-500'
+              onlineCount > 1 ? 'bg-green-500' : 'bg-orange-500'
             )}
           ></span>
         </span>
-        <span>ONLINE {onlineCount}</span>
+        <span>ONLINE {onlineCount > 99 ? '99+' : onlineCount}</span>
       </div>
     </div>
   )
