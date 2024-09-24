@@ -194,4 +194,4 @@ export const STORAGE_NAME = 'WEB_CHAT' as const
  * Image is encoded as base64, and the size is increased by about 33%.
  * 8kb * (1 - 0.33) = 5488 bytes
  */
-export const MAX_AVATAR_SIZE = 5488 as const
+export const MAX_AVATAR_SIZE = 5120 as const

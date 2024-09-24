@@ -5,14 +5,11 @@ import AppButton from '@/app/content/views/AppButton'
 import AppContainer from '@/app/content/views/AppContainer'
 import { useRemeshDomain, useRemeshQuery, useRemeshSend } from 'remesh-react'
 import RoomDomain from '@/domain/Room'
-import { stringToHex } from '@/utils'
 import { Toaster } from '@/components/ui/Sonner'
 import UserInfoDomain from '@/domain/UserInfo'
 import Setup from '@/app/content/views/Setup'
 import MessageListDomain from '@/domain/MessageList'
 import { useEffect } from 'react'
-
-const hostRoomId = stringToHex(document.location.host)
 
 export default function App() {
   const send = useRemeshSend()
@@ -29,7 +26,7 @@ export default function App() {
   useEffect(() => {
     if (userInfoFinished) {
       if (userInfo) {
-        !roomFinished && send(roomDomain.command.JoinRoomCommand(hostRoomId))
+        !roomFinished && send(roomDomain.command.JoinRoomCommand())
       } else {
         send(messageListDomain.command.ClearListCommand())
       }

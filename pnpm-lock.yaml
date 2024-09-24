@@ -44,12 +44,21 @@ importers:
       '@radix-ui/react-switch':
         specifier: ^1.1.0
         version: 1.1.0(@types/react-dom@18.3.0)(@types/react@18.3.7)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+      '@resreq/event-hub':
+        specifier: ^1.6.0
+        version: 1.6.0
       '@resreq/timer':
         specifier: ^1.1.5
         version: 1.1.5
+      '@rtco/client':
+        specifier: ^0.2.17
+        version: 0.2.17
       '@tailwindcss/typography':
         specifier: ^0.5.15
         version: 0.5.15(tailwindcss@3.4.12)
+      '@webext-core/proxy-service':
+        specifier: ^1.2.0
+        version: 1.2.0(@webext-core/messaging@1.4.0)(webextension-polyfill@0.12.0)
       class-variance-authority:
         specifier: ^0.7.0
         version: 0.7.0
@@ -115,7 +124,7 @@ importers:
         version: 2.5.2
       trystero:
         specifier: ^0.20.0
-        version: 0.20.0(@libp2p/interface@1.7.0)(@waku/core@0.0.27(@multiformats/multiaddr@12.3.1)(libp2p@1.9.4))(@waku/enr@0.0.21)(@waku/interfaces@0.0.22)(@waku/message-hash@0.1.16)(@waku/proto@0.0.7)(@waku/relay@0.0.11(@waku/core@0.0.27(@multiformats/multiaddr@12.3.1)(libp2p@1.9.4))(@waku/interfaces@0.0.22)(@waku/proto@0.0.7)(@waku/utils@0.0.20))(@waku/utils@0.0.20)
+        version: 0.20.0(@libp2p/interface@1.7.0)(@waku/core@0.0.27(@multiformats/multiaddr@12.3.1)(libp2p@1.9.4))(@waku/enr@0.0.21)(@waku/interfaces@0.0.22)(@waku/message-hash@0.1.16)(@waku/proto@0.0.7)(@waku/relay@0.0.11(@waku/core@0.0.27(@multiformats/multiaddr@12.3.1)(libp2p@1.9.4))(@waku/interfaces@0.0.22)(@waku/proto@0.0.7)(@waku/utils@0.0.20))(@waku/utils@0.0.20)(bufferutil@4.0.8)(utf-8-validate@6.0.4)
       type-fest:
         specifier: ^4.26.1
         version: 4.26.1
@@ -227,7 +236,7 @@ importers:
         version: 6.0.1
       wxt:
         specifier: ^0.19.9
-        version: 0.19.9(@types/node@22.5.5)(rollup@4.21.3)
+        version: 0.19.9(@types/node@22.5.5)(bufferutil@4.0.8)(rollup@4.21.3)(utf-8-validate@6.0.4)
 
 packages:
 
@@ -1741,6 +1750,12 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  '@rtco/client@0.2.17':
+    resolution: {integrity: sha512-nV/KJGBh/j0fK069uADXNr30JBbWe7CZ0xe0cEx1JjuBQIkH10Ny5mQm4WZd/vID+EF7l+tqkCG6QUyCAW5PFg==}
+
+  '@rtco/peer@0.2.17':
+    resolution: {integrity: sha512-jxKQzAIMiofkJ5UHIbeq2JUl+fBOCnWRxgxemzuI7TKw96pbkfaMowr3fj+ElXnKPWwCi5WRX3hwitqjfNkwFQ==}
+
   '@sec-ant/readable-stream@0.4.1':
     resolution: {integrity: sha512-831qok9r2t8AlxLko40y2ebgSDhenenCatLVeW/uBtnHPyhHOvG0C7TvfgecV+wHzIm5KUICgzmVpWS+IMEAeg==}
 
@@ -1755,6 +1770,9 @@ packages:
   '@sindresorhus/merge-streams@4.0.0':
     resolution: {integrity: sha512-tlqY9xq5ukxTUZBmoOp+m61cqwQD5pHJtFY3Mn8CA8ps6yghLH/Hw8UPdqg4OLmFW3IFlcXnQNmo/dh8HzXYIQ==}
     engines: {node: '>=18'}
+
+  '@socket.io/component-emitter@3.1.2':
+    resolution: {integrity: sha512-9BCxFwvbGg/RsZK9tjXd8s4UcwR0MWeFQ1XEKIQVVvAGJyINdrqKMcTRyLoK8Rse1GjzLV9cwjWV1olXRWEXVA==}
 
   '@supabase/auth-js@2.65.0':
     resolution: {integrity: sha512-+wboHfZufAE2Y612OsKeVP4rVOeGZzzMLD/Ac3HrTQkkY4qXNjI6Af9gtmxwccE5nFvTiF114FEbIQ1hRq5uUw==}
@@ -2105,6 +2123,15 @@ packages:
   '@webext-core/match-patterns@1.0.3':
     resolution: {integrity: sha512-NY39ACqCxdKBmHgw361M9pfJma8e4AZo20w9AY+5ZjIj1W2dvXC8J31G5fjfOGbulW9w4WKpT8fPooi0mLkn9A==}
 
+  '@webext-core/messaging@1.4.0':
+    resolution: {integrity: sha512-gzXQ13HfKR3Yrn9TnrvTC/5seA7uPFvaqxqNFBsFOOdSZa5LyXt58Rhym8BYXarkWUGp+fh8f6AYM3RYuNbS+A==}
+
+  '@webext-core/proxy-service@1.2.0':
+    resolution: {integrity: sha512-MCUadVakeb7L47AvdtlbJfBUDjFdejr5t4E2WrwZagnev3a5I/xh2wHCkE+G0ihO/VUt/m0R1MPX+y4YVFRyPA==}
+    peerDependencies:
+      '@webext-core/messaging': '>=1.3.1'
+      webextension-polyfill: ^0.10.0
+
   '@xobotyi/scrollbar-width@1.9.5':
     resolution: {integrity: sha512-N8tkAACJx2ww8vFMneJmaAgmjAG1tnVBZJRLRcx061tmsLRZHSEZSLuGWnwPtunsSLvSqXQ2wfp7Mgqg1I+2dQ==}
 
@@ -2310,6 +2337,10 @@ packages:
 
   buffer@6.0.3:
     resolution: {integrity: sha512-FTiCpNxtwiZZHEZbcbTIcZjERVICn9yq/pDFkTl95/AxzD1naBctN7YO68riM/gLSDY7sdrMby8hofADYuuqOA==}
+
+  bufferutil@4.0.8:
+    resolution: {integrity: sha512-4T53u4PdgsXqKaIctwF8ifXlRTTmEPJ8iEPWFdGZvcf7sbwYo6FKFEX9eNNAnzFZ7EzJAQ3CJeOtCRA4rDp7Pw==}
+    engines: {node: '>=6.14.2'}
 
   bundle-name@3.0.0:
     resolution: {integrity: sha512-PKA4BeSvBpQKQ8iPOGCSiell+N8P+Tf1DlwqmYhpe2gAhKPHn8EYOxVT+ShuGmhg8lN8XiSlS80yiExKXrURlw==}
@@ -2825,6 +2856,13 @@ packages:
   end-of-stream@1.4.4:
     resolution: {integrity: sha512-+uw1inIHVPQoaVuHzRyXd21icM+cnt4CzD5rW+NC1wjOUSTOs+Te7FOv7AhN7vS9x/oIyhLP5PR1H+phQAHu5Q==}
 
+  engine.io-client@6.6.1:
+    resolution: {integrity: sha512-aYuoak7I+R83M/BBPIOs2to51BmFIpC1wZe6zZzMrT2llVsHy5cvcmdsJgP2Qz6smHu+sD9oexiSUAVd8OfBPw==}
+
+  engine.io-parser@5.2.3:
+    resolution: {integrity: sha512-HqD3yTBfnBxIrbnM1DoD6Pcq8NECnh8d4As1Qgh0z5Gg3jRRIqijury0CL3ghu/edArpUYiYqQiDUQBIs4np3Q==}
+    engines: {node: '>=10.0.0'}
+
   entities@4.5.0:
     resolution: {integrity: sha512-V0hjH4dGPh9Ao5p0MoRY6BVqtwCjhz6vI5LT8AJ55H+4g9/4vbHx1I54fS0XuclLhDHArPQCiMjDxjaL8fPxhw==}
     engines: {node: '>=0.12'}
@@ -3270,6 +3308,10 @@ packages:
   get-symbol-description@1.0.2:
     resolution: {integrity: sha512-g0QYk1dZBxGwk+Ngc+ltRH2IBp2f7zBkBMBJZCDerh6EhlhSR6+9irMCuT/09zD6qkarHUSn529sK/yL4S27mg==}
     engines: {node: '>= 0.4'}
+
+  get-value@3.0.1:
+    resolution: {integrity: sha512-mKZj9JLQrwMBtj5wxi6MH8Z5eSKaERpAwjg43dPtlGI1ZVEgH/qC7T8/6R2OBSUA+zzHBZgICsVJaEIV2tKTDA==}
+    engines: {node: '>=6.0'}
 
   giget@1.2.3:
     resolution: {integrity: sha512-8EHPljDvs7qKykr6uw8b+lqLiUc/vUg+KVTI0uND4s63TdsZM2Xus3mflvF0DDG9SiM4RlCkFGL+7aAjRmV7KA==}
@@ -4415,6 +4457,10 @@ packages:
     resolution: {integrity: sha512-dPEtOeMvF9VMcYV/1Wb8CPoVAXtp6MKMlcbAt4ddqmGqUJ6fQZFXkNZNkNlfevtNkGtaSoXf/vNNNSvgrdXwtA==}
     engines: {node: '>= 6.13.0'}
 
+  node-gyp-build@4.8.2:
+    resolution: {integrity: sha512-IRUxE4BVsHWXkV/SFOut4qTlagw2aM8T5/vnTsmrHJvVoKueJHRc/JaFND7QDDc61kLYUJ6qlZM3sqTSyx2dTw==}
+    hasBin: true
+
   node-notifier@10.0.1:
     resolution: {integrity: sha512-YX7TSyDukOZ0g+gmzjB6abKu+hTGvO8+8+gIFDsRCU2t8fLV/P2unmt+LGFaIa4y64aX98Qksa97rgz4vMNeLQ==}
 
@@ -5128,6 +5174,10 @@ packages:
     engines: {node: '>=10'}
     hasBin: true
 
+  serialize-error@11.0.3:
+    resolution: {integrity: sha512-2G2y++21dhj2R7iHAdd0FIzjGwuKZld+7Pl/bTU6YIkrC2ZMbVUjm+luj6A6V34Rv9XfKJDKpTWu9W4Gse1D9g==}
+    engines: {node: '>=14.16'}
+
   serialize-error@9.1.1:
     resolution: {integrity: sha512-6uZQLGyUkNA4N+Zii9fYukmNu9PEA1F5rqcwXzN/3LtBjwl2dFBbVZ1Zyn08/CGkB4H440PIemdOQBt1Wvjbrg==}
     engines: {node: ^12.20.0 || ^14.13.1 || >=16.0.0}
@@ -5210,6 +5260,14 @@ packages:
   slice-ansi@7.1.0:
     resolution: {integrity: sha512-bSiSngZ/jWeX93BqeIAbImyTbEihizcwNjFoRUIY/T1wWQsfsm2Vw1agPKylXvQTU7iASGdHhyqRlqQzfz+Htg==}
     engines: {node: '>=18'}
+
+  socket.io-client@4.8.0:
+    resolution: {integrity: sha512-C0jdhD5yQahMws9alf/yvtsMGTaIDBnZ8Rb5HU56svyq0l5LIrGzIDZZD5pHQlmzxLuU91Gz+VpQMKgCTNYtkw==}
+    engines: {node: '>=10.0.0'}
+
+  socket.io-parser@4.2.4:
+    resolution: {integrity: sha512-/GbIKmo8ioc+NIWIhwdecY0ge+qVBSMdgxGygevmdHj24bsfgtCmcUUcQ5ZzcylGFHsN3k4HB4Cgkl96KVnuew==}
+    engines: {node: '>=10.0.0'}
 
   sonner@1.5.0:
     resolution: {integrity: sha512-FBjhG/gnnbN6FY0jaNnqZOMmB73R+5IiyYAw8yBj7L54ER7HB3fOSE5OFiQiE2iXWxeXKvg6fIP4LtVppHEdJA==}
@@ -5756,6 +5814,10 @@ packages:
     peerDependencies:
       react: ^16.8.0 || ^17.0.0 || ^18.0.0
 
+  utf-8-validate@6.0.4:
+    resolution: {integrity: sha512-xu9GQDeFp+eZ6LnCywXN/zBancWvOpUMzgjLPSjy4BRHSmTelvn2E0DG0o1sTiw5hkCKBHo8rwSKncfRfv2EEQ==}
+    engines: {node: '>=6.14.2'}
+
   utf8-bytes@0.0.1:
     resolution: {integrity: sha512-GifWmJAx2qAXT+lZLhbkWhBsy7pr6xWHiPWlVToDiELdWgZwt4Ogjf9tlgvKuALzTFR/d+EPQQI9ogJV3957Jg==}
 
@@ -5849,6 +5911,9 @@ packages:
   webext-bridge@6.0.1:
     resolution: {integrity: sha512-GruIrN+vNwbxVCi8UW4Dqk5YkcGA9V0ZfJ57jXP9JXHbrsDs5k2N6NNYQR5e+wSCnQpGYOGAGihwUpKlhg8QIw==}
 
+  webextension-polyfill@0.10.0:
+    resolution: {integrity: sha512-c5s35LgVa5tFaHhrZDnr3FpQpjj1BB+RXhLTYUxGqBVN460HkbM8TBtEqdXWbpTKfzwCcjAZVF7zXCYSKtcp9g==}
+
   webextension-polyfill@0.12.0:
     resolution: {integrity: sha512-97TBmpoWJEE+3nFBQ4VocyCdLKfw54rFaJ6EVQYLBCXqCIpLSZkwGgASpv4oPt9gdKCJ80RJlcmNzNn008Ag6Q==}
 
@@ -5941,6 +6006,18 @@ packages:
   write-file-atomic@3.0.3:
     resolution: {integrity: sha512-AvHcyZ5JnSfq3ioSyjrBkH9yW4m7Ayk8/9My/DD9onKeu/94fwrMocemO2QAJFAlnnDN+ZDS+ZjAR5ua1/PV/Q==}
 
+  ws@8.17.1:
+    resolution: {integrity: sha512-6XQFvXTkbfUOZOKKILFG1PDK2NDQs4azKQl26T0YS5CxqWLgXajbPZ+h4gZekJyRqFU8pvnbAbbs/3TgRPy+GQ==}
+    engines: {node: '>=10.0.0'}
+    peerDependencies:
+      bufferutil: ^4.0.1
+      utf-8-validate: '>=5.0.2'
+    peerDependenciesMeta:
+      bufferutil:
+        optional: true
+      utf-8-validate:
+        optional: true
+
   ws@8.18.0:
     resolution: {integrity: sha512-8VbfWfHLbbwu3+N6OKsOMpBdT4kXPDDB9cJk2bJ6mh9ucxdlnNvH1e+roYkKmN9Nxw2yjz7VzeO9oOz2zJ04Pw==}
     engines: {node: '>=10.0.0'}
@@ -5968,6 +6045,10 @@ packages:
   xmlbuilder@11.0.1:
     resolution: {integrity: sha512-fDlsI/kFEx7gLvbecc0/ohLG50fugQp8ryHzMTuW9vSa1GJ0XYWKnhsUx7oie3G98+r56aTQIUB4kht42R3JvA==}
     engines: {node: '>=4.0'}
+
+  xmlhttprequest-ssl@2.1.1:
+    resolution: {integrity: sha512-ptjR8YSJIXoA3Mbv5po7RtSYHO6mZr8s7i5VGmEk7QY2pQWyT1o0N+W1gKbOyJPUCGXGnuw0wqe8f0L6Y0ny7g==}
+    engines: {node: '>=0.4.0'}
 
   y18n@5.0.8:
     resolution: {integrity: sha512-0pfFzegeDWJHJIAmTLRP2DwHjdF5s7jo9tuztdQxAhINCdvS+3nGINqPd00AphqJR/0LhANUS6/+7SCb98YOfA==}
@@ -7186,7 +7267,7 @@ snapshots:
       uint8arraylist: 2.4.8
       uint8arrays: 5.1.0
 
-  '@libp2p/websockets@8.2.0':
+  '@libp2p/websockets@8.2.0(bufferutil@4.0.8)(utf-8-validate@6.0.4)':
     dependencies:
       '@libp2p/interface': 1.7.0
       '@libp2p/utils': 5.4.9
@@ -7194,12 +7275,12 @@ snapshots:
       '@multiformats/multiaddr': 12.3.1
       '@multiformats/multiaddr-to-uri': 10.1.0
       '@types/ws': 8.5.12
-      it-ws: 6.1.5
+      it-ws: 6.1.5(bufferutil@4.0.8)(utf-8-validate@6.0.4)
       p-defer: 4.0.1
       progress-events: 1.0.1
       race-signal: 1.1.0
       wherearewe: 2.0.1
-      ws: 8.18.0
+      ws: 8.18.0(bufferutil@4.0.8)(utf-8-validate@6.0.4)
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
@@ -7781,6 +7862,21 @@ snapshots:
   '@rollup/rollup-win32-x64-msvc@4.21.3':
     optional: true
 
+  '@rtco/client@0.2.17':
+    dependencies:
+      '@rtco/peer': 0.2.17
+      bufferutil: 4.0.8
+      eventemitter3: 5.0.1
+      nanoid: 5.0.7
+      socket.io-client: 4.8.0(bufferutil@4.0.8)(utf-8-validate@6.0.4)
+      utf-8-validate: 6.0.4
+    transitivePeerDependencies:
+      - supports-color
+
+  '@rtco/peer@0.2.17':
+    dependencies:
+      eventemitter3: 5.0.1
+
   '@sec-ant/readable-stream@0.4.1': {}
 
   '@sindresorhus/fnv1a@3.1.0': {}
@@ -7788,6 +7884,8 @@ snapshots:
   '@sindresorhus/is@5.6.0': {}
 
   '@sindresorhus/merge-streams@4.0.0': {}
+
+  '@socket.io/component-emitter@3.1.2': {}
 
   '@supabase/auth-js@2.65.0':
     dependencies:
@@ -7805,12 +7903,12 @@ snapshots:
     dependencies:
       '@supabase/node-fetch': 2.6.15
 
-  '@supabase/realtime-js@2.10.2':
+  '@supabase/realtime-js@2.10.2(bufferutil@4.0.8)(utf-8-validate@6.0.4)':
     dependencies:
       '@supabase/node-fetch': 2.6.15
       '@types/phoenix': 1.6.5
       '@types/ws': 8.5.12
-      ws: 8.18.0
+      ws: 8.18.0(bufferutil@4.0.8)(utf-8-validate@6.0.4)
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
@@ -7819,13 +7917,13 @@ snapshots:
     dependencies:
       '@supabase/node-fetch': 2.6.15
 
-  '@supabase/supabase-js@2.45.4':
+  '@supabase/supabase-js@2.45.4(bufferutil@4.0.8)(utf-8-validate@6.0.4)':
     dependencies:
       '@supabase/auth-js': 2.65.0
       '@supabase/functions-js': 2.4.1
       '@supabase/node-fetch': 2.6.15
       '@supabase/postgrest-js': 1.16.1
-      '@supabase/realtime-js': 2.10.2
+      '@supabase/realtime-js': 2.10.2(bufferutil@4.0.8)(utf-8-validate@6.0.4)
       '@supabase/storage-js': 2.7.0
     transitivePeerDependencies:
       - bufferutil
@@ -8213,13 +8311,13 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@waku/sdk@0.0.26(@libp2p/interface@1.7.0)(@waku/core@0.0.27(@multiformats/multiaddr@12.3.1)(libp2p@1.9.4))(@waku/enr@0.0.21)(@waku/interfaces@0.0.22)(@waku/message-hash@0.1.16)(@waku/relay@0.0.11(@waku/core@0.0.27(@multiformats/multiaddr@12.3.1)(libp2p@1.9.4))(@waku/interfaces@0.0.22)(@waku/proto@0.0.7)(@waku/utils@0.0.20))(@waku/utils@0.0.20)':
+  '@waku/sdk@0.0.26(@libp2p/interface@1.7.0)(@waku/core@0.0.27(@multiformats/multiaddr@12.3.1)(libp2p@1.9.4))(@waku/enr@0.0.21)(@waku/interfaces@0.0.22)(@waku/message-hash@0.1.16)(@waku/relay@0.0.11(@waku/core@0.0.27(@multiformats/multiaddr@12.3.1)(libp2p@1.9.4))(@waku/interfaces@0.0.22)(@waku/proto@0.0.7)(@waku/utils@0.0.20))(@waku/utils@0.0.20)(bufferutil@4.0.8)(utf-8-validate@6.0.4)':
     dependencies:
       '@chainsafe/libp2p-noise': 14.1.0
       '@libp2p/identify': 1.0.21
       '@libp2p/mplex': 10.1.5
       '@libp2p/ping': 1.1.6
-      '@libp2p/websockets': 8.2.0
+      '@libp2p/websockets': 8.2.0(bufferutil@4.0.8)(utf-8-validate@6.0.4)
       '@noble/hashes': 1.5.0
       '@waku/core': 0.0.27(@multiformats/multiaddr@12.3.1)(libp2p@1.9.4)
       '@waku/discovery': 0.0.3(@libp2p/interface@1.7.0)(@waku/core@0.0.27(@multiformats/multiaddr@12.3.1)(libp2p@1.9.4))(@waku/enr@0.0.21)(@waku/interfaces@0.0.22)(@waku/proto@0.0.7)(@waku/utils@0.0.20)
@@ -8266,6 +8364,17 @@ snapshots:
       is-potential-custom-element-name: 1.0.1
 
   '@webext-core/match-patterns@1.0.3': {}
+
+  '@webext-core/messaging@1.4.0':
+    dependencies:
+      serialize-error: 11.0.3
+      webextension-polyfill: 0.10.0
+
+  '@webext-core/proxy-service@1.2.0(@webext-core/messaging@1.4.0)(webextension-polyfill@0.12.0)':
+    dependencies:
+      '@webext-core/messaging': 1.4.0
+      get-value: 3.0.1
+      webextension-polyfill: 0.12.0
 
   '@xobotyi/scrollbar-width@1.9.5': {}
 
@@ -8481,6 +8590,10 @@ snapshots:
     dependencies:
       base64-js: 1.5.1
       ieee754: 1.2.1
+
+  bufferutil@4.0.8:
+    dependencies:
+      node-gyp-build: 4.8.2
 
   bundle-name@3.0.0:
     dependencies:
@@ -9010,6 +9123,20 @@ snapshots:
   end-of-stream@1.4.4:
     dependencies:
       once: 1.4.0
+
+  engine.io-client@6.6.1(bufferutil@4.0.8)(utf-8-validate@6.0.4):
+    dependencies:
+      '@socket.io/component-emitter': 3.1.2
+      debug: 4.3.7
+      engine.io-parser: 5.2.3
+      ws: 8.17.1(bufferutil@4.0.8)(utf-8-validate@6.0.4)
+      xmlhttprequest-ssl: 2.1.1
+    transitivePeerDependencies:
+      - bufferutil
+      - supports-color
+      - utf-8-validate
+
+  engine.io-parser@5.2.3: {}
 
   entities@4.5.0: {}
 
@@ -9669,6 +9796,10 @@ snapshots:
       es-errors: 1.3.0
       get-intrinsic: 1.2.4
 
+  get-value@3.0.1:
+    dependencies:
+      isobject: 3.0.1
+
   giget@1.2.3:
     dependencies:
       citty: 0.1.6
@@ -10209,13 +10340,13 @@ snapshots:
 
   it-take@3.0.6: {}
 
-  it-ws@6.1.5:
+  it-ws@6.1.5(bufferutil@4.0.8)(utf-8-validate@6.0.4):
     dependencies:
       '@types/ws': 8.5.12
       event-iterator: 2.0.0
       it-stream-types: 2.0.2
       uint8arrays: 5.1.0
-      ws: 8.18.0
+      ws: 8.18.0(bufferutil@4.0.8)(utf-8-validate@6.0.4)
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
@@ -10932,7 +11063,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  mqtt@5.10.1:
+  mqtt@5.10.1(bufferutil@4.0.8)(utf-8-validate@6.0.4):
     dependencies:
       '@types/readable-stream': 4.0.15
       '@types/ws': 8.5.12
@@ -10949,7 +11080,7 @@ snapshots:
       rfdc: 1.4.1
       split2: 4.2.0
       worker-timers: 7.1.8
-      ws: 8.18.0
+      ws: 8.18.0(bufferutil@4.0.8)(utf-8-validate@6.0.4)
     transitivePeerDependencies:
       - bufferutil
       - supports-color
@@ -11043,6 +11174,8 @@ snapshots:
   node-fetch-native@1.6.4: {}
 
   node-forge@1.3.1: {}
+
+  node-gyp-build@4.8.2: {}
 
   node-notifier@10.0.1:
     dependencies:
@@ -11863,6 +11996,10 @@ snapshots:
 
   semver@7.6.3: {}
 
+  serialize-error@11.0.3:
+    dependencies:
+      type-fest: 2.19.0
+
   serialize-error@9.1.1:
     dependencies:
       type-fest: 2.19.0
@@ -11944,6 +12081,24 @@ snapshots:
     dependencies:
       ansi-styles: 6.2.1
       is-fullwidth-code-point: 5.0.0
+
+  socket.io-client@4.8.0(bufferutil@4.0.8)(utf-8-validate@6.0.4):
+    dependencies:
+      '@socket.io/component-emitter': 3.1.2
+      debug: 4.3.7
+      engine.io-client: 6.6.1(bufferutil@4.0.8)(utf-8-validate@6.0.4)
+      socket.io-parser: 4.2.4
+    transitivePeerDependencies:
+      - bufferutil
+      - supports-color
+      - utf-8-validate
+
+  socket.io-parser@4.2.4:
+    dependencies:
+      '@socket.io/component-emitter': 3.1.2
+      debug: 4.3.7
+    transitivePeerDependencies:
+      - supports-color
 
   sonner@1.5.0(react-dom@18.3.1(react@18.3.1))(react@18.3.1):
     dependencies:
@@ -12246,16 +12401,16 @@ snapshots:
 
   trough@2.2.0: {}
 
-  trystero@0.20.0(@libp2p/interface@1.7.0)(@waku/core@0.0.27(@multiformats/multiaddr@12.3.1)(libp2p@1.9.4))(@waku/enr@0.0.21)(@waku/interfaces@0.0.22)(@waku/message-hash@0.1.16)(@waku/proto@0.0.7)(@waku/relay@0.0.11(@waku/core@0.0.27(@multiformats/multiaddr@12.3.1)(libp2p@1.9.4))(@waku/interfaces@0.0.22)(@waku/proto@0.0.7)(@waku/utils@0.0.20))(@waku/utils@0.0.20):
+  trystero@0.20.0(@libp2p/interface@1.7.0)(@waku/core@0.0.27(@multiformats/multiaddr@12.3.1)(libp2p@1.9.4))(@waku/enr@0.0.21)(@waku/interfaces@0.0.22)(@waku/message-hash@0.1.16)(@waku/proto@0.0.7)(@waku/relay@0.0.11(@waku/core@0.0.27(@multiformats/multiaddr@12.3.1)(libp2p@1.9.4))(@waku/interfaces@0.0.22)(@waku/proto@0.0.7)(@waku/utils@0.0.20))(@waku/utils@0.0.20)(bufferutil@4.0.8)(utf-8-validate@6.0.4):
     dependencies:
       '@noble/curves': 1.6.0
-      '@supabase/supabase-js': 2.45.4
+      '@supabase/supabase-js': 2.45.4(bufferutil@4.0.8)(utf-8-validate@6.0.4)
       '@thaunknown/simple-peer': 10.0.10
       '@waku/discovery': 0.0.3(@libp2p/interface@1.7.0)(@waku/core@0.0.27(@multiformats/multiaddr@12.3.1)(libp2p@1.9.4))(@waku/enr@0.0.21)(@waku/interfaces@0.0.22)(@waku/proto@0.0.7)(@waku/utils@0.0.20)
-      '@waku/sdk': 0.0.26(@libp2p/interface@1.7.0)(@waku/core@0.0.27(@multiformats/multiaddr@12.3.1)(libp2p@1.9.4))(@waku/enr@0.0.21)(@waku/interfaces@0.0.22)(@waku/message-hash@0.1.16)(@waku/relay@0.0.11(@waku/core@0.0.27(@multiformats/multiaddr@12.3.1)(libp2p@1.9.4))(@waku/interfaces@0.0.22)(@waku/proto@0.0.7)(@waku/utils@0.0.20))(@waku/utils@0.0.20)
+      '@waku/sdk': 0.0.26(@libp2p/interface@1.7.0)(@waku/core@0.0.27(@multiformats/multiaddr@12.3.1)(libp2p@1.9.4))(@waku/enr@0.0.21)(@waku/interfaces@0.0.22)(@waku/message-hash@0.1.16)(@waku/relay@0.0.11(@waku/core@0.0.27(@multiformats/multiaddr@12.3.1)(libp2p@1.9.4))(@waku/interfaces@0.0.22)(@waku/proto@0.0.7)(@waku/utils@0.0.20))(@waku/utils@0.0.20)(bufferutil@4.0.8)(utf-8-validate@6.0.4)
       firebase: 10.13.1
       libp2p: 1.9.4
-      mqtt: 5.10.1
+      mqtt: 5.10.1(bufferutil@4.0.8)(utf-8-validate@6.0.4)
     transitivePeerDependencies:
       - '@libp2p/bootstrap'
       - '@libp2p/interface'
@@ -12541,6 +12696,10 @@ snapshots:
     dependencies:
       react: 18.3.1
 
+  utf-8-validate@6.0.4:
+    dependencies:
+      node-gyp-build: 4.8.2
+
   utf8-bytes@0.0.1: {}
 
   utf8-codec@1.0.0: {}
@@ -12614,7 +12773,7 @@ snapshots:
       ms: 3.0.0-canary.1
       supports-color: 9.4.0
 
-  web-ext-run@0.2.1:
+  web-ext-run@0.2.1(bufferutil@4.0.8)(utf-8-validate@6.0.4):
     dependencies:
       '@babel/runtime': 7.24.7
       '@devicefarmer/adbkit': 3.2.6
@@ -12638,7 +12797,7 @@ snapshots:
       tmp: 0.2.3
       update-notifier: 6.0.2
       watchpack: 2.4.1
-      ws: 8.18.0
+      ws: 8.18.0(bufferutil@4.0.8)(utf-8-validate@6.0.4)
       zip-dir: 2.0.0
     transitivePeerDependencies:
       - bufferutil
@@ -12652,6 +12811,8 @@ snapshots:
       serialize-error: 9.1.1
       tiny-uid: 1.1.2
       webextension-polyfill: 0.9.0
+
+  webextension-polyfill@0.10.0: {}
 
   webextension-polyfill@0.12.0: {}
 
@@ -12768,9 +12929,17 @@ snapshots:
       signal-exit: 3.0.7
       typedarray-to-buffer: 3.1.5
 
-  ws@8.18.0: {}
+  ws@8.17.1(bufferutil@4.0.8)(utf-8-validate@6.0.4):
+    optionalDependencies:
+      bufferutil: 4.0.8
+      utf-8-validate: 6.0.4
 
-  wxt@0.19.9(@types/node@22.5.5)(rollup@4.21.3):
+  ws@8.18.0(bufferutil@4.0.8)(utf-8-validate@6.0.4):
+    optionalDependencies:
+      bufferutil: 4.0.8
+      utf-8-validate: 6.0.4
+
+  wxt@0.19.9(@types/node@22.5.5)(bufferutil@4.0.8)(rollup@4.21.3)(utf-8-validate@6.0.4):
     dependencies:
       '@aklinker1/rollup-plugin-visualizer': 5.12.0(rollup@4.21.3)
       '@types/chrome': 0.0.269
@@ -12814,7 +12983,7 @@ snapshots:
       unimport: 3.12.0(rollup@4.21.3)
       vite: 5.4.5(@types/node@22.5.5)
       vite-node: 2.1.1(@types/node@22.5.5)
-      web-ext-run: 0.2.1
+      web-ext-run: 0.2.1(bufferutil@4.0.8)(utf-8-validate@6.0.4)
       webextension-polyfill: 0.12.0
     transitivePeerDependencies:
       - '@types/node'
@@ -12839,6 +13008,8 @@ snapshots:
       xmlbuilder: 11.0.1
 
   xmlbuilder@11.0.1: {}
+
+  xmlhttprequest-ssl@2.1.1: {}
 
   y18n@5.0.8: {}
 

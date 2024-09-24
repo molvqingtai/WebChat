@@ -42,7 +42,7 @@ const formSchema = v.object({
   avatar: v.pipe(
     v.string(),
     v.notLength(0, 'Please select your avatar.'),
-    v.maxBytes(8 * 1024, 'Your avatar cannot exceed 8kb.')
+    v.maxBytes(8 * 1024, `Your avatar cannot exceed 8kb.`)
   ),
   themeMode: v.pipe(
     v.string(),
@@ -92,32 +92,24 @@ const ProfileForm = () => {
           control={form.control}
           name="avatar"
           render={({ field }) => (
-            <FormItem className="absolute left-1/2 top-0 grid -translate-x-1/2 -translate-y-1/2 justify-items-center">
+            <FormItem className="absolute inset-x-1 top-0 mx-auto grid w-fit -translate-y-1/2  justify-items-center">
               <FormControl>
-                <div className="grid justify-items-center gap-y-2">
-                  <AvatarSelect
-                    compressSize={MAX_AVATAR_SIZE}
-                    onError={handleError}
-                    onWarning={handleWarning}
-                    className="shadow-lg"
-                    {...field}
-                  ></AvatarSelect>
-                  <Button
-                    type="button"
-                    size="xs"
-                    className="mx-auto flex items-center gap-x-2"
-                    onClick={handleRefreshAvatar}
-                  >
-                    <RefreshCcwIcon size={14} />
-                    Ugly Avatar
-                  </Button>
-                </div>
+                <AvatarSelect
+                  compressSize={MAX_AVATAR_SIZE}
+                  onError={handleError}
+                  onWarning={handleWarning}
+                  className="shadow-lg"
+                  {...field}
+                ></AvatarSelect>
               </FormControl>
               <FormMessage />
             </FormItem>
           )}
         />
-
+        <Button type="button" size="xs" className="mx-auto flex items-center gap-x-2" onClick={handleRefreshAvatar}>
+          <RefreshCcwIcon size={14} />
+          Ugly Avatar
+        </Button>
         <FormField
           control={form.control}
           name="name"

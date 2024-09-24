@@ -1,26 +1,24 @@
-import { type DataPayload, type Room, joinRoom, selfId } from 'trystero'
-
-// import { joinRoom } from 'trystero/firebase'
+import { Artico, Room } from '@rtco/client'
 
 import { PeerRoomExtern, type PeerMessage } from '@/domain/externs/PeerRoom'
 import { stringToHex } from '@/utils'
+import { nanoid } from 'nanoid'
 import EventHub from '@resreq/event-hub'
-
 export interface Config {
   peerId?: string
   roomId: string
 }
 
 class PeerRoom extends EventHub {
-  readonly appId: string
-  private room?: Room
   readonly roomId: string
+  private rtco?: Artico
   readonly peerId: string
+  private room?: Room
+
   constructor(config: Config) {
     super()
-    this.appId = __NAME__
     this.roomId = config.roomId
-    this.peerId = selfId
+    this.peerId = config.peerId || nanoid()
     this.joinRoom = this.joinRoom.bind(this)
     this.sendMessage = this.sendMessage.bind(this)
     this.onMessage = this.onMessage.bind(this)
@@ -31,16 +29,17 @@ class PeerRoom extends EventHub {
   }
 
   joinRoom() {
-    this.room = joinRoom({ appId: this.appId }, this.roomId)
-    /**
-     * If we wait to join, it will result in not being able to listen to our own join event.
-     * This might be related to the fact that:
-     * (If called more than once, only the latest callback registered is ever called.)
-     * Multiple listeners may overwrite each other.
-     * @see: https://github.com/dmotz/trystero?tab=readme-ov-file#onpeerjoincallback
-     */
-    // this.room.onPeerJoin(() => this.emit('action'))
-    this.emit('action')
+    if (!this.rtco) {
+      this.rtco = new Artico({ id: this.peerId })
+    }
+    if (this.room) {
+      this.room = this.rtco.join(this.roomId)
+    } else {
+      this.rtco!.on('open', () => {
+        this.room = this.rtco!.join(this.roomId)
+        this.emit('action')
+      })
+    }
     return this
   }
 
@@ -52,14 +51,11 @@ class PeerRoom extends EventHub {
           this.emit('error', error)
           throw error
         }
-        const [send] = this.room.makeAction('MESSAGE')
-        send(message as DataPayload, id)
+        this.room.send(JSON.stringify(message), id)
       })
     } else {
-      const [send] = this.room.makeAction('MESSAGE')
-      send(message as DataPayload, id)
+      this.room.send(JSON.stringify(message), id)
     }
-
     return this
   }
 
@@ -71,12 +67,10 @@ class PeerRoom extends EventHub {
           this.emit('error', error)
           throw error
         }
-        const [, on] = this.room.makeAction('MESSAGE')
-        on((message) => callback(message as T))
+        this.room.on('message', (message) => callback(JSON.parse(message) as T))
       })
     } else {
-      const [, on] = this.room.makeAction('MESSAGE')
-      on((message) => callback(message as T))
+      this.room.on('message', (message) => callback(JSON.parse(message) as T))
     }
     return this
   }
@@ -89,14 +83,10 @@ class PeerRoom extends EventHub {
           this.emit('error', error)
           throw error
         }
-        this.room.onPeerJoin((peerId) => {
-          callback(peerId)
-        })
+        this.room.on('join', (id) => callback(id))
       })
     } else {
-      this.room.onPeerJoin((peerId) => {
-        callback(peerId)
-      })
+      this.room.on('join', (id) => callback(id))
     }
     return this
   }
@@ -109,10 +99,10 @@ class PeerRoom extends EventHub {
           this.emit('error', error)
           throw error
         }
-        this.room.onPeerLeave((peerId) => callback(peerId))
+        this.room.on('leave', (id) => callback(id))
       })
     } else {
-      this.room.onPeerLeave((peerId) => callback(peerId))
+      this.room.on('leave', (id) => callback(id))
     }
     return this
   }
@@ -134,14 +124,15 @@ class PeerRoom extends EventHub {
     }
     return this
   }
-
   onError(callback: (error: Error) => void) {
+    this.rtco?.on('error', (error) => callback(error))
     this.on('error', (error: Error) => callback(error))
     return this
   }
 }
 
 const hostRoomId = stringToHex(document.location.host)
+
 const peerRoom = new PeerRoom({ roomId: hostRoomId })
 
 export const PeerRoomImpl = PeerRoomExtern.impl(peerRoom)

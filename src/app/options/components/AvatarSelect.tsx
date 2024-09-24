@@ -21,8 +21,8 @@ const AvatarSelect = React.forwardRef<HTMLInputElement, AvatarSelectProps>(
     const handleChange = async (e: ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0]
       if (file) {
-        if (!/image\/(png|jpeg)/.test(file.type)) {
-          onWarning?.(new Error('Only PNG and JPEG image are supported.'))
+        if (!/image\/(png|jpeg|webp)/.test(file.type)) {
+          onWarning?.(new Error('Only PNG, JPEG and WebP image are supported.'))
           return
         }
 

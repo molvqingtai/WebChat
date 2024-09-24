@@ -1,3 +1,4 @@
+import { EVENT } from '@/constants/event'
 import { browser } from 'wxt/browser'
 import { defineBackground } from 'wxt/sandbox'
 
@@ -7,8 +8,10 @@ export default defineBackground({
   type: 'module',
 
   main() {
-    browser.runtime.onMessage.addListener(async () => {
-      browser.runtime.openOptionsPage()
+    browser.runtime.onMessage.addListener(async (event: EVENT) => {
+      if (event === EVENT.OPEN_OPTIONS_PAGE) {
+        browser.runtime.openOptionsPage()
+      }
     })
   }
 })

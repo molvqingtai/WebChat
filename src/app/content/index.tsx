@@ -8,7 +8,8 @@ import { createShadowRootUi } from 'wxt/client'
 
 import App from './App'
 import { IndexDBStorageImpl, BrowserSyncStorageImpl } from '@/domain/impls/Storage'
-import { PeerRoomImpl } from '@/domain/impls/PeerRoom'
+// import { PeerRoomImpl } from '@/domain/impls/PeerRoom'
+import { PeerRoomImpl } from '@/domain/impls/PeerRoom2'
 import '@/assets/styles/tailwind.css'
 import { createElement } from '@/utils'
 import { ToastImpl } from '@/domain/impls/Toast'
@@ -19,7 +20,7 @@ export default defineContentScript({
   async main(ctx) {
     const store = Remesh.store({
       externs: [IndexDBStorageImpl, BrowserSyncStorageImpl, PeerRoomImpl, ToastImpl],
-      inspectors: !__DEV__ ? [RemeshLogger()] : []
+      inspectors: __DEV__ ? [RemeshLogger()] : []
     })
 
     const ui = await createShadowRootUi(ctx, {

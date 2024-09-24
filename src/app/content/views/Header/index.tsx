@@ -6,13 +6,12 @@ import { Button } from '@/components/ui/Button'
 import { getSiteInfo } from '@/utils'
 import { useRemeshDomain, useRemeshQuery } from 'remesh-react'
 import RoomDomain from '@/domain/Room'
-import { selfId } from 'trystero'
 
 const Header: FC = () => {
   const siteInfo = getSiteInfo()
   const roomDomain = useRemeshDomain(RoomDomain())
   const userList = useRemeshQuery(roomDomain.query.UserListQuery())
-  console.log('userList', [...userList], userList.length)
+  const peerId = useRemeshQuery(roomDomain.query.PeerIdQuery())
 
   return (
     <div className="z-10 grid h-12 grid-flow-col items-center justify-between gap-x-4 rounded-t-xl bg-white px-4 backdrop-blur-lg">
@@ -27,7 +26,7 @@ const Header: FC = () => {
           <Button className="overflow-hidden" variant="link">
             <span className="truncate text-lg font-medium text-slate-600">
               {/* {siteInfo.hostname.replace(/^www\./i, '')} */}
-              {selfId}
+              {peerId}
             </span>
           </Button>
         </HoverCardTrigger>

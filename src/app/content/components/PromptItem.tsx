@@ -12,7 +12,7 @@ export interface PromptItemProps {
 
 const PromptItem: FC<PromptItemProps> = ({ data, className }) => {
   return (
-    <div className={cn('flex justify-center py-1', className)}>
+    <div className={cn('flex justify-center py-1 px-4', className)}>
       <Badge variant="secondary" className="gap-x-2 rounded-full  font-medium text-slate-400">
         <Avatar className="size-4">
           <AvatarImage src={data.userAvatar} alt="avatar" />
