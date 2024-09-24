@@ -281,20 +281,28 @@ const RoomDomain = Remesh.domain({
             const commandEvent$ = (() => {
               switch (message.type) {
                 case SendType.UserSync: {
-                  const self = get(UserListQuery()).find((user) => user.peerId === peerRoom.peerId)!
-                  const isJoining = self.joinTime < message.joinTime
-                  return of(
-                    UpdateUserListCommand({ type: 'create', user: message }),
-                    isJoining
-                      ? messageListDomain.command.CreateItemCommand({
-                          ...message,
-                          id: nanoid(),
-                          body: `"${message.username}" joined the chat`,
-                          type: MessageType.Prompt,
-                          date: Date.now()
-                        })
-                      : null
-                  )
+                  const userList = get(UserListQuery())
+                  const selfUser = userList.find((user) => user.peerId === peerRoom.peerId)!
+                  // If the browser has multiple tabs open, it can cause the same user to join multiple times with the same peerId but different userId
+                  const isSelfJoinEvent = !!userList.find((user) => user.userId === message.userId)
+                  // When a new user joins, it triggers join events for all users, i.e., newUser join event and oldUser join event
+                  // Use joinTime to determine if it's a new user
+                  const isNewJoinEvent = selfUser.joinTime < message.joinTime
+
+                  return isSelfJoinEvent
+                    ? EMPTY
+                    : of(
+                        UpdateUserListCommand({ type: 'create', user: message }),
+                        isNewJoinEvent
+                          ? messageListDomain.command.CreateItemCommand({
+                              ...message,
+                              id: nanoid(),
+                              body: `"${message.username}" joined the chat`,
+                              type: MessageType.Prompt,
+                              date: Date.now()
+                            })
+                          : null
+                      )
                 }
                 case SendType.Text:
                   return of(
