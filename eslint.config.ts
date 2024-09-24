@@ -24,7 +24,7 @@ export default [
     }
   },
   {
-    ignores: ['**/.output/*', '**/.wxt/*', '**/ui/**', '**/lib/**']
+    ignores: ['**/.output/*', '**/.wxt/*', '**/ui/**', '**/lib/**', '**.million**']
   },
   {
     rules: {

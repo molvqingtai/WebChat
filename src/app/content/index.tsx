@@ -8,8 +8,8 @@ import { createShadowRootUi } from 'wxt/client'
 
 import App from './App'
 import { IndexDBStorageImpl, BrowserSyncStorageImpl } from '@/domain/impls/Storage'
-// import { PeerRoomImpl } from '@/domain/impls/PeerRoom'
-import { PeerRoomImpl } from '@/domain/impls/PeerRoom2'
+import { PeerRoomImpl } from '@/domain/impls/PeerRoom'
+// import { PeerRoomImpl } from '@/domain/impls/PeerRoom2'
 import '@/assets/styles/tailwind.css'
 import { createElement } from '@/utils'
 import { ToastImpl } from '@/domain/impls/Toast'
@@ -34,11 +34,11 @@ export default defineContentScript({
 
         const root = createRoot(app)
         root.render(
-          // <React.StrictMode>
-          <RemeshRoot store={store}>
-            <App />
-          </RemeshRoot>
-          // </React.StrictMode>
+          <React.StrictMode>
+            <RemeshRoot store={store}>
+              <App />
+            </RemeshRoot>
+          </React.StrictMode>
         )
         return root
       },

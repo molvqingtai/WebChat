@@ -3,6 +3,7 @@ node_modules
 .output
 stats.html
 .wxt
+.million
 web-ext.config.ts
 
 *.DS_Store

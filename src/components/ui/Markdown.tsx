@@ -52,6 +52,14 @@ const Markdown: FC<MarkdownProps> = ({ children = '', className }) => {
         img: ({ className, alt, ...props }) => (
           <img className={cn('my-2 max-w-[100%] rounded', className)} alt={alt} {...props} />
         ),
+        a: ({ className, ...props }) => (
+          <a
+            className={cn('text-blue-500', className)}
+            target={props.href || '_blank'}
+            rel="noopener noreferrer"
+            {...props}
+          />
+        ),
         ul: ({ className, ...props }) => {
           Reflect.deleteProperty(props, 'ordered')
           return <ul className={cn('text-sm [&:not([depth="0"])]:my-0 ', className)} {...props} />
