@@ -1,4 +1,4 @@
-import { FC, forwardRef, useRef, useState, type ReactElement } from 'react'
+import { FC, useState, type ReactElement } from 'react'
 
 import { type MessageItemProps } from './MessageItem'
 import { type PromptItemProps } from './PromptItem'

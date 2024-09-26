@@ -1,13 +1,17 @@
 import { Toaster } from 'sonner'
-import Layout from './components/Layout'
+import Main from './components/Main'
 import ProfileForm from './components/ProfileForm'
+import BadgeList from './components/BadgeList'
 
 function App() {
   return (
-    <Layout>
-      <ProfileForm></ProfileForm>
-      <Toaster richColors position="top-center" />
-    </Layout>
+    <>
+      <BadgeList></BadgeList>
+      <Main>
+        <ProfileForm></ProfileForm>
+        <Toaster richColors position="top-center" />
+      </Main>
+    </>
   )
 }
 
