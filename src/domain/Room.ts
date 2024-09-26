@@ -1,10 +1,10 @@
 import { Remesh } from 'remesh'
-import { map, merge, of, EMPTY, mergeMap, fromEvent, Observable, tap } from 'rxjs'
+import { map, merge, of, EMPTY, mergeMap, fromEvent, Observable, tap, fromEventPattern } from 'rxjs'
 import { NormalMessage, type MessageUser } from './MessageList'
 import { PeerRoomExtern } from '@/domain/externs/PeerRoom'
 import MessageListDomain, { MessageType } from '@/domain/MessageList'
 import UserInfoDomain from '@/domain/UserInfo'
-import { fromEventPattern, desert, upsert } from '@/utils'
+import { desert, upsert } from '@/utils'
 import { nanoid } from 'nanoid'
 import StatusModule from '@/domain/modules/Status'
 
