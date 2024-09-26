@@ -1,5 +1,5 @@
 import { type RemeshEvent, type RemeshAction, type RemeshDomainContext, type RemeshExtern } from 'remesh'
-import { from, fromEventPattern, map, merge, switchMap, tap } from 'rxjs'
+import { defer, from, fromEventPattern, map, Observable, switchMap } from 'rxjs'
 import { type Promisable } from 'type-fest'
 
 export type StorageValue = null | string | number | boolean | object
@@ -60,11 +60,20 @@ export default class StorageEffect {
     this.domain.effect({
       name: 'WatchStorageToStateEffect',
       impl: () => {
-        return fromEventPattern(this.storage.watch, this.storage.unwatch).pipe(
-          switchMap(() => {
-            return from(this.storage.get<T>(this.key)).pipe(map((value) => callback(value)))
-          })
-        )
+        return defer(() => {
+          let unwatch: Unwatch
+          return new Observable<void>((observer) => {
+            this.storage
+              .watch(() => observer.next())
+              .then((_unwatch) => {
+                unwatch = _unwatch
+              })
+            return () => unwatch?.()
+          }).pipe(
+            switchMap(() => from(this.storage.get<T | null>(this.key))),
+            map(callback)
+          )
+        })
       }
     })
     return this

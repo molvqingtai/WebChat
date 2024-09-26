@@ -3,6 +3,7 @@ import { ListModule } from 'remesh/modules/list'
 import { IndexDBStorageExtern } from '@/domain/externs/Storage'
 import StorageEffect from '@/domain/modules/StorageEffect'
 import StatusModule from './modules/Status'
+import { MESSAGE_LIST_STORAGE_KEY } from '@/constants/config'
 
 export enum MessageType {
   Normal = 'normal',
@@ -33,15 +34,13 @@ export interface PromptMessage extends MessageUser {
 
 export type Message = NormalMessage | PromptMessage
 
-export const STORAGE_KEY = `MESSAGE_LIST`
-
 const MessageListDomain = Remesh.domain({
   name: 'MessageListDomain',
   impl: (domain) => {
     const storageEffect = new StorageEffect({
       domain,
       extern: IndexDBStorageExtern,
-      key: STORAGE_KEY
+      key: MESSAGE_LIST_STORAGE_KEY
     })
 
     const MessageListModule = ListModule<Message>(domain, {
@@ -145,11 +144,9 @@ const MessageListDomain = Remesh.domain({
 
     storageEffect
       .set(SyncToStorageEvent)
-      .get<Message[]>((value) => [
-        SyncToStateCommand(value ?? []),
-        MessageListLoadStatusModule.command.SetFinishedCommand()
-      ])
-      .watch<Message[]>((value) => SyncToStateCommand(value ?? []))
+      .get<
+        Message[]
+      >((value) => [SyncToStateCommand(value ?? []), MessageListLoadStatusModule.command.SetFinishedCommand()])
 
     return {
       query: {

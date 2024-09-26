@@ -48,8 +48,7 @@ class PeerRoom extends EventHub {
     if (!this.room) {
       this.once('action', () => {
         if (!this.room) {
-          const error = new Error('Room not joined')
-          this.emit('error', error)
+          this.emit('error', new Error('Room not joined'))
         } else {
           const [send] = this.room.makeAction('MESSAGE')
           send(message as DataPayload, id)
@@ -67,8 +66,7 @@ class PeerRoom extends EventHub {
     if (!this.room) {
       this.once('action', () => {
         if (!this.room) {
-          const error = new Error('Room not joined')
-          this.emit('error', error)
+          this.emit('error', new Error('Room not joined'))
         } else {
           const [, on] = this.room.makeAction('MESSAGE')
           on((message) => callback(message as T))
@@ -85,9 +83,7 @@ class PeerRoom extends EventHub {
     if (!this.room) {
       this.once('action', () => {
         if (!this.room) {
-          const error = new Error('Room not joined')
-          this.emit('error', error)
-          throw error
+          this.emit('error', new Error('Room not joined'))
         } else {
           this.room.onPeerJoin((peerId) => {
             callback(peerId)
@@ -106,8 +102,7 @@ class PeerRoom extends EventHub {
     if (!this.room) {
       this.once('action', () => {
         if (!this.room) {
-          const error = new Error('Room not joined')
-          this.emit('error', error)
+          this.emit('error', new Error('Room not joined'))
         } else {
           this.room.onPeerLeave((peerId) => callback(peerId))
         }
@@ -122,8 +117,7 @@ class PeerRoom extends EventHub {
     if (!this.room) {
       this.once('action', () => {
         if (!this.room) {
-          const error = new Error('Room not joined')
-          this.emit('error', error)
+          this.emit('error', new Error('Room not joined'))
         } else {
           this.room.leave()
           this.room = undefined

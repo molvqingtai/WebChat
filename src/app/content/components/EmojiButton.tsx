@@ -10,7 +10,7 @@ export interface EmojiButtonProps {
   onSelect?: (value: string) => void
 }
 
-const emojiGroups = chunk(EMOJI_LIST, 8)
+const emojiGroups = chunk([...EMOJI_LIST], 8)
 
 // BUG: https://github.com/radix-ui/primitives/pull/2433
 // BUG https://github.com/radix-ui/primitives/issues/1666

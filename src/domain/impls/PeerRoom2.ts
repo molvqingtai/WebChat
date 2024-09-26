@@ -47,8 +47,7 @@ class PeerRoom extends EventHub {
     if (!this.room) {
       this.once('action', () => {
         if (!this.room) {
-          const error = new Error('Room not joined')
-          this.emit('error', error)
+          this.emit('error', new Error('Room not joined'))
         } else {
           this.room.send(JSON.stringify(message), id)
         }
@@ -63,8 +62,7 @@ class PeerRoom extends EventHub {
     if (!this.room) {
       this.once('action', () => {
         if (!this.room) {
-          const error = new Error('Room not joined')
-          this.emit('error', error)
+          this.emit('error', new Error('Room not joined'))
         } else {
           this.room.on('message', (message) => callback(JSON.parse(message) as T))
         }
@@ -79,8 +77,7 @@ class PeerRoom extends EventHub {
     if (!this.room) {
       this.once('action', () => {
         if (!this.room) {
-          const error = new Error('Room not joined')
-          this.emit('error', error)
+          this.emit('error', new Error('Room not joined'))
         } else {
           this.room.on('join', (id) => callback(id))
         }
@@ -95,8 +92,7 @@ class PeerRoom extends EventHub {
     if (!this.room) {
       this.once('action', () => {
         if (!this.room) {
-          const error = new Error('Room not joined')
-          this.emit('error', error)
+          this.emit('error', new Error('Room not joined'))
         } else {
           this.room.on('leave', (id) => callback(id))
         }
@@ -111,8 +107,7 @@ class PeerRoom extends EventHub {
     if (!this.room) {
       this.once('action', () => {
         if (!this.room) {
-          const error = new Error('Room not joined')
-          this.emit('error', error)
+          this.emit('error', new Error('Room not joined'))
         } else {
           this.room.leave()
           this.room = undefined

@@ -2,6 +2,7 @@ import { Remesh } from 'remesh'
 import { BrowserSyncStorageExtern } from '@/domain/externs/Storage'
 import StorageEffect from '@/domain/modules/StorageEffect'
 import StatusModule from './modules/Status'
+import { USER_INFO_STORAGE_KEY } from '@/constants/config'
 
 export interface UserInfo {
   id: string
@@ -11,15 +12,13 @@ export interface UserInfo {
   themeMode: 'system' | 'light' | 'dark'
 }
 
-export const STORAGE_KEY = 'USER_INFO'
-
 const UserInfoDomain = Remesh.domain({
   name: 'UserInfoDomain',
   impl: (domain) => {
     const storageEffect = new StorageEffect({
       domain,
       extern: BrowserSyncStorageExtern,
-      key: STORAGE_KEY
+      key: USER_INFO_STORAGE_KEY
     })
 
     const UserInfoState = domain.state<UserInfo | null>({

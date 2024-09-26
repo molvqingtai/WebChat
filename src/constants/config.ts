@@ -1,7 +1,5 @@
 // https://www.webfx.com/tools/emoji-cheat-sheet/
 
-import { Message } from '@/domain/MessageList'
-
 export const EMOJI_LIST = [
   '😀',
   '😃',
@@ -165,7 +163,7 @@ export const EMOJI_LIST = [
   '🙏',
   '✍',
   '💅'
-]
+] as const
 
 // https://night-tailwindcss.vercel.app/docs/breakpoints
 export const BREAKPOINTS = {
@@ -189,6 +187,11 @@ export const MESSAGE_MAX_LENGTH = 500 as const
 
 export const STORAGE_NAME = 'WEB_CHAT' as const
 
+export const MESSAGE_LIST_STORAGE_KEY = 'WEB_CHAT_MESSAGE_LIST' as const
+
+export const USER_INFO_STORAGE_KEY = 'WEB_CHAT_USER_INFO' as const
+
+export const APP_OPEN_STATUS_STORAGE_KEY = 'WEB_CHAT_APP_OPEN_STATUS' as const
 /**
  * In chrome storage.sync, each key-value pair supports a maximum storage of 8kb
  * Image is encoded as base64, and the size is increased by about 33%.

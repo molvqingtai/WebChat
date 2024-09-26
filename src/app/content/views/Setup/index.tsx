@@ -12,6 +12,7 @@ import ExampleImage from '@/assets/images/example.jpg'
 import PulsatingButton from '@/components/magicui/pulsating-button'
 import BlurFade from '@/components/magicui/blur-fade'
 import WordPullUp from '@/components/magicui/word-pull-up'
+import { motion } from 'framer-motion'
 
 const mockTextList = [
   `你問我支持不支持，我說我支持`,
@@ -32,6 +33,8 @@ const mockTextList = [
   `![ExampleImage](${ExampleImage})`
 ]
 
+let printTextList = [...mockTextList]
+
 const generateUserInfo = async (): Promise<UserInfo> => {
   return {
     id: nanoid(),
@@ -46,7 +49,7 @@ const generateMessage = async (userInfo: UserInfo): Promise<Message> => {
   const { name: username, avatar: userAvatar, id: userId } = userInfo
   return {
     id: nanoid(),
-    body: mockTextList.shift()!,
+    body: printTextList.shift()!,
     date: Date.now(),
     type: MessageType.Normal,
     userId,
@@ -79,17 +82,18 @@ const Setup: FC = () => {
   }
 
   useEffect(() => {
+    printTextList.length === 0 && (printTextList = [...mockTextList])
     const timer = new Timer(
       async () => {
         await createMessage(await refreshUserInfo())
       },
-      { delay: 2000, immediate: true, limit: mockTextList.length }
+      { delay: 2000, immediate: true, limit: printTextList.length }
     )
 
     timer.start()
     return () => {
       timer.stop()
-      send(messageListDomain.command.ClearListCommand())
+      printTextList.length === 0 && send(messageListDomain.command.ClearListCommand())
     }
   }, [])
 
@@ -104,13 +108,16 @@ const Setup: FC = () => {
             </AvatarFallback>
           </Avatar>
         </BlurFade>
-        <div className="flex">
-          <div className="text-2xl font-bold text-primary">@</div>
-          <WordPullUp
+        <div className="flex" key={userInfo?.name}>
+          <motion.div
             className="text-2xl font-bold text-primary"
-            key={userInfo?.name}
-            words={`${userInfo?.name || ''}`}
-          />
+            initial={{ x: -10, opacity: 0 }} // 初始向左位移 10 像素
+            animate={{ x: 0, opacity: 1 }} // 动画结束时回到原位
+            transition={{ duration: 0.5 }} // 过渡效果持续时间
+          >
+            @
+          </motion.div>
+          <WordPullUp className="text-2xl font-bold text-primary" words={`${userInfo?.name || ''.padEnd(10, ' ')}`} />
         </div>
         <PulsatingButton onClick={handleSetup}>Start chatting</PulsatingButton>
       </div>

@@ -1,4 +1,4 @@
-import { type ReactNode, type FC, useState, type MouseEvent, useRef } from 'react'
+import { type ReactNode, type FC, useState, type MouseEvent, useRef, useEffect } from 'react'
 import { SettingsIcon, MoonIcon, SunIcon } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 
@@ -12,9 +12,10 @@ import { checkSystemDarkMode, cn } from '@/utils'
 
 export interface AppButtonProps {
   children?: ReactNode
+  onClick?: (e: MouseEvent<HTMLButtonElement>) => void
 }
 
-const AppButton: FC<AppButtonProps> = ({ children }) => {
+const AppButton: FC<AppButtonProps> = ({ children, onClick }) => {
   const send = useRemeshSend()
   const userInfoDomain = useRemeshDomain(UserInfoDomain())
   const userInfo = useRemeshQuery(userInfoDomain.query.UserInfoQuery())
@@ -22,19 +23,17 @@ const AppButton: FC<AppButtonProps> = ({ children }) => {
   const isDarkMode =
     userInfo?.themeMode === 'dark' ? true : userInfo?.themeMode === 'light' ? false : checkSystemDarkMode()
 
-  const [open, setOpen] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
 
   const menuRef = useRef<HTMLDivElement>(null)
 
   useClickAway(menuRef, () => {
-    setOpen(false)
+    setMenuOpen(false)
   }, ['click'])
-
-  const handleToggleApp = () => {}
 
   const handleToggleMenu = (e: MouseEvent<HTMLButtonElement>) => {
     e.preventDefault()
-    setOpen(!open)
+    setMenuOpen(!menuOpen)
   }
 
   const handleSwitchTheme = () => {
@@ -52,7 +51,7 @@ const AppButton: FC<AppButtonProps> = ({ children }) => {
   return (
     <div ref={menuRef} className="fixed bottom-5 right-5 z-infinity grid select-none justify-center gap-y-3">
       <AnimatePresence>
-        {open && (
+        {menuOpen && (
           <motion.div
             className="grid gap-y-3"
             initial="hidden"
@@ -121,7 +120,7 @@ const AppButton: FC<AppButtonProps> = ({ children }) => {
         )}
       </AnimatePresence>
       <Button
-        onClick={handleToggleApp}
+        onClick={onClick}
         onContextMenu={handleToggleMenu}
         className="relative z-10 size-10 rounded-full p-0 text-xs shadow"
       >

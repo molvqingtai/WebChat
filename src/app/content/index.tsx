@@ -35,11 +35,11 @@ export default defineContentScript({
 
         const root = createRoot(app)
         root.render(
-          <React.StrictMode>
-            <RemeshRoot store={store}>
-              <App />
-            </RemeshRoot>
-          </React.StrictMode>
+          // <React.StrictMode>
+          <RemeshRoot store={store}>
+            <App />
+          </RemeshRoot>
+          // </React.StrictMode>
         )
         return root
       },

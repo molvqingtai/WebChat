@@ -4,11 +4,11 @@ import { IndexDBStorageExtern, BrowserSyncStorageExtern } from '@/domain/externs
 import { STORAGE_NAME } from '@/constants/config'
 import { webExtensionDriver } from '@/utils/webExtensionDriver'
 
-const indexDBStorage = createStorage({
+export const indexDBStorage = createStorage({
   driver: indexedDbDriver({ base: `${STORAGE_NAME}:` })
 })
 
-const browserSyncStorage = createStorage({
+export const browserSyncStorage = createStorage({
   driver: webExtensionDriver({ storageArea: 'sync' })
 })
 

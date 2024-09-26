@@ -7,9 +7,11 @@ import { useRemeshDomain, useRemeshQuery, useRemeshSend } from 'remesh-react'
 import RoomDomain from '@/domain/Room'
 import UserInfoDomain from '@/domain/UserInfo'
 import Setup from '@/app/content/views/Setup'
-import MessageListDomain from '@/domain/MessageList'
-import { useEffect } from 'react'
+import MessageListDomain, { MessageType } from '@/domain/MessageList'
+import { useEffect, useState } from 'react'
 import { Toaster } from 'sonner'
+import { indexDBStorage } from '@/domain/impls/Storage'
+import { APP_OPEN_STATUS_STORAGE_KEY } from '@/constants/config'
 
 export default function App() {
   const send = useRemeshSend()
@@ -33,16 +35,33 @@ export default function App() {
     }
   }, [userInfoSetFinished, messageListLoadFinished])
 
+  const [appOpen, setAppOpen] = useState(false)
+
+  const handleToggleApp = async () => {
+    const value = !appOpen
+    setAppOpen(value)
+    await indexDBStorage.setItem<boolean>(APP_OPEN_STATUS_STORAGE_KEY, value)
+  }
+
+  const getAppOpenStatus = async () => {
+    const value = await indexDBStorage.getItem<boolean>(APP_OPEN_STATUS_STORAGE_KEY)
+    setAppOpen(!!value)
+  }
+
+  useEffect(() => {
+    getAppOpenStatus()
+  }, [])
+
   return (
     <>
-      <AppContainer>
+      <AppContainer open={appOpen}>
         <Header />
         <Main />
         <Footer />
         {notUserInfo && <Setup />}
         <Toaster richColors offset="70px" visibleToasts={1} duration={5000} position="top-center"></Toaster>
       </AppContainer>
-      <AppButton></AppButton>
+      <AppButton onClick={handleToggleApp}></AppButton>
     </>
   )
 }
