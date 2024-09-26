@@ -1,5 +1,4 @@
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/Avatar'
-import { Button } from '@/components/ui/Button'
 import { MAX_AVATAR_SIZE } from '@/constants/config'
 import MessageListDomain, { Message, MessageType } from '@/domain/MessageList'
 import UserInfoDomain, { UserInfo } from '@/domain/UserInfo'
@@ -10,11 +9,14 @@ import { FC, useEffect, useState } from 'react'
 import { useRemeshDomain, useRemeshSend } from 'remesh-react'
 import Timer from '@resreq/Timer'
 import ExampleImage from '@/assets/images/example.jpg'
+import PulsatingButton from '@/components/magicui/pulsating-button'
+import BlurFade from '@/components/magicui/blur-fade'
+import WordPullUp from '@/components/magicui/word-pull-up'
 
 const mockTextList = [
   `你問我支持不支持，我說我支持`,
   `我就明確告訴你，你們啊，我感覺你們新聞界還要學習一個，你們非常熟悉西方的那一套`,
-  `你們畢竟還 too young`,
+  `你們畢竟還 “too young”`,
   `明白我的意思吧？`,
   `我告訴你們我是身經百戰了，見得多了`,
   `西方的那個國家我沒去過？`,
@@ -22,12 +24,12 @@ const mockTextList = [
   `其實媒體呀，還是要提高自己的知識水平，識得唔識得呀？`,
   `你們有一個好，全世界跑到什么地方，你們比其他的西方記者跑得還快`,
   `但是呢問來問去的問題呀`,
-  `都 too simple sometimes naive`,
+  `都 “too simple sometimes naive”`,
   `懂了沒啊，識得唔識得呀？`,
   `我很抱歉，我今天是作爲一個長者給你們講`,
   `我不是新聞工作者，但是我見得太多了`,
   `我有這個必要好告訴你們一點人生的經驗`,
-  `![too young too simple sometimes naive](${ExampleImage})`
+  `![ExampleImage](${ExampleImage})`
 ]
 
 const generateUserInfo = async (): Promise<UserInfo> => {
@@ -90,19 +92,27 @@ const Setup: FC = () => {
       send(messageListDomain.command.ClearListCommand())
     }
   }, [])
+
   return (
     <div className="absolute inset-0 z-50 flex  rounded-xl bg-black/10 shadow-2xl  backdrop-blur-sm">
       <div className="m-auto flex flex-col items-center justify-center gap-y-8 pb-40 drop-shadow-lg">
-        <Avatar className="size-24 cursor-pointer border-4 border-white ">
-          <AvatarImage src={userInfo?.avatar} alt="avatar" />
-          <AvatarFallback>
-            <UserIcon size={30} className="text-slate-400" />
-          </AvatarFallback>
-        </Avatar>
-        <div className="text-2xl font-bold text-primary">@{userInfo?.name}</div>
-        <Button className="rounded-full" size="lg" onClick={handleSetup}>
-          Start chatting
-        </Button>
+        <BlurFade key={userInfo?.avatar} delay={0.1} inView>
+          <Avatar className="size-24 cursor-pointer border-4 border-white ">
+            <AvatarImage src={userInfo?.avatar} alt="avatar" />
+            <AvatarFallback>
+              <UserIcon size={30} className="text-slate-400" />
+            </AvatarFallback>
+          </Avatar>
+        </BlurFade>
+        <div className="flex">
+          <div className="text-2xl font-bold text-primary">@</div>
+          <WordPullUp
+            className="text-2xl font-bold text-primary"
+            key={userInfo?.name}
+            words={`${userInfo?.name || ''}`}
+          />
+        </div>
+        <PulsatingButton onClick={handleSetup}>Start chatting</PulsatingButton>
       </div>
     </div>
   )

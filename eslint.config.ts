@@ -24,7 +24,7 @@ export default [
     }
   },
   {
-    ignores: ['**/.output/*', '**/.wxt/*', '**/ui/**', '**/lib/**', '**.million**']
+    ignores: ['**/.output/*', '**/.wxt/*', '**/ui/**', '**/magicui/**', '**/lib/**', '**.million**']
   },
   {
     rules: {
@@ -33,7 +33,8 @@ export default [
       '@typescript-eslint/no-empty-object-type': 'off',
       '@typescript-eslint/no-unused-expressions': 'off',
       '@eslint-react/no-array-index-key': 'off',
-      '@eslint-react/hooks-extra/no-redundant-custom-hook': 'off'
+      '@eslint-react/hooks-extra/no-redundant-custom-hook': 'off',
+      '@eslint-react/dom/no-missing-button-type': 'off'
     }
   }
 ]

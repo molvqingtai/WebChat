@@ -2,6 +2,7 @@ import { Remesh } from 'remesh'
 import { ListModule } from 'remesh/modules/list'
 import { IndexDBStorageExtern } from '@/domain/externs/Storage'
 import StorageEffect from '@/domain/modules/StorageEffect'
+import StatusModule from './modules/Status'
 
 export enum MessageType {
   Normal = 'normal',
@@ -46,6 +47,10 @@ const MessageListDomain = Remesh.domain({
     const MessageListModule = ListModule<Message>(domain, {
       name: 'MessageListModule',
       key: (message) => message.id
+    })
+
+    const MessageListLoadStatusModule = StatusModule(domain, {
+      name: 'MessageListLoadStatusModule'
     })
 
     const ListQuery = MessageListModule.query.ItemListQuery
@@ -140,14 +145,18 @@ const MessageListDomain = Remesh.domain({
 
     storageEffect
       .set(SyncToStorageEvent)
-      .get<Message[]>((value) => SyncToStateCommand(value ?? []))
+      .get<Message[]>((value) => [
+        SyncToStateCommand(value ?? []),
+        MessageListLoadStatusModule.command.SetFinishedCommand()
+      ])
       .watch<Message[]>((value) => SyncToStateCommand(value ?? []))
 
     return {
       query: {
         HasItemQuery,
         ItemQuery,
-        ListQuery
+        ListQuery,
+        MessageListLoadIsFinishedQuery: MessageListLoadStatusModule.query.IsFinishedQuery
       },
       command: {
         CreateItemCommand,

@@ -27,8 +27,11 @@ const UserInfoDomain = Remesh.domain({
       default: null
     })
 
-    const UserInfoStatusModule = StatusModule(domain, {
-      name: 'UserInfo.StatusModule'
+    const UserInfoLoadStatusModule = StatusModule(domain, {
+      name: 'UserInfoLoadStatusModule'
+    })
+    const UserInfoSetStatusModule = StatusModule(domain, {
+      name: 'UserInfoSetStatusModule'
     })
 
     const UserInfoQuery = domain.query({
@@ -46,8 +49,8 @@ const UserInfoDomain = Remesh.domain({
           UpdateUserInfoEvent(),
           SyncToStorageEvent(),
           userInfo
-            ? UserInfoStatusModule.command.SetFinishedCommand()
-            : UserInfoStatusModule.command.SetInitialCommand()
+            ? UserInfoSetStatusModule.command.SetFinishedCommand()
+            : UserInfoSetStatusModule.command.SetInitialCommand()
         ]
       }
     })
@@ -73,31 +76,35 @@ const UserInfoDomain = Remesh.domain({
     const SyncToStateCommand = domain.command({
       name: 'UserInfo.SyncToStateCommand',
       impl: (_, userInfo: UserInfo | null) => {
-        return [UserInfoState().new(userInfo), UpdateUserInfoEvent(), SyncToStateEvent(userInfo)]
+        return [
+          UserInfoState().new(userInfo),
+          UpdateUserInfoEvent(),
+          SyncToStateEvent(userInfo),
+          userInfo && UserInfoSetStatusModule.command.SetFinishedCommand()
+        ]
       }
     })
 
     storageEffect
       .set(SyncToStorageEvent)
       .get<UserInfo>((value) => {
-        return [SyncToStateCommand(value), UserInfoStatusModule.command.SetFinishedCommand()]
+        return [SyncToStateCommand(value), UserInfoLoadStatusModule.command.SetFinishedCommand()]
       })
       .watch<UserInfo>((value) => [SyncToStateCommand(value)])
 
     return {
       query: {
         UserInfoQuery,
-        ...UserInfoStatusModule.query
+        UserInfoLoadIsFinishedQuery: UserInfoLoadStatusModule.query.IsFinishedQuery,
+        UserInfoSetIsFinishedQuery: UserInfoSetStatusModule.query.IsFinishedQuery
       },
       command: {
-        UpdateUserInfoCommand,
-        ...UserInfoStatusModule.command
+        UpdateUserInfoCommand
       },
       event: {
         SyncToStateEvent,
         SyncToStorageEvent,
-        UpdateUserInfoEvent,
-        ...UserInfoStatusModule.event
+        UpdateUserInfoEvent
       }
     }
   }

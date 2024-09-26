@@ -6,13 +6,15 @@ import MessageItem from '../../components/MessageItem'
 import PromptItem from '../../components/PromptItem'
 import UserInfoDomain from '@/domain/UserInfo'
 import RoomDomain, { MessageType } from '@/domain/Room'
+import MessageListDomain from '@/domain/MessageList'
 
 const Main: FC = () => {
   const send = useRemeshSend()
+  const messageListDomain = useRemeshDomain(MessageListDomain())
   const roomDomain = useRemeshDomain(RoomDomain())
   const userInfoDomain = useRemeshDomain(UserInfoDomain())
-  const _messageList = useRemeshQuery(roomDomain.query.MessageListQuery())
   const userInfo = useRemeshQuery(userInfoDomain.query.UserInfoQuery())
+  const _messageList = useRemeshQuery(messageListDomain.query.ListQuery())
   const messageList = _messageList.map((message) => {
     if (message.type === MessageType.Normal) {
       return {

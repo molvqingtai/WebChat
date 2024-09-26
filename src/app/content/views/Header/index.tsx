@@ -25,7 +25,7 @@ const Header: FC = () => {
       <HoverCard>
         <HoverCardTrigger asChild>
           <Button className="overflow-hidden" variant="link">
-            <span className="truncate text-lg font-medium text-slate-600">
+            <span className="truncate text-lg font-semibold text-slate-600">
               {siteInfo.hostname.replace(/^www\./i, '')}
               {/* {peerId} */}
             </span>

@@ -60,6 +60,7 @@ export default {
         md: 'calc(var(--radius) - 2px)',
         sm: 'calc(var(--radius) - 4px)'
       },
+
       keyframes: {
         'accordion-down': {
           from: { height: '0' },
@@ -68,11 +69,25 @@ export default {
         'accordion-up': {
           from: { height: 'var(--radix-accordion-content-height)' },
           to: { height: '0' }
+        },
+        pulse: {
+          '0%, 100%': { boxShadow: '0 0 0 0 var(--pulse-color)' },
+          '50%': { boxShadow: '0 0 0 8px var(--pulse-color)' }
+        },
+        ripple: {
+          '0%, 100%': {
+            transform: 'translate(-50%, -50%) scale(1)'
+          },
+          '50%': {
+            transform: 'translate(-50%, -50%) scale(0.9)'
+          }
         }
       },
       animation: {
         'accordion-down': 'accordion-down 0.2s ease-out',
-        'accordion-up': 'accordion-up 0.2s ease-out'
+        'accordion-up': 'accordion-up 0.2s ease-out',
+        pulse: 'pulse var(--duration) ease-out infinite',
+        ripple: 'ripple var(--duration,2s) ease calc(var(--i, 0)*.2s) infinite'
       }
     }
   },

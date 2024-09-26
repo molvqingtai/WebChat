@@ -45,12 +45,12 @@ export default class StorageEffect {
     this.domain.effect({
       name: 'FormStateToStorageEffect',
       impl: ({ fromEvent }) => {
-        const changeUserInfo$ = fromEvent(event).pipe(
-          tap(async (value) => {
-            return await this.storage.set(this.key, value)
+        return fromEvent(event).pipe(
+          switchMap(async (value) => {
+            await this.storage.set(this.key, value)
+            return null
           })
         )
-        return merge(changeUserInfo$).pipe(map(() => null))
       }
     })
     return this

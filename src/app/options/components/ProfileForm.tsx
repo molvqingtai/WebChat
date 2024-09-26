@@ -15,6 +15,7 @@ import { Label } from '@/components/ui/Label'
 import { RefreshCcwIcon } from 'lucide-react'
 import { MAX_AVATAR_SIZE } from '@/constants/config'
 import ToastDomain from '@/domain/Toast'
+import BlurFade from '@/components/magicui/blur-fade'
 
 const defaultUserInfo: UserInfo = {
   id: nanoid(),
@@ -94,13 +95,15 @@ const ProfileForm = () => {
           render={({ field }) => (
             <FormItem className="absolute inset-x-1 top-0 mx-auto grid w-fit -translate-y-1/2  justify-items-center">
               <FormControl>
-                <AvatarSelect
-                  compressSize={MAX_AVATAR_SIZE}
-                  onError={handleError}
-                  onWarning={handleWarning}
-                  className="shadow-lg"
-                  {...field}
-                ></AvatarSelect>
+                <BlurFade key={form.getValues().avatar} delay={0.1}>
+                  <AvatarSelect
+                    compressSize={MAX_AVATAR_SIZE}
+                    onError={handleError}
+                    onWarning={handleWarning}
+                    className="shadow-lg"
+                    {...field}
+                  ></AvatarSelect>
+                </BlurFade>
               </FormControl>
               <FormMessage />
             </FormItem>

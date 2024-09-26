@@ -20,13 +20,14 @@ export default defineContentScript({
   async main(ctx) {
     const store = Remesh.store({
       externs: [IndexDBStorageImpl, BrowserSyncStorageImpl, PeerRoomImpl, ToastImpl],
-      inspectors: __DEV__ ? [RemeshLogger()] : []
+      inspectors: !__DEV__ ? [RemeshLogger()] : []
     })
 
     const ui = await createShadowRootUi(ctx, {
       name: __NAME__,
       position: 'inline',
       anchor: 'body',
+      isolateEvents: ['scroll', 'click'],
       mode: __DEV__ ? 'open' : 'closed',
       onMount: (container) => {
         const app = createElement('<div id="app"></div>')
@@ -34,11 +35,11 @@ export default defineContentScript({
 
         const root = createRoot(app)
         root.render(
-          <React.StrictMode>
-            <RemeshRoot store={store}>
-              <App />
-            </RemeshRoot>
-          </React.StrictMode>
+          // <React.StrictMode>
+          <RemeshRoot store={store}>
+            <App />
+          </RemeshRoot>
+          // </React.StrictMode>
         )
         return root
       },
