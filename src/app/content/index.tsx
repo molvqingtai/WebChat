@@ -11,6 +11,7 @@ import { IndexDBStorageImpl, BrowserSyncStorageImpl } from '@/domain/impls/Stora
 import { PeerRoomImpl } from '@/domain/impls/PeerRoom'
 // import { PeerRoomImpl } from '@/domain/impls/PeerRoom2'
 import '@/assets/styles/tailwind.css'
+import '@/assets/styles/sonner.css'
 import { createElement } from '@/utils'
 import { ToastImpl } from '@/domain/impls/Toast'
 
@@ -27,7 +28,6 @@ export default defineContentScript({
       name: __NAME__,
       position: 'inline',
       anchor: 'body',
-      isolateEvents: ['scroll', 'click'],
       mode: __DEV__ ? 'open' : 'closed',
       onMount: (container) => {
         const app = createElement('<div id="app"></div>')
@@ -35,11 +35,11 @@ export default defineContentScript({
 
         const root = createRoot(app)
         root.render(
-          // <React.StrictMode>
-          <RemeshRoot store={store}>
-            <App />
-          </RemeshRoot>
-          // </React.StrictMode>
+          <React.StrictMode>
+            <RemeshRoot store={store}>
+              <App />
+            </RemeshRoot>
+          </React.StrictMode>
         )
         return root
       },

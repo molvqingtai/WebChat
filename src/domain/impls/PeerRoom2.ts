@@ -49,9 +49,9 @@ class PeerRoom extends EventHub {
         if (!this.room) {
           const error = new Error('Room not joined')
           this.emit('error', error)
-          throw error
+        } else {
+          this.room.send(JSON.stringify(message), id)
         }
-        this.room.send(JSON.stringify(message), id)
       })
     } else {
       this.room.send(JSON.stringify(message), id)
@@ -65,9 +65,9 @@ class PeerRoom extends EventHub {
         if (!this.room) {
           const error = new Error('Room not joined')
           this.emit('error', error)
-          throw error
+        } else {
+          this.room.on('message', (message) => callback(JSON.parse(message) as T))
         }
-        this.room.on('message', (message) => callback(JSON.parse(message) as T))
       })
     } else {
       this.room.on('message', (message) => callback(JSON.parse(message) as T))
@@ -81,9 +81,9 @@ class PeerRoom extends EventHub {
         if (!this.room) {
           const error = new Error('Room not joined')
           this.emit('error', error)
-          throw error
+        } else {
+          this.room.on('join', (id) => callback(id))
         }
-        this.room.on('join', (id) => callback(id))
       })
     } else {
       this.room.on('join', (id) => callback(id))
@@ -97,9 +97,9 @@ class PeerRoom extends EventHub {
         if (!this.room) {
           const error = new Error('Room not joined')
           this.emit('error', error)
-          throw error
+        } else {
+          this.room.on('leave', (id) => callback(id))
         }
-        this.room.on('leave', (id) => callback(id))
       })
     } else {
       this.room.on('leave', (id) => callback(id))
@@ -113,10 +113,10 @@ class PeerRoom extends EventHub {
         if (!this.room) {
           const error = new Error('Room not joined')
           this.emit('error', error)
-          throw error
+        } else {
+          this.room.leave()
+          this.room = undefined
         }
-        this.room.leave()
-        this.room = undefined
       })
     } else {
       this.room.leave()

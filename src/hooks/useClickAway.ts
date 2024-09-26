@@ -2,6 +2,10 @@ import { type RefObject, useEffect, useRef } from 'react'
 
 export type Events = Array<keyof GlobalEventHandlersEventMap>
 
+/**
+ * Waiting for PR merge
+ * @see https://github.com/streamich/react-use/pull/2528
+ */
 const useClickAway = <E extends Event = Event>(
   ref: RefObject<HTMLElement | null>,
   onClickAway: (event: E) => void,

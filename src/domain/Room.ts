@@ -7,6 +7,7 @@ import UserInfoDomain from '@/domain/UserInfo'
 import { desert, upsert } from '@/utils'
 import { nanoid } from 'nanoid'
 import StatusModule from '@/domain/modules/Status'
+import { ToastExtern } from './externs/Toast'
 
 export { MessageType }
 
@@ -50,6 +51,7 @@ const RoomDomain = Remesh.domain({
     const messageListDomain = domain.getDomain(MessageListDomain())
     const userInfoDomain = domain.getDomain(UserInfoDomain())
     const peerRoom = domain.getExtern(PeerRoomExtern)
+    const toast = domain.getExtern(ToastExtern)
 
     const PeerIdState = domain.state<string>({
       name: 'Room.PeerIdState',
@@ -389,7 +391,21 @@ const RoomDomain = Remesh.domain({
       }
     })
 
-    // 以后移动到 service worker 中，无需每次刷新页面都发送离开房间的消息
+    domain.effect({
+      name: 'RoomOnErrorEffect',
+      impl: () => {
+        const onRoomError$ = fromEventPattern<Error>(peerRoom.onError).pipe(
+          map((error) => {
+            console.error(error)
+            toast.error(error.message)
+            return null
+          })
+        )
+        return onRoomError$
+      }
+    })
+
+    // TODO: Move this to a service worker in the future, so we don't need to send a leave room message every time the page refreshes
     domain.effect({
       name: 'RoomOnUnloadEffect',
       impl: () => {

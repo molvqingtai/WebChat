@@ -96,7 +96,7 @@ const Setup: FC = () => {
   return (
     <div className="absolute inset-0 z-50 flex  rounded-xl bg-black/10 shadow-2xl  backdrop-blur-sm">
       <div className="m-auto flex flex-col items-center justify-center gap-y-8 pb-40 drop-shadow-lg">
-        <BlurFade key={userInfo?.avatar} delay={0.1} inView>
+        <BlurFade key={userInfo?.avatar} inView>
           <Avatar className="size-24 cursor-pointer border-4 border-white ">
             <AvatarImage src={userInfo?.avatar} alt="avatar" />
             <AvatarFallback>

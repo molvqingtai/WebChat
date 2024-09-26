@@ -5,11 +5,11 @@ import AppButton from '@/app/content/views/AppButton'
 import AppContainer from '@/app/content/views/AppContainer'
 import { useRemeshDomain, useRemeshQuery, useRemeshSend } from 'remesh-react'
 import RoomDomain from '@/domain/Room'
-import { Toaster } from '@/components/ui/Sonner'
 import UserInfoDomain from '@/domain/UserInfo'
 import Setup from '@/app/content/views/Setup'
 import MessageListDomain from '@/domain/MessageList'
 import { useEffect } from 'react'
+import { Toaster } from 'sonner'
 
 export default function App() {
   const send = useRemeshSend()
@@ -23,8 +23,13 @@ export default function App() {
   const notUserInfo = userInfoLoadFinished && !userInfoSetFinished
 
   useEffect(() => {
-    if (userInfoSetFinished && messageListLoadFinished) {
-      send(roomDomain.command.JoinRoomCommand())
+    if (messageListLoadFinished) {
+      if (userInfoSetFinished) {
+        send(roomDomain.command.JoinRoomCommand())
+      } else {
+        // Clear simulated data when refreshing on the setup page
+        send(messageListDomain.command.ClearListCommand())
+      }
     }
   }, [userInfoSetFinished, messageListLoadFinished])
 
@@ -35,9 +40,9 @@ export default function App() {
         <Main />
         <Footer />
         {notUserInfo && <Setup />}
+        <Toaster richColors offset="70px" visibleToasts={1} duration={5000} position="top-center"></Toaster>
       </AppContainer>
       <AppButton></AppButton>
-      <Toaster richColors offset="104px" position="top-center"></Toaster>
     </>
   )
 }

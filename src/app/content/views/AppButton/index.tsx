@@ -1,5 +1,6 @@
 import { type ReactNode, type FC, useState, type MouseEvent, useRef } from 'react'
 import { SettingsIcon, MoonIcon, SunIcon } from 'lucide-react'
+import { motion, AnimatePresence } from 'framer-motion'
 
 import { browser } from 'wxt/browser'
 import { useRemeshDomain, useRemeshQuery, useRemeshSend } from 'remesh-react'
@@ -25,13 +26,11 @@ const AppButton: FC<AppButtonProps> = ({ children }) => {
 
   const menuRef = useRef<HTMLDivElement>(null)
 
-  /**
-   * Waiting for PR merge
-   * @see https://github.com/streamich/react-use/pull/2528
-   */
   useClickAway(menuRef, () => {
     setOpen(false)
   }, ['click'])
+
+  const handleToggleApp = () => {}
 
   const handleToggleMenu = (e: MouseEvent<HTMLButtonElement>) => {
     e.preventDefault()
@@ -52,35 +51,80 @@ const AppButton: FC<AppButtonProps> = ({ children }) => {
 
   return (
     <div ref={menuRef} className="fixed bottom-5 right-5 z-infinity grid select-none justify-center gap-y-3">
-      {/* <div className="grid gap-y-3" inert={!open && ''}> */}
-      <div className="pointer-events-none grid gap-y-3">
-        <Button
-          onClick={handleSwitchTheme}
-          variant="outline"
-          data-state={open ? 'open' : 'closed'}
-          className="pointer-events-auto relative size-10 overflow-hidden rounded-full p-0 shadow fill-mode-forwards data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out data-[state=open]:fade-in data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom"
-        >
-          <div
-            className={cn(
-              'absolute -top-10 grid grid-rows-[repeat(2,minmax(0,2.5rem))] w-full justify-center items-center transition-all duration-500',
-              isDarkMode ? 'top-0' : '-top-10 ',
-              isDarkMode ? 'bg-slate-800 text-white' : 'bg-white text-orange-400'
-            )}
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            className="grid gap-y-3"
+            initial="hidden"
+            animate="visible"
+            exit="exit"
+            variants={{
+              hidden: {},
+              visible: {
+                transition: {
+                  staggerChildren: 0.1,
+                  staggerDirection: -1
+                }
+              },
+              exit: {
+                transition: {
+                  staggerChildren: 0.1,
+                  staggerDirection: 1
+                }
+              }
+            }}
           >
-            <MoonIcon size={20} />
-            <SunIcon size={20} />
-          </div>
-        </Button>
-        <Button
-          onClick={handleOpenOptionsPage}
-          variant="outline"
-          data-state={open ? 'open' : 'closed'}
-          className="pointer-events-auto size-10 rounded-full  p-0 shadow fill-mode-forwards data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out data-[state=open]:fade-in data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom"
-        >
-          <SettingsIcon size={20} />
-        </Button>
-      </div>
-      <Button onContextMenu={handleToggleMenu} className="relative z-10 size-10 rounded-full p-0 text-xs shadow">
+            <motion.div
+              className="leading-none"
+              variants={{
+                hidden: { opacity: 0, y: 12 },
+                visible: { opacity: 1, y: 0 },
+                exit: { opacity: 0, y: 12 }
+              }}
+              transition={{ duration: 0.1 }}
+            >
+              <Button
+                onClick={handleSwitchTheme}
+                variant="outline"
+                className="relative size-10 overflow-hidden rounded-full p-0 shadow"
+              >
+                <div
+                  className={cn(
+                    'absolute grid grid-rows-[repeat(2,minmax(0,2.5rem))] w-full justify-center items-center transition-all duration-500',
+                    isDarkMode ? 'top-0' : '-top-10',
+                    isDarkMode ? 'bg-slate-800 text-white' : 'bg-white text-orange-400'
+                  )}
+                >
+                  <MoonIcon size={20} />
+                  <SunIcon size={20} />
+                </div>
+              </Button>
+            </motion.div>
+
+            <motion.div
+              variants={{
+                hidden: { opacity: 0, y: 12 },
+                visible: { opacity: 1, y: 0 },
+                exit: { opacity: 0, y: 12 }
+              }}
+              transition={{ duration: 0.1 }}
+            >
+              <Button
+                onClick={handleOpenOptionsPage}
+                variant="outline"
+                className="pointer-events-auto size-10 rounded-full p-0 shadow"
+              >
+                <SettingsIcon size={20} />
+              </Button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+      <Button
+        onClick={handleToggleApp}
+        onContextMenu={handleToggleMenu}
+        className="relative z-10 size-10 rounded-full p-0 text-xs shadow"
+      >
         {children}
       </Button>
     </div>

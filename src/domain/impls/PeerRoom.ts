@@ -50,10 +50,10 @@ class PeerRoom extends EventHub {
         if (!this.room) {
           const error = new Error('Room not joined')
           this.emit('error', error)
-          throw error
+        } else {
+          const [send] = this.room.makeAction('MESSAGE')
+          send(message as DataPayload, id)
         }
-        const [send] = this.room.makeAction('MESSAGE')
-        send(message as DataPayload, id)
       })
     } else {
       const [send] = this.room.makeAction('MESSAGE')
@@ -69,10 +69,10 @@ class PeerRoom extends EventHub {
         if (!this.room) {
           const error = new Error('Room not joined')
           this.emit('error', error)
-          throw error
+        } else {
+          const [, on] = this.room.makeAction('MESSAGE')
+          on((message) => callback(message as T))
         }
-        const [, on] = this.room.makeAction('MESSAGE')
-        on((message) => callback(message as T))
       })
     } else {
       const [, on] = this.room.makeAction('MESSAGE')
@@ -88,10 +88,11 @@ class PeerRoom extends EventHub {
           const error = new Error('Room not joined')
           this.emit('error', error)
           throw error
+        } else {
+          this.room.onPeerJoin((peerId) => {
+            callback(peerId)
+          })
         }
-        this.room.onPeerJoin((peerId) => {
-          callback(peerId)
-        })
       })
     } else {
       this.room.onPeerJoin((peerId) => {
@@ -107,9 +108,9 @@ class PeerRoom extends EventHub {
         if (!this.room) {
           const error = new Error('Room not joined')
           this.emit('error', error)
-          throw error
+        } else {
+          this.room.onPeerLeave((peerId) => callback(peerId))
         }
-        this.room.onPeerLeave((peerId) => callback(peerId))
       })
     } else {
       this.room.onPeerLeave((peerId) => callback(peerId))
@@ -123,10 +124,10 @@ class PeerRoom extends EventHub {
         if (!this.room) {
           const error = new Error('Room not joined')
           this.emit('error', error)
-          throw error
+        } else {
+          this.room.leave()
+          this.room = undefined
         }
-        this.room.leave()
-        this.room = undefined
       })
     } else {
       this.room.leave()

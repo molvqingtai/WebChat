@@ -6,6 +6,7 @@ import { RemeshLogger } from 'remesh-logger'
 import App from './App'
 import { BrowserSyncStorageImpl } from '@/domain/impls/Storage'
 import '@/assets/styles/tailwind.css'
+
 import { ToastImpl } from '@/domain/impls/Toast'
 
 const store = Remesh.store({
