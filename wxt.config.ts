@@ -1,7 +1,7 @@
 import path from 'node:path'
 import { defineConfig } from 'wxt'
 import react from '@vitejs/plugin-react'
-import { name } from './package.json'
+import { name, displayName, homepage } from './package.json'
 import svgr from 'vite-plugin-svgr'
 
 export default defineConfig({
@@ -13,6 +13,8 @@ export default defineConfig({
   },
   manifest: {
     permissions: ['storage'],
+    name: displayName,
+    homepage_url: homepage,
     icons: {
       '16': 'logo.png',
       '32': 'logo.png',
