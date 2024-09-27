@@ -1,11 +1,26 @@
 {
-  "branches": ["master"],
+  "branches": [
+    "master"
+  ],
   "plugins": [
     "@semantic-release/commit-analyzer",
     "@semantic-release/release-notes-generator",
     "@semantic-release/changelog",
     "@semantic-release/github",
+    [
+      "@semantic-release/exec",
+      {
+        "prepareCmd": "pnpm run pack:chrome"
+      }
+    ],
+    {
+      "assets": [
+        {
+          "path": ".output/web-chat-{{nextRelease.version}}-chrome.zip",
+          "label": "Release ZIP"
+        }
+      ]
+    },
     "@semantic-release/git"
   ]
 }
-
