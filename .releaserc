@@ -17,6 +17,9 @@
       "assets": [
         {
           "path": ".output/web-chat-0.0.1-chrome.zip"
+        },
+        {
+          "path": "package.json"
         }
       ],
       "labels": [
