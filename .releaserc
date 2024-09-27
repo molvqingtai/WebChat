@@ -6,6 +6,34 @@
     "@semantic-release/commit-analyzer",
     "@semantic-release/release-notes-generator",
     "@semantic-release/changelog",
-    "@semantic-release/git"
+    [
+      "@semantic-release/git",
+      {
+        "assets": [
+          "package.json",
+          "package-lock.json"
+        ],
+        "message": "chore(release): ${{ nextRelease.version }} [skip ci]"
+      }
+    ],
+    [
+      "@semantic-release/exec",
+      {
+        "prepareCmd": "pnpm pack:chrome && cat package.json"
+      }
+    ],
+    [
+      "@semantic-release/github",
+      {
+        "assets": [
+          {
+            "path": ".output/web-chat-${{ nextRelease.version }}-chrome.zip"
+          }
+        ],
+        "labels": [
+          "release"
+        ]
+      }
+    ]
   ]
 }
