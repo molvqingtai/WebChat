@@ -8,7 +8,7 @@ on:
     branches:
       - master
 jobs:
-  install:
+  linter:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
@@ -20,17 +20,6 @@ jobs:
           version: latest
       - run: pnpm install --ignore-scripts
       - run: pnpm wxt prepare
-  linter:
-    needs: install
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v2
-      - uses: actions/setup-node@v2
-        with:
-          node-version: lts/*
-      - uses: pnpm/action-setup@v2.1.0
-        with:
-          version: latest
       - run: pnpm run lint
       - run: pnpm run tsc
 
@@ -45,6 +34,8 @@ jobs:
       - uses: pnpm/action-setup@v2.1.0
         with:
           version: latest
+      - run: pnpm install --ignore-scripts
+      - run: pnpm wxt prepare
       - run: pnpx semantic-release --dry-run
         env:
           GH_TOKEN: ${{ secrets.WEB_CHAT_GITHUB_TOKEN }}
