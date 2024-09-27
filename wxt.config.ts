@@ -11,12 +11,12 @@ export default defineConfig({
     startUrls: ['https://www.example.com/']
   },
   manifest: {
-    permissions: ['storage'],
-    browser_specific_settings: {
-      gecko: {
-        id: 'molvqingtai@gmail.com'
-      }
-    }
+    permissions: ['storage']
+    // browser_specific_settings: {
+    //   gecko: {
+    //     id: 'molvqingtai@gmail.com'
+    //   }
+    // }
   },
   vite: (env) => ({
     define: {
