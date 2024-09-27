@@ -5,27 +5,29 @@
   "plugins": [
     "@semantic-release/commit-analyzer",
     "@semantic-release/release-notes-generator",
-    [
-      "@semantic-release/exec",
-      {
+    "@semantic-release/changelog",
+    {
+      "name": "@semantic-release/exec",
+      "config": {
         "prepareCmd": "pnpm pack:chrome"
       }
-    ],
-    "@semantic-release/changelog",
-    "@semantic-release/github",
-    {
-      "assets": [
-        {
-          "path": ".output/web-chat-0.0.1-chrome.zip"
-        },
-        {
-          "path": "package.json"
-        }
-      ],
-      "labels": [
-        "release"
-      ]
     },
+    [
+      "@semantic-release/github",
+      {
+        "assets": [
+          {
+            "path": ".output/web-chat-{{nextRelease.version}}-chrome.zip"
+          },
+          {
+            "path": "package.json"
+          }
+        ],
+        "labels": [
+          "release"
+        ]
+      }
+    ],
     "@semantic-release/git"
   ]
 }
