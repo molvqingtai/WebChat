@@ -123,6 +123,7 @@
     "tailwindcss-animate": "^1.0.7",
     "typescript": "^5.6.2",
     "typescript-eslint": "^8.7.0",
+    "vite-plugin-svgr": "^4.2.0",
     "webext-bridge": "^6.0.1",
     "wxt": "^0.19.10"
   },

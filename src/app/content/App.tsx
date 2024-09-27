@@ -7,11 +7,19 @@ import { useRemeshDomain, useRemeshQuery, useRemeshSend } from 'remesh-react'
 import RoomDomain from '@/domain/Room'
 import UserInfoDomain from '@/domain/UserInfo'
 import Setup from '@/app/content/views/Setup'
-import MessageListDomain, { MessageType } from '@/domain/MessageList'
+import MessageListDomain from '@/domain/MessageList'
 import { useEffect, useState } from 'react'
 import { Toaster } from 'sonner'
 import { indexDBStorage } from '@/domain/impls/Storage'
 import { APP_OPEN_STATUS_STORAGE_KEY } from '@/constants/config'
+import LogoIcon0 from '@/assets/images/logo-0.svg'
+import LogoIcon1 from '@/assets/images/logo-1.svg'
+import LogoIcon2 from '@/assets/images/logo-2.svg'
+import LogoIcon3 from '@/assets/images/logo-3.svg'
+import LogoIcon4 from '@/assets/images/logo-4.svg'
+import LogoIcon5 from '@/assets/images/logo-5.svg'
+import LogoIcon6 from '@/assets/images/logo-6.svg'
+import { getDay } from 'date-fns'
 
 export default function App() {
   const send = useRemeshSend()
@@ -23,6 +31,8 @@ export default function App() {
   const messageListLoadFinished = useRemeshQuery(messageListDomain.query.MessageListLoadIsFinishedQuery())
 
   const notUserInfo = userInfoLoadFinished && !userInfoSetFinished
+
+  const DayLogo = [LogoIcon0, LogoIcon1, LogoIcon2, LogoIcon3, LogoIcon4, LogoIcon5, LogoIcon6][getDay(Date())]
 
   useEffect(() => {
     if (messageListLoadFinished) {
@@ -59,9 +69,11 @@ export default function App() {
         <Main />
         <Footer />
         {notUserInfo && <Setup />}
-        <Toaster richColors offset="70px" visibleToasts={1} duration={5000} position="top-center"></Toaster>
+        <Toaster richColors offset="70px" visibleToasts={1} position="top-center"></Toaster>
       </AppContainer>
-      <AppButton onClick={handleToggleApp}></AppButton>
+      <AppButton onClick={handleToggleApp}>
+        <DayLogo></DayLogo>
+      </AppButton>
     </>
   )
 }

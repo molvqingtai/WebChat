@@ -9,6 +9,7 @@ import { EVENT } from '@/constants/event'
 import UserInfoDomain from '@/domain/UserInfo'
 import useClickAway from '@/hooks/useClickAway'
 import { checkSystemDarkMode, cn } from '@/utils'
+import ToastDomain from '@/domain/Toast'
 
 export interface AppButtonProps {
   children?: ReactNode
@@ -19,6 +20,7 @@ const AppButton: FC<AppButtonProps> = ({ children, onClick }) => {
   const send = useRemeshSend()
   const userInfoDomain = useRemeshDomain(UserInfoDomain())
   const userInfo = useRemeshQuery(userInfoDomain.query.UserInfoQuery())
+  const toastDomain = useRemeshDomain(ToastDomain())
 
   const isDarkMode =
     userInfo?.themeMode === 'dark' ? true : userInfo?.themeMode === 'light' ? false : checkSystemDarkMode()
@@ -38,9 +40,10 @@ const AppButton: FC<AppButtonProps> = ({ children, onClick }) => {
 
   const handleSwitchTheme = () => {
     if (userInfo) {
+      send(toastDomain.command.WarningCommand('Developer is too lazy~'))
       send(userInfoDomain.command.UpdateUserInfoCommand({ ...userInfo, themeMode: isDarkMode ? 'light' : 'dark' }))
     } else {
-      // TODO
+      handleOpenOptionsPage()
     }
   }
 
@@ -53,7 +56,7 @@ const AppButton: FC<AppButtonProps> = ({ children, onClick }) => {
       <AnimatePresence>
         {menuOpen && (
           <motion.div
-            className="grid gap-y-3"
+            className="z-infinity grid gap-y-3"
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 12 }}
@@ -89,7 +92,7 @@ const AppButton: FC<AppButtonProps> = ({ children, onClick }) => {
       <Button
         onClick={onClick}
         onContextMenu={handleToggleMenu}
-        className="relative z-10 size-10 rounded-full p-0 text-xs shadow"
+        className="relative z-10 size-11 rounded-full p-0 text-xs shadow-lg shadow-slate-500/50"
       >
         {children}
       </Button>

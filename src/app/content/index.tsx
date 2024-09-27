@@ -31,7 +31,7 @@ export default defineContentScript({
       position: 'inline',
       anchor: 'body',
       append: 'last',
-      mode: 'closed',
+      mode: 'open',
       onMount: (container) => {
         const app = createElement('<div id="app"></div>')
         container.append(app)
