@@ -10,14 +10,13 @@
     [
       "@semantic-release/exec",
       {
-        "prepareCmd": "pnpm run pack:chrome"
+        "prepareCmd": "pnpm pack:chrome"
       }
     ],
     {
       "assets": [
         {
-          "path": ".output/web-chat-{{nextRelease.version}}-chrome.zip",
-          "label": "Release ZIP"
+          "path": ".output/web-chat-{{nextRelease.version}}-chrome.zip"
         }
       ]
     },

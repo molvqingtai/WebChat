@@ -36,6 +36,6 @@ jobs:
           version: latest
       - run: pnpm install --ignore-scripts
       - run: pnpm wxt prepare
-      - run: pnpx semantic-release
+      - run: pnpm semantic-release
         env:
           GH_TOKEN: ${{ secrets.WEB_CHAT_GITHUB_TOKEN }}
