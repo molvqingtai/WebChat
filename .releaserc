@@ -9,7 +9,7 @@
     {
       "name": "@semantic-release/exec",
       "config": {
-        "prepareCmd": "pnpm pack:chrome && ls -la .output"
+        "prepareCmd": "pnpm pack:chrome && ls -la .output && cat package.json"
       }
     },
     [
