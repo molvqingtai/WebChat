@@ -17,7 +17,7 @@ This is an anonymous chat browser extension that is decentralized and serverless
 
 
 
-
+### Example
 
 ![Example](https://github.com/molvqingtai/WebChat/blob/master/src/public/Example.png)
 
