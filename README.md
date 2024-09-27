@@ -1,8 +1,6 @@
-
-
-
-
-
+<p align="center">
+  <img src="https://github.com/molvqingtai/WebChat/blob/master/src/public/logo.png" width="300px"/>
+</p>
 
 # WebChat
 
@@ -10,7 +8,13 @@
 
 
 
-This is an anonymous chat browser extension that is decentralized and serverless, utilizing WebRTC for end-to-end encrypted communication. It prioritizes privacy, with all data stored locally. The goal is to address the issue of delayed replies on websites by adding instant messaging capabilities to any site, allowing for chatting anytime, anywhere.
+This is an anonymous chat browser extension that is decentralized and serverless, utilizing WebRTC for end-to-end encrypted communication. It prioritizes privacy, with all data stored locally.
+
+ The goal is to address the issue of delayed replies on websites by adding instant messaging capabilities to any site, allowing for chatting anytime, anywhere.
+
+
+
+![Example](https://github.com/molvqingtai/WebChat/blob/master/src/public/Example.png)
 
 
 
