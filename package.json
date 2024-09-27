@@ -10,7 +10,7 @@
     "build": "wxt build",
     "build:firefox": "wxt build -b firefox",
     "pack": "cross-env NODE_ENV=production run-p pack:*",
-    "pack:chrome": "wxt zip -b firefox",
+    "pack:chrome": "wxt zip -b chrome",
     "pack:firefox": "wxt zip -b firefox",
     "lint": "eslint --fix --flag unstable_ts_config",
     "clear": "rimraf .output",
