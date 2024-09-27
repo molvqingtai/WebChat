@@ -1,10 +1,13 @@
 <p align="center">
-  <img src="https://github.com/molvqingtai/WebChat/blob/master/src/public/logo.png" width="300px"/>
+  <img src="https://github.com/molvqingtai/WebChat/blob/master/src/public/logo.png" width="200px"/>
 </p>
+
 
 # WebChat
 
 > Chat with anyone on any website
+
+
 
 
 
@@ -14,7 +17,11 @@ This is an anonymous chat browser extension that is decentralized and serverless
 
 
 
+
+
 ![Example](https://github.com/molvqingtai/WebChat/blob/master/src/public/Example.png)
+
+
 
 
 
