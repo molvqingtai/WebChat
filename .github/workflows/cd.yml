@@ -11,7 +11,7 @@ jobs:
   linter:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
       - uses: actions/setup-node@v2
         with:
           node-version: lts/*
@@ -27,7 +27,10 @@ jobs:
     needs: linter
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
+        # https://github.com/semantic-release/semantic-release/issues/2636
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v2
         with:
           node-version: lts/*

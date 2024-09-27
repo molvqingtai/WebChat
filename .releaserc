@@ -18,6 +18,9 @@
         {
           "path": ".output/web-chat-{{nextRelease.version}}-chrome.zip"
         }
+      ],
+      "labels": [
+        "release"
       ]
     },
     "@semantic-release/git"
