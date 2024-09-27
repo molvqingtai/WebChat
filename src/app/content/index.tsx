@@ -17,29 +17,32 @@ import { ToastImpl } from '@/domain/impls/Toast'
 
 export default defineContentScript({
   cssInjectionMode: 'ui',
-  matches: ['*://*.example.com/*', '*://*.v2ex.com/*'],
+  runAt: 'document_end',
+  matches: ['https://*/*'],
   async main(ctx) {
     const store = Remesh.store({
       externs: [IndexDBStorageImpl, BrowserSyncStorageImpl, PeerRoomImpl, ToastImpl],
-      inspectors: !__DEV__ ? [RemeshLogger()] : []
+      inspectors: __DEV__ ? [RemeshLogger()] : []
     })
 
     const ui = await createShadowRootUi(ctx, {
       name: __NAME__,
       position: 'inline',
       anchor: 'body',
-      mode: __DEV__ ? 'open' : 'closed',
+      append: 'last',
+      mode: 'closed',
       onMount: (container) => {
+        // container.style.visibility = 'visible'
         const app = createElement('<div id="app"></div>')
         container.append(app)
 
         const root = createRoot(app)
         root.render(
-          // <React.StrictMode>
-          <RemeshRoot store={store}>
-            <App />
-          </RemeshRoot>
-          // </React.StrictMode>
+          <React.StrictMode>
+            <RemeshRoot store={store}>
+              <App />
+            </RemeshRoot>
+          </React.StrictMode>
         )
         return root
       },

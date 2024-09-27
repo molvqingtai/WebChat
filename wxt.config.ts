@@ -3,8 +3,6 @@ import { defineConfig } from 'wxt'
 import react from '@vitejs/plugin-react'
 import { name } from './package.json'
 
-const isDev = process.env.NODE_ENV === 'development'
-
 export default defineConfig({
   srcDir: path.resolve('src'),
   imports: false,
@@ -20,9 +18,9 @@ export default defineConfig({
       }
     }
   },
-  vite: () => ({
+  vite: (env) => ({
     define: {
-      __DEV__: isDev,
+      __DEV__: env.mode === 'development',
       __NAME__: JSON.stringify(name)
     },
     plugins: [react()]

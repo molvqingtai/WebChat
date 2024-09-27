@@ -111,9 +111,9 @@ const Setup: FC = () => {
         <div className="flex" key={userInfo?.name}>
           <motion.div
             className="text-2xl font-bold text-primary"
-            initial={{ x: -10, opacity: 0 }} // 初始向左位移 10 像素
-            animate={{ x: 0, opacity: 1 }} // 动画结束时回到原位
-            transition={{ duration: 0.5 }} // 过渡效果持续时间
+            initial={{ x: -10, opacity: 0 }}
+            animate={{ x: 0, opacity: 1 }}
+            transition={{ duration: 0.5 }}
           >
             @
           </motion.div>

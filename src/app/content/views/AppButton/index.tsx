@@ -54,68 +54,35 @@ const AppButton: FC<AppButtonProps> = ({ children, onClick }) => {
         {menuOpen && (
           <motion.div
             className="grid gap-y-3"
-            initial="hidden"
-            animate="visible"
-            exit="exit"
-            variants={{
-              hidden: {},
-              visible: {
-                transition: {
-                  staggerChildren: 0.1,
-                  staggerDirection: -1
-                }
-              },
-              exit: {
-                transition: {
-                  staggerChildren: 0.1,
-                  staggerDirection: 1
-                }
-              }
-            }}
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 12 }}
+            transition={{ duration: 0.1 }}
           >
-            <motion.div
-              className="leading-none"
-              variants={{
-                hidden: { opacity: 0, y: 12 },
-                visible: { opacity: 1, y: 0 },
-                exit: { opacity: 0, y: 12 }
-              }}
-              transition={{ duration: 0.1 }}
+            <Button
+              onClick={handleSwitchTheme}
+              variant="outline"
+              className="relative size-10 overflow-hidden rounded-full p-0 shadow"
             >
-              <Button
-                onClick={handleSwitchTheme}
-                variant="outline"
-                className="relative size-10 overflow-hidden rounded-full p-0 shadow"
+              <div
+                className={cn(
+                  'absolute grid grid-rows-[repeat(2,minmax(0,2.5rem))] w-full justify-center items-center transition-all duration-500',
+                  isDarkMode ? 'top-0' : '-top-10',
+                  isDarkMode ? 'bg-slate-800 text-white' : 'bg-white text-orange-400'
+                )}
               >
-                <div
-                  className={cn(
-                    'absolute grid grid-rows-[repeat(2,minmax(0,2.5rem))] w-full justify-center items-center transition-all duration-500',
-                    isDarkMode ? 'top-0' : '-top-10',
-                    isDarkMode ? 'bg-slate-800 text-white' : 'bg-white text-orange-400'
-                  )}
-                >
-                  <MoonIcon size={20} />
-                  <SunIcon size={20} />
-                </div>
-              </Button>
-            </motion.div>
+                <MoonIcon size={20} />
+                <SunIcon size={20} />
+              </div>
+            </Button>
 
-            <motion.div
-              variants={{
-                hidden: { opacity: 0, y: 12 },
-                visible: { opacity: 1, y: 0 },
-                exit: { opacity: 0, y: 12 }
-              }}
-              transition={{ duration: 0.1 }}
+            <Button
+              onClick={handleOpenOptionsPage}
+              variant="outline"
+              className="pointer-events-auto size-10 rounded-full p-0 shadow"
             >
-              <Button
-                onClick={handleOpenOptionsPage}
-                variant="outline"
-                className="pointer-events-auto size-10 rounded-full p-0 shadow"
-              >
-                <SettingsIcon size={20} />
-              </Button>
-            </motion.div>
+              <SettingsIcon size={20} />
+            </Button>
           </motion.div>
         )}
       </AnimatePresence>

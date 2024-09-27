@@ -75,11 +75,11 @@
   }
   :host,
   :root {
-    @apply bg-background text-foreground;
+    @apply !bg-background !text-foreground !text-base !visible;
 
     /* Disabled inherit */
-    all: initial;
-    direction: ltr;
+    all: initial !important;
+    direction: ltr !important;
   }
   /**
    * Fix: scroll area dispay: table
