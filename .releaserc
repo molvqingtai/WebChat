@@ -17,10 +17,7 @@
       {
         "assets": [
           {
-            "path": ".output/web-chat-{{nextRelease.version}}-chrome.zip"
-          },
-          {
-            "path": "package.json"
+            "path": ".output/web-chat-${{nextRelease.version}}-chrome.zip"
           }
         ],
         "labels": [
