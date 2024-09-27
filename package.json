@@ -2,7 +2,7 @@
   "name": "web-chat",
   "displayName": "WebChat",
   "version": "0.0.1",
-  "description": "Chatting Anonymously with People on the Same Website.",
+  "description": "Chat with anyone on any website.",
   "type": "module",
   "scripts": {
     "dev": "wxt",
