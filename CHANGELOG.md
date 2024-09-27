@@ -1,3 +1,10 @@
+## [1.0.1](https://github.com/molvqingtai/WebChat/compare/v1.0.0...v1.0.1) (2024-09-27)
+
+
+### Bug Fixes
+
+* add packge.json to assets ([974b440](https://github.com/molvqingtai/WebChat/commit/974b4407520c10b745abcab031898476477dee27))
+
 # 1.0.0 (2024-09-27)
 
 
