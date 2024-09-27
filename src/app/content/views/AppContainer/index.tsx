@@ -10,7 +10,7 @@ export interface AppContainerProps {
 const AppContainer: FC<AppContainerProps> = ({ children, open }) => {
   const { size, ref } = useResizable({
     initSize: Math.max(375, window.innerWidth / 6),
-    maxSize: Math.max(750, window.innerWidth / 3),
+    maxSize: Math.min(750, window.innerWidth / 3),
     minSize: Math.max(375, window.innerWidth / 5),
     direction: 'left'
   })
@@ -26,7 +26,7 @@ const AppContainer: FC<AppContainerProps> = ({ children, open }) => {
           style={{
             width: `${size}px`
           }}
-          className="fixed bottom-10 right-10 z-infinity box-border grid h-full max-h-[1200px] grid-flow-col grid-rows-[auto_1fr_auto] rounded-xl bg-slate-50 font-sans shadow-2xl"
+          className="fixed bottom-10 right-10 z-infinity box-border grid h-screen max-h-[min(calc(100vh_-60px),_1200px)] grid-flow-col grid-rows-[auto_1fr_auto] rounded-xl bg-slate-50 font-sans shadow-2xl"
         >
           {children}
           <div

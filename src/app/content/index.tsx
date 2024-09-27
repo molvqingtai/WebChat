@@ -19,6 +19,7 @@ export default defineContentScript({
   cssInjectionMode: 'ui',
   runAt: 'document_end',
   matches: ['https://*/*'],
+
   async main(ctx) {
     const store = Remesh.store({
       externs: [IndexDBStorageImpl, BrowserSyncStorageImpl, PeerRoomImpl, ToastImpl],
@@ -32,7 +33,6 @@ export default defineContentScript({
       append: 'last',
       mode: 'closed',
       onMount: (container) => {
-        // container.style.visibility = 'visible'
         const app = createElement('<div id="app"></div>')
         container.append(app)
 
