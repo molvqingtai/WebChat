@@ -1,3 +1,10 @@
+## [1.0.4](https://github.com/molvqingtai/WebChat/compare/v1.0.3...v1.0.4) (2024-09-27)
+
+
+### Bug Fixes
+
+* add .zip to assets ([273f1a3](https://github.com/molvqingtai/WebChat/commit/273f1a33deb5c8e84aa4c2540a41127f4e41b166))
+
 ## [1.0.3](https://github.com/molvqingtai/WebChat/compare/v1.0.2...v1.0.3) (2024-09-27)
 
 
