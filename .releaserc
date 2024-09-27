@@ -17,7 +17,7 @@
       {
         "assets": [
           {
-            "path": "${github.workspace}/.output/web-chat-${nextRelease.version}-chrome.zip"
+            "path": "${{ github.workspace }}/.output/web-chat-${{ nextRelease.version }}-chrome.zip"
           }
         ],
         "labels": [
