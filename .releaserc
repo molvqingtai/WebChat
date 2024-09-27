@@ -6,32 +6,6 @@
     "@semantic-release/commit-analyzer",
     "@semantic-release/release-notes-generator",
     "@semantic-release/changelog",
-    [
-      "@semantic-release/exec",
-      {
-        "prepareCmd": "pnpm pack:chrome && cat package.json"
-      }
-    ],
-    [
-      "@semantic-release/github",
-      {
-        "assets": [
-          {
-            "path": "${{ github.workspace }}/.output/web-chat-${{ nextRelease.version }}-chrome.zip"
-          }
-        ],
-        "labels": [
-          "release"
-        ]
-      }
-    ],
-    [
-      "@semantic-release/git",
-      {
-        "assets": [
-          "package.json"
-        ]
-      }
-    ]
+    "@semantic-release/git"
   ]
 }
