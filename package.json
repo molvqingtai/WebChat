@@ -17,7 +17,8 @@
     "clear": "rimraf .output",
     "tsc:check": "tsc --noEmit",
     "prepare": "husky",
-    "postinstall": "wxt prepare"
+    "postinstall": "wxt prepare",
+    "zip": "wxt zip"
   },
   "repository": {
     "type": "git",
