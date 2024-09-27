@@ -9,7 +9,7 @@
     {
       "name": "@semantic-release/exec",
       "config": {
-        "prepareCmd": "${github.workspace}/.output/web-chat-${nextRelease.version}-chrome.zip"
+        "prepareCmd": "pnpm pack:chrome"
       }
     },
     [
@@ -17,7 +17,7 @@
       {
         "assets": [
           {
-            "path": ".output/web-chat-0.0.1-chrome.zip"
+            "path": "${github.workspace}/.output/web-chat-${nextRelease.version}-chrome.zip"
           }
         ],
         "labels": [
