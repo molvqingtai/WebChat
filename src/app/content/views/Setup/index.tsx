@@ -89,11 +89,12 @@ const Setup: FC = () => {
       },
       { delay: 2000, immediate: true, limit: printTextList.length }
     )
-
+    timer.on('stop', () => {
+      printTextList.length === 0 && send(messageListDomain.command.ClearListCommand())
+    })
     timer.start()
     return () => {
       timer.stop()
-      printTextList.length === 0 && send(messageListDomain.command.ClearListCommand())
     }
   }, [])
 

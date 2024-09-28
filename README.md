@@ -2,26 +2,19 @@
   <img src="https://github.com/molvqingtai/WebChat/blob/master/src/public/logo.png" width="200px"/>
 </p>
 
-
 # WebChat
 
 > Chat with anyone on any website
 
-
-
-
-
 This is an anonymous chat browser extension that is decentralized and serverless, utilizing WebRTC for end-to-end encrypted communication. It prioritizes privacy, with all data stored locally.
 
- The goal is to address the issue of delayed replies on websites by adding instant messaging capabilities to any site, allowing for chatting anytime, anywhere.
+The aim is to add chat room functionality to any website, enabling real-time messaging anytime, anywhere.
+
+### Video
 
 
 
-### Example
-
-![Example](https://github.com/molvqingtai/WebChat/blob/master/src/public/Example.png)
-
-
+https://github.com/user-attachments/assets/34890975-5926-4e38-9a5f-34a28e17ff36
 
 
 
@@ -29,15 +22,13 @@ This is an anonymous chat browser extension that is decentralized and serverless
 
 In addition to the great idea of decentralized chat, it also leverages some fantastic technologies.
 
-* **[remesh](https://github.com/remesh-js/remesh)**: A frontend framework that implements DDD principles in code, achieving true separation of UI and logic. This provides a robust structure that can be easily migrated to other frontend frameworks like Vue.
+- **[remesh](https://github.com/remesh-js/remesh)**: A framework in JavaScript that implements DDD principles, achieving true separation of UI and logic, allowing for easy reimplementation of the UI part, such as rewriting it in Vue, due to its independence from the UI.
 
-* **[shadcn/ui](https://ui.shadcn.com/)**: A beautiful UI library and a pioneer of no-install options, with unmatched ease of customizing styles.
+- **[shadcn/ui](https://ui.shadcn.com/)**: A beautiful UI library and a pioneer of the no-install concept, offering unmatched convenience in customizing styles.
 
-* **[wxt](https://wxt.dev/)**: This is the best framework I’ve used for building browser extensions, bar none.
+- **[wxt](https://wxt.dev/)**: This is the best framework I’ve used for building browser extensions, bar none.
 
-* **[trystero](https://github.com/dmotz/trystero)**: The core dependency for implementing decentralized communication, enabling connections to decentralized networks like IPFS, torrent, Nostr, etc.
-
-
+- **[trystero](https://github.com/dmotz/trystero)**: The core dependency for implementing decentralized communication, enabling connections to decentralized networks like IPFS, torrent, Nostr, etc.
 
 ### License
 

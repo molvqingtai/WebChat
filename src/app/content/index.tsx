@@ -32,6 +32,7 @@ export default defineContentScript({
       anchor: 'body',
       append: 'last',
       mode: 'open',
+      isolateEvents: ['keyup', 'keydown', 'keypress'],
       onMount: (container) => {
         const app = createElement('<div id="app"></div>')
         container.append(app)
