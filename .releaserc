@@ -15,7 +15,7 @@
     [
       "@semantic-release/exec",
       {
-        "prepareCmd": "pnpm run pack && echo \"nextRelease.version: ${nextRelease.version}\" && echo \"current files:\" && ls -d */"
+        "prepareCmd": "pnpm run pack && echo \"nextRelease.version: ${nextRelease.version}\" && echo \"current files:\" && ls -a */"
       }
     ],
     [
@@ -24,7 +24,7 @@
         "assets": [
           {
             "path": ".output/web-chat-${nextRelease.version}-chrome.zip",
-            "label": "Chrome Extension Installation Package"
+            "label": "Chrome Extension Installation Package v${nextRelease.version}"
           }
         ],
         "labels": [
