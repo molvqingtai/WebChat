@@ -2,7 +2,10 @@
  * @type {import('semantic-release').GlobalConfig}
  */
 
-import { name } from 'package.json'
+import packageJson from './package.json' with { type: 'json' }
+
+const name = packageJson.name
+
 export default {
   branches: ['master'],
   plugins: [

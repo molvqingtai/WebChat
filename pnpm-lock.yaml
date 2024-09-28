@@ -225,6 +225,9 @@ importers:
       npm-run-all:
         specifier: ^4.1.5
         version: 4.1.5
+      package-up:
+        specifier: ^5.0.0
+        version: 5.0.0
       postcss:
         specifier: ^8.4.47
         version: 8.4.47
@@ -5179,6 +5182,10 @@ packages:
   package-json@8.1.1:
     resolution: {integrity: sha512-cbH9IAIJHNj9uXi196JVsRlt7cHKak6u/e6AkL/bkRelZ7rlL3X1YKxsZwa36xipOEKAsdtmaG6aAJoM1fx2zA==}
     engines: {node: '>=14.16'}
+
+  package-up@5.0.0:
+    resolution: {integrity: sha512-MQEgDUvXCa3sGvqHg3pzHO8e9gqTCMPVrWUko3vPQGntwegmFo52mZb2abIVTjFnUcW0BcPz0D93jV5Cas1DWA==}
+    engines: {node: '>=18'}
 
   pako@1.0.11:
     resolution: {integrity: sha512-4hLB8Py4zZce5s4yd9XzopqwVv/yGNhV1Bl8NTmCq1763HeK2+EwVTv+leGeL13Dnh2wfbqowVPXCIO0z4taYw==}
@@ -12553,6 +12560,10 @@ snapshots:
       registry-auth-token: 5.0.2
       registry-url: 6.0.1
       semver: 7.6.3
+
+  package-up@5.0.0:
+    dependencies:
+      find-up-simple: 1.0.0
 
   pako@1.0.11: {}
 
