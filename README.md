@@ -10,9 +10,9 @@ This is an anonymous chat browser extension that is decentralized and serverless
 
 The aim is to add chat room functionality to any website, enabling real-time messaging anytime, anywhere.
 
-### Example
+### Video
 
-![Example](https://github.com/molvqingtai/WebChat/blob/master/src/Example.png)
+<video src="https://youtu.be/Rixj6zGZLUc"></video>
 
 ### Standing on the Shoulders of Giants
 
