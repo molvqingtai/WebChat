@@ -15,7 +15,7 @@
     [
       "@semantic-release/exec",
       {
-        "prepareCmd": "pnpm run pack"
+        "prepareCmd": "pnpm run pack && ls -a"
       }
     ],
     [
