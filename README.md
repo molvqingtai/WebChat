@@ -26,6 +26,8 @@ In addition to the great idea of decentralized chat, it also leverages some fant
 
 - **[trystero](https://github.com/dmotz/trystero)**: The core dependency for implementing decentralized communication, enabling connections to decentralized networks like IPFS, torrent, Nostr, etc.
 
+- **[ugly-avatar](https://github.com/txstc55/ugly-avatar)**: Use it to create stunning random avatars.
+
 ### License
 
 This project is licensed under the MIT License - see the [LICENSE](https://github.com/molvqingtai/WebChat/blob/master/LICENSE) file for details
