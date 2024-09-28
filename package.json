@@ -4,6 +4,7 @@
   "version": "0.0.1",
   "description": "Chat with anyone on any website.",
   "type": "module",
+  "private": true,
   "scripts": {
     "dev": "wxt",
     "dev:firefox": "wxt -b firefox",
