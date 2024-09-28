@@ -19,6 +19,7 @@ import LogoIcon3 from '@/assets/images/logo-3.svg'
 import LogoIcon4 from '@/assets/images/logo-4.svg'
 import LogoIcon5 from '@/assets/images/logo-5.svg'
 import LogoIcon6 from '@/assets/images/logo-6.svg'
+
 import { getDay } from 'date-fns'
 
 export default function App() {
@@ -72,7 +73,7 @@ export default function App() {
         <Toaster richColors offset="70px" visibleToasts={1} position="top-center"></Toaster>
       </AppContainer>
       <AppButton onClick={handleToggleApp}>
-        <DayLogo></DayLogo>
+        <DayLogo className="max-h-full max-w-full"></DayLogo>
       </AppButton>
     </>
   )

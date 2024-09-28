@@ -92,7 +92,7 @@ const AppButton: FC<AppButtonProps> = ({ children, onClick }) => {
       <Button
         onClick={onClick}
         onContextMenu={handleToggleMenu}
-        className="relative z-10 size-11 rounded-full p-0 text-xs shadow-lg shadow-slate-500/50"
+        className="relative z-10 size-11 overflow-hidden rounded-full p-0 text-xs shadow-lg shadow-slate-500/50"
       >
         {children}
       </Button>
