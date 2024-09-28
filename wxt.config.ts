@@ -12,8 +12,8 @@ export default defineConfig({
     startUrls: ['https://www.example.com/']
   },
   manifest: {
-    permissions: ['storage'],
     name: displayName,
+    permissions: ['storage'],
     homepage_url: homepage,
     icons: {
       '16': 'logo.png',
