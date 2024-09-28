@@ -23,7 +23,7 @@
       {
         "assets": [
           {
-            "path": ".output/web-chat-${nextRelease.version}-chrome.zip",
+            "path": ".output/web-chat-1.0.24-chrome.zip",
             "label": "Chrome Extension Installation Package"
           }
         ],
