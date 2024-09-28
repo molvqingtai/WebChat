@@ -1,3 +1,10 @@
+## [1.0.23](https://github.com/molvqingtai/WebChat/compare/v1.0.22...v1.0.23) (2024-09-28)
+
+
+### Bug Fixes
+
+* test release flow ([3d984fc](https://github.com/molvqingtai/WebChat/commit/3d984fc42bc3581723fe29ece360a9ee842026c3))
+
 ## [1.0.22](https://github.com/molvqingtai/WebChat/compare/v1.0.21...v1.0.22) (2024-09-28)
 
 
