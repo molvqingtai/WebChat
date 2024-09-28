@@ -13,6 +13,7 @@ The aim is to add chat room functionality to any website, enabling real-time mes
 ### Video
 
 <video title="web chat" src="https://youtu.be/Rixj6zGZLUc" width="500px"></video>
+[<img src="https://youtu.be/Rixj6zGZLUc/maxresdefault.jpg" width="50%">](https://youtu.be/Rixj6zGZLUc 'Web Chat')
 
 ### Standing on the Shoulders of Giants
 
