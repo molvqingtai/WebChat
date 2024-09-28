@@ -12,17 +12,13 @@ The aim is to add chat room functionality to any website, enabling real-time mes
 
 ### Video
 
-
-
 https://github.com/user-attachments/assets/34890975-5926-4e38-9a5f-34a28e17ff36
-
-
 
 ### Standing on the Shoulders of Giants
 
 In addition to the great idea of decentralized chat, it also leverages some fantastic technologies.
 
-- **[remesh](https://github.com/remesh-js/remesh)**: A framework in JavaScript that implements DDD principles, achieving true separation of UI and logic, allowing for easy reimplementation of the UI part, such as rewriting it in Vue, due to its independence from the UI.
+- **[remesh](https://github.com/remesh-js/remesh)**: A framework in JavaScript that implements DDD principles, achieving true separation of UI and logic, allowing for easy implementation of the UI part, such as rewriting it in Vue, due to its independence from the UI.
 
 - **[shadcn/ui](https://ui.shadcn.com/)**: A beautiful UI library and a pioneer of the no-install concept, offering unmatched convenience in customizing styles.
 
