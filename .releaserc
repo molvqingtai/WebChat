@@ -15,7 +15,7 @@
     [
       "@semantic-release/exec",
       {
-        "prepareCmd": "pnpm run pack && echo \"nextRelease.version: ${nextRelease.version}\""
+        "prepareCmd": "pnpm run pack && echo \"nextRelease.version: ${nextRelease.version}\" && echo \"current files:\" && ls -d */"
       }
     ],
     [
