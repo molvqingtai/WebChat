@@ -1,3 +1,15 @@
+## [1.0.27](https://github.com/molvqingtai/WebChat/compare/v1.0.26...v1.0.27) (2024-09-28)
+
+
+### Bug Fixes
+
+* uniformly resizable size ([3bb2b55](https://github.com/molvqingtai/WebChat/commit/3bb2b55f21e2ead16be4f7c4d9aa40cee87cca93))
+
+
+### Performance Improvements
+
+* add isolate events ([8fd5f04](https://github.com/molvqingtai/WebChat/commit/8fd5f04ecd730bf4bc73fe72c1ce9281a572ca4c))
+
 ## [1.0.26](https://github.com/molvqingtai/WebChat/compare/v1.0.25...v1.0.26) (2024-09-28)
 
 
