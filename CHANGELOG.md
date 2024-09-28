@@ -1,3 +1,10 @@
+## [1.0.28](https://github.com/molvqingtai/WebChat/compare/v1.0.27...v1.0.28) (2024-09-28)
+
+
+### Bug Fixes
+
+* svg icon size ([089d69a](https://github.com/molvqingtai/WebChat/commit/089d69a095c22ea24bd2e8960799d7f2acb0b1ac))
+
 ## [1.0.27](https://github.com/molvqingtai/WebChat/compare/v1.0.26...v1.0.27) (2024-09-28)
 
 
