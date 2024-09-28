@@ -1,6 +1,8 @@
 /**
  * @type {import('semantic-release').GlobalConfig}
  */
+
+import { name } from 'package.json'
 export default {
   branches: ['master'],
   plugins: [
@@ -26,13 +28,13 @@ export default {
     [
       '@semantic-release/exec',
       {
-        prepareCmd: 'cp .output/web-chat-${nextRelease.version}-chrome.zip .output/web-chat-chrome.zip'
+        prepareCmd: `cp .output/${name}-\${nextRelease.version}-chrome.zip .output/${name}-chrome.zip`
       }
     ],
     [
       '@semantic-release/exec',
       {
-        prepareCmd: 'cp .output/web-chat-${nextRelease.version}-firefox.zip .output/web-chat-firefox.zip'
+        prepareCmd: `cp .output/${name}-\${nextRelease.version}-firefox.zip .output/${name}-firefox.zip`
       }
     ],
     [
@@ -40,10 +42,10 @@ export default {
       {
         assets: [
           {
-            path: '.output/web-chat-chrome.zip'
+            path: `.output/${name}-chrome.zip`
           },
           {
-            path: '.output/web-chat-firefox.zip'
+            path: `.output/${name}-firefox.zip`
           }
         ],
         labels: ['release']
