@@ -11,7 +11,7 @@ const AppContainer: FC<AppContainerProps> = ({ children, open }) => {
   const { size, ref } = useResizable({
     initSize: Math.max(375, window.innerWidth / 6),
     maxSize: Math.min(750, window.innerWidth / 3),
-    minSize: Math.max(375, window.innerWidth / 5),
+    minSize: Math.max(375, window.innerWidth / 6),
     direction: 'left'
   })
 
