@@ -43,6 +43,8 @@ const UserInfoDomain = Remesh.domain({
     const UpdateUserInfoCommand = domain.command({
       name: 'UserInfo.UpdateUserInfoCommand',
       impl: (_, userInfo: UserInfo | null) => {
+        console.log('111', userInfo)
+
         return [
           UserInfoState().new(userInfo),
           UpdateUserInfoEvent(),

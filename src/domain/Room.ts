@@ -408,10 +408,10 @@ const RoomDomain = Remesh.domain({
     // TODO: Move this to a service worker in the future, so we don't need to send a leave room message every time the page refreshes
     domain.effect({
       name: 'RoomOnUnloadEffect',
-      impl: () => {
+      impl: ({ get }) => {
         const beforeUnload$ = fromEvent(window, 'beforeunload').pipe(
           map(() => {
-            return [LeaveRoomCommand()]
+            return get(RoomJoinStatusModule.query.IsFinishedQuery()) ? LeaveRoomCommand() : null
           })
         )
         return beforeUnload$

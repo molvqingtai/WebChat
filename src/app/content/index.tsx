@@ -22,8 +22,8 @@ export default defineContentScript({
   excludeMatches: ['*://localhost/*', '*://127.0.0.1/*'],
   async main(ctx) {
     const store = Remesh.store({
-      externs: [IndexDBStorageImpl, BrowserSyncStorageImpl, PeerRoomImpl, ToastImpl],
-      inspectors: __DEV__ ? [RemeshLogger()] : []
+      externs: [IndexDBStorageImpl, BrowserSyncStorageImpl, PeerRoomImpl, ToastImpl]
+      // inspectors: __DEV__ ? [RemeshLogger()] : []
     })
 
     const ui = await createShadowRootUi(ctx, {

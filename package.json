@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "wxt",
     "dev:firefox": "wxt -b firefox",
-    "build": "wxt build",
+    "build": "cross-env NODE_ENV=production run-p build:*",
+    "build:chorme": "wxt build -b chorme",
     "build:firefox": "wxt build -b firefox",
     "pack": "cross-env NODE_ENV=production run-p pack:*",
     "pack:chrome": "wxt zip -b chrome",
