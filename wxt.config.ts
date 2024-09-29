@@ -11,21 +11,31 @@ export default defineConfig({
   runner: {
     startUrls: ['https://www.example.com/']
   },
-  manifest: {
-    name: displayName,
-    permissions: ['storage'],
-    homepage_url: homepage,
-    icons: {
-      '16': 'logo.png',
-      '32': 'logo.png',
-      '48': 'logo.png',
-      '128': 'logo.png'
+  manifest: ({ browser, manifestVersion }) => {
+    const common = {
+      name: displayName,
+      permissions: ['storage'],
+      homepage_url: homepage,
+      icons: {
+        '16': 'logo.png',
+        '32': 'logo.png',
+        '48': 'logo.png',
+        '128': 'logo.png'
+      }
     }
-    // browser_specific_settings: {
-    //   gecko: {
-    //     id: 'molvqingtai@gmail.com'
-    //   }
-    // }
+    return {
+      chrome: {
+        ...common
+      },
+      firefox: {
+        ...common,
+        browser_specific_settings: {
+          gecko: {
+            id: 'molvqingtai@gmail.com'
+          }
+        }
+      }
+    }[browser]
   },
   vite: (env) => ({
     define: {
