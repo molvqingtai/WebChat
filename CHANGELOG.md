@@ -1,3 +1,10 @@
+# [1.1.0](https://github.com/molvqingtai/WebChat/compare/v1.0.29...v1.1.0) (2024-09-30)
+
+
+### Features
+
+* support danmaku ([999a55c](https://github.com/molvqingtai/WebChat/commit/999a55c65f78d0a1a0938c354a8453f2aa39fcd0))
+
 ## [1.0.29](https://github.com/molvqingtai/WebChat/compare/v1.0.28...v1.0.29) (2024-09-29)
 
 
