@@ -1,10 +1,9 @@
 import { Remesh } from 'remesh'
-import { type Promisable } from 'type-fest'
 
 export type StorageValue = null | string | number | boolean | object
 export type WatchEvent = 'update' | 'remove'
 export type WatchCallback = (event: WatchEvent, key: string) => any
-export type Unwatch = () => Promisable<void>
+export type Unwatch = () => Promise<void>
 
 export interface Storage {
   name: string
@@ -31,10 +30,10 @@ export const IndexDBStorageExtern = Remesh.extern<Storage>({
     clear: async () => {
       throw new Error('"clear" not implemented.')
     },
-    watch: () => {
+    watch: async () => {
       throw new Error('"watch" not implemented.')
     },
-    unwatch: () => {
+    unwatch: async () => {
       throw new Error('"unwatch" not implemented.')
     }
   }
@@ -55,10 +54,10 @@ export const BrowserSyncStorageExtern = Remesh.extern<Storage>({
     clear: async () => {
       throw new Error('"clear" not implemented.')
     },
-    watch: () => {
+    watch: async () => {
       throw new Error('"watch" not implemented.')
     },
-    unwatch: () => {
+    unwatch: async () => {
       throw new Error('"unwatch" not implemented.')
     }
   }

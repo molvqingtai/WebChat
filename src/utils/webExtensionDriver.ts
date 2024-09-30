@@ -1,5 +1,5 @@
 import { type Driver, type WatchCallback, defineDriver } from 'unstorage'
-import browser, { type Storage as BrowserStorage } from 'webextension-polyfill'
+import { browser, type Storage as BrowserStorage } from 'wxt/browser'
 
 export interface WebExtensionDriverOptions {
   storageArea: 'sync' | 'local' | 'managed' | 'session'
@@ -67,6 +67,7 @@ export const webExtensionDriver: (opts: WebExtensionDriverOptions) => Driver = d
     watch(callback) {
       checkPermission()
       _listeners.add(callback)
+
       if (_listeners.size === 1) {
         browser.storage[opts.storageArea].onChanged.addListener(_storageListener)
       }

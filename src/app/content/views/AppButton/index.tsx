@@ -1,4 +1,4 @@
-import { type ReactNode, type FC, useState, type MouseEvent, useRef, useEffect } from 'react'
+import { type ReactNode, type FC, useState, type MouseEvent, useRef } from 'react'
 import { SettingsIcon, MoonIcon, SunIcon } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 

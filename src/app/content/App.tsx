@@ -8,9 +8,9 @@ import RoomDomain from '@/domain/Room'
 import UserInfoDomain from '@/domain/UserInfo'
 import Setup from '@/app/content/views/Setup'
 import MessageListDomain from '@/domain/MessageList'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Toaster } from 'sonner'
-import { indexDBStorage } from '@/domain/impls/Storage'
+import { browserSyncStorage, indexDBStorage } from '@/domain/impls/Storage'
 import { APP_OPEN_STATUS_STORAGE_KEY } from '@/constants/config'
 import LogoIcon0 from '@/assets/images/logo-0.svg'
 import LogoIcon1 from '@/assets/images/logo-1.svg'
@@ -21,16 +21,21 @@ import LogoIcon5 from '@/assets/images/logo-5.svg'
 import LogoIcon6 from '@/assets/images/logo-6.svg'
 
 import { getDay } from 'date-fns'
+import DanmakuContainer from './components/DanmakuContainer'
+import DanmakuDomain from '@/domain/Danmaku'
+import { browser } from 'wxt/browser'
 
 export default function App() {
   const send = useRemeshSend()
   const roomDomain = useRemeshDomain(RoomDomain())
   const userInfoDomain = useRemeshDomain(UserInfoDomain())
   const messageListDomain = useRemeshDomain(MessageListDomain())
+  const danmakuDomain = useRemeshDomain(DanmakuDomain())
+  const danmakuIsEnabled = useRemeshQuery(danmakuDomain.query.IsEnabledQuery())
+  const userInfo = useRemeshQuery(userInfoDomain.query.UserInfoQuery())
   const userInfoSetFinished = useRemeshQuery(userInfoDomain.query.UserInfoSetIsFinishedQuery())
   const userInfoLoadFinished = useRemeshQuery(userInfoDomain.query.UserInfoLoadIsFinishedQuery())
-  const messageListLoadFinished = useRemeshQuery(messageListDomain.query.MessageListLoadIsFinishedQuery())
-
+  const messageListLoadFinished = useRemeshQuery(messageListDomain.query.LoadIsFinishedQuery())
   const notUserInfo = userInfoLoadFinished && !userInfoSetFinished
 
   const DayLogo = [LogoIcon0, LogoIcon1, LogoIcon2, LogoIcon3, LogoIcon4, LogoIcon5, LogoIcon6][getDay(Date())]
@@ -63,6 +68,15 @@ export default function App() {
     getAppOpenStatus()
   }, [])
 
+  const danmakuContainerRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    danmakuIsEnabled && send(danmakuDomain.command.MountCommand(danmakuContainerRef.current!))
+    return () => {
+      danmakuIsEnabled && send(danmakuDomain.command.DestroyCommand())
+    }
+  }, [danmakuIsEnabled])
+
   return (
     <>
       <AppContainer open={appOpen}>
@@ -75,6 +89,7 @@ export default function App() {
       <AppButton onClick={handleToggleApp}>
         <DayLogo className="max-h-full max-w-full"></DayLogo>
       </AppButton>
+      <DanmakuContainer ref={danmakuContainerRef} />
     </>
   )
 }

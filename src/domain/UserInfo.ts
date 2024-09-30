@@ -10,6 +10,7 @@ export interface UserInfo {
   avatar: string
   createTime: number
   themeMode: 'system' | 'light' | 'dark'
+  danmakuEnabled: boolean
 }
 
 const UserInfoDomain = Remesh.domain({
@@ -27,10 +28,10 @@ const UserInfoDomain = Remesh.domain({
     })
 
     const UserInfoLoadStatusModule = StatusModule(domain, {
-      name: 'UserInfoLoadStatusModule'
+      name: 'UserInfo.LoadStatusModule'
     })
     const UserInfoSetStatusModule = StatusModule(domain, {
-      name: 'UserInfoSetStatusModule'
+      name: 'UserInfo.SetStatusModule'
     })
 
     const UserInfoQuery = domain.query({
@@ -43,8 +44,6 @@ const UserInfoDomain = Remesh.domain({
     const UpdateUserInfoCommand = domain.command({
       name: 'UserInfo.UpdateUserInfoCommand',
       impl: (_, userInfo: UserInfo | null) => {
-        console.log('111', userInfo)
-
         return [
           UserInfoState().new(userInfo),
           UpdateUserInfoEvent(),
@@ -81,16 +80,16 @@ const UserInfoDomain = Remesh.domain({
           UserInfoState().new(userInfo),
           UpdateUserInfoEvent(),
           SyncToStateEvent(userInfo),
-          userInfo && UserInfoSetStatusModule.command.SetFinishedCommand()
+          userInfo
+            ? UserInfoSetStatusModule.command.SetFinishedCommand()
+            : UserInfoSetStatusModule.command.SetInitialCommand()
         ]
       }
     })
 
     storageEffect
       .set(SyncToStorageEvent)
-      .get<UserInfo>((value) => {
-        return [SyncToStateCommand(value), UserInfoLoadStatusModule.command.SetFinishedCommand()]
-      })
+      .get<UserInfo>((value) => [SyncToStateCommand(value), UserInfoLoadStatusModule.command.SetFinishedCommand()])
       .watch<UserInfo>((value) => [SyncToStateCommand(value)])
 
     return {

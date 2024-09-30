@@ -1,4 +1,4 @@
-import Meteors from '@/components/magicui/meteors'
+import Meteors from '@/components/magicui/Meteors'
 import { FC, ReactNode } from 'react'
 
 export interface LayoutProps {

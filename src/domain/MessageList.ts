@@ -48,8 +48,8 @@ const MessageListDomain = Remesh.domain({
       key: (message) => message.id
     })
 
-    const MessageListLoadStatusModule = StatusModule(domain, {
-      name: 'MessageListLoadStatusModule'
+    const LoadStatusModule = StatusModule(domain, {
+      name: 'Message.ListLoadStatusModule'
     })
 
     const ListQuery = MessageListModule.query.ItemListQuery
@@ -57,6 +57,8 @@ const MessageListDomain = Remesh.domain({
     const ItemQuery = MessageListModule.query.ItemQuery
 
     const HasItemQuery = MessageListModule.query.HasItemByKeyQuery
+
+    const LoadIsFinishedQuery = LoadStatusModule.query.IsFinishedQuery
 
     const ChangeListEvent = domain.event({
       name: 'MessageList.ChangeListEvent',
@@ -144,16 +146,14 @@ const MessageListDomain = Remesh.domain({
 
     storageEffect
       .set(SyncToStorageEvent)
-      .get<
-        Message[]
-      >((value) => [SyncToStateCommand(value ?? []), MessageListLoadStatusModule.command.SetFinishedCommand()])
+      .get<Message[]>((value) => [SyncToStateCommand(value ?? []), LoadStatusModule.command.SetFinishedCommand()])
 
     return {
       query: {
         HasItemQuery,
         ItemQuery,
         ListQuery,
-        MessageListLoadIsFinishedQuery: MessageListLoadStatusModule.query.IsFinishedQuery
+        LoadIsFinishedQuery
       },
       command: {
         CreateItemCommand,

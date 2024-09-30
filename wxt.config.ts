@@ -11,7 +11,7 @@ export default defineConfig({
   runner: {
     startUrls: ['https://www.example.com/']
   },
-  manifest: ({ browser, manifestVersion }) => {
+  manifest: ({ browser }) => {
     const common = {
       name: displayName,
       permissions: ['storage'],

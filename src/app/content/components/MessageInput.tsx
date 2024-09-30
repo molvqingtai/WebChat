@@ -1,6 +1,5 @@
-import { type ChangeEvent, type KeyboardEvent } from 'react'
+import { forwardRef, type ChangeEvent, type KeyboardEvent } from 'react'
 
-import React from 'react'
 import { Textarea } from '@/components/ui/Textarea'
 import { Markdown } from '@/components/ui/Markdown'
 import { cn } from '@/utils'
@@ -17,7 +16,7 @@ export interface MessageInputProps {
   onEnter?: (value: string) => void
 }
 
-const MessageInput = React.forwardRef<HTMLTextAreaElement, MessageInputProps>(
+const MessageInput = forwardRef<HTMLTextAreaElement, MessageInputProps>(
   ({ value = '', className, maxLength = 500, onInput, onEnter, preview, autoFocus, disabled }, ref) => {
     const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
       if (e.key === 'Enter' && !(e.shiftKey || e.ctrlKey || e.altKey || e.metaKey)) {

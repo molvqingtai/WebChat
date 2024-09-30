@@ -9,9 +9,9 @@ import { FC, useEffect, useState } from 'react'
 import { useRemeshDomain, useRemeshSend } from 'remesh-react'
 import Timer from '@resreq/timer'
 import ExampleImage from '@/assets/images/example.jpg'
-import PulsatingButton from '@/components/magicui/pulsating-button'
-import BlurFade from '@/components/magicui/blur-fade'
-import WordPullUp from '@/components/magicui/word-pull-up'
+import PulsatingButton from '@/components/magicui/PulsatingButton'
+import BlurFade from '@/components/magicui/BlurFade'
+import WordPullUp from '@/components/magicui/WordPullUp'
 import { motion } from 'framer-motion'
 
 const mockTextList = [
@@ -41,7 +41,8 @@ const generateUserInfo = async (): Promise<UserInfo> => {
     name: generateRandomName(),
     avatar: await generateRandomAvatar(MAX_AVATAR_SIZE),
     createTime: Date.now(),
-    themeMode: checkSystemDarkMode() ? 'dark' : 'system'
+    themeMode: checkSystemDarkMode() ? 'dark' : 'system',
+    danmakuEnabled: true
   }
 }
 

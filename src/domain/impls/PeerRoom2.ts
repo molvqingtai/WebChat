@@ -1,9 +1,10 @@
 import { Artico, Room } from '@rtco/client'
 
-import { PeerRoomExtern, type PeerMessage } from '@/domain/externs/PeerRoom'
+import { PeerRoomExtern } from '@/domain/externs/PeerRoom'
 import { stringToHex } from '@/utils'
 import { nanoid } from 'nanoid'
 import EventHub from '@resreq/event-hub'
+import { RoomMessage } from '../Room'
 export interface Config {
   peerId?: string
   roomId: string
@@ -43,7 +44,7 @@ class PeerRoom extends EventHub {
     return this
   }
 
-  sendMessage<T extends PeerMessage>(message: T, id?: string) {
+  sendMessage(message: RoomMessage, id?: string) {
     if (!this.room) {
       this.once('action', () => {
         if (!this.room) {
@@ -58,17 +59,17 @@ class PeerRoom extends EventHub {
     return this
   }
 
-  onMessage<T extends PeerMessage>(callback: (message: T) => void) {
+  onMessage(callback: (message: RoomMessage) => void) {
     if (!this.room) {
       this.once('action', () => {
         if (!this.room) {
           this.emit('error', new Error('Room not joined'))
         } else {
-          this.room.on('message', (message) => callback(JSON.parse(message) as T))
+          this.room.on('message', (message) => callback(JSON.parse(message) as RoomMessage))
         }
       })
     } else {
-      this.room.on('message', (message) => callback(JSON.parse(message) as T))
+      this.room.on('message', (message) => callback(JSON.parse(message) as RoomMessage))
     }
     return this
   }

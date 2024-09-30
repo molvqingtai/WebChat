@@ -15,15 +15,16 @@ import { Label } from '@/components/ui/Label'
 import { RefreshCcwIcon } from 'lucide-react'
 import { MAX_AVATAR_SIZE } from '@/constants/config'
 import ToastDomain from '@/domain/Toast'
-import BlurFade from '@/components/magicui/blur-fade'
-import debounce from './../../../utils/debounce'
+import BlurFade from '@/components/magicui/BlurFade'
+import { Checkbox } from '@/components/ui/checkbox'
 
 const defaultUserInfo: UserInfo = {
   id: nanoid(),
   name: '',
   avatar: '',
   createTime: Date.now(),
-  themeMode: checkSystemDarkMode() ? 'dark' : 'system'
+  themeMode: checkSystemDarkMode() ? 'dark' : 'system',
+  danmakuEnabled: true
 }
 
 const formSchema = v.object({
@@ -49,7 +50,8 @@ const formSchema = v.object({
   themeMode: v.pipe(
     v.string(),
     v.union([v.literal('system'), v.literal('light'), v.literal('dark')], 'Please select extension theme mode.')
-  )
+  ),
+  danmakuEnabled: v.boolean()
 })
 
 const ProfileForm = () => {
@@ -89,7 +91,7 @@ const ProfileForm = () => {
 
   return (
     <Form {...form}>
-      <form onSubmit={form.handleSubmit(handleSubmit)} autoComplete="off" className="relative w-96 space-y-8 p-10">
+      <form onSubmit={form.handleSubmit(handleSubmit)} autoComplete="off" className="relative w-[450px] space-y-8 p-14">
         <FormField
           control={form.control}
           name="avatar"
@@ -124,6 +126,30 @@ const ProfileForm = () => {
                 <Input placeholder="Please enter your username" {...field} />
               </FormControl>
               <FormDescription>This is your public display name.</FormDescription>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        <FormField
+          control={form.control}
+          name="danmakuEnabled"
+          render={({ field }) => (
+            <FormItem>
+              {/* <FormLabel>Username</FormLabel> */}
+              <FormControl>
+                <div className="flex items-center space-x-2">
+                  <Checkbox
+                    defaultChecked={false}
+                    id="enable-danmaku"
+                    onCheckedChange={field.onChange}
+                    checked={field.value}
+                  />
+                  <FormLabel className="cursor-pointer" htmlFor="enable-danmaku">
+                    Enable Danmaku
+                  </FormLabel>
+                </div>
+              </FormControl>
+              <FormDescription>Danmaku messages will scroll across the screen.</FormDescription>
               <FormMessage />
             </FormItem>
           )}

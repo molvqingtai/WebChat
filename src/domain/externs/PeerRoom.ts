@@ -1,13 +1,12 @@
 import { Remesh } from 'remesh'
-
-export type PeerMessage = object | Blob | ArrayBuffer | ArrayBufferView
+import { RoomMessage } from '../Room'
 
 export interface PeerRoom {
   readonly peerId: string
   readonly roomId: string
   joinRoom: () => PeerRoom
-  sendMessage: <T extends PeerMessage>(message: T, id?: string) => PeerRoom
-  onMessage: <T extends PeerMessage>(callback: (message: T) => void) => PeerRoom
+  sendMessage: (message: RoomMessage, id?: string) => PeerRoom
+  onMessage: (callback: (message: RoomMessage) => void) => PeerRoom
   leaveRoom: () => PeerRoom
   onJoinRoom: (callback: (id: string) => void) => PeerRoom
   onLeaveRoom: (callback: (id: string) => void) => PeerRoom

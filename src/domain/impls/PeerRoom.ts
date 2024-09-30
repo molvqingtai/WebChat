@@ -2,9 +2,10 @@ import { type DataPayload, type Room, joinRoom, selfId } from 'trystero'
 
 // import { joinRoom } from 'trystero/firebase'
 
-import { PeerRoomExtern, type PeerMessage } from '@/domain/externs/PeerRoom'
+import { PeerRoomExtern } from '@/domain/externs/PeerRoom'
 import { stringToHex } from '@/utils'
 import EventHub from '@resreq/event-hub'
+import { RoomMessage } from '../Room'
 
 export interface Config {
   peerId?: string
@@ -44,37 +45,37 @@ class PeerRoom extends EventHub {
     return this
   }
 
-  sendMessage<T extends PeerMessage>(message: T, id?: string) {
+  sendMessage(message: RoomMessage, id?: string) {
     if (!this.room) {
       this.once('action', () => {
         if (!this.room) {
           this.emit('error', new Error('Room not joined'))
         } else {
           const [send] = this.room.makeAction('MESSAGE')
-          send(message as DataPayload, id)
+          send(message as any as DataPayload, id)
         }
       })
     } else {
       const [send] = this.room.makeAction('MESSAGE')
-      send(message as DataPayload, id)
+      send(message as any as DataPayload, id)
     }
 
     return this
   }
 
-  onMessage<T extends PeerMessage>(callback: (message: T) => void) {
+  onMessage(callback: (message: RoomMessage) => void) {
     if (!this.room) {
       this.once('action', () => {
         if (!this.room) {
           this.emit('error', new Error('Room not joined'))
         } else {
           const [, on] = this.room.makeAction('MESSAGE')
-          on((message) => callback(message as T))
+          on((message) => callback(message as any as RoomMessage))
         }
       })
     } else {
       const [, on] = this.room.makeAction('MESSAGE')
-      on((message) => callback(message as T))
+      on((message) => callback(message as any as RoomMessage))
     }
     return this
   }

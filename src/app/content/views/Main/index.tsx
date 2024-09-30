@@ -7,7 +7,7 @@ import PromptItem from '../../components/PromptItem'
 import UserInfoDomain from '@/domain/UserInfo'
 import RoomDomain, { MessageType } from '@/domain/Room'
 import MessageListDomain from '@/domain/MessageList'
-import BlurFade from '@/components/magicui/blur-fade'
+import BlurFade from '@/components/magicui/BlurFade'
 
 const Main: FC = () => {
   const send = useRemeshSend()
