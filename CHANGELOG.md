@@ -1,3 +1,11 @@
+## [1.0.29](https://github.com/molvqingtai/WebChat/compare/v1.0.28...v1.0.29) (2024-09-29)
+
+
+### Bug Fixes
+
+* compile by environment ([52cd203](https://github.com/molvqingtai/WebChat/commit/52cd203a53ec10dda48572659d0e9959667575be))
+* error when leaving the room without joining ([8476595](https://github.com/molvqingtai/WebChat/commit/8476595011c0e38929e6ebaa44ab7d8d5292a8e3))
+
 ## [1.0.28](https://github.com/molvqingtai/WebChat/compare/v1.0.27...v1.0.28) (2024-09-28)
 
 
