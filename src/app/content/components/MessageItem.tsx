@@ -5,7 +5,7 @@ import LikeButton from './LikeButton'
 import FormatDate from './FormatDate'
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/Avatar'
 
-import { Markdown } from '@/components/ui/Markdown'
+import { Markdown } from '@/components/Markdown'
 import { type NormalMessage } from '@/domain/MessageList'
 import { cn } from '@/utils'
 

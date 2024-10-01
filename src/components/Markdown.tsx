@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
 import { cn } from '@/utils'
-import { ScrollArea, ScrollBar } from './ScrollArea'
+import { ScrollArea, ScrollBar } from '@/components/ui/ScrollArea'
 
 export interface MarkdownProps {
   children?: string
