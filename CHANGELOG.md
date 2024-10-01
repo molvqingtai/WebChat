@@ -1,3 +1,10 @@
+## [1.1.1](https://github.com/molvqingtai/WebChat/compare/v1.1.0...v1.1.1) (2024-10-01)
+
+
+### Performance Improvements
+
+* a tag use Link component ([fce64b7](https://github.com/molvqingtai/WebChat/commit/fce64b744c2ada3532ff3d4b78d08559c718ca1a))
+
 # [1.1.0](https://github.com/molvqingtai/WebChat/compare/v1.0.29...v1.1.0) (2024-09-30)
 
 
