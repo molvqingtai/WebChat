@@ -10,6 +10,15 @@ This is an anonymous chat browser extension that is decentralized and serverless
 
 The aim is to add chat room functionality to any website, enabling real-time messaging anytime, anywhere.
 
+### Install
+
+1. Go to the GitHub repository ([Releases](https://github.com/molvqingtai/WebChat/releases))
+2. Click on the "Assets" button and select "web-chat-\*.zip"
+3. Extract the ZIP file to a folder on your computer
+4. Open the extension management page in your browser (usually chrome://extensions/)
+   - Enable "Developer mode"
+   - Click "Load unpacked" and select the folder you just extracted
+
 ### Video
 
 https://github.com/user-attachments/assets/34890975-5926-4e38-9a5f-34a28e17ff36
