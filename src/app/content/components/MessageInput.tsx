@@ -1,7 +1,7 @@
 import { forwardRef, type ChangeEvent, type KeyboardEvent } from 'react'
 
 import { Textarea } from '@/components/ui/Textarea'
-import { Markdown } from '@/components/ui/Markdown'
+import { Markdown } from '@/components/Markdown'
 import { cn } from '@/utils'
 import { ScrollArea } from '@/components/ui/ScrollArea'
 

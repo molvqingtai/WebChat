@@ -17,6 +17,7 @@ import { MAX_AVATAR_SIZE } from '@/constants/config'
 import ToastDomain from '@/domain/Toast'
 import BlurFade from '@/components/magicui/BlurFade'
 import { Checkbox } from '@/components/ui/checkbox'
+import Link from '@/components/Link'
 
 const defaultUserInfo: UserInfo = {
   id: nanoid(),
@@ -149,7 +150,12 @@ const ProfileForm = () => {
                   </FormLabel>
                 </div>
               </FormControl>
-              <FormDescription>Danmaku messages will scroll across the screen.</FormDescription>
+              <FormDescription>
+                Enabling this will display messages scrolling on the website.
+                <Link className="ml-2 text-primary" href="https://en.wikipedia.org/wiki/Danmaku_subtitling">
+                  Wikipedia
+                </Link>
+              </FormDescription>
               <FormMessage />
             </FormItem>
           )}

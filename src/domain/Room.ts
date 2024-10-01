@@ -440,7 +440,7 @@ const RoomDomain = Remesh.domain({
     domain.effect({
       name: 'Room.OnUnloadEffect',
       impl: ({ get }) => {
-        const beforeUnload$ = fromEvent(window, 'beforedestroy').pipe(
+        const beforeUnload$ = fromEvent(window, 'beforeunload').pipe(
           map(() => {
             return get(JoinStatusModule.query.IsFinishedQuery()) ? LeaveRoomCommand() : null
           })
