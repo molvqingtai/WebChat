@@ -1,3 +1,10 @@
+## [1.1.4](https://github.com/molvqingtai/WebChat/compare/v1.1.3...v1.1.4) (2024-10-02)
+
+
+### Bug Fixes
+
+* firfox requestAnimationFrame error ([65bf9b2](https://github.com/molvqingtai/WebChat/commit/65bf9b2419ec65b6c53355986df9a0e2eb593d6f))
+
 ## [1.1.3](https://github.com/molvqingtai/WebChat/compare/v1.1.2...v1.1.3) (2024-10-02)
 
 
