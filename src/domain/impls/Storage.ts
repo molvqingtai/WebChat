@@ -1,10 +1,15 @@
 import { createStorage } from 'unstorage'
 import indexedDbDriver from 'unstorage/drivers/indexedb'
-import { IndexDBStorageExtern, BrowserSyncStorageExtern } from '@/domain/externs/Storage'
+import localStorageDriver from 'unstorage/drivers/localstorage'
+import { LocalStorageExtern, IndexDBStorageExtern, BrowserSyncStorageExtern } from '@/domain/externs/Storage'
 import { STORAGE_NAME } from '@/constants/config'
 import { webExtensionDriver } from '@/utils/webExtensionDriver'
 import { browser } from 'wxt/browser'
 import { Storage } from '@/domain/externs/Storage'
+
+export const localStorage = createStorage({
+  driver: localStorageDriver({ base: `${STORAGE_NAME}:` })
+})
 
 export const indexDBStorage = createStorage({
   driver: indexedDbDriver({ base: `${STORAGE_NAME}:` })
@@ -12,6 +17,16 @@ export const indexDBStorage = createStorage({
 
 export const browserSyncStorage = createStorage({
   driver: webExtensionDriver({ storageArea: 'sync' })
+})
+
+export const LocalStorageImpl = LocalStorageExtern.impl({
+  name: STORAGE_NAME,
+  get: localStorage.getItem,
+  set: localStorage.setItem,
+  remove: localStorage.removeItem,
+  clear: localStorage.clear,
+  watch: localStorage.watch as Storage['watch'],
+  unwatch: localStorage.unwatch
 })
 
 export const IndexDBStorageImpl = IndexDBStorageExtern.impl({

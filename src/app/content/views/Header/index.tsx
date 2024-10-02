@@ -11,7 +11,6 @@ const Header: FC = () => {
   const siteInfo = getSiteInfo()
   const roomDomain = useRemeshDomain(RoomDomain())
   const userList = useRemeshQuery(roomDomain.query.UserListQuery())
-  const peerId = useRemeshQuery(roomDomain.query.PeerIdQuery())
   const onlineCount = userList.length
 
   return (
@@ -27,7 +26,6 @@ const Header: FC = () => {
           <Button className="overflow-hidden" variant="link">
             <span className="truncate text-lg font-semibold text-slate-600">
               {siteInfo.hostname.replace(/^www\./i, '')}
-              {/* {peerId} */}
             </span>
           </Button>
         </HoverCardTrigger>

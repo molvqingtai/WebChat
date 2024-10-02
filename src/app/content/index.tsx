@@ -7,7 +7,7 @@ import { defineContentScript } from 'wxt/sandbox'
 import { createShadowRootUi } from 'wxt/client'
 
 import App from './App'
-import { IndexDBStorageImpl, BrowserSyncStorageImpl, indexDBStorage } from '@/domain/impls/Storage'
+import { LocalStorageImpl, IndexDBStorageImpl, BrowserSyncStorageImpl } from '@/domain/impls/Storage'
 import { PeerRoomImpl } from '@/domain/impls/PeerRoom'
 import { DanmakuImpl } from '@/domain/impls/Danmaku'
 // import { PeerRoomImpl } from '@/domain/impls/PeerRoom2'
@@ -23,7 +23,7 @@ export default defineContentScript({
   excludeMatches: ['*://localhost/*', '*://127.0.0.1/*'],
   async main(ctx) {
     const store = Remesh.store({
-      externs: [IndexDBStorageImpl, BrowserSyncStorageImpl, PeerRoomImpl, ToastImpl, DanmakuImpl]
+      externs: [LocalStorageImpl, IndexDBStorageImpl, BrowserSyncStorageImpl, PeerRoomImpl, ToastImpl, DanmakuImpl]
       // inspectors: __DEV__ ? [RemeshLogger()] : []
     })
 
