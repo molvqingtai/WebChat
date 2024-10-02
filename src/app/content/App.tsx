@@ -14,6 +14,15 @@ import { Toaster } from 'sonner'
 import DanmakuContainer from './components/DanmakuContainer'
 import DanmakuDomain from '@/domain/Danmaku'
 
+/**
+ * Fix requestAnimationFrame error in jest
+ * @see https://github.com/facebook/react/issues/16606
+ * @see https://bugzilla.mozilla.org/show_bug.cgi?id=1469304
+ */
+if (import.meta.env.FIREFOX) {
+  window.requestAnimationFrame = window.requestAnimationFrame.bind(window)
+}
+
 export default function App() {
   const send = useRemeshSend()
   const roomDomain = useRemeshDomain(RoomDomain())
@@ -46,7 +55,6 @@ export default function App() {
       danmakuIsEnabled && send(danmakuDomain.command.DestroyCommand())
     }
   }, [danmakuIsEnabled])
-  console.log(1)
 
   return (
     <>
