@@ -1,3 +1,10 @@
+## [1.1.2](https://github.com/molvqingtai/WebChat/compare/v1.1.1...v1.1.2) (2024-10-02)
+
+
+### Performance Improvements
+
+* support unread status ([1f44af8](https://github.com/molvqingtai/WebChat/commit/1f44af873c57aaed2eb3d845342ad427ce1d8a4f))
+
 ## [1.1.1](https://github.com/molvqingtai/WebChat/compare/v1.1.0...v1.1.1) (2024-10-01)
 
 
