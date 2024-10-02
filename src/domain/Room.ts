@@ -237,9 +237,9 @@ const RoomDomain = Remesh.domain({
       impl: ({ get }, action: { type: 'create' | 'delete'; user: RoomUser }) => {
         const userList = get(UserListState())
         if (action.type === 'create') {
-          return [UserListState().new(upsert(userList, action.user, 'peerId'))]
+          return [UserListState().new(upsert(userList, action.user, 'userId'))]
         } else {
-          return [UserListState().new(userList.filter(({ peerId }) => peerId !== action.user.peerId))]
+          return [UserListState().new(userList.filter(({ userId }) => userId !== action.user.userId))]
         }
       }
     })
