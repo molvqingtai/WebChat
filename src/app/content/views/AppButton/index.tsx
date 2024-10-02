@@ -1,4 +1,4 @@
-import { type ReactNode, type FC, useState, type MouseEvent, useRef } from 'react'
+import { type FC, useState, type MouseEvent, useRef } from 'react'
 import { SettingsIcon, MoonIcon, SunIcon } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 
@@ -10,17 +10,25 @@ import UserInfoDomain from '@/domain/UserInfo'
 import useClickAway from '@/hooks/useClickAway'
 import { checkSystemDarkMode, cn } from '@/utils'
 import ToastDomain from '@/domain/Toast'
+import LogoIcon0 from '@/assets/images/logo-0.svg'
+import LogoIcon1 from '@/assets/images/logo-1.svg'
+import LogoIcon2 from '@/assets/images/logo-2.svg'
+import LogoIcon3 from '@/assets/images/logo-3.svg'
+import LogoIcon4 from '@/assets/images/logo-4.svg'
+import LogoIcon5 from '@/assets/images/logo-5.svg'
+import LogoIcon6 from '@/assets/images/logo-6.svg'
+import AppStatusDomain from '@/domain/AppStatus'
+import { getDay } from 'date-fns'
 
-export interface AppButtonProps {
-  children?: ReactNode
-  onClick?: (e: MouseEvent<HTMLButtonElement>) => void
-}
-
-const AppButton: FC<AppButtonProps> = ({ children, onClick }) => {
+const AppButton: FC = () => {
   const send = useRemeshSend()
+  const appStatusDomain = useRemeshDomain(AppStatusDomain())
+  const appOpenStatus = useRemeshQuery(appStatusDomain.query.OpenQuery())
+  const hasUnreadQuery = useRemeshQuery(appStatusDomain.query.HasUnreadQuery())
   const userInfoDomain = useRemeshDomain(UserInfoDomain())
   const userInfo = useRemeshQuery(userInfoDomain.query.UserInfoQuery())
   const toastDomain = useRemeshDomain(ToastDomain())
+  const DayLogo = [LogoIcon0, LogoIcon1, LogoIcon2, LogoIcon3, LogoIcon4, LogoIcon5, LogoIcon6][getDay(Date())]
 
   const isDarkMode =
     userInfo?.themeMode === 'dark' ? true : userInfo?.themeMode === 'light' ? false : checkSystemDarkMode()
@@ -51,12 +59,16 @@ const AppButton: FC<AppButtonProps> = ({ children, onClick }) => {
     browser.runtime.sendMessage(EVENT.OPEN_OPTIONS_PAGE)
   }
 
+  const handleToggleApp = () => {
+    send(appStatusDomain.command.UpdateOpenCommand(!appOpenStatus))
+  }
+
   return (
     <div ref={menuRef} className="fixed bottom-5 right-5 z-infinity grid select-none justify-center gap-y-3">
       <AnimatePresence>
         {menuOpen && (
           <motion.div
-            className="z-infinity grid gap-y-3"
+            className="z-10 grid gap-y-3"
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 12 }}
@@ -90,11 +102,27 @@ const AppButton: FC<AppButtonProps> = ({ children, onClick }) => {
         )}
       </AnimatePresence>
       <Button
-        onClick={onClick}
+        onClick={handleToggleApp}
         onContextMenu={handleToggleMenu}
-        className="relative z-10 size-11 overflow-hidden rounded-full p-0 text-xs shadow-lg shadow-slate-500/50"
+        className="relative z-20 size-11 rounded-full p-0 text-xs shadow-lg shadow-slate-500/50"
       >
-        {children}
+        <AnimatePresence>
+          {hasUnreadQuery && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.1 }}
+              className="absolute -right-1 -top-1 flex size-5 items-center justify-center"
+            >
+              <span
+                className={cn('absolute inline-flex size-full animate-ping rounded-full opacity-75', 'bg-orange-400')}
+              ></span>
+              <span className={cn('relative inline-flex size-3 rounded-full', 'bg-orange-500')}></span>
+            </motion.div>
+          )}
+        </AnimatePresence>
+        <DayLogo className="max-h-full max-w-full"></DayLogo>
       </Button>
     </div>
   )

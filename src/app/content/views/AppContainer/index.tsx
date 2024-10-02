@@ -1,13 +1,17 @@
 import { type ReactNode, type FC } from 'react'
 import useResizable from '@/hooks/useResizable'
 import { motion, AnimatePresence } from 'framer-motion'
+import AppStatusDomain from '@/domain/AppStatus'
+import { useRemeshDomain, useRemeshQuery } from 'remesh-react'
 
 export interface AppContainerProps {
   children?: ReactNode
-  open?: boolean
 }
 
-const AppContainer: FC<AppContainerProps> = ({ children, open }) => {
+const AppContainer: FC<AppContainerProps> = ({ children }) => {
+  const appStatusDomain = useRemeshDomain(AppStatusDomain())
+  const appOpenStatus = useRemeshQuery(appStatusDomain.query.OpenQuery())
+
   const { size, ref } = useResizable({
     initSize: Math.max(375, window.innerWidth / 6),
     maxSize: Math.min(750, window.innerWidth / 3),
@@ -17,7 +21,7 @@ const AppContainer: FC<AppContainerProps> = ({ children, open }) => {
 
   return (
     <AnimatePresence>
-      {open && (
+      {appOpenStatus && (
         <motion.div
           initial={{ opacity: 0, y: 10, x: 10 }}
           animate={{ opacity: 1, y: 0, x: 0 }}

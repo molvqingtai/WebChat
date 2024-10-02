@@ -8,22 +8,11 @@ import RoomDomain from '@/domain/Room'
 import UserInfoDomain from '@/domain/UserInfo'
 import Setup from '@/app/content/views/Setup'
 import MessageListDomain from '@/domain/MessageList'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 import { Toaster } from 'sonner'
-import { browserSyncStorage, indexDBStorage } from '@/domain/impls/Storage'
-import { APP_OPEN_STATUS_STORAGE_KEY } from '@/constants/config'
-import LogoIcon0 from '@/assets/images/logo-0.svg'
-import LogoIcon1 from '@/assets/images/logo-1.svg'
-import LogoIcon2 from '@/assets/images/logo-2.svg'
-import LogoIcon3 from '@/assets/images/logo-3.svg'
-import LogoIcon4 from '@/assets/images/logo-4.svg'
-import LogoIcon5 from '@/assets/images/logo-5.svg'
-import LogoIcon6 from '@/assets/images/logo-6.svg'
 
-import { getDay } from 'date-fns'
 import DanmakuContainer from './components/DanmakuContainer'
 import DanmakuDomain from '@/domain/Danmaku'
-import { browser } from 'wxt/browser'
 
 export default function App() {
   const send = useRemeshSend()
@@ -32,13 +21,11 @@ export default function App() {
   const messageListDomain = useRemeshDomain(MessageListDomain())
   const danmakuDomain = useRemeshDomain(DanmakuDomain())
   const danmakuIsEnabled = useRemeshQuery(danmakuDomain.query.IsEnabledQuery())
-  const userInfo = useRemeshQuery(userInfoDomain.query.UserInfoQuery())
   const userInfoSetFinished = useRemeshQuery(userInfoDomain.query.UserInfoSetIsFinishedQuery())
   const userInfoLoadFinished = useRemeshQuery(userInfoDomain.query.UserInfoLoadIsFinishedQuery())
   const messageListLoadFinished = useRemeshQuery(messageListDomain.query.LoadIsFinishedQuery())
-  const notUserInfo = userInfoLoadFinished && !userInfoSetFinished
 
-  const DayLogo = [LogoIcon0, LogoIcon1, LogoIcon2, LogoIcon3, LogoIcon4, LogoIcon5, LogoIcon6][getDay(Date())]
+  const notUserInfo = userInfoLoadFinished && !userInfoSetFinished
 
   useEffect(() => {
     if (messageListLoadFinished) {
@@ -51,23 +38,6 @@ export default function App() {
     }
   }, [userInfoSetFinished, messageListLoadFinished])
 
-  const [appOpen, setAppOpen] = useState(false)
-
-  const handleToggleApp = async () => {
-    const value = !appOpen
-    setAppOpen(value)
-    await indexDBStorage.setItem<boolean>(APP_OPEN_STATUS_STORAGE_KEY, value)
-  }
-
-  const getAppOpenStatus = async () => {
-    const value = await indexDBStorage.getItem<boolean>(APP_OPEN_STATUS_STORAGE_KEY)
-    setAppOpen(!!value)
-  }
-
-  useEffect(() => {
-    getAppOpenStatus()
-  }, [])
-
   const danmakuContainerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -76,19 +46,18 @@ export default function App() {
       danmakuIsEnabled && send(danmakuDomain.command.DestroyCommand())
     }
   }, [danmakuIsEnabled])
+  console.log(1)
 
   return (
     <>
-      <AppContainer open={appOpen}>
+      <AppContainer>
         <Header />
         <Main />
         <Footer />
         {notUserInfo && <Setup />}
         <Toaster richColors offset="70px" visibleToasts={1} position="top-center"></Toaster>
       </AppContainer>
-      <AppButton onClick={handleToggleApp}>
-        <DayLogo className="max-h-full max-w-full"></DayLogo>
-      </AppButton>
+      <AppButton></AppButton>
       <DanmakuContainer ref={danmakuContainerRef} />
     </>
   )
