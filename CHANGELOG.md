@@ -1,3 +1,10 @@
+## [1.1.5](https://github.com/molvqingtai/WebChat/compare/v1.1.4...v1.1.5) (2024-10-02)
+
+
+### Bug Fixes
+
+* multiple tabs display duplicate online users ([8b843ac](https://github.com/molvqingtai/WebChat/commit/8b843ac45cc415676641b66dbfb21329c3f7c962))
+
 ## [1.1.4](https://github.com/molvqingtai/WebChat/compare/v1.1.3...v1.1.4) (2024-10-02)
 
 
