@@ -1,3 +1,10 @@
+## [1.1.3](https://github.com/molvqingtai/WebChat/compare/v1.1.2...v1.1.3) (2024-10-02)
+
+
+### Performance Improvements
+
+* add version link ([4551ad2](https://github.com/molvqingtai/WebChat/commit/4551ad2964e21e1bf85866b79acd25bf556aa26d))
+
 ## [1.1.2](https://github.com/molvqingtai/WebChat/compare/v1.1.1...v1.1.2) (2024-10-02)
 
 
