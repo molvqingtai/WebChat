@@ -1,4 +1,4 @@
-import { useRef, type FC } from 'react'
+import { ChangeEvent, useRef, type FC } from 'react'
 import { CornerDownLeftIcon } from 'lucide-react'
 import { useRemeshDomain, useRemeshQuery, useRemeshSend } from 'remesh-react'
 import MessageInput from '../../components/MessageInput'
@@ -15,12 +15,14 @@ const Footer: FC = () => {
   const message = useRemeshQuery(messageInputDomain.query.MessageQuery())
 
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const isComposing = useRef(false)
 
-  const handleInput = (value: string) => {
-    send(messageInputDomain.command.InputCommand(value))
+  const handleInput = (e: ChangeEvent<HTMLTextAreaElement>) => {
+    send(messageInputDomain.command.InputCommand(e.target.value))
   }
 
   const handleSend = () => {
+    if (isComposing.current) return
     if (!message.trim()) return
     send(roomDomain.command.SendTextMessageCommand(message.trim()))
     send(messageInputDomain.command.ClearCommand())
@@ -38,6 +40,8 @@ const Footer: FC = () => {
         value={message}
         onEnter={handleSend}
         onInput={handleInput}
+        onCompositionEnd={() => (isComposing.current = false)}
+        onCompositionStart={() => (isComposing.current = true)}
         maxLength={MESSAGE_MAX_LENGTH}
       ></MessageInput>
       <div className="flex items-center">
