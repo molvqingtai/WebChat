@@ -1,3 +1,10 @@
+## [1.1.6](https://github.com/molvqingtai/WebChat/compare/v1.1.5...v1.1.6) (2024-10-04)
+
+
+### Bug Fixes
+
+* it should not be sent when composing ([8ee9ed6](https://github.com/molvqingtai/WebChat/commit/8ee9ed6259f731fa43ef0d458a7e040ad1618d12))
+
 ## [1.1.5](https://github.com/molvqingtai/WebChat/compare/v1.1.4...v1.1.5) (2024-10-02)
 
 
