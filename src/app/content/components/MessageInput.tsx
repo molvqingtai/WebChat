@@ -1,4 +1,4 @@
-import { forwardRef, type ChangeEvent, type KeyboardEvent } from 'react'
+import { forwardRef, type ChangeEvent, CompositionEvent, type KeyboardEvent } from 'react'
 
 import { Textarea } from '@/components/ui/Textarea'
 import { Markdown } from '@/components/Markdown'
@@ -12,20 +12,33 @@ export interface MessageInputProps {
   preview?: boolean
   autoFocus?: boolean
   disabled?: boolean
-  onInput?: (value: string) => void
-  onEnter?: (value: string) => void
+  onInput?: (e: ChangeEvent<HTMLTextAreaElement>) => void
+  onEnter?: (e: KeyboardEvent<HTMLTextAreaElement>) => void
+  onCompositionStart?: (e: CompositionEvent<HTMLTextAreaElement>) => void
+  onCompositionEnd?: (e: CompositionEvent<HTMLTextAreaElement>) => void
 }
 
 const MessageInput = forwardRef<HTMLTextAreaElement, MessageInputProps>(
-  ({ value = '', className, maxLength = 500, onInput, onEnter, preview, autoFocus, disabled }, ref) => {
+  (
+    {
+      value = '',
+      className,
+      maxLength = 500,
+      onInput,
+      onEnter,
+      onCompositionStart,
+      onCompositionEnd,
+      preview,
+      autoFocus,
+      disabled
+    },
+    ref
+  ) => {
     const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
       if (e.key === 'Enter' && !(e.shiftKey || e.ctrlKey || e.altKey || e.metaKey)) {
         e.preventDefault()
-        onEnter?.(value)
+        onEnter?.(e)
       }
-    }
-    const handleInput = (e: ChangeEvent<HTMLTextAreaElement>) => {
-      onInput?.(e.target.value)
     }
 
     return (
@@ -42,8 +55,10 @@ const MessageInput = forwardRef<HTMLTextAreaElement, MessageInputProps>(
               className="box-border resize-none whitespace-pre-wrap break-words border-none bg-gray-50 pb-5 [field-sizing:content] focus:ring-0 focus:ring-offset-0"
               rows={2}
               value={value}
+              onCompositionStart={onCompositionStart}
+              onCompositionEnd={onCompositionEnd}
               placeholder="Type your message here."
-              onInput={handleInput}
+              onInput={onInput}
               disabled={disabled}
             />
           </ScrollArea>
