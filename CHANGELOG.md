@@ -1,3 +1,10 @@
+# [1.2.0](https://github.com/molvqingtai/WebChat/compare/v1.1.6...v1.2.0) (2024-10-08)
+
+
+### Features
+
+* support display of online user list ([4c7137d](https://github.com/molvqingtai/WebChat/commit/4c7137d045a127bef6e8a3afe319f15a480b149c))
+
 ## [1.1.6](https://github.com/molvqingtai/WebChat/compare/v1.1.5...v1.1.6) (2024-10-04)
 
 
