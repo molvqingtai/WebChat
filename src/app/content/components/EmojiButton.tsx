@@ -34,7 +34,7 @@ const EmojiButton: FC<EmojiButtonProps> = ({ onSelect }) => {
           <SmileIcon size={20} />
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="z-infinity w-72 px-0" onCloseAutoFocus={handleCloseAutoFocus}>
+      <PopoverContent className="z-infinity w-72 rounded-xl px-0" onCloseAutoFocus={handleCloseAutoFocus}>
         <ScrollArea className="size-72 px-3">
           {emojiGroups.map((group, index) => {
             return (
