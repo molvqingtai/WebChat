@@ -34,7 +34,7 @@ const DanmakuMessage: FC<PromptItemProps> = ({ data, className, onMouseEnter, on
       )}
     >
       <Avatar className="size-5">
-        <AvatarImage src={data.userAvatar} alt="avatar" />
+        <AvatarImage src={data.userAvatar} className="size-full" alt="avatar" />
         <AvatarFallback>{data.username.at(0)}</AvatarFallback>
       </Avatar>
       <div className="max-w-40 overflow-hidden text-ellipsis">{data.body}</div>
