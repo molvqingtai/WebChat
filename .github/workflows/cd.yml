@@ -42,10 +42,6 @@ jobs:
       - run: pnpm semantic-release
         env:
           GH_TOKEN: ${{ secrets.WEB_CHAT_GITHUB_TOKEN }}
-      - run: |
-          pnpm wxt submit --dry-run \
-            --chrome-zip .output/*-chrome.zip
-        env:
           CHROME_EXTENSION_ID: ${{ secrets.CHROME_EXTENSION_ID }}
           CHROME_CLIENT_ID: ${{ secrets.CHROME_CLIENT_ID }}
           CHROME_CLIENT_SECRET: ${{ secrets.CHROME_CLIENT_SECRET }}
