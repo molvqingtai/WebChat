@@ -21,7 +21,7 @@ export default {
     [
       '@semantic-release/exec',
       {
-        prepareCmd: 'pnpm run pack'
+        prepareCmd: `npm run pack && pnpm wxt submit --dry-run --chrome-zip .output/${name}-\${nextRelease.version}-chrome.zip`
       }
     ],
     /**
