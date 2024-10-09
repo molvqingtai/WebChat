@@ -4,6 +4,8 @@
 
 # WebChat
 
+[![GitHub License](https://img.shields.io/github/license/molvqingtai/WebChat)](https://github.com/molvqingtai/WebChat/blob/master/LICENSE) [![Chrome Web Store Version](https://img.shields.io/chrome-web-store/v/cpaedhbidlpnbdfegakhiamfpndhjpgf)](https://chromewebstore.google.com/detail/webchat/cpaedhbidlpnbdfegakhiamfpndhjpgf) [![GitHub Release](https://img.shields.io/github/v/release/molvqingtai/WebChat)](https://github.com/molvqingtai/WebChat/releases)
+
 > Chat with anyone on any website
 
 This is an anonymous chat browser extension that is decentralized and serverless, utilizing WebRTC for end-to-end encrypted communication. It prioritizes privacy, with all data stored locally.
@@ -11,6 +13,12 @@ This is an anonymous chat browser extension that is decentralized and serverless
 The aim is to add chat room functionality to any website, enabling real-time messaging anytime, anywhere.
 
 ### Install
+
+**Install from Store**
+
+- [Chrome Web Store](https://chromewebstore.google.com/detail/webchat/cpaedhbidlpnbdfegakhiamfpndhjpgf)
+
+**Manual Installation**
 
 1. Go to the GitHub repository ([Releases](https://github.com/molvqingtai/WebChat/releases))
 2. Click on the "Assets" button and select "web-chat-\*.zip"
