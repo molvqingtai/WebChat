@@ -77,11 +77,11 @@ const DanmakuDomain = Remesh.domain({
       }
     })
 
-    const DestroyCommand = domain.command({
-      name: 'Danmaku.DestroyCommand',
+    const UnmountCommand = domain.command({
+      name: 'Danmaku.UnmountCommand',
       impl: () => {
-        danmaku.destroy()
-        return [DestroyEvent()]
+        danmaku.unmount()
+        return [UnmountEvent()]
       }
     })
 
@@ -101,8 +101,8 @@ const DanmakuDomain = Remesh.domain({
       name: 'Danmaku.MountEvent'
     })
 
-    const DestroyEvent = domain.event({
-      name: 'Danmaku.DestroyEvent'
+    const UnmountEvent = domain.event({
+      name: 'Danmaku.UnmountEvent'
     })
 
     domain.effect({
@@ -129,14 +129,14 @@ const DanmakuDomain = Remesh.domain({
         UnshiftCommand,
         ClearCommand,
         MountCommand,
-        DestroyCommand
+        UnmountCommand
       },
       event: {
         PushEvent,
         UnshiftEvent,
         ClearEvent,
         MountEvent,
-        DestroyEvent
+        UnmountEvent
       }
     }
   }

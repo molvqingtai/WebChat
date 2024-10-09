@@ -71,9 +71,9 @@ importers:
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
-      danmaku:
-        specifier: ^2.0.7
-        version: 2.0.7
+      danmu:
+        specifier: ^0.12.0
+        version: 0.12.0
       date-fns:
         specifier: ^4.1.0
         version: 4.1.0
@@ -136,7 +136,7 @@ importers:
         version: 2.5.3
       trystero:
         specifier: ^0.20.0
-        version: 0.20.0(@libp2p/interface@2.1.2)(@waku/enr@0.0.26(@multiformats/multiaddr@12.3.1))(@waku/message-hash@0.1.16)(@waku/proto@0.0.7)(@waku/relay@0.0.15(@libp2p/interface@2.1.2)(@multiformats/multiaddr@12.3.1)(bufferutil@4.0.8)(libp2p@1.9.4)(utf-8-validate@6.0.4))(bufferutil@4.0.8)(utf-8-validate@6.0.4)
+        version: 0.20.0(@libp2p/interface@1.7.0)(@waku/enr@0.0.26(@multiformats/multiaddr@12.3.1))(@waku/message-hash@0.1.16)(@waku/proto@0.0.7)(@waku/relay@0.0.15(@libp2p/interface@1.7.0)(@multiformats/multiaddr@12.3.1)(bufferutil@4.0.8)(libp2p@1.9.4)(utf-8-validate@6.0.4))(bufferutil@4.0.8)(utf-8-validate@6.0.4)
       type-fest:
         specifier: ^4.26.1
         version: 4.26.1
@@ -1131,9 +1131,6 @@ packages:
 
   '@libp2p/interface@1.7.0':
     resolution: {integrity: sha512-/zFyaIaIGW0aihhsH7/93vQdpWInUzFocxF11RO/029Y6h0SVjs24HHbils+DqaFDTqN+L7oNlBx2rM2MnmTjA==}
-
-  '@libp2p/interface@2.1.2':
-    resolution: {integrity: sha512-uD4NapC+1qGX7RmgC1aehQm3pMs1MpO1DwuhUlAo1M6CyNxfs1Ha9jhg2T+G4u4CAJM6wffZTyPGnKnrR+M8Fw==}
 
   '@libp2p/logger@4.0.20':
     resolution: {integrity: sha512-TTh2dhHsOTAlMPxSa9ncFPHa/0jTt+0AQxwHdlxg/OGLAgc9VRhnrhHUbJZp07Crcw4T/MOfS4KhjlxgqYgJRw==}
@@ -2406,6 +2403,9 @@ packages:
     resolution: {integrity: sha512-gOsf2YwSlleG6IjRYG2A7k0HmBMEo6qVNk9Bp/EaLgAJT5ngH6PXbqa4ItvnEwCm/velL5jAnQgsHsWnjhGmvw==}
     engines: {node: '>=18'}
 
+  aidly@1.9.0:
+    resolution: {integrity: sha512-OREY4n7SkhJZpxn94Exd4MeYni1MVPpHGe8dBxkuOSjqrlOTHchgjguaX8BNd0g3idoRNrkFBrmyJ+JWK+AROw==}
+
   ajv@6.12.6:
     resolution: {integrity: sha512-j3fVLgvTo527anyYyJOGTYJbG+vnnQYvE0m5mmkc1TK+nxAppkCLMIL0aZ4dblVCNoGShhm+kzE4ZUykBoMg4g==}
 
@@ -2971,8 +2971,8 @@ packages:
   csstype@3.1.3:
     resolution: {integrity: sha512-M1uQkMl8rQK/szD0LNhtqxIPLpimGm8sOBwU7lLnCpSbTyY3yeU1Vc7l4KT5zT4s/yOxHH5O7tIuuLOCnLADRw==}
 
-  danmaku@2.0.7:
-    resolution: {integrity: sha512-etJEa9tdfW6cp5pn5qLCr1oE9v+uSE7bZxeQUMFKjHNV0Z7JCIVO126NZ5KyKgeOZx3jXAXLkS4UH/CgIx4BPQ==}
+  danmu@0.12.0:
+    resolution: {integrity: sha512-29NnnQaVFJVWvfCNpt70nW9UV2ClLtryrkWvwz8Nrwe1qrd2M8LMEfEQCNdtXebn1enk6ropBfHq3S/uTiTj5A==}
 
   dargs@8.1.0:
     resolution: {integrity: sha512-wAV9QHOsNbwnWdNW2FYvE1P56wtgSbM+3SZcdGiWQILwVjACCXDCI3Ai8QlCjMDB8YK5zySiXZYBiwGmNY3lnw==}
@@ -3833,6 +3833,9 @@ packages:
 
   hookable@5.5.3:
     resolution: {integrity: sha512-Yc+BQe8SvoXH1643Qez1zqLRmbA5rCL+sSmk6TVos0LWVfNIB7PGncdlId77WzLGSIB5KaWgTaNTs2lNVEI6VQ==}
+
+  hooks-plugin@1.3.0:
+    resolution: {integrity: sha512-CuISP+7AhIca8ZoGRN4valoVwVPtOVkzA7MiVaLA2s9XNESADUI7WbLO67z17KU2onX/UA2n/ZRhMn9PdMzXVw==}
 
   hosted-git-info@2.8.9:
     resolution: {integrity: sha512-mxIDAb9Lsm6DoOJ7xH+5+X4y1LU/4Hi50L9C5sIswK3JzULS4bwk1FvjdBgvYR4bzT4tuUQiC15FE2f5HbLvYw==}
@@ -5933,6 +5936,9 @@ packages:
     resolution: {integrity: sha512-bSiSngZ/jWeX93BqeIAbImyTbEihizcwNjFoRUIY/T1wWQsfsm2Vw1agPKylXvQTU7iASGdHhyqRlqQzfz+Htg==}
     engines: {node: '>=18'}
 
+  small-queue@1.1.2:
+    resolution: {integrity: sha512-K6zQPh7cRjkzv+upcwrOTbR4kU3neY3KZR2F1nc8Fuez8uJyh4BguOUs4KGKHcuzU1LJmK8yfCkMUZbconLe8Q==}
+
   snake-case@3.0.4:
     resolution: {integrity: sha512-LAOh4z89bGQvl9pFfNF8V146i7o7/CqFPbqzYgP+yYzDIDeS9HaNFtXABamRW+AQzEVODcvE79ljJ+8a9YSdMg==}
 
@@ -7953,16 +7959,6 @@ snapshots:
       progress-events: 1.0.1
       uint8arraylist: 2.4.8
 
-  '@libp2p/interface@2.1.2':
-    dependencies:
-      '@multiformats/multiaddr': 12.3.1
-      it-pushable: 3.2.3
-      it-stream-types: 2.0.2
-      multiformats: 13.3.0
-      progress-events: 1.0.1
-      uint8arraylist: 2.4.8
-    optional: true
-
   '@libp2p/logger@4.0.20':
     dependencies:
       '@libp2p/interface': 1.7.0
@@ -9273,7 +9269,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@waku/discovery@0.0.3(@libp2p/interface@2.1.2)(@waku/enr@0.0.26(@multiformats/multiaddr@12.3.1))(@waku/proto@0.0.7)':
+  '@waku/discovery@0.0.3(@libp2p/interface@1.7.0)(@waku/enr@0.0.26(@multiformats/multiaddr@12.3.1))(@waku/proto@0.0.7)':
     dependencies:
       '@waku/enr': 0.0.26(@multiformats/multiaddr@12.3.1)
       '@waku/proto': 0.0.7
@@ -9282,11 +9278,11 @@ snapshots:
       hi-base32: 0.5.1
       uint8arrays: 5.1.0
     optionalDependencies:
-      '@libp2p/interface': 2.1.2
+      '@libp2p/interface': 1.7.0
     transitivePeerDependencies:
       - supports-color
 
-  '@waku/discovery@0.0.5(@libp2p/interface@2.1.2)(@multiformats/multiaddr@12.3.1)(libp2p@1.9.4)':
+  '@waku/discovery@0.0.5(@libp2p/interface@1.7.0)(@multiformats/multiaddr@12.3.1)(libp2p@1.9.4)':
     dependencies:
       '@waku/core': 0.0.32(@multiformats/multiaddr@12.3.1)(libp2p@1.9.4)
       '@waku/enr': 0.0.26(@multiformats/multiaddr@12.3.1)
@@ -9298,7 +9294,7 @@ snapshots:
       hi-base32: 0.5.1
       uint8arrays: 5.1.0
     optionalDependencies:
-      '@libp2p/interface': 2.1.2
+      '@libp2p/interface': 1.7.0
     transitivePeerDependencies:
       - '@multiformats/multiaddr'
       - libp2p
@@ -9337,13 +9333,13 @@ snapshots:
     dependencies:
       protons-runtime: 5.5.0
 
-  '@waku/relay@0.0.15(@libp2p/interface@2.1.2)(@multiformats/multiaddr@12.3.1)(bufferutil@4.0.8)(libp2p@1.9.4)(utf-8-validate@6.0.4)':
+  '@waku/relay@0.0.15(@libp2p/interface@1.7.0)(@multiformats/multiaddr@12.3.1)(bufferutil@4.0.8)(libp2p@1.9.4)(utf-8-validate@6.0.4)':
     dependencies:
       '@noble/hashes': 1.5.0
       '@waku/core': 0.0.32(@multiformats/multiaddr@12.3.1)(libp2p@1.9.4)
       '@waku/interfaces': 0.0.27
       '@waku/proto': 0.0.8
-      '@waku/sdk': 0.0.28(@libp2p/interface@2.1.2)(@multiformats/multiaddr@12.3.1)(bufferutil@4.0.8)(utf-8-validate@6.0.4)
+      '@waku/sdk': 0.0.28(@libp2p/interface@1.7.0)(@multiformats/multiaddr@12.3.1)(bufferutil@4.0.8)(utf-8-validate@6.0.4)
       '@waku/utils': 0.0.20
       chai: 4.5.0
       debug: 4.3.7
@@ -9357,7 +9353,7 @@ snapshots:
       - supports-color
       - utf-8-validate
 
-  '@waku/sdk@0.0.26(@libp2p/interface@2.1.2)(@waku/enr@0.0.26(@multiformats/multiaddr@12.3.1))(@waku/message-hash@0.1.16)(@waku/relay@0.0.15(@libp2p/interface@2.1.2)(@multiformats/multiaddr@12.3.1)(bufferutil@4.0.8)(libp2p@1.9.4)(utf-8-validate@6.0.4))(bufferutil@4.0.8)(utf-8-validate@6.0.4)':
+  '@waku/sdk@0.0.26(@libp2p/interface@1.7.0)(@waku/enr@0.0.26(@multiformats/multiaddr@12.3.1))(@waku/message-hash@0.1.16)(@waku/relay@0.0.15(@libp2p/interface@1.7.0)(@multiformats/multiaddr@12.3.1)(bufferutil@4.0.8)(libp2p@1.9.4)(utf-8-validate@6.0.4))(bufferutil@4.0.8)(utf-8-validate@6.0.4)':
     dependencies:
       '@chainsafe/libp2p-noise': 14.1.0
       '@libp2p/identify': 1.0.21
@@ -9365,10 +9361,10 @@ snapshots:
       '@libp2p/ping': 1.1.6
       '@libp2p/websockets': 8.2.0(bufferutil@4.0.8)(utf-8-validate@6.0.4)
       '@noble/hashes': 1.5.0
-      '@waku/discovery': 0.0.3(@libp2p/interface@2.1.2)(@waku/enr@0.0.26(@multiformats/multiaddr@12.3.1))(@waku/proto@0.0.7)
+      '@waku/discovery': 0.0.3(@libp2p/interface@1.7.0)(@waku/enr@0.0.26(@multiformats/multiaddr@12.3.1))(@waku/proto@0.0.7)
       '@waku/message-hash': 0.1.16
       '@waku/proto': 0.0.7
-      '@waku/relay': 0.0.15(@libp2p/interface@2.1.2)(@multiformats/multiaddr@12.3.1)(bufferutil@4.0.8)(libp2p@1.9.4)(utf-8-validate@6.0.4)
+      '@waku/relay': 0.0.15(@libp2p/interface@1.7.0)(@multiformats/multiaddr@12.3.1)(bufferutil@4.0.8)(libp2p@1.9.4)(utf-8-validate@6.0.4)
       libp2p: 1.9.4
     transitivePeerDependencies:
       - '@libp2p/interface'
@@ -9377,7 +9373,7 @@ snapshots:
       - supports-color
       - utf-8-validate
 
-  '@waku/sdk@0.0.28(@libp2p/interface@2.1.2)(@multiformats/multiaddr@12.3.1)(bufferutil@4.0.8)(utf-8-validate@6.0.4)':
+  '@waku/sdk@0.0.28(@libp2p/interface@1.7.0)(@multiformats/multiaddr@12.3.1)(bufferutil@4.0.8)(utf-8-validate@6.0.4)':
     dependencies:
       '@chainsafe/libp2p-noise': 15.1.2
       '@libp2p/identify': 2.1.5
@@ -9386,7 +9382,7 @@ snapshots:
       '@libp2p/websockets': 8.2.0(bufferutil@4.0.8)(utf-8-validate@6.0.4)
       '@noble/hashes': 1.5.0
       '@waku/core': 0.0.32(@multiformats/multiaddr@12.3.1)(libp2p@1.9.4)
-      '@waku/discovery': 0.0.5(@libp2p/interface@2.1.2)(@multiformats/multiaddr@12.3.1)(libp2p@1.9.4)
+      '@waku/discovery': 0.0.5(@libp2p/interface@1.7.0)(@multiformats/multiaddr@12.3.1)(libp2p@1.9.4)
       '@waku/interfaces': 0.0.27
       '@waku/message-hash': 0.1.16
       '@waku/proto': 0.0.8
@@ -9464,6 +9460,10 @@ snapshots:
     dependencies:
       clean-stack: 5.2.0
       indent-string: 5.0.0
+
+  aidly@1.9.0:
+    dependencies:
+      small-queue: 1.1.2
 
   ajv@6.12.6:
     dependencies:
@@ -10062,7 +10062,10 @@ snapshots:
 
   csstype@3.1.3: {}
 
-  danmaku@2.0.7: {}
+  danmu@0.12.0:
+    dependencies:
+      aidly: 1.9.0
+      hooks-plugin: 1.3.0
 
   dargs@8.1.0: {}
 
@@ -11180,6 +11183,10 @@ snapshots:
   hook-std@3.0.0: {}
 
   hookable@5.5.3: {}
+
+  hooks-plugin@1.3.0:
+    dependencies:
+      aidly: 1.9.0
 
   hosted-git-info@2.8.9: {}
 
@@ -13525,6 +13532,8 @@ snapshots:
       ansi-styles: 6.2.1
       is-fullwidth-code-point: 5.0.0
 
+  small-queue@1.1.2: {}
+
   snake-case@3.0.4:
     dependencies:
       dot-case: 3.0.4
@@ -13892,13 +13901,13 @@ snapshots:
 
   trough@2.2.0: {}
 
-  trystero@0.20.0(@libp2p/interface@2.1.2)(@waku/enr@0.0.26(@multiformats/multiaddr@12.3.1))(@waku/message-hash@0.1.16)(@waku/proto@0.0.7)(@waku/relay@0.0.15(@libp2p/interface@2.1.2)(@multiformats/multiaddr@12.3.1)(bufferutil@4.0.8)(libp2p@1.9.4)(utf-8-validate@6.0.4))(bufferutil@4.0.8)(utf-8-validate@6.0.4):
+  trystero@0.20.0(@libp2p/interface@1.7.0)(@waku/enr@0.0.26(@multiformats/multiaddr@12.3.1))(@waku/message-hash@0.1.16)(@waku/proto@0.0.7)(@waku/relay@0.0.15(@libp2p/interface@1.7.0)(@multiformats/multiaddr@12.3.1)(bufferutil@4.0.8)(libp2p@1.9.4)(utf-8-validate@6.0.4))(bufferutil@4.0.8)(utf-8-validate@6.0.4):
     dependencies:
       '@noble/curves': 1.6.0
       '@supabase/supabase-js': 2.45.4(bufferutil@4.0.8)(utf-8-validate@6.0.4)
       '@thaunknown/simple-peer': 10.0.10
-      '@waku/discovery': 0.0.3(@libp2p/interface@2.1.2)(@waku/enr@0.0.26(@multiformats/multiaddr@12.3.1))(@waku/proto@0.0.7)
-      '@waku/sdk': 0.0.26(@libp2p/interface@2.1.2)(@waku/enr@0.0.26(@multiformats/multiaddr@12.3.1))(@waku/message-hash@0.1.16)(@waku/relay@0.0.15(@libp2p/interface@2.1.2)(@multiformats/multiaddr@12.3.1)(bufferutil@4.0.8)(libp2p@1.9.4)(utf-8-validate@6.0.4))(bufferutil@4.0.8)(utf-8-validate@6.0.4)
+      '@waku/discovery': 0.0.3(@libp2p/interface@1.7.0)(@waku/enr@0.0.26(@multiformats/multiaddr@12.3.1))(@waku/proto@0.0.7)
+      '@waku/sdk': 0.0.26(@libp2p/interface@1.7.0)(@waku/enr@0.0.26(@multiformats/multiaddr@12.3.1))(@waku/message-hash@0.1.16)(@waku/relay@0.0.15(@libp2p/interface@1.7.0)(@multiformats/multiaddr@12.3.1)(bufferutil@4.0.8)(libp2p@1.9.4)(utf-8-validate@6.0.4))(bufferutil@4.0.8)(utf-8-validate@6.0.4)
       firebase: 10.14.0
       libp2p: 1.9.4
       mqtt: 5.10.1(bufferutil@4.0.8)(utf-8-validate@6.0.4)

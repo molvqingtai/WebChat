@@ -65,7 +65,7 @@
     "@webext-core/proxy-service": "^1.2.0",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.1",
-    "danmaku": "^2.0.7",
+    "danmu": "^0.12.0",
     "date-fns": "^4.1.0",
     "framer-motion": "^11.11.1",
     "idb-keyval": "^6.2.1",

@@ -191,7 +191,7 @@ export const MESSAGE_LIST_STORAGE_KEY = 'WEB_CHAT_MESSAGE_LIST' as const
 
 export const USER_INFO_STORAGE_KEY = 'WEB_CHAT_USER_INFO' as const
 
-export const APP_STATUS_STORAGE_KEY = 'WEB_CHAT_APP_OPEN_STATUS' as const
+export const APP_STATUS_STORAGE_KEY = 'WEB_CHAT_APP_STATUS' as const
 /**
  * In chrome storage.sync, each key-value pair supports a maximum storage of 8kb
  * Image is encoded as base64, and the size is increased by about 33%.

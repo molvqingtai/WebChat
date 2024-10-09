@@ -56,7 +56,7 @@ const AppButton: FC = () => {
   }
 
   const handleOpenOptionsPage = () => {
-    browser.runtime.sendMessage(EVENT.OPEN_OPTIONS_PAGE)
+    browser.runtime.sendMessage(EVENT.OPTIONS_PAGE_OPEN)
   }
 
   const handleToggleApp = () => {
