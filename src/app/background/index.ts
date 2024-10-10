@@ -9,7 +9,7 @@ export default defineBackground({
 
   main() {
     browser.runtime.onMessage.addListener(async (event: EVENT) => {
-      if (event === EVENT.OPEN_OPTIONS_PAGE) {
+      if (event === EVENT.OPTIONS_PAGE_OPEN) {
         browser.runtime.openOptionsPage()
       }
     })

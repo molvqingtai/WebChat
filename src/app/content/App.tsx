@@ -52,7 +52,7 @@ export default function App() {
   useEffect(() => {
     danmakuIsEnabled && send(danmakuDomain.command.MountCommand(danmakuContainerRef.current!))
     return () => {
-      danmakuIsEnabled && send(danmakuDomain.command.DestroyCommand())
+      danmakuIsEnabled && send(danmakuDomain.command.UnmountCommand())
     }
   }, [danmakuIsEnabled])
 

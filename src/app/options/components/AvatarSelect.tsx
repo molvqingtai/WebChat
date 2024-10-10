@@ -58,7 +58,7 @@ const AvatarSelect = React.forwardRef<HTMLInputElement, AvatarSelectProps>(
             className
           )}
         >
-          <AvatarImage src={value} alt="avatar" />
+          <AvatarImage src={value} className="size-full" alt="avatar" />
           <AvatarFallback>
             <ImagePlusIcon size={30} className="text-slate-400 group-hover:text-slate-500" />
           </AvatarFallback>

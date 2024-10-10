@@ -32,7 +32,7 @@ const MessageItem: FC<MessageItemProps> = (props) => {
       className={cn('box-border grid grid-cols-[auto_1fr] gap-x-2 px-4  first:pt-4 last:pb-4', props.className)}
     >
       <Avatar>
-        <AvatarImage src={props.data.userAvatar} alt="avatar" />
+        <AvatarImage src={props.data.userAvatar} className="size-full" alt="avatar" />
         <AvatarFallback>{props.data.username.at(0)}</AvatarFallback>
       </Avatar>
       <div className="overflow-hidden">

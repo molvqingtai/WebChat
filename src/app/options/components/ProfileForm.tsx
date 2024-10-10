@@ -92,31 +92,43 @@ const ProfileForm = () => {
 
   return (
     <Form {...form}>
-      <form onSubmit={form.handleSubmit(handleSubmit)} autoComplete="off" className="relative w-[450px] space-y-8 p-14">
+      <form
+        onSubmit={form.handleSubmit(handleSubmit)}
+        autoComplete="off"
+        className="relative w-[450px] space-y-8 p-14 pt-20"
+      >
         <FormField
           control={form.control}
           name="avatar"
           render={({ field }) => (
-            <FormItem className="absolute inset-x-1 top-0 mx-auto grid w-fit -translate-y-1/2  justify-items-center">
+            <FormItem className="absolute inset-x-1 top-0 mx-auto grid w-fit -translate-y-1/3  justify-items-center">
               <FormControl>
-                <BlurFade key={form.getValues().avatar} duration={0.1}>
-                  <AvatarSelect
-                    compressSize={MAX_AVATAR_SIZE}
-                    onError={handleError}
-                    onWarning={handleWarning}
-                    className="shadow-lg"
-                    {...field}
-                  ></AvatarSelect>
-                </BlurFade>
+                <div className="flex flex-col items-center gap-2">
+                  <BlurFade key={form.getValues().avatar} duration={0.1}>
+                    <AvatarSelect
+                      compressSize={MAX_AVATAR_SIZE}
+                      onError={handleError}
+                      onWarning={handleWarning}
+                      className="shadow-lg"
+                      {...field}
+                    ></AvatarSelect>
+                  </BlurFade>
+                  <Button
+                    type="button"
+                    size="xs"
+                    className="mx-auto flex items-center gap-x-2"
+                    onClick={handleRefreshAvatar}
+                  >
+                    <RefreshCcwIcon size={14} />
+                    Ugly Avatar
+                  </Button>
+                </div>
               </FormControl>
               <FormMessage />
             </FormItem>
           )}
         />
-        <Button type="button" size="xs" className="mx-auto flex items-center gap-x-2" onClick={handleRefreshAvatar}>
-          <RefreshCcwIcon size={14} />
-          Ugly Avatar
-        </Button>
+
         <FormField
           control={form.control}
           name="name"

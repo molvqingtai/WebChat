@@ -104,7 +104,7 @@ const Setup: FC = () => {
       <div className="m-auto flex flex-col items-center justify-center gap-y-8 pb-40 drop-shadow-lg">
         <BlurFade key={userInfo?.avatar} inView>
           <Avatar className="size-24 cursor-pointer border-4 border-white ">
-            <AvatarImage src={userInfo?.avatar} alt="avatar" />
+            <AvatarImage src={userInfo?.avatar} className="size-full" alt="avatar" />
             <AvatarFallback>
               <UserIcon size={30} className="text-slate-400" />
             </AvatarFallback>

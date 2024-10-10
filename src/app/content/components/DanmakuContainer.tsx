@@ -8,7 +8,7 @@ export interface DanmakuContainerProps {
 const DanmakuContainer = forwardRef<HTMLDivElement, DanmakuContainerProps>(({ className }, ref) => {
   return (
     <div
-      className={cn('fixed left-0 top-20 z-infinity w-full h-full invisible pointer-events-none shadow-md', className)}
+      className={cn('fixed left-0 top-0 z-infinity w-full h-full invisible pointer-events-none shadow-md', className)}
       ref={ref}
     ></div>
   )

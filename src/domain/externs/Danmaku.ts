@@ -6,7 +6,7 @@ export interface Danmaku {
   unshift: (message: TextMessage) => void
   clear: () => void
   mount: (root: HTMLElement) => void
-  destroy: () => void
+  unmount: () => void
 }
 
 export const DanmakuExtern = Remesh.extern<Danmaku>({
@@ -14,8 +14,8 @@ export const DanmakuExtern = Remesh.extern<Danmaku>({
     mount: () => {
       throw new Error('"mount" not implemented.')
     },
-    destroy() {
-      throw new Error('"destroy" not implemented.')
+    unmount() {
+      throw new Error('"unmount" not implemented.')
     },
     clear: () => {
       throw new Error('"clear" not implemented.')

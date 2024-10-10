@@ -1,8 +1,7 @@
 import { Remesh } from 'remesh'
 
 export type StorageValue = null | string | number | boolean | object
-export type WatchEvent = 'update' | 'remove'
-export type WatchCallback = (event: WatchEvent, key: string) => any
+export type WatchCallback = () => any
 export type Unwatch = () => Promise<void>
 
 export interface Storage {

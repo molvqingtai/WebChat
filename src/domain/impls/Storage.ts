@@ -6,6 +6,7 @@ import { STORAGE_NAME } from '@/constants/config'
 import { webExtensionDriver } from '@/utils/webExtensionDriver'
 import { browser } from 'wxt/browser'
 import { Storage } from '@/domain/externs/Storage'
+import { EVENT } from '@/constants/event'
 
 export const localStorage = createStorage({
   driver: localStorageDriver({ base: `${STORAGE_NAME}:` })
@@ -25,7 +26,20 @@ export const LocalStorageImpl = LocalStorageExtern.impl({
   set: localStorage.setItem,
   remove: localStorage.removeItem,
   clear: localStorage.clear,
-  watch: localStorage.watch as Storage['watch'],
+  watch: async (callback) => {
+    const unwatch = await localStorage.watch(callback)
+
+    /**
+     * Because the storage event cannot be triggered in the same browsing context
+     * it is necessary to listen for click events from DanmukuMessage.
+     * @see https://developer.mozilla.org/en-US/docs/Web/API/Window/storage_event
+     */
+    addEventListener(EVENT.APP_OPEN, callback)
+    return async () => {
+      removeEventListener(EVENT.APP_OPEN, callback)
+      return unwatch()
+    }
+  },
   unwatch: localStorage.unwatch
 })
 
