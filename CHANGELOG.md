@@ -1,3 +1,18 @@
+## [1.2.1](https://github.com/molvqingtai/WebChat/compare/v1.2.0...v1.2.1) (2024-10-10)
+
+
+### Bug Fixes
+
+* avatar is not displayed completely ([de97d05](https://github.com/molvqingtai/WebChat/commit/de97d0552894a33f2b15dd232598c40335d941a4))
+* the text in the button is not visible in dark mode ([d6652cb](https://github.com/molvqingtai/WebChat/commit/d6652cb2a43116016af32697b52d5bba276e6d2c))
+* the text in the textarea is not visible in dark mode ([d75a191](https://github.com/molvqingtai/WebChat/commit/d75a191dedd40a02fc58707ac60cccd9ff020c5f))
+
+
+### Performance Improvements
+
+* change https://github.com/weizhenye/Danmaku to https://github.com/imtaotao/danmu ([05ee49e](https://github.com/molvqingtai/WebChat/commit/05ee49e7c4019f32c654f2f935b734ec2383bebc))
+* submit store flow ([5235a6e](https://github.com/molvqingtai/WebChat/commit/5235a6ee8703597df227942208b4075bff880c2d))
+
 # [1.2.0](https://github.com/molvqingtai/WebChat/compare/v1.1.6...v1.2.0) (2024-10-08)
 
 

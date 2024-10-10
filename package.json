@@ -1,7 +1,7 @@
 {
   "name": "web-chat",
   "displayName": "WebChat",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Chat with anyone on any website.",
   "type": "module",
   "scripts": {
