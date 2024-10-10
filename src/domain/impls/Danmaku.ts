@@ -5,6 +5,10 @@ import { createElement } from 'react'
 import DanmakuMessage from '@/app/content/components/DanmakuMessage'
 import { createRoot } from 'react-dom/client'
 import { create, Manager } from 'danmu'
+import { LocalStorageImpl } from './Storage'
+import { AppStatus } from '../AppStatus'
+import { APP_STATUS_STORAGE_KEY } from '@/constants/config'
+import { EVENT } from '@/constants/event'
 
 export class Danmaku {
   private container?: Element
@@ -18,6 +22,11 @@ export class Danmaku {
           createRoot(manager.node).render(
             createElement(DanmakuMessage, {
               data: manager.data,
+              onClick: async () => {
+                const appStatus = await LocalStorageImpl.value.get<AppStatus>(APP_STATUS_STORAGE_KEY)
+                LocalStorageImpl.value.set<AppStatus>(APP_STATUS_STORAGE_KEY, { ...appStatus!, open: true, unread: 0 })
+                dispatchEvent(new CustomEvent(EVENT.APP_OPEN))
+              },
               onMouseEnter: () => manager.pause(),
               onMouseLeave: () => manager.resume()
             })
