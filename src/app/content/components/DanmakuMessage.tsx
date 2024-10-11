@@ -28,7 +28,7 @@ const DanmakuMessage: FC<PromptItemProps> = ({ data, className, onClick, onMouse
         <AvatarImage src={data.userAvatar} className="size-full" alt="avatar" />
         <AvatarFallback>{data.username.at(0)}</AvatarFallback>
       </Avatar>
-      <div className="max-w-40 overflow-hidden text-ellipsis">{data.body}</div>
+      <div className="max-w-44 truncate">{data.body}</div>
     </Button>
   )
 }

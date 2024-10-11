@@ -37,9 +37,7 @@ const MessageItem: FC<MessageItemProps> = (props) => {
       </Avatar>
       <div className="overflow-hidden">
         <div className="grid grid-cols-[1fr_auto] items-center gap-x-2 leading-none">
-          <div className="overflow-hidden text-ellipsis text-sm font-semibold text-slate-600">
-            {props.data.username}
-          </div>
+          <div className="truncate text-sm font-semibold text-slate-600">{props.data.username}</div>
           <FormatDate className="text-xs text-slate-400" date={props.data.date}></FormatDate>
         </div>
         <div>

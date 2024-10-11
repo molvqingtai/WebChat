@@ -24,7 +24,7 @@ const Header: FC = () => {
       </Avatar>
       <HoverCard>
         <HoverCardTrigger asChild>
-          <Button className="overflow-hidden" variant="link">
+          <Button className="overflow-hidden p-2" variant="link">
             <span className="truncate text-lg font-semibold text-slate-600">
               {siteInfo.hostname.replace(/^www\./i, '')}
             </span>
@@ -49,8 +49,8 @@ const Header: FC = () => {
       </HoverCard>
       <HoverCard>
         <HoverCardTrigger asChild>
-          <Button className="overflow-hidden" variant="link">
-            <div className="flex items-center gap-x-1 text-nowrap text-sm text-slate-500">
+          <Button className="p-0" variant="link">
+            <div className="flex items-center gap-x-1 text-nowrap text-xs text-slate-500">
               <span className="relative flex size-2">
                 <span
                   className={cn(
@@ -77,9 +77,7 @@ const Header: FC = () => {
                   <AvatarImage src={user.userAvatar} alt="avatar" />
                   <AvatarFallback>{user.username.at(0)}</AvatarFallback>
                 </Avatar>
-                <div className="flex-1 overflow-hidden text-ellipsis text-nowrap text-sm text-slate-500">
-                  {user.username}
-                </div>
+                <div className="flex-1 truncate text-sm text-slate-500">{user.username}</div>
               </div>
             ))}
           </ScrollArea>
