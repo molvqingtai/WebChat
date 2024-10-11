@@ -1,3 +1,11 @@
+## [1.2.2](https://github.com/molvqingtai/WebChat/compare/v1.2.1...v1.2.2) (2024-10-11)
+
+
+### Bug Fixes
+
+* danmuku message ellipsis ([e8e243e](https://github.com/molvqingtai/WebChat/commit/e8e243ee096a0fb22183170ef3c0005291b72870))
+* online text overflow ([d4e42c6](https://github.com/molvqingtai/WebChat/commit/d4e42c68caf8e2e080854f244328c1e519ed6338))
+
 ## [1.2.1](https://github.com/molvqingtai/WebChat/compare/v1.2.0...v1.2.1) (2024-10-10)
 
 
