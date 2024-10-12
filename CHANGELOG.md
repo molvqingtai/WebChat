@@ -1,3 +1,20 @@
+# [1.3.0](https://github.com/molvqingtai/WebChat/compare/v1.2.2...v1.3.0) (2024-10-12)
+
+
+### Bug Fixes
+
+* p2p use artico ([a0a8462](https://github.com/molvqingtai/WebChat/commit/a0a8462f5ff55a50511e335f70f5b814f2713358))
+
+
+### Features
+
+* support notification ([9898718](https://github.com/molvqingtai/WebChat/commit/9898718b1a14605d140852faca74b8af12f9b2a2))
+
+
+### Performance Improvements
+
+* notification supports clicking to open the source website ([653229c](https://github.com/molvqingtai/WebChat/commit/653229c8fa1ef748c84c4a5cec756a42f51933ab))
+
 ## [1.2.2](https://github.com/molvqingtai/WebChat/compare/v1.2.1...v1.2.2) (2024-10-11)
 
 
