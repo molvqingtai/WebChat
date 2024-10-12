@@ -45,14 +45,6 @@ const NotificationDomain = Remesh.domain({
       }
     })
 
-    const ClearCommand = domain.command({
-      name: 'Notification.ClearCommand',
-      impl: (_, id: string) => {
-        notification.clear(id)
-        return [ClearEvent(id)]
-      }
-    })
-
     const PushEvent = domain.event<TextMessage>({
       name: 'Notification.PushEvent'
     })
@@ -96,8 +88,7 @@ const NotificationDomain = Remesh.domain({
       command: {
         EnableCommand,
         DisableCommand,
-        PushCommand,
-        ClearCommand
+        PushCommand
       },
       event: {
         PushEvent,
