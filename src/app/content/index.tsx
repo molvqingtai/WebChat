@@ -1,7 +1,7 @@
 import React from 'react'
 import { createRoot } from 'react-dom/client'
 import { Remesh } from 'remesh'
-import { RemeshRoot } from 'remesh-react'
+import { RemeshRoot, RemeshScope } from 'remesh-react'
 import { RemeshLogger } from 'remesh-logger'
 import { defineContentScript } from 'wxt/sandbox'
 import { createShadowRootUi } from 'wxt/client'
@@ -9,12 +9,14 @@ import { createShadowRootUi } from 'wxt/client'
 import App from './App'
 import { LocalStorageImpl, IndexDBStorageImpl, BrowserSyncStorageImpl } from '@/domain/impls/Storage'
 import { DanmakuImpl } from '@/domain/impls/Danmaku'
+import { NotificationImpl } from '@/domain/impls/Notification'
+import { ToastImpl } from '@/domain/impls/Toast'
 // import { PeerRoomImpl } from '@/domain/impls/PeerRoom'
 import { PeerRoomImpl } from '@/domain/impls/PeerRoom2'
 import '@/assets/styles/tailwind.css'
 import '@/assets/styles/sonner.css'
 import { createElement } from '@/utils'
-import { ToastImpl } from '@/domain/impls/Toast'
+import NotificationDomain from '@/domain/Notification'
 
 export default defineContentScript({
   cssInjectionMode: 'ui',
@@ -23,7 +25,15 @@ export default defineContentScript({
   excludeMatches: ['*://localhost/*', '*://127.0.0.1/*', '*://*.csdn.net/*', '*://*.csdn.com/*'],
   async main(ctx) {
     const store = Remesh.store({
-      externs: [LocalStorageImpl, IndexDBStorageImpl, BrowserSyncStorageImpl, PeerRoomImpl, ToastImpl, DanmakuImpl]
+      externs: [
+        LocalStorageImpl,
+        IndexDBStorageImpl,
+        BrowserSyncStorageImpl,
+        PeerRoomImpl,
+        ToastImpl,
+        DanmakuImpl,
+        NotificationImpl
+      ]
       // inspectors: __DEV__ ? [RemeshLogger()] : []
     })
 
@@ -42,7 +52,9 @@ export default defineContentScript({
         root.render(
           <React.StrictMode>
             <RemeshRoot store={store}>
-              <App />
+              <RemeshScope domains={[NotificationDomain()]}>
+                <App />
+              </RemeshScope>
             </RemeshRoot>
           </React.StrictMode>
         )

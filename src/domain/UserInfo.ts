@@ -11,6 +11,7 @@ export interface UserInfo {
   createTime: number
   themeMode: 'system' | 'light' | 'dark'
   danmakuEnabled: boolean
+  notificationEnabled: boolean
 }
 
 const UserInfoDomain = Remesh.domain({

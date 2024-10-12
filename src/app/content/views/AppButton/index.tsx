@@ -19,6 +19,7 @@ import LogoIcon5 from '@/assets/images/logo-5.svg'
 import LogoIcon6 from '@/assets/images/logo-6.svg'
 import AppStatusDomain from '@/domain/AppStatus'
 import { getDay } from 'date-fns'
+import { messenger } from '@/messenger'
 
 const AppButton: FC = () => {
   const send = useRemeshSend()
@@ -56,7 +57,7 @@ const AppButton: FC = () => {
   }
 
   const handleOpenOptionsPage = () => {
-    browser.runtime.sendMessage(EVENT.OPTIONS_PAGE_OPEN)
+    messenger.sendMessage(EVENT.OPTIONS_PAGE_OPEN, undefined)
   }
 
   const handleToggleApp = () => {

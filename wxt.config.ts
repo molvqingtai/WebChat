@@ -14,7 +14,7 @@ export default defineConfig({
   manifest: ({ browser }) => {
     const common = {
       name: displayName,
-      permissions: ['storage'],
+      permissions: ['storage', 'notifications'],
       homepage_url: homepage,
       icons: {
         '16': 'logo.png',
