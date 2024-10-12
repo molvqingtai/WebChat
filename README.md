@@ -10,7 +10,9 @@
 
 This is an anonymous chat browser extension that is decentralized and serverless, utilizing WebRTC for end-to-end encrypted communication. It prioritizes privacy, with all data stored locally.
 
-The aim is to add chat room functionality to any website, enabling real-time messaging anytime, anywhere.
+The aim is to add chat room functionality to any website, you'll never feel alone again.
+
+
 
 ### Install
 
@@ -26,6 +28,12 @@ The aim is to add chat room functionality to any website, enabling real-time mes
 4. Open the extension management page in your browser (usually chrome://extensions/)
    - Enable "Developer mode"
    - Click "Load unpacked" and select the folder you just extracted
+
+### Use
+
+After installing the extension, you'll see a ghost icon in the bottom-right corner of any website. Click it, and you'll be able to chat with others on the site!
+
+
 
 ### Video
 
