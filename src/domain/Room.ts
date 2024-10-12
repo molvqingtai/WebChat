@@ -7,8 +7,6 @@ import UserInfoDomain from '@/domain/UserInfo'
 import { desert, upsert } from '@/utils'
 import { nanoid } from 'nanoid'
 import StatusModule from '@/domain/modules/Status'
-import { ToastExtern } from '@/domain/externs/Toast'
-import DanmakuDomain from '@/domain/Danmaku'
 
 export { MessageType }
 
@@ -51,9 +49,7 @@ const RoomDomain = Remesh.domain({
   impl: (domain) => {
     const messageListDomain = domain.getDomain(MessageListDomain())
     const userInfoDomain = domain.getDomain(UserInfoDomain())
-    const danmakuDomain = domain.getDomain(DanmakuDomain())
     const peerRoom = domain.getExtern(PeerRoomExtern)
-    const toast = domain.getExtern(ToastExtern)
 
     const PeerIdState = domain.state<string>({
       name: 'Room.PeerIdState',
@@ -139,12 +135,7 @@ const RoomDomain = Remesh.domain({
     const SendTextMessageCommand = domain.command({
       name: 'Room.SendTextMessageCommand',
       impl: ({ get }, message: string) => {
-        const {
-          id: userId,
-          name: username,
-          avatar: userAvatar,
-          danmakuEnabled
-        } = get(userInfoDomain.query.UserInfoQuery())!
+        const { id: userId, name: username, avatar: userAvatar } = get(userInfoDomain.query.UserInfoQuery())!
 
         const textMessage: TextMessage = {
           id: nanoid(),
@@ -164,11 +155,7 @@ const RoomDomain = Remesh.domain({
         }
 
         peerRoom.sendMessage(textMessage)
-        return [
-          messageListDomain.command.CreateItemCommand(listMessage),
-          danmakuEnabled ? PushDanmakuCommand(textMessage) : null,
-          SendTextMessageEvent(textMessage)
-        ]
+        return [messageListDomain.command.CreateItemCommand(listMessage), SendTextMessageEvent(textMessage)]
       }
     })
 
@@ -244,20 +231,6 @@ const RoomDomain = Remesh.domain({
       }
     })
 
-    const PushDanmakuCommand = domain.command({
-      name: 'Room.PushDanmakuCommand',
-      impl: (_, message: TextMessage) => {
-        return [danmakuDomain.command.PushCommand(message)]
-      }
-    })
-
-    // const UnshiftDanmakuCommand = domain.command({
-    //   name: 'Room.PushDanmakuCommand',
-    //   impl: (_, message: TextMessage) => {
-    //     return [danmakuDomain.command.UnshiftCommand(message)]
-    //   }
-    // })
-
     const SendJoinMessageEvent = domain.event<SyncUserMessage>({
       name: 'Room.SendJoinMessageEvent'
     })
@@ -286,12 +259,20 @@ const RoomDomain = Remesh.domain({
       name: 'Room.OnMessageEvent'
     })
 
+    const OnTextMessageEvent = domain.event<TextMessage>({
+      name: 'Room.OnTextMessageEvent'
+    })
+
     const OnJoinRoomEvent = domain.event<string>({
       name: 'Room.OnJoinRoomEvent'
     })
 
     const OnLeaveRoomEvent = domain.event<string>({
       name: 'Room.OnLeaveRoomEvent'
+    })
+
+    const OnErrorEvent = domain.event<Error>({
+      name: 'Room.OnErrorEvent'
     })
 
     domain.effect({
@@ -317,9 +298,10 @@ const RoomDomain = Remesh.domain({
         const onMessage$ = fromEventPattern<RoomMessage>(peerRoom.onMessage).pipe(
           mergeMap((message) => {
             // console.log('onMessage', message)
-            const { danmakuEnabled } = get(userInfoDomain.query.UserInfoQuery())!
 
             const messageEvent$ = of(OnMessageEvent(message))
+
+            const textMessageEvent$ = of(message.type === SendType.Text ? OnTextMessageEvent(message) : null)
 
             const messageCommand$ = (() => {
               switch (message.type) {
@@ -355,8 +337,7 @@ const RoomDomain = Remesh.domain({
                       date: Date.now(),
                       likeUsers: [],
                       hateUsers: []
-                    }),
-                    danmakuEnabled ? PushDanmakuCommand(message) : null
+                    })
                   )
                 case SendType.Like:
                 case SendType.Hate: {
@@ -386,7 +367,7 @@ const RoomDomain = Remesh.domain({
               }
             })()
 
-            return merge(messageEvent$, messageCommand$)
+            return merge(messageEvent$, textMessageEvent$, messageCommand$)
           })
         )
         return onMessage$
@@ -428,8 +409,7 @@ const RoomDomain = Remesh.domain({
         const onRoomError$ = fromEventPattern<Error>(peerRoom.onError).pipe(
           map((error) => {
             console.error(error)
-            toast.error(error.message)
-            return null
+            return OnErrorEvent(error)
           })
         )
         return onRoomError$
@@ -471,8 +451,10 @@ const RoomDomain = Remesh.domain({
         JoinRoomEvent,
         LeaveRoomEvent,
         OnMessageEvent,
+        OnTextMessageEvent,
         OnJoinRoomEvent,
-        OnLeaveRoomEvent
+        OnLeaveRoomEvent,
+        OnErrorEvent
       }
     }
   }

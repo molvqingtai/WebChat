@@ -69,10 +69,10 @@ const Header: FC = () => {
             </div>
           </Button>
         </HoverCardTrigger>
-        <HoverCardContent className="w-44 rounded-lg p-2">
+        <HoverCardContent className="w-44 rounded-lg px-0 py-2">
           <ScrollArea className="max-h-80">
             {userList.map((user) => (
-              <div className="flex items-center gap-x-2 p-2 [content-visibility:auto]" key={user.userId}>
+              <div className="flex items-center gap-x-2 px-4 py-2 [content-visibility:auto]" key={user.userId}>
                 <Avatar className="size-6 shrink-0">
                   <AvatarImage src={user.userAvatar} alt="avatar" />
                   <AvatarFallback>{user.username.at(0)}</AvatarFallback>

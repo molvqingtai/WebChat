@@ -145,3 +145,4 @@ export const PeerRoomImpl = PeerRoomExtern.impl(peerRoom)
 // https://github.com/w3c/webextensions/issues/72
 // https://issues.chromium.org/issues/40251342
 // https://github.com/w3c/webrtc-extensions/issues/77
+// https://github.com/aklinker1/webext-core/pull/70

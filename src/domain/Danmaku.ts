@@ -1,14 +1,15 @@
 import { Remesh } from 'remesh'
 import { DanmakuExtern } from './externs/Danmaku'
-import { TextMessage } from './Room'
+import RoomDomain, { TextMessage } from './Room'
 import UserInfoDomain from './UserInfo'
-import { map } from 'rxjs'
+import { map, merge, of } from 'rxjs'
 
 const DanmakuDomain = Remesh.domain({
   name: 'DanmakuDomain',
   impl: (domain) => {
     const danmaku = domain.getExtern(DanmakuExtern)
     const userInfoDomain = domain.getDomain(UserInfoDomain())
+    const roomDomain = domain.getDomain(RoomDomain())
 
     const MountState = domain.state({
       name: 'Danmaku.MountState',
@@ -114,6 +115,22 @@ const DanmakuDomain = Remesh.domain({
             return userInfo?.danmakuEnabled ? EnableCommand() : DisableCommand()
           })
         )
+      }
+    })
+
+    domain.effect({
+      name: 'Danmaku.OnRoomMessageEffect',
+      impl: ({ fromEvent, get }) => {
+        const sendTextMessage$ = fromEvent(roomDomain.event.SendTextMessageEvent)
+        const onTextMessage$ = fromEvent(roomDomain.event.OnTextMessageEvent)
+
+        const onMessage$ = merge(sendTextMessage$, onTextMessage$).pipe(
+          map((message) => {
+            const danmakuEnabled = get(IsEnabledQuery())
+            return danmakuEnabled ? PushCommand(message) : null
+          })
+        )
+        return onMessage$
       }
     })
 

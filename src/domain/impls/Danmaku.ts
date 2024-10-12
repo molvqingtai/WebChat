@@ -15,7 +15,7 @@ export class Danmaku {
   private manager?: Manager<TextMessage>
   constructor() {
     this.manager = create<TextMessage>({
-      durationRange: [10000, 13000],
+      durationRange: [7000, 10000],
       plugin: {
         $createNode(manager) {
           if (!manager.node) return

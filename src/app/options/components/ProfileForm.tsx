@@ -14,7 +14,7 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/RadioGroup'
 import { Label } from '@/components/ui/Label'
 import { RefreshCcwIcon } from 'lucide-react'
 import { MAX_AVATAR_SIZE } from '@/constants/config'
-import ToastDomain from '@/domain/Toast'
+import { ToastImpl } from '@/domain/impls/Toast'
 import BlurFade from '@/components/magicui/BlurFade'
 import { Checkbox } from '@/components/ui/checkbox'
 import Link from '@/components/Link'
@@ -25,7 +25,8 @@ const defaultUserInfo: UserInfo = {
   avatar: '',
   createTime: Date.now(),
   themeMode: checkSystemDarkMode() ? 'dark' : 'system',
-  danmakuEnabled: true
+  danmakuEnabled: true,
+  notificationEnabled: false
 }
 
 const formSchema = v.object({
@@ -52,12 +53,13 @@ const formSchema = v.object({
     v.string(),
     v.union([v.literal('system'), v.literal('light'), v.literal('dark')], 'Please select extension theme mode.')
   ),
-  danmakuEnabled: v.boolean()
+  danmakuEnabled: v.boolean(),
+  notificationEnabled: v.boolean()
 })
 
 const ProfileForm = () => {
   const send = useRemeshSend()
-  const toastDomain = useRemeshDomain(ToastDomain())
+  const toast = ToastImpl.value
 
   const userInfoDomain = useRemeshDomain(UserInfoDomain())
   const userInfo = useRemeshQuery(userInfoDomain.query.UserInfoQuery())
@@ -74,15 +76,15 @@ const ProfileForm = () => {
 
   const handleSubmit = (userInfo: UserInfo) => {
     send(userInfoDomain.command.UpdateUserInfoCommand(userInfo))
-    send(toastDomain.command.SuccessCommand('Saved successfully!'))
+    toast.success('Saved successfully!')
   }
 
   const handleWarning = (error: Error) => {
-    send(toastDomain.command.WarningCommand(error.message))
+    toast.warning(error.message)
   }
 
   const handleError = (error: Error) => {
-    send(toastDomain.command.ErrorCommand(error.message))
+    toast.error(error.message)
   }
 
   const handleRefreshAvatar = async () => {
@@ -163,11 +165,35 @@ const ProfileForm = () => {
                 </div>
               </FormControl>
               <FormDescription>
-                Enabling this will display messages scrolling on the website.
+                Enabling this option will display scrolling messages on the website.
                 <Link className="ml-2 text-primary" href="https://en.wikipedia.org/wiki/Danmaku_subtitling">
                   Wikipedia
                 </Link>
               </FormDescription>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        <FormField
+          control={form.control}
+          name="notificationEnabled"
+          render={({ field }) => (
+            <FormItem>
+              {/* <FormLabel>Username</FormLabel> */}
+              <FormControl>
+                <div className="flex items-center space-x-2">
+                  <Checkbox
+                    defaultChecked={false}
+                    id="notification-enabled"
+                    onCheckedChange={field.onChange}
+                    checked={field.value}
+                  />
+                  <FormLabel className="cursor-pointer" htmlFor="notification-enabled">
+                    Enable Notification
+                  </FormLabel>
+                </div>
+              </FormControl>
+              <FormDescription>Enabling this option will display desktop notifications for messages.</FormDescription>
               <FormMessage />
             </FormItem>
           )}
