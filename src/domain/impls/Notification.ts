@@ -4,13 +4,11 @@ import { EVENT } from '@/constants/event'
 import { messenger } from '@/messenger'
 
 class Notification {
+  messages: TextMessage[] = []
   async push(message: TextMessage) {
     await messenger.sendMessage(EVENT.NOTIFICATION_PUSH, message)
+    this.messages.push(message)
     return message.id
-  }
-  async clear(id: string) {
-    await messenger.sendMessage(EVENT.NOTIFICATION_CLEAR, id)
-    return true
   }
 }
 
