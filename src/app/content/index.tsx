@@ -20,7 +20,7 @@ export default defineContentScript({
   cssInjectionMode: 'ui',
   runAt: 'document_end',
   matches: ['https://*/*'],
-  excludeMatches: ['*://localhost/*', '*://127.0.0.1/*'],
+  excludeMatches: ['*://localhost/*', '*://127.0.0.1/*', '*://*.csdn.net/*', '*://*.csdn.com/*'],
   async main(ctx) {
     const store = Remesh.store({
       externs: [LocalStorageImpl, IndexDBStorageImpl, BrowserSyncStorageImpl, PeerRoomImpl, ToastImpl, DanmakuImpl]
