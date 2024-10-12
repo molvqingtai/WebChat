@@ -31,7 +31,7 @@ The aim is to add chat room functionality to any website, you'll never feel alon
 
 ### Use
 
-After installing the extension, you'll see a ghost icon in the bottom-right corner of any website. Click it, and you'll be able to chat with others on the site!
+After installing the extension, you'll see a ghost icon in the bottom-right corner of any website. Click it, and you'll be able to chat happily with others on the same site!
 
 
 
