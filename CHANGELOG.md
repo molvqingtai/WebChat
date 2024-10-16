@@ -1,3 +1,10 @@
+## [1.3.1](https://github.com/molvqingtai/WebChat/compare/v1.3.0...v1.3.1) (2024-10-16)
+
+
+### Bug Fixes
+
+* missing tabs permission ([3cfc16c](https://github.com/molvqingtai/WebChat/commit/3cfc16c9ee0f3f46c8b5692c02e5c569f40744c9))
+
 # [1.3.0](https://github.com/molvqingtai/WebChat/compare/v1.2.2...v1.3.0) (2024-10-12)
 
 
