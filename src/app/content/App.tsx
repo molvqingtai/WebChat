@@ -2,7 +2,7 @@ import Header from '@/app/content/views/Header'
 import Footer from '@/app/content/views/Footer'
 import Main from '@/app/content/views/Main'
 import AppButton from '@/app/content/views/AppButton'
-import AppContainer from '@/app/content/views/AppContainer'
+import AppMain from '@/app/content/views/AppMain'
 import { useRemeshDomain, useRemeshQuery, useRemeshSend } from 'remesh-react'
 import RoomDomain from '@/domain/Room'
 import UserInfoDomain from '@/domain/UserInfo'
@@ -10,6 +10,7 @@ import Setup from '@/app/content/views/Setup'
 import MessageListDomain from '@/domain/MessageList'
 import { useEffect, useRef } from 'react'
 import { Toaster } from 'sonner'
+import { AnimatePresence, motion } from 'framer-motion'
 
 import DanmakuContainer from './components/DanmakuContainer'
 import DanmakuDomain from '@/domain/Danmaku'
@@ -31,8 +32,8 @@ export default function App() {
   const danmakuDomain = useRemeshDomain(DanmakuDomain())
   const danmakuIsEnabled = useRemeshQuery(danmakuDomain.query.IsEnabledQuery())
   const userInfoSetFinished = useRemeshQuery(userInfoDomain.query.UserInfoSetIsFinishedQuery())
-  const userInfoLoadFinished = useRemeshQuery(userInfoDomain.query.UserInfoLoadIsFinishedQuery())
   const messageListLoadFinished = useRemeshQuery(messageListDomain.query.LoadIsFinishedQuery())
+  const userInfoLoadFinished = useRemeshQuery(userInfoDomain.query.UserInfoLoadIsFinishedQuery())
 
   const notUserInfo = userInfoLoadFinished && !userInfoSetFinished
 
@@ -58,14 +59,21 @@ export default function App() {
 
   return (
     <>
-      <AppContainer>
+      <AppMain>
         <Header />
         <Main />
         <Footer />
-        {notUserInfo && <Setup />}
+        <AnimatePresence>
+          {notUserInfo && (
+            <motion.div initial={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
+              <Setup></Setup>
+            </motion.div>
+          )}
+        </AnimatePresence>
         <Toaster richColors offset="70px" visibleToasts={1} position="top-center"></Toaster>
-      </AppContainer>
+      </AppMain>
       <AppButton></AppButton>
+
       <DanmakuContainer ref={danmakuContainerRef} />
     </>
   )

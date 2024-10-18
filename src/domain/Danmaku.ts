@@ -2,7 +2,7 @@ import { Remesh } from 'remesh'
 import { DanmakuExtern } from './externs/Danmaku'
 import RoomDomain, { TextMessage } from './Room'
 import UserInfoDomain from './UserInfo'
-import { map, merge, of } from 'rxjs'
+import { map, merge } from 'rxjs'
 
 const DanmakuDomain = Remesh.domain({
   name: 'DanmakuDomain',

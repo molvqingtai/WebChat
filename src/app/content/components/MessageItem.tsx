@@ -1,6 +1,5 @@
 import { type FC } from 'react'
 import { FrownIcon, ThumbsUpIcon } from 'lucide-react'
-import { Badge } from '@/components/ui/Badge'
 import LikeButton from './LikeButton'
 import FormatDate from './FormatDate'
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/Avatar'

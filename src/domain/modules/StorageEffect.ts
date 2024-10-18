@@ -1,5 +1,5 @@
 import { type RemeshEvent, type RemeshAction, type RemeshDomainContext, type RemeshExtern } from 'remesh'
-import { defer, from, map, Observable, switchMap } from 'rxjs'
+import { from, map, Observable, switchMap } from 'rxjs'
 
 import { Storage, StorageValue } from '@/domain/externs/Storage'
 

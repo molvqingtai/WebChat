@@ -1,8 +1,7 @@
-import { type FC, useState, type MouseEvent, useRef } from 'react'
-import { SettingsIcon, MoonIcon, SunIcon } from 'lucide-react'
+import { type FC, useState, type MouseEvent, useRef, useEffect, useLayoutEffect } from 'react'
+import { SettingsIcon, MoonIcon, SunIcon, HandIcon } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 
-import { browser } from 'wxt/browser'
 import { useRemeshDomain, useRemeshQuery, useRemeshSend } from 'remesh-react'
 import { Button } from '@/components/ui/Button'
 import { EVENT } from '@/constants/event'
@@ -20,6 +19,8 @@ import LogoIcon6 from '@/assets/images/logo-6.svg'
 import AppStatusDomain from '@/domain/AppStatus'
 import { getDay } from 'date-fns'
 import { messenger } from '@/messenger'
+import useDarg from '@/hooks/useDarg'
+import { useWindowSize } from 'react-use'
 
 const AppButton: FC = () => {
   const send = useRemeshSend()
@@ -29,6 +30,9 @@ const AppButton: FC = () => {
   const userInfoDomain = useRemeshDomain(UserInfoDomain())
   const userInfo = useRemeshQuery(userInfoDomain.query.UserInfoQuery())
   const toastDomain = useRemeshDomain(ToastDomain())
+  const appPosition = useRemeshQuery(appStatusDomain.query.PositionQuery())
+  const appStatusLoadIsFinished = useRemeshQuery(appStatusDomain.query.StatusLoadIsFinishedQuery())
+
   const DayLogo = [LogoIcon0, LogoIcon1, LogoIcon2, LogoIcon3, LogoIcon4, LogoIcon5, LogoIcon6][getDay(Date())]
 
   const isDarkMode =
@@ -37,6 +41,21 @@ const AppButton: FC = () => {
   const [menuOpen, setMenuOpen] = useState(false)
 
   const menuRef = useRef<HTMLDivElement>(null)
+
+  const { width, height } = useWindowSize()
+
+  const { x, y, ref } = useDarg({
+    initX: appPosition.x,
+    initY: appPosition.y,
+    minX: 44,
+    maxX: width - 44,
+    maxY: height - 22,
+    minY: height / 2
+  })
+
+  useLayoutEffect(() => {
+    appStatusLoadIsFinished && send(appStatusDomain.command.UpdatePositionCommand({ x, y }))
+  }, [x, y])
 
   useClickAway(menuRef, () => {
     setMenuOpen(false)
@@ -65,7 +84,15 @@ const AppButton: FC = () => {
   }
 
   return (
-    <div ref={menuRef} className="fixed bottom-5 right-5 z-infinity grid select-none justify-center gap-y-3">
+    <div
+      ref={menuRef}
+      className="fixed bottom-5 right-5 z-infinity grid w-min select-none justify-center gap-y-3"
+      style={{
+        left: `calc(${appPosition.x}px)`,
+        bottom: `calc(100vh - ${appPosition.y}px)`,
+        transform: 'translateX(-50%)'
+      }}
+    >
       <AnimatePresence>
         {menuOpen && (
           <motion.div
@@ -92,12 +119,11 @@ const AppButton: FC = () => {
               </div>
             </Button>
 
-            <Button
-              onClick={handleOpenOptionsPage}
-              variant="outline"
-              className="pointer-events-auto size-10 rounded-full p-0 shadow"
-            >
+            <Button onClick={handleOpenOptionsPage} variant="outline" className="size-10 rounded-full p-0 shadow">
               <SettingsIcon size={20} />
+            </Button>
+            <Button ref={ref} variant="outline" className="size-10 cursor-grab rounded-full p-0 shadow">
+              <HandIcon size={20} />
             </Button>
           </motion.div>
         )}

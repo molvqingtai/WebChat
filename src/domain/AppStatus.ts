@@ -9,11 +9,13 @@ import { map } from 'rxjs'
 export interface AppStatus {
   open: boolean
   unread: number
+  position: { x: number; y: number }
 }
 
 export const defaultStatusState = {
   open: false,
-  unread: 0
+  unread: 0,
+  position: { x: window.innerWidth - 44, y: window.innerHeight - 22 }
 }
 
 const AppStatusDomain = Remesh.domain({
@@ -32,8 +34,8 @@ const AppStatusDomain = Remesh.domain({
 
     const StatusLoadIsFinishedQuery = domain.query({
       name: 'AppStatus.StatusLoadIsFinishedQuery',
-      impl: () => {
-        return StatusLoadModule.query.IsFinishedQuery()
+      impl: ({ get }) => {
+        return get(StatusLoadModule.query.IsFinishedQuery())
       }
     })
 
@@ -56,6 +58,13 @@ const AppStatusDomain = Remesh.domain({
       }
     })
 
+    const PositionQuery = domain.query({
+      name: 'AppStatus.PositionQuery',
+      impl: ({ get }) => {
+        return get(StatusState()).position
+      }
+    })
+
     const HasUnreadQuery = domain.query({
       name: 'AppStatus.HasUnreadQuery',
       impl: ({ get }) => {
@@ -68,6 +77,7 @@ const AppStatusDomain = Remesh.domain({
       impl: ({ get }, value: boolean) => {
         const status = get(StatusState())
         return UpdateStatusCommand({
+          ...status,
           unread: value ? 0 : status.unread,
           open: value
         })
@@ -81,6 +91,17 @@ const AppStatusDomain = Remesh.domain({
         return UpdateStatusCommand({
           ...status,
           unread: value
+        })
+      }
+    })
+
+    const UpdatePositionCommand = domain.command({
+      name: 'AppStatus.UpdatePositionCommand',
+      impl: ({ get }, value: { x: number; y: number }) => {
+        const status = get(StatusState())
+        return UpdateStatusCommand({
+          ...status,
+          position: value
         })
       }
     })
@@ -128,11 +149,13 @@ const AppStatusDomain = Remesh.domain({
         OpenQuery,
         UnreadQuery,
         HasUnreadQuery,
+        PositionQuery,
         StatusLoadIsFinishedQuery
       },
       command: {
         UpdateOpenCommand,
-        UpdateUnreadCommand
+        UpdateUnreadCommand,
+        UpdatePositionCommand
       },
       event: {
         SyncToStorageEvent

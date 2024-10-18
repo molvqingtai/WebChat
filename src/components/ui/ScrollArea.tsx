@@ -5,10 +5,13 @@ import { cn } from '@/utils/index'
 
 const ScrollArea = React.forwardRef<
   React.ElementRef<typeof ScrollAreaPrimitive.Root>,
-  React.ComponentPropsWithoutRef<typeof ScrollAreaPrimitive.Root>
->(({ className, children, ...props }, ref) => (
+  React.ComponentPropsWithoutRef<typeof ScrollAreaPrimitive.Root> & { scrollLock?: boolean }
+>(({ className, children, scrollLock = true, ...props }, ref) => (
   <ScrollAreaPrimitive.Root className={cn('relative grid grid-rows-[1fr] overflow-hidden', className)} {...props}>
-    <ScrollAreaPrimitive.Viewport ref={ref} className="size-full overscroll-none rounded-[inherit]">
+    <ScrollAreaPrimitive.Viewport
+      ref={ref}
+      className={cn('size-full rounded-[inherit]', scrollLock ? 'overscroll-none' : 'overscroll-auto')}
+    >
       {children}
     </ScrollAreaPrimitive.Viewport>
     <ScrollBar />

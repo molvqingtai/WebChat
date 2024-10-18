@@ -14,6 +14,7 @@ const MessageList: FC<MessageListProps> = ({ children }) => {
   return (
     <ScrollArea ref={setScrollParentRef}>
       <Virtuoso
+        defaultItemHeight={108}
         followOutput={(isAtBottom: boolean) => (isAtBottom ? 'smooth' : 'auto')}
         initialTopMostItemIndex={{ index: 'LAST', align: 'end' }}
         data={children}

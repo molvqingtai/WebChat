@@ -68,6 +68,7 @@ const Setup: FC = () => {
   const messageListDomain = useRemeshDomain(MessageListDomain())
 
   const [userInfo, setUserInfo] = useState<UserInfo>()
+
   const handleSetup = () => {
     send(userInfoDomain.command.UpdateUserInfoCommand(userInfo!))
     send(messageListDomain.command.ClearListCommand())
