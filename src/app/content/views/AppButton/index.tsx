@@ -1,4 +1,4 @@
-import { type FC, useState, type MouseEvent, useRef, useEffect, useLayoutEffect } from 'react'
+import { type FC, useState, type MouseEvent, useRef, useEffect, useLayoutEffect, ReactNode } from 'react'
 import { SettingsIcon, MoonIcon, SunIcon, HandIcon } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 
@@ -22,7 +22,11 @@ import { messenger } from '@/messenger'
 import useDarg from '@/hooks/useDarg'
 import { useWindowSize } from 'react-use'
 
-const AppButton: FC = () => {
+export interface AppButtonProps {
+  className?: string
+}
+
+const AppButton: FC<AppButtonProps> = ({ className }) => {
   const send = useRemeshSend()
   const appStatusDomain = useRemeshDomain(AppStatusDomain())
   const appOpenStatus = useRemeshQuery(appStatusDomain.query.OpenQuery())
@@ -86,7 +90,7 @@ const AppButton: FC = () => {
   return (
     <div
       ref={menuRef}
-      className="fixed bottom-5 right-5 z-infinity grid w-min select-none justify-center gap-y-3"
+      className={`fixed bottom-5 right-5 z-infinity grid w-min select-none justify-center gap-y-3 ${className}`}
       style={{
         left: `calc(${appPosition.x}px)`,
         bottom: `calc(100vh - ${appPosition.y}px)`,

@@ -3,7 +3,7 @@ import { useForm } from 'react-hook-form'
 import { valibotResolver } from '@hookform/resolvers/valibot'
 import { useRemeshDomain, useRemeshQuery, useRemeshSend } from 'remesh-react'
 import { nanoid } from 'nanoid'
-import { useEffect } from 'react'
+import { ReactNode, useEffect, type FC } from 'react'
 import AvatarSelect from './AvatarSelect'
 import { Button } from '@/components/ui/Button'
 import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/Form'
@@ -56,8 +56,7 @@ const formSchema = v.object({
   danmakuEnabled: v.boolean(),
   notificationEnabled: v.boolean()
 })
-
-const ProfileForm = () => {
+const ProfileForm: FC = () => {
   const send = useRemeshSend()
   const toast = ToastImpl.value
 
@@ -97,13 +96,13 @@ const ProfileForm = () => {
       <form
         onSubmit={form.handleSubmit(handleSubmit)}
         autoComplete="off"
-        className="relative w-[450px] space-y-8 p-14 pt-20"
+        className="relative w-[450px] space-y-8 p-14 pt-20 dark:bg-slate-900 dark:text-slate-50"
       >
         <FormField
           control={form.control}
           name="avatar"
           render={({ field }) => (
-            <FormItem className="absolute inset-x-1 top-0 mx-auto grid w-fit -translate-y-1/3  justify-items-center">
+            <FormItem className="absolute inset-x-1 top-0 mx-auto grid w-fit -translate-y-1/3 justify-items-center">
               <FormControl>
                 <div className="flex flex-col items-center gap-2">
                   <BlurFade key={form.getValues().avatar} duration={0.1}>
@@ -135,7 +134,7 @@ const ProfileForm = () => {
           control={form.control}
           name="name"
           render={({ field }) => (
-            <FormItem>
+            <FormItem className="dark:text-slate-50">
               <FormLabel>Username</FormLabel>
               <FormControl>
                 <Input placeholder="Please enter your username" {...field} />
@@ -227,7 +226,7 @@ const ProfileForm = () => {
             </FormItem>
           )}
         />
-        <Button className="w-full" type="submit">
+        <Button className="w-full dark:bg-slate-800 dark:text-slate-50" type="submit">
           Save
         </Button>
       </form>

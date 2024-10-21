@@ -30,7 +30,7 @@ const EmojiButton: FC<EmojiButtonProps> = ({ onSelect }) => {
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <Button variant="ghost" size="icon">
+        <Button variant="ghost" size="icon" className="dark:text-white">
           <SmileIcon size={20} />
         </Button>
       </PopoverTrigger>

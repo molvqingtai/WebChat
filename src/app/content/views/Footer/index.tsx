@@ -34,7 +34,7 @@ const Footer: FC = () => {
   }
 
   return (
-    <div className="relative z-10 grid gap-y-2 px-4 pb-4 pt-2 before:pointer-events-none before:absolute before:inset-x-4 before:-top-2 before:h-2 before:bg-gradient-to-t before:from-slate-50 before:from-30% before:to-transparent">
+    <div className="relative z-10 grid gap-y-2 px-4 pb-4 pt-2 before:pointer-events-none before:absolute before:inset-x-4 before:-top-2 before:h-2 before:bg-gradient-to-t before:from-slate-50 before:from-30% before:to-transparent dark:bg-slate-950 dark:text-slate-50">
       <MessageInput
         ref={inputRef}
         value={message}
@@ -49,9 +49,9 @@ const Footer: FC = () => {
         {/* <Button variant="ghost" size="icon">
           <ImageIcon size={20} />
         </Button> */}
-        <Button className="ml-auto" size="sm" onClick={handleSend}>
-          <span className="mr-2">Send</span>
-          <CornerDownLeftIcon className="text-slate-400" size={12}></CornerDownLeftIcon>
+        <Button className="ml-auto dark:bg-white" size="sm" onClick={handleSend}>
+          <span className="mr-2 text-slate-500">Send</span>
+          <CornerDownLeftIcon className="text-slate-500" size={12}></CornerDownLeftIcon>
         </Button>
       </div>
     </div>

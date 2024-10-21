@@ -14,4 +14,8 @@ web-ext.config.ts
 *.pem
 *.xpi
 *.zip
+*.xml
+*.gitignore
+.idea
+*.yaml
 

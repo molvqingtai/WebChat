@@ -15,8 +15,8 @@ const Header: FC = () => {
   const onlineCount = userList.length
 
   return (
-    <div className="z-10 grid h-12 grid-flow-col grid-cols-[theme('spacing.20')_auto_theme('spacing.20')] items-center justify-between rounded-t-xl bg-white px-4 backdrop-blur-lg">
-      <Avatar className="size-8">
+    <div className="z-10 grid h-12 grid-flow-col grid-cols-[theme('spacing.20')_auto_theme('spacing.20')] items-center justify-between rounded-t-xl bg-white px-4 backdrop-blur-lg dark:bg-slate-950">
+      <Avatar className="size-8 dark:text-slate-50">
         <AvatarImage src={siteInfo.icon} alt="favicon" />
         <AvatarFallback>
           <Globe2Icon size="100%" className="text-gray-400" />
@@ -25,7 +25,7 @@ const Header: FC = () => {
       <HoverCard>
         <HoverCardTrigger asChild>
           <Button className="overflow-hidden p-2" variant="link">
-            <span className="truncate text-lg font-semibold text-slate-600">
+            <span className="truncate text-lg font-semibold text-slate-600 dark:text-slate-50">
               {siteInfo.hostname.replace(/^www\./i, '')}
             </span>
           </Button>
@@ -65,7 +65,7 @@ const Header: FC = () => {
                   )}
                 ></span>
               </span>
-              <span>ONLINE {onlineCount > 99 ? '99+' : onlineCount}</span>
+              <span className="dark:text-slate-50">ONLINE {onlineCount > 99 ? '99+' : onlineCount}</span>
             </div>
           </Button>
         </HoverCardTrigger>
