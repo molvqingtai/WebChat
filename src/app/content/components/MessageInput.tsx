@@ -45,7 +45,7 @@ const MessageInput = forwardRef<HTMLTextAreaElement, MessageInputProps>(
             onKeyDown={onKeyDown}
             autoFocus={autoFocus}
             maxLength={maxLength}
-            className="box-border resize-none whitespace-pre-wrap break-words border-none bg-gray-50 pb-5 [field-sizing:content] [word-break:break-word] focus:ring-0 focus:ring-offset-0"
+            className="box-border resize-none whitespace-pre-wrap break-words border-none bg-gray-50 pb-5 [field-sizing:content] [word-break:break-word] focus:ring-0 focus:ring-offset-0 dark:bg-slate-800"
             rows={2}
             value={value}
             spellCheck={false}
@@ -56,7 +56,7 @@ const MessageInput = forwardRef<HTMLTextAreaElement, MessageInputProps>(
             disabled={disabled}
           />
         </ScrollArea>
-        <div className="absolute bottom-1 right-3 rounded-lg text-xs text-slate-400">
+        <div className="absolute bottom-1 right-3 rounded-lg text-xs text-slate-400 dark:text-slate-50">
           {value?.length ?? 0}/{maxLength}
         </div>
       </div>

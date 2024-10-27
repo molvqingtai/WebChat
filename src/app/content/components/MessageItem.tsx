@@ -46,7 +46,10 @@ const MessageItem: FC<MessageItemProps> = (props) => {
   return (
     <div
       data-index={props.index}
-      className={cn('box-border grid grid-cols-[auto_1fr] gap-x-2 px-4  first:pt-4 last:pb-4', props.className)}
+      className={cn(
+        'box-border grid grid-cols-[auto_1fr] gap-x-2 px-4  first:pt-4 last:pb-4 dark:text-slate-50',
+        props.className
+      )}
     >
       <Avatar>
         <AvatarImage src={props.data.userAvatar} className="size-full" alt="avatar" />
@@ -54,14 +57,14 @@ const MessageItem: FC<MessageItemProps> = (props) => {
       </Avatar>
       <div className="overflow-hidden">
         <div className="grid grid-cols-[1fr_auto] items-center gap-x-2 leading-none">
-          <div className="truncate text-sm font-semibold text-slate-600">{props.data.username}</div>
-          <FormatDate className="text-xs text-slate-400" date={props.data.date}></FormatDate>
+          <div className="truncate text-sm font-semibold text-slate-600 dark:text-slate-50">{props.data.username}</div>
+          <FormatDate className="text-xs text-slate-400 dark:text-slate-100" date={props.data.date}></FormatDate>
         </div>
         <div>
           <div className="pb-2">
             <Markdown>{content}</Markdown>
           </div>
-          <div className="grid grid-flow-col justify-end gap-x-2 leading-none">
+          <div className="grid grid-flow-col justify-end gap-x-2 leading-none dark:text-slate-600">
             <LikeButton
               checked={props.like}
               onChange={(checked) => handleLikeChange(checked)}

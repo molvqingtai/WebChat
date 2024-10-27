@@ -243,7 +243,7 @@ const Footer: FC = () => {
   const root = document.querySelector(__NAME__)?.shadowRoot
 
   return (
-    <div className="relative z-10 grid gap-y-2 px-4 pb-4 pt-2 before:pointer-events-none before:absolute before:inset-x-4 before:-top-2 before:h-2 before:bg-gradient-to-t before:from-slate-50 before:from-30% before:to-transparent">
+    <div className="relative z-10 grid gap-y-2 rounded-b-xl px-4 pb-4 pt-2 before:pointer-events-none before:absolute before:inset-x-4 before:-top-2 before:h-2 before:bg-gradient-to-t before:from-slate-50 before:from-30% before:to-transparent dark:bg-slate-950">
       <Presence present={autoCompleteListShow}>
         <Portal
           container={root}

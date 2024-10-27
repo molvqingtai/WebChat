@@ -3,7 +3,7 @@ import { useForm } from 'react-hook-form'
 import { valibotResolver } from '@hookform/resolvers/valibot'
 import { useRemeshDomain, useRemeshQuery, useRemeshSend } from 'remesh-react'
 import { nanoid } from 'nanoid'
-import { useEffect } from 'react'
+import { ReactNode, useEffect, type FC } from 'react'
 import AvatarSelect from './AvatarSelect'
 import { Button } from '@/components/ui/Button'
 import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/Form'
@@ -54,8 +54,7 @@ const formSchema = v.object({
   notificationEnabled: v.boolean(),
   notificationType: v.pipe(v.string(), v.union([v.literal('all'), v.literal('at')], 'Please select notification type.'))
 })
-
-const ProfileForm = () => {
+const ProfileForm: FC = () => {
   const send = useRemeshSend()
   const toast = ToastImpl.value
 
@@ -101,7 +100,7 @@ const ProfileForm = () => {
           control={form.control}
           name="avatar"
           render={({ field }) => (
-            <FormItem className="absolute inset-x-1 top-0 mx-auto grid w-fit -translate-y-1/3  justify-items-center">
+            <FormItem className="absolute inset-x-1 top-0 mx-auto grid w-fit -translate-y-1/3 justify-items-center">
               <FormControl>
                 <div className="flex flex-col items-center gap-2">
                   <BlurFade key={form.getValues().avatar} duration={0.1}>

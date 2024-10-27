@@ -7,7 +7,7 @@ export interface MainProps {
 const Main: FC<MainProps> = ({ children }) => {
   return (
     <main className="grid min-h-screen min-w-screen items-center justify-center">
-      <div className="relative rounded-xl bg-slate-50 shadow-lg">{children}</div>
+      <div className="relative rounded-xl bg-slate-50 shadow-lg dark:bg-slate-900 dark:text-slate-50">{children}</div>
     </main>
   )
 }

@@ -38,6 +38,7 @@ export default function App() {
   const appStatusDomain = useRemeshDomain(AppStatusDomain())
   const appStatusLoadIsFinished = useRemeshQuery(appStatusDomain.query.StatusLoadIsFinishedQuery())
 
+  const userInfo = useRemeshQuery(userInfoDomain.query.UserInfoQuery())
   const notUserInfo = userInfoLoadFinished && !userInfoSetFinished
 
   useEffect(() => {
@@ -63,7 +64,7 @@ export default function App() {
   return (
     appStatusLoadIsFinished && (
       <>
-        <AppMain>
+        <AppMain className={userInfo?.themeMode}>
           <Header />
           <Main />
           <Footer />
@@ -76,9 +77,9 @@ export default function App() {
           </AnimatePresence>
           <Toaster richColors offset="70px" visibleToasts={1} position="top-center"></Toaster>
         </AppMain>
-        <AppButton></AppButton>
+        <AppButton className={userInfo?.themeMode}></AppButton>
 
-        <DanmakuContainer ref={danmakuContainerRef} />
+        <DanmakuContainer ref={danmakuContainerRef} className={userInfo?.themeMode} />
       </>
     )
   )

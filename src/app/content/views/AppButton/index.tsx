@@ -8,7 +8,6 @@ import { EVENT } from '@/constants/event'
 import UserInfoDomain from '@/domain/UserInfo'
 import useTriggerAway from '@/hooks/useTriggerAway'
 import { checkSystemDarkMode, cn } from '@/utils'
-import ToastDomain from '@/domain/Toast'
 import LogoIcon0 from '@/assets/images/logo-0.svg'
 import LogoIcon1 from '@/assets/images/logo-1.svg'
 import LogoIcon2 from '@/assets/images/logo-2.svg'
@@ -20,16 +19,18 @@ import AppStatusDomain from '@/domain/AppStatus'
 import { getDay } from 'date-fns'
 import { messenger } from '@/messenger'
 import useDarg from '@/hooks/useDarg'
-import { useWindowSize } from 'react-use'
 
-const AppButton: FC = () => {
+export interface AppButtonProps {
+  className?: string
+}
+
+const AppButton: FC<AppButtonProps> = ({ className }) => {
   const send = useRemeshSend()
   const appStatusDomain = useRemeshDomain(AppStatusDomain())
   const appOpenStatus = useRemeshQuery(appStatusDomain.query.OpenQuery())
   const hasUnreadQuery = useRemeshQuery(appStatusDomain.query.HasUnreadQuery())
   const userInfoDomain = useRemeshDomain(UserInfoDomain())
   const userInfo = useRemeshQuery(userInfoDomain.query.UserInfoQuery())
-  const toastDomain = useRemeshDomain(ToastDomain())
   const appPosition = useRemeshQuery(appStatusDomain.query.PositionQuery())
 
   const DayLogo = [LogoIcon0, LogoIcon1, LogoIcon2, LogoIcon3, LogoIcon4, LogoIcon5, LogoIcon6][getDay(Date())]
@@ -73,7 +74,6 @@ const AppButton: FC = () => {
 
   const handleSwitchTheme = () => {
     if (userInfo) {
-      send(toastDomain.command.WarningCommand('Developer is too lazy~'))
       send(userInfoDomain.command.UpdateUserInfoCommand({ ...userInfo, themeMode: isDarkMode ? 'light' : 'dark' }))
     } else {
       handleOpenOptionsPage()
@@ -91,7 +91,7 @@ const AppButton: FC = () => {
   return (
     <div
       ref={appMenuRef}
-      className="fixed bottom-5 right-5 z-infinity grid w-min select-none justify-center gap-y-3"
+      className={cn('fixed bottom-5 right-5 z-infinity grid w-min select-none justify-center gap-y-3', className)}
       style={{
         left: `calc(${appPosition.x}px)`,
         bottom: `calc(100vh - ${appPosition.y}px)`,

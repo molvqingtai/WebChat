@@ -18,7 +18,7 @@ const useResizable = (options: ResizableOptions) => {
     if (newSize !== size) {
       setSize(newSize)
     }
-  }, [initSize, minSize, maxSize, size])
+  }, [initSize, minSize, maxSize])
 
   const position = useRef(0)
 
