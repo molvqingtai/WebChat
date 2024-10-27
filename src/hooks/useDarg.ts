@@ -18,7 +18,10 @@ const useDarg = (options: DargOptions) => {
   const [position, setPosition] = useState({ x: clamp(initX, minX, maxX), y: clamp(initY, minY, maxY) })
 
   useLayoutEffect(() => {
-    setPosition({ x: clamp(initX, minX, maxX), y: clamp(initY, minY, maxY) })
+    const newPosition = { x: clamp(initX, minX, maxX), y: clamp(initY, minY, maxY) }
+    if (JSON.stringify(newPosition) !== JSON.stringify(position)) {
+      setPosition(newPosition)
+    }
   }, [initX, initY, maxX, minX, maxY, minY])
 
   const isMove = useRef(false)
@@ -68,7 +71,7 @@ const useDarg = (options: DargOptions) => {
 
   const handleRef = useRef<HTMLElement | null>(null)
 
-  const setHandleRef = useCallback(
+  const setRef = useCallback(
     (node: HTMLElement | null) => {
       if (handleRef.current) {
         handleRef.current.removeEventListener('mousedown', handleStart)
@@ -85,7 +88,7 @@ const useDarg = (options: DargOptions) => {
     [handleEnd, handleMove, handleStart]
   )
 
-  return { ref: setHandleRef, ...position }
+  return { setRef, ...position }
 }
 
 export default useDarg

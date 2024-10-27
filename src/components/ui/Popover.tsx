@@ -10,9 +10,10 @@ const PopoverContent = React.forwardRef<
   React.ElementRef<typeof PopoverPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof PopoverPrimitive.Content>
 >(({ className, align = 'center', sideOffset = 4, ...props }, ref) => {
-  const shadowRoot = document.querySelector(__NAME__)!.shadowRoot! as unknown as HTMLElement
+  const root = document.querySelector(__NAME__)?.shadowRoot
+
   return (
-    <PopoverPrimitive.Portal container={shadowRoot}>
+    <PopoverPrimitive.Portal container={root}>
       <PopoverPrimitive.Content
         ref={ref}
         align={align}

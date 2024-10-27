@@ -21,7 +21,7 @@ jobs:
       - run: pnpm install --ignore-scripts
       - run: pnpm wxt prepare
       - run: pnpm run lint
-      - run: pnpm run tsc
+      - run: pnpm run check
 
   release:
     needs: linter

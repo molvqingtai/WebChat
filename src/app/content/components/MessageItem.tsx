@@ -25,6 +25,24 @@ const MessageItem: FC<MessageItemProps> = (props) => {
   const handleHateChange = (checked: boolean) => {
     props.onHateChange?.(checked)
   }
+
+  let content = props.data.body
+
+  // Check if the field exists, compatible with old data
+  if (props.data.atUsers) {
+    const atUserPositions = props.data.atUsers.flatMap((user) =>
+      user.positions.map((position) => ({ username: user.username, userId: user.userId, position }))
+    )
+
+    // Replace from back to front according to position to avoid affecting previous indices
+    atUserPositions
+      .sort((a, b) => b.position[0] - a.position[0])
+      .forEach(({ position, username }) => {
+        const [start, end] = position
+        content = `${content.slice(0, start)} **@${username}** ${content.slice(end + 1)}`
+      })
+  }
+
   return (
     <div
       data-index={props.index}
@@ -41,7 +59,7 @@ const MessageItem: FC<MessageItemProps> = (props) => {
         </div>
         <div>
           <div className="pb-2">
-            <Markdown>{props.data.body}</Markdown>
+            <Markdown>{content}</Markdown>
           </div>
           <div className="grid grid-flow-col justify-end gap-x-2 leading-none">
             <LikeButton

@@ -19,7 +19,7 @@ const AppMain: FC<AppMainProps> = ({ children }) => {
 
   const isOnRightSide = x >= width / 2 + 44
 
-  const { size, ref } = useResizable({
+  const { size, setRef } = useResizable({
     initSize: Math.max(375, width / 6),
     maxSize: Math.max(Math.min(750, width / 3), 375),
     minSize: Math.max(375, width / 6),
@@ -50,7 +50,7 @@ const AppMain: FC<AppMainProps> = ({ children }) => {
         >
           {children}
           <div
-            ref={ref}
+            ref={setRef}
             className={cn(
               'absolute inset-y-3 z-20 w-1 cursor-ew-resize rounded-xl bg-slate-100 opacity-0 shadow transition-opacity duration-200 ease-in hover:opacity-100',
               isOnRightSide ? '-left-0.5' : '-right-0.5'

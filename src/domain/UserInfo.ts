@@ -12,6 +12,7 @@ export interface UserInfo {
   themeMode: 'system' | 'light' | 'dark'
   danmakuEnabled: boolean
   notificationEnabled: boolean
+  notificationType: 'all' | 'at'
 }
 
 const UserInfoDomain = Remesh.domain({

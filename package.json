@@ -15,7 +15,7 @@
     "pack:firefox": "wxt zip -b firefox",
     "lint": "eslint --fix --flag unstable_ts_config",
     "clear": "rimraf .output",
-    "tsc": "tsc --noEmit",
+    "check": "tsc --noEmit",
     "prepare": "husky",
     "postinstall": "wxt prepare"
   },
@@ -54,6 +54,8 @@
     "@radix-ui/react-icons": "^1.3.0",
     "@radix-ui/react-label": "^2.1.0",
     "@radix-ui/react-popover": "^1.1.2",
+    "@radix-ui/react-portal": "^1.1.2",
+    "@radix-ui/react-presence": "^1.1.1",
     "@radix-ui/react-radio-group": "^1.2.1",
     "@radix-ui/react-scroll-area": "^1.2.0",
     "@radix-ui/react-slot": "^1.1.0",

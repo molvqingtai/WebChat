@@ -1,6 +1,6 @@
 import { Remesh } from 'remesh'
 import { map, merge, of, EMPTY, mergeMap, fromEvent, fromEventPattern } from 'rxjs'
-import { NormalMessage, type MessageUser } from './MessageList'
+import { AtUser, NormalMessage, type MessageUser } from './MessageList'
 import { PeerRoomExtern } from '@/domain/externs/PeerRoom'
 import MessageListDomain, { MessageType } from '@/domain/MessageList'
 import UserInfoDomain from '@/domain/UserInfo'
@@ -38,6 +38,7 @@ export interface TextMessage extends MessageUser {
   type: SendType.Text
   id: string
   body: string
+  atUsers: AtUser[]
 }
 
 export type RoomMessage = SyncUserMessage | LikeMessage | HateMessage | TextMessage
@@ -134,16 +135,17 @@ const RoomDomain = Remesh.domain({
 
     const SendTextMessageCommand = domain.command({
       name: 'Room.SendTextMessageCommand',
-      impl: ({ get }, message: string) => {
+      impl: ({ get }, message: string | { body: string; atUsers: AtUser[] }) => {
         const { id: userId, name: username, avatar: userAvatar } = get(userInfoDomain.query.UserInfoQuery())!
 
         const textMessage: TextMessage = {
           id: nanoid(),
           type: SendType.Text,
-          body: message,
+          body: typeof message === 'string' ? message : message.body,
           userId,
           username,
-          userAvatar
+          userAvatar,
+          atUsers: typeof message === 'string' ? [] : message.atUsers
         }
 
         const listMessage: NormalMessage = {
@@ -151,7 +153,8 @@ const RoomDomain = Remesh.domain({
           type: MessageType.Normal,
           date: Date.now(),
           likeUsers: [],
-          hateUsers: []
+          hateUsers: [],
+          atUsers: typeof message === 'string' ? [] : message.atUsers
         }
 
         peerRoom.sendMessage(textMessage)

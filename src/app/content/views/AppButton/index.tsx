@@ -1,4 +1,4 @@
-import { type FC, useState, type MouseEvent, useRef, useEffect, useLayoutEffect } from 'react'
+import { type FC, useState, type MouseEvent, useLayoutEffect } from 'react'
 import { SettingsIcon, MoonIcon, SunIcon, HandIcon } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 
@@ -6,7 +6,7 @@ import { useRemeshDomain, useRemeshQuery, useRemeshSend } from 'remesh-react'
 import { Button } from '@/components/ui/Button'
 import { EVENT } from '@/constants/event'
 import UserInfoDomain from '@/domain/UserInfo'
-import useClickAway from '@/hooks/useClickAway'
+import useTriggerAway from '@/hooks/useTriggerAway'
 import { checkSystemDarkMode, cn } from '@/utils'
 import ToastDomain from '@/domain/Toast'
 import LogoIcon0 from '@/assets/images/logo-0.svg'
@@ -40,11 +40,13 @@ const AppButton: FC = () => {
 
   const [menuOpen, setMenuOpen] = useState(false)
 
-  const menuRef = useRef<HTMLDivElement>(null)
-
   const { width, height } = useWindowSize()
 
-  const { x, y, ref } = useDarg({
+  const {
+    x,
+    y,
+    setRef: appButtonRef
+  } = useDarg({
     initX: appPosition.x,
     initY: appPosition.y,
     minX: 44,
@@ -57,9 +59,7 @@ const AppButton: FC = () => {
     appStatusLoadIsFinished && send(appStatusDomain.command.UpdatePositionCommand({ x, y }))
   }, [x, y])
 
-  useClickAway(menuRef, () => {
-    setMenuOpen(false)
-  }, ['click'])
+  const { setRef: appMenuRef } = useTriggerAway(['click'], () => setMenuOpen(false))
 
   const handleToggleMenu = (e: MouseEvent<HTMLButtonElement>) => {
     e.preventDefault()
@@ -85,7 +85,7 @@ const AppButton: FC = () => {
 
   return (
     <div
-      ref={menuRef}
+      ref={appMenuRef}
       className="fixed bottom-5 right-5 z-infinity grid w-min select-none justify-center gap-y-3"
       style={{
         left: `calc(${appPosition.x}px)`,
@@ -122,7 +122,7 @@ const AppButton: FC = () => {
             <Button onClick={handleOpenOptionsPage} variant="outline" className="size-10 rounded-full p-0 shadow">
               <SettingsIcon size={20} />
             </Button>
-            <Button ref={ref} variant="outline" className="size-10 cursor-grab rounded-full p-0 shadow">
+            <Button ref={appButtonRef} variant="outline" className="size-10 cursor-grab rounded-full p-0 shadow">
               <HandIcon size={20} />
             </Button>
           </motion.div>
