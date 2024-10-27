@@ -14,6 +14,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 
 import DanmakuContainer from './components/DanmakuContainer'
 import DanmakuDomain from '@/domain/Danmaku'
+import AppStatusDomain from '@/domain/AppStatus'
 
 /**
  * Fix requestAnimationFrame error in jest
@@ -34,6 +35,8 @@ export default function App() {
   const userInfoSetFinished = useRemeshQuery(userInfoDomain.query.UserInfoSetIsFinishedQuery())
   const messageListLoadFinished = useRemeshQuery(messageListDomain.query.LoadIsFinishedQuery())
   const userInfoLoadFinished = useRemeshQuery(userInfoDomain.query.UserInfoLoadIsFinishedQuery())
+  const appStatusDomain = useRemeshDomain(AppStatusDomain())
+  const appStatusLoadIsFinished = useRemeshQuery(appStatusDomain.query.StatusLoadIsFinishedQuery())
 
   const notUserInfo = userInfoLoadFinished && !userInfoSetFinished
 
@@ -58,23 +61,25 @@ export default function App() {
   }, [danmakuIsEnabled])
 
   return (
-    <>
-      <AppMain>
-        <Header />
-        <Main />
-        <Footer />
-        <AnimatePresence>
-          {notUserInfo && (
-            <motion.div initial={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
-              <Setup></Setup>
-            </motion.div>
-          )}
-        </AnimatePresence>
-        <Toaster richColors offset="70px" visibleToasts={1} position="top-center"></Toaster>
-      </AppMain>
-      <AppButton></AppButton>
+    appStatusLoadIsFinished && (
+      <>
+        <AppMain>
+          <Header />
+          <Main />
+          <Footer />
+          <AnimatePresence>
+            {notUserInfo && (
+              <motion.div initial={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
+                <Setup></Setup>
+              </motion.div>
+            )}
+          </AnimatePresence>
+          <Toaster richColors offset="70px" visibleToasts={1} position="top-center"></Toaster>
+        </AppMain>
+        <AppButton></AppButton>
 
-      <DanmakuContainer ref={danmakuContainerRef} />
-    </>
+        <DanmakuContainer ref={danmakuContainerRef} />
+      </>
+    )
   )
 }

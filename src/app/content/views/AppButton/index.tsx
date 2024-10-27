@@ -1,4 +1,4 @@
-import { type FC, useState, type MouseEvent, useLayoutEffect } from 'react'
+import { type FC, useState, type MouseEvent, useLayoutEffect, useEffect } from 'react'
 import { SettingsIcon, MoonIcon, SunIcon, HandIcon } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 
@@ -31,7 +31,6 @@ const AppButton: FC = () => {
   const userInfo = useRemeshQuery(userInfoDomain.query.UserInfoQuery())
   const toastDomain = useRemeshDomain(ToastDomain())
   const appPosition = useRemeshQuery(appStatusDomain.query.PositionQuery())
-  const appStatusLoadIsFinished = useRemeshQuery(appStatusDomain.query.StatusLoadIsFinishedQuery())
 
   const DayLogo = [LogoIcon0, LogoIcon1, LogoIcon2, LogoIcon3, LogoIcon4, LogoIcon5, LogoIcon6][getDay(Date())]
 
@@ -39,8 +38,6 @@ const AppButton: FC = () => {
     userInfo?.themeMode === 'dark' ? true : userInfo?.themeMode === 'light' ? false : checkSystemDarkMode()
 
   const [menuOpen, setMenuOpen] = useState(false)
-
-  const { width, height } = useWindowSize()
 
   const {
     x,
@@ -50,13 +47,21 @@ const AppButton: FC = () => {
     initX: appPosition.x,
     initY: appPosition.y,
     minX: 44,
-    maxX: width - 44,
-    maxY: height - 22,
-    minY: height / 2
+    maxX: window.innerWidth - 44,
+    maxY: window.innerHeight - 22,
+    minY: window.innerHeight / 2
   })
 
+  useEffect(() => {
+    const handler = () => {
+      send(appStatusDomain.command.UpdatePositionCommand({ x: window.innerWidth - 44, y: window.innerHeight - 22 }))
+    }
+    window.addEventListener('resize', handler)
+    return () => window.removeEventListener('resize', handler)
+  }, [])
+
   useLayoutEffect(() => {
-    appStatusLoadIsFinished && send(appStatusDomain.command.UpdatePositionCommand({ x, y }))
+    send(appStatusDomain.command.UpdatePositionCommand({ x, y }))
   }, [x, y])
 
   const { setRef: appMenuRef } = useTriggerAway(['click'], () => setMenuOpen(false))
