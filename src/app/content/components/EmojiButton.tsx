@@ -10,7 +10,7 @@ export interface EmojiButtonProps {
   onSelect?: (value: string) => void
 }
 
-const emojiGroups = chunk([...EMOJI_LIST], 8)
+const emojiGroups = chunk([...EMOJI_LIST], 6)
 
 // BUG: https://github.com/radix-ui/primitives/pull/2433
 // BUG https://github.com/radix-ui/primitives/issues/1666
@@ -34,16 +34,19 @@ const EmojiButton: FC<EmojiButtonProps> = ({ onSelect }) => {
           <SmileIcon size={20} />
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="z-infinity w-72 rounded-xl px-0" onCloseAutoFocus={handleCloseAutoFocus}>
-        <ScrollArea className="size-72 px-3">
+      <PopoverContent
+        className="z-infinity w-64 overflow-hidden rounded-xl p-0 dark:bg-slate-900"
+        onCloseAutoFocus={handleCloseAutoFocus}
+      >
+        <ScrollArea className="size-64 p-1">
           {emojiGroups.map((group, index) => {
             return (
-              <div key={index} className="grid grid-cols-8">
+              <div key={index} className="grid grid-cols-6">
                 {group.map((emoji, index) => (
                   <Button
                     key={index}
-                    size="sm"
-                    className="text-base"
+                    size="icon"
+                    className="text-xl"
                     variant="ghost"
                     onClick={() => handleSelect(emoji)}
                   >

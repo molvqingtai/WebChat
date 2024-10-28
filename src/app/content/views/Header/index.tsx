@@ -19,7 +19,7 @@ const Header: FC = () => {
 
   return (
     <div className="z-10 grid h-12 grid-flow-col grid-cols-[theme('spacing.20')_auto_theme('spacing.20')] items-center justify-between rounded-t-xl bg-white px-4 backdrop-blur-lg dark:bg-slate-950">
-      <Avatar className="size-8 dark:text-slate-50">
+      <Avatar className="size-8">
         <AvatarImage src={siteInfo.icon} alt="favicon" />
         <AvatarFallback>
           <Globe2Icon size="100%" className="text-gray-400" />

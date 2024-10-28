@@ -12,7 +12,7 @@ const MessageList: FC<MessageListProps> = ({ children }) => {
   const [scrollParentRef, setScrollParentRef] = useState<HTMLDivElement | null>(null)
 
   return (
-    <ScrollArea ref={setScrollParentRef}>
+    <ScrollArea ref={setScrollParentRef} className="dark:bg-slate-900">
       <Virtuoso
         defaultItemHeight={108}
         followOutput={(isAtBottom: boolean) => (isAtBottom ? 'smooth' : 'auto')}

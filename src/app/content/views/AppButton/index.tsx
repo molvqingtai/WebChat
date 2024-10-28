@@ -1,4 +1,4 @@
-import { type FC, useState, type MouseEvent, useLayoutEffect, useEffect } from 'react'
+import { type FC, useState, type MouseEvent, useEffect } from 'react'
 import { SettingsIcon, MoonIcon, SunIcon, HandIcon } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 
@@ -19,6 +19,7 @@ import AppStatusDomain from '@/domain/AppStatus'
 import { getDay } from 'date-fns'
 import { messenger } from '@/messenger'
 import useDarg from '@/hooks/useDarg'
+import useWindowResize from '@/hooks/useWindowResize'
 
 export interface AppButtonProps {
   className?: string
@@ -47,21 +48,17 @@ const AppButton: FC<AppButtonProps> = ({ className }) => {
   } = useDarg({
     initX: appPosition.x,
     initY: appPosition.y,
-    minX: 44,
-    maxX: window.innerWidth - 44,
+    minX: 50,
+    maxX: window.innerWidth - 50,
     maxY: window.innerHeight - 22,
     minY: window.innerHeight / 2
   })
 
-  useEffect(() => {
-    const handler = () => {
-      send(appStatusDomain.command.UpdatePositionCommand({ x: window.innerWidth - 44, y: window.innerHeight - 22 }))
-    }
-    window.addEventListener('resize', handler)
-    return () => window.removeEventListener('resize', handler)
-  }, [])
+  useWindowResize(({ width, height }) => {
+    send(appStatusDomain.command.UpdatePositionCommand({ x: width - 50, y: height - 22 }))
+  })
 
-  useLayoutEffect(() => {
+  useEffect(() => {
     send(appStatusDomain.command.UpdatePositionCommand({ x, y }))
   }, [x, y])
 
@@ -116,7 +113,7 @@ const AppButton: FC<AppButtonProps> = ({ className }) => {
                 className={cn(
                   'absolute grid grid-rows-[repeat(2,minmax(0,2.5rem))] w-full justify-center items-center transition-all duration-500',
                   isDarkMode ? 'top-0' : '-top-10',
-                  isDarkMode ? 'bg-slate-800 text-white' : 'bg-white text-orange-400'
+                  isDarkMode ? 'bg-slate-950 text-white' : 'bg-white text-orange-400'
                 )}
               >
                 <MoonIcon size={20} />
@@ -136,7 +133,7 @@ const AppButton: FC<AppButtonProps> = ({ className }) => {
       <Button
         onClick={handleToggleApp}
         onContextMenu={handleToggleMenu}
-        className="relative z-20 size-11 rounded-full p-0 text-xs shadow-lg shadow-slate-500/50"
+        className="relative z-20 size-11 rounded-full p-0 text-xs shadow-lg shadow-slate-500/50 after:absolute after:-inset-0.5 after:z-10 after:animate-[shimmer_2s_linear_infinite] after:rounded-full after:bg-[conic-gradient(from_var(--shimmer-angle),theme(colors.slate.500)_0%,theme(colors.white)_10%,theme(colors.slate.500)_20%)]"
       >
         <AnimatePresence>
           {hasUnreadQuery && (
@@ -145,7 +142,7 @@ const AppButton: FC<AppButtonProps> = ({ className }) => {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               transition={{ duration: 0.1 }}
-              className="absolute -right-1 -top-1 flex size-5 items-center justify-center"
+              className="absolute -right-1 -top-1 z-30 flex size-5 items-center justify-center"
             >
               <span
                 className={cn('absolute inline-flex size-full animate-ping rounded-full opacity-75', 'bg-orange-400')}
@@ -154,7 +151,8 @@ const AppButton: FC<AppButtonProps> = ({ className }) => {
             </motion.div>
           )}
         </AnimatePresence>
-        <DayLogo className="max-h-full max-w-full"></DayLogo>
+
+        <DayLogo className="relative z-20 max-h-full max-w-full overflow-hidden"></DayLogo>
       </Button>
     </div>
   )

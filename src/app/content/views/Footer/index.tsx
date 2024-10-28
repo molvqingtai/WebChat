@@ -15,7 +15,7 @@ import useTriggerAway from '@/hooks/useTriggerAway'
 import { ScrollArea } from '@/components/ui/ScrollArea'
 import { Virtuoso, VirtuosoHandle } from 'react-virtuoso'
 import UserInfoDomain from '@/domain/UserInfo'
-import { cn, getTextSimilarity } from '@/utils'
+import { cn, getRootNode, getTextSimilarity } from '@/utils'
 import { Avatar, AvatarFallback } from '@/components/ui/Avatar'
 import { AvatarImage } from '@radix-ui/react-avatar'
 import ToastDomain from '@/domain/Toast'
@@ -240,7 +240,7 @@ const Footer: FC = () => {
     })
   }
 
-  const root = document.querySelector(__NAME__)?.shadowRoot
+  const root = getRootNode()
 
   return (
     <div className="relative z-10 grid gap-y-2 rounded-b-xl px-4 pb-4 pt-2 before:pointer-events-none before:absolute before:inset-x-4 before:-top-2 before:h-2 before:bg-gradient-to-t before:from-slate-50 before:from-30%  before:to-transparent dark:bg-slate-900 before:dark:from-slate-900">
@@ -248,8 +248,8 @@ const Footer: FC = () => {
         <Portal
           container={root}
           ref={shareAutoCompleteListRef}
-          className="fixed z-infinity w-36 -translate-y-full rounded-lg border bg-popover text-popover-foreground shadow-md duration-300 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95"
-          style={{ left: `min(${x}px, 100vw - 212px)`, top: `${y}px` }}
+          className="fixed z-infinity w-36 -translate-y-full overflow-hidden rounded-lg border bg-popover text-popover-foreground shadow-md duration-300 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95"
+          style={{ left: `min(${x}px, 100vw - 160px)`, top: `${y}px` }}
         >
           <ScrollArea className="max-h-[204px] min-h-9 p-1" ref={setScrollParentRef}>
             <Virtuoso

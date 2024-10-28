@@ -15,6 +15,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import DanmakuContainer from './components/DanmakuContainer'
 import DanmakuDomain from '@/domain/Danmaku'
 import AppStatusDomain from '@/domain/AppStatus'
+import { cn } from '@/utils'
 
 /**
  * Fix requestAnimationFrame error in jest
@@ -63,24 +64,29 @@ export default function App() {
 
   return (
     appStatusLoadIsFinished && (
-      <>
-        <AppMain className={userInfo?.themeMode}>
+      <div id="app" className={cn('contents', userInfo?.themeMode)}>
+        <AppMain>
           <Header />
           <Main />
           <Footer />
           <AnimatePresence>
             {notUserInfo && (
-              <motion.div initial={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
+              <motion.div
+                className="contents"
+                initial={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.3 }}
+              >
                 <Setup></Setup>
               </motion.div>
             )}
           </AnimatePresence>
           <Toaster richColors offset="70px" visibleToasts={1} position="top-center"></Toaster>
         </AppMain>
-        <AppButton className={userInfo?.themeMode}></AppButton>
+        <AppButton></AppButton>
 
-        <DanmakuContainer ref={danmakuContainerRef} className={userInfo?.themeMode} />
-      </>
+        <DanmakuContainer ref={danmakuContainerRef} />
+      </div>
     )
   )
 }

@@ -16,7 +16,7 @@ function App() {
         <VersionLink></VersionLink>
         <Main>
           <ProfileForm></ProfileForm>
-          <Toaster richColors position="top-center" />
+          <Toaster richColors position="top-center" duration={1000000} />
         </Main>
         <BadgeList></BadgeList>
       </Layout>

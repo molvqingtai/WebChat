@@ -15,7 +15,7 @@ export interface AppStatus {
 export const defaultStatusState = {
   open: false,
   unread: 0,
-  position: { x: window.innerWidth - 44, y: window.innerHeight - 22 }
+  position: { x: window.innerWidth - 50, y: window.innerHeight - 22 }
 }
 
 const AppStatusDomain = Remesh.domain({

@@ -113,7 +113,7 @@ const Markdown: FC<MarkdownProps> = ({ children = '', className }) => {
         )
       }}
       remarkPlugins={[remarkGfm, remarkBreaks]}
-      className={cn(className, 'prose prose-sm prose-slate break-words dark:text-slate-400')}
+      className={cn(className, 'prose prose-sm prose-slate break-words dark:text-slate-50')}
     >
       {children}
     </ReactMarkdown>

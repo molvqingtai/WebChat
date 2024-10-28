@@ -1,6 +1,6 @@
 import * as React from 'react'
 import * as PopoverPrimitive from '@radix-ui/react-popover'
-import { cn } from '@/utils/index'
+import { cn, getRootNode } from '@/utils'
 
 const Popover = PopoverPrimitive.Root
 
@@ -10,8 +10,7 @@ const PopoverContent = React.forwardRef<
   React.ElementRef<typeof PopoverPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof PopoverPrimitive.Content>
 >(({ className, align = 'center', sideOffset = 4, ...props }, ref) => {
-  const root = document.querySelector(__NAME__)?.shadowRoot
-
+  const root = getRootNode()
   return (
     <PopoverPrimitive.Portal container={root}>
       <PopoverPrimitive.Content

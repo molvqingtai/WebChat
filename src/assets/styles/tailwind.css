@@ -82,3 +82,9 @@
     direction: ltr !important;
   }
 }
+
+/* @property --shimmer-angle {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+} */

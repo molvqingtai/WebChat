@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import AppStatusDomain from '@/domain/AppStatus'
 import { useRemeshDomain, useRemeshQuery } from 'remesh-react'
 import { cn } from '@/utils'
-import { useWindowSize } from 'react-use'
+import useWindowResize from '@/hooks/useWindowResize'
 
 export interface AppMainProps {
   children?: ReactNode
@@ -16,9 +16,9 @@ const AppMain: FC<AppMainProps> = ({ children, className }) => {
   const appOpenStatus = useRemeshQuery(appStatusDomain.query.OpenQuery())
   const { x, y } = useRemeshQuery(appStatusDomain.query.PositionQuery())
 
-  const { width } = useWindowSize()
+  const { width } = useWindowResize()
 
-  const isOnRightSide = x >= width / 2 + 44
+  const isOnRightSide = x >= width / 2 + 50
 
   const { size, setRef } = useResizable({
     initSize: Math.max(375, width / 6),
@@ -54,7 +54,7 @@ const AppMain: FC<AppMainProps> = ({ children, className }) => {
           <div
             ref={setRef}
             className={cn(
-              'absolute inset-y-3 z-infinity w-1 dark:bg-slate-500 cursor-ew-resize rounded-xl bg-slate-100 opacity-0 shadow transition-opacity duration-200 ease-in hover:opacity-100',
+              'absolute inset-y-3 z-infinity w-1 dark:bg-slate-600 cursor-ew-resize rounded-xl bg-slate-100 opacity-0 shadow transition-opacity duration-200 ease-in hover:opacity-100',
               isOnRightSide ? '-left-0.5' : '-right-0.5'
             )}
           ></div>
