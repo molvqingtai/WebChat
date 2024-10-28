@@ -673,12 +673,15 @@ section:has([data-sonner-toaster]) {
 
 /* Custom styles */
 :where([data-sonner-toaster]) {
-  width: 200px;
+  max-width: 300px;
   position: absolute;
+  display: flex;
+  justify-content: center;
 }
 
 :where([data-sonner-toast][data-styled='true']) {
-  width: 200px;
+  max-width: 300px;
   padding: 6px 12px;
   border-radius: 9999px;
+  width: fit-content;
 }

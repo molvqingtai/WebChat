@@ -43,7 +43,8 @@ const generateUserInfo = async (): Promise<UserInfo> => {
     createTime: Date.now(),
     themeMode: checkSystemDarkMode() ? 'dark' : 'system',
     danmakuEnabled: true,
-    notificationEnabled: false
+    notificationEnabled: true,
+    notificationType: 'all'
   }
 }
 
@@ -58,7 +59,8 @@ const generateMessage = async (userInfo: UserInfo): Promise<Message> => {
     username,
     userAvatar,
     likeUsers: mockTextList.length ? [] : [{ userId, username, userAvatar }],
-    hateUsers: []
+    hateUsers: [],
+    atUsers: []
   }
 }
 
@@ -68,6 +70,7 @@ const Setup: FC = () => {
   const messageListDomain = useRemeshDomain(MessageListDomain())
 
   const [userInfo, setUserInfo] = useState<UserInfo>()
+
   const handleSetup = () => {
     send(userInfoDomain.command.UpdateUserInfoCommand(userInfo!))
     send(messageListDomain.command.ClearListCommand())

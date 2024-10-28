@@ -1,4 +1,4 @@
-import { type FC } from 'react'
+import { useState, type FC } from 'react'
 import { Globe2Icon } from 'lucide-react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/Avatar'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/HoverCard'
@@ -7,6 +7,7 @@ import { cn, getSiteInfo } from '@/utils'
 import { useRemeshDomain, useRemeshQuery } from 'remesh-react'
 import RoomDomain from '@/domain/Room'
 import { ScrollArea } from '@/components/ui/ScrollArea'
+import { Virtuoso } from 'react-virtuoso'
 
 const Header: FC = () => {
   const siteInfo = getSiteInfo()
@@ -14,8 +15,10 @@ const Header: FC = () => {
   const userList = useRemeshQuery(roomDomain.query.UserListQuery())
   const onlineCount = userList.length
 
+  const [scrollParentRef, setScrollParentRef] = useState<HTMLDivElement | null>(null)
+
   return (
-    <div className="z-10 grid h-12 grid-flow-col grid-cols-[theme('spacing.20')_auto_theme('spacing.20')] items-center justify-between rounded-t-xl bg-white px-4 backdrop-blur-lg">
+    <div className="z-10 grid h-12 grid-flow-col grid-cols-[theme('spacing.20')_auto_theme('spacing.20')] items-center justify-between rounded-t-xl bg-white px-4 backdrop-blur-lg dark:bg-slate-950">
       <Avatar className="size-8">
         <AvatarImage src={siteInfo.icon} alt="favicon" />
         <AvatarFallback>
@@ -25,7 +28,7 @@ const Header: FC = () => {
       <HoverCard>
         <HoverCardTrigger asChild>
           <Button className="overflow-hidden p-2" variant="link">
-            <span className="truncate text-lg font-semibold text-slate-600">
+            <span className="truncate text-lg font-semibold text-slate-600 dark:text-slate-50">
               {siteInfo.hostname.replace(/^www\./i, '')}
             </span>
           </Button>
@@ -41,7 +44,9 @@ const Header: FC = () => {
             <div className="grid items-center">
               <h4 className="truncate text-sm font-semibold">{siteInfo.title}</h4>
               {siteInfo.description && (
-                <p className="line-clamp-2 max-h-8 text-xs text-slate-500">{siteInfo.description}</p>
+                <p className="line-clamp-2 max-h-8 text-xs text-slate-500 dark:text-slate-300">
+                  {siteInfo.description}
+                </p>
               )}
             </div>
           </div>
@@ -65,21 +70,26 @@ const Header: FC = () => {
                   )}
                 ></span>
               </span>
-              <span>ONLINE {onlineCount > 99 ? '99+' : onlineCount}</span>
+              <span className="dark:text-slate-50">ONLINE {onlineCount > 99 ? '99+' : onlineCount}</span>
             </div>
           </Button>
         </HoverCardTrigger>
-        <HoverCardContent className="w-44 rounded-lg px-0 py-2">
-          <ScrollArea className="max-h-80">
-            {userList.map((user) => (
-              <div className="flex items-center gap-x-2 px-4 py-2 [content-visibility:auto]" key={user.userId}>
-                <Avatar className="size-6 shrink-0">
-                  <AvatarImage src={user.userAvatar} alt="avatar" />
-                  <AvatarFallback>{user.username.at(0)}</AvatarFallback>
-                </Avatar>
-                <div className="flex-1 truncate text-sm text-slate-500">{user.username}</div>
-              </div>
-            ))}
+        <HoverCardContent className="w-36 rounded-lg p-0">
+          <ScrollArea className="max-h-[204px] min-h-9 p-1" ref={setScrollParentRef}>
+            <Virtuoso
+              data={userList}
+              defaultItemHeight={28}
+              customScrollParent={scrollParentRef!}
+              itemContent={(index, user) => (
+                <div className={cn('flex  items-center gap-x-2 rounded-md px-2 py-1.5 outline-none')}>
+                  <Avatar className="size-4 shrink-0">
+                    <AvatarImage className="size-full" src={user.userAvatar} alt="avatar" />
+                    <AvatarFallback>{user.username.at(0)}</AvatarFallback>
+                  </Avatar>
+                  <div className="flex-1 truncate text-xs text-slate-500 dark:text-slate-50">{user.username}</div>
+                </div>
+              )}
+            ></Virtuoso>
           </ScrollArea>
         </HoverCardContent>
       </HoverCard>

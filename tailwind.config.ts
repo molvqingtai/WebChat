@@ -81,6 +81,14 @@ export default {
             transform: 'rotate(215deg) translateX(-500px)',
             opacity: '0'
           }
+        },
+        shimmer: {
+          '0%': {
+            '--shimmer-angle': '0deg'
+          },
+          '100%': {
+            '--shimmer-angle': '360deg'
+          }
         }
       },
       animation: {

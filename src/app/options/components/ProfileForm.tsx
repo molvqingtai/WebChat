@@ -3,20 +3,20 @@ import { useForm } from 'react-hook-form'
 import { valibotResolver } from '@hookform/resolvers/valibot'
 import { useRemeshDomain, useRemeshQuery, useRemeshSend } from 'remesh-react'
 import { nanoid } from 'nanoid'
-import { useEffect } from 'react'
+import { ReactNode, useEffect, type FC } from 'react'
 import AvatarSelect from './AvatarSelect'
 import { Button } from '@/components/ui/Button'
 import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/Form'
 import { Input } from '@/components/ui/Input'
 import UserInfoDomain, { type UserInfo } from '@/domain/UserInfo'
-import { checkSystemDarkMode, generateRandomAvatar } from '@/utils'
+import { checkSystemDarkMode, cn, generateRandomAvatar } from '@/utils'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/RadioGroup'
 import { Label } from '@/components/ui/Label'
 import { RefreshCcwIcon } from 'lucide-react'
 import { MAX_AVATAR_SIZE } from '@/constants/config'
 import { ToastImpl } from '@/domain/impls/Toast'
 import BlurFade from '@/components/magicui/BlurFade'
-import { Checkbox } from '@/components/ui/checkbox'
+import { Checkbox } from '@/components/ui/Checkbox'
 import Link from '@/components/Link'
 
 const defaultUserInfo: UserInfo = {
@@ -26,7 +26,8 @@ const defaultUserInfo: UserInfo = {
   createTime: Date.now(),
   themeMode: checkSystemDarkMode() ? 'dark' : 'system',
   danmakuEnabled: true,
-  notificationEnabled: false
+  notificationEnabled: true,
+  notificationType: 'all'
 }
 
 const formSchema = v.object({
@@ -34,13 +35,9 @@ const formSchema = v.object({
   createTime: v.number(),
   // Pure numeric strings will be converted to number
   // Issues: https://github.com/unjs/unstorage/issues/277
-  // name: v.string([
-  //   // toTrimmed(),
-  //   v.minBytes(1, 'Please enter your username.'),
-  //   v.maxBytes(20, 'Your username cannot exceed 20 bytes.')
-  // ]),
   name: v.pipe(
     v.string(),
+    v.trim(),
     v.minBytes(1, 'Please enter your username.'),
     v.maxBytes(20, 'Your username cannot exceed 20 bytes.')
   ),
@@ -54,10 +51,10 @@ const formSchema = v.object({
     v.union([v.literal('system'), v.literal('light'), v.literal('dark')], 'Please select extension theme mode.')
   ),
   danmakuEnabled: v.boolean(),
-  notificationEnabled: v.boolean()
+  notificationEnabled: v.boolean(),
+  notificationType: v.pipe(v.string(), v.union([v.literal('all'), v.literal('at')], 'Please select notification type.'))
 })
-
-const ProfileForm = () => {
+const ProfileForm: FC = () => {
   const send = useRemeshSend()
   const toast = ToastImpl.value
 
@@ -103,7 +100,7 @@ const ProfileForm = () => {
           control={form.control}
           name="avatar"
           render={({ field }) => (
-            <FormItem className="absolute inset-x-1 top-0 mx-auto grid w-fit -translate-y-1/3  justify-items-center">
+            <FormItem className="absolute inset-x-1 top-0 mx-auto grid w-fit -translate-y-1/3 justify-items-center">
               <FormControl>
                 <div className="flex flex-col items-center gap-2">
                   <BlurFade key={form.getValues().avatar} duration={0.1}>
@@ -136,7 +133,7 @@ const ProfileForm = () => {
           name="name"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Username</FormLabel>
+              <FormLabel className="font-semibold">Username</FormLabel>
               <FormControl>
                 <Input placeholder="Please enter your username" {...field} />
               </FormControl>
@@ -150,7 +147,6 @@ const ProfileForm = () => {
           name="danmakuEnabled"
           render={({ field }) => (
             <FormItem>
-              {/* <FormLabel>Username</FormLabel> */}
               <FormControl>
                 <div className="flex items-center space-x-2">
                   <Checkbox
@@ -159,7 +155,7 @@ const ProfileForm = () => {
                     onCheckedChange={field.onChange}
                     checked={field.value}
                   />
-                  <FormLabel className="cursor-pointer" htmlFor="enable-danmaku">
+                  <FormLabel className="cursor-pointer font-semibold" htmlFor="enable-danmaku">
                     Enable Danmaku
                   </FormLabel>
                 </div>
@@ -174,24 +170,66 @@ const ProfileForm = () => {
             </FormItem>
           )}
         />
+
         <FormField
           control={form.control}
-          name="notificationEnabled"
+          name="notificationType"
           render={({ field }) => (
             <FormItem>
-              {/* <FormLabel>Username</FormLabel> */}
-              <FormControl>
-                <div className="flex items-center space-x-2">
-                  <Checkbox
-                    defaultChecked={false}
-                    id="notification-enabled"
-                    onCheckedChange={field.onChange}
-                    checked={field.value}
-                  />
-                  <FormLabel className="cursor-pointer" htmlFor="notification-enabled">
-                    Enable Notification
-                  </FormLabel>
-                </div>
+              <FormField
+                control={form.control}
+                name="notificationEnabled"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormControl>
+                      <div className="flex items-center space-x-2">
+                        <Checkbox
+                          defaultChecked={false}
+                          id="enable-notification"
+                          onCheckedChange={field.onChange}
+                          checked={field.value}
+                        />
+                        <FormLabel className="cursor-pointer font-semibold" htmlFor="enable-notification">
+                          Enable Notification
+                        </FormLabel>
+                      </div>
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormControl className="pl-6">
+                <RadioGroup
+                  disabled={!form.getValues('notificationEnabled')}
+                  className="flex gap-x-4"
+                  onValueChange={field.onChange}
+                  value={field.value}
+                >
+                  <div className="flex items-center space-x-2">
+                    <RadioGroupItem value="all" id="all" />
+                    <Label
+                      className={cn(
+                        'cursor-pointer',
+                        !form.getValues('notificationEnabled') && 'cursor-not-allowed opacity-50'
+                      )}
+                      htmlFor="all"
+                    >
+                      All message
+                    </Label>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <RadioGroupItem value="at" id="at" />
+                    <Label
+                      className={cn(
+                        'cursor-pointer',
+                        !form.getValues('notificationEnabled') && 'cursor-not-allowed opacity-50'
+                      )}
+                      htmlFor="at"
+                    >
+                      Only @self
+                    </Label>
+                  </div>
+                </RadioGroup>
               </FormControl>
               <FormDescription>Enabling this option will display desktop notifications for messages.</FormDescription>
               <FormMessage />
@@ -203,20 +241,26 @@ const ProfileForm = () => {
           name="themeMode"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Theme Mode</FormLabel>
+              <FormLabel className="font-semibold">Theme Mode</FormLabel>
               <FormControl>
                 <RadioGroup className="flex gap-x-4" onValueChange={field.onChange} value={field.value}>
                   <div className="flex items-center space-x-2">
-                    <RadioGroupItem value="system" id="r1" />
-                    <Label htmlFor="r1">System</Label>
+                    <RadioGroupItem value="system" id="system" />
+                    <Label className="cursor-pointer" htmlFor="system">
+                      System
+                    </Label>
                   </div>
                   <div className="flex items-center space-x-2">
-                    <RadioGroupItem value="light" id="r2" />
-                    <Label htmlFor="r2">Light</Label>
+                    <RadioGroupItem value="light" id="light" />
+                    <Label className="cursor-pointer" htmlFor="light">
+                      Light
+                    </Label>
                   </div>
                   <div className="flex items-center space-x-2">
-                    <RadioGroupItem value="dark" id="r3" />
-                    <Label htmlFor="r3">Dark</Label>
+                    <RadioGroupItem value="dark" id="dark" />
+                    <Label className="cursor-pointer" htmlFor="dark">
+                      Dark
+                    </Label>
                   </div>
                 </RadioGroup>
               </FormControl>

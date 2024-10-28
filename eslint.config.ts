@@ -34,8 +34,9 @@ export default [
       '@typescript-eslint/no-unused-expressions': 'off',
       '@eslint-react/no-array-index-key': 'off',
       '@eslint-react/hooks-extra/no-redundant-custom-hook': 'off',
-      '@eslint-react/dom/no-missing-button-type': 'off'
+      '@eslint-react/dom/no-missing-button-type': 'off',
+      '@eslint-react/hooks-extra/prefer-use-state-lazy-initialization': 'off'
     }
   }
 ]
-//  satisfies Linter.Config[]
+// satisfies Linter.Config[]

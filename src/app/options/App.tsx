@@ -4,17 +4,23 @@ import ProfileForm from './components/ProfileForm'
 import BadgeList from './components/BadgeList'
 import Layout from './components/Layout'
 import VersionLink from './components/VersionLink'
+import { useRemeshDomain, useRemeshQuery } from 'remesh-react'
+import UserInfoDomain from '@/domain/UserInfo'
 
 function App() {
+  const userInfoDomain = useRemeshDomain(UserInfoDomain())
+  const userInfo = useRemeshQuery(userInfoDomain.query.UserInfoQuery())
   return (
-    <Layout>
-      <VersionLink></VersionLink>
-      <Main>
-        <ProfileForm></ProfileForm>
-        <Toaster richColors position="top-center" />
-      </Main>
-      <BadgeList></BadgeList>
-    </Layout>
+    <div className={userInfo?.themeMode}>
+      <Layout>
+        <VersionLink></VersionLink>
+        <Main>
+          <ProfileForm></ProfileForm>
+          <Toaster richColors position="top-center" duration={1000000} />
+        </Main>
+        <BadgeList></BadgeList>
+      </Layout>
+    </div>
   )
 }
 

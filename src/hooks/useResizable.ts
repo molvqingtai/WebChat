@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { RefCallback, useCallback, useLayoutEffect, useRef, useState } from 'react'
 import { clamp, isInRange } from '@/utils'
 
 export interface ResizableOptions {
@@ -11,7 +11,14 @@ export interface ResizableOptions {
 const useResizable = (options: ResizableOptions) => {
   const { minSize, maxSize, initSize = 0, direction } = options
 
-  const [size, setSize] = useState(initSize)
+  const [size, setSize] = useState(clamp(initSize, minSize, maxSize))
+
+  useLayoutEffect(() => {
+    const newSize = clamp(initSize, minSize, maxSize)
+    if (newSize !== size) {
+      setSize(newSize)
+    }
+  }, [initSize, minSize, maxSize])
 
   const position = useRef(0)
 
@@ -67,13 +74,13 @@ const useResizable = (options: ResizableOptions) => {
     [isHorizontal]
   )
 
-  const ref = useRef<HTMLElement | null>(null)
+  const handlerRef = useRef<HTMLElement | null>(null)
 
   // Watch ref: https://medium.com/@teh_builder/ref-objects-inside-useeffect-hooks-eb7c15198780
-  const setRef = useCallback(
-    (node: HTMLElement | null) => {
-      if (ref.current) {
-        ref.current.removeEventListener('mousedown', handleStart)
+  const setRef: RefCallback<HTMLElement | null> = useCallback(
+    (node) => {
+      if (handlerRef.current) {
+        handlerRef.current.removeEventListener('mousedown', handleStart)
         document.removeEventListener('mouseup', handleEnd)
         document.removeEventListener('mousemove', handleMove)
       }
@@ -82,12 +89,12 @@ const useResizable = (options: ResizableOptions) => {
         document.addEventListener('mouseup', handleEnd)
         document.addEventListener('mousemove', handleMove)
       }
-      ref.current = node
+      handlerRef.current = node
     },
     [handleEnd, handleMove, handleStart]
   )
 
-  return { size, ref: setRef }
+  return { size, setRef }
 }
 
 export default useResizable

@@ -81,11 +81,10 @@
     all: initial !important;
     direction: ltr !important;
   }
-  /**
-   * Fix: scroll area dispay: table
-   * @see https://github.com/radix-ui/primitives/issues/3129
-   */
-  [data-radix-scroll-area-viewport] > div {
-    display: block !important;
-  }
 }
+
+/* @property --shimmer-angle {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+} */

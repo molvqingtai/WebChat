@@ -16,6 +16,10 @@ export interface MessageUser {
   userAvatar: string
 }
 
+export interface AtUser extends MessageUser {
+  positions: [number, number][]
+}
+
 export interface NormalMessage extends MessageUser {
   type: MessageType.Normal
   id: string
@@ -23,6 +27,7 @@ export interface NormalMessage extends MessageUser {
   date: number
   likeUsers: MessageUser[]
   hateUsers: MessageUser[]
+  atUsers: AtUser[]
 }
 
 export interface PromptMessage extends MessageUser {

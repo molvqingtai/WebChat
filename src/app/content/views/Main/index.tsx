@@ -7,7 +7,6 @@ import PromptItem from '../../components/PromptItem'
 import UserInfoDomain from '@/domain/UserInfo'
 import RoomDomain, { MessageType } from '@/domain/Room'
 import MessageListDomain from '@/domain/MessageList'
-import BlurFade from '@/components/magicui/BlurFade'
 
 const Main: FC = () => {
   const send = useRemeshSend()
@@ -39,24 +38,21 @@ const Main: FC = () => {
     <MessageList>
       {messageList.map((message, index) =>
         message.type === MessageType.Normal ? (
-          <BlurFade key={message.id} duration={0.1} yOffset={0}>
-            <MessageItem
-              key={message.id}
-              data={message}
-              like={message.like}
-              hate={message.hate}
-              onLikeChange={() => handleLikeChange(message.id)}
-              onHateChange={() => handleHateChange(message.id)}
-            ></MessageItem>
-          </BlurFade>
+          <MessageItem
+            key={message.id}
+            data={message}
+            like={message.like}
+            hate={message.hate}
+            onLikeChange={() => handleLikeChange(message.id)}
+            onHateChange={() => handleHateChange(message.id)}
+            className="duration-300 animate-in fade-in-0"
+          ></MessageItem>
         ) : (
-          <BlurFade key={message.id} duration={0.1} yOffset={0}>
-            <PromptItem
-              key={message.id}
-              data={message}
-              className={`${index === 0 ? 'pt-4' : ''} ${index === messageList.length - 1 ? 'pb-4' : ''}`}
-            ></PromptItem>
-          </BlurFade>
+          <PromptItem
+            key={message.id}
+            data={message}
+            className={`${index === 0 ? 'pt-4' : ''} ${index === messageList.length - 1 ? 'pb-4' : ''}`}
+          ></PromptItem>
         )
       )}
     </MessageList>

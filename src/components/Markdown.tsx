@@ -67,7 +67,7 @@ const Markdown: FC<MarkdownProps> = ({ children = '', className }) => {
         input: ({ className, ...props }) => <input className={cn('my-0', className)} {...props} />,
         table: ({ className, ...props }) => (
           <div className="my-2 w-full">
-            <ScrollArea>
+            <ScrollArea scrollLock={false}>
               <table className={cn('my-0 w-full rounded-md', className)} {...props} />
               <ScrollBar orientation="horizontal" />
             </ScrollArea>
@@ -106,14 +106,14 @@ const Markdown: FC<MarkdownProps> = ({ children = '', className }) => {
          *
          */
         code: ({ className, ...props }) => (
-          <ScrollArea>
+          <ScrollArea className="overscroll-y-auto" scrollLock={false}>
             <code className={cn('text-sm', className)} {...props}></code>
             <ScrollBar orientation="horizontal" />
           </ScrollArea>
         )
       }}
       remarkPlugins={[remarkGfm, remarkBreaks]}
-      className={cn(className, 'prose prose-sm prose-slate break-words')}
+      className={cn(className, 'prose prose-sm prose-slate break-words dark:text-slate-50')}
     >
       {children}
     </ReactMarkdown>

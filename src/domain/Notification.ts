@@ -69,11 +69,27 @@ const NotificationDomain = Remesh.domain({
       name: 'Notification.OnRoomMessageEffect',
       impl: ({ fromEvent, get }) => {
         const onTextMessage$ = fromEvent(roomDomain.event.OnTextMessageEvent)
-
         const onMessage$ = merge(onTextMessage$).pipe(
           map((message) => {
             const notificationEnabled = get(IsEnabledQuery())
-            return notificationEnabled ? PushCommand(message) : null
+            if (notificationEnabled) {
+              // Compatible with old versions, without the atUsers field
+              if (message.atUsers) {
+                const userInfo = get(userInfoDomain.query.UserInfoQuery())
+                const hasAtSelf = message.atUsers.find((user) => user.userId === userInfo?.id)
+                if (userInfo?.notificationType === 'all') {
+                  return PushCommand(message)
+                }
+                if (userInfo?.notificationType === 'at' && hasAtSelf) {
+                  return PushCommand(message)
+                }
+                return null
+              } else {
+                return PushCommand(message)
+              }
+            } else {
+              return null
+            }
           })
         )
 

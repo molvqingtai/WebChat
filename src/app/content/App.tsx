@@ -2,7 +2,7 @@ import Header from '@/app/content/views/Header'
 import Footer from '@/app/content/views/Footer'
 import Main from '@/app/content/views/Main'
 import AppButton from '@/app/content/views/AppButton'
-import AppContainer from '@/app/content/views/AppContainer'
+import AppMain from '@/app/content/views/AppMain'
 import { useRemeshDomain, useRemeshQuery, useRemeshSend } from 'remesh-react'
 import RoomDomain from '@/domain/Room'
 import UserInfoDomain from '@/domain/UserInfo'
@@ -10,9 +10,12 @@ import Setup from '@/app/content/views/Setup'
 import MessageListDomain from '@/domain/MessageList'
 import { useEffect, useRef } from 'react'
 import { Toaster } from 'sonner'
+import { AnimatePresence, motion } from 'framer-motion'
 
 import DanmakuContainer from './components/DanmakuContainer'
 import DanmakuDomain from '@/domain/Danmaku'
+import AppStatusDomain from '@/domain/AppStatus'
+import { cn } from '@/utils'
 
 /**
  * Fix requestAnimationFrame error in jest
@@ -31,9 +34,12 @@ export default function App() {
   const danmakuDomain = useRemeshDomain(DanmakuDomain())
   const danmakuIsEnabled = useRemeshQuery(danmakuDomain.query.IsEnabledQuery())
   const userInfoSetFinished = useRemeshQuery(userInfoDomain.query.UserInfoSetIsFinishedQuery())
-  const userInfoLoadFinished = useRemeshQuery(userInfoDomain.query.UserInfoLoadIsFinishedQuery())
   const messageListLoadFinished = useRemeshQuery(messageListDomain.query.LoadIsFinishedQuery())
+  const userInfoLoadFinished = useRemeshQuery(userInfoDomain.query.UserInfoLoadIsFinishedQuery())
+  const appStatusDomain = useRemeshDomain(AppStatusDomain())
+  const appStatusLoadIsFinished = useRemeshQuery(appStatusDomain.query.StatusLoadIsFinishedQuery())
 
+  const userInfo = useRemeshQuery(userInfoDomain.query.UserInfoQuery())
   const notUserInfo = userInfoLoadFinished && !userInfoSetFinished
 
   useEffect(() => {
@@ -57,16 +63,30 @@ export default function App() {
   }, [danmakuIsEnabled])
 
   return (
-    <>
-      <AppContainer>
-        <Header />
-        <Main />
-        <Footer />
-        {notUserInfo && <Setup />}
-        <Toaster richColors offset="70px" visibleToasts={1} position="top-center"></Toaster>
-      </AppContainer>
-      <AppButton></AppButton>
-      <DanmakuContainer ref={danmakuContainerRef} />
-    </>
+    appStatusLoadIsFinished && (
+      <div id="app" className={cn('contents', userInfo?.themeMode)}>
+        <AppMain>
+          <Header />
+          <Main />
+          <Footer />
+          <AnimatePresence>
+            {notUserInfo && (
+              <motion.div
+                className="contents"
+                initial={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.3 }}
+              >
+                <Setup></Setup>
+              </motion.div>
+            )}
+          </AnimatePresence>
+          <Toaster richColors offset="70px" visibleToasts={1} position="top-center"></Toaster>
+        </AppMain>
+        <AppButton></AppButton>
+
+        <DanmakuContainer ref={danmakuContainerRef} />
+      </div>
+    )
   )
 }

@@ -2,7 +2,7 @@ import React from 'react'
 import { createRoot } from 'react-dom/client'
 import { Remesh } from 'remesh'
 import { RemeshRoot, RemeshScope } from 'remesh-react'
-import { RemeshLogger } from 'remesh-logger'
+// import { RemeshLogger } from 'remesh-logger'
 import { defineContentScript } from 'wxt/sandbox'
 import { createShadowRootUi } from 'wxt/client'
 
@@ -15,8 +15,8 @@ import { ToastImpl } from '@/domain/impls/Toast'
 import { PeerRoomImpl } from '@/domain/impls/PeerRoom2'
 import '@/assets/styles/tailwind.css'
 import '@/assets/styles/sonner.css'
-import { createElement } from '@/utils'
 import NotificationDomain from '@/domain/Notification'
+import { createElement } from '@/utils'
 
 export default defineContentScript({
   cssInjectionMode: 'ui',
@@ -24,6 +24,13 @@ export default defineContentScript({
   matches: ['https://*/*'],
   excludeMatches: ['*://localhost/*', '*://127.0.0.1/*', '*://*.csdn.net/*', '*://*.csdn.com/*'],
   async main(ctx) {
+    window.CSS.registerProperty({
+      name: '--shimmer-angle',
+      syntax: '<angle>',
+      inherits: false,
+      initialValue: '0deg'
+    })
+
     const store = Remesh.store({
       externs: [
         LocalStorageImpl,
@@ -45,9 +52,8 @@ export default defineContentScript({
       mode: 'open',
       isolateEvents: ['keyup', 'keydown', 'keypress'],
       onMount: (container) => {
-        const app = createElement('<div id="app"></div>')
+        const app = createElement('<div id="root"></div>')
         container.append(app)
-
         const root = createRoot(app)
         root.render(
           <React.StrictMode>
