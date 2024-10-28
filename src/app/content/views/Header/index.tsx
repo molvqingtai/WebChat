@@ -44,7 +44,9 @@ const Header: FC = () => {
             <div className="grid items-center">
               <h4 className="truncate text-sm font-semibold">{siteInfo.title}</h4>
               {siteInfo.description && (
-                <p className="line-clamp-2 max-h-8 text-xs text-slate-500">{siteInfo.description}</p>
+                <p className="line-clamp-2 max-h-8 text-xs text-slate-500 dark:text-slate-300">
+                  {siteInfo.description}
+                </p>
               )}
             </div>
           </div>
@@ -84,7 +86,7 @@ const Header: FC = () => {
                     <AvatarImage className="size-full" src={user.userAvatar} alt="avatar" />
                     <AvatarFallback>{user.username.at(0)}</AvatarFallback>
                   </Avatar>
-                  <div className="flex-1 truncate text-xs text-slate-500">{user.username}</div>
+                  <div className="flex-1 truncate text-xs text-slate-500 dark:text-slate-50">{user.username}</div>
                 </div>
               )}
             ></Virtuoso>
