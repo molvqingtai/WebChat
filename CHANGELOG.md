@@ -1,3 +1,25 @@
+# [1.4.0](https://github.com/molvqingtai/WebChat/compare/v1.3.1...v1.4.0) (2024-10-28)
+
+
+### Bug Fixes
+
+* delete bad z-index ([bcdd435](https://github.com/molvqingtai/WebChat/commit/bcdd435e45e0b39d2c3ac45fbe594609165bacd8))
+
+
+### Features
+
+* app button support drag ([4eba638](https://github.com/molvqingtai/WebChat/commit/4eba638a367d4be2dc3d0b3e378298fd98a9ff5d))
+* support [@user](https://github.com/user) syntax ([bef576a](https://github.com/molvqingtai/WebChat/commit/bef576a77bc995e8eaf57de212a233081be34727))
+* support dark mode ([010aa2f](https://github.com/molvqingtai/WebChat/commit/010aa2f45e8cf864ac54fed44668369b5ff8fd9e))
+
+
+### Performance Improvements
+
+* optimize danmuku theme styles ([4f6eb56](https://github.com/molvqingtai/WebChat/commit/4f6eb560fe88e5e7e5d5b920666ed5e19b952fe9))
+* optimize header theme styles ([025166e](https://github.com/molvqingtai/WebChat/commit/025166ead5529f66c26810e6b7ab6ba07dd874aa))
+* optimize theme styles ([2d051fe](https://github.com/molvqingtai/WebChat/commit/2d051fedd763427d10ac2c0c1a0bd74fe7788501))
+* reset app position when window resize ([eee1735](https://github.com/molvqingtai/WebChat/commit/eee17356545515905813f5937b4dbe183fb081ed))
+
 ## [1.3.1](https://github.com/molvqingtai/WebChat/compare/v1.3.0...v1.3.1) (2024-10-16)
 
 
