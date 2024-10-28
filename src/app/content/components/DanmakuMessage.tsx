@@ -20,7 +20,7 @@ const DanmakuMessage: FC<PromptItemProps> = ({ data, className, onClick, onMouse
       onMouseLeave={onMouseLeave}
       onClick={onClick}
       className={cn(
-        'flex justify-center pointer-events-auto visible gap-x-2 border px-2.5 py-0.5  rounded-full bg-primary/30 text-base font-medium text-white dark:bg-slate-800 dark:text-slate-50 backdrop-blur-md',
+        'flex justify-center pointer-events-auto visible gap-x-2 border border-slate-50 px-2.5 py-0.5  rounded-full bg-primary/30 text-base font-medium text-white backdrop-blur-md',
         className
       )}
     >

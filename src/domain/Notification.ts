@@ -73,15 +73,20 @@ const NotificationDomain = Remesh.domain({
           map((message) => {
             const notificationEnabled = get(IsEnabledQuery())
             if (notificationEnabled) {
-              const userInfo = get(userInfoDomain.query.UserInfoQuery())
-              const hasAtSelf = message.atUsers.find((user) => user.userId === userInfo?.id)
-              if (userInfo?.notificationType === 'all') {
+              // Compatible with old versions, without the atUsers field
+              if (message.atUsers) {
+                const userInfo = get(userInfoDomain.query.UserInfoQuery())
+                const hasAtSelf = message.atUsers.find((user) => user.userId === userInfo?.id)
+                if (userInfo?.notificationType === 'all') {
+                  return PushCommand(message)
+                }
+                if (userInfo?.notificationType === 'at' && hasAtSelf) {
+                  return PushCommand(message)
+                }
+                return null
+              } else {
                 return PushCommand(message)
               }
-              if (userInfo?.notificationType === 'at' && hasAtSelf) {
-                return PushCommand(message)
-              }
-              return null
             } else {
               return null
             }
