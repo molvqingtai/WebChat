@@ -1,3 +1,10 @@
+# [1.5.0](https://github.com/molvqingtai/WebChat/compare/v1.4.0...v1.5.0) (2024-10-29)
+
+
+### Features
+
+* support send image button ([a01a93f](https://github.com/molvqingtai/WebChat/commit/a01a93f260c3fefadb1ad1ce0369af3ea8c6b3f0))
+
 # [1.4.0](https://github.com/molvqingtai/WebChat/compare/v1.3.1...v1.4.0) (2024-10-28)
 
 
