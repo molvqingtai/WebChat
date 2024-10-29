@@ -1,3 +1,4 @@
+import { version } from '@/../package.json'
 // https://www.webfx.com/tools/emoji-cheat-sheet/
 
 export const EMOJI_LIST = [
@@ -185,11 +186,11 @@ export const BREAKPOINTS = {
 
 export const MESSAGE_MAX_LENGTH = 500 as const
 
-export const STORAGE_NAME = 'WEB_CHAT' as const
-
-export const MESSAGE_LIST_STORAGE_KEY = 'WEB_CHAT_MESSAGE_LIST' as const
+export const STORAGE_NAME = `WEB_CHAT_${version}` as const
 
 export const USER_INFO_STORAGE_KEY = 'WEB_CHAT_USER_INFO' as const
+
+export const MESSAGE_LIST_STORAGE_KEY = 'WEB_CHAT_MESSAGE_LIST' as const
 
 export const APP_STATUS_STORAGE_KEY = 'WEB_CHAT_APP_STATUS' as const
 /**
