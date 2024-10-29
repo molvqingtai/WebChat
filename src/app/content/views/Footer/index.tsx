@@ -15,10 +15,12 @@ import useTriggerAway from '@/hooks/useTriggerAway'
 import { ScrollArea } from '@/components/ui/ScrollArea'
 import { Virtuoso, VirtuosoHandle } from 'react-virtuoso'
 import UserInfoDomain from '@/domain/UserInfo'
-import { cn, getRootNode, getTextSimilarity } from '@/utils'
+import { blobToBase64, cn, compressImage, getRootNode, getTextSimilarity } from '@/utils'
 import { Avatar, AvatarFallback } from '@/components/ui/Avatar'
 import { AvatarImage } from '@radix-ui/react-avatar'
 import ToastDomain from '@/domain/Toast'
+import ImageButton from '../../components/ImageButton'
+import { nanoid } from 'nanoid'
 
 const Footer: FC = () => {
   const send = useRemeshSend()
@@ -40,6 +42,7 @@ const Footer: FC = () => {
   const shareAutoCompleteListRef = useShareRef(setAutoCompleteListRef, autoCompleteListRef)
   const isComposing = useRef(false)
   const virtuosoRef = useRef<VirtuosoHandle>(null)
+  const [inputLoading, setInputLoading] = useState(false)
 
   const shareRef = useShareRef(inputRef, setRef)
 
@@ -47,6 +50,7 @@ const Footer: FC = () => {
    * When inserting a username using the @ syntax, record the username's position information and the mapping relationship between the position information and userId to distinguish between users with the same name.
    */
   const atUserRecord = useRef<Map<string, Set<[number, number]>>>(new Map())
+  const imageRecord = useRef<Map<string, string>>(new Map())
 
   const updateAtUserAtRecord = useMemo(
     () => (message: string, start: number, end: number, offset: number, atUserId?: string) => {
@@ -102,11 +106,29 @@ const Footer: FC = () => {
 
   const selectedUser = autoCompleteList.find((_, index) => index === selectedUserIndex)!
 
-  const handleSend = () => {
+  // Replace the hash URL in ![Image](hash:${hash}) with base64 and update the atUserRecord.
+  const transformMessage = async (message: string) => {
+    let newMessage = message
+    const matchList = [...message.matchAll(/!\[Image\]\(hash:([^\s)]+)\)/g)]
+    matchList?.forEach((match) => {
+      const base64 = imageRecord.current.get(match[1])
+      if (base64) {
+        const base64Syntax = `![Image](${base64})`
+        const hashSyntax = match[0]
+        const startIndex = match.index
+        const endIndex = startIndex + base64Syntax.length - hashSyntax.length
+        newMessage = newMessage.replace(hashSyntax, base64Syntax)
+        updateAtUserAtRecord(newMessage, startIndex, endIndex, 0)
+      }
+    })
+    return newMessage
+  }
+
+  const handleSend = async () => {
     if (!`${message}`.trim()) {
       return send(toastDomain.command.WarningCommand('Message cannot be empty.'))
     }
-
+    const transformedMessage = await transformMessage(message)
     const atUsers = [...atUserRecord.current]
       .map(([userId, positions]) => {
         const user = userList.find((user) => user.userId === userId)
@@ -114,7 +136,7 @@ const Footer: FC = () => {
       })
       .filter(Boolean)
 
-    send(roomDomain.command.SendTextMessageCommand({ body: message, atUsers }))
+    send(roomDomain.command.SendTextMessageCommand({ body: transformedMessage, atUsers }))
     send(messageInputDomain.command.ClearCommand())
   }
 
@@ -211,6 +233,33 @@ const Footer: FC = () => {
     })
   }
 
+  const handleInjectImage = async (file: File) => {
+    try {
+      setInputLoading(true)
+      const blob = await compressImage({ input: file, targetSize: 30 * 1024, outputType: 'image/webp' })
+      const base64 = await blobToBase64(blob)
+      const hash = nanoid()
+      const newMessage = `${message.slice(0, selectionEnd)}![Image](hash:${hash})${message.slice(selectionEnd)}`
+
+      const start = selectionStart
+      const end = selectionEnd + newMessage.length - message.length
+
+      updateAtUserAtRecord(newMessage, start, end, 0)
+      send(messageInputDomain.command.InputCommand(newMessage))
+
+      imageRecord.current.set(hash, base64)
+
+      requestIdleCallback(() => {
+        inputRef.current?.setSelectionRange(end, end)
+        inputRef.current?.focus()
+      })
+    } catch (error) {
+      send(toastDomain.command.ErrorCommand((error as Error).message))
+    } finally {
+      setInputLoading(false)
+    }
+  }
+
   const handleInjectAtSyntax = (username: string) => {
     const atIndex = message.lastIndexOf('@', selectionEnd - 1)
     // Determine if there is a space before @
@@ -285,11 +334,13 @@ const Footer: FC = () => {
         ref={shareRef}
         value={message}
         onInput={handleInput}
+        loading={inputLoading}
         onKeyDown={handleKeyDown}
         maxLength={MESSAGE_MAX_LENGTH}
       ></MessageInput>
       <div className="flex items-center">
         <EmojiButton onSelect={handleInjectEmoji}></EmojiButton>
+        <ImageButton disabled={inputLoading} onSelect={handleInjectImage}></ImageButton>
         <Button className="ml-auto" size="sm" onClick={handleSend}>
           <span className="mr-2">Send</span>
           <CornerDownLeftIcon className="text-slate-400" size={12}></CornerDownLeftIcon>

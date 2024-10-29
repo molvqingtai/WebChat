@@ -3,7 +3,7 @@ import { type ChangeEvent } from 'react'
 import { ImagePlusIcon } from 'lucide-react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/Avatar'
 import { Label } from '@/components/ui/Label'
-import { cn, compressImage } from '@/utils'
+import { blobToBase64, cn, compressImage } from '@/utils'
 
 export interface AvatarSelectProps {
   value?: string
@@ -31,15 +31,10 @@ const AvatarSelect = React.forwardRef<HTMLInputElement, AvatarSelectProps>(
            * In chrome storage.sync, each key-value pair supports a maximum storage of 8kb
            * and all key-value pairs support a maximum storage of 100kb.
            */
-          const blob = await compressImage({ input: file, targetSize: compressSize })
-          const reader = new FileReader()
-          reader.onload = (e) => {
-            const base64 = e.target?.result as string
-            onSuccess?.(base64)
-            onChange?.(base64)
-          }
-          reader.onerror = () => onError?.(new Error('Failed to read image file.'))
-          reader.readAsDataURL(blob)
+          const blob = await compressImage({ input: file, targetSize: compressSize, outputType: 'image/webp' })
+          const base64 = await blobToBase64(blob)
+          onSuccess?.(base64)
+          onChange?.(base64)
         } catch (error) {
           onError?.(error as Error)
         }
@@ -63,7 +58,14 @@ const AvatarSelect = React.forwardRef<HTMLInputElement, AvatarSelectProps>(
             <ImagePlusIcon size={30} className="text-slate-400 group-hover:text-slate-500" />
           </AvatarFallback>
         </Avatar>
-        <input ref={ref} hidden disabled={disabled} type="file" accept="image/png,image/jpeg" onChange={handleChange} />
+        <input
+          ref={ref}
+          hidden
+          disabled={disabled}
+          type="file"
+          accept="image/png,image/jpeg,image/webp"
+          onChange={handleChange}
+        />
       </Label>
     )
   }

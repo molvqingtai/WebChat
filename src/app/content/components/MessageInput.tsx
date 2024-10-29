@@ -3,6 +3,7 @@ import { forwardRef, type ChangeEvent, CompositionEvent, type KeyboardEvent } fr
 import { cn } from '@/utils'
 import { Textarea } from '@/components/ui/Textarea'
 import { ScrollArea } from '@/components/ui/ScrollArea'
+import LoadingIcon from '@/assets/images/loading.svg'
 
 export interface MessageInputProps {
   value?: string
@@ -11,6 +12,7 @@ export interface MessageInputProps {
   preview?: boolean
   autoFocus?: boolean
   disabled?: boolean
+  loading?: boolean
   onInput?: (e: ChangeEvent<HTMLTextAreaElement>) => void
   onKeyDown?: (e: KeyboardEvent<HTMLTextAreaElement>) => void
   onCompositionStart?: (e: CompositionEvent<HTMLTextAreaElement>) => void
@@ -33,7 +35,8 @@ const MessageInput = forwardRef<HTMLTextAreaElement, MessageInputProps>(
       onCompositionStart,
       onCompositionEnd,
       autoFocus,
-      disabled
+      disabled,
+      loading
     },
     ref
   ) => {
@@ -45,7 +48,12 @@ const MessageInput = forwardRef<HTMLTextAreaElement, MessageInputProps>(
             onKeyDown={onKeyDown}
             autoFocus={autoFocus}
             maxLength={maxLength}
-            className="box-border resize-none whitespace-pre-wrap break-words border-none bg-gray-50 pb-5 [field-sizing:content] [word-break:break-word] focus:ring-0 focus:ring-offset-0 dark:bg-slate-800"
+            className={cn(
+              'box-border resize-none whitespace-pre-wrap break-words border-none bg-slate-100 pb-5 [field-sizing:content] [word-break:break-word] focus:ring-0 focus:ring-offset-0 dark:bg-slate-800',
+              {
+                'disabled:opacity-100': loading
+              }
+            )}
             rows={2}
             value={value}
             spellCheck={false}
@@ -53,12 +61,21 @@ const MessageInput = forwardRef<HTMLTextAreaElement, MessageInputProps>(
             onCompositionEnd={onCompositionEnd}
             placeholder="Type your message here."
             onInput={onInput}
-            disabled={disabled}
+            disabled={disabled || loading}
           />
         </ScrollArea>
-        <div className="absolute bottom-1 right-3 rounded-lg text-xs text-slate-400 dark:text-slate-50">
+        <div
+          className={cn('absolute bottom-1 right-3 rounded-lg text-xs text-slate-400', {
+            'opacity-50': disabled || loading
+          })}
+        >
           {value?.length ?? 0}/{maxLength}
         </div>
+        {loading && (
+          <div className="absolute inset-0 flex items-center justify-center text-slate-800 after:absolute after:inset-0 after:backdrop-blur-xs dark:text-slate-100">
+            <LoadingIcon className="relative z-10 size-10"></LoadingIcon>
+          </div>
+        )}
       </div>
     )
   }
