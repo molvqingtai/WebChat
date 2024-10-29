@@ -1,3 +1,10 @@
+## [1.5.1](https://github.com/molvqingtai/WebChat/compare/v1.5.0...v1.5.1) (2024-10-29)
+
+
+### Bug Fixes
+
+* incompatibility with old data causes app to crash ([bd07bdc](https://github.com/molvqingtai/WebChat/commit/bd07bdc2c3df031d5a04d3eebade5d7fc7672600))
+
 # [1.5.0](https://github.com/molvqingtai/WebChat/compare/v1.4.0...v1.5.0) (2024-10-29)
 
 
