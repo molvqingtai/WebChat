@@ -111,7 +111,7 @@ const AppButton: FC<AppButtonProps> = ({ className }) => {
             >
               <div
                 className={cn(
-                  'absolute grid grid-rows-[repeat(2,minmax(0,2.5rem))] w-full justify-center items-center transition-all duration-500',
+                  'absolute grid grid-rows-[repeat(2,minmax(0,2.5rem))] w-full justify-center items-center transition-all duration-300',
                   isDarkMode ? 'top-0' : '-top-10',
                   isDarkMode ? 'bg-slate-950 text-white' : 'bg-white text-orange-400'
                 )}

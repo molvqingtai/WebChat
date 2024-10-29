@@ -60,7 +60,7 @@ const compress = async (
 const compressImage = async (options: Options) => {
   const { input, targetSize, toleranceSize = -1024 } = options
   if (!['image/jpeg', 'image/png', 'image/webp'].includes(input.type)) {
-    throw new Error('Invalid input type, only support image/jpeg, image/png, image/webp')
+    throw new Error('Only PNG, JPEG and WebP image are supported.')
   }
 
   if (input.size <= targetSize) {
