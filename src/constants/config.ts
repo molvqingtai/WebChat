@@ -3,7 +3,6 @@ import { version } from '@/../package.json'
 
 export const EMOJI_LIST = [
   '😀',
-  '😃',
   '😄',
   '😁',
   '😆',
@@ -113,6 +112,7 @@ export const EMOJI_LIST = [
   '👽',
   '👾',
   '🤖',
+  '👀',
   '😺',
   '😸',
   '😹',
