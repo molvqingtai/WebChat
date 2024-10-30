@@ -20,6 +20,7 @@ The aim is to add chat room functionality to any website, you'll never feel alon
 
 - [Chrome Web Store](https://chromewebstore.google.com/detail/webchat/cpaedhbidlpnbdfegakhiamfpndhjpgf)
 - [Edge Web Store](https://microsoftedge.microsoft.com/addons/detail/mmfdplbomjjlgdffecapcpgjmhfhmiob)
+- [Firefox Addons](https://addons.mozilla.org/firefox/addon/webchat/)
 
 **Manual Installation**
 
