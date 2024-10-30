@@ -20,12 +20,14 @@ const useCursorPosition = () => {
         handleRef.current.removeEventListener('input', handler)
         handleRef.current.removeEventListener('keydown', handler)
         handleRef.current.removeEventListener('keyup', handler)
+        handleRef.current.removeEventListener('focus', handler)
       }
       if (node) {
         node.addEventListener('click', handler)
         node.addEventListener('input', handler)
         node.addEventListener('keydown', handler)
         node.addEventListener('keyup', handler)
+        node.addEventListener('focus', handler)
       }
       handleRef.current = node
     },
