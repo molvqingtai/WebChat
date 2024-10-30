@@ -46,12 +46,21 @@ const Markdown: FC<MarkdownProps> = ({ children = '', className }) => {
       urlTransform={urlTransform}
       components={{
         h1: ({ className, ...props }) => (
-          <h1 className={cn('my-2 mt-0 font-semibold text-2xl', className)} {...props} />
+          <h1 className={cn('my-2 mt-0 font-semibold text-2xl dark:text-slate-50', className)} {...props} />
         ),
-        h2: ({ className, ...props }) => <h2 className={cn('mb-2 mt-0 font-semibold', className)} {...props} />,
+        h2: ({ className, ...props }) => (
+          <h2 className={cn('mb-2 mt-0 font-semibold dark:text-slate-50', className)} {...props} />
+        ),
+        h3: ({ className, ...props }) => (
+          <h3 className={cn('mb-2 mt-0 font-semibold dark:text-slate-50', className)} {...props} />
+        ),
+        h4: ({ className, ...props }) => (
+          <h4 className={cn('mb-2 mt-0 font-semibold dark:text-slate-50', className)} {...props} />
+        ),
         img: ({ className, alt, ...props }) => (
           <img className={cn('my-2 max-w-[100%] rounded', className)} alt={alt} {...props} />
         ),
+        strong: ({ className, ...props }) => <strong className={cn('dark:text-slate-50', className)} {...props} />,
         a: ({ className, ...props }) => (
           <a
             className={cn('text-blue-500', className)}
