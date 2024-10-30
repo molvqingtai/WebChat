@@ -1,3 +1,10 @@
+## [1.5.3](https://github.com/molvqingtai/WebChat/compare/v1.5.2...v1.5.3) (2024-10-30)
+
+
+### Bug Fixes
+
+* insertion cursor position is incorrect ([2987c2d](https://github.com/molvqingtai/WebChat/commit/2987c2d85dd84639c06848ddc5cd4dc0b3288538))
+
 ## [1.5.2](https://github.com/molvqingtai/WebChat/compare/v1.5.1...v1.5.2) (2024-10-30)
 
 
