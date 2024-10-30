@@ -1,3 +1,10 @@
+## [1.5.2](https://github.com/molvqingtai/WebChat/compare/v1.5.1...v1.5.2) (2024-10-30)
+
+
+### Performance Improvements
+
+* optimize theme style ([7b91944](https://github.com/molvqingtai/WebChat/commit/7b91944fbf60c27d21274ddb7f28f97344c89ef5))
+
 ## [1.5.1](https://github.com/molvqingtai/WebChat/compare/v1.5.0...v1.5.1) (2024-10-29)
 
 
