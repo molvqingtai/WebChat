@@ -1,4 +1,4 @@
-import { forwardRef, type ChangeEvent, CompositionEvent, type KeyboardEvent } from 'react'
+import { forwardRef, type ChangeEvent, CompositionEvent, type KeyboardEvent, ClipboardEvent } from 'react'
 
 import { cn } from '@/utils'
 import { Textarea } from '@/components/ui/Textarea'
@@ -14,6 +14,7 @@ export interface MessageInputProps {
   disabled?: boolean
   loading?: boolean
   onInput?: (e: ChangeEvent<HTMLTextAreaElement>) => void
+  onPaste?: (e: ClipboardEvent<HTMLTextAreaElement>) => void
   onKeyDown?: (e: KeyboardEvent<HTMLTextAreaElement>) => void
   onCompositionStart?: (e: CompositionEvent<HTMLTextAreaElement>) => void
   onCompositionEnd?: (e: CompositionEvent<HTMLTextAreaElement>) => void
@@ -31,6 +32,7 @@ const MessageInput = forwardRef<HTMLTextAreaElement, MessageInputProps>(
       className,
       maxLength = 500,
       onInput,
+      onPaste,
       onKeyDown,
       onCompositionStart,
       onCompositionEnd,
@@ -45,6 +47,7 @@ const MessageInput = forwardRef<HTMLTextAreaElement, MessageInputProps>(
         <ScrollArea className="box-border max-h-28 w-full rounded-lg border border-input bg-background ring-offset-background focus-within:ring-1 focus-within:ring-ring 2xl:max-h-40">
           <Textarea
             ref={ref}
+            onPaste={onPaste}
             onKeyDown={onKeyDown}
             autoFocus={autoFocus}
             maxLength={maxLength}

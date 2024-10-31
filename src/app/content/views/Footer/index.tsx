@@ -1,4 +1,4 @@
-import { ChangeEvent, useMemo, useRef, useState, KeyboardEvent, type FC } from 'react'
+import { ChangeEvent, useMemo, useRef, useState, KeyboardEvent, type FC, ClipboardEvent } from 'react'
 import { CornerDownLeftIcon } from 'lucide-react'
 import { useRemeshDomain, useRemeshQuery, useRemeshSend } from 'remesh-react'
 import MessageInput from '../../components/MessageInput'
@@ -216,6 +216,13 @@ const Footer: FC = () => {
     send(messageInputDomain.command.InputCommand(currentMessage))
   }
 
+  const handlePaste = async (e: ClipboardEvent<HTMLTextAreaElement>) => {
+    const file = e.nativeEvent.clipboardData?.files[0]
+    if (['image/png', 'image/jpeg', 'image/webp'].includes(file?.type ?? '')) {
+      handleInjectImage(file!)
+    }
+  }
+
   const handleInjectEmoji = (emoji: string) => {
     const newMessage = `${message.slice(0, selectionEnd)}${emoji}${message.slice(selectionEnd)}`
 
@@ -335,6 +342,7 @@ const Footer: FC = () => {
         value={message}
         onInput={handleInput}
         loading={inputLoading}
+        onPaste={handlePaste}
         onKeyDown={handleKeyDown}
         maxLength={MESSAGE_MAX_LENGTH}
       ></MessageInput>
