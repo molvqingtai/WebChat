@@ -1,3 +1,10 @@
+## [1.5.4](https://github.com/molvqingtai/WebChat/compare/v1.5.3...v1.5.4) (2024-10-31)
+
+
+### Performance Improvements
+
+* support reading image from the clipboard ([362d7db](https://github.com/molvqingtai/WebChat/commit/362d7db7386d978c6d053a3e7262adf844e24f55))
+
 ## [1.5.3](https://github.com/molvqingtai/WebChat/compare/v1.5.2...v1.5.3) (2024-10-30)
 
 
