@@ -39,7 +39,10 @@ After installing the extension, you'll see a ghost icon in the bottom-right corn
 
 ### Video
 
-https://github.com/user-attachments/assets/34890975-5926-4e38-9a5f-34a28e17ff36
+https://github.com/user-attachments/assets/e7ac9b8e-1b6c-43fb-8469-7a0a2c09d450
+
+
+
 
 ### Standing on the Shoulders of Giants
 
