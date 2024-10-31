@@ -12,8 +12,6 @@ This is an anonymous chat browser extension that is decentralized and serverless
 
 The aim is to add chat room functionality to any website, you'll never feel alone again.
 
-
-
 ### Install
 
 **Install from Store**
@@ -35,14 +33,9 @@ The aim is to add chat room functionality to any website, you'll never feel alon
 
 After installing the extension, you'll see a ghost icon in the bottom-right corner of any website. Click it, and you'll be able to chat happily with others on the same site!
 
-
-
 ### Video
 
 https://github.com/user-attachments/assets/e7ac9b8e-1b6c-43fb-8469-7a0a2c09d450
-
-
-
 
 ### Standing on the Shoulders of Giants
 
@@ -54,7 +47,8 @@ In addition to the good idea of decentralized chat, it also leverages some fanta
 
 - **[wxt](https://wxt.dev/)**: This is the best framework I’ve used for building browser extensions, bar none.
 
-- **[trystero](https://github.com/dmotz/trystero)**: The core dependency for implementing decentralized communication, enabling connections to decentralized networks like IPFS, torrent, Nostr, etc.
+- ~~**[trystero](https://github.com/dmotz/trystero)**: The core dependency for implementing decentralized communication, enabling connections to decentralized networks like IPFS, torrent, Nostr, etc.~~
+- **[Artico](https://github.com/matallui/artico)**: A flexible set of libraries that help you create your own WebRTC-based solutions
 
 - **[ugly-avatar](https://github.com/txstc55/ugly-avatar)**: Use it to create stunning random avatars.
 
