@@ -1,3 +1,10 @@
+## [1.6.1](https://github.com/molvqingtai/WebChat/compare/v1.6.0...v1.6.1) (2024-11-03)
+
+
+### Bug Fixes
+
+* sooner style ([7e49ec2](https://github.com/molvqingtai/WebChat/commit/7e49ec210ed706a0ee94b3c2b7b17af719b604e1))
+
 # [1.6.0](https://github.com/molvqingtai/WebChat/compare/v1.5.4...v1.6.0) (2024-11-03)
 
 
