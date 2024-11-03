@@ -506,7 +506,7 @@ const RoomDomain = Remesh.domain({
       impl: ({ get }) => {
         const onLeaveRoom$ = fromEventPattern<string>(peerRoom.onLeaveRoom).pipe(
           map((peerId) => {
-            console.log('onLeaveRoom', peerId, get(SelfUserQuery()).peerId)
+            // console.log('onLeaveRoom', peerId)
             const user = get(UserListQuery()).find((user) => user.peerId === peerId)
 
             if (user) {
@@ -550,8 +550,6 @@ const RoomDomain = Remesh.domain({
       impl: ({ get }) => {
         const beforeUnload$ = fromEvent(window, 'beforeunload').pipe(
           map(() => {
-            console.log('beforeunload')
-
             return get(JoinStatusModule.query.IsFinishedQuery()) ? LeaveRoomCommand() : null
           })
         )

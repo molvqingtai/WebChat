@@ -73,6 +73,7 @@
   * {
     @apply border-border;
   }
+
   :host,
   :root {
     @apply !bg-background !text-foreground !text-base !visible;
