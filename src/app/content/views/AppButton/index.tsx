@@ -18,7 +18,7 @@ import LogoIcon6 from '@/assets/images/logo-6.svg'
 import AppStatusDomain from '@/domain/AppStatus'
 import { getDay } from 'date-fns'
 import { messenger } from '@/messenger'
-import useDarg from '@/hooks/useDarg'
+import useDraggable from '@/hooks/useDraggable'
 import useWindowResize from '@/hooks/useWindowResize'
 
 export interface AppButtonProps {
@@ -45,7 +45,7 @@ const AppButton: FC<AppButtonProps> = ({ className }) => {
     x,
     y,
     setRef: appButtonRef
-  } = useDarg({
+  } = useDraggable({
     initX: appPosition.x,
     initY: appPosition.y,
     minX: 50,

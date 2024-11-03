@@ -10,7 +10,7 @@ export interface DargOptions {
   minY: number
 }
 
-const useDarg = (options: DargOptions) => {
+const useDraggable = (options: DargOptions) => {
   const { initX, initY, maxX = 0, minX = 0, maxY = 0, minY = 0 } = options
 
   const mousePosition = useRef({ x: 0, y: 0 })
@@ -91,4 +91,4 @@ const useDarg = (options: DargOptions) => {
   return { setRef, ...position }
 }
 
-export default useDarg
+export default useDraggable
