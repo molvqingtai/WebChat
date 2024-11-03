@@ -5,7 +5,7 @@ import MessageInput from '../../components/MessageInput'
 import EmojiButton from '../../components/EmojiButton'
 import { Button } from '@/components/ui/Button'
 import MessageInputDomain from '@/domain/MessageInput'
-import { MESSAGE_MAX_LENGTH } from '@/constants/config'
+import { MESSAGE_MAX_LENGTH, WEB_RTC_MAX_MESSAGE_SIZE } from '@/constants/config'
 import RoomDomain from '@/domain/Room'
 import useCursorPosition from '@/hooks/useCursorPosition'
 import useShareRef from '@/hooks/useShareRef'
@@ -15,7 +15,7 @@ import useTriggerAway from '@/hooks/useTriggerAway'
 import { ScrollArea } from '@/components/ui/ScrollArea'
 import { Virtuoso, VirtuosoHandle } from 'react-virtuoso'
 import UserInfoDomain from '@/domain/UserInfo'
-import { blobToBase64, cn, compressImage, getRootNode, getTextSimilarity } from '@/utils'
+import { blobToBase64, cn, compressImage, getRootNode, getTextByteSize, getTextSimilarity } from '@/utils'
 import { Avatar, AvatarFallback } from '@/components/ui/Avatar'
 import { AvatarImage } from '@radix-ui/react-avatar'
 import ToastDomain from '@/domain/Toast'
@@ -135,6 +135,13 @@ const Footer: FC = () => {
         return (user ? { ...user, positions: [...positions] } : undefined)!
       })
       .filter(Boolean)
+
+    const newMessage = { body: transformedMessage, atUsers }
+    const byteSize = getTextByteSize(JSON.stringify(newMessage))
+
+    if (byteSize > WEB_RTC_MAX_MESSAGE_SIZE) {
+      return send(toastDomain.command.WarningCommand('Message size cannot exceed 256KiB.'))
+    }
 
     send(roomDomain.command.SendTextMessageCommand({ body: transformedMessage, atUsers }))
     send(messageInputDomain.command.ClearCommand())

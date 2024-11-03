@@ -58,7 +58,7 @@ const MessageItem: FC<MessageItemProps> = (props) => {
       <div className="overflow-hidden">
         <div className="grid grid-cols-[1fr_auto] items-center gap-x-2 leading-none">
           <div className="truncate text-sm font-semibold text-slate-600 dark:text-slate-50">{props.data.username}</div>
-          <FormatDate className="text-xs text-slate-400 dark:text-slate-100" date={props.data.date}></FormatDate>
+          <FormatDate className="text-xs text-slate-400 dark:text-slate-100" date={props.data.sendTime}></FormatDate>
         </div>
         <div>
           <div className="pb-2">

@@ -33,8 +33,6 @@ const mockTextList = [
   `![ExampleImage](${ExampleImage})`
 ]
 
-let printTextList = [...mockTextList]
-
 const generateUserInfo = async (): Promise<UserInfo> => {
   return {
     id: nanoid(),
@@ -52,8 +50,9 @@ const generateMessage = async (userInfo: UserInfo): Promise<Message> => {
   const { name: username, avatar: userAvatar, id: userId } = userInfo
   return {
     id: nanoid(),
-    body: printTextList.shift()!,
-    date: Date.now(),
+    body: mockTextList.shift()!,
+    sendTime: Date.now(),
+    receiveTime: Date.now(),
     type: MessageType.Normal,
     userId,
     username,
@@ -87,19 +86,16 @@ const Setup: FC = () => {
   }
 
   useEffect(() => {
-    printTextList.length === 0 && (printTextList = [...mockTextList])
     const timer = new Timer(
       async () => {
         await createMessage(await refreshUserInfo())
       },
-      { delay: 2000, immediate: true, limit: printTextList.length }
+      { delay: 2000, immediate: true, limit: mockTextList.length }
     )
-    timer.on('stop', () => {
-      printTextList.length === 0 && send(messageListDomain.command.ClearListCommand())
-    })
     timer.start()
     return () => {
       timer.stop()
+      send(messageListDomain.command.ClearListCommand())
     }
   }, [])
 

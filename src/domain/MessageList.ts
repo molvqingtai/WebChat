@@ -24,7 +24,8 @@ export interface NormalMessage extends MessageUser {
   type: MessageType.Normal
   id: string
   body: string
-  date: number
+  sendTime: number
+  receiveTime: number
   likeUsers: MessageUser[]
   hateUsers: MessageUser[]
   atUsers: AtUser[]
@@ -34,7 +35,8 @@ export interface PromptMessage extends MessageUser {
   type: MessageType.Prompt
   id: string
   body: string
-  date: number
+  sendTime: number
+  receiveTime: number
 }
 
 export type Message = NormalMessage | PromptMessage
@@ -120,6 +122,38 @@ const MessageListDomain = Remesh.domain({
       }
     })
 
+    const UpsertItemCommand = domain.command({
+      name: 'MessageList.UpsertItemCommand',
+      impl: (_, message: Message) => {
+        return [
+          MessageListModule.command.UpsertItemCommand(message),
+          UpsertItemEvent(message),
+          ChangeListEvent(),
+          SyncToStorageEvent()
+        ]
+      }
+    })
+
+    const UpsertItemEvent = domain.event<Message>({
+      name: 'MessageList.UpsertItemEvent'
+    })
+
+    const ResetListCommand = domain.command({
+      name: 'MessageList.ResetListCommand',
+      impl: (_, messages: Message[]) => {
+        return [
+          MessageListModule.command.SetListCommand(messages),
+          ResetListEvent(messages),
+          ChangeListEvent(),
+          SyncToStorageEvent()
+        ]
+      }
+    })
+
+    const ResetListEvent = domain.event<Message[]>({
+      name: 'MessageList.ResetListEvent'
+    })
+
     const ClearListEvent = domain.event({
       name: 'MessageList.ClearListEvent'
     })
@@ -164,14 +198,18 @@ const MessageListDomain = Remesh.domain({
         CreateItemCommand,
         UpdateItemCommand,
         DeleteItemCommand,
-        ClearListCommand
+        UpsertItemCommand,
+        ClearListCommand,
+        ResetListCommand
       },
       event: {
         ChangeListEvent,
         CreateItemEvent,
         UpdateItemEvent,
         DeleteItemEvent,
+        UpsertItemEvent,
         ClearListEvent,
+        ResetListEvent,
         SyncToStateEvent,
         SyncToStorageEvent
       }

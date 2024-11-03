@@ -5,6 +5,8 @@ import { stringToHex } from '@/utils'
 import { nanoid } from 'nanoid'
 import EventHub from '@resreq/event-hub'
 import { RoomMessage } from '../Room'
+import { JSONR } from '@/utils'
+
 export interface Config {
   peerId?: string
   roomId: string
@@ -50,11 +52,11 @@ class PeerRoom extends EventHub {
         if (!this.room) {
           this.emit('error', new Error('Room not joined'))
         } else {
-          this.room.send(JSON.stringify(message), id)
+          this.room.send(JSONR.stringify(message)!, id)
         }
       })
     } else {
-      this.room.send(JSON.stringify(message), id)
+      this.room.send(JSONR.stringify(message)!, id)
     }
     return this
   }
@@ -65,11 +67,11 @@ class PeerRoom extends EventHub {
         if (!this.room) {
           this.emit('error', new Error('Room not joined'))
         } else {
-          this.room.on('message', (message) => callback(JSON.parse(message) as RoomMessage))
+          this.room.on('message', (message) => callback(JSONR.parse(message) as RoomMessage))
         }
       })
     } else {
-      this.room.on('message', (message) => callback(JSON.parse(message) as RoomMessage))
+      this.room.on('message', (message) => callback(JSONR.parse(message) as RoomMessage))
     }
     return this
   }
