@@ -26,7 +26,7 @@ const Main: FC = () => {
       }
       return message
     })
-    .toSorted((a, b) => a.worldTime - b.worldTime)
+    .toSorted((a, b) => a.sendTime - b.sendTime)
 
   const handleLikeChange = (messageId: string) => {
     send(roomDomain.command.SendLikeMessageCommand(messageId))

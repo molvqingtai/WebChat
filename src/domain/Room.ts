@@ -26,14 +26,12 @@ export interface SyncUserMessage extends MessageUser {
   peerId: string
   joinTime: number
   sendTime: number
-  worldTime: number
   lastMessageTime: number
 }
 
 export interface SyncHistoryMessage extends MessageUser {
   type: SendType.SyncHistory
   sendTime: number
-  worldTime: number
   id: string
   messages: NormalMessage[]
 }
@@ -41,14 +39,12 @@ export interface SyncHistoryMessage extends MessageUser {
 export interface LikeMessage extends MessageUser {
   type: SendType.Like
   sendTime: number
-  worldTime: number
   id: string
 }
 
 export interface HateMessage extends MessageUser {
   type: SendType.Hate
   sendTime: number
-  worldTime: number
   id: string
 }
 
@@ -57,7 +53,6 @@ export interface TextMessage extends MessageUser {
   id: string
   body: string
   sendTime: number
-  worldTime: number
   atUsers: AtUser[]
 }
 
@@ -114,7 +109,7 @@ const RoomDomain = Remesh.domain({
         return (
           get(messageListDomain.query.ListQuery())
             .filter((message) => message.type === MessageType.Normal)
-            .toSorted((a, b) => b.worldTime - a.worldTime)[0]?.worldTime ?? new Date(1970, 1, 1).getTime()
+            .toSorted((a, b) => b.sendTime - a.sendTime)[0]?.sendTime ?? new Date(1970, 1, 1).getTime()
         )
       }
     })
@@ -140,8 +135,7 @@ const RoomDomain = Remesh.domain({
             body: `"${username}" joined the chat`,
             type: MessageType.Prompt,
             sendTime: Date.now(),
-            receiveTime: Date.now(),
-            worldTime: Date.now()
+            receiveTime: Date.now()
           }),
           JoinStatusModule.command.SetFinishedCommand(),
           JoinRoomEvent(peerRoom.roomId)
@@ -163,8 +157,7 @@ const RoomDomain = Remesh.domain({
             body: `"${username}" left the chat`,
             type: MessageType.Prompt,
             sendTime: Date.now(),
-            receiveTime: Date.now(),
-            worldTime: Date.now()
+            receiveTime: Date.now()
           }),
           UpdateUserListCommand({
             type: 'delete',
@@ -186,7 +179,6 @@ const RoomDomain = Remesh.domain({
           id: nanoid(),
           type: SendType.Text,
           sendTime: Date.now(),
-          worldTime: Date.now(),
           body: typeof message === 'string' ? message : message.body,
           atUsers: typeof message === 'string' ? [] : message.atUsers
         }
@@ -215,7 +207,6 @@ const RoomDomain = Remesh.domain({
           ...self,
           id: messageId,
           sendTime: Date.now(),
-          worldTime: Date.now(),
           type: SendType.Like
         }
         const listMessage: NormalMessage = {
@@ -237,7 +228,6 @@ const RoomDomain = Remesh.domain({
           ...self,
           id: messageId,
           sendTime: Date.now(),
-          worldTime: Date.now(),
           type: SendType.Hate
         }
         const listMessage: NormalMessage = {
@@ -259,7 +249,6 @@ const RoomDomain = Remesh.domain({
           ...self,
           id: nanoid(),
           sendTime: Date.now(),
-          worldTime: Date.now(),
           lastMessageTime,
           type: SendType.SyncUser
         }
@@ -297,8 +286,8 @@ const RoomDomain = Remesh.domain({
         const historyMessages = get(messageListDomain.query.ListQuery()).filter(
           (message) =>
             message.type === MessageType.Normal &&
-            message.worldTime > lastMessageTime &&
-            message.worldTime - Date.now() <= SYNC_HISTORY_MAX_DAYS * 24 * 60 * 60 * 1000
+            message.sendTime > lastMessageTime &&
+            message.sendTime - Date.now() <= SYNC_HISTORY_MAX_DAYS * 24 * 60 * 60 * 1000
         )
 
         /**
@@ -310,7 +299,6 @@ const RoomDomain = Remesh.domain({
             ...self,
             id: nanoid(),
             sendTime: Date.now(),
-            worldTime: Date.now(),
             type: SendType.SyncHistory,
             messages: [cur as NormalMessage]
           }
@@ -487,6 +475,7 @@ const RoomDomain = Remesh.domain({
                   return of(
                     messageListDomain.command.UpdateItemCommand({
                       ..._message,
+                      receiveTime: Date.now(),
                       [type]: desert(
                         _message[type],
                         {
@@ -529,7 +518,6 @@ const RoomDomain = Remesh.domain({
                   body: `"${user.username}" left the chat`,
                   type: MessageType.Prompt,
                   sendTime: Date.now(),
-                  worldTime: Date.now(),
                   receiveTime: Date.now()
                 }),
                 OnLeaveRoomEvent(peerId)

@@ -26,7 +26,6 @@ export interface NormalMessage extends MessageUser {
   body: string
   sendTime: number
   receiveTime: number
-  worldTime: number
   likeUsers: MessageUser[]
   hateUsers: MessageUser[]
   atUsers: AtUser[]
@@ -38,7 +37,6 @@ export interface PromptMessage extends MessageUser {
   body: string
   sendTime: number
   receiveTime: number
-  worldTime: number
 }
 
 export type Message = NormalMessage | PromptMessage

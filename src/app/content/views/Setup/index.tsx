@@ -53,7 +53,6 @@ const generateMessage = async (userInfo: UserInfo): Promise<Message> => {
     body: mockTextList.shift()!,
     sendTime: Date.now(),
     receiveTime: Date.now(),
-    worldTime: Date.now(),
     type: MessageType.Normal,
     userId,
     username,
