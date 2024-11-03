@@ -1,3 +1,10 @@
+# [1.6.0](https://github.com/molvqingtai/WebChat/compare/v1.5.4...v1.6.0) (2024-11-03)
+
+
+### Features
+
+* support offline message sync [#45](https://github.com/molvqingtai/WebChat/issues/45) ([7c4f655](https://github.com/molvqingtai/WebChat/commit/7c4f65573c591da2a8c8938e14066cee96d15b40))
+
 ## [1.5.4](https://github.com/molvqingtai/WebChat/compare/v1.5.3...v1.5.4) (2024-10-31)
 
 
