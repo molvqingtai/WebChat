@@ -199,3 +199,11 @@ export const APP_STATUS_STORAGE_KEY = 'WEB_CHAT_APP_STATUS' as const
  * 8kb * (1 - 0.33) = 5488 bytes
  */
 export const MAX_AVATAR_SIZE = 5120 as const
+
+export const SYNC_HISTORY_MAX_DAYS = 30 as const
+
+/**
+ * https://lgrahl.de/articles/demystifying-webrtc-dc-size-limit.html
+ * Message max size is 256KiB; if the message is too large, it will cause the connection to drop.
+ */
+export const WEB_RTC_MAX_MESSAGE_SIZE = 262144 as const

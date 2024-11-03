@@ -56,13 +56,13 @@ export default defineContentScript({
         container.append(app)
         const root = createRoot(app)
         root.render(
-          <React.StrictMode>
-            <RemeshRoot store={store}>
-              <RemeshScope domains={[NotificationDomain()]}>
-                <App />
-              </RemeshScope>
-            </RemeshRoot>
-          </React.StrictMode>
+          // <React.StrictMode>
+          <RemeshRoot store={store}>
+            <RemeshScope domains={[NotificationDomain()]}>
+              <App />
+            </RemeshScope>
+          </RemeshRoot>
+          // </React.StrictMode>
         )
         return root
       },

@@ -7,6 +7,7 @@ import { webExtensionDriver } from '@/utils/webExtensionDriver'
 
 import { Storage } from '@/domain/externs/Storage'
 import { EVENT } from '@/constants/event'
+import { JSONR } from '@/utils'
 
 export const localStorage = createStorage({
   driver: localStorageDriver({ base: `${STORAGE_NAME}:` })
@@ -22,8 +23,8 @@ export const browserSyncStorage = createStorage({
 
 export const LocalStorageImpl = LocalStorageExtern.impl({
   name: STORAGE_NAME,
-  get: localStorage.getItem,
-  set: localStorage.setItem,
+  get: async (key) => JSONR.parse(await localStorage.getItem(key)),
+  set: (key, value) => localStorage.setItem(key, JSONR.stringify(value)!),
   remove: localStorage.removeItem,
   clear: localStorage.clear,
   watch: async (callback) => {
@@ -45,8 +46,8 @@ export const LocalStorageImpl = LocalStorageExtern.impl({
 
 export const IndexDBStorageImpl = IndexDBStorageExtern.impl({
   name: STORAGE_NAME,
-  get: indexDBStorage.getItem,
-  set: indexDBStorage.setItem,
+  get: async (key) => JSONR.parse(await indexDBStorage.getItem(key)),
+  set: (key, value) => indexDBStorage.setItem(key, JSONR.stringify(value)),
   remove: indexDBStorage.removeItem,
   clear: indexDBStorage.clear,
   watch: indexDBStorage.watch as Storage['watch'],
@@ -55,8 +56,8 @@ export const IndexDBStorageImpl = IndexDBStorageExtern.impl({
 
 export const BrowserSyncStorageImpl = BrowserSyncStorageExtern.impl({
   name: STORAGE_NAME,
-  get: browserSyncStorage.getItem,
-  set: browserSyncStorage.setItem,
+  get: async (key) => JSONR.parse(await browserSyncStorage.getItem(key)),
+  set: (key, value) => browserSyncStorage.setItem(key, JSONR.stringify(value)),
   remove: browserSyncStorage.removeItem,
   clear: browserSyncStorage.clear,
   watch: browserSyncStorage.watch as Storage['watch'],
