@@ -56,7 +56,14 @@ export const IndexDBStorageImpl = IndexDBStorageExtern.impl({
 
 export const BrowserSyncStorageImpl = BrowserSyncStorageExtern.impl({
   name: STORAGE_NAME,
-  get: async (key) => JSONR.parse(await browserSyncStorage.getItem(key)),
+  get: async (key) => {
+    const value: any = await browserSyncStorage.getItem(key)
+    try {
+      return JSONR.parse(value)
+    } catch {
+      return value
+    }
+  },
   set: (key, value) => browserSyncStorage.setItem(key, JSONR.stringify(value)),
   remove: browserSyncStorage.removeItem,
   clear: browserSyncStorage.clear,
