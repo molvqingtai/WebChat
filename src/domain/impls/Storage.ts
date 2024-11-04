@@ -58,6 +58,7 @@ export const BrowserSyncStorageImpl = BrowserSyncStorageExtern.impl({
   name: STORAGE_NAME,
   get: async (key) => {
     const value: any = await browserSyncStorage.getItem(key)
+    // Compatibility with old version data
     try {
       return JSONR.parse(value)
     } catch {
