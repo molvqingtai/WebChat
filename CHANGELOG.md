@@ -1,3 +1,10 @@
+## [1.6.2](https://github.com/molvqingtai/WebChat/compare/v1.6.1...v1.6.2) (2024-11-04)
+
+
+### Bug Fixes
+
+* incompatible with old data of userInfo, causing crash ([d5ced07](https://github.com/molvqingtai/WebChat/commit/d5ced0718f586ca156e80c56078ae1f3de4ee917))
+
 ## [1.6.1](https://github.com/molvqingtai/WebChat/compare/v1.6.0...v1.6.1) (2024-11-03)
 
 
