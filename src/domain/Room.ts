@@ -451,7 +451,6 @@ const RoomDomain = Remesh.domain({
                 }
 
                 case SendType.SyncHistory: {
-                  toast.success('Syncing history messages.')
                   return of(...message.messages.map((message) => messageListDomain.command.UpsertItemCommand(message)))
                 }
 

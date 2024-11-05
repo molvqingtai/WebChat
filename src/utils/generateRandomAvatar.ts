@@ -1,7 +1,7 @@
 import generateUglyAvatar from '@/lib/uglyAvatar'
-import compressImage from './compressImage'
+import compressImage, { ImageType } from './compressImage'
 
-const generateRandomAvatar = async (targetSize: number) => {
+const generateRandomAvatar = async (targetSize: number, outputType: ImageType = 'image/webp') => {
   const svgBlob = generateUglyAvatar()
 
   // compressImage can't directly compress svg, need to convert to jpeg first
@@ -11,13 +11,13 @@ const generateRandomAvatar = async (targetSize: number) => {
       const canvas = new OffscreenCanvas(image.width, image.height)
       const ctx = canvas.getContext('2d')
       ctx?.drawImage(image, 0, 0)
-      const blob = await canvas.convertToBlob({ type: 'image/jpeg' })
+      const blob = await canvas.convertToBlob({ type: outputType })
       resolve(blob)
     }
     image.onerror = () => reject(new Error('Failed to load SVG'))
     image.src = URL.createObjectURL(svgBlob)
   })
-  const miniAvatarBlob = await compressImage({ input: imageBlob, targetSize })
+  const miniAvatarBlob = await compressImage({ input: imageBlob, targetSize, outputType })
   const miniAvatarBase64 = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader()
     reader.onload = (e) => resolve(e.target?.result as string)

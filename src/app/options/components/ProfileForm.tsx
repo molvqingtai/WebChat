@@ -32,9 +32,9 @@ const defaultUserInfo: UserInfo = {
 
 const formSchema = v.object({
   id: v.string(),
-  createTime: v.number(),
   // Pure numeric strings will be converted to number
   // Issues: https://github.com/unjs/unstorage/issues/277
+  createTime: v.number(),
   name: v.pipe(
     v.string(),
     v.trim(),

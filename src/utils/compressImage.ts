@@ -59,15 +59,21 @@ const compress = async (
 
 const compressImage = async (options: Options) => {
   const { input, targetSize, toleranceSize = -1024 } = options
+
   if (!['image/jpeg', 'image/png', 'image/webp'].includes(input.type)) {
     throw new Error('Only PNG, JPEG and WebP image are supported.')
   }
 
-  if (input.size <= targetSize) {
-    return input
+  if (toleranceSize % 1024 !== 0) {
+    throw new Error('Tolerance size must be a multiple of 1024.')
   }
 
   const outputType = options.outputType || (input.type as ImageType)
+
+  if (input.size <= targetSize && input.type === outputType) {
+    return input
+  }
+
   const imageBitmap = await createImageBitmap(input)
 
   // Initialize quality range
