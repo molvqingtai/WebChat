@@ -250,7 +250,13 @@ const Footer: FC = () => {
   const handleInjectImage = async (file: File) => {
     try {
       setInputLoading(true)
-      const blob = await compressImage({ input: file, targetSize: 30 * 1024, outputType: 'image/webp' })
+
+      const blob = await compressImage({
+        input: file,
+        targetSize: 30 * 1024,
+        outputType: file.size > 30 * 1024 ? 'image/webp' : undefined
+      })
+
       const base64 = await blobToBase64(blob)
       const hash = nanoid()
       const newMessage = `${message.slice(0, selectionEnd)}![Image](hash:${hash})${message.slice(selectionEnd)}`
