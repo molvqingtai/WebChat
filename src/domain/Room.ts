@@ -281,7 +281,6 @@ const RoomDomain = Remesh.domain({
       name: 'Room.SendSyncHistoryMessageCommand',
       impl: ({ get }, { peerId, lastMessageTime }: { peerId: string; lastMessageTime: number }) => {
         const self = get(SelfUserQuery())
-        console.log('SendSyncHistoryMessageCommand', peerId, peerRoom.peerId)
 
         const historyMessages = get(messageListDomain.query.ListQuery()).filter(
           (message) =>
