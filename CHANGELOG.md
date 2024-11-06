@@ -1,3 +1,10 @@
+## [1.6.3](https://github.com/molvqingtai/WebChat/compare/v1.6.2...v1.6.3) (2024-11-06)
+
+
+### Performance Improvements
+
+* optimize image processing ([9438a31](https://github.com/molvqingtai/WebChat/commit/9438a3169dfda166776610ba6aac1ac168231636))
+
 ## [1.6.2](https://github.com/molvqingtai/WebChat/compare/v1.6.1...v1.6.2) (2024-11-04)
 
 
