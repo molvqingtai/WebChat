@@ -10,7 +10,6 @@ import Setup from '@/app/content/views/Setup'
 import MessageListDomain from '@/domain/MessageList'
 import { useEffect, useRef } from 'react'
 import { Toaster } from 'sonner'
-import { AnimatePresence, motion } from 'framer-motion'
 
 import DanmakuContainer from './components/DanmakuContainer'
 import DanmakuDomain from '@/domain/Danmaku'
@@ -69,18 +68,7 @@ export default function App() {
           <Header />
           <Main />
           <Footer />
-          <AnimatePresence>
-            {notUserInfo && (
-              <motion.div
-                className="contents"
-                initial={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.3 }}
-              >
-                <Setup></Setup>
-              </motion.div>
-            )}
-          </AnimatePresence>
+          {notUserInfo && <Setup></Setup>}
           <Toaster richColors offset="70px" visibleToasts={1} position="top-center"></Toaster>
         </AppMain>
         <AppButton></AppButton>
