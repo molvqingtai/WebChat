@@ -7,8 +7,8 @@ import UserInfoDomain from '@/domain/UserInfo'
 import { desert, getTextByteSize, upsert } from '@/utils'
 import { nanoid } from 'nanoid'
 import StatusModule from '@/domain/modules/Status'
-import { ToastExtern } from './externs/Toast'
 import { SYNC_HISTORY_MAX_DAYS, WEB_RTC_MAX_MESSAGE_SIZE } from '@/constants/config'
+import * as v from 'valibot'
 
 export { MessageType }
 
@@ -60,12 +60,78 @@ export type RoomMessage = SyncUserMessage | SyncHistoryMessage | LikeMessage | H
 
 export type RoomUser = MessageUser & { peerId: string; joinTime: number }
 
+const MessageUserSchema = {
+  userId: v.string(),
+  username: v.string(),
+  userAvatar: v.string()
+}
+
+const AtUserSchema = {
+  userId: v.string(),
+  username: v.string(),
+  userAvatar: v.string(),
+  positions: v.array(v.tuple([v.number(), v.number()]))
+}
+
+const NormalMessageSchema = {
+  id: v.string(),
+  type: v.literal(MessageType.Normal),
+  body: v.string(),
+  sendTime: v.number(),
+  receiveTime: v.number(),
+  likeUsers: v.array(v.object(MessageUserSchema)),
+  hateUsers: v.array(v.object(MessageUserSchema)),
+  atUsers: v.array(v.object(AtUserSchema))
+}
+
+const RoomMessageSchema = v.union([
+  v.object({
+    type: v.literal(SendType.Text),
+    id: v.string(),
+    body: v.string(),
+    sendTime: v.number(),
+    atUsers: v.array(v.object(AtUserSchema)),
+    ...MessageUserSchema
+  }),
+  v.object({
+    type: v.literal(SendType.Like),
+    id: v.string(),
+    sendTime: v.number(),
+    ...MessageUserSchema
+  }),
+  v.object({
+    type: v.literal(SendType.Hate),
+    id: v.string(),
+    sendTime: v.number(),
+    ...MessageUserSchema
+  }),
+  v.object({
+    type: v.literal(SendType.SyncUser),
+    id: v.string(),
+    peerId: v.string(),
+    joinTime: v.number(),
+    sendTime: v.number(),
+    lastMessageTime: v.number(),
+    ...MessageUserSchema
+  }),
+  v.object({
+    type: v.literal(SendType.SyncHistory),
+    id: v.string(),
+    sendTime: v.number(),
+    messages: v.array(v.object(NormalMessageSchema)),
+    ...MessageUserSchema
+  })
+])
+
+// Check if the message conforms to the format
+const checkMessageFormat = (message: v.InferInput<typeof RoomMessageSchema>) =>
+  v.safeParse(RoomMessageSchema, message).success
+
 const RoomDomain = Remesh.domain({
   name: 'RoomDomain',
   impl: (domain) => {
     const messageListDomain = domain.getDomain(MessageListDomain())
     const userInfoDomain = domain.getDomain(UserInfoDomain())
-    const toast = domain.getExtern(ToastExtern)
     const peerRoom = domain.getExtern(PeerRoomExtern)
 
     const PeerIdState = domain.state<string>({
@@ -407,7 +473,11 @@ const RoomDomain = Remesh.domain({
       impl: ({ get }) => {
         const onMessage$ = fromEventPattern<RoomMessage>(peerRoom.onMessage).pipe(
           mergeMap((message) => {
-            // console.log('onMessage', message)
+            // Filter out messages that do not conform to the format
+            if (!checkMessageFormat(message)) {
+              console.warn('Invalid message format', message)
+              return EMPTY
+            }
 
             const messageEvent$ = of(OnMessageEvent(message))
 
