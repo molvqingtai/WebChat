@@ -1,3 +1,10 @@
+## [1.6.5](https://github.com/molvqingtai/WebChat/compare/v1.6.4...v1.6.5) (2024-11-07)
+
+
+### Performance Improvements
+
+* delete setup exit animation ([d325be4](https://github.com/molvqingtai/WebChat/commit/d325be4becf562d2232a1a1e9a4e1582e44869a2))
+
 ## [1.6.4](https://github.com/molvqingtai/WebChat/compare/v1.6.3...v1.6.4) (2024-11-07)
 
 
