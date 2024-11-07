@@ -71,8 +71,8 @@ const Setup: FC = () => {
   const [userInfo, setUserInfo] = useState<UserInfo>()
 
   const handleSetup = () => {
-    send(userInfoDomain.command.UpdateUserInfoCommand(userInfo!))
     send(messageListDomain.command.ClearListCommand())
+    send(userInfoDomain.command.UpdateUserInfoCommand(userInfo!))
   }
 
   const refreshUserInfo = async () => {
