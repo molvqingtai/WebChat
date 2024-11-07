@@ -1,3 +1,10 @@
+## [1.6.4](https://github.com/molvqingtai/WebChat/compare/v1.6.3...v1.6.4) (2024-11-07)
+
+
+### Performance Improvements
+
+* check message format ([f6864e0](https://github.com/molvqingtai/WebChat/commit/f6864e06be01fd434136901ae85278ed4eab4c03))
+
 ## [1.6.3](https://github.com/molvqingtai/WebChat/compare/v1.6.2...v1.6.3) (2024-11-06)
 
 
