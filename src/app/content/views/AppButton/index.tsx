@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/Button'
 import { EVENT } from '@/constants/event'
 import UserInfoDomain from '@/domain/UserInfo'
 import useTriggerAway from '@/hooks/useTriggerAway'
-import { checkSystemDarkMode, cn } from '@/utils'
+import { checkDarkMode, cn } from '@/utils'
 import LogoIcon0 from '@/assets/images/logo-0.svg'
 import LogoIcon1 from '@/assets/images/logo-1.svg'
 import LogoIcon2 from '@/assets/images/logo-2.svg'
@@ -36,8 +36,7 @@ const AppButton: FC<AppButtonProps> = ({ className }) => {
 
   const DayLogo = [LogoIcon0, LogoIcon1, LogoIcon2, LogoIcon3, LogoIcon4, LogoIcon5, LogoIcon6][getDay(Date())]
 
-  const isDarkMode =
-    userInfo?.themeMode === 'dark' ? true : userInfo?.themeMode === 'light' ? false : checkSystemDarkMode()
+  const isDarkMode = userInfo?.themeMode === 'dark' ? true : userInfo?.themeMode === 'light' ? false : checkDarkMode()
 
   const [menuOpen, setMenuOpen] = useState(false)
 

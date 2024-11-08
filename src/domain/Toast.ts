@@ -13,7 +13,7 @@ const ToastDomain = Remesh.domain({
       name: 'Toast.OnRoomSelfJoinRoomEffect',
       impl: ({ fromEvent }) => {
         const onRoomJoin$ = fromEvent(roomDomain.event.SelfJoinRoomEvent).pipe(
-          map(() => toastModule.command.LoadingCommand('Connected to the chat.'))
+          map(() => toastModule.command.LoadingCommand({ message: 'Connected to the chat.', duration: 3000 }))
         )
 
         return onRoomJoin$

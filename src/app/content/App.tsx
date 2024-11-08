@@ -14,7 +14,7 @@ import { Toaster } from 'sonner'
 import DanmakuContainer from './components/DanmakuContainer'
 import DanmakuDomain from '@/domain/Danmaku'
 import AppStatusDomain from '@/domain/AppStatus'
-import { cn } from '@/utils'
+import { checkDarkMode, cn } from '@/utils'
 
 /**
  * Fix requestAnimationFrame error in jest
@@ -52,8 +52,6 @@ export default function App() {
     }
   }, [userInfoSetFinished, messageListLoadFinished])
 
-  const danmakuContainerRef = useRef<HTMLDivElement>(null)
-
   useEffect(() => {
     danmakuIsEnabled && send(danmakuDomain.command.MountCommand(danmakuContainerRef.current!))
     return () => {
@@ -61,8 +59,17 @@ export default function App() {
     }
   }, [danmakuIsEnabled])
 
+  const themeMode =
+    userInfo?.themeMode === 'system'
+      ? checkDarkMode()
+        ? 'dark'
+        : 'light'
+      : (userInfo?.themeMode ?? (checkDarkMode() ? 'dark' : 'light'))
+
+  const danmakuContainerRef = useRef<HTMLDivElement>(null)
+
   return (
-    <div id="app" className={cn('contents', userInfo?.themeMode)}>
+    <div id="app" className={cn('contents', themeMode)}>
       {appStatusLoadIsFinished && (
         <>
           <AppMain>
@@ -72,7 +79,7 @@ export default function App() {
             {notUserInfo && <Setup></Setup>}
             <Toaster
               richColors
-              theme={userInfo?.themeMode}
+              theme={themeMode}
               offset="70px"
               visibleToasts={1}
               toastOptions={{

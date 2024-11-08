@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/Button'
 import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/Form'
 import { Input } from '@/components/ui/Input'
 import UserInfoDomain, { type UserInfo } from '@/domain/UserInfo'
-import { checkSystemDarkMode, cn, generateRandomAvatar } from '@/utils'
+import { cn, generateRandomAvatar } from '@/utils'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/RadioGroup'
 import { Label } from '@/components/ui/Label'
 import { RefreshCcwIcon } from 'lucide-react'
@@ -24,7 +24,7 @@ const defaultUserInfo: UserInfo = {
   name: '',
   avatar: '',
   createTime: Date.now(),
-  themeMode: checkSystemDarkMode() ? 'dark' : 'system',
+  themeMode: 'system',
   danmakuEnabled: true,
   notificationEnabled: true,
   notificationType: 'all'
