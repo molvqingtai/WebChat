@@ -8,51 +8,90 @@ export interface ToastOptions {
 const ToastModule = (domain: RemeshDomainContext, options: ToastOptions = { name: 'MessageToastModule' }) => {
   const toast = domain.getExtern(ToastExtern)
 
-  const SuccessEvent = domain.event({
+  const SuccessEvent = domain.event<number | string>({
     name: `${options.name}.SuccessEvent`
   })
 
   const SuccessCommand = domain.command({
     name: `${options.name}.SuccessCommand`,
-    impl: (_, message: string) => {
-      toast.success(message)
-      return [SuccessEvent()]
+    impl: (_, message: string | { message: string; duration?: number }) => {
+      const id = toast.success(
+        typeof message === 'string' ? message : message.message,
+        typeof message === 'string' ? undefined : message.duration
+      )
+      return [SuccessEvent(id)]
     }
   })
 
-  const ErrorEvent = domain.event({
+  const ErrorEvent = domain.event<number | string>({
     name: `${options.name}.ErrorEvent`
   })
 
   const ErrorCommand = domain.command({
     name: `${options.name}.ErrorCommand`,
-    impl: (_, message: string) => {
-      toast.error(message)
-      return [ErrorEvent()]
+    impl: (_, message: string | { message: string; duration?: number }) => {
+      const id = toast.error(
+        typeof message === 'string' ? message : message.message,
+        typeof message === 'string' ? undefined : message.duration
+      )
+      return [ErrorEvent(id)]
     }
   })
 
-  const InfoEvent = domain.event({
+  const InfoEvent = domain.event<number | string>({
     name: `${options.name}.InfoEvent`
   })
 
   const InfoCommand = domain.command({
     name: `${options.name}.InfoCommand`,
-    impl: (_, message: string) => {
-      toast.info(message)
-      return [InfoEvent()]
+    impl: (_, message: string | { message: string; duration?: number }) => {
+      const id = toast.info(
+        typeof message === 'string' ? message : message.message,
+        typeof message === 'string' ? undefined : message.duration
+      )
+      return [InfoEvent(id)]
     }
   })
 
-  const WarningEvent = domain.event({
+  const WarningEvent = domain.event<number | string>({
     name: `${options.name}.WarningEvent`
   })
 
   const WarningCommand = domain.command({
     name: `${options.name}.WarningCommand`,
-    impl: (_, message: string) => {
-      toast.warning(message)
-      return [WarningEvent()]
+    impl: (_, message: string | { message: string; duration?: number }) => {
+      const id = toast.warning(
+        typeof message === 'string' ? message : message.message,
+        typeof message === 'string' ? undefined : message.duration
+      )
+      return [WarningEvent(id)]
+    }
+  })
+
+  const LoadingEvent = domain.event<number | string>({
+    name: `${options.name}.LoadingEvent`
+  })
+
+  const LoadingCommand = domain.command({
+    name: `${options.name}.LoadingCommand`,
+    impl: (_, message: string | { message: string; duration?: number }) => {
+      const id = toast.loading(
+        typeof message === 'string' ? message : message.message,
+        typeof message === 'string' ? undefined : message.duration
+      )
+      return [LoadingEvent(id)]
+    }
+  })
+
+  const CancelEvent = domain.event<number | string>({
+    name: `${options.name}.CancelEvent`
+  })
+
+  const CancelCommand = domain.command({
+    name: `${options.name}.CancelCommand`,
+    impl: (_, id: number | string) => {
+      toast.cancel(id)
+      return [CancelEvent(id)]
     }
   })
 
@@ -61,13 +100,17 @@ const ToastModule = (domain: RemeshDomainContext, options: ToastOptions = { name
       SuccessEvent,
       ErrorEvent,
       InfoEvent,
-      WarningEvent
+      WarningEvent,
+      LoadingEvent,
+      CancelEvent
     },
     command: {
       SuccessCommand,
       ErrorCommand,
       InfoCommand,
-      WarningCommand
+      WarningCommand,
+      LoadingCommand,
+      CancelCommand
     }
   }
 }

@@ -107,7 +107,7 @@ const AppButton: FC<AppButtonProps> = ({ className }) => {
             <Button
               onClick={handleSwitchTheme}
               variant="outline"
-              className="relative size-10 overflow-hidden rounded-full p-0 shadow"
+              className="relative size-10 overflow-hidden rounded-full p-0 shadow dark:border-slate-600"
             >
               <div
                 className={cn(
@@ -121,10 +121,18 @@ const AppButton: FC<AppButtonProps> = ({ className }) => {
               </div>
             </Button>
 
-            <Button onClick={handleOpenOptionsPage} variant="outline" className="size-10 rounded-full p-0 shadow">
+            <Button
+              onClick={handleOpenOptionsPage}
+              variant="outline"
+              className="size-10 rounded-full p-0 shadow dark:border-slate-600"
+            >
               <SettingsIcon size={20} />
             </Button>
-            <Button ref={appButtonRef} variant="outline" className="size-10 cursor-grab rounded-full p-0 shadow">
+            <Button
+              ref={appButtonRef}
+              variant="outline"
+              className="size-10 cursor-grab rounded-full p-0 shadow dark:border-slate-600"
+            >
               <HandIcon size={20} />
             </Button>
           </motion.div>

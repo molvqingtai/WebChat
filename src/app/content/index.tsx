@@ -13,10 +13,10 @@ import { NotificationImpl } from '@/domain/impls/Notification'
 import { ToastImpl } from '@/domain/impls/Toast'
 // import { PeerRoomImpl } from '@/domain/impls/PeerRoom'
 import { PeerRoomImpl } from '@/domain/impls/PeerRoom2'
-import '@/assets/styles/tailwind.css'
 // Remove import after merging: https://github.com/emilkowalski/sonner/pull/508
 import '@/assets/styles/sonner.css'
 import '@/assets/styles/overlay.css'
+import '@/assets/styles/tailwind.css'
 import NotificationDomain from '@/domain/Notification'
 import { createElement } from '@/utils'
 

@@ -62,19 +62,31 @@ export default function App() {
   }, [danmakuIsEnabled])
 
   return (
-    appStatusLoadIsFinished && (
-      <div id="app" className={cn('contents', userInfo?.themeMode)}>
-        <AppMain>
-          <Header />
-          <Main />
-          <Footer />
-          {notUserInfo && <Setup></Setup>}
-          <Toaster richColors offset="70px" visibleToasts={1} position="top-center"></Toaster>
-        </AppMain>
-        <AppButton></AppButton>
-
-        <DanmakuContainer ref={danmakuContainerRef} />
-      </div>
-    )
+    <div id="app" className={cn('contents', userInfo?.themeMode)}>
+      {appStatusLoadIsFinished && (
+        <>
+          <AppMain>
+            <Header />
+            <Main />
+            <Footer />
+            {notUserInfo && <Setup></Setup>}
+            <Toaster
+              richColors
+              theme={userInfo?.themeMode}
+              offset="70px"
+              visibleToasts={1}
+              toastOptions={{
+                classNames: {
+                  toast: 'dark:bg-slate-950 border dark:border-slate-600'
+                }
+              }}
+              position="top-center"
+            ></Toaster>
+          </AppMain>
+          <AppButton></AppButton>
+        </>
+      )}
+      <DanmakuContainer ref={danmakuContainerRef} />
+    </div>
   )
 }
