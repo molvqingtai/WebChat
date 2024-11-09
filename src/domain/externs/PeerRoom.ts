@@ -5,7 +5,7 @@ export interface PeerRoom {
   readonly peerId: string
   readonly roomId: string
   joinRoom: () => PeerRoom
-  sendMessage: (message: RoomMessage, id?: string) => PeerRoom
+  sendMessage: (message: RoomMessage, id?: string | string[]) => PeerRoom
   onMessage: (callback: (message: RoomMessage) => void) => PeerRoom
   leaveRoom: () => PeerRoom
   onJoinRoom: (callback: (id: string) => void) => PeerRoom

@@ -40,7 +40,7 @@ const AppStatusDomain = Remesh.domain({
     })
 
     const StatusState = domain.state<AppStatus>({
-      name: 'AppStatus.OpenState',
+      name: 'AppStatus.StatusState',
       default: defaultStatusState
     })
 

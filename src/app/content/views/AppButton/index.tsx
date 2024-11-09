@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/Button'
 import { EVENT } from '@/constants/event'
 import UserInfoDomain from '@/domain/UserInfo'
 import useTriggerAway from '@/hooks/useTriggerAway'
-import { checkSystemDarkMode, cn } from '@/utils'
+import { checkDarkMode, cn } from '@/utils'
 import LogoIcon0 from '@/assets/images/logo-0.svg'
 import LogoIcon1 from '@/assets/images/logo-1.svg'
 import LogoIcon2 from '@/assets/images/logo-2.svg'
@@ -36,8 +36,7 @@ const AppButton: FC<AppButtonProps> = ({ className }) => {
 
   const DayLogo = [LogoIcon0, LogoIcon1, LogoIcon2, LogoIcon3, LogoIcon4, LogoIcon5, LogoIcon6][getDay(Date())]
 
-  const isDarkMode =
-    userInfo?.themeMode === 'dark' ? true : userInfo?.themeMode === 'light' ? false : checkSystemDarkMode()
+  const isDarkMode = userInfo?.themeMode === 'dark' ? true : userInfo?.themeMode === 'light' ? false : checkDarkMode()
 
   const [menuOpen, setMenuOpen] = useState(false)
 
@@ -107,7 +106,7 @@ const AppButton: FC<AppButtonProps> = ({ className }) => {
             <Button
               onClick={handleSwitchTheme}
               variant="outline"
-              className="relative size-10 overflow-hidden rounded-full p-0 shadow"
+              className="relative size-10 overflow-hidden rounded-full p-0 shadow dark:border-slate-600"
             >
               <div
                 className={cn(
@@ -121,10 +120,18 @@ const AppButton: FC<AppButtonProps> = ({ className }) => {
               </div>
             </Button>
 
-            <Button onClick={handleOpenOptionsPage} variant="outline" className="size-10 rounded-full p-0 shadow">
+            <Button
+              onClick={handleOpenOptionsPage}
+              variant="outline"
+              className="size-10 rounded-full p-0 shadow dark:border-slate-600"
+            >
               <SettingsIcon size={20} />
             </Button>
-            <Button ref={appButtonRef} variant="outline" className="size-10 cursor-grab rounded-full p-0 shadow">
+            <Button
+              ref={appButtonRef}
+              variant="outline"
+              className="size-10 cursor-grab rounded-full p-0 shadow dark:border-slate-600"
+            >
               <HandIcon size={20} />
             </Button>
           </motion.div>

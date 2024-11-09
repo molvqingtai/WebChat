@@ -2,7 +2,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/Avatar'
 import { MAX_AVATAR_SIZE } from '@/constants/config'
 import MessageListDomain, { Message, MessageType } from '@/domain/MessageList'
 import UserInfoDomain, { UserInfo } from '@/domain/UserInfo'
-import { checkSystemDarkMode, generateRandomAvatar, generateRandomName } from '@/utils'
+import { generateRandomAvatar, generateRandomName } from '@/utils'
 import { UserIcon } from 'lucide-react'
 import { nanoid } from 'nanoid'
 import { FC, useEffect, useState } from 'react'
@@ -39,7 +39,7 @@ const generateUserInfo = async (): Promise<UserInfo> => {
     name: generateRandomName(),
     avatar: await generateRandomAvatar(MAX_AVATAR_SIZE),
     createTime: Date.now(),
-    themeMode: checkSystemDarkMode() ? 'dark' : 'system',
+    themeMode: 'system',
     danmakuEnabled: true,
     notificationEnabled: true,
     notificationType: 'all'

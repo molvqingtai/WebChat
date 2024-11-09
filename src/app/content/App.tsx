@@ -14,7 +14,7 @@ import { Toaster } from 'sonner'
 import DanmakuContainer from './components/DanmakuContainer'
 import DanmakuDomain from '@/domain/Danmaku'
 import AppStatusDomain from '@/domain/AppStatus'
-import { cn } from '@/utils'
+import { checkDarkMode, cn } from '@/utils'
 
 /**
  * Fix requestAnimationFrame error in jest
@@ -52,8 +52,6 @@ export default function App() {
     }
   }, [userInfoSetFinished, messageListLoadFinished])
 
-  const danmakuContainerRef = useRef<HTMLDivElement>(null)
-
   useEffect(() => {
     danmakuIsEnabled && send(danmakuDomain.command.MountCommand(danmakuContainerRef.current!))
     return () => {
@@ -61,20 +59,41 @@ export default function App() {
     }
   }, [danmakuIsEnabled])
 
-  return (
-    appStatusLoadIsFinished && (
-      <div id="app" className={cn('contents', userInfo?.themeMode)}>
-        <AppMain>
-          <Header />
-          <Main />
-          <Footer />
-          {notUserInfo && <Setup></Setup>}
-          <Toaster richColors offset="70px" visibleToasts={1} position="top-center"></Toaster>
-        </AppMain>
-        <AppButton></AppButton>
+  const themeMode =
+    userInfo?.themeMode === 'system'
+      ? checkDarkMode()
+        ? 'dark'
+        : 'light'
+      : (userInfo?.themeMode ?? (checkDarkMode() ? 'dark' : 'light'))
 
-        <DanmakuContainer ref={danmakuContainerRef} />
-      </div>
-    )
+  const danmakuContainerRef = useRef<HTMLDivElement>(null)
+
+  return (
+    <div id="app" className={cn('contents', themeMode)}>
+      {appStatusLoadIsFinished && (
+        <>
+          <AppMain>
+            <Header />
+            <Main />
+            <Footer />
+            {notUserInfo && <Setup></Setup>}
+            <Toaster
+              richColors
+              theme={themeMode}
+              offset="70px"
+              visibleToasts={1}
+              toastOptions={{
+                classNames: {
+                  toast: 'dark:bg-slate-950 border dark:border-slate-600'
+                }
+              }}
+              position="top-center"
+            ></Toaster>
+          </AppMain>
+          <AppButton></AppButton>
+        </>
+      )}
+      <DanmakuContainer ref={danmakuContainerRef} />
+    </div>
   )
 }

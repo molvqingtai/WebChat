@@ -58,7 +58,7 @@ export interface TextMessage extends MessageUser {
 
 export type RoomMessage = SyncUserMessage | SyncHistoryMessage | LikeMessage | HateMessage | TextMessage
 
-export type RoomUser = MessageUser & { peerId: string; joinTime: number }
+export type RoomUser = MessageUser & { peerIds: string[]; joinTime: number }
 
 const MessageUserSchema = {
   userId: v.string(),
@@ -165,7 +165,7 @@ const RoomDomain = Remesh.domain({
     const SelfUserQuery = domain.query({
       name: 'Room.SelfUserQuery',
       impl: ({ get }) => {
-        return get(UserListQuery()).find((user) => user.peerId === get(PeerIdQuery()))!
+        return get(UserListQuery()).find((user) => user.peerIds.includes(peerRoom.peerId))!
       }
     })
 
@@ -185,9 +185,7 @@ const RoomDomain = Remesh.domain({
     const JoinRoomCommand = domain.command({
       name: 'Room.JoinRoomCommand',
       impl: ({ get }) => {
-        peerRoom.joinRoom()
         const { id: userId, name: username, avatar: userAvatar } = get(userInfoDomain.query.UserInfoQuery())!
-
         return [
           UpdateUserListCommand({
             type: 'create',
@@ -204,15 +202,20 @@ const RoomDomain = Remesh.domain({
             receiveTime: Date.now()
           }),
           JoinStatusModule.command.SetFinishedCommand(),
-          JoinRoomEvent(peerRoom.roomId)
+          JoinRoomEvent(peerRoom.roomId),
+          SelfJoinRoomEvent(peerRoom.roomId)
         ]
       }
+    })
+
+    JoinRoomCommand.after(() => {
+      peerRoom.joinRoom()
+      return null
     })
 
     const LeaveRoomCommand = domain.command({
       name: 'Room.LeaveRoomCommand',
       impl: ({ get }) => {
-        peerRoom.leaveRoom()
         const { id: userId, name: username, avatar: userAvatar } = get(userInfoDomain.query.UserInfoQuery())!
         return [
           messageListDomain.command.CreateItemCommand({
@@ -230,9 +233,15 @@ const RoomDomain = Remesh.domain({
             user: { peerId: peerRoom.peerId, joinTime: Date.now(), userId, username, userAvatar }
           }),
           JoinStatusModule.command.SetInitialCommand(),
-          LeaveRoomEvent(peerRoom.roomId)
+          LeaveRoomEvent(peerRoom.roomId),
+          SelfLeaveRoomEvent(peerRoom.roomId)
         ]
       }
+    })
+
+    LeaveRoomCommand.after(() => {
+      peerRoom.leaveRoom()
+      return null
     })
 
     const SendTextMessageCommand = domain.command({
@@ -314,6 +323,7 @@ const RoomDomain = Remesh.domain({
         const syncUserMessage: SyncUserMessage = {
           ...self,
           id: nanoid(),
+          peerId: peerRoom.peerId,
           sendTime: Date.now(),
           lastMessageTime,
           type: SendType.SyncUser
@@ -393,12 +403,32 @@ const RoomDomain = Remesh.domain({
 
     const UpdateUserListCommand = domain.command({
       name: 'Room.UpdateUserListCommand',
-      impl: ({ get }, action: { type: 'create' | 'delete'; user: RoomUser }) => {
+      impl: ({ get }, action: { type: 'create' | 'delete'; user: Omit<RoomUser, 'peerIds'> & { peerId: string } }) => {
         const userList = get(UserListState())
+        const existUser = userList.find((user) => user.userId === action.user.userId)
         if (action.type === 'create') {
-          return [UserListState().new(upsert(userList, action.user, 'userId'))]
+          return [
+            UserListState().new(
+              upsert(
+                userList,
+                { ...action.user, peerIds: [...(existUser?.peerIds || []), action.user.peerId] },
+                'userId'
+              )
+            )
+          ]
         } else {
-          return [UserListState().new(userList.filter(({ userId }) => userId !== action.user.userId))]
+          return [
+            UserListState().new(
+              upsert(
+                userList,
+                {
+                  ...action.user,
+                  peerIds: existUser?.peerIds?.filter((peerId) => peerId !== action.user.peerId) || []
+                },
+                'userId'
+              ).filter((user) => user.peerIds.length)
+            )
+          ]
         }
       }
     })
@@ -443,8 +473,16 @@ const RoomDomain = Remesh.domain({
       name: 'Room.OnJoinRoomEvent'
     })
 
+    const SelfJoinRoomEvent = domain.event<string>({
+      name: 'Room.SelfJoinRoomEvent'
+    })
+
     const OnLeaveRoomEvent = domain.event<string>({
       name: 'Room.OnLeaveRoomEvent'
+    })
+
+    const SelfLeaveRoomEvent = domain.event<string>({
+      name: 'Room.SelfLeaveRoomEvent'
     })
 
     const OnErrorEvent = domain.event<Error>({
@@ -486,37 +524,33 @@ const RoomDomain = Remesh.domain({
             const messageCommand$ = (() => {
               switch (message.type) {
                 case SendType.SyncUser: {
-                  const userList = get(UserListQuery())
                   const selfUser = get(SelfUserQuery())
-                  // If the browser has multiple tabs open, it can cause the same user to join multiple times with the same peerId but different userId
-                  const isRepeatJoin = userList.some((user) => user.userId === message.userId)
-                  // When a new user joins, it triggers join events for all users, i.e., newUser join event and oldUser join event
-                  // Use joinTime to determine if it's a new user
-                  const isNewJoinEvent = selfUser.joinTime < message.joinTime
+
+                  // If a new user joins after the current user has entered the room, a join log message needs to be created.
+                  const existUser = get(UserListQuery()).find((user) => user.userId === message.userId)
+                  const isNewJoinUser = !existUser && message.joinTime > selfUser.joinTime
 
                   const lastMessageTime = get(LastMessageTimeQuery())
                   const needSyncHistory = lastMessageTime > message.lastMessageTime
 
-                  return isRepeatJoin
-                    ? EMPTY
-                    : of(
-                        UpdateUserListCommand({ type: 'create', user: message }),
-                        isNewJoinEvent
-                          ? messageListDomain.command.CreateItemCommand({
-                              ...message,
-                              id: nanoid(),
-                              body: `"${message.username}" joined the chat`,
-                              type: MessageType.Prompt,
-                              receiveTime: Date.now()
-                            })
-                          : null,
-                        needSyncHistory
-                          ? SendSyncHistoryMessageCommand({
-                              peerId: message.peerId,
-                              lastMessageTime: message.lastMessageTime
-                            })
-                          : null
-                      )
+                  return of(
+                    UpdateUserListCommand({ type: 'create', user: message }),
+                    isNewJoinUser
+                      ? messageListDomain.command.CreateItemCommand({
+                          ...message,
+                          id: nanoid(),
+                          body: `"${message.username}" joined the chat`,
+                          type: MessageType.Prompt,
+                          receiveTime: Date.now()
+                        })
+                      : null,
+                    needSyncHistory
+                      ? SendSyncHistoryMessageCommand({
+                          peerId: message.peerId,
+                          lastMessageTime: message.lastMessageTime
+                        })
+                      : null
+                  )
                 }
 
                 case SendType.SyncHistory: {
@@ -574,20 +608,26 @@ const RoomDomain = Remesh.domain({
       impl: ({ get }) => {
         const onLeaveRoom$ = fromEventPattern<string>(peerRoom.onLeaveRoom).pipe(
           map((peerId) => {
+            if (get(JoinStatusModule.query.IsInitialQuery())) {
+              return null
+            }
             // console.log('onLeaveRoom', peerId)
-            const user = get(UserListQuery()).find((user) => user.peerId === peerId)
 
-            if (user) {
+            const existUser = get(UserListQuery()).find((user) => user.peerIds.includes(peerId))
+
+            if (existUser) {
               return [
-                UpdateUserListCommand({ type: 'delete', user }),
-                messageListDomain.command.CreateItemCommand({
-                  ...user,
-                  id: nanoid(),
-                  body: `"${user.username}" left the chat`,
-                  type: MessageType.Prompt,
-                  sendTime: Date.now(),
-                  receiveTime: Date.now()
-                }),
+                UpdateUserListCommand({ type: 'delete', user: { ...existUser, peerId } }),
+                existUser.peerIds.length === 1
+                  ? messageListDomain.command.CreateItemCommand({
+                      ...existUser,
+                      id: nanoid(),
+                      body: `"${existUser.username}" left the chat`,
+                      type: MessageType.Prompt,
+                      sendTime: Date.now(),
+                      receiveTime: Date.now()
+                    })
+                  : null,
                 OnLeaveRoomEvent(peerId)
               ]
             } else {
@@ -612,7 +652,6 @@ const RoomDomain = Remesh.domain({
       }
     })
 
-    // TODO: Move this to a service worker in the future, so we don't need to send a leave room message every time the page refreshes
     domain.effect({
       name: 'Room.OnUnloadEffect',
       impl: ({ get }) => {
@@ -647,7 +686,9 @@ const RoomDomain = Remesh.domain({
         SendSyncUserMessageEvent,
         SendSyncHistoryMessageEvent,
         JoinRoomEvent,
+        SelfJoinRoomEvent,
         LeaveRoomEvent,
+        SelfLeaveRoomEvent,
         OnMessageEvent,
         OnTextMessageEvent,
         OnJoinRoomEvent,

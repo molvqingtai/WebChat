@@ -45,7 +45,7 @@ class PeerRoom extends EventHub {
     return this
   }
 
-  sendMessage(message: RoomMessage, id?: string) {
+  sendMessage(message: RoomMessage, id?: string | string[]) {
     if (!this.room) {
       this.once('action', () => {
         if (!this.room) {
