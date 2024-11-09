@@ -16,7 +16,15 @@ function App() {
         <VersionLink></VersionLink>
         <Main>
           <ProfileForm></ProfileForm>
-          <Toaster richColors position="top-center" />
+          <Toaster
+            richColors
+            position="top-center"
+            toastOptions={{
+              classNames: {
+                toast: 'dark:bg-slate-950 border dark:border-slate-600'
+              }
+            }}
+          />
         </Main>
         <BadgeList></BadgeList>
       </Layout>
