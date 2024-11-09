@@ -1,3 +1,16 @@
+## [1.6.6](https://github.com/molvqingtai/WebChat/compare/v1.6.5...v1.6.6) (2024-11-09)
+
+
+### Bug Fixes
+
+* the number of online users is inaccurate ([c6301a8](https://github.com/molvqingtai/WebChat/commit/c6301a826ebcf38a34b93a02c8013dd1ef9e7abc))
+
+
+### Performance Improvements
+
+* optimize taost dark mode ([00f0bd0](https://github.com/molvqingtai/WebChat/commit/00f0bd08b04e49f83cee60bb5767acd460a1b5d0))
+* theme mode is compatible with website themes by default ([6222e3f](https://github.com/molvqingtai/WebChat/commit/6222e3f8af1bf4fad2466a9bf88c3b3159478a86))
+
 ## [1.6.5](https://github.com/molvqingtai/WebChat/compare/v1.6.4...v1.6.5) (2024-11-07)
 
 
