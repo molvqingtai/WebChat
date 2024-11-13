@@ -11,8 +11,8 @@ import { LocalStorageImpl, IndexDBStorageImpl, BrowserSyncStorageImpl } from '@/
 import { DanmakuImpl } from '@/domain/impls/Danmaku'
 import { NotificationImpl } from '@/domain/impls/Notification'
 import { ToastImpl } from '@/domain/impls/Toast'
-// import { PeerRoomImpl } from '@/domain/impls/PeerRoom'
-import { PeerRoomImpl } from '@/domain/impls/PeerRoom2'
+import { ChatRoomImpl } from '@/domain/impls/ChatRoom'
+import { VirtualRoomImpl } from '@/domain/impls/VirtualRoom'
 // Remove import after merging: https://github.com/emilkowalski/sonner/pull/508
 import '@/assets/styles/sonner.css'
 import '@/assets/styles/overlay.css'
@@ -38,7 +38,8 @@ export default defineContentScript({
         LocalStorageImpl,
         IndexDBStorageImpl,
         BrowserSyncStorageImpl,
-        PeerRoomImpl,
+        ChatRoomImpl,
+        VirtualRoomImpl,
         ToastImpl,
         DanmakuImpl,
         NotificationImpl

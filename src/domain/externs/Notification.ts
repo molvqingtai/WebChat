@@ -1,5 +1,5 @@
 import { Remesh } from 'remesh'
-import { TextMessage } from '../Room'
+import { TextMessage } from '@/domain/ChatRoom'
 
 export interface Notification {
   push: (message: TextMessage) => Promise<string>

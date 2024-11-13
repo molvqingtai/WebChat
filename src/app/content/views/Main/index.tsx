@@ -5,13 +5,13 @@ import MessageList from '../../components/MessageList'
 import MessageItem from '../../components/MessageItem'
 import PromptItem from '../../components/PromptItem'
 import UserInfoDomain from '@/domain/UserInfo'
-import RoomDomain, { MessageType } from '@/domain/Room'
+import ChatRoomDomain, { MessageType } from '@/domain/ChatRoom'
 import MessageListDomain from '@/domain/MessageList'
 
 const Main: FC = () => {
   const send = useRemeshSend()
   const messageListDomain = useRemeshDomain(MessageListDomain())
-  const roomDomain = useRemeshDomain(RoomDomain())
+  const chatRoomDomain = useRemeshDomain(ChatRoomDomain())
   const userInfoDomain = useRemeshDomain(UserInfoDomain())
   const userInfo = useRemeshQuery(userInfoDomain.query.UserInfoQuery())
   const _messageList = useRemeshQuery(messageListDomain.query.ListQuery())
@@ -29,11 +29,11 @@ const Main: FC = () => {
     .toSorted((a, b) => a.sendTime - b.sendTime)
 
   const handleLikeChange = (messageId: string) => {
-    send(roomDomain.command.SendLikeMessageCommand(messageId))
+    send(chatRoomDomain.command.SendLikeMessageCommand(messageId))
   }
 
   const handleHateChange = (messageId: string) => {
-    send(roomDomain.command.SendHateMessageCommand(messageId))
+    send(chatRoomDomain.command.SendHateMessageCommand(messageId))
   }
 
   return (

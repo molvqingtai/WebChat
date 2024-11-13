@@ -1,27 +1,29 @@
-import { Artico, Room } from '@rtco/client'
+import { Room } from '@rtco/client'
 
-import { PeerRoomExtern } from '@/domain/externs/PeerRoom'
+import { VirtualRoomExtern } from '@/domain/externs/VirtualRoom'
 import { stringToHex } from '@/utils'
-import { nanoid } from 'nanoid'
 import EventHub from '@resreq/event-hub'
-import { RoomMessage } from '../Room'
+import { RoomMessage } from '@/domain/VirtualRoom'
 import { JSONR } from '@/utils'
+import { VIRTUAL_ROOM_ID } from '@/constants/config'
+import Peer from './Peer'
 
 export interface Config {
-  peerId?: string
+  peer: Peer
   roomId: string
 }
 
-class PeerRoom extends EventHub {
+class VirtualRoom extends EventHub {
+  readonly peer: Peer
   readonly roomId: string
-  private rtco?: Artico
   readonly peerId: string
   private room?: Room
 
   constructor(config: Config) {
     super()
+    this.peer = config.peer
     this.roomId = config.roomId
-    this.peerId = config.peerId || nanoid()
+    this.peerId = config.peer.id
     this.joinRoom = this.joinRoom.bind(this)
     this.sendMessage = this.sendMessage.bind(this)
     this.onMessage = this.onMessage.bind(this)
@@ -32,16 +34,18 @@ class PeerRoom extends EventHub {
   }
 
   joinRoom() {
-    if (!this.rtco) {
-      this.rtco = new Artico({ id: this.peerId })
-    }
     if (this.room) {
-      this.room = this.rtco.join(this.roomId)
+      this.room = this.peer.join(this.roomId)
     } else {
-      this.rtco!.on('open', () => {
-        this.room = this.rtco!.join(this.roomId)
+      if (this.peer.state === 'ready') {
+        this.room = this.peer.join(this.roomId)
         this.emit('action')
-      })
+      } else {
+        this.peer!.on('open', () => {
+          this.room = this.peer.join(this.roomId)
+          this.emit('action')
+        })
+      }
     }
     return this
   }
@@ -123,19 +127,14 @@ class PeerRoom extends EventHub {
     return this
   }
   onError(callback: (error: Error) => void) {
-    this.rtco?.on('error', (error) => callback(error))
+    this.peer?.on('error', (error) => callback(error))
     this.on('error', (error: Error) => callback(error))
     return this
   }
 }
 
-const hostRoomId = stringToHex(document.location.host)
+const hostRoomId = stringToHex(VIRTUAL_ROOM_ID)
 
-const peerRoom = new PeerRoom({ roomId: hostRoomId })
+const virtualRoom = new VirtualRoom({ roomId: hostRoomId, peer: Peer.createInstance() })
 
-export const PeerRoomImpl = PeerRoomExtern.impl(peerRoom)
-
-// https://github.com/w3c/webextensions/issues/72
-// https://issues.chromium.org/issues/40251342
-// https://github.com/w3c/webrtc-extensions/issues/77
-// https://github.com/aklinker1/webext-core/pull/70
+export const VirtualRoomImpl = VirtualRoomExtern.impl(virtualRoom)

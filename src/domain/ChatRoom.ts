@@ -1,7 +1,7 @@
 import { Remesh } from 'remesh'
-import { map, merge, of, EMPTY, mergeMap, fromEvent, fromEventPattern } from 'rxjs'
+import { map, merge, of, EMPTY, mergeMap, fromEventPattern } from 'rxjs'
 import { AtUser, NormalMessage, type MessageUser } from './MessageList'
-import { PeerRoomExtern } from '@/domain/externs/PeerRoom'
+import { ChatRoomExtern } from '@/domain/externs/ChatRoom'
 import MessageListDomain, { MessageType } from '@/domain/MessageList'
 import UserInfoDomain from '@/domain/UserInfo'
 import { desert, getTextByteSize, upsert } from '@/utils'
@@ -127,16 +127,16 @@ const RoomMessageSchema = v.union([
 const checkMessageFormat = (message: v.InferInput<typeof RoomMessageSchema>) =>
   v.safeParse(RoomMessageSchema, message).success
 
-const RoomDomain = Remesh.domain({
-  name: 'RoomDomain',
+const ChatRoomDomain = Remesh.domain({
+  name: 'ChatRoomDomain',
   impl: (domain) => {
     const messageListDomain = domain.getDomain(MessageListDomain())
     const userInfoDomain = domain.getDomain(UserInfoDomain())
-    const peerRoom = domain.getExtern(PeerRoomExtern)
+    const chatRoomExtern = domain.getExtern(ChatRoomExtern)
 
     const PeerIdState = domain.state<string>({
       name: 'Room.PeerIdState',
-      default: peerRoom.peerId
+      default: chatRoomExtern.peerId
     })
 
     const PeerIdQuery = domain.query({
@@ -165,7 +165,7 @@ const RoomDomain = Remesh.domain({
     const SelfUserQuery = domain.query({
       name: 'Room.SelfUserQuery',
       impl: ({ get }) => {
-        return get(UserListQuery()).find((user) => user.peerIds.includes(peerRoom.peerId))!
+        return get(UserListQuery()).find((user) => user.peerIds.includes(chatRoomExtern.peerId))!
       }
     })
 
@@ -189,7 +189,7 @@ const RoomDomain = Remesh.domain({
         return [
           UpdateUserListCommand({
             type: 'create',
-            user: { peerId: peerRoom.peerId, joinTime: Date.now(), userId, username, userAvatar }
+            user: { peerId: chatRoomExtern.peerId, joinTime: Date.now(), userId, username, userAvatar }
           }),
           messageListDomain.command.CreateItemCommand({
             id: nanoid(),
@@ -202,14 +202,14 @@ const RoomDomain = Remesh.domain({
             receiveTime: Date.now()
           }),
           JoinStatusModule.command.SetFinishedCommand(),
-          JoinRoomEvent(peerRoom.roomId),
-          SelfJoinRoomEvent(peerRoom.roomId)
+          JoinRoomEvent(chatRoomExtern.roomId),
+          SelfJoinRoomEvent(chatRoomExtern.roomId)
         ]
       }
     })
 
     JoinRoomCommand.after(() => {
-      peerRoom.joinRoom()
+      chatRoomExtern.joinRoom()
       return null
     })
 
@@ -230,17 +230,17 @@ const RoomDomain = Remesh.domain({
           }),
           UpdateUserListCommand({
             type: 'delete',
-            user: { peerId: peerRoom.peerId, joinTime: Date.now(), userId, username, userAvatar }
+            user: { peerId: chatRoomExtern.peerId, joinTime: Date.now(), userId, username, userAvatar }
           }),
           JoinStatusModule.command.SetInitialCommand(),
-          LeaveRoomEvent(peerRoom.roomId),
-          SelfLeaveRoomEvent(peerRoom.roomId)
+          LeaveRoomEvent(chatRoomExtern.roomId),
+          SelfLeaveRoomEvent(chatRoomExtern.roomId)
         ]
       }
     })
 
     LeaveRoomCommand.after(() => {
-      peerRoom.leaveRoom()
+      chatRoomExtern.leaveRoom()
       return null
     })
 
@@ -267,7 +267,7 @@ const RoomDomain = Remesh.domain({
           atUsers: typeof message === 'string' ? [] : message.atUsers
         }
 
-        peerRoom.sendMessage(textMessage)
+        chatRoomExtern.sendMessage(textMessage)
         return [messageListDomain.command.CreateItemCommand(listMessage), SendTextMessageEvent(textMessage)]
       }
     })
@@ -288,7 +288,7 @@ const RoomDomain = Remesh.domain({
           ...localMessage,
           likeUsers: desert(localMessage.likeUsers, likeMessage, 'userId')
         }
-        peerRoom.sendMessage(likeMessage)
+        chatRoomExtern.sendMessage(likeMessage)
         return [messageListDomain.command.UpdateItemCommand(listMessage), SendLikeMessageEvent(likeMessage)]
       }
     })
@@ -309,7 +309,7 @@ const RoomDomain = Remesh.domain({
           ...localMessage,
           hateUsers: desert(localMessage.hateUsers, hateMessage, 'userId')
         }
-        peerRoom.sendMessage(hateMessage)
+        chatRoomExtern.sendMessage(hateMessage)
         return [messageListDomain.command.UpdateItemCommand(listMessage), SendHateMessageEvent(hateMessage)]
       }
     })
@@ -323,13 +323,13 @@ const RoomDomain = Remesh.domain({
         const syncUserMessage: SyncUserMessage = {
           ...self,
           id: nanoid(),
-          peerId: peerRoom.peerId,
+          peerId: chatRoomExtern.peerId,
           sendTime: Date.now(),
           lastMessageTime,
           type: SendType.SyncUser
         }
 
-        peerRoom.sendMessage(syncUserMessage, peerId)
+        chatRoomExtern.sendMessage(syncUserMessage, peerId)
         return [SendSyncUserMessageEvent(syncUserMessage)]
       }
     })
@@ -395,7 +395,7 @@ const RoomDomain = Remesh.domain({
         }, [])
 
         return pushHistoryMessageList.map((message) => {
-          peerRoom.sendMessage(message, peerId)
+          chatRoomExtern.sendMessage(message, peerId)
           return SendSyncHistoryMessageEvent(message)
         })
       }
@@ -411,7 +411,7 @@ const RoomDomain = Remesh.domain({
             UserListState().new(
               upsert(
                 userList,
-                { ...action.user, peerIds: [...(existUser?.peerIds || []), action.user.peerId] },
+                { ...action.user, peerIds: [...new Set(existUser?.peerIds || []), action.user.peerId] },
                 'userId'
               )
             )
@@ -492,10 +492,10 @@ const RoomDomain = Remesh.domain({
     domain.effect({
       name: 'Room.OnJoinRoomEffect',
       impl: () => {
-        const onJoinRoom$ = fromEventPattern<string>(peerRoom.onJoinRoom).pipe(
+        const onJoinRoom$ = fromEventPattern<string>(chatRoomExtern.onJoinRoom).pipe(
           mergeMap((peerId) => {
             // console.log('onJoinRoom', peerId)
-            if (peerRoom.peerId === peerId) {
+            if (chatRoomExtern.peerId === peerId) {
               return [OnJoinRoomEvent(peerId)]
             } else {
               return [SendSyncUserMessageCommand(peerId), OnJoinRoomEvent(peerId)]
@@ -509,7 +509,7 @@ const RoomDomain = Remesh.domain({
     domain.effect({
       name: 'Room.OnMessageEffect',
       impl: ({ get }) => {
-        const onMessage$ = fromEventPattern<RoomMessage>(peerRoom.onMessage).pipe(
+        const onMessage$ = fromEventPattern<RoomMessage>(chatRoomExtern.onMessage).pipe(
           mergeMap((message) => {
             // Filter out messages that do not conform to the format
             if (!checkMessageFormat(message)) {
@@ -606,7 +606,7 @@ const RoomDomain = Remesh.domain({
     domain.effect({
       name: 'Room.OnLeaveRoomEffect',
       impl: ({ get }) => {
-        const onLeaveRoom$ = fromEventPattern<string>(peerRoom.onLeaveRoom).pipe(
+        const onLeaveRoom$ = fromEventPattern<string>(chatRoomExtern.onLeaveRoom).pipe(
           map((peerId) => {
             if (get(JoinStatusModule.query.IsInitialQuery())) {
               return null
@@ -642,25 +642,13 @@ const RoomDomain = Remesh.domain({
     domain.effect({
       name: 'Room.OnErrorEffect',
       impl: () => {
-        const onRoomError$ = fromEventPattern<Error>(peerRoom.onError).pipe(
+        const onRoomError$ = fromEventPattern<Error>(chatRoomExtern.onError).pipe(
           map((error) => {
             console.error(error)
             return OnErrorEvent(error)
           })
         )
         return onRoomError$
-      }
-    })
-
-    domain.effect({
-      name: 'Room.OnUnloadEffect',
-      impl: ({ get }) => {
-        const beforeUnload$ = fromEvent(window, 'beforeunload').pipe(
-          map(() => {
-            return get(JoinStatusModule.query.IsFinishedQuery()) ? LeaveRoomCommand() : null
-          })
-        )
-        return beforeUnload$
       }
     })
 
@@ -699,4 +687,4 @@ const RoomDomain = Remesh.domain({
   }
 })
 
-export default RoomDomain
+export default ChatRoomDomain

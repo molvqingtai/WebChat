@@ -3,7 +3,7 @@ import StatusModule from './modules/Status'
 import { LocalStorageExtern } from './externs/Storage'
 import { APP_STATUS_STORAGE_KEY } from '@/constants/config'
 import StorageEffect from './modules/StorageEffect'
-import RoomDomain, { SendType } from './Room'
+import ChatRoomDomain, { SendType } from '@/domain/ChatRoom'
 import { map } from 'rxjs'
 
 export interface AppStatus {
@@ -26,7 +26,7 @@ const AppStatusDomain = Remesh.domain({
       extern: LocalStorageExtern,
       key: APP_STATUS_STORAGE_KEY
     })
-    const roomDomain = domain.getDomain(RoomDomain())
+    const chatRoomDomain = domain.getDomain(ChatRoomDomain())
 
     const StatusLoadModule = StatusModule(domain, {
       name: 'AppStatus.LoadStatusModule'
@@ -131,7 +131,7 @@ const AppStatusDomain = Remesh.domain({
     domain.effect({
       name: 'OnMessageEffect',
       impl: ({ fromEvent, get }) => {
-        const onMessage$ = fromEvent(roomDomain.event.OnMessageEvent).pipe(
+        const onMessage$ = fromEvent(chatRoomDomain.event.OnMessageEvent).pipe(
           map((message) => {
             const status = get(StatusState())
             if (!status.open && message.type === SendType.Text) {

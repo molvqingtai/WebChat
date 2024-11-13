@@ -5,17 +5,39 @@ import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/H
 import { Button } from '@/components/ui/Button'
 import { cn, getSiteInfo } from '@/utils'
 import { useRemeshDomain, useRemeshQuery } from 'remesh-react'
-import RoomDomain from '@/domain/Room'
+import ChatRoomDomain from '@/domain/ChatRoom'
+import VirtualRoomDomain, { FromInfo, RoomUser } from '@/domain/VirtualRoom'
 import { ScrollArea } from '@/components/ui/ScrollArea'
 import { Virtuoso } from 'react-virtuoso'
+import AvatarCircles from '@/components/magicui/AvatarCircles'
+import Link from '@/components/Link'
 
 const Header: FC = () => {
   const siteInfo = getSiteInfo()
-  const roomDomain = useRemeshDomain(RoomDomain())
-  const userList = useRemeshQuery(roomDomain.query.UserListQuery())
-  const onlineCount = userList.length
+  const chatRoomDomain = useRemeshDomain(ChatRoomDomain())
+  const virtualRoomDomain = useRemeshDomain(VirtualRoomDomain())
+  const chatUserList = useRemeshQuery(chatRoomDomain.query.UserListQuery())
+  const virtualUserList = useRemeshQuery(virtualRoomDomain.query.UserListQuery())
+  const chatOnlineCount = chatUserList.length
 
-  const [scrollParentRef, setScrollParentRef] = useState<HTMLDivElement | null>(null)
+  const virtualOnlineGroup = virtualUserList
+    .flatMap((user) => user.fromInfos.map((from) => ({ from, user })))
+    .reduce<(FromInfo & { users: RoomUser[] })[]>((acc, item) => {
+      const existSite = acc.find((group) => group.origin === item.from.origin)
+      if (existSite) {
+        const existUser = existSite.users.find((user) => user.userId === item.user.userId)
+        !existUser && existSite.users.push(item.user)
+      } else {
+        acc.push({ ...item.from, users: [item.user] })
+      }
+      return acc
+    }, [])
+    .sort((a, b) => b.users.length - a.users.length)
+
+  const [chatUserListScrollParentRef, setChatUserListScrollParentRef] = useState<HTMLDivElement | null>(null)
+  const [virtualOnlineGroupScrollParentRef, setVirtualOnlineGroupScrollParentRef] = useState<HTMLDivElement | null>(
+    null
+  )
 
   return (
     <div className="z-10 grid h-12 grid-flow-col grid-cols-[theme('spacing.20')_auto_theme('spacing.20')] items-center justify-between rounded-t-xl bg-white px-4 backdrop-blur-lg dark:bg-slate-950">
@@ -33,23 +55,55 @@ const Header: FC = () => {
             </span>
           </Button>
         </HoverCardTrigger>
-        <HoverCardContent className="w-80 rounded-lg">
-          <div className="grid grid-cols-[auto_1fr] gap-x-4">
-            <Avatar className="size-14">
-              <AvatarImage src={siteInfo.icon} alt="favicon" />
-              <AvatarFallback>
-                <Globe2Icon size="100%" className="text-gray-400" />
-              </AvatarFallback>
-            </Avatar>
-            <div className="grid items-center">
-              <h4 className="truncate text-sm font-semibold">{siteInfo.title}</h4>
-              {siteInfo.description && (
-                <p className="line-clamp-2 max-h-8 text-xs text-slate-500 dark:text-slate-300">
-                  {siteInfo.description}
-                </p>
+        <HoverCardContent className="w-80 rounded-lg p-0">
+          <ScrollArea className="max-h-96 min-h-[72px] p-2" ref={setVirtualOnlineGroupScrollParentRef}>
+            <Virtuoso
+              data={virtualOnlineGroup}
+              defaultItemHeight={56}
+              customScrollParent={virtualOnlineGroupScrollParentRef!}
+              itemContent={(_index, site) => (
+                <Link
+                  underline={false}
+                  href={site.origin}
+                  className="grid cursor-pointer grid-cols-[auto_1fr] items-center gap-x-2 rounded-lg px-2 py-1.5 hover:bg-accent hover:text-accent-foreground"
+                >
+                  <Avatar className="size-10">
+                    <AvatarImage src={site.icon} alt="favicon" />
+                    <AvatarFallback>
+                      <Globe2Icon size="100%" className="text-gray-400" />
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className="grid items-center">
+                    <div className="flex items-center gap-x-1 overflow-hidden">
+                      <h4 className="flex-1 truncate text-sm font-semibold">{site.hostname.replace(/^www\./i, '')}</h4>
+                      <div className="shrink-0 text-sm">
+                        <div className="flex items-center gap-x-1 text-nowrap text-xs text-slate-500">
+                          <span className="relative flex size-2">
+                            <span
+                              className={cn(
+                                'absolute inline-flex size-full animate-ping rounded-full opacity-75',
+                                site.users.length > 1 ? 'bg-green-400' : 'bg-orange-400'
+                              )}
+                            ></span>
+                            <span
+                              className={cn(
+                                'relative inline-flex size-full rounded-full',
+                                site.users.length > 1 ? 'bg-green-500' : 'bg-orange-500'
+                              )}
+                            ></span>
+                          </span>
+                          <span className="dark:text-slate-50">
+                            ONLINE {site.users.length > 99 ? '99+' : site.users.length}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                    <AvatarCircles max={9} size="xs" avatarUrls={site.users.map((user) => user.userAvatar)} />
+                  </div>
+                </Link>
               )}
-            </div>
-          </div>
+            ></Virtuoso>
+          </ScrollArea>
         </HoverCardContent>
       </HoverCard>
       <HoverCard>
@@ -60,26 +114,26 @@ const Header: FC = () => {
                 <span
                   className={cn(
                     'absolute inline-flex size-full animate-ping rounded-full opacity-75',
-                    onlineCount > 1 ? 'bg-green-400' : 'bg-orange-400'
+                    chatOnlineCount > 1 ? 'bg-green-400' : 'bg-orange-400'
                   )}
                 ></span>
                 <span
                   className={cn(
-                    'relative inline-flex size-2 rounded-full',
-                    onlineCount > 1 ? 'bg-green-500' : 'bg-orange-500'
+                    'relative inline-flex size-full rounded-full',
+                    chatOnlineCount > 1 ? 'bg-green-500' : 'bg-orange-500'
                   )}
                 ></span>
               </span>
-              <span className="dark:text-slate-50">ONLINE {onlineCount > 99 ? '99+' : onlineCount}</span>
+              <span className="dark:text-slate-50">ONLINE {chatOnlineCount > 99 ? '99+' : chatOnlineCount}</span>
             </div>
           </Button>
         </HoverCardTrigger>
         <HoverCardContent className="w-36 rounded-lg p-0">
-          <ScrollArea className="max-h-[204px] min-h-9 p-1" ref={setScrollParentRef}>
+          <ScrollArea className="max-h-[204px] min-h-9 p-1" ref={setChatUserListScrollParentRef}>
             <Virtuoso
-              data={userList}
+              data={chatUserList}
               defaultItemHeight={28}
-              customScrollParent={scrollParentRef!}
+              customScrollParent={chatUserListScrollParentRef!}
               itemContent={(index, user) => (
                 <div className={cn('flex  items-center gap-x-2 rounded-md px-2 py-1.5 outline-none')}>
                   <Avatar className="size-4 shrink-0">

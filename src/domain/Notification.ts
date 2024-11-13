@@ -1,15 +1,15 @@
 import { Remesh } from 'remesh'
 import { NotificationExtern } from './externs/Notification'
-import RoomDomain, { TextMessage } from './Room'
+import ChatRoomDomain, { TextMessage } from '@/domain/ChatRoom'
 import UserInfoDomain from './UserInfo'
 import { map, merge } from 'rxjs'
 
 const NotificationDomain = Remesh.domain({
   name: 'NotificationDomain',
   impl: (domain) => {
-    const notification = domain.getExtern(NotificationExtern)
+    const notificationExtern = domain.getExtern(NotificationExtern)
     const userInfoDomain = domain.getDomain(UserInfoDomain())
-    const roomDomain = domain.getDomain(RoomDomain())
+    const chatRoomDomain = domain.getDomain(ChatRoomDomain())
 
     const NotificationEnabledState = domain.state<boolean>({
       name: 'Notification.EnabledState',
@@ -40,7 +40,7 @@ const NotificationDomain = Remesh.domain({
     const PushCommand = domain.command({
       name: 'Notification.PushCommand',
       impl: (_, message: TextMessage) => {
-        notification.push(message)
+        notificationExtern.push(message)
         return [PushEvent(message)]
       }
     })
@@ -68,7 +68,7 @@ const NotificationDomain = Remesh.domain({
     domain.effect({
       name: 'Notification.OnRoomMessageEffect',
       impl: ({ fromEvent, get }) => {
-        const onTextMessage$ = fromEvent(roomDomain.event.OnTextMessageEvent)
+        const onTextMessage$ = fromEvent(chatRoomDomain.event.OnTextMessageEvent)
         const onMessage$ = merge(onTextMessage$).pipe(
           map((message) => {
             const notificationEnabled = get(IsEnabledQuery())

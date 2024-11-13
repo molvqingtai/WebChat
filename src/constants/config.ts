@@ -207,3 +207,5 @@ export const SYNC_HISTORY_MAX_DAYS = 30 as const
  * Message max size is 256KiB; if the message is too large, it will cause the connection to drop.
  */
 export const WEB_RTC_MAX_MESSAGE_SIZE = 262144 as const
+
+export const VIRTUAL_ROOM_ID = 'WEB_CHAT_VIRTUAL_ROOM' as const

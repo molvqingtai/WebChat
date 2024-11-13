@@ -6,7 +6,7 @@ import EmojiButton from '../../components/EmojiButton'
 import { Button } from '@/components/ui/Button'
 import MessageInputDomain from '@/domain/MessageInput'
 import { MESSAGE_MAX_LENGTH, WEB_RTC_MAX_MESSAGE_SIZE } from '@/constants/config'
-import RoomDomain from '@/domain/Room'
+import ChatRoomDomain from '@/domain/ChatRoom'
 import useCursorPosition from '@/hooks/useCursorPosition'
 import useShareRef from '@/hooks/useShareRef'
 import { Presence } from '@radix-ui/react-presence'
@@ -25,12 +25,12 @@ import { nanoid } from 'nanoid'
 const Footer: FC = () => {
   const send = useRemeshSend()
   const toastDomain = useRemeshDomain(ToastDomain())
-  const roomDomain = useRemeshDomain(RoomDomain())
+  const chatRoomDomain = useRemeshDomain(ChatRoomDomain())
   const messageInputDomain = useRemeshDomain(MessageInputDomain())
   const message = useRemeshQuery(messageInputDomain.query.MessageQuery())
   const userInfoDomain = useRemeshDomain(UserInfoDomain())
   const userInfo = useRemeshQuery(userInfoDomain.query.UserInfoQuery())
-  const userList = useRemeshQuery(roomDomain.query.UserListQuery())
+  const userList = useRemeshQuery(chatRoomDomain.query.UserListQuery())
 
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const { x, y, selectionStart, selectionEnd, setRef } = useCursorPosition()
@@ -143,7 +143,7 @@ const Footer: FC = () => {
       return send(toastDomain.command.WarningCommand('Message size cannot exceed 256KiB.'))
     }
 
-    send(roomDomain.command.SendTextMessageCommand({ body: transformedMessage, atUsers }))
+    send(chatRoomDomain.command.SendTextMessageCommand({ body: transformedMessage, atUsers }))
     send(messageInputDomain.command.ClearCommand())
   }
 
