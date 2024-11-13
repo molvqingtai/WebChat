@@ -1,19 +1,19 @@
 import { Remesh } from 'remesh'
-import { RoomMessage } from '../Room'
+import { RoomMessage } from '../ChatRoom'
 
-export interface PeerRoom {
+export interface ChatRoom {
   readonly peerId: string
   readonly roomId: string
-  joinRoom: () => PeerRoom
-  sendMessage: (message: RoomMessage, id?: string | string[]) => PeerRoom
-  onMessage: (callback: (message: RoomMessage) => void) => PeerRoom
-  leaveRoom: () => PeerRoom
-  onJoinRoom: (callback: (id: string) => void) => PeerRoom
-  onLeaveRoom: (callback: (id: string) => void) => PeerRoom
-  onError: (callback: (error: Error) => void) => PeerRoom
+  joinRoom: () => ChatRoom
+  sendMessage: (message: RoomMessage, id?: string | string[]) => ChatRoom
+  onMessage: (callback: (message: RoomMessage) => void) => ChatRoom
+  leaveRoom: () => ChatRoom
+  onJoinRoom: (callback: (id: string) => void) => ChatRoom
+  onLeaveRoom: (callback: (id: string) => void) => ChatRoom
+  onError: (callback: (error: Error) => void) => ChatRoom
 }
 
-export const PeerRoomExtern = Remesh.extern<PeerRoom>({
+export const ChatRoomExtern = Remesh.extern<ChatRoom>({
   default: {
     peerId: '',
     roomId: '',

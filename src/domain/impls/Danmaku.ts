@@ -1,6 +1,6 @@
 import { DanmakuExtern } from '@/domain/externs/Danmaku'
 
-import { TextMessage } from '@/domain/Room'
+import { TextMessage } from '@/domain/ChatRoom'
 import { createElement } from 'react'
 import DanmakuMessage from '@/app/content/components/DanmakuMessage'
 import { createRoot } from 'react-dom/client'

@@ -1,6 +1,6 @@
 import { EVENT } from '@/constants/event'
 import { defineExtensionMessaging } from '@webext-core/messaging'
-import { TextMessage } from '@/domain/Room'
+import { TextMessage } from '@/domain/ChatRoom'
 
 interface ProtocolMap {
   [EVENT.OPTIONS_PAGE_OPEN]: () => void

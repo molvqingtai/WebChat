@@ -1,27 +1,28 @@
-import { type DataPayload, type Room, joinRoom, selfId } from 'trystero'
+import { Room } from '@rtco/client'
 
-// import { joinRoom } from 'trystero/firebase'
-
-import { PeerRoomExtern } from '@/domain/externs/PeerRoom'
+import { ChatRoomExtern } from '@/domain/externs/ChatRoom'
 import { stringToHex } from '@/utils'
 import EventHub from '@resreq/event-hub'
-import { RoomMessage } from '../Room'
+import { RoomMessage } from '@/domain/ChatRoom'
+import { JSONR } from '@/utils'
+import Peer from './Peer'
 
 export interface Config {
-  peerId?: string
+  peer: Peer
   roomId: string
 }
 
-class PeerRoom extends EventHub {
-  readonly appId: string
-  private room?: Room
+class ChatRoom extends EventHub {
+  readonly peer: Peer
   readonly roomId: string
   readonly peerId: string
+  private room?: Room
+
   constructor(config: Config) {
     super()
-    this.appId = __NAME__
+    this.peer = config.peer
     this.roomId = config.roomId
-    this.peerId = selfId
+    this.peerId = config.peer.id
     this.joinRoom = this.joinRoom.bind(this)
     this.sendMessage = this.sendMessage.bind(this)
     this.onMessage = this.onMessage.bind(this)
@@ -32,16 +33,19 @@ class PeerRoom extends EventHub {
   }
 
   joinRoom() {
-    this.room = joinRoom({ appId: this.appId }, this.roomId)
-    /**
-     * If we wait to join, it will result in not being able to listen to our own join event.
-     * This might be related to the fact that:
-     * (If called more than once, only the latest callback registered is ever called.)
-     * Multiple listeners may overwrite each other.
-     * @see: https://github.com/dmotz/trystero?tab=readme-ov-file#onpeerjoincallback
-     */
-    // this.room.onPeerJoin(() => this.emit('action'))
-    this.emit('action')
+    if (this.room) {
+      this.room = this.peer.join(this.roomId)
+    } else {
+      if (this.peer.state === 'ready') {
+        this.room = this.peer.join(this.roomId)
+        this.emit('action')
+      } else {
+        this.peer!.on('open', () => {
+          this.room = this.peer.join(this.roomId)
+          this.emit('action')
+        })
+      }
+    }
     return this
   }
 
@@ -51,15 +55,12 @@ class PeerRoom extends EventHub {
         if (!this.room) {
           this.emit('error', new Error('Room not joined'))
         } else {
-          const [send] = this.room.makeAction('MESSAGE')
-          send(message as any as DataPayload, id)
+          this.room.send(JSONR.stringify(message)!, id)
         }
       })
     } else {
-      const [send] = this.room.makeAction('MESSAGE')
-      send(message as any as DataPayload, id)
+      this.room.send(JSONR.stringify(message)!, id)
     }
-
     return this
   }
 
@@ -69,13 +70,11 @@ class PeerRoom extends EventHub {
         if (!this.room) {
           this.emit('error', new Error('Room not joined'))
         } else {
-          const [, on] = this.room.makeAction('MESSAGE')
-          on((message) => callback(message as any as RoomMessage))
+          this.room.on('message', (message) => callback(JSONR.parse(message) as RoomMessage))
         }
       })
     } else {
-      const [, on] = this.room.makeAction('MESSAGE')
-      on((message) => callback(message as any as RoomMessage))
+      this.room.on('message', (message) => callback(JSONR.parse(message) as RoomMessage))
     }
     return this
   }
@@ -86,15 +85,11 @@ class PeerRoom extends EventHub {
         if (!this.room) {
           this.emit('error', new Error('Room not joined'))
         } else {
-          this.room.onPeerJoin((peerId) => {
-            callback(peerId)
-          })
+          this.room.on('join', (id) => callback(id))
         }
       })
     } else {
-      this.room.onPeerJoin((peerId) => {
-        callback(peerId)
-      })
+      this.room.on('join', (id) => callback(id))
     }
     return this
   }
@@ -105,11 +100,11 @@ class PeerRoom extends EventHub {
         if (!this.room) {
           this.emit('error', new Error('Room not joined'))
         } else {
-          this.room.onPeerLeave((peerId) => callback(peerId))
+          this.room.on('leave', (id) => callback(id))
         }
       })
     } else {
-      this.room.onPeerLeave((peerId) => callback(peerId))
+      this.room.on('leave', (id) => callback(id))
     }
     return this
   }
@@ -130,17 +125,18 @@ class PeerRoom extends EventHub {
     }
     return this
   }
-
   onError(callback: (error: Error) => void) {
+    this.peer?.on('error', (error) => callback(error))
     this.on('error', (error: Error) => callback(error))
     return this
   }
 }
 
 const hostRoomId = stringToHex(document.location.host)
-const peerRoom = new PeerRoom({ roomId: hostRoomId })
 
-export const PeerRoomImpl = PeerRoomExtern.impl(peerRoom)
+const chatRoom = new ChatRoom({ roomId: hostRoomId, peer: Peer.createInstance() })
+
+export const ChatRoomImpl = ChatRoomExtern.impl(chatRoom)
 
 // https://github.com/w3c/webextensions/issues/72
 // https://issues.chromium.org/issues/40251342

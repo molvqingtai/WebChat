@@ -11,6 +11,9 @@ export default {
       padding: '2rem'
     },
     extend: {
+      fontSize: {
+        '2xs': '0.625rem'
+      },
       zIndex: {
         infinity: 'calc(infinity)'
       },

@@ -1,18 +1,20 @@
 import { Remesh } from 'remesh'
 import ToastModule from './modules/Toast'
-import RoomDomain, { SendType } from './Room'
-import { filter, map } from 'rxjs'
+import ChatRoomDomain, { SendType } from './ChatRoom'
+import VirtualRoomDomain from './VirtualRoom'
+import { filter, map, merge } from 'rxjs'
 
 const ToastDomain = Remesh.domain({
   name: 'ToastDomain',
   impl: (domain) => {
-    const roomDomain = domain.getDomain(RoomDomain())
+    const chatRoomDomain = domain.getDomain(ChatRoomDomain())
+    const virtualRoomDomain = domain.getDomain(VirtualRoomDomain())
     const toastModule = ToastModule(domain)
 
     domain.effect({
       name: 'Toast.OnRoomSelfJoinRoomEffect',
       impl: ({ fromEvent }) => {
-        const onRoomJoin$ = fromEvent(roomDomain.event.SelfJoinRoomEvent).pipe(
+        const onRoomJoin$ = fromEvent(chatRoomDomain.event.SelfJoinRoomEvent).pipe(
           map(() => toastModule.command.LoadingCommand({ message: 'Connected to the chat.', duration: 3000 }))
         )
 
@@ -23,7 +25,10 @@ const ToastDomain = Remesh.domain({
     domain.effect({
       name: 'Toast.OnRoomErrorEffect',
       impl: ({ fromEvent }) => {
-        const onRoomError$ = fromEvent(roomDomain.event.OnErrorEvent).pipe(
+        const onRoomError$ = merge(
+          fromEvent(chatRoomDomain.event.OnErrorEvent),
+          fromEvent(virtualRoomDomain.event.OnErrorEvent)
+        ).pipe(
           map((error) => {
             return toastModule.command.ErrorCommand(error.message)
           })
@@ -36,7 +41,7 @@ const ToastDomain = Remesh.domain({
     domain.effect({
       name: 'Toast.OnSyncHistoryEffect',
       impl: ({ fromEvent }) => {
-        const onSyncHistory$ = fromEvent(roomDomain.event.OnMessageEvent).pipe(
+        const onSyncHistory$ = fromEvent(chatRoomDomain.event.OnMessageEvent).pipe(
           filter((message) => message.type === SendType.SyncHistory),
           map(() => toastModule.command.SuccessCommand('Syncing history messages.'))
         )

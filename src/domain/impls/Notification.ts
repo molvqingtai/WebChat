@@ -1,5 +1,5 @@
 import { NotificationExtern } from '@/domain/externs/Notification'
-import { TextMessage } from '../Room'
+import { TextMessage } from '@/domain/ChatRoom'
 import { EVENT } from '@/constants/event'
 import { messenger } from '@/messenger'
 

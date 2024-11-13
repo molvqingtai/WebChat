@@ -1,15 +1,15 @@
 import { Remesh } from 'remesh'
 import { DanmakuExtern } from './externs/Danmaku'
-import RoomDomain, { TextMessage } from './Room'
+import ChatRoomDomain, { TextMessage } from '@/domain/ChatRoom'
 import UserInfoDomain from './UserInfo'
 import { map, merge } from 'rxjs'
 
 const DanmakuDomain = Remesh.domain({
   name: 'DanmakuDomain',
   impl: (domain) => {
-    const danmaku = domain.getExtern(DanmakuExtern)
+    const danmakuExtern = domain.getExtern(DanmakuExtern)
     const userInfoDomain = domain.getDomain(UserInfoDomain())
-    const roomDomain = domain.getDomain(RoomDomain())
+    const chatRoomDomain = domain.getDomain(ChatRoomDomain())
 
     const MountState = domain.state({
       name: 'Danmaku.MountState',
@@ -49,7 +49,7 @@ const DanmakuDomain = Remesh.domain({
     const PushCommand = domain.command({
       name: 'Danmaku.PushCommand',
       impl: (_, message: TextMessage) => {
-        danmaku.push(message)
+        danmakuExtern.push(message)
         return [PushEvent(message)]
       }
     })
@@ -57,7 +57,7 @@ const DanmakuDomain = Remesh.domain({
     const UnshiftCommand = domain.command({
       name: 'Danmaku.UnshiftCommand',
       impl: (_, message: TextMessage) => {
-        danmaku.unshift(message)
+        danmakuExtern.unshift(message)
         return [UnshiftEvent(message)]
       }
     })
@@ -65,7 +65,7 @@ const DanmakuDomain = Remesh.domain({
     const ClearCommand = domain.command({
       name: 'Danmaku.ClearCommand',
       impl: () => {
-        danmaku.clear()
+        danmakuExtern.clear()
         return [ClearEvent()]
       }
     })
@@ -73,7 +73,7 @@ const DanmakuDomain = Remesh.domain({
     const MountCommand = domain.command({
       name: 'Danmaku.ClearCommand',
       impl: (_, container: HTMLElement) => {
-        danmaku.mount(container)
+        danmakuExtern.mount(container)
         return [MountEvent(container)]
       }
     })
@@ -81,7 +81,7 @@ const DanmakuDomain = Remesh.domain({
     const UnmountCommand = domain.command({
       name: 'Danmaku.UnmountCommand',
       impl: () => {
-        danmaku.unmount()
+        danmakuExtern.unmount()
         return [UnmountEvent()]
       }
     })
@@ -121,8 +121,8 @@ const DanmakuDomain = Remesh.domain({
     domain.effect({
       name: 'Danmaku.OnRoomMessageEffect',
       impl: ({ fromEvent, get }) => {
-        const sendTextMessage$ = fromEvent(roomDomain.event.SendTextMessageEvent)
-        const onTextMessage$ = fromEvent(roomDomain.event.OnTextMessageEvent)
+        const sendTextMessage$ = fromEvent(chatRoomDomain.event.SendTextMessageEvent)
+        const onTextMessage$ = fromEvent(chatRoomDomain.event.OnTextMessageEvent)
 
         const onMessage$ = merge(sendTextMessage$, onTextMessage$).pipe(
           map((message) => {

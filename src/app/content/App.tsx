@@ -4,7 +4,7 @@ import Main from '@/app/content/views/Main'
 import AppButton from '@/app/content/views/AppButton'
 import AppMain from '@/app/content/views/AppMain'
 import { useRemeshDomain, useRemeshQuery, useRemeshSend } from 'remesh-react'
-import RoomDomain from '@/domain/Room'
+import ChatRoomDomain from '@/domain/ChatRoom'
 import UserInfoDomain from '@/domain/UserInfo'
 import Setup from '@/app/content/views/Setup'
 import MessageListDomain from '@/domain/MessageList'
@@ -15,6 +15,7 @@ import DanmakuContainer from './components/DanmakuContainer'
 import DanmakuDomain from '@/domain/Danmaku'
 import AppStatusDomain from '@/domain/AppStatus'
 import { checkDarkMode, cn } from '@/utils'
+import VirtualRoomDomain from '@/domain/VirtualRoom'
 
 /**
  * Fix requestAnimationFrame error in jest
@@ -27,7 +28,8 @@ if (import.meta.env.FIREFOX) {
 
 export default function App() {
   const send = useRemeshSend()
-  const roomDomain = useRemeshDomain(RoomDomain())
+  const chatRoomDomain = useRemeshDomain(ChatRoomDomain())
+  const virtualRoomDomain = useRemeshDomain(VirtualRoomDomain())
   const userInfoDomain = useRemeshDomain(UserInfoDomain())
   const messageListDomain = useRemeshDomain(MessageListDomain())
   const danmakuDomain = useRemeshDomain(DanmakuDomain())
@@ -37,19 +39,32 @@ export default function App() {
   const userInfoLoadFinished = useRemeshQuery(userInfoDomain.query.UserInfoLoadIsFinishedQuery())
   const appStatusDomain = useRemeshDomain(AppStatusDomain())
   const appStatusLoadIsFinished = useRemeshQuery(appStatusDomain.query.StatusLoadIsFinishedQuery())
+  const chatRoomJoinIsFinished = useRemeshQuery(chatRoomDomain.query.JoinIsFinishedQuery())
+  const virtualRoomJoinIsFinished = useRemeshQuery(virtualRoomDomain.query.JoinIsFinishedQuery())
 
   const userInfo = useRemeshQuery(userInfoDomain.query.UserInfoQuery())
   const notUserInfo = userInfoLoadFinished && !userInfoSetFinished
 
+  const joinRoom = () => {
+    send(chatRoomDomain.command.JoinRoomCommand())
+    send(virtualRoomDomain.command.JoinRoomCommand())
+  }
+
+  const leaveRoom = () => {
+    chatRoomJoinIsFinished && send(chatRoomDomain.command.LeaveRoomCommand())
+    virtualRoomJoinIsFinished && send(virtualRoomDomain.command.LeaveRoomCommand())
+  }
+
   useEffect(() => {
     if (messageListLoadFinished) {
       if (userInfoSetFinished) {
-        send(roomDomain.command.JoinRoomCommand())
+        joinRoom()
       } else {
         // Clear simulated data when refreshing on the setup page
         send(messageListDomain.command.ClearListCommand())
       }
     }
+    return () => leaveRoom()
   }, [userInfoSetFinished, messageListLoadFinished])
 
   useEffect(() => {
@@ -58,6 +73,13 @@ export default function App() {
       danmakuIsEnabled && send(danmakuDomain.command.UnmountCommand())
     }
   }, [danmakuIsEnabled])
+
+  useEffect(() => {
+    window.addEventListener('beforeunload', leaveRoom)
+    return () => {
+      window.removeEventListener('beforeunload', leaveRoom)
+    }
+  }, [])
 
   const themeMode =
     userInfo?.themeMode === 'system'

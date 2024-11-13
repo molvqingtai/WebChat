@@ -1,6 +1,6 @@
 import { Avatar, AvatarFallback } from '@/components/ui/Avatar'
 import { Button } from '@/components/ui/Button'
-import { TextMessage } from '@/domain/Room'
+import { TextMessage } from '@/domain/ChatRoom'
 import { cn } from '@/utils'
 import { AvatarImage } from '@radix-ui/react-avatar'
 import { FC, MouseEvent } from 'react'
