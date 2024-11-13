@@ -1,3 +1,10 @@
+# [1.7.0](https://github.com/molvqingtai/WebChat/compare/v1.6.6...v1.7.0) (2024-11-13)
+
+
+### Features
+
+* ranking of users supporting online websites Closes [#48](https://github.com/molvqingtai/WebChat/issues/48) ([d0fea9e](https://github.com/molvqingtai/WebChat/commit/d0fea9e42d52d0e56171c08ed780066d66ebe3f1))
+
 ## [1.6.6](https://github.com/molvqingtai/WebChat/compare/v1.6.5...v1.6.6) (2024-11-09)
 
 
