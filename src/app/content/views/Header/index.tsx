@@ -41,7 +41,7 @@ const Header: FC = () => {
 
   return (
     <div className="z-10 grid h-12 grid-flow-col grid-cols-[theme('spacing.20')_auto_theme('spacing.20')] items-center justify-between rounded-t-xl bg-white px-4 backdrop-blur-lg dark:bg-slate-950">
-      <Avatar className="size-8">
+      <Avatar className="size-8 rounded-sm">
         <AvatarImage src={siteInfo.icon} alt="favicon" />
         <AvatarFallback>
           <Globe2Icon size="100%" className="text-gray-400" />
@@ -67,7 +67,7 @@ const Header: FC = () => {
                   href={site.origin}
                   className="grid cursor-pointer grid-cols-[auto_1fr] items-center gap-x-2 rounded-lg px-2 py-1.5 hover:bg-accent hover:text-accent-foreground"
                 >
-                  <Avatar className="size-10">
+                  <Avatar className="size-10 rounded-sm">
                     <AvatarImage src={site.icon} alt="favicon" />
                     <AvatarFallback>
                       <Globe2Icon size="100%" className="text-gray-400" />
@@ -134,7 +134,7 @@ const Header: FC = () => {
               data={chatUserList}
               defaultItemHeight={28}
               customScrollParent={chatUserListScrollParentRef!}
-              itemContent={(index, user) => (
+              itemContent={(_index, user) => (
                 <div className={cn('flex  items-center gap-x-2 rounded-md px-2 py-1.5 outline-none')}>
                   <Avatar className="size-4 shrink-0">
                     <AvatarImage className="size-full" src={user.userAvatar} alt="avatar" />
