@@ -50,7 +50,7 @@ const AppButton: FC<AppButtonProps> = ({ className }) => {
     minX: 50,
     maxX: window.innerWidth - 50,
     maxY: window.innerHeight - 22,
-    minY: window.innerHeight / 2
+    minY: 750
   })
 
   useWindowResize(({ width, height }) => {

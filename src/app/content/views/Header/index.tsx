@@ -11,6 +11,7 @@ import { ScrollArea } from '@/components/ui/ScrollArea'
 import { Virtuoso } from 'react-virtuoso'
 import AvatarCircles from '@/components/magicui/AvatarCircles'
 import Link from '@/components/Link'
+import NumberFlow from '@number-flow/react'
 
 const Header: FC = () => {
   const siteInfo = getSiteInfo()
@@ -49,7 +50,7 @@ const Header: FC = () => {
       </Avatar>
       <HoverCard>
         <HoverCardTrigger asChild>
-          <Button className="overflow-hidden p-2" variant="link">
+          <Button className="overflow-hidden rounded-md p-2" variant="link">
             <span className="truncate text-lg font-semibold text-slate-600 dark:text-slate-50">
               {siteInfo.hostname.replace(/^www\./i, '')}
             </span>
@@ -78,23 +79,30 @@ const Header: FC = () => {
                       <h4 className="flex-1 truncate text-sm font-semibold">{site.hostname.replace(/^www\./i, '')}</h4>
                       <div className="shrink-0 text-sm">
                         <div className="flex items-center gap-x-1 text-nowrap text-xs text-slate-500">
-                          <span className="relative flex size-2">
-                            <span
-                              className={cn(
-                                'absolute inline-flex size-full animate-ping rounded-full opacity-75',
-                                site.users.length > 1 ? 'bg-green-400' : 'bg-orange-400'
-                              )}
-                            ></span>
-                            <span
-                              className={cn(
-                                'relative inline-flex size-full rounded-full',
-                                site.users.length > 1 ? 'bg-green-500' : 'bg-orange-500'
-                              )}
-                            ></span>
-                          </span>
-                          <span className="dark:text-slate-50">
-                            ONLINE {site.users.length > 99 ? '99+' : site.users.length}
-                          </span>
+                          <div className="flex items-center gap-x-1 pt-px">
+                            <span className="relative flex size-2">
+                              <span
+                                className={cn(
+                                  'absolute inline-flex size-full animate-ping rounded-full opacity-75',
+                                  site.users.length > 1 ? 'bg-green-400' : 'bg-orange-400'
+                                )}
+                              ></span>
+                              <span
+                                className={cn(
+                                  'relative inline-flex size-full rounded-full',
+                                  site.users.length > 1 ? 'bg-green-500' : 'bg-orange-500'
+                                )}
+                              ></span>
+                            </span>
+                            <span className="flex items-center leading-none dark:text-slate-50">
+                              <span className="py-[0.25em]">ONLINE</span>
+                            </span>
+                          </div>
+                          {import.meta.env.FIREFOX ? (
+                            <span className="tabular-nums">{site.users.length}</span>
+                          ) : (
+                            <NumberFlow className="tabular-nums" willChange value={site.users.length} />
+                          )}
                         </div>
                       </div>
                     </div>
@@ -108,23 +116,35 @@ const Header: FC = () => {
       </HoverCard>
       <HoverCard>
         <HoverCardTrigger asChild>
-          <Button className="p-0" variant="link">
-            <div className="flex items-center gap-x-1 text-nowrap text-xs text-slate-500">
-              <span className="relative flex size-2">
-                <span
-                  className={cn(
-                    'absolute inline-flex size-full animate-ping rounded-full opacity-75',
-                    chatOnlineCount > 1 ? 'bg-green-400' : 'bg-orange-400'
-                  )}
-                ></span>
-                <span
-                  className={cn(
-                    'relative inline-flex size-full rounded-full',
-                    chatOnlineCount > 1 ? 'bg-green-500' : 'bg-orange-500'
-                  )}
-                ></span>
-              </span>
-              <span className="dark:text-slate-50">ONLINE {chatOnlineCount > 99 ? '99+' : chatOnlineCount}</span>
+          <Button className=" rounded-md p-0  hover:no-underline" variant="link">
+            <div className="relative flex items-center gap-x-1 text-nowrap text-xs  text-slate-500 hover:after:absolute hover:after:bottom-0  hover:after:left-0 hover:after:h-px hover:after:w-full hover:after:bg-black">
+              <div className="flex items-center gap-x-1 pt-px">
+                <span className="relative flex size-2">
+                  <span
+                    className={cn(
+                      'absolute inline-flex size-full animate-ping rounded-full opacity-75',
+                      chatOnlineCount > 1 ? 'bg-green-400' : 'bg-orange-400'
+                    )}
+                  ></span>
+                  <span
+                    className={cn(
+                      'relative inline-flex size-full rounded-full',
+                      chatOnlineCount > 1 ? 'bg-green-500' : 'bg-orange-500'
+                    )}
+                  ></span>
+                </span>
+                <span className="flex items-center leading-none dark:text-slate-50">
+                  <span className="py-[0.25em]">ONLINE</span>
+                </span>
+              </div>
+              {import.meta.env.FIREFOX ? (
+                <span className="tabular-nums">{Math.min(chatUserList.length, 99)}</span>
+              ) : (
+                <span className="tabular-nums">
+                  <NumberFlow className="tabular-nums" willChange value={Math.min(chatUserList.length, 99)} />
+                  {chatUserList.length > 99 && <span className="text-xs">+</span>}
+                </span>
+              )}
             </div>
           </Button>
         </HoverCardTrigger>
