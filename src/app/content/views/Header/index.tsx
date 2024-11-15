@@ -57,7 +57,7 @@ const Header: FC = () => {
           </Button>
         </HoverCardTrigger>
         <HoverCardContent className="w-80 rounded-lg p-0">
-          <ScrollArea className="max-h-96 min-h-[72px] p-2" ref={setVirtualOnlineGroupScrollParentRef}>
+          <ScrollArea type="scroll" className="max-h-96 min-h-[72px] p-2" ref={setVirtualOnlineGroupScrollParentRef}>
             <Virtuoso
               data={virtualOnlineGroup}
               defaultItemHeight={56}
@@ -149,7 +149,7 @@ const Header: FC = () => {
           </Button>
         </HoverCardTrigger>
         <HoverCardContent className="w-36 rounded-lg p-0">
-          <ScrollArea className="max-h-[204px] min-h-9 p-1" ref={setChatUserListScrollParentRef}>
+          <ScrollArea type="scroll" className="max-h-[204px] min-h-9 p-1" ref={setChatUserListScrollParentRef}>
             <Virtuoso
               data={chatUserList}
               defaultItemHeight={28}
