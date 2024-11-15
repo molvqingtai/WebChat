@@ -1,3 +1,17 @@
+## [1.7.1](https://github.com/molvqingtai/WebChat/compare/v1.7.0...v1.7.1) (2024-11-15)
+
+
+### Bug Fixes
+
+* parse icon url error ([7763f34](https://github.com/molvqingtai/WebChat/commit/7763f34d5d07a104f8a66e53b05a7f87a4e0da28))
+
+
+### Performance Improvements
+
+* add number animation ([eb37dd2](https://github.com/molvqingtai/WebChat/commit/eb37dd28338d9e5420c91fb3d25c318411bdfd31))
+* compatible with rectangular icons ([b860b16](https://github.com/molvqingtai/WebChat/commit/b860b16e908a744f615c8cea35a3dcd4ca008f1a))
+* optimize scrollbar ([c5185e4](https://github.com/molvqingtai/WebChat/commit/c5185e419c5e175b8bc30e3f2b2207c18b9503b2))
+
 # [1.7.0](https://github.com/molvqingtai/WebChat/compare/v1.6.6...v1.7.0) (2024-11-13)
 
 
