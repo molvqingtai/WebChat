@@ -1,3 +1,4 @@
+import '@webcomponents/custom-elements'
 import Header from '@/app/content/views/Header'
 import Footer from '@/app/content/views/Footer'
 import Main from '@/app/content/views/Main'

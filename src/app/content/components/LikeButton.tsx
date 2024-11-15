@@ -1,6 +1,7 @@
 import { type MouseEvent, type FC, type ReactElement } from 'react'
 import { Button } from '@/components/ui/Button'
 import { cn } from '@/utils'
+import NumberFlow from '@number-flow/react'
 
 export interface LikeButtonIconProps {
   children: JSX.Element
@@ -40,7 +41,11 @@ const LikeButton: FC<LikeButtonProps> & { Icon: FC<LikeButtonIconProps> } = ({
       size="xs"
     >
       {children}
-      {!!count && <span className="min-w-0 text-xs">{count}</span>}
+      {!!count && (
+        <span className="min-w-0 text-xs">
+          {import.meta.env.FIREFOX ? <span className="tabular-nums">{count}</span> : <NumberFlow value={count} />}
+        </span>
+      )}
     </Button>
   )
 }

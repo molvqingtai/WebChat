@@ -1,5 +1,5 @@
 import { type FC } from 'react'
-import { FrownIcon, ThumbsUpIcon } from 'lucide-react'
+import { FrownIcon, HeartIcon } from 'lucide-react'
 import LikeButton from './LikeButton'
 import FormatDate from './FormatDate'
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/Avatar'
@@ -71,7 +71,7 @@ const MessageItem: FC<MessageItemProps> = (props) => {
               count={props.data.likeUsers.length}
             >
               <LikeButton.Icon>
-                <ThumbsUpIcon size={14}></ThumbsUpIcon>
+                <HeartIcon size={14}></HeartIcon>
               </LikeButton.Icon>
             </LikeButton>
             <LikeButton
