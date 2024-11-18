@@ -76,9 +76,11 @@ const Header: FC = () => {
                   </Avatar>
                   <div className="grid items-center">
                     <div className="flex items-center gap-x-1 overflow-hidden">
-                      <h4 className="flex-1 truncate text-sm font-semibold">{site.hostname.replace(/^www\./i, '')}</h4>
+                      <h4 className="flex-1 truncate text-sm font-semibold text-slate-600 dark:text-slate-50">
+                        {site.hostname.replace(/^www\./i, '')}
+                      </h4>
                       <div className="shrink-0 text-sm">
-                        <div className="flex items-center gap-x-1 text-nowrap text-xs text-slate-500">
+                        <div className="flex items-center gap-x-1 text-nowrap text-xs text-slate-500 dark:text-slate-100">
                           <div className="flex items-center gap-x-1 pt-px">
                             <span className="relative flex size-2">
                               <span
@@ -94,7 +96,7 @@ const Header: FC = () => {
                                 )}
                               ></span>
                             </span>
-                            <span className="flex items-center leading-none dark:text-slate-50">
+                            <span className="flex items-center leading-none ">
                               <span className="py-[0.25em]">ONLINE</span>
                             </span>
                           </div>
@@ -117,7 +119,7 @@ const Header: FC = () => {
       <HoverCard>
         <HoverCardTrigger asChild>
           <Button className=" rounded-md p-0  hover:no-underline" variant="link">
-            <div className="relative flex items-center gap-x-1 text-nowrap text-xs  text-slate-500 hover:after:absolute hover:after:bottom-0  hover:after:left-0 hover:after:h-px hover:after:w-full hover:after:bg-black">
+            <div className="relative flex items-center gap-x-1 text-nowrap text-xs  text-slate-500 hover:after:absolute hover:after:bottom-0 hover:after:left-0  hover:after:h-px hover:after:w-full hover:after:bg-black dark:text-slate-100 dark:hover:after:bg-white">
               <div className="flex items-center gap-x-1 pt-px">
                 <span className="relative flex size-2">
                   <span
@@ -133,7 +135,7 @@ const Header: FC = () => {
                     )}
                   ></span>
                 </span>
-                <span className="flex items-center leading-none dark:text-slate-50">
+                <span className="flex items-center leading-none">
                   <span className="py-[0.25em]">ONLINE</span>
                 </span>
               </div>
