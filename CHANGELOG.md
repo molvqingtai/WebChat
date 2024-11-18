@@ -1,3 +1,13 @@
+## [1.7.2](https://github.com/molvqingtai/WebChat/compare/v1.7.1...v1.7.2) (2024-11-18)
+
+
+### Performance Improvements
+
+* notification type default `[@self](https://github.com/self)` ([7f94e37](https://github.com/molvqingtai/WebChat/commit/7f94e37f73f021aaa97d91fd911c299d709be52a))
+* optimize online style ([8db7959](https://github.com/molvqingtai/WebChat/commit/8db79599e1d00e5405f4c8fdc329d830755cf6c9))
+* optimize setup page message logic ([442fc99](https://github.com/molvqingtai/WebChat/commit/442fc993a36634805aeb91ee6222d416259ae39a))
+* support icon click & optimize notification click logic ([074fc74](https://github.com/molvqingtai/WebChat/commit/074fc7403e0fc1e507d8e2aaf9a4f890157c4b25))
+
 ## [1.7.1](https://github.com/molvqingtai/WebChat/compare/v1.7.0...v1.7.1) (2024-11-15)
 
 
