@@ -21,7 +21,8 @@ export default defineConfig({
         '32': 'logo.png',
         '48': 'logo.png',
         '128': 'logo.png'
-      }
+      },
+      action: {}
     }
     return {
       chrome: {

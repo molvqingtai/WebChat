@@ -22,7 +22,7 @@ import { createElement } from '@/utils'
 
 export default defineContentScript({
   cssInjectionMode: 'ui',
-  runAt: 'document_end',
+  runAt: 'document_idle',
   matches: ['https://*/*'],
   excludeMatches: ['*://localhost/*', '*://127.0.0.1/*', '*://*.csdn.net/*', '*://*.csdn.com/*'],
   async main(ctx) {

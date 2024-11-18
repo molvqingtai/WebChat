@@ -88,7 +88,9 @@ const Setup: FC = () => {
   useEffect(() => {
     const timer = new Timer(
       async () => {
-        await createMessage(await refreshUserInfo())
+        if (timer.status !== 'stopped') {
+          await createMessage(await refreshUserInfo())
+        }
       },
       { delay: 2000, immediate: true, limit: mockTextList.length }
     )

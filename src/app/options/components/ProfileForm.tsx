@@ -27,7 +27,7 @@ const defaultUserInfo: UserInfo = {
   themeMode: 'system',
   danmakuEnabled: true,
   notificationEnabled: true,
-  notificationType: 'all'
+  notificationType: 'at'
 }
 
 const formSchema = v.object({
