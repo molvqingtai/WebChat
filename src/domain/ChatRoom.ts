@@ -453,6 +453,10 @@ const ChatRoomDomain = Remesh.domain({
       name: 'Room.SendHateMessageEvent'
     })
 
+    const TranslateMessageEvent = domain.event<{ messageId: string; translateMessage: string }>({
+      name: 'Room.TranslateMessageEvent'
+    })
+
     const JoinRoomEvent = domain.event<string>({
       name: 'Room.JoinRoomEvent'
     })
@@ -673,6 +677,7 @@ const ChatRoomDomain = Remesh.domain({
         SendHateMessageEvent,
         SendSyncUserMessageEvent,
         SendSyncHistoryMessageEvent,
+        TranslateMessageEvent,
         JoinRoomEvent,
         SelfJoinRoomEvent,
         LeaveRoomEvent,

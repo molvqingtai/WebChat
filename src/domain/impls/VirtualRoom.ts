@@ -1,6 +1,6 @@
 import { Room } from '@rtco/client'
 
-import { VirtualRoomExtern } from '@/domain/externs/VirtualRoom'
+import { VirtualRoomExtern, VirtualRoom as VirtualRoomExternType } from '@/domain/externs/VirtualRoom'
 import { stringToHex } from '@/utils'
 import EventHub from '@resreq/event-hub'
 import { RoomMessage } from '@/domain/VirtualRoom'
@@ -13,7 +13,7 @@ export interface Config {
   roomId: string
 }
 
-class VirtualRoom extends EventHub {
+class VirtualRoom extends EventHub implements VirtualRoomExternType {
   readonly peer: Peer
   readonly roomId: string
   readonly peerId: string

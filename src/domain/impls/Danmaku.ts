@@ -9,8 +9,9 @@ import { LocalStorageImpl } from './Storage'
 import { AppStatus } from '../AppStatus'
 import { APP_STATUS_STORAGE_KEY } from '@/constants/config'
 import { EVENT } from '@/constants/event'
+import { type Danmaku as DanmakuExternType } from '../externs/Danmaku'
 
-export class Danmaku {
+export class Danmaku implements DanmakuExternType {
   private container?: Element
   private manager?: Manager<TextMessage>
   constructor() {

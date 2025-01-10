@@ -8,11 +8,12 @@ import { FC } from 'react'
 export interface PromptItemProps {
   data: PromptMessage
   className?: string
+  index?: number
 }
 
-const PromptItem: FC<PromptItemProps> = ({ data, className }) => {
+const PromptItem: FC<PromptItemProps> = ({ data, className, index }) => {
   return (
-    <div className={cn('flex justify-center py-1 px-4 ', className)}>
+    <div data-index={index} className={cn('flex justify-center py-1 px-4 ', className)}>
       <Badge variant="secondary" className="gap-x-2 rounded-full px-2 font-medium text-slate-400 dark:bg-slate-800">
         <Avatar className="size-4">
           <AvatarImage src={data.userAvatar} className="size-full" alt="avatar" />

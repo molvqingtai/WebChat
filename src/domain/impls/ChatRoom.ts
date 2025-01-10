@@ -1,6 +1,6 @@
 import { Room } from '@rtco/client'
 
-import { ChatRoomExtern } from '@/domain/externs/ChatRoom'
+import { ChatRoomExtern, ChatRoom as ChatRoomExternType } from '@/domain/externs/ChatRoom'
 import { stringToHex } from '@/utils'
 import EventHub from '@resreq/event-hub'
 import { RoomMessage } from '@/domain/ChatRoom'
@@ -12,7 +12,7 @@ export interface Config {
   roomId: string
 }
 
-class ChatRoom extends EventHub {
+class ChatRoom extends EventHub implements ChatRoomExternType {
   readonly peer: Peer
   readonly roomId: string
   readonly peerId: string

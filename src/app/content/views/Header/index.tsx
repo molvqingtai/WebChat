@@ -33,7 +33,7 @@ const Header: FC = () => {
       }
       return acc
     }, [])
-    .sort((a, b) => b.users.length - a.users.length)
+    .toSorted((a, b) => b.users.length - a.users.length)
 
   const [chatUserListScrollParentRef, setChatUserListScrollParentRef] = useState<HTMLDivElement | null>(null)
   const [virtualOnlineGroupScrollParentRef, setVirtualOnlineGroupScrollParentRef] = useState<HTMLDivElement | null>(

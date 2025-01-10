@@ -14,11 +14,12 @@ import { ToastImpl } from '@/domain/impls/Toast'
 import { ChatRoomImpl } from '@/domain/impls/ChatRoom'
 import { VirtualRoomImpl } from '@/domain/impls/VirtualRoom'
 // Remove import after merging: https://github.com/emilkowalski/sonner/pull/508
-import '@/assets/styles/sonner.css'
+import 'sonner/dist/styles.css'
 import '@/assets/styles/overlay.css'
 import '@/assets/styles/tailwind.css'
 import NotificationDomain from '@/domain/Notification'
 import { createElement } from '@/utils'
+import { TranslatorImpl } from '@/domain/impls/Translator'
 
 export default defineContentScript({
   cssInjectionMode: 'ui',
@@ -42,7 +43,8 @@ export default defineContentScript({
         VirtualRoomImpl,
         ToastImpl,
         DanmakuImpl,
-        NotificationImpl
+        NotificationImpl,
+        TranslatorImpl
       ]
       // inspectors: __DEV__ ? [RemeshLogger()] : []
     })

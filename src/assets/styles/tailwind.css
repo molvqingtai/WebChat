@@ -76,7 +76,7 @@
 
   :host,
   :root {
-    @apply !bg-background !text-foreground !text-base !visible;
+    @apply !bg-background !text-foreground !text-base !visible font-sans;
 
     /* Disabled inherit */
     all: initial !important;

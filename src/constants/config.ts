@@ -191,6 +191,7 @@ export const STORAGE_NAME = `WEB_CHAT_${version}` as const
 export const USER_INFO_STORAGE_KEY = 'WEB_CHAT_USER_INFO' as const
 
 export const MESSAGE_LIST_STORAGE_KEY = 'WEB_CHAT_MESSAGE_LIST' as const
+export const TRANSLATE_LIST_STORAGE_KEY = 'WEB_CHAT_TRANSLATE_LIST' as const
 
 export const APP_STATUS_STORAGE_KEY = 'WEB_CHAT_APP_STATUS' as const
 /**

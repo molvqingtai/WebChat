@@ -3,12 +3,14 @@ import ToastModule from './modules/Toast'
 import ChatRoomDomain, { SendType } from './ChatRoom'
 import VirtualRoomDomain from './VirtualRoom'
 import { filter, map, merge } from 'rxjs'
+import TranslateListDomain from './TranslateList'
 
 const ToastDomain = Remesh.domain({
   name: 'ToastDomain',
   impl: (domain) => {
     const chatRoomDomain = domain.getDomain(ChatRoomDomain())
     const virtualRoomDomain = domain.getDomain(VirtualRoomDomain())
+    const translateListDomain = domain.getDomain(TranslateListDomain())
     const toastModule = ToastModule(domain)
 
     domain.effect({
@@ -27,7 +29,8 @@ const ToastDomain = Remesh.domain({
       impl: ({ fromEvent }) => {
         const onRoomError$ = merge(
           fromEvent(chatRoomDomain.event.OnErrorEvent),
-          fromEvent(virtualRoomDomain.event.OnErrorEvent)
+          fromEvent(virtualRoomDomain.event.OnErrorEvent),
+          fromEvent(translateListDomain.event.OnErrorEvent)
         ).pipe(
           map((error) => {
             return toastModule.command.ErrorCommand(error.message)

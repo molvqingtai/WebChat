@@ -92,7 +92,15 @@ const Setup: FC = () => {
           await createMessage(await refreshUserInfo())
         }
       },
-      { delay: 2000, immediate: true, limit: mockTextList.length }
+      {
+        interval: 2000,
+        immediate: true,
+        limit: mockTextList.length,
+        adapter: {
+          setTimer: window.requestAnimationFrame.bind(window),
+          cancelTimer: window.cancelAnimationFrame.bind(window)
+        }
+      }
     )
     timer.start()
     return () => {

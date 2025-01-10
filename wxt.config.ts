@@ -3,6 +3,7 @@ import { defineConfig } from 'wxt'
 import react from '@vitejs/plugin-react'
 import { name, displayName, homepage } from './package.json'
 import svgr from 'vite-plugin-svgr'
+import defu from 'defu'
 
 export default defineConfig({
   srcDir: path.resolve('src'),
@@ -25,17 +26,23 @@ export default defineConfig({
       action: {}
     }
     return {
-      chrome: {
-        ...common
-      },
-      firefox: {
-        ...common,
+      chrome: defu(common, {
+        permissions: ['aiLanguageModelOriginTrial'],
+        minimum_chrome_version: '131',
+        key: import.meta.env.WXT_EXTENSION_PUBLIC_KEY,
+        trial_tokens: [
+          import.meta.env.WXT_ORIGIN_TRIALS_LANGUAGE_DETECTOR_API_TOKEN,
+          import.meta.env.WXT_ORIGIN_TRIALS_TRANSLATOR_API_TOKEN,
+          import.meta.env.WXT_ORIGIN_TRIALS_PROMPT_API_TOKEN
+        ]
+      }),
+      firefox: defu(common, {
         browser_specific_settings: {
           gecko: {
             id: 'molvqingtai@gmail.com'
           }
         }
-      }
+      })
     }[browser]
   },
   vite: (env) => ({

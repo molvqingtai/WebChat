@@ -56,7 +56,7 @@ const MessageListDomain = Remesh.domain({
     })
 
     const LoadStatusModule = StatusModule(domain, {
-      name: 'Message.ListLoadStatusModule'
+      name: 'MessageList.LoadStatusModule'
     })
 
     const ListQuery = MessageListModule.query.ItemListQuery

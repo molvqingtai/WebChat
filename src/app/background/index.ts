@@ -2,10 +2,13 @@ import { EVENT } from '@/constants/event'
 import { messenger } from '@/messenger'
 import { browser, Tabs } from 'wxt/browser'
 import { defineBackground } from 'wxt/sandbox'
+import { registerTranslator } from '@/service/Translator'
 
 export default defineBackground({
   type: 'module',
   main() {
+    registerTranslator()
+
     browser.action.onClicked.addListener(() => {
       browser.runtime.openOptionsPage()
     })
@@ -21,8 +24,6 @@ export default defineBackground({
       const hasActiveSomeSiteTab = tabs.some((tab) => {
         return new URL(tab.url!).origin === new URL(sender.tab!.url!).origin
       })
-
-      console.log('sender', sender)
 
       if (hasActiveSomeSiteTab) return
 

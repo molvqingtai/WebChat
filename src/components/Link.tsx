@@ -8,7 +8,13 @@ export interface LinkProps {
   underline?: boolean
 }
 
-const Link = forwardRef<HTMLAnchorElement, LinkProps>(({ href, className, children, underline = true }, ref) => {
+const Link = ({
+  ref,
+  href,
+  className,
+  children,
+  underline = true
+}: LinkProps & { ref?: React.RefObject<HTMLAnchorElement> }) => {
   return (
     <a
       href={href}
@@ -20,7 +26,7 @@ const Link = forwardRef<HTMLAnchorElement, LinkProps>(({ href, className, childr
       {children}
     </a>
   )
-})
+}
 
 Link.displayName = 'Link'
 export default Link

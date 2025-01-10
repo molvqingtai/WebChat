@@ -15,6 +15,7 @@ export interface LikeButtonProps {
   onClick?: (e: MouseEvent<HTMLButtonElement>) => void
   onChange?: (checked: boolean, count: number) => void
   children: ReactElement<LikeButtonIconProps>
+  className?: string
 }
 
 const LikeButton: FC<LikeButtonProps> & { Icon: FC<LikeButtonIconProps> } = ({
@@ -22,7 +23,8 @@ const LikeButton: FC<LikeButtonProps> & { Icon: FC<LikeButtonIconProps> } = ({
   count,
   onClick,
   onChange,
-  children
+  children,
+  className
 }) => {
   const handleClick = (e: MouseEvent<HTMLButtonElement>) => {
     onClick?.(e)
@@ -34,8 +36,9 @@ const LikeButton: FC<LikeButtonProps> & { Icon: FC<LikeButtonIconProps> } = ({
       onClick={handleClick}
       variant="secondary"
       className={cn(
-        'grid items-center overflow-hidden rounded-full leading-none transition-all select-none dark:bg-slate-600',
-        checked ? 'text-orange-500' : 'text-slate-500 dark:text-slate-100',
+        'grid items-center overflow-hidden rounded-full leading-none transition-all select-none dark:bg-slate-800',
+        className,
+        checked ? 'text-orange-500' : 'text-slate-500 dark:text-slate-200',
         count ? 'grid-cols-[auto_1fr] gap-x-1' : 'grid-cols-[auto_0fr] gap-x-0'
       )}
       size="xs"
