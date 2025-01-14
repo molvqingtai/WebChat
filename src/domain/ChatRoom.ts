@@ -67,10 +67,8 @@ const MessageUserSchema = {
 }
 
 const AtUserSchema = {
-  userId: v.string(),
-  username: v.string(),
-  userAvatar: v.string(),
-  positions: v.array(v.tuple([v.number(), v.number()]))
+  positions: v.array(v.tuple([v.number(), v.number()])),
+  ...MessageUserSchema
 }
 
 const NormalMessageSchema = {
@@ -81,7 +79,8 @@ const NormalMessageSchema = {
   receiveTime: v.number(),
   likeUsers: v.array(v.object(MessageUserSchema)),
   hateUsers: v.array(v.object(MessageUserSchema)),
-  atUsers: v.array(v.object(AtUserSchema))
+  atUsers: v.array(v.object(AtUserSchema)),
+  ...MessageUserSchema
 }
 
 const RoomMessageSchema = v.union([
