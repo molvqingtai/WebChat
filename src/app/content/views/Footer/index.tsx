@@ -312,7 +312,7 @@ const Footer: FC = () => {
   const root = getRootNode()
 
   return (
-    <div className="relative z-10 grid gap-y-2 rounded-b-xl px-4 pb-4 pt-2 before:pointer-events-none before:absolute before:inset-x-4 before:-top-2 before:h-2 before:bg-gradient-to-t before:from-slate-50 before:from-30%  before:to-transparent dark:bg-slate-900 before:dark:from-slate-900">
+    <div className="relative grid gap-y-2 rounded-b-xl px-4 pb-4 pt-2 before:pointer-events-none before:absolute before:inset-x-4 before:-top-2 before:h-2 before:bg-gradient-to-t before:from-slate-50 before:from-30%  before:to-transparent dark:bg-slate-900 before:dark:from-slate-900">
       <Presence present={autoCompleteListShow}>
         <Portal
           container={root}

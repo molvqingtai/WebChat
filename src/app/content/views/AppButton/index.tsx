@@ -1,4 +1,4 @@
-import { type FC, useState, type MouseEvent, useEffect } from 'react'
+import { type FC, useState, type MouseEvent, useEffect, startTransition } from 'react'
 import { SettingsIcon, MoonIcon, SunIcon, HandIcon } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 
@@ -54,7 +54,9 @@ const AppButton: FC<AppButtonProps> = ({ className }) => {
   })
 
   useWindowResize(({ width, height }) => {
-    send(appStatusDomain.command.UpdatePositionCommand({ x: width - 50, y: height - 22 }))
+    startTransition(() => {
+      send(appStatusDomain.command.UpdatePositionCommand({ x: width - 50, y: height - 22 }))
+    })
   })
 
   useEffect(() => {
