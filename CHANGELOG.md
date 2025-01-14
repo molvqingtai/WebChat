@@ -1,3 +1,15 @@
+## [1.7.3](https://github.com/molvqingtai/WebChat/compare/v1.7.2...v1.7.3) (2025-01-14)
+
+
+### Bug Fixes
+
+* incomplete validation of message format ([b8cf28b](https://github.com/molvqingtai/WebChat/commit/b8cf28bf2bb6d0fe4d0f14176799cc331066ae9d))
+
+
+### Performance Improvements
+
+* optimize style ([96f19bf](https://github.com/molvqingtai/WebChat/commit/96f19bfc3ac97987eea54bcc1c6ce8246e62d034))
+
 ## [1.7.2](https://github.com/molvqingtai/WebChat/compare/v1.7.1...v1.7.2) (2024-11-18)
 
 
