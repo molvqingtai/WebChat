@@ -1,7 +1,7 @@
 import { type FC } from 'react'
 import { FrownIcon, HeartIcon } from 'lucide-react'
 import LikeButton from './LikeButton'
-import FormatDate from './FormatDate'
+import FormatDate from '@/components/FormatDate'
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/Avatar'
 
 import { Markdown } from '@/components/Markdown'

@@ -1,16 +1,16 @@
 import { Remesh } from 'remesh'
-import { RoomMessage } from '../ChatRoom'
+import { RoomMessage } from '@/domain/ChatRoom'
 
 export interface ChatRoom {
   readonly peerId: string
   readonly roomId: string
-  joinRoom: () => ChatRoom
-  sendMessage: (message: RoomMessage, id?: string | string[]) => ChatRoom
-  onMessage: (callback: (message: RoomMessage) => void) => ChatRoom
-  leaveRoom: () => ChatRoom
-  onJoinRoom: (callback: (id: string) => void) => ChatRoom
-  onLeaveRoom: (callback: (id: string) => void) => ChatRoom
-  onError: (callback: (error: Error) => void) => ChatRoom
+  joinRoom: () => void
+  sendMessage: (message: RoomMessage, id?: string | string[]) => void
+  onMessage: (callback: (message: RoomMessage) => void) => void
+  leaveRoom: () => void
+  onJoinRoom: (callback: (id: string) => void) => void
+  onLeaveRoom: (callback: (id: string) => void) => void
+  onError: (callback: (error: Error) => void) => void
 }
 
 export const ChatRoomExtern = Remesh.extern<ChatRoom>({

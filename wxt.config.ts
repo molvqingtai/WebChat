@@ -22,7 +22,13 @@ export default defineConfig({
         '48': 'logo.png',
         '128': 'logo.png'
       },
-      action: {}
+      action: {},
+      web_accessible_resources: [
+        {
+          matches: ['https://*/*'],
+          resources: ['shared-worker.js']
+        }
+      ]
     }
     return {
       chrome: {

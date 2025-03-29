@@ -83,6 +83,9 @@ importers:
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
+      comctx:
+        specifier: ^1.1.3
+        version: 1.1.3
       danmu:
         specifier: ^0.14.0
         version: 0.14.0
@@ -2144,6 +2147,9 @@ packages:
 
   colorette@2.0.20:
     resolution: {integrity: sha512-IfEDxwoWIjkeXL1eXcDiow4UbKjhLdq6/EuSVR9GMN7KVH3r9gQ83e73hsz1Nd1T3ijd5xv1wcWRYO+D6kCI2w==}
+
+  comctx@1.1.3:
+    resolution: {integrity: sha512-K+R3r5e0UBOsjvtto+L6+pGk3uS8qNHzsKiUDBeRgx5VXABHzumhWsx9OfVtcz6SED3LN7VJ+ufncbp8RSDW7w==}
 
   comma-separated-tokens@2.0.3:
     resolution: {integrity: sha512-Fu4hJdvzeylCfQPp9SGWidpzrMs7tTrlu6Vb8XGaRGck8QSNZJJp538Wrb60Lax4fPwR64ViY468OIUTbRlGZg==}
@@ -7806,6 +7812,8 @@ snapshots:
   color-name@1.1.4: {}
 
   colorette@2.0.20: {}
+
+  comctx@1.1.3: {}
 
   comma-separated-tokens@2.0.3: {}
 

@@ -4,13 +4,13 @@ import { RoomMessage } from '@/domain/VirtualRoom'
 export interface VirtualRoom {
   readonly peerId: string
   readonly roomId: string
-  joinRoom: () => VirtualRoom
-  sendMessage: (message: RoomMessage, id?: string | string[]) => VirtualRoom
-  onMessage: (callback: (message: RoomMessage) => void) => VirtualRoom
-  leaveRoom: () => VirtualRoom
-  onJoinRoom: (callback: (id: string) => void) => VirtualRoom
-  onLeaveRoom: (callback: (id: string) => void) => VirtualRoom
-  onError: (callback: (error: Error) => void) => VirtualRoom
+  joinRoom: () => void
+  sendMessage: (message: RoomMessage, id?: string | string[]) => void
+  onMessage: (callback: (message: RoomMessage) => void) => void
+  leaveRoom: () => void
+  onJoinRoom: (callback: (id: string) => void) => void
+  onLeaveRoom: (callback: (id: string) => void) => void
+  onError: (callback: (error: Error) => void) => void
 }
 
 export const VirtualRoomExtern = Remesh.extern<VirtualRoom>({
