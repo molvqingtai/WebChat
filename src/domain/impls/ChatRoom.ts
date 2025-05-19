@@ -7,6 +7,7 @@ const chatRoom = injectChatRoom(new InjectAdapter(browser.runtime.getURL('/share
 
 export const ChatRoomImpl = ChatRoomExtern.impl(chatRoom)
 
+// https://github.com/w3c/strategy/issues/131
 // https://github.com/w3c/webextensions/issues/72
 // https://issues.chromium.org/issues/40251342
 // https://github.com/w3c/webrtc-extensions/issues/77
