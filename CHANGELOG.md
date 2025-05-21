@@ -1,3 +1,10 @@
+## [1.8.2](https://github.com/molvqingtai/WebChat/compare/v1.8.1...v1.8.2) (2025-05-21)
+
+
+### Bug Fixes
+
+* sync history message ([e42f344](https://github.com/molvqingtai/WebChat/commit/e42f34479e166bbb67957449e4eb5edd9f390b84))
+
 ## [1.8.1](https://github.com/molvqingtai/WebChat/compare/v1.8.0...v1.8.1) (2025-05-21)
 
 
