@@ -1,3 +1,10 @@
+## [1.8.1](https://github.com/molvqingtai/WebChat/compare/v1.8.0...v1.8.1) (2025-05-21)
+
+
+### Bug Fixes
+
+* z-infinity not working ([192359b](https://github.com/molvqingtai/WebChat/commit/192359bf1cbbad77a15e98cc52129e0eacad51f7))
+
 # [1.8.0](https://github.com/molvqingtai/WebChat/compare/v1.7.3...v1.8.0) (2025-05-21)
 
 
