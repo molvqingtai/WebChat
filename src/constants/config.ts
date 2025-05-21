@@ -200,7 +200,7 @@ export const APP_STATUS_STORAGE_KEY = 'WEB_CHAT_APP_STATUS' as const
  */
 export const MAX_AVATAR_SIZE = 5120 as const
 
-export const SYNC_HISTORY_MAX_DAYS = 30 as const
+export const SYNC_HISTORY_MAX_DAYS = 90 as const
 
 /**
  * https://lgrahl.de/articles/demystifying-webrtc-dc-size-limit.html

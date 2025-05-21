@@ -358,12 +358,13 @@ const ChatRoomDomain = Remesh.domain({
       impl: ({ get }, { peerId, lastMessageTime }: { peerId: string; lastMessageTime: number }) => {
         const self = get(SelfUserQuery())
 
-        const historyMessages = get(messageListDomain.query.ListQuery()).filter(
-          (message) =>
+        const historyMessages = get(messageListDomain.query.ListQuery()).filter((message) => {
+          return (
             message.type === MessageType.Normal &&
             message.sendTime > lastMessageTime &&
-            message.sendTime - Date.now() <= SYNC_HISTORY_MAX_DAYS * 24 * 60 * 60 * 1000
-        )
+            message.sendTime >= Date.now() - SYNC_HISTORY_MAX_DAYS * 24 * 60 * 60 * 1000
+          )
+        })
 
         /**
          * Message chunking to ensure that each message does not exceed WEB_RTC_MAX_MESSAGE_SIZE
