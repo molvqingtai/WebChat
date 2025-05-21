@@ -58,7 +58,7 @@ const MessageInput = ({
           onInput={onInput}
           disabled={disabled || loading}
           className={cn(
-            'box-border resize-none whitespace-pre-wrap text-foreground break-words border-none bg-slate-100 pb-5 [word-break:break-word] dark:bg-slate-800 focus-visible:ring-0',
+            'box-border resize-none whitespace-pre-wrap px-2 text-sm text-foreground break-words border-none bg-slate-100 pb-5 [word-break:break-word] dark:bg-slate-800 focus-visible:ring-0',
             {
               'disabled:opacity-100': loading
             }
