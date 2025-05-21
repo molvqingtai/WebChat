@@ -1,3 +1,10 @@
+# [1.8.0](https://github.com/molvqingtai/WebChat/compare/v1.7.3...v1.8.0) (2025-05-21)
+
+
+### Features
+
+* upgrade to tailwind v4 ([9214708](https://github.com/molvqingtai/WebChat/commit/92147083c2978a6ce7f2d4fa0751b5ef9fa4797b))
+
 ## [1.7.3](https://github.com/molvqingtai/WebChat/compare/v1.7.2...v1.7.3) (2025-01-14)
 
 
