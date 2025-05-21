@@ -1,16 +1,17 @@
 import { useState, type FC } from 'react'
 import { Globe2Icon } from 'lucide-react'
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/Avatar'
-import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/HoverCard'
-import { Button } from '@/components/ui/Button'
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
+import { Button } from '@/components/ui/button'
 import { cn, getSiteInfo } from '@/utils'
 import { useRemeshDomain, useRemeshQuery } from 'remesh-react'
 import ChatRoomDomain from '@/domain/ChatRoom'
-import VirtualRoomDomain, { FromInfo, RoomUser } from '@/domain/VirtualRoom'
-import { ScrollArea } from '@/components/ui/ScrollArea'
+import type { FromInfo, RoomUser } from '@/domain/VirtualRoom'
+import VirtualRoomDomain from '@/domain/VirtualRoom'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { Virtuoso } from 'react-virtuoso'
-import AvatarCircles from '@/components/magicui/AvatarCircles'
-import Link from '@/components/Link'
+import { AvatarCircles } from '@/components/magicui/avatar-circles'
+import Link from '@/components/link'
 import NumberFlow from '@number-flow/react'
 
 const Header: FC = () => {
@@ -108,7 +109,7 @@ const Header: FC = () => {
                         </div>
                       </div>
                     </div>
-                    <AvatarCircles max={9} size="xs" avatarUrls={site.users.map((user) => user.userAvatar)} />
+                    <AvatarCircles maxLength={9} size="xs" avatarUrls={site.users.map((user) => user.userAvatar)} />
                   </div>
                 </Link>
               )}

@@ -1,7 +1,7 @@
-import { FC } from 'react'
-import { Button } from '@/components/ui/Button'
+import type { FC } from 'react'
+import { Button } from '@/components/ui/button'
 import { GitHubLogoIcon } from '@radix-ui/react-icons'
-import Link from '@/components/Link'
+import Link from '@/components/link'
 
 const BadgeList: FC = () => {
   return (

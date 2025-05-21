@@ -1,18 +1,21 @@
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/Avatar'
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { MAX_AVATAR_SIZE } from '@/constants/config'
-import MessageListDomain, { Message, MessageType } from '@/domain/MessageList'
-import UserInfoDomain, { UserInfo } from '@/domain/UserInfo'
+import type { Message } from '@/domain/MessageList'
+import MessageListDomain, { MessageType } from '@/domain/MessageList'
+import type { UserInfo } from '@/domain/UserInfo'
+import UserInfoDomain from '@/domain/UserInfo'
 import { generateRandomAvatar, generateRandomName } from '@/utils'
 import { UserIcon } from 'lucide-react'
 import { nanoid } from 'nanoid'
-import { FC, useEffect, useState } from 'react'
+import type { FC } from 'react'
+import { useEffect, useState } from 'react'
 import { useRemeshDomain, useRemeshSend } from 'remesh-react'
 import Timer from '@resreq/timer'
 import ExampleImage from '@/assets/images/example.jpg'
-import PulsatingButton from '@/components/magicui/PulsatingButton'
-import BlurFade from '@/components/magicui/BlurFade'
-import WordPullUp from '@/components/magicui/WordPullUp'
+import { PulsatingButton } from '@/components/magicui/pulsating-button'
+import { BlurFade } from '@/components/magicui/blur-fade'
 import { motion } from 'framer-motion'
+import { WordRotate } from '@/components/magicui/word-rotate'
 
 const mockTextList = [
   `你問我支持不支持，我說我支持`,
@@ -92,7 +95,7 @@ const Setup: FC = () => {
           await createMessage(await refreshUserInfo())
         }
       },
-      { delay: 2000, immediate: true, limit: mockTextList.length }
+      { interval: 2000, immediate: true, limit: mockTextList.length }
     )
     timer.start()
     return () => {
@@ -112,7 +115,7 @@ const Setup: FC = () => {
             </AvatarFallback>
           </Avatar>
         </BlurFade>
-        <div className="flex" key={userInfo?.name}>
+        <div className="flex items-center" key={userInfo?.name}>
           <motion.div
             className="text-2xl font-bold text-primary"
             initial={{ x: -10, opacity: 0 }}
@@ -121,7 +124,7 @@ const Setup: FC = () => {
           >
             @
           </motion.div>
-          <WordPullUp className="text-2xl font-bold text-primary" words={`${userInfo?.name || ''.padEnd(10, ' ')}`} />
+          <WordRotate className="text-2xl font-bold text-primary" words={[`${userInfo?.name || ''.padEnd(10, ' ')}`]} />
         </div>
         <PulsatingButton onClick={handleSetup}>Start chatting</PulsatingButton>
       </div>

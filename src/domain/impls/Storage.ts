@@ -3,9 +3,9 @@ import indexedDbDriver from 'unstorage/drivers/indexedb'
 import localStorageDriver from 'unstorage/drivers/localstorage'
 import { LocalStorageExtern, IndexDBStorageExtern, BrowserSyncStorageExtern } from '@/domain/externs/Storage'
 import { STORAGE_NAME } from '@/constants/config'
-import { webExtensionDriver } from '@/utils/webExtensionDriver'
+import webExtensionDriver from '@/utils/webExtensionDriver'
 
-import { Storage } from '@/domain/externs/Storage'
+import type { Storage } from '@/domain/externs/Storage'
 import { EVENT } from '@/constants/event'
 
 /**

@@ -1,4 +1,5 @@
-import { ForwardedRef, MutableRefObject, RefCallback, useCallback } from 'react'
+import type { ForwardedRef, MutableRefObject, RefCallback } from 'react'
+import { useCallback } from 'react'
 
 const useShareRef = <T extends HTMLElement | null>(
   ...refs: (MutableRefObject<T> | ForwardedRef<T> | RefCallback<T>)[]

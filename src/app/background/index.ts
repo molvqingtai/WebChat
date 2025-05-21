@@ -1,7 +1,7 @@
 import { EVENT } from '@/constants/event'
 import { messenger } from '@/messenger'
-import { browser, Tabs } from 'wxt/browser'
-import { defineBackground } from 'wxt/sandbox'
+import { browser, defineBackground } from '#imports'
+import type { Browser } from 'wxt/browser'
 
 export default defineBackground({
   type: 'module',
@@ -10,7 +10,7 @@ export default defineBackground({
       browser.runtime.openOptionsPage()
     })
 
-    const historyNotificationTabs = new Map<string, Tabs.Tab>()
+    const historyNotificationTabs = new Map<string, Browser.tabs.Tab>()
     messenger.onMessage(EVENT.OPTIONS_PAGE_OPEN, () => {
       browser.runtime.openOptionsPage()
     })
@@ -22,8 +22,6 @@ export default defineBackground({
         return new URL(tab.url!).origin === new URL(sender.tab!.url!).origin
       })
 
-      console.log('sender', sender)
-
       if (hasActiveSomeSiteTab) return
 
       browser.notifications.create(message.id, {
@@ -33,7 +31,7 @@ export default defineBackground({
         message: message.body,
         contextMessage: sender.tab!.url!
       })
-      historyNotificationTabs.set(message.id, sender.tab!)
+      historyNotificationTabs.set(message.id, sender.tab! as Browser.tabs.Tab)
     })
     messenger.onMessage(EVENT.NOTIFICATION_CLEAR, async ({ data: id }) => {
       browser.notifications.clear(id)
@@ -44,7 +42,7 @@ export default defineBackground({
       if (fromTab?.id) {
         try {
           const tab = await browser.tabs.get(fromTab.id)
-          browser.tabs.update(tab.id, { active: true, highlighted: true })
+          browser.tabs.update(tab.id!, { active: true, highlighted: true })
           browser.windows.update(tab.windowId!, { focused: true })
         } catch {
           browser.tabs.create({ url: fromTab.url })
@@ -57,7 +55,7 @@ export default defineBackground({
       if (fromTab?.id) {
         try {
           const tab = await browser.tabs.get(fromTab.id)
-          browser.tabs.update(tab.id, { active: true })
+          browser.tabs.update(tab.id!, { active: true })
         } catch {
           browser.tabs.create({ url: fromTab.url })
         }

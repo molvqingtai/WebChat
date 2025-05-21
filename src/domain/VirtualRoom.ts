@@ -7,7 +7,8 @@ import { upsert } from '@/utils'
 import { nanoid } from 'nanoid'
 import StatusModule from '@/domain/modules/Status'
 import * as v from 'valibot'
-import getSiteInfo, { SiteInfo } from '@/utils/getSiteInfo'
+import type { SiteInfo } from '@/utils/getSiteInfo'
+import getSiteInfo from '@/utils/getSiteInfo'
 
 export enum SendType {
   SyncUser = 'SyncUser'

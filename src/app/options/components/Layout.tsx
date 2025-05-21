@@ -1,5 +1,5 @@
-import Meteors from '@/components/magicui/Meteors'
-import { FC, ReactNode } from 'react'
+import { Meteors } from '@/components/magicui/meteors'
+import type { FC, ReactNode } from 'react'
 
 export interface LayoutProps {
   children?: ReactNode

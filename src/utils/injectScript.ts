@@ -1,4 +1,5 @@
-import { type PublicPath, browser } from 'wxt/browser'
+import { browser } from '#imports'
+import type { PublicPath } from 'wxt/browser'
 import createElement from './createElement'
 
 const injectScript = async (path: PublicPath) => {

@@ -1,9 +1,9 @@
-import { Room } from '@rtco/client'
+import type { Room } from '@rtco/client'
 
 import { ChatRoomExtern } from '@/domain/externs/ChatRoom'
 import { stringToHex } from '@/utils'
 import EventHub from '@resreq/event-hub'
-import { RoomMessage } from '@/domain/ChatRoom'
+import type { RoomMessage } from '@/domain/ChatRoom'
 import { JSONR } from '@/utils'
 import Peer from './Peer'
 

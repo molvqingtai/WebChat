@@ -1,6 +1,6 @@
-import { FC } from 'react'
-import { Button } from '@/components/ui/Button'
-import Link from '@/components/Link'
+import type { FC } from 'react'
+import { Button } from '@/components/ui/button'
+import Link from '@/components/link'
 import { version } from '@/../package.json'
 
 const VersionLink: FC = () => {

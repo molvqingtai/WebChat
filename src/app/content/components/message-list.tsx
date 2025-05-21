@@ -1,8 +1,9 @@
-import { FC, useState, type ReactElement } from 'react'
+import type { FC } from 'react'
+import { useState, type ReactElement } from 'react'
 
-import { type MessageItemProps } from './MessageItem'
-import { type PromptItemProps } from './PromptItem'
-import { ScrollArea } from '@/components/ui/ScrollArea'
+import { type MessageItemProps } from './message-item'
+import { type PromptItemProps } from './prompt-item'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { Virtuoso } from 'react-virtuoso'
 
 export interface MessageListProps {

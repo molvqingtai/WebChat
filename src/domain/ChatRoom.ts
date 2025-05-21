@@ -1,6 +1,7 @@
 import { Remesh } from 'remesh'
 import { map, merge, of, EMPTY, mergeMap, fromEventPattern } from 'rxjs'
-import { AtUser, NormalMessage, type MessageUser } from './MessageList'
+import type { AtUser, NormalMessage } from './MessageList'
+import { type MessageUser } from './MessageList'
 import { ChatRoomExtern } from '@/domain/externs/ChatRoom'
 import MessageListDomain, { MessageType } from '@/domain/MessageList'
 import UserInfoDomain from '@/domain/UserInfo'

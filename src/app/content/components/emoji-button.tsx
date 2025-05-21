@@ -1,8 +1,8 @@
 import { SmileIcon } from 'lucide-react'
 import { useState, type FC } from 'react'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/Popover'
-import { ScrollArea } from '@/components/ui/ScrollArea'
-import { Button } from '@/components/ui/Button'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import { Button } from '@/components/ui/button'
 import { EMOJI_LIST } from '@/constants/config'
 import { chunk } from '@/utils'
 
@@ -31,7 +31,7 @@ const EmojiButton: FC<EmojiButtonProps> = ({ onSelect }) => {
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button variant="ghost" size="icon" className="dark:text-white">
-          <SmileIcon size={20} />
+          <SmileIcon className="size-5" />
         </Button>
       </PopoverTrigger>
       <PopoverContent

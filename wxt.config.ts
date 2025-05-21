@@ -3,14 +3,16 @@ import { defineConfig } from 'wxt'
 import react from '@vitejs/plugin-react'
 import { name, displayName, homepage } from './package.json'
 import svgr from 'vite-plugin-svgr'
+import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
   srcDir: path.resolve('src'),
   imports: false,
   entrypointsDir: 'app',
-  runner: {
+  webExt: {
     startUrls: ['https://www.example.com/']
   },
+  manifestVersion: 3,
   manifest: ({ browser }) => {
     const common = {
       name: displayName,
@@ -45,6 +47,7 @@ export default defineConfig({
     },
     plugins: [
       react(),
+      tailwindcss(),
       svgr({
         include: '**/*.svg'
       })

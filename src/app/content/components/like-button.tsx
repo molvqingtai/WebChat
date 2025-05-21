@@ -1,10 +1,11 @@
+import type { ReactNode } from 'react'
 import { type MouseEvent, type FC, type ReactElement } from 'react'
-import { Button } from '@/components/ui/Button'
+import { Button } from '@/components/ui/button'
 import { cn } from '@/utils'
 import NumberFlow from '@number-flow/react'
 
 export interface LikeButtonIconProps {
-  children: JSX.Element
+  children: ReactNode
 }
 
 export const LikeButtonIcon: FC<LikeButtonIconProps> = ({ children }) => children

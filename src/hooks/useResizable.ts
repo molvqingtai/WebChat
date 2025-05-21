@@ -1,4 +1,5 @@
-import { RefCallback, useCallback, useLayoutEffect, useRef, useState } from 'react'
+import type { RefCallback } from 'react'
+import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 import { clamp, isInRange } from '@/utils'
 
 export interface ResizableOptions {

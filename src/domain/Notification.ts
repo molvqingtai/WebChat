@@ -1,6 +1,7 @@
 import { Remesh } from 'remesh'
 import { NotificationExtern } from './externs/Notification'
-import ChatRoomDomain, { TextMessage } from '@/domain/ChatRoom'
+import type { TextMessage } from '@/domain/ChatRoom'
+import ChatRoomDomain from '@/domain/ChatRoom'
 import UserInfoDomain from './UserInfo'
 import { map, merge } from 'rxjs'
 

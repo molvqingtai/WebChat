@@ -3,7 +3,8 @@ import globals from 'globals'
 import pluginJs from '@eslint/js'
 import tseslint from 'typescript-eslint'
 import reactPlugin from '@eslint-react/eslint-plugin'
-import tailwindPlugin from 'eslint-plugin-tailwindcss'
+// https://github.com/francoismassart/eslint-plugin-tailwindcss/issues/325
+// import tailwindPlugin from 'eslint-plugin-tailwindcss'
 import prettierPlugin from 'eslint-plugin-prettier/recommended'
 import * as tsParser from '@typescript-eslint/parser'
 
@@ -14,7 +15,7 @@ export default [
   },
   pluginJs.configs.recommended,
   ...tseslint.configs.recommended,
-  ...tailwindPlugin.configs['flat/recommended'],
+  // ...tailwindPlugin.configs['flat/recommended'],
   prettierPlugin,
   {
     files: ['**/*.{ts,tsx}'],
@@ -24,7 +25,7 @@ export default [
     }
   },
   {
-    ignores: ['**/.output/*', '**/.wxt/*', '**/ui/**', '**/magicui/**', '**/lib/**', '**.million**']
+    ignores: ['**/.output/*', '**/.wxt/*', '**/ui/**', '**/magicui/**', '**/lib/**', '**/patches/**']
   },
   {
     rules: {
@@ -35,7 +36,9 @@ export default [
       '@eslint-react/no-array-index-key': 'off',
       '@eslint-react/hooks-extra/no-redundant-custom-hook': 'off',
       '@eslint-react/dom/no-missing-button-type': 'off',
-      '@eslint-react/hooks-extra/prefer-use-state-lazy-initialization': 'off'
+      '@eslint-react/hooks-extra/prefer-use-state-lazy-initialization': 'off',
+      '@eslint-react/no-unstable-context-value': 'off',
+      '@typescript-eslint/consistent-type-imports': 'error'
     }
   }
 ]
