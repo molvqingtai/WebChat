@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://github.com/molvqingtai/WebChat/blob/master/src/public/logo.png" width="200px"/>
+  <img src="https://github.com/molvqingtai/WebChat/blob/master/public/logo.png" width="200px"/>
 </p>
 
 # WebChat
