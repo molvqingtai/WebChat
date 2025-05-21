@@ -1,4 +1,4 @@
-import { Button } from '@/components/ui/Button'
+import { Button } from '@/components/ui/button'
 import { createElement } from '@/utils'
 import { ImageIcon } from 'lucide-react'
 
@@ -24,7 +24,7 @@ const ImageButton = ({ onSelect, disabled }: ImageButtonProps) => {
 
   return (
     <Button disabled={disabled} onClick={handleClick} variant="ghost" size="icon" className="dark:text-white">
-      <ImageIcon size={20} />
+      <ImageIcon className="size-5" />
     </Button>
   )
 }

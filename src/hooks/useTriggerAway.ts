@@ -1,4 +1,5 @@
-import { RefCallback, useCallback, useRef } from 'react'
+import type { RefCallback } from 'react'
+import { useCallback, useRef } from 'react'
 
 export type Events = Array<keyof GlobalEventHandlersEventMap>
 

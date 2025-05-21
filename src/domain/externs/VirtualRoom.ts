@@ -1,5 +1,5 @@
 import { Remesh } from 'remesh'
-import { RoomMessage } from '@/domain/VirtualRoom'
+import type { RoomMessage } from '@/domain/VirtualRoom'
 
 export interface VirtualRoom {
   readonly peerId: string

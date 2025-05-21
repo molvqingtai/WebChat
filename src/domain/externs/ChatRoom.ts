@@ -1,5 +1,5 @@
 import { Remesh } from 'remesh'
-import { RoomMessage } from '../ChatRoom'
+import type { RoomMessage } from '../ChatRoom'
 
 export interface ChatRoom {
   readonly peerId: string

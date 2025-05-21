@@ -1,9 +1,9 @@
-import { Room } from '@rtco/client'
+import type { Room } from '@rtco/client'
 
 import { VirtualRoomExtern } from '@/domain/externs/VirtualRoom'
 import { stringToHex } from '@/utils'
 import EventHub from '@resreq/event-hub'
-import { RoomMessage } from '@/domain/VirtualRoom'
+import type { RoomMessage } from '@/domain/VirtualRoom'
 import { JSONR } from '@/utils'
 import { VIRTUAL_ROOM_ID } from '@/constants/config'
 import Peer from './Peer'

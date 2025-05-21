@@ -1,5 +1,6 @@
 import generateUglyAvatar from '@/lib/uglyAvatar'
-import compressImage, { ImageType } from './compressImage'
+import type { ImageType } from './compressImage'
+import compressImage from './compressImage'
 
 const generateRandomAvatar = async (targetSize: number, outputType: ImageType = 'image/webp') => {
   const svgBlob = generateUglyAvatar()

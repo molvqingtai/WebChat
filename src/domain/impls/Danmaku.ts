@@ -1,12 +1,13 @@
 import { DanmakuExtern } from '@/domain/externs/Danmaku'
 
-import { TextMessage } from '@/domain/ChatRoom'
+import type { TextMessage } from '@/domain/ChatRoom'
 import { createElement } from 'react'
-import DanmakuMessage from '@/app/content/components/DanmakuMessage'
+import DanmakuMessage from '@/app/content/components/danmaku-message'
 import { createRoot } from 'react-dom/client'
-import { create, Manager } from 'danmu'
+import type { Manager } from 'danmu'
+import { create } from 'danmu'
 import { LocalStorageImpl } from './Storage'
-import { AppStatus } from '../AppStatus'
+import type { AppStatus } from '../AppStatus'
 import { APP_STATUS_STORAGE_KEY } from '@/constants/config'
 import { EVENT } from '@/constants/event'
 

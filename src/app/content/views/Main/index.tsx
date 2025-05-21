@@ -1,9 +1,9 @@
 import { type FC } from 'react'
 import { useRemeshDomain, useRemeshQuery, useRemeshSend } from 'remesh-react'
 
-import MessageList from '../../components/MessageList'
-import MessageItem from '../../components/MessageItem'
-import PromptItem from '../../components/PromptItem'
+import MessageList from '../../components/message-list'
+import MessageItem from '../../components/message-item'
+import PromptItem from '../../components/prompt-item'
 import UserInfoDomain from '@/domain/UserInfo'
 import ChatRoomDomain, { MessageType } from '@/domain/ChatRoom'
 import MessageListDomain from '@/domain/MessageList'

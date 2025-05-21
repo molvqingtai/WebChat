@@ -1,9 +1,10 @@
-import { ChangeEvent, useMemo, useRef, useState, KeyboardEvent, type FC, ClipboardEvent } from 'react'
+import type { ChangeEvent, KeyboardEvent, ClipboardEvent } from 'react'
+import { useMemo, useRef, useState, type FC } from 'react'
 import { CornerDownLeftIcon } from 'lucide-react'
 import { useRemeshDomain, useRemeshQuery, useRemeshSend } from 'remesh-react'
-import MessageInput from '../../components/MessageInput'
-import EmojiButton from '../../components/EmojiButton'
-import { Button } from '@/components/ui/Button'
+import MessageInput from '../../components/message-input'
+import EmojiButton from '../../components/emoji-button'
+import { Button } from '@/components/ui/button'
 import MessageInputDomain from '@/domain/MessageInput'
 import { MESSAGE_MAX_LENGTH, WEB_RTC_MAX_MESSAGE_SIZE } from '@/constants/config'
 import ChatRoomDomain from '@/domain/ChatRoom'
@@ -12,14 +13,15 @@ import useShareRef from '@/hooks/useShareRef'
 import { Presence } from '@radix-ui/react-presence'
 import { Portal } from '@radix-ui/react-portal'
 import useTriggerAway from '@/hooks/useTriggerAway'
-import { ScrollArea } from '@/components/ui/ScrollArea'
-import { Virtuoso, VirtuosoHandle } from 'react-virtuoso'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import type { VirtuosoHandle } from 'react-virtuoso'
+import { Virtuoso } from 'react-virtuoso'
 import UserInfoDomain from '@/domain/UserInfo'
 import { blobToBase64, cn, compressImage, getRootNode, getTextByteSize, getTextSimilarity } from '@/utils'
-import { Avatar, AvatarFallback } from '@/components/ui/Avatar'
+import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { AvatarImage } from '@radix-ui/react-avatar'
 import ToastDomain from '@/domain/Toast'
-import ImageButton from '../../components/ImageButton'
+import ImageButton from '../../components/image-button'
 import { nanoid } from 'nanoid'
 
 const Footer: FC = () => {
@@ -312,7 +314,7 @@ const Footer: FC = () => {
   const root = getRootNode()
 
   return (
-    <div className="relative grid gap-y-2 rounded-b-xl px-4 pb-4 pt-2 before:pointer-events-none before:absolute before:inset-x-4 before:-top-2 before:h-2 before:bg-gradient-to-t before:from-slate-50 before:from-30%  before:to-transparent dark:bg-slate-900 before:dark:from-slate-900">
+    <div className="relative grid gap-y-2 rounded-b-xl px-4 pb-4 pt-2 before:pointer-events-none before:absolute before:inset-x-4 before:-top-2 before:h-2 before:bg-gradient-to-t before:from-slate-50 before:from-30%  before:to-transparent dark:bg-slate-900 dark:before:from-slate-900">
       <Presence present={autoCompleteListShow}>
         <Portal
           container={root}

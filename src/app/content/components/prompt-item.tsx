@@ -1,9 +1,9 @@
-import { Avatar, AvatarFallback } from '@/components/ui/Avatar'
-import { Badge } from '@/components/ui/Badge'
-import { PromptMessage } from '@/domain/MessageList'
+import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { Badge } from '@/components/ui/badge'
+import type { PromptMessage } from '@/domain/MessageList'
 import { cn } from '@/utils'
 import { AvatarImage } from '@radix-ui/react-avatar'
-import { FC } from 'react'
+import type { FC } from 'react'
 
 export interface PromptItemProps {
   data: PromptMessage

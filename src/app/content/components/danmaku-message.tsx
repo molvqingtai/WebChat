@@ -1,9 +1,9 @@
-import { Avatar, AvatarFallback } from '@/components/ui/Avatar'
-import { Button } from '@/components/ui/Button'
-import { TextMessage } from '@/domain/ChatRoom'
+import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { Button } from '@/components/ui/button'
+import type { TextMessage } from '@/domain/ChatRoom'
 import { cn } from '@/utils'
 import { AvatarImage } from '@radix-ui/react-avatar'
-import { FC, MouseEvent } from 'react'
+import type { FC, MouseEvent } from 'react'
 
 export interface PromptItemProps {
   data: TextMessage

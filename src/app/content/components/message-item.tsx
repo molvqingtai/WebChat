@@ -1,10 +1,10 @@
 import { type FC } from 'react'
 import { FrownIcon, HeartIcon } from 'lucide-react'
-import LikeButton from './LikeButton'
-import FormatDate from './FormatDate'
-import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/Avatar'
+import LikeButton from './like-button'
+import FormatDate from './format-date'
+import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar'
 
-import { Markdown } from '@/components/Markdown'
+import { Markdown } from '@/components/markdown'
 import { type NormalMessage } from '@/domain/MessageList'
 import { cn } from '@/utils'
 

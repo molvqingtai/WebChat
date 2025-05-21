@@ -3,6 +3,7 @@ import { BREAKPOINTS } from '@/constants/config'
 
 const _useBreakpoint = createBreakpoint(BREAKPOINTS)
 
+// eslint-disable-next-line @eslint-react/hooks-extra/no-unnecessary-use-prefix
 const useBreakpoint = () => {
   const breakpoint = _useBreakpoint() as keyof typeof BREAKPOINTS
 

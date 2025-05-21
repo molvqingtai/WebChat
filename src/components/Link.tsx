@@ -1,5 +1,5 @@
 import { cn } from '@/utils'
-import { forwardRef, ReactNode } from 'react'
+import type { ReactNode, Ref } from 'react'
 
 export interface LinkProps {
   href: string
@@ -8,7 +8,13 @@ export interface LinkProps {
   underline?: boolean
 }
 
-const Link = forwardRef<HTMLAnchorElement, LinkProps>(({ href, className, children, underline = true }, ref) => {
+const Link = ({
+  ref,
+  href,
+  className,
+  children,
+  underline = true
+}: LinkProps & { ref?: Ref<HTMLAnchorElement | null> }) => {
   return (
     <a
       href={href}
@@ -20,7 +26,7 @@ const Link = forwardRef<HTMLAnchorElement, LinkProps>(({ href, className, childr
       {children}
     </a>
   )
-})
+}
 
 Link.displayName = 'Link'
 export default Link
