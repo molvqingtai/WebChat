@@ -111,7 +111,7 @@
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
 
-  --z-index-infinity: 'calc(infinity)';
+  --z-index-infinity: calc(infinity);
   --text-2xs: 0.625rem;
   --animate-meteor: meteor 5s linear infinite;
   --animate-pulse: pulse var(--duration) ease-out infinite;
