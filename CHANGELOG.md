@@ -1,3 +1,10 @@
+## [1.8.4](https://github.com/molvqingtai/WebChat/compare/v1.8.3...v1.8.4) (2025-05-22)
+
+
+### Performance Improvements
+
+* performance optimization ([dce12eb](https://github.com/molvqingtai/WebChat/commit/dce12ebf427d82c9a50f6d5da4f715885c0f7539))
+
 ## [1.8.3](https://github.com/molvqingtai/WebChat/compare/v1.8.2...v1.8.3) (2025-05-22)
 
 
