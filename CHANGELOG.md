@@ -1,3 +1,15 @@
+## [1.8.3](https://github.com/molvqingtai/WebChat/compare/v1.8.2...v1.8.3) (2025-05-22)
+
+
+### Bug Fixes
+
+* drag crash ([54b7144](https://github.com/molvqingtai/WebChat/commit/54b7144f7b0711b26ade0f2851c614b905e88b0d))
+
+
+### Performance Improvements
+
+* empty messsage focus input ([403a522](https://github.com/molvqingtai/WebChat/commit/403a5228569d4fbe2d0ff1279e7b218cec7f130f))
+
 ## [1.8.2](https://github.com/molvqingtai/WebChat/compare/v1.8.1...v1.8.2) (2025-05-21)
 
 
