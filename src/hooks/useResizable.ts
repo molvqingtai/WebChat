@@ -1,5 +1,5 @@
 import type { RefCallback } from 'react'
-import { useCallback, useLayoutEffect, useRef, useState } from 'react'
+import { startTransition, useCallback, useLayoutEffect, useRef, useState } from 'react'
 import { clamp, isInRange } from '@/utils'
 
 export interface ResizableOptions {
@@ -17,7 +17,9 @@ const useResizable = (options: ResizableOptions) => {
   useLayoutEffect(() => {
     const newSize = clamp(initSize, minSize, maxSize)
     if (newSize !== size) {
-      setSize(newSize)
+      startTransition(() => {
+        setSize(newSize)
+      })
     }
   }, [initSize, minSize, maxSize])
 
@@ -47,12 +49,15 @@ const useResizable = (options: ResizableOptions) => {
             break
         }
         const newSize = size + delta
-        if (isInRange(newSize, minSize, maxSize)) {
-          position.current = isHorizontal ? screenX : screenY
-        }
-        if (newSize !== size) {
-          setSize(clamp(newSize, minSize, maxSize))
-        }
+
+        startTransition(() => {
+          if (isInRange(newSize, minSize, maxSize)) {
+            position.current = isHorizontal ? screenX : screenY
+          }
+          if (newSize !== size) {
+            setSize(clamp(newSize, minSize, maxSize))
+          }
+        })
       }
     },
     [direction, isHorizontal, maxSize, minSize, size]

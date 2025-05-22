@@ -54,9 +54,7 @@ const AppButton: FC<AppButtonProps> = ({ className }) => {
   })
 
   useWindowResize(({ width, height }) => {
-    startTransition(() => {
-      send(appStatusDomain.command.UpdatePositionCommand({ x: width - 50, y: height - 22 }))
-    })
+    send(appStatusDomain.command.UpdatePositionCommand({ x: width - 50, y: height - 22 }))
   })
 
   useEffect(() => {
