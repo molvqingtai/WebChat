@@ -50,8 +50,8 @@ const useDraggable = (options: DargOptions) => {
         if (hasChanged) {
           const x = clamp(delta.x, minX, maxX)
           const y = clamp(delta.y, minY, maxY)
-          positionRef.current = { x, y }
           startTransition(() => {
+            positionRef.current = { x, y }
             setPosition({ x, y })
           })
         }
