@@ -20,7 +20,10 @@ const useDraggable = (options: DargOptions) => {
   useLayoutEffect(() => {
     const newPosition = { x: clamp(initX, minX, maxX), y: clamp(initY, minY, maxY) }
     if (JSON.stringify(newPosition) !== JSON.stringify(position)) {
-      setPosition(newPosition)
+      startTransition(() => {
+        positionRef.current = newPosition
+        setPosition(newPosition)
+      })
     }
   }, [initX, initY, maxX, minX, maxY, minY])
 
@@ -48,7 +51,9 @@ const useDraggable = (options: DargOptions) => {
           const x = clamp(delta.x, minX, maxX)
           const y = clamp(delta.y, minY, maxY)
           positionRef.current = { x, y }
-          setPosition({ x, y })
+          startTransition(() => {
+            setPosition({ x, y })
+          })
         }
       }
     },

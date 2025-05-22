@@ -128,7 +128,8 @@ const Footer: FC = () => {
 
   const handleSend = async () => {
     if (!`${message}`.trim()) {
-      return send(toastDomain.command.WarningCommand('Message cannot be empty.'))
+      inputRef.current?.focus()
+      return
     }
     const transformedMessage = await transformMessage(message)
     const atUsers = [...atUserRecord.current]
