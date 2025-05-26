@@ -1,5 +1,5 @@
 import type { RefCallback } from 'react'
-import { startTransition, useCallback, useLayoutEffect, useRef, useState } from 'react'
+import { startTransition, useCallback, useEffect, useRef, useState } from 'react'
 import { clamp, isInRange } from '@/utils'
 
 export interface ResizableOptions {
@@ -14,7 +14,7 @@ const useResizable = (options: ResizableOptions) => {
 
   const [size, setSize] = useState(clamp(initSize, minSize, maxSize))
 
-  useLayoutEffect(() => {
+  useEffect(() => {
     const newSize = clamp(initSize, minSize, maxSize)
     if (newSize !== size) {
       startTransition(() => {

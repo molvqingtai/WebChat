@@ -1,5 +1,5 @@
 import { clamp, isInRange } from '@/utils'
-import { startTransition, useCallback, useLayoutEffect, useRef, useState } from 'react'
+import { startTransition, useCallback, useEffect, useRef, useState } from 'react'
 
 export interface DargOptions {
   initX: number
@@ -17,7 +17,7 @@ const useDraggable = (options: DargOptions) => {
   const positionRef = useRef({ x: clamp(initX, minX, maxX), y: clamp(initY, minY, maxY) })
   const [position, setPosition] = useState(positionRef.current)
 
-  useLayoutEffect(() => {
+  useEffect(() => {
     const newPosition = { x: clamp(initX, minX, maxX), y: clamp(initY, minY, maxY) }
     if (JSON.stringify(newPosition) !== JSON.stringify(position)) {
       startTransition(() => {

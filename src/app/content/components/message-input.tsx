@@ -42,7 +42,7 @@ const MessageInput = ({
 }: MessageInputProps & { ref?: Ref<HTMLTextAreaElement | null> }) => {
   return (
     <div className={cn('relative', className)}>
-      <ScrollArea className="box-border max-h-28 w-full rounded-lg border transition-[color,box-shadow] shadow-xs border-input bg-background 2xl:max-h-40 dark:bg-input/30 focus-within:ring-1 focus-within:border-ring focus-within:ring-ring/50">
+      <ScrollArea className="box-border max-h-28 w-full rounded-md border transition-[color,box-shadow] shadow-xs border-input bg-background 2xl:max-h-40 dark:bg-input/30 has-focus-visible:ring-[3px] has-focus-visible:border-ring has-focus-visible:ring-ring/50 has-aria-invalid:ring-destructive/20 dark:has-aria-invalid:ring-destructive/40 has-aria-invalid:border-destructive">
         <Textarea
           ref={ref}
           onPaste={onPaste}
@@ -58,7 +58,7 @@ const MessageInput = ({
           onInput={onInput}
           disabled={disabled || loading}
           className={cn(
-            'box-border resize-none whitespace-pre-wrap px-2 text-sm text-foreground break-words border-none bg-slate-100 pb-5 [word-break:break-word] dark:bg-slate-800 focus-visible:ring-0',
+            'box-border resize-none whitespace-pre-wrap px-2 text-sm text-foreground break-words border-none bg-slate-100 pb-5 [word-break:break-word] focus-visible:ring-0 dark:bg-transparent',
             {
               'disabled:opacity-100': loading
             }
