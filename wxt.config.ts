@@ -12,7 +12,6 @@ export default defineConfig({
   webExt: {
     startUrls: ['https://www.example.com/']
   },
-  manifestVersion: 3,
   manifest: ({ browser }) => {
     const common = {
       name: displayName,

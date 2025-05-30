@@ -25,13 +25,6 @@ export default defineContentScript({
   matches: ['https://*/*'],
   excludeMatches: ['*://localhost/*', '*://127.0.0.1/*', '*://*.csdn.net/*', '*://*.csdn.com/*'],
   async main(ctx) {
-    // window.CSS.registerProperty({
-    //   name: '--shimmer-angle',
-    //   syntax: '<angle>',
-    //   inherits: false,
-    //   initialValue: '0deg'
-    // })
-
     const store = Remesh.store({
       externs: [
         LocalStorageImpl,
