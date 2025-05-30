@@ -6,7 +6,7 @@ import { cn } from '@/utils'
 function ScrollArea({
   className,
   children,
-  scrollLock,
+  scrollLock = true,
   ref,
   ...props
 }: React.ComponentProps<typeof ScrollAreaPrimitive.Root> & { scrollLock?: boolean }) {
