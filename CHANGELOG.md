@@ -1,3 +1,16 @@
+## [1.8.5](https://github.com/molvqingtai/WebChat/compare/v1.8.4...v1.8.5) (2025-05-30)
+
+
+### Performance Improvements
+
+* optimize style ([254ca88](https://github.com/molvqingtai/WebChat/commit/254ca8844dd535a65b26638871abaa52389f7416))
+* scroll-area default scrollLock ([d00aee4](https://github.com/molvqingtai/WebChat/commit/d00aee48a4a90a5ad8f840f0af8251753e4f10a0))
+
+
+### Reverts
+
+* firefox falls back to manifest v2 ([943d64c](https://github.com/molvqingtai/WebChat/commit/943d64cf1e9c5b2b01c2480dd75607a9467da00e))
+
 ## [1.8.4](https://github.com/molvqingtai/WebChat/compare/v1.8.3...v1.8.4) (2025-05-22)
 
 
