@@ -37,6 +37,12 @@ After installing the extension, you'll see a ghost icon in the bottom-right corn
 
 https://github.com/user-attachments/assets/e7ac9b8e-1b6c-43fb-8469-7a0a2c09d450
 
+### Community
+
+Join our Discord community to discuss WebChat and connect with other users:
+
+[Discord](https://discord.com/channels/1398133810398367805/1398137562043908248)
+
 ### Standing on the Shoulders of Giants
 
 In addition to the good idea of decentralized chat, it also leverages some fantastic technologies.
