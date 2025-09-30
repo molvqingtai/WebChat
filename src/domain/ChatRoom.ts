@@ -1,5 +1,5 @@
 import { Remesh } from 'remesh'
-import { map, merge, of, EMPTY, mergeMap, fromEventPattern } from 'rxjs'
+import { map, merge, of, EMPTY, mergeMap, fromEventPattern, fromEvent, bufferTime, filter } from 'rxjs'
 import type { AtUser, NormalMessage } from './MessageList'
 import { type MessageUser } from './MessageList'
 import { ChatRoomExtern } from '@/domain/externs/ChatRoom'
@@ -506,6 +506,22 @@ const ChatRoomDomain = Remesh.domain({
       name: 'Room.OnTextMessageEvent'
     })
 
+    const OnSyncUserMessageEvent = domain.event<SyncUserMessage>({
+      name: 'Room.OnSyncUserMessageEvent'
+    })
+
+    const OnSyncHistoryMessageEvent = domain.event<SyncHistoryMessage>({
+      name: 'Room.OnSyncHistoryMessageEvent'
+    })
+
+    const OnLikeMessageEvent = domain.event<LikeMessage>({
+      name: 'Room.OnLikeMessageEvent'
+    })
+
+    const OnHateMessageEvent = domain.event<HateMessage>({
+      name: 'Room.OnHateMessageEvent'
+    })
+
     const OnJoinRoomEvent = domain.event<string>({
       name: 'Room.OnJoinRoomEvent'
     })
@@ -545,7 +561,7 @@ const ChatRoomDomain = Remesh.domain({
 
     domain.effect({
       name: 'Room.OnMessageEffect',
-      impl: ({ get }) => {
+      impl: () => {
         const onMessage$ = fromEventPattern<RoomMessage>(chatRoomExtern.onMessage).pipe(
           mergeMap((message) => {
             // Filter out messages that do not conform to the format
@@ -556,86 +572,162 @@ const ChatRoomDomain = Remesh.domain({
 
             const messageEvent$ = of(OnMessageEvent(message))
 
-            const textMessageEvent$ = of(message.type === SendType.Text ? OnTextMessageEvent(message) : null)
-
-            const messageCommand$ = (() => {
+            // Emit specific message type events
+            const specificEvent$ = (() => {
               switch (message.type) {
-                case SendType.SyncUser: {
-                  const selfUser = get(SelfUserQuery())
-
-                  // If a new user joins after the current user has entered the room, a join log message needs to be created.
-                  const existUser = get(UserListQuery()).find((user) => user.userId === message.userId)
-                  const isNewJoinUser = !existUser && message.joinTime > selfUser.joinTime
-
-                  const lastMessageTime = get(LastMessageTimeQuery())
-                  const needSyncHistory = lastMessageTime > message.lastMessageTime
-
-                  return of(
-                    UpdateUserListCommand({ type: 'create', user: message }),
-                    isNewJoinUser
-                      ? HandleJoinLeaveMessageCommand({
-                          userId: message.userId,
-                          username: message.username,
-                          userAvatar: message.userAvatar,
-                          messageType: 'join'
-                        })
-                      : null,
-                    needSyncHistory
-                      ? SendSyncHistoryMessageCommand({
-                          peerId: message.peerId,
-                          lastMessageTime: message.lastMessageTime
-                        })
-                      : null
-                  )
-                }
-
-                case SendType.SyncHistory: {
-                  return of(...message.messages.map((message) => messageListDomain.command.UpsertItemCommand(message)))
-                }
-
                 case SendType.Text:
-                  return of(
-                    messageListDomain.command.CreateItemCommand({
-                      ...message,
-                      type: MessageType.Normal,
-                      receiveTime: Date.now(),
-                      likeUsers: [],
-                      hateUsers: []
-                    })
-                  )
+                  return of(OnTextMessageEvent(message))
+                case SendType.SyncUser:
+                  return of(OnSyncUserMessageEvent(message))
+                case SendType.SyncHistory:
+                  return of(OnSyncHistoryMessageEvent(message))
                 case SendType.Like:
-                case SendType.Hate: {
-                  if (!get(messageListDomain.query.HasItemQuery(message.id))) {
-                    return EMPTY
-                  }
-                  const _message = get(messageListDomain.query.ItemQuery(message.id)) as NormalMessage
-                  const type = message.type === 'Like' ? 'likeUsers' : 'hateUsers'
-                  return of(
-                    messageListDomain.command.UpdateItemCommand({
-                      ..._message,
-                      receiveTime: Date.now(),
-                      [type]: desert(
-                        _message[type],
-                        {
-                          userId: message.userId,
-                          username: message.username,
-                          userAvatar: message.userAvatar
-                        },
-                        'userId'
-                      )
-                    })
-                  )
-                }
+                  return of(OnLikeMessageEvent(message))
+                case SendType.Hate:
+                  return of(OnHateMessageEvent(message))
                 default:
                   console.warn('Unsupported message type', message)
                   return EMPTY
               }
             })()
 
-            return merge(messageEvent$, textMessageEvent$, messageCommand$)
+            return merge(messageEvent$, specificEvent$)
           })
         )
         return onMessage$
+      }
+    })
+
+    domain.effect({
+      name: 'Room.OnTextMessageEffect',
+      impl: ({ fromEvent }) => {
+        return fromEvent(OnTextMessageEvent).pipe(
+          map((message) => {
+            return messageListDomain.command.CreateItemCommand({
+              ...message,
+              type: MessageType.Normal,
+              receiveTime: Date.now(),
+              likeUsers: [],
+              hateUsers: []
+            })
+          })
+        )
+      }
+    })
+
+    domain.effect({
+      name: 'Room.OnSyncUserMessageEffect',
+      impl: ({ get, fromEvent }) => {
+        return fromEvent(OnSyncUserMessageEvent).pipe(
+          mergeMap((message) => {
+            const selfUser = get(SelfUserQuery())
+
+            // If a new user joins after the current user has entered the room, a join log message needs to be created.
+            const existUser = get(UserListQuery()).find((user) => user.userId === message.userId)
+            const isNewJoinUser = !existUser && message.joinTime > selfUser.joinTime
+
+            const lastMessageTime = get(LastMessageTimeQuery())
+            const needSyncHistory = lastMessageTime > message.lastMessageTime
+
+            return of(
+              UpdateUserListCommand({ type: 'create', user: message }),
+              isNewJoinUser
+                ? HandleJoinLeaveMessageCommand({
+                    userId: message.userId,
+                    username: message.username,
+                    userAvatar: message.userAvatar,
+                    messageType: 'join'
+                  })
+                : null,
+              needSyncHistory
+                ? SendSyncHistoryMessageCommand({
+                    peerId: message.peerId,
+                    lastMessageTime: message.lastMessageTime
+                  })
+                : null
+            )
+          })
+        )
+      }
+    })
+
+    domain.effect({
+      name: 'Room.OnSyncHistoryMessageEffect',
+      impl: ({ fromEvent }) => {
+        return fromEvent(OnSyncHistoryMessageEvent).pipe(
+          bufferTime(300), // Collect messages within 300ms time window
+          filter((messages) => messages.length > 0),
+          mergeMap((syncMessages) => {
+            // Merge all messages from multiple sync events
+            const allMessages = syncMessages.flatMap((syncMsg) => syncMsg.messages)
+
+            // Deduplicate messages by id, keep the latest one
+            const uniqueMessages = [
+              ...allMessages.reduce((map, msg) => map.set(msg.id, msg), new Map<string, NormalMessage>()).values()
+            ]
+
+            // Return batched upsert commands
+            return of(...uniqueMessages.map((message) => messageListDomain.command.UpsertItemCommand(message)))
+          })
+        )
+      }
+    })
+
+    domain.effect({
+      name: 'Room.OnLikeMessageEffect',
+      impl: ({ get, fromEvent }) => {
+        return fromEvent(OnLikeMessageEvent).pipe(
+          mergeMap((message) => {
+            if (!get(messageListDomain.query.HasItemQuery(message.id))) {
+              return EMPTY
+            }
+            const _message = get(messageListDomain.query.ItemQuery(message.id)) as NormalMessage
+            return of(
+              messageListDomain.command.UpdateItemCommand({
+                ..._message,
+                receiveTime: Date.now(),
+                likeUsers: desert(
+                  _message.likeUsers,
+                  {
+                    userId: message.userId,
+                    username: message.username,
+                    userAvatar: message.userAvatar
+                  },
+                  'userId'
+                )
+              })
+            )
+          })
+        )
+      }
+    })
+
+    domain.effect({
+      name: 'Room.OnHateMessageEffect',
+      impl: ({ get, fromEvent }) => {
+        return fromEvent(OnHateMessageEvent).pipe(
+          mergeMap((message) => {
+            if (!get(messageListDomain.query.HasItemQuery(message.id))) {
+              return EMPTY
+            }
+            const _message = get(messageListDomain.query.ItemQuery(message.id)) as NormalMessage
+            return of(
+              messageListDomain.command.UpdateItemCommand({
+                ..._message,
+                receiveTime: Date.now(),
+                hateUsers: desert(
+                  _message.hateUsers,
+                  {
+                    userId: message.userId,
+                    username: message.username,
+                    userAvatar: message.userAvatar
+                  },
+                  'userId'
+                )
+              })
+            )
+          })
+        )
       }
     })
 
