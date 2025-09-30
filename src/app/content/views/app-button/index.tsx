@@ -1,4 +1,4 @@
-import { type FC, useState, type MouseEvent, useEffect, startTransition } from 'react'
+import { type FC, useState, type MouseEvent, useEffect } from 'react'
 import { SettingsIcon, MoonIcon, SunIcon, HandIcon } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 
@@ -41,7 +41,7 @@ const AppButton: FC<AppButtonProps> = ({ className }) => {
   const [menuOpen, setMenuOpen] = useState(false)
 
   // Get current window size to recalculate position on resize
-  const windowSize = useWindowResize(({ width, height }) => {
+  const windowSize = useWindowResize(() => {
     // Reset to default position when window resizes
     send(appStatusDomain.command.UpdatePositionCommand({ x: 50, y: 22 }))
   })
