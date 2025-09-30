@@ -1,22 +1,23 @@
-import type { ForwardedRef, MutableRefObject, RefCallback } from 'react'
+import type { Ref } from 'react'
 import { useCallback } from 'react'
 
-const useShareRef = <T extends HTMLElement | null>(
-  ...refs: (MutableRefObject<T> | ForwardedRef<T> | RefCallback<T>)[]
-) => {
-  const setRef = useCallback(
-    (node: T) =>
-      refs.forEach((ref) => {
-        if (typeof ref === 'function') {
-          ref(node)
-        } else if (ref) {
-          ref.current = node
-        }
-      }),
+export const setRef = <T>(ref: Ref<T> | undefined, value: T) => {
+  if (typeof ref === 'function') {
+    return ref(value)
+  } else if (ref !== null && ref !== undefined) {
+    ref.current = value
+  }
+}
+
+const useShareRef = <T>(...refs: (Ref<T> | undefined)[]) => {
+  return useCallback(
+    (node: T) => {
+      const cleanups = refs.map((ref) => setRef(ref, node))
+      return () =>
+        cleanups.forEach((cleanup, index) => (typeof cleanup === 'function' ? cleanup() : setRef(refs[index], null)))
+    },
     [...refs]
   )
-
-  return setRef
 }
 
 export default useShareRef

@@ -8,24 +8,46 @@ export interface DargOptions {
   minX: number
   maxY: number
   minY: number
+  reverse?: boolean // If true, position is calculated from bottom-right corner
 }
 
 const useDraggable = (options: DargOptions) => {
-  const { initX, initY, maxX = 0, minX = 0, maxY = 0, minY = 0 } = options
+  const { initX, initY, maxX = 0, minX = 0, maxY = 0, minY = 0, reverse = false } = options
 
   const mousePosition = useRef({ x: 0, y: 0 })
-  const positionRef = useRef({ x: clamp(initX, minX, maxX), y: clamp(initY, minY, maxY) })
-  const [position, setPosition] = useState(positionRef.current)
+
+  // Convert to internal coordinates if reverse mode
+  const toInternal = (x: number, y: number) => {
+    if (!reverse) return { x, y }
+    return {
+      x: window.innerWidth - x,
+      y: window.innerHeight - y
+    }
+  }
+
+  // Convert from internal coordinates if reverse mode
+  const fromInternal = (x: number, y: number) => {
+    if (!reverse) return { x, y }
+    return {
+      x: window.innerWidth - x,
+      y: window.innerHeight - y
+    }
+  }
+
+  const internalInit = toInternal(initX, initY)
+  const positionRef = useRef({ x: clamp(internalInit.x, minX, maxX), y: clamp(internalInit.y, minY, maxY) })
+  const [position, setPosition] = useState(() => fromInternal(positionRef.current.x, positionRef.current.y))
 
   useEffect(() => {
-    const newPosition = { x: clamp(initX, minX, maxX), y: clamp(initY, minY, maxY) }
-    if (JSON.stringify(newPosition) !== JSON.stringify(position)) {
+    const internal = toInternal(initX, initY)
+    const newPosition = { x: clamp(internal.x, minX, maxX), y: clamp(internal.y, minY, maxY) }
+    if (JSON.stringify(newPosition) !== JSON.stringify(positionRef.current)) {
       startTransition(() => {
         positionRef.current = newPosition
-        setPosition(newPosition)
+        setPosition(fromInternal(newPosition.x, newPosition.y))
       })
     }
-  }, [initX, initY, maxX, minX, maxY, minY])
+  }, [initX, initY, maxX, minX, maxY, minY, reverse])
 
   const isMove = useRef(false)
 
@@ -52,12 +74,12 @@ const useDraggable = (options: DargOptions) => {
           const y = clamp(delta.y, minY, maxY)
           startTransition(() => {
             positionRef.current = { x, y }
-            setPosition({ x, y })
+            setPosition(fromInternal(x, y))
           })
         }
       }
     },
-    [minX, maxX, minY, maxY]
+    [minX, maxX, minY, maxY, reverse]
   )
 
   const handleEnd = useCallback(() => {

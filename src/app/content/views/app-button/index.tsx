@@ -40,6 +40,12 @@ const AppButton: FC<AppButtonProps> = ({ className }) => {
 
   const [menuOpen, setMenuOpen] = useState(false)
 
+  // Get current window size to recalculate position on resize
+  const windowSize = useWindowResize(({ width, height }) => {
+    // Reset to default position when window resizes
+    send(appStatusDomain.command.UpdatePositionCommand({ x: 50, y: 22 }))
+  })
+
   const {
     x,
     y,
@@ -48,13 +54,10 @@ const AppButton: FC<AppButtonProps> = ({ className }) => {
     initX: appPosition.x,
     initY: appPosition.y,
     minX: 50,
-    maxX: window.innerWidth - 50,
-    maxY: window.innerHeight - 22,
-    minY: 750
-  })
-
-  useWindowResize(({ width, height }) => {
-    send(appStatusDomain.command.UpdatePositionCommand({ x: width - 50, y: height - 22 }))
+    maxX: windowSize.width - 50,
+    maxY: windowSize.height - 22,
+    minY: 750,
+    reverse: true
   })
 
   useEffect(() => {
@@ -87,11 +90,11 @@ const AppButton: FC<AppButtonProps> = ({ className }) => {
   return (
     <div
       ref={appMenuRef}
-      className={cn('fixed bottom-5 right-5 z-infinity grid w-min select-none justify-center gap-y-3', className)}
+      className={cn('fixed z-infinity grid w-min select-none justify-center gap-y-3', className)}
       style={{
-        left: `calc(${appPosition.x}px)`,
-        bottom: `calc(100vh - ${appPosition.y}px)`,
-        transform: 'translateX(-50%)'
+        right: `${x}px`,
+        bottom: `${y}px`,
+        transform: 'translateX(50%)'
       }}
     >
       <AnimatePresence>

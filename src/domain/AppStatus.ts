@@ -12,10 +12,11 @@ export interface AppStatus {
   position: { x: number; y: number }
 }
 
+// Position is stored as offset from bottom-right corner
 export const defaultStatusState = {
   open: false,
   unread: 0,
-  position: { x: window.innerWidth - 50, y: window.innerHeight - 22 }
+  position: { x: 50, y: 22 }
 }
 
 const AppStatusDomain = Remesh.domain({
