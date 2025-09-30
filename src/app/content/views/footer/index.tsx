@@ -1,5 +1,5 @@
 import type { ChangeEvent, KeyboardEvent, ClipboardEvent } from 'react'
-import { useMemo, useRef, useState, startTransition, type FC } from 'react'
+import { useMemo, useRef, useState, type FC } from 'react'
 import { CornerDownLeftIcon } from 'lucide-react'
 import { useRemeshDomain, useRemeshQuery, useRemeshSend } from 'remesh-react'
 import MessageInput from '../../components/message-input'
@@ -148,13 +148,10 @@ const Footer: FC = () => {
       return send(toastDomain.command.WarningCommand('Message size cannot exceed 256KiB.'))
     }
 
-    // Send message with lower priority to prevent blocking UI
-    startTransition(() => {
-      send([
-        chatRoomDomain.command.SendTextMessageCommand({ body: transformedMessage, atUsers }),
-        messageInputDomain.command.ClearCommand()
-      ])
-    })
+    send([
+      chatRoomDomain.command.SendTextMessageCommand({ body: transformedMessage, atUsers }),
+      messageInputDomain.command.ClearCommand()
+    ])
   }
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
