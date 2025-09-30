@@ -1,3 +1,18 @@
+## [1.8.6](https://github.com/molvqingtai/WebChat/compare/v1.8.5...v1.8.6) (2025-09-30)
+
+
+### Bug Fixes
+
+* resolve ESLint warnings and errors ([38e10ba](https://github.com/molvqingtai/WebChat/commit/38e10baebfa2eb664dd8e8cf3621b4dd8c27bfef))
+
+
+### Performance Improvements
+
+* deduplicate join/leave messages to reduce spam ([2782b43](https://github.com/molvqingtai/WebChat/commit/2782b43d4341dcf828cc79308e7d30c634834f34))
+* improve virtual scroll and simplify message sending ([411a38f](https://github.com/molvqingtai/WebChat/commit/411a38fa3b4f70335ed4116dc3ed277ec58a1596))
+* optimize app positioning and message sending performance ([0bfaa07](https://github.com/molvqingtai/WebChat/commit/0bfaa07258b57bc8a4acecf4c9b73baf47d58181))
+* optimize message sync with batched processing ([f19bace](https://github.com/molvqingtai/WebChat/commit/f19bacef560d0bfa4273b2c96cf6364d8c1dc350))
+
 ## [1.8.5](https://github.com/molvqingtai/WebChat/compare/v1.8.4...v1.8.5) (2025-05-30)
 
 
