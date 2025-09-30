@@ -16,9 +16,14 @@ const AppMain: FC<AppMainProps> = ({ children, className }) => {
   const appOpenStatus = useRemeshQuery(appStatusDomain.query.OpenQuery())
   const { x, y } = useRemeshQuery(appStatusDomain.query.PositionQuery())
 
-  const { width } = useWindowResize()
+  const { width, height } = useWindowResize()
 
-  const isOnRightSide = x >= width / 2 + 50
+  // Position x,y is offset from bottom-right corner
+  // Convert to absolute position from left for comparison
+  const absoluteX = width - x
+  const absoluteY = height - y
+
+  const isOnRightSide = absoluteX >= width / 2 + 50
 
   const { size, setRef } = useResizable({
     initSize: Math.max(375, width / 6),
@@ -41,8 +46,8 @@ const AppMain: FC<AppMainProps> = ({ children, className }) => {
           onAnimationStart={() => setAnimationComplete(false)}
           style={{
             width: `${size}px`,
-            left: `${x}px`,
-            bottom: `calc(100vh - ${y}px + 22px)`
+            left: `${absoluteX}px`,
+            bottom: `calc(100vh - ${absoluteY}px + 22px)`
           }}
           className={cn(
             `fixed inset-y-10 right-10 z-infinity mb-0 mt-auto box-border grid max-h-[min(calc(100vh_-60px),_1000px)] min-h-[375px] grid-flow-col grid-rows-[auto_1fr_auto] rounded-xl bg-slate-50 dark:bg-slate-950 font-sans shadow-2xl`,

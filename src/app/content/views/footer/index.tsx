@@ -1,5 +1,5 @@
 import type { ChangeEvent, KeyboardEvent, ClipboardEvent } from 'react'
-import { useMemo, useRef, useState, type FC } from 'react'
+import { useMemo, useRef, useState, startTransition, type FC } from 'react'
 import { CornerDownLeftIcon } from 'lucide-react'
 import { useRemeshDomain, useRemeshQuery, useRemeshSend } from 'remesh-react'
 import MessageInput from '../../components/message-input'
@@ -40,13 +40,15 @@ const Footer: FC = () => {
   const [autoCompleteListShow, setAutoCompleteListShow] = useState(false)
   const [scrollParentRef, setScrollParentRef] = useState<HTMLDivElement | null>(null)
   const autoCompleteListRef = useRef<HTMLDivElement>(null)
-  const { setRef: setAutoCompleteListRef } = useTriggerAway(['click'], () => setAutoCompleteListShow(false))
-  const shareAutoCompleteListRef = useShareRef(setAutoCompleteListRef, autoCompleteListRef)
+  const { setRef: setAutoCompleteListRef } = useTriggerAway<HTMLDivElement>(['click'], () =>
+    setAutoCompleteListShow(false)
+  )
+  const shareAutoCompleteListRef = useShareRef<HTMLDivElement>(setAutoCompleteListRef, autoCompleteListRef)
   const isComposing = useRef(false)
   const virtuosoRef = useRef<VirtuosoHandle>(null)
   const [inputLoading, setInputLoading] = useState(false)
 
-  const shareRef = useShareRef(inputRef, setRef)
+  const shareRef = useShareRef<HTMLTextAreaElement | null>(inputRef, setRef)
 
   /**
    * When inserting a username using the @ syntax, record the username's position information and the mapping relationship between the position information and userId to distinguish between users with the same name.
@@ -146,8 +148,13 @@ const Footer: FC = () => {
       return send(toastDomain.command.WarningCommand('Message size cannot exceed 256KiB.'))
     }
 
-    send(chatRoomDomain.command.SendTextMessageCommand({ body: transformedMessage, atUsers }))
-    send(messageInputDomain.command.ClearCommand())
+    // Send message with lower priority to prevent blocking UI
+    startTransition(() => {
+      send([
+        chatRoomDomain.command.SendTextMessageCommand({ body: transformedMessage, atUsers }),
+        messageInputDomain.command.ClearCommand()
+      ])
+    })
   }
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
