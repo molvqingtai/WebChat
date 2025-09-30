@@ -10,7 +10,8 @@ export default defineConfig({
   imports: false,
   entrypointsDir: 'app',
   webExt: {
-    startUrls: ['https://www.example.com/']
+    startUrls: ['https://www.google.com/'],
+    openDevtools: true
   },
   manifest: ({ browser }) => {
     const common = {
@@ -45,7 +46,11 @@ export default defineConfig({
       __NAME__: JSON.stringify(name)
     },
     plugins: [
-      react(),
+      react({
+        babel: {
+          plugins: ['babel-plugin-react-compiler']
+        }
+      }),
       tailwindcss(),
       svgr({
         include: '**/*.svg'
