@@ -182,6 +182,60 @@ const ChatRoomDomain = Remesh.domain({
 
     const JoinIsFinishedQuery = JoinStatusModule.query.IsFinishedQuery
 
+    /**
+     * Handle join/leave message deduplication
+     * If the previous message is a join/leave message from the same user,
+     * delete it and create a new one to avoid message spam
+     */
+    const HandleJoinLeaveMessageCommand = domain.command({
+      name: 'Room.HandleJoinLeaveMessageCommand',
+      impl: (
+        { get },
+        payload: { userId: string; username: string; userAvatar: string; messageType: 'join' | 'leave' }
+      ) => {
+        const { userId, username, userAvatar, messageType } = payload
+        const now = Date.now()
+        const messageBody = messageType === 'join' ? `"${username}" joined the chat` : `"${username}" left the chat`
+
+        // Find user's most recent join/leave message
+        const messageList = get(messageListDomain.query.ListQuery())
+        const userPromptMessages = messageList
+          .filter((msg) => msg.type === MessageType.Prompt && msg.userId === userId)
+          .toSorted((a, b) => b.sendTime - a.sendTime)
+
+        const lastMessage = userPromptMessages[0]
+
+        // If the previous message is from the same user, delete it
+        if (lastMessage) {
+          return [
+            messageListDomain.command.DeleteItemCommand(lastMessage.id),
+            messageListDomain.command.CreateItemCommand({
+              id: nanoid(),
+              userId,
+              username,
+              userAvatar,
+              body: messageBody,
+              type: MessageType.Prompt,
+              sendTime: now,
+              receiveTime: now
+            })
+          ]
+        }
+
+        // Create new message (first message from this user)
+        return messageListDomain.command.CreateItemCommand({
+          id: nanoid(),
+          userId,
+          username,
+          userAvatar,
+          body: messageBody,
+          type: MessageType.Prompt,
+          sendTime: now,
+          receiveTime: now
+        })
+      }
+    })
+
     const JoinRoomCommand = domain.command({
       name: 'Room.JoinRoomCommand',
       impl: ({ get }) => {
@@ -191,16 +245,7 @@ const ChatRoomDomain = Remesh.domain({
             type: 'create',
             user: { peerId: chatRoomExtern.peerId, joinTime: Date.now(), userId, username, userAvatar }
           }),
-          messageListDomain.command.CreateItemCommand({
-            id: nanoid(),
-            userId,
-            username,
-            userAvatar,
-            body: `"${username}" joined the chat`,
-            type: MessageType.Prompt,
-            sendTime: Date.now(),
-            receiveTime: Date.now()
-          }),
+          HandleJoinLeaveMessageCommand({ userId, username, userAvatar, messageType: 'join' }),
           JoinStatusModule.command.SetFinishedCommand(),
           JoinRoomEvent(chatRoomExtern.roomId),
           SelfJoinRoomEvent(chatRoomExtern.roomId)
@@ -218,16 +263,7 @@ const ChatRoomDomain = Remesh.domain({
       impl: ({ get }) => {
         const { id: userId, name: username, avatar: userAvatar } = get(userInfoDomain.query.UserInfoQuery())!
         return [
-          messageListDomain.command.CreateItemCommand({
-            id: nanoid(),
-            userId,
-            username,
-            userAvatar,
-            body: `"${username}" left the chat`,
-            type: MessageType.Prompt,
-            sendTime: Date.now(),
-            receiveTime: Date.now()
-          }),
+          HandleJoinLeaveMessageCommand({ userId, username, userAvatar, messageType: 'leave' }),
           UpdateUserListCommand({
             type: 'delete',
             user: { peerId: chatRoomExtern.peerId, joinTime: Date.now(), userId, username, userAvatar }
@@ -537,12 +573,11 @@ const ChatRoomDomain = Remesh.domain({
                   return of(
                     UpdateUserListCommand({ type: 'create', user: message }),
                     isNewJoinUser
-                      ? messageListDomain.command.CreateItemCommand({
-                          ...message,
-                          id: nanoid(),
-                          body: `"${message.username}" joined the chat`,
-                          type: MessageType.Prompt,
-                          receiveTime: Date.now()
+                      ? HandleJoinLeaveMessageCommand({
+                          userId: message.userId,
+                          username: message.username,
+                          userAvatar: message.userAvatar,
+                          messageType: 'join'
                         })
                       : null,
                     needSyncHistory
@@ -620,13 +655,11 @@ const ChatRoomDomain = Remesh.domain({
               return [
                 UpdateUserListCommand({ type: 'delete', user: { ...existUser, peerId } }),
                 existUser.peerIds.length === 1
-                  ? messageListDomain.command.CreateItemCommand({
-                      ...existUser,
-                      id: nanoid(),
-                      body: `"${existUser.username}" left the chat`,
-                      type: MessageType.Prompt,
-                      sendTime: Date.now(),
-                      receiveTime: Date.now()
+                  ? HandleJoinLeaveMessageCommand({
+                      userId: existUser.userId,
+                      username: existUser.username,
+                      userAvatar: existUser.userAvatar,
+                      messageType: 'leave'
                     })
                   : null,
                 OnLeaveRoomEvent(peerId)
