@@ -12,7 +12,7 @@ export interface ResizableOptions {
 const useResizable = (options: ResizableOptions) => {
   const { minSize, maxSize, initSize = 0, direction } = options
 
-  const [size, setSize] = useState(clamp(initSize, minSize, maxSize))
+  const [size, setSize] = useState(() => clamp(initSize, minSize, maxSize))
 
   useEffect(() => {
     const newSize = clamp(initSize, minSize, maxSize)
