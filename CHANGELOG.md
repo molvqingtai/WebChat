@@ -1,3 +1,11 @@
+## [1.9.1](https://github.com/molvqingtai/WebChat/compare/v1.9.0...v1.9.1) (2025-10-01)
+
+
+### Performance Improvements
+
+* add URL sanitization to prevent XSS attacks ([f03a679](https://github.com/molvqingtai/WebChat/commit/f03a67947819fb34956e7265f7f11d26fca6be14))
+* optimize Virtuoso performance for message list ([15e6706](https://github.com/molvqingtai/WebChat/commit/15e67066fca322d135829ba82aa9df18507db77b))
+
 # [1.9.0](https://github.com/molvqingtai/WebChat/compare/v1.8.6...v1.9.0) (2025-10-01)
 
 
