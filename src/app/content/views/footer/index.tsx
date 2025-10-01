@@ -17,12 +17,13 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import type { VirtuosoHandle } from 'react-virtuoso'
 import { Virtuoso } from 'react-virtuoso'
 import UserInfoDomain from '@/domain/UserInfo'
-import { blobToBase64, cn, compressImage, getRootNode, getTextByteSize, getTextSimilarity } from '@/utils'
+import { blobToBase64, cn, getRootNode, getTextByteSize, getTextSimilarity } from '@/utils'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { AvatarImage } from '@radix-ui/react-avatar'
 import ToastDomain from '@/domain/Toast'
 import ImageButton from '../../components/image-button'
 import { nanoid } from 'nanoid'
+import imgcap from 'imgcap'
 
 const Footer: FC = () => {
   const send = useRemeshSend()
@@ -258,8 +259,7 @@ const Footer: FC = () => {
     try {
       setInputLoading(true)
 
-      const blob = await compressImage({
-        input: file,
+      const blob = await imgcap(file, {
         targetSize: 30 * 1024,
         outputType: file.size > 30 * 1024 ? 'image/webp' : undefined
       })
