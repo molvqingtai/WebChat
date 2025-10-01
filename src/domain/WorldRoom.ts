@@ -6,7 +6,6 @@ import UserInfoDomain from '@/domain/UserInfo'
 import { upsert } from '@/utils'
 import { nanoid } from 'nanoid'
 import StatusModule from '@/domain/modules/Status'
-import type { SiteInfo } from '@/utils/getSiteInfo'
 import getSiteInfo from '@/utils/getSiteInfo'
 import {
   WorldRoomSendType,

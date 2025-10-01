@@ -22,9 +22,9 @@ const MessageList: FC<MessageListProps> = ({ children }) => {
         initialTopMostItemIndex={{ index: 'LAST', align: 'end' }}
         data={children}
         customScrollParent={scrollParentRef!}
-        computeItemKey={(index, item) => item.props.data.id}
+        computeItemKey={(_, item) => item.props.data.id}
         skipAnimationFrameInResizeObserver
-        itemContent={(_: any, item: ReactElement<MessageItemProps | PromptItemProps>) => item}
+        itemContent={(_, item: ReactElement<MessageItemProps | PromptItemProps>) => item}
       />
     </ScrollArea>
   )

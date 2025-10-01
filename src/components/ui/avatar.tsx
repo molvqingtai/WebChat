@@ -1,7 +1,7 @@
 import * as React from "react"
 import * as AvatarPrimitive from "@radix-ui/react-avatar"
 
-import { cn } from "@/utils"
+import { cn, safeUrl } from "@/utils"
 
 function Avatar({
   className,
@@ -21,12 +21,17 @@ function Avatar({
 
 function AvatarImage({
   className,
+  src,
   ...props
 }: React.ComponentProps<typeof AvatarPrimitive.Image>) {
+  // Sanitize image URL to prevent XSS attacks
+  const safeSrc = src ? safeUrl(src) : undefined
+
   return (
     <AvatarPrimitive.Image
       data-slot="avatar-image"
       className={cn("aspect-square size-full", className)}
+      src={safeSrc}
       {...props}
     />
   )

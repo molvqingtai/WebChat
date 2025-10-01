@@ -2,7 +2,7 @@ import { type FC } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
-import { cn } from '@/utils'
+import { cn, safeUrl } from '@/utils'
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area'
 
 export interface MarkdownProps {
@@ -10,35 +10,12 @@ export interface MarkdownProps {
   className?: string
 }
 
-const safeProtocol = /^(https?|ircs?|mailto|xmpp|data)$/i
-
 /**
+ * Sanitize URL to prevent XSS attacks
+ * Supports http/https URLs, data URLs (for images), mailto, xmpp, and relative URLs
  * https://github.com/remarkjs/react-markdown/blob/baad6c53764e34c4ead41e2eaba176acfc87538a/lib/index.js#L293
  */
-const urlTransform = (value: string) => {
-  // Same as:
-  // <https://github.com/micromark/micromark/blob/929275e/packages/micromark-util-sanitize-uri/dev/index.js#L34>
-  // But without the `encode` part.
-  const colon = value.indexOf(':')
-  const questionMark = value.indexOf('?')
-  const numberSign = value.indexOf('#')
-  const slash = value.indexOf('/')
-
-  if (
-    // If there is no protocol, it’s relative.
-    colon < 0 ||
-    // If the first colon is after a `?`, `#`, or `/`, it’s not a protocol.
-    (slash > -1 && colon > slash) ||
-    (questionMark > -1 && colon > questionMark) ||
-    (numberSign > -1 && colon > numberSign) ||
-    // It is a protocol, it should be allowed.
-    safeProtocol.test(value.slice(0, colon))
-  ) {
-    return value
-  }
-
-  return ''
-}
+const urlTransform = (value: string) => safeUrl(value)
 
 const Markdown: FC<MarkdownProps> = ({ children = '', className }) => {
   return (
@@ -62,14 +39,21 @@ const Markdown: FC<MarkdownProps> = ({ children = '', className }) => {
             <img className={cn('my-2 max-w-[100%] rounded', className)} alt={alt} {...props} />
           ),
           strong: ({ className, ...props }) => <strong className={cn('dark:text-slate-50', className)} {...props} />,
-          a: ({ className, ...props }) => (
-            <a
-              className={cn('text-blue-500', className)}
-              target={props.href || '_blank'}
-              rel="noopener noreferrer"
-              {...props}
-            />
-          ),
+          a: ({ className, href, ...props }) => {
+            // Check if link is an image URL
+            const isImage = href && /\.(jpg|jpeg|png|gif|webp|svg|bmp|ico)$/i.test(href)
+            return isImage ? (
+              <img src={href} alt="" className={cn('my-2 max-w-[100%] rounded', className)} />
+            ) : (
+              <a
+                className={cn('text-blue-500', className)}
+                href={href}
+                target="_blank"
+                rel="noopener noreferrer"
+                {...props}
+              />
+            )
+          },
           ul: ({ className, ...props }) => {
             Reflect.deleteProperty(props, 'ordered')
             return <ul className={cn('text-sm [&:not([depth="0"])]:my-0 ', className)} {...props} />

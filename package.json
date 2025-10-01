@@ -71,6 +71,7 @@
     "comctx": "^1.4.3",
     "danmu": "^0.18.1",
     "date-fns": "^4.1.0",
+    "dompurify": "^3.2.7",
     "framer-motion": "^12.23.22",
     "hash-it": "^6.0.0",
     "idb-keyval": "^6.2.2",
