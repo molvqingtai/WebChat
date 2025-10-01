@@ -1,3 +1,10 @@
+## [1.9.3](https://github.com/molvqingtai/WebChat/compare/v1.9.2...v1.9.3) (2025-10-01)
+
+
+### Performance Improvements
+
+* add automatic IndexDB cleanup on extension update ([7a1a622](https://github.com/molvqingtai/WebChat/commit/7a1a6224f77e81ff1c5dd56be13897f5dce190c4))
+
 ## [1.9.2](https://github.com/molvqingtai/WebChat/compare/v1.9.1...v1.9.2) (2025-10-01)
 
 
