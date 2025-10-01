@@ -9,7 +9,7 @@ import ChatRoomDomain from '@/domain/ChatRoom'
 import UserInfoDomain from '@/domain/UserInfo'
 import Setup from '@/app/content/views/setup'
 import MessageListDomain from '@/domain/MessageList'
-import { useEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef } from 'react'
 import { Toaster } from 'sonner'
 
 import DanmakuContainer from './components/danmaku-container'
@@ -75,7 +75,7 @@ export default function App() {
     }
   }, [danmakuIsEnabled])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     window.addEventListener('beforeunload', leaveRoom)
     return () => {
       window.removeEventListener('beforeunload', leaveRoom)
