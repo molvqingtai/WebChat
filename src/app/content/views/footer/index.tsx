@@ -10,6 +10,7 @@ import { MESSAGE_MAX_LENGTH, WEB_RTC_MAX_MESSAGE_SIZE } from '@/constants/config
 import ChatRoomDomain from '@/domain/ChatRoom'
 import useCursorPosition from '@/hooks/useCursorPosition'
 import useShareRef from '@/hooks/useShareRef'
+import useThrottle from '@/hooks/useThrottle'
 import { Presence } from '@radix-ui/react-presence'
 import { Portal } from '@radix-ui/react-portal'
 import useTriggerAway from '@/hooks/useTriggerAway'
@@ -129,7 +130,7 @@ const Footer: FC = () => {
     return newMessage
   }
 
-  const handleSend = async () => {
+  const handleSendMessage = async () => {
     if (!`${message}`.trim()) {
       inputRef.current?.focus()
       return
@@ -154,6 +155,8 @@ const Footer: FC = () => {
       messageInputDomain.command.ClearCommand()
     ])
   }
+
+  const handleSend = useThrottle(handleSendMessage, 1000)
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (autoCompleteListShow && autoCompleteList.length) {
@@ -236,6 +239,10 @@ const Footer: FC = () => {
     if (['image/png', 'image/jpeg', 'image/webp'].includes(file?.type ?? '')) {
       handleInjectImage(file!)
     }
+  }
+
+  const handleToggleComposing = (composing: boolean) => {
+    isComposing.current = composing
   }
 
   const handleInjectEmoji = (emoji: string) => {
@@ -364,6 +371,8 @@ const Footer: FC = () => {
         loading={inputLoading}
         onPaste={handlePaste}
         onKeyDown={handleKeyDown}
+        onCompositionStart={() => handleToggleComposing(true)}
+        onCompositionEnd={() => handleToggleComposing(false)}
         maxLength={MESSAGE_MAX_LENGTH}
       ></MessageInput>
       <div className="flex items-center">
