@@ -3,7 +3,7 @@ import { Globe2Icon } from 'lucide-react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 import { Button } from '@/components/ui/button'
-import { cn, getSiteInfo } from '@/utils'
+import { cn, getSiteMeta } from '@/utils'
 import { useRemeshDomain, useRemeshQuery } from 'remesh-react'
 import ChatRoomDomain from '@/domain/ChatRoom'
 import type { FromInfo, RoomUser } from '@/domain/WorldRoom'
@@ -15,7 +15,7 @@ import Link from '@/components/link'
 import NumberFlow from '@number-flow/react'
 
 const Header: FC = () => {
-  const siteInfo = getSiteInfo()
+  const siteMeta = getSiteMeta()
   const chatRoomDomain = useRemeshDomain(ChatRoomDomain())
   const worldRoomDomain = useRemeshDomain(WorldRoomDomain())
   const chatUserList = useRemeshQuery(chatRoomDomain.query.UserListQuery())
@@ -42,7 +42,7 @@ const Header: FC = () => {
   return (
     <div className="z-10 grid h-12 grid-flow-col grid-cols-[theme('spacing.20')_auto_theme('spacing.20')] items-center justify-between rounded-t-xl bg-white px-4 backdrop-blur-lg dark:bg-slate-950">
       <Avatar className="size-8 rounded-sm">
-        <AvatarImage src={siteInfo.icon} alt="favicon" />
+        <AvatarImage src={siteMeta.icon} alt="favicon" />
         <AvatarFallback>
           <Globe2Icon size="100%" className="text-gray-400" />
         </AvatarFallback>
@@ -51,7 +51,7 @@ const Header: FC = () => {
         <HoverCardTrigger asChild>
           <Button className="overflow-hidden rounded-md p-2" variant="link">
             <span className="truncate text-lg font-semibold text-slate-600 dark:text-slate-50">
-              {siteInfo.hostname.replace(/^www\./i, '')}
+              {siteMeta.hostname.replace(/^www\./i, '')}
             </span>
           </Button>
         </HoverCardTrigger>

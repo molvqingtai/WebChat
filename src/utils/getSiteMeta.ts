@@ -1,6 +1,6 @@
 import { buildFullURL } from '@/utils'
 
-export interface SiteInfo {
+export interface SiteMeta {
   host: string
   hostname: string
   href: string
@@ -29,7 +29,7 @@ const getIcon = (): string => {
   }
 }
 
-const getSiteInfo = (): SiteInfo => {
+const getSiteMeta = (): SiteMeta => {
   return {
     host: document.location.host,
     hostname: document.location.hostname,
@@ -52,4 +52,4 @@ const getSiteInfo = (): SiteInfo => {
   }
 }
 
-export default getSiteInfo
+export default getSiteMeta

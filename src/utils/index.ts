@@ -1,7 +1,7 @@
 export { default as cn } from './cn'
 export { isInRange, clamp } from './number'
 export { default as createElement } from './createElement'
-export { default as getSiteInfo } from './getSiteInfo'
+export { default as getSiteMeta } from './getSiteMeta'
 export { default as isNullish } from './isNullish'
 export { default as checkDarkMode } from './checkDarkMode'
 export { default as stringToHex } from './stringToHex'
