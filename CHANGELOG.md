@@ -1,3 +1,10 @@
+## [1.9.2](https://github.com/molvqingtai/WebChat/compare/v1.9.1...v1.9.2) (2025-10-01)
+
+
+### Performance Improvements
+
+* enhance site metadata extraction with more fallback selectors ([71cf8af](https://github.com/molvqingtai/WebChat/commit/71cf8af0ad6d9eb4b7a3358453beb9131b3f8b50))
+
 ## [1.9.1](https://github.com/molvqingtai/WebChat/compare/v1.9.0...v1.9.1) (2025-10-01)
 
 
