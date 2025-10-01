@@ -11,7 +11,7 @@ import { DanmakuImpl } from '@/domain/impls/Danmaku'
 import { NotificationImpl } from '@/domain/impls/Notification'
 import { ToastImpl } from '@/domain/impls/Toast'
 import { ChatRoomImpl } from '@/domain/impls/ChatRoom'
-import { VirtualRoomImpl } from '@/domain/impls/VirtualRoom'
+import { WorldRoomImpl } from '@/domain/impls/WorldRoom'
 // Remove import after merging: https://github.com/emilkowalski/sonner/pull/508
 import 'sonner/dist/styles.css'
 import '@/assets/styles/tailwind.css'
@@ -31,7 +31,7 @@ export default defineContentScript({
         IndexDBStorageImpl,
         BrowserSyncStorageImpl,
         ChatRoomImpl,
-        VirtualRoomImpl,
+        WorldRoomImpl,
         ToastImpl,
         DanmakuImpl,
         NotificationImpl

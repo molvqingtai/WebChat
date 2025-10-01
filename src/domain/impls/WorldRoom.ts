@@ -1,11 +1,11 @@
 import type { Room } from '@rtco/client'
 
-import { VirtualRoomExtern } from '@/domain/externs/VirtualRoom'
+import { WorldRoomExtern } from '@/domain/externs/WorldRoom'
 import { stringToHex } from '@/utils'
 import EventHub from '@resreq/event-hub'
-import type { RoomMessage } from '@/domain/VirtualRoom'
+import type { WorldRoomMessage } from '@/protocol'
 import { JSONR } from '@/utils'
-import { VIRTUAL_ROOM_ID } from '@/constants/config'
+import { WORLD_ROOM_ID } from '@/constants/config'
 import Peer from './Peer'
 
 export interface Config {
@@ -13,7 +13,7 @@ export interface Config {
   roomId: string
 }
 
-class VirtualRoom extends EventHub {
+class WorldRoom extends EventHub {
   readonly peer: Peer
   readonly roomId: string
   readonly peerId: string
@@ -54,7 +54,7 @@ class VirtualRoom extends EventHub {
     return this
   }
 
-  sendMessage(message: RoomMessage, id?: string | string[]) {
+  sendMessage(message: WorldRoomMessage, id?: string | string[]) {
     try {
       if (!this.room) {
         this.once('action', async () => {
@@ -73,18 +73,18 @@ class VirtualRoom extends EventHub {
     return this
   }
 
-  onMessage(callback: (message: RoomMessage) => void) {
+  onMessage(callback: (message: WorldRoomMessage) => void) {
     try {
       if (!this.room) {
         this.once('action', async () => {
           if (!this.room) {
             throw new Error('Room not joined')
           } else {
-            this.room.on('message', (message) => callback(JSONR.parse(message) as RoomMessage))
+            this.room.on('message', (message) => callback(JSONR.parse(message) as WorldRoomMessage))
           }
         })
       } else {
-        this.room.on('message', (message) => callback(JSONR.parse(message) as RoomMessage))
+        this.room.on('message', (message) => callback(JSONR.parse(message) as WorldRoomMessage))
       }
     } catch (error) {
       this.emit('error', error)
@@ -157,8 +157,8 @@ class VirtualRoom extends EventHub {
   }
 }
 
-const hostRoomId = stringToHex(VIRTUAL_ROOM_ID)
+const hostRoomId = stringToHex(WORLD_ROOM_ID)
 
-const virtualRoom = new VirtualRoom({ roomId: hostRoomId, peer: Peer.createInstance() })
+const worldRoom = new WorldRoom({ roomId: hostRoomId, peer: Peer.createInstance() })
 
-export const VirtualRoomImpl = VirtualRoomExtern.impl(virtualRoom)
+export const WorldRoomImpl = WorldRoomExtern.impl(worldRoom)

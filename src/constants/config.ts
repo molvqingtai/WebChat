@@ -208,4 +208,4 @@ export const SYNC_HISTORY_MAX_DAYS = 90 as const
  */
 export const WEB_RTC_MAX_MESSAGE_SIZE = 262144 as const
 
-export const VIRTUAL_ROOM_ID = 'WEB_CHAT_VIRTUAL_ROOM' as const
+export const WORLD_ROOM_ID = 'WEB_CHAT_WORLD_ROOM' as const

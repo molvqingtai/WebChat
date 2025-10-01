@@ -3,14 +3,14 @@ import { Badge } from '@/components/ui/badge'
 import type { PromptMessage } from '@/domain/MessageList'
 import { cn } from '@/utils'
 import { AvatarImage } from '@radix-ui/react-avatar'
-import type { FC } from 'react'
+import { type FC, memo } from 'react'
 
 export interface PromptItemProps {
   data: PromptMessage
   className?: string
 }
 
-const PromptItem: FC<PromptItemProps> = ({ data, className }) => {
+const PromptItem: FC<PromptItemProps> = memo(({ data, className }) => {
   return (
     <div className={cn('flex justify-center py-1 px-4 ', className)}>
       <Badge variant="secondary" className="gap-x-2 rounded-full px-2 font-medium text-slate-400 dark:bg-slate-800">
@@ -22,7 +22,7 @@ const PromptItem: FC<PromptItemProps> = ({ data, className }) => {
       </Badge>
     </div>
   )
-}
+})
 
 PromptItem.displayName = 'PromptItem'
 

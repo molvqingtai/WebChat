@@ -1,19 +1,19 @@
 import { Remesh } from 'remesh'
-import type { RoomMessage } from '@/domain/VirtualRoom'
+import type { WorldRoomMessage } from '@/protocol'
 
-export interface VirtualRoom {
+export interface WorldRoom {
   readonly peerId: string
   readonly roomId: string
-  joinRoom: () => VirtualRoom
-  sendMessage: (message: RoomMessage, id?: string | string[]) => VirtualRoom
-  onMessage: (callback: (message: RoomMessage) => void) => VirtualRoom
-  leaveRoom: () => VirtualRoom
-  onJoinRoom: (callback: (id: string) => void) => VirtualRoom
-  onLeaveRoom: (callback: (id: string) => void) => VirtualRoom
-  onError: (callback: (error: Error) => void) => VirtualRoom
+  joinRoom: () => WorldRoom
+  sendMessage: (message: WorldRoomMessage, id?: string | string[]) => WorldRoom
+  onMessage: (callback: (message: WorldRoomMessage) => void) => WorldRoom
+  leaveRoom: () => WorldRoom
+  onJoinRoom: (callback: (id: string) => void) => WorldRoom
+  onLeaveRoom: (callback: (id: string) => void) => WorldRoom
+  onError: (callback: (error: Error) => void) => WorldRoom
 }
 
-export const VirtualRoomExtern = Remesh.extern<VirtualRoom>({
+export const WorldRoomExtern = Remesh.extern<WorldRoom>({
   default: {
     peerId: '',
     roomId: '',

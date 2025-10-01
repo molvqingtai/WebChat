@@ -1,6 +1,6 @@
 import { DanmakuExtern } from '@/domain/externs/Danmaku'
 
-import type { TextMessage } from '@/domain/ChatRoom'
+import type { ChatRoomTextMessage } from '@/protocol'
 import { createElement } from 'react'
 import DanmakuMessage from '@/app/content/components/danmaku-message'
 import { createRoot } from 'react-dom/client'
@@ -13,9 +13,9 @@ import { EVENT } from '@/constants/event'
 
 export class Danmaku {
   private container?: Element
-  private manager?: Manager<TextMessage>
+  private manager?: Manager<ChatRoomTextMessage>
   constructor() {
-    this.manager = create<TextMessage>({
+    this.manager = create<ChatRoomTextMessage>({
       durationRange: [7000, 10000],
       plugin: {
         $createNode(manager) {
@@ -50,14 +50,14 @@ export class Danmaku {
     this.manager!.unmount()
   }
 
-  push(message: TextMessage) {
+  push(message: ChatRoomTextMessage) {
     if (!this.container) {
       throw new Error('Danmaku not mounted')
     }
     this.manager!.push(message)
   }
 
-  unshift(message: TextMessage) {
+  unshift(message: ChatRoomTextMessage) {
     if (!this.container) {
       throw new Error('Danmaku not mounted')
     }

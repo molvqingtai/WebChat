@@ -1,78 +1,33 @@
 import { Remesh } from 'remesh'
 import { map, merge, of, EMPTY, mergeMap, fromEventPattern } from 'rxjs'
 import { type MessageUser } from './MessageList'
-import { VirtualRoomExtern } from '@/domain/externs/VirtualRoom'
+import { WorldRoomExtern } from '@/domain/externs/WorldRoom'
 import UserInfoDomain from '@/domain/UserInfo'
 import { upsert } from '@/utils'
 import { nanoid } from 'nanoid'
 import StatusModule from '@/domain/modules/Status'
-import * as v from 'valibot'
-import type { SiteInfo } from '@/utils/getSiteInfo'
 import getSiteInfo from '@/utils/getSiteInfo'
+import {
+  WorldRoomSendType,
+  type WorldRoomMessage,
+  type WorldRoomSyncUserMessage,
+  type WorldRoomMessageFromInfo,
+  checkWorldRoomMessage
+} from '@/protocol'
 
-export enum SendType {
-  SyncUser = 'SyncUser'
-}
-
-export interface FromInfo extends SiteInfo {
-  peerId: string
-}
-
-export interface SyncUserMessage extends MessageUser {
-  type: SendType.SyncUser
-  id: string
-  peerId: string
-  joinTime: number
-  sendTime: number
-  fromInfo: FromInfo
-}
-
-export type RoomMessage = SyncUserMessage
+export type FromInfo = WorldRoomMessageFromInfo
 
 export type RoomUser = MessageUser & { peerIds: string[]; fromInfos: FromInfo[]; joinTime: number }
 
-const MessageUserSchema = {
-  userId: v.string(),
-  username: v.string(),
-  userAvatar: v.string()
-}
-
-const FromInfoSchema = {
-  peerId: v.string(),
-  host: v.string(),
-  hostname: v.string(),
-  href: v.string(),
-  origin: v.string(),
-  title: v.string(),
-  icon: v.string(),
-  description: v.string()
-}
-
-const RoomMessageSchema = v.union([
-  v.object({
-    type: v.literal(SendType.SyncUser),
-    id: v.string(),
-    peerId: v.string(),
-    joinTime: v.number(),
-    sendTime: v.number(),
-    fromInfo: v.object(FromInfoSchema),
-    ...MessageUserSchema
-  })
-])
-
-// Check if the message conforms to the format
-const checkMessageFormat = (message: v.InferInput<typeof RoomMessageSchema>) =>
-  v.safeParse(RoomMessageSchema, message).success
-
-const VirtualRoomDomain = Remesh.domain({
-  name: 'VirtualRoomDomain',
+const WorldRoomDomain = Remesh.domain({
+  name: 'WorldRoomDomain',
   impl: (domain) => {
     const userInfoDomain = domain.getDomain(UserInfoDomain())
-    const virtualRoomExtern = domain.getExtern(VirtualRoomExtern)
+    const worldRoomExtern = domain.getExtern(WorldRoomExtern)
 
     const PeerIdState = domain.state<string>({
       name: 'Room.PeerIdState',
-      default: virtualRoomExtern.peerId
+      default: worldRoomExtern.peerId
     })
 
     const PeerIdQuery = domain.query({
@@ -101,7 +56,7 @@ const VirtualRoomDomain = Remesh.domain({
     const SelfUserQuery = domain.query({
       name: 'Room.SelfUserQuery',
       impl: ({ get }) => {
-        return get(UserListQuery()).find((user) => user.peerIds.includes(virtualRoomExtern.peerId))!
+        return get(UserListQuery()).find((user) => user.peerIds.includes(worldRoomExtern.peerId))!
       }
     })
 
@@ -115,8 +70,8 @@ const VirtualRoomDomain = Remesh.domain({
           UpdateUserListCommand({
             type: 'create',
             user: {
-              peerId: virtualRoomExtern.peerId,
-              fromInfo: { ...getSiteInfo(), peerId: virtualRoomExtern.peerId },
+              peerId: worldRoomExtern.peerId,
+              fromInfo: { ...getSiteInfo(), peerId: worldRoomExtern.peerId },
               joinTime: Date.now(),
               userId,
               username,
@@ -125,14 +80,14 @@ const VirtualRoomDomain = Remesh.domain({
           }),
 
           JoinStatusModule.command.SetFinishedCommand(),
-          JoinRoomEvent(virtualRoomExtern.roomId),
-          SelfJoinRoomEvent(virtualRoomExtern.roomId)
+          JoinRoomEvent(worldRoomExtern.roomId),
+          SelfJoinRoomEvent(worldRoomExtern.roomId)
         ]
       }
     })
 
     JoinRoomCommand.after(() => {
-      virtualRoomExtern.joinRoom()
+      worldRoomExtern.joinRoom()
       return null
     })
 
@@ -144,8 +99,8 @@ const VirtualRoomDomain = Remesh.domain({
           UpdateUserListCommand({
             type: 'delete',
             user: {
-              peerId: virtualRoomExtern.peerId,
-              fromInfo: { ...getSiteInfo(), peerId: virtualRoomExtern.peerId },
+              peerId: worldRoomExtern.peerId,
+              fromInfo: { ...getSiteInfo(), peerId: worldRoomExtern.peerId },
               joinTime: Date.now(),
               userId,
               username,
@@ -153,14 +108,14 @@ const VirtualRoomDomain = Remesh.domain({
             }
           }),
           JoinStatusModule.command.SetInitialCommand(),
-          LeaveRoomEvent(virtualRoomExtern.roomId),
-          SelfLeaveRoomEvent(virtualRoomExtern.roomId)
+          LeaveRoomEvent(worldRoomExtern.roomId),
+          SelfLeaveRoomEvent(worldRoomExtern.roomId)
         ]
       }
     })
 
     LeaveRoomCommand.after(() => {
-      virtualRoomExtern.leaveRoom()
+      worldRoomExtern.leaveRoom()
       return null
     })
 
@@ -212,21 +167,21 @@ const VirtualRoomDomain = Remesh.domain({
       impl: ({ get }, peerId: string) => {
         const self = get(SelfUserQuery())
 
-        const syncUserMessage: SyncUserMessage = {
+        const syncUserMessage: WorldRoomSyncUserMessage = {
           ...self,
           id: nanoid(),
-          peerId: virtualRoomExtern.peerId,
+          peerId: worldRoomExtern.peerId,
           sendTime: Date.now(),
-          fromInfo: { ...getSiteInfo(), peerId: virtualRoomExtern.peerId },
-          type: SendType.SyncUser
+          fromInfo: { ...getSiteInfo(), peerId: worldRoomExtern.peerId },
+          type: WorldRoomSendType.SyncUser
         }
 
-        virtualRoomExtern.sendMessage(syncUserMessage, peerId)
+        worldRoomExtern.sendMessage(syncUserMessage, peerId)
         return [SendSyncUserMessageEvent(syncUserMessage)]
       }
     })
 
-    const SendSyncUserMessageEvent = domain.event<SyncUserMessage>({
+    const SendSyncUserMessageEvent = domain.event<WorldRoomSyncUserMessage>({
       name: 'Room.SendSyncUserMessageEvent'
     })
 
@@ -238,7 +193,7 @@ const VirtualRoomDomain = Remesh.domain({
       name: 'Room.LeaveRoomEvent'
     })
 
-    const OnMessageEvent = domain.event<RoomMessage>({
+    const OnMessageEvent = domain.event<WorldRoomMessage>({
       name: 'Room.OnMessageEvent'
     })
 
@@ -265,10 +220,10 @@ const VirtualRoomDomain = Remesh.domain({
     domain.effect({
       name: 'Room.OnJoinRoomEffect',
       impl: () => {
-        const onJoinRoom$ = fromEventPattern<string>(virtualRoomExtern.onJoinRoom).pipe(
+        const onJoinRoom$ = fromEventPattern<string>(worldRoomExtern.onJoinRoom).pipe(
           mergeMap((peerId) => {
             // console.log('onJoinRoom', peerId)
-            if (virtualRoomExtern.peerId === peerId) {
+            if (worldRoomExtern.peerId === peerId) {
               return [OnJoinRoomEvent(peerId)]
             } else {
               return [SendSyncUserMessageCommand(peerId), OnJoinRoomEvent(peerId)]
@@ -282,10 +237,10 @@ const VirtualRoomDomain = Remesh.domain({
     domain.effect({
       name: 'Room.OnMessageEffect',
       impl: () => {
-        const onMessage$ = fromEventPattern<RoomMessage>(virtualRoomExtern.onMessage).pipe(
+        const onMessage$ = fromEventPattern<WorldRoomMessage>(worldRoomExtern.onMessage).pipe(
           mergeMap((message) => {
             // Filter out messages that do not conform to the format
-            if (!checkMessageFormat(message)) {
+            if (!checkWorldRoomMessage(message)) {
               console.warn('Invalid message format', message)
               return EMPTY
             }
@@ -294,7 +249,7 @@ const VirtualRoomDomain = Remesh.domain({
 
             const messageCommand$ = (() => {
               switch (message.type) {
-                case SendType.SyncUser: {
+                case WorldRoomSendType.SyncUser: {
                   return of(UpdateUserListCommand({ type: 'create', user: message }))
                 }
 
@@ -314,7 +269,7 @@ const VirtualRoomDomain = Remesh.domain({
     domain.effect({
       name: 'Room.OnLeaveRoomEffect',
       impl: ({ get }) => {
-        const onLeaveRoom$ = fromEventPattern<string>(virtualRoomExtern.onLeaveRoom).pipe(
+        const onLeaveRoom$ = fromEventPattern<string>(worldRoomExtern.onLeaveRoom).pipe(
           map((peerId) => {
             if (get(JoinStatusModule.query.IsInitialQuery())) {
               return null
@@ -343,7 +298,7 @@ const VirtualRoomDomain = Remesh.domain({
     domain.effect({
       name: 'Room.OnErrorEffect',
       impl: () => {
-        const onRoomError$ = fromEventPattern<Error>(virtualRoomExtern.onError).pipe(
+        const onRoomError$ = fromEventPattern<Error>(worldRoomExtern.onError).pipe(
           map((error) => {
             console.error(error)
             return OnErrorEvent(error)
@@ -379,4 +334,4 @@ const VirtualRoomDomain = Remesh.domain({
   }
 })
 
-export default VirtualRoomDomain
+export default WorldRoomDomain

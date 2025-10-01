@@ -1,14 +1,14 @@
 import { Remesh } from 'remesh'
 import ToastModule from './modules/Toast'
 import ChatRoomDomain from './ChatRoom'
-import VirtualRoomDomain from './VirtualRoom'
+import WorldRoomDomain from './WorldRoom'
 import { map, merge } from 'rxjs'
 
 const ToastDomain = Remesh.domain({
   name: 'ToastDomain',
   impl: (domain) => {
     const chatRoomDomain = domain.getDomain(ChatRoomDomain())
-    const virtualRoomDomain = domain.getDomain(VirtualRoomDomain())
+    const worldRoomDomain = domain.getDomain(WorldRoomDomain())
     const toastModule = ToastModule(domain)
 
     domain.effect({
@@ -27,7 +27,7 @@ const ToastDomain = Remesh.domain({
       impl: ({ fromEvent }) => {
         const onRoomError$ = merge(
           fromEvent(chatRoomDomain.event.OnErrorEvent),
-          fromEvent(virtualRoomDomain.event.OnErrorEvent)
+          fromEvent(worldRoomDomain.event.OnErrorEvent)
         ).pipe(
           map((error) => {
             return toastModule.command.ErrorCommand(error.message)

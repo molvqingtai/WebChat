@@ -4,11 +4,7 @@ import { IndexDBStorageExtern } from '@/domain/externs/Storage'
 import StorageEffect from '@/domain/modules/StorageEffect'
 import StatusModule from './modules/Status'
 import { MESSAGE_LIST_STORAGE_KEY } from '@/constants/config'
-
-export enum MessageType {
-  Normal = 'normal',
-  Prompt = 'prompt'
-}
+import type { ChatRoomMessageType } from '@/protocol'
 
 export interface MessageUser {
   userId: string
@@ -21,7 +17,7 @@ export interface AtUser extends MessageUser {
 }
 
 export interface NormalMessage extends MessageUser {
-  type: MessageType.Normal
+  type: ChatRoomMessageType.Normal
   id: string
   body: string
   sendTime: number
@@ -32,7 +28,7 @@ export interface NormalMessage extends MessageUser {
 }
 
 export interface PromptMessage extends MessageUser {
-  type: MessageType.Prompt
+  type: ChatRoomMessageType.Prompt
   id: string
   body: string
   sendTime: number

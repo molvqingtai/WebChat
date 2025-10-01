@@ -32,7 +32,7 @@ const AppMain: FC<AppMainProps> = ({ children, className }) => {
     direction: isOnRightSide ? 'left' : 'right'
   })
 
-  const [isAnimationComplete, setAnimationComplete] = useState(false)
+  const [isAnimationComplete, setIsAnimationComplete] = useState(false)
 
   // Memoize children to prevent unnecessary re-renders when position changes
   const memoizedChildren = useMemo(() => children, [children])
@@ -45,8 +45,8 @@ const AppMain: FC<AppMainProps> = ({ children, className }) => {
           animate={{ opacity: 1, y: 0, x: isOnRightSide ? '-100%' : '0' }}
           exit={{ opacity: 0, y: 10 }}
           transition={{ duration: 0.3, ease: 'linear' }}
-          onAnimationEnd={() => setAnimationComplete(true)}
-          onAnimationStart={() => setAnimationComplete(false)}
+          onAnimationEnd={() => setIsAnimationComplete(true)}
+          onAnimationStart={() => setIsAnimationComplete(false)}
           style={{
             width: `${size}px`,
             left: `${absoluteX}px`,

@@ -3,7 +3,7 @@ import type { Room } from '@rtco/client'
 import { ChatRoomExtern } from '@/domain/externs/ChatRoom'
 import { stringToHex } from '@/utils'
 import EventHub from '@resreq/event-hub'
-import type { RoomMessage } from '@/domain/ChatRoom'
+import type { ChatRoomMessage } from '@/protocol'
 import { JSONR } from '@/utils'
 import Peer from './Peer'
 
@@ -53,7 +53,7 @@ class ChatRoom extends EventHub {
     return this
   }
 
-  sendMessage(message: RoomMessage, id?: string | string[]) {
+  sendMessage(message: ChatRoomMessage, id?: string | string[]) {
     try {
       if (!this.room) {
         this.once('action', async () => {
@@ -72,18 +72,18 @@ class ChatRoom extends EventHub {
     return this
   }
 
-  onMessage(callback: (message: RoomMessage) => void) {
+  onMessage(callback: (message: ChatRoomMessage) => void) {
     try {
       if (!this.room) {
         this.once('action', async () => {
           if (!this.room) {
             throw new Error('Room not joined')
           } else {
-            this.room.on('message', (message) => callback(JSONR.parse(message) as RoomMessage))
+            this.room.on('message', (message) => callback(JSONR.parse(message) as ChatRoomMessage))
           }
         })
       } else {
-        this.room.on('message', (message) => callback(JSONR.parse(message) as RoomMessage))
+        this.room.on('message', (message) => callback(JSONR.parse(message) as ChatRoomMessage))
       }
     } catch (error) {
       this.emit('error', error)

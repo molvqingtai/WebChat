@@ -1,5 +1,5 @@
 import type { Notification as NotificationExternType } from '@/domain/externs/Notification'
-import type { TextMessage } from '@/domain/ChatRoom'
+import type { ChatRoomTextMessage } from '@/protocol'
 import { browser } from '#imports'
 import type { MessageTab } from '@/service/adapter/runtimeMessage'
 
@@ -34,7 +34,7 @@ export class Notification implements NotificationExternType {
       this.historyNotificationTabs.delete(id)
     })
   }
-  async push(message: TextMessage & { meta?: { tab?: MessageTab } }) {
+  async push(message: ChatRoomTextMessage & { meta?: { tab?: MessageTab } }) {
     const tab = message.meta?.tab
     console.log(tab)
     const id = await browser.notifications.create({

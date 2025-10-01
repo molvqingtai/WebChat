@@ -1,4 +1,4 @@
-import { type FC } from 'react'
+import { type FC, memo } from 'react'
 import { FrownIcon, HeartIcon } from 'lucide-react'
 import LikeButton from './like-button'
 import FormatDate from './format-date'
@@ -18,7 +18,7 @@ export interface MessageItemProps {
   className?: string
 }
 
-const MessageItem: FC<MessageItemProps> = (props) => {
+const MessageItem: FC<MessageItemProps> = memo((props) => {
   const handleLikeChange = (checked: boolean) => {
     props.onLikeChange?.(checked)
   }
@@ -88,7 +88,7 @@ const MessageItem: FC<MessageItemProps> = (props) => {
       </div>
     </div>
   )
-}
+})
 
 MessageItem.displayName = 'MessageItem'
 

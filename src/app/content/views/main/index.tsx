@@ -5,9 +5,10 @@ import MessageList from '../../components/message-list'
 import MessageItem from '../../components/message-item'
 import PromptItem from '../../components/prompt-item'
 import UserInfoDomain from '@/domain/UserInfo'
-import ChatRoomDomain, { MessageType } from '@/domain/ChatRoom'
+import ChatRoomDomain from '@/domain/ChatRoom'
 import MessageListDomain from '@/domain/MessageList'
 import useDataId from '@/hooks/useDataId'
+import { ChatRoomMessageType } from '@/protocol'
 
 const Main: FC = () => {
   const send = useRemeshSend()
@@ -23,7 +24,7 @@ const Main: FC = () => {
     () =>
       _messageList
         .map((message) => {
-          if (message.type === MessageType.Normal) {
+          if (message.type === ChatRoomMessageType.Normal) {
             return {
               ...message,
               like: message.likeUsers.some((likeUser) => likeUser.userId === userInfo?.id),
@@ -47,7 +48,7 @@ const Main: FC = () => {
   return (
     <MessageList>
       {messageList.map((message, index) =>
-        message.type === MessageType.Normal ? (
+        message.type === ChatRoomMessageType.Normal ? (
           <MessageItem
             key={message.id}
             data={message}
