@@ -18,7 +18,7 @@ export const localStorage = createStorage({
 })
 
 export const indexDBStorage = createStorage({
-  driver: indexedDbDriver({ base: `${STORAGE_NAME}:` })
+  driver: indexedDbDriver({ dbName: __NAME__, storeName: __NAME__, base: `${STORAGE_NAME}:` })
 })
 
 export const browserSyncStorage = createStorage({
