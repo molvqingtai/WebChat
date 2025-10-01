@@ -1,4 +1,4 @@
-import { type ReactNode, type FC, useState } from 'react'
+import { type ReactNode, type FC, useState, useMemo } from 'react'
 import useResizable from '@/hooks/useResizable'
 import { motion, AnimatePresence } from 'framer-motion'
 import AppStatusDomain from '@/domain/AppStatus'
@@ -34,6 +34,9 @@ const AppMain: FC<AppMainProps> = ({ children, className }) => {
 
   const [isAnimationComplete, setAnimationComplete] = useState(false)
 
+  // Memoize children to prevent unnecessary re-renders when position changes
+  const memoizedChildren = useMemo(() => children, [children])
+
   return (
     <AnimatePresence>
       {appOpenStatus && (
@@ -55,7 +58,7 @@ const AppMain: FC<AppMainProps> = ({ children, className }) => {
             { 'transition-transform': isAnimationComplete }
           )}
         >
-          {children}
+          {memoizedChildren}
           <div
             ref={setRef}
             className={cn(

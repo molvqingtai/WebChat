@@ -50,33 +50,42 @@ const useDraggable = (options: DargOptions) => {
   }, [initX, initY, maxX, minX, maxY, minY, reverse])
 
   const isMove = useRef(false)
+  const rafRef = useRef<number | null>(null)
+  const latestMousePosition = useRef({ x: 0, y: 0 })
 
   const handleMove = useCallback(
     (e: MouseEvent) => {
       if (isMove.current) {
         const { clientX, clientY } = e
-        const prev = positionRef.current
-        const delta = {
-          x: prev.x + clientX - mousePosition.current.x,
-          y: prev.y + clientY - mousePosition.current.y
-        }
+        latestMousePosition.current = { x: clientX, y: clientY }
 
-        const hasChanged = delta.x !== prev.x || delta.y !== prev.y
+        // Cancel previous frame to ensure only one update per frame
+        rafRef.current && cancelAnimationFrame(rafRef.current)
 
-        if (isInRange(delta.x, minX, maxX)) {
-          mousePosition.current.x = clientX
-        }
-        if (isInRange(delta.y, minY, maxY)) {
-          mousePosition.current.y = clientY
-        }
-        if (hasChanged) {
-          const x = clamp(delta.x, minX, maxX)
-          const y = clamp(delta.y, minY, maxY)
-          startTransition(() => {
-            positionRef.current = { x, y }
-            setPosition(fromInternal(x, y))
-          })
-        }
+        rafRef.current = requestAnimationFrame(() => {
+          const prev = positionRef.current
+          const delta = {
+            x: prev.x + latestMousePosition.current.x - mousePosition.current.x,
+            y: prev.y + latestMousePosition.current.y - mousePosition.current.y
+          }
+
+          const hasChanged = delta.x !== prev.x || delta.y !== prev.y
+
+          if (isInRange(delta.x, minX, maxX)) {
+            mousePosition.current.x = latestMousePosition.current.x
+          }
+          if (isInRange(delta.y, minY, maxY)) {
+            mousePosition.current.y = latestMousePosition.current.y
+          }
+          if (hasChanged) {
+            const x = clamp(delta.x, minX, maxX)
+            const y = clamp(delta.y, minY, maxY)
+            startTransition(() => {
+              positionRef.current = { x, y }
+              setPosition(fromInternal(x, y))
+            })
+          }
+        })
       }
     },
     [minX, maxX, minY, maxY, reverse]
@@ -86,6 +95,7 @@ const useDraggable = (options: DargOptions) => {
     isMove.current = false
     document.documentElement.style.cursor = ''
     document.documentElement.style.userSelect = ''
+    rafRef.current && cancelAnimationFrame(rafRef.current)
   }, [])
 
   const handleStart = useCallback((e: MouseEvent) => {
