@@ -1,7 +1,7 @@
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { MAX_AVATAR_SIZE } from '@/constants/config'
 import type { Message } from '@/domain/MessageList'
-import MessageListDomain, { MessageType } from '@/domain/MessageList'
+import MessageListDomain from '@/domain/MessageList'
 import type { UserInfo } from '@/domain/UserInfo'
 import UserInfoDomain from '@/domain/UserInfo'
 import { generateRandomAvatar, generateRandomName, setIntervalImmediate } from '@/utils'
@@ -15,6 +15,7 @@ import { PulsatingButton } from '@/components/magicui/pulsating-button'
 import { BlurFade } from '@/components/magicui/blur-fade'
 import { motion } from 'framer-motion'
 import { WordRotate } from '@/components/magicui/word-rotate'
+import { ChatRoomMessageType } from '@/protocol'
 
 const mockTextList = [
   `你問我支持不支持，我說我支持`,
@@ -55,7 +56,7 @@ const generateMessage = async (userInfo: UserInfo): Promise<Message> => {
     body: mockTextList.shift()!,
     sendTime: Date.now(),
     receiveTime: Date.now(),
-    type: MessageType.Normal,
+    type: ChatRoomMessageType.Normal,
     userId,
     username,
     userAvatar,

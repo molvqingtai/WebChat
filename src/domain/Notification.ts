@@ -1,6 +1,6 @@
 import { Remesh } from 'remesh'
 import { NotificationExtern } from './externs/Notification'
-import type { TextMessage } from '@/domain/ChatRoom'
+import type { ChatRoomTextMessage } from '@/protocol'
 import ChatRoomDomain from '@/domain/ChatRoom'
 import UserInfoDomain from './UserInfo'
 import { map, merge } from 'rxjs'
@@ -40,13 +40,13 @@ const NotificationDomain = Remesh.domain({
 
     const PushCommand = domain.command({
       name: 'Notification.PushCommand',
-      impl: (_, message: TextMessage) => {
+      impl: (_, message: ChatRoomTextMessage) => {
         notificationExtern.push(message)
         return [PushEvent(message)]
       }
     })
 
-    const PushEvent = domain.event<TextMessage>({
+    const PushEvent = domain.event<ChatRoomTextMessage>({
       name: 'Notification.PushEvent'
     })
 

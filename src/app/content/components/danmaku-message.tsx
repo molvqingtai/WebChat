@@ -1,12 +1,12 @@
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
-import type { TextMessage } from '@/domain/ChatRoom'
+import type { ChatRoomTextMessage } from '@/protocol'
 import { cn } from '@/utils'
 import { AvatarImage } from '@radix-ui/react-avatar'
 import type { FC, MouseEvent } from 'react'
 
 export interface PromptItemProps {
-  data: TextMessage
+  data: ChatRoomTextMessage
   className?: string
   onClick?: (e: MouseEvent<HTMLButtonElement>) => void
   onMouseEnter?: (e: MouseEvent<HTMLButtonElement>) => void

@@ -3,8 +3,9 @@ import StatusModule from './modules/Status'
 import { LocalStorageExtern } from './externs/Storage'
 import { APP_STATUS_STORAGE_KEY } from '@/constants/config'
 import StorageEffect from './modules/StorageEffect'
-import ChatRoomDomain, { SendType } from '@/domain/ChatRoom'
+import ChatRoomDomain from '@/domain/ChatRoom'
 import { map } from 'rxjs'
+import { ChatRoomSendType } from '@/protocol'
 
 export interface AppStatus {
   open: boolean
@@ -135,7 +136,7 @@ const AppStatusDomain = Remesh.domain({
         const onMessage$ = fromEvent(chatRoomDomain.event.OnMessageEvent).pipe(
           map((message) => {
             const status = get(StatusState())
-            if (!status.open && message.type === SendType.Text) {
+            if (!status.open && message.type === ChatRoomSendType.Text) {
               return UpdateUnreadCommand(status.unread + 1)
             }
             return null

@@ -1,12 +1,12 @@
 import { Remesh } from 'remesh'
-import type { RoomMessage } from '../ChatRoom'
+import type { ChatRoomMessage } from '@/protocol'
 
 export interface ChatRoom {
   readonly peerId: string
   readonly roomId: string
   joinRoom: () => ChatRoom
-  sendMessage: (message: RoomMessage, id?: string | string[]) => ChatRoom
-  onMessage: (callback: (message: RoomMessage) => void) => ChatRoom
+  sendMessage: (message: ChatRoomMessage, id?: string | string[]) => ChatRoom
+  onMessage: (callback: (message: ChatRoomMessage) => void) => ChatRoom
   leaveRoom: () => ChatRoom
   onJoinRoom: (callback: (id: string) => void) => ChatRoom
   onLeaveRoom: (callback: (id: string) => void) => ChatRoom

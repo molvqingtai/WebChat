@@ -16,7 +16,7 @@ import DanmakuContainer from './components/danmaku-container'
 import DanmakuDomain from '@/domain/Danmaku'
 import AppStatusDomain from '@/domain/AppStatus'
 import { checkDarkMode, cn } from '@/utils'
-import VirtualRoomDomain from '@/domain/VirtualRoom'
+import WorldRoomDomain from '@/domain/WorldRoom'
 
 /**
  * Fix requestAnimationFrame error in jest
@@ -30,7 +30,7 @@ if (import.meta.env.FIREFOX) {
 export default function App() {
   const send = useRemeshSend()
   const chatRoomDomain = useRemeshDomain(ChatRoomDomain())
-  const virtualRoomDomain = useRemeshDomain(VirtualRoomDomain())
+  const worldRoomDomain = useRemeshDomain(WorldRoomDomain())
   const userInfoDomain = useRemeshDomain(UserInfoDomain())
   const messageListDomain = useRemeshDomain(MessageListDomain())
   const danmakuDomain = useRemeshDomain(DanmakuDomain())
@@ -41,19 +41,19 @@ export default function App() {
   const appStatusDomain = useRemeshDomain(AppStatusDomain())
   const appStatusLoadIsFinished = useRemeshQuery(appStatusDomain.query.StatusLoadIsFinishedQuery())
   const chatRoomJoinIsFinished = useRemeshQuery(chatRoomDomain.query.JoinIsFinishedQuery())
-  const virtualRoomJoinIsFinished = useRemeshQuery(virtualRoomDomain.query.JoinIsFinishedQuery())
+  const worldRoomJoinIsFinished = useRemeshQuery(worldRoomDomain.query.JoinIsFinishedQuery())
 
   const userInfo = useRemeshQuery(userInfoDomain.query.UserInfoQuery())
   const notUserInfo = userInfoLoadFinished && !userInfoSetFinished
 
   const joinRoom = () => {
     send(chatRoomDomain.command.JoinRoomCommand())
-    send(virtualRoomDomain.command.JoinRoomCommand())
+    send(worldRoomDomain.command.JoinRoomCommand())
   }
 
   const leaveRoom = () => {
     chatRoomJoinIsFinished && send(chatRoomDomain.command.LeaveRoomCommand())
-    virtualRoomJoinIsFinished && send(virtualRoomDomain.command.LeaveRoomCommand())
+    worldRoomJoinIsFinished && send(worldRoomDomain.command.LeaveRoomCommand())
   }
 
   useEffect(() => {

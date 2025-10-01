@@ -3,130 +3,26 @@ import { map, merge, of, EMPTY, mergeMap, fromEventPattern, bufferTime, filter }
 import type { AtUser, NormalMessage } from './MessageList'
 import { type MessageUser } from './MessageList'
 import { ChatRoomExtern } from '@/domain/externs/ChatRoom'
-import MessageListDomain, { MessageType } from '@/domain/MessageList'
+import MessageListDomain from '@/domain/MessageList'
 import UserInfoDomain from '@/domain/UserInfo'
 import { desert, getTextByteSize, upsert } from '@/utils'
 import { nanoid } from 'nanoid'
 import StatusModule from '@/domain/modules/Status'
 import { SYNC_HISTORY_MAX_DAYS, WEB_RTC_MAX_MESSAGE_SIZE } from '@/constants/config'
-import * as v from 'valibot'
 import hash from 'hash-it'
-
-export { MessageType }
-
-export enum SendType {
-  Like = 'Like',
-  Hate = 'Hate',
-  Text = 'Text',
-  SyncUser = 'SyncUser',
-  SyncHistory = 'SyncHistory'
-}
-
-export interface SyncUserMessage extends MessageUser {
-  type: SendType.SyncUser
-  id: string
-  peerId: string
-  joinTime: number
-  sendTime: number
-  lastMessageTime: number
-}
-
-export interface SyncHistoryMessage extends MessageUser {
-  type: SendType.SyncHistory
-  sendTime: number
-  id: string
-  messages: NormalMessage[]
-}
-
-export interface LikeMessage extends MessageUser {
-  type: SendType.Like
-  sendTime: number
-  id: string
-}
-
-export interface HateMessage extends MessageUser {
-  type: SendType.Hate
-  sendTime: number
-  id: string
-}
-
-export interface TextMessage extends MessageUser {
-  type: SendType.Text
-  id: string
-  body: string
-  sendTime: number
-  atUsers: AtUser[]
-}
-
-export type RoomMessage = SyncUserMessage | SyncHistoryMessage | LikeMessage | HateMessage | TextMessage
+import {
+  checkChatRoomMessage,
+  ChatRoomMessageType,
+  ChatRoomSendType,
+  type ChatRoomMessage,
+  type ChatRoomTextMessage,
+  type ChatRoomLikeMessage,
+  type ChatRoomHateMessage,
+  type ChatRoomSyncUserMessage,
+  type ChatRoomSyncHistoryMessage
+} from '@/protocol'
 
 export type RoomUser = MessageUser & { peerIds: string[]; joinTime: number }
-
-const MessageUserSchema = {
-  userId: v.string(),
-  username: v.string(),
-  userAvatar: v.string()
-}
-
-const AtUserSchema = {
-  positions: v.array(v.tuple([v.number(), v.number()])),
-  ...MessageUserSchema
-}
-
-const NormalMessageSchema = {
-  id: v.string(),
-  type: v.literal(MessageType.Normal),
-  body: v.string(),
-  sendTime: v.number(),
-  receiveTime: v.number(),
-  likeUsers: v.array(v.object(MessageUserSchema)),
-  hateUsers: v.array(v.object(MessageUserSchema)),
-  atUsers: v.array(v.object(AtUserSchema)),
-  ...MessageUserSchema
-}
-
-const RoomMessageSchema = v.union([
-  v.object({
-    type: v.literal(SendType.Text),
-    id: v.string(),
-    body: v.string(),
-    sendTime: v.number(),
-    atUsers: v.array(v.object(AtUserSchema)),
-    ...MessageUserSchema
-  }),
-  v.object({
-    type: v.literal(SendType.Like),
-    id: v.string(),
-    sendTime: v.number(),
-    ...MessageUserSchema
-  }),
-  v.object({
-    type: v.literal(SendType.Hate),
-    id: v.string(),
-    sendTime: v.number(),
-    ...MessageUserSchema
-  }),
-  v.object({
-    type: v.literal(SendType.SyncUser),
-    id: v.string(),
-    peerId: v.string(),
-    joinTime: v.number(),
-    sendTime: v.number(),
-    lastMessageTime: v.number(),
-    ...MessageUserSchema
-  }),
-  v.object({
-    type: v.literal(SendType.SyncHistory),
-    id: v.string(),
-    sendTime: v.number(),
-    messages: v.array(v.object(NormalMessageSchema)),
-    ...MessageUserSchema
-  })
-])
-
-// Check if the message conforms to the format
-const checkMessageFormat = (message: v.InferInput<typeof RoomMessageSchema>) =>
-  v.safeParse(RoomMessageSchema, message).success
 
 const ChatRoomDomain = Remesh.domain({
   name: 'ChatRoomDomain',
@@ -175,7 +71,7 @@ const ChatRoomDomain = Remesh.domain({
       impl: ({ get }) => {
         return (
           get(messageListDomain.query.ListQuery())
-            .filter((message) => message.type === MessageType.Normal)
+            .filter((message) => message.type === ChatRoomMessageType.Normal)
             .toSorted((a, b) => b.sendTime - a.sendTime)[0]?.sendTime ?? new Date(1970, 1, 1).getTime()
         )
       }
@@ -201,7 +97,7 @@ const ChatRoomDomain = Remesh.domain({
         // Find user's most recent join/leave message
         const messageList = get(messageListDomain.query.ListQuery())
         const userPromptMessages = messageList
-          .filter((msg) => msg.type === MessageType.Prompt && msg.userId === userId)
+          .filter((msg) => msg.type === ChatRoomMessageType.Prompt && msg.userId === userId)
           .toSorted((a, b) => b.sendTime - a.sendTime)
 
         const lastMessage = userPromptMessages[0]
@@ -216,7 +112,7 @@ const ChatRoomDomain = Remesh.domain({
               username,
               userAvatar,
               body: messageBody,
-              type: MessageType.Prompt,
+              type: ChatRoomMessageType.Prompt,
               sendTime: now,
               receiveTime: now
             })
@@ -230,7 +126,7 @@ const ChatRoomDomain = Remesh.domain({
           username,
           userAvatar,
           body: messageBody,
-          type: MessageType.Prompt,
+          type: ChatRoomMessageType.Prompt,
           sendTime: now,
           receiveTime: now
         })
@@ -286,10 +182,10 @@ const ChatRoomDomain = Remesh.domain({
       impl: ({ get }, message: string | { body: string; atUsers: AtUser[] }) => {
         const self = get(SelfUserQuery())
 
-        const textMessage: TextMessage = {
+        const textMessage: ChatRoomTextMessage = {
           ...self,
           id: nanoid(),
-          type: SendType.Text,
+          type: ChatRoomSendType.Text,
           sendTime: Date.now(),
           body: typeof message === 'string' ? message : message.body,
           atUsers: typeof message === 'string' ? [] : message.atUsers
@@ -297,7 +193,7 @@ const ChatRoomDomain = Remesh.domain({
 
         const listMessage: NormalMessage = {
           ...textMessage,
-          type: MessageType.Normal,
+          type: ChatRoomMessageType.Normal,
           receiveTime: Date.now(),
           likeUsers: [],
           hateUsers: [],
@@ -315,11 +211,11 @@ const ChatRoomDomain = Remesh.domain({
         const self = get(SelfUserQuery())
         const localMessage = get(messageListDomain.query.ItemQuery(messageId)) as NormalMessage
 
-        const likeMessage: LikeMessage = {
+        const likeMessage: ChatRoomLikeMessage = {
           ...self,
           id: messageId,
           sendTime: Date.now(),
-          type: SendType.Like
+          type: ChatRoomSendType.Like
         }
         const listMessage: NormalMessage = {
           ...localMessage,
@@ -336,11 +232,11 @@ const ChatRoomDomain = Remesh.domain({
         const self = get(SelfUserQuery())
         const localMessage = get(messageListDomain.query.ItemQuery(messageId)) as NormalMessage
 
-        const hateMessage: HateMessage = {
+        const hateMessage: ChatRoomHateMessage = {
           ...self,
           id: messageId,
           sendTime: Date.now(),
-          type: SendType.Hate
+          type: ChatRoomSendType.Hate
         }
         const listMessage: NormalMessage = {
           ...localMessage,
@@ -357,13 +253,13 @@ const ChatRoomDomain = Remesh.domain({
         const self = get(SelfUserQuery())
         const lastMessageTime = get(LastMessageTimeQuery())
 
-        const syncUserMessage: SyncUserMessage = {
+        const syncUserMessage: ChatRoomSyncUserMessage = {
           ...self,
           id: nanoid(),
           peerId: chatRoomExtern.peerId,
           sendTime: Date.now(),
           lastMessageTime,
-          type: SendType.SyncUser
+          type: ChatRoomSendType.SyncUser
         }
 
         chatRoomExtern.sendMessage(syncUserMessage, peerId)
@@ -397,7 +293,7 @@ const ChatRoomDomain = Remesh.domain({
 
         const historyMessages = get(messageListDomain.query.ListQuery()).filter((message) => {
           return (
-            message.type === MessageType.Normal &&
+            message.type === ChatRoomMessageType.Normal &&
             message.sendTime > lastMessageTime &&
             message.sendTime >= Date.now() - SYNC_HISTORY_MAX_DAYS * 24 * 60 * 60 * 1000
           )
@@ -407,12 +303,12 @@ const ChatRoomDomain = Remesh.domain({
          * Message chunking to ensure that each message does not exceed WEB_RTC_MAX_MESSAGE_SIZE
          * If the message itself exceeds the size limit, skip syncing that message directly.
          */
-        const pushHistoryMessageList = historyMessages.reduce<SyncHistoryMessage[]>((acc, cur) => {
-          const pushHistoryMessage: SyncHistoryMessage = {
+        const pushHistoryMessageList = historyMessages.reduce<ChatRoomSyncHistoryMessage[]>((acc, cur) => {
+          const pushHistoryMessage: ChatRoomSyncHistoryMessage = {
             ...self,
             id: nanoid(),
             sendTime: Date.now(),
-            type: SendType.SyncHistory,
+            type: ChatRoomSendType.SyncHistory,
             messages: [cur as NormalMessage]
           }
           const pushHistoryMessageByteSize = getTextByteSize(JSON.stringify(pushHistoryMessage))
@@ -471,23 +367,23 @@ const ChatRoomDomain = Remesh.domain({
       }
     })
 
-    const SendSyncHistoryMessageEvent = domain.event<SyncHistoryMessage>({
+    const SendSyncHistoryMessageEvent = domain.event<ChatRoomSyncHistoryMessage>({
       name: 'Room.SendSyncHistoryMessageEvent'
     })
 
-    const SendSyncUserMessageEvent = domain.event<SyncUserMessage>({
+    const SendSyncUserMessageEvent = domain.event<ChatRoomSyncUserMessage>({
       name: 'Room.SendSyncUserMessageEvent'
     })
 
-    const SendTextMessageEvent = domain.event<TextMessage>({
+    const SendTextMessageEvent = domain.event<ChatRoomTextMessage>({
       name: 'Room.SendTextMessageEvent'
     })
 
-    const SendLikeMessageEvent = domain.event<LikeMessage>({
+    const SendLikeMessageEvent = domain.event<ChatRoomLikeMessage>({
       name: 'Room.SendLikeMessageEvent'
     })
 
-    const SendHateMessageEvent = domain.event<HateMessage>({
+    const SendHateMessageEvent = domain.event<ChatRoomHateMessage>({
       name: 'Room.SendHateMessageEvent'
     })
 
@@ -499,31 +395,31 @@ const ChatRoomDomain = Remesh.domain({
       name: 'Room.LeaveRoomEvent'
     })
 
-    const OnMessageEvent = domain.event<RoomMessage>({
+    const OnMessageEvent = domain.event<ChatRoomMessage>({
       name: 'Room.OnMessageEvent'
     })
 
-    const OnTextMessageEvent = domain.event<TextMessage>({
+    const OnTextMessageEvent = domain.event<ChatRoomTextMessage>({
       name: 'Room.OnTextMessageEvent'
     })
 
-    const OnSyncUserMessageEvent = domain.event<SyncUserMessage>({
+    const OnSyncUserMessageEvent = domain.event<ChatRoomSyncUserMessage>({
       name: 'Room.OnSyncUserMessageEvent'
     })
 
-    const OnSyncHistoryMessageEvent = domain.event<SyncHistoryMessage>({
+    const OnSyncHistoryMessageEvent = domain.event<ChatRoomSyncHistoryMessage>({
       name: 'Room.OnSyncHistoryMessageEvent'
     })
 
-    const OnSyncMessageEvent = domain.event<SyncHistoryMessage[]>({
+    const OnSyncMessageEvent = domain.event<ChatRoomSyncHistoryMessage[]>({
       name: 'Room.OnSyncMessageEvent'
     })
 
-    const OnLikeMessageEvent = domain.event<LikeMessage>({
+    const OnLikeMessageEvent = domain.event<ChatRoomLikeMessage>({
       name: 'Room.OnLikeMessageEvent'
     })
 
-    const OnHateMessageEvent = domain.event<HateMessage>({
+    const OnHateMessageEvent = domain.event<ChatRoomHateMessage>({
       name: 'Room.OnHateMessageEvent'
     })
 
@@ -567,10 +463,10 @@ const ChatRoomDomain = Remesh.domain({
     domain.effect({
       name: 'Room.OnMessageEffect',
       impl: () => {
-        const onMessage$ = fromEventPattern<RoomMessage>(chatRoomExtern.onMessage).pipe(
+        const onMessage$ = fromEventPattern<ChatRoomMessage>(chatRoomExtern.onMessage).pipe(
           mergeMap((message) => {
             // Filter out messages that do not conform to the format
-            if (!checkMessageFormat(message)) {
+            if (!checkChatRoomMessage(message)) {
               console.warn('Invalid message format', message)
               return EMPTY
             }
@@ -580,15 +476,15 @@ const ChatRoomDomain = Remesh.domain({
             // Emit specific message type events
             const specificEvent$ = (() => {
               switch (message.type) {
-                case SendType.Text:
+                case ChatRoomSendType.Text:
                   return of(OnTextMessageEvent(message))
-                case SendType.SyncUser:
+                case ChatRoomSendType.SyncUser:
                   return of(OnSyncUserMessageEvent(message))
-                case SendType.SyncHistory:
+                case ChatRoomSendType.SyncHistory:
                   return of(OnSyncHistoryMessageEvent(message))
-                case SendType.Like:
+                case ChatRoomSendType.Like:
                   return of(OnLikeMessageEvent(message))
-                case SendType.Hate:
+                case ChatRoomSendType.Hate:
                   return of(OnHateMessageEvent(message))
                 default:
                   console.warn('Unsupported message type', message)
@@ -610,7 +506,7 @@ const ChatRoomDomain = Remesh.domain({
           map((message) => {
             return messageListDomain.command.CreateItemCommand({
               ...message,
-              type: MessageType.Normal,
+              type: ChatRoomMessageType.Normal,
               receiveTime: Date.now(),
               likeUsers: [],
               hateUsers: []

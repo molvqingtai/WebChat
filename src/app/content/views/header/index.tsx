@@ -6,8 +6,8 @@ import { Button } from '@/components/ui/button'
 import { cn, getSiteInfo } from '@/utils'
 import { useRemeshDomain, useRemeshQuery } from 'remesh-react'
 import ChatRoomDomain from '@/domain/ChatRoom'
-import type { FromInfo, RoomUser } from '@/domain/VirtualRoom'
-import VirtualRoomDomain from '@/domain/VirtualRoom'
+import type { FromInfo, RoomUser } from '@/domain/WorldRoom'
+import WorldRoomDomain from '@/domain/WorldRoom'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Virtuoso } from 'react-virtuoso'
 import { AvatarCircles } from '@/components/magicui/avatar-circles'
@@ -17,12 +17,12 @@ import NumberFlow from '@number-flow/react'
 const Header: FC = () => {
   const siteInfo = getSiteInfo()
   const chatRoomDomain = useRemeshDomain(ChatRoomDomain())
-  const virtualRoomDomain = useRemeshDomain(VirtualRoomDomain())
+  const worldRoomDomain = useRemeshDomain(WorldRoomDomain())
   const chatUserList = useRemeshQuery(chatRoomDomain.query.UserListQuery())
-  const virtualUserList = useRemeshQuery(virtualRoomDomain.query.UserListQuery())
+  const worldUserList = useRemeshQuery(worldRoomDomain.query.UserListQuery())
   const chatOnlineCount = chatUserList.length
 
-  const virtualOnlineGroup = virtualUserList
+  const worldOnlineGroup = worldUserList
     .flatMap((user) => user.fromInfos.map((from) => ({ from, user })))
     .reduce<(FromInfo & { users: RoomUser[] })[]>((acc, item) => {
       const existSite = acc.find((group) => group.origin === item.from.origin)
@@ -37,9 +37,7 @@ const Header: FC = () => {
     .sort((a, b) => b.users.length - a.users.length)
 
   const [chatUserListScrollParentRef, setChatUserListScrollParentRef] = useState<HTMLDivElement | null>(null)
-  const [virtualOnlineGroupScrollParentRef, setVirtualOnlineGroupScrollParentRef] = useState<HTMLDivElement | null>(
-    null
-  )
+  const [worldOnlineGroupScrollParentRef, setWorldOnlineGroupScrollParentRef] = useState<HTMLDivElement | null>(null)
 
   return (
     <div className="z-10 grid h-12 grid-flow-col grid-cols-[theme('spacing.20')_auto_theme('spacing.20')] items-center justify-between rounded-t-xl bg-white px-4 backdrop-blur-lg dark:bg-slate-950">
@@ -58,11 +56,11 @@ const Header: FC = () => {
           </Button>
         </HoverCardTrigger>
         <HoverCardContent className="w-80 rounded-lg p-0">
-          <ScrollArea type="scroll" className="max-h-96 min-h-[72px] p-2" ref={setVirtualOnlineGroupScrollParentRef}>
+          <ScrollArea type="scroll" className="max-h-96 min-h-[72px] p-2" ref={setWorldOnlineGroupScrollParentRef}>
             <Virtuoso
-              data={virtualOnlineGroup}
+              data={worldOnlineGroup}
               defaultItemHeight={56}
-              customScrollParent={virtualOnlineGroupScrollParentRef!}
+              customScrollParent={worldOnlineGroupScrollParentRef!}
               itemContent={(_index, site) => (
                 <Link
                   underline={false}
