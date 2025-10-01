@@ -1,3 +1,22 @@
+# [1.9.0](https://github.com/molvqingtai/WebChat/compare/v1.8.6...v1.9.0) (2025-10-01)
+
+
+### Bug Fixes
+
+* prevent setup component render before userInfo loads ([cae3a08](https://github.com/molvqingtai/WebChat/commit/cae3a08811d3885bf409a8a86e9fd5322ee4a504))
+
+
+### Features
+
+* add message send throttling and fix IME composition issue ([2d3e6db](https://github.com/molvqingtai/WebChat/commit/2d3e6db7318841577d0a368dbf7ffd791b3fc8c7))
+
+
+### Performance Improvements
+
+* optimize drag/resize performance with RAF and prevent unnecessary re-renders ([82577d0](https://github.com/molvqingtai/WebChat/commit/82577d0bcdca7c46d20128e51bc128662e201647))
+* optimize message sync with hash comparison ([da8c411](https://github.com/molvqingtai/WebChat/commit/da8c411ac5a34e808b0fcf7a6cb591c32387d9ee))
+* use useLayoutEffect for beforeunload listener to ensure early registration ([97e9574](https://github.com/molvqingtai/WebChat/commit/97e957420ceaa80ca04380c68179716c612643d6))
+
 ## [1.8.6](https://github.com/molvqingtai/WebChat/compare/v1.8.5...v1.8.6) (2025-09-30)
 
 
