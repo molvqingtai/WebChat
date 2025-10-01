@@ -1,8 +1,8 @@
 import { Remesh } from 'remesh'
 import ToastModule from './modules/Toast'
-import ChatRoomDomain, { SendType } from './ChatRoom'
+import ChatRoomDomain from './ChatRoom'
 import VirtualRoomDomain from './VirtualRoom'
-import { filter, map, merge } from 'rxjs'
+import { map, merge } from 'rxjs'
 
 const ToastDomain = Remesh.domain({
   name: 'ToastDomain',

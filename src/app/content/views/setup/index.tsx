@@ -4,13 +4,12 @@ import type { Message } from '@/domain/MessageList'
 import MessageListDomain, { MessageType } from '@/domain/MessageList'
 import type { UserInfo } from '@/domain/UserInfo'
 import UserInfoDomain from '@/domain/UserInfo'
-import { generateRandomAvatar, generateRandomName } from '@/utils'
+import { generateRandomAvatar, generateRandomName, setIntervalImmediate } from '@/utils'
 import { UserIcon } from 'lucide-react'
 import { nanoid } from 'nanoid'
 import type { FC } from 'react'
 import { useEffect, useState } from 'react'
 import { useRemeshDomain, useRemeshSend } from 'remesh-react'
-import Timer from '@resreq/timer'
 import ExampleImage from '@/assets/images/example.jpg'
 import { PulsatingButton } from '@/components/magicui/pulsating-button'
 import { BlurFade } from '@/components/magicui/blur-fade'
@@ -78,28 +77,20 @@ const Setup: FC = () => {
     send(userInfoDomain.command.UpdateUserInfoCommand(userInfo!))
   }
 
-  const refreshUserInfo = async () => {
-    const userInfo = await generateUserInfo()
-    setUserInfo(userInfo)
-    return userInfo
-  }
+  const refreshUserInfo = async () => generateUserInfo()
   const createMessage = async (userInfo: UserInfo) => {
-    const message = await generateMessage(userInfo!)
+    const message = await generateMessage(userInfo)
+    setUserInfo(userInfo)
     send(messageListDomain.command.CreateItemCommand(message))
   }
 
   useEffect(() => {
-    const timer = new Timer(
-      async () => {
-        if (timer.status !== 'stopped') {
-          await createMessage(await refreshUserInfo())
-        }
-      },
-      { interval: 2000, immediate: true, limit: mockTextList.length }
-    )
-    timer.start()
+    const clearTimer = setIntervalImmediate(async () => {
+      mockTextList.length ? await createMessage(await refreshUserInfo()) : clearTimer()
+    }, 2000)
+
     return () => {
-      timer.stop()
+      clearTimer()
       send(messageListDomain.command.ClearListCommand())
     }
   }, [])
