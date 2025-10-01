@@ -7,6 +7,7 @@ import PromptItem from '../../components/prompt-item'
 import UserInfoDomain from '@/domain/UserInfo'
 import ChatRoomDomain, { MessageType } from '@/domain/ChatRoom'
 import MessageListDomain from '@/domain/MessageList'
+import useDataId from '@/hooks/useDataId'
 
 const Main: FC = () => {
   const send = useRemeshSend()
@@ -15,6 +16,8 @@ const Main: FC = () => {
   const userInfoDomain = useRemeshDomain(UserInfoDomain())
   const userInfo = useRemeshQuery(userInfoDomain.query.UserInfoQuery())
   const _messageList = useRemeshQuery(messageListDomain.query.ListQuery())
+
+  const messageListId = useDataId(_messageList)
 
   const messageList = useMemo(
     () =>
@@ -30,7 +33,7 @@ const Main: FC = () => {
           return message
         })
         .toSorted((a, b) => a.sendTime - b.sendTime),
-    [_messageList, userInfo?.id]
+    [messageListId, userInfo?.id]
   )
 
   const handleLikeChange = (messageId: string) => {

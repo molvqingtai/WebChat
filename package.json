@@ -73,6 +73,7 @@
     "danmu": "^0.18.1",
     "date-fns": "^4.1.0",
     "framer-motion": "^12.23.22",
+    "hash-it": "^6.0.0",
     "idb-keyval": "^6.2.2",
     "imgcap": "^1.0.2",
     "lucide-react": "^0.544.0",

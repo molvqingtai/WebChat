@@ -41,8 +41,7 @@ const ToastDomain = Remesh.domain({
     domain.effect({
       name: 'Toast.OnSyncHistoryEffect',
       impl: ({ fromEvent }) => {
-        const onSyncHistory$ = fromEvent(chatRoomDomain.event.OnMessageEvent).pipe(
-          filter((message) => message.type === SendType.SyncHistory),
+        const onSyncHistory$ = fromEvent(chatRoomDomain.event.OnSyncMessageEvent).pipe(
           map(() => toastModule.command.SuccessCommand('Syncing history messages.'))
         )
 
