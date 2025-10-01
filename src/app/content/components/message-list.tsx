@@ -17,10 +17,13 @@ const MessageList: FC<MessageListProps> = ({ children }) => {
       <Virtuoso
         defaultItemHeight={108}
         increaseViewportBy={200}
+        overscan={200}
         followOutput={(isAtBottom: boolean) => (isAtBottom ? 'smooth' : 'auto')}
         initialTopMostItemIndex={{ index: 'LAST', align: 'end' }}
         data={children}
         customScrollParent={scrollParentRef!}
+        computeItemKey={(index, item) => item.props.data.id}
+        skipAnimationFrameInResizeObserver
         itemContent={(_: any, item: ReactElement<MessageItemProps | PromptItemProps>) => item}
       />
     </ScrollArea>
