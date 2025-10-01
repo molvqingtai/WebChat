@@ -1,10 +1,10 @@
-name: CD
+name: CI
 
 on:
   push:
-    branches: [master]
+    branches: [develop]
   pull_request:
-    branches: [master]
+    branches: [develop]
 
 jobs:
   setup:
@@ -83,33 +83,3 @@ jobs:
         if: needs.setup.outputs.cache-hit != 'true'
         run: pnpm install --frozen-lockfile
       - run: pnpm run build
-
-  release:
-    needs: [setup, linter, build]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        # https://github.com/semantic-release/semantic-release/issues/2636
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@v4
-        with:
-          node-version: lts/*
-      - uses: pnpm/action-setup@v4
-        with:
-          version: latest
-      - name: Restore pnpm cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.pnpm-store
-            node_modules
-          key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpm-
-      - name: Install dependencies
-        if: needs.setup.outputs.cache-hit != 'true'
-        run: pnpm install --frozen-lockfile
-      - run: pnpm semantic-release
-        env:
-          GH_TOKEN: ${{ secrets.WEB_CHAT_GITHUB_TOKEN }}
