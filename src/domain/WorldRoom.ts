@@ -6,7 +6,7 @@ import UserInfoDomain from '@/domain/UserInfo'
 import { upsert } from '@/utils'
 import { nanoid } from 'nanoid'
 import StatusModule from '@/domain/modules/Status'
-import getSiteInfo from '@/utils/getSiteInfo'
+import getSiteMeta from '@/utils/getSiteMeta'
 import {
   WorldRoomSendType,
   type WorldRoomMessage,
@@ -71,7 +71,7 @@ const WorldRoomDomain = Remesh.domain({
             type: 'create',
             user: {
               peerId: worldRoomExtern.peerId,
-              fromInfo: { ...getSiteInfo(), peerId: worldRoomExtern.peerId },
+              fromInfo: { ...getSiteMeta(), peerId: worldRoomExtern.peerId },
               joinTime: Date.now(),
               userId,
               username,
@@ -100,7 +100,7 @@ const WorldRoomDomain = Remesh.domain({
             type: 'delete',
             user: {
               peerId: worldRoomExtern.peerId,
-              fromInfo: { ...getSiteInfo(), peerId: worldRoomExtern.peerId },
+              fromInfo: { ...getSiteMeta(), peerId: worldRoomExtern.peerId },
               joinTime: Date.now(),
               userId,
               username,
@@ -172,7 +172,7 @@ const WorldRoomDomain = Remesh.domain({
           id: nanoid(),
           peerId: worldRoomExtern.peerId,
           sendTime: Date.now(),
-          fromInfo: { ...getSiteInfo(), peerId: worldRoomExtern.peerId },
+          fromInfo: { ...getSiteMeta(), peerId: worldRoomExtern.peerId },
           type: WorldRoomSendType.SyncUser
         }
 
@@ -282,7 +282,7 @@ const WorldRoomDomain = Remesh.domain({
               return [
                 UpdateUserListCommand({
                   type: 'delete',
-                  user: { ...existUser, peerId, fromInfo: { ...getSiteInfo(), peerId } }
+                  user: { ...existUser, peerId, fromInfo: { ...getSiteMeta(), peerId } }
                 }),
                 OnLeaveRoomEvent(peerId)
               ]
