@@ -59,9 +59,6 @@ importers:
       '@resreq/event-hub':
         specifier: ^1.6.0
         version: 1.6.0
-      '@resreq/timer':
-        specifier: ^1.3.2
-        version: 1.3.2
       '@rtco/client':
         specifier: ^0.3.6
         version: 0.3.6
@@ -71,9 +68,6 @@ importers:
       '@webcomponents/custom-elements':
         specifier: ^1.6.0
         version: 1.6.0
-      '@webext-core/messaging':
-        specifier: ^2.3.0
-        version: 2.3.0
       '@webext-core/proxy-service':
         specifier: ^1.2.1
         version: 1.2.1(@webext-core/messaging@2.3.0)(webextension-polyfill@0.12.0)
@@ -86,6 +80,9 @@ importers:
       cobe:
         specifier: ^0.6.5
         version: 0.6.5
+      comctx:
+        specifier: ^1.4.3
+        version: 1.4.3
       danmu:
         specifier: ^0.18.1
         version: 0.18.1
@@ -95,9 +92,15 @@ importers:
       framer-motion:
         specifier: ^12.23.22
         version: 12.23.22(@emotion/is-prop-valid@1.3.1)(react-dom@19.1.1(react@19.1.1))(react@19.1.1)
+      hash-it:
+        specifier: ^6.0.0
+        version: 6.0.0
       idb-keyval:
         specifier: ^6.2.2
         version: 6.2.2
+      imgcap:
+        specifier: ^1.0.2
+        version: 1.0.2
       lucide-react:
         specifier: ^0.544.0
         version: 0.544.0(react@19.1.1)
@@ -1266,9 +1269,6 @@ packages:
   '@resreq/event-hub@1.6.0':
     resolution: {integrity: sha512-SEzPuAc2bQdMV9cKrBIjW3EvntpU8NcBxdgdEo9yLKAeRfvdM4oM/sG8pFPRZOpYwOytaJqWGqwjc+RSRFFTvQ==}
 
-  '@resreq/timer@1.3.2':
-    resolution: {integrity: sha512-KTtm5WBnu26R+z1Xd34zn/cUhagVHNwfUbyJfQyqf2F0JtNmdVgA6PL1JHvNW1C2TXHgKkBNSsfp1vNGg/DngQ==}
-
   '@rolldown/pluginutils@1.0.0-beta.38':
     resolution: {integrity: sha512-N/ICGKleNhA5nc9XXQG/kkKHJ7S55u0x0XUJbbkmdCnFuoRkM1Il12q9q0eX19+M7KKUEPw/daUPIRnxhcxAIw==}
 
@@ -2183,6 +2183,9 @@ packages:
   colorette@2.0.20:
     resolution: {integrity: sha512-IfEDxwoWIjkeXL1eXcDiow4UbKjhLdq6/EuSVR9GMN7KVH3r9gQ83e73hsz1Nd1T3ijd5xv1wcWRYO+D6kCI2w==}
 
+  comctx@1.4.3:
+    resolution: {integrity: sha512-Z1fisV3l6kucW+GZDg3AI2+ffWGd+Q/RCBKGbpQ8oe6U3p6wmTM/NciP4RRgLYYDW4aZgZIXRUQz1YnFX1QsjQ==}
+
   comma-separated-tokens@2.0.3:
     resolution: {integrity: sha512-Fu4hJdvzeylCfQPp9SGWidpzrMs7tTrlu6Vb8XGaRGck8QSNZJJp538Wrb60Lax4fPwR64ViY468OIUTbRlGZg==}
 
@@ -3069,6 +3072,9 @@ packages:
     resolution: {integrity: sha512-NqADB8VjPFLM2V0VvHUewwwsw0ZWBaIdgo+ieHtK3hasLz4qeCRjYcqfB6AQrBggRKppKF8L52/VqdVsO47Dlw==}
     engines: {node: '>= 0.4'}
 
+  hash-it@6.0.0:
+    resolution: {integrity: sha512-KHzmSFx1KwyMPw0kXeeUD752q/Kfbzhy6dAZrjXV9kAIXGqzGvv8vhkUqj+2MGZldTo0IBpw6v7iWE7uxsvH0w==}
+
   hasown@2.0.2:
     resolution: {integrity: sha512-0hJU9SCPvmMzIBdZFqNPXWa6dqh7WdH0cII9y+CyS8rG3nL48Bclra9HmKhVVUHyPWNH5Y7xDwAB7bfgSjkUMQ==}
     engines: {node: '>= 0.4'}
@@ -3153,6 +3159,9 @@ packages:
   ignore@7.0.5:
     resolution: {integrity: sha512-Hs59xBNfUIunMFgWAbGX5cq6893IbWg4KnrjbYwX3tx0ztorVgTDA6B2sxf8ejHJ4wz8BqGUMYlnzNBer5NvGg==}
     engines: {node: '>= 4'}
+
+  imgcap@1.0.2:
+    resolution: {integrity: sha512-KY04sGVRupPrRBIruSBDnBBEe/5iwyivnukzmhOBclIkdyMJcbfrlqZrSZjQi1254NJXxOtpB3ddmHUjdKNydg==}
 
   immediate@3.0.6:
     resolution: {integrity: sha512-XXOFtyqDjNDAQxVfYxuF7g9Il/IbWmmlQg2MYKOH8ExIT1qg6xc4zyS3HaEEATgs1btfzxq15ciUiY7gjSXRGQ==}
@@ -6813,10 +6822,6 @@ snapshots:
 
   '@resreq/event-hub@1.6.0': {}
 
-  '@resreq/timer@1.3.2':
-    dependencies:
-      '@resreq/event-hub': 1.6.0
-
   '@rolldown/pluginutils@1.0.0-beta.38': {}
 
   '@rollup/pluginutils@5.3.0(rollup@4.52.3)':
@@ -7795,6 +7800,8 @@ snapshots:
   color-name@1.1.4: {}
 
   colorette@2.0.20: {}
+
+  comctx@1.4.3: {}
 
   comma-separated-tokens@2.0.3: {}
 
@@ -8868,6 +8875,8 @@ snapshots:
     dependencies:
       has-symbols: 1.1.0
 
+  hash-it@6.0.0: {}
+
   hasown@2.0.2:
     dependencies:
       function-bind: 1.1.2
@@ -8958,6 +8967,8 @@ snapshots:
   ignore@5.3.2: {}
 
   ignore@7.0.5: {}
+
+  imgcap@1.0.2: {}
 
   immediate@3.0.6: {}
 

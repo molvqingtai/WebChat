@@ -10,6 +10,7 @@ import { MESSAGE_MAX_LENGTH, WEB_RTC_MAX_MESSAGE_SIZE } from '@/constants/config
 import ChatRoomDomain from '@/domain/ChatRoom'
 import useCursorPosition from '@/hooks/useCursorPosition'
 import useShareRef from '@/hooks/useShareRef'
+import useThrottle from '@/hooks/useThrottle'
 import { Presence } from '@radix-ui/react-presence'
 import { Portal } from '@radix-ui/react-portal'
 import useTriggerAway from '@/hooks/useTriggerAway'
@@ -17,12 +18,13 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import type { VirtuosoHandle } from 'react-virtuoso'
 import { Virtuoso } from 'react-virtuoso'
 import UserInfoDomain from '@/domain/UserInfo'
-import { blobToBase64, cn, compressImage, getRootNode, getTextByteSize, getTextSimilarity } from '@/utils'
+import { blobToBase64, cn, getRootNode, getTextByteSize, getTextSimilarity } from '@/utils'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { AvatarImage } from '@radix-ui/react-avatar'
 import ToastDomain from '@/domain/Toast'
 import ImageButton from '../../components/image-button'
 import { nanoid } from 'nanoid'
+import imgcap from 'imgcap'
 
 const Footer: FC = () => {
   const send = useRemeshSend()
@@ -128,7 +130,7 @@ const Footer: FC = () => {
     return newMessage
   }
 
-  const handleSend = async () => {
+  const handleSendMessage = async () => {
     if (!`${message}`.trim()) {
       inputRef.current?.focus()
       return
@@ -153,6 +155,8 @@ const Footer: FC = () => {
       messageInputDomain.command.ClearCommand()
     ])
   }
+
+  const handleSend = useThrottle(handleSendMessage, 1000)
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (autoCompleteListShow && autoCompleteList.length) {
@@ -237,6 +241,10 @@ const Footer: FC = () => {
     }
   }
 
+  const handleToggleComposing = (composing: boolean) => {
+    isComposing.current = composing
+  }
+
   const handleInjectEmoji = (emoji: string) => {
     const newMessage = `${message.slice(0, selectionEnd)}${emoji}${message.slice(selectionEnd)}`
 
@@ -258,8 +266,7 @@ const Footer: FC = () => {
     try {
       setInputLoading(true)
 
-      const blob = await compressImage({
-        input: file,
+      const blob = await imgcap(file, {
         targetSize: 30 * 1024,
         outputType: file.size > 30 * 1024 ? 'image/webp' : undefined
       })
@@ -364,6 +371,8 @@ const Footer: FC = () => {
         loading={inputLoading}
         onPaste={handlePaste}
         onKeyDown={handleKeyDown}
+        onCompositionStart={() => handleToggleComposing(true)}
+        onCompositionEnd={() => handleToggleComposing(false)}
         maxLength={MESSAGE_MAX_LENGTH}
       ></MessageInput>
       <div className="flex items-center">

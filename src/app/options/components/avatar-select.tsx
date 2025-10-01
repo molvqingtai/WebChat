@@ -4,7 +4,8 @@ import { type ChangeEvent } from 'react'
 import { ImagePlusIcon } from 'lucide-react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Label } from '@/components/ui/label'
-import { blobToBase64, cn, compressImage } from '@/utils'
+import { blobToBase64, cn } from '@/utils'
+import imgcap from 'imgcap'
 
 export interface AvatarSelectProps {
   value?: string
@@ -41,7 +42,7 @@ const AvatarSelect = ({
          * In chrome storage.sync, each key-value pair supports a maximum storage of 8kb
          * and all key-value pairs support a maximum storage of 100kb.
          */
-        const blob = await compressImage({ input: file, targetSize: compressSize, outputType: 'image/webp' })
+        const blob = await imgcap(file, { targetSize: compressSize, outputType: 'image/webp' })
         const base64 = await blobToBase64(blob)
         onSuccess?.(base64)
         onChange?.(base64)

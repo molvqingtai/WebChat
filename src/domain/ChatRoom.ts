@@ -10,6 +10,7 @@ import { nanoid } from 'nanoid'
 import StatusModule from '@/domain/modules/Status'
 import { SYNC_HISTORY_MAX_DAYS, WEB_RTC_MAX_MESSAGE_SIZE } from '@/constants/config'
 import * as v from 'valibot'
+import hash from 'hash-it'
 
 export { MessageType }
 
@@ -514,6 +515,10 @@ const ChatRoomDomain = Remesh.domain({
       name: 'Room.OnSyncHistoryMessageEvent'
     })
 
+    const OnSyncMessageEvent = domain.event<SyncHistoryMessage[]>({
+      name: 'Room.OnSyncMessageEvent'
+    })
+
     const OnLikeMessageEvent = domain.event<LikeMessage>({
       name: 'Room.OnLikeMessageEvent'
     })
@@ -653,7 +658,7 @@ const ChatRoomDomain = Remesh.domain({
 
     domain.effect({
       name: 'Room.OnSyncHistoryMessageEffect',
-      impl: ({ fromEvent }) => {
+      impl: ({ get, fromEvent }) => {
         return fromEvent(OnSyncHistoryMessageEvent).pipe(
           bufferTime(300), // Collect messages within 300ms time window
           filter((messages) => messages.length > 0),
@@ -666,8 +671,23 @@ const ChatRoomDomain = Remesh.domain({
               ...allMessages.reduce((map, msg) => map.set(msg.id, msg), new Map<string, NormalMessage>()).values()
             ]
 
-            // Return batched upsert commands
-            return of(...uniqueMessages.map((message) => messageListDomain.command.UpsertItemCommand(message)))
+            // Filter out messages that haven't changed
+            const changedMessages = uniqueMessages.filter((message) => {
+              const hasMessage = get(messageListDomain.query.HasItemQuery(message.id))
+              if (!hasMessage) {
+                return true
+              } else {
+                return hash(message) !== hash(get(messageListDomain.query.ItemQuery(message.id)))
+              }
+            })
+
+            // Return batched upsert commands and single OnSyncMessageEvent for all sync messages
+            return changedMessages.length
+              ? of(
+                  ...changedMessages.map((message) => messageListDomain.command.UpsertItemCommand(message)),
+                  OnSyncMessageEvent(syncMessages)
+                )
+              : EMPTY
           })
         )
       }
@@ -805,6 +825,7 @@ const ChatRoomDomain = Remesh.domain({
         SelfLeaveRoomEvent,
         OnMessageEvent,
         OnTextMessageEvent,
+        OnSyncMessageEvent,
         OnJoinRoomEvent,
         OnLeaveRoomEvent,
         OnErrorEvent

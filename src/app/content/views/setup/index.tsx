@@ -4,13 +4,12 @@ import type { Message } from '@/domain/MessageList'
 import MessageListDomain, { MessageType } from '@/domain/MessageList'
 import type { UserInfo } from '@/domain/UserInfo'
 import UserInfoDomain from '@/domain/UserInfo'
-import { generateRandomAvatar, generateRandomName } from '@/utils'
+import { generateRandomAvatar, generateRandomName, setIntervalImmediate } from '@/utils'
 import { UserIcon } from 'lucide-react'
 import { nanoid } from 'nanoid'
 import type { FC } from 'react'
 import { useEffect, useState } from 'react'
 import { useRemeshDomain, useRemeshSend } from 'remesh-react'
-import Timer from '@resreq/timer'
 import ExampleImage from '@/assets/images/example.jpg'
 import { PulsatingButton } from '@/components/magicui/pulsating-button'
 import { BlurFade } from '@/components/magicui/blur-fade'
@@ -78,56 +77,50 @@ const Setup: FC = () => {
     send(userInfoDomain.command.UpdateUserInfoCommand(userInfo!))
   }
 
-  const refreshUserInfo = async () => {
-    const userInfo = await generateUserInfo()
-    setUserInfo(userInfo)
-    return userInfo
-  }
+  const refreshUserInfo = async () => generateUserInfo()
   const createMessage = async (userInfo: UserInfo) => {
-    const message = await generateMessage(userInfo!)
+    const message = await generateMessage(userInfo)
+    setUserInfo(userInfo)
     send(messageListDomain.command.CreateItemCommand(message))
   }
 
   useEffect(() => {
-    const timer = new Timer(
-      async () => {
-        if (timer.status !== 'stopped') {
-          await createMessage(await refreshUserInfo())
-        }
-      },
-      { interval: 2000, immediate: true, limit: mockTextList.length }
-    )
-    timer.start()
+    const clearTimer = setIntervalImmediate(async () => {
+      mockTextList.length ? await createMessage(await refreshUserInfo()) : clearTimer()
+    }, 2000)
+
     return () => {
-      timer.stop()
+      clearTimer()
       send(messageListDomain.command.ClearListCommand())
     }
   }, [])
 
   return (
     <div className="absolute inset-0 z-50 flex rounded-xl bg-black/10 shadow-2xl  backdrop-blur-sm">
-      <div className="m-auto flex flex-col items-center justify-center gap-y-8 pb-40 drop-shadow-lg">
-        <BlurFade key={userInfo?.avatar} inView>
-          <Avatar className="size-24 cursor-pointer border-4 border-white ">
-            <AvatarImage src={userInfo?.avatar} className="size-full" alt="avatar" />
-            <AvatarFallback>
-              <UserIcon size={30} className="text-slate-400" />
-            </AvatarFallback>
-          </Avatar>
-        </BlurFade>
-        <div className="flex items-center" key={userInfo?.name}>
-          <motion.div
-            className="text-2xl font-bold text-primary"
-            initial={{ x: -10, opacity: 0 }}
-            animate={{ x: 0, opacity: 1 }}
-            transition={{ duration: 0.5 }}
-          >
-            @
-          </motion.div>
-          <WordRotate className="text-2xl font-bold text-primary" words={[`${userInfo?.name || ''.padEnd(10, ' ')}`]} />
+      {userInfo && (
+        <div className="m-auto flex flex-col items-center justify-center gap-y-8 pb-40 drop-shadow-lg">
+          <BlurFade key={userInfo.avatar} inView>
+            <Avatar className="size-24 cursor-pointer border-4 border-white ">
+              <AvatarImage src={userInfo.avatar} className="size-full" alt="avatar" />
+              <AvatarFallback>
+                <UserIcon size={30} className="text-slate-400" />
+              </AvatarFallback>
+            </Avatar>
+          </BlurFade>
+          <div className="flex items-center" key={userInfo.name}>
+            <motion.div
+              className="text-2xl font-bold text-primary"
+              initial={{ x: -10, opacity: 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              transition={{ duration: 0.5 }}
+            >
+              @
+            </motion.div>
+            <WordRotate className="text-2xl font-bold text-primary" words={[userInfo.name]} />
+          </div>
+          <PulsatingButton onClick={handleSetup}>Start chatting</PulsatingButton>
         </div>
-        <PulsatingButton onClick={handleSetup}>Start chatting</PulsatingButton>
-      </div>
+      )}
     </div>
   )
 }
