@@ -6,7 +6,7 @@ import { RemeshRoot, RemeshScope } from 'remesh-react'
 import { defineContentScript, createShadowRootUi } from '#imports'
 
 import App from './App'
-import { LocalStorageImpl, IndexDBStorageImpl, BrowserSyncStorageImpl } from '@/domain/impls/Storage'
+import { LocalStorageImpl, IndexDBStorageImpl, BrowserSyncStorageImpl, indexDBStorage } from '@/domain/impls/Storage'
 import { DanmakuImpl } from '@/domain/impls/Danmaku'
 import { NotificationImpl } from '@/domain/impls/Notification'
 import { ToastImpl } from '@/domain/impls/Toast'
@@ -18,6 +18,8 @@ import '@/assets/styles/tailwind.css'
 import '@/assets/styles/overlay.css'
 import NotificationDomain from '@/domain/Notification'
 import { createElement } from '@/utils'
+import { version } from '@/../package.json'
+import { VERSION_STORAGE_KEY } from '@/constants/config'
 
 export default defineContentScript({
   cssInjectionMode: 'ui',
@@ -25,6 +27,29 @@ export default defineContentScript({
   matches: ['https://*/*'],
   excludeMatches: ['*://localhost/*', '*://127.0.0.1/*', '*://*.csdn.net/*', '*://*.csdn.com/*'],
   async main(ctx) {
+    // Check version and clear IndexDB if updated
+    const storedVersion = await indexDBStorage.getItem<string>(VERSION_STORAGE_KEY)
+    if (storedVersion !== version) {
+      try {
+        if (storedVersion) {
+          await indexDBStorage.clear()
+          console.log(
+            `%c[WebChat]%c IndexDB cleared due to version update: ${storedVersion} -> ${version}`,
+            'color: #10b981; font-weight: bold;',
+            'color: inherit;'
+          )
+        }
+        await indexDBStorage.setItem(VERSION_STORAGE_KEY, version)
+      } catch (error) {
+        console.error(
+          '%c[WebChat]%c Failed to clear IndexDB on update:',
+          'color: #10b981; font-weight: bold;',
+          'color: inherit;',
+          error
+        )
+      }
+    }
+
     const store = Remesh.store({
       externs: [
         LocalStorageImpl,
