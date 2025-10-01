@@ -54,7 +54,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pnpm-
       - name: Install dependencies
-        if: needs.setup.outputs.cache-hit != 'true'
         run: pnpm install --frozen-lockfile
       - run: pnpm run lint
       - run: pnpm run check
@@ -80,7 +79,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pnpm-
       - name: Install dependencies
-        if: needs.setup.outputs.cache-hit != 'true'
         run: pnpm install --frozen-lockfile
       - run: pnpm run build
 
@@ -108,7 +106,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pnpm-
       - name: Install dependencies
-        if: needs.setup.outputs.cache-hit != 'true'
         run: pnpm install --frozen-lockfile
       - run: pnpm semantic-release
         env:
