@@ -71,9 +71,6 @@ importers:
       '@webcomponents/custom-elements':
         specifier: ^1.6.0
         version: 1.6.0
-      '@webext-core/messaging':
-        specifier: ^2.3.0
-        version: 2.3.0
       '@webext-core/proxy-service':
         specifier: ^1.2.1
         version: 1.2.1(@webext-core/messaging@2.3.0)(webextension-polyfill@0.12.0)
@@ -86,6 +83,9 @@ importers:
       cobe:
         specifier: ^0.6.5
         version: 0.6.5
+      comctx:
+        specifier: ^1.4.3
+        version: 1.4.3
       danmu:
         specifier: ^0.18.1
         version: 0.18.1
@@ -98,6 +98,9 @@ importers:
       idb-keyval:
         specifier: ^6.2.2
         version: 6.2.2
+      imgcap:
+        specifier: ^1.0.2
+        version: 1.0.2
       lucide-react:
         specifier: ^0.544.0
         version: 0.544.0(react@19.1.1)
@@ -2183,6 +2186,9 @@ packages:
   colorette@2.0.20:
     resolution: {integrity: sha512-IfEDxwoWIjkeXL1eXcDiow4UbKjhLdq6/EuSVR9GMN7KVH3r9gQ83e73hsz1Nd1T3ijd5xv1wcWRYO+D6kCI2w==}
 
+  comctx@1.4.3:
+    resolution: {integrity: sha512-Z1fisV3l6kucW+GZDg3AI2+ffWGd+Q/RCBKGbpQ8oe6U3p6wmTM/NciP4RRgLYYDW4aZgZIXRUQz1YnFX1QsjQ==}
+
   comma-separated-tokens@2.0.3:
     resolution: {integrity: sha512-Fu4hJdvzeylCfQPp9SGWidpzrMs7tTrlu6Vb8XGaRGck8QSNZJJp538Wrb60Lax4fPwR64ViY468OIUTbRlGZg==}
 
@@ -3153,6 +3159,9 @@ packages:
   ignore@7.0.5:
     resolution: {integrity: sha512-Hs59xBNfUIunMFgWAbGX5cq6893IbWg4KnrjbYwX3tx0ztorVgTDA6B2sxf8ejHJ4wz8BqGUMYlnzNBer5NvGg==}
     engines: {node: '>= 4'}
+
+  imgcap@1.0.2:
+    resolution: {integrity: sha512-KY04sGVRupPrRBIruSBDnBBEe/5iwyivnukzmhOBclIkdyMJcbfrlqZrSZjQi1254NJXxOtpB3ddmHUjdKNydg==}
 
   immediate@3.0.6:
     resolution: {integrity: sha512-XXOFtyqDjNDAQxVfYxuF7g9Il/IbWmmlQg2MYKOH8ExIT1qg6xc4zyS3HaEEATgs1btfzxq15ciUiY7gjSXRGQ==}
@@ -7796,6 +7805,8 @@ snapshots:
 
   colorette@2.0.20: {}
 
+  comctx@1.4.3: {}
+
   comma-separated-tokens@2.0.3: {}
 
   commander@14.0.1: {}
@@ -8958,6 +8969,8 @@ snapshots:
   ignore@5.3.2: {}
 
   ignore@7.0.5: {}
+
+  imgcap@1.0.2: {}
 
   immediate@3.0.6: {}
 

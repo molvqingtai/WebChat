@@ -4,7 +4,6 @@ import { motion, AnimatePresence } from 'framer-motion'
 
 import { useRemeshDomain, useRemeshQuery, useRemeshSend } from 'remesh-react'
 import { Button } from '@/components/ui/button'
-import { EVENT } from '@/constants/event'
 import UserInfoDomain from '@/domain/UserInfo'
 import useTriggerAway from '@/hooks/useTriggerAway'
 import { checkDarkMode, cn } from '@/utils'
@@ -17,9 +16,9 @@ import LogoIcon5 from '@/assets/images/logo-5.svg'
 import LogoIcon6 from '@/assets/images/logo-6.svg'
 import AppStatusDomain from '@/domain/AppStatus'
 import { getDay } from 'date-fns'
-import { messenger } from '@/messenger'
 import useDraggable from '@/hooks/useDraggable'
 import useWindowResize from '@/hooks/useWindowResize'
+import { AppActionImpl } from '@/domain/impls/AppAction'
 
 export interface AppButtonProps {
   className?: string
@@ -80,7 +79,7 @@ const AppButton: FC<AppButtonProps> = ({ className }) => {
   }
 
   const handleOpenOptionsPage = () => {
-    messenger.sendMessage(EVENT.OPTIONS_PAGE_OPEN, undefined)
+    AppActionImpl.value.openOptionsPage()
   }
 
   const handleToggleApp = () => {
