@@ -1,3 +1,10 @@
+## [1.9.4](https://github.com/molvqingtai/WebChat/compare/v1.9.3...v1.9.4) (2025-10-02)
+
+
+### Bug Fixes
+
+* add namespace to notification proxy to prevent cross-extension conflicts ([2429fd4](https://github.com/molvqingtai/WebChat/commit/2429fd40b7e5c6b4374d938ac03f88dbe44a04c3))
+
 ## [1.9.3](https://github.com/molvqingtai/WebChat/compare/v1.9.2...v1.9.3) (2025-10-01)
 
 
