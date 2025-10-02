@@ -1,6 +1,4 @@
-import { version } from '@/../package.json'
 // https://www.webfx.com/tools/emoji-cheat-sheet/
-
 export const EMOJI_LIST = [
   '😀',
   '😄',
