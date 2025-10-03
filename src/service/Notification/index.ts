@@ -35,15 +35,23 @@ export class Notification implements NotificationExternType {
     })
   }
   async push(message: ChatRoomTextMessage & { meta?: { tab?: MessageTab } }) {
-    const tab = message.meta?.tab
-    console.log(tab)
+    const messageTab = message.meta?.tab
+    const tabs = await browser.tabs.query({ active: true })
+    const hasActiveSameSiteTab =
+      messageTab?.url &&
+      tabs.some((tab) => {
+        return tab.url && new URL(messageTab.url!).origin === new URL(tab.url).origin
+      })
+
+    if (hasActiveSameSiteTab) return
+
     const id = await browser.notifications.create({
       type: 'basic',
       iconUrl: message.userAvatar,
       title: message.username,
       message: message.body,
-      contextMessage: tab?.url
+      contextMessage: messageTab?.url
     })
-    tab && this.historyNotificationTabs.set(id, tab)
+    messageTab && this.historyNotificationTabs.set(id, messageTab)
   }
 }
