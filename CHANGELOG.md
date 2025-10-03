@@ -1,3 +1,10 @@
+## [1.9.5](https://github.com/molvqingtai/WebChat/compare/v1.9.4...v1.9.5) (2025-10-03)
+
+
+### Performance Improvements
+
+* **notification:** improve notification logic and smart filtering ([b2432df](https://github.com/molvqingtai/WebChat/commit/b2432dfc662560ecf911b3740ebf45dbbecd5632))
+
 ## [1.9.4](https://github.com/molvqingtai/WebChat/compare/v1.9.3...v1.9.4) (2025-10-02)
 
 
