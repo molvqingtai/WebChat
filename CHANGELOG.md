@@ -1,3 +1,10 @@
+## [1.9.6](https://github.com/molvqingtai/WebChat/compare/v1.9.5...v1.9.6) (2025-10-04)
+
+
+### Bug Fixes
+
+* specify target peers when sending messages to avoid connection errors ([ac0d22f](https://github.com/molvqingtai/WebChat/commit/ac0d22fa1518e763e1de78ede52346a4d7ece036)), closes [#56](https://github.com/molvqingtai/WebChat/issues/56)
+
 ## [1.9.5](https://github.com/molvqingtai/WebChat/compare/v1.9.4...v1.9.5) (2025-10-03)
 
 
