@@ -200,7 +200,25 @@ const ChatRoomDomain = Remesh.domain({
           atUsers: typeof message === 'string' ? [] : message.atUsers
         }
 
-        chatRoomExtern.sendMessage(textMessage)
+        /**
+         * Get all peerIds from UserList except self.
+         *
+         * Why specify peerIds:
+         * According to artico source code, room.send() without target will send to all calls (including connecting peers).
+         * If a peer's DataChannel is not ready, it will throw "Connection is not established yet" error and interrupt the forEach loop.
+         * UserList only contains peers that have sent SyncUser message, which means their DataChannel is already established.
+         * So we only send to peers in UserList to avoid errors.
+         *
+         * @see https://github.com/matallui/artico/blob/8a4f1a185be9355f893120e9492151f1785e59fa/packages/client/src/room.ts#L114 Room.send() implementation
+         * @see hhttps://github.com/matallui/artico/blob/8a4f1a185be9355f893120e9492151f1785e59fa/packages/peer/src/peer.ts#L281 Peer.send() throws error when not ready
+         */
+        const peerIds = get(UserListQuery())
+          .flatMap((user) => user.peerIds)
+          .filter((peerId) => peerId !== chatRoomExtern.peerId)
+
+        // Only send to network if there are other peers, but always save to local
+        peerIds.length && chatRoomExtern.sendMessage(textMessage, peerIds)
+
         return [messageListDomain.command.CreateItemCommand(listMessage), SendTextMessageEvent(textMessage)]
       }
     })
@@ -221,7 +239,18 @@ const ChatRoomDomain = Remesh.domain({
           ...localMessage,
           likeUsers: desert(localMessage.likeUsers, likeMessage, 'userId')
         }
-        chatRoomExtern.sendMessage(likeMessage)
+
+        /**
+         * Get all peerIds from UserList except self.
+         * @see SendTextMessageCommand for detailed explanation.
+         */
+        const peerIds = get(UserListQuery())
+          .flatMap((user) => user.peerIds)
+          .filter((peerId) => peerId !== chatRoomExtern.peerId)
+
+        // Only send to network if there are other peers, but always save to local
+        peerIds.length && chatRoomExtern.sendMessage(likeMessage, peerIds)
+
         return [messageListDomain.command.UpdateItemCommand(listMessage), SendLikeMessageEvent(likeMessage)]
       }
     })
@@ -242,7 +271,18 @@ const ChatRoomDomain = Remesh.domain({
           ...localMessage,
           hateUsers: desert(localMessage.hateUsers, hateMessage, 'userId')
         }
-        chatRoomExtern.sendMessage(hateMessage)
+
+        /**
+         * Get all peerIds from UserList except self.
+         * @see SendTextMessageCommand for detailed explanation.
+         */
+        const peerIds = get(UserListQuery())
+          .flatMap((user) => user.peerIds)
+          .filter((peerId) => peerId !== chatRoomExtern.peerId)
+
+        // Only send to network if there are other peers, but always save to local
+        peerIds.length && chatRoomExtern.sendMessage(hateMessage, peerIds)
+
         return [messageListDomain.command.UpdateItemCommand(listMessage), SendHateMessageEvent(hateMessage)]
       }
     })
