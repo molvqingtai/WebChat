@@ -4,7 +4,7 @@ import type { Message } from '@/domain/MessageList'
 import MessageListDomain from '@/domain/MessageList'
 import type { UserInfo } from '@/domain/UserInfo'
 import UserInfoDomain from '@/domain/UserInfo'
-import { generateRandomAvatar, generateRandomName, setIntervalImmediate } from '@/utils'
+import { createHLC, generateRandomAvatar, generateRandomName, setIntervalImmediate } from '@/utils'
 import { UserIcon } from 'lucide-react'
 import { nanoid } from 'nanoid'
 import type { FC } from 'react'
@@ -15,7 +15,7 @@ import { PulsatingButton } from '@/components/magicui/pulsating-button'
 import { BlurFade } from '@/components/magicui/blur-fade'
 import { motion } from 'framer-motion'
 import { WordRotate } from '@/components/magicui/word-rotate'
-import { ChatRoomMessageType } from '@/protocol'
+import { MESSAGE_TYPE } from '@/protocol/Message'
 
 const mockTextList = [
   `你問我支持不支持，我說我支持`,
@@ -50,19 +50,25 @@ const generateUserInfo = async (): Promise<UserInfo> => {
 }
 
 const generateMessage = async (userInfo: UserInfo): Promise<Message> => {
-  const { name: username, avatar: userAvatar, id: userId } = userInfo
+  const { name, avatar, id } = userInfo
+  const now = Date.now()
   return {
     id: nanoid(),
+    type: MESSAGE_TYPE.TEXT,
+    hlc: createHLC(),
+    sentAt: now,
+    receivedAt: now,
+    sender: {
+      id,
+      name,
+      avatar
+    },
     body: mockTextList.shift()!,
-    sendTime: Date.now(),
-    receiveTime: Date.now(),
-    type: ChatRoomMessageType.Normal,
-    userId,
-    username,
-    userAvatar,
-    likeUsers: mockTextList.length ? [] : [{ userId, username, userAvatar }],
-    hateUsers: [],
-    atUsers: []
+    mentions: [],
+    reactions: {
+      likes: mockTextList.length ? [] : [{ id, name, avatar }],
+      hates: []
+    }
   }
 }
 

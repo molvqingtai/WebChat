@@ -47,8 +47,8 @@ export class Notification implements NotificationExternType {
 
     const id = await browser.notifications.create({
       type: 'basic',
-      iconUrl: message.userAvatar,
-      title: message.username,
+      iconUrl: message.sender.avatar,
+      title: message.sender.name,
       message: message.body,
       contextMessage: messageTab?.url
     })

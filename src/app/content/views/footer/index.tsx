@@ -84,8 +84,8 @@ const Footer: FC = () => {
       atUserRecord.current.forEach((item, userId) => {
         // Pre-calculate the offset after InputCommand
         const positionList = [...item].filter((item) => {
-          const username = message.slice(item[0], item[1] + 1)
-          return username === `@${userList.find((user) => user.userId === userId)?.username}`
+          const name = message.slice(item[0], item[1] + 1)
+          return name === `@${userList.find((user) => user.id === userId)?.name}`
         })
         if (positionList.length) {
           atUserRecord.current.set(userId, new Set(positionList))
@@ -102,10 +102,10 @@ const Footer: FC = () => {
 
   const autoCompleteList = useMemo(() => {
     return userList
-      .filter((user) => user.userId !== userInfo?.id)
+      .filter((user) => user.id !== userInfo?.id)
       .map((item) => ({
         ...item,
-        similarity: getTextSimilarity(searchNameKeyword.toLowerCase(), item.username.toLowerCase())
+        similarity: getTextSimilarity(searchNameKeyword.toLowerCase(), item.name.toLowerCase())
       }))
       .toSorted((a, b) => b.similarity - a.similarity)
   }, [searchNameKeyword, userList, userInfo])
@@ -136,14 +136,14 @@ const Footer: FC = () => {
       return
     }
     const transformedMessage = await transformMessage(message)
-    const atUsers = [...atUserRecord.current]
+    const mentions = [...atUserRecord.current]
       .map(([userId, positions]) => {
-        const user = userList.find((user) => user.userId === userId)
+        const user = userList.find((user) => user.id === userId)
         return (user ? { ...user, positions: [...positions] } : undefined)!
       })
       .filter(Boolean)
 
-    const newMessage = { body: transformedMessage, atUsers }
+    const newMessage = { body: transformedMessage, mentions }
     const byteSize = getTextByteSize(JSON.stringify(newMessage))
 
     if (byteSize > WEB_RTC_MAX_MESSAGE_SIZE) {
@@ -151,7 +151,7 @@ const Footer: FC = () => {
     }
 
     send([
-      chatRoomDomain.command.SendTextMessageCommand({ body: transformedMessage, atUsers }),
+      chatRoomDomain.command.SendTextMessageCommand({ body: transformedMessage, mentions }),
       messageInputDomain.command.ClearCommand()
     ])
   }
@@ -193,7 +193,7 @@ const Footer: FC = () => {
       if (isComposing.current) return
 
       if (autoCompleteListShow && autoCompleteList.length) {
-        handleInjectAtSyntax(selectedUser.username)
+        handleInjectAtSyntax(selectedUser.name)
       } else {
         handleSend()
       }
@@ -314,7 +314,7 @@ const Footer: FC = () => {
     // Calculate the difference after replacing @text with @user
     const offset = newMessage.length - message.length - (atUserPosition[1] - atUserPosition[0])
 
-    updateAtUserAtRecord(newMessage, ...atUserPosition, offset, selectedUser.userId)
+    updateAtUserAtRecord(newMessage, ...atUserPosition, offset, selectedUser.id)
 
     send(messageInputDomain.command.InputCommand(newMessage))
     requestIdleCallback(() => {
@@ -343,8 +343,8 @@ const Footer: FC = () => {
               customScrollParent={scrollParentRef!}
               itemContent={(index, user) => (
                 <div
-                  key={user.userId}
-                  onClick={() => handleInjectAtSyntax(user.username)}
+                  key={user.id}
+                  onClick={() => handleInjectAtSyntax(user.name)}
                   onMouseEnter={() => setSelectedUserIndex(index)}
                   className={cn(
                     'flex cursor-pointer select-none items-center gap-x-2 rounded-md px-2 py-1.5 outline-none',
@@ -354,10 +354,10 @@ const Footer: FC = () => {
                   )}
                 >
                   <Avatar className="size-4 shrink-0">
-                    <AvatarImage className="size-full" src={user.userAvatar} alt="avatar" />
-                    <AvatarFallback>{user.username.at(0)}</AvatarFallback>
+                    <AvatarImage className="size-full" src={user.avatar} alt="avatar" />
+                    <AvatarFallback>{user.name.at(0)}</AvatarFallback>
                   </Avatar>
-                  <div className="flex-1 truncate text-xs text-slate-500 dark:text-slate-50">{user.username}</div>
+                  <div className="flex-1 truncate text-xs text-slate-500 dark:text-slate-50">{user.name}</div>
                 </div>
               )}
             ></Virtuoso>

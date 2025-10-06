@@ -8,7 +8,7 @@ import UserInfoDomain from '@/domain/UserInfo'
 import ChatRoomDomain from '@/domain/ChatRoom'
 import MessageListDomain from '@/domain/MessageList'
 import useDataId from '@/hooks/useDataId'
-import { ChatRoomMessageType } from '@/protocol'
+import { compareHLC } from '@/utils'
 
 const Main: FC = () => {
   const send = useRemeshSend()
@@ -24,31 +24,31 @@ const Main: FC = () => {
     () =>
       _messageList
         .map((message) => {
-          if (message.type === ChatRoomMessageType.Normal) {
+          if (message.type === 'text') {
             return {
               ...message,
-              like: message.likeUsers.some((likeUser) => likeUser.userId === userInfo?.id),
-              hate: message.hateUsers.some((hateUser) => hateUser.userId === userInfo?.id)
+              like: message.reactions.likes.some((likeUser) => likeUser.id === userInfo?.id),
+              hate: message.reactions.hates.some((hateUser) => hateUser.id === userInfo?.id)
             }
           }
           return message
         })
-        .toSorted((a, b) => a.sendTime - b.sendTime),
+        .toSorted((a, b) => compareHLC(a.hlc, b.hlc)),
     [messageListId, userInfo?.id]
   )
 
   const handleLikeChange = (messageId: string) => {
-    send(chatRoomDomain.command.SendLikeMessageCommand(messageId))
+    send(chatRoomDomain.command.SendReactionCommand({ messageId, reaction: 'like' }))
   }
 
   const handleHateChange = (messageId: string) => {
-    send(chatRoomDomain.command.SendHateMessageCommand(messageId))
+    send(chatRoomDomain.command.SendReactionCommand({ messageId, reaction: 'hate' }))
   }
 
   return (
     <MessageList>
       {messageList.map((message, index) =>
-        message.type === ChatRoomMessageType.Normal ? (
+        message.type === 'text' ? (
           <MessageItem
             key={message.id}
             data={message}

@@ -5,11 +5,11 @@ import FormatDate from './format-date'
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar'
 
 import { Markdown } from '@/components/markdown'
-import { type NormalMessage } from '@/domain/MessageList'
+import { type TextMessage } from '@/domain/MessageList'
 import { cn } from '@/utils'
 
 export interface MessageItemProps {
-  data: NormalMessage
+  data: TextMessage
   index?: number
   like: boolean
   hate: boolean
@@ -28,18 +28,18 @@ const MessageItem: FC<MessageItemProps> = memo((props) => {
 
   let content = props.data.body
 
-  // Check if the field exists, compatible with old data
-  if (props.data.atUsers) {
-    const atUserPositions = props.data.atUsers.flatMap((user) =>
-      user.positions.map((position) => ({ username: user.username, userId: user.userId, position }))
+  // Check if mentions exist
+  if (props.data.mentions && props.data.mentions.length > 0) {
+    const mentionPositions = props.data.mentions.flatMap((user) =>
+      user.positions.map((position) => ({ name: user.name, id: user.id, position }))
     )
 
     // Replace from back to front according to position to avoid affecting previous indices
-    atUserPositions
+    mentionPositions
       .sort((a, b) => b.position[0] - a.position[0])
-      .forEach(({ position, username }) => {
+      .forEach(({ position, name }) => {
         const [start, end] = position
-        content = `${content.slice(0, start)} **@${username}** ${content.slice(end + 1)}`
+        content = `${content.slice(0, start)} **@${name}** ${content.slice(end + 1)}`
       })
   }
 
@@ -52,13 +52,15 @@ const MessageItem: FC<MessageItemProps> = memo((props) => {
       )}
     >
       <Avatar>
-        <AvatarImage src={props.data.userAvatar} className="size-full" alt="avatar" />
-        <AvatarFallback>{props.data.username.at(0)}</AvatarFallback>
+        <AvatarImage src={props.data.sender.avatar} className="size-full" alt="avatar" />
+        <AvatarFallback>{props.data.sender.name.at(0)}</AvatarFallback>
       </Avatar>
       <div className="overflow-hidden">
         <div className="grid grid-cols-[1fr_auto] items-center gap-x-2 leading-none">
-          <div className="truncate text-sm font-semibold text-slate-600 dark:text-slate-50">{props.data.username}</div>
-          <FormatDate className="text-xs text-slate-400 dark:text-slate-100" date={props.data.sendTime}></FormatDate>
+          <div className="truncate text-sm font-semibold text-slate-600 dark:text-slate-50">
+            {props.data.sender.name}
+          </div>
+          <FormatDate className="text-xs text-slate-400 dark:text-slate-100" date={props.data.sentAt}></FormatDate>
         </div>
         <div>
           <div className="pb-2">
@@ -68,7 +70,7 @@ const MessageItem: FC<MessageItemProps> = memo((props) => {
             <LikeButton
               checked={props.like}
               onChange={(checked) => handleLikeChange(checked)}
-              count={props.data.likeUsers.length}
+              count={props.data.reactions.likes.length}
             >
               <LikeButton.Icon>
                 <HeartIcon size={14}></HeartIcon>
@@ -77,7 +79,7 @@ const MessageItem: FC<MessageItemProps> = memo((props) => {
             <LikeButton
               checked={props.hate}
               onChange={(checked) => handleHateChange(checked)}
-              count={props.data.hateUsers.length}
+              count={props.data.reactions.hates.length}
             >
               <LikeButton.Icon>
                 <FrownIcon size={14}></FrownIcon>

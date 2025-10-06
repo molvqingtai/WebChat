@@ -1,4 +1,4 @@
-import { useState, type FC } from 'react'
+import { useState, useMemo, type FC } from 'react'
 import { Globe2Icon } from 'lucide-react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button'
 import { cn, getSiteMeta } from '@/utils'
 import { useRemeshDomain, useRemeshQuery } from 'remesh-react'
 import ChatRoomDomain from '@/domain/ChatRoom'
-import type { FromInfo, RoomUser } from '@/domain/WorldRoom'
+import type { FromSite, RoomUser } from '@/domain/WorldRoom'
 import WorldRoomDomain from '@/domain/WorldRoom'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Virtuoso } from 'react-virtuoso'
@@ -22,19 +22,23 @@ const Header: FC = () => {
   const worldUserList = useRemeshQuery(worldRoomDomain.query.UserListQuery())
   const chatOnlineCount = chatUserList.length
 
-  const worldOnlineGroup = worldUserList
-    .flatMap((user) => user.fromInfos.map((from) => ({ from, user })))
-    .reduce<(FromInfo & { users: RoomUser[] })[]>((acc, item) => {
-      const existSite = acc.find((group) => group.origin === item.from.origin)
-      if (existSite) {
-        const existUser = existSite.users.find((user) => user.userId === item.user.userId)
-        !existUser && existSite.users.push(item.user)
-      } else {
-        acc.push({ ...item.from, users: [item.user] })
-      }
-      return acc
-    }, [])
-    .sort((a, b) => b.users.length - a.users.length)
+  const worldOnlineGroup = useMemo(
+    () =>
+      worldUserList
+        .flatMap((user) => user.fromSites.map((from) => ({ from, user })))
+        .reduce<(FromSite & { users: RoomUser[] })[]>((acc, item) => {
+          const existSite = acc.find((group) => group.origin === item.from.origin)
+          if (existSite) {
+            const existUser = existSite.users.find((user: RoomUser) => user.id === item.user.id)
+            !existUser && existSite.users.push(item.user)
+          } else {
+            acc.push({ ...item.from, users: [item.user] })
+          }
+          return acc
+        }, [])
+        .sort((a, b) => b.users.length - a.users.length),
+    [worldUserList]
+  )
 
   const [chatUserListScrollParentRef, setChatUserListScrollParentRef] = useState<HTMLDivElement | null>(null)
   const [worldOnlineGroupScrollParentRef, setWorldOnlineGroupScrollParentRef] = useState<HTMLDivElement | null>(null)
@@ -60,7 +64,11 @@ const Header: FC = () => {
             <Virtuoso
               data={worldOnlineGroup}
               defaultItemHeight={56}
+              increaseViewportBy={200}
+              overscan={200}
               customScrollParent={worldOnlineGroupScrollParentRef!}
+              computeItemKey={(_, site) => site.origin}
+              skipAnimationFrameInResizeObserver
               itemContent={(_index, site) => (
                 <Link
                   underline={false}
@@ -107,7 +115,11 @@ const Header: FC = () => {
                         </div>
                       </div>
                     </div>
-                    <AvatarCircles maxLength={9} size="xs" avatarUrls={site.users.map((user) => user.userAvatar)} />
+                    <AvatarCircles
+                      maxLength={9}
+                      size="xs"
+                      avatarUrls={site.users.map((user: RoomUser) => user.avatar)}
+                    />
                   </div>
                 </Link>
               )}
@@ -154,14 +166,18 @@ const Header: FC = () => {
             <Virtuoso
               data={chatUserList}
               defaultItemHeight={28}
+              increaseViewportBy={200}
+              overscan={200}
               customScrollParent={chatUserListScrollParentRef!}
+              computeItemKey={(_, user) => user.id}
+              skipAnimationFrameInResizeObserver
               itemContent={(_index, user) => (
                 <div className={cn('flex  items-center gap-x-2 rounded-md px-2 py-1.5 outline-none')}>
                   <Avatar className="size-4 shrink-0">
-                    <AvatarImage className="size-full" src={user.userAvatar} alt="avatar" />
-                    <AvatarFallback>{user.username.at(0)}</AvatarFallback>
+                    <AvatarImage className="size-full" src={user.avatar} alt="avatar" />
+                    <AvatarFallback>{user.name.at(0)}</AvatarFallback>
                   </Avatar>
-                  <div className="flex-1 truncate text-xs text-slate-500 dark:text-slate-50">{user.username}</div>
+                  <div className="flex-1 truncate text-xs text-slate-500 dark:text-slate-50">{user.name}</div>
                 </div>
               )}
             ></Virtuoso>
