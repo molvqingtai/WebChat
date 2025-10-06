@@ -1,3 +1,10 @@
+## [1.9.7](https://github.com/molvqingtai/WebChat/compare/v1.9.6...v1.9.7) (2025-10-06)
+
+
+### Performance Improvements
+
+* **toast:** show synced message count in history sync notification ([0dd074c](https://github.com/molvqingtai/WebChat/commit/0dd074c100ca3c70175236abb19bb30754c1feaa))
+
 ## [1.9.6](https://github.com/molvqingtai/WebChat/compare/v1.9.5...v1.9.6) (2025-10-04)
 
 
