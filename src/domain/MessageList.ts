@@ -4,38 +4,16 @@ import { IndexDBStorageExtern } from '@/domain/externs/Storage'
 import StorageEffect from '@/domain/modules/StorageEffect'
 import StatusModule from './modules/Status'
 import { MESSAGE_LIST_STORAGE_KEY } from '@/constants/config'
-import type { ChatRoomMessageType } from '@/protocol'
+import type { LocalMessage } from '@/protocol/Message'
 
-export interface MessageUser {
-  userId: string
-  username: string
-  userAvatar: string
-}
-
-export interface AtUser extends MessageUser {
-  positions: [number, number][]
-}
-
-export interface NormalMessage extends MessageUser {
-  type: ChatRoomMessageType.Normal
-  id: string
-  body: string
-  sendTime: number
-  receiveTime: number
-  likeUsers: MessageUser[]
-  hateUsers: MessageUser[]
-  atUsers: AtUser[]
-}
-
-export interface PromptMessage extends MessageUser {
-  type: ChatRoomMessageType.Prompt
-  id: string
-  body: string
-  sendTime: number
-  receiveTime: number
-}
-
-export type Message = NormalMessage | PromptMessage
+// Re-export types
+export type {
+  LocalMessage as Message,
+  TextMessage,
+  SystemPromptMessage,
+  MentionedUser,
+  MessageUser
+} from '@/protocol/Message'
 
 const MessageListDomain = Remesh.domain({
   name: 'MessageListDomain',
@@ -46,7 +24,7 @@ const MessageListDomain = Remesh.domain({
       key: MESSAGE_LIST_STORAGE_KEY
     })
 
-    const MessageListModule = ListModule<Message>(domain, {
+    const MessageListModule = ListModule<LocalMessage>(domain, {
       name: 'MessageListModule',
       key: (message) => message.id
     })
@@ -70,13 +48,13 @@ const MessageListDomain = Remesh.domain({
       }
     })
 
-    const CreateItemEvent = domain.event<Message>({
+    const CreateItemEvent = domain.event<LocalMessage>({
       name: 'MessageList.CreateItemEvent'
     })
 
     const CreateItemCommand = domain.command({
       name: 'MessageList.CreateItemCommand',
-      impl: (_, message: Message) => {
+      impl: (_, message: LocalMessage) => {
         return [
           MessageListModule.command.AddItemCommand(message),
           CreateItemEvent(message),
@@ -86,13 +64,13 @@ const MessageListDomain = Remesh.domain({
       }
     })
 
-    const UpdateItemEvent = domain.event<Message>({
+    const UpdateItemEvent = domain.event<LocalMessage>({
       name: 'MessageList.UpdateItemEvent'
     })
 
     const UpdateItemCommand = domain.command({
       name: 'MessageList.UpdateItemCommand',
-      impl: (_, message: Message) => {
+      impl: (_, message: LocalMessage) => {
         return [
           MessageListModule.command.UpdateItemCommand(message),
           UpdateItemEvent(message),
@@ -120,7 +98,7 @@ const MessageListDomain = Remesh.domain({
 
     const UpsertItemCommand = domain.command({
       name: 'MessageList.UpsertItemCommand',
-      impl: (_, message: Message) => {
+      impl: (_, message: LocalMessage) => {
         return [
           MessageListModule.command.UpsertItemCommand(message),
           UpsertItemEvent(message),
@@ -130,13 +108,13 @@ const MessageListDomain = Remesh.domain({
       }
     })
 
-    const UpsertItemEvent = domain.event<Message>({
+    const UpsertItemEvent = domain.event<LocalMessage>({
       name: 'MessageList.UpsertItemEvent'
     })
 
     const ResetListCommand = domain.command({
       name: 'MessageList.ResetListCommand',
-      impl: (_, messages: Message[]) => {
+      impl: (_, messages: LocalMessage[]) => {
         return [
           MessageListModule.command.SetListCommand(messages),
           ResetListEvent(messages),
@@ -146,7 +124,7 @@ const MessageListDomain = Remesh.domain({
       }
     })
 
-    const ResetListEvent = domain.event<Message[]>({
+    const ResetListEvent = domain.event<LocalMessage[]>({
       name: 'MessageList.ResetListEvent'
     })
 
@@ -168,20 +146,20 @@ const MessageListDomain = Remesh.domain({
       }
     })
 
-    const SyncToStateEvent = domain.event<Message[]>({
+    const SyncToStateEvent = domain.event<LocalMessage[]>({
       name: 'MessageList.SyncToStateEvent'
     })
 
     const SyncToStateCommand = domain.command({
       name: 'MessageList.SyncToStateCommand',
-      impl: (_, messages: Message[]) => {
+      impl: (_, messages: LocalMessage[]) => {
         return [MessageListModule.command.SetListCommand(messages), SyncToStateEvent(messages)]
       }
     })
 
     storageEffect
       .set(SyncToStorageEvent)
-      .get<Message[]>((value) => [SyncToStateCommand(value ?? []), LoadStatusModule.command.SetFinishedCommand()])
+      .get<LocalMessage[]>((value) => [SyncToStateCommand(value ?? []), LoadStatusModule.command.SetFinishedCommand()])
 
     return {
       query: {

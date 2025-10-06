@@ -25,8 +25,8 @@ const DanmakuMessage: FC<PromptItemProps> = ({ data, className, onClick, onMouse
       )}
     >
       <Avatar className="size-5">
-        <AvatarImage src={data.userAvatar} className="size-full" alt="avatar" />
-        <AvatarFallback>{data.username.at(0)}</AvatarFallback>
+        <AvatarImage src={data.sender.avatar} className="size-full" alt="avatar" />
+        <AvatarFallback>{data.sender.name.at(0)}</AvatarFallback>
       </Avatar>
       <div className="max-w-44 truncate">{data.body}</div>
     </Button>

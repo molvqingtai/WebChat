@@ -1,34 +1,35 @@
 import { Remesh } from 'remesh'
 import { map, merge, of, EMPTY, mergeMap, fromEventPattern, bufferTime, filter } from 'rxjs'
-import type { AtUser, NormalMessage } from './MessageList'
-import { type MessageUser } from './MessageList'
+import type { MessageUser, MentionedUser } from './MessageList'
 import { ChatRoomExtern } from '@/domain/externs/ChatRoom'
 import MessageListDomain from '@/domain/MessageList'
 import UserInfoDomain from '@/domain/UserInfo'
-import { desert, getTextByteSize, upsert } from '@/utils'
+import HLCClockDomain from '@/domain/HLCClock'
+import { desert, getTextByteSize, upsert, compareHLC, sendEvent } from '@/utils'
 import { nanoid } from 'nanoid'
 import StatusModule from '@/domain/modules/Status'
 import { SYNC_HISTORY_MAX_DAYS, WEB_RTC_MAX_MESSAGE_SIZE } from '@/constants/config'
 import hash from 'hash-it'
 import {
-  checkChatRoomMessage,
-  ChatRoomMessageType,
-  ChatRoomSendType,
-  type ChatRoomMessage,
-  type ChatRoomTextMessage,
-  type ChatRoomLikeMessage,
-  type ChatRoomHateMessage,
-  type ChatRoomSyncUserMessage,
-  type ChatRoomSyncHistoryMessage
-} from '@/protocol'
+  validateNetworkMessage,
+  type NetworkMessage,
+  type TextMessage,
+  type ReactionMessage,
+  type PeerSyncMessage,
+  type HistorySyncMessage,
+  MESSAGE_TYPE,
+  REACTION_TYPE,
+  PROMPT_TYPE
+} from '@/protocol/Message'
 
-export type RoomUser = MessageUser & { peerIds: string[]; joinTime: number }
+export type RoomUser = MessageUser & { peerIds: string[]; joinedAt: number }
 
 const ChatRoomDomain = Remesh.domain({
   name: 'ChatRoomDomain',
   impl: (domain) => {
     const messageListDomain = domain.getDomain(MessageListDomain())
     const userInfoDomain = domain.getDomain(UserInfoDomain())
+    const hlcClockDomain = domain.getDomain(HLCClockDomain())
     const chatRoomExtern = domain.getExtern(ChatRoomExtern)
 
     const PeerIdState = domain.state<string>({
@@ -66,14 +67,18 @@ const ChatRoomDomain = Remesh.domain({
       }
     })
 
-    const LastMessageTimeQuery = domain.query({
-      name: 'Room.LastMessageTimeQuery',
+    const LastMessageHLCQuery = domain.query({
+      name: 'Room.LastMessageHLCQuery',
       impl: ({ get }) => {
-        return (
-          get(messageListDomain.query.ListQuery())
-            .filter((message) => message.type === ChatRoomMessageType.Normal)
-            .toSorted((a, b) => b.sendTime - a.sendTime)[0]?.sendTime ?? new Date(1970, 1, 1).getTime()
+        const messages = get(messageListDomain.query.ListQuery()).filter(
+          (message) => message.type === MESSAGE_TYPE.TEXT
         )
+
+        if (!messages.length) {
+          return { timestamp: 0, counter: 0 }
+        }
+
+        return messages.reduce((latest, msg) => (compareHLC(msg.hlc, latest.hlc) > 0 ? msg : latest)).hlc
       }
     })
 
@@ -99,63 +104,66 @@ const ChatRoomDomain = Remesh.domain({
      */
     const HandleJoinLeaveMessageCommand = domain.command({
       name: 'Room.HandleJoinLeaveMessageCommand',
-      impl: (
-        { get },
-        payload: { userId: string; username: string; userAvatar: string; messageType: 'join' | 'leave' }
-      ) => {
-        const { userId, username, userAvatar, messageType } = payload
+      impl: ({ get }, payload: { id: string; name: string; avatar: string; messageType: 'join' | 'leave' }) => {
+        const { id, name, avatar, messageType } = payload
         const now = Date.now()
-        const messageBody = messageType === 'join' ? `"${username}" joined the chat` : `"${username}" left the chat`
+        const currentHLC = get(hlcClockDomain.query.CurrentHLCQuery())
+        const newHLC = sendEvent(currentHLC)
+        const messageBody = messageType === 'join' ? `"${name}" joined the chat` : `"${name}" left the chat`
 
         // Find user's most recent join/leave message
         const messageList = get(messageListDomain.query.ListQuery())
         const userPromptMessages = messageList
-          .filter((msg) => msg.type === ChatRoomMessageType.Prompt && msg.userId === userId)
-          .toSorted((a, b) => b.sendTime - a.sendTime)
+          .filter((msg) => msg.type === MESSAGE_TYPE.SYSTEM_PROMPT && msg.sender.id === id)
+          .toSorted((a, b) => compareHLC(b.hlc, a.hlc))
 
         const lastMessage = userPromptMessages[0]
 
         // If the previous message is from the same user, delete it
         if (lastMessage) {
           return [
+            hlcClockDomain.command.SendEventCommand(),
             messageListDomain.command.DeleteItemCommand(lastMessage.id),
             messageListDomain.command.CreateItemCommand({
+              type: MESSAGE_TYPE.SYSTEM_PROMPT,
               id: nanoid(),
-              userId,
-              username,
-              userAvatar,
+              hlc: newHLC,
+              sentAt: now,
+              receivedAt: now,
+              sender: { id, name, avatar },
               body: messageBody,
-              type: ChatRoomMessageType.Prompt,
-              sendTime: now,
-              receiveTime: now
+              promptType: messageType === 'join' ? PROMPT_TYPE.JOIN : PROMPT_TYPE.LEAVE
             })
           ]
         }
 
         // Create new message (first message from this user)
-        return messageListDomain.command.CreateItemCommand({
-          id: nanoid(),
-          userId,
-          username,
-          userAvatar,
-          body: messageBody,
-          type: ChatRoomMessageType.Prompt,
-          sendTime: now,
-          receiveTime: now
-        })
+        return [
+          hlcClockDomain.command.SendEventCommand(),
+          messageListDomain.command.CreateItemCommand({
+            type: MESSAGE_TYPE.SYSTEM_PROMPT,
+            id: nanoid(),
+            hlc: newHLC,
+            sentAt: now,
+            receivedAt: now,
+            sender: { id, name, avatar },
+            body: messageBody,
+            promptType: messageType === 'join' ? PROMPT_TYPE.JOIN : PROMPT_TYPE.LEAVE
+          })
+        ]
       }
     })
 
     const JoinRoomCommand = domain.command({
       name: 'Room.JoinRoomCommand',
       impl: ({ get }) => {
-        const { id: userId, name: username, avatar: userAvatar } = get(userInfoDomain.query.UserInfoQuery())!
+        const { id, name, avatar } = get(userInfoDomain.query.UserInfoQuery())!
         return [
           UpdateUserListCommand({
             type: 'create',
-            user: { peerId: chatRoomExtern.peerId, joinTime: Date.now(), userId, username, userAvatar }
+            user: { peerId: chatRoomExtern.peerId, joinedAt: Date.now(), id, name, avatar }
           }),
-          HandleJoinLeaveMessageCommand({ userId, username, userAvatar, messageType: 'join' }),
+          HandleJoinLeaveMessageCommand({ id, name, avatar, messageType: PROMPT_TYPE.JOIN }),
           JoinStatusModule.command.SetFinishedCommand(),
           JoinRoomEvent(chatRoomExtern.roomId),
           SelfJoinRoomEvent(chatRoomExtern.roomId)
@@ -171,12 +179,12 @@ const ChatRoomDomain = Remesh.domain({
     const LeaveRoomCommand = domain.command({
       name: 'Room.LeaveRoomCommand',
       impl: ({ get }) => {
-        const { id: userId, name: username, avatar: userAvatar } = get(userInfoDomain.query.UserInfoQuery())!
+        const { id, name, avatar } = get(userInfoDomain.query.UserInfoQuery())!
         return [
-          HandleJoinLeaveMessageCommand({ userId, username, userAvatar, messageType: 'leave' }),
+          HandleJoinLeaveMessageCommand({ id, name, avatar, messageType: PROMPT_TYPE.LEAVE }),
           UpdateUserListCommand({
             type: 'delete',
-            user: { peerId: chatRoomExtern.peerId, joinTime: Date.now(), userId, username, userAvatar }
+            user: { peerId: chatRoomExtern.peerId, joinedAt: Date.now(), id, name, avatar }
           }),
           JoinStatusModule.command.SetInitialCommand(),
           LeaveRoomEvent(chatRoomExtern.roomId),
@@ -192,25 +200,29 @@ const ChatRoomDomain = Remesh.domain({
 
     const SendTextMessageCommand = domain.command({
       name: 'Room.SendTextMessageCommand',
-      impl: ({ get }, message: string | { body: string; atUsers: AtUser[] }) => {
+      impl: ({ get }, message: string | { body: string; mentions: MentionedUser[] }) => {
         const self = get(SelfUserQuery())
+        const now = Date.now()
+        const currentHLC = get(hlcClockDomain.query.CurrentHLCQuery())
+        const newHLC = sendEvent(currentHLC)
 
-        const textMessage: ChatRoomTextMessage = {
-          ...self,
+        const textMessage: TextMessage = {
+          type: MESSAGE_TYPE.TEXT,
           id: nanoid(),
-          type: ChatRoomSendType.Text,
-          sendTime: Date.now(),
+          hlc: newHLC,
+          sentAt: now,
+          receivedAt: now,
+          sender: {
+            id: self.id,
+            name: self.name,
+            avatar: self.avatar
+          },
           body: typeof message === 'string' ? message : message.body,
-          atUsers: typeof message === 'string' ? [] : message.atUsers
-        }
-
-        const listMessage: NormalMessage = {
-          ...textMessage,
-          type: ChatRoomMessageType.Normal,
-          receiveTime: Date.now(),
-          likeUsers: [],
-          hateUsers: [],
-          atUsers: typeof message === 'string' ? [] : message.atUsers
+          mentions: typeof message === 'string' ? [] : message.mentions,
+          reactions: {
+            likes: [],
+            hates: []
+          }
         }
 
         /**
@@ -228,25 +240,52 @@ const ChatRoomDomain = Remesh.domain({
         // Only send to network if there are other peers, but always save to local
         peerIds.length && chatRoomExtern.sendMessage(textMessage, peerIds)
 
-        return [messageListDomain.command.CreateItemCommand(listMessage), SendTextMessageEvent(textMessage)]
+        return [
+          hlcClockDomain.command.SendEventCommand(),
+          messageListDomain.command.CreateItemCommand(textMessage),
+          SendTextMessageEvent(textMessage)
+        ]
       }
     })
 
-    const SendLikeMessageCommand = domain.command({
-      name: 'Room.SendLikeMessageCommand',
-      impl: ({ get }, messageId: string) => {
+    const SendReactionCommand = domain.command({
+      name: 'Room.SendReactionCommand',
+      impl: ({ get }, payload: { messageId: string; reaction: 'like' | 'hate' }) => {
+        const { messageId, reaction } = payload
         const self = get(SelfUserQuery())
-        const localMessage = get(messageListDomain.query.ItemQuery(messageId)) as NormalMessage
+        const now = Date.now()
+        const currentHLC = get(hlcClockDomain.query.CurrentHLCQuery())
+        const newHLC = sendEvent(currentHLC)
+        const localMessage = get(messageListDomain.query.ItemQuery(messageId)) as TextMessage
 
-        const likeMessage: ChatRoomLikeMessage = {
-          ...self,
-          id: messageId,
-          sendTime: Date.now(),
-          type: ChatRoomSendType.Like
+        const reactionMessage: ReactionMessage = {
+          type: MESSAGE_TYPE.REACTION,
+          id: nanoid(),
+          hlc: newHLC,
+          sentAt: now,
+          receivedAt: now,
+          sender: {
+            id: self.id,
+            name: self.name,
+            avatar: self.avatar
+          },
+          targetId: messageId,
+          reaction: reaction === REACTION_TYPE.LIKE ? REACTION_TYPE.LIKE : REACTION_TYPE.HATE
         }
-        const listMessage: NormalMessage = {
+
+        const senderInfo = { id: self.id, name: self.name, avatar: self.avatar }
+        const updatedMessage: TextMessage = {
           ...localMessage,
-          likeUsers: desert(localMessage.likeUsers, likeMessage, 'userId')
+          reactions: {
+            likes:
+              reaction === REACTION_TYPE.LIKE
+                ? desert(localMessage.reactions.likes, senderInfo, 'id')
+                : localMessage.reactions.likes,
+            hates:
+              reaction === REACTION_TYPE.HATE
+                ? desert(localMessage.reactions.hates, senderInfo, 'id')
+                : localMessage.reactions.hates
+          }
         }
 
         /**
@@ -256,39 +295,13 @@ const ChatRoomDomain = Remesh.domain({
         const peerIds = get(PeerListQuery())
 
         // Only send to network if there are other peers, but always save to local
-        peerIds.length && chatRoomExtern.sendMessage(likeMessage, peerIds)
+        peerIds.length && chatRoomExtern.sendMessage(reactionMessage, peerIds)
 
-        return [messageListDomain.command.UpdateItemCommand(listMessage), SendLikeMessageEvent(likeMessage)]
-      }
-    })
-
-    const SendHateMessageCommand = domain.command({
-      name: 'Room.SendHateMessageCommand',
-      impl: ({ get }, messageId: string) => {
-        const self = get(SelfUserQuery())
-        const localMessage = get(messageListDomain.query.ItemQuery(messageId)) as NormalMessage
-
-        const hateMessage: ChatRoomHateMessage = {
-          ...self,
-          id: messageId,
-          sendTime: Date.now(),
-          type: ChatRoomSendType.Hate
-        }
-        const listMessage: NormalMessage = {
-          ...localMessage,
-          hateUsers: desert(localMessage.hateUsers, hateMessage, 'userId')
-        }
-
-        /**
-         * Get all peerIds from UserList except self.
-         * @see SendTextMessageCommand for detailed explanation.
-         */
-        const peerIds = get(PeerListQuery())
-
-        // Only send to network if there are other peers, but always save to local
-        peerIds.length && chatRoomExtern.sendMessage(hateMessage, peerIds)
-
-        return [messageListDomain.command.UpdateItemCommand(listMessage), SendHateMessageEvent(hateMessage)]
+        return [
+          hlcClockDomain.command.SendEventCommand(),
+          messageListDomain.command.UpdateItemCommand(updatedMessage),
+          SendReactionMessageEvent(reactionMessage)
+        ]
       }
     })
 
@@ -296,19 +309,29 @@ const ChatRoomDomain = Remesh.domain({
       name: 'Room.SendSyncUserMessageCommand',
       impl: ({ get }, peerId: string) => {
         const self = get(SelfUserQuery())
-        const lastMessageTime = get(LastMessageTimeQuery())
+        const now = Date.now()
+        const currentHLC = get(hlcClockDomain.query.CurrentHLCQuery())
+        const newHLC = sendEvent(currentHLC)
+        const lastMessageHLC = get(LastMessageHLCQuery())
 
-        const syncUserMessage: ChatRoomSyncUserMessage = {
-          ...self,
+        const syncUserMessage: PeerSyncMessage = {
+          type: MESSAGE_TYPE.PEER_SYNC,
           id: nanoid(),
+          hlc: newHLC,
+          sentAt: now,
+          receivedAt: now,
+          sender: {
+            id: self.id,
+            name: self.name,
+            avatar: self.avatar
+          },
           peerId: chatRoomExtern.peerId,
-          sendTime: Date.now(),
-          lastMessageTime,
-          type: ChatRoomSendType.SyncUser
+          joinedAt: self.joinedAt,
+          lastMessageHLC
         }
 
         chatRoomExtern.sendMessage(syncUserMessage, peerId)
-        return [SendSyncUserMessageEvent(syncUserMessage)]
+        return [hlcClockDomain.command.SendEventCommand(), SendSyncUserMessageEvent(syncUserMessage)]
       }
     })
 
@@ -333,28 +356,41 @@ const ChatRoomDomain = Remesh.domain({
      */
     const SendSyncHistoryMessageCommand = domain.command({
       name: 'Room.SendSyncHistoryMessageCommand',
-      impl: ({ get }, { peerId, lastMessageTime }: { peerId: string; lastMessageTime: number }) => {
+      impl: (
+        { get },
+        { peerId, lastMessageHLC }: { peerId: string; lastMessageHLC: { timestamp: number; counter: number } }
+      ) => {
         const self = get(SelfUserQuery())
+        const now = Date.now()
 
         const historyMessages = get(messageListDomain.query.ListQuery()).filter((message) => {
           return (
-            message.type === ChatRoomMessageType.Normal &&
-            message.sendTime > lastMessageTime &&
-            message.sendTime >= Date.now() - SYNC_HISTORY_MAX_DAYS * 24 * 60 * 60 * 1000
+            message.type === MESSAGE_TYPE.TEXT &&
+            compareHLC(message.hlc, lastMessageHLC) > 0 &&
+            message.hlc.timestamp >= Date.now() - SYNC_HISTORY_MAX_DAYS * 24 * 60 * 60 * 1000
           )
-        })
+        }) as TextMessage[]
 
         /**
          * Message chunking to ensure that each message does not exceed WEB_RTC_MAX_MESSAGE_SIZE
          * If the message itself exceeds the size limit, skip syncing that message directly.
          */
-        const pushHistoryMessageList = historyMessages.reduce<ChatRoomSyncHistoryMessage[]>((acc, cur) => {
-          const pushHistoryMessage: ChatRoomSyncHistoryMessage = {
-            ...self,
+        const pushHistoryMessageList = historyMessages.reduce<HistorySyncMessage[]>((acc, cur) => {
+          const currentHLC = get(hlcClockDomain.query.CurrentHLCQuery())
+          const newHLC = sendEvent(currentHLC)
+
+          const pushHistoryMessage: HistorySyncMessage = {
+            type: MESSAGE_TYPE.HISTORY_SYNC,
             id: nanoid(),
-            sendTime: Date.now(),
-            type: ChatRoomSendType.SyncHistory,
-            messages: [cur as NormalMessage]
+            hlc: newHLC,
+            sentAt: now,
+            receivedAt: now,
+            sender: {
+              id: self.id,
+              name: self.name,
+              avatar: self.avatar
+            },
+            messages: [cur]
           }
           const pushHistoryMessageByteSize = getTextByteSize(JSON.stringify(pushHistoryMessage))
 
@@ -362,7 +398,7 @@ const ChatRoomDomain = Remesh.domain({
             if (acc.length) {
               const mergedSize = getTextByteSize(JSON.stringify(acc[acc.length - 1])) + pushHistoryMessageByteSize
               if (mergedSize < WEB_RTC_MAX_MESSAGE_SIZE) {
-                acc[acc.length - 1].messages.push(cur as NormalMessage)
+                acc[acc.length - 1].messages.push(cur)
               } else {
                 acc.push(pushHistoryMessage)
               }
@@ -375,7 +411,7 @@ const ChatRoomDomain = Remesh.domain({
 
         return pushHistoryMessageList.map((message) => {
           chatRoomExtern.sendMessage(message, peerId)
-          return SendSyncHistoryMessageEvent(message)
+          return [hlcClockDomain.command.SendEventCommand(), SendSyncHistoryMessageEvent(message)]
         })
       }
     })
@@ -384,14 +420,14 @@ const ChatRoomDomain = Remesh.domain({
       name: 'Room.UpdateUserListCommand',
       impl: ({ get }, action: { type: 'create' | 'delete'; user: Omit<RoomUser, 'peerIds'> & { peerId: string } }) => {
         const userList = get(UserListState())
-        const existUser = userList.find((user) => user.userId === action.user.userId)
+        const existUser = userList.find((user) => user.id === action.user.id)
         if (action.type === 'create') {
           return [
             UserListState().new(
               upsert(
                 userList,
                 { ...action.user, peerIds: [...new Set(existUser?.peerIds || []), action.user.peerId] },
-                'userId'
+                'id'
               )
             )
           ]
@@ -404,7 +440,7 @@ const ChatRoomDomain = Remesh.domain({
                   ...action.user,
                   peerIds: existUser?.peerIds?.filter((peerId) => peerId !== action.user.peerId) || []
                 },
-                'userId'
+                'id'
               ).filter((user) => user.peerIds.length)
             )
           ]
@@ -412,24 +448,20 @@ const ChatRoomDomain = Remesh.domain({
       }
     })
 
-    const SendSyncHistoryMessageEvent = domain.event<ChatRoomSyncHistoryMessage>({
+    const SendSyncHistoryMessageEvent = domain.event<HistorySyncMessage>({
       name: 'Room.SendSyncHistoryMessageEvent'
     })
 
-    const SendSyncUserMessageEvent = domain.event<ChatRoomSyncUserMessage>({
+    const SendSyncUserMessageEvent = domain.event<PeerSyncMessage>({
       name: 'Room.SendSyncUserMessageEvent'
     })
 
-    const SendTextMessageEvent = domain.event<ChatRoomTextMessage>({
+    const SendTextMessageEvent = domain.event<TextMessage>({
       name: 'Room.SendTextMessageEvent'
     })
 
-    const SendLikeMessageEvent = domain.event<ChatRoomLikeMessage>({
-      name: 'Room.SendLikeMessageEvent'
-    })
-
-    const SendHateMessageEvent = domain.event<ChatRoomHateMessage>({
-      name: 'Room.SendHateMessageEvent'
+    const SendReactionMessageEvent = domain.event<ReactionMessage>({
+      name: 'Room.SendReactionMessageEvent'
     })
 
     const JoinRoomEvent = domain.event<string>({
@@ -440,32 +472,28 @@ const ChatRoomDomain = Remesh.domain({
       name: 'Room.LeaveRoomEvent'
     })
 
-    const OnMessageEvent = domain.event<ChatRoomMessage>({
+    const OnMessageEvent = domain.event<NetworkMessage>({
       name: 'Room.OnMessageEvent'
     })
 
-    const OnTextMessageEvent = domain.event<ChatRoomTextMessage>({
+    const OnTextMessageEvent = domain.event<TextMessage>({
       name: 'Room.OnTextMessageEvent'
     })
 
-    const OnSyncUserMessageEvent = domain.event<ChatRoomSyncUserMessage>({
+    const OnSyncUserMessageEvent = domain.event<PeerSyncMessage>({
       name: 'Room.OnSyncUserMessageEvent'
     })
 
-    const OnSyncHistoryMessageEvent = domain.event<ChatRoomSyncHistoryMessage>({
+    const OnSyncHistoryMessageEvent = domain.event<HistorySyncMessage>({
       name: 'Room.OnSyncHistoryMessageEvent'
     })
 
-    const OnSyncMessageEvent = domain.event<ChatRoomSyncHistoryMessage[]>({
+    const OnSyncMessageEvent = domain.event<HistorySyncMessage[]>({
       name: 'Room.OnSyncMessageEvent'
     })
 
-    const OnLikeMessageEvent = domain.event<ChatRoomLikeMessage>({
-      name: 'Room.OnLikeMessageEvent'
-    })
-
-    const OnHateMessageEvent = domain.event<ChatRoomHateMessage>({
-      name: 'Room.OnHateMessageEvent'
+    const OnReactionMessageEvent = domain.event<ReactionMessage>({
+      name: 'Room.OnReactionMessageEvent'
     })
 
     const OnJoinRoomEvent = domain.event<string>({
@@ -508,10 +536,10 @@ const ChatRoomDomain = Remesh.domain({
     domain.effect({
       name: 'Room.OnMessageEffect',
       impl: () => {
-        const onMessage$ = fromEventPattern<ChatRoomMessage>(chatRoomExtern.onMessage).pipe(
+        const onMessage$ = fromEventPattern<NetworkMessage>(chatRoomExtern.onMessage).pipe(
           mergeMap((message) => {
             // Filter out messages that do not conform to the format
-            if (!checkChatRoomMessage(message)) {
+            if (!validateNetworkMessage(message)) {
               console.warn('Invalid message format', message)
               return EMPTY
             }
@@ -521,16 +549,14 @@ const ChatRoomDomain = Remesh.domain({
             // Emit specific message type events
             const specificEvent$ = (() => {
               switch (message.type) {
-                case ChatRoomSendType.Text:
+                case MESSAGE_TYPE.TEXT:
                   return of(OnTextMessageEvent(message))
-                case ChatRoomSendType.SyncUser:
+                case MESSAGE_TYPE.PEER_SYNC:
                   return of(OnSyncUserMessageEvent(message))
-                case ChatRoomSendType.SyncHistory:
+                case MESSAGE_TYPE.HISTORY_SYNC:
                   return of(OnSyncHistoryMessageEvent(message))
-                case ChatRoomSendType.Like:
-                  return of(OnLikeMessageEvent(message))
-                case ChatRoomSendType.Hate:
-                  return of(OnHateMessageEvent(message))
+                case MESSAGE_TYPE.REACTION:
+                  return of(OnReactionMessageEvent(message))
                 default:
                   console.warn('Unsupported message type', message)
                   return EMPTY
@@ -549,13 +575,15 @@ const ChatRoomDomain = Remesh.domain({
       impl: ({ fromEvent }) => {
         return fromEvent(OnTextMessageEvent).pipe(
           map((message) => {
-            return messageListDomain.command.CreateItemCommand({
+            // Update local HLC based on received message
+            const receivedMessage: TextMessage = {
               ...message,
-              type: ChatRoomMessageType.Normal,
-              receiveTime: Date.now(),
-              likeUsers: [],
-              hateUsers: []
-            })
+              receivedAt: Date.now()
+            }
+            return [
+              hlcClockDomain.command.ReceiveEventCommand(message.hlc),
+              messageListDomain.command.CreateItemCommand(receivedMessage)
+            ]
           })
         )
       }
@@ -569,26 +597,33 @@ const ChatRoomDomain = Remesh.domain({
             const selfUser = get(SelfUserQuery())
 
             // If a new user joins after the current user has entered the room, a join log message needs to be created.
-            const existUser = get(UserListQuery()).find((user) => user.userId === message.userId)
-            const isNewJoinUser = !existUser && message.joinTime > selfUser.joinTime
+            const existUser = get(UserListQuery()).find((user) => user.id === message.sender.id)
+            const isNewJoinUser = !existUser && message.joinedAt > selfUser.joinedAt
 
-            const lastMessageTime = get(LastMessageTimeQuery())
-            const needSyncHistory = lastMessageTime > message.lastMessageTime
+            const lastMessageHLC = get(LastMessageHLCQuery())
+            const needSyncHistory = compareHLC(lastMessageHLC, message.lastMessageHLC) > 0
+
+            const userForList = {
+              ...message.sender,
+              peerId: message.peerId,
+              joinedAt: message.joinedAt
+            }
 
             return of(
-              UpdateUserListCommand({ type: 'create', user: message }),
+              hlcClockDomain.command.ReceiveEventCommand(message.hlc),
+              UpdateUserListCommand({ type: 'create', user: userForList }),
               isNewJoinUser
                 ? HandleJoinLeaveMessageCommand({
-                    userId: message.userId,
-                    username: message.username,
-                    userAvatar: message.userAvatar,
-                    messageType: 'join'
+                    id: message.sender.id,
+                    name: message.sender.name,
+                    avatar: message.sender.avatar,
+                    messageType: PROMPT_TYPE.JOIN
                   })
                 : null,
               needSyncHistory
                 ? SendSyncHistoryMessageCommand({
                     peerId: message.peerId,
-                    lastMessageTime: message.lastMessageTime
+                    lastMessageHLC: message.lastMessageHLC
                   })
                 : null
             )
@@ -609,7 +644,7 @@ const ChatRoomDomain = Remesh.domain({
 
             // Deduplicate messages by id, keep the latest one
             const uniqueMessages = [
-              ...allMessages.reduce((map, msg) => map.set(msg.id, msg), new Map<string, NormalMessage>()).values()
+              ...allMessages.reduce((map, msg) => map.set(msg.id, msg), new Map<string, TextMessage>()).values()
             ]
 
             // Filter out messages that haven't changed
@@ -622,9 +657,16 @@ const ChatRoomDomain = Remesh.domain({
               }
             })
 
+            // Update HLC for each received history message
+            const maxHLC = uniqueMessages.reduce((max, msg) => (compareHLC(msg.hlc, max) > 0 ? msg.hlc : max), {
+              timestamp: 0,
+              counter: 0
+            })
+
             // Return batched upsert commands and single OnSyncMessageEvent for all sync messages
             return changedMessages.length
               ? of(
+                  hlcClockDomain.command.ReceiveEventCommand(maxHLC),
                   ...changedMessages.map((message) => messageListDomain.command.UpsertItemCommand(message)),
                   OnSyncMessageEvent(syncMessages)
                 )
@@ -635,57 +677,33 @@ const ChatRoomDomain = Remesh.domain({
     })
 
     domain.effect({
-      name: 'Room.OnLikeMessageEffect',
+      name: 'Room.OnReactionMessageEffect',
       impl: ({ get, fromEvent }) => {
-        return fromEvent(OnLikeMessageEvent).pipe(
+        return fromEvent(OnReactionMessageEvent).pipe(
           mergeMap((message) => {
-            if (!get(messageListDomain.query.HasItemQuery(message.id))) {
+            if (!get(messageListDomain.query.HasItemQuery(message.targetId))) {
               return EMPTY
             }
-            const _message = get(messageListDomain.query.ItemQuery(message.id)) as NormalMessage
-            return of(
-              messageListDomain.command.UpdateItemCommand({
-                ..._message,
-                receiveTime: Date.now(),
-                likeUsers: desert(
-                  _message.likeUsers,
-                  {
-                    userId: message.userId,
-                    username: message.username,
-                    userAvatar: message.userAvatar
-                  },
-                  'userId'
-                )
-              })
-            )
-          })
-        )
-      }
-    })
+            const targetMessage = get(messageListDomain.query.ItemQuery(message.targetId)) as TextMessage
 
-    domain.effect({
-      name: 'Room.OnHateMessageEffect',
-      impl: ({ get, fromEvent }) => {
-        return fromEvent(OnHateMessageEvent).pipe(
-          mergeMap((message) => {
-            if (!get(messageListDomain.query.HasItemQuery(message.id))) {
-              return EMPTY
+            const updatedMessage: TextMessage = {
+              ...targetMessage,
+              receivedAt: Date.now(),
+              reactions: {
+                likes:
+                  message.reaction === REACTION_TYPE.LIKE
+                    ? desert(targetMessage.reactions.likes, message.sender, 'id')
+                    : targetMessage.reactions.likes,
+                hates:
+                  message.reaction === REACTION_TYPE.HATE
+                    ? desert(targetMessage.reactions.hates, message.sender, 'id')
+                    : targetMessage.reactions.hates
+              }
             }
-            const _message = get(messageListDomain.query.ItemQuery(message.id)) as NormalMessage
+
             return of(
-              messageListDomain.command.UpdateItemCommand({
-                ..._message,
-                receiveTime: Date.now(),
-                hateUsers: desert(
-                  _message.hateUsers,
-                  {
-                    userId: message.userId,
-                    username: message.username,
-                    userAvatar: message.userAvatar
-                  },
-                  'userId'
-                )
-              })
+              hlcClockDomain.command.ReceiveEventCommand(message.hlc),
+              messageListDomain.command.UpdateItemCommand(updatedMessage)
             )
           })
         )
@@ -709,10 +727,10 @@ const ChatRoomDomain = Remesh.domain({
                 UpdateUserListCommand({ type: 'delete', user: { ...existUser, peerId } }),
                 existUser.peerIds.length === 1
                   ? HandleJoinLeaveMessageCommand({
-                      userId: existUser.userId,
-                      username: existUser.username,
-                      userAvatar: existUser.userAvatar,
-                      messageType: 'leave'
+                      id: existUser.id,
+                      name: existUser.name,
+                      avatar: existUser.avatar,
+                      messageType: PROMPT_TYPE.LEAVE
                     })
                   : null,
                 OnLeaveRoomEvent(peerId)
@@ -744,21 +762,20 @@ const ChatRoomDomain = Remesh.domain({
         PeerIdQuery,
         UserListQuery,
         PeerListQuery,
-        JoinIsFinishedQuery
+        JoinIsFinishedQuery,
+        LastMessageHLCQuery
       },
       command: {
         JoinRoomCommand,
         LeaveRoomCommand,
         SendTextMessageCommand,
-        SendLikeMessageCommand,
-        SendHateMessageCommand,
+        SendReactionCommand,
         SendSyncUserMessageCommand,
         SendSyncHistoryMessageCommand
       },
       event: {
         SendTextMessageEvent,
-        SendLikeMessageEvent,
-        SendHateMessageEvent,
+        SendReactionMessageEvent,
         SendSyncUserMessageEvent,
         SendSyncHistoryMessageEvent,
         JoinRoomEvent,
@@ -767,6 +784,7 @@ const ChatRoomDomain = Remesh.domain({
         SelfLeaveRoomEvent,
         OnMessageEvent,
         OnTextMessageEvent,
+        OnReactionMessageEvent,
         OnSyncMessageEvent,
         OnJoinRoomEvent,
         OnLeaveRoomEvent,

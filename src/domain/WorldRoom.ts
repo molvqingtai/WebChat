@@ -8,16 +8,16 @@ import { nanoid } from 'nanoid'
 import StatusModule from '@/domain/modules/Status'
 import getSiteMeta from '@/utils/getSiteMeta'
 import {
-  WorldRoomSendType,
   type WorldRoomMessage,
-  type WorldRoomSyncUserMessage,
-  type WorldRoomMessageFromInfo,
+  type WorldRoomPeerSyncMessage,
+  type WorldRoomSiteMeta,
   checkWorldRoomMessage
 } from '@/protocol'
+import { MESSAGE_TYPE } from '@/protocol/Message'
 
-export type FromInfo = WorldRoomMessageFromInfo
+export type FromSite = WorldRoomSiteMeta & { peerId: string }
 
-export type RoomUser = MessageUser & { peerIds: string[]; fromInfos: FromInfo[]; joinTime: number }
+export type RoomUser = MessageUser & { peerIds: string[]; fromSites: FromSite[]; joinedAt: number }
 
 const WorldRoomDomain = Remesh.domain({
   name: 'WorldRoomDomain',
@@ -65,17 +65,17 @@ const WorldRoomDomain = Remesh.domain({
     const JoinRoomCommand = domain.command({
       name: 'Room.JoinRoomCommand',
       impl: ({ get }) => {
-        const { id: userId, name: username, avatar: userAvatar } = get(userInfoDomain.query.UserInfoQuery())!
+        const { id, name, avatar } = get(userInfoDomain.query.UserInfoQuery())!
         return [
           UpdateUserListCommand({
             type: 'create',
             user: {
               peerId: worldRoomExtern.peerId,
-              fromInfo: { ...getSiteMeta(), peerId: worldRoomExtern.peerId },
-              joinTime: Date.now(),
-              userId,
-              username,
-              userAvatar
+              fromSite: { ...getSiteMeta(), peerId: worldRoomExtern.peerId },
+              joinedAt: Date.now(),
+              id,
+              name,
+              avatar
             }
           }),
 
@@ -94,17 +94,17 @@ const WorldRoomDomain = Remesh.domain({
     const LeaveRoomCommand = domain.command({
       name: 'Room.LeaveRoomCommand',
       impl: ({ get }) => {
-        const { id: userId, name: username, avatar: userAvatar } = get(userInfoDomain.query.UserInfoQuery())!
+        const { id, name, avatar } = get(userInfoDomain.query.UserInfoQuery())!
         return [
           UpdateUserListCommand({
             type: 'delete',
             user: {
               peerId: worldRoomExtern.peerId,
-              fromInfo: { ...getSiteMeta(), peerId: worldRoomExtern.peerId },
-              joinTime: Date.now(),
-              userId,
-              username,
-              userAvatar
+              fromSite: { ...getSiteMeta(), peerId: worldRoomExtern.peerId },
+              joinedAt: Date.now(),
+              id,
+              name,
+              avatar
             }
           }),
           JoinStatusModule.command.SetInitialCommand(),
@@ -125,11 +125,11 @@ const WorldRoomDomain = Remesh.domain({
         { get },
         action: {
           type: 'create' | 'delete'
-          user: Omit<RoomUser, 'peerIds' | 'fromInfos'> & { peerId: string; fromInfo: FromInfo }
+          user: Omit<RoomUser, 'peerIds' | 'fromSites'> & { peerId: string; fromSite: FromSite }
         }
       ) => {
         const userList = get(UserListState())
-        const existUser = userList.find((user) => user.userId === action.user.userId)
+        const existUser = userList.find((user) => user.id === action.user.id)
         if (action.type === 'create') {
           return [
             UserListState().new(
@@ -138,9 +138,9 @@ const WorldRoomDomain = Remesh.domain({
                 {
                   ...action.user,
                   peerIds: [...new Set(existUser?.peerIds || []), action.user.peerId],
-                  fromInfos: upsert(existUser?.fromInfos || [], action.user.fromInfo, 'peerId')
+                  fromSites: upsert(existUser?.fromSites || [], action.user.fromSite, 'peerId')
                 },
-                'userId'
+                'id'
               )
             )
           ]
@@ -152,9 +152,9 @@ const WorldRoomDomain = Remesh.domain({
                 {
                   ...action.user,
                   peerIds: existUser?.peerIds?.filter((peerId) => peerId !== action.user.peerId) || [],
-                  fromInfos: existUser?.fromInfos?.filter((fromInfo) => fromInfo.peerId !== action.user.peerId) || []
+                  fromSites: existUser?.fromSites?.filter((fromSite) => fromSite.peerId !== action.user.peerId) || []
                 },
-                'userId'
+                'id'
               ).filter((user) => user.peerIds.length)
             )
           ]
@@ -166,14 +166,22 @@ const WorldRoomDomain = Remesh.domain({
       name: 'Room.SendSyncUserMessageCommand',
       impl: ({ get }, peerId: string) => {
         const self = get(SelfUserQuery())
+        const now = Date.now()
 
-        const syncUserMessage: WorldRoomSyncUserMessage = {
-          ...self,
+        const syncUserMessage: WorldRoomPeerSyncMessage = {
+          type: MESSAGE_TYPE.PEER_SYNC,
           id: nanoid(),
+          hlc: { timestamp: now, counter: 0 },
+          sentAt: now,
+          receivedAt: now,
+          sender: {
+            id: self.id,
+            name: self.name,
+            avatar: self.avatar
+          },
           peerId: worldRoomExtern.peerId,
-          sendTime: Date.now(),
-          fromInfo: { ...getSiteMeta(), peerId: worldRoomExtern.peerId },
-          type: WorldRoomSendType.SyncUser
+          joinedAt: self.joinedAt,
+          siteMeta: getSiteMeta()
         }
 
         worldRoomExtern.sendMessage(syncUserMessage, peerId)
@@ -181,7 +189,7 @@ const WorldRoomDomain = Remesh.domain({
       }
     })
 
-    const SendSyncUserMessageEvent = domain.event<WorldRoomSyncUserMessage>({
+    const SendSyncUserMessageEvent = domain.event<WorldRoomPeerSyncMessage>({
       name: 'Room.SendSyncUserMessageEvent'
     })
 
@@ -249,8 +257,18 @@ const WorldRoomDomain = Remesh.domain({
 
             const messageCommand$ = (() => {
               switch (message.type) {
-                case WorldRoomSendType.SyncUser: {
-                  return of(UpdateUserListCommand({ type: 'create', user: message }))
+                case MESSAGE_TYPE.PEER_SYNC: {
+                  return of(
+                    UpdateUserListCommand({
+                      type: 'create',
+                      user: {
+                        ...message.sender,
+                        peerId: message.peerId,
+                        fromSite: { ...message.siteMeta, peerId: message.peerId },
+                        joinedAt: message.joinedAt
+                      }
+                    })
+                  )
                 }
 
                 default:
@@ -282,7 +300,7 @@ const WorldRoomDomain = Remesh.domain({
               return [
                 UpdateUserListCommand({
                   type: 'delete',
-                  user: { ...existUser, peerId, fromInfo: { ...getSiteMeta(), peerId } }
+                  user: { ...existUser, peerId, fromSite: { ...getSiteMeta(), peerId } }
                 }),
                 OnLeaveRoomEvent(peerId)
               ]

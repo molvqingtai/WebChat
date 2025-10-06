@@ -79,7 +79,7 @@ const NotificationDomain = Remesh.domain({
             }
 
             const userInfo = get(userInfoDomain.query.UserInfoQuery())
-            if (message.userId === userInfo?.id) {
+            if (message.sender.id === userInfo?.id) {
               return null
             }
 
@@ -88,7 +88,7 @@ const NotificationDomain = Remesh.domain({
             }
 
             if (userInfo?.notificationType === 'at') {
-              const hasAtSelf = message.atUsers.find((user) => user.userId === userInfo?.id)
+              const hasAtSelf = message.mentions.find((user) => user.id === userInfo?.id)
               if (hasAtSelf) {
                 return PushCommand(message)
               }

@@ -19,3 +19,14 @@ export { getTextByteSize } from './getTextByteSize'
 export { default as isEqual } from './isEqual'
 export { default as setIntervalImmediate } from './setIntervalImmediate'
 export { cleanURL, isAbsoluteURL, assembleURL, buildFullURL, safeUrl } from './url'
+export {
+  type HLC,
+  compareHLC,
+  createHLC,
+  sendEvent,
+  receiveEvent,
+  isWithinTimeWindow,
+  formatHLC,
+  isValidHLC,
+  cloneHLC
+} from './hlc'

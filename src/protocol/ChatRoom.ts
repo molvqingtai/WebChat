@@ -1,94 +1,43 @@
 import * as v from 'valibot'
+import { MESSAGE_TYPE, REACTION_TYPE, HLCSchema, MessageMetaSchema, TextMessageSchema } from './Message'
 
-// ChatRoom MessageType
-export enum ChatRoomMessageType {
-  Normal = 'normal',
-  Prompt = 'prompt'
-}
-
-// ChatRoom SendType
-export enum ChatRoomSendType {
-  Text = 'Text',
-  Like = 'Like',
-  Hate = 'Hate',
-  SyncUser = 'SyncUser',
-  SyncHistory = 'SyncHistory'
-}
-
-// ChatRoom Message Schemas
-const ChatRoomMessageUserSchema = {
-  userId: v.string(),
-  username: v.string(),
-  userAvatar: v.string()
-}
-
-const ChatRoomMessageAtUserSchema = {
-  positions: v.array(v.tuple([v.number(), v.number()])),
-  ...ChatRoomMessageUserSchema
-}
-
-export const ChatRoomNormalMessageSchema = {
-  id: v.string(),
-  type: v.literal(ChatRoomMessageType.Normal),
-  body: v.string(),
-  sendTime: v.number(),
-  receiveTime: v.number(),
-  likeUsers: v.array(v.object(ChatRoomMessageUserSchema)),
-  hateUsers: v.array(v.object(ChatRoomMessageUserSchema)),
-  atUsers: v.array(v.object(ChatRoomMessageAtUserSchema)),
-  ...ChatRoomMessageUserSchema
-}
-
-// ChatRoom Message Schema
+// ChatRoom-specific message schemas
 export const ChatRoomMessageSchema = v.union([
+  // Text Message (reuse from Message.ts)
+  TextMessageSchema,
+
+  // Reaction Message
   v.object({
-    type: v.literal(ChatRoomSendType.Text),
-    id: v.string(),
-    body: v.string(),
-    sendTime: v.number(),
-    atUsers: v.array(v.object(ChatRoomMessageAtUserSchema)),
-    ...ChatRoomMessageUserSchema
+    ...MessageMetaSchema.entries,
+    type: v.literal(MESSAGE_TYPE.REACTION),
+    targetId: v.string(),
+    reaction: v.union([v.literal(REACTION_TYPE.LIKE), v.literal(REACTION_TYPE.HATE)])
   }),
+
+  // Peer Sync Message
   v.object({
-    type: v.literal(ChatRoomSendType.Like),
-    id: v.string(),
-    sendTime: v.number(),
-    ...ChatRoomMessageUserSchema
-  }),
-  v.object({
-    type: v.literal(ChatRoomSendType.Hate),
-    id: v.string(),
-    sendTime: v.number(),
-    ...ChatRoomMessageUserSchema
-  }),
-  v.object({
-    type: v.literal(ChatRoomSendType.SyncUser),
-    id: v.string(),
+    ...MessageMetaSchema.entries,
+    type: v.literal(MESSAGE_TYPE.PEER_SYNC),
     peerId: v.string(),
-    joinTime: v.number(),
-    sendTime: v.number(),
-    lastMessageTime: v.number(),
-    ...ChatRoomMessageUserSchema
+    joinedAt: v.number(),
+    lastMessageHLC: HLCSchema
   }),
+
+  // History Sync Message
   v.object({
-    type: v.literal(ChatRoomSendType.SyncHistory),
-    id: v.string(),
-    sendTime: v.number(),
-    messages: v.array(v.object(ChatRoomNormalMessageSchema)),
-    ...ChatRoomMessageUserSchema
+    ...MessageMetaSchema.entries,
+    type: v.literal(MESSAGE_TYPE.HISTORY_SYNC),
+    messages: v.array(TextMessageSchema)
   })
 ])
 
 // ChatRoom Types
-export type ChatRoomMessageUser = v.InferOutput<v.ObjectSchema<typeof ChatRoomMessageUserSchema, undefined>>
-export type ChatRoomMessageAtUser = v.InferOutput<v.ObjectSchema<typeof ChatRoomMessageAtUserSchema, undefined>>
-export type ChatRoomNormalMessage = v.InferOutput<v.ObjectSchema<typeof ChatRoomNormalMessageSchema, undefined>>
-export type ChatRoomTextMessage = v.InferOutput<(typeof ChatRoomMessageSchema.options)[0]>
-export type ChatRoomLikeMessage = v.InferOutput<(typeof ChatRoomMessageSchema.options)[1]>
-export type ChatRoomHateMessage = v.InferOutput<(typeof ChatRoomMessageSchema.options)[2]>
-export type ChatRoomSyncUserMessage = v.InferOutput<(typeof ChatRoomMessageSchema.options)[3]>
-export type ChatRoomSyncHistoryMessage = v.InferOutput<(typeof ChatRoomMessageSchema.options)[4]>
 export type ChatRoomMessage = v.InferInput<typeof ChatRoomMessageSchema>
+export type ChatRoomTextMessage = v.InferOutput<(typeof ChatRoomMessageSchema.options)[0]>
+export type ChatRoomReactionMessage = v.InferOutput<(typeof ChatRoomMessageSchema.options)[1]>
+export type ChatRoomPeerSyncMessage = v.InferOutput<(typeof ChatRoomMessageSchema.options)[2]>
+export type ChatRoomHistorySyncMessage = v.InferOutput<(typeof ChatRoomMessageSchema.options)[3]>
 
 // Check if the message conforms to the format
-export const checkChatRoomMessage = (message: ChatRoomMessage) => v.safeParse(ChatRoomMessageSchema, message).success
+export const checkChatRoomMessage = (message: unknown): message is ChatRoomMessage =>
+  v.safeParse(ChatRoomMessageSchema, message).success
