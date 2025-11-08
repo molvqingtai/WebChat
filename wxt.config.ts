@@ -40,21 +40,22 @@ export default defineConfig({
       }
     }[browser]
   },
-  vite: (env) => ({
-    define: {
-      __DEV__: env.mode === 'development',
-      __NAME__: JSON.stringify(name)
-    },
-    plugins: [
-      react({
-        babel: {
-          plugins: ['babel-plugin-react-compiler']
-        }
-      }),
-      tailwindcss(),
-      svgr({
-        include: '**/*.svg'
-      })
-    ]
-  })
+  vite: (env) =>
+    ({
+      define: {
+        __DEV__: env.mode === 'development',
+        __NAME__: JSON.stringify(name)
+      },
+      plugins: [
+        react({
+          babel: {
+            plugins: ['babel-plugin-react-compiler']
+          }
+        }),
+        tailwindcss(),
+        svgr({
+          include: '**/*.svg'
+        })
+      ]
+    }) as any
 })

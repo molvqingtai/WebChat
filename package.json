@@ -14,7 +14,7 @@
     "pack:chrome": "wxt zip -b chrome",
     "pack:firefox": "wxt zip -b firefox",
     "lint": "eslint --fix --cache",
-    "clear": "rimraf .output",
+    "clear": "rimraf .output node_modules",
     "check": "tsc --noEmit",
     "prepare": "husky",
     "postinstall": "wxt prepare"
@@ -93,8 +93,7 @@
     "tailwind-merge": "^3.3.1",
     "type-fest": "^5.2.0",
     "unstorage": "^1.17.2",
-    "valibot": "1.1.0",
-    "zod": "^4.1.12"
+    "valibot": "1.1.0"
   },
   "devDependencies": {
     "@commitlint/cli": "^20.1.0",
@@ -135,6 +134,12 @@
     "typescript-eslint": "^8.46.3",
     "vite-plugin-svgr": "^4.5.0",
     "wxt": "^0.20.11"
+  },
+  "pnpm": {
+    "overrides": {
+      "vite": "7.1.8",
+      "rollup": "4.52.3"
+    }
   },
   "lint-staged": {
     "*.{js,jsx,ts,tsx}": "eslint --fix --cache"
