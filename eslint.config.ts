@@ -11,7 +11,10 @@ import * as tsParser from '@typescript-eslint/parser'
 export default [
   { files: ['**/*.{js,mjs,cjs,ts,jsx,tsx}'] },
   {
-    languageOptions: { globals: globals.browser }
+    languageOptions: {
+      globals: { ...globals.browser, ...globals.node },
+      parserOptions: { project: './tsconfig.json', tsconfigRootDir: import.meta.dirname }
+    }
   },
   pluginJs.configs.recommended,
   ...tseslint.configs.recommended,
