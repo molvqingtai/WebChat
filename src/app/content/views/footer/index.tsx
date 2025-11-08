@@ -18,13 +18,14 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import type { VirtuosoHandle } from 'react-virtuoso'
 import { Virtuoso } from 'react-virtuoso'
 import UserInfoDomain from '@/domain/UserInfo'
-import { blobToBase64, cn, getRootNode, getTextByteSize, getTextSimilarity } from '@/utils'
+import { blobToBase64, cn, getTextByteSize, getTextSimilarity } from '@/utils'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { AvatarImage } from '@radix-ui/react-avatar'
 import ToastDomain from '@/domain/Toast'
 import ImageButton from '../../components/image-button'
 import { nanoid } from 'nanoid'
 import imgcap from 'imgcap'
+import useRoot from '@/hooks/useRoot'
 
 const Footer: FC = () => {
   const send = useRemeshSend()
@@ -323,7 +324,7 @@ const Footer: FC = () => {
     })
   }
 
-  const root = getRootNode()
+  const root = useRoot()
 
   return (
     <div className="relative grid gap-y-2 rounded-b-xl px-4 pb-4 pt-2 before:pointer-events-none before:absolute before:inset-x-4 before:-top-2 before:h-2 before:bg-gradient-to-t before:from-slate-50 before:from-30%  before:to-transparent dark:bg-slate-900 dark:before:from-slate-900">

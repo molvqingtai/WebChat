@@ -1,6 +1,5 @@
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { MAX_AVATAR_SIZE } from '@/constants/config'
-import type { Message } from '@/domain/MessageList'
 import MessageListDomain from '@/domain/MessageList'
 import type { UserInfo } from '@/domain/UserInfo'
 import UserInfoDomain from '@/domain/UserInfo'

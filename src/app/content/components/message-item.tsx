@@ -63,7 +63,7 @@ const MessageItem: FC<MessageItemProps> = memo((props) => {
           <FormatDate className="text-xs text-slate-400 dark:text-slate-100" date={props.data.sentAt}></FormatDate>
         </div>
         <div>
-          <div className="pb-2">
+          <div className="pb-1">
             <Markdown>{content}</Markdown>
           </div>
           <div className="grid grid-flow-col justify-end gap-x-2 leading-none dark:text-slate-600">
