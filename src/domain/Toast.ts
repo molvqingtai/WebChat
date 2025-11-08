@@ -43,7 +43,7 @@ const ToastDomain = Remesh.domain({
       impl: ({ fromEvent }) => {
         const onSyncHistory$ = fromEvent(chatRoomDomain.event.OnSyncMessageEvent).pipe(
           map((messages) =>
-            toastModule.command.SuccessCommand(
+            toastModule.command.InfoCommand(
               `Synced ${messages.length} history message${messages.length > 1 ? 's' : ''}.`
             )
           )
