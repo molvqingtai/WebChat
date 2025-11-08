@@ -10,7 +10,7 @@ export default defineConfig({
   imports: false,
   entrypointsDir: 'app',
   webExt: {
-    startUrls: ['http://www.example.com/'],
+    startUrls: ['https://www.example.com/'],
     openDevtools: true
   },
   manifest: ({ browser }) => {

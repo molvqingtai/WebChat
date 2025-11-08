@@ -8,7 +8,7 @@ import { createHLC, generateRandomAvatar, generateRandomName, setIntervalImmedia
 import { UserIcon } from 'lucide-react'
 import { nanoid } from 'nanoid'
 import type { FC } from 'react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRemeshDomain, useRemeshSend } from 'remesh-react'
 import ExampleImage from '@/assets/images/example.jpg'
 import { PulsatingButton } from '@/components/magicui/pulsating-button'
@@ -49,7 +49,7 @@ const generateUserInfo = async (): Promise<UserInfo> => {
   }
 }
 
-const generateMessage = async (userInfo: UserInfo): Promise<Message> => {
+const generateMessage = async (userInfo: UserInfo, body: string, like: boolean) => {
   const { name, avatar, id } = userInfo
   const now = Date.now()
   return {
@@ -63,10 +63,10 @@ const generateMessage = async (userInfo: UserInfo): Promise<Message> => {
       name,
       avatar
     },
-    body: mockTextList.shift()!,
+    body,
     mentions: [],
     reactions: {
-      likes: mockTextList.length ? [] : [{ id, name, avatar }],
+      likes: like ? [{ id, name, avatar }] : [],
       hates: []
     }
   }
@@ -76,6 +76,7 @@ const Setup: FC = () => {
   const send = useRemeshSend()
   const userInfoDomain = useRemeshDomain(UserInfoDomain())
   const messageListDomain = useRemeshDomain(MessageListDomain())
+  const messageList = useRef([...mockTextList])
 
   const [userInfo, setUserInfo] = useState<UserInfo>()
 
@@ -86,14 +87,16 @@ const Setup: FC = () => {
 
   const refreshUserInfo = async () => generateUserInfo()
   const createMessage = async (userInfo: UserInfo) => {
-    const message = await generateMessage(userInfo)
+    const body = messageList.current.shift()
+    if (!body) return
+    const message = await generateMessage(userInfo, body, !messageList.current.length)
     setUserInfo(userInfo)
     send(messageListDomain.command.CreateItemCommand(message))
   }
 
   useEffect(() => {
     const clearTimer = setIntervalImmediate(async () => {
-      mockTextList.length ? await createMessage(await refreshUserInfo()) : clearTimer()
+      messageList.current.length ? await createMessage(await refreshUserInfo()) : clearTimer()
     }, 2000)
 
     return () => {
