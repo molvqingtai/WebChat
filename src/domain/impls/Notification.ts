@@ -1,13 +1,13 @@
-import { NotificationExtern } from '@/domain/externs/Notification'
-import { TextMessage } from '@/domain/ChatRoom'
-import { EVENT } from '@/constants/event'
-import { messenger } from '@/messenger'
+import { browser } from '#imports'
+import { NotificationExtern, type Notification } from '@/domain/externs/Notification'
 
-class Notification {
-  async push(message: TextMessage) {
-    await messenger.sendMessage(EVENT.NOTIFICATION_PUSH, message)
-    return message.id
-  }
-}
+import { InjectAdapter } from '@/service/adapter/runtimeMessage'
+import { defineProxy } from 'comctx'
 
-export const NotificationImpl = NotificationExtern.impl(new Notification())
+const [, injectNotification] = defineProxy(() => ({}) as Notification, {
+  namespace: browser.runtime.id
+})
+
+const notification = injectNotification(new InjectAdapter())
+
+export const NotificationImpl = NotificationExtern.impl(notification)

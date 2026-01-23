@@ -1,12 +1,16 @@
-import { RefCallback, useCallback, useRef } from 'react'
+import type { RefCallback } from 'react'
+import { useCallback, useRef } from 'react'
 
 export type Events = Array<keyof GlobalEventHandlersEventMap>
 
 /**
  * @see https://github.com/streamich/react-use/pull/2528
  */
-const useTriggerAway = <E extends Event = Event>(events: Events, callback: (event: E) => void) => {
-  const handleRef = useRef<HTMLElement | null>(null)
+const useTriggerAway = <T extends Element = Element, E extends Event = Event>(
+  events: Events,
+  callback: (event: E) => void
+) => {
+  const handleRef = useRef<T | null>(null)
 
   const handler = (event: SafeAny) => {
     const rootNode = handleRef.current?.getRootNode()
@@ -21,7 +25,7 @@ const useTriggerAway = <E extends Event = Event>(events: Events, callback: (even
    *    |                |                   |
    *    |- on(document) -|-  on(shadowRoot) -|
    */
-  const setRef: RefCallback<HTMLElement | null> = useCallback(
+  const setRef: RefCallback<T> = useCallback(
     (node) => {
       if (handleRef.current) {
         const rootNode = handleRef.current.getRootNode()

@@ -4,6 +4,7 @@ import { Remesh } from 'remesh'
 import { RemeshRoot } from 'remesh-react'
 import App from './App'
 import { BrowserSyncStorageImpl } from '@/domain/impls/Storage'
+import 'sonner/dist/styles.css'
 import '@/assets/styles/tailwind.css'
 
 import { ToastImpl } from '@/domain/impls/Toast'

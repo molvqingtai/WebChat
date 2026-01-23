@@ -1,5 +1,7 @@
-import { RefCallback, useCallback, useRef, useState } from 'react'
-import getCursorPosition, { Position } from '@/utils/getCursorPosition'
+import type { RefCallback } from 'react'
+import { useCallback, useRef, useState } from 'react'
+import type { Position } from '@/utils/getCursorPosition'
+import getCursorPosition from '@/utils/getCursorPosition'
 
 const useCursorPosition = () => {
   const [position, setPosition] = useState<Position>({ x: 0, y: 0, selectionStart: 0, selectionEnd: 0 })

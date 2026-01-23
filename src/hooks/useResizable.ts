@@ -1,4 +1,5 @@
-import { RefCallback, useCallback, useLayoutEffect, useRef, useState } from 'react'
+import type { RefCallback } from 'react'
+import { startTransition, useCallback, useEffect, useRef, useState } from 'react'
 import { clamp, isInRange } from '@/utils'
 
 export interface ResizableOptions {
@@ -11,18 +12,22 @@ export interface ResizableOptions {
 const useResizable = (options: ResizableOptions) => {
   const { minSize, maxSize, initSize = 0, direction } = options
 
-  const [size, setSize] = useState(clamp(initSize, minSize, maxSize))
+  const [size, setSize] = useState(() => clamp(initSize, minSize, maxSize))
 
-  useLayoutEffect(() => {
+  useEffect(() => {
     const newSize = clamp(initSize, minSize, maxSize)
     if (newSize !== size) {
-      setSize(newSize)
+      startTransition(() => {
+        setSize(newSize)
+      })
     }
   }, [initSize, minSize, maxSize])
 
   const position = useRef(0)
 
   const isMove = useRef(false)
+  const rafRef = useRef<number | null>(null)
+  const latestMousePosition = useRef({ x: 0, y: 0 })
 
   const isHorizontal = direction === 'left' || direction === 'right'
 
@@ -30,28 +35,40 @@ const useResizable = (options: ResizableOptions) => {
     (e: MouseEvent) => {
       if (isMove.current) {
         const { screenY, screenX } = e
-        let delta = 0
-        switch (direction) {
-          case 'left':
-            delta = position.current - screenX
-            break
-          case 'right':
-            delta = screenX - position.current
-            break
-          case 'top':
-            delta = position.current - screenY
-            break
-          case 'bottom':
-            delta = screenY - position.current
-            break
-        }
-        const newSize = size + delta
-        if (isInRange(newSize, minSize, maxSize)) {
-          position.current = isHorizontal ? screenX : screenY
-        }
-        if (newSize !== size) {
-          setSize(clamp(newSize, minSize, maxSize))
-        }
+        latestMousePosition.current = { x: screenX, y: screenY }
+
+        // Cancel previous frame to ensure only one update per frame
+        rafRef.current && cancelAnimationFrame(rafRef.current)
+
+        rafRef.current = requestAnimationFrame(() => {
+          const screenX = latestMousePosition.current.x
+          const screenY = latestMousePosition.current.y
+          let delta = 0
+          switch (direction) {
+            case 'left':
+              delta = position.current - screenX
+              break
+            case 'right':
+              delta = screenX - position.current
+              break
+            case 'top':
+              delta = position.current - screenY
+              break
+            case 'bottom':
+              delta = screenY - position.current
+              break
+          }
+          const newSize = size + delta
+
+          startTransition(() => {
+            if (isInRange(newSize, minSize, maxSize)) {
+              position.current = isHorizontal ? screenX : screenY
+            }
+            if (newSize !== size) {
+              setSize(clamp(newSize, minSize, maxSize))
+            }
+          })
+        })
       }
     },
     [direction, isHorizontal, maxSize, minSize, size]
@@ -61,6 +78,7 @@ const useResizable = (options: ResizableOptions) => {
     isMove.current = false
     document.documentElement.style.cursor = ''
     document.documentElement.style.userSelect = ''
+    rafRef.current && cancelAnimationFrame(rafRef.current)
   }, [])
 
   const handleStart = useCallback(

@@ -1,7 +1,7 @@
 import { type RemeshEvent, type RemeshAction, type RemeshDomainContext, type RemeshExtern } from 'remesh'
 import { from, map, Observable, switchMap } from 'rxjs'
 
-import { Storage, StorageValue } from '@/domain/externs/Storage'
+import type { Storage, StorageValue } from '@/domain/externs/Storage'
 
 export interface Options {
   domain: RemeshDomainContext
@@ -50,7 +50,7 @@ export default class StorageEffect {
       name: 'WatchStorageToStateEffect',
       impl: () => {
         // TODO: Report the bug to https://github.com/unjs/unstorage
-        return new Observable((observer) => {
+        return new Observable<void>((observer) => {
           const unwatchPromise = this.storage.watch(() => observer.next())
           return () => unwatchPromise.then((unwatch) => unwatch())
         }).pipe(

@@ -2,14 +2,14 @@ section[aria-live='polite'] {
   display: contents;
 }
 
-:where([data-sonner-toaster]) {
+[data-sonner-toaster] {
   max-width: 300px;
   position: absolute;
   display: flex;
   justify-content: center;
 }
 
-:where([data-sonner-toast][data-styled='true']) {
+[data-sonner-toast][data-styled='true'] {
   max-width: 300px;
   padding: 6px 12px;
   border-radius: 9999px;

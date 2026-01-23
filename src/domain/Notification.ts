@@ -1,6 +1,7 @@
 import { Remesh } from 'remesh'
 import { NotificationExtern } from './externs/Notification'
-import ChatRoomDomain, { TextMessage } from '@/domain/ChatRoom'
+import type { ChatRoomTextMessage } from '@/protocol'
+import ChatRoomDomain from '@/domain/ChatRoom'
 import UserInfoDomain from './UserInfo'
 import { map, merge } from 'rxjs'
 
@@ -39,13 +40,13 @@ const NotificationDomain = Remesh.domain({
 
     const PushCommand = domain.command({
       name: 'Notification.PushCommand',
-      impl: (_, message: TextMessage) => {
+      impl: (_, message: ChatRoomTextMessage) => {
         notificationExtern.push(message)
         return [PushEvent(message)]
       }
     })
 
-    const PushEvent = domain.event<TextMessage>({
+    const PushEvent = domain.event<ChatRoomTextMessage>({
       name: 'Notification.PushEvent'
     })
 
@@ -72,24 +73,27 @@ const NotificationDomain = Remesh.domain({
         const onMessage$ = merge(onTextMessage$).pipe(
           map((message) => {
             const notificationEnabled = get(IsEnabledQuery())
-            if (notificationEnabled) {
-              // Compatible with old versions, without the atUsers field
-              if (message.atUsers) {
-                const userInfo = get(userInfoDomain.query.UserInfoQuery())
-                const hasAtSelf = message.atUsers.find((user) => user.userId === userInfo?.id)
-                if (userInfo?.notificationType === 'all') {
-                  return PushCommand(message)
-                }
-                if (userInfo?.notificationType === 'at' && hasAtSelf) {
-                  return PushCommand(message)
-                }
-                return null
-              } else {
-                return PushCommand(message)
-              }
-            } else {
+
+            if (!notificationEnabled) {
               return null
             }
+
+            const userInfo = get(userInfoDomain.query.UserInfoQuery())
+            if (message.sender.id === userInfo?.id) {
+              return null
+            }
+
+            if (userInfo?.notificationType === 'all') {
+              return PushCommand(message)
+            }
+
+            if (userInfo?.notificationType === 'at') {
+              const hasAtSelf = message.mentions.find((user) => user.id === userInfo?.id)
+              if (hasAtSelf) {
+                return PushCommand(message)
+              }
+            }
+            return null
           })
         )
 

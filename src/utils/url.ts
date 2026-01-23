@@ -34,3 +34,20 @@ export const buildFullURL = (baseURL: string = '', pathURL: string = '', params:
   const url = cleanURL(isAbsoluteURL(pathURL) ? pathURL : `${baseURL}/${pathURL}`)
   return assembleURL(url, params)
 }
+
+/**
+ * Sanitize URL to prevent XSS attacks
+ * @param url - The URL to sanitize
+ * @returns Sanitized URL or empty string if invalid
+ */
+export const safeUrl = (url: string): string => {
+  if (!url || typeof url !== 'string') return ''
+
+  // Block dangerous protocols
+  if (/^(javascript|vbscript|file|about):/i.test(url)) return ''
+
+  // Only allow media data URIs (image/video/audio)
+  if (url.startsWith('data:') && !/^data:(image|video|audio)\//i.test(url)) return ''
+
+  return url
+}

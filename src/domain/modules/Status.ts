@@ -1,4 +1,4 @@
-import { DomainConceptName, RemeshDomainContext } from 'remesh'
+import type { DomainConceptName, RemeshDomainContext } from 'remesh'
 
 export enum Status {
   Initial = 0b001, // 1

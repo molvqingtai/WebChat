@@ -3,9 +3,9 @@ import indexedDbDriver from 'unstorage/drivers/indexedb'
 import localStorageDriver from 'unstorage/drivers/localstorage'
 import { LocalStorageExtern, IndexDBStorageExtern, BrowserSyncStorageExtern } from '@/domain/externs/Storage'
 import { STORAGE_NAME } from '@/constants/config'
-import { webExtensionDriver } from '@/utils/webExtensionDriver'
+import webExtensionDriver from '@/utils/webExtensionDriver'
 
-import { Storage } from '@/domain/externs/Storage'
+import type { Storage } from '@/domain/externs/Storage'
 import { EVENT } from '@/constants/event'
 
 /**
@@ -18,7 +18,7 @@ export const localStorage = createStorage({
 })
 
 export const indexDBStorage = createStorage({
-  driver: indexedDbDriver({ base: `${STORAGE_NAME}:` })
+  driver: indexedDbDriver({ dbName: __NAME__, storeName: __NAME__, base: `${STORAGE_NAME}:` })
 })
 
 export const browserSyncStorage = createStorage({

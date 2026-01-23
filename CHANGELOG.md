@@ -1,3 +1,140 @@
+## [1.9.7](https://github.com/molvqingtai/WebChat/compare/v1.9.6...v1.9.7) (2025-10-06)
+
+
+### Performance Improvements
+
+* **toast:** show synced message count in history sync notification ([0dd074c](https://github.com/molvqingtai/WebChat/commit/0dd074c100ca3c70175236abb19bb30754c1feaa))
+
+## [1.9.6](https://github.com/molvqingtai/WebChat/compare/v1.9.5...v1.9.6) (2025-10-04)
+
+
+### Bug Fixes
+
+* specify target peers when sending messages to avoid connection errors ([ac0d22f](https://github.com/molvqingtai/WebChat/commit/ac0d22fa1518e763e1de78ede52346a4d7ece036)), closes [#56](https://github.com/molvqingtai/WebChat/issues/56)
+
+## [1.9.5](https://github.com/molvqingtai/WebChat/compare/v1.9.4...v1.9.5) (2025-10-03)
+
+
+### Performance Improvements
+
+* **notification:** improve notification logic and smart filtering ([b2432df](https://github.com/molvqingtai/WebChat/commit/b2432dfc662560ecf911b3740ebf45dbbecd5632))
+
+## [1.9.4](https://github.com/molvqingtai/WebChat/compare/v1.9.3...v1.9.4) (2025-10-02)
+
+
+### Bug Fixes
+
+* add namespace to notification proxy to prevent cross-extension conflicts ([2429fd4](https://github.com/molvqingtai/WebChat/commit/2429fd40b7e5c6b4374d938ac03f88dbe44a04c3))
+
+## [1.9.3](https://github.com/molvqingtai/WebChat/compare/v1.9.2...v1.9.3) (2025-10-01)
+
+
+### Performance Improvements
+
+* add automatic IndexDB cleanup on extension update ([7a1a622](https://github.com/molvqingtai/WebChat/commit/7a1a6224f77e81ff1c5dd56be13897f5dce190c4))
+
+## [1.9.2](https://github.com/molvqingtai/WebChat/compare/v1.9.1...v1.9.2) (2025-10-01)
+
+
+### Performance Improvements
+
+* enhance site metadata extraction with more fallback selectors ([71cf8af](https://github.com/molvqingtai/WebChat/commit/71cf8af0ad6d9eb4b7a3358453beb9131b3f8b50))
+
+## [1.9.1](https://github.com/molvqingtai/WebChat/compare/v1.9.0...v1.9.1) (2025-10-01)
+
+
+### Performance Improvements
+
+* add URL sanitization to prevent XSS attacks ([f03a679](https://github.com/molvqingtai/WebChat/commit/f03a67947819fb34956e7265f7f11d26fca6be14))
+* optimize Virtuoso performance for message list ([15e6706](https://github.com/molvqingtai/WebChat/commit/15e67066fca322d135829ba82aa9df18507db77b))
+
+# [1.9.0](https://github.com/molvqingtai/WebChat/compare/v1.8.6...v1.9.0) (2025-10-01)
+
+
+### Bug Fixes
+
+* prevent setup component render before userInfo loads ([cae3a08](https://github.com/molvqingtai/WebChat/commit/cae3a08811d3885bf409a8a86e9fd5322ee4a504))
+
+
+### Features
+
+* add message send throttling and fix IME composition issue ([2d3e6db](https://github.com/molvqingtai/WebChat/commit/2d3e6db7318841577d0a368dbf7ffd791b3fc8c7))
+
+
+### Performance Improvements
+
+* optimize drag/resize performance with RAF and prevent unnecessary re-renders ([82577d0](https://github.com/molvqingtai/WebChat/commit/82577d0bcdca7c46d20128e51bc128662e201647))
+* optimize message sync with hash comparison ([da8c411](https://github.com/molvqingtai/WebChat/commit/da8c411ac5a34e808b0fcf7a6cb591c32387d9ee))
+* use useLayoutEffect for beforeunload listener to ensure early registration ([97e9574](https://github.com/molvqingtai/WebChat/commit/97e957420ceaa80ca04380c68179716c612643d6))
+
+## [1.8.6](https://github.com/molvqingtai/WebChat/compare/v1.8.5...v1.8.6) (2025-09-30)
+
+
+### Bug Fixes
+
+* resolve ESLint warnings and errors ([38e10ba](https://github.com/molvqingtai/WebChat/commit/38e10baebfa2eb664dd8e8cf3621b4dd8c27bfef))
+
+
+### Performance Improvements
+
+* deduplicate join/leave messages to reduce spam ([2782b43](https://github.com/molvqingtai/WebChat/commit/2782b43d4341dcf828cc79308e7d30c634834f34))
+* improve virtual scroll and simplify message sending ([411a38f](https://github.com/molvqingtai/WebChat/commit/411a38fa3b4f70335ed4116dc3ed277ec58a1596))
+* optimize app positioning and message sending performance ([0bfaa07](https://github.com/molvqingtai/WebChat/commit/0bfaa07258b57bc8a4acecf4c9b73baf47d58181))
+* optimize message sync with batched processing ([f19bace](https://github.com/molvqingtai/WebChat/commit/f19bacef560d0bfa4273b2c96cf6364d8c1dc350))
+
+## [1.8.5](https://github.com/molvqingtai/WebChat/compare/v1.8.4...v1.8.5) (2025-05-30)
+
+
+### Performance Improvements
+
+* optimize style ([254ca88](https://github.com/molvqingtai/WebChat/commit/254ca8844dd535a65b26638871abaa52389f7416))
+* scroll-area default scrollLock ([d00aee4](https://github.com/molvqingtai/WebChat/commit/d00aee48a4a90a5ad8f840f0af8251753e4f10a0))
+
+
+### Reverts
+
+* firefox falls back to manifest v2 ([943d64c](https://github.com/molvqingtai/WebChat/commit/943d64cf1e9c5b2b01c2480dd75607a9467da00e))
+
+## [1.8.4](https://github.com/molvqingtai/WebChat/compare/v1.8.3...v1.8.4) (2025-05-22)
+
+
+### Performance Improvements
+
+* performance optimization ([dce12eb](https://github.com/molvqingtai/WebChat/commit/dce12ebf427d82c9a50f6d5da4f715885c0f7539))
+
+## [1.8.3](https://github.com/molvqingtai/WebChat/compare/v1.8.2...v1.8.3) (2025-05-22)
+
+
+### Bug Fixes
+
+* drag crash ([54b7144](https://github.com/molvqingtai/WebChat/commit/54b7144f7b0711b26ade0f2851c614b905e88b0d))
+
+
+### Performance Improvements
+
+* empty messsage focus input ([403a522](https://github.com/molvqingtai/WebChat/commit/403a5228569d4fbe2d0ff1279e7b218cec7f130f))
+
+## [1.8.2](https://github.com/molvqingtai/WebChat/compare/v1.8.1...v1.8.2) (2025-05-21)
+
+
+### Bug Fixes
+
+* sync history message ([e42f344](https://github.com/molvqingtai/WebChat/commit/e42f34479e166bbb67957449e4eb5edd9f390b84))
+
+## [1.8.1](https://github.com/molvqingtai/WebChat/compare/v1.8.0...v1.8.1) (2025-05-21)
+
+
+### Bug Fixes
+
+* z-infinity not working ([192359b](https://github.com/molvqingtai/WebChat/commit/192359bf1cbbad77a15e98cc52129e0eacad51f7))
+
+# [1.8.0](https://github.com/molvqingtai/WebChat/compare/v1.7.3...v1.8.0) (2025-05-21)
+
+
+### Features
+
+* upgrade to tailwind v4 ([9214708](https://github.com/molvqingtai/WebChat/commit/92147083c2978a6ce7f2d4fa0751b5ef9fa4797b))
+
 ## [1.7.3](https://github.com/molvqingtai/WebChat/compare/v1.7.2...v1.7.3) (2025-01-14)
 
 

@@ -1,9 +1,9 @@
-import { Room } from '@rtco/client'
+import type { Room } from '@rtco/client'
 
 import { ChatRoomExtern } from '@/domain/externs/ChatRoom'
 import { stringToHex } from '@/utils'
 import EventHub from '@resreq/event-hub'
-import { RoomMessage } from '@/domain/ChatRoom'
+import type { ChatRoomMessage } from '@/protocol'
 import { JSONR } from '@/utils'
 import Peer from './Peer'
 
@@ -33,95 +33,119 @@ class ChatRoom extends EventHub {
   }
 
   joinRoom() {
-    if (this.room) {
-      this.room = this.peer.join(this.roomId)
-    } else {
-      if (this.peer.state === 'ready') {
+    try {
+      if (this.room) {
         this.room = this.peer.join(this.roomId)
-        this.emit('action')
       } else {
-        this.peer!.on('open', () => {
+        if (this.peer.state === 'ready') {
           this.room = this.peer.join(this.roomId)
           this.emit('action')
-        })
+        } else {
+          this.peer!.on('open', () => {
+            this.room = this.peer.join(this.roomId)
+            this.emit('action')
+          })
+        }
       }
+    } catch (error) {
+      this.emit('error', error)
     }
     return this
   }
 
-  sendMessage(message: RoomMessage, id?: string | string[]) {
-    if (!this.room) {
-      this.once('action', () => {
-        if (!this.room) {
-          this.emit('error', new Error('Room not joined'))
-        } else {
-          this.room.send(JSONR.stringify(message)!, id)
-        }
-      })
-    } else {
-      this.room.send(JSONR.stringify(message)!, id)
+  sendMessage(message: ChatRoomMessage, id?: string | string[]) {
+    try {
+      if (!this.room) {
+        this.once('action', async () => {
+          if (!this.room) {
+            throw new Error('Room not joined')
+          } else {
+            this.room.send(JSONR.stringify(message)!, id)
+          }
+        })
+      } else {
+        this.room.send(JSONR.stringify(message)!, id)
+      }
+    } catch (error) {
+      this.emit('error', error)
     }
     return this
   }
 
-  onMessage(callback: (message: RoomMessage) => void) {
-    if (!this.room) {
-      this.once('action', () => {
-        if (!this.room) {
-          this.emit('error', new Error('Room not joined'))
-        } else {
-          this.room.on('message', (message) => callback(JSONR.parse(message) as RoomMessage))
-        }
-      })
-    } else {
-      this.room.on('message', (message) => callback(JSONR.parse(message) as RoomMessage))
+  onMessage(callback: (message: ChatRoomMessage) => void) {
+    try {
+      if (!this.room) {
+        this.once('action', async () => {
+          if (!this.room) {
+            throw new Error('Room not joined')
+          } else {
+            this.room.on('message', (message) => callback(JSONR.parse(message) as ChatRoomMessage))
+          }
+        })
+      } else {
+        this.room.on('message', (message) => callback(JSONR.parse(message) as ChatRoomMessage))
+      }
+    } catch (error) {
+      this.emit('error', error)
     }
     return this
   }
 
   onJoinRoom(callback: (id: string) => void) {
-    if (!this.room) {
-      this.once('action', () => {
-        if (!this.room) {
-          this.emit('error', new Error('Room not joined'))
-        } else {
-          this.room.on('join', (id) => callback(id))
-        }
-      })
-    } else {
-      this.room.on('join', (id) => callback(id))
+    try {
+      if (!this.room) {
+        this.once('action', async () => {
+          if (!this.room) {
+            throw new Error('Room not joined')
+          } else {
+            this.room.on('join', (id) => callback(id))
+          }
+        })
+      } else {
+        this.room.on('join', (id) => callback(id))
+      }
+    } catch (error) {
+      this.emit('error', error)
     }
     return this
   }
 
   onLeaveRoom(callback: (id: string) => void) {
-    if (!this.room) {
-      this.once('action', () => {
-        if (!this.room) {
-          this.emit('error', new Error('Room not joined'))
-        } else {
-          this.room.on('leave', (id) => callback(id))
-        }
-      })
-    } else {
-      this.room.on('leave', (id) => callback(id))
+    try {
+      if (!this.room) {
+        this.once('action', async () => {
+          if (!this.room) {
+            throw new Error('Room not joined')
+          } else {
+            this.room.on('leave', (id) => callback(id))
+          }
+        })
+      } else {
+        this.room.on('leave', (id) => callback(id))
+      }
+    } catch (error) {
+      this.emit('error', error)
     }
     return this
   }
 
   leaveRoom() {
-    if (!this.room) {
-      this.once('action', () => {
-        if (!this.room) {
-          this.emit('error', new Error('Room not joined'))
-        } else {
-          this.room.leave()
-          this.room = undefined
-        }
-      })
-    } else {
-      this.room.leave()
-      this.room = undefined
+    try {
+      if (!this.room) {
+        this.once('action', async () => {
+          if (!this.room) {
+            throw new Error('Room not joined')
+          } else {
+            this.room.leave()
+            this.room = undefined
+          }
+        })
+      } else {
+        this.room.leave()
+        this.room = undefined
+      }
+    } catch (error) {
+      this.emit('error', error)
     }
     return this
   }

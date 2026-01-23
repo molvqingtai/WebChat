@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://github.com/molvqingtai/WebChat/blob/master/src/public/logo.png" width="200px"/>
+  <img src="https://github.com/molvqingtai/WebChat/blob/master/public/logo.png" width="200px"/>
 </p>
 
 # WebChat
@@ -29,13 +29,19 @@ The aim is to add chat room functionality to any website, you'll never feel alon
    - Enable "Developer mode"
    - Click "Load unpacked" and select the folder you just extracted
 
-### Use
+### Usage
 
 After installing the extension, you'll see a ghost icon in the bottom-right corner of any website. Click it, and you'll be able to chat happily with others on the same site!
 
 ### Video
 
 https://github.com/user-attachments/assets/e7ac9b8e-1b6c-43fb-8469-7a0a2c09d450
+
+### Community
+
+Join our Discord community to discuss WebChat and connect with other users:
+
+[Discord](https://discord.com/channels/1398133810398367805/1398137562043908248)
 
 ### Standing on the Shoulders of Giants
 
@@ -51,6 +57,12 @@ In addition to the good idea of decentralized chat, it also leverages some fanta
 - **[Artico](https://github.com/matallui/artico)**: A flexible set of libraries that help you create your own WebRTC-based solutions
 
 - **[ugly-avatar](https://github.com/txstc55/ugly-avatar)**: Use it to create stunning random avatars.
+
+### Sponsors
+
+WebChat is a open source project with its ongoing development made possible entirely by the support of these awesome backers. 
+
+[![Powered by DartNode](https://dartnode.com/branding/DN-Open-Source-sm.png)](https://dartnode.com "Powered by DartNode - Free VPS for Open Source")
 
 ### License
 

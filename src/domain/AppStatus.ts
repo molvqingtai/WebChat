@@ -3,8 +3,9 @@ import StatusModule from './modules/Status'
 import { LocalStorageExtern } from './externs/Storage'
 import { APP_STATUS_STORAGE_KEY } from '@/constants/config'
 import StorageEffect from './modules/StorageEffect'
-import ChatRoomDomain, { SendType } from '@/domain/ChatRoom'
+import ChatRoomDomain from '@/domain/ChatRoom'
 import { map } from 'rxjs'
+import { MESSAGE_TYPE } from '@/protocol/Message'
 
 export interface AppStatus {
   open: boolean
@@ -12,10 +13,11 @@ export interface AppStatus {
   position: { x: number; y: number }
 }
 
+// Position is stored as offset from bottom-right corner
 export const defaultStatusState = {
   open: false,
   unread: 0,
-  position: { x: window.innerWidth - 50, y: window.innerHeight - 22 }
+  position: { x: 50, y: 22 }
 }
 
 const AppStatusDomain = Remesh.domain({
@@ -134,7 +136,7 @@ const AppStatusDomain = Remesh.domain({
         const onMessage$ = fromEvent(chatRoomDomain.event.OnMessageEvent).pipe(
           map((message) => {
             const status = get(StatusState())
-            if (!status.open && message.type === SendType.Text) {
+            if (!status.open && message.type === MESSAGE_TYPE.TEXT) {
               return UpdateUnreadCommand(status.unread + 1)
             }
             return null

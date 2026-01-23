@@ -1,6 +1,4 @@
-import { version } from '@/../package.json'
 // https://www.webfx.com/tools/emoji-cheat-sheet/
-
 export const EMOJI_LIST = [
   '😀',
   '😄',
@@ -186,13 +184,15 @@ export const BREAKPOINTS = {
 
 export const MESSAGE_MAX_LENGTH = 500 as const
 
-export const STORAGE_NAME = `WEB_CHAT_${version}` as const
+export const STORAGE_NAME = `WEB_CHAT_STORAGE` as const
 
 export const USER_INFO_STORAGE_KEY = 'WEB_CHAT_USER_INFO' as const
 
 export const MESSAGE_LIST_STORAGE_KEY = 'WEB_CHAT_MESSAGE_LIST' as const
 
 export const APP_STATUS_STORAGE_KEY = 'WEB_CHAT_APP_STATUS' as const
+
+export const VERSION_STORAGE_KEY = 'WEB_CHAT_VERSION' as const
 /**
  * In chrome storage.sync, each key-value pair supports a maximum storage of 8kb
  * Image is encoded as base64, and the size is increased by about 33%.
@@ -200,7 +200,7 @@ export const APP_STATUS_STORAGE_KEY = 'WEB_CHAT_APP_STATUS' as const
  */
 export const MAX_AVATAR_SIZE = 5120 as const
 
-export const SYNC_HISTORY_MAX_DAYS = 30 as const
+export const SYNC_HISTORY_MAX_DAYS = 90 as const
 
 /**
  * https://lgrahl.de/articles/demystifying-webrtc-dc-size-limit.html
@@ -208,4 +208,4 @@ export const SYNC_HISTORY_MAX_DAYS = 30 as const
  */
 export const WEB_RTC_MAX_MESSAGE_SIZE = 262144 as const
 
-export const VIRTUAL_ROOM_ID = 'WEB_CHAT_VIRTUAL_ROOM' as const
+export const WORLD_ROOM_ID = 'WEB_CHAT_WORLD_ROOM' as const

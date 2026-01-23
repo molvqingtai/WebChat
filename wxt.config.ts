@@ -3,13 +3,15 @@ import { defineConfig } from 'wxt'
 import react from '@vitejs/plugin-react'
 import { name, displayName, homepage } from './package.json'
 import svgr from 'vite-plugin-svgr'
+import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
   srcDir: path.resolve('src'),
   imports: false,
   entrypointsDir: 'app',
-  runner: {
-    startUrls: ['https://www.example.com/']
+  webExt: {
+    startUrls: ['http://www.example.com/'],
+    openDevtools: true
   },
   manifest: ({ browser }) => {
     const common = {
@@ -44,7 +46,12 @@ export default defineConfig({
       __NAME__: JSON.stringify(name)
     },
     plugins: [
-      react(),
+      react({
+        babel: {
+          plugins: ['babel-plugin-react-compiler']
+        }
+      }),
+      tailwindcss(),
       svgr({
         include: '**/*.svg'
       })

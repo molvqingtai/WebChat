@@ -1,16 +1,17 @@
 import { type Driver, type WatchCallback, defineDriver } from 'unstorage'
-import { browser, type Storage as BrowserStorage } from 'wxt/browser'
+import type { Browser } from '#imports'
+import { browser } from '#imports'
 
 export interface WebExtensionDriverOptions {
   storageArea: 'sync' | 'local' | 'managed' | 'session'
 }
 
-export const webExtensionDriver: (opts: WebExtensionDriverOptions) => Driver = defineDriver((opts) => {
+const webExtensionDriver: (opts: WebExtensionDriverOptions) => Driver = defineDriver((opts) => {
   const checkPermission = () => {
     if (browser.storage == null) throw Error("You must request the 'storage' permission to use webExtensionDriver")
   }
 
-  const _storageListener: (changes: BrowserStorage.StorageAreaSyncOnChangedChangesType) => void = (changes) => {
+  const _storageListener: (changes: Browser.storage.StorageChange) => void = (changes) => {
     Object.entries(changes).forEach(([key, { newValue }]) => {
       _listeners.forEach((callback) => {
         callback(newValue ? 'update' : 'remove', key)
@@ -81,3 +82,5 @@ export const webExtensionDriver: (opts: WebExtensionDriverOptions) => Driver = d
     }
   }
 })
+
+export default webExtensionDriver
