@@ -60,9 +60,9 @@ In addition to the good idea of decentralized chat, it also leverages some fanta
 
 ### Sponsors
 
-WebChat is a open source project with its ongoing development made possible entirely by the support of these awesome backers. 
+WebChat is a open source project with its ongoing development made possible entirely by the support of these awesome backers.
 
-[![Powered by DartNode](https://dartnode.com/branding/DN-Open-Source-sm.png)](https://dartnode.com "Powered by DartNode - Free VPS for Open Source")
+[![Powered by DartNode](https://dartnode.com/branding/DN-Open-Source-sm.png)](https://dartnode.com 'Powered by DartNode - Free VPS for Open Source')
 
 ### License
 

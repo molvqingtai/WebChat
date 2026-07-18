@@ -9,7 +9,7 @@ import { desert, getTextByteSize, upsert, compareHLC, sendEvent } from '@/utils'
 import { nanoid } from 'nanoid'
 import StatusModule from '@/domain/modules/Status'
 import { SYNC_HISTORY_MAX_DAYS, WEB_RTC_MAX_MESSAGE_SIZE } from '@/constants/config'
-import hash from 'hash-it'
+import { hash } from 'hash-it'
 import {
   validateNetworkMessage,
   type NetworkMessage,

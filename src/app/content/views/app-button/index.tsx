@@ -110,14 +110,14 @@ const AppButton: FC<AppButtonProps> = ({ className }) => {
         <Button
           onClick={handleOpenOptionsPage}
           variant="outline"
-          className="size-10 rounded-full p-0 dark:bg-background shadow dark:text-foreground dark:border-slate-600 dark:hover:bg-accent"
+          className="dark:bg-background dark:text-foreground dark:hover:bg-accent size-10 rounded-full p-0 shadow dark:border-slate-600"
         >
           <SettingsIcon className="size-5" />
         </Button>
         <Button
           ref={appButtonRef}
           variant="outline"
-          className="size-10 cursor-grab dark:bg-background rounded-full p-0 dark:text-foreground shadow dark:border-slate-600 dark:hover:bg-accent"
+          className="dark:bg-background dark:text-foreground dark:hover:bg-accent size-10 cursor-grab rounded-full p-0 shadow dark:border-slate-600"
         >
           <HandIcon className="size-5" />
         </Button>
@@ -137,7 +137,7 @@ const AppButton: FC<AppButtonProps> = ({ className }) => {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               transition={{ duration: 0.1 }}
-              className="absolute -right-1 -top-1 z-30 flex size-5 items-center justify-center"
+              className="absolute -top-1 -right-1 z-30 flex size-5 items-center justify-center"
             >
               <span
                 className={cn('absolute inline-flex size-full animate-ping rounded-full opacity-75', 'bg-orange-400')}
@@ -147,7 +147,7 @@ const AppButton: FC<AppButtonProps> = ({ className }) => {
           )}
         </AnimatePresence>
 
-        <DayLogo className="relative z-20 max-h-full max-w-full overflow-hidden size-full"></DayLogo>
+        <DayLogo className="relative z-20 size-full max-h-full max-w-full overflow-hidden"></DayLogo>
       </>
     ),
     [hasUnreadQuery, DayLogo]
@@ -179,7 +179,7 @@ const AppButton: FC<AppButtonProps> = ({ className }) => {
       <Button
         onClick={handleToggleApp}
         onContextMenu={handleToggleMenu}
-        className="relative z-20 size-11 rounded-full has-[>svg]:p-0 text-xs shadow-lg shadow-slate-500/50 after:absolute after:-inset-0.5 after:z-10 after:animate-[shimmer_2s_linear_infinite] after:rounded-full after:bg-[conic-gradient(from_var(--shimmer-angle),theme(colors.slate.500)_0%,theme(colors.white)_10%,theme(colors.slate.500)_20%)]"
+        className="relative z-20 size-11 rounded-full text-xs shadow-lg shadow-slate-500/50 after:absolute after:-inset-0.5 after:z-10 after:animate-[shimmer_2s_linear_infinite] after:rounded-full after:bg-[conic-gradient(from_var(--shimmer-angle),theme(colors.slate.500)_0%,theme(colors.white)_10%,theme(colors.slate.500)_20%)] has-[>svg]:p-0"
       >
         {mainButtonContent}
       </Button>

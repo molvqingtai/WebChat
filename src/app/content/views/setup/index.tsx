@@ -105,11 +105,11 @@ const Setup: FC = () => {
   }, [])
 
   return (
-    <div className="absolute inset-0 z-50 flex rounded-xl bg-black/10 shadow-2xl  backdrop-blur-sm">
+    <div className="absolute inset-0 z-50 flex rounded-xl bg-black/10 shadow-2xl backdrop-blur-sm">
       {userInfo && (
         <div className="m-auto flex flex-col items-center justify-center gap-y-8 pb-40 drop-shadow-lg">
           <BlurFade key={userInfo.avatar} inView>
-            <Avatar className="size-24 cursor-pointer border-4 border-white ">
+            <Avatar className="size-24 cursor-pointer border-4 border-white">
               <AvatarImage src={userInfo.avatar} className="size-full" alt="avatar" />
               <AvatarFallback>
                 <UserIcon size={30} className="text-slate-400" />
@@ -118,14 +118,14 @@ const Setup: FC = () => {
           </BlurFade>
           <div className="flex items-center" key={userInfo.name}>
             <motion.div
-              className="text-2xl font-bold text-primary"
+              className="text-primary text-2xl font-bold"
               initial={{ x: -10, opacity: 0 }}
               animate={{ x: 0, opacity: 1 }}
               transition={{ duration: 0.5 }}
             >
               @
             </motion.div>
-            <WordRotate className="text-2xl font-bold text-primary" words={[userInfo.name]} />
+            <WordRotate className="text-primary text-2xl font-bold" words={[userInfo.name]} />
           </div>
           <PulsatingButton onClick={handleSetup}>Start chatting</PulsatingButton>
         </div>

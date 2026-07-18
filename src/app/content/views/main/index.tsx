@@ -56,7 +56,7 @@ const Main: FC = () => {
             hate={message.hate}
             onLikeChange={() => handleLikeChange(message.id)}
             onHateChange={() => handleHateChange(message.id)}
-            className="duration-300 animate-in fade-in-0"
+            className="animate-in fade-in-0 duration-300"
           ></MessageItem>
         ) : (
           <PromptItem

@@ -8,7 +8,7 @@ export interface LayoutProps {
 const Layout: FC<LayoutProps> = ({ children }) => {
   return (
     <div className={`h-screen w-screen bg-gray-50 bg-[url(@/assets/images/texture.png)] font-sans dark:bg-slate-950`}>
-      <div className="fixed left-0 top-0 h-full w-screen overflow-hidden">
+      <div className="fixed top-0 left-0 h-full w-screen overflow-hidden">
         <Meteors number={30} />
       </div>
       <div className="relative z-10 min-h-screen min-w-screen">{children}</div>

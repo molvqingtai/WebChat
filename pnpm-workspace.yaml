@@ -1,0 +1,5 @@
+allowBuilds:
+  bufferutil: true
+  esbuild: true
+  spawn-sync: true
+  utf-8-validate: true

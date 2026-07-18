@@ -1,4 +1,4 @@
-import type { ChangeEvent, KeyboardEvent, ClipboardEvent } from 'react'
+import type { InputEventHandler, KeyboardEvent, ClipboardEvent } from 'react'
 import { useMemo, useRef, useState, type FC } from 'react'
 import { CornerDownLeftIcon } from 'lucide-react'
 import { useRemeshDomain, useRemeshQuery, useRemeshSend } from 'remesh-react'
@@ -202,11 +202,11 @@ const Footer: FC = () => {
     }
   }
 
-  const handleInput = (e: ChangeEvent<HTMLTextAreaElement>) => {
-    const currentMessage = e.target.value
+  const handleInput: InputEventHandler<HTMLTextAreaElement> = (e) => {
+    const target = e.target as HTMLTextAreaElement
+    const currentMessage = target.value
 
     if (autoCompleteListShow) {
-      const target = e.target as HTMLTextAreaElement
       if (target.value) {
         const atIndex = target.value.lastIndexOf('@', selectionEnd - 1)
         if (atIndex !== -1) {
@@ -327,12 +327,12 @@ const Footer: FC = () => {
   const root = useRoot()
 
   return (
-    <div className="relative grid gap-y-2 rounded-b-xl px-4 pb-4 pt-2 before:pointer-events-none before:absolute before:inset-x-4 before:-top-2 before:h-2 before:bg-gradient-to-t before:from-slate-50 before:from-30%  before:to-transparent dark:bg-slate-900 dark:before:from-slate-900">
+    <div className="relative grid gap-y-2 rounded-b-xl px-4 pt-2 pb-4 before:pointer-events-none before:absolute before:inset-x-4 before:-top-2 before:h-2 before:bg-gradient-to-t before:from-slate-50 before:from-30% before:to-transparent dark:bg-slate-900 dark:before:from-slate-900">
       <Presence present={autoCompleteListShow}>
         <Portal
           container={root}
           ref={shareAutoCompleteListRef}
-          className="fixed z-infinity w-36 -translate-y-full overflow-hidden rounded-lg border bg-popover text-popover-foreground shadow-md duration-300 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95"
+          className="z-infinity bg-popover text-popover-foreground data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 fixed w-36 -translate-y-full overflow-hidden rounded-lg border shadow-md duration-300"
           style={{ left: `min(${x}px, 100vw - 160px)`, top: `${y}px` }}
         >
           <ScrollArea className="max-h-[204px] min-h-9 p-1" ref={setScrollParentRef}>

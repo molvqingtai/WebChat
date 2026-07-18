@@ -73,7 +73,7 @@ const Header: FC = () => {
                 <Link
                   underline={false}
                   href={site.origin}
-                  className="grid cursor-pointer grid-cols-[auto_1fr] items-center gap-x-2 rounded-lg px-2 py-1.5 hover:bg-accent hover:text-accent-foreground"
+                  className="hover:bg-accent hover:text-accent-foreground grid cursor-pointer grid-cols-[auto_1fr] items-center gap-x-2 rounded-lg px-2 py-1.5"
                 >
                   <Avatar className="size-10 rounded-sm">
                     <AvatarImage src={site.icon} alt="favicon" />
@@ -87,7 +87,7 @@ const Header: FC = () => {
                         {site.hostname.replace(/^www\./i, '')}
                       </h4>
                       <div className="shrink-0 text-sm">
-                        <div className="flex items-center gap-x-1 text-nowrap text-xs text-slate-500 dark:text-slate-100">
+                        <div className="flex items-center gap-x-1 text-xs text-nowrap text-slate-500 dark:text-slate-100">
                           <div className="flex items-center gap-x-1 pt-px">
                             <span className="relative flex size-2">
                               <span
@@ -103,7 +103,7 @@ const Header: FC = () => {
                                 )}
                               ></span>
                             </span>
-                            <span className="flex items-center leading-none ">
+                            <span className="flex items-center leading-none">
                               <span className="py-[0.25em]">ONLINE</span>
                             </span>
                           </div>
@@ -129,8 +129,8 @@ const Header: FC = () => {
       </HoverCard>
       <HoverCard>
         <HoverCardTrigger asChild>
-          <Button className=" rounded-md p-0  hover:no-underline" variant="link">
-            <div className="relative flex items-center gap-x-1 text-nowrap text-xs  text-slate-500 hover:after:absolute hover:after:bottom-0 hover:after:left-0  hover:after:h-px hover:after:w-full hover:after:bg-black dark:text-slate-100 dark:hover:after:bg-white">
+          <Button className="rounded-md p-0 hover:no-underline" variant="link">
+            <div className="relative flex items-center gap-x-1 text-xs text-nowrap text-slate-500 hover:after:absolute hover:after:bottom-0 hover:after:left-0 hover:after:h-px hover:after:w-full hover:after:bg-black dark:text-slate-100 dark:hover:after:bg-white">
               <div className="flex items-center gap-x-1 pt-px">
                 <span className="relative flex size-2">
                   <span

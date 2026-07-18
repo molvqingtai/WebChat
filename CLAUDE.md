@@ -26,7 +26,10 @@ npm run dev:firefox          # Firefox dev mode
 npm run check                # Run TypeScript compiler without emitting files
 
 # Linting
-npm run lint                 # ESLint with auto-fix and cache
+npm run format               # oxfmt write mode (formats source in place)
+npm run format:check         # read-only format check
+npm run lint                 # oxlint safe fixes
+npm run lint:check           # read-only lint check
 
 # Building
 npm run build                # Production build for all browsers
@@ -49,6 +52,7 @@ npm run postinstall          # WXT preparation (auto-runs after install)
 ### Extension Structure
 
 WebChat uses WXT's app-based structure (not entrypoints):
+
 - **src/app/content/** - Content script injected into web pages (main chat UI)
 - **src/app/background/** - Service worker handling notifications and extension actions
 - **src/app/options/** - Options page UI for user profile settings
@@ -59,6 +63,7 @@ WebChat uses WXT's app-based structure (not entrypoints):
 Business logic is fully decoupled from UI using Remesh domains:
 
 **Core Domains** (`src/domain/`):
+
 - `ChatRoom.ts` - Site-specific P2P chat room (messages, users, sync)
 - `VirtualRoom.ts` - Global virtual room for cross-site user discovery
 - `MessageList.ts` - Message management and persistence
@@ -69,6 +74,7 @@ Business logic is fully decoupled from UI using Remesh domains:
 - `Toast.ts` - In-app toast messages
 
 **Domain Pattern**:
+
 - `domain/` - Remesh domain definitions (pure logic, queries, commands, events)
 - `domain/externs/` - External dependency interfaces (define contracts)
 - `domain/impls/` - Concrete implementations of externs (WebRTC, storage, etc.)
@@ -92,6 +98,7 @@ Business logic is fully decoupled from UI using Remesh domains:
    - Message types: SyncUser only
 
 **Connection Flow**:
+
 1. User joins VirtualRoom (global presence)
 2. User joins ChatRoom (site-specific, based on `location.origin`)
 3. On peer join: Exchange SyncUser messages
@@ -101,11 +108,13 @@ Business logic is fully decoupled from UI using Remesh domains:
 ### Storage Strategy
 
 Three-tier storage implemented in `src/domain/impls/Storage.ts`:
+
 - **LocalStorage** - Fast, synchronous access (volatile)
 - **IndexDB** - Large data persistence (message history)
 - **BrowserSyncStorage** - Cross-device user profile sync (8kb limit per key)
 
 Key storage keys in `src/constants/config.ts`:
+
 - `USER_INFO_STORAGE_KEY` - User profile (synced)
 - `MESSAGE_LIST_STORAGE_KEY` - Message history (IndexDB)
 - `APP_STATUS_STORAGE_KEY` - App UI state (local)
@@ -113,6 +122,7 @@ Key storage keys in `src/constants/config.ts`:
 ### Message Sync Logic
 
 **Important sync behavior** (documented in ChatRoom.ts:337-355):
+
 - New peer joins → existing peers with newer messages push history
 - Only messages newer than peer's `lastMessageTime` are synced
 - Messages chunked to respect WebRTC size limits
@@ -141,6 +151,7 @@ src/
 ## Path Aliases
 
 TypeScript paths configured in `tsconfig.json`:
+
 - `@/*` → `./src/*`
 
 Import example: `import { ChatRoomDomain } from '@/domain/ChatRoom'`
@@ -148,6 +159,7 @@ Import example: `import { ChatRoomDomain } from '@/domain/ChatRoom'`
 ## Important Constants
 
 In `src/constants/config.ts`:
+
 - `MESSAGE_MAX_LENGTH = 500` - Max message length
 - `MAX_AVATAR_SIZE = 5120` - Max avatar size (bytes) for sync storage
 - `SYNC_HISTORY_MAX_DAYS = 90` - Message history retention
@@ -157,12 +169,14 @@ In `src/constants/config.ts`:
 ## Browser Extension Specifics
 
 **Manifest configuration** (`wxt.config.ts`):
+
 - Permissions: `storage`, `notifications`, `tabs`
 - Matches: `https://*/*`
 - Excludes: localhost, 127.0.0.1, csdn.net, csdn.com
 - Browser-specific manifests for Chrome and Firefox
 
 **Content Script Injection**:
+
 - Shadow DOM mode: `open`
 - Position: `inline` in body (appended last)
 - CSS isolation with `cssInjectionMode: 'ui'`
@@ -171,6 +185,7 @@ In `src/constants/config.ts`:
 ## Working with Remesh Domains
 
 **Creating/Using Domains**:
+
 ```typescript
 // In content script
 const store = Remesh.store({
@@ -179,7 +194,7 @@ const store = Remesh.store({
     IndexDBStorageImpl,
     BrowserSyncStorageImpl,
     ChatRoomImpl,
-    VirtualRoomImpl,
+    VirtualRoomImpl
     // ... other implementations
   ]
 })
@@ -200,10 +215,13 @@ domain.useRemeshEvent(chatRoomDomain.event.OnTextMessageEvent, (message) => {
 ## Validation with Valibot
 
 All runtime message validation uses Valibot (not Zod):
+
 ```typescript
 import * as v from 'valibot'
 
-const schema = v.object({ /* ... */ })
+const schema = v.object({
+  /* ... */
+})
 const isValid = v.safeParse(schema, data).success
 ```
 

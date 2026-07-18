@@ -1,6 +1,7 @@
 import path from 'node:path'
 import { defineConfig } from 'wxt'
-import react from '@vitejs/plugin-react'
+import react, { reactCompilerPreset } from '@vitejs/plugin-react'
+import babel from '@rolldown/plugin-babel'
 import { name, displayName, homepage } from './package.json'
 import svgr from 'vite-plugin-svgr'
 import tailwindcss from '@tailwindcss/vite'
@@ -47,10 +48,9 @@ export default defineConfig({
         __NAME__: JSON.stringify(name)
       },
       plugins: [
-        react({
-          babel: {
-            plugins: ['babel-plugin-react-compiler']
-          }
+        react(),
+        babel({
+          presets: [reactCompilerPreset()]
         }),
         tailwindcss(),
         svgr({

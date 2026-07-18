@@ -162,7 +162,7 @@ const ProfileForm: FC = () => {
               </FormControl>
               <FormDescription>
                 Enabling this option will display scrolling messages on the website.
-                <Link className="ml-2 text-primary" href="https://en.wikipedia.org/wiki/Danmaku_subtitling">
+                <Link className="text-primary ml-2" href="https://en.wikipedia.org/wiki/Danmaku_subtitling">
                   Wikipedia
                 </Link>
               </FormDescription>
