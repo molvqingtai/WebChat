@@ -1,8 +1,8 @@
 import { Remesh } from 'remesh'
-import type { ChatRoomTextMessage } from '@/protocol'
+import type { ProjectedTextMessage } from '@/domain/Message'
 
 export interface Notification {
-  push: (message: ChatRoomTextMessage) => Promise<string | void>
+  push: (message: ProjectedTextMessage) => Promise<string | void>
 }
 
 export const NotificationExtern = Remesh.extern<Notification>({

@@ -9,7 +9,7 @@ import ChatRoomDomain from '@/domain/ChatRoom'
 import UserInfoDomain from '@/domain/UserInfo'
 import Setup from '@/app/content/views/setup'
 import MessageListDomain from '@/domain/MessageList'
-import { useEffect, useLayoutEffect, useRef } from 'react'
+import { useEffect, useRef } from 'react'
 import { Toaster } from 'sonner'
 
 import DanmakuContainer from './components/danmaku-container'
@@ -17,6 +17,8 @@ import DanmakuDomain from '@/domain/Danmaku'
 import AppStatusDomain from '@/domain/AppStatus'
 import { checkDarkMode, cn } from '@/utils'
 import WorldRoomDomain from '@/domain/WorldRoom'
+import ReadinessDomain from '@/domain/Readiness'
+import { AlertCircleIcon, LoaderCircleIcon } from 'lucide-react'
 
 /**
  * Fix requestAnimationFrame error in jest
@@ -42,45 +44,28 @@ export default function App() {
   const appStatusLoadIsFinished = useRemeshQuery(appStatusDomain.query.StatusLoadIsFinishedQuery())
   const chatRoomJoinIsFinished = useRemeshQuery(chatRoomDomain.query.JoinIsFinishedQuery())
   const worldRoomJoinIsFinished = useRemeshQuery(worldRoomDomain.query.JoinIsFinishedQuery())
+  const readinessDomain = useRemeshDomain(ReadinessDomain())
+  const runtimeHostPhase = useRemeshQuery(readinessDomain.query.StateQuery())
 
   const userInfo = useRemeshQuery(userInfoDomain.query.UserInfoQuery())
   const notUserInfo = userInfoLoadFinished && !userInfoSetFinished
 
-  const joinRoom = () => {
-    send(chatRoomDomain.command.JoinRoomCommand())
-    send(worldRoomDomain.command.JoinRoomCommand())
-  }
-
-  const leaveRoom = () => {
-    chatRoomJoinIsFinished && send(chatRoomDomain.command.LeaveRoomCommand())
-    worldRoomJoinIsFinished && send(worldRoomDomain.command.LeaveRoomCommand())
-  }
+  useEffect(() => {
+    if (messageListLoadFinished && userInfoSetFinished) send(chatRoomDomain.command.JoinRoomCommand())
+  }, [userInfoSetFinished, messageListLoadFinished, send, chatRoomDomain.command])
 
   useEffect(() => {
-    if (messageListLoadFinished) {
-      if (userInfoSetFinished) {
-        joinRoom()
-      } else {
-        // Clear simulated data when refreshing on the setup page
-        send(messageListDomain.command.ClearListCommand())
-      }
+    if (chatRoomJoinIsFinished && !worldRoomJoinIsFinished) {
+      send(worldRoomDomain.command.JoinRoomCommand())
     }
-    return () => leaveRoom()
-  }, [userInfoSetFinished, messageListLoadFinished])
+  }, [chatRoomJoinIsFinished, worldRoomJoinIsFinished, send, worldRoomDomain.command])
 
   useEffect(() => {
-    danmakuIsEnabled && send(danmakuDomain.command.MountCommand(danmakuContainerRef.current!))
+    if (danmakuIsEnabled) send(danmakuDomain.command.MountCommand(danmakuContainerRef.current!))
     return () => {
-      danmakuIsEnabled && send(danmakuDomain.command.UnmountCommand())
+      if (danmakuIsEnabled) send(danmakuDomain.command.UnmountCommand())
     }
-  }, [danmakuIsEnabled])
-
-  useLayoutEffect(() => {
-    window.addEventListener('beforeunload', leaveRoom)
-    return () => {
-      window.removeEventListener('beforeunload', leaveRoom)
-    }
-  }, [])
+  }, [danmakuIsEnabled, send, danmakuDomain.command])
 
   const themeMode =
     userInfo?.themeMode === 'system'
@@ -93,6 +78,19 @@ export default function App() {
 
   return (
     <div id="app" className={cn('contents', themeMode)}>
+      {runtimeHostPhase !== 'ready' && (
+        <output
+          aria-live="polite"
+          className="z-infinity fixed right-4 bottom-4 flex items-center gap-2 rounded-md border border-slate-300 bg-white p-2 text-sm text-slate-700 shadow-lg dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
+        >
+          {runtimeHostPhase === 'connecting' ? (
+            <LoaderCircleIcon className="size-4 animate-spin" />
+          ) : (
+            <AlertCircleIcon className="size-4 text-red-600 dark:text-red-400" />
+          )}
+          <span>{runtimeHostPhase === 'connecting' ? 'WebChat connecting' : 'WebChat unavailable'}</span>
+        </output>
+      )}
       {appStatusLoadIsFinished && (
         <>
           <AppMain>

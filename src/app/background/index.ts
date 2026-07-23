@@ -1,8 +1,18 @@
 import { browser, defineBackground } from '#imports'
-import { ProvideAdapter } from '@/service/adapter/runtimeMessage'
+import { ProvideAdapter } from '@/service/adapter/runtime'
 import { defineProxy } from 'comctx'
 import { AppAction } from '@/service/AppAction'
 import { Notification } from '@/service/Notification'
+import { COORDINATOR_NAMESPACE } from '@/runtime/Contract'
+import type { RuntimeCoordinator } from '@/runtime/Contract'
+import {
+  ensureHost,
+  registerPage,
+  relayOffscreenMessages,
+  restore,
+  unregisterPage,
+  watchOffscreenClosed
+} from '@/runtime/Background'
 
 export default defineBackground({
   type: 'module',
@@ -17,6 +27,16 @@ export default defineBackground({
     provideNotification(new ProvideAdapter())
 
     const appAction = provideAppAction(new ProvideAdapter())
+
+    // Sole host coordinator: pages request the shared Runtime host here.
+    const [provideCoordinator] = defineProxy<() => RuntimeCoordinator>(
+      () => ({ ensureHost, registerPage, unregisterPage }),
+      { namespace: `${COORDINATOR_NAMESPACE}:${browser.runtime.id}` }
+    )
+    provideCoordinator(new ProvideAdapter())
+    if (!import.meta.env.FIREFOX) relayOffscreenMessages()
+    watchOffscreenClosed()
+    void restore()
 
     browser.action.onClicked.addListener(() => appAction.openOptionsPage())
   }

@@ -2,12 +2,12 @@ import type { FC } from 'react'
 import { useState, type ReactElement } from 'react'
 
 import { type MessageItemProps } from './message-item'
-import { type PromptItemProps } from './prompt-item'
+import { type NoticeItemProps } from './notice-item'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Virtuoso } from 'react-virtuoso'
 
 export interface MessageListProps {
-  children?: Array<ReactElement<MessageItemProps | PromptItemProps>>
+  children?: Array<ReactElement<MessageItemProps | NoticeItemProps>>
 }
 const MessageList: FC<MessageListProps> = ({ children }) => {
   const [scrollParentRef, setScrollParentRef] = useState<HTMLDivElement | null>(null)
@@ -24,7 +24,7 @@ const MessageList: FC<MessageListProps> = ({ children }) => {
         customScrollParent={scrollParentRef!}
         computeItemKey={(_, item) => item.props.data.id}
         skipAnimationFrameInResizeObserver
-        itemContent={(_, item: ReactElement<MessageItemProps | PromptItemProps>) => item}
+        itemContent={(_, item: ReactElement<MessageItemProps | NoticeItemProps>) => item}
       />
     </ScrollArea>
   )

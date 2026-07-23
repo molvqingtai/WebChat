@@ -1,6 +1,6 @@
 import { Remesh } from 'remesh'
 import { DanmakuExtern } from './externs/Danmaku'
-import type { ChatRoomTextMessage } from '@/protocol'
+import type { ProjectedTextMessage } from '@/domain/Message'
 import ChatRoomDomain from '@/domain/ChatRoom'
 import UserInfoDomain from './UserInfo'
 import { map, merge } from 'rxjs'
@@ -49,7 +49,7 @@ const DanmakuDomain = Remesh.domain({
 
     const PushCommand = domain.command({
       name: 'Danmaku.PushCommand',
-      impl: (_, message: ChatRoomTextMessage) => {
+      impl: (_, message: ProjectedTextMessage) => {
         danmakuExtern.push(message)
         return [PushEvent(message)]
       }
@@ -57,7 +57,7 @@ const DanmakuDomain = Remesh.domain({
 
     const UnshiftCommand = domain.command({
       name: 'Danmaku.UnshiftCommand',
-      impl: (_, message: ChatRoomTextMessage) => {
+      impl: (_, message: ProjectedTextMessage) => {
         danmakuExtern.unshift(message)
         return [UnshiftEvent(message)]
       }
@@ -87,11 +87,11 @@ const DanmakuDomain = Remesh.domain({
       }
     })
 
-    const PushEvent = domain.event<ChatRoomTextMessage>({
+    const PushEvent = domain.event<ProjectedTextMessage>({
       name: 'Danmaku.PushEvent'
     })
 
-    const UnshiftEvent = domain.event<ChatRoomTextMessage>({
+    const UnshiftEvent = domain.event<ProjectedTextMessage>({
       name: 'Danmaku.UnshiftEvent'
     })
 

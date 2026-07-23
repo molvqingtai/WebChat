@@ -3,7 +3,15 @@
   "singleQuote": true,
   "trailingComma": "none",
   "printWidth": 120,
-  "ignorePatterns": [".output", ".wxt", "patches", "src/components/ui", "src/components/magicui", "src/lib/uglyAvatar"],
+  "ignorePatterns": [
+    ".output",
+    ".wxt",
+    "patches",
+    "src/components/ui",
+    "src/components/magicui",
+    "src/lib/uglyAvatar",
+    "docs/architecture/*.html"
+  ],
   "sortPackageJson": false,
   "sortTailwindcss": {
     "functions": ["clsx"]

@@ -1,7 +1,7 @@
 import { browser } from '#imports'
 import { NotificationExtern, type Notification } from '@/domain/externs/Notification'
 
-import { InjectAdapter } from '@/service/adapter/runtimeMessage'
+import { InjectAdapter } from '@/service/adapter/runtime'
 import { defineProxy } from 'comctx'
 
 const [, injectNotification] = defineProxy(() => ({}) as Notification, {

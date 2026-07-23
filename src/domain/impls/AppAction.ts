@@ -1,7 +1,7 @@
 import { browser } from '#imports'
 import { AppActionExtern, type AppAction } from '@/domain/externs/AppAction'
 
-import { InjectAdapter } from '@/service/adapter/runtimeMessage'
+import { InjectAdapter } from '@/service/adapter/runtime'
 import { defineProxy } from 'comctx'
 
 const [, injectAppAction] = defineProxy(() => ({}) as AppAction, {

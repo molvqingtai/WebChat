@@ -29,10 +29,10 @@ const UserInfoDomain = Remesh.domain({
       default: null
     })
 
-    const UserInfoLoadStatusModule = StatusModule(domain, {
+    const LoadStatus = StatusModule(domain, {
       name: 'UserInfo.LoadStatusModule'
     })
-    const UserInfoSetStatusModule = StatusModule(domain, {
+    const SetStatus = StatusModule(domain, {
       name: 'UserInfo.SetStatusModule'
     })
 
@@ -50,9 +50,7 @@ const UserInfoDomain = Remesh.domain({
           UserInfoState().new(userInfo),
           UpdateUserInfoEvent(),
           SyncToStorageEvent(),
-          userInfo
-            ? UserInfoSetStatusModule.command.SetFinishedCommand()
-            : UserInfoSetStatusModule.command.SetInitialCommand()
+          userInfo ? SetStatus.command.SetFinishedCommand() : SetStatus.command.SetInitialCommand()
         ]
       }
     })
@@ -82,23 +80,21 @@ const UserInfoDomain = Remesh.domain({
           UserInfoState().new(userInfo),
           UpdateUserInfoEvent(),
           SyncToStateEvent(userInfo),
-          userInfo
-            ? UserInfoSetStatusModule.command.SetFinishedCommand()
-            : UserInfoSetStatusModule.command.SetInitialCommand()
+          userInfo ? SetStatus.command.SetFinishedCommand() : SetStatus.command.SetInitialCommand()
         ]
       }
     })
 
     storageEffect
       .set(SyncToStorageEvent)
-      .get<UserInfo>((value) => [SyncToStateCommand(value), UserInfoLoadStatusModule.command.SetFinishedCommand()])
+      .get<UserInfo>((value) => [SyncToStateCommand(value), LoadStatus.command.SetFinishedCommand()])
       .watch<UserInfo>((value) => [SyncToStateCommand(value)])
 
     return {
       query: {
         UserInfoQuery,
-        UserInfoLoadIsFinishedQuery: UserInfoLoadStatusModule.query.IsFinishedQuery,
-        UserInfoSetIsFinishedQuery: UserInfoSetStatusModule.query.IsFinishedQuery
+        UserInfoLoadIsFinishedQuery: LoadStatus.query.IsFinishedQuery,
+        UserInfoSetIsFinishedQuery: SetStatus.query.IsFinishedQuery
       },
       command: {
         UpdateUserInfoCommand

@@ -29,7 +29,10 @@ export default defineConfig({
     }
     return {
       chrome: {
-        ...common
+        ...common,
+        // Offscreen Document hosts the shared WebRTC Runtime on Chrome/Edge;
+        // Firefox hosts it in the persistent background page instead.
+        permissions: [...common.permissions, 'offscreen']
       },
       firefox: {
         ...common,

@@ -5,11 +5,11 @@ import FormatDate from './format-date'
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar'
 
 import { Markdown } from '@/components/markdown'
-import { type TextMessage } from '@/domain/MessageList'
+import { type ProjectedTextMessage } from '@/domain/MessageList'
 import { cn } from '@/utils'
 
 export interface MessageItemProps {
-  data: TextMessage
+  data: ProjectedTextMessage
   index?: number
   like: boolean
   hate: boolean
@@ -30,12 +30,12 @@ const MessageItem: FC<MessageItemProps> = memo((props) => {
 
   // Check if mentions exist
   if (props.data.mentions && props.data.mentions.length > 0) {
-    const mentionPositions = props.data.mentions.flatMap((user) =>
-      user.positions.map((position) => ({ name: user.name, id: user.id, position }))
+    const mentionRanges = props.data.mentions.flatMap((user) =>
+      user.ranges.map((position) => ({ name: user.name, id: user.id, position }))
     )
 
     // Replace from back to front according to position to avoid affecting previous indices
-    mentionPositions
+    mentionRanges
       .sort((a, b) => b.position[0] - a.position[0])
       .forEach(({ position, name }) => {
         const [start, end] = position
@@ -52,15 +52,18 @@ const MessageItem: FC<MessageItemProps> = memo((props) => {
       )}
     >
       <Avatar>
-        <AvatarImage src={props.data.sender.avatar} className="size-full" alt="avatar" />
-        <AvatarFallback>{props.data.sender.name.at(0)}</AvatarFallback>
+        <AvatarImage src={props.data.author.avatar} className="size-full" alt="avatar" />
+        <AvatarFallback>{props.data.author.name.at(0)}</AvatarFallback>
       </Avatar>
       <div className="overflow-hidden">
         <div className="grid grid-cols-[1fr_auto] items-center gap-x-2 leading-none">
           <div className="truncate text-sm font-semibold text-slate-600 dark:text-slate-50">
-            {props.data.sender.name}
+            {props.data.author.name}
           </div>
-          <FormatDate className="text-xs text-slate-400 dark:text-slate-100" date={props.data.sentAt}></FormatDate>
+          <FormatDate
+            className="text-xs text-slate-400 dark:text-slate-100"
+            date={props.data.hlc.timestamp}
+          ></FormatDate>
         </div>
         <div>
           <div className="pb-1">

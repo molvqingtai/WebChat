@@ -3,12 +3,11 @@ import { useRemeshDomain, useRemeshQuery, useRemeshSend } from 'remesh-react'
 
 import MessageList from '../../components/message-list'
 import MessageItem from '../../components/message-item'
-import PromptItem from '../../components/prompt-item'
+import NoticeItem from '../../components/notice-item'
 import UserInfoDomain from '@/domain/UserInfo'
 import ChatRoomDomain from '@/domain/ChatRoom'
 import MessageListDomain from '@/domain/MessageList'
-import useDataId from '@/hooks/useDataId'
-import { compareHLC } from '@/utils'
+import { compareEventPosition } from '@/domain/Message'
 
 const Main: FC = () => {
   const send = useRemeshSend()
@@ -17,8 +16,6 @@ const Main: FC = () => {
   const userInfoDomain = useRemeshDomain(UserInfoDomain())
   const userInfo = useRemeshQuery(userInfoDomain.query.UserInfoQuery())
   const _messageList = useRemeshQuery(messageListDomain.query.ListQuery())
-
-  const messageListId = useDataId(_messageList)
 
   const messageList = useMemo(
     () =>
@@ -33,8 +30,8 @@ const Main: FC = () => {
           }
           return message
         })
-        .toSorted((a, b) => compareHLC(a.hlc, b.hlc)),
-    [messageListId, userInfo?.id]
+        .toSorted(compareEventPosition),
+    [_messageList, userInfo?.id]
   )
 
   const handleLikeChange = (messageId: string) => {
@@ -59,11 +56,11 @@ const Main: FC = () => {
             className="animate-in fade-in-0 duration-300"
           ></MessageItem>
         ) : (
-          <PromptItem
+          <NoticeItem
             key={message.id}
             data={message}
             className={`${index === 0 ? 'pt-4' : ''} ${index === messageList.length - 1 ? 'pb-4' : ''}`}
-          ></PromptItem>
+          ></NoticeItem>
         )
       )}
     </MessageList>

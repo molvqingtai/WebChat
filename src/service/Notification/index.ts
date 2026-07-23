@@ -1,7 +1,7 @@
 import type { Notification as NotificationExternType } from '@/domain/externs/Notification'
-import type { ChatRoomTextMessage } from '@/protocol'
+import type { ProjectedTextMessage } from '@/domain/Message'
 import { browser } from '#imports'
-import type { MessageTab } from '@/service/adapter/runtimeMessage'
+import type { MessageTab } from '@/service/adapter/runtime'
 
 export class Notification implements NotificationExternType {
   historyNotificationTabs = new Map<string, MessageTab>()
@@ -34,7 +34,7 @@ export class Notification implements NotificationExternType {
       this.historyNotificationTabs.delete(id)
     })
   }
-  async push(message: ChatRoomTextMessage & { meta?: { tab?: MessageTab } }) {
+  async push(message: ProjectedTextMessage & { meta?: { tab?: MessageTab } }) {
     const messageTab = message.meta?.tab
     const tabs = await browser.tabs.query({ active: true })
     const hasActiveSameSiteTab =
@@ -47,11 +47,11 @@ export class Notification implements NotificationExternType {
 
     const id = await browser.notifications.create({
       type: 'basic',
-      iconUrl: message.sender.avatar,
-      title: message.sender.name,
+      iconUrl: message.author.avatar,
+      title: message.author.name,
       message: message.body,
       contextMessage: messageTab?.url
     })
-    messageTab && this.historyNotificationTabs.set(id, messageTab)
+    if (messageTab) this.historyNotificationTabs.set(id, messageTab)
   }
 }

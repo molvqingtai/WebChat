@@ -53,97 +53,92 @@ npm run postinstall          # WXT preparation (auto-runs after install)
 
 WebChat uses WXT's app-based structure (not entrypoints):
 
-- **src/app/content/** - Content script injected into web pages (main chat UI)
-- **src/app/background/** - Service worker handling notifications and extension actions
+- **src/app/content/** - Content-script UI; each page connects to the shared Runtime through comctx
+- **src/app/background/** - Extension actions, notifications, Runtime coordination, and the Firefox MV2 Runtime host
+- **src/app/offscreen/** - Chrome MV3 host document for the shared headless Runtime
 - **src/app/options/** - Options page UI for user profile settings
 - Entry files: `index.ts` or `index.tsx` in each app directory
 
 ### Domain-Driven Design (Remesh)
 
-Business logic is fully decoupled from UI using Remesh domains:
+Remesh is used across two ownership layers:
 
-**Core Domains** (`src/domain/`):
+**Application/page Domains** (`src/domain/`):
 
-- `ChatRoom.ts` - Site-specific P2P chat room (messages, users, sync)
-- `VirtualRoom.ts` - Global virtual room for cross-site user discovery
-- `MessageList.ts` - Message management and persistence
-- `UserInfo.ts` - User profile state
-- `AppStatus.ts` - Application state (open/minimized)
-- `Danmaku.ts` - Danmaku/bullet comments display
-- `Notification.ts` - Browser notifications
-- `Toast.ts` - In-app toast messages
-
-**Domain Pattern**:
-
-- `domain/` - Remesh domain definitions (pure logic, queries, commands, events)
-- `domain/externs/` - External dependency interfaces (define contracts)
-- `domain/impls/` - Concrete implementations of externs (WebRTC, storage, etc.)
+- `ChatRoom.ts` and `WorldRoom.ts` - UI-facing room state and Runtime event projection
+- `Message.ts`, `MessageList.ts`, and `MessageProjection.ts` - Local record model, persistence workflow, ordering, and reaction LWW projection
+- `UserInfo.ts`, `AppStatus.ts`, `Danmaku.ts`, `Notification.ts`, and `Toast.ts` - Page and extension behavior
+- `domain/externs/` - Application dependency contracts
+- `domain/impls/` - Page-side adapters, including the origin-owned message store and Runtime client
 - `domain/modules/` - Reusable domain sub-modules
+
+**Headless Runtime Domains** (`src/domain/runtime/`):
+
+- `Network.ts` - Trusted peer transport, World/Chat room orchestration, identity binding, and bounded history synchronization
+- `Lifecycle.ts` - Per-origin page leases and the shared host lifecycle
+- `Delivery.ts` - Volatile delivery and durable-settlement acknowledgement
+- `runtime/Server.ts` creates the headless Remesh store and injects clock, identity, wire, and page-port externs through adapters.
 
 ### P2P Communication Architecture
 
-**Two-Layer Room System**:
+The content pages are UI/comctx clients. They do not own peer rooms or duplicate durable history. A single shared headless Runtime lives in a Chrome MV3 offscreen document or the persistent Firefox MV2 background page. The Runtime owns Artico WebRTC transport, trusted `sourcePeerId` context, World/Chat sessions, decode and delivery queues, and history scheduling, supply, cancellation, and admission. After the last page for an origin detaches, that origin's domain state enters a five-second grace period; this does not release the shared Runtime or any other domain.
 
-1. **ChatRoom** (Site-specific):
-   - RoomId: Hash of current page's origin
-   - Users on same site chat in isolated rooms
-   - Message types: Text, Like, Hate, SyncUser, SyncHistory
-   - History sync: Last 90 days (`SYNC_HISTORY_MAX_DAYS`)
-   - Message size limit: 256KiB (`WEB_RTC_MAX_MESSAGE_SIZE`)
+`src/protocol/` is the third-party-facing peer boundary:
 
-2. **VirtualRoom** (Global):
-   - RoomId: `WEB_CHAT_VIRTUAL_ROOM` constant
-   - Cross-site user discovery
-   - Shares online user presence across different websites
-   - Message types: SyncUser only
+- Chat v2 is the closed union `session | text | reaction | history-request | history-response`.
+- World v2 has no message `type`; trusted room context selects its strict `{sessionId,user,sites}` shape.
+- Peer frames use the fixed `base64(deflate(UTF8(JSON)))` codec and strict schemas. Payload identity never replaces the transport-provided source identity.
 
 **Connection Flow**:
 
-1. User joins VirtualRoom (global presence)
-2. User joins ChatRoom (site-specific, based on `location.origin`)
-3. On peer join: Exchange SyncUser messages
-4. Sync message history if peer's lastMessageTime is older
-5. WebRTC data channels handle all message transport
+1. A content page registers its `{ domain, pageId }` lease and attaches to the shared Runtime through comctx.
+2. The Runtime joins the v2 World room and the origin-derived v2 Chat room, then projects trusted snapshots and events to attached pages.
+3. The Runtime allocates event IDs/HLC values centrally; the page persists the canonical local record before transport is attempted.
+4. History is pulled recent-first with exclusive `(hlc, id)` cursors and settles into the requesting page's origin store.
+5. Detaching the last page starts that origin domain's five-second grace period. Reconnecting during the grace period retains that domain. Expiry releases only its origin Chat room, World presence contribution, sessions, and history/delivery state; the shared Runtime host and all other active or grace-period domains remain alive.
 
 ### Storage Strategy
 
-Three-tier storage implemented in `src/domain/impls/Storage.ts`:
+Page-owned storage is split by purpose:
 
-- **LocalStorage** - Fast, synchronous access (volatile)
-- **IndexDB** - Large data persistence (message history)
-- **BrowserSyncStorage** - Cross-device user profile sync (8kb limit per key)
+- `src/domain/impls/Storage.ts` provides local storage for UI state and browser sync storage for the user profile.
+- `src/domain/impls/MessageStore.ts` owns the per-origin IndexedDB store of exact `LocalRecord` values.
+- Canonical records use atomic first-value-wins persistence. Durable event status is monotonic `pending -> sent`; received peer events use `received`. System notices and record metadata remain local-only.
+- The Runtime may buffer unacknowledged deliveries, but it does not own or copy durable history. A page acknowledges only after its origin store settles the record.
 
 Key storage keys in `src/constants/config.ts`:
 
-- `USER_INFO_STORAGE_KEY` - User profile (synced)
-- `MESSAGE_LIST_STORAGE_KEY` - Message history (IndexDB)
-- `APP_STATUS_STORAGE_KEY` - App UI state (local)
+- `USER_INFO_STORAGE_KEY` - User profile (browser sync storage)
+- `APP_STATUS_STORAGE_KEY` - App UI state (local storage)
 
-### Message Sync Logic
+### History Synchronization
 
-**Important sync behavior** (documented in ChatRoom.ts:337-355):
-
-- New peer joins → existing peers with newer messages push history
-- Only messages newer than peer's `lastMessageTime` are synced
-- Messages chunked to respect WebRTC size limits
-- Incremental sync (not full 90-day diff) - may result in incomplete history for peers joining at different times
+- `HISTORY_WINDOW_DAYS = 180` is a peer-history candidate window, not a local durable-retention or deletion policy.
+- The requester freezes `requesterNow - 180 days` once at sync start. Retries, pagination, and provider failover do not reread its injected clock.
+- Each provider independently freezes `providerNow - 180 days` at supply-session admission. Page failover, later cursors, and successor promotion retain that admitted cutoff.
+- Cutoffs are not sent on the wire and do not need to match. Provider filtering is non-destructive; the requester remains final acceptance authority.
+- Both sides accept an event exactly at their own cutoff and exclude or reject only earlier events. Clock skew may omit a boundary candidate but cannot expand the requester's window.
+- A history session is recent-first and bounded to 10,000 events or 8MiB with a 10-second timeout. Provider admission allows at most 4 active jobs, 32 admitted jobs including dormant successors, and 8KiB of queued metadata. Each page supply has a five-second physical cancellation boundary.
 
 ## Code Organization
 
 ```
 src/
-├── app/              # WXT applications (content, background, options)
-├── domain/           # Remesh domains (business logic)
-│   ├── externs/      # External dependency interfaces
-│   ├── impls/        # Concrete implementations
-│   └── modules/      # Reusable domain modules
+├── app/              # WXT applications (content, background, offscreen, options)
+├── protocol/         # Public v2 peer types, strict schemas, limits, and fixed codec
+├── domain/           # Application/page Remesh domains and local models
+│   ├── externs/      # Application dependency interfaces
+│   ├── impls/        # Page-side adapters and origin-owned persistence
+│   ├── modules/      # Reusable domain modules
+│   └── runtime/      # Headless Runtime Remesh domains
+├── runtime/          # Runtime server, host lifecycle, wire pipeline, and internal RPC
+├── service/adapter/  # Browser/runtime/comctx adapters
 ├── components/       # React UI components
 │   ├── ui/           # shadcn/ui base components
 │   └── magicui/      # Magic UI animated components
 ├── utils/            # Pure utility functions
 ├── constants/        # App constants and config
 ├── hooks/            # React hooks
-├── messenger/        # Extension messaging (webext-bridge)
 ├── lib/              # Third-party library integrations
 └── assets/           # Static assets (images, styles)
 ```
@@ -158,13 +153,20 @@ Import example: `import { ChatRoomDomain } from '@/domain/ChatRoom'`
 
 ## Important Constants
 
-In `src/constants/config.ts`:
+Application and Runtime constants in `src/constants/config.ts`:
 
-- `MESSAGE_MAX_LENGTH = 500` - Max message length
-- `MAX_AVATAR_SIZE = 5120` - Max avatar size (bytes) for sync storage
-- `SYNC_HISTORY_MAX_DAYS = 90` - Message history retention
-- `WEB_RTC_MAX_MESSAGE_SIZE = 262144` - 256KiB WebRTC limit
-- `VIRTUAL_ROOM_ID = 'WEB_CHAT_VIRTUAL_ROOM'` - Global room identifier
+- `MESSAGE_MAX_LENGTH = 500` - Maximum visible draft length
+- `MESSAGE_IMAGE_TARGET_SIZE = 30 * 1024` - Image-compression target; canonical event size remains authoritative
+- `MAX_AVATAR_SIZE = 5120` - Maximum avatar size in browser sync storage
+- `HISTORY_WINDOW_DAYS = 180` - Frozen peer-history candidate window
+- `RUNTIME_DOMAIN_GRACE_MS = 5000` - Per-domain last-page detach grace; it is not the shared host lifetime
+
+Public limits in `src/protocol/Limits.ts` are deliberately separate:
+
+- A wire frame is at most 64KiB; a history response must be strictly less than 64KiB.
+- Decoded JSON is at most 256KiB.
+- A canonical chat event is at most 48KiB; a `User` value is at most 8KiB.
+- A history response contains at most 100 events.
 
 ## Browser Extension Specifics
 
@@ -184,37 +186,13 @@ In `src/constants/config.ts`:
 
 ## Working with Remesh Domains
 
-**Creating/Using Domains**:
+A Remesh domain defines state transitions with Queries, Commands, Events, and Effects. Keep browser, transport, clock, storage, and internal page-port capabilities behind Extern contracts and inject concrete adapters when constructing the appropriate page or Runtime store.
 
-```typescript
-// In content script
-const store = Remesh.store({
-  externs: [
-    LocalStorageImpl,
-    IndexDBStorageImpl,
-    BrowserSyncStorageImpl,
-    ChatRoomImpl,
-    VirtualRoomImpl
-    // ... other implementations
-  ]
-})
-
-// In React component
-const send = domain.useRemeshSend()
-const userList = domain.useRemeshQuery(chatRoomDomain.query.UserListQuery())
-
-// Send command
-send(chatRoomDomain.command.SendTextMessageCommand('Hello'))
-
-// Subscribe to event
-domain.useRemeshEvent(chatRoomDomain.event.OnTextMessageEvent, (message) => {
-  console.log('New message:', message)
-})
-```
+Page domains may project Runtime snapshots and events into UI state and origin-owned persistence. Peer decoding, source binding, queues, history state machines, and host RPC belong to the shared Runtime; public wire schemas and resource checks belong to `src/protocol/`.
 
 ## Validation with Valibot
 
-All runtime message validation uses Valibot (not Zod):
+Public peer-message schemas use Valibot (not Zod):
 
 ```typescript
 import * as v from 'valibot'

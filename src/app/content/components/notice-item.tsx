@@ -1,22 +1,22 @@
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
-import type { SystemPromptMessage } from '@/domain/MessageList'
+import type { SystemNoticeMessage } from '@/domain/MessageList'
 import { cn } from '@/utils'
 import { AvatarImage } from '@radix-ui/react-avatar'
 import { type FC, memo } from 'react'
 
-export interface PromptItemProps {
-  data: SystemPromptMessage
+export interface NoticeItemProps {
+  data: SystemNoticeMessage
   className?: string
 }
 
-const PromptItem: FC<PromptItemProps> = memo(({ data, className }) => {
+const NoticeItem: FC<NoticeItemProps> = memo(({ data, className }) => {
   return (
     <div className={cn('flex justify-center py-1 px-4 ', className)}>
       <Badge variant="secondary" className="gap-x-2 rounded-full px-2 font-medium text-slate-400 dark:bg-slate-800">
         <Avatar className="size-4">
-          <AvatarImage src={data.sender.avatar} className="size-full" alt="avatar" />
-          <AvatarFallback>{data.sender.name.at(0)}</AvatarFallback>
+          <AvatarImage src={data.user.avatar} className="size-full" alt="avatar" />
+          <AvatarFallback>{data.user.name.at(0)}</AvatarFallback>
         </Avatar>
         {data.body}
       </Badge>
@@ -24,6 +24,6 @@ const PromptItem: FC<PromptItemProps> = memo(({ data, className }) => {
   )
 })
 
-PromptItem.displayName = 'PromptItem'
+NoticeItem.displayName = 'NoticeItem'
 
-export default PromptItem
+export default NoticeItem
