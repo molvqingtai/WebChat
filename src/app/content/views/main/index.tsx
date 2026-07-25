@@ -3,6 +3,8 @@ import { useRemeshDomain, useRemeshQuery, useRemeshSend } from 'remesh-react'
 
 import MessageList from '../../components/message-list'
 import MessageItem from '../../components/message-item'
+import NoticeGroup from '../../components/notice-group'
+import { groupAdjacentNotices, messageRowKey } from '../../components/notice-grouping'
 import NoticeItem from '../../components/notice-item'
 import UserInfoDomain from '@/domain/UserInfo'
 import ChatRoomDomain from '@/domain/ChatRoom'
@@ -19,18 +21,20 @@ const Main: FC = () => {
 
   const messageList = useMemo(
     () =>
-      _messageList
-        .map((message) => {
-          if (message.type === 'text') {
-            return {
-              ...message,
-              like: message.reactions.likes.some((likeUser) => likeUser.id === userInfo?.id),
-              hate: message.reactions.hates.some((hateUser) => hateUser.id === userInfo?.id)
+      groupAdjacentNotices(
+        _messageList
+          .map((message) => {
+            if (message.type === 'text') {
+              return {
+                ...message,
+                like: message.reactions.likes.some((likeUser) => likeUser.id === userInfo?.id),
+                hate: message.reactions.hates.some((hateUser) => hateUser.id === userInfo?.id)
+              }
             }
-          }
-          return message
-        })
-        .toSorted(compareEventPosition),
+            return message
+          })
+          .toSorted(compareEventPosition)
+      ),
     [_messageList, userInfo?.id]
   )
 
@@ -44,25 +48,39 @@ const Main: FC = () => {
 
   return (
     <MessageList>
-      {messageList.map((message, index) =>
-        message.type === 'text' ? (
-          <MessageItem
-            key={message.id}
-            data={message}
-            like={message.like}
-            hate={message.hate}
-            onLikeChange={() => handleLikeChange(message.id)}
-            onHateChange={() => handleHateChange(message.id)}
-            className="animate-in fade-in-0 duration-300"
-          ></MessageItem>
-        ) : (
+      {messageList.map((message, index) => {
+        const key = messageRowKey(message)
+        if (message.type === 'text') {
+          return (
+            <MessageItem
+              key={key}
+              data={message}
+              like={message.like}
+              hate={message.hate}
+              onLikeChange={() => handleLikeChange(message.id)}
+              onHateChange={() => handleHateChange(message.id)}
+              className="animate-in fade-in-0 duration-300"
+            />
+          )
+        }
+        if (message.type === 'notice-group') {
+          return (
+            <NoticeGroup
+              key={key}
+              notices={message.notices}
+              first={index === 0}
+              last={index === messageList.length - 1}
+            />
+          )
+        }
+        return (
           <NoticeItem
-            key={message.id}
+            key={key}
             data={message}
             className={`${index === 0 ? 'pt-4' : ''} ${index === messageList.length - 1 ? 'pb-4' : ''}`}
-          ></NoticeItem>
+          />
         )
-      )}
+      })}
     </MessageList>
   )
 }

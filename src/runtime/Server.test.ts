@@ -487,6 +487,7 @@ const broadcastsToRoom = (fake: ReturnType<typeof createFakeTransport>, roomId: 
 const session = (user = REMOTE_USER) => ({
   type: MESSAGE_TYPE.SESSION,
   sessionId: `session-${user.id}`,
+  presenceId: `presence-${user.id}`,
   user
 })
 
@@ -1042,7 +1043,7 @@ describe('RuntimeServer lifecycle', () => {
 
     await server.detachPage({ domain: DOMAIN, pageId: 'page-b' })
     clock.advance(RUNTIME_DOMAIN_GRACE_MS + 1)
-    expect(fake.joined.has(roomId)).toBe(false)
+    await vi.waitFor(() => expect(fake.joined.has(roomId)).toBe(false))
     expect(await server.replayInbound({ domain: DOMAIN, after: 0 })).toEqual([])
   })
 
@@ -1057,7 +1058,7 @@ describe('RuntimeServer lifecycle', () => {
 
     expect((await server.getSnapshot()).domains[0].phase).toBe('grace')
     clock.advance(RUNTIME_DOMAIN_GRACE_MS + 1)
-    expect(fake.joined.has(roomId)).toBe(false)
+    await vi.waitFor(() => expect(fake.joined.has(roomId)).toBe(false))
   })
 
   it('reattaches inside grace without recreating the room or losing buffered events', async () => {
@@ -1165,12 +1166,12 @@ describe('RuntimeServer provisional recovery races', () => {
     const currentSession = snapshot.domains[0].localSession
     const currentPresence = snapshot.world.localPresence
     if (!currentSession || !currentPresence) throw new Error('Committed local identity missing')
-    const currentSessionMessage: ChatRoomMessage = {
+    const [currentSessionMessage] = broadcastsToRoom(fake, roomId) as ChatRoomMessage[]
+    expect(currentSessionMessage).toMatchObject({
       type: MESSAGE_TYPE.SESSION,
       sessionId: currentSession.sessionId,
       user: currentSession.user
-    }
-    expect(broadcastsToRoom(fake, roomId)).toEqual([currentSessionMessage])
+    })
     expect(broadcastsToRoom(fake, worldRoomId)).toEqual([currentPresence])
     expect.soft(sentToPeer(fake, roomId, 'both-missed-peer')).toEqual([currentSessionMessage])
     expect.soft(sentToPeer(fake, worldRoomId, 'both-missed-peer')).toEqual([currentPresence])

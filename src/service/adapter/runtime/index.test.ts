@@ -113,6 +113,21 @@ describe('Runtime browser adapters', () => {
     listener(providerMessage('forged'), { url: 'chrome-extension://test-extension/options.html' } as never)
     listener(providerMessage('namespace', { namespace: 'UNKNOWN' }), offscreen)
     listener(providerMessage('direction', { sender: { type: 'injector' } }), offscreen)
+    listener(
+      providerMessage('presence-request', {
+        sender: { type: 'injector' },
+        namespace: 'WEB_CHAT_RUNTIME_PRESENCE_STORE_V1:test-extension',
+        meta: {}
+      }),
+      offscreen
+    )
+    listener(
+      providerMessage('presence-response', {
+        namespace: 'WEB_CHAT_RUNTIME_PRESENCE_STORE_V1:test-extension',
+        meta: {}
+      }),
+      { url: 'chrome-extension://test-extension/background.js' } as never
+    )
     listener(providerMessage('schema', { id: '' }), offscreen)
     listener(providerMessage('background', { meta: {} }), offscreen)
     listener(providerMessage('target', { meta: { tab: { id: 7, url: 'http://example.com/' } } }), offscreen)

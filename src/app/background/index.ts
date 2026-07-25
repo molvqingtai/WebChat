@@ -2,6 +2,7 @@ import { browser, defineBackground } from '#imports'
 import { ProvideAdapter } from '@/service/adapter/runtime'
 import { defineProxy } from 'comctx'
 import { AppAction } from '@/service/AppAction'
+import { defineAppActionProxy, defineNotificationProxy } from '@/service/Contract'
 import { Notification } from '@/service/Notification'
 import { COORDINATOR_NAMESPACE } from '@/runtime/Contract'
 import type { RuntimeCoordinator } from '@/runtime/Contract'
@@ -17,12 +18,8 @@ import {
 export default defineBackground({
   type: 'module',
   main() {
-    const [provideNotification] = defineProxy(() => new Notification(), {
-      namespace: browser.runtime.id
-    })
-    const [provideAppAction] = defineProxy(() => new AppAction(), {
-      namespace: browser.runtime.id
-    })
+    const [provideNotification] = defineNotificationProxy(() => new Notification(), browser.runtime.id)
+    const [provideAppAction] = defineAppActionProxy(() => new AppAction(), browser.runtime.id)
 
     provideNotification(new ProvideAdapter())
 

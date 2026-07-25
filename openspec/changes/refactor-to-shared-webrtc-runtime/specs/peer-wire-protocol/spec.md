@@ -2,7 +2,7 @@
 
 ### Requirement: Public protocol module is pure and explicitly bounded
 
-The code-level public module `src/protocol/index.ts` SHALL be the third-party-facing peer contract without introducing a package, publishing flow, or SDK. Its wire structures SHALL be exactly the Owner-frozen `ChatUser`, `ChatSession`, `HLC`, `MentionedUser`, `SessionMessage`, `TextMessage`, `ReactionMessage`, `ChatMessage`, `HistoryCursor`, `HistoryRequestMessage`, `HistoryResponseMessage`, `ChatRoomMessage`, `ChatSite`, and `WorldRoomMessage` contracts. It SHALL additionally export only their strict schemas, pure parse/check/validation, public limits/constants, and the public codec surface (`WireCodec`, `NativeWireCodec` reference implementation, `WireCodecError`). It SHALL NOT add or rename any field/type, export a structural alias or compatibility DTO, or expose an optional/open metadata bag without explicit Owner intervention. Pure validation SHALL cover closed-union and unknown-key rejection, field/resource limits, mention `ranges`, user/message size, origin-only and uniqueness rules, history-response reference completeness, and explicit-`now` HLC rules. The `NativeWireCodec` SHALL own only the fixed codec/security algorithm; the public protocol SHALL NOT export local persistence/UI models, projections, ordering implementations, Runtime lifecycle or page-host RPC contracts, WirePipeline queue/drop/apply/flush types, or application orchestration.
+The code-level public module `src/protocol/index.ts` SHALL be the third-party-facing peer contract without introducing a package, publishing flow, or SDK. Its wire structures SHALL be exactly the Owner-frozen `ChatUser`, `ChatSession`, `HLC`, `MentionedUser`, `SessionMessage`, `SessionEndMessage`, `TextMessage`, `ReactionMessage`, `ChatMessage`, `HistoryCursor`, `HistoryRequestMessage`, `HistoryResponseMessage`, `ChatRoomMessage`, `ChatSite`, and `WorldRoomMessage` contracts. It SHALL additionally export only their strict schemas, pure parse/check/validation, public limits/constants, and the public codec surface (`WireCodec`, `NativeWireCodec` reference implementation, `WireCodecError`). It SHALL NOT add or rename any field/type, export a structural alias or compatibility DTO, or expose an optional/open metadata bag without explicit Owner intervention. Pure validation SHALL cover closed-union and unknown-key rejection, field/resource limits, mention `ranges`, user/message size, origin-only and uniqueness rules, history-response reference completeness, and explicit-`now` HLC rules. The `NativeWireCodec` SHALL own only the fixed codec/security algorithm; the public protocol SHALL NOT export local persistence/UI models, projections, ordering implementations, Runtime lifecycle or page-host RPC contracts, WirePipeline queue/drop/apply/flush types, or application orchestration.
 
 `src/protocol/**` SHALL NOT depend on `domain/runtime`, `service`, `app`, UI, storage, comctx, browser-extension APIs/globals (`chrome.*`/`browser.*`), DOM/window/document, host lifecycle APIs, or app configuration. The public `NativeWireCodec` MAY use the standard Web codec APIs it implements (`CompressionStream`, `DecompressionStream`, `Blob`, `ReadableStream`, `TextEncoder`, and `TextDecoder`) and exactly the two scoped `core-js` imports; no whole-package polyfill is permitted. Protocol-owned limits and pure byte utilities SHALL be defined within the protocol boundary. Runtime and Domain code SHALL depend on the public protocol one way; the protocol SHALL NOT import Runtime or Domain code.
 
@@ -27,6 +27,11 @@ interface MentionedUser extends ChatUser {
 }
 interface SessionMessage extends ChatSession {
   type: 'session'
+  presenceId: string
+}
+interface SessionEndMessage {
+  type: 'session-end'
+  presenceId: string
 }
 interface TextMessage {
   type: 'text'
@@ -62,7 +67,7 @@ interface HistoryResponseMessage {
   messages: ChatMessage[]
   done: boolean
 }
-type ChatRoomMessage = SessionMessage | ChatMessage | HistoryRequestMessage | HistoryResponseMessage
+type ChatRoomMessage = SessionMessage | SessionEndMessage | ChatMessage | HistoryRequestMessage | HistoryResponseMessage
 interface ChatSite {
   origin: string
   title?: string
@@ -86,7 +91,7 @@ interface WorldRoomMessage extends ChatSession {
 
 ### Requirement: Current v2 peer wire remains immutable during the Runtime architecture replacement
 
-The Remesh DDD + CQRS Runtime replacement SHALL NOT change the current v2 peer message types, field names, strict schemas, parser behavior, room namespaces, limits, codec algorithm, reference codec exports, canonical JSON, or encoded golden bytes from baseline `9c90bb0...`. The internal page-to-Runtime comctx control contract and Runtime Domain CQRS surface MAY change cleanly because neither is peer wire, but those changes SHALL NOT add a peer field, alias, envelope, fallback, compatibility path, or different canonical encoding. Protected-input and golden-byte checks SHALL bind this immutability to the exact baseline files and fixtures.
+Except for the Owner-authorized logical-presence exception below, the Remesh DDD + CQRS Runtime replacement SHALL NOT change the current v2 peer message types, field names, strict schemas, parser behavior, room namespaces, limits, codec algorithm, reference codec exports, canonical JSON, or encoded golden bytes from baseline `9c90bb0...`. The exception adds required opaque `presenceId` to `SessionMessage` and the strict `SessionEndMessage`; it changes no `ChatMessage`, history, World, room namespace, limit, or codec algorithm. The internal page-to-Runtime comctx control contract and Runtime Domain CQRS surface MAY change cleanly because neither is peer wire, but those changes SHALL NOT add a peer field, alias, envelope, fallback, compatibility path, or different canonical encoding. Protected-input and golden-byte checks SHALL bind this immutability to the exact baseline files and fixtures.
 
 #### Scenario: Internal CQRS refactor preserves peer bytes
 
@@ -172,7 +177,7 @@ World presence wire data SHALL be exactly `WorldRoomMessage extends ChatSession 
 
 ### Requirement: Chat wire uses immutable typed messages
 
-Chat wire SHALL be exactly `ChatRoomMessage = SessionMessage | ChatMessage | HistoryRequestMessage | HistoryResponseMessage`, where `ChatMessage = TextMessage | ReactionMessage`, `SessionMessage extends ChatSession {type:'session'}`, and `ChatSession = {sessionId, user:ChatUser}`. `ChatUser` SHALL be exactly `{id,name,avatar}`. `MentionedUser extends ChatUser` and SHALL add exactly `ranges: [number, number][]`. Each pair SHALL be an inclusive `[start,end]` range in JavaScript string/UTF-16 code-unit indices with non-negative integers and `start <= end < body.length`. Text and reaction messages SHALL be immutable once created, and live fields SHALL use `userId`; Runtime session binding and application are specified by `webrtc-runtime`.
+Chat wire SHALL be exactly `ChatRoomMessage = SessionMessage | SessionEndMessage | ChatMessage | HistoryRequestMessage | HistoryResponseMessage`, where `ChatMessage = TextMessage | ReactionMessage`, `SessionMessage extends ChatSession {type:'session', presenceId:string}`, `SessionEndMessage = {type:'session-end', presenceId:string}`, and `ChatSession = {sessionId, user:ChatUser}`. `ChatUser` SHALL be exactly `{id,name,avatar}`. `MentionedUser extends ChatUser` and SHALL add exactly `ranges: [number, number][]`. Each pair SHALL be an inclusive `[start,end]` range in JavaScript string/UTF-16 code-unit indices with non-negative integers and `start <= end < body.length`. Text and reaction messages SHALL be immutable once created, and live fields SHALL use `userId`; Runtime session binding and application are specified by `webrtc-runtime`.
 
 #### Scenario: Chat union and text shape
 
@@ -183,6 +188,44 @@ Chat wire SHALL be exactly `ChatRoomMessage = SessionMessage | ChatMessage | His
 
 - **WHEN** a peer sends a reaction message
 - **THEN** it SHALL carry `userId` and `active: boolean` plus the documented target/reaction/HLC/id fields
+
+### Requirement: Chat presence uses causal generation and final-end facts
+
+Every `SessionMessage` SHALL carry a required opaque `presenceId` identifying one logical online generation independently of physical `sessionId` and transport `sourcePeerId`. A reconnect, refresh, recovery, reattach, duplicate publication, additional physical session, or supported Runtime host replacement SHALL reuse the active generation. Only an initial join or a return after the prior generation ended SHALL allocate a new generation. `SessionEndMessage` SHALL carry exactly `type:'session-end'` and that generation's `presenceId`; its strict schema SHALL reject missing or unknown fields. No old SESSION decoder, optional-field fallback, alias, dual schema, or compatibility bridge SHALL exist.
+
+A graceful final release SHALL first durably replace the private active lease with the same generation's unsettled final-end identity, then publish the end fact on the source-ordered Wire lane. Retirement persistence rejection SHALL send no end and preserve the active generation plus physical membership. The durable identity SHALL remain present throughout every unsettled first or retry send. Explicit end-send rejection SHALL durably mark that generation retryable; a same-host retry SHALL durably mark the same identity in flight again before resending the idempotent end. A same-user replacement that loads either unsettled marker SHALL continue that exact END transaction with the same `presenceId`; it SHALL NOT expose the generation as a successful active join or let it carry live messages. Successful send settlement SHALL durably replace the unsettled marker with private settled-cleanup ownership before removing the marker. A replacement that loads settled-cleanup ownership SHALL only retry marker removal and SHALL publish neither SESSION nor SESSION_END. Only successful marker removal may physically leave the Chat room. A failed transition or cleanup SHALL retain a safe durable identity and physical membership still owned by that host. Complete cleanup SHALL leave no persistent retry marker. Receivers SHALL apply duplicate SESSION and SESSION_END facts idempotently, reject SESSION after its accepted end, and classify logical joins/leaves from generation/end facts rather than wall clocks, debounce, transport loss, `sourcePeerId`, or physical `sessionId` conventions. `ChatMessage`, history, and World shapes remain unchanged.
+
+#### Scenario: Transport recovery reuses a generation
+
+- **WHEN** one logical user loses and restores a physical transport, refreshes, reattaches, or replaces a supported Runtime host without a final generation end
+- **THEN** every replacement SESSION SHALL carry the same `presenceId`, and receivers SHALL not classify a new logical join or leave
+
+#### Scenario: Final end is ordered and idempotent
+
+- **WHEN** the last local owner gracefully releases a generation and each external stage succeeds
+- **THEN** it SHALL durably retire the private active lease while retaining the generation identity, settle exactly the strict `SessionEndMessage`, durably record settled-cleanup ownership, remove that marker, then physically leave the room, and receivers SHALL classify at most one final logical leave even if the end fact is duplicated
+
+#### Scenario: Final end is fenced by an external rejection
+
+- **WHEN** private retirement persistence, an END-state transition, SESSION_END send, or post-settlement cleanup rejects
+- **THEN** the peer SHALL NOT physically leave or publish a false local lifecycle end; retirement rejection SHALL retain the same active lease, while every later rejection SHALL retain a recoverable final-end identity for the already-retired generation
+
+#### Scenario: Unsettled end survives host replacement
+
+- **GIVEN** durable retirement succeeded and the first or retry SESSION_END is unsettled or explicitly rejected
+- **WHEN** the Runtime host is replaced before END settlement
+- **THEN** the replacement SHALL physically rebind the retained `presenceId` only to continue the same idempotent END transaction, SHALL expose no successful active join or live-message authority, and SHALL produce at most one observer leave while clearing every private final-end marker
+
+#### Scenario: Settled cleanup survives host replacement
+
+- **GIVEN** receivers accepted SESSION_END and the durable record contains settled-cleanup ownership because marker removal is incomplete
+- **WHEN** the Runtime host is replaced
+- **THEN** the replacement SHALL remove that marker without joining Chat or World, publishing SESSION or SESSION_END, reviving the ended generation, or changing the observer's exactly-once leave
+
+#### Scenario: Later return uses a fresh generation
+
+- **WHEN** the same user returns after its accepted final generation end
+- **THEN** its SESSION SHALL use a different `presenceId` and receivers SHALL classify one fresh logical join
 
 ### Requirement: History wire shapes are bounded and reference-complete
 

@@ -123,22 +123,46 @@ const SystemNoticeRecordSchema = v.strictObject({
 
 const MessageRecordSchema = v.variant('type', [ChatMessageRecordSchema, SystemNoticeRecordSchema])
 
+class InvalidMessageRecordError extends TypeError {
+  override readonly name = 'InvalidMessageRecordError'
+}
+
+export const isInvalidMessageRecordError = (error: unknown): error is InvalidMessageRecordError =>
+  error instanceof InvalidMessageRecordError
+
+const invalidMessageRecord = (message: string): never => {
+  throw new InvalidMessageRecordError(message)
+}
+
 const decodeMessageRecord = (item: DatabaseItem<string, unknown>): MessageRecord => {
   const parsed = v.safeParse(MessageRecordSchema, item.value)
-  if (!parsed.success) throw new TypeError('Database contains an invalid MessageRecord')
+  if (!parsed.success) return invalidMessageRecord('Database contains an invalid MessageRecord')
   const record = parsed.output as MessageRecord
-  if (item.key !== record.id) throw new TypeError('Database item key does not match record id')
-  if (!isUserWithinLimit(record.user)) throw new TypeError('MessageRecord user exceeds protocol limits')
+  if (item.key !== record.id) return invalidMessageRecord('Database item key does not match record id')
+  if (!isUserWithinLimit(record.user)) return invalidMessageRecord('MessageRecord user exceeds protocol limits')
   if (record.type === MESSAGE_RECORD_TYPE.CHAT_MESSAGE) {
-    if (record.id !== record.message.id) throw new TypeError('Chat record id does not match message id')
+    if (record.id !== record.message.id) return invalidMessageRecord('Chat record id does not match message id')
     if (record.user.id !== record.message.userId) {
-      throw new TypeError('Chat record user does not match message user')
+      return invalidMessageRecord('Chat record user does not match message user')
     }
-    if (!isMessageWithinLimit(record.message)) throw new TypeError('Chat record message exceeds protocol limits')
+    if (!isMessageWithinLimit(record.message)) {
+      return invalidMessageRecord('Chat record message exceeds protocol limits')
+    }
   } else if (record.id !== record.notice.id) {
-    throw new TypeError('System notice record id does not match notice id')
+    return invalidMessageRecord('System notice record id does not match notice id')
   }
   return record
+}
+
+const safeDecodeMessageRecord = (
+  item: DatabaseItem<string, unknown>
+): { success: true; record: MessageRecord } | { success: false; error: InvalidMessageRecordError } => {
+  try {
+    return { success: true, record: decodeMessageRecord(item) }
+  } catch (error) {
+    if (!isInvalidMessageRecordError(error)) throw error
+    return { success: false, error }
+  }
 }
 
 const canonicalContent = (record: MessageRecord): unknown =>
@@ -169,7 +193,68 @@ interface StoredConflict {
   recordedAt: number
 }
 
-const decodeInput = (record: MessageRecord): MessageRecord => decodeMessageRecord({ key: record.id, value: record })
+/** Invalid physical rows stay untouched; conflicts is the existing bounded private diagnostic sink. */
+interface InvalidStoredRecord {
+  item: DatabaseItem<string, unknown>
+  error: InvalidMessageRecordError
+}
+
+interface StoredInvalidRecordDiagnostic {
+  eventId: string
+  invalidHash: string
+  reason: string
+  recordedAt: number
+}
+
+const retainInvalidRecordDiagnostics = async (
+  database: Database<MessageDatabaseSchema>,
+  invalidRecords: readonly InvalidStoredRecord[],
+  signal?: AbortSignal
+): Promise<void> => {
+  await database.write(
+    ['conflicts'],
+    async (transaction) => {
+      const existing = await transaction.scan('conflicts')
+      let total = existing.length
+      const keys = new Set(existing.map(({ key }) => key))
+      const counts = new Map<string, number>()
+      for (const { value } of existing) {
+        if (typeof value !== 'object' || value === null) continue
+        const eventId = (value as { eventId?: unknown }).eventId
+        if (typeof eventId === 'string') counts.set(eventId, (counts.get(eventId) ?? 0) + 1)
+      }
+      for (const { item, error } of invalidRecords) {
+        signal?.throwIfAborted()
+        if (total >= MAX_STORED_CONFLICTS) return
+        const invalidHash = hashString(JSON.stringify(item.value))
+        const diagnosticKey = `invalid-record:${item.key}:${invalidHash}`
+        if (keys.has(diagnosticKey)) continue
+        const count = counts.get(item.key) ?? 0
+        if (count >= MAX_CONFLICTS_PER_RECORD) continue
+        const diagnostic: StoredInvalidRecordDiagnostic = {
+          eventId: item.key,
+          invalidHash,
+          reason: error.message,
+          recordedAt: Date.now()
+        }
+        const result = await transaction.insert('conflicts', diagnosticKey, diagnostic)
+        if (!result.inserted) continue
+        keys.add(diagnosticKey)
+        counts.set(item.key, count + 1)
+        total += 1
+      }
+    },
+    signal
+  )
+}
+
+const decodeInput = (record: MessageRecord): MessageRecord => {
+  const value = record as unknown
+  const id = typeof value === 'object' && value !== null ? (value as { id?: unknown }).id : undefined
+  return decodeMessageRecord({ key: typeof id === 'string' ? id : '', value })
+}
+
+const reportedDiagnosticFailures = new WeakSet<Database<MessageDatabaseSchema>>()
 
 export const createMessageStore = (database: Database<MessageDatabaseSchema>): MessageStore => ({
   insert: async (input) => {
@@ -208,10 +293,24 @@ export const createMessageStore = (database: Database<MessageDatabaseSchema>): M
     signal?.throwIfAborted()
     const items = await database.read(['records'], (transaction) => transaction.scan('records'), signal)
     const records: MessageRecord[] = []
+    const invalidRecords: InvalidStoredRecord[] = []
     for (const item of items) {
       signal?.throwIfAborted()
-      records.push(decodeMessageRecord(item))
+      const decoded = safeDecodeMessageRecord(item)
+      if (decoded.success) records.push(decoded.record)
+      else invalidRecords.push({ item, error: decoded.error })
       signal?.throwIfAborted()
+    }
+    if (invalidRecords.length > 0) {
+      try {
+        await retainInvalidRecordDiagnostics(database, invalidRecords, signal)
+      } catch (error) {
+        signal?.throwIfAborted()
+        if (!reportedDiagnosticFailures.has(database)) {
+          reportedDiagnosticFailures.add(database)
+          console.warn('[WebChat] Failed to retain invalid MessageRecord diagnostics:', error)
+        }
+      }
     }
     signal?.throwIfAborted()
     if (type === undefined) return records

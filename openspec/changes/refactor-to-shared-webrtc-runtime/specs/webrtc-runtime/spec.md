@@ -89,6 +89,30 @@ The extension background SHALL be the only coordinator allowed to create or rebu
 - **WHEN** the background coordinator itself is suspended or restarted by the browser
 - **THEN** it SHALL recover physical page-port and host-phase observations from active ports or idempotent page reattach, reconstruct one host, and dispatch idempotent Lifecycle attach Commands without producing duplicate domain leases, hosts, or physical rooms
 
+### Requirement: Background service RPC routing is service-specific
+
+Notification and AppAction SHALL use mutually exclusive versioned comctx namespaces. Each service's background provider and content injector SHALL obtain its namespace from the same internal proxy contract combined with the current extension runtime id. A heartbeat SHALL therefore admit only the requested service provider. One Notification or AppAction request SHALL produce one matching provider response, execute its intended side effect exactly once, and return request listeners to the live-provider baseline.
+
+A rejected Notification `push` Promise SHALL be consumed by that request and produce one local observable diagnostic. It SHALL NOT surface as an unhandled Promise or global page error, terminate later notification requests, or remove or duplicate the chat list, barrage, input, OS notification, or AppAction behavior. The existing Notification request Event and all successful behavior SHALL remain unchanged. This isolation SHALL NOT add a public method, retry, fallback, product copy, shared failure authority, comctx fork, Runtime/PresenceStore change, or peer-wire change.
+
+#### Scenario: Notification reaches only its provider
+
+- **GIVEN** Notification and AppAction providers are both live on the extension runtime bus with heartbeat enabled
+- **WHEN** the content injector calls Notification `push`
+- **THEN** exactly one Notification provider SHALL answer and execute `push` once, AppAction SHALL execute nothing, the request SHALL receive one response, and request listeners SHALL return to baseline
+
+#### Scenario: AppAction reaches only its provider
+
+- **GIVEN** Notification and AppAction providers are both live on the extension runtime bus with heartbeat enabled
+- **WHEN** the content injector calls AppAction `openOptionsPage`
+- **THEN** exactly one AppAction provider SHALL answer and open Options once, Notification SHALL execute nothing, the request SHALL receive one response, and request listeners SHALL return to baseline
+
+#### Scenario: Notification rejection is request-local
+
+- **GIVEN** a Notification request rejects internally
+- **WHEN** `NotificationDomain` issues that request and then issues a later healthy request
+- **THEN** the first request SHALL emit one local diagnostic with no unhandled page error, both existing notification request Events SHALL occur, and the later request SHALL execute normally without harming the chat list, barrage, or input
+
 ### Requirement: Domain connection sharing and isolation
 
 For each domain, `ConnectionDomain` SHALL maintain at most one connection to the same remote peer, shared by every local page of that domain. Connection, Session, World, History, and Delivery owners SHALL keep different domains isolated from one another.
@@ -179,12 +203,60 @@ This per-target settlement is best-effort physical provider acceptance, not remo
 
 ### Requirement: Unified five-second lifecycle grace
 
-When the last page of a domain disconnects, `LifecycleDomain` SHALL uniquely own one unified five-second grace phase/deadline. During it, Connection SHALL retain that domain's ChatRoom connection, Session/History SHALL retain domain State, Delivery SHALL retain the volatile inbound un-ACK buffer, and World SHALL retain domain presence. On grace expiry, the Lifecycle domain-released Event SHALL cause those owners to release their own State together. A page that reconnects within the grace period SHALL cancel grace through Lifecycle and read the current Runtime snapshot without a false offline/online transition. No persistent outbound outbox or delivery-status retry survives grace expiry; only the separately specified volatile inbound un-ACK buffer participates in this lifecycle.
+When the last page of a domain disconnects, `LifecycleDomain` SHALL uniquely own one unified five-second grace phase/deadline. During it, Connection SHALL retain that domain's ChatRoom connection, Session/History SHALL retain domain State, Delivery SHALL retain the volatile inbound un-ACK buffer, and World SHALL retain domain presence. On grace expiry, the Lifecycle domain-released Event SHALL begin a fenced final release: Session SHALL persist the retired private presence record with an unsettled final-end identity before publishing SESSION_END, retain that identity until the send settles, durably replace it with settled-cleanup ownership, and then remove that marker. Session's authoritative finalization state SHALL reject text/reaction allocation and live send from pending retirement through physical release. Connection SHALL physically leave Chat or the last World room only after marker removal succeeds. A page that reconnects within the grace period SHALL cancel grace through Lifecycle and read the current Runtime snapshot without a false offline/online transition. No persistent outbound outbox or delivery-status retry survives a successfully completed grace release; only the separately specified volatile inbound un-ACK buffer participates in this lifecycle.
 
 #### Scenario: Refresh within grace
 
 - **WHEN** a user refreshes the only page of a domain and the new page attaches within 5 seconds
 - **THEN** the domain connection and state SHALL continue without re-join flapping, presence flicker, or message loss caused by the refresh
+
+#### Scenario: Application reconnect preserves the logical generation
+
+- **GIVEN** the application Reconnect Effect retains the frozen `leaveRoom()` then `joinRoom(command)` composition
+- **WHEN** the Runtime ChatRoom implementation executes that composition for an active domain
+- **THEN** `leaveRoom()` SHALL invoke current-domain Runtime reconnect rather than final logical release, the replacement physical Chat session SHALL reuse the same `presenceId`, World SHALL remain physically joined, and local plus observer views SHALL receive snapshots without SESSION_END, logical join/leave, or another notice
+
+#### Scenario: Durable retirement rejects
+
+- **GIVEN** a committed active presence generation and a PresenceStore that rejects the retired record
+- **WHEN** final release begins
+- **THEN** the same active durable and in-memory lease, Chat/World physical membership, History state, World desired presence, and joined Runtime snapshot SHALL remain; no SESSION_END, observer leave, or physical departure SHALL occur; the pending release fence SHALL be removed so allocation and live send remain usable; and the existing Runtime error path SHALL surface a retryable request-local failure
+
+#### Scenario: Retirement succeeds after storage recovery
+
+- **GIVEN** a prior retirement attempt was fenced by storage rejection and the PresenceStore later recovers
+- **WHEN** final release is requested again
+- **THEN** the same generation SHALL persist one retired identity before exactly one SESSION_END settles, durably transition it to settled-cleanup ownership, remove that marker, and only then SHALL Connection physically leave Chat and the last World room while observers classify one leave
+
+#### Scenario: Every non-active final-release phase fences live authority
+
+- **GIVEN** Session has a pending release in `retiring`, `retrying`, `publishing`, `pending`, `settling`, `settlement-failed`, `cleaning`, or `cleanup-failed`, or has restored `inflightEnd`, `pendingEnd`, or `settledEnd` without an active `local` lease
+- **WHEN** the current or replacement host requests text allocation, reaction allocation, or live Chat send
+- **THEN** both Server preflight and the authoritative Session Command SHALL reject before HLC allocation or Wire send, no live frame SHALL be added, and successful marker cleanup SHALL retain that fence until physical domain release completes
+
+#### Scenario: SESSION_END send rejects
+
+- **GIVEN** durable retirement succeeded but the SESSION_END send rejects
+- **WHEN** the send failure settles
+- **THEN** Session SHALL durably transition that generation from in-flight to retryable pending final end, Connection SHALL retain Chat/World physical membership and publish no false local departure, and a later same-host final-release request SHALL durably transition the same marker back to in-flight before retrying the idempotent end
+
+#### Scenario: Host replacement continues an unsettled final end
+
+- **GIVEN** durable retirement succeeded and a first or retry SESSION_END is unsettled or explicitly rejected
+- **WHEN** the Runtime host is replaced and the same user invokes join before END settlement
+- **THEN** the replacement SHALL use the retained `presenceId` only to physically rebind and continue the same END transaction, SHALL expose no successful active join or live-message authority, and SHALL finish with at most one observer leave plus no persistent marker; a subsequent explicit join SHALL allocate a new generation
+
+#### Scenario: Post-settlement cleanup rejects
+
+- **GIVEN** SESSION_END settled and Session durably replaced the unsettled identity with private settled-cleanup ownership
+- **WHEN** marker removal rejects
+- **THEN** Session SHALL retain settled-cleanup ownership and Chat/World physical membership still owned by the current host, surface a request-local error, publish no second SESSION_END merely to retry cleanup in the same host, and permit physical departure only after later marker removal succeeds
+
+#### Scenario: Host replacement assumes settled cleanup ownership
+
+- **GIVEN** the observer ledger accepted SESSION_END and durable settled-cleanup ownership remains after a cleanup rejection
+- **WHEN** the same user's replacement host invokes join
+- **THEN** it SHALL only remove that marker, SHALL join neither Chat nor World, SHALL publish no SESSION or SESSION_END, SHALL expose no active session or live-message authority, and SHALL preserve the observer's exactly-once leave; only a later explicit join MAY allocate a fresh `presenceId` and one new logical join
 
 #### Scenario: Readiness helper distinguishes mounted UI from convergence
 
@@ -193,8 +265,8 @@ When the last page of a domain disconnects, `LifecycleDomain` SHALL uniquely own
 
 #### Scenario: Grace expiry
 
-- **WHEN** no page of the domain reconnects within 5 seconds
-- **THEN** the ChatRoom connection, Runtime domain state, volatile inbound un-ACK delivery buffer, and WorldRoom presence for that domain SHALL all be released or removed together, with no persistent outbound status or same-id crash retry retained
+- **WHEN** no page of the domain reconnects within 5 seconds and durable retirement plus SESSION_END settlement succeed
+- **THEN** the ChatRoom connection, Runtime domain state, volatile inbound un-ACK delivery buffer, and WorldRoom presence for that domain SHALL all be released or removed in the required causal order, with no persistent outbound status or same-id crash retry retained
 
 #### Scenario: Event outside grace
 
@@ -407,7 +479,7 @@ interface MessageStore {
 }
 ```
 
-MessageStore SHALL have one Database-backed implementation and no Remesh extern, public-barrel export, host injection, Memory-specific implementation, or fake replacement. It SHALL map Database's insert result into its own Domain result; strictly decode every item by outer `record.type`; enforce `DatabaseItem.key === record.id`, Chat `record.id === record.message.id`, notice `record.id === record.notice.id`, and Chat user/message identity; preserve the first canonical value; retain bounded conflict diagnostics for same-id different-content input; and classify same-content replay without overwrite. Key/id prefixes, property presence, the removed standalone `SYSTEM_NOTICE`, and compatibility aliases SHALL NOT participate in decode or dispatch. `query()` SHALL return every canonical record in physical primary-scan order. `query({type})` SHALL return only records whose exact outer discriminator equals that type, but the implementation SHALL still strictly decode every physically read item before applying the type filter. `query({signal})` SHALL gate the physical read transaction and all subsequent decode/filter work. The optional query object SHALL contain only `type` and `signal`; an unknown field or a type outside the exact outer discriminator union SHALL reject deterministically. It SHALL expose no id, range, order, limit, cursor, or syncId criterion. The type filter SHALL add no physical index, schema migration, or version bump; private `MESSAGE_STORE_VERSION = 2` remains the schema authority. `clear` SHALL run only for an explicit user/application clear command and SHALL atomically clear canonical records plus conflicts; startup, app-version checks, and compatibility code SHALL NOT call it. `watch` SHALL observe canonical-record invalidation; a conflict-only diagnostic write need not invalidate visible query results. Neither Database nor MessageStore SHALL own history wire DTOs, `syncId`, cursor, cutoff, limit, response `messages`, or `done`; history cutoff/pagination/projection remains in its Runtime/application owner. No `list` alias or test-only conflict-count API is exposed.
+MessageStore SHALL have one Database-backed implementation and no Remesh extern, public-barrel export, host injection, Memory-specific implementation, or fake replacement. It SHALL map Database's insert result into its own Domain result; strictly decode each physical item independently by outer `record.type`; retain every invalid raw row without publication; record bounded, per-key deduplicated diagnostics in the existing private conflicts store without notifying canonical-record watchers; enforce `DatabaseItem.key === record.id`, Chat `record.id === record.message.id`, notice `record.id === record.notice.id`, and Chat user/message identity; preserve the first canonical value; retain bounded conflict diagnostics for same-id different-content input; and classify same-content replay without overwrite. Key/id prefixes, property presence, the removed standalone `SYSTEM_NOTICE`, and compatibility aliases SHALL NOT participate in decode or dispatch. `query()` SHALL return every valid canonical record in physical primary-scan order even when other physical rows are invalid. `query({type})` SHALL return only valid records whose exact outer discriminator equals that type, after independently attempting to decode every physically read item before applying the type filter. `query({signal})` SHALL gate the physical read transaction and all subsequent decode/filter work. The optional query object SHALL contain only `type` and `signal`; an unknown field or a type outside the exact outer discriminator union SHALL reject deterministically. It SHALL expose no id, range, order, limit, cursor, or syncId criterion. The type filter SHALL add no physical index, schema migration, or version bump; private `MESSAGE_STORE_VERSION = 2` remains the schema authority. `clear` SHALL run only for an explicit user/application clear command and SHALL atomically clear canonical records plus conflicts; startup, app-version checks, and compatibility code SHALL NOT call it. `watch` SHALL observe canonical-record invalidation; a conflict-only diagnostic write need not invalidate visible query results. Neither Database nor MessageStore SHALL own history wire DTOs, `syncId`, cursor, cutoff, limit, response `messages`, or `done`; history cutoff/pagination/projection remains in its Runtime/application owner. No `list` alias or test-only conflict-count API is exposed.
 
 Default IndexedDB and Memory implementations SHALL use the same private `MessageDatabaseSchema` plus private logical name/version/store/index definition and run one unchanged backend contract suite; this requirement SHALL NOT add a public generic adapter factory. Type-negative tests SHALL reject wrong stores, keys, values, indexes, ranges, scopes, MessageQuery fields, and MessageQuery discriminator values. Separate parity tests SHALL cover Database transactions/abort/insert/order/watch/close/value isolation, MessageStore replay/conflict/decode/query-default/query-type/query-abort/clear/watch, and static imports proving Chat/UI/public ChatRoom do not import Database items, transactions, schemas, or concrete adapters. Residue scans SHALL reject the removed MessageStore `list` member, call sites, aliases, and dual paths without treating ordinary UI list nouns as compatibility APIs. If implementation proves any frozen field, method, or semantic insufficient, work on that boundary SHALL stop and the implementer SHALL send the exact gap, earliest blocked call chain, and minimum decision only to `@PM`. PM SHALL independently verify it and, when Owner input is required, ask `@molvqingtai` the one minimum decision. No implementation may add an alias, field, method, overload, fallback, or relaxed behavior autonomously.
 
@@ -439,7 +511,7 @@ Default IndexedDB and Memory implementations SHALL use the same private `Message
 #### Scenario: Default-all typed MessageStore query
 
 - **WHEN** a caller invokes `query()` with no object, with one exact outer `type`, with an AbortSignal, or with an invalid field/discriminator
-- **THEN** the facade SHALL respectively return all strictly decoded canonical records, return only that type after decoding the complete scan, honor cancellation through read/decode/filter settlement, or reject deterministically; it SHALL preserve primary-scan order, expose no `list` alias or history criteria, and introduce no physical index, migration, or version change
+- **THEN** the facade SHALL respectively return all valid strictly decoded canonical records while isolating invalid rows, return only that type after independently decoding the complete scan, honor cancellation through read/decode/diagnostic/filter settlement, or reject deterministically; it SHALL preserve primary-scan order, expose no `list` alias or history criteria, and introduce no physical index, migration, or version change
 
 #### Scenario: Frozen definition proves insufficient
 
@@ -721,9 +793,9 @@ Artico SHALL appear only in the provider implementation and explicit composition
 
 ### Requirement: Immutable peer values terminate in explicit Domain mappings
 
-`WireDomain` SHALL terminate every protocol DTO at one typed accepted-message Event and SHALL NOT expose raw provider callbacks, decoded unknown values, or a shared mutable wire model. `SessionMessage` SHALL enter Session binding/commit Commands. `TextMessage` and `ReactionMessage` SHALL enter Session source/user validation and then Delivery admission. `HistoryRequestMessage` and `HistoryResponseMessage` SHALL enter History Commands; History SHALL verify the current trusted source/session binding through a Session Query before its requester/provider transition, with accepted response batches entering Delivery atomically. `WorldRoomMessage` SHALL enter World source-snapshot replacement. Provider peer-ready/leave and room-close/error facts SHALL enter Connection transitions, which SHALL request Session/World/History cleanup through their Commands rather than mutate them.
+`WireDomain` SHALL terminate every protocol DTO at one typed accepted-message Event and SHALL NOT expose raw provider callbacks, decoded unknown values, or a shared mutable wire model. `SessionMessage` SHALL enter Session binding/generation commit Commands, and `SessionEndMessage` SHALL enter Session's source-bound idempotent generation-end Command. `TextMessage` and `ReactionMessage` SHALL enter Session source/user validation and then Delivery admission. `HistoryRequestMessage` and `HistoryResponseMessage` SHALL enter History Commands; History SHALL verify the current trusted source/session binding through a Session Query before its requester/provider transition, with accepted response batches entering Delivery atomically. `WorldRoomMessage` SHALL enter World source-snapshot replacement. Provider peer-ready/leave and room-close/error facts SHALL enter Connection transitions, which SHALL request Session/World/History cleanup through their Commands rather than mutate them.
 
-Outbound `SessionMessage` SHALL originate from Session after an accepted Connection generation. Outbound Text/Reaction SHALL use Session-owned id/HLC allocation and a Wire send Command. History request/response SHALL originate from History State and page-supply outcomes. `WorldRoomMessage` SHALL originate from World's current full snapshot only after Connection acceptance. All outbound values SHALL use the unchanged existing peer schemas and codec bytes.
+Outbound `SessionMessage` SHALL originate from Session after an accepted Connection generation. Outbound `SessionEndMessage` SHALL originate from final Session release only after private lease retirement and SHALL be sent before physical Chat-room leave. Outbound Text/Reaction SHALL use Session-owned id/HLC allocation and a Wire send Command. History request/response SHALL originate from History State and page-supply outcomes. `WorldRoomMessage` SHALL originate from World's current full snapshot only after Connection acceptance. All outbound values SHALL use the strict current schemas and unchanged codec algorithm; only the Owner-authorized SESSION `presenceId` and SESSION_END shapes differ from the prior baseline.
 
 #### Scenario: Chat message crosses one trust and delivery path
 
@@ -777,6 +849,132 @@ Implementation SHALL move one writable owner at a time and immediately delete th
 - **WHEN** the canonical architecture JSON is rendered
 - **THEN** the generated HTML SHALL reproduce deterministically and show the exact application port, state-free client, seven Runtime owners, immutable protocol, private RoomTransport Extern, provider implementation, and one-way dependency flow
 
+### Requirement: Session classifies logical presence across physical lifecycles
+
+Session SHALL uniquely own local active-generation state, unsettled in-flight final-end identity, rejected retryable pending-final-end identity, observer-accepted settled-cleanup identity, and a bounded observer ledger. A private two-method `PresenceStoreExtern` SHALL persist those facts through `browser.storage.session` across supported Runtime host replacement; it SHALL NOT expand MessageStore, the origin database schema, `RuntimeServer`, `ChatRoomExtern`, or any UI/public model. Active lease, in-flight final end, retryable pending final end, and settled cleanup SHALL be four mutually exclusive strict records. Session SHALL allocate a generation only for initial join or true return after complete final end. Refresh, reconnect, recovery, replay, duplicate SESSION, additional physical session, page reattach, supported host replacement, and replacement recovery of any final-end marker SHALL reuse the retained generation and emit snapshot convergence without a logical join/leave.
+
+Chrome MV3 SHALL construct the concrete session-backed PresenceStore in the background Service Worker and expose only its existing `load`/`save` methods to the Offscreen Runtime through a dedicated comctx adapter over a point-to-point Runtime Port. Port name and comctx namespace SHALL be routing values rather than authority. Before delivering a message, Background SHALL require the transport sender's runtime id, exact Offscreen document URL, and absence of a tab; content, options, and every other extension source SHALL be disconnected without reading or writing durable state. Every provider response SHALL resolve through the exact request-to-Port binding recorded when its request arrived. If that binding has detached or been replaced, the response SHALL be dropped and SHALL NOT fall back to the current active Port. Offscreen SHALL admit a response only while that request remains pending on the same binding; uncorrelated, replayed, old-binding, wrong-namespace, wrong-direction, and broadcast responses SHALL reach no comctx callback. From request-ID response registration, each one-shot call SHALL reserve exactly one ordered transport generation. Generic response subscription SHALL NOT open a Port. The local heartbeat response subscription SHALL unregister before the actual `apply`, and that `apply` SHALL consume the oldest remaining request reservation. If the reserved generation terminates before pending insertion, the call SHALL reject before connecting or posting to a replacement and the adapter SHALL remove that operation's one-shot response entry. Port disconnect, synchronous connect/send failure, and adapter disposal SHALL reject every request and pre-send reservation owned by the terminal generation exactly once and release every adapter-owned per-operation response entry, without hanging or automatically replaying `load` or `save`; stale and late traffic SHALL traverse no terminal operation callback, and only a later new application call with a new request ID may create a replacement Port and correlation. Provider-owned long-lived callback handles SHALL retain their existing refresh/re-registration lifetime and SHALL NOT be removed by this one-shot cleanup. The dedicated adapter SHALL use Port send/disconnect as its liveness authority, satisfy comctx heartbeat preflight locally, and transmit only actual one-shot PresenceStore operations. Offscreen SHALL register no broadcast Runtime-message listener for PresenceStore, so another context cannot forge a provider response or observe one through that adapter. The Offscreen document SHALL receive the dependency through host assembly and SHALL NOT dereference an unavailable `browser.storage.session`, create memory storage, or route presence records through tabs/pages. Firefox MV2 SHALL pass the same concrete session-backed store directly from its persistent Background Page into the same shared host. Storage rejection and authenticated-Port termination SHALL reach Session's existing request-local failure fences without acknowledging, discarding, or weakening the durable transition; a later call after Service Worker recreation SHALL reconnect and use the same session-backed record.
+
+A peer discovered during preparation SHALL establish baseline membership without a historical observer join. A newly accepted post-baseline generation SHALL produce one observer-local join only when that user transitions from zero active logical generations to one. Physical `PeerLeft` SHALL not produce a logical leave. A valid SESSION_END SHALL produce one observer-local leave only when the user transitions from one active generation to zero. On graceful final local release, Session SHALL replace the active lease with an in-flight final-end identity, send SESSION_END, durably remove that identity after settlement, and only then allow Connection to leave the Chat room. The departing local client need not persist its own leave.
+
+The local self-join notice SHALL be generation-scoped, persist immediately after successful new-generation join without waiting for history, and consume only Runtime private join provenance. Reconnect/recovery/host replacement SHALL not create a candidate; later true return SHALL use a later stable generation event time and produce a distinct notice. All SystemNotice records SHALL remain observer-local and SHALL never enter ChatMessage history.
+
+#### Scenario: Chrome Offscreen mounts with background-owned durability
+
+- **GIVEN** a Chrome MV3 Offscreen document does not expose `browser.storage.session` while the background Service Worker does
+- **WHEN** the shared Runtime host mounts and Session loads or saves a presence record
+- **THEN** the Offscreen host SHALL remain available, the request SHALL use the private background PresenceStore adapter, and the exact session-backed record or persistence rejection SHALL return without a volatile fallback or page relay
+
+#### Scenario: Unauthorized extension contexts cannot access PresenceStore
+
+- **GIVEN** content and options contexts know the deterministic Port name and comctx namespace
+- **WHEN** either context opens the named Port and sends a valid `load` or `save` injector envelope
+- **THEN** Background SHALL reject the transport source before comctx dispatch, return no lifecycle record, perform no storage write, and leave the durable bytes unchanged
+
+#### Scenario: Forged provider response cannot reach Offscreen
+
+- **WHEN** a content, options, or other extension context broadcasts a provider-shaped response with the exact namespace and request id
+- **THEN** the Offscreen PresenceStore injector SHALL receive nothing because it listens only to its background-owned point-to-point Port
+
+#### Scenario: Service Worker recreation preserves the private route
+
+- **WHEN** the accepted Port disconnects with a request in flight and the Service Worker provider is later recreated
+- **THEN** every request owned by that Port SHALL reject through the existing request-local fence without replay, and only the next new `load`/`save` SHALL reconnect to the authenticated provider and use the retained session-storage record
+
+#### Scenario: Old provider completion cannot cross into a replacement Port
+
+- **GIVEN** an authenticated request arrived through one Port and that binding detached before its provider operation completed
+- **WHEN** a replacement authenticated Port becomes active and the old operation later produces its response
+- **THEN** Background SHALL drop the old response because its original request binding no longer exists; the replacement Port SHALL receive nothing and Session SHALL not advance from that completion
+
+#### Scenario: Terminal send failure settles every binding-owned request
+
+- **GIVEN** one or more Offscreen PresenceStore requests are pending on the same Port
+- **WHEN** a later send on that Port throws a disconnected-Port error before the asynchronous disconnect event is observed
+- **THEN** every request owned by that terminal binding SHALL reject without timeout, the operation that was already accepted SHALL not be replayed, and only a later new request may create a new Port and correlation
+
+#### Scenario: Pre-send request cannot migrate generations
+
+- **GIVEN** comctx generated request IDs and registered one or more one-shot response callbacks against a live generation, but their `apply` messages have not entered the pending registry
+- **WHEN** that generation disconnects before those messages can be posted
+- **THEN** every prepared call SHALL reject through its original generation, no replacement Port SHALL receive any original `load`/`save` bytes, and only a later application call with a new request ID may connect and settle
+
+#### Scenario: Terminal operations release adapter-owned response entries
+
+- **GIVEN** one-shot `load` or `save` operations registered response callbacks before or after pending insertion on one generation
+- **WHEN** connect, post, disconnect, termination, or disposal makes that generation terminal
+- **THEN** every affected operation SHALL reject, every adapter-owned response entry and reservation SHALL return to baseline, stale or late responses SHALL settle nothing, no original bytes SHALL migrate to a replacement, and a later fresh request SHALL use a new correlation
+
+#### Scenario: Dispose settles a prepared first call
+
+- **GIVEN** a one-shot call registered its response callback while no Port was open and its `apply` has not started
+- **WHEN** the Offscreen adapter is disposed
+- **THEN** the call SHALL reject locally, its adapter-owned response entry SHALL be released, no Port SHALL open, and no durable PresenceStore operation SHALL be posted
+
+#### Scenario: Firefox uses the equivalent direct store
+
+- **WHEN** Firefox MV2 mounts the shared Runtime in its persistent Background Page
+- **THEN** host assembly SHALL pass the concrete session-backed PresenceStore directly and preserve the same strict records, rejection semantics, and supported replacement behavior
+
+#### Scenario: Six-timepoint A/B/C/D lifecycle
+
+- **GIVEN** independent actual Runtime Server/Session/Wire stacks use deterministic in-repo transport, A is an existing observer, B is a new local user, C is an additional physical session for B's generation, and D is B's replacement Runtime host
+- **WHEN** the control executes preparation baseline, B first join, duplicate/C publication, transient B loss/D recovery, D final release, and B later return
+- **THEN** B and A SHALL each persist one join for the first logical transition; duplicate/C/loss/recovery SHALL add no notice; A SHALL persist one leave on final end; and later return SHALL persist one fresh self join plus one fresh observer join
+
+#### Scenario: Physical loss remains provisional
+
+- **WHEN** a bound peer leaves transport without a valid final generation end and later republishes the same generation from reconnect, recovery, host replacement, or rejected-final-end replacement recovery
+- **THEN** Session SHALL publish snapshots only and preserve the logical observer state without a leave/join pair
+
+#### Scenario: Duplicate and late lifecycle facts
+
+- **WHEN** SESSION or SESSION_END is duplicated, or an ended generation's SESSION arrives late
+- **THEN** Session SHALL apply the accepted generation/end at most once, reject resurrection of the ended generation, and persist no duplicate notice
+
+### Requirement: Invalid records are isolated at send, receive, and retained-load boundaries
+
+Every uncontrolled record boundary SHALL use the existing strict Valibot schemas and `safeParse`. Invalid inbound Runtime records SHALL be rejected before persistence, barrage, or primary-list publication; the adapter SHALL diagnose and ACK only that invalid sequence so later valid delivery continues. MessageStore queries SHALL decode retained physical rows independently: valid rows remain queryable, invalid raw rows remain physically untouched, and bounded deduplicated private diagnostics use the existing conflicts store without invalidating canonical-record watchers. A diagnostic-write failure SHALL not hide valid results. No Zod schema, database version change, MessageStore method, or public failure channel SHALL be added.
+
+#### Scenario: Valid inbound event beside invalid retained data
+
+- **GIVEN** one unsupported retained row remains in the physical records store
+- **WHEN** a valid remote live event is accepted
+- **THEN** the valid event SHALL persist, emit once to realtime consumers, and appear in the primary list; the invalid row SHALL remain physical with one bounded diagnostic and SHALL not fail the canonical query
+
+#### Scenario: Invalid inbound does not poison the lane
+
+- **WHEN** one Runtime inbound record fails strict MessageRecord validation and a later valid event follows
+- **THEN** the invalid event SHALL produce request-local diagnostics and no persistence/barrage/list publication, its sequence SHALL be discarded through ACK, and the later valid event SHALL settle normally
+
+### Requirement: Adjacent SystemNotice grouping is UI-only and history-responsive
+
+After the complete latest application projection is canonically sorted by event `(hlc,id)`, the UI SHALL group each maximal adjacent run of SystemNotice messages. A singleton SHALL render unchanged. A run of two or more SHALL initially render the latest notice plus the exact count and an icon expand/collapse control; expansion SHALL reveal every original notice in canonical order. Any non-notice message SHALL split groups. The transform SHALL not alter, delete, merge, or persist canonical records, and lifecycle terminology SHALL not appear in the UI.
+
+Each grouped row SHALL derive one stable UI identity from its first canonical notice's persistent ID. Extending the same run SHALL preserve that identity. Before React and Virtuoso receive a row, text SHALL project as `message:<id>`, singleton notice as `single-notice:<id>`, and grouped notice as `notice-group:<first-notice-id>`. These row-kind namespaces SHALL remain structurally disjoint for every wire-valid opaque ID, including IDs that begin with another row kind's namespace. Every row SHALL pass that same projected identity to Virtuoso as the item key. Raw ID alone, array position, first/last presentation flags, and expand/collapse state SHALL NOT participate in row identity.
+
+Streaming history MAY insert Chat messages before, after, or between existing SystemNotice messages according to canonical event time. The UI SHALL recompute grouping from the new sorted projection so late history can create, split, or reposition a group without changing observer-local notice ownership or synchronizing notices through peer history.
+
+#### Scenario: Non-notice splits a run
+
+- **WHEN** two adjacent notices are followed by a Chat message and then two more adjacent notices
+- **THEN** the UI SHALL render two independent collapsible groups separated by the unchanged Chat message
+
+#### Scenario: Late history reprojects grouping
+
+- **WHEN** streaming history inserts a canonically ordered Chat message between notices that were previously adjacent
+- **THEN** the next UI projection SHALL split the prior group while every canonical notice and Chat record remains unchanged
+
+#### Scenario: Virtualized grouped-row identity remains stable
+
+- **WHEN** a two-notice group renders, its expand/collapse state changes, another notice extends the same run, or late history splits that run
+- **THEN** Virtuoso SHALL receive a defined persistent key for every rendered row; expansion and extension SHALL not remount the original group, and split rows SHALL have distinct non-index identities
+
+#### Scenario: Opaque IDs cannot impersonate another row kind
+
+- **WHEN** text or notice IDs begin with `message:`, `single-notice:`, or `notice-group:` and late history creates or splits an adjacent-notice group
+- **THEN** every React and Virtuoso identity SHALL retain its actual row-kind namespace, remain unique across the projection, preserve the original group through expansion or extension, and never transfer DOM, measurement, or scroll identity to another row kind
+
 ### Requirement: Domain-scoped manual reconnect
 
 The actions menu SHALL include "Reconnect this site", which SHALL rebuild only the current domain's ChatRoom connection and re-publish that domain's presence. Because the frozen `ChatRoom` has no `reconnect` method, the application Domain command SHALL use the exact public `leaveRoom()` and retained `JoinRoomCommand` with `joinRoom(command)` rather than extending the extern. It SHALL NOT rebuild the shared WorldRoom; the Runtime SHALL auto-reconnect the WorldRoom only on its own connection failure. The Options page SHALL NOT gain a global reconnect entry.
@@ -793,7 +991,7 @@ The actions menu SHALL include "Reconnect this site", which SHALL rebuild only t
 
 ### Requirement: One-shot migration without dual architecture
 
-The change SHALL be delivered as one candidate that includes the hosts, exact eight-method ChatRoom port, state-free Runtime client, clean-cut internal comctx surface, uniquely owned Lifecycle/Connection/Session/World/History/Delivery/Wire Domain graph, private RoomTransport Extern/provider composition, message delivery, reconnect entry, immutable current v2 peer protocol, exact typed Database extern/default adapters, internal concrete MessageStore, canonical outer-type/outer-id `MessageRecord` with `ChatMessageRecord.message` and `SystemNoticeRecord.notice`, send-first persistence, and complete removal of page-owned WebRTC, the v1 protocol, stateful ChatRoom authority, catch-all Network ownership, and old WireExtern/provider route. Persistence and Runtime authority SHALL be complete clean-cut structural replacements rather than minimal repairs; no compatibility wrapper, alias, dual path, dead facade, hidden state channel, provider leak, or test-only accommodation may retain an obsolete owner/record/Store/outbox architecture. No intermediate release SHALL ship both architectures. Existing local message history SHALL NOT be imported, migrated, or retained by the canonical database.
+The change SHALL be delivered as one candidate that includes the hosts, exact eight-method ChatRoom port, state-free Runtime client, clean-cut internal comctx surface, uniquely owned Lifecycle/Connection/Session/World/History/Delivery/Wire Domain graph, private RoomTransport Extern/provider composition, message delivery, reconnect entry, current v2 peer protocol with only the authorized logical-presence exception, exact typed Database extern/default adapters, internal concrete MessageStore, canonical outer-type/outer-id `MessageRecord` with `ChatMessageRecord.message` and `SystemNoticeRecord.notice`, send-first persistence, and complete removal of page-owned WebRTC, the v1 protocol, stateful ChatRoom authority, catch-all Network ownership, and old WireExtern/provider route. Persistence and Runtime authority SHALL be complete clean-cut structural replacements rather than minimal repairs; no compatibility wrapper, alias, dual path, dead facade, hidden state channel, provider leak, or test-only accommodation may retain an obsolete owner/record/Store/outbox architecture. No intermediate release SHALL ship both architectures. Existing local message history SHALL NOT be imported, migrated, or retained by the canonical database.
 
 #### Scenario: Single-candidate completeness
 

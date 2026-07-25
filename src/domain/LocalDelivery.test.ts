@@ -133,7 +133,14 @@ const createPage = (database: Database<MessageDatabaseSchema>, nextId: () => str
   const user = store.getDomain(userAction)
   store.igniteDomain(chatAction)
   store.send(user.command.UpdateUserInfoCommand(SELF))
-  return { store, room, list }
+  return {
+    store,
+    room,
+    list,
+    messageStore,
+    emitMessage: (message: ChatMessage) => listeners.message.forEach((listener) => listener(message)),
+    emitSessions: (sessions: readonly ChatSession[]) => listeners.sessions.forEach((listener) => listener(sessions))
+  }
 }
 
 afterEach(async () => {
@@ -184,6 +191,44 @@ describe.each(backends)('$name causal local send projection', (backend) => {
     notify.clear()
     await vi.waitFor(() => expect(page.store.query(page.list.query.RecordListQuery())).toHaveLength(1))
     expect(projected).toEqual(['local-message'])
+    page.store.discard()
+  })
+
+  it('projects one valid live message when an invalid retained row exists after readiness', async () => {
+    vi.stubGlobal('document', {
+      location: { origin: 'https://example.test' },
+      title: '',
+      querySelector: () => null
+    })
+    const name = `retained-invalid-${backend.name}-${sequence++}`
+    names.add(name)
+    const database = backend.create(name)
+    databases.add(database)
+    const page = createPage(database, () => 'unused')
+    const remote: string[] = []
+    const errors: Error[] = []
+    page.store.subscribeEvent(page.room.event.OnTextMessageEvent, (message) => remote.push(message.id))
+    page.store.subscribeEvent(page.list.event.LoadFailedEvent, (error) => errors.push(error))
+    await vi.waitFor(() => expect(page.store.query(page.list.query.LoadIsFinishedQuery())).toBe(true))
+    page.emitSessions([{ sessionId: 'remote-session', user: REMOTE }])
+
+    await database.write(['records'], (transaction) =>
+      transaction.insert('records', 'qa-legacy-invalid-record', {
+        legacy: true,
+        schema: 'unsupported-v1'
+      })
+    )
+    const valid = textRecord('valid-remote', 'visible despite retained invalid row', REMOTE)
+    await page.messageStore.insert(valid)
+    page.emitMessage(valid.message)
+
+    await vi.waitFor(() => expect(remote).toEqual([valid.id]))
+    await vi.waitFor(() =>
+      expect(page.store.query(page.list.query.RecordListQuery()).map((record) => record.id)).toEqual([valid.id])
+    )
+    expect(errors).toEqual([])
+    await expect(database.read(['records'], (transaction) => transaction.count('records'))).resolves.toBe(2)
+    await expect(database.read(['conflicts'], (transaction) => transaction.count('conflicts'))).resolves.toBe(1)
     page.store.discard()
   })
 

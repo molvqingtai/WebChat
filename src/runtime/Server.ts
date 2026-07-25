@@ -9,6 +9,7 @@ import WireDomain from '@/domain/runtime/Wire'
 import WorldDomain, { getWorldRoomId } from '@/domain/runtime/World'
 import { ClockExtern, type Clock } from '@/domain/runtime/externs/Clock'
 import { IdentityExtern } from '@/domain/runtime/externs/Identity'
+import { PresenceStoreExtern, type PresenceStore } from '@/domain/runtime/externs/PresenceStore'
 import { RoomTransportExtern, WireCodecExtern } from '@/domain/runtime/externs/RoomTransport'
 import type { RoomTransport } from '@/runtime/RoomTransport'
 import type { ReactionMessageRecord, TextMessageRecord } from '@/domain/Message'
@@ -16,6 +17,7 @@ import { NativeWireCodec, type WireCodec } from '@/protocol'
 import type { RuntimeServer, RuntimeSnapshot } from '@/runtime/Contract'
 import { MAX_HISTORY_SESSION_BYTES, MAX_HISTORY_SESSION_MESSAGES } from '@/constants/config'
 import { PagePort, createPagePortImpl } from '@/runtime/PagePort'
+import { createMemoryPresenceStore } from '@/runtime/PresenceStore'
 
 export interface ServerConfig {
   transport: RoomTransport
@@ -23,9 +25,11 @@ export interface ServerConfig {
   codec?: WireCodec
   historySessionBytes?: number
   historySessionMessages?: number
+  presenceStore?: PresenceStore
 }
 
 const defaultClock: Clock = { now: () => Date.now() }
+const INTERRUPTED_RELEASE_COMPLETED = 'Runtime completed an interrupted presence release; join again to re-enter'
 const serverDisposers = new WeakMap<RuntimeServer, () => void>()
 
 export const disposeServer = (server: RuntimeServer) => serverDisposers.get(server)?.()
@@ -33,6 +37,7 @@ export const disposeServer = (server: RuntimeServer) => serverDisposers.get(serv
 export const createServer = (config: ServerConfig): RuntimeServer => {
   const clock = config.clock ?? defaultClock
   const pagePort = new PagePort()
+  const presenceStore = config.presenceStore ?? createMemoryPresenceStore()
   const worldSessionId = nanoid()
   const historyOptions = {
     historySessionBytes: config.historySessionBytes ?? MAX_HISTORY_SESSION_BYTES,
@@ -48,6 +53,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     externs: [
       ClockExtern.impl(clock),
       IdentityExtern.impl({ nextId: nanoid }),
+      PresenceStoreExtern.impl(presenceStore),
       RoomTransportExtern.impl(config.transport),
       WireCodecExtern.impl(config.codec ?? NativeWireCodec),
       createPagePortImpl(pagePort)
@@ -83,6 +89,45 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   store.send(lifecycleDomain.command.HostReadyCommand())
 
   const snapshot = (): RuntimeSnapshot => store.query(connectionDomain.query.SnapshotQuery())
+  const acquirePresence = async (domain: string, userId: string): Promise<'active' | 'finalizing' | 'settled'> => {
+    if (store.query(sessionDomain.query.DomainQuery(domain))) {
+      return store.query(sessionDomain.query.FinalizingPresenceQuery(domain)) ? 'finalizing' : 'active'
+    }
+    const stored = (await presenceStore.load(domain)) ?? { domain, lastJoinedAt: 0, observers: [] }
+    const unsettledEnd = stored.pendingEnd ?? stored.inflightEnd
+    const finalEnd = stored.settledEnd ?? unsettledEnd
+    if (finalEnd && finalEnd.userId !== userId) {
+      throw new Error('Runtime pending presence belongs to another user')
+    }
+    if (stored.settledEnd) {
+      const { inflightEnd: _inflightEnd, pendingEnd: _pendingEnd, settledEnd: _settledEnd, ...record } = stored
+      await presenceStore.save(record)
+      store.send(sessionDomain.command.HydratePresenceCommand(record))
+      return 'settled'
+    }
+    if (unsettledEnd) {
+      store.send(sessionDomain.command.HydratePresenceCommand(stored))
+      return 'finalizing'
+    }
+    const local =
+      stored.local?.userId === userId
+        ? stored.local
+        : {
+            presenceId: nanoid(),
+            userId,
+            joinedAt: Math.max(clock.now(), stored.lastJoinedAt + 1),
+            status: 'pending' as const
+          }
+    const record = {
+      ...stored,
+      domain,
+      lastJoinedAt: Math.max(stored.lastJoinedAt, local.joinedAt),
+      local
+    }
+    await presenceStore.save(record)
+    store.send(sessionDomain.command.HydratePresenceCommand(record))
+    return 'active'
+  }
   const detachDeadPages = (pageIds: string[]) => {
     const leases = store.query(lifecycleDomain.query.DomainLeasesQuery())
     pageIds.forEach((pageId) => {
@@ -152,6 +197,29 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       store.send(command)
     })
 
+  const completeInterruptedRelease = (domain: string): Promise<void> =>
+    new Promise<void>((resolve, reject) => {
+      const success = store.subscribeEvent(connectionDomain.event.ConnectionLeftEvent, (event) => {
+        if (event.domain !== domain) return
+        success.unsubscribe()
+        failure.unsubscribe()
+        resolve()
+      })
+      const failure = store.subscribeEvent(sessionDomain.event.DomainReleaseFailedEvent, (event) => {
+        if (event.domain !== domain) return
+        success.unsubscribe()
+        failure.unsubscribe()
+        reject(event.error)
+      })
+      store.send(connectionDomain.command.LeaveDomainCommand(domain))
+    })
+
+  const assertLivePresence = (domain: string) => {
+    if (store.query(sessionDomain.query.FinalizingPresenceQuery(domain))) {
+      throw new Error('Runtime presence is completing its final release')
+    }
+  }
+
   const server: RuntimeServer = {
     attachPage: async (payload) => {
       store.send(lifecycleDomain.command.AttachPageCommand({ ...payload, seenAt: clock.now() }))
@@ -163,18 +231,29 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     },
     getSnapshot: async () => snapshot(),
     joinChatRoom: async (payload) => {
-      const operationId = nanoid()
-      await runConnectionOperation(
-        operationId,
-        connectionDomain.command.JoinDomainCommand({ operationId, ...payload }),
-        () => undefined
-      )
+      const presenceState = await acquirePresence(payload.domain, payload.user.id)
+      if (presenceState === 'settled') throw new Error(INTERRUPTED_RELEASE_COMPLETED)
+      if (presenceState === 'active' || !store.query(sessionDomain.query.DomainQuery(payload.domain))) {
+        const operationId = nanoid()
+        await runConnectionOperation(
+          operationId,
+          connectionDomain.command.JoinDomainCommand({ operationId, ...payload }),
+          () => undefined
+        )
+      }
+      if (presenceState === 'finalizing') {
+        await completeInterruptedRelease(payload.domain)
+        throw new Error(INTERRUPTED_RELEASE_COMPLETED)
+      }
+      const presence = store.query(sessionDomain.query.PresenceDomainQuery(payload.domain))
+      if (presence) await presenceStore.save(presence)
       return snapshot()
     },
     leaveChatRoom: async ({ domain }) => {
       store.send(connectionDomain.command.LeaveDomainCommand(domain))
     },
     allocateTextMessage: async (payload) => {
+      assertLivePresence(payload.domain)
       const operationId = nanoid()
       return runSessionOperation(
         operationId,
@@ -186,6 +265,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       )
     },
     allocateReactionMessage: async (payload) => {
+      assertLivePresence(payload.domain)
       const operationId = nanoid()
       return runSessionOperation(
         operationId,
@@ -197,6 +277,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       )
     },
     sendChatMessage: async (payload) => {
+      assertLivePresence(payload.domain)
       const operationId = nanoid()
       await runSessionOperation(
         operationId,

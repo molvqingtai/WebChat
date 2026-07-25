@@ -114,6 +114,7 @@ interface ServerFixture {
   resolvedHistory: { supplyId: string; ids: string[]; done: boolean }[]
   sent: ChatMessage[]
   leaveCount: () => number
+  reconnectCount: () => number
 }
 
 const serverFixture = (): ServerFixture => {
@@ -121,6 +122,7 @@ const serverFixture = (): ServerFixture => {
   let session: ((event: RuntimeSessionEvent) => void | Promise<void>) | undefined
   let history: ((event: HistorySupplyEvent) => void) | undefined
   let leaves = 0
+  let reconnects = 0
   const resolvedHistory: ServerFixture['resolvedHistory'] = []
   const sent: ChatMessage[] = []
   const server: RuntimeServer = {
@@ -167,7 +169,9 @@ const serverFixture = (): ServerFixture => {
     }),
     ackInbound: vi.fn(async () => {}),
     replayInbound: async () => [],
-    reconnectDomain: async () => {},
+    reconnectDomain: async () => {
+      reconnects += 1
+    },
     onInbound: async (_payload, listener) => {
       inbound = listener
     },
@@ -195,7 +199,8 @@ const serverFixture = (): ServerFixture => {
     emitHistory: (event) => history?.(event),
     resolvedHistory,
     sent,
-    leaveCount: () => leaves
+    leaveCount: () => leaves,
+    reconnectCount: () => reconnects
   }
 }
 
@@ -488,6 +493,42 @@ describe('Runtime-backed ChatRoom application port', () => {
     await expect(messageStore.query()).resolves.toEqual([textRecord('history'), record])
   })
 
+  it('isolates an invalid inbound record before persistence and recovers on the next event', async () => {
+    const { room, emitInbound, messageStore, server } = await setup()
+    const messages: ChatMessage[] = []
+    const errors: Error[] = []
+    room.onMessage((message) => messages.push(message))
+    room.onError((error) => errors.push(error))
+    vi.mocked(server.ackInbound).mockRejectedValueOnce(new Error('invalid ACK failed'))
+    await settle()
+
+    await emitInbound({
+      sequence: 1,
+      domain: DOMAIN,
+      record: { legacy: true, schema: 'unsupported-v1' } as unknown as TextMessageRecord,
+      source: 'live'
+    })
+
+    expect(messages).toEqual([])
+    expect(errors).toHaveLength(2)
+    expect(errors[0]).toMatchObject({ name: 'InvalidMessageRecordError' })
+    expect(errors[1]).toEqual(new Error('invalid ACK failed'))
+    await expect(messageStore.query()).resolves.toEqual([])
+    expect(server.ackInbound).toHaveBeenCalledWith({ domain: DOMAIN, sequence: 1 })
+
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(server.ackInbound).toHaveBeenCalledTimes(2)
+    expect(errors).toHaveLength(2)
+
+    const valid = textRecord('valid-after-invalid')
+    await emitInbound({ sequence: 2, domain: DOMAIN, record: valid, source: 'live' })
+
+    expect(messages).toEqual([valid.message])
+    expect(errors).toHaveLength(2)
+    await expect(messageStore.query()).resolves.toEqual([valid])
+    expect(server.ackInbound).toHaveBeenCalledTimes(3)
+  })
+
   it('emits one live projection when two pages race to persist the same inbound fact', async () => {
     const database = createMemoryMessageDatabase(`inbound-pages-${databaseId++}`)
     const first = await setup([], database)
@@ -650,8 +691,8 @@ describe('Runtime-backed ChatRoom application port', () => {
     })
   })
 
-  it('leaves the current room and publishes an empty recovery snapshot only', async () => {
-    const { room, leaveCount } = await setup()
+  it('reconnects the current room without publishing a synthetic leave snapshot', async () => {
+    const { room, leaveCount, reconnectCount } = await setup()
     const snapshots: Array<readonly ChatSession[]> = []
     const leaves: ChatSession[] = []
     room.onSessions((sessions) => snapshots.push(sessions))
@@ -661,8 +702,9 @@ describe('Runtime-backed ChatRoom application port', () => {
 
     await room.leaveRoom()
 
-    expect(leaveCount()).toBe(1)
-    expect(snapshots.at(-1)).toEqual([])
+    expect(reconnectCount()).toBe(1)
+    expect(leaveCount()).toBe(0)
+    expect(snapshots.at(-1)).toEqual([{ sessionId: 'local-session', user: USER }])
     expect(leaves).toEqual([])
   })
 })

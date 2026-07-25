@@ -66,10 +66,13 @@ export const relayOffscreenProviderMessages = (options: RelayOptions) => {
 
     const message = rawMessage
     const claimsProvider = message.sender?.type === 'provider'
+    if (message.namespace !== options.namespace) {
+      if (fromOffscreen && claimsProvider) reject('invalid-namespace', message)
+      return
+    }
     if (!fromOffscreen && !claimsProvider) return
     if (!fromOffscreen) return reject('untrusted-source', message)
     if (!claimsProvider) return reject('invalid-direction', message)
-    if (message.namespace !== options.namespace) return reject('invalid-namespace', message)
     if (!message.meta?.tab) return
     const target = targetFromMessage(message)
     if (!target) return reject('invalid-target', message)

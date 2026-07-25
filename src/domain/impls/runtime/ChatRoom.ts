@@ -1,5 +1,5 @@
 import EventHub from '@resreq/event-hub'
-import type { MessageStore } from '@/domain/MessageStore'
+import { isInvalidMessageRecordError, type MessageStore } from '@/domain/MessageStore'
 import type { ChatRoom as ChatRoomPort, JoinRoomCommand, SendMessageCommand } from '@/domain/externs/ChatRoom'
 import type { Unsubscribe } from '@/domain/Subscription'
 import {
@@ -44,7 +44,8 @@ const sessionsFrom = (snapshot: RuntimeSessionSnapshot): readonly ChatSession[] 
 ]
 
 const selfJoinNotice = (session: Pick<RuntimeSession, 'user' | 'joinedAt'>, slot: number): SystemNoticeRecord => {
-  const key = slot === 0 ? `self:join:${session.user.id}` : `self:join:${session.user.id}:${slot}`
+  const generationKey = `self:join:${session.user.id}:${session.joinedAt}`
+  const key = slot === 0 ? generationKey : `${generationKey}:${slot}`
   const id = `notice:${stringToHex(key)}`
   return {
     type: MESSAGE_RECORD_TYPE.SYSTEM_NOTICE,
@@ -60,10 +61,11 @@ const selfJoinNotice = (session: Pick<RuntimeSession, 'user' | 'joinedAt'>, slot
   }
 }
 
-const isSelfJoinNotice = (record: MessageRecord, userId: string): boolean =>
+const isSelfJoinNotice = (record: MessageRecord, session: Pick<RuntimeSession, 'user' | 'joinedAt'>): boolean =>
   record.type === MESSAGE_RECORD_TYPE.SYSTEM_NOTICE &&
   record.notice.type === NOTICE_TYPE.JOIN &&
-  record.user.id === userId
+  record.user.id === session.user.id &&
+  record.notice.hlc.timestamp === session.joinedAt
 
 const persistSelfJoinNotice = async (
   messageStore: MessageStore,
@@ -71,7 +73,7 @@ const persistSelfJoinNotice = async (
 ): Promise<void> => {
   for (let slot = 0; ; slot += 1) {
     const result = await messageStore.insert(selfJoinNotice(session, slot))
-    if (result.inserted || isSelfJoinNotice(result.existing, session.user.id)) return
+    if (result.inserted || isSelfJoinNotice(result.existing, session)) return
   }
 }
 
@@ -101,6 +103,7 @@ const projectHistory = (
 export class ChatRoom extends EventHub implements ChatRoomPort {
   private subscriptionTask: Promise<void> = Promise.resolve()
   private readonly disposeReady: Unsubscribe
+  private readonly pendingSelfJoinGenerations = new Set<string>()
 
   constructor(private readonly dependencies: ChatRoomDependencies) {
     super()
@@ -113,6 +116,11 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
 
   private emitSessionEvent(event: RuntimeSessionEvent) {
     const sessions = sessionsFrom(event.snapshot)
+    const localSession = event.snapshot.localSession
+    if (event.provenance === 'join' && localSession) {
+      // Runtime generation classification is the sole owner of self-notice eligibility.
+      this.pendingSelfJoinGenerations.add(`${localSession.user.id}:${localSession.joinedAt}`)
+    }
     const userSessionCount = (userId: string) => sessions.filter((session) => session.user.id === userId).length
     this.emit('sessions', sessions)
     if (event.type === 'join') {
@@ -128,23 +136,52 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
   private async attachRuntime(hostId: string) {
     const { dependencies } = this
     const isCurrentHost = () => dependencies.getSnapshot().hostId === hostId
+    type RuntimeInboundEvent = Awaited<ReturnType<RuntimeServer['replayInbound']>>[number]
     const retryingInbound = new Set<number>()
-    const persistInbound = async (event: Awaited<ReturnType<RuntimeServer['replayInbound']>>[number]) => {
+    const invalidInbound = new Set<number>()
+    const retryInbound = (event: RuntimeInboundEvent) => {
+      if (retryingInbound.has(event.sequence)) return
+      retryingInbound.add(event.sequence)
+      globalThis.setTimeout(() => {
+        retryingInbound.delete(event.sequence)
+        void persistInbound(event)
+      }, 1000)
+    }
+    const acknowledgeInbound = async (event: RuntimeInboundEvent) => {
+      if (!isCurrentHost()) return
+      await dependencies.server.ackInbound({ domain: dependencies.pageDomain, sequence: event.sequence })
+      retryingInbound.delete(event.sequence)
+      invalidInbound.delete(event.sequence)
+    }
+    const persistInbound = async (event: RuntimeInboundEvent): Promise<void> => {
       if (event.domain !== dependencies.pageDomain || !isCurrentHost()) return
+      if (invalidInbound.has(event.sequence)) {
+        try {
+          await acknowledgeInbound(event)
+        } catch (error) {
+          this.emit('error', error as Error)
+          retryInbound(event)
+        }
+        return
+      }
       try {
         const result = await dependencies.messageStore.insert(event.record)
         if (result.inserted && event.source === 'live') this.emit('message', event.record.message)
-        if (!isCurrentHost()) return
-        await dependencies.server.ackInbound({ domain: dependencies.pageDomain, sequence: event.sequence })
-        retryingInbound.delete(event.sequence)
+        await acknowledgeInbound(event)
       } catch (error) {
         this.emit('error', error as Error)
-        if (retryingInbound.has(event.sequence)) return
-        retryingInbound.add(event.sequence)
-        globalThis.setTimeout(() => {
-          retryingInbound.delete(event.sequence)
-          void persistInbound(event)
-        }, 1000)
+        if (isInvalidMessageRecordError(error)) {
+          // The record cannot become durable; ACK discards only this invalid Runtime event after diagnosis.
+          invalidInbound.add(event.sequence)
+          try {
+            await acknowledgeInbound(event)
+          } catch (ackError) {
+            this.emit('error', ackError as Error)
+            retryInbound(event)
+          }
+          return
+        }
+        retryInbound(event)
       }
     }
 
@@ -157,6 +194,7 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
       const { request } = event
       const controller = new AbortController()
       activeHistorySupplies.set(request.supplyId, controller)
+      // Page-owned MessageStore supplies local history; Runtime owns only orchestration.
       void dependencies.messageStore
         .query({ type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE, signal: controller.signal })
         .then((records) => projectHistory(records, request.before, request.cutoff, controller.signal))
@@ -211,13 +249,15 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
     })
     const domainSnapshot = snapshot.domains.find((item) => item.domain === this.dependencies.pageDomain)
     if (!domainSnapshot?.localSession) throw new Error('Runtime did not create a local session')
+    const generationKey = `${domainSnapshot.localSession.user.id}:${domainSnapshot.localSession.joinedAt}`
+    if (!this.pendingSelfJoinGenerations.delete(generationKey)) return
     await persistSelfJoinNotice(this.dependencies.messageStore, domainSnapshot.localSession)
   }
 
+  // Application reconnect retains the public leave/join composition; Lifecycle owns final release.
   async leaveRoom(): Promise<void> {
     await this.subscriptionTask
-    await this.dependencies.server.leaveChatRoom({ domain: this.dependencies.pageDomain })
-    this.emit('sessions', [])
+    await this.dependencies.server.reconnectDomain({ domain: this.dependencies.pageDomain })
   }
 
   async sendMessage(command: SendMessageCommand): Promise<ChatMessage> {

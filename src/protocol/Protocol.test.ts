@@ -42,6 +42,25 @@ describe('public v2 protocol contract', () => {
     expect(checkChatRoomMessage({ type: 'unknown' }, NOW)).toBe(false)
   })
 
+  it('requires causal logical-presence generations and strict final-end facts', () => {
+    const session = {
+      type: MESSAGE_TYPE.SESSION,
+      sessionId: 'session-1',
+      presenceId: 'presence-1',
+      user: USER
+    }
+    const end = { type: MESSAGE_TYPE.SESSION_END, presenceId: 'presence-1' }
+
+    expect(parseChatRoomMessage(session)).toEqual(session)
+    expect(parseChatRoomMessage({ type: session.type, sessionId: session.sessionId, user: USER })).toBeNull()
+    expect(parseChatRoomMessage({ ...session, generation: session.presenceId })).toBeNull()
+    expect(parseChatRoomMessage({ ...session, presenceId: '' })).toBeNull()
+    expect(parseChatRoomMessage(end)).toEqual(end)
+    expect(parseChatRoomMessage({ ...end, sessionId: session.sessionId })).toBeNull()
+    expect(parseChatRoomMessage({ ...end, presenceId: '' })).toBeNull()
+    expect(parseChatRoomMessage({ type: MESSAGE_TYPE.SESSION_END })).toBeNull()
+  })
+
   it('accepts only the current sync, mention-range, and history-message keys', () => {
     const request = { type: MESSAGE_TYPE.HISTORY_REQUEST, syncId: 'sync-1' }
     expect(parseChatRoomMessage(request)).toEqual(request)
@@ -149,12 +168,20 @@ describe('public v2 protocol contract', () => {
     const userBase = { ...USER, avatar: '' }
     const exactUser = { ...userBase, avatar: 'x'.repeat(MAX_USER_BYTES - byteSize(userBase)) }
     expect(byteSize(exactUser)).toBe(MAX_USER_BYTES)
-    expect(checkChatRoomMessage({ type: MESSAGE_TYPE.SESSION, sessionId: 'session-1', user: exactUser }, NOW)).toBe(
-      true
-    )
     expect(
       checkChatRoomMessage(
-        { type: MESSAGE_TYPE.SESSION, sessionId: 'session-1', user: { ...exactUser, avatar: `${exactUser.avatar}x` } },
+        { type: MESSAGE_TYPE.SESSION, sessionId: 'session-1', presenceId: 'presence-1', user: exactUser },
+        NOW
+      )
+    ).toBe(true)
+    expect(
+      checkChatRoomMessage(
+        {
+          type: MESSAGE_TYPE.SESSION,
+          sessionId: 'session-1',
+          presenceId: 'presence-1',
+          user: { ...exactUser, avatar: `${exactUser.avatar}x` }
+        },
         NOW
       )
     ).toBe(false)

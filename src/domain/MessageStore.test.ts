@@ -152,7 +152,7 @@ describe.each(backends)('$name MessageStore contract', (backend) => {
     await expect(messageStore.query()).resolves.toEqual([textRecord('bounded', 'first')])
   })
 
-  it('decodes only the strict outer-type union and all key/id/user equalities', async () => {
+  it('isolates records outside the strict outer-type union or key/id/user equalities', async () => {
     const invalid: Array<{ key: string; value: unknown }> = [
       { key: 'legacy', value: { event: textRecord('legacy').message, user: USER, receivedAt: 1 } },
       {
@@ -186,8 +186,13 @@ describe.each(backends)('$name MessageStore contract', (backend) => {
 
     for (const item of invalid) {
       const { database, messageStore } = create(backend)
+      const valid = textRecord(`valid-${item.key}`)
       await database.write(['records'], (transaction) => transaction.insert('records', item.key, item.value))
-      await expect(messageStore.query()).rejects.toThrow()
+      await messageStore.insert(valid)
+
+      await expect(messageStore.query()).resolves.toEqual([valid])
+      await expect(database.read(['records'], (transaction) => transaction.count('records'))).resolves.toBe(2)
+      await expect(database.read(['conflicts'], (transaction) => transaction.count('conflicts'))).resolves.toBe(1)
     }
   })
 
@@ -200,8 +205,15 @@ describe.each(backends)('$name MessageStore contract', (backend) => {
       receivedAt: 1
     }
 
-    await expect(messageStore.insert(prefixedButUntyped as MessageRecord)).rejects.toThrow('invalid MessageRecord')
+    for (const input of [prefixedButUntyped, null, undefined, []]) {
+      await expect(messageStore.insert(input as unknown as MessageRecord)).rejects.toMatchObject({
+        name: 'InvalidMessageRecordError'
+      })
+    }
     await expect(messageStore.query()).resolves.toEqual([])
+    const valid = textRecord('valid-after-invalid-input')
+    await expect(messageStore.insert(valid)).resolves.toEqual({ inserted: true })
+    await expect(messageStore.query()).resolves.toEqual([valid])
   })
 
   it('queries one primary scan in order and filters only by exact outer type', async () => {
@@ -227,9 +239,10 @@ describe.each(backends)('$name MessageStore contract', (backend) => {
     expect(read).toHaveBeenCalledTimes(3)
   })
 
-  it('strictly decodes the complete physical scan before filtering by type', async () => {
+  it('strictly decodes and isolates the complete physical scan before filtering by type', async () => {
     const { database, messageStore } = create(backend)
     await messageStore.insert(textRecord('valid-chat'))
+    await messageStore.insert(noticeRecord('valid-notice'))
     await database.write(['records'], (transaction) =>
       transaction.insert('records', 'invalid-notice', {
         ...noticeRecord('invalid-notice'),
@@ -237,9 +250,37 @@ describe.each(backends)('$name MessageStore contract', (backend) => {
       })
     )
 
-    await expect(messageStore.query({ type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE })).rejects.toThrow(
-      'invalid MessageRecord'
-    )
+    await expect(messageStore.query({ type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE })).resolves.toEqual([
+      textRecord('valid-chat')
+    ])
+    await expect(messageStore.query()).resolves.toEqual([textRecord('valid-chat'), noticeRecord('valid-notice')])
+    await expect(database.read(['records'], (transaction) => transaction.count('records'))).resolves.toBe(3)
+    await expect(database.read(['conflicts'], (transaction) => transaction.count('conflicts'))).resolves.toBe(1)
+  })
+
+  it('keeps an all-invalid store operational and bounds diagnostics without deleting raw rows', async () => {
+    const { database, messageStore } = create(backend)
+    const listener = vi.fn()
+    const unsubscribe = messageStore.watch(listener)
+
+    for (let version = 0; version < 6; version += 1) {
+      await database.write(['records'], (transaction) =>
+        transaction.put('records', 'legacy-record', { legacy: true, version })
+      )
+      await expect(messageStore.query()).resolves.toEqual([])
+    }
+
+    expect(listener).toHaveBeenCalledTimes(6)
+    await expect(database.read(['records'], (transaction) => transaction.count('records'))).resolves.toBe(1)
+    await expect(
+      database.read(['records'], (transaction) => transaction.get('records', 'legacy-record'))
+    ).resolves.toEqual({ legacy: true, version: 5 })
+    await expect(database.read(['conflicts'], (transaction) => transaction.count('conflicts'))).resolves.toBe(4)
+
+    const valid = textRecord('valid-after-invalid')
+    await messageStore.insert(valid)
+    await expect(messageStore.query()).resolves.toEqual([valid])
+    unsubscribe()
   })
 
   it('rejects invalid query shapes, unknown own fields, types, and signals before reading', async () => {

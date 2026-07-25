@@ -1,12 +1,9 @@
 import { browser } from '#imports'
 import { AppActionExtern, type AppAction } from '@/domain/externs/AppAction'
-
 import { InjectAdapter } from '@/service/adapter/runtime'
-import { defineProxy } from 'comctx'
+import { defineAppActionProxy } from '@/service/Contract'
 
-const [, injectAppAction] = defineProxy(() => ({}) as AppAction, {
-  namespace: browser.runtime.id
-})
+const [, injectAppAction] = defineAppActionProxy(() => ({}) as AppAction, browser.runtime.id)
 
 const appAction = injectAppAction(new InjectAdapter())
 

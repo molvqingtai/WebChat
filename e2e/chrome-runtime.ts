@@ -37,6 +37,12 @@ type AppState = {
   unavailable: boolean
 }
 
+type PortAttack = {
+  disconnected: boolean
+  responses: unknown[]
+  error?: string
+}
+
 type Evidence = {
   browser: string | null
   chromePid?: number
@@ -48,6 +54,13 @@ type Evidence = {
   extensionErrors: RuntimeEvent[]
   relayDiagnostics: RuntimeEvent[]
   rawBoundaryMessages: { offscreen: number; content: number }
+  presenceSourceBoundary?: {
+    content: PortAttack
+    options: PortAttack
+    durableUnchanged: boolean
+    before: Record<string, unknown>
+    after: Record<string, unknown>
+  }
   sandbox: string
   cleanup: { rootExited: boolean; residualProcesses: string[]; profileRemoved: boolean }
   appState?: AppState
@@ -380,6 +393,110 @@ try {
       if (!worker) throw new Error('WebChat Runtime service worker target is missing')
 
       const offscreenSession = await sessionForTarget(offscreenTargets[0], 'Offscreen CDP session')
+      const workerSession = await sessionForTarget(worker, 'Service Worker CDP session')
+      const presenceNamespace = `WEB_CHAT_RUNTIME_PRESENCE_STORE_V1:${extensionId}`
+      const forgedPresence = {
+        domain: 'https://forged-source.example',
+        lastJoinedAt: 1,
+        local: {
+          presenceId: 'forged-source-generation',
+          userId: 'forged-source-user',
+          joinedAt: 1,
+          status: 'active'
+        },
+        observers: []
+      }
+      const presenceRecords = (sessionId: string) =>
+        evaluate<Record<string, unknown>>(
+          sessionId,
+          `chrome.storage.session.get(null).then((values) => Object.fromEntries(Object.entries(values).filter(([key]) => key.startsWith('WEB_CHAT_RUNTIME_PRESENCE_V1:'))))`
+        )
+      const attackPresencePort = (label: string) => `new Promise((resolve) => {
+        const namespace = ${JSON.stringify(presenceNamespace)};
+        const port = chrome.runtime.connect({ name: namespace });
+        const responses = [];
+        let settled = false;
+        const finish = (value) => {
+          if (settled) return;
+          settled = true;
+          resolve(value);
+        };
+        port.onMessage.addListener((message) => responses.push(message));
+        port.onDisconnect.addListener(() => finish({ disconnected: true, responses }));
+        const apply = (id, path, args) => ({
+          type: 'apply',
+          sender: { type: 'injector' },
+          id,
+          path,
+          args,
+          meta: {},
+          namespace,
+          timeStamp: Date.now()
+        });
+        try {
+          port.postMessage(apply(${JSON.stringify(`${label}-load`)}, ['load'], [${JSON.stringify(forgedPresence.domain)}]));
+          port.postMessage(apply(${JSON.stringify(`${label}-save`)}, ['save'], [${JSON.stringify(forgedPresence)}]));
+        } catch (error) {
+          finish({ disconnected: true, responses, error: String(error) });
+        }
+        setTimeout(() => finish({ disconnected: false, responses }), 2000);
+      })`
+      const beforePresence = await presenceRecords(workerSession[0])
+      const { targetId: optionsTargetId } = await client.send<{ targetId: string }>('Target.createTarget', {
+        url: `chrome-extension://${extensionId}/options.html`
+      })
+      const optionsTarget = await waitFor(() => targets.get(optionsTargetId), {
+        timeoutMs: 5000,
+        label: 'options target'
+      })
+      const optionsSession = await sessionForTarget(optionsTarget, 'Options CDP session')
+      await waitFor(
+        async () =>
+          (await evaluate<boolean>(optionsSession[0], `typeof chrome !== 'undefined' && !!chrome.runtime?.connect`)) ||
+          null,
+        { timeoutMs: 5000, label: 'options extension runtime' }
+      )
+      const [contentAttack, optionsAttack] = await Promise.all([
+        evaluate<PortAttack>(pageSession[0], attackPresencePort('content'), contentContext.id),
+        evaluate<PortAttack>(optionsSession[0], attackPresencePort('options'))
+      ])
+      const forgedProvider = {
+        type: 'apply',
+        sender: { type: 'provider' },
+        id: 'forged-presence-provider-response',
+        path: ['load'],
+        data: forgedPresence,
+        meta: {},
+        namespace: presenceNamespace,
+        timeStamp: Date.now()
+      }
+      await Promise.all([
+        evaluate(pageSession[0], `chrome.runtime.sendMessage(${JSON.stringify(forgedProvider)})`, contentContext.id),
+        evaluate(optionsSession[0], `chrome.runtime.sendMessage(${JSON.stringify(forgedProvider)})`)
+      ])
+      await delay(100)
+      const afterPresence = await presenceRecords(workerSession[0])
+      const durableUnchanged = JSON.stringify(afterPresence) === JSON.stringify(beforePresence)
+      if (
+        !contentAttack.disconnected ||
+        contentAttack.responses.length !== 0 ||
+        !optionsAttack.disconnected ||
+        optionsAttack.responses.length !== 0 ||
+        !durableUnchanged
+      ) {
+        throw new Error(
+          `PresenceStore source boundary failed: ${JSON.stringify({ contentAttack, optionsAttack, beforePresence, afterPresence })}`
+        )
+      }
+      evidence.presenceSourceBoundary = {
+        content: contentAttack,
+        options: optionsAttack,
+        durableUnchanged,
+        before: beforePresence,
+        after: afterPresence
+      }
+      await client.send('Target.closeTarget', { targetId: optionsTargetId })
+
       await evaluate(
         pageSession[0],
         `globalThis.__webchatRelayMessages = [];

@@ -1,18 +1,41 @@
 import { browser } from '#imports'
 import { defineProxy } from 'comctx'
 import type { Clock } from '@/domain/runtime/externs/Clock'
+import type { PresenceStore } from '@/domain/runtime/externs/PresenceStore'
 import type { RuntimeServer } from '@/runtime/Contract'
 import { RUNTIME_NAMESPACE_PREFIX } from '@/runtime/Contract'
 import { ProvideAdapter, relayOffscreenProviderMessages, type RelayRejection } from '@/service/adapter/runtime'
 import { BackgroundInjectAdapter, type MessageApi } from '@/service/adapter/runtime/Core'
+import {
+  PresenceStoreProviderPortAdapter,
+  type PresenceStorePortApi
+} from '@/service/adapter/runtime/PresenceStorePort'
 import { Coordinator, type HostEnsureResult } from '@/runtime/Coordinator'
 import { HostOwner } from '@/runtime/HostOwner'
 import { startHost } from '@/runtime/host'
+import { createBrowserPresenceStore, presenceStoreNamespace } from '@/runtime/PresenceStore'
 import poll from '@/utils/poll'
 
 const OFFSCREEN_URL = '/offscreen.html'
 const HEARTBEAT_TIMEOUT_MS = 5000
+const messageApi = browser.runtime as unknown as MessageApi
+const portApi = browser.runtime as unknown as PresenceStorePortApi
 const runtimeNamespace = `${RUNTIME_NAMESPACE_PREFIX}:${browser.runtime.id}`
+const presenceNamespace = presenceStoreNamespace(browser.runtime.id)
+const presenceStore = createBrowserPresenceStore(browser.storage.session)
+
+const [providePresenceStore] = defineProxy<() => PresenceStore>(() => presenceStore, {
+  namespace: presenceNamespace
+})
+if (!import.meta.env.FIREFOX) {
+  providePresenceStore(
+    new PresenceStoreProviderPortAdapter(portApi, {
+      portName: presenceNamespace,
+      offscreenUrl: browser.runtime.getURL(OFFSCREEN_URL),
+      onError: (error) => console.warn('[WebChat] PresenceStore port failure:', error)
+    })
+  )
+}
 
 interface OffscreenApi {
   hasDocument?: () => Promise<boolean>
@@ -47,7 +70,7 @@ const destroyOffscreenHost = async () => {
 }
 
 const ensureBackgroundHost = async (): Promise<HostEnsureResult> => {
-  const { created } = backgroundHost.ensure(() => startHost(new ProvideAdapter()))
+  const { created } = backgroundHost.ensure(() => startHost(new ProvideAdapter(), presenceStore))
   return { phase: 'ready', created }
 }
 
@@ -60,7 +83,7 @@ const [, injectServer] = defineProxy(() => ({}) as RuntimeServer, {
   debug: import.meta.env.DEV ? ('event' as const) : false,
   namespace: runtimeNamespace
 })
-const server = injectServer(new BackgroundInjectAdapter(browser.runtime as unknown as MessageApi))
+const server = injectServer(new BackgroundInjectAdapter(messageApi))
 
 const clock: Clock = {
   now: () => Date.now()

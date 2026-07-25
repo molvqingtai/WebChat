@@ -41,7 +41,9 @@ const NotificationDomain = Remesh.domain({
     const PushCommand = domain.command({
       name: 'Notification.PushCommand',
       impl: (_, message: ProjectedTextMessage) => {
-        notificationExtern.push(message)
+        void notificationExtern.push(message).catch((error) => {
+          console.warn('[WebChat] Notification push failed:', error)
+        })
         return [PushEvent(message)]
       }
     })

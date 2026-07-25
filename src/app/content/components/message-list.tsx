@@ -1,14 +1,17 @@
-import type { FC } from 'react'
-import { useState, type ReactElement } from 'react'
+import { useState, type FC, type ReactElement } from 'react'
 
-import { type MessageItemProps } from './message-item'
-import { type NoticeItemProps } from './notice-item'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Virtuoso } from 'react-virtuoso'
 
 export interface MessageListProps {
-  children?: Array<ReactElement<MessageItemProps | NoticeItemProps>>
+  children?: ReactElement[]
 }
+
+const itemKey = (_: number, item: ReactElement) => {
+  if (item.key === null) throw new TypeError('MessageList items require a stable key')
+  return item.key
+}
+
 const MessageList: FC<MessageListProps> = ({ children }) => {
   const [scrollParentRef, setScrollParentRef] = useState<HTMLDivElement | null>(null)
 
@@ -22,9 +25,9 @@ const MessageList: FC<MessageListProps> = ({ children }) => {
         initialTopMostItemIndex={{ index: 'LAST', align: 'end' }}
         data={children}
         customScrollParent={scrollParentRef!}
-        computeItemKey={(_, item) => item.props.data.id}
+        computeItemKey={itemKey}
         skipAnimationFrameInResizeObserver
-        itemContent={(_, item: ReactElement<MessageItemProps | NoticeItemProps>) => item}
+        itemContent={(_, item) => item}
       />
     </ScrollArea>
   )

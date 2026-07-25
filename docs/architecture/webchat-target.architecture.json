@@ -160,7 +160,7 @@
       "id": "session-domain",
       "type": "backend",
       "label": "Session Domain",
-      "sublabel": "committed sessions + snapshot + HLC",
+      "sublabel": "sessions + logical presence + HLC",
       "pos": [1900, 300],
       "size": [205, 76],
       "tag": "unique owner"
@@ -204,11 +204,11 @@
     {
       "id": "wire-protocol",
       "type": "security",
-      "label": "Immutable Peer Protocol",
-      "sublabel": "types + schemas + limits",
+      "label": "Strict Peer Protocol",
+      "sublabel": "frozen except presence lifecycle",
       "pos": [2145, 80],
       "size": [205, 76],
-      "tag": "byte-identical to 9c90"
+      "tag": "Chat/history/World frozen"
     },
     {
       "id": "wire-codec",
@@ -317,7 +317,7 @@
     },
     {
       "kind": "security-group",
-      "label": "Immutable Public Peer Contract",
+      "label": "Strict Public Peer Contract",
       "wraps": ["wire-protocol", "wire-codec"]
     },
     {

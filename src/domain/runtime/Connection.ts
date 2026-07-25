@@ -207,19 +207,30 @@ const ConnectionDomain = Remesh.domain({
     const JoinDomainCommand = domain.command({
       name: 'Connection.JoinDomainCommand',
       impl: ({ get }, payload: { operationId: string; domain: string; user: ChatUser; site: ChatSite }) =>
-        startAttempt(get, {
-          attemptId: payload.operationId,
-          operationId: payload.operationId,
-          mode: 'join',
-          domain: payload.domain,
-          user: payload.user,
-          site: payload.site
-        })
+        get(sessionDomain.query.ReleasingDomainQuery(payload.domain))
+          ? OperationFailedEvent({
+              operationId: payload.operationId,
+              error: new Error('Domain release is already in progress')
+            })
+          : startAttempt(get, {
+              attemptId: payload.operationId,
+              operationId: payload.operationId,
+              mode: 'join',
+              domain: payload.domain,
+              user: payload.user,
+              site: payload.site
+            })
     })
 
     const ReconnectDomainCommand = domain.command({
       name: 'Connection.ReconnectDomainCommand',
       impl: ({ get }, payload: { operationId: string; domain: string }) => {
+        if (get(sessionDomain.query.ReleasingDomainQuery(payload.domain))) {
+          return OperationFailedEvent({
+            operationId: payload.operationId,
+            error: new Error('Domain release is already in progress')
+          })
+        }
         if (get(lifecycleDomain.query.DomainLeaseQuery(payload.domain))?.reconnecting) {
           return OperationFailedEvent({
             operationId: payload.operationId,
@@ -335,7 +346,9 @@ const ConnectionDomain = Remesh.domain({
         const attempts = get(AttemptsState())
         const attempt = attempts.find((item) => item.attemptId === payload.attemptId)
         if (!attempt) return null
-        const committed = get(sessionDomain.query.DomainsQuery())
+        const committed = get(sessionDomain.query.DomainsQuery()).filter(
+          (item) => !get(sessionDomain.query.ReleasingDomainQuery(item.domain))
+        )
         const hasOtherAttempt = attempts.some((item) => item.attemptId !== attempt.attemptId)
         return [
           AttemptsState().new(attempts.filter((item) => item.attemptId !== attempt.attemptId)),
@@ -470,19 +483,43 @@ const ConnectionDomain = Remesh.domain({
       }
     })
 
+    const FinalizeReleaseDomainCommand = domain.command({
+      name: 'Connection.FinalizeReleaseDomainCommand',
+      impl: ({ get }, payload: { domain: string; roomId?: string }) => {
+        const remainingDomains = get(sessionDomain.query.DomainsQuery()).filter(
+          (item) => item.domain !== payload.domain
+        )
+        const remainingAttempts = get(AttemptsState()).filter((item) => item.domain !== payload.domain)
+        return [
+          historyDomain.command.ReleaseDomainCommand(payload.domain),
+          sessionDomain.command.ReleaseDomainCommand(payload.domain),
+          ...(payload.roomId ? [wireDomain.command.LeaveRoomCommand(payload.roomId)] : []),
+          ...(remainingDomains.length === 0 && remainingAttempts.length === 0
+            ? [wireDomain.command.LeaveRoomCommand(getWorldRoomId())]
+            : []),
+          ConnectionLeftEvent({ domain: payload.domain })
+        ]
+      }
+    })
+
     const ReleaseDomainCommand = domain.command({
       name: 'Connection.ReleaseDomainCommand',
       impl: ({ get }, releasedDomain: string) => {
+        if (get(sessionDomain.query.ReleasingDomainQuery(releasedDomain))) {
+          return sessionDomain.command.BeginReleaseDomainCommand(releasedDomain)
+        }
         const runtime = get(sessionDomain.query.DomainQuery(releasedDomain))
         const attempts = get(AttemptsState())
         const attempt = attempts.find((item) => item.domain === releasedDomain)
-        const prepared = attempt ? get(sessionDomain.query.PreparedSessionQuery(attempt.attemptId)) : null
         if (!runtime && !attempt) return null
+        if (!runtime && attempt) {
+          return AbortAttemptCommand({
+            attemptId: attempt.attemptId,
+            error: new Error('Domain released during join')
+          })
+        }
         const generations = get(GenerationsState())
         const generation = (generations.find((item) => item.domain === releasedDomain)?.generation ?? 0) + 1
-        const remainingDomains = get(sessionDomain.query.DomainsQuery()).filter(
-          (item) => item.domain !== releasedDomain
-        )
         const remainingAttempts = attempts.filter((item) => item.domain !== releasedDomain)
         return [
           AttemptsState().new(remainingAttempts),
@@ -496,13 +533,13 @@ const ConnectionDomain = Remesh.domain({
                 )
               ]
             : [ErrorEvent(new Error('Domain join generation exhausted'))]),
-          sessionDomain.command.ReleaseDomainCommand(releasedDomain),
-          worldDomain.command.ReleaseDomainCommand(releasedDomain),
-          historyDomain.command.ReleaseDomainCommand(releasedDomain),
-          ...(runtime || prepared ? [wireDomain.command.LeaveRoomCommand((runtime ?? prepared!.runtime).roomId)] : []),
-          ...(remainingDomains.length === 0 && remainingAttempts.length === 0
-            ? [wireDomain.command.LeaveRoomCommand(getWorldRoomId())]
+          ...(attempt
+            ? [
+                sessionDomain.command.AbortPreparedCommand(attempt.attemptId),
+                worldDomain.command.AbortStagedCommand(attempt.attemptId)
+              ]
             : []),
+          sessionDomain.command.BeginReleaseDomainCommand(releasedDomain),
           ...(attempt?.mode === 'reconnect' ? [lifecycleDomain.command.FinishReconnectCommand(releasedDomain)] : []),
           ...(attempt?.operationId
             ? [
@@ -511,8 +548,7 @@ const ConnectionDomain = Remesh.domain({
                   error: new Error('Domain released during join')
                 })
               ]
-            : []),
-          ConnectionLeftEvent({ domain: releasedDomain })
+            : [])
         ]
       }
     })
@@ -661,6 +697,18 @@ const ConnectionDomain = Remesh.domain({
     domain.effect({
       name: 'Connection.ReleaseEffect',
       impl: ({ fromEvent }) => fromEvent(lifecycleDomain.event.DomainReleasedEvent).pipe(map(ReleaseDomainCommand))
+    })
+    domain.effect({
+      name: 'Connection.DurableRetirementEffect',
+      impl: ({ fromEvent }) =>
+        fromEvent(sessionDomain.event.DomainRetiredEvent).pipe(
+          map(({ domain: retiredDomain }) => worldDomain.command.ReleaseDomainCommand(retiredDomain))
+        )
+    })
+    domain.effect({
+      name: 'Connection.FinalizeReleaseEffect',
+      impl: ({ fromEvent }) =>
+        fromEvent(sessionDomain.event.DomainEndPublishedEvent).pipe(map(FinalizeReleaseDomainCommand))
     })
     domain.effect({
       name: 'Connection.ErrorEffect',

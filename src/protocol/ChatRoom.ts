@@ -4,6 +4,7 @@ import { ChatSessionSchema, ChatUserSchema, isUserWithinLimit, type ChatSession,
 
 export const MESSAGE_TYPE = {
   SESSION: 'session',
+  SESSION_END: 'session-end',
   TEXT: 'text',
   REACTION: 'reaction',
   HISTORY_REQUEST: 'history-request',
@@ -28,6 +29,12 @@ export interface MentionedUser extends ChatUser {
 
 export interface SessionMessage extends ChatSession {
   type: typeof MESSAGE_TYPE.SESSION
+  presenceId: string
+}
+
+export interface SessionEndMessage {
+  type: typeof MESSAGE_TYPE.SESSION_END
+  presenceId: string
 }
 
 export interface TextMessage {
@@ -70,9 +77,15 @@ export interface HistoryResponseMessage {
   done: boolean
 }
 
-export type ChatRoomMessage = SessionMessage | ChatMessage | HistoryRequestMessage | HistoryResponseMessage
+export type ChatRoomMessage =
+  | SessionMessage
+  | SessionEndMessage
+  | ChatMessage
+  | HistoryRequestMessage
+  | HistoryResponseMessage
 
 const boundedString = (maxLength: number) => v.pipe(v.string(), v.maxLength(maxLength))
+const OpaquePresenceIdSchema = v.pipe(v.string(), v.minLength(1), v.maxLength(128))
 const safeNonNegativeInteger = v.pipe(v.number(), v.safeInteger(), v.minValue(0))
 const byteSize = (value: unknown): number => new TextEncoder().encode(JSON.stringify(value)).byteLength
 
@@ -88,7 +101,13 @@ export const MentionedUserSchema = v.strictObject({
 
 export const SessionMessageSchema = v.strictObject({
   type: v.literal(MESSAGE_TYPE.SESSION),
-  ...ChatSessionSchema.entries
+  ...ChatSessionSchema.entries,
+  presenceId: OpaquePresenceIdSchema
+})
+
+export const SessionEndMessageSchema = v.strictObject({
+  type: v.literal(MESSAGE_TYPE.SESSION_END),
+  presenceId: OpaquePresenceIdSchema
 })
 
 export const TextMessageSchema = v.strictObject({
@@ -133,6 +152,7 @@ export const HistoryResponseMessageSchema = v.strictObject({
 
 export const ChatRoomMessageSchema = v.variant('type', [
   SessionMessageSchema,
+  SessionEndMessageSchema,
   TextMessageSchema,
   ReactionMessageSchema,
   HistoryRequestMessageSchema,
@@ -161,6 +181,7 @@ export const parseChatRoomMessage = (value: unknown): ChatRoomMessage | null => 
   if (!parsed.success) return null
   const message = parsed.output as ChatRoomMessage
   if (message.type === MESSAGE_TYPE.SESSION) return isUserWithinLimit(message.user) ? message : null
+  if (message.type === MESSAGE_TYPE.SESSION_END) return message
   if (message.type === MESSAGE_TYPE.TEXT || message.type === MESSAGE_TYPE.REACTION) {
     return isMessageWithinLimit(message) ? message : null
   }
@@ -176,7 +197,7 @@ export const parseChatRoomMessage = (value: unknown): ChatRoomMessage | null => 
 
 /** Pure time-relative and reference validation; explicit now prevents protocol code from hiding clock authority. */
 export const isChatRoomMessageSemanticallyValid = (message: ChatRoomMessage, now: number): boolean => {
-  if (message.type === MESSAGE_TYPE.SESSION) return true
+  if (message.type === MESSAGE_TYPE.SESSION || message.type === MESSAGE_TYPE.SESSION_END) return true
   if (message.type === MESSAGE_TYPE.TEXT || message.type === MESSAGE_TYPE.REACTION) {
     return isHLCInRange(message.hlc, now)
   }

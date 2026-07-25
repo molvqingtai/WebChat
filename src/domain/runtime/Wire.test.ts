@@ -10,6 +10,7 @@ const ROOM = 'chat-room'
 const message = {
   type: MESSAGE_TYPE.SESSION,
   sessionId: 'session-1',
+  presenceId: 'presence-1',
   user: { id: 'user-1', name: 'User', avatar: '' }
 } as const
 
