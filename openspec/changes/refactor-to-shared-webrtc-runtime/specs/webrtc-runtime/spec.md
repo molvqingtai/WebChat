@@ -982,7 +982,7 @@ Streaming history MAY insert Chat messages before, after, or between existing Sy
 
 ### Requirement: Domain-scoped manual reconnect
 
-The actions menu SHALL include "Reconnect this site", which SHALL rebuild only the current domain's ChatRoom connection and re-publish that domain's presence. Because the frozen `ChatRoom` has no `reconnect` method, the application Domain command SHALL use the exact public `leaveRoom()` and retained `JoinRoomCommand` with `joinRoom(command)` rather than extending the extern. The application Domain SHALL expose one request-local reconnect lifecycle. While the main plugin panel is open, every enabled activation SHALL visibly render exactly one loading toast inside that panel before the leave/join composition can settle; the reconnect control SHALL disable duplicate activation and show its spinning refresh icon while active. The Toaster and its reconnect feedback SHALL NOT render or portal as a host-page global overlay. If reconnect cannot start, the control SHALL be visibly disabled and SHALL NOT dispatch activation rather than accept a click that silently returns. Terminal settlement SHALL dismiss the loading toast before existing error feedback is emitted; success requires no additional toast. Closing the panel MAY hide or unmount toast presentation, but SHALL NOT cancel, replay, or strand the request, and reopening SHALL reveal no stale reconnect toast. Reconnect SHALL NOT rebuild the shared WorldRoom; the Runtime SHALL auto-reconnect the WorldRoom only on its own connection failure. The Options page SHALL NOT gain a global reconnect entry.
+The actions menu SHALL include "Reconnect this site", which SHALL rebuild only the current domain's ChatRoom connection and re-publish that domain's presence. Because the frozen `ChatRoom` has no `reconnect` method, the application Domain command SHALL use the exact public `leaveRoom()` and retained `JoinRoomCommand` with `joinRoom(command)` rather than extending the extern. The application Domain SHALL expose one request-local reconnect lifecycle and stable request-owned feedback identity. While the main plugin panel is open, every enabled activation SHALL commit exactly one rendered loading toast inside that panel and give it at least one browser paint opportunity before invoking the leave/join composition; source-level call order without a rendered observation SHALL NOT satisfy visible feedback. The reconnect control SHALL disable duplicate activation and show its spinning refresh icon while active. The Toaster and its reconnect feedback SHALL NOT render or portal as a host-page global overlay. If reconnect cannot start, the control SHALL be visibly disabled and SHALL NOT dispatch activation rather than accept a click that silently returns. Terminal settlement SHALL retire only that request's loading feedback before its existing error feedback is emitted; success requires no additional toast. Reconnect cleanup SHALL NOT use an unscoped/global toast dismissal and SHALL preserve every unrelated Toast. Closing the panel MAY hide or unmount toast presentation, but SHALL NOT cancel, replay, or strand the request. Reopening while the request remains active SHALL reconstruct exactly one panel-local loading toast from authoritative request state; settlement while closed SHALL queue no reconnect error for a later mount, and reopening after settlement SHALL reveal no loading or error feedback from that request. Reconnect SHALL NOT rebuild the shared WorldRoom; the Runtime SHALL auto-reconnect the WorldRoom only on its own connection failure. The Options page SHALL NOT gain a global reconnect entry.
 
 #### Scenario: Manual domain reconnect
 
@@ -992,12 +992,18 @@ The actions menu SHALL include "Reconnect this site", which SHALL rebuild only t
 #### Scenario: Manual reconnect feedback settles once
 
 - **WHEN** the user activates reconnect and the current-domain leave/join composition succeeds or fails
-- **THEN** one panel-local loading toast SHALL remain visible for that request, duplicate activation SHALL be ignored while it is active, and terminal settlement SHALL dismiss it before any failure toast
+- **THEN** one panel-local loading toast SHALL become visibly rendered for that request before the composition is invoked, duplicate activation SHALL be ignored while it is active, and terminal settlement SHALL retire that loading feedback before any failure toast
+
+#### Scenario: Fast terminal reconnect still presents loading
+
+- **GIVEN** the leave/join ports can settle before a toast library's deferred subscriber update would render
+- **WHEN** an enabled user activates reconnect
+- **THEN** the panel SHALL commit exactly one loading toast and receive at least one browser paint opportunity before invoking those ports, so a fast terminal path cannot erase loading before its first visible presentation
 
 #### Scenario: Reconnect feedback belongs to the plugin panel
 
 - **WHEN** an enabled user activates reconnect while the main plugin panel is open
-- **THEN** exactly one loading toast SHALL visibly render inside the plugin-panel boundary before the reconnect composition can settle, and no reconnect Toaster or toast SHALL appear as a host-page global overlay
+- **THEN** exactly one loading toast SHALL visibly render inside the plugin-panel boundary, and no reconnect Toaster or toast SHALL appear as a host-page global overlay
 
 #### Scenario: Reconnect unavailable state is not a silent action
 
@@ -1005,10 +1011,21 @@ The actions menu SHALL include "Reconnect this site", which SHALL rebuild only t
 - **WHEN** the actions menu renders "Reconnect this site"
 - **THEN** the action SHALL be visibly disabled, SHALL NOT dispatch activation, and SHALL NOT accept a click that silently produces neither feedback nor an operation
 
-#### Scenario: Closing the panel does not retain stale feedback
+#### Scenario: Active reconnect presentation survives panel remount
+
+- **WHEN** the main plugin panel closes during an active reconnect and reopens before that request settles
+- **THEN** presentation MAY be absent while closed, but authoritative request state SHALL reconstruct exactly one loading toast on reopen without restarting or duplicating the request
+
+#### Scenario: Closing the panel does not retain terminal feedback
 
 - **WHEN** the main plugin panel closes during an active reconnect and later reopens after terminal settlement
-- **THEN** the presentation MAY hide or unmount while closed, the request SHALL still complete terminal cleanup, and no stale loading or error toast SHALL reappear
+- **THEN** the request SHALL complete terminal cleanup while closed, SHALL queue no reconnect error for a later mount, and no loading or error toast from that request SHALL appear on reopen
+
+#### Scenario: Reconnect cleanup is request-local
+
+- **GIVEN** unrelated Toast feedback exists before or during reconnect
+- **WHEN** reconnect succeeds, fails, the panel closes, or the panel reopens
+- **THEN** cleanup SHALL address only the reconnect request's feedback identity, SHALL NOT invoke an unscoped/global dismissal, and SHALL preserve all unrelated Toast feedback
 
 #### Scenario: WorldRoom self-recovery
 
