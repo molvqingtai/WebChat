@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Remesh } from 'remesh'
 import ChatRoomDomain from '@/domain/ChatRoom'
+import ToastDomain from '@/domain/Toast'
 import MessageInputDomain from '@/domain/MessageInput'
 import MessageListDomain from '@/domain/MessageList'
 import UserInfoDomain, { type UserInfo } from '@/domain/UserInfo'
@@ -17,6 +18,8 @@ import {
   type TextMessageRecord
 } from '@/domain/Message'
 import { BrowserSyncStorageExtern, type Storage, type StorageValue } from '@/domain/externs/Storage'
+import { ToastExtern, type Toast } from '@/domain/externs/Toast'
+import { WorldRoomExtern } from '@/domain/externs/WorldRoom'
 import { MESSAGE_TYPE, type ChatMessage, type ChatSession } from '@/protocol'
 import type { RuntimeServer, RuntimeSessionEvent, RuntimeSnapshot } from '@/runtime/Contract'
 import { stringToHex } from '@/utils'
@@ -36,7 +39,15 @@ const SELF_SESSION = { sessionId: 'local-session', user: SELF }
 const REMOTE_SESSION = { sessionId: 'remote-session', user: REMOTE }
 let databaseId = 0
 
-const createFixture = (options: { delayRecordWatch?: boolean } = {}) => {
+const deferred = () => {
+  let resolve!: () => void
+  const promise = new Promise<void>((next) => {
+    resolve = next
+  })
+  return { promise, resolve }
+}
+
+const createFixture = (options: { delayRecordWatch?: boolean; toast?: Toast } = {}) => {
   vi.stubGlobal('document', {
     location: { origin: 'https://example.test' },
     title: '',
@@ -124,7 +135,13 @@ const createFixture = (options: { delayRecordWatch?: boolean } = {}) => {
         }
       }),
       MessageDatabaseExtern.impl(database),
-      BrowserSyncStorageExtern.impl(storage)
+      BrowserSyncStorageExtern.impl(storage),
+      WorldRoomExtern.impl({
+        getState: async () => [],
+        onState: () => () => {},
+        onError: () => () => {}
+      }),
+      ...(options.toast ? [ToastExtern.impl(options.toast)] : [])
     ]
   })
   const chatAction = ChatRoomDomain()
@@ -471,6 +488,69 @@ describe('ChatRoomDomain exact application port', () => {
     fixture.store.send(fixture.room.command.ReconnectCommand())
     await vi.waitFor(() => expect(fixture.chat.leaveRoom).toHaveBeenCalledTimes(1))
     expect(fixture.chat.joinRoom).toHaveBeenCalledTimes(2)
+    fixture.store.discard()
+  })
+
+  it('shows one reconnect loading toast until the reconnect settles and rejects duplicate clicks', async () => {
+    const reconnect = deferred()
+    const toast = {
+      success: vi.fn(() => 1),
+      warning: vi.fn(() => 2),
+      error: vi.fn(() => 3),
+      info: vi.fn(() => 4),
+      loading: vi.fn(() => 'reconnect-loading'),
+      cancel: vi.fn(() => 'reconnect-loading')
+    } satisfies Toast
+    const fixture = createFixture({ toast })
+    await join(fixture)
+    vi.mocked(fixture.chat.leaveRoom).mockReturnValueOnce(reconnect.promise)
+    fixture.store.igniteDomain(ToastDomain())
+    const started: number[] = []
+    const finished: number[] = []
+    fixture.store.subscribeEvent(fixture.room.event.ReconnectStartedEvent, () => started.push(started.length))
+    fixture.store.subscribeEvent(fixture.room.event.ReconnectFinishedEvent, () => finished.push(finished.length))
+
+    fixture.store.send(fixture.room.command.ReconnectCommand())
+    fixture.store.send(fixture.room.command.ReconnectCommand())
+
+    expect(fixture.store.query(fixture.room.query.ReconnectIsLoadingQuery())).toBe(true)
+    expect(toast.loading).toHaveBeenCalledOnce()
+    expect(toast.loading).toHaveBeenCalledWith('Reconnecting to the chat...')
+    expect(fixture.chat.leaveRoom).toHaveBeenCalledOnce()
+    expect(started).toHaveLength(1)
+
+    reconnect.resolve()
+    await vi.waitFor(() => expect(finished).toHaveLength(1))
+    expect(fixture.store.query(fixture.room.query.ReconnectIsLoadingQuery())).toBe(false)
+    expect(fixture.chat.joinRoom).toHaveBeenCalledTimes(2)
+    expect(toast.cancel).toHaveBeenCalledOnce()
+    expect(toast.cancel).toHaveBeenCalledWith('reconnect-loading')
+    fixture.store.discard()
+  })
+
+  it('dismisses reconnect loading before reporting a reconnect failure', async () => {
+    const failure = new Error('reconnect failed')
+    const toast = {
+      success: vi.fn(() => 1),
+      warning: vi.fn(() => 2),
+      error: vi.fn(() => 3),
+      info: vi.fn(() => 4),
+      loading: vi.fn(() => 'reconnect-loading'),
+      cancel: vi.fn(() => 'reconnect-loading')
+    } satisfies Toast
+    const fixture = createFixture({ toast })
+    await join(fixture)
+    vi.mocked(fixture.chat.leaveRoom).mockRejectedValueOnce(failure)
+    fixture.store.igniteDomain(ToastDomain())
+
+    fixture.store.send(fixture.room.command.ReconnectCommand())
+
+    await vi.waitFor(() => expect(toast.error).toHaveBeenCalledWith(failure.message, undefined))
+    expect(fixture.store.query(fixture.room.query.ReconnectIsLoadingQuery())).toBe(false)
+    expect(toast.cancel).toHaveBeenCalledWith('reconnect-loading')
+    expect(vi.mocked(toast.cancel).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(toast.error).mock.invocationCallOrder[0]
+    )
     fixture.store.discard()
   })
 

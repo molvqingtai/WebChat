@@ -90,11 +90,12 @@ const AppButton: FC<AppButtonProps> = ({ className }) => {
 
   const chatRoomDomain = useRemeshDomain(ChatRoomDomain())
   const chatRoomJoined = useRemeshQuery(chatRoomDomain.query.JoinIsFinishedQuery())
+  const reconnecting = useRemeshQuery(chatRoomDomain.query.ReconnectIsLoadingQuery())
 
   // Rebuilds only this domain's ChatRoom; the shared WorldRoom is untouched.
   const handleReconnectSite = useCallback(() => {
-    if (chatRoomJoined) send(chatRoomDomain.command.ReconnectCommand())
-  }, [chatRoomDomain.command, chatRoomJoined, send])
+    if (chatRoomJoined && !reconnecting) send(chatRoomDomain.command.ReconnectCommand())
+  }, [chatRoomDomain.command, chatRoomJoined, reconnecting, send])
 
   // Memoize menu buttons to prevent re-render when position changes
   const menuButtons = useMemo(
@@ -127,10 +128,12 @@ const AppButton: FC<AppButtonProps> = ({ className }) => {
         <Button
           onClick={handleReconnectSite}
           variant="outline"
-          title="Reconnect this site"
+          disabled={!chatRoomJoined || reconnecting}
+          aria-label={reconnecting ? 'Reconnecting this site' : 'Reconnect this site'}
+          title={reconnecting ? 'Reconnecting this site' : 'Reconnect this site'}
           className="dark:bg-background dark:text-foreground dark:hover:bg-accent size-10 rounded-full p-0 shadow dark:border-slate-600"
         >
-          <RefreshCwIcon className="size-5" />
+          <RefreshCwIcon className={cn('size-5', reconnecting && 'animate-spin')} />
         </Button>
         <Button
           ref={appButtonRef}
@@ -141,7 +144,15 @@ const AppButton: FC<AppButtonProps> = ({ className }) => {
         </Button>
       </>
     ),
-    [isDarkMode, handleSwitchTheme, handleOpenOptionsPage, handleReconnectSite, appButtonRef]
+    [
+      isDarkMode,
+      handleSwitchTheme,
+      handleOpenOptionsPage,
+      handleReconnectSite,
+      appButtonRef,
+      chatRoomJoined,
+      reconnecting
+    ]
   )
 
   // Memoize main button content to prevent re-render when position changes

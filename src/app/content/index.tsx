@@ -21,6 +21,7 @@ import 'sonner/dist/styles.css'
 import '@/assets/styles/tailwind.css'
 import '@/assets/styles/overlay.css'
 import NotificationDomain from '@/domain/Notification'
+import ToastDomain from '@/domain/Toast'
 import { createElement } from '@/utils'
 import { AlertCircleIcon, RefreshCwIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -113,7 +114,7 @@ export default defineContentScript({
         root.render(
           <React.StrictMode>
             <RemeshRoot store={store}>
-              <RemeshScope domains={[NotificationDomain()]}>
+              <RemeshScope domains={[NotificationDomain(), ToastDomain()]}>
                 <App />
               </RemeshScope>
             </RemeshRoot>

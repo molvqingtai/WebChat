@@ -8,13 +8,12 @@ import { type FC, memo } from 'react'
 
 export interface NoticeItemProps {
   data: SystemNoticeMessage
-  count?: number
   expanded?: boolean
   onExpandedChange?: (expanded: boolean) => void
   className?: string
 }
 
-const NoticeItem: FC<NoticeItemProps> = memo(({ data, count, expanded = false, onExpandedChange, className }) => {
+const NoticeItem: FC<NoticeItemProps> = memo(({ data, expanded = false, onExpandedChange, className }) => {
   return (
     <div className={cn('flex justify-center py-1 px-4 ', className)}>
       <Badge variant="secondary" className="gap-x-2 rounded-full px-2 font-medium text-slate-400 dark:bg-slate-800">
@@ -23,7 +22,6 @@ const NoticeItem: FC<NoticeItemProps> = memo(({ data, count, expanded = false, o
           <AvatarFallback>{data.user.name.at(0)}</AvatarFallback>
         </Avatar>
         <span>{data.body}</span>
-        {count && count > 1 ? <span className="text-slate-500 tabular-nums dark:text-slate-300">{count}</span> : null}
         {onExpandedChange ? (
           <button
             type="button"

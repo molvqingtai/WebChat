@@ -10,6 +10,10 @@ const ToastDomain = Remesh.domain({
     const chatRoomDomain = domain.getDomain(ChatRoomDomain())
     const worldRoomDomain = domain.getDomain(WorldRoomDomain())
     const toast = domain.getExtern(ToastExtern)
+    const ReconnectLoadingState = domain.state<number | string | null>({
+      name: 'Toast.ReconnectLoadingState',
+      default: null
+    })
 
     type Message = string | { message: string; duration?: number }
     const args = (input: Message): [string, number | undefined] =>
@@ -48,6 +52,38 @@ const ToastDomain = Remesh.domain({
         toast.cancel(id)
         return CancelEvent(id)
       }
+    })
+
+    const StartReconnectLoadingCommand = domain.command({
+      name: 'Toast.StartReconnectLoadingCommand',
+      impl: ({ get }) => {
+        const current = get(ReconnectLoadingState())
+        if (current !== null) toast.cancel(current)
+        const id = toast.loading('Reconnecting to the chat...')
+        return [...(current === null ? [] : [CancelEvent(current)]), ReconnectLoadingState().new(id), LoadingEvent(id)]
+      }
+    })
+
+    const FinishReconnectLoadingCommand = domain.command({
+      name: 'Toast.FinishReconnectLoadingCommand',
+      impl: ({ get }) => {
+        const id = get(ReconnectLoadingState())
+        if (id === null) return null
+        toast.cancel(id)
+        return [ReconnectLoadingState().new(null), CancelEvent(id)]
+      }
+    })
+
+    domain.effect({
+      name: 'Toast.OnRoomReconnectStartedEffect',
+      impl: ({ fromEvent }) =>
+        fromEvent(chatRoomDomain.event.ReconnectStartedEvent).pipe(map(StartReconnectLoadingCommand))
+    })
+
+    domain.effect({
+      name: 'Toast.OnRoomReconnectFinishedEffect',
+      impl: ({ fromEvent }) =>
+        fromEvent(chatRoomDomain.event.ReconnectFinishedEvent).pipe(map(FinishReconnectLoadingCommand))
     })
 
     domain.effect({

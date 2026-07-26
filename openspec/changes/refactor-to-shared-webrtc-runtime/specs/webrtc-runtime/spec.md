@@ -949,7 +949,7 @@ Every uncontrolled record boundary SHALL use the existing strict Valibot schemas
 
 ### Requirement: Adjacent SystemNotice grouping is UI-only and history-responsive
 
-After the complete latest application projection is canonically sorted by event `(hlc,id)`, the UI SHALL group each maximal adjacent run of SystemNotice messages. A singleton SHALL render unchanged. A run of two or more SHALL initially render the latest notice plus the exact count and an icon expand/collapse control; expansion SHALL reveal every original notice in canonical order. Any non-notice message SHALL split groups. The transform SHALL not alter, delete, merge, or persist canonical records, and lifecycle terminology SHALL not appear in the UI.
+After the complete latest application projection is canonically sorted by event `(hlc,id)`, the UI SHALL group each maximal adjacent run of SystemNotice messages. A singleton SHALL render unchanged. A run of two or more SHALL initially render the latest notice and an icon expand/collapse control without a numeric count; expansion and collapse SHALL reveal or hide the earlier notices in canonical order through a height/opacity transition, while reduced-motion preference SHALL remove the transition without changing content. Any non-notice message SHALL split groups. The transform SHALL not alter, delete, merge, or persist canonical records, and lifecycle terminology SHALL not appear in the UI.
 
 Each grouped row SHALL derive one stable UI identity from its first canonical notice's persistent ID. Extending the same run SHALL preserve that identity. Before React and Virtuoso receive a row, text SHALL project as `message:<id>`, singleton notice as `single-notice:<id>`, and grouped notice as `notice-group:<first-notice-id>`. These row-kind namespaces SHALL remain structurally disjoint for every wire-valid opaque ID, including IDs that begin with another row kind's namespace. Every row SHALL pass that same projected identity to Virtuoso as the item key. Raw ID alone, array position, first/last presentation flags, and expand/collapse state SHALL NOT participate in row identity.
 
@@ -970,6 +970,11 @@ Streaming history MAY insert Chat messages before, after, or between existing Sy
 - **WHEN** a two-notice group renders, its expand/collapse state changes, another notice extends the same run, or late history splits that run
 - **THEN** Virtuoso SHALL receive a defined persistent key for every rendered row; expansion and extension SHALL not remount the original group, and split rows SHALL have distinct non-index identities
 
+#### Scenario: Count-free animated notice disclosure
+
+- **WHEN** a grouped notice row is expanded or collapsed
+- **THEN** earlier notices SHALL enter or leave in canonical order through a smooth height/opacity transition, the latest notice SHALL remain the control anchor, reduced-motion preference SHALL remove the transition, and no numeric group count SHALL render
+
 #### Scenario: Opaque IDs cannot impersonate another row kind
 
 - **WHEN** text or notice IDs begin with `message:`, `single-notice:`, or `notice-group:` and late history creates or splits an adjacent-notice group
@@ -977,12 +982,17 @@ Streaming history MAY insert Chat messages before, after, or between existing Sy
 
 ### Requirement: Domain-scoped manual reconnect
 
-The actions menu SHALL include "Reconnect this site", which SHALL rebuild only the current domain's ChatRoom connection and re-publish that domain's presence. Because the frozen `ChatRoom` has no `reconnect` method, the application Domain command SHALL use the exact public `leaveRoom()` and retained `JoinRoomCommand` with `joinRoom(command)` rather than extending the extern. It SHALL NOT rebuild the shared WorldRoom; the Runtime SHALL auto-reconnect the WorldRoom only on its own connection failure. The Options page SHALL NOT gain a global reconnect entry.
+The actions menu SHALL include "Reconnect this site", which SHALL rebuild only the current domain's ChatRoom connection and re-publish that domain's presence. Because the frozen `ChatRoom` has no `reconnect` method, the application Domain command SHALL use the exact public `leaveRoom()` and retained `JoinRoomCommand` with `joinRoom(command)` rather than extending the extern. The application Domain SHALL expose one request-local reconnect lifecycle: the action disables duplicate activation and shows a loading toast until either success or failure; terminal settlement SHALL dismiss that toast before existing error feedback is emitted. It SHALL NOT rebuild the shared WorldRoom; the Runtime SHALL auto-reconnect the WorldRoom only on its own connection failure. The Options page SHALL NOT gain a global reconnect entry.
 
 #### Scenario: Manual domain reconnect
 
 - **WHEN** a user activates "Reconnect this site" on one domain
 - **THEN** only that domain's ChatRoom connection and presence SHALL be rebuilt, and other domains and the WorldRoom SHALL be undisturbed
+
+#### Scenario: Manual reconnect feedback settles once
+
+- **WHEN** the user activates reconnect and the current-domain leave/join composition succeeds or fails
+- **THEN** one loading toast SHALL remain visible for that request, duplicate activation SHALL be ignored while it is active, and terminal settlement SHALL dismiss it before any failure toast
 
 #### Scenario: WorldRoom self-recovery
 

@@ -98,19 +98,19 @@ export default function App() {
             <Main />
             <Footer />
             {notUserInfo && <Setup></Setup>}
-            <Toaster
-              richColors
-              theme={themeMode}
-              offset="70px"
-              visibleToasts={1}
-              toastOptions={{
-                classNames: {
-                  toast: 'dark:bg-slate-950 border dark:border-slate-600'
-                }
-              }}
-              position="top-center"
-            ></Toaster>
           </AppMain>
+          <Toaster
+            richColors
+            theme={themeMode}
+            offset="70px"
+            visibleToasts={1}
+            toastOptions={{
+              classNames: {
+                toast: 'dark:bg-slate-950 border dark:border-slate-600'
+              }
+            }}
+            position="top-center"
+          ></Toaster>
           <AppButton></AppButton>
         </>
       )}

@@ -126,6 +126,18 @@ describe('MessageList Virtuoso integration', () => {
     expect(new Set(splitKeys).size).toBe(splitKeys.length)
   })
 
+  it('collapses a notice group to its latest notice without a numeric count', () => {
+    const markup = renderToStaticMarkup(
+      createElement(NoticeGroup, { notices: [notice('older-notice', 1), notice('latest-notice', 2)] })
+    )
+
+    expect(markup).not.toContain('older-notice')
+    expect(markup).toContain('latest-notice')
+    expect(markup).toContain('aria-label="Expand notices"')
+    expect(markup).toContain('aria-expanded="false"')
+    expect(markup).not.toContain('>2<')
+  })
+
   it('fails explicitly rather than substituting an array index for a missing row key', () => {
     expect(() => renderToStaticMarkup(createElement(MessageList, null, [createElement('div')]))).toThrow(
       'MessageList items require a stable key'
