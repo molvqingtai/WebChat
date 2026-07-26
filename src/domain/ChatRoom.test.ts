@@ -554,6 +554,33 @@ describe('ChatRoomDomain exact application port', () => {
     fixture.store.discard()
   })
 
+  it('dismisses reconnect loading before reporting a non-Error transport rejection', async () => {
+    const toast = {
+      success: vi.fn(() => 1),
+      warning: vi.fn(() => 2),
+      error: vi.fn(() => 3),
+      info: vi.fn(() => 4),
+      loading: vi.fn(() => 'reconnect-loading'),
+      cancel: vi.fn(() => 'reconnect-loading')
+    } satisfies Toast
+    const fixture = createFixture({ toast })
+    await join(fixture)
+    vi.mocked(fixture.chat.leaveRoom).mockRejectedValueOnce('transport reset')
+    fixture.store.igniteDomain(ToastDomain())
+
+    fixture.store.send(fixture.room.command.ReconnectCommand())
+
+    await vi.waitFor(() => expect(toast.error).toHaveBeenCalledWith('transport reset', undefined))
+    expect(fixture.store.query(fixture.room.query.ReconnectIsLoadingQuery())).toBe(false)
+    expect(toast.cancel).toHaveBeenCalledOnce()
+    expect(toast.cancel).toHaveBeenCalledWith('reconnect-loading')
+    expect(toast.error).toHaveBeenCalledOnce()
+    expect(vi.mocked(toast.cancel).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(toast.error).mock.invocationCallOrder[0]
+    )
+    fixture.store.discard()
+  })
+
   it('does not fabricate a local projection when the send-first port rejects', async () => {
     const fixture = createFixture()
     const projected: string[] = []

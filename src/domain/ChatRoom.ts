@@ -281,7 +281,7 @@ const ChatRoomDomain = Remesh.domain({
               await chatRoom.joinRoom(input)
               return CompleteReconnectCommand()
             } catch (error) {
-              return CompleteReconnectCommand(error as Error)
+              return CompleteReconnectCommand(error instanceof Error ? error : new Error(String(error)))
             }
           })
         )
