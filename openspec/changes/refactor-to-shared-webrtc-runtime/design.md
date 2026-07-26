@@ -32,7 +32,7 @@ Source exact `9c90bb0...` is the frozen functional baseline, but it is not the f
 - No dual-architecture intermediate release.
 - No cryptographic identity/signatures, message editing, or standalone attachment protocol.
 - No `host/hostname/href` on the wire, ever (derivable or privacy-risky); presence sites carry only `origin` and optional `title`, `icon`, `description`.
-- No agent-run `pnpm dev` or manual browser runtime testing; browser runtime verification is delegated to the QA-executed automated real-extension acceptance gates, and the Owner performs only the release-candidate branded Chrome/Edge smoke.
+- No agent-run `pnpm dev` is release evidence. Exact-bound production artifacts are exercised by repository automation and the Owner's local test environment; the Owner records the final cross-browser product verdict.
 
 ## Decisions
 
@@ -179,7 +179,7 @@ The Runtime replacement starts from clean baseline `9c90bb0...`; the requirement
 | Acyclic graph                       | Catch-all/import paths obscure or reverse dependencies                                                 | Dependency test proves the documented Domain/Extern direction and no Runtime cycle                                               |
 | Artifact synchronization            | Existing diagram shows one `NetworkDomain` and direct Artico transport                                 | Architecture JSON/HTML show the seven owners, exact application port, private provider Extern, and immutable protocol boundary   |
 
-The final acceptance matrix is cumulative: structural owner/dependency tests; provider contract tests against deterministic fake and Artico; exact eight-method/peer-wire/Database/MessageStore protected-input checks; deterministic dual-page/F5/host-rebuild/reconnect/grace/history/ACK/exactly-once behavior; full static/build gates; independent Reviewer; QA Chrome MV3 and Firefox MV2 real-extension acceptance; then Owner branded smoke and separate merge authorization. A pass on baseline `9c90bb0...`, tooling exact `167e8817...`, or any earlier candidate transfers to none of the replacement's changed inputs.
+The final acceptance matrix is cumulative: structural owner/dependency tests; provider contract tests against deterministic fake and Artico; exact eight-method/peer-wire/Database/MessageStore protected-input checks; deterministic dual-page/F5/host-rebuild/reconnect/grace/history/ACK/exactly-once behavior; full static/build gates; independent Reviewer; then exact-bound Chrome MV3 and Firefox MV2 verification in the Owner's local test environment and separate merge authorization. A pass on baseline `9c90bb0...`, tooling exact `167e8817...`, or any earlier candidate transfers to none of the replacement's changed inputs.
 
 ### 3. Background coordinates physical ports and host recovery; Lifecycle owns leases
 
@@ -266,7 +266,7 @@ v1 protocol is abandoned, not bridged. Old unstorage `LocalMessage[]` data is ne
 - [Domain splitting can create dependency cycles] -> Planner must audit the final graph before implementation, and dependency tests enforce the documented acyclic direction on the candidate.
 - [Overusing modules can hide unique invariants] -> A module is allowed only after semantic-isomorphism proof; unique owner logic and pure functions remain direct.
 - [Provider abstraction can become a second business API] -> `RoomTransportExtern` stays Runtime-private and provider-neutral; the eight-method `ChatRoomExtern` remains the only application port.
-- [Big-bang migration risk] -> Mitigated by fake-deterministic owner/provider/race tests plus QA-executed automated real-extension acceptance (Chrome MV3 and Firefox MV2) and the Owner's release-candidate branded Chrome/Edge smoke.
+- [Big-bang migration risk] -> Mitigated by fake-deterministic owner/provider/race tests, repository browser automation, and exact-bound Chrome/Edge and Firefox verification in the Owner's local test environment.
 - [Transport succeeds but local persistence fails or never starts] -> Explicit Owner decision B accepts remote-visible/local-missing history in this crash window; no delivery status, outbox, retry, or hidden fallback remains.
 - [History budgets drop very old events for some peers] -> Explicit resource contract; recent data is always preserved first.
 - [P2P data is not authenticated] -> Out of scope by decision; profiles/sites remain untrusted display data.
@@ -281,7 +281,7 @@ v1 protocol is abandoned, not bridged. Old unstorage `LocalMessage[]` data is ne
 6. Make the Runtime ChatRoom implementation state-free, remove all retained join/session/recovery authority, and adapt internal comctx Commands/Events cleanly while preserving the exact public eight methods, persistence-before-ACK, history supply, and causal send result.
 7. Convert surviving reusable Status/attempt capabilities to real `Remesh.module` only when the isomorphism rule is satisfied; otherwise rename helpers and keep unique logic in its owner. Finish all comments, tasks, architecture artifacts, tests, and residue cleanup before validation.
 8. Freeze one clean source candidate whose sole source parent is `9c90bb0...`, then run Coder development gates and fresh independent Reviewer. Requirements and independent Archify tooling commits are not ancestors.
-9. After Reviewer PASS, QA runs the complete production-built Chrome MV3 and Firefox MV2 automated real-extension matrix with preserved evidence and cleanup. The Owner then performs one branded Chrome/Edge smoke. Push/PR update does not require separate Owner authorization; merge remains a separate explicit Owner decision.
+9. After Reviewer PASS, publish and synchronize the exact production artifacts to the Owner's local test environment for Chrome/Edge and Firefox verification. Repository automation and any retained agent evidence remain supporting signals rather than a substitute for the Owner's product verdict. Push/PR update does not require separate Owner authorization; merge remains a separate explicit Owner decision.
 
 Rollback is code-only before release: revert the final candidate to the published `9c90bb0...` functional baseline. No data migration exists to roll back, and no intermediate dual-owner candidate is releasable.
 

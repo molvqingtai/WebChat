@@ -3,7 +3,7 @@
   "diagram_type": "architecture",
   "meta": {
     "title": "WebChat Remesh DDD + CQRS Architecture",
-    "subtitle": "Exact ChatRoom application port, seven unique Runtime owners, immutable peer wire, private provider injection",
+    "subtitle": "Exact ChatRoom port, seven Runtime owners, immutable peer wire, disjoint background service RPC",
     "output": "webchat-target-architecture.html",
     "viewBox": [3000, 1320]
   },
@@ -71,10 +71,53 @@
     {
       "id": "notifications",
       "type": "frontend",
-      "label": "Notifications",
+      "label": "Notification Domain",
       "sublabel": "first remote live insert",
       "pos": [430, 870],
+      "size": [185, 68],
+      "tag": "request-local failure"
+    },
+    {
+      "id": "notification-rpc",
+      "type": "messagebus",
+      "label": "Notification RPC",
+      "sublabel": "WEB_CHAT_NOTIFICATION_V1",
+      "pos": [675, 870],
+      "size": [200, 68],
+      "tag": "versioned namespace"
+    },
+    {
+      "id": "notification-provider",
+      "type": "backend",
+      "label": "Notification Provider",
+      "sublabel": "OS notification side effect",
+      "pos": [925, 870],
+      "size": [200, 68]
+    },
+    {
+      "id": "app-action",
+      "type": "frontend",
+      "label": "AppAction Domain",
+      "sublabel": "open extension options",
+      "pos": [430, 1010],
       "size": [185, 68]
+    },
+    {
+      "id": "app-action-rpc",
+      "type": "messagebus",
+      "label": "AppAction RPC",
+      "sublabel": "WEB_CHAT_APP_ACTION_V1",
+      "pos": [675, 1010],
+      "size": [200, 68],
+      "tag": "versioned namespace"
+    },
+    {
+      "id": "app-action-provider",
+      "type": "backend",
+      "label": "AppAction Provider",
+      "sublabel": "options-page side effect",
+      "pos": [925, 1010],
+      "size": [200, 68]
     },
     {
       "id": "chatroom-extern",
@@ -265,6 +308,7 @@
         "database",
         "database-backends",
         "notifications",
+        "app-action",
         "chatroom-extern",
         "runtime-client",
         "history-provider"
@@ -281,6 +325,11 @@
         "database",
         "database-backends",
         "notifications",
+        "notification-rpc",
+        "notification-provider",
+        "app-action",
+        "app-action-rpc",
+        "app-action-provider",
         "chatroom-extern",
         "runtime-client",
         "history-provider",
@@ -324,6 +373,11 @@
       "kind": "security-group",
       "label": "Private Provider Boundary",
       "wraps": ["transport-extern", "artico"]
+    },
+    {
+      "kind": "security-group",
+      "label": "Disjoint Background Service RPC",
+      "wraps": ["notification-rpc", "notification-provider", "app-action-rpc", "app-action-provider"]
     }
   ],
   "connections": [
@@ -439,6 +493,33 @@
         [522, 830]
       ],
       "labelAt": [638, 806]
+    },
+    {
+      "from": "notifications",
+      "to": "notification-rpc",
+      "label": "push",
+      "variant": "dashed"
+    },
+    {
+      "from": "notification-rpc",
+      "to": "notification-provider",
+      "label": "one request",
+      "variant": "security",
+      "labelAt": [900, 952]
+    },
+    {
+      "from": "app-action",
+      "to": "app-action-rpc",
+      "label": "open options",
+      "variant": "dashed",
+      "labelAt": [645, 1006]
+    },
+    {
+      "from": "app-action-rpc",
+      "to": "app-action-provider",
+      "label": "one request",
+      "variant": "security",
+      "labelAt": [900, 1006]
     },
     {
       "from": "runtime-client",
@@ -713,6 +794,7 @@
       "items": [
         "Current v2 message types, schemas, limits, codec, canonical JSON, and bytes stay unchanged",
         "Internal comctx may clean-cut change because it is not peer protocol",
+        "Notification and AppAction use structurally disjoint versioned RPC namespaces",
         "Wire is the anti-corruption boundary: trusted source, strict validation, ordered queues",
         "RoomTransportExtern is Runtime-private and visible only to Wire",
         "Artico is one provider implementation; fake and Artico run the same contract suite"

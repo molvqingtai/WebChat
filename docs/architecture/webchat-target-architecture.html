@@ -714,12 +714,12 @@
           <div class="pulse-dot"></div>
           <h1>WebChat Remesh DDD + CQRS Architecture</h1>
         </div>
-        <p class="subtitle">Exact ChatRoom application port, seven unique Runtime owners, immutable peer wire, private provider injection</p>
+        <p class="subtitle">Exact ChatRoom port, seven Runtime owners, immutable peer wire, disjoint background service RPC</p>
       </div>
 
       <!-- Main Diagram -->
       <div class="diagram-container">
-        <svg viewBox="0 0 3000 1320" role="img" aria-label="WebChat Remesh DDD + CQRS Architecture — Exact ChatRoom application port, seven unique Runtime owners, immutable peer wire, private provider injection (architecture diagram)">
+        <svg viewBox="0 0 3000 1320" role="img" aria-label="WebChat Remesh DDD + CQRS Architecture — Exact ChatRoom port, seven Runtime owners, immutable peer wire, disjoint background service RPC (architecture diagram)">
         <!-- Definitions -->
         <defs>
           <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
@@ -743,10 +743,10 @@
         <rect width="100%" height="100%" fill="url(#grid)" />
 
         <!-- Boundaries (behind everything) -->
-        <rect x="160" y="70" width="1000" height="888" rx="12" class="c-region" stroke-width="1"/>
+        <rect x="160" y="70" width="1000" height="1028" rx="12" class="c-region" stroke-width="1"/>
         <text x="168" y="88" class="t-cloud" font-size="9" font-weight="600">Page / Origin Contexts</text>
 
-        <rect x="146" y="36" width="2733" height="922" rx="12" class="c-region" stroke-width="1"/>
+        <rect x="146" y="36" width="2733" height="1062" rx="12" class="c-region" stroke-width="1"/>
         <text x="154" y="54" class="t-cloud" font-size="9" font-weight="600">Browser Extension Boundary</text>
 
         <rect x="1385" y="270" width="995" height="546" rx="8" class="c-security-group" stroke-width="1"/>
@@ -757,6 +757,9 @@
 
         <rect x="2360" y="270" width="505" height="126" rx="8" class="c-security-group" stroke-width="1"/>
         <text x="2368" y="288" class="t-security" font-size="9" font-weight="600">Private Provider Boundary</text>
+
+        <rect x="645" y="840" width="510" height="258" rx="8" class="c-security-group" stroke-width="1"/>
+        <text x="653" y="858" class="t-security" font-size="9" font-weight="600">Disjoint Background Service RPC</text>
 
         <!-- Connection paths (before components for correct z-order) -->
         <path d="M 150 294 L 162 294 Q 170 294 170 286 L 170 144 Q 170 136 178 136 L 190 136" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
@@ -771,6 +774,10 @@
         <path d="M 522.5 638 L 522.5 720" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
         <path d="M 430 604 L 403 604 Q 395 604 395 596 L 395 146 Q 395 138 403 138 L 420 138" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
         <path d="M 522.5 492 L 632.3881648881536 527.5383001340412 Q 640 530 640 538 L 640 822 Q 640 830 632 830 L 530 830 Q 522 830 522.0999921884154 837.9993750732326 L 522.5 870" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        <path d="M 615 904 L 675 904" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        <path d="M 875 904 L 925 904" class="a-security" stroke-width="1.5" marker-end="url(#arrowhead-security)"/>
+        <path d="M 615 1044 L 675 1044" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        <path d="M 875 1044 L 925 1044" class="a-security" stroke-width="1.5" marker-end="url(#arrowhead-security)"/>
         <path d="M 1027.5 176 L 907.1498010514274 236.41108025653844 Q 900 240 900 248 L 900 448 Q 900 456 892 456 L 658 456 Q 650 456 642 456 L 615 456" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
         <path d="M 935 476 L 783 476 Q 775 476 775 468 L 775 464 Q 775 456 767 456 L 615 456" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
         <path d="M 1120 476 L 1137 476 Q 1145 476 1145 468 L 1145 238 Q 1145 230 1153 230 L 1262 230 Q 1270 230 1270 222 L 1270 176" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
@@ -837,8 +844,36 @@
 
         <rect x="430" y="870" width="185" height="68" rx="6" class="c-mask"/>
         <rect x="430" y="870" width="185" height="68" rx="6" class="c-frontend" stroke-width="1.5"/>
-        <text x="522.5" y="902" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Notifications</text>
+        <text x="522.5" y="902" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Notification Domain</text>
         <text x="522.5" y="918" class="t-muted" font-size="9" text-anchor="middle">first remote live insert</text>
+        <text x="522.5" y="930" class="t-frontend" font-size="7" text-anchor="middle">request-local failure</text>
+
+        <rect x="675" y="870" width="200" height="68" rx="6" class="c-mask"/>
+        <rect x="675" y="870" width="200" height="68" rx="6" class="c-messagebus" stroke-width="1.5"/>
+        <text x="775" y="902" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Notification RPC</text>
+        <text x="775" y="918" class="t-muted" font-size="9" text-anchor="middle">WEB_CHAT_NOTIFICATION_V1</text>
+        <text x="775" y="930" class="t-messagebus" font-size="7" text-anchor="middle">versioned namespace</text>
+
+        <rect x="925" y="870" width="200" height="68" rx="6" class="c-mask"/>
+        <rect x="925" y="870" width="200" height="68" rx="6" class="c-backend" stroke-width="1.5"/>
+        <text x="1025" y="902" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Notification Provider</text>
+        <text x="1025" y="918" class="t-muted" font-size="9" text-anchor="middle">OS notification side effect</text>
+
+        <rect x="430" y="1010" width="185" height="68" rx="6" class="c-mask"/>
+        <rect x="430" y="1010" width="185" height="68" rx="6" class="c-frontend" stroke-width="1.5"/>
+        <text x="522.5" y="1042" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">AppAction Domain</text>
+        <text x="522.5" y="1058" class="t-muted" font-size="9" text-anchor="middle">open extension options</text>
+
+        <rect x="675" y="1010" width="200" height="68" rx="6" class="c-mask"/>
+        <rect x="675" y="1010" width="200" height="68" rx="6" class="c-messagebus" stroke-width="1.5"/>
+        <text x="775" y="1042" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">AppAction RPC</text>
+        <text x="775" y="1058" class="t-muted" font-size="9" text-anchor="middle">WEB_CHAT_APP_ACTION_V1</text>
+        <text x="775" y="1070" class="t-messagebus" font-size="7" text-anchor="middle">versioned namespace</text>
+
+        <rect x="925" y="1010" width="200" height="68" rx="6" class="c-mask"/>
+        <rect x="925" y="1010" width="200" height="68" rx="6" class="c-backend" stroke-width="1.5"/>
+        <text x="1025" y="1042" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">AppAction Provider</text>
+        <text x="1025" y="1058" class="t-muted" font-size="9" text-anchor="middle">options-page side effect</text>
 
         <rect x="675" y="100" width="200" height="76" rx="6" class="c-mask"/>
         <rect x="675" y="100" width="200" height="76" rx="6" class="c-security" stroke-width="1.5"/>
@@ -977,6 +1012,14 @@
         <text x="393" y="396" class="t-muted" font-size="8" text-anchor="middle">commit invalidation</text>
         <rect x="604.2" y="796" width="67.6" height="14" rx="3" class="c-mask"/>
         <text x="638" y="806" class="t-messagebus" font-size="8" text-anchor="middle">first insert</text>
+        <rect x="630" y="884" width="30" height="14" rx="3" class="c-mask"/>
+        <text x="645" y="894" class="t-messagebus" font-size="8" text-anchor="middle">push</text>
+        <rect x="868.6" y="942" width="62.8" height="14" rx="3" class="c-mask"/>
+        <text x="900" y="952" class="t-security" font-size="8" text-anchor="middle">one request</text>
+        <rect x="611.2" y="996" width="67.6" height="14" rx="3" class="c-mask"/>
+        <text x="645" y="1006" class="t-messagebus" font-size="8" text-anchor="middle">open options</text>
+        <rect x="868.6" y="996" width="62.8" height="14" rx="3" class="c-mask"/>
+        <text x="900" y="1006" class="t-security" font-size="8" text-anchor="middle">one request</text>
         <rect x="726.8" y="439" width="96.39999999999999" height="14" rx="3" class="c-mask"/>
         <text x="775" y="449" class="t-messagebus" font-size="8" text-anchor="middle">persist before ACK</text>
         <rect x="722" y="522" width="106" height="14" rx="3" class="c-mask"/>
@@ -1028,10 +1071,10 @@
         <text x="256" y="1304" class="t-muted" font-size="8">Backend</text>
         <rect x="329" y="1296" width="14" height="9" rx="2" class="c-database" stroke-width="1"/>
         <text x="349" y="1304" class="t-muted" font-size="8">Database</text>
-        <rect x="427" y="1296" width="14" height="9" rx="2" class="c-security" stroke-width="1"/>
-        <text x="447" y="1304" class="t-muted" font-size="8">Security</text>
-        <rect x="525" y="1296" width="14" height="9" rx="2" class="c-messagebus" stroke-width="1"/>
-        <text x="545" y="1304" class="t-muted" font-size="8">Message bus</text>
+        <rect x="427" y="1296" width="14" height="9" rx="2" class="c-messagebus" stroke-width="1"/>
+        <text x="447" y="1304" class="t-muted" font-size="8">Message bus</text>
+        <rect x="540" y="1296" width="14" height="9" rx="2" class="c-security" stroke-width="1"/>
+        <text x="560" y="1304" class="t-muted" font-size="8">Security</text>
         <rect x="638" y="1296" width="14" height="9" rx="2" class="c-cloud" stroke-width="1"/>
         <text x="658" y="1304" class="t-muted" font-size="8">Cloud</text>
       </svg>
@@ -1090,6 +1133,7 @@
         <ul>
           <li>&bull; Current v2 message types, schemas, limits, codec, canonical JSON, and bytes stay unchanged</li>
           <li>&bull; Internal comctx may clean-cut change because it is not peer protocol</li>
+          <li>&bull; Notification and AppAction use structurally disjoint versioned RPC namespaces</li>
           <li>&bull; Wire is the anti-corruption boundary: trusted source, strict validation, ordered queues</li>
           <li>&bull; RoomTransportExtern is Runtime-private and visible only to Wire</li>
           <li>&bull; Artico is one provider implementation; fake and Artico run the same contract suite</li>
