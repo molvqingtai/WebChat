@@ -982,7 +982,7 @@ Streaming history MAY insert Chat messages before, after, or between existing Sy
 
 ### Requirement: Domain-scoped manual reconnect
 
-The actions menu SHALL include "Reconnect this site", which SHALL rebuild only the current domain's ChatRoom connection and re-publish that domain's presence. Because the frozen `ChatRoom` has no `reconnect` method, the application Domain command SHALL use the exact public `leaveRoom()` and retained `JoinRoomCommand` with `joinRoom(command)` rather than extending the extern. The application Domain SHALL expose one request-local reconnect lifecycle: the action disables duplicate activation and shows a loading toast until either success or failure; terminal settlement SHALL dismiss that toast before existing error feedback is emitted. It SHALL NOT rebuild the shared WorldRoom; the Runtime SHALL auto-reconnect the WorldRoom only on its own connection failure. The Options page SHALL NOT gain a global reconnect entry.
+The actions menu SHALL include "Reconnect this site", which SHALL rebuild only the current domain's ChatRoom connection and re-publish that domain's presence. Because the frozen `ChatRoom` has no `reconnect` method, the application Domain command SHALL use the exact public `leaveRoom()` and retained `JoinRoomCommand` with `joinRoom(command)` rather than extending the extern. The application Domain SHALL expose one request-local reconnect lifecycle. While the main plugin panel is open, every enabled activation SHALL visibly render exactly one loading toast inside that panel before the leave/join composition can settle; the reconnect control SHALL disable duplicate activation and show its spinning refresh icon while active. The Toaster and its reconnect feedback SHALL NOT render or portal as a host-page global overlay. If reconnect cannot start, the control SHALL be visibly disabled and SHALL NOT dispatch activation rather than accept a click that silently returns. Terminal settlement SHALL dismiss the loading toast before existing error feedback is emitted; success requires no additional toast. Closing the panel MAY hide or unmount toast presentation, but SHALL NOT cancel, replay, or strand the request, and reopening SHALL reveal no stale reconnect toast. Reconnect SHALL NOT rebuild the shared WorldRoom; the Runtime SHALL auto-reconnect the WorldRoom only on its own connection failure. The Options page SHALL NOT gain a global reconnect entry.
 
 #### Scenario: Manual domain reconnect
 
@@ -992,7 +992,23 @@ The actions menu SHALL include "Reconnect this site", which SHALL rebuild only t
 #### Scenario: Manual reconnect feedback settles once
 
 - **WHEN** the user activates reconnect and the current-domain leave/join composition succeeds or fails
-- **THEN** one loading toast SHALL remain visible for that request, duplicate activation SHALL be ignored while it is active, and terminal settlement SHALL dismiss it before any failure toast
+- **THEN** one panel-local loading toast SHALL remain visible for that request, duplicate activation SHALL be ignored while it is active, and terminal settlement SHALL dismiss it before any failure toast
+
+#### Scenario: Reconnect feedback belongs to the plugin panel
+
+- **WHEN** an enabled user activates reconnect while the main plugin panel is open
+- **THEN** exactly one loading toast SHALL visibly render inside the plugin-panel boundary before the reconnect composition can settle, and no reconnect Toaster or toast SHALL appear as a host-page global overlay
+
+#### Scenario: Reconnect unavailable state is not a silent action
+
+- **GIVEN** the current domain cannot start the reconnect composition
+- **WHEN** the actions menu renders "Reconnect this site"
+- **THEN** the action SHALL be visibly disabled, SHALL NOT dispatch activation, and SHALL NOT accept a click that silently produces neither feedback nor an operation
+
+#### Scenario: Closing the panel does not retain stale feedback
+
+- **WHEN** the main plugin panel closes during an active reconnect and later reopens after terminal settlement
+- **THEN** the presentation MAY hide or unmount while closed, the request SHALL still complete terminal cleanup, and no stale loading or error toast SHALL reappear
 
 #### Scenario: WorldRoom self-recovery
 
