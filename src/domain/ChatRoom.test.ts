@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Remesh } from 'remesh'
 import ChatRoomDomain from '@/domain/ChatRoom'
-import ToastDomain from '@/domain/Toast'
 import MessageInputDomain from '@/domain/MessageInput'
 import MessageListDomain from '@/domain/MessageList'
 import UserInfoDomain, { type UserInfo } from '@/domain/UserInfo'
@@ -18,7 +17,6 @@ import {
   type TextMessageRecord
 } from '@/domain/Message'
 import { BrowserSyncStorageExtern, type Storage, type StorageValue } from '@/domain/externs/Storage'
-import { ToastExtern, type Toast } from '@/domain/externs/Toast'
 import { WorldRoomExtern } from '@/domain/externs/WorldRoom'
 import { MESSAGE_TYPE, type ChatMessage, type ChatSession } from '@/protocol'
 import type { RuntimeServer, RuntimeSessionEvent, RuntimeSnapshot } from '@/runtime/Contract'
@@ -47,7 +45,7 @@ const deferred = () => {
   return { promise, resolve }
 }
 
-const createFixture = (options: { delayRecordWatch?: boolean; toast?: Toast } = {}) => {
+const createFixture = (options: { delayRecordWatch?: boolean } = {}) => {
   vi.stubGlobal('document', {
     location: { origin: 'https://example.test' },
     title: '',
@@ -140,8 +138,7 @@ const createFixture = (options: { delayRecordWatch?: boolean; toast?: Toast } = 
         getState: async () => [],
         onState: () => () => {},
         onError: () => () => {}
-      }),
-      ...(options.toast ? [ToastExtern.impl(options.toast)] : [])
+      })
     ]
   })
   const chatAction = ChatRoomDomain()
@@ -486,98 +483,73 @@ describe('ChatRoomDomain exact application port', () => {
     await vi.waitFor(() => expect(projected).toEqual(['local-message']))
     expect(fixture.store.query(fixture.input.query.MessageQuery())).toBe('')
     fixture.store.send(fixture.room.command.ReconnectCommand())
+    const request = fixture.store.query(fixture.room.query.ReconnectRequestQuery())
+    expect(request).toEqual({ id: 1, phase: 'presenting' })
+    expect(fixture.chat.leaveRoom).not.toHaveBeenCalled()
+    fixture.store.send(fixture.room.command.PresentReconnectCommand(request!.id))
     await vi.waitFor(() => expect(fixture.chat.leaveRoom).toHaveBeenCalledTimes(1))
     expect(fixture.chat.joinRoom).toHaveBeenCalledTimes(2)
     fixture.store.discard()
   })
 
-  it('shows one reconnect loading toast until the reconnect settles and rejects duplicate clicks', async () => {
+  it('waits for the request-owned presentation, rejects duplicates, and ignores stale presentation signals', async () => {
     const reconnect = deferred()
-    const toast = {
-      success: vi.fn(() => 1),
-      warning: vi.fn(() => 2),
-      error: vi.fn(() => 3),
-      info: vi.fn(() => 4),
-      loading: vi.fn(() => 'reconnect-loading'),
-      cancel: vi.fn(() => 'reconnect-loading')
-    } satisfies Toast
-    const fixture = createFixture({ toast })
+    const fixture = createFixture()
     await join(fixture)
     vi.mocked(fixture.chat.leaveRoom).mockReturnValueOnce(reconnect.promise)
-    fixture.store.igniteDomain(ToastDomain())
     const started: number[] = []
-    const finished: number[] = []
-    fixture.store.subscribeEvent(fixture.room.event.ReconnectStartedEvent, () => started.push(started.length))
-    fixture.store.subscribeEvent(fixture.room.event.ReconnectFinishedEvent, () => finished.push(finished.length))
+    const finished: { id: number; error?: Error }[] = []
+    fixture.store.subscribeEvent(fixture.room.event.ReconnectStartedEvent, (id) => started.push(id))
+    fixture.store.subscribeEvent(fixture.room.event.ReconnectFinishedEvent, (result) => finished.push(result))
 
     fixture.store.send(fixture.room.command.ReconnectCommand())
     fixture.store.send(fixture.room.command.ReconnectCommand())
 
+    const request = fixture.store.query(fixture.room.query.ReconnectRequestQuery())
+    expect(request).toEqual({ id: 1, phase: 'presenting' })
     expect(fixture.store.query(fixture.room.query.ReconnectIsLoadingQuery())).toBe(true)
-    expect(toast.loading).toHaveBeenCalledOnce()
-    expect(toast.loading).toHaveBeenCalledWith('Reconnecting to the chat...')
-    expect(fixture.chat.leaveRoom).toHaveBeenCalledOnce()
-    expect(started).toHaveLength(1)
+    expect(started).toEqual([request!.id])
+    expect(fixture.chat.leaveRoom).not.toHaveBeenCalled()
+
+    fixture.store.send(fixture.room.command.PresentReconnectCommand(request!.id + 1))
+    expect(fixture.chat.leaveRoom).not.toHaveBeenCalled()
+    fixture.store.send(fixture.room.command.PresentReconnectCommand(request!.id))
+    fixture.store.send(fixture.room.command.PresentReconnectCommand(request!.id))
+
+    await vi.waitFor(() => expect(fixture.chat.leaveRoom).toHaveBeenCalledOnce())
+    expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toEqual({
+      id: request!.id,
+      phase: 'connecting'
+    })
 
     reconnect.resolve()
-    await vi.waitFor(() => expect(finished).toHaveLength(1))
+    await vi.waitFor(() => expect(finished).toEqual([{ id: request!.id }]))
+    expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toBeNull()
     expect(fixture.store.query(fixture.room.query.ReconnectIsLoadingQuery())).toBe(false)
     expect(fixture.chat.joinRoom).toHaveBeenCalledTimes(2)
-    expect(toast.cancel).toHaveBeenCalledOnce()
-    expect(toast.cancel).toHaveBeenCalledWith('reconnect-loading')
     fixture.store.discard()
   })
 
-  it('dismisses reconnect loading before reporting a reconnect failure', async () => {
-    const failure = new Error('reconnect failed')
-    const toast = {
-      success: vi.fn(() => 1),
-      warning: vi.fn(() => 2),
-      error: vi.fn(() => 3),
-      info: vi.fn(() => 4),
-      loading: vi.fn(() => 'reconnect-loading'),
-      cancel: vi.fn(() => 'reconnect-loading')
-    } satisfies Toast
-    const fixture = createFixture({ toast })
+  it.each([
+    { rejection: new Error('reconnect failed'), message: 'reconnect failed' },
+    { rejection: 'transport reset', message: 'transport reset' }
+  ])('normalizes $message and settles it through the request-owned result', async ({ rejection, message }) => {
+    const fixture = createFixture()
     await join(fixture)
-    vi.mocked(fixture.chat.leaveRoom).mockRejectedValueOnce(failure)
-    fixture.store.igniteDomain(ToastDomain())
+    vi.mocked(fixture.chat.leaveRoom).mockRejectedValueOnce(rejection)
+    const finished: { id: number; error?: Error }[] = []
+    const roomErrors: Error[] = []
+    fixture.store.subscribeEvent(fixture.room.event.ReconnectFinishedEvent, (result) => finished.push(result))
+    fixture.store.subscribeEvent(fixture.room.event.OnErrorEvent, (error) => roomErrors.push(error))
 
     fixture.store.send(fixture.room.command.ReconnectCommand())
+    const request = fixture.store.query(fixture.room.query.ReconnectRequestQuery())!
+    fixture.store.send(fixture.room.command.PresentReconnectCommand(request.id))
 
-    await vi.waitFor(() => expect(toast.error).toHaveBeenCalledWith(failure.message, undefined))
+    await vi.waitFor(() => expect(finished).toHaveLength(1))
+    expect(finished[0]).toEqual({ id: request.id, error: new Error(message) })
     expect(fixture.store.query(fixture.room.query.ReconnectIsLoadingQuery())).toBe(false)
-    expect(toast.cancel).toHaveBeenCalledWith('reconnect-loading')
-    expect(vi.mocked(toast.cancel).mock.invocationCallOrder[0]).toBeLessThan(
-      vi.mocked(toast.error).mock.invocationCallOrder[0]
-    )
-    fixture.store.discard()
-  })
-
-  it('dismisses reconnect loading before reporting a non-Error transport rejection', async () => {
-    const toast = {
-      success: vi.fn(() => 1),
-      warning: vi.fn(() => 2),
-      error: vi.fn(() => 3),
-      info: vi.fn(() => 4),
-      loading: vi.fn(() => 'reconnect-loading'),
-      cancel: vi.fn(() => 'reconnect-loading')
-    } satisfies Toast
-    const fixture = createFixture({ toast })
-    await join(fixture)
-    vi.mocked(fixture.chat.leaveRoom).mockRejectedValueOnce('transport reset')
-    fixture.store.igniteDomain(ToastDomain())
-
-    fixture.store.send(fixture.room.command.ReconnectCommand())
-
-    await vi.waitFor(() => expect(toast.error).toHaveBeenCalledWith('transport reset', undefined))
-    expect(fixture.store.query(fixture.room.query.ReconnectIsLoadingQuery())).toBe(false)
-    expect(toast.cancel).toHaveBeenCalledOnce()
-    expect(toast.cancel).toHaveBeenCalledWith('reconnect-loading')
-    expect(toast.error).toHaveBeenCalledOnce()
-    expect(vi.mocked(toast.cancel).mock.invocationCallOrder[0]).toBeLessThan(
-      vi.mocked(toast.error).mock.invocationCallOrder[0]
-    )
+    expect(roomErrors).toEqual([])
     fixture.store.discard()
   })
 

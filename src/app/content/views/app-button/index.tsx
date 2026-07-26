@@ -25,6 +25,9 @@ export interface AppButtonProps {
   className?: string
 }
 
+export const isReconnectAvailable = (panelOpen: boolean, joined: boolean, reconnecting: boolean) =>
+  panelOpen && joined && !reconnecting
+
 const AppButton: FC<AppButtonProps> = ({ className }) => {
   const send = useRemeshSend()
   const appActionDomain = useRemeshDomain(AppActionDomain())
@@ -91,11 +94,19 @@ const AppButton: FC<AppButtonProps> = ({ className }) => {
   const chatRoomDomain = useRemeshDomain(ChatRoomDomain())
   const chatRoomJoined = useRemeshQuery(chatRoomDomain.query.JoinIsFinishedQuery())
   const reconnecting = useRemeshQuery(chatRoomDomain.query.ReconnectIsLoadingQuery())
+  const reconnectAvailable = isReconnectAvailable(appOpenStatus, chatRoomJoined, reconnecting)
+  const reconnectLabel = reconnecting
+    ? 'Reconnecting this site'
+    : !appOpenStatus
+      ? 'Open WebChat to reconnect this site'
+      : !chatRoomJoined
+        ? 'Waiting for this site chat to connect'
+        : 'Reconnect this site'
 
   // Rebuilds only this domain's ChatRoom; the shared WorldRoom is untouched.
   const handleReconnectSite = useCallback(() => {
-    if (chatRoomJoined && !reconnecting) send(chatRoomDomain.command.ReconnectCommand())
-  }, [chatRoomDomain.command, chatRoomJoined, reconnecting, send])
+    send(chatRoomDomain.command.ReconnectCommand())
+  }, [chatRoomDomain.command, send])
 
   // Memoize menu buttons to prevent re-render when position changes
   const menuButtons = useMemo(
@@ -128,9 +139,9 @@ const AppButton: FC<AppButtonProps> = ({ className }) => {
         <Button
           onClick={handleReconnectSite}
           variant="outline"
-          disabled={!chatRoomJoined || reconnecting}
-          aria-label={reconnecting ? 'Reconnecting this site' : 'Reconnect this site'}
-          title={reconnecting ? 'Reconnecting this site' : 'Reconnect this site'}
+          disabled={!reconnectAvailable}
+          aria-label={reconnectLabel}
+          title={reconnectLabel}
           className="dark:bg-background dark:text-foreground dark:hover:bg-accent size-10 rounded-full p-0 shadow dark:border-slate-600"
         >
           <RefreshCwIcon className={cn('size-5', reconnecting && 'animate-spin')} />
@@ -150,7 +161,8 @@ const AppButton: FC<AppButtonProps> = ({ className }) => {
       handleOpenOptionsPage,
       handleReconnectSite,
       appButtonRef,
-      chatRoomJoined,
+      reconnectAvailable,
+      reconnectLabel,
       reconnecting
     ]
   )

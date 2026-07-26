@@ -50,16 +50,24 @@ const ChatRoomDomain = Remesh.domain({
 
     const SessionsState = domain.state<readonly ChatSession[]>({ name: 'Room.SessionsState', default: [] })
     const JoinInputState = domain.state<JoinRoomInput | null>({ name: 'Room.JoinInputState', default: null })
-    const ReconnectingState = domain.state({ name: 'Room.ReconnectingState', default: false })
+    const ReconnectSequenceState = domain.state({ name: 'Room.ReconnectSequenceState', default: 0 })
+    const ReconnectRequestState = domain.state<{ id: number; phase: 'presenting' | 'connecting' } | null>({
+      name: 'Room.ReconnectRequestState',
+      default: null
+    })
 
     const UserListQuery = domain.query({
       name: 'Room.UserListQuery',
       impl: ({ get }) => uniqueUsers(get(SessionsState()))
     })
     const JoinIsFinishedQuery = JoinStatus.query.IsFinishedQuery
+    const ReconnectRequestQuery = domain.query({
+      name: 'Room.ReconnectRequestQuery',
+      impl: ({ get }) => get(ReconnectRequestState())
+    })
     const ReconnectIsLoadingQuery = domain.query({
       name: 'Room.ReconnectIsLoadingQuery',
-      impl: ({ get }) => get(ReconnectingState())
+      impl: ({ get }) => get(ReconnectRequestQuery()) !== null
     })
 
     const ApplySessionsCommand = domain.command({
@@ -91,15 +99,30 @@ const ChatRoomDomain = Remesh.domain({
       impl: (_, payload: { messageId: string; reaction: 'like' | 'hate' }) => SendReactionRequestedEvent(payload)
     })
 
-    const ReconnectRequestedEvent = domain.event({ name: 'Room.ReconnectRequestedEvent' })
-    const ReconnectStartedEvent = domain.event({ name: 'Room.ReconnectStartedEvent' })
-    const ReconnectFinishedEvent = domain.event({ name: 'Room.ReconnectFinishedEvent' })
+    const ReconnectRequestedEvent = domain.event<number>({ name: 'Room.ReconnectRequestedEvent' })
+    const ReconnectStartedEvent = domain.event<number>({ name: 'Room.ReconnectStartedEvent' })
+    const ReconnectFinishedEvent = domain.event<{ id: number; error?: Error }>({
+      name: 'Room.ReconnectFinishedEvent'
+    })
     const ReconnectCommand = domain.command({
       name: 'Room.ReconnectCommand',
-      impl: ({ get }) =>
-        get(JoinIsFinishedQuery()) && !get(ReconnectingState())
-          ? [ReconnectingState().new(true), ReconnectStartedEvent(), ReconnectRequestedEvent()]
-          : null
+      impl: ({ get }) => {
+        if (!get(JoinIsFinishedQuery()) || get(ReconnectRequestQuery()) !== null) return null
+        const id = get(ReconnectSequenceState()) + 1
+        return [
+          ReconnectSequenceState().new(id),
+          ReconnectRequestState().new({ id, phase: 'presenting' }),
+          ReconnectStartedEvent(id)
+        ]
+      }
+    })
+    const PresentReconnectCommand = domain.command({
+      name: 'Room.PresentReconnectCommand',
+      impl: ({ get }, id: number) => {
+        const request = get(ReconnectRequestQuery())
+        if (request?.id !== id || request.phase !== 'presenting') return null
+        return [ReconnectRequestState().new({ id, phase: 'connecting' }), ReconnectRequestedEvent(id)]
+      }
     })
 
     const SendTextMessageEvent = domain.event<ReturnType<typeof projectTextRecord>>({
@@ -113,11 +136,10 @@ const ChatRoomDomain = Remesh.domain({
 
     const CompleteReconnectCommand = domain.command({
       name: 'Room.CompleteReconnectCommand',
-      impl: (_, error?: Error) => [
-        ReconnectingState().new(false),
-        ReconnectFinishedEvent(),
-        ...(error ? [OnErrorEvent(error)] : [])
-      ]
+      impl: ({ get }, result: { id: number; error?: Error }) => {
+        if (get(ReconnectRequestQuery())?.id !== result.id) return null
+        return [ReconnectRequestState().new(null), ReconnectFinishedEvent(result)]
+      }
     })
 
     const RetainJoinInputCommand = domain.command({
@@ -273,15 +295,18 @@ const ChatRoomDomain = Remesh.domain({
       name: 'Room.ReconnectEffect',
       impl: ({ fromEvent, get }) =>
         fromEvent(ReconnectRequestedEvent).pipe(
-          concatMap(async () => {
+          concatMap(async (id) => {
             const input = get(JoinInputState())
-            if (!input) return CompleteReconnectCommand()
+            if (!input) return CompleteReconnectCommand({ id })
             try {
               await chatRoom.leaveRoom()
               await chatRoom.joinRoom(input)
-              return CompleteReconnectCommand()
+              return CompleteReconnectCommand({ id })
             } catch (error) {
-              return CompleteReconnectCommand(error instanceof Error ? error : new Error(String(error)))
+              return CompleteReconnectCommand({
+                id,
+                error: error instanceof Error ? error : new Error(String(error))
+              })
             }
           })
         )
@@ -328,8 +353,14 @@ const ChatRoomDomain = Remesh.domain({
     })
 
     return {
-      query: { UserListQuery, JoinIsFinishedQuery, ReconnectIsLoadingQuery },
-      command: { JoinRoomCommand, SendTextMessageCommand, SendReactionCommand, ReconnectCommand },
+      query: { UserListQuery, JoinIsFinishedQuery, ReconnectRequestQuery, ReconnectIsLoadingQuery },
+      command: {
+        JoinRoomCommand,
+        SendTextMessageCommand,
+        SendReactionCommand,
+        ReconnectCommand,
+        PresentReconnectCommand
+      },
       event: {
         SendTextMessageEvent,
         OnTextMessageEvent,
