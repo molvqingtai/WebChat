@@ -1,3 +1,5 @@
+> **Completion status (2026-07-28):** The base repair completed on immutable exact `56ebff521299b3644d7bf3b2a4858958388e2918` after fresh independent Review PASS and exact-bound CI. PR #74 merged into `develop` through `e62c15b2f64f7ae8cb75bbfedcc5519340cf10fe`, and merge-triggered run `29999281047` passed. Unchanged Archify head `5ee76d1a195f26958e0866df87aa97ece4e28a22` then received fresh repaired-base validation and PR #73 merged through `28ff830ff7b52cb5cea4a97ed9b6ca655de1129c`. These records close only the WXT/Archify route and transfer no verdict to unrelated Runtime candidates.
+
 ## 1. Baseline And FAIL-Before
 
 - [x] 1.1 Record clean `develop@b140b68dc8b2635e95ade977dfa504c94b7663c2` identity, tree, branch/ref state, workflow/package hashes, and the failed base/Archify CI run identities.
@@ -21,7 +23,7 @@
 ## 4. Independent Review And Publication
 
 - [x] 4.1 Planner reviews only the requirements/decomposition authority; Planner does not issue a source verdict.
-- [ ] 4.2 Reviewer independently audits the frozen source exact, test sensitivity, one-path scope, failure propagation, unchanged gates, and evidence. Only `FINAL PASS` releases publication.
-- [ ] 4.3 Push the immutable exact on an independent branch, open a separate `develop`-base PR, and track fresh exact-bound CI to terminal success without merge.
-- [ ] 4.4 After successful review/CI, ask the Owner for explicit base-remediation merge authorization. Commit, push, and PR update require no separate authorization.
-- [ ] 4.5 After the repair merges to `develop`, keep PR #73 head exactly `5ee76d1a...`, run fresh CI against the repaired base, and keep Archify merge separately unauthorized until its own exact-bound gates and Owner decision.
+- [x] 4.2 Reviewer independently audits the frozen source exact, test sensitivity, one-path scope, failure propagation, unchanged gates, and evidence. Only `FINAL PASS` releases publication.
+- [x] 4.3 Push the immutable exact on an independent branch, open a separate `develop`-base PR, and track fresh exact-bound CI to terminal success without merge.
+- [x] 4.4 After successful review/CI, ask the Owner for explicit base-remediation merge authorization. Commit, push, and PR update require no separate authorization.
+- [x] 4.5 After the repair merges to `develop`, keep PR #73 head exactly `5ee76d1a...`, run fresh CI against the repaired base, and keep Archify merge separately unauthorized until its own exact-bound gates and Owner decision.
