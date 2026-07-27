@@ -1,3 +1,39 @@
+# [2.0.0](https://github.com/molvqingtai/WebChat/compare/v1.9.7...v2.0.0) (2026-07-27)
+
+
+* feat!: release WebChat 2.0 ([fff7da8](https://github.com/molvqingtai/WebChat/commit/fff7da8e4e6f320a86d45670e108cd97451955e5))
+
+
+### Bug Fixes
+
+* **chat:** normalize reconnect rejections ([fb3d1dd](https://github.com/molvqingtai/WebChat/commit/fb3d1dd6cd02bfdb8fdf0c3ee9642f0ade1e5f1b))
+* **ci:** derive Chrome context identity ([5a7bb4a](https://github.com/molvqingtai/WebChat/commit/5a7bb4a12c301bd4e51b4904253739e41091a4f8))
+* **ci:** prepare isolated test workspace ([a03e2d1](https://github.com/molvqingtai/WebChat/commit/a03e2d168b5bd65476a516226f2b48a862c58a30))
+* **ci:** prepare WXT before typecheck ([56ebff5](https://github.com/molvqingtai/WebChat/commit/56ebff521299b3644d7bf3b2a4858958388e2918))
+* fixed dependency, prevent build errors ([35febaa](https://github.com/molvqingtai/WebChat/commit/35febaa9cd388820e2048fde386a8c874e6f517f))
+* rewrite rendering displays blank ([9f28641](https://github.com/molvqingtai/WebChat/commit/9f286415f20b66a27e7f4d2c1e40e9f9586d6f57))
+* **service:** isolate background RPC namespaces ([b1fcb66](https://github.com/molvqingtai/WebChat/commit/b1fcb6687b5c0bec2c844ab9cc2392057f6e6874))
+* **ui:** animate notices and show reconnect feedback ([d3906bb](https://github.com/molvqingtai/WebChat/commit/d3906bbae26e050e3f6de7bd9f459a85348299b2))
+* **ui:** make reconnect feedback request-owned ([a74d55b](https://github.com/molvqingtai/WebChat/commit/a74d55b741a2e124aac7006967a9c6f3982ba784))
+* **ui:** publish toast surface after subscription ([f4d9c40](https://github.com/molvqingtai/WebChat/commit/f4d9c40199e3f73455a16b0194848ec888d7e78c))
+* **ui:** replay active toast after remount ([ce1693b](https://github.com/molvqingtai/WebChat/commit/ce1693b8796c3c86977b9bcce3c8c2688bb5e391))
+* **ui:** replay active toasts after remount ([6069170](https://github.com/molvqingtai/WebChat/commit/606917050685e95c4ee3807085b3467ef3631036))
+* **ui:** restore AppMain reconnect toast flow ([4a26a59](https://github.com/molvqingtai/WebChat/commit/4a26a59ec3a417bb9761fb8666a64eab30e7dddb))
+* **ui:** stop repeated readiness feedback ([4f53598](https://github.com/molvqingtai/WebChat/commit/4f535988ed92664597e0ea1a666e1537d8cf011c))
+* **ui:** unify generic toast presentation ([7f0ccd7](https://github.com/molvqingtai/WebChat/commit/7f0ccd7e2120f476faf0de99d7264ba62837d2ec))
+* unwrap jsonr commonjs default export ([1e441a0](https://github.com/molvqingtai/WebChat/commit/1e441a0a285b6a054f52b8361b3333a581dcd62c))
+
+
+### Performance Improvements
+
+* change join toast type ([3cf0bf0](https://github.com/molvqingtai/WebChat/commit/3cf0bf03e3ecdfd1db9f4b18e7a739030c41052e))
+* getRootNode -> useRoot ([9507a0f](https://github.com/molvqingtai/WebChat/commit/9507a0fe9ae8a533396ec66d04f222c3a8e79fa1))
+
+
+### BREAKING CHANGES
+
+* WebChat 2.0 is not wire-compatible with 1.x clients.
+
 ## [1.9.7](https://github.com/molvqingtai/WebChat/compare/v1.9.6...v1.9.7) (2025-10-06)
 
 ### Performance Improvements
