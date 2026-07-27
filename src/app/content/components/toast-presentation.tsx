@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRemeshDomain, useRemeshEvent, useRemeshSend } from 'remesh-react'
 import { toast } from 'sonner'
 import ToastPresentationDomain, { type ToastDescriptor } from '@/domain/ToastPresentation'
@@ -97,6 +97,7 @@ const showDescriptor = (descriptor: ToastDescriptor) => {
 export const useToastPresentation = () => {
   const send = useRemeshSend()
   const presentationDomain = useRemeshDomain(ToastPresentationDomain())
+  const [surfaceAttached, setSurfaceAttached] = useState(false)
   const toasterRef = useRef<HTMLElement | null>(null)
   const surfaceMountedRef = useRef(false)
   const trackedIdsRef = useRef(new Set<string>())
@@ -140,6 +141,12 @@ export const useToastPresentation = () => {
     surfaceAttemptIds.forEach((id) => acknowledge(id, 'unavailable'))
   }, [acknowledge, detach, presentationDomain.command, send])
 
+  const mountSurface = useCallback(() => {
+    if (!toasterRef.current || surfaceMountedRef.current) return
+    surfaceMountedRef.current = true
+    send(presentationDomain.command.SetSurfaceMountedCommand(true))
+  }, [presentationDomain.command, send])
+
   const cancelSurfaceUnmount = useCallback(() => {
     if (pendingUnmountRef.current === null) return
     clearTimeout(pendingUnmountRef.current)
@@ -157,16 +164,14 @@ export const useToastPresentation = () => {
   const setToasterRef = useCallback(
     (toaster: HTMLElement | null) => {
       toasterRef.current = toaster
+      setSurfaceAttached(Boolean(toaster))
       if (!toaster) {
         scheduleSurfaceUnmount()
         return
       }
       cancelSurfaceUnmount()
-      if (surfaceMountedRef.current) return
-      surfaceMountedRef.current = true
-      send(presentationDomain.command.SetSurfaceMountedCommand(true))
     },
-    [cancelSurfaceUnmount, presentationDomain.command, scheduleSurfaceUnmount, send]
+    [cancelSurfaceUnmount, scheduleSurfaceUnmount]
   )
 
   useRemeshEvent(presentationDomain.event.DescriptorEvent, (descriptor) => {
@@ -200,9 +205,12 @@ export const useToastPresentation = () => {
   useRemeshEvent(presentationDomain.event.DismissEvent, dismiss)
 
   useEffect(() => {
+    if (!surfaceAttached) return
     cancelSurfaceUnmount()
+    // Child passive effects install Sonner's subscription before this parent effect publishes.
+    mountSurface()
     return scheduleSurfaceUnmount
-  }, [cancelSurfaceUnmount, scheduleSurfaceUnmount])
+  }, [cancelSurfaceUnmount, mountSurface, scheduleSurfaceUnmount, surfaceAttached])
 
   return setToasterRef
 }
