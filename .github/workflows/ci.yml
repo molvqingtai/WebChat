@@ -85,6 +85,8 @@ jobs:
             ${{ runner.os }}-pnpm-
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+      - name: Generate WXT types
+        run: pnpm exec wxt prepare
       - run: pnpm run test
 
   build:

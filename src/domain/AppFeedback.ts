@@ -48,9 +48,7 @@ const AppFeedbackDomain = Remesh.domain({
       name: 'AppFeedback.OnReadinessEffect',
       impl: ({ fromEvent, get }) =>
         fromEvent(readinessDomain.event.StateChangedEvent).pipe(
-          map((state) =>
-            get(presentationDomain.query.SurfaceMountedQuery()) ? readinessFeedbackCommand(state) : null
-          )
+          map((state) => (get(presentationDomain.query.SurfaceMountedQuery()) ? readinessFeedbackCommand(state) : null))
         )
     })
 
