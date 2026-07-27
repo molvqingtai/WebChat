@@ -556,7 +556,7 @@ describe('ChatRoomDomain exact application port', () => {
     fixture.store.discard()
   })
 
-  it('allows one omitted request to enter mounted Toast feedback and ignores older callbacks', async () => {
+  it('retries an omitted active Toast while fencing settled and stale callbacks', async () => {
     const firstReconnect = deferred()
     const secondReconnect = deferred()
     const fixture = createFixture()
@@ -574,6 +574,16 @@ describe('ChatRoomDomain exact application port', () => {
       toast: { attempted: false, settled: true }
     })
 
+    fixture.store.send(fixture.room.command.BeginToastCommand(first.id))
+    expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toEqual({
+      ...first,
+      toast: { attempted: true, settled: false }
+    })
+    fixture.store.send(fixture.room.command.OmitToastCommand(first.id))
+    expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toEqual({
+      ...first,
+      toast: { attempted: false, settled: true }
+    })
     fixture.store.send(fixture.room.command.BeginToastCommand(first.id))
     expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toEqual({
       ...first,

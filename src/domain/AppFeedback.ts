@@ -95,11 +95,12 @@ const AppFeedbackDomain = Remesh.domain({
       name: 'AppFeedback.OnAcknowledgedEffect',
       impl: ({ fromEvent, get }) =>
         fromEvent(presentationDomain.event.AcknowledgedEvent).pipe(
-          map(({ id }) => {
+          map(({ id, status }) => {
             const request = get(chatRoomDomain.query.ReconnectRequestQuery())
-            return request && requestToastId(request.id) === id
+            if (!request || requestToastId(request.id) !== id) return null
+            return status === 'presented'
               ? chatRoomDomain.command.SettleToastCommand(request.id)
-              : null
+              : chatRoomDomain.command.OmitToastCommand(request.id)
           })
         )
     })

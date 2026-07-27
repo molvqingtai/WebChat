@@ -300,10 +300,22 @@ describe('generic Toast presentation', () => {
 
     setMounted(false)
     await waitFor(() => document.querySelector(`[data-testid="${activeDescriptorId}"]`) === null)
-    await waitFor(() => fixture.store.query(fixture.room.query.ReconnectRequestQuery())?.toast.settled === true)
+    await waitFor(() => {
+      const active = fixture.store.query(fixture.room.query.ReconnectRequestQuery())
+      return active?.toast.settled === true && active.toast.attempted === false
+    })
     setMounted(true)
-    await settle(100)
-    expect(document.querySelector(`[data-testid="${activeDescriptorId}"]`)).toBeNull()
+    await waitFor(() => document.querySelector(`[data-testid="${activeDescriptorId}"]`) !== null)
+    const loadingCountAfterReplay = operations.filter(
+      ({ type, id }) => type === 'loading' && id === activeDescriptorId
+    ).length
+    expect(loadingCountAfterReplay).toBeGreaterThan(1)
+    expect(vi.mocked(fixture.chat.leaveRoom)).toHaveBeenCalledTimes(2)
+    setMounted(true)
+    await settle(50)
+    expect(operations.filter(({ type, id }) => type === 'loading' && id === activeDescriptorId)).toHaveLength(
+      loadingCountAfterReplay
+    )
 
     closeDuringPresentation.resolve()
     await waitFor(() => fixture.store.query(fixture.room.query.ReconnectRequestQuery()) === null)
