@@ -1,7 +1,8 @@
 import * as React from 'react'
 import * as PopoverPrimitive from '@radix-ui/react-popover'
 
-import { cn, getRootNode } from '@/utils'
+import { cn } from '@/utils'
+import useRoot from '@/hooks/useRoot'
 
 function Popover({ ...props }: React.ComponentProps<typeof PopoverPrimitive.Root>) {
   return <PopoverPrimitive.Root data-slot="popover" {...props} />
@@ -17,7 +18,7 @@ function PopoverContent({
   sideOffset = 4,
   ...props
 }: React.ComponentProps<typeof PopoverPrimitive.Content>) {
-  const root = getRootNode()
+  const root = useRoot()
   return (
     <PopoverPrimitive.Portal container={root}>
       <PopoverPrimitive.Content

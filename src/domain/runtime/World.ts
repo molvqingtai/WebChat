@@ -1,0 +1,633 @@
+import { Remesh } from 'remesh'
+import { filter, map } from 'rxjs'
+import WireDomain, { type WireMessageEvent } from '@/domain/runtime/Wire'
+import { WORLD_ROOM_ID } from '@/constants/config'
+import { type ChatSite, type ChatUser, type WorldRoomMessage } from '@/protocol'
+import type { WorldPresenceEvent, WorldPresenceRecord } from '@/runtime/Contract'
+import stringToHex from '@/utils/stringToHex'
+
+interface WorldDomainRegistration {
+  domain: string
+  user: ChatUser
+  site: ChatSite
+}
+
+interface StagedWorldRegistration extends WorldDomainRegistration {
+  attemptId: string
+  publicationPending: boolean
+  missedPeerIds: string[]
+}
+
+interface RecoveryState {
+  requestId: string
+  publicationPending: boolean
+  missedPeerIds: string[]
+}
+
+interface FullPublication {
+  requestId: string
+  revision: number
+  presence: WorldRoomMessage
+  stagedAttemptId: string | null
+  recoveryRequestId: string | null
+}
+
+interface PendingPresenceSend {
+  requestId: string
+}
+
+export interface WorldOptions {
+  [key: string]: string
+  sessionId: string
+}
+
+const worldRoomId = stringToHex(WORLD_ROOM_ID)
+export const getWorldRoomId = () => worldRoomId
+const replaceBy = <T>(items: T[], predicate: (item: T) => boolean, next: T): T[] =>
+  items.some(predicate) ? items.map((item) => (predicate(item) ? next : item)) : [...items, next]
+const appendUnique = <T>(items: T[], item: T): T[] => (items.includes(item) ? items : [...items, item])
+
+const presenceFor = (registrations: WorldDomainRegistration[], sessionId: string): WorldRoomMessage | undefined => {
+  const first = registrations[0]
+  return first ? { sessionId, user: first.user, sites: registrations.map(({ site }) => site) } : undefined
+}
+
+const publicationRequestId = (sequence: number) => `world:publication:${sequence}`
+
+const WorldDomain = Remesh.domain({
+  name: 'WorldDomain',
+  impl: (domain, options: WorldOptions) => {
+    const wireDomain = domain.getDomain(WireDomain())
+
+    const RegistrationsState = domain.state<WorldDomainRegistration[]>({
+      name: 'World.RegistrationsState',
+      default: []
+    })
+    const StagedRegistrationsState = domain.state<StagedWorldRegistration[]>({
+      name: 'World.StagedRegistrationsState',
+      default: []
+    })
+    const JoinedState = domain.state<boolean>({ name: 'World.JoinedState', default: false })
+    const PresencesState = domain.state<WorldPresenceRecord[]>({ name: 'World.PresencesState', default: [] })
+    const RecoveryState = domain.state<RecoveryState | null>({ name: 'World.RecoveryState', default: null })
+    const PendingPresenceSendsState = domain.state<PendingPresenceSend[]>({
+      name: 'World.PendingPresenceSendsState',
+      default: []
+    })
+    const PublicationRevisionState = domain.state<number>({
+      name: 'World.PublicationRevisionState',
+      default: 0
+    })
+    const PublicationSequenceState = domain.state<number>({
+      name: 'World.PublicationSequenceState',
+      default: 0
+    })
+    const FullPublicationState = domain.state<FullPublication | null>({
+      name: 'World.FullPublicationState',
+      default: null
+    })
+
+    const RegistrationsQuery = domain.query({
+      name: 'World.RegistrationsQuery',
+      impl: ({ get }) => get(RegistrationsState())
+    })
+    const JoinedQuery = domain.query({ name: 'World.JoinedQuery', impl: ({ get }) => get(JoinedState()) })
+    const PresencesQuery = domain.query({ name: 'World.PresencesQuery', impl: ({ get }) => get(PresencesState()) })
+    const LocalPresenceQuery = domain.query({
+      name: 'World.LocalPresenceQuery',
+      impl: ({ get }) => presenceFor(get(RegistrationsState()), options.sessionId)
+    })
+    const StagedPresenceQuery = domain.query({
+      name: 'World.StagedPresenceQuery',
+      impl: ({ get }, attemptId: string) => {
+        const staged = get(StagedRegistrationsState()).find((item) => item.attemptId === attemptId)
+        if (!staged) return undefined
+        const prospective = replaceBy(get(RegistrationsState()), (item) => item.domain === staged.domain, staged)
+        return presenceFor(prospective, options.sessionId)
+      }
+    })
+    const PublicationPresenceQuery = domain.query({
+      name: 'World.PublicationPresenceQuery',
+      impl: ({ get }) => {
+        const staged = get(StagedRegistrationsState()).find((item) => item.publicationPending)
+        const registrations = staged
+          ? replaceBy(get(RegistrationsState()), (item) => item.domain === staged.domain, staged)
+          : get(RegistrationsState())
+        return presenceFor(registrations, options.sessionId)
+      }
+    })
+
+    const StagedEvent = domain.event<{ attemptId: string }>({ name: 'World.StagedEvent' })
+    const StagedPublishedEvent = domain.event<{ attemptId: string; presence: WorldRoomMessage }>({
+      name: 'World.StagedPublishedEvent'
+    })
+    const StagedPublishFailedEvent = domain.event<{ attemptId: string; error: Error }>({
+      name: 'World.StagedPublishFailedEvent'
+    })
+    const DomainCommittedEvent = domain.event<{ attemptId: string; domain: string }>({
+      name: 'World.DomainCommittedEvent'
+    })
+    const DomainReleasedEvent = domain.event<string>({ name: 'World.DomainReleasedEvent' })
+    const PresenceChangedEvent = domain.event<WorldPresenceEvent>({ name: 'World.PresenceChangedEvent' })
+    const RecoveryPublishedEvent = domain.event<{ requestId: string; presence: WorldRoomMessage }>({
+      name: 'World.RecoveryPublishedEvent'
+    })
+    const RecoveryPublishFailedEvent = domain.event<{ requestId: string; error: Error }>({
+      name: 'World.RecoveryPublishFailedEvent'
+    })
+    const ErrorEvent = domain.event<Error>({ name: 'World.ErrorEvent' })
+
+    const EnsureFullPublicationCommand = domain.command({
+      name: 'World.EnsureFullPublicationCommand',
+      impl: ({ get }) => {
+        if (get(FullPublicationState())) return null
+        const presence = get(PublicationPresenceQuery())
+        if (!presence) return null
+        const sequence = get(PublicationSequenceState()) + 1
+        if (!Number.isSafeInteger(sequence)) return ErrorEvent(new Error('World publication sequence exhausted'))
+        const staged = get(StagedRegistrationsState()).find((item) => item.publicationPending)
+        const recovery = get(RecoveryState())
+        const publication: FullPublication = {
+          requestId: publicationRequestId(sequence),
+          revision: get(PublicationRevisionState()),
+          presence,
+          stagedAttemptId: staged?.attemptId ?? null,
+          recoveryRequestId: recovery?.publicationPending ? recovery.requestId : null
+        }
+        return [
+          PublicationSequenceState().new(sequence),
+          FullPublicationState().new(publication),
+          wireDomain.command.SendMessageCommand({
+            requestId: publication.requestId,
+            roomId: worldRoomId,
+            message: publication.presence
+          })
+        ]
+      }
+    })
+
+    const StageDomainCommand = domain.command({
+      name: 'World.StageDomainCommand',
+      impl: ({ get }, payload: { attemptId: string; domain: string; user: ChatUser; site: ChatSite }) => {
+        const staged: StagedWorldRegistration = { ...payload, publicationPending: false, missedPeerIds: [] }
+        return [
+          StagedRegistrationsState().new(
+            replaceBy(get(StagedRegistrationsState()), (item) => item.domain === payload.domain, staged)
+          ),
+          StagedEvent({ attemptId: payload.attemptId })
+        ]
+      }
+    })
+
+    const PublishStagedCommand = domain.command({
+      name: 'World.PublishStagedCommand',
+      impl: ({ get }, attemptId: string) => {
+        const stages = get(StagedRegistrationsState())
+        const staged = stages.find((item) => item.attemptId === attemptId)
+        if (!staged || !get(StagedPresenceQuery(attemptId))) {
+          return StagedPublishFailedEvent({
+            attemptId,
+            error: new Error('Runtime local presence disappeared during join')
+          })
+        }
+        if (stages.some((item) => item.publicationPending)) return null
+        const revision = get(PublicationRevisionState()) + 1
+        if (!Number.isSafeInteger(revision)) {
+          return StagedPublishFailedEvent({ attemptId, error: new Error('World publication revision exhausted') })
+        }
+        return [
+          StagedRegistrationsState().new(
+            replaceBy(stages, (item) => item.attemptId === attemptId, { ...staged, publicationPending: true })
+          ),
+          PublicationRevisionState().new(revision),
+          EnsureFullPublicationCommand()
+        ]
+      }
+    })
+
+    const CompleteFullPublicationCommand = domain.command({
+      name: 'World.CompleteFullPublicationCommand',
+      impl: ({ get }, requestId: string) => {
+        const publication = get(FullPublicationState())
+        if (!publication || publication.requestId !== requestId) return null
+        if (publication.revision !== get(PublicationRevisionState())) {
+          return [FullPublicationState().new(null), EnsureFullPublicationCommand()]
+        }
+        const staged = get(StagedRegistrationsState()).find((item) => item.publicationPending)
+        const recovery = get(RecoveryState())
+        return [
+          FullPublicationState().new(null),
+          ...(staged ? [StagedPublishedEvent({ attemptId: staged.attemptId, presence: publication.presence })] : []),
+          ...(recovery?.publicationPending
+            ? [RecoveryPublishedEvent({ requestId: recovery.requestId, presence: publication.presence })]
+            : []),
+          ...(!staged && !recovery?.publicationPending && get(JoinedState())
+            ? [
+                PresenceChangedEvent({
+                  sourcePeerId: get(wireDomain.query.PeerIdQuery()),
+                  presence: {
+                    sourcePeerId: get(wireDomain.query.PeerIdQuery()),
+                    presence: publication.presence
+                  }
+                })
+              ]
+            : [])
+        ]
+      }
+    })
+
+    const FailFullPublicationCommand = domain.command({
+      name: 'World.FailFullPublicationCommand',
+      impl: ({ get }, payload: { requestId: string; error: Error }) => {
+        const publication = get(FullPublicationState())
+        if (!publication || publication.requestId !== payload.requestId) return null
+        const applicableStage = publication.stagedAttemptId
+          ? get(StagedRegistrationsState()).find(
+              (item) => item.attemptId === publication.stagedAttemptId && item.publicationPending
+            )
+          : undefined
+        const recovery = get(RecoveryState())
+        const applicableRecovery =
+          publication.recoveryRequestId &&
+          recovery?.requestId === publication.recoveryRequestId &&
+          recovery.publicationPending
+            ? recovery
+            : undefined
+        const ownerless = publication.stagedAttemptId === null && publication.recoveryRequestId === null
+        if (
+          (!applicableStage && !applicableRecovery && !ownerless) ||
+          (ownerless && publication.revision !== get(PublicationRevisionState()))
+        ) {
+          return [FullPublicationState().new(null), EnsureFullPublicationCommand()]
+        }
+        return [
+          FullPublicationState().new(null),
+          ...(applicableStage
+            ? [StagedPublishFailedEvent({ attemptId: applicableStage.attemptId, error: payload.error })]
+            : []),
+          ...(applicableRecovery
+            ? [RecoveryPublishFailedEvent({ requestId: applicableRecovery.requestId, error: payload.error })]
+            : []),
+          ...(ownerless ? [ErrorEvent(payload.error)] : [])
+        ]
+      }
+    })
+
+    const CommitStagedCommand = domain.command({
+      name: 'World.CommitStagedCommand',
+      impl: ({ get }, attemptId: string) => {
+        const stages = get(StagedRegistrationsState())
+        const staged = stages.find((item) => item.attemptId === attemptId)
+        if (!staged) return null
+        const registrations = replaceBy(get(RegistrationsState()), (item) => item.domain === staged.domain, {
+          domain: staged.domain,
+          user: staged.user,
+          site: staged.site
+        })
+        const remainingStages = stages.filter((item) => item.attemptId !== attemptId)
+        const nextStage = remainingStages.find((item) => !item.publicationPending)
+        const presence = presenceFor(registrations, options.sessionId)
+        return [
+          RegistrationsState().new(registrations),
+          StagedRegistrationsState().new(remainingStages),
+          JoinedState().new(true),
+          ...(presence
+            ? [
+                PresenceChangedEvent({
+                  sourcePeerId: get(wireDomain.query.PeerIdQuery()),
+                  presence: { sourcePeerId: get(wireDomain.query.PeerIdQuery()), presence }
+                })
+              ]
+            : []),
+          ...get(PresencesState()).map((remote) =>
+            PresenceChangedEvent({ sourcePeerId: remote.sourcePeerId, presence: remote })
+          ),
+          ...staged.missedPeerIds.flatMap((sourcePeerId) =>
+            presence
+              ? [
+                  wireDomain.command.SendMessageCommand({
+                    requestId: `world:catch-up:${attemptId}:${sourcePeerId}`,
+                    roomId: worldRoomId,
+                    targetPeerIds: [sourcePeerId],
+                    message: presence
+                  })
+                ]
+              : []
+          ),
+          ...(nextStage ? [PublishStagedCommand(nextStage.attemptId)] : []),
+          DomainCommittedEvent({ attemptId, domain: staged.domain })
+        ]
+      }
+    })
+
+    const AbortStagedCommand = domain.command({
+      name: 'World.AbortStagedCommand',
+      impl: ({ get }, attemptId: string) => {
+        const stages = get(StagedRegistrationsState())
+        const aborted = stages.find((item) => item.attemptId === attemptId)
+        if (!aborted) return null
+        const remainingStages = stages.filter((item) => item.attemptId !== attemptId)
+        const nextStage = remainingStages.find((item) => !item.publicationPending)
+        const revision = get(PublicationRevisionState()) + (aborted.publicationPending ? 1 : 0)
+        if (!Number.isSafeInteger(revision)) return ErrorEvent(new Error('World publication revision exhausted'))
+        return [
+          StagedRegistrationsState().new(remainingStages),
+          ...(aborted.publicationPending ? [PublicationRevisionState().new(revision)] : []),
+          ...(nextStage && !remainingStages.some((item) => item.publicationPending)
+            ? [PublishStagedCommand(nextStage.attemptId)]
+            : []),
+          ...(aborted.publicationPending ? [EnsureFullPublicationCommand()] : [])
+        ]
+      }
+    })
+
+    const PublishCurrentCommand = domain.command({
+      name: 'World.PublishCurrentCommand',
+      impl: ({ get }, payload: { requestId: string; targetPeerIds?: string[] }) => {
+        const presence = get(LocalPresenceQuery())
+        if (!get(JoinedState()) || !presence) return null
+        if (payload.targetPeerIds === undefined) {
+          const revision = get(PublicationRevisionState()) + 1
+          if (!Number.isSafeInteger(revision)) return ErrorEvent(new Error('World publication revision exhausted'))
+          return [PublicationRevisionState().new(revision), EnsureFullPublicationCommand()]
+        }
+        return [
+          PendingPresenceSendsState().new([
+            ...get(PendingPresenceSendsState()).filter((item) => item.requestId !== payload.requestId),
+            { requestId: payload.requestId }
+          ]),
+          wireDomain.command.SendMessageCommand({
+            requestId: payload.requestId,
+            roomId: worldRoomId,
+            targetPeerIds: payload.targetPeerIds,
+            message: presence
+          })
+        ]
+      }
+    })
+
+    const CompletePresenceSendCommand = domain.command({
+      name: 'World.CompletePresenceSendCommand',
+      impl: ({ get }, requestId: string) => {
+        const pending = get(PendingPresenceSendsState())
+        const current = pending.find((item) => item.requestId === requestId)
+        if (!current) return null
+        return PendingPresenceSendsState().new(pending.filter((item) => item.requestId !== requestId))
+      }
+    })
+
+    const FailPresenceSendCommand = domain.command({
+      name: 'World.FailPresenceSendCommand',
+      impl: ({ get }, payload: { requestId: string; error: Error }) => {
+        const pending = get(PendingPresenceSendsState())
+        return pending.some((item) => item.requestId === payload.requestId)
+          ? [
+              PendingPresenceSendsState().new(pending.filter((item) => item.requestId !== payload.requestId)),
+              ErrorEvent(payload.error)
+            ]
+          : null
+      }
+    })
+
+    const ReleaseDomainCommand = domain.command({
+      name: 'World.ReleaseDomainCommand',
+      impl: ({ get }, runtimeDomain: string) => {
+        const registrations = get(RegistrationsState())
+        const stages = get(StagedRegistrationsState())
+        const next = registrations.filter((item) => item.domain !== runtimeDomain)
+        const remainingStages = stages.filter((item) => item.domain !== runtimeDomain)
+        if (next.length === registrations.length && remainingStages.length === stages.length) return null
+        const activeBefore = stages.find((item) => item.publicationPending)
+        const activeAfter = remainingStages.find((item) => item.publicationPending)
+        const publicationChanged =
+          next.length !== registrations.length || activeBefore?.attemptId !== activeAfter?.attemptId
+        const revision = get(PublicationRevisionState()) + (publicationChanged ? 1 : 0)
+        if (!Number.isSafeInteger(revision)) return ErrorEvent(new Error('World publication revision exhausted'))
+        const nextStage = remainingStages.find((item) => !item.publicationPending)
+        return [
+          RegistrationsState().new(next),
+          StagedRegistrationsState().new(remainingStages),
+          ...(publicationChanged ? [PublicationRevisionState().new(revision)] : []),
+          ...(next.length === 0 ? [JoinedState().new(false), PresencesState().new([])] : []),
+          ...(next.length === 0 && remainingStages.length === 0 ? [RecoveryState().new(null)] : []),
+          ...(nextStage && !activeAfter ? [PublishStagedCommand(nextStage.attemptId)] : []),
+          ...(publicationChanged ? [EnsureFullPublicationCommand()] : []),
+          DomainReleasedEvent(runtimeDomain)
+        ]
+      }
+    })
+
+    const ApplyPresenceCommand = domain.command({
+      name: 'World.ApplyPresenceCommand',
+      impl: ({ get }, payload: WireMessageEvent) => {
+        if (!('sites' in payload.message) || payload.roomId !== worldRoomId) return null
+        const presences = get(PresencesState())
+        const current = presences.find((item) => item.sourcePeerId === payload.sourcePeerId)
+        if (
+          current?.presence.sessionId === payload.message.sessionId &&
+          current.presence.user.id !== payload.message.user.id
+        ) {
+          return wireDomain.command.DropProtocolCommand({
+            sourcePeerId: payload.sourcePeerId,
+            reason: 'World user changed inside a bound session'
+          })
+        }
+        const record = { sourcePeerId: payload.sourcePeerId, presence: payload.message }
+        return [
+          PresencesState().new(replaceBy(presences, (item) => item.sourcePeerId === payload.sourcePeerId, record)),
+          ...(get(JoinedState()) && get(RegistrationsState()).length > 0
+            ? [PresenceChangedEvent({ sourcePeerId: payload.sourcePeerId, presence: record })]
+            : [])
+        ]
+      }
+    })
+
+    const PeerJoinedCommand = domain.command({
+      name: 'World.PeerJoinedCommand',
+      impl: ({ get }, payload: { roomId: string; sourcePeerId: string }) => {
+        if (payload.roomId !== worldRoomId) return null
+        const stages = get(StagedRegistrationsState())
+        const changed = stages.map((stage) =>
+          stage.publicationPending
+            ? { ...stage, missedPeerIds: appendUnique(stage.missedPeerIds, payload.sourcePeerId) }
+            : stage
+        )
+        const recovery = get(RecoveryState())
+        const nextRecovery = recovery?.publicationPending
+          ? { ...recovery, missedPeerIds: appendUnique(recovery.missedPeerIds, payload.sourcePeerId) }
+          : recovery
+        if (stages.some((stage) => stage.publicationPending) || recovery) {
+          return [StagedRegistrationsState().new(changed), ...(nextRecovery ? [RecoveryState().new(nextRecovery)] : [])]
+        }
+        return PublishCurrentCommand({
+          requestId: `world:peer:${payload.sourcePeerId}`,
+          targetPeerIds: [payload.sourcePeerId]
+        })
+      }
+    })
+
+    const PeerLeftCommand = domain.command({
+      name: 'World.PeerLeftCommand',
+      impl: ({ get }, payload: { roomId: string; sourcePeerId: string }) => {
+        if (payload.roomId !== worldRoomId) return null
+        const stages = get(StagedRegistrationsState()).map((stage) => ({
+          ...stage,
+          missedPeerIds: stage.missedPeerIds.filter((item) => item !== payload.sourcePeerId)
+        }))
+        const recovery = get(RecoveryState())
+        const presences = get(PresencesState())
+        const hasPresence = presences.some((item) => item.sourcePeerId === payload.sourcePeerId)
+        return [
+          StagedRegistrationsState().new(stages),
+          ...(recovery
+            ? [
+                RecoveryState().new({
+                  ...recovery,
+                  missedPeerIds: recovery.missedPeerIds.filter((item) => item !== payload.sourcePeerId)
+                })
+              ]
+            : []),
+          ...(hasPresence
+            ? [
+                PresencesState().new(presences.filter((item) => item.sourcePeerId !== payload.sourcePeerId)),
+                ...(get(JoinedState())
+                  ? [PresenceChangedEvent({ sourcePeerId: payload.sourcePeerId, presence: null })]
+                  : [])
+              ]
+            : [])
+        ]
+      }
+    })
+
+    const BeginRecoveryCommand = domain.command({
+      name: 'World.BeginRecoveryCommand',
+      impl: (_, requestId: string) => [
+        JoinedState().new(false),
+        RecoveryState().new({ requestId, publicationPending: false, missedPeerIds: [] })
+      ]
+    })
+
+    const PublishRecoveryCommand = domain.command({
+      name: 'World.PublishRecoveryCommand',
+      impl: ({ get }, requestId: string) => {
+        const recovery = get(RecoveryState())
+        if (!recovery || recovery.requestId !== requestId || !get(PublicationPresenceQuery())) {
+          return RecoveryPublishFailedEvent({ requestId, error: new Error('Runtime local presence disappeared') })
+        }
+        const revision = get(PublicationRevisionState()) + 1
+        if (!Number.isSafeInteger(revision)) {
+          return RecoveryPublishFailedEvent({ requestId, error: new Error('World publication revision exhausted') })
+        }
+        return [
+          RecoveryState().new({ ...recovery, publicationPending: true }),
+          PublicationRevisionState().new(revision),
+          EnsureFullPublicationCommand()
+        ]
+      }
+    })
+
+    const CommitRecoveryCommand = domain.command({
+      name: 'World.CommitRecoveryCommand',
+      impl: ({ get }, requestId: string) => {
+        const recovery = get(RecoveryState())
+        const presence = get(LocalPresenceQuery())
+        if (!recovery || recovery.requestId !== requestId || !presence) return null
+        return [
+          RecoveryState().new(null),
+          JoinedState().new(true),
+          PresenceChangedEvent({
+            sourcePeerId: get(wireDomain.query.PeerIdQuery()),
+            presence: { sourcePeerId: get(wireDomain.query.PeerIdQuery()), presence }
+          }),
+          ...recovery.missedPeerIds.map((sourcePeerId) =>
+            wireDomain.command.SendMessageCommand({
+              requestId: `world:recovery-catch-up:${requestId}:${sourcePeerId}`,
+              roomId: worldRoomId,
+              targetPeerIds: [sourcePeerId],
+              message: presence
+            })
+          )
+        ]
+      }
+    })
+
+    const AbortRecoveryCommand = domain.command({
+      name: 'World.AbortRecoveryCommand',
+      impl: ({ get }, requestId: string) =>
+        get(RecoveryState())?.requestId === requestId ? [RecoveryState().new(null), JoinedState().new(false)] : null
+    })
+
+    domain.effect({
+      name: 'World.WireMessageEffect',
+      impl: ({ fromEvent }) =>
+        fromEvent(wireDomain.event.MessageAcceptedEvent).pipe(
+          filter((event) => 'sites' in event.message),
+          map(ApplyPresenceCommand)
+        )
+    })
+    domain.effect({
+      name: 'World.PeerJoinEffect',
+      impl: ({ fromEvent }) => fromEvent(wireDomain.event.PeerJoinedEvent).pipe(map(PeerJoinedCommand))
+    })
+    domain.effect({
+      name: 'World.PeerLeaveEffect',
+      impl: ({ fromEvent }) => fromEvent(wireDomain.event.PeerLeftEvent).pipe(map(PeerLeftCommand))
+    })
+    domain.effect({
+      name: 'World.SendSuccessEffect',
+      impl: ({ fromEvent }) =>
+        fromEvent(wireDomain.event.MessageSentEvent).pipe(
+          map(({ requestId }) => [CompleteFullPublicationCommand(requestId), CompletePresenceSendCommand(requestId)])
+        )
+    })
+    domain.effect({
+      name: 'World.SendFailureEffect',
+      impl: ({ fromEvent }) =>
+        fromEvent(wireDomain.event.MessageSendFailedEvent).pipe(
+          map((payload) => [FailFullPublicationCommand(payload), FailPresenceSendCommand(payload)])
+        )
+    })
+    domain.effect({
+      name: 'World.CatchUpFailureEffect',
+      impl: ({ fromEvent }) =>
+        fromEvent(wireDomain.event.MessageSendFailedEvent).pipe(
+          filter(
+            ({ requestId }) =>
+              requestId.startsWith('world:catch-up:') || requestId.startsWith('world:recovery-catch-up:')
+          ),
+          map(({ error }) => ErrorEvent(error))
+        )
+    })
+
+    return {
+      query: { RegistrationsQuery, JoinedQuery, PresencesQuery, LocalPresenceQuery, StagedPresenceQuery },
+      command: {
+        StageDomainCommand,
+        PublishStagedCommand,
+        CommitStagedCommand,
+        AbortStagedCommand,
+        PublishCurrentCommand,
+        ReleaseDomainCommand,
+        PeerJoinedCommand,
+        PeerLeftCommand,
+        BeginRecoveryCommand,
+        PublishRecoveryCommand,
+        CommitRecoveryCommand,
+        AbortRecoveryCommand
+      },
+      event: {
+        StagedEvent,
+        StagedPublishedEvent,
+        StagedPublishFailedEvent,
+        DomainCommittedEvent,
+        DomainReleasedEvent,
+        PresenceChangedEvent,
+        RecoveryPublishedEvent,
+        RecoveryPublishFailedEvent,
+        ErrorEvent
+      }
+    }
+  }
+})
+
+export default WorldDomain

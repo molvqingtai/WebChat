@@ -8,7 +8,7 @@ const VersionLink: FC = () => {
     <Button
       size="lg"
       variant="ghost"
-      className="fixed right-4 top-2 rounded-full px-3 text-base font-medium text-primary"
+      className="text-primary fixed top-2 right-4 rounded-full px-3 text-base font-medium"
     >
       <Link href="https://github.com/molvqingtai/WebChat/releases">Version: v{version}</Link>
     </Button>

@@ -1,9 +1,9 @@
 import { Remesh } from 'remesh'
 import { NotificationExtern } from './externs/Notification'
-import type { ChatRoomTextMessage } from '@/protocol'
+import type { ProjectedTextMessage } from '@/domain/Message'
 import ChatRoomDomain from '@/domain/ChatRoom'
 import UserInfoDomain from './UserInfo'
-import { map, merge } from 'rxjs'
+import { map } from 'rxjs'
 
 const NotificationDomain = Remesh.domain({
   name: 'NotificationDomain',
@@ -40,13 +40,15 @@ const NotificationDomain = Remesh.domain({
 
     const PushCommand = domain.command({
       name: 'Notification.PushCommand',
-      impl: (_, message: ChatRoomTextMessage) => {
-        notificationExtern.push(message)
+      impl: (_, message: ProjectedTextMessage) => {
+        void notificationExtern.push(message).catch((error) => {
+          console.warn('[WebChat] Notification push failed:', error)
+        })
         return [PushEvent(message)]
       }
     })
 
-    const PushEvent = domain.event<ChatRoomTextMessage>({
+    const PushEvent = domain.event<ProjectedTextMessage>({
       name: 'Notification.PushEvent'
     })
 
@@ -69,8 +71,8 @@ const NotificationDomain = Remesh.domain({
     domain.effect({
       name: 'Notification.OnRoomMessageEffect',
       impl: ({ fromEvent, get }) => {
-        const onTextMessage$ = fromEvent(chatRoomDomain.event.OnTextMessageEvent)
-        const onMessage$ = merge(onTextMessage$).pipe(
+        // The ChatRoom callback runs only in the tab whose atomic insert won.
+        const onMessage$ = fromEvent(chatRoomDomain.event.OnTextMessageEvent).pipe(
           map((message) => {
             const notificationEnabled = get(IsEnabledQuery())
 
@@ -79,7 +81,7 @@ const NotificationDomain = Remesh.domain({
             }
 
             const userInfo = get(userInfoDomain.query.UserInfoQuery())
-            if (message.sender.id === userInfo?.id) {
+            if (message.author.id === userInfo?.id) {
               return null
             }
 

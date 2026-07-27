@@ -1,11 +1,12 @@
 {
   "extends": "./.wxt/tsconfig.json",
+  "baseUrl": ".",
+  "rootDir": "src",
   "compilerOptions": {
     "allowImportingTsExtensions": true,
     "jsx": "react-jsx",
     "allowJs": true,
-    "paths": {
-      "@/*": ["./src/*"]
-    }
+    "strict": true,
+    "skipLibCheck": true
   }
 }

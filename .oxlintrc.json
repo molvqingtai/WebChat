@@ -1,0 +1,7 @@
+{
+  "plugins": ["typescript", "react", "react-hooks", "jsx-a11y", "unicorn"],
+  "rules": {
+    "typescript/consistent-type-imports": "error"
+  },
+  "ignorePatterns": [".output", ".wxt", "patches", "src/components/ui", "src/components/magicui", "src/lib/uglyAvatar"]
+}

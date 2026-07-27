@@ -1,21 +1,21 @@
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { MAX_AVATAR_SIZE } from '@/constants/config'
-import type { Message } from '@/domain/MessageList'
 import MessageListDomain from '@/domain/MessageList'
 import type { UserInfo } from '@/domain/UserInfo'
 import UserInfoDomain from '@/domain/UserInfo'
-import { createHLC, generateRandomAvatar, generateRandomName, setIntervalImmediate } from '@/utils'
+import { generateRandomAvatar, generateRandomName, setIntervalImmediate } from '@/utils'
 import { UserIcon } from 'lucide-react'
 import { nanoid } from 'nanoid'
 import type { FC } from 'react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRemeshDomain, useRemeshSend } from 'remesh-react'
 import ExampleImage from '@/assets/images/example.jpg'
 import { PulsatingButton } from '@/components/magicui/pulsating-button'
 import { BlurFade } from '@/components/magicui/blur-fade'
 import { motion } from 'framer-motion'
 import { WordRotate } from '@/components/magicui/word-rotate'
-import { MESSAGE_TYPE } from '@/protocol/Message'
+import { MESSAGE_RECORD_TYPE } from '@/domain/Message'
+import { MESSAGE_TYPE } from '@/protocol/ChatRoom'
 
 const mockTextList = [
   `你問我支持不支持，我說我支持`,
@@ -49,26 +49,23 @@ const generateUserInfo = async (): Promise<UserInfo> => {
   }
 }
 
-const generateMessage = async (userInfo: UserInfo): Promise<Message> => {
+const generateMessage = async (userInfo: UserInfo, body: string) => {
   const { name, avatar, id } = userInfo
   const now = Date.now()
+  const messageId = nanoid()
   return {
-    id: nanoid(),
-    type: MESSAGE_TYPE.TEXT,
-    hlc: createHLC(),
-    sentAt: now,
-    receivedAt: now,
-    sender: {
-      id,
-      name,
-      avatar
+    type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE,
+    id: messageId,
+    message: {
+      id: messageId,
+      type: MESSAGE_TYPE.TEXT,
+      hlc: { timestamp: now, counter: 0 },
+      userId: id,
+      body,
+      mentions: []
     },
-    body: mockTextList.shift()!,
-    mentions: [],
-    reactions: {
-      likes: mockTextList.length ? [] : [{ id, name, avatar }],
-      hates: []
-    }
+    user: { id, name, avatar },
+    receivedAt: now
   }
 }
 
@@ -76,38 +73,41 @@ const Setup: FC = () => {
   const send = useRemeshSend()
   const userInfoDomain = useRemeshDomain(UserInfoDomain())
   const messageListDomain = useRemeshDomain(MessageListDomain())
+  const messageList = useRef([...mockTextList])
 
   const [userInfo, setUserInfo] = useState<UserInfo>()
 
   const handleSetup = () => {
-    send(messageListDomain.command.ClearListCommand())
+    send(messageListDomain.command.ReloadCommand())
     send(userInfoDomain.command.UpdateUserInfoCommand(userInfo!))
   }
 
-  const refreshUserInfo = async () => generateUserInfo()
-  const createMessage = async (userInfo: UserInfo) => {
-    const message = await generateMessage(userInfo)
-    setUserInfo(userInfo)
-    send(messageListDomain.command.CreateItemCommand(message))
-  }
-
   useEffect(() => {
+    const createMessage = async (nextUserInfo: UserInfo) => {
+      const body = messageList.current.shift()
+      if (!body) return
+      const message = await generateMessage(nextUserInfo, body)
+      setUserInfo(nextUserInfo)
+      send(messageListDomain.command.ApplyRecordCommand(message))
+    }
+
     const clearTimer = setIntervalImmediate(async () => {
-      mockTextList.length ? await createMessage(await refreshUserInfo()) : clearTimer()
+      if (messageList.current.length) await createMessage(await generateUserInfo())
+      else clearTimer()
     }, 2000)
 
     return () => {
       clearTimer()
-      send(messageListDomain.command.ClearListCommand())
+      send(messageListDomain.command.ReloadCommand())
     }
-  }, [])
+  }, [messageListDomain.command, send])
 
   return (
-    <div className="absolute inset-0 z-50 flex rounded-xl bg-black/10 shadow-2xl  backdrop-blur-sm">
+    <div className="absolute inset-0 z-50 flex rounded-xl bg-black/10 shadow-2xl backdrop-blur-sm">
       {userInfo && (
         <div className="m-auto flex flex-col items-center justify-center gap-y-8 pb-40 drop-shadow-lg">
           <BlurFade key={userInfo.avatar} inView>
-            <Avatar className="size-24 cursor-pointer border-4 border-white ">
+            <Avatar className="size-24 cursor-pointer border-4 border-white">
               <AvatarImage src={userInfo.avatar} className="size-full" alt="avatar" />
               <AvatarFallback>
                 <UserIcon size={30} className="text-slate-400" />
@@ -116,14 +116,14 @@ const Setup: FC = () => {
           </BlurFade>
           <div className="flex items-center" key={userInfo.name}>
             <motion.div
-              className="text-2xl font-bold text-primary"
+              className="text-primary text-2xl font-bold"
               initial={{ x: -10, opacity: 0 }}
               animate={{ x: 0, opacity: 1 }}
               transition={{ duration: 0.5 }}
             >
               @
             </motion.div>
-            <WordRotate className="text-2xl font-bold text-primary" words={[userInfo.name]} />
+            <WordRotate className="text-primary text-2xl font-bold" words={[userInfo.name]} />
           </div>
           <PulsatingButton onClick={handleSetup}>Start chatting</PulsatingButton>
         </div>

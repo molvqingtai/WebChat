@@ -7,26 +7,14 @@ export { default as checkDarkMode } from './checkDarkMode'
 export { default as stringToHex } from './stringToHex'
 export { default as debounce } from './debounce'
 export { default as throttle } from './throttle'
-export { chunk, desert, upsert } from './array'
+export { chunk } from './array'
 export { default as generateRandomAvatar } from './generateRandomAvatar'
 export { default as generateRandomName } from './generateRandomName'
 export { default as getCursorPosition } from './getCursorPosition'
 export { default as getTextSimilarity } from './getTextSimilarity'
 export { default as getRootNode } from './getRootNode'
 export { default as blobToBase64 } from './blobToBase64'
-export * as JSONR from './jsonr'
 export { getTextByteSize } from './getTextByteSize'
 export { default as isEqual } from './isEqual'
 export { default as setIntervalImmediate } from './setIntervalImmediate'
 export { cleanURL, isAbsoluteURL, assembleURL, buildFullURL, safeUrl } from './url'
-export {
-  type HLC,
-  compareHLC,
-  createHLC,
-  sendEvent,
-  receiveEvent,
-  isWithinTimeWindow,
-  formatHLC,
-  isValidHLC,
-  cloneHLC
-} from './hlc'

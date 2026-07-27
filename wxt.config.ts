@@ -1,6 +1,7 @@
 import path from 'node:path'
 import { defineConfig } from 'wxt'
-import react from '@vitejs/plugin-react'
+import react, { reactCompilerPreset } from '@vitejs/plugin-react'
+import babel from '@rolldown/plugin-babel'
 import { name, displayName, homepage } from './package.json'
 import svgr from 'vite-plugin-svgr'
 import tailwindcss from '@tailwindcss/vite'
@@ -10,7 +11,7 @@ export default defineConfig({
   imports: false,
   entrypointsDir: 'app',
   webExt: {
-    startUrls: ['http://www.example.com/'],
+    startUrls: ['https://www.example.com/'],
     openDevtools: true
   },
   manifest: ({ browser }) => {
@@ -28,7 +29,10 @@ export default defineConfig({
     }
     return {
       chrome: {
-        ...common
+        ...common,
+        // Offscreen Document hosts the shared WebRTC Runtime on Chrome/Edge;
+        // Firefox hosts it in the persistent background page instead.
+        permissions: [...common.permissions, 'offscreen']
       },
       firefox: {
         ...common,
@@ -40,21 +44,21 @@ export default defineConfig({
       }
     }[browser]
   },
-  vite: (env) => ({
-    define: {
-      __DEV__: env.mode === 'development',
-      __NAME__: JSON.stringify(name)
-    },
-    plugins: [
-      react({
-        babel: {
-          plugins: ['babel-plugin-react-compiler']
-        }
-      }),
-      tailwindcss(),
-      svgr({
-        include: '**/*.svg'
-      })
-    ]
-  })
+  vite: (env) =>
+    ({
+      define: {
+        __DEV__: env.mode === 'development',
+        __NAME__: JSON.stringify(name)
+      },
+      plugins: [
+        react(),
+        babel({
+          presets: [reactCompilerPreset()]
+        }),
+        tailwindcss(),
+        svgr({
+          include: '**/*.svg'
+        })
+      ]
+    }) as any
 })

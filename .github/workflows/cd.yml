@@ -55,8 +55,14 @@ jobs:
             ${{ runner.os }}-pnpm-
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-      - run: pnpm run lint
+      - name: Apply oxfmt and oxlint corrections
+        run: pnpm run format && pnpm run lint
+      - name: Verify corrections were committed
+        run: git diff --exit-code
+      - name: Generate WXT types
+        run: pnpm exec wxt prepare
       - run: pnpm run check
+      - run: pnpm run test
 
   build:
     needs: [setup]

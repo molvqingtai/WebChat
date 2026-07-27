@@ -1,32 +1,51 @@
 import * as v from 'valibot'
-import { PeerSyncMessageSchema } from './Message'
+import { ChatSessionSchema, isUserWithinLimit, type ChatSession } from './Session'
 
-// Site metadata schema
-const SiteMetaSchema = v.object({
-  host: v.string(),
-  hostname: v.string(),
-  href: v.string(),
-  origin: v.string(),
-  title: v.string(),
-  icon: v.string(),
-  description: v.string()
+export interface ChatSite {
+  origin: string
+  title?: string
+  icon?: string
+  description?: string
+}
+
+export interface WorldRoomMessage extends ChatSession {
+  sites: ChatSite[]
+}
+
+const boundedString = (maxLength: number) => v.pipe(v.string(), v.maxLength(maxLength))
+
+export const ChatSiteSchema = v.strictObject({
+  origin: boundedString(2048),
+  title: v.optional(boundedString(512)),
+  icon: v.optional(boundedString(16 * 1024)),
+  description: v.optional(boundedString(2048))
 })
 
-// WorldRoom Message Schema
-// Extends PeerSyncMessageSchema with siteMeta field, but omits lastMessageHLC
-// WorldRoom only handles user discovery, not message history sync
-export const WorldRoomMessageSchema = v.union([
-  v.object({
-    ...v.omit(PeerSyncMessageSchema, ['lastMessageHLC']).entries,
-    siteMeta: SiteMetaSchema
-  })
-])
+export const WorldRoomMessageSchema = v.strictObject({
+  ...ChatSessionSchema.entries,
+  sites: v.pipe(v.array(ChatSiteSchema), v.maxLength(100))
+})
 
-// WorldRoom Types
-export type WorldRoomSiteMeta = v.InferOutput<typeof SiteMetaSchema>
-export type WorldRoomPeerSyncMessage = v.InferOutput<(typeof WorldRoomMessageSchema.options)[0]>
-export type WorldRoomMessage = v.InferInput<typeof WorldRoomMessageSchema>
+/** Rejects paths/query/fragments so World presence cannot leak the visited page URL. */
+const isOriginOnly = (origin: string): boolean => {
+  try {
+    return new URL(origin).origin === origin
+  } catch {
+    return false
+  }
+}
 
-// Check if the message conforms to the format
-export const checkWorldRoomMessage = (message: unknown): message is WorldRoomMessage =>
-  v.safeParse(WorldRoomMessageSchema, message).success
+export const parseWorldRoomMessage = (value: unknown): WorldRoomMessage | null => {
+  const parsed = v.safeParse(WorldRoomMessageSchema, value)
+  if (!parsed.success) return null
+  const message = parsed.output as WorldRoomMessage
+  const origins = message.sites.map((site) => site.origin)
+  return isUserWithinLimit(message.user) &&
+    message.sites.every((site) => isOriginOnly(site.origin)) &&
+    new Set(origins).size === origins.length
+    ? message
+    : null
+}
+
+export const checkWorldRoomMessage = (value: unknown): value is WorldRoomMessage =>
+  parseWorldRoomMessage(value) !== null

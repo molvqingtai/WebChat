@@ -1,14 +1,5 @@
 import { buildFullURL } from '@/utils'
-
-export interface SiteMeta {
-  host: string
-  hostname: string
-  href: string
-  origin: string
-  title: string
-  icon: string
-  description: string
-}
+import type { ChatSite } from '@/protocol/WorldRoom'
 
 const getIcon = (): string => {
   const path =
@@ -20,35 +11,32 @@ const getIcon = (): string => {
     document.querySelector('meta[property="og:image" i]')?.getAttribute('content') ??
     document.querySelector('meta[name^="msapplication" i]')?.getAttribute('content') ??
     document.querySelector('meta[itemprop="image" i]')?.getAttribute('content') ??
-    `/favicon.ico`
+    '/favicon.ico'
 
-  if (/^(data:|\/\/|https?:\/\/)/.test(path)) {
-    return path
-  } else {
-    return buildFullURL(document.location.origin, path)
-  }
+  return /^(data:|\/\/|https?:\/\/)/.test(path) ? path : buildFullURL(document.location.origin, path)
 }
 
-const getSiteMeta = (): SiteMeta => {
+/** Display-safe World presence metadata. Raw href/host/hostname never leave this helper. */
+const getSiteMeta = (): ChatSite => {
+  const title =
+    document.querySelector('meta[property="og:site_name" i]')?.getAttribute('content') ??
+    document.querySelector('meta[property="og:title" i]')?.getAttribute('content') ??
+    document.querySelector('meta[name="twitter:title" i]')?.getAttribute('content') ??
+    document.querySelector('meta[itemprop="name" i]')?.getAttribute('content') ??
+    document.querySelector('meta[name="application-name" i]')?.getAttribute('content') ??
+    document.title
+  const description =
+    document.querySelector('meta[property="og:description" i]')?.getAttribute('content') ??
+    document.querySelector('meta[name="description" i]')?.getAttribute('content') ??
+    document.querySelector('meta[name="twitter:description" i]')?.getAttribute('content') ??
+    document.querySelector('meta[itemprop="description" i]')?.getAttribute('content') ??
+    ''
+
   return {
-    host: document.location.host,
-    hostname: document.location.hostname,
-    href: document.location.href,
     origin: document.location.origin,
-    title:
-      document.querySelector('meta[property="og:site_name" i]')?.getAttribute('content') ??
-      document.querySelector('meta[property="og:title" i]')?.getAttribute('content') ??
-      document.querySelector('meta[name="twitter:title" i]')?.getAttribute('content') ??
-      document.querySelector('meta[itemprop="name" i]')?.getAttribute('content') ??
-      document.querySelector('meta[name="application-name" i]')?.getAttribute('content') ??
-      document.title,
+    ...(title ? { title } : {}),
     icon: getIcon(),
-    description:
-      document.querySelector('meta[property="og:description" i]')?.getAttribute('content') ??
-      document.querySelector('meta[name="description" i]')?.getAttribute('content') ??
-      document.querySelector('meta[name="twitter:description" i]')?.getAttribute('content') ??
-      document.querySelector('meta[itemprop="description" i]')?.getAttribute('content') ??
-      ''
+    ...(description ? { description } : {})
   }
 }
 

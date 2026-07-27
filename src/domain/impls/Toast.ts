@@ -14,9 +14,9 @@ export const ToastImpl = ToastExtern.impl({
   warning: (message: string, duration: number = 4000) => {
     return toast.warning(message, { duration })
   },
-  loading: (message: string, duration: number = 4000) => {
+  loading: (message: string, duration?: number) => {
     const id = toast.loading(message, { duration })
-    setTimeout(() => toast.dismiss(id), duration)
+    if (duration !== undefined) setTimeout(() => toast.dismiss(id), duration)
     return id
   },
   cancel: (id: number | string) => {

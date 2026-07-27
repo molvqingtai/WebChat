@@ -53,7 +53,7 @@ const AppMain: FC<AppMainProps> = ({ children, className }) => {
             bottom: `calc(100vh - ${absoluteY}px + 22px)`
           }}
           className={cn(
-            `fixed inset-y-10 right-10 z-infinity mb-0 mt-auto box-border grid max-h-[min(calc(100vh_-60px),_1000px)] min-h-[375px] grid-flow-col grid-rows-[auto_1fr_auto] rounded-xl bg-slate-50 dark:bg-slate-950 font-sans shadow-2xl`,
+            `z-infinity fixed inset-y-10 right-10 mt-auto mb-0 box-border grid max-h-[min(calc(100vh_-60px),_1000px)] min-h-[375px] grid-flow-col grid-rows-[auto_1fr_auto] rounded-xl bg-slate-50 font-sans shadow-2xl dark:bg-slate-950`,
             className,
             { 'transition-transform': isAnimationComplete }
           )}

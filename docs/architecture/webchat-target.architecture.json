@@ -1,0 +1,804 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "WebChat Remesh DDD + CQRS Architecture",
+    "subtitle": "Exact ChatRoom port, seven Runtime owners, immutable peer wire, disjoint background service RPC",
+    "output": "webchat-target-architecture.html",
+    "viewBox": [3000, 1320]
+  },
+  "components": [
+    {
+      "id": "web-pages",
+      "type": "external",
+      "label": "Web Pages",
+      "sublabel": "domain A / B / ...",
+      "pos": [20, 260],
+      "size": [130, 68]
+    },
+    {
+      "id": "content-ui",
+      "type": "frontend",
+      "label": "Content Chat UI",
+      "sublabel": "Query / Command / Event",
+      "pos": [190, 100],
+      "size": [180, 72]
+    },
+    {
+      "id": "controls-ui",
+      "type": "frontend",
+      "label": "Extension Controls",
+      "sublabel": "options + reconnect site",
+      "pos": [190, 310],
+      "size": [180, 72]
+    },
+    {
+      "id": "page-domains",
+      "type": "backend",
+      "label": "Application Domains",
+      "sublabel": "input + display read models",
+      "pos": [420, 100],
+      "size": [205, 76],
+      "tag": "no Runtime write authority"
+    },
+    {
+      "id": "origin-store",
+      "type": "backend",
+      "label": "MessageStore Facade",
+      "sublabel": "insert / query / clear / watch",
+      "pos": [430, 420],
+      "size": [185, 72],
+      "tag": "decode then filter"
+    },
+    {
+      "id": "database",
+      "type": "database",
+      "label": "Database<Schema>",
+      "sublabel": "typed tx + commit watch",
+      "pos": [430, 570],
+      "size": [185, 68],
+      "tag": "sole persistence extern"
+    },
+    {
+      "id": "database-backends",
+      "type": "database",
+      "label": "Default Backends",
+      "sublabel": "IndexedDB + Memory",
+      "pos": [430, 720],
+      "size": [185, 68],
+      "tag": "one parity suite"
+    },
+    {
+      "id": "notifications",
+      "type": "frontend",
+      "label": "Notification Domain",
+      "sublabel": "first remote live insert",
+      "pos": [430, 870],
+      "size": [185, 68],
+      "tag": "request-local failure"
+    },
+    {
+      "id": "notification-rpc",
+      "type": "messagebus",
+      "label": "Notification RPC",
+      "sublabel": "WEB_CHAT_NOTIFICATION_V1",
+      "pos": [675, 870],
+      "size": [200, 68],
+      "tag": "versioned namespace"
+    },
+    {
+      "id": "notification-provider",
+      "type": "backend",
+      "label": "Notification Provider",
+      "sublabel": "OS notification side effect",
+      "pos": [925, 870],
+      "size": [200, 68]
+    },
+    {
+      "id": "app-action",
+      "type": "frontend",
+      "label": "AppAction Domain",
+      "sublabel": "open extension options",
+      "pos": [430, 1010],
+      "size": [185, 68]
+    },
+    {
+      "id": "app-action-rpc",
+      "type": "messagebus",
+      "label": "AppAction RPC",
+      "sublabel": "WEB_CHAT_APP_ACTION_V1",
+      "pos": [675, 1010],
+      "size": [200, 68],
+      "tag": "versioned namespace"
+    },
+    {
+      "id": "app-action-provider",
+      "type": "backend",
+      "label": "AppAction Provider",
+      "sublabel": "options-page side effect",
+      "pos": [925, 1010],
+      "size": [200, 68]
+    },
+    {
+      "id": "chatroom-extern",
+      "type": "security",
+      "label": "ChatRoomExtern",
+      "sublabel": "exact eight application methods",
+      "pos": [675, 100],
+      "size": [200, 76],
+      "tag": "only application port"
+    },
+    {
+      "id": "runtime-client",
+      "type": "backend",
+      "label": "Stateless Runtime Client",
+      "sublabel": "event bridge + persist / ACK",
+      "pos": [925, 100],
+      "size": [205, 76],
+      "tag": "no join / session cache"
+    },
+    {
+      "id": "history-provider",
+      "type": "backend",
+      "label": "Page History Provider",
+      "sublabel": "AbortSignal store query",
+      "pos": [935, 440],
+      "size": [185, 72],
+      "tag": "one selected page"
+    },
+    {
+      "id": "comctx",
+      "type": "messagebus",
+      "label": "Internal comctx",
+      "sublabel": "clean-cut Commands / Events",
+      "pos": [1175, 100],
+      "size": [190, 76],
+      "tag": "not peer protocol"
+    },
+    {
+      "id": "coordinator",
+      "type": "backend",
+      "label": "Background Coordinator",
+      "sublabel": "port liveness + health + host phase",
+      "pos": [1175, 330],
+      "size": [190, 72]
+    },
+    {
+      "id": "host-owner",
+      "type": "cloud",
+      "label": "Host Owner",
+      "sublabel": "Offscreen / Background Page",
+      "pos": [1175, 540],
+      "size": [190, 72],
+      "tag": "one disposable host"
+    },
+    {
+      "id": "server",
+      "type": "backend",
+      "label": "Server Composition",
+      "sublabel": "graph + Extern injection only",
+      "pos": [1415, 100],
+      "size": [200, 76],
+      "tag": "no network truth"
+    },
+    {
+      "id": "lifecycle-domain",
+      "type": "backend",
+      "label": "Lifecycle Domain",
+      "sublabel": "page leases + 5s grace",
+      "pos": [1415, 300],
+      "size": [200, 76],
+      "tag": "unique owner"
+    },
+    {
+      "id": "connection-domain",
+      "type": "backend",
+      "label": "Connection Domain",
+      "sublabel": "join / leave / reconnect / generation",
+      "pos": [1655, 300],
+      "size": [205, 76],
+      "tag": "unique owner"
+    },
+    {
+      "id": "session-domain",
+      "type": "backend",
+      "label": "Session Domain",
+      "sublabel": "sessions + logical presence + HLC",
+      "pos": [1900, 300],
+      "size": [205, 76],
+      "tag": "unique owner"
+    },
+    {
+      "id": "wire-domain",
+      "type": "messagebus",
+      "label": "Wire Domain",
+      "sublabel": "trusted room / source + queues",
+      "pos": [2145, 300],
+      "size": [205, 76],
+      "tag": "anti-corruption boundary"
+    },
+    {
+      "id": "world-domain",
+      "type": "backend",
+      "label": "World Domain",
+      "sublabel": "registry + presence snapshots",
+      "pos": [1900, 520],
+      "size": [205, 76],
+      "tag": "unique owner"
+    },
+    {
+      "id": "history-domain",
+      "type": "backend",
+      "label": "History Domain",
+      "sublabel": "sessions + cutoffs + cursors + batches",
+      "pos": [1655, 720],
+      "size": [205, 76],
+      "tag": "unique owner"
+    },
+    {
+      "id": "delivery-domain",
+      "type": "messagebus",
+      "label": "Delivery Domain",
+      "sublabel": "sequence + un-ACK buffer + replay",
+      "pos": [1415, 720],
+      "size": [205, 76],
+      "tag": "512 events / 8MiB"
+    },
+    {
+      "id": "wire-protocol",
+      "type": "security",
+      "label": "Strict Peer Protocol",
+      "sublabel": "frozen except presence lifecycle",
+      "pos": [2145, 80],
+      "size": [205, 76],
+      "tag": "Chat/history/World frozen"
+    },
+    {
+      "id": "wire-codec",
+      "type": "messagebus",
+      "label": "Native Wire Codec",
+      "sublabel": "base64(deflate(UTF8(JSON)))",
+      "pos": [2390, 80],
+      "size": [205, 76],
+      "tag": "public reference"
+    },
+    {
+      "id": "transport-extern",
+      "type": "security",
+      "label": "RoomTransportExtern",
+      "sublabel": "private provider capability",
+      "pos": [2390, 300],
+      "size": [205, 76],
+      "tag": "Wire only"
+    },
+    {
+      "id": "artico",
+      "type": "cloud",
+      "label": "Artico Provider Impl",
+      "sublabel": "replaceable WebRTC adapter",
+      "pos": [2630, 300],
+      "size": [205, 76]
+    },
+    {
+      "id": "signaling",
+      "type": "external",
+      "label": "Signaling Network",
+      "sublabel": "peer discovery",
+      "pos": [2630, 20],
+      "size": [205, 68]
+    },
+    {
+      "id": "remote-peers",
+      "type": "external",
+      "label": "Remote v2 Peers",
+      "sublabel": "isolated World / Chat rooms",
+      "pos": [2630, 710],
+      "size": [205, 72]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Page / Origin Contexts",
+      "wraps": [
+        "content-ui",
+        "controls-ui",
+        "page-domains",
+        "origin-store",
+        "database",
+        "database-backends",
+        "notifications",
+        "app-action",
+        "chatroom-extern",
+        "runtime-client",
+        "history-provider"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "Browser Extension Boundary",
+      "wraps": [
+        "content-ui",
+        "controls-ui",
+        "page-domains",
+        "origin-store",
+        "database",
+        "database-backends",
+        "notifications",
+        "notification-rpc",
+        "notification-provider",
+        "app-action",
+        "app-action-rpc",
+        "app-action-provider",
+        "chatroom-extern",
+        "runtime-client",
+        "history-provider",
+        "comctx",
+        "coordinator",
+        "host-owner",
+        "server",
+        "lifecycle-domain",
+        "connection-domain",
+        "session-domain",
+        "world-domain",
+        "history-domain",
+        "delivery-domain",
+        "wire-domain",
+        "wire-protocol",
+        "wire-codec",
+        "transport-extern",
+        "artico"
+      ],
+      "pad": 44
+    },
+    {
+      "kind": "security-group",
+      "label": "Headless Remesh DDD + CQRS Runtime",
+      "wraps": [
+        "lifecycle-domain",
+        "connection-domain",
+        "session-domain",
+        "world-domain",
+        "history-domain",
+        "delivery-domain",
+        "wire-domain"
+      ]
+    },
+    {
+      "kind": "security-group",
+      "label": "Strict Public Peer Contract",
+      "wraps": ["wire-protocol", "wire-codec"]
+    },
+    {
+      "kind": "security-group",
+      "label": "Private Provider Boundary",
+      "wraps": ["transport-extern", "artico"]
+    },
+    {
+      "kind": "security-group",
+      "label": "Disjoint Background Service RPC",
+      "wraps": ["notification-rpc", "notification-provider", "app-action-rpc", "app-action-provider"]
+    }
+  ],
+  "connections": [
+    {
+      "from": "web-pages",
+      "to": "content-ui",
+      "label": "inject",
+      "variant": "emphasis",
+      "fromSide": "right",
+      "toSide": "left",
+      "route": "orthogonal-h",
+      "via": [
+        [170, 294],
+        [170, 136]
+      ],
+      "labelAt": [169, 216]
+    },
+    {
+      "from": "content-ui",
+      "to": "page-domains",
+      "label": "Q / C / E",
+      "variant": "emphasis",
+      "fromSide": "right",
+      "toSide": "left",
+      "route": "orthogonal-h",
+      "via": [
+        [395, 136],
+        [395, 138]
+      ]
+    },
+    {
+      "from": "controls-ui",
+      "to": "page-domains",
+      "label": "reconnect Command",
+      "fromSide": "right",
+      "toSide": "bottom",
+      "route": "orthogonal-h",
+      "via": [
+        [395, 346],
+        [395, 220],
+        [522, 220]
+      ],
+      "labelAt": [458, 213]
+    },
+    {
+      "from": "page-domains",
+      "to": "chatroom-extern",
+      "variant": "emphasis"
+    },
+    {
+      "from": "chatroom-extern",
+      "to": "runtime-client",
+      "variant": "emphasis"
+    },
+    {
+      "from": "runtime-client",
+      "to": "comctx",
+      "variant": "emphasis"
+    },
+    {
+      "from": "comctx",
+      "to": "server",
+      "variant": "emphasis"
+    },
+    {
+      "from": "page-domains",
+      "to": "origin-store",
+      "label": "records",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [522, 300]
+    },
+    {
+      "from": "origin-store",
+      "to": "database",
+      "label": "scoped transactions",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [522, 535]
+    },
+    {
+      "from": "database",
+      "to": "database-backends",
+      "label": "same contract",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [522, 685]
+    },
+    {
+      "from": "database",
+      "to": "page-domains",
+      "label": "commit invalidation",
+      "fromSide": "left",
+      "toSide": "left",
+      "route": "orthogonal-h",
+      "via": [
+        [395, 604],
+        [395, 138]
+      ],
+      "labelAt": [393, 396]
+    },
+    {
+      "from": "origin-store",
+      "to": "notifications",
+      "label": "first insert",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "route": "orthogonal-v",
+      "via": [
+        [640, 530],
+        [640, 830],
+        [522, 830]
+      ],
+      "labelAt": [638, 806]
+    },
+    {
+      "from": "notifications",
+      "to": "notification-rpc",
+      "label": "push",
+      "variant": "dashed"
+    },
+    {
+      "from": "notification-rpc",
+      "to": "notification-provider",
+      "label": "one request",
+      "variant": "security",
+      "labelAt": [900, 952]
+    },
+    {
+      "from": "app-action",
+      "to": "app-action-rpc",
+      "label": "open options",
+      "variant": "dashed",
+      "labelAt": [645, 1006]
+    },
+    {
+      "from": "app-action-rpc",
+      "to": "app-action-provider",
+      "label": "one request",
+      "variant": "security",
+      "labelAt": [900, 1006]
+    },
+    {
+      "from": "runtime-client",
+      "to": "origin-store",
+      "label": "persist before ACK",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "right",
+      "route": "orthogonal-h",
+      "via": [
+        [900, 240],
+        [900, 456],
+        [650, 456]
+      ],
+      "labelAt": [775, 449]
+    },
+    {
+      "from": "history-provider",
+      "to": "origin-store",
+      "label": "decoded Chat records",
+      "fromSide": "left",
+      "toSide": "right",
+      "labelAt": [775, 532]
+    },
+    {
+      "from": "history-provider",
+      "to": "comctx",
+      "label": "supply settlement",
+      "variant": "dashed",
+      "fromSide": "right",
+      "toSide": "bottom",
+      "route": "orthogonal-h",
+      "via": [
+        [1145, 476],
+        [1145, 230],
+        [1270, 230]
+      ],
+      "labelAt": [1205, 255]
+    },
+    {
+      "from": "runtime-client",
+      "to": "coordinator",
+      "label": "ensure host",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "route": "orthogonal-h",
+      "via": [
+        [1150, 215],
+        [1270, 215],
+        [1270, 290]
+      ],
+      "labelAt": [1208, 208]
+    },
+    {
+      "from": "coordinator",
+      "to": "host-owner",
+      "label": "probe / replace",
+      "variant": "security",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [1270, 475]
+    },
+    {
+      "from": "host-owner",
+      "to": "server",
+      "label": "single host",
+      "fromSide": "right",
+      "toSide": "bottom",
+      "route": "orthogonal-h",
+      "via": [
+        [1390, 576],
+        [1390, 220],
+        [1515, 220]
+      ],
+      "labelAt": [1453, 213]
+    },
+    {
+      "from": "server",
+      "to": "lifecycle-domain",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "from": "lifecycle-domain",
+      "to": "connection-domain",
+      "variant": "emphasis"
+    },
+    {
+      "from": "connection-domain",
+      "to": "session-domain",
+      "variant": "emphasis"
+    },
+    {
+      "from": "session-domain",
+      "to": "wire-domain",
+      "variant": "emphasis"
+    },
+    {
+      "from": "session-domain",
+      "to": "delivery-domain",
+      "label": "validated live admit",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "route": "orthogonal-h",
+      "via": [
+        [2002, 620],
+        [1518, 620]
+      ],
+      "labelAt": [1760, 613]
+    },
+    {
+      "from": "connection-domain",
+      "to": "world-domain",
+      "label": "commit / recover",
+      "fromSide": "bottom",
+      "toSide": "left",
+      "route": "orthogonal-h",
+      "via": [
+        [1880, 420],
+        [1880, 558]
+      ],
+      "labelAt": [1878, 487]
+    },
+    {
+      "from": "connection-domain",
+      "to": "history-domain",
+      "label": "start / cancel",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [1758, 535]
+    },
+    {
+      "from": "history-domain",
+      "to": "delivery-domain",
+      "fromSide": "left",
+      "toSide": "right"
+    },
+    {
+      "from": "history-domain",
+      "to": "session-domain",
+      "label": "binding Query",
+      "variant": "dashed",
+      "fromSide": "top",
+      "toSide": "left",
+      "route": "orthogonal-h",
+      "via": [
+        [1758, 460],
+        [1875, 460],
+        [1875, 338]
+      ],
+      "labelAt": [1816, 453]
+    },
+    {
+      "from": "world-domain",
+      "to": "wire-domain",
+      "label": "full presence",
+      "fromSide": "right",
+      "toSide": "bottom",
+      "route": "orthogonal-h",
+      "via": [
+        [2370, 558],
+        [2370, 420],
+        [2248, 420]
+      ],
+      "labelAt": [2308, 413]
+    },
+    {
+      "from": "history-domain",
+      "to": "wire-domain",
+      "label": "history frames",
+      "variant": "dashed",
+      "fromSide": "right",
+      "toSide": "bottom",
+      "route": "orthogonal-h",
+      "via": [
+        [2110, 758],
+        [2110, 430],
+        [2248, 430]
+      ],
+      "labelAt": [2178, 453]
+    },
+    {
+      "from": "wire-domain",
+      "to": "wire-protocol",
+      "label": "strict schema / limits",
+      "variant": "security",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "from": "wire-domain",
+      "to": "wire-codec",
+      "label": "reference codec",
+      "fromSide": "right",
+      "toSide": "bottom",
+      "route": "orthogonal-h",
+      "via": [
+        [2370, 338],
+        [2370, 205],
+        [2492, 205]
+      ],
+      "labelAt": [2430, 198]
+    },
+    {
+      "from": "wire-domain",
+      "to": "transport-extern",
+      "variant": "emphasis"
+    },
+    {
+      "from": "transport-extern",
+      "to": "artico",
+      "label": "impl",
+      "variant": "emphasis"
+    },
+    {
+      "from": "artico",
+      "to": "signaling",
+      "label": "discover",
+      "variant": "dashed",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "from": "artico",
+      "to": "remote-peers",
+      "label": "encrypted P2P",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [2733, 540]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Application and persistence authority",
+      "items": [
+        "UI reads Queries, issues Commands, and subscribes to Events; it never writes Runtime facts",
+        "ChatRoomExtern is the only application port and remains exactly eight methods",
+        "The Runtime client is state-free; it persists inbound facts before ACK and supplies history",
+        "Application owns join input, MessageRecord, projection, reaction LWW, and (hlc,id) ordering",
+        "Database<Schema> is the sole replaceable persistence Extern; MessageStore stays concrete"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Seven unique Runtime owners",
+      "items": [
+        "Lifecycle: domain leases/grace; Connection: join/leave/reconnect/generation",
+        "Session: committed sessions/snapshot/id/HLC; World: presence",
+        "History owns requesters, providers, cutoffs, cursors, and batches; Delivery owns sequence, un-ACK, and replay",
+        "Session validates live Chat before Delivery; History queries Session binding",
+        "Wire: trusted room/source, immutable protocol translation, queues, provider callbacks",
+        "Coordinator owns physical port/host facts; Server only constructs the graph; no catch-all owner"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "CQRS and module rules",
+      "items": [
+        "Command is intent; Query is pure read; Event is a past fact; Effect owns I/O",
+        "Extern injects capability and never becomes a parallel cache or recovery authority",
+        "A Remesh.module is real, reusable, configurable, and semantically isomorphic in 2+ hosts",
+        "Shared authority comes from one Domain instance, not repeated module instances",
+        "Migration moves one owner then deletes the old path: no alias, fallback, or dual write"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Immutable peer wire and private provider",
+      "items": [
+        "Current v2 message types, schemas, limits, codec, canonical JSON, and bytes stay unchanged",
+        "Internal comctx may clean-cut change because it is not peer protocol",
+        "Notification and AppAction use structurally disjoint versioned RPC namespaces",
+        "Wire is the anti-corruption boundary: trusted source, strict validation, ordered queues",
+        "RoomTransportExtern is Runtime-private and visible only to Wire",
+        "Artico is one provider implementation; fake and Artico run the same contract suite"
+      ]
+    }
+  ]
+}

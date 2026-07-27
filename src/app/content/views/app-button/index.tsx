@@ -1,5 +1,5 @@
-import { type FC, useState, type MouseEvent, useEffect, useMemo } from 'react'
-import { SettingsIcon, MoonIcon, SunIcon, HandIcon } from 'lucide-react'
+import { type FC, useState, type MouseEvent, useCallback, useEffect, useMemo } from 'react'
+import { SettingsIcon, MoonIcon, SunIcon, HandIcon, RefreshCwIcon } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 
 import { useRemeshDomain, useRemeshQuery, useRemeshSend } from 'remesh-react'
@@ -18,14 +18,18 @@ import AppStatusDomain from '@/domain/AppStatus'
 import { getDay } from 'date-fns'
 import useDraggable from '@/hooks/useDraggable'
 import useWindowResize from '@/hooks/useWindowResize'
-import { AppActionImpl } from '@/domain/impls/AppAction'
+import AppActionDomain from '@/domain/AppAction'
+import ChatRoomDomain from '@/domain/ChatRoom'
 
 export interface AppButtonProps {
   className?: string
 }
 
+export const isReconnectAvailable = (joined: boolean, reconnecting: boolean) => joined && !reconnecting
+
 const AppButton: FC<AppButtonProps> = ({ className }) => {
   const send = useRemeshSend()
+  const appActionDomain = useRemeshDomain(AppActionDomain())
   const appStatusDomain = useRemeshDomain(AppStatusDomain())
   const appOpenStatus = useRemeshQuery(appStatusDomain.query.OpenQuery())
   const hasUnreadQuery = useRemeshQuery(appStatusDomain.query.HasUnreadQuery())
@@ -61,7 +65,7 @@ const AppButton: FC<AppButtonProps> = ({ className }) => {
 
   useEffect(() => {
     send(appStatusDomain.command.UpdatePositionCommand({ x, y }))
-  }, [x, y])
+  }, [x, y, send, appStatusDomain.command])
 
   const { setRef: appMenuRef } = useTriggerAway(['click'], () => setMenuOpen(false))
 
@@ -70,21 +74,36 @@ const AppButton: FC<AppButtonProps> = ({ className }) => {
     setMenuOpen(!menuOpen)
   }
 
-  const handleSwitchTheme = () => {
+  const handleOpenOptionsPage = useCallback(() => {
+    send(appActionDomain.command.OpenOptionsCommand())
+  }, [appActionDomain.command, send])
+
+  const handleSwitchTheme = useCallback(() => {
     if (userInfo) {
       send(userInfoDomain.command.UpdateUserInfoCommand({ ...userInfo, themeMode: isDarkMode ? 'light' : 'dark' }))
     } else {
       handleOpenOptionsPage()
     }
-  }
-
-  const handleOpenOptionsPage = () => {
-    AppActionImpl.value.openOptionsPage()
-  }
+  }, [handleOpenOptionsPage, isDarkMode, send, userInfo, userInfoDomain.command])
 
   const handleToggleApp = () => {
     send(appStatusDomain.command.UpdateOpenCommand(!appOpenStatus))
   }
+
+  const chatRoomDomain = useRemeshDomain(ChatRoomDomain())
+  const chatRoomJoined = useRemeshQuery(chatRoomDomain.query.JoinIsFinishedQuery())
+  const reconnecting = useRemeshQuery(chatRoomDomain.query.ReconnectIsLoadingQuery())
+  const reconnectAvailable = isReconnectAvailable(chatRoomJoined, reconnecting)
+  const reconnectLabel = reconnecting
+    ? 'Reconnecting this site'
+    : !chatRoomJoined
+      ? 'Waiting for this site chat to connect'
+      : 'Reconnect this site'
+
+  // Rebuilds only this domain's ChatRoom; the shared WorldRoom is untouched.
+  const handleReconnectSite = useCallback(() => {
+    send(chatRoomDomain.command.ReconnectCommand())
+  }, [chatRoomDomain.command, send])
 
   // Memoize menu buttons to prevent re-render when position changes
   const menuButtons = useMemo(
@@ -110,20 +129,39 @@ const AppButton: FC<AppButtonProps> = ({ className }) => {
         <Button
           onClick={handleOpenOptionsPage}
           variant="outline"
-          className="size-10 rounded-full p-0 dark:bg-background shadow dark:text-foreground dark:border-slate-600 dark:hover:bg-accent"
+          className="dark:bg-background dark:text-foreground dark:hover:bg-accent size-10 rounded-full p-0 shadow dark:border-slate-600"
         >
           <SettingsIcon className="size-5" />
         </Button>
         <Button
+          onClick={handleReconnectSite}
+          variant="outline"
+          disabled={!reconnectAvailable}
+          aria-label={reconnectLabel}
+          title={reconnectLabel}
+          className="dark:bg-background dark:text-foreground dark:hover:bg-accent size-10 rounded-full p-0 shadow dark:border-slate-600"
+        >
+          <RefreshCwIcon className={cn('size-5', reconnecting && 'animate-spin')} />
+        </Button>
+        <Button
           ref={appButtonRef}
           variant="outline"
-          className="size-10 cursor-grab dark:bg-background rounded-full p-0 dark:text-foreground shadow dark:border-slate-600 dark:hover:bg-accent"
+          className="dark:bg-background dark:text-foreground dark:hover:bg-accent size-10 cursor-grab rounded-full p-0 shadow dark:border-slate-600"
         >
           <HandIcon className="size-5" />
         </Button>
       </>
     ),
-    [isDarkMode, handleSwitchTheme, handleOpenOptionsPage, appButtonRef]
+    [
+      isDarkMode,
+      handleSwitchTheme,
+      handleOpenOptionsPage,
+      handleReconnectSite,
+      appButtonRef,
+      reconnectAvailable,
+      reconnectLabel,
+      reconnecting
+    ]
   )
 
   // Memoize main button content to prevent re-render when position changes
@@ -137,7 +175,7 @@ const AppButton: FC<AppButtonProps> = ({ className }) => {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               transition={{ duration: 0.1 }}
-              className="absolute -right-1 -top-1 z-30 flex size-5 items-center justify-center"
+              className="absolute -top-1 -right-1 z-30 flex size-5 items-center justify-center"
             >
               <span
                 className={cn('absolute inline-flex size-full animate-ping rounded-full opacity-75', 'bg-orange-400')}
@@ -147,7 +185,7 @@ const AppButton: FC<AppButtonProps> = ({ className }) => {
           )}
         </AnimatePresence>
 
-        <DayLogo className="relative z-20 max-h-full max-w-full overflow-hidden size-full"></DayLogo>
+        <DayLogo className="relative z-20 size-full max-h-full max-w-full overflow-hidden"></DayLogo>
       </>
     ),
     [hasUnreadQuery, DayLogo]
@@ -179,7 +217,7 @@ const AppButton: FC<AppButtonProps> = ({ className }) => {
       <Button
         onClick={handleToggleApp}
         onContextMenu={handleToggleMenu}
-        className="relative z-20 size-11 rounded-full has-[>svg]:p-0 text-xs shadow-lg shadow-slate-500/50 after:absolute after:-inset-0.5 after:z-10 after:animate-[shimmer_2s_linear_infinite] after:rounded-full after:bg-[conic-gradient(from_var(--shimmer-angle),theme(colors.slate.500)_0%,theme(colors.white)_10%,theme(colors.slate.500)_20%)]"
+        className="relative z-20 size-11 rounded-full text-xs shadow-lg shadow-slate-500/50 after:absolute after:-inset-0.5 after:z-10 after:animate-[shimmer_2s_linear_infinite] after:rounded-full after:bg-[conic-gradient(from_var(--shimmer-angle),theme(colors.slate.500)_0%,theme(colors.white)_10%,theme(colors.slate.500)_20%)] has-[>svg]:p-0"
       >
         {mainButtonContent}
       </Button>
