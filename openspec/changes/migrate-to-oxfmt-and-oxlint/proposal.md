@@ -9,6 +9,7 @@ WebChat currently maintains overlapping ESLint and Prettier dependencies and con
 - Allow normal local format and lint commands to fix source files.
 - Add explicit read-only check commands for diagnosing formatting and lint violations.
 - Run the fixing commands in CI/CD and then fail with `git diff --exit-code` if those commands produced uncommitted changes; CI does not commit or push fixes.
+- Report `linter` and `tests` as separate GitHub Actions jobs/checks. Both depend only on shared setup, run independently, and must pass before merge; unit tests are not a step inside `linter`.
 - Update lint-staged and Husky integration so staged source is formatted and lint-fixed by the new tools.
 - Keep Conventional Commit validation and `tsc --noEmit` as separate gates.
 - Use non-type-aware oxlint for this migration; TypeScript remains the type-analysis authority.
@@ -43,6 +44,6 @@ WebChat currently maintains overlapping ESLint and Prettier dependencies and con
 
 - No active ESLint or Prettier dependency, config, script, cache, lint-staged, Husky, CI, CD, or documentation reference remains, except migration history explaining their removal.
 - Local fix commands produce a clean source tree when rerun; check commands pass without modifying files.
-- CI/CD run the same fix contract and `git diff --exit-code`, then pass lint, type checking, and required Chrome/Firefox builds.
+- CI/CD run the same fix contract and `git diff --exit-code`; GitHub Actions reports independent `linter` and `tests` checks, and lint, unit tests, type checking, and required Chrome/Firefox builds all pass before merge.
 - The migration candidate preserves and accounts for the pre-existing dirty dependency-upgrade work.
 - The final candidate passes OpenSpec strict validation and all repository quality/build gates without changing extension product behavior.

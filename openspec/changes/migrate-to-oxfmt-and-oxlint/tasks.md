@@ -40,3 +40,9 @@
 - [ ] 6.5 Run OpenSpec status, strict change validation, repository-wide strict validation, and doctor; resolve all errors.
 - [ ] 6.6 Freeze an exact clean candidate with parent/tree/SHA and a handoff that accounts for every pre-existing dirty-file change, rule-coverage difference, source correction, and known limitation.
 - [ ] 6.7 Route Planner evidence review, Reviewer, and QA; UX/Tester browser acceptance is required only if verification finds visible or runtime behavior changes beyond deterministic tooling output.
+
+## 7. Independent CI Linter And Test Checks
+
+- [ ] 7.1 From Owner-local exact `2b143a23aa8f07baec7db800b4b8505ad7740e03`, preserve the existing `package.json` display-name change and create a fresh docs-authority child followed by a workflow-only child. In `.github/workflows/ci.yml`, remove `pnpm run test` from `linter`; add a sibling `tests` job that depends only on `setup`, reuses the existing checkout/Node/pnpm/cache/install pattern, and runs only `pnpm run test`. Retain `linter` format/lint/diff/WXT-TypeScript behavior, the existing `build` job, triggers, scripts, lockfile, source, Runtime, protocol, persistence, and browser scope.
+- [ ] 7.2 Route a fresh no-gate Reviewer over both the direct workflow diff and the cumulative delta from `b13a5e29421d4ef01e21ac87398d3007615c5495`. The cumulative delta SHALL contain only the Owner `package.json` display-name commit, the PM OpenSpec authority, and `.github/workflows/ci.yml`; prior evidence SHALL NOT certify those additions.
+- [ ] 7.3 After Reviewer PASS and separate Owner authorization for the diverged remote-history strategy, publish the immutable final exact, update the PR body using product goals/outcomes and verification rather than implementation details, and require same-exact successful terminal `linter`, `tests`, and `build` Actions checks. No additional browser/QA route is required. Only then may the Owner-authorized PR merge proceed.

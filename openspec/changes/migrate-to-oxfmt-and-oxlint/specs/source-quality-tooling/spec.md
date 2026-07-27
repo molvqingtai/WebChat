@@ -99,6 +99,30 @@ The migration SHALL preserve Conventional Commit validation, TypeScript checking
 - **WHEN** built Chrome and Firefox extensions are smoke-tested on the migration candidate
 - **THEN** extension loading and core chat entry behavior SHALL match the pre-migration product contract
 
+### Requirement: CI reports linter and unit tests independently
+
+The GitHub Actions CI workflow SHALL expose `linter` and `tests` as separate named jobs/checks. Both jobs SHALL depend only on the shared setup job, SHALL be eligible to run independently after setup, and SHALL NOT contain or depend on the other job's command. `linter` SHALL retain the existing format/lint correction, repository-cleanliness verification, and WXT/TypeScript check. `tests` SHALL run the canonical `pnpm run test` command. The existing `build` job, workflow triggers, package scripts, application behavior, and browser scope SHALL remain unchanged. Merge acceptance SHALL require successful terminal results for `linter`, `tests`, and `build` on the same final exact.
+
+#### Scenario: Inspect the CI job graph
+
+- **WHEN** the final workflow is inspected after shared setup
+- **THEN** `linter`, `tests`, and `build` SHALL be sibling jobs, `pnpm run test` SHALL appear only in `tests`, and neither `linter` nor `tests` SHALL depend on the other
+
+#### Scenario: Linter fails independently
+
+- **WHEN** setup succeeds and `linter` fails
+- **THEN** the `linter` check SHALL report that failure while `tests` remains independently eligible to run and report its own terminal result
+
+#### Scenario: Unit tests fail independently
+
+- **WHEN** setup succeeds and `pnpm run test` fails
+- **THEN** the `tests` check SHALL report that failure without relabeling it as a linter failure or suppressing the independent `linter` result
+
+#### Scenario: Accept the final pull request exact
+
+- **WHEN** the final exact is considered for merge
+- **THEN** its separate `linter`, `tests`, and `build` checks SHALL all have successful terminal results
+
 ### Requirement: Existing dependency-upgrade work is preserved and reconciled
 
 The existing uncommitted changes in `eslint.config.ts`, `package.json`, and `pnpm-lock.yaml` SHALL be treated as input to the migration. Compatible dependency upgrades SHALL be preserved, superseded ESLint/Prettier work SHALL be replaced, and user changes MUST NOT be silently discarded.
