@@ -25,8 +25,7 @@ export interface AppButtonProps {
   className?: string
 }
 
-export const isReconnectAvailable = (panelOpen: boolean, joined: boolean, reconnecting: boolean) =>
-  panelOpen && joined && !reconnecting
+export const isReconnectAvailable = (joined: boolean, reconnecting: boolean) => joined && !reconnecting
 
 const AppButton: FC<AppButtonProps> = ({ className }) => {
   const send = useRemeshSend()
@@ -94,14 +93,12 @@ const AppButton: FC<AppButtonProps> = ({ className }) => {
   const chatRoomDomain = useRemeshDomain(ChatRoomDomain())
   const chatRoomJoined = useRemeshQuery(chatRoomDomain.query.JoinIsFinishedQuery())
   const reconnecting = useRemeshQuery(chatRoomDomain.query.ReconnectIsLoadingQuery())
-  const reconnectAvailable = isReconnectAvailable(appOpenStatus, chatRoomJoined, reconnecting)
+  const reconnectAvailable = isReconnectAvailable(chatRoomJoined, reconnecting)
   const reconnectLabel = reconnecting
     ? 'Reconnecting this site'
-    : !appOpenStatus
-      ? 'Open WebChat to reconnect this site'
-      : !chatRoomJoined
-        ? 'Waiting for this site chat to connect'
-        : 'Reconnect this site'
+    : !chatRoomJoined
+      ? 'Waiting for this site chat to connect'
+      : 'Reconnect this site'
 
   // Rebuilds only this domain's ChatRoom; the shared WorldRoom is untouched.
   const handleReconnectSite = useCallback(() => {

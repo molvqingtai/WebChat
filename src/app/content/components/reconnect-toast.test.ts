@@ -27,14 +27,12 @@ window.matchMedia = () =>
     removeListener() {}
   }) as unknown as MediaQueryList
 
-let activeLoadingId: string | null = null
-let frame = 0
-let firstVisibleFrame: number | null = null
+let activeFeedbackId: string | null = null
+let firstVisibleAt: number | null = null
 const requestAnimationFrame = (callback: FrameRequestCallback) =>
   setTimeout(() => {
-    frame += 1
-    if (activeLoadingId && document.body.textContent.includes('Reconnecting to the chat...')) {
-      firstVisibleFrame ??= frame
+    if (activeFeedbackId && document.querySelector(`[data-testid="${activeFeedbackId}"]`)) {
+      firstVisibleAt ??= Date.now()
     }
     callback(Date.now())
   }, 0) as unknown as number
@@ -60,20 +58,15 @@ for (const [name, value] of Object.entries({
   Object.defineProperty(globalThis, name, { value, writable: true, configurable: true })
 }
 
-afterAll(async () => {
-  await settle(100)
-  for (const [name, descriptor] of previousGlobals) {
-    if (descriptor) Object.defineProperty(globalThis, name, descriptor)
-    else Reflect.deleteProperty(globalThis, name)
-  }
-})
+const settle = (milliseconds = 25) => new Promise((resolve) => setTimeout(resolve, milliseconds))
 
+// React and Sonner must observe the linkedom globals installed above.
 const React = await import('react')
 const { createRoot } = await import('react-dom/client')
 const { RemeshRoot } = await import('remesh-react')
+const { Toaster, toast } = await import('sonner')
+const { useReconnectToast } = await import('./reconnect-toast')
 const TestRemeshRoot = RemeshRoot as ComponentType<{ store: RemeshStore; children?: ReactNode }>
-const { toast } = await import('sonner')
-const { PanelToaster, ReconnectToastLifecycle } = await import('./reconnect-toast')
 
 const SELF: UserInfo = {
   id: 'local-user',
@@ -86,12 +79,12 @@ const SELF: UserInfo = {
   notificationType: 'at'
 }
 
-const settle = (milliseconds = 25) => new Promise((resolve) => setTimeout(resolve, milliseconds))
 const waitFor = async (predicate: () => boolean, timeout = 2000) => {
   const deadline = Date.now() + timeout
   while (!predicate() && Date.now() < deadline) await settle(10)
   expect(predicate()).toBe(true)
 }
+
 const deferred = () => {
   let resolve!: () => void
   let reject!: (reason?: unknown) => void
@@ -101,10 +94,26 @@ const deferred = () => {
   })
   return { promise, resolve, reject }
 }
-const feedbackIds = (requestId: number) => ({
-  loading: `webchat-reconnect-${requestId}-loading`,
-  error: `webchat-reconnect-${requestId}-error`
-})
+
+const feedbackId = (requestId: number) => `webchat-reconnect-${requestId}`
+
+const FeedbackHarness = ({ mounted }: { mounted: boolean }) => {
+  const toasterRef = useReconnectToast()
+  if (!mounted) return null
+  return React.createElement(Toaster, {
+    ref: toasterRef,
+    richColors: true,
+    theme: 'light',
+    offset: '70px',
+    visibleToasts: 1,
+    toastOptions: {
+      classNames: {
+        toast: 'dark:bg-slate-950 border dark:border-slate-600'
+      }
+    },
+    position: 'top-center'
+  })
+}
 
 const createFixture = () => {
   const transaction = {
@@ -135,13 +144,13 @@ const createFixture = () => {
     watch: async () => async () => {}
   }
   let reconnectPort = () => Promise.resolve()
-  const portSnapshots: { visible: boolean; painted: boolean }[] = []
+  const portSnapshots: { visible: boolean; startedAt: number }[] = []
   const chat: ChatRoom = {
     joinRoom: vi.fn(async () => {}),
     leaveRoom: vi.fn(() => {
       portSnapshots.push({
         visible: document.body.textContent.includes('Reconnecting to the chat...'),
-        painted: firstVisibleFrame !== null && frame > firstVisibleFrame
+        startedAt: Date.now()
       })
       return reconnectPort()
     }),
@@ -185,139 +194,193 @@ const createFixture = () => {
   }
 }
 
-describe('request-owned reconnect Sonner lifecycle', () => {
-  it('commits before ports, restores one active loading, suppresses closed errors, and preserves unrelated Toasts', async () => {
+afterAll(async () => {
+  await settle(100)
+  for (const [name, descriptor] of previousGlobals) {
+    if (descriptor) Object.defineProperty(globalThis, name, descriptor)
+    else Reflect.deleteProperty(globalThis, name)
+  }
+})
+
+describe('request-owned reconnect flow on the original Toaster', () => {
+  it('starts transport before Toast, handles panel mount changes, and preserves unrelated feedback', async () => {
     const fixture = createFixture()
     await waitFor(() => fixture.store.query(fixture.appStatus.query.StatusLoadIsFinishedQuery()))
     fixture.store.send(fixture.appStatus.command.UpdateOpenCommand(true))
     fixture.store.send(fixture.room.command.JoinRoomCommand())
     await waitFor(() => fixture.store.query(fixture.room.query.JoinIsFinishedQuery()))
 
-    const operations: { type: 'dismiss' | 'error'; id: number | string | undefined }[] = []
-    const dismiss = toast.dismiss
+    const operations: {
+      type: 'loading' | 'success' | 'error' | 'dismiss'
+      id: number | string | undefined
+      at: number
+    }[] = []
+    const loading = toast.loading
+    const success = toast.success
     const error = toast.error
-    toast.dismiss = ((id?: number | string) => {
-      operations.push({ type: 'dismiss', id })
-      return dismiss(id)
-    }) as typeof toast.dismiss
+    const dismiss = toast.dismiss
+    toast.loading = ((message, options) => {
+      operations.push({ type: 'loading', id: options?.id, at: Date.now() })
+      return loading(message, options)
+    }) as typeof toast.loading
+    toast.success = ((message, options) => {
+      operations.push({ type: 'success', id: options?.id, at: Date.now() })
+      return success(message, options)
+    }) as typeof toast.success
     toast.error = ((message, options) => {
-      operations.push({ type: 'error', id: options?.id })
+      operations.push({ type: 'error', id: options?.id, at: Date.now() })
       return error(message, options)
     }) as typeof toast.error
+    toast.dismiss = ((id?: number | string) => {
+      operations.push({ type: 'dismiss', id, at: Date.now() })
+      return dismiss(id)
+    }) as typeof toast.dismiss
 
     const root = createRoot(document.getElementById('root')!)
-    let panelOpen = true
+    let panelMounted = true
+    let toasterMounted = true
     const render = () =>
       root.render(
         React.createElement(
           TestRemeshRoot,
           { store: fixture.store },
-          React.createElement(ReconnectToastLifecycle),
-          panelOpen ? React.createElement(PanelToaster, { theme: 'light' }) : null
+          React.createElement(FeedbackHarness, { mounted: panelMounted && toasterMounted })
         )
       )
     const setPanelOpen = (open: boolean) => {
-      panelOpen = open
+      panelMounted = open
       fixture.store.send(fixture.appStatus.command.UpdateOpenCommand(open))
       render()
     }
     render()
     await settle()
 
-    const unrelatedId = 'review-unrelated-error'
+    const unrelatedId = 'unrelated-feedback'
     toast.error('Unrelated feedback', { id: unrelatedId, duration: Infinity, testId: unrelatedId })
     await waitFor(() => document.body.textContent.includes('Unrelated feedback'))
 
+    activeFeedbackId = null
+    firstVisibleAt = null
     fixture.store.send(fixture.room.command.ReconnectCommand())
     fixture.store.send(fixture.room.command.ReconnectCommand())
     let request = fixture.store.query(fixture.room.query.ReconnectRequestQuery())!
-    activeLoadingId = feedbackIds(request.id).loading
-    firstVisibleFrame = null
+    activeFeedbackId = feedbackId(request.id)
     await waitFor(() => fixture.portSnapshots.length === 1)
-    expect(fixture.portSnapshots[0]).toEqual({ visible: true, painted: true })
+    expect(fixture.portSnapshots[0].visible).toBe(false)
+    await waitFor(() =>
+      Boolean(document.querySelector(`[data-testid="${activeFeedbackId}"][data-mounted="true"][data-visible="true"]`))
+    )
+    const loadingItem = document.querySelector<HTMLElement>(`[data-testid="${activeFeedbackId}"]`)!
+    expect(loadingItem.getAttribute('data-mounted')).toBe('true')
+    expect(loadingItem.getAttribute('data-visible')).toBe('true')
     await waitFor(() => fixture.store.query(fixture.room.query.ReconnectRequestQuery()) === null)
-    await settle(600)
+    await waitFor(
+      () =>
+        document.querySelector(`[data-testid="${activeFeedbackId}"]`)?.textContent?.includes('Ready to chat') === true
+    )
+    const successOperation = operations.find((item) => item.type === 'success' && item.id === activeFeedbackId)!
+    expect(firstVisibleAt).not.toBeNull()
+    expect(successOperation.at - firstVisibleAt!).toBeGreaterThanOrEqual(290)
     expect(vi.mocked(fixture.chat.leaveRoom)).toHaveBeenCalledOnce()
     expect(toast.getToasts().some(({ id }) => id === unrelatedId)).toBe(true)
-    expect(document.body.textContent).toContain('Unrelated feedback')
 
-    const active = deferred()
-    fixture.usePort(() => active.promise)
+    const closeDuringFeedback = deferred()
+    fixture.usePort(() => closeDuringFeedback.promise)
+    activeFeedbackId = null
+    firstVisibleAt = null
     fixture.store.send(fixture.room.command.ReconnectCommand())
     request = fixture.store.query(fixture.room.query.ReconnectRequestQuery())!
-    const activeFeedback = feedbackIds(request.id)
-    activeLoadingId = activeFeedback.loading
-    firstVisibleFrame = null
+    activeFeedbackId = feedbackId(request.id)
     await waitFor(() => fixture.portSnapshots.length === 2)
-    await waitFor(() => document.body.textContent.includes('Reconnecting to the chat...'))
+    expect(fixture.portSnapshots[1].visible).toBe(false)
+    await waitFor(() => document.querySelector(`[data-testid="${activeFeedbackId}"]`) !== null)
 
     setPanelOpen(false)
-    await settle()
-    expect(document.body.textContent).not.toContain('Reconnecting to the chat...')
-    expect(toast.getToasts().some(({ id }) => id === activeFeedback.loading)).toBe(true)
-
-    setPanelOpen(true)
-    await waitFor(() => document.body.textContent.includes('Reconnecting to the chat...'))
-    expect(document.querySelectorAll(`[data-testid="${activeFeedback.loading}"]`)).toHaveLength(1)
-    expect(vi.mocked(fixture.chat.leaveRoom)).toHaveBeenCalledTimes(2)
-
-    active.resolve()
-    await waitFor(() => fixture.store.query(fixture.room.query.ReconnectRequestQuery()) === null)
-    await settle(600)
-    expect(toast.getToasts().some(({ id }) => id === activeFeedback.loading)).toBe(false)
-
-    const closedFailure = deferred()
-    fixture.usePort(() => closedFailure.promise)
-    fixture.store.send(fixture.room.command.ReconnectCommand())
-    request = fixture.store.query(fixture.room.query.ReconnectRequestQuery())!
-    const closedFeedback = feedbackIds(request.id)
-    activeLoadingId = closedFeedback.loading
-    firstVisibleFrame = null
-    await waitFor(() => fixture.portSnapshots.length === 3)
-
-    panelOpen = false
-    fixture.store.send(fixture.appStatus.command.UpdateOpenCommand(false))
-    closedFailure.reject('closed reset')
-    await waitFor(() => fixture.store.query(fixture.room.query.ReconnectRequestQuery()) === null)
-    render()
-    await settle()
-    expect(toast.getToasts().some(({ id }) => id === closedFeedback.loading || id === closedFeedback.error)).toBe(false)
-
+    await waitFor(() => document.querySelector(`[data-testid="${activeFeedbackId}"]`) === null)
+    await waitFor(() => fixture.store.query(fixture.room.query.ReconnectRequestQuery())?.feedback.phase === 'complete')
     setPanelOpen(true)
     await settle(100)
-    expect(document.body.textContent).not.toContain('closed reset')
-    expect(document.body.textContent).not.toContain('Reconnecting to the chat...')
+    expect(document.querySelector(`[data-testid="${activeFeedbackId}"]`)).toBeNull()
+    expect(vi.mocked(fixture.chat.leaveRoom)).toHaveBeenCalledTimes(2)
 
-    fixture.usePort(() => Promise.reject(new Error('open reset')))
+    closeDuringFeedback.resolve()
+    await waitFor(() => fixture.store.query(fixture.room.query.ReconnectRequestQuery()) === null)
+    await waitFor(
+      () =>
+        document.querySelector(`[data-testid="${activeFeedbackId}"]`)?.textContent?.includes('Ready to chat') === true
+    )
+
+    const openDuringActive = deferred()
+    fixture.usePort(() => openDuringActive.promise)
+    setPanelOpen(false)
+    activeFeedbackId = null
+    firstVisibleAt = null
     fixture.store.send(fixture.room.command.ReconnectCommand())
     request = fixture.store.query(fixture.room.query.ReconnectRequestQuery())!
-    const openFailure = feedbackIds(request.id)
-    activeLoadingId = openFailure.loading
-    firstVisibleFrame = null
-    await waitFor(() => document.body.textContent.includes('open reset'))
-    expect(toast.getToasts().some(({ id }) => id === openFailure.loading)).toBe(false)
-    expect(toast.getToasts().some(({ id }) => id === openFailure.error)).toBe(true)
-    expect(operations.findIndex((item) => item.type === 'dismiss' && item.id === openFailure.loading)).toBeLessThan(
-      operations.findIndex((item) => item.type === 'error' && item.id === openFailure.error)
+    activeFeedbackId = feedbackId(request.id)
+    await waitFor(() => fixture.portSnapshots.length === 3)
+    expect(fixture.portSnapshots[2].visible).toBe(false)
+    await waitFor(
+      () =>
+        fixture.store.query(fixture.room.query.ReconnectRequestQuery())?.feedback.phase === 'complete' &&
+        fixture.store.query(fixture.room.query.ReconnectRequestQuery())?.feedback.attempted === false
     )
+    expect(document.querySelector(`[data-testid="${activeFeedbackId}"]`)).toBeNull()
+
+    setPanelOpen(true)
+    await waitFor(() => document.querySelector(`[data-testid="${activeFeedbackId}"]`) !== null)
+    expect(vi.mocked(fixture.chat.leaveRoom)).toHaveBeenCalledTimes(3)
+    openDuringActive.resolve()
+    await waitFor(() => fixture.store.query(fixture.room.query.ReconnectRequestQuery()) === null)
+    await waitFor(
+      () =>
+        document.querySelector(`[data-testid="${activeFeedbackId}"]`)?.textContent?.includes('Ready to chat') === true
+    )
+
+    setPanelOpen(false)
+    fixture.usePort(() => Promise.reject(new Error('closed reset')))
+    fixture.store.send(fixture.room.command.ReconnectCommand())
+    request = fixture.store.query(fixture.room.query.ReconnectRequestQuery())!
+    const closedFeedbackId = feedbackId(request.id)
+    await waitFor(() => fixture.store.query(fixture.room.query.ReconnectRequestQuery()) === null)
+    setPanelOpen(true)
+    await settle(100)
+    expect(document.querySelector(`[data-testid="${closedFeedbackId}"]`)).toBeNull()
+    expect(document.body.textContent).not.toContain('closed reset')
+
+    fixture.usePort(() => Promise.reject(new Error('open reset')))
+    activeFeedbackId = null
+    firstVisibleAt = null
+    fixture.store.send(fixture.room.command.ReconnectCommand())
+    request = fixture.store.query(fixture.room.query.ReconnectRequestQuery())!
+    activeFeedbackId = feedbackId(request.id)
+    await waitFor(
+      () => document.querySelector(`[data-testid="${activeFeedbackId}"]`)?.textContent?.includes('open reset') === true
+    )
+    expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toBeNull()
+    expect(operations.some((item) => item.type === 'error' && item.id === activeFeedbackId)).toBe(true)
     expect(operations.some((item) => item.type === 'dismiss' && item.id === undefined)).toBe(false)
     expect(operations.some((item) => item.type === 'dismiss' && item.id === unrelatedId)).toBe(false)
     expect(toast.getToasts().some(({ id }) => id === unrelatedId)).toBe(true)
 
-    setPanelOpen(false)
-    await settle(600)
-    expect(toast.getToasts().some(({ id }) => id === openFailure.error)).toBe(false)
-    expect(toast.getToasts().some(({ id }) => id === unrelatedId)).toBe(true)
-    setPanelOpen(true)
-    await settle(100)
-    expect(document.body.textContent).not.toContain('open reset')
+    toasterMounted = false
+    render()
+    await settle()
+    fixture.usePort(() => Promise.resolve())
+    const absentStartedAt = Date.now()
+    fixture.store.send(fixture.room.command.ReconnectCommand())
+    await waitFor(() => fixture.store.query(fixture.room.query.ReconnectRequestQuery()) === null)
+    expect(Date.now() - absentStartedAt).toBeLessThan(1000)
+    expect(document.body.textContent).not.toContain('Reconnecting to the chat...')
 
     toast.dismiss(unrelatedId)
     root.unmount()
     await settle(600)
     fixture.store.discard()
-    toast.dismiss = dismiss
+    toast.loading = loading
+    toast.success = success
     toast.error = error
-    activeLoadingId = null
-  })
+    toast.dismiss = dismiss
+    activeFeedbackId = null
+  }, 10000)
 })

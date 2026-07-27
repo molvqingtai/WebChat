@@ -469,7 +469,7 @@ describe('ChatRoomDomain exact application port', () => {
     fixture.store.discard()
   })
 
-  it('projects the returned local identity once, clears the draft, and composes reconnect', async () => {
+  it('projects the returned local identity once, clears the draft, and composes reconnect immediately', async () => {
     const fixture = createFixture()
     await join(fixture)
     const projected: string[] = []
@@ -482,17 +482,29 @@ describe('ChatRoomDomain exact application port', () => {
     )
     await vi.waitFor(() => expect(projected).toEqual(['local-message']))
     expect(fixture.store.query(fixture.input.query.MessageQuery())).toBe('')
+
     fixture.store.send(fixture.room.command.ReconnectCommand())
-    const request = fixture.store.query(fixture.room.query.ReconnectRequestQuery())
-    expect(request).toEqual({ id: 1, phase: 'presenting' })
-    expect(fixture.chat.leaveRoom).not.toHaveBeenCalled()
-    fixture.store.send(fixture.room.command.PresentReconnectCommand(request!.id))
+    const request = fixture.store.query(fixture.room.query.ReconnectRequestQuery())!
+    expect(request).toEqual({
+      id: 1,
+      feedback: { phase: 'pending', attempted: false },
+      outcome: null
+    })
     await vi.waitFor(() => expect(fixture.chat.leaveRoom).toHaveBeenCalledTimes(1))
-    expect(fixture.chat.joinRoom).toHaveBeenCalledTimes(2)
+    await vi.waitFor(() => expect(fixture.chat.joinRoom).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() =>
+      expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toEqual({
+        ...request,
+        outcome: {}
+      })
+    )
+
+    fixture.store.send(fixture.room.command.FailReconnectFeedbackCommand(request.id))
+    await vi.waitFor(() => expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toBeNull())
     fixture.store.discard()
   })
 
-  it('waits for the request-owned presentation, rejects duplicates, and ignores stale presentation signals', async () => {
+  it('joins immediate operation and mounted feedback while fencing duplicate and stale signals', async () => {
     const reconnect = deferred()
     const fixture = createFixture()
     await join(fixture)
@@ -505,35 +517,100 @@ describe('ChatRoomDomain exact application port', () => {
     fixture.store.send(fixture.room.command.ReconnectCommand())
     fixture.store.send(fixture.room.command.ReconnectCommand())
 
-    const request = fixture.store.query(fixture.room.query.ReconnectRequestQuery())
-    expect(request).toEqual({ id: 1, phase: 'presenting' })
+    const request = fixture.store.query(fixture.room.query.ReconnectRequestQuery())!
+    expect(request).toEqual({
+      id: 1,
+      feedback: { phase: 'pending', attempted: false },
+      outcome: null
+    })
     expect(fixture.store.query(fixture.room.query.ReconnectIsLoadingQuery())).toBe(true)
-    expect(started).toEqual([request!.id])
-    expect(fixture.chat.leaveRoom).not.toHaveBeenCalled()
-
-    fixture.store.send(fixture.room.command.PresentReconnectCommand(request!.id + 1))
-    expect(fixture.chat.leaveRoom).not.toHaveBeenCalled()
-    fixture.store.send(fixture.room.command.PresentReconnectCommand(request!.id))
-    fixture.store.send(fixture.room.command.PresentReconnectCommand(request!.id))
-
+    expect(started).toEqual([request.id])
     await vi.waitFor(() => expect(fixture.chat.leaveRoom).toHaveBeenCalledOnce())
+
+    fixture.store.send(fixture.room.command.BeginReconnectFeedbackCommand(request.id + 1))
+    expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toEqual(request)
+    fixture.store.send(fixture.room.command.BeginReconnectFeedbackCommand(request.id))
+    fixture.store.send(fixture.room.command.BeginReconnectFeedbackCommand(request.id))
+    fixture.store.send(fixture.room.command.PresentReconnectCommand(request.id + 1))
+    fixture.store.send(fixture.room.command.PresentReconnectCommand(request.id))
+    fixture.store.send(fixture.room.command.PresentReconnectCommand(request.id))
+
     expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toEqual({
-      id: request!.id,
-      phase: 'connecting'
+      id: request.id,
+      feedback: { phase: 'dwelling', attempted: true },
+      outcome: null
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 325))
+    expect(finished).toEqual([])
+    expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toEqual({
+      id: request.id,
+      feedback: { phase: 'complete', attempted: true },
+      outcome: null
     })
 
     reconnect.resolve()
-    await vi.waitFor(() => expect(finished).toEqual([{ id: request!.id }]))
+    await vi.waitFor(() => expect(finished).toEqual([{ id: request.id }]))
     expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toBeNull()
     expect(fixture.store.query(fixture.room.query.ReconnectIsLoadingQuery())).toBe(false)
     expect(fixture.chat.joinRoom).toHaveBeenCalledTimes(2)
     fixture.store.discard()
   })
 
+  it('allows one closed-panel request to enter mounted feedback and ignores older callbacks', async () => {
+    const firstReconnect = deferred()
+    const secondReconnect = deferred()
+    const fixture = createFixture()
+    await join(fixture)
+    vi.mocked(fixture.chat.leaveRoom)
+      .mockReturnValueOnce(firstReconnect.promise)
+      .mockReturnValueOnce(secondReconnect.promise)
+
+    fixture.store.send(fixture.room.command.ReconnectCommand())
+    const first = fixture.store.query(fixture.room.query.ReconnectRequestQuery())!
+    await vi.waitFor(() => expect(fixture.chat.leaveRoom).toHaveBeenCalledOnce())
+    fixture.store.send(fixture.room.command.FailReconnectFeedbackCommand(first.id))
+    expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toEqual({
+      ...first,
+      feedback: { phase: 'complete', attempted: false }
+    })
+
+    fixture.store.send(fixture.room.command.BeginReconnectFeedbackCommand(first.id))
+    fixture.store.send(fixture.room.command.PresentReconnectCommand(first.id))
+    expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toEqual({
+      ...first,
+      feedback: { phase: 'dwelling', attempted: true }
+    })
+    fixture.store.send(fixture.room.command.FailReconnectFeedbackCommand(first.id))
+    const closed = fixture.store.query(fixture.room.query.ReconnectRequestQuery())
+    expect(closed).toEqual({
+      ...first,
+      feedback: { phase: 'complete', attempted: true }
+    })
+    fixture.store.send(fixture.room.command.BeginReconnectFeedbackCommand(first.id))
+    expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toEqual(closed)
+
+    firstReconnect.resolve()
+    await vi.waitFor(() => expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toBeNull())
+
+    fixture.store.send(fixture.room.command.ReconnectCommand())
+    const second = fixture.store.query(fixture.room.query.ReconnectRequestQuery())!
+    await vi.waitFor(() => expect(fixture.chat.leaveRoom).toHaveBeenCalledTimes(2))
+    fixture.store.send(fixture.room.command.BeginReconnectFeedbackCommand(first.id))
+    fixture.store.send(fixture.room.command.PresentReconnectCommand(first.id))
+    fixture.store.send(fixture.room.command.FailReconnectFeedbackCommand(first.id))
+    expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toEqual(second)
+
+    fixture.store.send(fixture.room.command.FailReconnectFeedbackCommand(second.id))
+    secondReconnect.resolve()
+    await vi.waitFor(() => expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toBeNull())
+    fixture.store.discard()
+  })
+
   it.each([
     { rejection: new Error('reconnect failed'), message: 'reconnect failed' },
     { rejection: 'transport reset', message: 'transport reset' }
-  ])('normalizes $message and settles it through the request-owned result', async ({ rejection, message }) => {
+  ])('normalizes $message and settles it through request-owned absent feedback', async ({ rejection, message }) => {
     const fixture = createFixture()
     await join(fixture)
     vi.mocked(fixture.chat.leaveRoom).mockRejectedValueOnce(rejection)
@@ -544,7 +621,12 @@ describe('ChatRoomDomain exact application port', () => {
 
     fixture.store.send(fixture.room.command.ReconnectCommand())
     const request = fixture.store.query(fixture.room.query.ReconnectRequestQuery())!
-    fixture.store.send(fixture.room.command.PresentReconnectCommand(request.id))
+    await vi.waitFor(() =>
+      expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())?.outcome).toEqual({
+        error: new Error(message)
+      })
+    )
+    fixture.store.send(fixture.room.command.FailReconnectFeedbackCommand(request.id))
 
     await vi.waitFor(() => expect(finished).toHaveLength(1))
     expect(finished[0]).toEqual({ id: request.id, error: new Error(message) })

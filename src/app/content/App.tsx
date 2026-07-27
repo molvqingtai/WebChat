@@ -10,6 +10,7 @@ import UserInfoDomain from '@/domain/UserInfo'
 import Setup from '@/app/content/views/setup'
 import MessageListDomain from '@/domain/MessageList'
 import { useEffect, useRef } from 'react'
+import { Toaster } from 'sonner'
 
 import DanmakuContainer from './components/danmaku-container'
 import DanmakuDomain from '@/domain/Danmaku'
@@ -18,7 +19,7 @@ import { checkDarkMode, cn } from '@/utils'
 import WorldRoomDomain from '@/domain/WorldRoom'
 import ReadinessDomain from '@/domain/Readiness'
 import { AlertCircleIcon, LoaderCircleIcon } from 'lucide-react'
-import { PanelToaster, ReconnectToastLifecycle } from './components/reconnect-toast'
+import { useReconnectToast } from './components/reconnect-toast'
 
 /**
  * Fix requestAnimationFrame error in jest
@@ -46,6 +47,7 @@ export default function App() {
   const worldRoomJoinIsFinished = useRemeshQuery(worldRoomDomain.query.JoinIsFinishedQuery())
   const readinessDomain = useRemeshDomain(ReadinessDomain())
   const runtimeHostPhase = useRemeshQuery(readinessDomain.query.StateQuery())
+  const reconnectToasterRef = useReconnectToast()
 
   const userInfo = useRemeshQuery(userInfoDomain.query.UserInfoQuery())
   const notUserInfo = userInfoLoadFinished && !userInfoSetFinished
@@ -93,13 +95,24 @@ export default function App() {
       )}
       {appStatusLoadIsFinished && (
         <>
-          <ReconnectToastLifecycle />
           <AppMain>
             <Header />
             <Main />
             <Footer />
             {notUserInfo && <Setup></Setup>}
-            <PanelToaster theme={themeMode} />
+            <Toaster
+              ref={reconnectToasterRef}
+              richColors
+              theme={themeMode}
+              offset="70px"
+              visibleToasts={1}
+              toastOptions={{
+                classNames: {
+                  toast: 'dark:bg-slate-950 border dark:border-slate-600'
+                }
+              }}
+              position="top-center"
+            ></Toaster>
           </AppMain>
           <AppButton></AppButton>
         </>
