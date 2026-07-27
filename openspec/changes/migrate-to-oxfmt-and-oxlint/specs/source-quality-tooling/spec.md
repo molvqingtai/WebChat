@@ -128,6 +128,25 @@ The GitHub Actions CI workflow SHALL expose `linter` and `tests` as separate nam
 - **WHEN** the final exact is considered for merge
 - **THEN** its separate `linter`, `tests`, and `build` checks SHALL all have successful terminal results
 
+### Requirement: Chrome Runtime control follows built manifest identity
+
+The Chrome Runtime CI harness SHALL derive the content isolated execution-context name from the `manifest.json` inside the selected built Chrome extension directory. It SHALL structurally parse that artifact, require a non-empty top-level string `name`, and match the execution context against that exact value. It SHALL NOT hardcode either a historical or current product display name. A missing, malformed, or invalid built manifest name SHALL fail explicitly. The extension display name, WXT configuration, Runtime behavior, workflow, browser scope, and existing Runtime-control assertions SHALL remain unchanged.
+
+#### Scenario: Product display name changes
+
+- **WHEN** a valid product display-name change is emitted as the selected Chrome artifact's manifest `name`
+- **THEN** the Runtime control SHALL discover the content isolated execution context using that artifact value without requiring a harness-copy update
+
+#### Scenario: Built manifest identity is unavailable
+
+- **WHEN** the selected Chrome artifact's manifest is missing, malformed, or has no non-empty string `name`
+- **THEN** the Runtime control SHALL fail with an explicit manifest-identity error instead of waiting for a hardcoded context name to time out
+
+#### Scenario: Preserve the existing Runtime boundary
+
+- **WHEN** the harness resolves the artifact-derived isolated context
+- **THEN** all existing extension-target, Offscreen, service-worker, authenticated relay, presence, diagnostic, timeout, and cleanup controls SHALL continue unchanged
+
 ### Requirement: Existing dependency-upgrade work is preserved and reconciled
 
 The existing uncommitted changes in `eslint.config.ts`, `package.json`, and `pnpm-lock.yaml` SHALL be treated as input to the migration. Compatible dependency upgrades SHALL be preserved, superseded ESLint/Prettier work SHALL be replaced, and user changes MUST NOT be silently discarded.

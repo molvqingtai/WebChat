@@ -55,6 +55,10 @@ Alternative rejected: keep unit tests as the final step inside `linter`. That co
 
 Alternative rejected: rely on `linter` to generate WXT types for `tests`. Sibling Actions jobs do not share a workspace, so the test job must establish its own generated-type prerequisite without depending on linter completion.
 
+The Chrome Runtime control treats the selected built extension directory as the artifact authority. Before matching the content isolated execution context, the harness reads and structurally parses that directory's `manifest.json`, requires a non-empty top-level `name`, and matches the context against that exact artifact value. Product display metadata may change without requiring a second hardcoded E2E name. A missing, malformed, or invalid manifest name fails explicitly rather than degrading into an unrelated context timeout.
+
+Alternative rejected: keep `WebChat` or replace it with the current longer display text in the E2E source. Either value couples release verification to mutable product copy and will drift again.
+
 ### 4. Keep lint-staged as the staged-file orchestrator
 
 Preserve Husky and lint-staged, replacing only the commands and supported file mapping. Staged supported source is formatted and lint-fixed before commit. Commitlint remains independent.
@@ -95,6 +99,7 @@ The formatting pass does not need its own isolated commit. The final history may
 - [CI diff check includes build output] -> Run fix-and-diff cleanliness before build steps or ensure generated output is ignored and not part of the check.
 - [Lint and unit-test failures are reported as one result] -> Keep `linter` and `tests` as sibling jobs that depend only on shared setup, and require both before merge.
 - [Independent tests cannot resolve generated WXT types] -> Generate WXT types inside the `tests` workspace before invoking the canonical unit-test command; do not create a dependency on `linter`.
+- [Product display-name changes break Chrome Runtime discovery] -> Parse and validate the selected build artifact's manifest name, then use that exact value to identify the isolated execution context; keep product copy out of the harness.
 - [Different Oxc versions expose different flags/defaults] -> Pin compatible versions in the lockfile and derive commands from those installed CLIs.
 
 ## Migration Plan
@@ -103,7 +108,7 @@ The formatting pass does not need its own isolated commit. The final history may
 2. Inventory all ESLint/Prettier dependencies, configs, ignores, scripts, lint-staged entries, Husky hooks, editor settings, documentation, and CI/CD references.
 3. Add pinned-compatible oxfmt/oxlint dependencies and minimal repository configuration; update package scripts and lint-staged.
 4. Remove superseded tool dependencies/configuration and reconcile the pre-existing package/lock changes.
-5. Update CI/CD to run format/lint fixes, `git diff --exit-code`, and TypeScript in `linter`; generate WXT types and run unit tests in an independent sibling `tests` job; retain existing browser gates.
+5. Update CI/CD to run format/lint fixes, `git diff --exit-code`, and TypeScript in `linter`; generate WXT types and run unit tests in an independent sibling `tests` job; make the Chrome Runtime control derive its isolated-context identity from the selected built manifest; retain existing browser gates.
 6. Apply Oxc corrections across the configured scope, review non-mechanical changes, and rerun to prove idempotence.
 7. Verify frozen install, format/lint fixes, read-only checks, staged-file behavior, TypeScript, Chrome/Firefox builds, OpenSpec strict validation, and browser smoke behavior.
 8. Freeze an exact candidate and route independent review/quality verification before push. Merge requires owner acceptance and explicit authorization under the team workflow.
