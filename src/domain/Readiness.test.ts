@@ -49,8 +49,7 @@ for (const initial of ['connecting', 'ready', 'unavailable'] as const) {
   it(`immediately replays ${initial} without treating an equal input as another transition`, () => {
     const fixture = createFixture(initial)
     const initialTransitions: ReadinessState[] = initial === 'connecting' ? [] : [initial]
-    const initialObservations: ReadinessState[] =
-      initial === 'connecting' ? ['connecting'] : ['connecting', initial]
+    const initialObservations: ReadinessState[] = initial === 'connecting' ? [] : [initial]
 
     expect(fixture.store.query(fixture.domain.query.StateQuery())).toBe(initial)
     expect(fixture.transitions).toEqual(initialTransitions)
@@ -77,7 +76,7 @@ it('updates and emits exactly once for each actual readiness transition', () => 
 
   expect(fixture.store.query(fixture.domain.query.StateQuery())).toBe('connecting')
   expect(fixture.transitions).toEqual(['ready', 'unavailable', 'connecting'])
-  expect(fixture.observedStates).toEqual(['connecting', 'ready', 'unavailable', 'connecting'])
+  expect(fixture.observedStates).toEqual(['ready', 'unavailable', 'connecting'])
 
   fixture.discard()
 })
