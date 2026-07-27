@@ -9,7 +9,7 @@ WebChat currently maintains overlapping ESLint and Prettier dependencies and con
 - Allow normal local format and lint commands to fix source files.
 - Add explicit read-only check commands for diagnosing formatting and lint violations.
 - Run the fixing commands in CI/CD and then fail with `git diff --exit-code` if those commands produced uncommitted changes; CI does not commit or push fixes.
-- Report `linter` and `tests` as separate GitHub Actions jobs/checks. Both depend only on shared setup, run independently, and must pass before merge; unit tests are not a step inside `linter`.
+- Report `linter` and `tests` as separate GitHub Actions jobs/checks. Both depend only on shared setup, run independently, and must pass before merge; unit tests are not a step inside `linter`, and `tests` generates its own WXT types before running them.
 - Update lint-staged and Husky integration so staged source is formatted and lint-fixed by the new tools.
 - Keep Conventional Commit validation and `tsc --noEmit` as separate gates.
 - Use non-type-aware oxlint for this migration; TypeScript remains the type-analysis authority.

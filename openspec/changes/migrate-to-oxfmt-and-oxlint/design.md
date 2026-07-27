@@ -45,13 +45,15 @@ Alternative rejected: make `lint` read-only. The owner requires the normal workf
 
 GitHub workflows run the same format and lint correction commands used locally, followed by `git diff --exit-code`. A correction therefore makes the workflow fail and exposes the required patch; it is not silently accepted.
 
-The CI workflow exposes `linter` and `tests` as separate named jobs/checks. Both depend only on the shared `setup` job and may run in parallel. `linter` retains format/lint correction, cleanliness verification, and the existing WXT/TypeScript check; `tests` owns `pnpm run test`. Neither job contains or depends on the other, so a failure remains attributable and the other result still reaches an independent terminal state. The existing `build` job and its browser boundaries remain unchanged.
+The CI workflow exposes `linter` and `tests` as separate named jobs/checks. Both depend only on the shared `setup` job and may run in parallel. `linter` retains format/lint correction, cleanliness verification, and the existing WXT/TypeScript check. Because GitHub Actions jobs use isolated workspaces, `tests` generates WXT types in its own job before it runs `pnpm run test`; this prerequisite does not give `tests` lint, format, type-check, or build ownership. Neither job depends on or absorbs the quality responsibility of the other, so a failure remains attributable and the other result still reaches an independent terminal state. The existing `build` job and its browser boundaries remain unchanged.
 
 Alternative rejected: CI bot commits. That would require write permissions, complicate fork/third-party PR security, create recursive workflow risk, and make author provenance less clear.
 
 Alternative rejected: run fixes without diff verification. Such a workflow can report success while the branch remains nonconforming.
 
 Alternative rejected: keep unit tests as the final step inside `linter`. That collapses two different failure domains into one Actions result and prevents an earlier linter failure from producing an independent test result.
+
+Alternative rejected: rely on `linter` to generate WXT types for `tests`. Sibling Actions jobs do not share a workspace, so the test job must establish its own generated-type prerequisite without depending on linter completion.
 
 ### 4. Keep lint-staged as the staged-file orchestrator
 
@@ -92,6 +94,7 @@ The formatting pass does not need its own isolated commit. The final history may
 - [Dirty dependency work is lost or misattributed] -> Capture pre-edit staged/unstaged patches and include an ownership reconciliation in handoff evidence.
 - [CI diff check includes build output] -> Run fix-and-diff cleanliness before build steps or ensure generated output is ignored and not part of the check.
 - [Lint and unit-test failures are reported as one result] -> Keep `linter` and `tests` as sibling jobs that depend only on shared setup, and require both before merge.
+- [Independent tests cannot resolve generated WXT types] -> Generate WXT types inside the `tests` workspace before invoking the canonical unit-test command; do not create a dependency on `linter`.
 - [Different Oxc versions expose different flags/defaults] -> Pin compatible versions in the lockfile and derive commands from those installed CLIs.
 
 ## Migration Plan
@@ -100,7 +103,7 @@ The formatting pass does not need its own isolated commit. The final history may
 2. Inventory all ESLint/Prettier dependencies, configs, ignores, scripts, lint-staged entries, Husky hooks, editor settings, documentation, and CI/CD references.
 3. Add pinned-compatible oxfmt/oxlint dependencies and minimal repository configuration; update package scripts and lint-staged.
 4. Remove superseded tool dependencies/configuration and reconcile the pre-existing package/lock changes.
-5. Update CI/CD to run format/lint fixes, `git diff --exit-code`, and TypeScript in `linter`; run unit tests in an independent sibling `tests` job; retain existing browser gates.
+5. Update CI/CD to run format/lint fixes, `git diff --exit-code`, and TypeScript in `linter`; generate WXT types and run unit tests in an independent sibling `tests` job; retain existing browser gates.
 6. Apply Oxc corrections across the configured scope, review non-mechanical changes, and rerun to prove idempotence.
 7. Verify frozen install, format/lint fixes, read-only checks, staged-file behavior, TypeScript, Chrome/Firefox builds, OpenSpec strict validation, and browser smoke behavior.
 8. Freeze an exact candidate and route independent review/quality verification before push. Merge requires owner acceptance and explicit authorization under the team workflow.
