@@ -4,7 +4,7 @@ import { Remesh, type RemeshStore } from 'remesh'
 import type { ComponentType, ReactNode } from 'react'
 import AppFeedbackDomain from '@/domain/AppFeedback'
 import ChatRoomDomain from '@/domain/ChatRoom'
-import ToastPresentationDomain from '@/domain/ToastPresentation'
+import ToastPresentationDomain, { type ToastDescriptor } from '@/domain/ToastPresentation'
 import UserInfoDomain, { type UserInfo } from '@/domain/UserInfo'
 import { ChatRoomExtern, type ChatRoom } from '@/domain/externs/ChatRoom'
 import { ReadinessExtern, type ReadinessState } from '@/domain/externs/Readiness'
@@ -212,7 +212,11 @@ describe('generic Toast presentation', () => {
   it('maps business sources while preserving immediate requests, bounded absence, and unrelated Toasts', async () => {
     const fixture = createFixture()
     const descriptorIds: string[] = []
-    fixture.store.subscribeEvent(fixture.presentation.event.DescriptorEvent, ({ id }) => descriptorIds.push(id))
+    const descriptors: ToastDescriptor[] = []
+    fixture.store.subscribeEvent(fixture.presentation.event.DescriptorEvent, (descriptor) => {
+      descriptorIds.push(descriptor.id)
+      descriptors.push(descriptor)
+    })
     fixture.store.send(fixture.room.command.JoinRoomCommand())
     await waitFor(() => fixture.store.query(fixture.room.query.JoinIsFinishedQuery()))
 
@@ -269,12 +273,46 @@ describe('generic Toast presentation', () => {
 
     fixture.emitReadiness('unavailable')
     await waitFor(() => operations.some((item) => item.type === 'error' && item.id === 'webchat-runtime-readiness'))
-    fixture.emitReadiness('ready')
-    await waitFor(() => operations.some((item) => item.type === 'success' && item.id === 'webchat-runtime-readiness'))
 
     const unrelatedId = 'unrelated-feedback'
     toast.error('Unrelated feedback', { id: unrelatedId, duration: Infinity, testId: unrelatedId })
     await waitFor(() => document.body.textContent.includes('Unrelated feedback'))
+
+    const runtimeDescriptorCount = descriptors.filter(({ id }) => id === 'webchat-runtime-readiness').length
+    fixture.emitReadiness('ready')
+    await waitFor(() => operations.some((item) => item.type === 'dismiss' && item.id === 'webchat-runtime-readiness'))
+    expect(operations.some((item) => item.type === 'success' && item.id === 'webchat-runtime-readiness')).toBe(false)
+    expect(descriptors.filter(({ id }) => id === 'webchat-runtime-readiness')).toHaveLength(runtimeDescriptorCount)
+    expect(
+      descriptors.some(
+        ({ id, type, message }) =>
+          id === 'webchat-runtime-readiness' && (type === 'success' || message === 'Ready to chat')
+      )
+    ).toBe(false)
+    expect(toast.getToasts().some(({ id }) => id === unrelatedId)).toBe(true)
+
+    const runtimeDismissCount = operations.filter(
+      (item) => item.type === 'dismiss' && item.id === 'webchat-runtime-readiness'
+    ).length
+    fixture.emitReadiness('ready')
+    fixture.emitReadiness('ready')
+    await settle(50)
+    expect(
+      operations.filter((item) => item.type === 'dismiss' && item.id === 'webchat-runtime-readiness')
+    ).toHaveLength(runtimeDismissCount)
+    expect(descriptors.filter(({ id }) => id === 'webchat-runtime-readiness')).toHaveLength(runtimeDescriptorCount)
+
+    setMounted(false)
+    await waitForSurfaceAbsent()
+    setMounted(true)
+    await waitFor(() => fixture.store.query(fixture.presentation.query.SurfaceMountedQuery()))
+    await waitFor(
+      () =>
+        operations.filter((item) => item.type === 'dismiss' && item.id === 'webchat-runtime-readiness').length ===
+        runtimeDismissCount + 1
+    )
+    expect(descriptors.filter(({ id }) => id === 'webchat-runtime-readiness')).toHaveLength(runtimeDescriptorCount)
+    expect(toast.getToasts().some(({ id }) => id === unrelatedId)).toBe(true)
 
     activeDescriptorId = null
     firstVisibleAt = null

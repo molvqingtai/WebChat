@@ -11,7 +11,8 @@ const ReadinessDomain = Remesh.domain({
     const StateChangedEvent = domain.event<ReadinessState>({ name: 'Readiness.StateChangedEvent' })
     const SetStateCommand = domain.command({
       name: 'Readiness.SetStateCommand',
-      impl: (_, state: ReadinessState) => [State().new(state), StateChangedEvent(state)]
+      impl: ({ get }, state: ReadinessState) =>
+        get(StateQuery()) === state ? null : [State().new(state), StateChangedEvent(state)]
     })
 
     domain.effect({

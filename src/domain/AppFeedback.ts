@@ -17,7 +17,7 @@ const requestLoadingDescriptor = (requestId: number): ToastDescriptor => ({
   minimumVisibleMs: 300
 })
 
-const readinessDescriptor = (state: ReadinessState): ToastDescriptor => {
+const readinessDescriptor = (state: Exclude<ReadinessState, 'ready'>): ToastDescriptor => {
   if (state === 'connecting') {
     return {
       id: RUNTIME_TOAST_ID,
@@ -28,8 +28,8 @@ const readinessDescriptor = (state: ReadinessState): ToastDescriptor => {
   }
   return {
     id: RUNTIME_TOAST_ID,
-    type: state === 'ready' ? 'success' : 'error',
-    message: state === 'ready' ? 'Ready to chat' : 'WebChat unavailable'
+    type: 'error',
+    message: 'WebChat unavailable'
   }
 }
 
@@ -39,15 +39,17 @@ const AppFeedbackDomain = Remesh.domain({
     const chatRoomDomain = domain.getDomain(ChatRoomDomain())
     const readinessDomain = domain.getDomain(ReadinessDomain())
     const presentationDomain = domain.getDomain(ToastPresentationDomain())
+    const readinessFeedbackCommand = (state: ReadinessState) =>
+      state === 'ready'
+        ? presentationDomain.command.DismissCommand(RUNTIME_TOAST_ID)
+        : presentationDomain.command.PublishCommand(readinessDescriptor(state))
 
     domain.effect({
       name: 'AppFeedback.OnReadinessEffect',
       impl: ({ fromEvent, get }) =>
         fromEvent(readinessDomain.event.StateChangedEvent).pipe(
           map((state) =>
-            get(presentationDomain.query.SurfaceMountedQuery())
-              ? presentationDomain.command.PublishCommand(readinessDescriptor(state))
-              : null
+            get(presentationDomain.query.SurfaceMountedQuery()) ? readinessFeedbackCommand(state) : null
           )
         )
     })
@@ -76,9 +78,7 @@ const AppFeedbackDomain = Remesh.domain({
         fromEvent(presentationDomain.event.SurfaceChangedEvent).pipe(
           filter(Boolean),
           map(() => {
-            const readiness = presentationDomain.command.PublishCommand(
-              readinessDescriptor(get(readinessDomain.query.StateQuery()))
-            )
+            const readiness = readinessFeedbackCommand(get(readinessDomain.query.StateQuery()))
             const request = get(chatRoomDomain.query.ReconnectRequestQuery())
             return request && !request.toast.attempted
               ? [

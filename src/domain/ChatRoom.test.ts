@@ -191,7 +191,7 @@ describe('ChatRoomDomain exact application port', () => {
     fixture.store.discard()
   })
 
-  it('reissues the retained join from the page domain after host readiness returns', async () => {
+  it('reissues the retained join once for each actual host readiness transition', async () => {
     const fixture = createFixture()
     await join(fixture)
     expect(fixture.chat.joinRoom).toHaveBeenCalledOnce()
@@ -204,6 +204,14 @@ describe('ChatRoomDomain exact application port', () => {
       user: SELF,
       site: expect.objectContaining({ origin: 'https://example.test' })
     })
+
+    fixture.emitReadiness('ready')
+    expect(fixture.chat.joinRoom).toHaveBeenCalledTimes(2)
+
+    fixture.emitReadiness('connecting')
+    fixture.emitReadiness('ready')
+    await vi.waitFor(() => expect(fixture.chat.joinRoom).toHaveBeenCalledTimes(3))
+
     fixture.store.discard()
   })
 
