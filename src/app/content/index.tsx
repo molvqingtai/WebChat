@@ -22,9 +22,9 @@ import '@/assets/styles/tailwind.css'
 import '@/assets/styles/overlay.css'
 import NotificationDomain from '@/domain/Notification'
 import ToastDomain from '@/domain/Toast'
+import ToastPresentationDomain from '@/domain/ToastPresentation'
+import AppFeedbackDomain from '@/domain/AppFeedback'
 import { createElement } from '@/utils'
-import { AlertCircleIcon, RefreshCwIcon } from 'lucide-react'
-import { Button } from '@/components/ui/button'
 
 export default defineContentScript({
   cssInjectionMode: 'ui',
@@ -44,40 +44,6 @@ export default defineContentScript({
         'color: inherit;',
         error
       )
-      const unavailableUi = await createShadowRootUi(ctx, {
-        name: `${__NAME__}-runtime-unavailable`,
-        position: 'inline',
-        anchor: 'body',
-        append: 'last',
-        mode: 'open',
-        onMount: (container) => {
-          const app = createElement('<div id="runtime-unavailable"></div>')
-          container.append(app)
-          const root = createRoot(app)
-          root.render(
-            <div
-              role="alert"
-              className="z-infinity fixed right-4 bottom-4 flex items-center gap-2 rounded-md border border-red-300 bg-white p-2 text-sm text-red-700 shadow-lg dark:border-red-800 dark:bg-slate-950 dark:text-red-300"
-            >
-              <AlertCircleIcon className="size-4" />
-              <span>WebChat unavailable</span>
-              <Button
-                type="button"
-                size="icon"
-                variant="ghost"
-                title="Retry"
-                aria-label="Retry"
-                onClick={() => location.reload()}
-              >
-                <RefreshCwIcon className="size-4" />
-              </Button>
-            </div>
-          )
-          return root
-        },
-        onRemove: (root) => root?.unmount()
-      })
-      unavailableUi.mount()
       return
     }
 
@@ -114,7 +80,9 @@ export default defineContentScript({
         root.render(
           <React.StrictMode>
             <RemeshRoot store={store}>
-              <RemeshScope domains={[NotificationDomain(), ToastDomain()]}>
+              <RemeshScope
+                domains={[NotificationDomain(), ToastDomain(), ToastPresentationDomain(), AppFeedbackDomain()]}
+              >
                 <App />
               </RemeshScope>
             </RemeshRoot>

@@ -17,9 +17,7 @@ import DanmakuDomain from '@/domain/Danmaku'
 import AppStatusDomain from '@/domain/AppStatus'
 import { checkDarkMode, cn } from '@/utils'
 import WorldRoomDomain from '@/domain/WorldRoom'
-import ReadinessDomain from '@/domain/Readiness'
-import { AlertCircleIcon, LoaderCircleIcon } from 'lucide-react'
-import { useReconnectToast } from './components/reconnect-toast'
+import { useToastPresentation } from './components/toast-presentation'
 
 /**
  * Fix requestAnimationFrame error in jest
@@ -45,9 +43,7 @@ export default function App() {
   const appStatusLoadIsFinished = useRemeshQuery(appStatusDomain.query.StatusLoadIsFinishedQuery())
   const chatRoomJoinIsFinished = useRemeshQuery(chatRoomDomain.query.JoinIsFinishedQuery())
   const worldRoomJoinIsFinished = useRemeshQuery(worldRoomDomain.query.JoinIsFinishedQuery())
-  const readinessDomain = useRemeshDomain(ReadinessDomain())
-  const runtimeHostPhase = useRemeshQuery(readinessDomain.query.StateQuery())
-  const reconnectToasterRef = useReconnectToast()
+  const toasterRef = useToastPresentation()
 
   const userInfo = useRemeshQuery(userInfoDomain.query.UserInfoQuery())
   const notUserInfo = userInfoLoadFinished && !userInfoSetFinished
@@ -80,19 +76,6 @@ export default function App() {
 
   return (
     <div id="app" className={cn('contents', themeMode)}>
-      {runtimeHostPhase !== 'ready' && (
-        <output
-          aria-live="polite"
-          className="z-infinity fixed right-4 bottom-4 flex items-center gap-2 rounded-md border border-slate-300 bg-white p-2 text-sm text-slate-700 shadow-lg dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
-        >
-          {runtimeHostPhase === 'connecting' ? (
-            <LoaderCircleIcon className="size-4 animate-spin" />
-          ) : (
-            <AlertCircleIcon className="size-4 text-red-600 dark:text-red-400" />
-          )}
-          <span>{runtimeHostPhase === 'connecting' ? 'WebChat connecting' : 'WebChat unavailable'}</span>
-        </output>
-      )}
       {appStatusLoadIsFinished && (
         <>
           <AppMain>
@@ -101,7 +84,7 @@ export default function App() {
             <Footer />
             {notUserInfo && <Setup></Setup>}
             <Toaster
-              ref={reconnectToasterRef}
+              ref={toasterRef}
               richColors
               theme={themeMode}
               offset="70px"

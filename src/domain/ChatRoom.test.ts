@@ -487,7 +487,7 @@ describe('ChatRoomDomain exact application port', () => {
     const request = fixture.store.query(fixture.room.query.ReconnectRequestQuery())!
     expect(request).toEqual({
       id: 1,
-      feedback: { phase: 'pending', attempted: false },
+      toast: { attempted: false, settled: false },
       outcome: null
     })
     await vi.waitFor(() => expect(fixture.chat.leaveRoom).toHaveBeenCalledTimes(1))
@@ -499,12 +499,12 @@ describe('ChatRoomDomain exact application port', () => {
       })
     )
 
-    fixture.store.send(fixture.room.command.FailReconnectFeedbackCommand(request.id))
+    fixture.store.send(fixture.room.command.OmitToastCommand(request.id))
     await vi.waitFor(() => expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toBeNull())
     fixture.store.discard()
   })
 
-  it('joins immediate operation and mounted feedback while fencing duplicate and stale signals', async () => {
+  it('joins immediate operation and Toast settlement while fencing duplicate and stale signals', async () => {
     const reconnect = deferred()
     const fixture = createFixture()
     await join(fixture)
@@ -520,32 +520,31 @@ describe('ChatRoomDomain exact application port', () => {
     const request = fixture.store.query(fixture.room.query.ReconnectRequestQuery())!
     expect(request).toEqual({
       id: 1,
-      feedback: { phase: 'pending', attempted: false },
+      toast: { attempted: false, settled: false },
       outcome: null
     })
     expect(fixture.store.query(fixture.room.query.ReconnectIsLoadingQuery())).toBe(true)
     expect(started).toEqual([request.id])
     await vi.waitFor(() => expect(fixture.chat.leaveRoom).toHaveBeenCalledOnce())
 
-    fixture.store.send(fixture.room.command.BeginReconnectFeedbackCommand(request.id + 1))
+    fixture.store.send(fixture.room.command.BeginToastCommand(request.id + 1))
     expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toEqual(request)
-    fixture.store.send(fixture.room.command.BeginReconnectFeedbackCommand(request.id))
-    fixture.store.send(fixture.room.command.BeginReconnectFeedbackCommand(request.id))
-    fixture.store.send(fixture.room.command.PresentReconnectCommand(request.id + 1))
-    fixture.store.send(fixture.room.command.PresentReconnectCommand(request.id))
-    fixture.store.send(fixture.room.command.PresentReconnectCommand(request.id))
+    fixture.store.send(fixture.room.command.BeginToastCommand(request.id))
+    fixture.store.send(fixture.room.command.BeginToastCommand(request.id))
 
     expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toEqual({
       id: request.id,
-      feedback: { phase: 'dwelling', attempted: true },
+      toast: { attempted: true, settled: false },
       outcome: null
     })
 
-    await new Promise((resolve) => setTimeout(resolve, 325))
+    fixture.store.send(fixture.room.command.SettleToastCommand(request.id + 1))
+    fixture.store.send(fixture.room.command.SettleToastCommand(request.id))
+    fixture.store.send(fixture.room.command.SettleToastCommand(request.id))
     expect(finished).toEqual([])
     expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toEqual({
       id: request.id,
-      feedback: { phase: 'complete', attempted: true },
+      toast: { attempted: true, settled: true },
       outcome: null
     })
 
@@ -557,7 +556,7 @@ describe('ChatRoomDomain exact application port', () => {
     fixture.store.discard()
   })
 
-  it('allows one closed-panel request to enter mounted feedback and ignores older callbacks', async () => {
+  it('allows one omitted request to enter mounted Toast feedback and ignores older callbacks', async () => {
     const firstReconnect = deferred()
     const secondReconnect = deferred()
     const fixture = createFixture()
@@ -569,26 +568,25 @@ describe('ChatRoomDomain exact application port', () => {
     fixture.store.send(fixture.room.command.ReconnectCommand())
     const first = fixture.store.query(fixture.room.query.ReconnectRequestQuery())!
     await vi.waitFor(() => expect(fixture.chat.leaveRoom).toHaveBeenCalledOnce())
-    fixture.store.send(fixture.room.command.FailReconnectFeedbackCommand(first.id))
+    fixture.store.send(fixture.room.command.OmitToastCommand(first.id))
     expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toEqual({
       ...first,
-      feedback: { phase: 'complete', attempted: false }
+      toast: { attempted: false, settled: true }
     })
 
-    fixture.store.send(fixture.room.command.BeginReconnectFeedbackCommand(first.id))
-    fixture.store.send(fixture.room.command.PresentReconnectCommand(first.id))
+    fixture.store.send(fixture.room.command.BeginToastCommand(first.id))
     expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toEqual({
       ...first,
-      feedback: { phase: 'dwelling', attempted: true }
+      toast: { attempted: true, settled: false }
     })
-    fixture.store.send(fixture.room.command.FailReconnectFeedbackCommand(first.id))
-    const closed = fixture.store.query(fixture.room.query.ReconnectRequestQuery())
-    expect(closed).toEqual({
+    fixture.store.send(fixture.room.command.SettleToastCommand(first.id))
+    const settled = fixture.store.query(fixture.room.query.ReconnectRequestQuery())
+    expect(settled).toEqual({
       ...first,
-      feedback: { phase: 'complete', attempted: true }
+      toast: { attempted: true, settled: true }
     })
-    fixture.store.send(fixture.room.command.BeginReconnectFeedbackCommand(first.id))
-    expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toEqual(closed)
+    fixture.store.send(fixture.room.command.BeginToastCommand(first.id))
+    expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toEqual(settled)
 
     firstReconnect.resolve()
     await vi.waitFor(() => expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toBeNull())
@@ -596,12 +594,12 @@ describe('ChatRoomDomain exact application port', () => {
     fixture.store.send(fixture.room.command.ReconnectCommand())
     const second = fixture.store.query(fixture.room.query.ReconnectRequestQuery())!
     await vi.waitFor(() => expect(fixture.chat.leaveRoom).toHaveBeenCalledTimes(2))
-    fixture.store.send(fixture.room.command.BeginReconnectFeedbackCommand(first.id))
-    fixture.store.send(fixture.room.command.PresentReconnectCommand(first.id))
-    fixture.store.send(fixture.room.command.FailReconnectFeedbackCommand(first.id))
+    fixture.store.send(fixture.room.command.BeginToastCommand(first.id))
+    fixture.store.send(fixture.room.command.SettleToastCommand(first.id))
+    fixture.store.send(fixture.room.command.OmitToastCommand(first.id))
     expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toEqual(second)
 
-    fixture.store.send(fixture.room.command.FailReconnectFeedbackCommand(second.id))
+    fixture.store.send(fixture.room.command.OmitToastCommand(second.id))
     secondReconnect.resolve()
     await vi.waitFor(() => expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toBeNull())
     fixture.store.discard()
@@ -610,7 +608,7 @@ describe('ChatRoomDomain exact application port', () => {
   it.each([
     { rejection: new Error('reconnect failed'), message: 'reconnect failed' },
     { rejection: 'transport reset', message: 'transport reset' }
-  ])('normalizes $message and settles it through request-owned absent feedback', async ({ rejection, message }) => {
+  ])('normalizes $message and settles it through an omitted Toast', async ({ rejection, message }) => {
     const fixture = createFixture()
     await join(fixture)
     vi.mocked(fixture.chat.leaveRoom).mockRejectedValueOnce(rejection)
@@ -626,7 +624,7 @@ describe('ChatRoomDomain exact application port', () => {
         error: new Error(message)
       })
     )
-    fixture.store.send(fixture.room.command.FailReconnectFeedbackCommand(request.id))
+    fixture.store.send(fixture.room.command.OmitToastCommand(request.id))
 
     await vi.waitFor(() => expect(finished).toHaveLength(1))
     expect(finished[0]).toEqual({ id: request.id, error: new Error(message) })

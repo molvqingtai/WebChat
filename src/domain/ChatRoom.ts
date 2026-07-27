@@ -1,5 +1,5 @@
 import { Remesh } from 'remesh'
-import { concatMap, filter, fromEventPattern, map, mergeMap } from 'rxjs'
+import { concatMap, filter, fromEventPattern, map } from 'rxjs'
 import {
   ChatRoomExtern,
   type JoinRoomCommand as JoinRoomInput,
@@ -38,14 +38,12 @@ const uniqueUsers = (sessions: readonly ChatSession[]) => {
   return [...users.values()]
 }
 
-type ReconnectFeedback = {
-  phase: 'pending' | 'presenting' | 'dwelling' | 'complete'
-  attempted: boolean
-}
-
 type ReconnectRequest = {
   id: number
-  feedback: ReconnectFeedback
+  toast: {
+    attempted: boolean
+    settled: boolean
+  }
   outcome: { error?: Error } | null
 }
 
@@ -111,14 +109,13 @@ const ChatRoomDomain = Remesh.domain({
     })
 
     const ReconnectRequestedEvent = domain.event<number>({ name: 'Room.ReconnectRequestedEvent' })
-    const ReconnectPresentedEvent = domain.event<number>({ name: 'Room.ReconnectPresentedEvent' })
     const ReconnectStartedEvent = domain.event<number>({ name: 'Room.ReconnectStartedEvent' })
     const ReconnectFinishedEvent = domain.event<{ id: number; error?: Error }>({
       name: 'Room.ReconnectFinishedEvent'
     })
 
     const settleReconnectRequest = (request: ReconnectRequest) => {
-      if (request.feedback.phase !== 'complete' || request.outcome === null) {
+      if (!request.toast.settled || request.outcome === null) {
         return ReconnectRequestState().new(request)
       }
       return [ReconnectRequestState().new(null), ReconnectFinishedEvent({ id: request.id, ...request.outcome })]
@@ -133,68 +130,47 @@ const ChatRoomDomain = Remesh.domain({
           ReconnectSequenceState().new(id),
           ReconnectRequestState().new({
             id,
-            feedback: { phase: 'pending', attempted: false },
+            toast: { attempted: false, settled: false },
             outcome: null
           }),
-          ReconnectStartedEvent(id),
-          ReconnectRequestedEvent(id)
+          ReconnectRequestedEvent(id),
+          ReconnectStartedEvent(id)
         ]
       }
     })
 
-    const BeginReconnectFeedbackCommand = domain.command({
-      name: 'Room.BeginReconnectFeedbackCommand',
+    const BeginToastCommand = domain.command({
+      name: 'Room.BeginToastCommand',
       impl: ({ get }, id: number) => {
         const request = get(ReconnectRequestQuery())
-        if (
-          request?.id !== id ||
-          request.feedback.attempted ||
-          (request.feedback.phase !== 'pending' && request.feedback.phase !== 'complete')
-        ) {
-          return null
-        }
+        if (request?.id !== id || request.toast.attempted) return null
         return ReconnectRequestState().new({
           ...request,
-          feedback: { phase: 'presenting', attempted: true }
+          toast: { attempted: true, settled: false }
         })
       }
     })
 
-    const PresentReconnectCommand = domain.command({
-      name: 'Room.PresentReconnectCommand',
+    const OmitToastCommand = domain.command({
+      name: 'Room.OmitToastCommand',
       impl: ({ get }, id: number) => {
         const request = get(ReconnectRequestQuery())
-        if (request?.id !== id || request.feedback.phase !== 'presenting') return null
-        return [
-          ReconnectRequestState().new({
-            ...request,
-            feedback: { ...request.feedback, phase: 'dwelling' }
-          }),
-          ReconnectPresentedEvent(id)
-        ]
-      }
-    })
-
-    const CompleteReconnectFeedbackCommand = domain.command({
-      name: 'Room.CompleteReconnectFeedbackCommand',
-      impl: ({ get }, id: number) => {
-        const request = get(ReconnectRequestQuery())
-        if (request?.id !== id || request.feedback.phase !== 'dwelling') return null
+        if (request?.id !== id || request.toast.attempted || request.toast.settled) return null
         return settleReconnectRequest({
           ...request,
-          feedback: { ...request.feedback, phase: 'complete' }
+          toast: { ...request.toast, settled: true }
         })
       }
     })
 
-    const FailReconnectFeedbackCommand = domain.command({
-      name: 'Room.FailReconnectFeedbackCommand',
+    const SettleToastCommand = domain.command({
+      name: 'Room.SettleToastCommand',
       impl: ({ get }, id: number) => {
         const request = get(ReconnectRequestQuery())
-        if (request?.id !== id || request.feedback.phase === 'complete') return null
+        if (request?.id !== id || !request.toast.attempted || request.toast.settled) return null
         return settleReconnectRequest({
           ...request,
-          feedback: { ...request.feedback, phase: 'complete' }
+          toast: { ...request.toast, settled: true }
         })
       }
     })
@@ -388,17 +364,6 @@ const ChatRoomDomain = Remesh.domain({
     })
 
     domain.effect({
-      name: 'Room.ReconnectFeedbackDwellEffect',
-      impl: ({ fromEvent }) =>
-        fromEvent(ReconnectPresentedEvent).pipe(
-          mergeMap(async (id) => {
-            await new Promise((resolve) => setTimeout(resolve, 300))
-            return CompleteReconnectFeedbackCommand(id)
-          })
-        )
-    })
-
-    domain.effect({
       name: 'Room.OnMessageEffect',
       impl: () =>
         fromEventPattern<ChatMessage>(chatRoom.onMessage.bind(chatRoom), (_handler, dispose) => dispose()).pipe(
@@ -445,9 +410,9 @@ const ChatRoomDomain = Remesh.domain({
         SendTextMessageCommand,
         SendReactionCommand,
         ReconnectCommand,
-        BeginReconnectFeedbackCommand,
-        PresentReconnectCommand,
-        FailReconnectFeedbackCommand
+        BeginToastCommand,
+        OmitToastCommand,
+        SettleToastCommand
       },
       event: {
         SendTextMessageEvent,
