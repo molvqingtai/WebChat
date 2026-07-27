@@ -86,6 +86,7 @@ const errorStack = (error: unknown): string => (error instanceof Error ? (error.
 
 const executable = process.env.WEBCHAT_CHROMIUM_EXECUTABLE
 const extensionPath = resolve(process.env.WEBCHAT_CHROME_EXTENSION_PATH ?? '.output/chrome-mv3')
+const manifestPath = join(extensionPath, 'manifest.json')
 const readPositiveTimeout = (name: string, fallback: number): number => {
   const value = Number(process.env[name] ?? fallback)
   if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`${name} must be a positive safe integer`)
@@ -108,7 +109,18 @@ if (!executable) {
     'WEBCHAT_CHROMIUM_EXECUTABLE is required and must point to side-load-capable Chrome for Testing or Chromium'
   )
 }
-await Promise.all([access(executable), access(join(extensionPath, 'manifest.json'))])
+await Promise.all([access(executable), access(manifestPath)])
+const extensionManifest: unknown = JSON.parse(await readFile(manifestPath, 'utf8'))
+if (
+  extensionManifest === null ||
+  typeof extensionManifest !== 'object' ||
+  !('name' in extensionManifest) ||
+  typeof extensionManifest.name !== 'string' ||
+  extensionManifest.name.trim().length === 0
+) {
+  throw new Error('Chrome extension manifest name must be a non-empty string')
+}
+const extensionName = extensionManifest.name
 
 const waitFor = async <T>(
   check: () => T | null | undefined | false | Promise<T | null | undefined | false>,
@@ -376,7 +388,7 @@ try {
       evidence.startupMs = Date.now() - startupStartedAt
 
       const contentContext = await waitFor(
-        () => contexts.get(pageSession[0])?.find((context) => context.name === 'WebChat'),
+        () => contexts.get(pageSession[0])?.find((context) => context.name === extensionName),
         { timeoutMs: 5000, label: 'content isolated execution context' }
       )
       const extensionId = new URL(contentContext.origin).host
