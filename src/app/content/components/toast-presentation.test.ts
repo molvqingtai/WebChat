@@ -260,6 +260,10 @@ describe('generic Toast presentation', () => {
       mounted = value
       render()
     }
+    const waitForSurfaceAbsent = async () => {
+      await waitFor(() => document.querySelector('[data-sonner-toaster]') === null)
+      await waitFor(() => !fixture.store.query(fixture.presentation.query.SurfaceMountedQuery()))
+    }
     render()
     await waitFor(() => fixture.store.query(fixture.presentation.query.SurfaceMountedQuery()))
 
@@ -339,6 +343,7 @@ describe('generic Toast presentation', () => {
     const openDuringActive = deferred()
     fixture.usePort(() => openDuringActive.promise)
     setMounted(false)
+    await waitForSurfaceAbsent()
     activeDescriptorId = null
     firstVisibleAt = null
     fixture.store.send(fixture.room.command.ReconnectCommand())
@@ -358,6 +363,7 @@ describe('generic Toast presentation', () => {
     await waitFor(() => fixture.store.query(fixture.room.query.ReconnectRequestQuery()) === null)
 
     setMounted(false)
+    await waitForSurfaceAbsent()
     fixture.usePort(() => Promise.reject(new Error('closed reset')))
     fixture.store.send(fixture.room.command.ReconnectCommand())
     request = fixture.store.query(fixture.room.query.ReconnectRequestQuery())!
@@ -386,6 +392,7 @@ describe('generic Toast presentation', () => {
     expect(toast.getToasts().some(({ id }) => id === unrelatedId)).toBe(true)
 
     setMounted(false)
+    await waitForSurfaceAbsent()
     fixture.usePort(() => Promise.resolve())
     const absentStartedAt = Date.now()
     fixture.store.send(fixture.room.command.ReconnectCommand())
