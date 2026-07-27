@@ -6,20 +6,25 @@ import { RemeshRoot, RemeshScope } from 'remesh-react'
 import { defineContentScript, createShadowRootUi } from '#imports'
 
 import App from './App'
-import { LocalStorageImpl, IndexDBStorageImpl, BrowserSyncStorageImpl, indexDBStorage } from '@/domain/impls/Storage'
+import { LocalStorageImpl, BrowserSyncStorageImpl } from '@/domain/impls/Storage'
+import { MessageDatabaseImpl } from '@/domain/impls/database/IndexedDB'
+import { detachClient, initClient, whenHostPhase } from '@/domain/impls/runtime/Client'
 import { DanmakuImpl } from '@/domain/impls/Danmaku'
 import { NotificationImpl } from '@/domain/impls/Notification'
 import { ToastImpl } from '@/domain/impls/Toast'
-import { ChatRoomImpl } from '@/domain/impls/ChatRoom'
-import { WorldRoomImpl } from '@/domain/impls/WorldRoom'
+import { createChatRoomImpl } from '@/domain/impls/ChatRoom'
+import { createWorldRoomImpl } from '@/domain/impls/WorldRoom'
+import { createReadinessImpl } from '@/domain/impls/Readiness'
+import { AppActionImpl } from '@/domain/impls/AppAction'
 // Remove import after merging: https://github.com/emilkowalski/sonner/pull/508
 import 'sonner/dist/styles.css'
 import '@/assets/styles/tailwind.css'
 import '@/assets/styles/overlay.css'
 import NotificationDomain from '@/domain/Notification'
+import ToastDomain from '@/domain/Toast'
+import ToastPresentationDomain from '@/domain/ToastPresentation'
+import AppFeedbackDomain from '@/domain/AppFeedback'
 import { createElement } from '@/utils'
-import { version } from '@/../package.json'
-import { VERSION_STORAGE_KEY } from '@/constants/config'
 
 export default defineContentScript({
   cssInjectionMode: 'ui',
@@ -27,36 +32,33 @@ export default defineContentScript({
   matches: ['https://*/*'],
   excludeMatches: ['*://localhost/*', '*://127.0.0.1/*', '*://*.csdn.net/*', '*://*.csdn.com/*'],
   async main(ctx) {
-    // Check version and clear IndexDB if updated
-    const storedVersion = await indexDBStorage.getItem<string>(VERSION_STORAGE_KEY)
-    if (storedVersion !== version) {
-      try {
-        if (storedVersion) {
-          await indexDBStorage.clear()
-          console.log(
-            `%c[WebChat]%c IndexDB cleared due to version update: ${storedVersion} -> ${version}`,
-            'color: #10b981; font-weight: bold;',
-            'color: inherit;'
-          )
-        }
-        await indexDBStorage.setItem(VERSION_STORAGE_KEY, version)
-      } catch (error) {
-        console.error(
-          '%c[WebChat]%c Failed to clear IndexDB on update:',
-          'color: #10b981; font-weight: bold;',
-          'color: inherit;',
-          error
-        )
-      }
+    // Attach to the shared Runtime before igniting any domain: the background
+    // coordinator creates the host single-flight; pages own no WebRTC state.
+    window.addEventListener('beforeunload', detachClient, { once: true })
+    try {
+      if (!(await initClient())) return
+    } catch (error) {
+      console.error(
+        '%c[WebChat]%c Shared runtime unavailable:',
+        'color: #10b981; font-weight: bold;',
+        'color: inherit;',
+        error
+      )
+      return
     }
 
+    const ChatRoomImpl = createChatRoomImpl(MessageDatabaseImpl.value)
+    const WorldRoomImpl = createWorldRoomImpl()
+    const ReadinessImpl = createReadinessImpl(whenHostPhase)
     const store = Remesh.store({
       externs: [
         LocalStorageImpl,
-        IndexDBStorageImpl,
         BrowserSyncStorageImpl,
+        MessageDatabaseImpl,
         ChatRoomImpl,
         WorldRoomImpl,
+        ReadinessImpl,
+        AppActionImpl,
         ToastImpl,
         DanmakuImpl,
         NotificationImpl
@@ -78,7 +80,9 @@ export default defineContentScript({
         root.render(
           <React.StrictMode>
             <RemeshRoot store={store}>
-              <RemeshScope domains={[NotificationDomain()]}>
+              <RemeshScope
+                domains={[NotificationDomain(), ToastDomain(), ToastPresentationDomain(), AppFeedbackDomain()]}
+              >
                 <App />
               </RemeshScope>
             </RemeshRoot>

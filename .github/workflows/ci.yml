@@ -59,9 +59,11 @@ jobs:
         run: pnpm run format && pnpm run lint
       - name: Verify corrections were committed
         run: git diff --exit-code
+      - name: Generate WXT types
+        run: pnpm exec wxt prepare
       - run: pnpm run check
 
-  build:
+  tests:
     needs: [setup]
     runs-on: ubuntu-latest
     steps:
@@ -83,4 +85,46 @@ jobs:
             ${{ runner.os }}-pnpm-
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+      - name: Generate WXT types
+        run: pnpm exec wxt prepare
+      - run: pnpm run test
+
+  build:
+    needs: [setup]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+      - uses: pnpm/action-setup@v4
+        with:
+          version: latest
+      - name: Restore pnpm cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.pnpm-store
+            node_modules
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
       - run: pnpm run build
+      - name: Build Firefox MV2 and verify Runtime capability boundaries
+        run: |
+          pnpm exec wxt build -b firefox
+          node e2e/runtime-bundles.ts
+      - name: Install Chrome for Testing
+        id: chrome
+        uses: browser-actions/setup-chrome@v2
+        with:
+          chrome-version: stable
+          install-dependencies: true
+      - name: Test Chrome MV3 shared Runtime
+        env:
+          WEBCHAT_CHROMIUM_EXECUTABLE: ${{ steps.chrome.outputs.chrome-path }}
+          WEBCHAT_CHROMIUM_DISABLE_SANDBOX: 'true'
+        run: node e2e/chrome-runtime.ts

@@ -9,7 +9,7 @@ import ChatRoomDomain from '@/domain/ChatRoom'
 import UserInfoDomain from '@/domain/UserInfo'
 import Setup from '@/app/content/views/setup'
 import MessageListDomain from '@/domain/MessageList'
-import { useEffect, useLayoutEffect, useRef } from 'react'
+import { useEffect, useRef } from 'react'
 import { Toaster } from 'sonner'
 
 import DanmakuContainer from './components/danmaku-container'
@@ -17,6 +17,7 @@ import DanmakuDomain from '@/domain/Danmaku'
 import AppStatusDomain from '@/domain/AppStatus'
 import { checkDarkMode, cn } from '@/utils'
 import WorldRoomDomain from '@/domain/WorldRoom'
+import { useToastPresentation } from './components/toast-presentation'
 
 /**
  * Fix requestAnimationFrame error in jest
@@ -42,45 +43,27 @@ export default function App() {
   const appStatusLoadIsFinished = useRemeshQuery(appStatusDomain.query.StatusLoadIsFinishedQuery())
   const chatRoomJoinIsFinished = useRemeshQuery(chatRoomDomain.query.JoinIsFinishedQuery())
   const worldRoomJoinIsFinished = useRemeshQuery(worldRoomDomain.query.JoinIsFinishedQuery())
+  const toasterRef = useToastPresentation()
 
   const userInfo = useRemeshQuery(userInfoDomain.query.UserInfoQuery())
   const notUserInfo = userInfoLoadFinished && !userInfoSetFinished
 
-  const joinRoom = () => {
-    send(chatRoomDomain.command.JoinRoomCommand())
-    send(worldRoomDomain.command.JoinRoomCommand())
-  }
-
-  const leaveRoom = () => {
-    chatRoomJoinIsFinished && send(chatRoomDomain.command.LeaveRoomCommand())
-    worldRoomJoinIsFinished && send(worldRoomDomain.command.LeaveRoomCommand())
-  }
+  useEffect(() => {
+    if (messageListLoadFinished && userInfoSetFinished) send(chatRoomDomain.command.JoinRoomCommand())
+  }, [userInfoSetFinished, messageListLoadFinished, send, chatRoomDomain.command])
 
   useEffect(() => {
-    if (messageListLoadFinished) {
-      if (userInfoSetFinished) {
-        joinRoom()
-      } else {
-        // Clear simulated data when refreshing on the setup page
-        send(messageListDomain.command.ClearListCommand())
-      }
+    if (chatRoomJoinIsFinished && !worldRoomJoinIsFinished) {
+      send(worldRoomDomain.command.JoinRoomCommand())
     }
-    return () => leaveRoom()
-  }, [userInfoSetFinished, messageListLoadFinished])
+  }, [chatRoomJoinIsFinished, worldRoomJoinIsFinished, send, worldRoomDomain.command])
 
   useEffect(() => {
-    danmakuIsEnabled && send(danmakuDomain.command.MountCommand(danmakuContainerRef.current!))
+    if (danmakuIsEnabled) send(danmakuDomain.command.MountCommand(danmakuContainerRef.current!))
     return () => {
-      danmakuIsEnabled && send(danmakuDomain.command.UnmountCommand())
+      if (danmakuIsEnabled) send(danmakuDomain.command.UnmountCommand())
     }
-  }, [danmakuIsEnabled])
-
-  useLayoutEffect(() => {
-    window.addEventListener('beforeunload', leaveRoom)
-    return () => {
-      window.removeEventListener('beforeunload', leaveRoom)
-    }
-  }, [])
+  }, [danmakuIsEnabled, send, danmakuDomain.command])
 
   const themeMode =
     userInfo?.themeMode === 'system'
@@ -101,6 +84,7 @@ export default function App() {
             <Footer />
             {notUserInfo && <Setup></Setup>}
             <Toaster
+              ref={toasterRef}
               richColors
               theme={themeMode}
               offset="70px"

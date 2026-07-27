@@ -1,4 +1,4 @@
-import { useState, useMemo, type FC } from 'react'
+import { useState, type FC } from 'react'
 import { Globe2Icon } from 'lucide-react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
@@ -6,7 +6,6 @@ import { Button } from '@/components/ui/button'
 import { cn, getSiteMeta } from '@/utils'
 import { useRemeshDomain, useRemeshQuery } from 'remesh-react'
 import ChatRoomDomain from '@/domain/ChatRoom'
-import type { FromSite, RoomUser } from '@/domain/WorldRoom'
 import WorldRoomDomain from '@/domain/WorldRoom'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Virtuoso } from 'react-virtuoso'
@@ -22,23 +21,7 @@ const Header: FC = () => {
   const worldUserList = useRemeshQuery(worldRoomDomain.query.UserListQuery())
   const chatOnlineCount = chatUserList.length
 
-  const worldOnlineGroup = useMemo(
-    () =>
-      worldUserList
-        .flatMap((user) => user.fromSites.map((from) => ({ from, user })))
-        .reduce<(FromSite & { users: RoomUser[] })[]>((acc, item) => {
-          const existSite = acc.find((group) => group.origin === item.from.origin)
-          if (existSite) {
-            const existUser = existSite.users.find((user: RoomUser) => user.id === item.user.id)
-            !existUser && existSite.users.push(item.user)
-          } else {
-            acc.push({ ...item.from, users: [item.user] })
-          }
-          return acc
-        }, [])
-        .sort((a, b) => b.users.length - a.users.length),
-    [worldUserList]
-  )
+  const worldOnlineGroup = worldUserList
 
   const [chatUserListScrollParentRef, setChatUserListScrollParentRef] = useState<HTMLDivElement | null>(null)
   const [worldOnlineGroupScrollParentRef, setWorldOnlineGroupScrollParentRef] = useState<HTMLDivElement | null>(null)
@@ -55,7 +38,7 @@ const Header: FC = () => {
         <HoverCardTrigger asChild>
           <Button className="overflow-hidden rounded-md p-2" variant="link">
             <span className="truncate text-lg font-semibold text-slate-600 dark:text-slate-50">
-              {siteMeta.hostname.replace(/^www\./i, '')}
+              {new URL(siteMeta.origin).hostname.replace(/^www\./i, '')}
             </span>
           </Button>
         </HoverCardTrigger>
@@ -84,7 +67,7 @@ const Header: FC = () => {
                   <div className="grid items-center">
                     <div className="flex items-center gap-x-1 overflow-hidden">
                       <h4 className="flex-1 truncate text-sm font-semibold text-slate-600 dark:text-slate-50">
-                        {site.hostname.replace(/^www\./i, '')}
+                        {site.title ?? new URL(site.origin).hostname.replace(/^www\./i, '')}
                       </h4>
                       <div className="shrink-0 text-sm">
                         <div className="flex items-center gap-x-1 text-xs text-nowrap text-slate-500 dark:text-slate-100">
@@ -115,11 +98,7 @@ const Header: FC = () => {
                         </div>
                       </div>
                     </div>
-                    <AvatarCircles
-                      maxLength={9}
-                      size="xs"
-                      avatarUrls={site.users.map((user: RoomUser) => user.avatar)}
-                    />
+                    <AvatarCircles maxLength={9} size="xs" avatarUrls={site.users.map((user) => user.avatar)} />
                   </div>
                 </Link>
               )}

@@ -59,7 +59,10 @@ jobs:
         run: pnpm run format && pnpm run lint
       - name: Verify corrections were committed
         run: git diff --exit-code
+      - name: Generate WXT types
+        run: pnpm exec wxt prepare
       - run: pnpm run check
+      - run: pnpm run test
 
   build:
     needs: [setup]

@@ -3,12 +3,13 @@ import { useRemeshDomain, useRemeshQuery, useRemeshSend } from 'remesh-react'
 
 import MessageList from '../../components/message-list'
 import MessageItem from '../../components/message-item'
-import PromptItem from '../../components/prompt-item'
+import NoticeGroup from '../../components/notice-group'
+import { groupAdjacentNotices, messageRowKey } from '../../components/notice-grouping'
+import NoticeItem from '../../components/notice-item'
 import UserInfoDomain from '@/domain/UserInfo'
 import ChatRoomDomain from '@/domain/ChatRoom'
 import MessageListDomain from '@/domain/MessageList'
-import useDataId from '@/hooks/useDataId'
-import { compareHLC } from '@/utils'
+import { compareEventPosition } from '@/domain/Message'
 
 const Main: FC = () => {
   const send = useRemeshSend()
@@ -18,23 +19,23 @@ const Main: FC = () => {
   const userInfo = useRemeshQuery(userInfoDomain.query.UserInfoQuery())
   const _messageList = useRemeshQuery(messageListDomain.query.ListQuery())
 
-  const messageListId = useDataId(_messageList)
-
   const messageList = useMemo(
     () =>
-      _messageList
-        .map((message) => {
-          if (message.type === 'text') {
-            return {
-              ...message,
-              like: message.reactions.likes.some((likeUser) => likeUser.id === userInfo?.id),
-              hate: message.reactions.hates.some((hateUser) => hateUser.id === userInfo?.id)
+      groupAdjacentNotices(
+        _messageList
+          .map((message) => {
+            if (message.type === 'text') {
+              return {
+                ...message,
+                like: message.reactions.likes.some((likeUser) => likeUser.id === userInfo?.id),
+                hate: message.reactions.hates.some((hateUser) => hateUser.id === userInfo?.id)
+              }
             }
-          }
-          return message
-        })
-        .toSorted((a, b) => compareHLC(a.hlc, b.hlc)),
-    [messageListId, userInfo?.id]
+            return message
+          })
+          .toSorted(compareEventPosition)
+      ),
+    [_messageList, userInfo?.id]
   )
 
   const handleLikeChange = (messageId: string) => {
@@ -47,25 +48,39 @@ const Main: FC = () => {
 
   return (
     <MessageList>
-      {messageList.map((message, index) =>
-        message.type === 'text' ? (
-          <MessageItem
-            key={message.id}
-            data={message}
-            like={message.like}
-            hate={message.hate}
-            onLikeChange={() => handleLikeChange(message.id)}
-            onHateChange={() => handleHateChange(message.id)}
-            className="animate-in fade-in-0 duration-300"
-          ></MessageItem>
-        ) : (
-          <PromptItem
-            key={message.id}
+      {messageList.map((message, index) => {
+        const key = messageRowKey(message)
+        if (message.type === 'text') {
+          return (
+            <MessageItem
+              key={key}
+              data={message}
+              like={message.like}
+              hate={message.hate}
+              onLikeChange={() => handleLikeChange(message.id)}
+              onHateChange={() => handleHateChange(message.id)}
+              className="animate-in fade-in-0 duration-300"
+            />
+          )
+        }
+        if (message.type === 'notice-group') {
+          return (
+            <NoticeGroup
+              key={key}
+              notices={message.notices}
+              first={index === 0}
+              last={index === messageList.length - 1}
+            />
+          )
+        }
+        return (
+          <NoticeItem
+            key={key}
             data={message}
             className={`${index === 0 ? 'pt-4' : ''} ${index === messageList.length - 1 ? 'pb-4' : ''}`}
-          ></PromptItem>
+          />
         )
-      )}
+      })}
     </MessageList>
   )
 }

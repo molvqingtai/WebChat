@@ -4,8 +4,9 @@ import { LocalStorageExtern } from './externs/Storage'
 import { APP_STATUS_STORAGE_KEY } from '@/constants/config'
 import StorageEffect from './modules/StorageEffect'
 import ChatRoomDomain from '@/domain/ChatRoom'
+import UserInfoDomain from '@/domain/UserInfo'
 import { map } from 'rxjs'
-import { MESSAGE_TYPE } from '@/protocol/Message'
+import { MESSAGE_TYPE } from '@/protocol/ChatRoom'
 
 export interface AppStatus {
   open: boolean
@@ -29,15 +30,16 @@ const AppStatusDomain = Remesh.domain({
       key: APP_STATUS_STORAGE_KEY
     })
     const chatRoomDomain = domain.getDomain(ChatRoomDomain())
+    const userInfoDomain = domain.getDomain(UserInfoDomain())
 
-    const StatusLoadModule = StatusModule(domain, {
+    const LoadStatus = StatusModule(domain, {
       name: 'AppStatus.LoadStatusModule'
     })
 
     const StatusLoadIsFinishedQuery = domain.query({
       name: 'AppStatus.StatusLoadIsFinishedQuery',
       impl: ({ get }) => {
-        return get(StatusLoadModule.query.IsFinishedQuery())
+        return get(LoadStatus.query.IsFinishedQuery())
       }
     })
 
@@ -126,17 +128,20 @@ const AppStatusDomain = Remesh.domain({
       .set(SyncToStorageEvent)
       .get<AppStatus>((value) => [
         UpdateStatusCommand(value ?? defaultStatusState),
-        StatusLoadModule.command.SetFinishedCommand()
+        LoadStatus.command.SetFinishedCommand()
       ])
       .watch<AppStatus>((value) => [UpdateStatusCommand(value ?? defaultStatusState)])
 
     domain.effect({
       name: 'OnMessageEffect',
       impl: ({ fromEvent, get }) => {
-        const onMessage$ = fromEvent(chatRoomDomain.event.OnMessageEvent).pipe(
+        // Unread increments once per message: only the first atomic insert wins.
+        // Self-sent messages never count (parity with the old inbound-only path).
+        const onMessage$ = fromEvent(chatRoomDomain.event.OnTextMessageEvent).pipe(
           map((message) => {
             const status = get(StatusState())
-            if (!status.open && message.type === MESSAGE_TYPE.TEXT) {
+            const selfId = get(userInfoDomain.query.UserInfoQuery())?.id
+            if (!status.open && message.type === MESSAGE_TYPE.TEXT && message.author.id !== selfId) {
               return UpdateUnreadCommand(status.unread + 1)
             }
             return null

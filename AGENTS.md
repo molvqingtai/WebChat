@@ -9,8 +9,9 @@
 
 ## Build, Test & Development Commands
 
-- `pnpm install` installs dependencies; Node >=20 is enforced via `.nvmrc`.
-- `pnpm dev` runs WXT in Chromium; use `pnpm dev:firefox` for Firefox debugging.
+- `pnpm install` installs dependencies; use Node 22.18 or newer as declared by `package.json`.
+- `pnpm test` runs the colocated Vitest suite once.
+- `pnpm test:e2e:chrome` builds and exercises the production Chrome MV3 extension through the repository E2E harness.
 - `pnpm build:chrome` and `pnpm build:firefox` create production builds per browser; `pnpm pack:*` zips distributables for store submission.
 - `pnpm format` applies oxfmt corrections and `pnpm lint` applies oxlint safe fixes; `pnpm format:check` and `pnpm lint:check` report violations without modifying files; `pnpm check` runs the TypeScript compiler in no-emit mode for API regressions.
 
@@ -23,9 +24,10 @@
 
 ## Testing Guidelines
 
-- No dedicated test runner ships today; rely on `pnpm lint` and `pnpm check` as a minimum quality gate.
-- When adding automated coverage, place `<module>.test.ts` or `<module>.spec.tsx` files alongside the source and use Vitest or Playwright after coordinating dependency changes.
-- Smoke-test core chat scenarios in both Chrome and Firefox via `pnpm dev:*`, verifying background-service events and UI rendering before merging.
+- Place focused tests beside source as `<module>.test.ts` or `<module>.spec.tsx`; shared browser harness code belongs in `e2e/`.
+- Treat `pnpm test`, `pnpm check`, `pnpm format:check`, and `pnpm lint:check` as separate required signals. A production build does not substitute for runtime acceptance.
+- Use exact-bound production artifacts for browser verification. Chrome MV3 automation uses the repository E2E harness; Firefox MV2 and final cross-browser product checks run in the Owner's local test environment with isolated profiles and explicit process/profile cleanup.
+- Do not use a WXT development session as release evidence. Record which exact and browser artifact was loaded when reporting a browser result.
 
 ## Commit & Pull Request Guidelines
 

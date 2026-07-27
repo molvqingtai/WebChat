@@ -1,5 +1,5 @@
-import { type FC, useState, type MouseEvent, useEffect, useMemo } from 'react'
-import { SettingsIcon, MoonIcon, SunIcon, HandIcon } from 'lucide-react'
+import { type FC, useState, type MouseEvent, useCallback, useEffect, useMemo } from 'react'
+import { SettingsIcon, MoonIcon, SunIcon, HandIcon, RefreshCwIcon } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 
 import { useRemeshDomain, useRemeshQuery, useRemeshSend } from 'remesh-react'
@@ -18,14 +18,18 @@ import AppStatusDomain from '@/domain/AppStatus'
 import { getDay } from 'date-fns'
 import useDraggable from '@/hooks/useDraggable'
 import useWindowResize from '@/hooks/useWindowResize'
-import { AppActionImpl } from '@/domain/impls/AppAction'
+import AppActionDomain from '@/domain/AppAction'
+import ChatRoomDomain from '@/domain/ChatRoom'
 
 export interface AppButtonProps {
   className?: string
 }
 
+export const isReconnectAvailable = (joined: boolean, reconnecting: boolean) => joined && !reconnecting
+
 const AppButton: FC<AppButtonProps> = ({ className }) => {
   const send = useRemeshSend()
+  const appActionDomain = useRemeshDomain(AppActionDomain())
   const appStatusDomain = useRemeshDomain(AppStatusDomain())
   const appOpenStatus = useRemeshQuery(appStatusDomain.query.OpenQuery())
   const hasUnreadQuery = useRemeshQuery(appStatusDomain.query.HasUnreadQuery())
@@ -61,7 +65,7 @@ const AppButton: FC<AppButtonProps> = ({ className }) => {
 
   useEffect(() => {
     send(appStatusDomain.command.UpdatePositionCommand({ x, y }))
-  }, [x, y])
+  }, [x, y, send, appStatusDomain.command])
 
   const { setRef: appMenuRef } = useTriggerAway(['click'], () => setMenuOpen(false))
 
@@ -70,21 +74,36 @@ const AppButton: FC<AppButtonProps> = ({ className }) => {
     setMenuOpen(!menuOpen)
   }
 
-  const handleSwitchTheme = () => {
+  const handleOpenOptionsPage = useCallback(() => {
+    send(appActionDomain.command.OpenOptionsCommand())
+  }, [appActionDomain.command, send])
+
+  const handleSwitchTheme = useCallback(() => {
     if (userInfo) {
       send(userInfoDomain.command.UpdateUserInfoCommand({ ...userInfo, themeMode: isDarkMode ? 'light' : 'dark' }))
     } else {
       handleOpenOptionsPage()
     }
-  }
-
-  const handleOpenOptionsPage = () => {
-    AppActionImpl.value.openOptionsPage()
-  }
+  }, [handleOpenOptionsPage, isDarkMode, send, userInfo, userInfoDomain.command])
 
   const handleToggleApp = () => {
     send(appStatusDomain.command.UpdateOpenCommand(!appOpenStatus))
   }
+
+  const chatRoomDomain = useRemeshDomain(ChatRoomDomain())
+  const chatRoomJoined = useRemeshQuery(chatRoomDomain.query.JoinIsFinishedQuery())
+  const reconnecting = useRemeshQuery(chatRoomDomain.query.ReconnectIsLoadingQuery())
+  const reconnectAvailable = isReconnectAvailable(chatRoomJoined, reconnecting)
+  const reconnectLabel = reconnecting
+    ? 'Reconnecting this site'
+    : !chatRoomJoined
+      ? 'Waiting for this site chat to connect'
+      : 'Reconnect this site'
+
+  // Rebuilds only this domain's ChatRoom; the shared WorldRoom is untouched.
+  const handleReconnectSite = useCallback(() => {
+    send(chatRoomDomain.command.ReconnectCommand())
+  }, [chatRoomDomain.command, send])
 
   // Memoize menu buttons to prevent re-render when position changes
   const menuButtons = useMemo(
@@ -115,6 +134,16 @@ const AppButton: FC<AppButtonProps> = ({ className }) => {
           <SettingsIcon className="size-5" />
         </Button>
         <Button
+          onClick={handleReconnectSite}
+          variant="outline"
+          disabled={!reconnectAvailable}
+          aria-label={reconnectLabel}
+          title={reconnectLabel}
+          className="dark:bg-background dark:text-foreground dark:hover:bg-accent size-10 rounded-full p-0 shadow dark:border-slate-600"
+        >
+          <RefreshCwIcon className={cn('size-5', reconnecting && 'animate-spin')} />
+        </Button>
+        <Button
           ref={appButtonRef}
           variant="outline"
           className="dark:bg-background dark:text-foreground dark:hover:bg-accent size-10 cursor-grab rounded-full p-0 shadow dark:border-slate-600"
@@ -123,7 +152,16 @@ const AppButton: FC<AppButtonProps> = ({ className }) => {
         </Button>
       </>
     ),
-    [isDarkMode, handleSwitchTheme, handleOpenOptionsPage, appButtonRef]
+    [
+      isDarkMode,
+      handleSwitchTheme,
+      handleOpenOptionsPage,
+      handleReconnectSite,
+      appButtonRef,
+      reconnectAvailable,
+      reconnectLabel,
+      reconnecting
+    ]
   )
 
   // Memoize main button content to prevent re-render when position changes

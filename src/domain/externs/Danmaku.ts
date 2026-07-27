@@ -1,9 +1,9 @@
 import { Remesh } from 'remesh'
-import type { ChatRoomTextMessage } from '@/protocol'
+import type { ProjectedTextMessage } from '@/domain/Message'
 
 export interface Danmaku {
-  push: (message: ChatRoomTextMessage) => void
-  unshift: (message: ChatRoomTextMessage) => void
+  push: (message: ProjectedTextMessage) => void
+  unshift: (message: ProjectedTextMessage) => void
   clear: () => void
   mount: (root: HTMLElement) => void
   unmount: () => void

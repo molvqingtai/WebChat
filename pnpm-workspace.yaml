@@ -1,5 +1,7 @@
 allowBuilds:
   bufferutil: true
+  core-js: false
   esbuild: true
   spawn-sync: true
   utf-8-validate: true
+  wxt: true

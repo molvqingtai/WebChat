@@ -1,42 +1,32 @@
 import { createStorage } from 'unstorage'
-import indexedDbDriver from 'unstorage/drivers/indexedb'
 import localStorageDriver from 'unstorage/drivers/localstorage'
-import { LocalStorageExtern, IndexDBStorageExtern, BrowserSyncStorageExtern } from '@/domain/externs/Storage'
+import { LocalStorageExtern, BrowserSyncStorageExtern } from '@/domain/externs/Storage'
 import { STORAGE_NAME } from '@/constants/config'
 import webExtensionDriver from '@/utils/webExtensionDriver'
-
 import type { Storage } from '@/domain/externs/Storage'
 import { EVENT } from '@/constants/event'
 
 /**
  * Waiting to be resolved
  * @see https://github.com/unjs/unstorage/issues/277
- * */
-
-export const localStorage = createStorage({
+ */
+const localStorage = createStorage({
   driver: localStorageDriver({ base: `${STORAGE_NAME}:` })
 })
 
-export const indexDBStorage = createStorage({
-  driver: indexedDbDriver({ dbName: __NAME__, storeName: __NAME__, base: `${STORAGE_NAME}:` })
-})
-
-export const browserSyncStorage = createStorage({
+const browserSyncStorage = createStorage({
   driver: webExtensionDriver({ storageArea: 'sync' })
 })
 
 export const LocalStorageImpl = LocalStorageExtern.impl({
-  name: STORAGE_NAME,
   get: localStorage.getItem,
   set: localStorage.setItem,
-  remove: localStorage.removeItem,
-  clear: localStorage.clear,
   watch: async (callback) => {
     const unwatch = await localStorage.watch(callback)
 
     /**
-     * Because the storage event cannot be triggered in the same browsing context
-     * it is necessary to listen for click events from DanmukuMessage.
+     * The storage event does not fire in the same browsing context, so
+     * DanmakuMessage clicks provide the local synchronization signal.
      * @see https://developer.mozilla.org/en-US/docs/Web/API/Window/storage_event
      */
     addEventListener(EVENT.APP_OPEN, callback)
@@ -44,26 +34,11 @@ export const LocalStorageImpl = LocalStorageExtern.impl({
       removeEventListener(EVENT.APP_OPEN, callback)
       return unwatch()
     }
-  },
-  unwatch: localStorage.unwatch
-})
-
-export const IndexDBStorageImpl = IndexDBStorageExtern.impl({
-  name: STORAGE_NAME,
-  get: indexDBStorage.getItem,
-  set: indexDBStorage.setItem,
-  remove: indexDBStorage.removeItem,
-  clear: indexDBStorage.clear,
-  watch: indexDBStorage.watch as Storage['watch'],
-  unwatch: indexDBStorage.unwatch
+  }
 })
 
 export const BrowserSyncStorageImpl = BrowserSyncStorageExtern.impl({
-  name: STORAGE_NAME,
   get: browserSyncStorage.getItem,
   set: browserSyncStorage.setItem,
-  remove: browserSyncStorage.removeItem,
-  clear: browserSyncStorage.clear,
-  watch: browserSyncStorage.watch as Storage['watch'],
-  unwatch: browserSyncStorage.unwatch
+  watch: browserSyncStorage.watch as Storage['watch']
 })
