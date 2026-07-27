@@ -211,6 +211,8 @@ afterAll(async () => {
 describe('generic Toast presentation', () => {
   it('maps business sources while preserving immediate requests, bounded absence, and unrelated Toasts', async () => {
     const fixture = createFixture()
+    const descriptorIds: string[] = []
+    fixture.store.subscribeEvent(fixture.presentation.event.DescriptorEvent, ({ id }) => descriptorIds.push(id))
     fixture.store.send(fixture.room.command.JoinRoomCommand())
     await waitFor(() => fixture.store.query(fixture.room.query.JoinIsFinishedQuery()))
 
@@ -245,9 +247,13 @@ describe('generic Toast presentation', () => {
     const render = () =>
       root.render(
         React.createElement(
-          TestRemeshRoot,
-          { store: fixture.store },
-          React.createElement(PresentationHarness, { mounted })
+          React.StrictMode,
+          null,
+          React.createElement(
+            TestRemeshRoot,
+            { store: fixture.store },
+            React.createElement(PresentationHarness, { mounted })
+          )
         )
       )
     const setMounted = (value: boolean) => {
@@ -297,25 +303,31 @@ describe('generic Toast presentation', () => {
     activeDescriptorId = descriptorId(request.id)
     await waitFor(() => fixture.portSnapshots.length === 2)
     await waitFor(() => document.querySelector(`[data-testid="${activeDescriptorId}"]`) !== null)
+    await waitFor(() => {
+      const active = fixture.store.query(fixture.room.query.ReconnectRequestQuery())
+      return active?.toast.attempted === true && active.toast.settled === true
+    })
+    const descriptorCountBeforeUnmount = descriptorIds.filter((id) => id === activeDescriptorId).length
 
     setMounted(false)
     await waitFor(() => document.querySelector(`[data-testid="${activeDescriptorId}"]`) === null)
-    await waitFor(() => {
-      const active = fixture.store.query(fixture.room.query.ReconnectRequestQuery())
-      return active?.toast.settled === true && active.toast.attempted === false
-    })
+    await waitFor(() => !fixture.store.query(fixture.presentation.query.SurfaceMountedQuery()))
+    expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())?.id).toBe(request.id)
+    expect(fixture.store.query(fixture.room.query.ReconnectIsLoadingQuery())).toBe(true)
+
     setMounted(true)
     await waitFor(() => document.querySelector(`[data-testid="${activeDescriptorId}"]`) !== null)
-    const loadingCountAfterReplay = operations.filter(
-      ({ type, id }) => type === 'loading' && id === activeDescriptorId
-    ).length
-    expect(loadingCountAfterReplay).toBeGreaterThan(1)
+    await waitFor(
+      () => descriptorIds.filter((id) => id === activeDescriptorId).length === descriptorCountBeforeUnmount + 1
+    )
+    const descriptorCountAfterReplay = descriptorIds.filter((id) => id === activeDescriptorId).length
+    expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())?.id).toBe(request.id)
+    expect(fixture.store.query(fixture.room.query.ReconnectIsLoadingQuery())).toBe(true)
     expect(vi.mocked(fixture.chat.leaveRoom)).toHaveBeenCalledTimes(2)
+
     setMounted(true)
     await settle(50)
-    expect(operations.filter(({ type, id }) => type === 'loading' && id === activeDescriptorId)).toHaveLength(
-      loadingCountAfterReplay
-    )
+    expect(descriptorIds.filter((id) => id === activeDescriptorId)).toHaveLength(descriptorCountAfterReplay)
 
     closeDuringPresentation.resolve()
     await waitFor(() => fixture.store.query(fixture.room.query.ReconnectRequestQuery()) === null)
@@ -354,6 +366,7 @@ describe('generic Toast presentation', () => {
     setMounted(true)
     await settle(100)
     expect(document.querySelector(`[data-testid="${omittedId}"]`)).toBeNull()
+    expect(descriptorIds).not.toContain(omittedId)
     expect(document.body.textContent).not.toContain('closed reset')
 
     fixture.usePort(() => Promise.reject(new Error('open reset')))

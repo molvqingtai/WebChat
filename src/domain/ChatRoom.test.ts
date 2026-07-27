@@ -556,7 +556,7 @@ describe('ChatRoomDomain exact application port', () => {
     fixture.store.discard()
   })
 
-  it('retries an omitted active Toast while fencing settled and stale callbacks', async () => {
+  it('releases unavailable and presented Toast attempts while fencing stale callbacks', async () => {
     const firstReconnect = deferred()
     const secondReconnect = deferred()
     const fixture = createFixture()
@@ -597,6 +597,22 @@ describe('ChatRoomDomain exact application port', () => {
     })
     fixture.store.send(fixture.room.command.BeginToastCommand(first.id))
     expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toEqual(settled)
+
+    fixture.store.send(fixture.room.command.OmitToastCommand(first.id))
+    const released = fixture.store.query(fixture.room.query.ReconnectRequestQuery())
+    expect(released).toEqual({
+      ...first,
+      toast: { attempted: false, settled: true }
+    })
+    fixture.store.send(fixture.room.command.OmitToastCommand(first.id))
+    expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toEqual(released)
+
+    fixture.store.send(fixture.room.command.BeginToastCommand(first.id))
+    expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toEqual({
+      ...first,
+      toast: { attempted: true, settled: false }
+    })
+    fixture.store.send(fixture.room.command.SettleToastCommand(first.id))
 
     firstReconnect.resolve()
     await vi.waitFor(() => expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toBeNull())

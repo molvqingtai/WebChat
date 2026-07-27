@@ -155,7 +155,7 @@ const ChatRoomDomain = Remesh.domain({
       name: 'Room.OmitToastCommand',
       impl: ({ get }, id: number) => {
         const request = get(ReconnectRequestQuery())
-        if (request?.id !== id || request.toast.settled) return null
+        if (request?.id !== id || (!request.toast.attempted && request.toast.settled)) return null
         return settleReconnectRequest({
           ...request,
           toast: { attempted: false, settled: true }

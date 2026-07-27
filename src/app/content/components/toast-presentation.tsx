@@ -98,12 +98,16 @@ export const useToastPresentation = () => {
   const send = useRemeshSend()
   const presentationDomain = useRemeshDomain(ToastPresentationDomain())
   const toasterRef = useRef<HTMLElement | null>(null)
+  const surfaceMountedRef = useRef(false)
   const trackedIdsRef = useRef(new Set<string>())
+  const surfaceAttemptIdsRef = useRef(new Set<string>())
   const observersRef = useRef(new Map<string, () => void>())
+  const pendingUnmountRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const acknowledge = useCallback(
     (id: string, status: 'presented' | 'unavailable') => {
       observersRef.current.delete(id)
+      if (status === 'unavailable') surfaceAttemptIdsRef.current.delete(id)
       send(presentationDomain.command.AcknowledgeCommand({ id, status }))
     },
     [presentationDomain.command, send]
@@ -112,35 +116,57 @@ export const useToastPresentation = () => {
   const dismiss = useCallback((id: string) => {
     observersRef.current.get(id)?.()
     observersRef.current.delete(id)
+    surfaceAttemptIdsRef.current.delete(id)
     trackedIdsRef.current.delete(id)
     toast.dismiss(id)
   }, [])
 
   const detach = useCallback(() => {
-    const pendingIds = [...observersRef.current.keys()]
+    const surfaceAttemptIds = [...surfaceAttemptIdsRef.current]
     observersRef.current.forEach((stop) => stop())
     observersRef.current.clear()
+    surfaceAttemptIdsRef.current.clear()
     trackedIdsRef.current.forEach((id) => toast.dismiss(id))
     trackedIdsRef.current.clear()
     toasterRef.current = null
-    return pendingIds
+    return surfaceAttemptIds
   }, [])
 
   const unmountSurface = useCallback(() => {
-    if (!toasterRef.current) return
-    const pendingIds = detach()
+    if (!surfaceMountedRef.current) return
+    const surfaceAttemptIds = detach()
+    surfaceMountedRef.current = false
     send(presentationDomain.command.SetSurfaceMountedCommand(false))
-    pendingIds.forEach((id) => acknowledge(id, 'unavailable'))
+    surfaceAttemptIds.forEach((id) => acknowledge(id, 'unavailable'))
   }, [acknowledge, detach, presentationDomain.command, send])
+
+  const cancelSurfaceUnmount = useCallback(() => {
+    if (pendingUnmountRef.current === null) return
+    clearTimeout(pendingUnmountRef.current)
+    pendingUnmountRef.current = null
+  }, [])
+
+  const scheduleSurfaceUnmount = useCallback(() => {
+    if (pendingUnmountRef.current !== null) return
+    pendingUnmountRef.current = setTimeout(() => {
+      pendingUnmountRef.current = null
+      unmountSurface()
+    }, 0)
+  }, [unmountSurface])
 
   const setToasterRef = useCallback(
     (toaster: HTMLElement | null) => {
-      if (toasterRef.current === toaster) return
-      unmountSurface()
       toasterRef.current = toaster
-      if (toaster) send(presentationDomain.command.SetSurfaceMountedCommand(true))
+      if (!toaster) {
+        scheduleSurfaceUnmount()
+        return
+      }
+      cancelSurfaceUnmount()
+      if (surfaceMountedRef.current) return
+      surfaceMountedRef.current = true
+      send(presentationDomain.command.SetSurfaceMountedCommand(true))
     },
-    [presentationDomain.command, send, unmountSurface]
+    [cancelSurfaceUnmount, presentationDomain.command, scheduleSurfaceUnmount, send]
   )
 
   useRemeshEvent(presentationDomain.event.DescriptorEvent, (descriptor) => {
@@ -155,7 +181,11 @@ export const useToastPresentation = () => {
     showDescriptor(descriptor)
     trackedIdsRef.current.add(descriptor.id)
 
-    if (!descriptor.acknowledge) return
+    if (!descriptor.acknowledge) {
+      surfaceAttemptIdsRef.current.delete(descriptor.id)
+      return
+    }
+    surfaceAttemptIdsRef.current.add(descriptor.id)
     observersRef.current.set(
       descriptor.id,
       observeVisibleDwell(
@@ -169,7 +199,10 @@ export const useToastPresentation = () => {
 
   useRemeshEvent(presentationDomain.event.DismissEvent, dismiss)
 
-  useEffect(() => () => unmountSurface(), [unmountSurface])
+  useEffect(() => {
+    cancelSurfaceUnmount()
+    return scheduleSurfaceUnmount
+  }, [cancelSurfaceUnmount, scheduleSurfaceUnmount])
 
   return setToasterRef
 }
