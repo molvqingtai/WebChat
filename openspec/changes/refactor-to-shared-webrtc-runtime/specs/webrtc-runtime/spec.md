@@ -982,20 +982,24 @@ Streaming history MAY insert Chat messages before, after, or between existing Sy
 
 ### Requirement: Domain-scoped manual reconnect
 
-The actions menu SHALL include "Reconnect this site", which SHALL rebuild only the current domain's ChatRoom connection and re-publish that domain's presence. Because the frozen `ChatRoom` has no `reconnect` method, the application Domain command SHALL use the exact public `leaveRoom()` and retained `JoinRoomCommand` with `joinRoom(command)` rather than extending the extern. Availability SHALL be exactly `joined && !reconnecting` in Chrome and Firefox; `panelOpen` SHALL NOT participate. One enabled activation SHALL create one authoritative request identity and pending fact, immediately invoke the leave/join composition, preserve the main panel's current open/closed state, disable the Refresh control, and spin that control's own icon. The button SHALL expose no Ready text, success region, result badge, or second terminal state: it SHALL return to its ordinary eligible icon when the matching request terminal settles. Every callback SHALL validate the request identity so stale work cannot clear a newer request's spin or feedback. Toast subscription, mount, paint, dwell, failure, unmount, or absence SHALL NOT delay, cancel, reject, or redefine reconnect dispatch or the independently captured network operation outcome. A visibly painted request-owned loading Toast SHALL contribute the accepted minimum 300ms dwell; feedback absence, unmount, or presentation failure SHALL settle boundedly and SHALL NOT strand the button or duplicate gate. This pending lifetime SHALL reject duplicates only and SHALL NOT become Runtime or network authority.
+The actions menu SHALL include "Reconnect this site", which SHALL rebuild only the current domain's ChatRoom connection and re-publish that domain's presence. Because the frozen `ChatRoom` has no `reconnect` method, the application Domain command SHALL use the exact public `leaveRoom()` and retained `JoinRoomCommand` with `joinRoom(command)` rather than extending the extern. Availability SHALL be exactly `joined && !reconnecting` in Chrome and Firefox; `panelOpen` SHALL NOT participate. One enabled activation SHALL create one authoritative request identity and pending fact, immediately invoke the leave/join composition, preserve the main panel's current open/closed state, disable the Refresh control, and spin that control's own icon. The button SHALL expose no Ready text, success region, result badge, or second terminal state: it SHALL return to its ordinary eligible icon when the matching request terminal settles. Every callback SHALL validate the request identity so stale work cannot clear a newer request's spin or feedback. Toast subscription, mount, paint, dwell, failure, unmount, or absence SHALL NOT delay, cancel, reject, or redefine reconnect dispatch or the independently captured network operation outcome. A visibly painted request-correlated generic loading Toast SHALL contribute the accepted minimum 300ms dwell; feedback absence, unmount, or presentation failure SHALL settle boundedly and SHALL NOT strand the button or duplicate gate. This pending lifetime SHALL reject duplicates only and SHALL NOT become Runtime or network authority.
 
-The reconnect feedback surface SHALL restore the original direct `AppMain -> <Toaster>` structure. The Toaster SHALL be a direct `AppMain` child and use the existing AppMain Motion translate containing mechanism. There SHALL be no reconnect wrapper, reconnect-specific Toaster component, always-mounted launcher feedback layer, host-page global overlay, or Refresh-specific Toast restyling. The direct Toaster SHALL retain the original `richColors`, current `themeMode`, `offset="70px"`, `visibleToasts={1}`, `position="top-center"`, and `dark:bg-slate-950 border dark:border-slate-600` Toast classes. Reconnect SHALL add no custom geometry, width, content-fit, placement, pointer, opacity-tracking, pseudo-element, or eligibility styles. While `AppMain` is mounted, the same reconnect request identity SHALL own one Toast flow that presents loading and then the matching ready/success or failure result; the Refresh button SHALL carry no terminal result feedback. While the panel is closed, `AppMain` and Toaster SHALL be absent: reconnect SHALL still start immediately, the button SHALL remain the request's pending indicator, and no Toast SHALL be queued as an operation prerequisite. Opening the panel during an active request MAY present only that current pending flow; a request that already terminated SHALL NOT replay on a later mount. Closing the panel MAY remove Toast presentation but SHALL NOT start, cancel, delay, replay, restart, or redefine reconnect. Matching cleanup SHALL address only that request's Toast ID, SHALL NOT use an unscoped/global dismissal, and SHALL preserve unrelated Toasts. Reconnect SHALL NOT rebuild the shared WorldRoom; the Runtime SHALL auto-reconnect the WorldRoom only on its own connection failure. The Options page SHALL NOT gain a global reconnect entry. Owner task #208 supersedes deprecated docs exact `3034b343...` and the later launcher-owned feedback model; their auto-open, paint-before-operation, launcher ownership, custom Toast geometry/pointer styling, and historical evidence SHALL NOT enter or certify source ancestry.
+The application SHALL expose one generic Toast feedback capability, not a reconnect-owned presenter. Reconnect, Runtime readiness, and unrelated application notifications SHALL publish through the existing generic Toast APIs and share the original direct `AppMain -> <Toaster>` surface. `src/app/content/components/reconnect-toast.tsx`, `useReconnectToast`, reconnect-specific presenter/renderer naming, and any independent reconnect Toast lifecycle truth SHALL be removed. Any presentation adapter SHALL consume only generic Toast descriptors, stable IDs, and presentation acknowledgements; it SHALL NOT directly import or own ChatRoom, Readiness, Runtime, network, or panel behavior. Business Domain effects MAY map source events to generic Toast entries, but the reconnect request SHALL remain the only owner of operation outcome, duplicate rejection, button pending state, and stale-request fencing. Generic Toast state SHALL NOT become a second reconnect pending or network truth.
+
+The Toaster SHALL remain a direct `AppMain` child using the existing AppMain Motion translate containing mechanism. There SHALL be no wrapper, reconnect-specific Toaster, always-mounted launcher layer, host-page global overlay, second renderer, or source-specific Toast restyling. The direct Toaster SHALL retain `richColors`, current `themeMode`, `offset="70px"`, `visibleToasts={1}`, `position="top-center"`, and `dark:bg-slate-950 border dark:border-slate-600` Toast classes. No source SHALL add custom geometry, width, content-fit, placement, pointer, opacity-tracking, pseudo-element, or eligibility styles. While mounted, generic entries MAY present reconnect loading/result, Runtime connecting/ready/unavailable, and unrelated feedback through that same surface. One reconnect request SHALL correlate only its own generic Toast ID for visible-paint acknowledgement, the accepted 300ms minimum loading dwell, terminal update, and cleanup. Absence, unmount, or presentation failure SHALL settle boundedly without delaying bootstrap, Runtime, reconnect, or the matching button. Opening during an active reconnect MAY present only its current pending entry; terminal reconnect SHALL NOT replay later. Cleanup SHALL address only the correlated ID, SHALL NOT use unscoped/global dismissal, and SHALL preserve unrelated Toasts.
+
+`App.tsx` SHALL NOT render a fixed readiness output, and `content/index.tsx` SHALL NOT render a pre-App loading, unavailable, Retry, status, or result fallback when client bootstrap fails. Runtime lifecycle SHALL retain its immediate-replay `connecting | ready | unavailable` state for recovery and send preconditions; only the independent presentation authority is removed. Runtime status MAY publish only through generic Toast while AppMain/Toaster exists. If Toast cannot render because App/Toaster is absent, the application SHALL NOT create an alternate loading, unavailable, Retry, status, or result view. Presentation absence SHALL NOT redefine bootstrap, Runtime, or network truth. Reconnect SHALL NOT rebuild the shared WorldRoom; the Runtime SHALL auto-reconnect WorldRoom only on its own connection failure. The Options page SHALL NOT gain a global reconnect entry. Owner task #215 supersedes the reconnect-owned model at blocked exact `4a26a59e...`; prior source and evidence SHALL NOT certify the replacement.
 
 #### Scenario: Manual domain reconnect
 
 - **WHEN** a user activates "Reconnect this site" on one domain
 - **THEN** only that domain's ChatRoom connection and presence SHALL be rebuilt, and other domains and the WorldRoom SHALL be undisturbed
 
-#### Scenario: Button and mounted Toast share one reconnect request
+#### Scenario: Button and generic Toast entry share one reconnect request
 
 - **GIVEN** `AppMain` and its original Toaster are mounted
 - **WHEN** an enabled user activates reconnect and the current-domain leave/join composition succeeds or fails
-- **THEN** one request identity SHALL immediately invoke the composition, disable and spin the Refresh button, and own one loading-to-ready/success-or-failure Toast flow; the bounded request terminal SHALL stop only the matching spin, and the button SHALL expose no separate result state
+- **THEN** one request identity SHALL immediately invoke the composition, disable and spin the Refresh button, and correlate one generic loading-to-ready/success-or-failure Toast entry; the bounded request terminal SHALL stop only the matching spin, and neither the generic Toast layer nor the button SHALL create a second reconnect state owner
 
 #### Scenario: Reconnect does not wait for Toast presentation
 
@@ -1017,8 +1021,19 @@ The reconnect feedback surface SHALL restore the original direct `AppMain -> <To
 
 #### Scenario: Original AppMain Toaster structure and visuals are preserved
 
-- **WHEN** the main panel renders reconnect feedback
+- **WHEN** the main panel renders application feedback
 - **THEN** `AppMain` SHALL contain the direct original Toaster with `richColors`, current theme, `offset="70px"`, `visibleToasts={1}`, `position="top-center"`, and the existing dark Toast classes, without an added wrapper, launcher layer, reconnect-specific Toaster component, or custom geometry/pointer styling
+
+#### Scenario: Generic Toast surface carries independent business sources
+
+- **GIVEN** unrelated application Toast feedback exists before or during reconnect or a Runtime readiness transition
+- **WHEN** reconnect or Runtime status publishes feedback
+- **THEN** all sources SHALL use the same generic Toaster and generic descriptor contract, reconnect/Readiness SHALL own no presenter or renderer, source-local cleanup SHALL preserve unrelated entries, and no unscoped dismissal SHALL occur
+
+#### Scenario: No independent readiness or bootstrap status view
+
+- **WHEN** Runtime is connecting or unavailable, or client bootstrap fails before App/Toaster exists
+- **THEN** `App.tsx` and `content/index.tsx` SHALL render no fixed loading, unavailable, Retry, status, or result view; mounted normal-runtime feedback MAY use generic Toast, while absent Toast presentation SHALL create no replacement UI and SHALL NOT become bootstrap or Runtime authority
 
 #### Scenario: Closed-panel reconnect has no Toast prerequisite
 
@@ -1026,17 +1041,17 @@ The reconnect feedback surface SHALL restore the original direct `AppMain -> <To
 - **WHEN** an enabled user activates reconnect
 - **THEN** the panel SHALL remain closed, the leave/join composition SHALL start immediately, the matching Refresh icon SHALL remain disabled and spinning while pending, and Toast absence SHALL neither queue nor strand the operation
 
-#### Scenario: Ready and result feedback use Toast only
+#### Scenario: Ready and result feedback use generic Toast only
 
 - **GIVEN** `AppMain` and Toaster are mounted for the reconnect request
 - **WHEN** that request captures success/readiness or failure
-- **THEN** the request-owned Toast flow SHALL present the matching terminal result, while the Refresh button SHALL expose no Ready text, success region, error region, result badge, or second result state
+- **THEN** the request-correlated generic Toast entry SHALL present the matching terminal result, while the Refresh button SHALL expose no Ready text, success region, error region, result badge, or second result state
 
 #### Scenario: Active request may enter a newly mounted Toaster once
 
 - **GIVEN** reconnect began while the panel was closed and the same request remains pending
 - **WHEN** the user opens the panel
-- **THEN** the original Toaster MAY present that current request's loading-to-terminal flow once, SHALL NOT restart reconnect, and SHALL NOT replay any request that had already terminated
+- **THEN** the original generic Toaster MAY present that request-correlated loading-to-terminal entry once, SHALL NOT restart reconnect, and SHALL NOT replay any request that had already terminated
 
 #### Scenario: Reconnect unavailable state is not a silent action
 
@@ -1047,13 +1062,13 @@ The reconnect feedback surface SHALL restore the original direct `AppMain -> <To
 #### Scenario: Panel state changes only Toast availability
 
 - **WHEN** the main plugin panel opens or closes during an active reconnect
-- **THEN** the same operation and matching button spin SHALL continue without cancellation, replay, restart, duplication, or panel mutation; opening MAY mount the current request's Toast flow once, while closing MAY unmount it and SHALL settle feedback absence boundedly
+- **THEN** the same operation and matching button spin SHALL continue without cancellation, replay, restart, duplication, or panel mutation; opening MAY mount the request-correlated generic Toast entry once, while closing MAY unmount it and SHALL settle feedback absence boundedly
 
 #### Scenario: Reconnect cleanup is request-local
 
 - **GIVEN** unrelated Toast feedback exists before or during reconnect
 - **WHEN** reconnect succeeds, fails, or the main panel changes state
-- **THEN** cleanup SHALL address only the matching reconnect request identity, SHALL NOT invoke an unscoped/global dismissal, SHALL preserve all unrelated Toast feedback, and SHALL NOT affect a newer request
+- **THEN** cleanup SHALL address only the generic Toast ID correlated to the matching reconnect request, SHALL NOT invoke an unscoped/global dismissal, SHALL preserve all unrelated Toast feedback, and SHALL NOT affect a newer request
 
 #### Scenario: WorldRoom self-recovery
 
