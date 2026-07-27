@@ -986,9 +986,13 @@ The actions menu SHALL include "Reconnect this site", which SHALL rebuild only t
 
 The application SHALL expose one generic Toast feedback capability, not a reconnect-owned presenter. Reconnect, Runtime readiness, and unrelated application notifications SHALL publish through the existing generic Toast APIs and share the original direct `AppMain -> <Toaster>` surface. `src/app/content/components/reconnect-toast.tsx`, `useReconnectToast`, reconnect-specific presenter/renderer naming, and any independent reconnect Toast lifecycle truth SHALL be removed. Any presentation adapter SHALL consume only generic Toast descriptors, stable IDs, and presentation acknowledgements; it SHALL NOT directly import or own ChatRoom, Readiness, Runtime, network, or panel behavior. Business Domain effects MAY map source events to generic Toast entries, but the reconnect request SHALL remain the only owner of operation outcome, duplicate rejection, button pending state, and stale-request fencing. Generic Toast state SHALL NOT become a second reconnect pending or network truth.
 
-The Toaster SHALL remain a direct `AppMain` child using the existing AppMain Motion translate containing mechanism. There SHALL be no wrapper, reconnect-specific Toaster, always-mounted launcher layer, host-page global overlay, second renderer, or source-specific Toast restyling. The direct Toaster SHALL retain `richColors`, current `themeMode`, `offset="70px"`, `visibleToasts={1}`, `position="top-center"`, and `dark:bg-slate-950 border dark:border-slate-600` Toast classes. No source SHALL add custom geometry, width, content-fit, placement, pointer, opacity-tracking, pseudo-element, or eligibility styles. While mounted, generic entries MAY present reconnect loading/result, Runtime connecting/ready/unavailable, and unrelated feedback through that same surface. One reconnect request SHALL correlate only its own generic Toast ID for visible-paint acknowledgement, the accepted 300ms minimum loading dwell, terminal update, and cleanup. Absence, unmount, or presentation failure SHALL settle boundedly without delaying bootstrap, Runtime, reconnect, or the matching button. Opening during an active reconnect MAY present only its current pending entry; terminal reconnect SHALL NOT replay later. Cleanup SHALL address only the correlated ID, SHALL NOT use unscoped/global dismissal, and SHALL preserve unrelated Toasts.
+The Toaster SHALL remain a direct `AppMain` child using the existing AppMain Motion translate containing mechanism. There SHALL be no wrapper, reconnect-specific Toaster, always-mounted launcher layer, host-page global overlay, second renderer, or source-specific Toast restyling. The direct Toaster SHALL retain `richColors`, current `themeMode`, `offset="70px"`, `visibleToasts={1}`, `position="top-center"`, and `dark:bg-slate-950 border dark:border-slate-600` Toast classes. No source SHALL add custom geometry, width, content-fit, placement, pointer, opacity-tracking, pseudo-element, or eligibility styles. While mounted, generic entries MAY present reconnect loading/result, Runtime connecting loading, Runtime unavailable error, and unrelated feedback through that same surface. Normal Runtime ready SHALL NOT publish a success descriptor. One reconnect request SHALL correlate only its own generic Toast ID for visible-paint acknowledgement, the accepted 300ms minimum loading dwell, terminal update, and cleanup. Absence, unmount, or presentation failure SHALL settle boundedly without delaying bootstrap, Runtime, reconnect, or the matching button. Opening during an active reconnect MAY present only its current pending entry; terminal reconnect SHALL NOT replay later. Cleanup SHALL address only the correlated ID, SHALL NOT use unscoped/global dismissal, and SHALL preserve unrelated Toasts.
 
-`App.tsx` SHALL NOT render a fixed readiness output, and `content/index.tsx` SHALL NOT render a pre-App loading, unavailable, Retry, status, or result fallback when client bootstrap fails. Runtime lifecycle SHALL retain its immediate-replay `connecting | ready | unavailable` state for recovery and send preconditions; only the independent presentation authority is removed. Runtime status MAY publish only through generic Toast while AppMain/Toaster exists. If Toast cannot render because App/Toaster is absent, the application SHALL NOT create an alternate loading, unavailable, Retry, status, or result view. Presentation absence SHALL NOT redefine bootstrap, Runtime, or network truth. Reconnect SHALL NOT rebuild the shared WorldRoom; the Runtime SHALL auto-reconnect WorldRoom only on its own connection failure. The Options page SHALL NOT gain a global reconnect entry. Owner task #215 supersedes the reconnect-owned model at blocked exact `4a26a59e...`; prior source and evidence SHALL NOT certify the replacement.
+`App.tsx` SHALL NOT render a fixed readiness output, and `content/index.tsx` SHALL NOT render a pre-App loading, unavailable, Retry, status, or result fallback when client bootstrap fails. Runtime lifecycle SHALL retain its immediate-replay `connecting | ready | unavailable` state for recovery and send preconditions; only the independent presentation authority is removed. ReadinessDomain SHALL be the sole application readiness-transition authority. Its State-setting Command SHALL compare every mapped extern input to current State: equal input SHALL perform no State write and emit no `StateChangedEvent`, while a different input SHALL update State and emit exactly one Event. The current Query SHALL remain immediately available independently of transition Events. No duplicate filter or second readiness State SHALL be added to ClientLease, the Readiness implementation adapter, AppFeedback, or Toast presentation.
+
+The ClientLease watchdog SHALL retain its existing five-second cadence, page lease renewal before the Coordinator's 15-second TTL, host availability probe, generation/host-id/page-attachment comparison, and real replacement/loss recovery. Equal healthy host-phase callbacks MAY still reach the Readiness extern boundary, but after mapping they SHALL NOT become application transitions. This heartbeat SHALL remain liveness infrastructure rather than proof of a new readiness fact.
+
+While AppMain/Toaster exists, normal Runtime `connecting` MAY publish the stable loading entry and `unavailable` MAY publish the stable error entry. A genuine transition to `ready`, or an immediate mounted-surface ready Query, SHALL issue only an ID-scoped dismissal for `webchat-runtime-readiness` if present; it SHALL NOT publish `Ready to chat` or any other success descriptor. Periodic equal-state ready health samples SHALL produce neither a `StateChangedEvent` nor any AppFeedback/Toast command. Toast dismissal, automatic close, acknowledgement, and presentation settlement SHALL NOT publish another readiness descriptor or create a loop. These rules SHALL NOT change recovery or send preconditions or alter the independently request-correlated reconnect success result. If Toast cannot render because App/Toaster is absent, the application SHALL NOT create an alternate loading, unavailable, Retry, status, or result view. Presentation absence SHALL NOT redefine bootstrap, Runtime, or network truth. Reconnect SHALL NOT rebuild the shared WorldRoom; the Runtime SHALL auto-reconnect WorldRoom only on its own connection failure. The Options page SHALL NOT gain a global reconnect entry. Owner task #228 supersedes the Runtime ready success mapping and equal-state Readiness transition behavior at round-27 exact `f4d9c401...`; prior source and evidence SHALL NOT certify the replacement.
 
 #### Scenario: Manual domain reconnect
 
@@ -1029,6 +1033,36 @@ The Toaster SHALL remain a direct `AppMain` child using the existing AppMain Mot
 - **GIVEN** unrelated application Toast feedback exists before or during reconnect or a Runtime readiness transition
 - **WHEN** reconnect or Runtime status publishes feedback
 - **THEN** all sources SHALL use the same generic Toaster and generic descriptor contract, reconnect/Readiness SHALL own no presenter or renderer, source-local cleanup SHALL preserve unrelated entries, and no unscoped dismissal SHALL occur
+
+#### Scenario: Readiness emits only actual transitions
+
+- **GIVEN** Readiness State already equals the mapped extern input
+- **WHEN** the five-second heartbeat or any other source repeats that same `connecting`, `ready`, or `unavailable` value
+- **THEN** Readiness SHALL perform no State write, emit no `StateChangedEvent`, trigger no ChatRoom recovery, and publish or dismiss no Toast
+
+#### Scenario: Real readiness transitions remain observable once
+
+- **GIVEN** Readiness currently exposes one state through its Query
+- **WHEN** the mapped extern input changes to a different `connecting`, `ready`, or `unavailable` value
+- **THEN** Readiness SHALL update its State and emit exactly one matching `StateChangedEvent`, while current-state Query/replay remains available without manufacturing a duplicate transition
+
+#### Scenario: Runtime watchdog retains lease and recovery behavior
+
+- **GIVEN** a page lease requires renewal and the shared Runtime host may be lost or replaced without a reliable terminal event
+- **WHEN** the ClientLease watchdog runs
+- **THEN** it SHALL retain the five-second lease/probe/snapshot checks and initiate recovery only for a real unavailable, generation, host-id, or page-attachment change; Readiness transition dedup SHALL NOT disable or delay that liveness behavior
+
+#### Scenario: Runtime ready dismisses loading without success replay
+
+- **GIVEN** the Runtime readiness Toast uses stable ID `webchat-runtime-readiness`
+- **WHEN** readiness genuinely enters ready or a newly mounted Toast surface reads the current ready Query
+- **THEN** application feedback SHALL only dismiss that ID if present, SHALL NOT publish `Ready to chat` or another success descriptor, and SHALL NOT dismiss unrelated Toasts
+
+#### Scenario: Runtime ready settlement cannot form a presentation loop
+
+- **GIVEN** the Runtime readiness loading entry was dismissed or a prior Toast automatically closed, acknowledged, or settled
+- **WHEN** readiness remains ready without a later connecting or unavailable transition
+- **THEN** no Toast lifecycle fact SHALL republish the ready success descriptor, while Runtime recovery, immediate-replay readiness truth, and manual reconnect feedback SHALL remain unchanged
 
 #### Scenario: No independent readiness or bootstrap status view
 
