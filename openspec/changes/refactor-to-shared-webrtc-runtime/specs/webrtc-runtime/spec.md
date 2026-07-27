@@ -982,44 +982,52 @@ Streaming history MAY insert Chat messages before, after, or between existing Sy
 
 ### Requirement: Domain-scoped manual reconnect
 
-The actions menu SHALL include "Reconnect this site", which SHALL rebuild only the current domain's ChatRoom connection and re-publish that domain's presence. Because the frozen `ChatRoom` has no `reconnect` method, the application Domain command SHALL use the exact public `leaveRoom()` and retained `JoinRoomCommand` with `joinRoom(command)` rather than extending the extern. The application Domain SHALL expose one request-local reconnect lifecycle and stable request-owned feedback identity. While the main plugin panel is open, every enabled activation SHALL commit exactly one rendered loading toast inside that panel and give it at least one browser paint opportunity before invoking the leave/join composition; source-level call order without a rendered observation SHALL NOT satisfy visible feedback. The first confirmed visible paint SHALL start the reconnect operation and a minimum 300ms loading dwell concurrently. Terminal settlement SHALL wait for both the operation outcome and that dwell: a fast success or rejection SHALL NOT retire loading before 300ms, a rejection SHALL be captured as an outcome so fail-fast composition cannot bypass the dwell, and an operation longer than 300ms SHALL remain authoritative. Panel ownership SHALL be determined by rendered geometry rather than React ancestry: throughout its visible lifetime, every reconnect loading or error toast `DOMRect` SHALL have all four edges at or inside the current visible plugin-panel `DOMRect`. This containment SHALL hold for the production left-side state whose Framer Motion transform settles to `none`, the right-side transformed state, and a supported narrow/mobile viewport no wider than 430 CSS pixels. Every visible Toast item SHALL retain content-fit width: short content SHALL NOT stretch to a fixed or full Toaster width, while a containment-only maximum SHALL let long content shrink or wrap without overflowing the panel. A bounded Toaster coordinate container MAY support panel-local positioning but SHALL NOT impose item `width: 100%`; unrelated Toasts SHALL retain their prior content-fit width behavior. Neither Sonner's fixed-position default nor an incidental transform-created containing block SHALL be treated as panel authority. While reconnect feedback exists, the Toaster presentation layer outside every actually visible Toast item rectangle SHALL NOT intercept pointer hit testing for the panel. Every Toast item SHALL default to pointer-transparent and MAY acquire pointer authority only while `mounted=true`, `visible=true`, `removed=false`, and its computed opacity is finite and greater than zero. The pre-mount stage and every success/error retirement stage SHALL remain pointer-transparent even if their DOM node or `visible=true` state is retained for animation. Eligibility tracking SHALL remain live for any `visible=true`, `removed=false` item while it is pre-mount or opacity-zero until that item becomes eligible or becomes hidden/removed; it SHALL NOT depend on a later unrelated attribute or child mutation after insertion. Hidden/removed items and unmounted presentation SHALL stop tracking and revoke any private eligibility marker. Every Toast `::before` and `::after` pseudo-element SHALL remain pointer-transparent in steady, expanded, swiping, and removal states, including any area painted outside the item `DOMRect`. For an interior test point of an enabled ordinary panel control that lies outside every eligible Toast item rectangle or is covered only by a transparent transition item or pseudo-element, `document.elementFromPoint()` SHALL resolve to that control or its descendant and a real browser click SHALL invoke the control exactly once. For an interior point of an eligible visible request-owned Toast item, hit testing SHALL resolve to that item or its descendant; any exposed Toast action or close control SHALL remain operable. A stretched root, transition item, or pseudo-element with pointer authority over non-Toast panel space and a globally pointer-disabled Toast subtree are all invalid. The reconnect control SHALL disable duplicate activation and show its spinning refresh icon while active. The Toaster and its reconnect feedback SHALL NOT render or portal as a host-page global overlay. If reconnect cannot start, the control SHALL be visibly disabled and SHALL NOT dispatch activation rather than accept a click that silently returns. Terminal settlement SHALL retire only that request's loading feedback before its existing error feedback is emitted; success requires no additional toast. Reconnect cleanup SHALL NOT use an unscoped/global toast dismissal and SHALL preserve every unrelated Toast. Closing the panel MAY hide or unmount toast presentation, but SHALL NOT cancel, replay, restart, or strand the request or dwell. Reopening while the request remains active SHALL reconstruct exactly one geometrically contained panel-local loading toast from authoritative request state; settlement while closed SHALL queue no reconnect error for a later mount, and reopening after settlement SHALL reveal no loading or error feedback from that request. Reconnect SHALL NOT rebuild the shared WorldRoom; the Runtime SHALL auto-reconnect the WorldRoom only on its own connection failure. The Options page SHALL NOT gain a global reconnect entry.
+The actions menu SHALL include "Reconnect this site", which SHALL rebuild only the current domain's ChatRoom connection and re-publish that domain's presence. Because the frozen `ChatRoom` has no `reconnect` method, the application Domain command SHALL use the exact public `leaveRoom()` and retained `JoinRoomCommand` with `joinRoom(command)` rather than extending the extern. Availability SHALL be exactly `joined && !reconnecting` in Chrome and Firefox; `panelOpen` SHALL NOT participate. One enabled activation SHALL create one authoritative request identity and pending fact, immediately invoke the leave/join composition, preserve the main panel's current open/closed state, disable the Refresh control, and spin that control's own icon. The same request identity SHALL concurrently own exactly one loading Toast. Button and Toast SHALL derive from that shared request instead of maintaining competing pending states, and every terminal callback SHALL validate the identity so stale work cannot clear a newer request's spin or feedback. Toast subscription, mount, paint, dwell, failure, or absence SHALL NOT delay, cancel, reject, or redefine reconnect dispatch or the network operation outcome. The request SHALL capture that outcome independently and SHALL reach one shared terminal only after its bounded feedback outcome also settles. If loading becomes visibly painted, the feedback outcome SHALL include the accepted minimum 300ms visible dwell and request-owned terminal ordering. If presentation fails, that failure SHALL settle the feedback outcome without stranding or redefining the request. The matching Refresh button SHALL remain disabled and spinning and the matching Toast SHALL remain request-owned until the shared terminal. This pending lifetime SHALL reject duplicates only and SHALL NOT become Runtime or network authority.
+
+The feedback Toaster SHALL remain mounted in a plugin-owned presentation layer anchored to the floating plugin controls, whether the main panel is open or closed. It SHALL NOT open or close that panel, depend on the panel's Framer Motion transform, or render as a host-page global overlay. Visible loading and error Toast rectangles SHALL remain launcher-owned and inside the supported viewport for left-side, right-side, and narrow/mobile placement. Every visible Toast item SHALL retain content-fit width: short content SHALL NOT stretch to a fixed or full Toaster width, while a containment-only maximum SHALL let long content shrink or wrap without overflowing the viewport-side plugin feedback surface. A bounded Toaster coordinate container SHALL NOT impose item `width: 100%`; unrelated Toasts SHALL retain their prior content-fit behavior. While feedback exists, Toaster presentation outside every actually visible Toast item rectangle SHALL NOT intercept pointer hit testing for either plugin or host-page controls. Every Toast item SHALL default to pointer-transparent and MAY acquire pointer authority only while `mounted=true`, `visible=true`, `removed=false`, and its computed opacity is finite and greater than zero. The pre-mount stage and every success/error retirement stage SHALL remain pointer-transparent even if their DOM node or `visible=true` state is retained for animation. Eligibility tracking SHALL remain live for any `visible=true`, `removed=false` item while it is pre-mount or opacity-zero until that item becomes eligible or becomes hidden/removed; it SHALL NOT depend on a later unrelated attribute or child mutation after insertion. Hidden/removed items and unmounted presentation SHALL stop tracking and revoke any private eligibility marker. Every Toast `::before` and `::after` pseudo-element SHALL remain pointer-transparent in steady, expanded, swiping, and removal states, including any area painted outside the item `DOMRect`. For an interior test point of an enabled underlying control outside every eligible Toast item rectangle or covered only by a transparent transition item or pseudo-element, `document.elementFromPoint()` SHALL resolve to that control or its descendant and a real browser click SHALL invoke the control exactly once. For an interior point of an eligible visible request-owned Toast item, hit testing SHALL resolve to that item or its descendant; any exposed Toast action or close control SHALL remain operable. A stretched root, transition item, or pseudo-element with pointer authority over non-Toast space and a globally pointer-disabled Toast subtree are all invalid. Duplicate activation SHALL be rejected while the shared reconnect request is pending. If reconnect cannot start, the control SHALL be visibly disabled and SHALL NOT dispatch activation rather than accept a click that silently returns. Matching terminal handling SHALL retire only that request's loading feedback before its existing error feedback is emitted; success requires no additional Toast. Reconnect cleanup SHALL NOT use an unscoped/global Toast dismissal and SHALL preserve every unrelated Toast. Opening or closing the main panel SHALL NOT start, cancel, replay, restart, hide, delay, or strand reconnect or its feedback. Reconnect SHALL NOT rebuild the shared WorldRoom; the Runtime SHALL auto-reconnect the WorldRoom only on its own connection failure. The Options page SHALL NOT gain a global reconnect entry. Owner task #208 supersedes deprecated docs exact `3034b343...`, whose auto-open and paint-before-operation requirements SHALL NOT enter source ancestry.
 
 #### Scenario: Manual domain reconnect
 
 - **WHEN** a user activates "Reconnect this site" on one domain
 - **THEN** only that domain's ChatRoom connection and presence SHALL be rebuilt, and other domains and the WorldRoom SHALL be undisturbed
 
-#### Scenario: Manual reconnect feedback settles once
+#### Scenario: Button and Toast share one reconnect request
 
-- **WHEN** the user activates reconnect and the current-domain leave/join composition succeeds or fails
-- **THEN** one panel-local loading toast SHALL become visibly rendered for that request before the composition is invoked, duplicate activation SHALL be ignored while it is active, and terminal settlement SHALL occur no earlier than 300ms after the first confirmed loading paint and SHALL retire that loading feedback before any failure toast
+- **WHEN** an enabled user activates reconnect and the current-domain leave/join composition succeeds or fails
+- **THEN** one request identity SHALL immediately invoke the composition, disable and spin the Refresh button, and concurrently own exactly one loading Toast; the independently captured operation and bounded feedback outcomes SHALL converge on one shared terminal that stops the matching spin and retires loading before any failure Toast
 
-#### Scenario: Fast terminal reconnect still presents loading
+#### Scenario: Reconnect does not wait for Toast presentation
 
-- **GIVEN** the leave/join ports can settle before a toast library's deferred subscriber update would render
+- **GIVEN** the Toast library defers its subscriber update or fails to render loading
 - **WHEN** an enabled user activates reconnect
-- **THEN** the panel SHALL commit exactly one loading toast and receive at least one browser paint opportunity before invoking those ports, start the operation and minimum 300ms dwell concurrently after that paint, and keep loading visible until the dwell ends even if the operation settles immediately
+- **THEN** the leave/join ports SHALL be invoked immediately, the Refresh icon SHALL represent the same pending request, no Toast state SHALL delay or alter that operation, and a bounded presentation-failure outcome SHALL allow the shared request terminal rather than strand the icon or duplicate gate
 
-#### Scenario: Fast rejection cannot bypass minimum loading dwell
+#### Scenario: Fast terminal reconnect still presents loading feedback
 
-- **GIVEN** the current-domain leave/join composition rejects before the 300ms minimum dwell ends
-- **WHEN** reconnect captures the rejection outcome and joins it with the dwell timer
-- **THEN** loading SHALL remain the request's visible feedback until at least 300ms after its first confirmed paint, then retire before the existing request-owned error is emitted, without changing the original rejection meaning
+- **GIVEN** the leave/join ports settle before the request-owned loading Toast receives its first visible paint
+- **WHEN** the operation outcome reaches the shared request
+- **THEN** the operation outcome SHALL be captured without waiting for feedback, while the matching Refresh icon and loading Toast SHALL remain tied to the same pending request until the Toast completes its 300ms minimum visible dwell and the shared terminal performs matching cleanup
 
-#### Scenario: Reconnect feedback belongs to the plugin panel
+#### Scenario: Stale terminal work cannot clear a newer request
 
-- **WHEN** an enabled user activates reconnect while the main plugin panel is open
-- **THEN** exactly one loading toast SHALL visibly render with all four edges inside the plugin-panel rectangle, and no reconnect Toaster or toast SHALL appear as a host-page global overlay
+- **GIVEN** one reconnect has settled and a later reconnect owns a newer request identity
+- **WHEN** delayed Toast paint, dwell, or terminal cleanup from the older request completes
+- **THEN** it SHALL NOT stop the newer Refresh spin, dismiss the newer loading Toast, emit a newer error, or alter the newer reconnect operation
+
+#### Scenario: Reconnect feedback belongs to the plugin controls
+
+- **WHEN** an enabled user activates reconnect while the main plugin panel is either open or closed
+- **THEN** exactly one launcher-owned loading Toast SHALL be eligible to render without changing panel state, and no reconnect Toaster or Toast SHALL appear as a host-page global overlay
 
 #### Scenario: Visible Toast width remains content-fit
 
-- **GIVEN** the panel-local Toaster renders a short reconnect or unrelated Toast and can also render content wider than the available panel space
-- **WHEN** the production browser measures the Toaster and Toast item rectangles
-- **THEN** short content SHALL retain intrinsic content-fit width rather than stretch to the Toaster width, long content SHALL wrap or shrink under a containment-only maximum, and neither case SHALL cross the panel rectangle
+- **GIVEN** the launcher-owned Toaster renders a short reconnect or unrelated Toast and can also render content wider than the available viewport-side plugin surface
+- **WHEN** the production browser measures the launcher, Toaster, and Toast item rectangles
+- **THEN** short content SHALL retain intrinsic content-fit width rather than stretch to the Toaster width, long content SHALL wrap or shrink under a containment-only maximum, and neither case SHALL cross the supported viewport
 
-#### Scenario: Ordinary panel controls remain interactive outside eligible Toast items
+#### Scenario: Underlying controls remain interactive outside eligible Toast items
 
-- **GIVEN** reconnect loading or error feedback exists and an enabled ordinary panel control has an interior test point outside every mounted, visible, not-removed, nontransparent Toast item rectangle
+- **GIVEN** reconnect loading or error feedback exists and an enabled plugin or host-page control has an interior test point outside every mounted, visible, not-removed, nontransparent Toast item rectangle
 - **WHEN** the production browser hit-tests and clicks that point
 - **THEN** `document.elementFromPoint()` SHALL resolve to the control or its descendant, the real click SHALL invoke it exactly once, and no Toaster root, ineligible item, or Toast pseudo-element SHALL receive the hit
 
@@ -1035,35 +1043,35 @@ The actions menu SHALL include "Reconnect this site", which SHALL rebuild only t
 - **WHEN** that same item later becomes mounted with finite nonzero opacity, remains hidden/removed, or the Toaster unmounts
 - **THEN** the item SHALL stay pointer-transparent while ineligible, tracking SHALL remain live until the first of eligibility or hidden/removal, an eligible item SHALL acquire pointer authority without requiring an unrelated mutation, and hidden/removed/unmounted cleanup SHALL stop tracking and revoke any marker
 
-#### Scenario: Transparent transition items do not shield panel controls
+#### Scenario: Transparent transition items do not shield underlying controls
 
 - **GIVEN** a request-owned Toast is in its initial mounted-false stage, its loading Toast is retiring after success or before failure feedback, or its error Toast is retiring, while an opacity-zero DOM node is still retained
-- **WHEN** the production browser hit-tests and clicks an ordinary enabled panel control beneath that transition box
+- **WHEN** the production browser hit-tests and clicks an ordinary enabled plugin or host-page control beneath that transition box
 - **THEN** the transition item SHALL have no pointer authority, `document.elementFromPoint()` SHALL resolve to the control or its descendant, and the real click SHALL invoke it exactly once
 
 #### Scenario: Toast pseudo-elements never extend pointer authority
 
 - **GIVEN** a steady, expanded, swiping, or removing Toast has a `::before` or `::after` painted area outside its item `DOMRect`
-- **WHEN** the production browser hit-tests and clicks an ordinary enabled panel control at a point inside that pseudo-element area but outside every eligible Toast item rectangle
+- **WHEN** the production browser hit-tests and clicks an ordinary enabled plugin or host-page control at a point inside that pseudo-element area but outside every eligible Toast item rectangle
 - **THEN** the pseudo-element SHALL remain noninteractive, the hit SHALL resolve to the control or its descendant, and a simultaneously eligible Toast item plus its exposed action or close control SHALL remain hit-testable at points inside their own rectangles
 
-#### Scenario: Left-side panel contains reconnect feedback without a transform
+#### Scenario: Left-side launcher owns reconnect feedback
 
-- **GIVEN** the production panel rests on the left and its computed Framer Motion transform is `none`
-- **WHEN** the request-owned loading toast or failure toast is visibly rendered
-- **THEN** every edge of each toast rectangle SHALL remain inside the panel rectangle rather than resolve against the host viewport
+- **GIVEN** the production plugin launcher rests on the left while the main panel is open or closed
+- **WHEN** the request-owned loading Toast or failure Toast is visibly rendered
+- **THEN** the feedback SHALL remain anchored to that launcher and every Toast edge SHALL remain inside the viewport without relying on the main panel transform
 
-#### Scenario: Right-side transform is not Toast authority
+#### Scenario: Right-side launcher owns reconnect feedback
 
-- **GIVEN** the production panel rests on the right and has a non-none motion transform
-- **WHEN** the request-owned loading toast or failure toast is visibly rendered
-- **THEN** each toast rectangle SHALL remain inside the panel rectangle by the same panel-local rule used on the left, not merely because the transform happens to create a fixed-position containing block
+- **GIVEN** the production plugin launcher rests on the right while the main panel is open or closed
+- **WHEN** the request-owned loading Toast or failure Toast is visibly rendered
+- **THEN** the same launcher-owned placement SHALL remain inside the viewport and SHALL NOT derive authority from a transformed main panel
 
-#### Scenario: Narrow mobile geometry remains panel-local
+#### Scenario: Narrow mobile geometry remains launcher-owned
 
-- **GIVEN** a production browser viewport no wider than 430 CSS pixels using the supported narrow/mobile panel rule
-- **WHEN** the request-owned loading toast or failure toast is visibly rendered
-- **THEN** its content SHALL shrink or wrap as needed, every edge SHALL remain inside the visible panel rectangle, and no horizontal Toast overflow SHALL escape the panel into host-page space
+- **GIVEN** a production browser viewport no wider than 430 CSS pixels using the supported narrow/mobile launcher rule
+- **WHEN** the request-owned loading Toast or failure Toast is visibly rendered
+- **THEN** its content SHALL shrink or wrap as needed, every edge SHALL remain inside the viewport, and no horizontal Toast overflow SHALL escape into clipped host-page space
 
 #### Scenario: Reconnect unavailable state is not a silent action
 
@@ -1071,21 +1079,16 @@ The actions menu SHALL include "Reconnect this site", which SHALL rebuild only t
 - **WHEN** the actions menu renders "Reconnect this site"
 - **THEN** the action SHALL be visibly disabled, SHALL NOT dispatch activation, and SHALL NOT accept a click that silently produces neither feedback nor an operation
 
-#### Scenario: Active reconnect presentation survives panel remount
+#### Scenario: Panel state never changes reconnect or feedback
 
-- **WHEN** the main plugin panel closes during an active reconnect and reopens before that request settles
-- **THEN** presentation MAY be absent while closed, but authoritative request state SHALL reconstruct exactly one loading toast on reopen without restarting or duplicating the request
-
-#### Scenario: Closing the panel does not retain terminal feedback
-
-- **WHEN** the main plugin panel closes during an active reconnect and later reopens after terminal settlement
-- **THEN** the request SHALL complete terminal cleanup while closed, SHALL queue no reconnect error for a later mount, and no loading or error toast from that request SHALL appear on reopen
+- **WHEN** the main plugin panel opens or closes during an active reconnect
+- **THEN** the same operation, button spin, and launcher-owned loading Toast SHALL continue without cancellation, replay, reconstruction, duplication, hiding, or panel mutation
 
 #### Scenario: Reconnect cleanup is request-local
 
 - **GIVEN** unrelated Toast feedback exists before or during reconnect
-- **WHEN** reconnect succeeds, fails, the panel closes, or the panel reopens
-- **THEN** cleanup SHALL address only the reconnect request's feedback identity, SHALL NOT invoke an unscoped/global dismissal, and SHALL preserve all unrelated Toast feedback
+- **WHEN** reconnect succeeds, fails, or the main panel changes state
+- **THEN** cleanup SHALL address only the matching reconnect request identity, SHALL NOT invoke an unscoped/global dismissal, SHALL preserve all unrelated Toast feedback, and SHALL NOT affect a newer request
 
 #### Scenario: WorldRoom self-recovery
 
@@ -1112,7 +1115,7 @@ Candidate delivery SHALL keep implementation, logic review, and testing roles se
 
 Contract tests for peer wire behavior SHALL import only from `@/protocol` or the documented public entry. Type-negative and unchanged-backend suites SHALL cover Database typing, transactions, cancellation, ordering, insertion, watch, close, and value isolation on IndexedDB and Memory. Application/page Domain/model tests SHALL cover exact outer-type MessageRecord decoding, all three item/record/payload id equalities, shared cross-variant id uniqueness, key/property-presence rejection, Chat user/message identity, internal MessageStore replay/conflict/query-default/query-type/query-abort/invalid-query/clear/watch, removal of its `list` API, send-first success/failure/loss behavior, exact causal returned-message projection under watch-order and same-content concurrency, projections, and LWW/order implementation. Headless Runtime tests SHALL cover each unique owner, provisional connection generations, committed sessions/HLC, World presence, history sessions/cursors/batches, delivery ACK/replay, Wire queues/trust/provider translation, and clean-cut internal RPC contracts.
 
-A dependency/export/residue scan SHALL prove that `src/protocol/**` has no reverse imports or local/UI/internal Runtime exports; Chat/UI do not import Runtime/provider/Database primitives or concrete adapters; MessageStore is not an extern/public export; Artico imports are provider/composition-only; and no removed Network owner, WireExtern route, ChatRoom cache, false Module name, status/outbox/retry, or legacy record alias remains. No agent SHALL treat `pnpm dev` or ad hoc browsing as release evidence. After Reviewer logic PASS, QA SHALL independently use exact-bound production Chrome MV3 and Firefox MV2 artifacts with isolated profiles and process/profile cleanup while the same immutable exact is synchronized to the Owner's local test environment for independent product acceptance. QA reconnect evidence SHALL record the viewport, panel placement, computed panel transform, panel rectangle, Toaster and short/long Toast item rectangles and computed widths, every request-owned loading/error Toast rectangle and its mounted/visible/removed/computed-opacity state, eligibility polling/cleanup observations, minimum loading dwell timestamps, computed pointer behavior for the item and its `::before`/`::after`, and actual `document.elementFromPoint()` plus real-click results for an ordinary control and eligible Toast item/action/close. The real-browser matrix SHALL cover content-fit short and wrapping long reconnect/unrelated Toasts, pre-mount-to-eligible tracking, steady, expanded/swiping, fast success, fast rejection, long operation, success retirement, loading-to-error retirement, and error retirement across left, right, and narrow/mobile placement. JSX nesting, an isolated Toaster mount, direct synthetic `.click()`, source-level timer order, or Toast containment without content-fit and hit-testing SHALL NOT substitute for those real rendered controls. QA automation MAY support but SHALL NOT replace the Owner's final product verdict. Commit, push, and PR update need no separate Owner authorization; PR merge and `master` release SHALL remain separate explicit Owner authorizations.
+A dependency/export/residue scan SHALL prove that `src/protocol/**` has no reverse imports or local/UI/internal Runtime exports; Chat/UI do not import Runtime/provider/Database primitives or concrete adapters; MessageStore is not an extern/public export; Artico imports are provider/composition-only; and no removed Network owner, WireExtern route, ChatRoom cache, false Module name, status/outbox/retry, or legacy record alias remains. No agent SHALL treat `pnpm dev` or ad hoc browsing as release evidence. After Reviewer logic PASS, QA SHALL independently use exact-bound production Chrome MV3 and Firefox MV2 artifacts with isolated profiles and process/profile cleanup while the same immutable exact is synchronized to the Owner's local test environment for independent product acceptance. QA reconnect evidence SHALL record the viewport, launcher placement, main-panel open/closed state before and after activation, launcher/Toaster and short/long Toast item rectangles and computed widths, the shared request identity, immediate leave/join invocation, Refresh button disabled/spinning state, every request-owned loading/error Toast rectangle and its mounted/visible/removed/computed-opacity state, eligibility polling/cleanup observations, minimum loading dwell and shared-terminal timestamps, stale-request fencing, computed pointer behavior for the item and its `::before`/`::after`, and actual `document.elementFromPoint()` plus real-click results for an underlying control and eligible Toast item/action/close. The real-browser matrix SHALL cover both panel states; content-fit short and wrapping long reconnect/unrelated Toasts; pre-mount-to-eligible tracking; steady, expanded/swiping, fast success, fast rejection, presentation failure, long operation, success retirement, loading-to-error retirement, error retirement, and an older terminal racing a newer request across left, right, and narrow/mobile launcher placement. JSX nesting, an isolated Toaster mount, direct synthetic `.click()`, main-panel-only evidence, source-level timer order, or Toast containment without content-fit and hit-testing SHALL NOT substitute for those real rendered controls. QA automation MAY support but SHALL NOT replace the Owner's final product verdict. Commit, push, and PR update need no separate Owner authorization; PR merge and `master` release SHALL remain separate explicit Owner authorizations.
 
 #### Scenario: Reviewer logic PASS precedes all candidate testing
 
