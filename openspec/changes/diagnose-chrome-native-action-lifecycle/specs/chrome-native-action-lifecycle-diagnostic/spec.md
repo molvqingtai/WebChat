@@ -1,10 +1,88 @@
 ## ADDED Requirements
 
+### Requirement: Package-first discovery derives one exact worker identity
+
+Before it accepts an extension ID, the Chrome MV3 diagnostic SHALL parse the exact packaged manifest as structured JSON and require `manifest_version` equal to `3`, an object-valued `background`, and a non-empty string `background.service_worker`. The immutable candidate exact, package digest, and parsed packaged manifest SHALL be the roots of authority. A caller-supplied extension ID, the first observed extension worker, or a global one-worker inventory SHALL NOT be an identity root.
+
+The manifest canonical relation SHALL recursively sort object keys while preserving array order, every JSON primitive, and every field exactly. It SHALL omit no field, insert no default, resolve no alias, and rewrite no path or value. The canonical manifest identity SHALL be the SHA-256 digest of its UTF-8 canonical JSON. The worker entry SHALL match only when the worker URL has scheme `chrome-extension`, no query or fragment, a non-empty evaluated `chrome.runtime.id` equal to the URL host, and a pathname exactly equal to `/${packagedManifest.background.service_worker}`. No other Runtime-manifest or entry normalization is authorized.
+
+After the observation fence, the diagnostic SHALL use one finite, non-resetting, maximum 30-second pre-target discovery deadline. It SHALL classify every currently observed extension Service Worker before closing a decision fence. For each worker it SHALL preserve bounded privacy-safe evidence containing monotonic appearance order and relative time, target URL and target/session identity, evaluated Runtime ID, allowlisted `manifest_version`/`name`/`version`/`background` projection, packaged and Runtime canonical digests, and a sorted capped JSON Pointer diff with an explicit overflow marker. Outside the allowlisted projection, differing values SHALL be represented only by JSON type, length, and digest. A per-worker diff overflow SHALL remain non-equal by canonical digest and SHALL NOT block a separate unique exact worker. Total worker-record capacity overflow or an unresolved worker at the deadline SHALL fail closed.
+
+A worker SHALL be an exact candidate only when its URL host and evaluated Runtime ID agree, its entry exactly matches the packaged Service Worker entry, and its Runtime manifest is canonically equal to the packaged manifest. Zero exact candidates SHALL continue observation until the deadline. Zero at the deadline or more than one at any completed decision fence SHALL produce `extension-setup-failed` before accepted-target creation. A fully classified non-exact worker SHALL remain evidence only and SHALL NOT count toward exact cardinality, supply the extension ID, or replace the exact worker.
+
+When one exact candidate exists and every current probe is resolved, the diagnostic SHALL derive the extension ID from that candidate and bind its worker target, session, Runtime ID, entry, and canonical manifest identity. That tuple SHALL remain immutable. A later worker SHALL be classified only within the remaining pre-target deadline before target creation or the remaining lifecycle deadline afterward; it SHALL receive no new budget. A later fully classified unrelated worker MAY remain evidence, but an unresolved later worker, second exact candidate, exact-worker destruction/replacement, or any bound target/session/ID/entry/manifest change SHALL fail closed without rebinding.
+
+#### Scenario: Packaged worker declaration is invalid
+
+- **GIVEN** the packaged manifest is not MV3, has no object-valued `background`, or has an empty or non-string `background.service_worker`
+- **WHEN** package-first discovery begins
+- **THEN** the outcome SHALL be `extension-setup-failed`, no worker ID SHALL be accepted, and no content target SHALL be created
+
+#### Scenario: Foreign worker appears before the exact worker
+
+- **GIVEN** observation first discovers a fully classified worker that does not match the packaged manifest and later discovers one exact candidate within the original pre-target deadline
+- **WHEN** the worker decision fence closes with every current probe resolved
+- **THEN** the foreign worker SHALL remain evidence only and the extension ID SHALL be derived from the sole exact candidate
+
+#### Scenario: Only foreign workers appear
+
+- **GIVEN** every worker observed before the pre-target deadline is fully classified as non-exact
+- **WHEN** the original deadline expires
+- **THEN** the outcome SHALL be `extension-setup-failed`, no accepted target SHALL be created, and no foreign Runtime ID SHALL become authority
+
+#### Scenario: More than one exact worker appears
+
+- **GIVEN** two worker target/session identities both satisfy the exact package relation at a completed decision fence
+- **WHEN** exact-worker cardinality is evaluated
+- **THEN** the outcome SHALL be `extension-setup-failed` rather than choosing the first, newest, or caller-preferred worker
+
+#### Scenario: Worker entry or Runtime ID disagrees
+
+- **GIVEN** a worker manifest matches the packaged manifest but its URL entry differs from the packaged `background.service_worker`, or its evaluated Runtime ID differs from the URL host
+- **WHEN** the worker is classified
+- **THEN** it SHALL NOT be exact and SHALL NOT supply extension identity
+
+#### Scenario: Manifest object key order differs
+
+- **GIVEN** the packaged and worker-evaluated manifests contain exactly the same fields, arrays, and primitive values but their object keys are ordered differently
+- **WHEN** their canonical identities are compared
+- **THEN** they SHALL compare equal because object-key order is the sole authorized normalization
+
+#### Scenario: Runtime manifest changes a semantic value
+
+- **GIVEN** the worker-evaluated manifest adds or removes a field, changes a value or array order, inserts a default, resolves an alias, or rewrites a path
+- **WHEN** canonical manifest comparison runs
+- **THEN** the manifests SHALL differ, the bounded JSON-path evidence SHALL be preserved, and no guessed normalization SHALL make the worker exact
+
+#### Scenario: Foreign manifest exceeds the diff-entry cap
+
+- **GIVEN** a foreign worker's canonical manifest digest differs and its sorted JSON-path diff exceeds the per-worker cap while another worker is uniquely exact
+- **WHEN** discovery records the foreign worker
+- **THEN** it SHALL retain the capped diff plus overflow marker, keep that worker non-exact, and SHALL NOT let the foreign evidence replace or block the unique exact binding
+
+#### Scenario: Worker inventory exceeds total evidence capacity
+
+- **GIVEN** observed worker records exceed the fixed total worker-evidence cap before accepted-target creation
+- **WHEN** the diagnostic can no longer preserve a complete discovery inventory
+- **THEN** the outcome SHALL be `extension-setup-failed`, no accepted target SHALL be created, and no partial inventory SHALL authorize action
+
+#### Scenario: Unrelated worker appears after binding
+
+- **GIVEN** one exact worker is bound and a later worker is fully classified as non-exact
+- **WHEN** worker continuity is checked
+- **THEN** the later worker SHALL remain evidence only and SHALL NOT invalidate or replace the exact binding
+
+#### Scenario: Exact worker is replaced after binding
+
+- **GIVEN** the bound exact worker disappears, another exact candidate appears, or the bound target/session/ID/entry/manifest tuple changes
+- **WHEN** continuity is checked before terminal authorization
+- **THEN** the diagnostic SHALL fail closed and SHALL NOT rebind or authorize native action
+
 ### Requirement: Chrome lifecycle observation precedes the accepted content target
 
 The Chrome MV3 native-action diagnostic SHALL start an owned isolated-profile browser with `about:blank` as its only startup page and the exact unpacked production package. It SHALL establish target discovery, flattened auto-attach, Runtime execution-context, console, exception, Page navigation/lifecycle, and bounded DOM observation before it creates any manifest-accepted HTTPS target.
 
-Before target creation, the diagnostic SHALL bind exactly one responsive Service Worker for the exact extension. The worker URL origin and worker-evaluated `chrome.runtime.id` SHALL identify the same extension, and the diagnostic SHALL compare `chrome.runtime.getManifest()` with the packaged manifest through canonical structured deep equality. It SHALL then issue exactly one planned `Target.createTarget({ url: 'https://example.com/' })` request. It SHALL NOT adopt an accepted startup page, call `Page.navigate`, create a replacement accepted target, refresh, reload, retry, or repair a failed target.
+Before target creation, the diagnostic SHALL complete package-first discovery, derive the extension ID from one exact worker, bind its immutable target/session/ID/entry/manifest tuple, and establish the worker continuity observer. It SHALL then issue exactly one planned `Target.createTarget({ url: 'https://example.com/' })` request. It SHALL NOT adopt an accepted startup page, call `Page.navigate`, create a replacement accepted target, refresh, reload, retry, or repair a failed target.
 
 #### Scenario: Establish observation before navigation
 
@@ -20,17 +98,19 @@ Before target creation, the diagnostic SHALL bind exactly one responsive Service
 
 #### Scenario: Exact extension setup is unavailable
 
-- **GIVEN** the worker is missing, duplicated, foreign, unresponsive, or inconsistent with the packaged manifest
+- **GIVEN** packaged-manifest validation, worker evidence, or unique exact selection is unavailable or contradictory before target creation
 - **WHEN** pre-target verification runs
 - **THEN** the outcome SHALL be `extension-setup-failed`, no accepted target SHALL be created, and native action authorization SHALL remain withheld
 
 ### Requirement: One exact binding owns all content lifecycle evidence
 
-The diagnostic SHALL bind the candidate exact, production-package digest, owned profile and process generation, browser identity, extension ID, Service Worker target/session, normalized manifest identity, exact accepted URL, page target/session/main frame, and one absolute lifecycle deadline. All later context, log, navigation, DOM, and action-authorization evidence SHALL refer to that same binding.
+The diagnostic SHALL bind the candidate exact, production-package digest, packaged worker entry and canonical manifest digest, owned profile and process generation, browser identity, derived extension ID, Service Worker target/session/entry/Runtime-manifest digest, completed worker decision fence, exact accepted URL, page target/session/main frame, and one absolute lifecycle deadline. All later worker, context, log, navigation, DOM, and action-authorization evidence SHALL refer to that same binding.
 
 An extension isolated context SHALL count only when its target, session, main frame, and extension origin match the binding. A worker, options page, host main world, foreign extension, unrelated page, destroyed target, replacement target, or prior process context SHALL NOT satisfy content injection.
 
 The accepted-target lifecycle SHALL use one non-resetting maximum 30-second budget beginning with the sole `Target.createTarget` request. Attach, navigation, isolated-context, Runtime signal, and DOM phases SHALL consume that same budget.
+
+The pre-target worker deadline and accepted-target lifecycle deadline SHALL each be single absolute budgets. Worker arrival SHALL NOT reset discovery time, and later lifecycle phases SHALL NOT borrow a new worker-discovery budget or extend the target budget.
 
 #### Scenario: Page-bound extension context appears
 
@@ -53,6 +133,8 @@ The accepted-target lifecycle SHALL use one non-resetting maximum 30-second budg
 ### Requirement: The diagnostic preserves a bounded ordered evidence timeline
 
 The diagnostic SHALL record a monotonic event timeline from the completed pre-target observation fence through one terminal outcome. The timeline SHALL include worker/manifest verification, target lifecycle, main-frame navigation, page lifecycle, execution-context creation/destruction, normalized console calls and exceptions, bounded structural DOM samples, and an unconditional terminal DOM-sample attempt that records either the final structure or why the bound target could not be sampled.
+
+Worker evidence SHALL include every observed candidate's bounded discovery/probe/manifest/diff record and every post-bind continuity event. It SHALL preserve the first mismatch rather than retaining only a final equality boolean. Raw manifest values outside `manifest_version`, `name`, `version`, and `background` SHALL NOT be captured; their diff entries SHALL contain only JSON path, type, length, and digest.
 
 DOM samples SHALL be limited to the bound URL, document readiness, body presence, shadow host/root counts, extension-shadow `#root` count, and Runtime-unavailable marker state where observable. The diagnostic SHALL NOT capture arbitrary HTML/text, cookies, storage, credentials, or user data. Console and exception values SHALL be normalized and bounded. Missing final evidence, serialization failure, event overflow, or contradictory identities SHALL fail closed rather than be truncated or ignored into PASS.
 
@@ -80,7 +162,7 @@ The diagnostic MAY claim complete observation only after its explicit listener/s
 
 The diagnostic SHALL emit exactly one terminal outcome:
 
-- `extension-setup-failed` for exact worker/manifest failure before target creation;
+- `extension-setup-failed` for packaged-manifest validation, bounded discovery, evidence capacity, unique exact-worker selection, canonical relation, or bound-worker continuity failure;
 - `target-lifecycle-failed` for sole-target creation, attach, navigation, destruction, replacement, or binding failure;
 - `content-context-absent` when no exact page-bound isolated context appears within the lifecycle;
 - `shared-runtime-unavailable` when the exact isolated context exists and reports the product's `Shared runtime unavailable` signal;
@@ -116,7 +198,7 @@ Runtime-unavailable and unexpected-error evidence SHALL take precedence over lat
 
 ### Requirement: Diagnostic support gates but never fabricates the native action
 
-The helper SHALL return native-action authorization only for `mounted`. That authorization SHALL bind the candidate, package, profile, process generation, extension, accepted target/session/frame/context, URL, deadline, and terminal evidence digest. All other outcomes SHALL withhold authorization before a click callback can execute.
+The helper SHALL return native-action authorization only for `mounted`. That authorization SHALL bind the candidate, package, packaged manifest digest/entry, exact worker target/session/ID/entry/Runtime-manifest digest, profile, process generation, accepted target/session/frame/context, URL, deadline, and terminal evidence digest. All other outcomes or any invalidated worker binding SHALL withhold authorization before a click callback can execute.
 
 The helper SHALL NOT click browser chrome, dispatch `chrome.action.onClicked`, invoke `AppAction.openOptionsPage()`, manually open or navigate to options, create a post-failure content target, or represent extension-origin options Runtime as the content control.
 
@@ -144,7 +226,7 @@ Fresh QA MAY perform one real native toolbar action only after authorization. It
 
 The implementation SHALL add only `e2e/chrome-native-action-lifecycle.ts` and `e2e/chrome-native-action-lifecycle.test.ts`, plus checkbox-only progress updates in this change's `tasks.md`. The helper SHALL be dependency-free and driven through an injected test-owned adapter.
 
-All existing E2E and Firefox support files, product source, WXT configuration, manifest/permissions, dependencies/lockfile, package scripts, timeouts, Runtime/coordinator/Offscreen/protocol/storage/UI, workflows/CI, reports, release metadata, and Owner checkout SHALL remain unchanged.
+All existing E2E and Firefox support files, product source, WXT configuration, generated manifest/permissions, dependencies/lockfile, package scripts, existing timeouts, Runtime/coordinator/Offscreen/protocol/storage/UI, workflows/CI, reports, release metadata, and Owner checkout SHALL remain unchanged.
 
 #### Scenario: Review direct implementation scope
 
@@ -158,17 +240,23 @@ All existing E2E and Firefox support files, product source, WXT configuration, m
 
 ### Requirement: Acceptance uses fresh exact-bound cross-browser evidence
 
-This docs authority SHALL be a clean sole child of `1b1f6cc61d7de9adc75bca0cc1b3768d90555e04`, and its implementation SHALL be a clean sole child of the docs exact. Only repository bytes transfer from the blocked parent; no static, Firefox, Chrome, action, Runtime, cleanup, Reviewer, or QA verdict transfers.
+This superseding docs authority SHALL be a clean sole child of `8b6d1fb36986df45bd9435ba170b5675273180ff`, and its implementation SHALL be a clean sole child of the superseding docs exact. Blocked `bfdbfa3665a060443175ad54dd7eefb320199e79` SHALL be neither parent nor transferable evidence. Only repository bytes transfer from the docs parent; no QA #287, QA #298, intermediate static, Firefox, Chrome, action, Runtime, cleanup, Reviewer, or QA verdict transfers.
 
-One fresh Reviewer SHALL validate the immutable implementation, deterministic chronology and branch controls, action gate, exact path scope, and protected surfaces. Only after Review PASS, one fresh QA seat SHALL rerun the complete real Chrome MV3 plus Firefox MV2 matrix from zero and own the first terminal verdict and zero-residual cleanup.
+One fresh Reviewer SHALL validate the immutable implementation, package-first identity root, canonical manifest relation, worker evidence/cardinality/continuity, deterministic chronology and branch controls, action gate, exact path scope, and protected surfaces. Only after Review PASS, one fresh QA seat SHALL rerun the complete real Chrome MV3 plus Firefox MV2 matrix from zero and own the first terminal verdict and zero-residual cleanup.
 
-Chrome SHALL use the new `about:blank` observation sequence, create the accepted target once, reach `mounted`, perform one real native action, prove `afterOptionsCount - beforeOptionsCount = 1` and pre/post-action content Runtime on the same target, preserve the full diagnostic artifact, and report no unexpected error. Firefox SHALL rerun initial startup and two same-profile owned-process restarts under all existing exact action, Runtime, identity, and cleanup requirements.
+Chrome SHALL use the new `about:blank` observation sequence, preserve bounded evidence for every worker, derive the extension ID only from one package-matching exact worker, retain its continuity, create the accepted target once, reach `mounted`, perform one real native action, prove `afterOptionsCount - beforeOptionsCount = 1` and pre/post-action content Runtime on the same target, preserve the full diagnostic artifact, and report no unexpected error. Firefox SHALL rerun initial startup and two same-profile owned-process restarts under all existing exact action, Runtime, identity, and cleanup requirements.
 
 #### Scenario: Prior Firefox PASS exists
 
 - **GIVEN** QA task #287 completed all three Firefox generations on `1b1f6cc`
 - **WHEN** the new implementation exact enters QA
 - **THEN** that result SHALL remain diagnostic history and the fresh QA seat SHALL rerun every Firefox generation from zero
+
+#### Scenario: Prior Chrome worker evidence exists
+
+- **GIVEN** QA task #298 stopped on `bfdbfa3` after selecting a non-package worker and retained no evaluated manifest diff
+- **WHEN** the superseding implementation enters QA
+- **THEN** the prior equality failure SHALL remain diagnostic history and fresh QA SHALL reproduce package-first discovery and the complete worker evidence from zero
 
 #### Scenario: Chrome diagnostic passes but action does not
 
