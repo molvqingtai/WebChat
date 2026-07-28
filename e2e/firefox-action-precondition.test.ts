@@ -20,7 +20,6 @@ const context: FirefoxActionContext = {
 }
 
 const ordinaryTab = (handle: string, url = 'about:blank', active = false, testOwned = true): FirefoxActionTab => ({
-  handle,
   identity: `physical:${handle}`,
   url,
   kind: 'ordinary',
@@ -29,7 +28,6 @@ const ordinaryTab = (handle: string, url = 'about:blank', active = false, testOw
 })
 
 const optionsTab = (handle: string, active = false): FirefoxActionTab => ({
-  handle,
   identity: `physical:${handle}`,
   url: 'moz-extension://exact-addon/options.html',
   kind: 'options',
@@ -37,24 +35,91 @@ const optionsTab = (handle: string, active = false): FirefoxActionTab => ({
   active
 })
 
+type HandleOperation = 'navigate' | 'runtime' | 'activate'
+
+type OperationSideEffect =
+  | { readonly operation: HandleOperation; readonly kind: 'create' }
+  | { readonly operation: HandleOperation; readonly kind: 'replace'; readonly identity: string }
+  | { readonly operation: HandleOperation; readonly kind: 'change-classification'; readonly identity: string }
+
 class FakeFirefoxAdapter implements FirefoxActionPreconditionAdapter {
   tabs: FirefoxActionTab[]
-  readonly runtimeReady = new Set<string>()
+  readonly baseHandles = new Map<string, string>()
+  readonly redirectedHandleIdentities = new Map<string, string>()
+  readonly runtimeReadyIdentities = new Set<string>()
   readonly runtimeChecks: string[] = []
+  readonly handleRequests: string[] = []
+  readonly operationTrace: string[] = []
   readonly createdHandles: string[] = []
+  readonly nonActivatingLookups = new Set<string>()
+  currentHandleToken: string | undefined
+  lookupActiveIdentities: readonly string[] | undefined
+  private currentCapability: { identity: string; handle: string } | undefined
+  private capabilitySequence = 0
   nativeClicks = 0
   allowCreate = true
   allowNavigation = true
   activateWorks = true
   runtimeReadyAfterNavigation = true
+  lookupCreatesPhysicalTab = false
+  lookupChangesClassification = false
+  operationSideEffect: OperationSideEffect | undefined
+  readonly appliedOperationSideEffects: OperationSideEffect[] = []
 
   constructor(tabs: readonly FirefoxActionTab[], readyHandles: readonly string[] = []) {
     this.tabs = tabs.map((tab) => ({ ...tab }))
-    readyHandles.forEach((handle) => this.runtimeReady.add(handle))
+    this.tabs.forEach((tab) => this.baseHandles.set(tab.identity, tab.identity.replace(/^physical:/, '')))
+    readyHandles.forEach((handle) => this.runtimeReadyIdentities.add(`physical:${handle}`))
   }
 
   async listTabs() {
     return this.tabs.map((tab) => ({ ...tab }))
+  }
+
+  async getCurrentHandle(identity: string) {
+    const requestedTab = this.tabs.find((tab) => tab.identity === identity)
+    const currentIdentity = this.redirectedHandleIdentities.get(identity) ?? identity
+    const baseHandle = this.baseHandles.get(currentIdentity)
+    if (!requestedTab || !baseHandle) {
+      throw new Error(`Unknown physical tab identity: ${identity}`)
+    }
+
+    this.handleRequests.push(identity)
+    this.operationTrace.push(`lookup:${currentIdentity}`)
+
+    if (this.lookupCreatesPhysicalTab) {
+      this.lookupCreatesPhysicalTab = false
+      const sideEffect = ordinaryTab('lookup-side-effect')
+      this.tabs.push(sideEffect)
+      this.baseHandles.set(sideEffect.identity, 'lookup-side-effect')
+    }
+
+    if (this.lookupChangesClassification) {
+      this.lookupChangesClassification = false
+      this.tabs = this.tabs.map((tab) =>
+        tab.identity === identity
+          ? {
+              ...tab,
+              url: 'moz-extension://exact-addon/options.html',
+              kind: 'options'
+            }
+          : tab
+      )
+    }
+
+    const handle = this.currentHandleToken ?? `${baseHandle}@${++this.capabilitySequence}`
+    this.currentCapability = { identity: currentIdentity, handle }
+
+    if (this.lookupActiveIdentities !== undefined) {
+      this.tabs = this.tabs.map((candidate) => ({
+        ...candidate,
+        active: this.lookupActiveIdentities?.includes(candidate.identity) ?? false
+      }))
+    } else if (!this.nonActivatingLookups.has(identity)) {
+      this.tabs = this.tabs.map((tab) => ({ ...tab, active: tab.identity === currentIdentity }))
+    }
+
+    return { identity: currentIdentity, handle }
   }
 
   async createTab() {
@@ -62,32 +127,47 @@ class FakeFirefoxAdapter implements FirefoxActionPreconditionAdapter {
     this.createdHandles.push(handle)
 
     if (this.allowCreate) {
-      this.tabs = this.tabs.map((tab) => ({ ...tab, active: false })).concat(ordinaryTab(handle, 'about:blank', true))
+      const tab = ordinaryTab(handle, 'about:blank', true)
+      this.baseHandles.set(tab.identity, handle)
+      this.tabs = this.tabs.map((tab) => ({ ...tab, active: false })).concat(tab)
     }
 
-    return handle
+    this.currentCapability = undefined
+    return `physical:${handle}`
   }
 
   async navigateTab(handle: string, target: string) {
-    if (!this.allowNavigation) {
+    const identity = this.consumeCapability(handle, 'navigate')
+    if (!identity || !this.allowNavigation) {
       return
     }
 
-    this.tabs = this.tabs.map((tab) => (tab.handle === handle ? { ...tab, url: target, kind: 'ordinary' } : tab))
+    this.tabs = this.tabs.map((tab) => (tab.identity === identity ? { ...tab, url: target, kind: 'ordinary' } : tab))
 
     if (this.runtimeReadyAfterNavigation) {
-      this.runtimeReady.add(handle)
+      this.runtimeReadyIdentities.add(identity)
     }
+
+    this.applyOperationSideEffect('navigate')
   }
 
   async isContentRuntimeReady(handle: string) {
     this.runtimeChecks.push(handle)
-    return this.runtimeReady.has(handle)
+    const identity = this.consumeCapability(handle, 'runtime')
+    const ready = identity ? this.runtimeReadyIdentities.has(identity) : false
+    if (identity) {
+      this.applyOperationSideEffect('runtime')
+    }
+    return ready
   }
 
   async activateTab(handle: string) {
-    if (this.activateWorks) {
-      this.tabs = this.tabs.map((tab) => ({ ...tab, active: tab.handle === handle }))
+    const identity = this.consumeCapability(handle, 'activate')
+    if (identity && this.activateWorks) {
+      this.tabs = this.tabs.map((tab) => ({ ...tab, active: tab.identity === identity }))
+    }
+    if (identity) {
+      this.applyOperationSideEffect('activate')
     }
   }
 
@@ -97,31 +177,117 @@ class FakeFirefoxAdapter implements FirefoxActionPreconditionAdapter {
 
   clickNativeAction() {
     this.nativeClicks += 1
+    this.currentCapability = undefined
     this.tabs = this.tabs.map((tab) =>
       tab.active && tab.kind === 'ordinary'
-        ? { ...optionsTab(tab.handle, true), identity: tab.identity, testOwned: tab.testOwned }
+        ? {
+            ...tab,
+            url: 'moz-extension://exact-addon/options.html',
+            kind: 'options'
+          }
         : tab
     )
   }
 
-  replaceBoundContentAfterAction(handle: string) {
+  replaceBoundContentAfterAction(identity: string) {
     this.nativeClicks += 1
+    const replacement = ordinaryTab('post-action-repair', context.acceptedTarget, false)
+    this.baseHandles.set(replacement.identity, 'post-action-repair')
     this.tabs = this.tabs
-      .map((tab) => (tab.handle === handle ? { ...optionsTab(handle, false), identity: tab.identity } : tab))
-      .concat(ordinaryTab('post-action-repair', context.acceptedTarget, false))
-    this.runtimeReady.add('post-action-repair')
+      .map((tab) =>
+        tab.identity === identity
+          ? {
+              ...tab,
+              url: 'moz-extension://exact-addon/options.html',
+              kind: 'options' as const,
+              active: false
+            }
+          : tab
+      )
+      .concat(replacement)
+    this.runtimeReadyIdentities.add(replacement.identity)
+    this.currentCapability = undefined
   }
 
-  remapMarionetteHandle(handle: string, remappedHandle: string) {
-    this.tabs = this.tabs.map((tab) => (tab.handle === handle ? { ...tab, handle: remappedHandle } : tab))
+  remapMarionetteHandle(identity: string, remappedHandle: string) {
+    this.baseHandles.set(identity, remappedHandle)
+    this.currentCapability = undefined
+  }
 
-    if (this.runtimeReady.delete(handle)) {
-      this.runtimeReady.add(remappedHandle)
-    }
+  invalidateHandleWithoutChangingPhysicalInventory(identity: string, currentHandle: string) {
+    this.baseHandles.set(identity, currentHandle)
+    this.currentCapability = undefined
+  }
+
+  redirectCurrentHandle(identity: string, currentIdentity: string) {
+    this.redirectedHandleIdentities.set(identity, currentIdentity)
+  }
+
+  dropCurrentHandle(identity: string) {
+    this.baseHandles.delete(identity)
   }
 
   acceptedContentHandles(target = context.acceptedTarget) {
-    return this.tabs.filter((tab) => tab.kind === 'ordinary' && tab.url === target).map((tab) => tab.handle)
+    return this.tabs
+      .filter((tab) => tab.kind === 'ordinary' && tab.url === target)
+      .map((tab) => this.requireBaseHandle(tab.identity))
+  }
+
+  private applyOperationSideEffect(operation: HandleOperation) {
+    const sideEffect = this.operationSideEffect
+    if (!sideEffect || sideEffect.operation !== operation) {
+      return
+    }
+
+    this.operationSideEffect = undefined
+    this.appliedOperationSideEffects.push(sideEffect)
+
+    if (sideEffect.kind === 'create') {
+      const created = ordinaryTab(`${operation}-side-effect`)
+      this.tabs.push(created)
+      this.baseHandles.set(created.identity, `${operation}-side-effect`)
+      return
+    }
+
+    if (sideEffect.kind === 'replace') {
+      const replacement = ordinaryTab(`${operation}-replacement`)
+      this.tabs = this.tabs.filter((tab) => tab.identity !== sideEffect.identity).concat(replacement)
+      this.baseHandles.delete(sideEffect.identity)
+      this.baseHandles.set(replacement.identity, `${operation}-replacement`)
+      this.runtimeReadyIdentities.delete(sideEffect.identity)
+      return
+    }
+
+    this.tabs = this.tabs.map((tab) =>
+      tab.identity === sideEffect.identity
+        ? {
+            ...tab,
+            url: 'moz-extension://unrelated-addon/options.html',
+            kind: 'options',
+            testOwned: false
+          }
+        : tab
+    )
+  }
+
+  private consumeCapability(handle: string, operation: string) {
+    if (!this.currentCapability || this.currentCapability.handle !== handle) {
+      return undefined
+    }
+
+    const { identity } = this.currentCapability
+    this.currentCapability = undefined
+    this.operationTrace.push(`${operation}:${identity}`)
+    return identity
+  }
+
+  private requireBaseHandle(identity: string) {
+    const handle = this.baseHandles.get(identity)
+    if (!handle) {
+      throw new Error(`No Marionette handle for physical tab identity: ${identity}`)
+    }
+
+    return handle
   }
 }
 
@@ -153,17 +319,17 @@ describe('Firefox action precondition', () => {
 
     expect(binding).toMatchObject({
       ...context,
-      contentHandle: 'created-1',
+      contentHandle: expect.stringMatching(/^created-1@/),
       contentIdentity: 'physical:created-1',
-      actionRecipientHandle: 'recipient',
+      actionRecipientHandle: expect.stringMatching(/^recipient@/),
       actionRecipientIdentity: 'physical:recipient',
       authorizedBeforeNativeAction: true
     })
     expect(adapter.createdHandles).toEqual(['created-1'])
     expect(binding.preActionTabs).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ handle: 'created-1', active: false }),
-        expect.objectContaining({ handle: 'recipient', active: true })
+        expect.objectContaining({ identity: 'physical:created-1', active: false }),
+        expect.objectContaining({ identity: 'physical:recipient', active: true })
       ])
     )
   })
@@ -173,11 +339,11 @@ describe('Firefox action precondition', () => {
 
     const binding = await prepareFirefoxActionPrecondition(adapter, context)
 
-    expect(binding.contentHandle).toBe('content')
-    expect(binding.actionRecipientHandle).toBe('created-1')
+    expect(binding.contentHandle).toMatch(/^content@/)
+    expect(binding.actionRecipientHandle).toMatch(/^created-1@/)
     expect(adapter.createdHandles).toEqual(['created-1'])
-    expect(binding.preActionTabs.find((tab) => tab.handle === 'content')?.active).toBe(false)
-    expect(binding.preActionTabs.find((tab) => tab.handle === 'created-1')?.active).toBe(true)
+    expect(binding.preActionTabs.find((tab) => tab.identity === 'physical:content')?.active).toBe(false)
+    expect(binding.preActionTabs.find((tab) => tab.identity === 'physical:created-1')?.active).toBe(true)
   })
 
   it('preserves an existing topology and excludes options handles', async () => {
@@ -188,11 +354,11 @@ describe('Firefox action precondition', () => {
 
     const binding = await prepareFirefoxActionPrecondition(adapter, context)
 
-    expect(binding.contentHandle).toBe('content')
-    expect(binding.actionRecipientHandle).toBe('recipient')
+    expect(binding.contentHandle).toMatch(/^content@/)
+    expect(binding.actionRecipientHandle).toMatch(/^recipient@/)
     expect(adapter.createdHandles).toEqual([])
-    expect([binding.contentHandle, binding.actionRecipientHandle]).not.toContain('options')
-    expect(binding.preActionTabs.find((tab) => tab.handle === 'options')?.kind).toBe('options')
+    expect([binding.contentIdentity, binding.actionRecipientIdentity]).not.toContain('physical:options')
+    expect(binding.preActionTabs.find((tab) => tab.identity === 'physical:options')?.kind).toBe('options')
   })
 
   it('rejects ambiguous physical tab identities before action', async () => {
@@ -249,6 +415,82 @@ describe('Firefox action precondition', () => {
     expect(adapter.createdHandles).toEqual([])
   })
 
+  it('rejects a successful preparation Runtime check that creates an unrelated physical tab', async () => {
+    const adapter = new FakeFirefoxAdapter(
+      [ordinaryTab('content', context.acceptedTarget, false), ordinaryTab('recipient', 'about:blank', true)],
+      ['content']
+    )
+    adapter.operationSideEffect = { operation: 'runtime', kind: 'create' }
+
+    await expectCode(prepareFirefoxActionPrecondition(adapter, context), 'accepted-content-unavailable')
+    expect(adapter.appliedOperationSideEffects).toEqual([{ operation: 'runtime', kind: 'create' }])
+    expect(adapter.operationTrace.slice(-2)).toEqual(['lookup:physical:content', 'runtime:physical:content'])
+    expect(adapter.tabs.some((tab) => tab.identity === 'physical:runtime-side-effect')).toBe(true)
+  })
+
+  it('rejects a successful recipient activation that replaces an unrelated physical tab', async () => {
+    const adapter = new FakeFirefoxAdapter(
+      [
+        ordinaryTab('content', context.acceptedTarget, false),
+        ordinaryTab('recipient', 'about:blank', true),
+        ordinaryTab('unrelated')
+      ],
+      ['content']
+    )
+    adapter.operationSideEffect = {
+      operation: 'activate',
+      kind: 'replace',
+      identity: 'physical:unrelated'
+    }
+
+    await expectCode(prepareFirefoxActionPrecondition(adapter, context), 'invalid-binding')
+    expect(adapter.appliedOperationSideEffects).toHaveLength(1)
+    expect(adapter.operationTrace.slice(-2)).toEqual(['lookup:physical:recipient', 'activate:physical:recipient'])
+    expect(adapter.tabs.some((tab) => tab.identity === 'physical:unrelated')).toBe(false)
+    expect(adapter.tabs.some((tab) => tab.identity === 'physical:activate-replacement')).toBe(true)
+  })
+
+  it('rejects a correct navigation that changes unrelated security classification', async () => {
+    const adapter = new FakeFirefoxAdapter([
+      ordinaryTab('recipient', 'about:blank', true),
+      ordinaryTab('content-candidate'),
+      ordinaryTab('unrelated')
+    ])
+    adapter.operationSideEffect = {
+      operation: 'navigate',
+      kind: 'change-classification',
+      identity: 'physical:unrelated'
+    }
+
+    await expectCode(prepareFirefoxActionPrecondition(adapter, context), 'accepted-content-unavailable')
+    expect(adapter.appliedOperationSideEffects).toHaveLength(1)
+    expect(adapter.operationTrace.slice(-2)).toEqual([
+      'lookup:physical:content-candidate',
+      'navigate:physical:content-candidate'
+    ])
+    expect(adapter.tabs.find((tab) => tab.identity === 'physical:content-candidate')?.url).toBe(context.acceptedTarget)
+    expect(adapter.tabs.find((tab) => tab.identity === 'physical:unrelated')).toMatchObject({
+      url: 'moz-extension://unrelated-addon/options.html',
+      kind: 'options',
+      testOwned: false
+    })
+  })
+
+  it('rejects a successful post-action Runtime check that creates an unrelated physical tab', async () => {
+    const adapter = new FakeFirefoxAdapter(
+      [ordinaryTab('content', context.acceptedTarget, false), ordinaryTab('recipient', 'about:blank', true)],
+      ['content']
+    )
+    const binding = await prepareFirefoxActionPrecondition(adapter, context)
+    adapter.clickNativeAction()
+    adapter.operationSideEffect = { operation: 'runtime', kind: 'create' }
+
+    await expectCode(assertFirefoxActionBinding(adapter, binding, context), 'invalid-binding')
+    expect(adapter.appliedOperationSideEffects).toEqual([{ operation: 'runtime', kind: 'create' }])
+    expect(adapter.operationTrace.slice(-2)).toEqual(['lookup:physical:content', 'runtime:physical:content'])
+    expect(adapter.tabs.some((tab) => tab.identity === 'physical:runtime-side-effect')).toBe(true)
+  })
+
   it('rejects post-action preparation and an unverified active recipient', async () => {
     const postActionAdapter = new FakeFirefoxAdapter([
       ordinaryTab('content', context.acceptedTarget, false),
@@ -262,6 +504,7 @@ describe('Firefox action precondition', () => {
       ['content']
     )
     inactiveRecipientAdapter.activateWorks = false
+    inactiveRecipientAdapter.nonActivatingLookups.add('physical:recipient')
     await expectCode(prepareFirefoxActionPrecondition(inactiveRecipientAdapter, context), 'invalid-binding')
   })
 
@@ -291,7 +534,14 @@ describe('Firefox action precondition', () => {
     )
     const binding = await prepareFirefoxActionPrecondition(adapter, context)
     expect(adapter.nativeClicks).toBe(0)
-    expect(adapter.runtimeChecks).toEqual(['content', 'content'])
+    expect(adapter.runtimeChecks).toHaveLength(2)
+    expect(adapter.runtimeChecks.every((handle) => handle.startsWith('content@'))).toBe(true)
+    expect(adapter.operationTrace.slice(-4)).toEqual([
+      'lookup:physical:content',
+      'runtime:physical:content',
+      'lookup:physical:recipient',
+      'activate:physical:recipient'
+    ])
     const beforeOptionsCount = adapter.tabs.filter((tab) => tab.kind === 'options').length
 
     adapter.clickNativeAction()
@@ -299,9 +549,10 @@ describe('Firefox action precondition', () => {
     const afterOptionsCount = adapter.tabs.filter((tab) => tab.kind === 'options').length
     expect(adapter.nativeClicks).toBe(1)
     expect(afterOptionsCount - beforeOptionsCount).toBe(1)
-    expect(adapter.tabs.find((tab) => tab.handle === 'recipient')?.kind).toBe('options')
+    expect(adapter.tabs.find((tab) => tab.identity === 'physical:recipient')?.kind).toBe('options')
     await expect(assertFirefoxActionBinding(adapter, binding, context)).resolves.toBeUndefined()
-    expect(adapter.runtimeChecks.at(-1)).toBe('content')
+    expect(adapter.runtimeChecks.at(-1)).toMatch(/^content@/)
+    expect(adapter.operationTrace.slice(-2)).toEqual(['lookup:physical:content', 'runtime:physical:content'])
   })
 
   it('keeps the same physical content when Marionette remaps its handle after action', async () => {
@@ -313,13 +564,107 @@ describe('Firefox action precondition', () => {
     const physicalIdentity = binding.contentIdentity
 
     adapter.clickNativeAction()
-    adapter.remapMarionetteHandle(binding.contentHandle, 'content-after')
+    adapter.remapMarionetteHandle(physicalIdentity, 'content-after')
 
     expect(adapter.createdHandles).toEqual([])
     expect(adapter.acceptedContentHandles()).toEqual(['content-after'])
-    expect(adapter.tabs.find((tab) => tab.handle === 'content-after')?.identity).toBe(physicalIdentity)
+    expect(adapter.tabs.find((tab) => tab.identity === physicalIdentity)?.kind).toBe('ordinary')
     await expect(assertFirefoxActionBinding(adapter, binding, context)).resolves.toBeUndefined()
-    expect(adapter.runtimeChecks.at(-1)).toBe('content-after')
+    expect(adapter.runtimeChecks.at(-1)).toMatch(/^content-after@/)
+  })
+
+  it('rejects current-handle lookup that leaves wrong or multiple active roles', async () => {
+    const invalidActiveSets = [
+      ['physical:unrelated-options'],
+      ['physical:content', 'physical:unrelated-options']
+    ] as const
+
+    for (const activeIdentities of invalidActiveSets) {
+      const adapter = new FakeFirefoxAdapter(
+        [
+          ordinaryTab('content', context.acceptedTarget, false),
+          ordinaryTab('recipient', 'about:blank', true),
+          optionsTab('unrelated-options')
+        ],
+        ['content']
+      )
+      const binding = await prepareFirefoxActionPrecondition(adapter, context)
+
+      adapter.clickNativeAction()
+      adapter.lookupActiveIdentities = activeIdentities
+
+      await expectCode(assertFirefoxActionBinding(adapter, binding, context), 'invalid-binding')
+    }
+  })
+
+  it('rejects a handle lookup that creates another physical tab', async () => {
+    const adapter = new FakeFirefoxAdapter(
+      [ordinaryTab('content', context.acceptedTarget, false), ordinaryTab('recipient', 'about:blank', true)],
+      ['content']
+    )
+    const binding = await prepareFirefoxActionPrecondition(adapter, context)
+
+    adapter.clickNativeAction()
+    adapter.lookupCreatesPhysicalTab = true
+
+    await expectCode(assertFirefoxActionBinding(adapter, binding, context), 'invalid-binding')
+  })
+
+  it('rejects a handle lookup that changes physical tab classification', async () => {
+    const adapter = new FakeFirefoxAdapter(
+      [ordinaryTab('content', context.acceptedTarget, false), ordinaryTab('recipient', 'about:blank', true)],
+      ['content']
+    )
+    const binding = await prepareFirefoxActionPrecondition(adapter, context)
+
+    adapter.clickNativeAction()
+    adapter.lookupChangesClassification = true
+
+    await expectCode(assertFirefoxActionBinding(adapter, binding, context), 'invalid-binding')
+  })
+
+  it('re-resolves a content handle invalidated by another tab operation', async () => {
+    const adapter = new FakeFirefoxAdapter(
+      [ordinaryTab('content', context.acceptedTarget, false), ordinaryTab('recipient', 'about:blank', true)],
+      ['content']
+    )
+    const binding = await prepareFirefoxActionPrecondition(adapter, context)
+
+    adapter.clickNativeAction()
+    adapter.invalidateHandleWithoutChangingPhysicalInventory(binding.contentIdentity, 'content-current')
+
+    await expect(assertFirefoxActionBinding(adapter, binding, context)).resolves.toBeUndefined()
+    expect(adapter.runtimeChecks.at(-1)).toMatch(/^content-current@/)
+    expect(adapter.operationTrace.slice(-2)).toEqual(['lookup:physical:content', 'runtime:physical:content'])
+  })
+
+  it('rejects a current handle that resolves to the options identity', async () => {
+    const adapter = new FakeFirefoxAdapter(
+      [ordinaryTab('content', context.acceptedTarget, false), ordinaryTab('recipient', 'about:blank', true)],
+      ['content', 'recipient']
+    )
+    const binding = await prepareFirefoxActionPrecondition(adapter, context)
+    const runtimeChecksBeforeAction = adapter.runtimeChecks.length
+
+    adapter.clickNativeAction()
+    adapter.redirectCurrentHandle(binding.contentIdentity, binding.actionRecipientIdentity)
+
+    await expectCode(assertFirefoxActionBinding(adapter, binding, context), 'invalid-binding')
+    expect(adapter.runtimeChecks).toHaveLength(runtimeChecksBeforeAction)
+  })
+
+  it('rejects an original physical identity without a current handle', async () => {
+    const adapter = new FakeFirefoxAdapter(
+      [ordinaryTab('content', context.acceptedTarget, false), ordinaryTab('recipient', 'about:blank', true)],
+      ['content']
+    )
+    const binding = await prepareFirefoxActionPrecondition(adapter, context)
+
+    adapter.clickNativeAction()
+    adapter.dropCurrentHandle(binding.contentIdentity)
+
+    await expectCode(assertFirefoxActionBinding(adapter, binding, context), 'invalid-binding')
+    expect(adapter.tabs.find((tab) => tab.identity === binding.contentIdentity)?.kind).toBe('ordinary')
   })
 
   it('rejects a replacement content tab created after the action', async () => {
@@ -329,14 +674,16 @@ describe('Firefox action precondition', () => {
     )
     const binding = await prepareFirefoxActionPrecondition(adapter, context)
 
-    adapter.replaceBoundContentAfterAction(binding.contentHandle)
+    adapter.replaceBoundContentAfterAction(binding.contentIdentity)
 
     expect(adapter.acceptedContentHandles()).toEqual(['post-action-repair'])
-    expect(adapter.tabs.find((tab) => tab.handle === 'post-action-repair')?.identity).not.toBe(binding.contentIdentity)
+    expect(adapter.tabs.find((tab) => tab.identity === 'physical:post-action-repair')?.identity).not.toBe(
+      binding.contentIdentity
+    )
     await expectCode(assertFirefoxActionBinding(adapter, binding, context), 'invalid-binding')
   })
 
-  it('rebinds fresh handles for initial startup and two same-profile restarts', async () => {
+  it('keeps physical identities fresh while diagnostic tokens repeat across restarts', async () => {
     const generations = ['initial', 'restart-1', 'restart-2'] as const
     const records = []
 
@@ -349,14 +696,16 @@ describe('Firefox action precondition', () => {
         ],
         [`${generationId}-content`]
       )
+      adapter.currentHandleToken = 'shared-diagnostic-handle'
       const binding = await prepareFirefoxActionPrecondition(adapter, generationContext)
       await assertFirefoxActionBinding(adapter, binding, generationContext)
       records.push({ adapter, binding, generationContext })
     }
 
-    expect(new Set(records.flatMap(({ binding }) => [binding.contentHandle, binding.actionRecipientHandle])).size).toBe(
-      6
+    expect(new Set(records.flatMap(({ binding }) => [binding.contentHandle, binding.actionRecipientHandle]))).toEqual(
+      new Set(['shared-diagnostic-handle'])
     )
+    expect(records.every(({ binding }) => binding.contentHandle === binding.actionRecipientHandle)).toBe(true)
     expect(
       new Set(records.flatMap(({ binding }) => [binding.contentIdentity, binding.actionRecipientIdentity])).size
     ).toBe(6)
