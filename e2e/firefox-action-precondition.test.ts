@@ -21,6 +21,7 @@ const context: FirefoxActionContext = {
 
 const ordinaryTab = (handle: string, url = 'about:blank', active = false, testOwned = true): FirefoxActionTab => ({
   handle,
+  identity: `physical:${handle}`,
   url,
   kind: 'ordinary',
   testOwned,
@@ -29,6 +30,7 @@ const ordinaryTab = (handle: string, url = 'about:blank', active = false, testOw
 
 const optionsTab = (handle: string, active = false): FirefoxActionTab => ({
   handle,
+  identity: `physical:${handle}`,
   url: 'moz-extension://exact-addon/options.html',
   kind: 'options',
   testOwned: true,
@@ -71,9 +73,7 @@ class FakeFirefoxAdapter implements FirefoxActionPreconditionAdapter {
       return
     }
 
-    this.tabs = this.tabs.map((tab) =>
-      tab.handle === handle ? ordinaryTab(handle, target, tab.active, tab.testOwned) : tab
-    )
+    this.tabs = this.tabs.map((tab) => (tab.handle === handle ? { ...tab, url: target, kind: 'ordinary' } : tab))
 
     if (this.runtimeReadyAfterNavigation) {
       this.runtimeReady.add(handle)
@@ -98,16 +98,26 @@ class FakeFirefoxAdapter implements FirefoxActionPreconditionAdapter {
   clickNativeAction() {
     this.nativeClicks += 1
     this.tabs = this.tabs.map((tab) =>
-      tab.active && tab.kind === 'ordinary' ? { ...optionsTab(tab.handle, true), testOwned: tab.testOwned } : tab
+      tab.active && tab.kind === 'ordinary'
+        ? { ...optionsTab(tab.handle, true), identity: tab.identity, testOwned: tab.testOwned }
+        : tab
     )
   }
 
   replaceBoundContentAfterAction(handle: string) {
     this.nativeClicks += 1
     this.tabs = this.tabs
-      .map((tab) => (tab.handle === handle ? optionsTab(handle, false) : tab))
+      .map((tab) => (tab.handle === handle ? { ...optionsTab(handle, false), identity: tab.identity } : tab))
       .concat(ordinaryTab('post-action-repair', context.acceptedTarget, false))
     this.runtimeReady.add('post-action-repair')
+  }
+
+  remapMarionetteHandle(handle: string, remappedHandle: string) {
+    this.tabs = this.tabs.map((tab) => (tab.handle === handle ? { ...tab, handle: remappedHandle } : tab))
+
+    if (this.runtimeReady.delete(handle)) {
+      this.runtimeReady.add(remappedHandle)
+    }
   }
 
   acceptedContentHandles(target = context.acceptedTarget) {
@@ -144,7 +154,9 @@ describe('Firefox action precondition', () => {
     expect(binding).toMatchObject({
       ...context,
       contentHandle: 'created-1',
+      contentIdentity: 'physical:created-1',
       actionRecipientHandle: 'recipient',
+      actionRecipientIdentity: 'physical:recipient',
       authorizedBeforeNativeAction: true
     })
     expect(adapter.createdHandles).toEqual(['created-1'])
@@ -181,6 +193,19 @@ describe('Firefox action precondition', () => {
     expect(adapter.createdHandles).toEqual([])
     expect([binding.contentHandle, binding.actionRecipientHandle]).not.toContain('options')
     expect(binding.preActionTabs.find((tab) => tab.handle === 'options')?.kind).toBe('options')
+  })
+
+  it('rejects ambiguous physical tab identities before action', async () => {
+    const adapter = new FakeFirefoxAdapter(
+      [
+        { ...ordinaryTab('content', context.acceptedTarget, false), identity: 'physical:duplicate' },
+        { ...ordinaryTab('recipient', 'about:blank', true), identity: 'physical:duplicate' }
+      ],
+      ['content']
+    )
+
+    await expectCode(prepareFirefoxActionPrecondition(adapter, context), 'invalid-binding')
+    expect(adapter.nativeClicks).toBe(0)
   })
 
   it('rejects an extension target and unavailable accepted target', async () => {
@@ -279,6 +304,24 @@ describe('Firefox action precondition', () => {
     expect(adapter.runtimeChecks.at(-1)).toBe('content')
   })
 
+  it('keeps the same physical content when Marionette remaps its handle after action', async () => {
+    const adapter = new FakeFirefoxAdapter(
+      [ordinaryTab('content-before', context.acceptedTarget, false), ordinaryTab('recipient', 'about:blank', true)],
+      ['content-before']
+    )
+    const binding = await prepareFirefoxActionPrecondition(adapter, context)
+    const physicalIdentity = binding.contentIdentity
+
+    adapter.clickNativeAction()
+    adapter.remapMarionetteHandle(binding.contentHandle, 'content-after')
+
+    expect(adapter.createdHandles).toEqual([])
+    expect(adapter.acceptedContentHandles()).toEqual(['content-after'])
+    expect(adapter.tabs.find((tab) => tab.handle === 'content-after')?.identity).toBe(physicalIdentity)
+    await expect(assertFirefoxActionBinding(adapter, binding, context)).resolves.toBeUndefined()
+    expect(adapter.runtimeChecks.at(-1)).toBe('content-after')
+  })
+
   it('rejects a replacement content tab created after the action', async () => {
     const adapter = new FakeFirefoxAdapter(
       [ordinaryTab('content', context.acceptedTarget, false), ordinaryTab('recipient', 'about:blank', true)],
@@ -289,6 +332,7 @@ describe('Firefox action precondition', () => {
     adapter.replaceBoundContentAfterAction(binding.contentHandle)
 
     expect(adapter.acceptedContentHandles()).toEqual(['post-action-repair'])
+    expect(adapter.tabs.find((tab) => tab.handle === 'post-action-repair')?.identity).not.toBe(binding.contentIdentity)
     await expectCode(assertFirefoxActionBinding(adapter, binding, context), 'invalid-binding')
   })
 
@@ -313,6 +357,9 @@ describe('Firefox action precondition', () => {
     expect(new Set(records.flatMap(({ binding }) => [binding.contentHandle, binding.actionRecipientHandle])).size).toBe(
       6
     )
+    expect(
+      new Set(records.flatMap(({ binding }) => [binding.contentIdentity, binding.actionRecipientIdentity])).size
+    ).toBe(6)
     expect(records.map(({ binding }) => binding.profileId)).toEqual([
       context.profileId,
       context.profileId,

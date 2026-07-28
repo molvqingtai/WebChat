@@ -10,6 +10,8 @@ export const FIREFOX_ACTION_ADDON_ID = 'molvqingtai@gmail.com'
 
 export interface FirefoxActionTab {
   readonly handle: string
+  /** Stable for the same physical tab within one process generation. */
+  readonly identity: string
   readonly url: string
   readonly kind: 'ordinary' | 'options'
   readonly testOwned: boolean
@@ -27,7 +29,9 @@ export interface FirefoxActionPreconditionAdapter {
 
 export interface FirefoxActionBinding extends FirefoxActionContext {
   readonly contentHandle: string
+  readonly contentIdentity: string
   readonly actionRecipientHandle: string
+  readonly actionRecipientIdentity: string
   readonly authorizedBeforeNativeAction: true
   readonly preActionTabs: readonly FirefoxActionTab[]
 }
@@ -93,8 +97,32 @@ const assertBeforeNativeAction = async (adapter: FirefoxActionPreconditionAdapte
   }
 }
 
-const readTabs = async (adapter: FirefoxActionPreconditionAdapter): Promise<FirefoxActionTab[]> =>
-  (await adapter.listTabs()).map((tab) => ({ ...tab }))
+const assertUniqueTabs = (tabs: readonly FirefoxActionTab[]): void => {
+  const handles = new Set<string>()
+  const identities = new Set<string>()
+
+  for (const tab of tabs) {
+    if (
+      typeof tab.handle !== 'string' ||
+      tab.handle.trim() === '' ||
+      handles.has(tab.handle) ||
+      typeof tab.identity !== 'string' ||
+      tab.identity.trim() === '' ||
+      identities.has(tab.identity)
+    ) {
+      fail('invalid-binding', 'Firefox action tabs require unique handles and physical identities')
+    }
+
+    handles.add(tab.handle)
+    identities.add(tab.identity)
+  }
+}
+
+const readTabs = async (adapter: FirefoxActionPreconditionAdapter): Promise<FirefoxActionTab[]> => {
+  const tabs = (await adapter.listTabs()).map((tab) => ({ ...tab }))
+  assertUniqueTabs(tabs)
+  return tabs
+}
 
 const isOwnedOrdinary = (tab: FirefoxActionTab): boolean => tab.testOwned && tab.kind === 'ordinary'
 
@@ -108,6 +136,16 @@ const requireTab = (
   message: string
 ): FirefoxActionTab => {
   const tab = tabs.find((candidate) => candidate.handle === handle)
+  return tab ?? fail(code, message)
+}
+
+const requireIdentity = (
+  tabs: readonly FirefoxActionTab[],
+  identity: string,
+  code: FirefoxActionPreconditionErrorCode,
+  message: string
+): FirefoxActionTab => {
+  const tab = tabs.find((candidate) => candidate.identity === identity)
   return tab ?? fail(code, message)
 }
 
@@ -182,14 +220,14 @@ export async function prepareFirefoxActionPrecondition(
   let actionRecipient: FirefoxActionTab | undefined
 
   if (content) {
-    const contentHandle = content.handle
-    actionRecipient = ordinaryTabs.find((tab) => tab.handle !== contentHandle)
+    const contentIdentity = content.identity
+    actionRecipient = ordinaryTabs.find((tab) => tab.identity !== contentIdentity)
   } else {
     actionRecipient = firstOrdinary
   }
 
   if (!content) {
-    let contentCandidate = ordinaryTabs.find((tab) => tab.handle !== actionRecipient?.handle)
+    let contentCandidate = ordinaryTabs.find((tab) => tab.identity !== actionRecipient?.identity)
 
     if (!contentCandidate) {
       const created = await createOwnedOrdinaryTab(adapter)
@@ -210,14 +248,15 @@ export async function prepareFirefoxActionPrecondition(
     }
 
     await assertBeforeNativeAction(adapter)
+    const contentIdentity = contentCandidate.identity
     await adapter.navigateTab(contentCandidate.handle, context.acceptedTarget)
     await assertBeforeNativeAction(adapter)
     tabs = await readTabs(adapter)
-    content = requireTab(
+    content = requireIdentity(
       tabs,
-      contentCandidate.handle,
+      contentIdentity,
       'accepted-content-unavailable',
-      'Firefox action accepted content handle was lost during preparation'
+      'Firefox action accepted content identity was lost during preparation'
     )
 
     if (!isAcceptedContent(content, context)) {
@@ -228,8 +267,8 @@ export async function prepareFirefoxActionPrecondition(
       fail('content-runtime-unready', 'Firefox action accepted content Runtime is not ready before native activation')
     }
 
-    const contentHandle = content.handle
-    actionRecipient = tabs.find((tab) => isOwnedOrdinary(tab) && tab.handle !== contentHandle)
+    const preparedContentIdentity = content.identity
+    actionRecipient = tabs.find((tab) => isOwnedOrdinary(tab) && tab.identity !== preparedContentIdentity)
   }
 
   if (!content) {
@@ -247,7 +286,7 @@ export async function prepareFirefoxActionPrecondition(
     )
   }
 
-  if (content.handle === actionRecipient.handle) {
+  if (content.handle === actionRecipient.handle || content.identity === actionRecipient.identity) {
     fail('missing-independent-content-control', 'Firefox action content and action-recipient handles must be distinct')
   }
 
@@ -256,17 +295,17 @@ export async function prepareFirefoxActionPrecondition(
   await assertBeforeNativeAction(adapter)
   tabs = await readTabs(adapter)
 
-  const preparedContent = requireTab(
+  const preparedContent = requireIdentity(
     tabs,
-    content.handle,
+    content.identity,
     'invalid-binding',
-    'Firefox action content handle became stale before native activation'
+    'Firefox action content identity became stale before native activation'
   )
-  const preparedRecipient = requireTab(
+  const preparedRecipient = requireIdentity(
     tabs,
-    actionRecipient.handle,
+    actionRecipient.identity,
     'invalid-binding',
-    'Firefox action recipient handle became stale before native activation'
+    'Firefox action recipient identity became stale before native activation'
   )
 
   if (!isAcceptedContent(preparedContent, context) || preparedContent.active) {
@@ -286,7 +325,9 @@ export async function prepareFirefoxActionPrecondition(
   return Object.freeze({
     ...context,
     contentHandle: preparedContent.handle,
+    contentIdentity: preparedContent.identity,
     actionRecipientHandle: preparedRecipient.handle,
+    actionRecipientIdentity: preparedRecipient.identity,
     authorizedBeforeNativeAction: true,
     preActionTabs: Object.freeze(tabs.map((tab) => Object.freeze({ ...tab })))
   })
@@ -305,22 +346,35 @@ export async function assertFirefoxActionBinding(
 
   assertContext(context)
 
-  if (binding.authorizedBeforeNativeAction !== true || binding.contentHandle === binding.actionRecipientHandle) {
+  if (
+    binding.authorizedBeforeNativeAction !== true ||
+    binding.contentHandle === binding.actionRecipientHandle ||
+    binding.contentIdentity === binding.actionRecipientIdentity
+  ) {
     fail('invalid-binding', 'Firefox action binding does not authorize distinct tab roles')
   }
 
-  const preActionContent = requireTab(
+  assertUniqueTabs(binding.preActionTabs)
+
+  const preActionContent = requireIdentity(
     binding.preActionTabs,
-    binding.contentHandle,
+    binding.contentIdentity,
     'invalid-binding',
     'Firefox action binding has no pre-action content classification'
   )
-  const preActionRecipient = requireTab(
+  const preActionRecipient = requireIdentity(
     binding.preActionTabs,
-    binding.actionRecipientHandle,
+    binding.actionRecipientIdentity,
     'invalid-binding',
     'Firefox action binding has no pre-action recipient classification'
   )
+
+  if (
+    preActionContent.handle !== binding.contentHandle ||
+    preActionRecipient.handle !== binding.actionRecipientHandle
+  ) {
+    fail('invalid-binding', 'Firefox action binding has mismatched pre-action handles')
+  }
 
   if (!isAcceptedContent(preActionContent, context) || preActionContent.active) {
     fail('invalid-binding', 'Firefox action binding has an invalid pre-action content role')
@@ -331,11 +385,11 @@ export async function assertFirefoxActionBinding(
   }
 
   const tabs = await readTabs(adapter)
-  const currentContent = requireTab(
+  const currentContent = requireIdentity(
     tabs,
-    binding.contentHandle,
+    binding.contentIdentity,
     'invalid-binding',
-    'Firefox action binding refers to a stale content handle'
+    'Firefox action binding refers to a stale content identity'
   )
 
   if (!isAcceptedContent(currentContent, context)) {
