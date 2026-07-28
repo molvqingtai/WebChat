@@ -10,6 +10,7 @@ The Owner requires these six outcomes to be repaired and accepted together rathe
 - On successful manual Refresh, dismiss only that request's loading Toast after its accepted dwell; do not publish `Ready to chat`. Genuine failure feedback remains unchanged.
 - Make fresh Artico room demand state-driven: an already disconnected peer is replaced through one shared restart before pending joins wait for readiness.
 - Classify same-domain attempt supersession as internal cancellation so stale work settles without user error/success feedback or newer-state overwrite.
+- Keep one logical presence's `user.id` and `joinedAt` immutable while treating `name` and `avatar` as its refreshable user projection; converge the winning projection across same-domain pages without a new logical join, leave, or notice.
 - Add required strict `joinedAt` to v3 `SessionMessage`; bind it to one logical `presenceId` across reconnect and supported host replacement, and use it instead of receiver discovery order for join-notice eligibility.
 - Move both Chat and World physical namespaces from v2 to v3 in one clean cut. World payload remains unchanged, but discovery cannot advertise peers whose Chat protocol is incompatible.
 - Exclude URL fragments from the canonical content-page routing identity while retaining exact tab binding and real-navigation stale-response rejection; direct-hash startup and hash-only navigation keep one mounted control and logical presence.
@@ -31,7 +32,7 @@ None.
 ## Impact
 
 - Public SESSION type/schema/golden fixtures and protocol-generation room constants.
-- Runtime Session/Connection mappings, observer classification, and deterministic network tests.
+- Runtime Session/Connection identity binding, mutable user projection, observer classification, and deterministic network tests.
 - Artico provider implementation and focused lifecycle tests.
 - Application ChatRoom cancellation handling and multi-page identity/recovery tests.
 - Content/background/Offscreen RPC target routing and fragment-navigation startup tests.

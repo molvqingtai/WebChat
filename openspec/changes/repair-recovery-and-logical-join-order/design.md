@@ -74,6 +74,8 @@ The superseded operation SHALL settle its own caller and pending cleanup, but SH
 
 The winning attempt alone owns the real success/failure result and convergence for every attached same-domain page. Application join/recovery status and button/request cleanup SHALL not remain loading after cancellation. Real provider, protocol, persistence, and join errors continue through existing error paths unchanged.
 
+Logical identity binding and user projection are distinct. A bound `sessionId` cannot change `user.id`, and an accepted `presenceId` cannot change its `user.id` or `joinedAt`. For that same binding, `name` and `avatar` are mutable presentation facts rather than generation identity: an accepted refresh SHALL replace the current projection and converge it to every attached same-domain page without changing membership, allocating a generation, or emitting a join/leave notice. Repeating the same projection is idempotent. A stale superseded attempt cannot restore an older projection.
+
 ### 4. SESSION carries one logical join timestamp
 
 The v3 Chat SESSION shape is exactly:
@@ -88,7 +90,7 @@ interface SessionMessage extends ChatSession {
 
 `joinedAt` SHALL be a required finite safe non-negative integer allocated with a new local logical presence. Session already persists the local generation time and ensures a later local return advances beyond the stored local time; the wire SHALL project that exact fact. Reconnect, Refresh, reattach, duplicate publication, additional physical session, and supported Runtime host replacement reuse the same `{presenceId, joinedAt}`. SESSION_END remains exactly `{type:'session-end',presenceId}`.
 
-The first accepted remote SESSION binds its `joinedAt` to that `presenceId` in the observer ledger. A duplicate or replacement SESSION for the same generation with a different user or `joinedAt` is a source-local protocol violation and cannot mutate membership or notices. Receiver observation time remains local metadata and SHALL NOT replace the remote value.
+The first accepted remote SESSION binds its `user.id` and `joinedAt` to that `presenceId` in the observer ledger and records the current `name`/`avatar` projection. A duplicate or replacement SESSION for the same generation with the same `user.id` and `joinedAt` SHALL accept a changed `name` or `avatar` as the current projection, while an equal projection is idempotent; neither case changes membership or notices. A different `user.id` or `joinedAt` is a source-local protocol violation and cannot mutate the accepted binding, membership, or notices. Receiver observation time remains local metadata and SHALL NOT replace the remote value.
 
 For one committed local logical generation, a remote generation is eligible for an observer-local join only when:
 

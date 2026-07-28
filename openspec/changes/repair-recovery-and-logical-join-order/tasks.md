@@ -7,7 +7,7 @@
 ## 2. Protocol V3 And Logical Join Time
 
 - [ ] 2.1 Add required strict safe non-negative `joinedAt` to `SessionMessage` only; keep `ChatSession`, SESSION_END, ChatMessage/history/reaction, World payload, codec algorithm, and limits unchanged.
-- [ ] 2.2 Project the persisted local logical-generation time into every SESSION and bind the first accepted remote `{presenceId,user,joinedAt}`; drop a same-generation user/time mutation without changing membership or notices.
+- [ ] 2.2 Project the persisted local logical-generation time into every SESSION and bind the first accepted remote `presenceId` to its `user.id` and `joinedAt`. Accept same-binding `name`/`avatar` projection refresh idempotently; drop a `user.id`/`joinedAt` mutation without changing membership or notices.
 - [ ] 2.3 Reuse `{presenceId,joinedAt}` across Refresh, reconnect, recovery, duplicate publication, additional physical session, reattach, and supported host replacement; allocate a later time only for a true later generation.
 - [ ] 2.4 Classify remote join eligibility by strict `remote.joinedAt > local.joinedAt` plus zero-to-one user transition. Make delayed historical discovery snapshot-only and keep any provisional later-join candidate attempt-owned until commit.
 - [ ] 2.5 Move both Chat and World namespace inputs from exact v2 values to exact v3 values. Join only v3 rooms; add no optional field, v2 parser, dual room/send, translator, fallback, or compatibility alias.
@@ -24,7 +24,7 @@
 
 - [ ] 4.1 Replace the ordinary message-only supersession failure with one machine-classified internal cancellation across Runtime operation settlement; keep newest-wins generation and provisional Session/World aborts.
 - [ ] 4.2 Make initial join, identity refresh, host recovery, and manual Refresh settle their own cancelled work without `Room.OnErrorEvent`, generic error Toast, false success, stale input retention, or stuck join/request/button loading.
-- [ ] 4.3 Ensure only the winning attempt can commit/publish/retain current identity and outcome; stale completion cannot clear or overwrite the winner.
+- [ ] 4.3 Ensure only the winning attempt can commit/publish/retain current identity, same-id `name`/`avatar` projection, and outcome across every attached same-domain page; stale completion cannot clear or overwrite the winner.
 - [ ] 4.4 Preserve existing user feedback for every genuine provider, protocol, persistence, Runtime, and join failure. Do not identify cancellation through message-string matching or add a second error/pending/Toast owner.
 
 ## 5. Fragment-Insensitive Page Routing
@@ -46,9 +46,9 @@
 
 - [ ] 7.1 Add parent fail-before and candidate pass-after coverage for terminal failed-join Refresh success/failure, no-leave retry, joined reconnect preservation, initial/request single-flight, request-local cleanup, stale fences, success dismissal without `Ready to chat`, and genuine failure feedback.
 - [ ] 7.2 Add Artico lifecycle matrix coverage for empty/non-empty demand, ready/connecting/disconnected peer state, concurrent Chat/World joins, exactly one replacement, old callback/timer isolation, leave, and dispose.
-- [ ] 7.3 Add same-domain supersession races for two-page avatar update, avatar/manual Refresh overlap, avatar/host recovery overlap, winner success/failure ordering, current identity retention, zero cancellation Toast, and genuine-error controls.
+- [ ] 7.3 Add same-domain supersession races for two-page avatar update, avatar/manual Refresh overlap, avatar/host recovery overlap, winner success/failure ordering, same-id `name`/`avatar` projection convergence and idempotence, stale superseded-attempt projection fencing, zero lifecycle notices/cancellation Toast, and genuine-error controls.
 - [ ] 7.4 Add deterministic A-before-B coverage that delays both discovery and SESSION until after B commit; prove B keeps only B's self notice, A records B once, membership converges, and duplicate/reconnect/reload/host replacement add no notice.
-- [ ] 7.5 Add later-during-provisional, equal/older timestamp, mutated same-presence time, true later return, exact v3/v3 exchange, and v1/v2/v3 namespace-isolation controls.
+- [ ] 7.5 Add later-during-provisional, equal/older timestamp, mutated same-presence `user.id`/time rejection, true later return, exact v3/v3 exchange, and v1/v2/v3 namespace-isolation controls.
 - [ ] 7.6 Add fragment routing controls for direct hash, mounted hashchange, in-flight hash change, multiple same-origin tabs, changed path/query navigation, recycled tab id, and forged/stale provider response.
 - [ ] 7.7 Add deterministic ClientLease fail-before/pass-after controls for healthy retained-host refresh, forever-pending and rejected register/attach, host replacement, Port/response loss, two overlapping recovery signals, late completion after timeout/detach/supersession, fast grace recovery, and visible connecting to ready/unavailable.
 - [ ] 7.8 Run focused and full tests, type/format/lint checks, strict OpenSpec validation, production Chrome MV3/Firefox MV2 builds, and only the exact-bound focused browser flows routed by Planner. Do not expand this repair into the full release matrix unless a failure requires it.
