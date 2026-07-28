@@ -1,21 +1,21 @@
 ## 1. Authority And Fail-Before
 
-- [ ] 1.1 Use docs exact `ab5278eea3134d3fb4a0755119b2419ccbd03e16` as the sole parent, record its tree/clean/ref state, and keep Coder #268 plus its dirty pre-freeze tooling worktree/candidate paused and non-transferable.
-- [ ] 1.2 Add focused fail-before coverage using the Firefox MV2 browser shape (`browser.browserAction` present, `browser.action` absent) and prove current background initialization throws before registering the action click.
-- [ ] 1.3 Record protected paths for WXT config, generated manifest semantics, dependencies, AppAction contract, coordinator/Runtime/Offscreen/protocol/persistence/content UI, release metadata, and all E2E runner/fixture/reporter/CI surfaces.
+- [x] 1.1 Use docs exact `ab5278eea3134d3fb4a0755119b2419ccbd03e16` as the sole parent, record its tree/clean/ref state, and keep Coder #268 plus its dirty pre-freeze tooling worktree/candidate paused and non-transferable.
+- [x] 1.2 Add focused fail-before coverage using the Firefox MV2 browser shape (`browser.browserAction` present, `browser.action` absent) and prove current background initialization throws before registering the action click.
+- [x] 1.3 Record protected paths for WXT config, generated manifest semantics, dependencies, AppAction contract, coordinator/Runtime/Offscreen/protocol/persistence/content UI, release metadata, and all E2E runner/fixture/reporter/CI surfaces.
 
 ## 2. Platform-Correct Registration
 
-- [ ] 2.1 Select `browser.action.onClicked` only for Chrome MV3 and `browser.browserAction.onClicked` only for Firefox MV2 using the existing production build platform identity.
-- [ ] 2.2 Require the selected namespace and `onClicked.addListener`; reject silent optional chaining, expected-error allowlisting, and opportunistic cross-platform runtime fallback.
-- [ ] 2.3 Register one listener per background generation and route one accepted click exactly once through the existing `AppAction.openOptionsPage()` command without adding popup/tab/retry/debounce behavior.
-- [ ] 2.4 Add deterministic Chrome, Firefox, missing-selected-API, listener-uniqueness, exactly-once click, and repeated-generation controls. Any source-local helper must remain specific to this registration boundary.
+- [x] 2.1 Select `browser.action.onClicked` only for Chrome MV3 and `browser.browserAction.onClicked` only for Firefox MV2 using the existing production build platform identity.
+- [x] 2.2 Require the selected namespace and `onClicked.addListener`; reject silent optional chaining, expected-error allowlisting, and opportunistic cross-platform runtime fallback.
+- [x] 2.3 Register one listener per background generation and route one accepted click exactly once through the existing `AppAction.openOptionsPage()` command without adding popup/tab/retry/debounce behavior.
+- [x] 2.4 Add deterministic Chrome, Firefox, missing-selected-API, listener-uniqueness, exactly-once click, and repeated-generation controls. Any source-local helper must remain specific to this registration boundary.
 
 ## 3. Scope And Implementation Gates
 
-- [ ] 3.1 Keep production changes limited to the background action-registration boundary and focused tests/support. Do not change WXT config, manifests/permissions, dependencies, AppAction behavior, Runtime/coordinator/Offscreen, protocol, storage/database, content UI, E2E tooling, CI, or release paths.
-- [ ] 3.2 Run the implementation-owned focused/full tests, format/lint/type, strict OpenSpec, production Chrome MV3 and Firefox MV2 build/package, manifest-structure, and protected-path gates on one clean exact. Do not interpret Runtime traffic alone as action-registration PASS.
-- [ ] 3.3 Freeze one clean detached/ref-free immutable product repair exact as the sole child of this docs authority, recording exact/tree/parent/direct scope/protected paths and no unintended refs. Do not push, update PR/CI, merge, release, or touch the Owner checkout.
+- [x] 3.1 Keep production changes limited to the background action-registration boundary and focused tests/support. Do not change WXT config, manifests/permissions, dependencies, AppAction behavior, Runtime/coordinator/Offscreen, protocol, storage/database, content UI, E2E tooling, CI, or release paths.
+- [x] 3.2 Run the implementation-owned focused/full tests, format/lint/type, strict OpenSpec, production Chrome MV3 and Firefox MV2 build/package, manifest-structure, and protected-path gates on one clean exact. Do not interpret Runtime traffic alone as action-registration PASS.
+- [x] 3.3 Freeze one clean detached/ref-free immutable product repair exact as the sole child of this docs authority, recording exact/tree/parent/direct scope/protected paths and no unintended refs. Do not push, update PR/CI, merge, release, or touch the Owner checkout.
 
 ## 4. Fresh Review And Real Cross-Browser QA
 

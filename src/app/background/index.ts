@@ -14,6 +14,7 @@ import {
   unregisterPage,
   watchOffscreenClosed
 } from '@/runtime/Background'
+import { registerActionClick } from '@/app/background/ActionRegistration'
 
 export default defineBackground({
   type: 'module',
@@ -35,6 +36,6 @@ export default defineBackground({
     watchOffscreenClosed()
     void restore()
 
-    browser.action.onClicked.addListener(() => appAction.openOptionsPage())
+    registerActionClick(browser, () => appAction.openOptionsPage())
   }
 })
