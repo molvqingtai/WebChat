@@ -84,19 +84,63 @@ The repair SHALL not query or broadcast to every same-origin tab, route by origi
 - **WHEN** that tab is recycled or genuinely navigates to a different scheme, host, port, path, or query before the response arrives
 - **THEN** the old response SHALL be rejected and SHALL not settle the replacement page, while another same-origin tab receives nothing
 
-### Requirement: Five repairs share one acceptance authority
+### Requirement: ClientLease recovery and connecting feedback are bounded
 
-The Refresh recovery baseline, disconnected-peer repair, supersession cancellation, logical join-time repair, and fragment-insensitive startup SHALL be delivered as one cumulative immutable source exact. Intermediate heads and evidence from `a6021495` SHALL remain diagnostic only and SHALL not authorize final review, QA, checkout synchronization, publication, or release. The final exact SHALL receive fresh Reviewer and QA decisions on the complete combined matrix, followed by one Owner five-scenario product acceptance.
+Each ClientLease lifecycle SHALL own at most one current startup or recovery generation. Repeated watchdog failure, generation/host-id/page-attachment mismatch, and overlapping recovery calls SHALL share that generation rather than issue parallel attach sequences or reset its budget. The existing 15,000ms startup/recovery timeout SHALL be one overall generation deadline. Every `registerPage()` and `attachPage()` attempt SHALL have a hard deadline no greater than 5,000ms and no greater than the generation's remaining budget. Expiry SHALL cancel that request's local ownership and reject the attempt; bounded retry MAY continue only inside the original overall deadline.
+
+A fresh `init()` or `detach()` SHALL abort the prior lifecycle and retire its requests. A response or rejection from an expired, aborted, detached, or superseded request SHALL be ignored and SHALL NOT publish HostPhase, replace a snapshot, start a watchdog, settle a newer recovery, or detach/unregister the current winning lease. Host replacement, Port loss, missing response, and a provider that remains pending forever SHALL therefore settle the current generation as `ready` after one valid current attachment or `unavailable` when its original budget is exhausted. No path SHALL leave HostPhase permanently `connecting`.
+
+Readiness presentation SHALL remain downstream of Runtime truth. A page refresh that attaches to an already healthy retained Runtime within the 300ms presentation grace SHALL create one current page lease and SHALL publish neither `WebChat connecting` nor `Ready to chat`. A real current connecting transition that survives the grace MAY publish the existing stable loading entry. Once visible, that entry SHALL be dismissed by current ready or replaced by unavailable no later than the original 15,000ms deadline. The grace SHALL NOT delay operation, extend the recovery budget, add another readiness state, or survive ready, unavailable, detach, remount, or a newer recovery. No alternate bootstrap UI, Toast renderer, structure, or visual style SHALL be added.
+
+#### Scenario: Healthy retained Runtime refresh stays silent
+
+- **GIVEN** the Runtime host remains healthy and ready while one content document is refreshed
+- **WHEN** the new page lifecycle registers and attaches within the 300ms feedback grace
+- **THEN** exactly one current page lease and application mount SHALL result, with no `WebChat connecting`, `Ready to chat`, unavailable feedback, host replacement, or logical join/leave caused by the refresh
+
+#### Scenario: Pending register or attach cannot exceed its deadline
+
+- **GIVEN** the current `registerPage()` or `attachPage()` attempt never resolves or rejects
+- **WHEN** its 5,000ms per-RPC deadline and then the generation's original 15,000ms overall deadline elapse
+- **THEN** each expired request SHALL lose settlement ownership, retry SHALL remain bounded by the original budget, and the generation SHALL settle unavailable rather than remain connecting
+
+#### Scenario: Rejection or control-plane loss can recover within the budget
+
+- **GIVEN** register/attach rejects, its Port or response route is lost, or the host is replaced during recovery
+- **WHEN** a later current attempt attaches a valid replacement before the original overall deadline
+- **THEN** the shared recovery generation SHALL settle ready once with the replacement snapshot and SHALL cancel any pending connecting-feedback timer
+
+#### Scenario: Concurrent recovery signals share one owner
+
+- **GIVEN** a watchdog failure and one or more generation, host-id, or page-lease mismatch signals overlap
+- **WHEN** recovery is already in flight for the current lifecycle
+- **THEN** every signal SHALL join one recovery task, deadline, register/attach sequence owner, and feedback generation without parallel attempts or budget reset
+
+#### Scenario: Late response cannot affect the winner
+
+- **GIVEN** an old RPC expired, was aborted by detach/init, or belongs to a superseded recovery, and a newer current lease exists
+- **WHEN** the old RPC later resolves or rejects
+- **THEN** it SHALL not publish ready/unavailable, replace the snapshot, start a watchdog, clear current feedback, settle the newer task, or release the winner's lease
+
+#### Scenario: Visible connecting always reaches a terminal state
+
+- **GIVEN** current recovery remains connecting beyond the 300ms presentation grace and the stable loading entry becomes visible
+- **WHEN** a current attachment succeeds or the original recovery budget expires
+- **THEN** the same readiness entry SHALL settle to dismissal on ready or unavailable error within that budget and SHALL never remain loading permanently
+
+### Requirement: Six repairs share one acceptance authority
+
+The Refresh recovery baseline with request-local success dismissal, disconnected-peer repair, supersession cancellation, logical join-time repair, fragment-insensitive startup, and bounded ClientLease recovery SHALL be delivered as one cumulative immutable source exact. A successful manual Refresh SHALL dismiss only its own loading entry after the accepted dwell and SHALL NOT publish `Ready to chat`; a genuine failure SHALL retain the matching error Toast. Intermediate heads and evidence from `a6021495` SHALL remain diagnostic only and SHALL not authorize final review, QA, checkout synchronization, publication, or release. The final exact SHALL receive fresh Reviewer and QA decisions on the complete combined matrix, followed by one Owner six-scenario product acceptance.
 
 #### Scenario: Partial success does not authorize delivery
 
-- **WHEN** any subset of the five repairs has a passing implementation or prior evidence
+- **WHEN** any subset of the six repairs has a passing implementation or prior evidence
 - **THEN** no partial head SHALL be synchronized or published as the requested repair, and the remaining outcomes SHALL stay part of the same final candidate
 
-#### Scenario: Final acceptance covers all five outcomes
+#### Scenario: Final acceptance covers all six outcomes
 
 - **WHEN** the final cumulative exact passes fresh independent Reviewer and QA gates
-- **THEN** the Owner SHALL verify failed-join Refresh, disconnected-peer retry, multi-page identity update without supersession Toast, A-before-B join-notice order, and direct fragment-URL startup before publication authority exists
+- **THEN** the Owner SHALL verify failed-join Refresh with no success Toast, disconnected-peer retry, multi-page identity update without supersession Toast, A-before-B join-notice order, direct fragment-URL startup, and retained-Runtime refresh plus bounded connecting recovery before publication authority exists
 
 ### Requirement: Peer wire protocol is replaced with v3 without compatibility
 

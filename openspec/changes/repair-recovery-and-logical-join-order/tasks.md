@@ -1,6 +1,6 @@
 ## 1. Authority And Baseline
 
-- [ ] 1.1 Freeze source baseline `a602149522c7038f29e13307bb925a48ed3848d7`, docs ancestor `740373298711002548cbe6eecb3c63dcb045db74`, current v2 protocol bytes/namespaces, Session observation classification, Artico peer lifecycle, supersession flow, and a602 Refresh behavior before source edits.
+- [ ] 1.1 Freeze source baseline `a602149522c7038f29e13307bb925a48ed3848d7`, docs ancestor `740373298711002548cbe6eecb3c63dcb045db74`, current v2 protocol bytes/namespaces, Session observation classification, Artico peer lifecycle, supersession flow, a602 Refresh feedback, and ClientLease pending-RPC recovery behavior before source edits.
 - [ ] 1.2 Create source work only as a clean detached sole child of this docs exact; keep the Owner checkout, untracked `.pnpm-store/`, remote refs, PRs, CI, `master`, tags, and release metadata untouched.
 - [ ] 1.3 Treat a602 Reviewer/QA facts and task #253 as non-transferable partial history. No intermediate implementation head may receive final gate or publication authority.
 
@@ -34,20 +34,29 @@
 - [ ] 5.3 Prove direct startup with `#fragment`, mounted `hashchange`, and hash change during the initial coordinator/Runtime handshake each mount or retain exactly one control/page lease/logical presence with zero join/leave.
 - [ ] 5.4 Preserve existing content bootstrap structure: no pre-App fallback UI, no origin-wide broadcast, no fragment-specific reconnect/remount, and no browser-specific business branch.
 
-## 6. Combined Regression Matrix
+## 6. Bounded ClientLease Recovery And Feedback
 
-- [ ] 6.1 Add parent fail-before and candidate pass-after coverage for terminal failed-join Refresh success/failure, no-leave retry, joined reconnect preservation, initial/recovery single-flight, request-local cleanup, and stale fences.
-- [ ] 6.2 Add Artico lifecycle matrix coverage for empty/non-empty demand, ready/connecting/disconnected peer state, concurrent Chat/World joins, exactly one replacement, old callback/timer isolation, leave, and dispose.
-- [ ] 6.3 Add same-domain supersession races for two-page avatar update, avatar/manual Refresh overlap, avatar/host recovery overlap, winner success/failure ordering, current identity retention, zero cancellation Toast, and genuine-error controls.
-- [ ] 6.4 Add deterministic A-before-B coverage that delays both discovery and SESSION until after B commit; prove B keeps only B's self notice, A records B once, membership converges, and duplicate/reconnect/reload/host replacement add no notice.
-- [ ] 6.5 Add later-during-provisional, equal/older timestamp, mutated same-presence time, true later return, exact v3/v3 exchange, and v1/v2/v3 namespace-isolation controls.
-- [ ] 6.6 Add fragment routing controls for direct hash, mounted hashchange, in-flight hash change, multiple same-origin tabs, changed path/query navigation, recycled tab id, and forged/stale provider response.
-- [ ] 6.7 Run focused and full tests, type/format/lint checks, strict OpenSpec validation, production Chrome MV3/Firefox MV2 builds, and only the exact-bound focused browser flows routed by Planner. Do not expand this repair into the full release matrix unless a failure requires it.
-- [ ] 6.8 Prove direct and cumulative scope: no public ChatRoom expansion, MessageStore/database/UI/Toaster/panel/alternate-bootstrap change, World payload change, watchdog, unbounded retry, dependency/workflow/WXT change, release-version edit, compatibility path, origin-wide response broadcast, or v2 active namespace residue.
+- [ ] 6.1 Bind one overall 15,000ms deadline to each current ClientLease startup/recovery generation and one hard deadline no greater than 5,000ms or the remaining budget to every register/attach attempt; a pending call SHALL reject locally and cannot extend the generation.
+- [ ] 6.2 Single-flight overlapping watchdog, generation, host-id, page-lease, Port-loss, and response-loss recovery signals. A repeated signal SHALL join the current owner without parallel register/attach sequences, deadline reset, or feedback restart.
+- [ ] 6.3 Retire correlation and cancel local ownership for every expired, detached, aborted, or superseded RPC. Fence late resolve/reject work so it cannot publish HostPhase, replace snapshots, start watchdogs, settle a current task, or release the winning lease.
+- [ ] 6.4 Preserve the immediate Runtime readiness truth while grace-delaying only its visible connecting entry by 300ms. Healthy retained-Runtime page refresh and recovery that completes inside the grace SHALL show no connecting/success Toast; any visible connecting SHALL dismiss on ready or become unavailable inside the original overall budget.
+- [ ] 6.5 On successful manual Refresh, finish the accepted 300ms request-loading dwell and dismiss only that request's generic Toast instead of publishing `Ready to chat`; retain request-local error Toasts, button cleanup, stable IDs, unrelated entries, and the original Toaster structure/visuals.
 
-## 7. Review And Release
+## 7. Combined Regression Matrix
 
-- [ ] 7.1 Freeze one clean cumulative immutable source exact with exact/tree/parent/patch identities, focused commits if used, direct/cumulative path inventory, zero unintended refs, and exact-bound evidence.
-- [ ] 7.2 Route fresh Reviewer and QA in parallel only after the final exact exists. Both SHALL review/test the complete five-repair matrix; prior a602 or partial-head verdicts do not transfer.
-- [ ] 7.3 After both final PASS, synchronize only that exact to the Owner checkout without touching `.pnpm-store/`. Owner verifies failed-join Refresh, disconnected-peer retry, multi-page avatar update without supersession Toast, A-before-B notice order, and direct fragment-URL startup in one acceptance.
-- [ ] 7.4 Publish only after Owner acceptance by verified normal fast-forward and stop on remote drift. Do not modify `master`, tags, package/app version, release metadata, or release notes in this change.
+- [ ] 7.1 Add parent fail-before and candidate pass-after coverage for terminal failed-join Refresh success/failure, no-leave retry, joined reconnect preservation, initial/request single-flight, request-local cleanup, stale fences, success dismissal without `Ready to chat`, and genuine failure feedback.
+- [ ] 7.2 Add Artico lifecycle matrix coverage for empty/non-empty demand, ready/connecting/disconnected peer state, concurrent Chat/World joins, exactly one replacement, old callback/timer isolation, leave, and dispose.
+- [ ] 7.3 Add same-domain supersession races for two-page avatar update, avatar/manual Refresh overlap, avatar/host recovery overlap, winner success/failure ordering, current identity retention, zero cancellation Toast, and genuine-error controls.
+- [ ] 7.4 Add deterministic A-before-B coverage that delays both discovery and SESSION until after B commit; prove B keeps only B's self notice, A records B once, membership converges, and duplicate/reconnect/reload/host replacement add no notice.
+- [ ] 7.5 Add later-during-provisional, equal/older timestamp, mutated same-presence time, true later return, exact v3/v3 exchange, and v1/v2/v3 namespace-isolation controls.
+- [ ] 7.6 Add fragment routing controls for direct hash, mounted hashchange, in-flight hash change, multiple same-origin tabs, changed path/query navigation, recycled tab id, and forged/stale provider response.
+- [ ] 7.7 Add deterministic ClientLease fail-before/pass-after controls for healthy retained-host refresh, forever-pending and rejected register/attach, host replacement, Port/response loss, two overlapping recovery signals, late completion after timeout/detach/supersession, fast grace recovery, and visible connecting to ready/unavailable.
+- [ ] 7.8 Run focused and full tests, type/format/lint checks, strict OpenSpec validation, production Chrome MV3/Firefox MV2 builds, and only the exact-bound focused browser flows routed by Planner. Do not expand this repair into the full release matrix unless a failure requires it.
+- [ ] 7.9 Prove direct and cumulative scope: no public ChatRoom expansion, MessageStore/database/UI/Toaster/panel/alternate-bootstrap change, World payload change, provider retry/watchdog, background wake redesign, dependency/workflow/WXT change, release-version edit, compatibility path, origin-wide response broadcast, or v2 active namespace residue.
+
+## 8. Review And Release
+
+- [ ] 8.1 Freeze one clean cumulative immutable source exact with exact/tree/parent/patch identities, focused commits if used, direct/cumulative path inventory, zero unintended refs, and exact-bound evidence.
+- [ ] 8.2 Route fresh Reviewer and QA in parallel only after the final exact exists. Both SHALL review/test the complete six-repair matrix; prior a602 or partial-head verdicts do not transfer.
+- [ ] 8.3 After both final PASS, synchronize only that exact to the Owner checkout without touching `.pnpm-store/`. Owner verifies failed-join Refresh with no success Toast, disconnected-peer retry, multi-page avatar update without supersession Toast, A-before-B notice order, direct fragment-URL startup, and retained-Runtime refresh plus bounded connecting recovery in one acceptance.
+- [ ] 8.4 Publish only after Owner acceptance by verified normal fast-forward and stop on remote drift. Do not modify `master`, tags, package/app version, release metadata, or release notes in this change.

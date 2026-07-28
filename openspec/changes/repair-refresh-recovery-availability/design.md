@@ -23,7 +23,7 @@ The frozen eight-method `ChatRoomExtern` already provides `joinRoom()` and `leav
 - No `ChatRoomExtern`, protocol, database, persistence, dependency, WXT, workflow, or browser-specific change.
 - No panel mutation, bootstrap fallback, fixed readiness view, second Toast renderer, or reconnect-specific presenter.
 - No automatic retry loop, background retry policy, or change to Runtime-owned recovery.
-- No change to the existing joined-domain reconnect outcome or logical-presence semantics.
+- No change to the existing joined-domain reconnect network outcome or logical-presence semantics; only its successful Toast result is removed by the cumulative repair.
 
 ## Decisions
 
@@ -62,15 +62,15 @@ Failed unjoined retry SHALL apply the existing join-failure transition, returnin
 
 Alternative rejected: treat an unjoined `joinRoom()` success only as reconnect-request success. That would leave application join status false and keep downstream Chat/World behavior inconsistent with the accepted connection.
 
-### 4. Presentation and panel contracts remain unchanged
+### 4. Presentation ownership and panel contracts remain unchanged
 
-The existing request ID continues to drive button disabled/spinning behavior and generic Toast loading/result feedback. Toast mount, paint, dwell, failure, or absence remains unable to delay or redefine the network operation. The action preserves the panel's open/closed state and uses the original direct `AppMain -> <Toaster>` surface when present.
+The existing request ID continues to drive button disabled/spinning behavior and generic Toast loading/error feedback. Toast mount, paint, dwell, failure, or absence remains unable to delay or redefine the network operation. After an accepted 300ms visible loading dwell, success dismisses only that request's loading entry and publishes no `Ready to chat` or other success descriptor; genuine failure updates the matching entry to the request-local error. The action preserves the panel's open/closed state and uses the original direct `AppMain -> <Toaster>` surface when present.
 
 The accessible label MAY distinguish an unjoined retry from an already joined reconnect, but no Ready region, result badge, fallback view, new renderer, or custom visual treatment is added.
 
 ### 5. Verification binds both recovery modes and admission fences
 
-Focused Domain tests SHALL prove configured unjoined retry success and failure, absence of `leaveRoom()` on retry, normal join-state completion, retry re-eligibility, initial-join single-flight, missing-identity rejection, joined leave/join preservation, duplicate rejection, request-local Toast settlement, and stale fencing.
+Focused Domain tests SHALL prove configured unjoined retry success and failure, absence of `leaveRoom()` on retry, normal join-state completion, retry re-eligibility, initial-join single-flight, missing-identity rejection, joined leave/join preservation, duplicate rejection, success dismissal without `Ready to chat`, request-local error Toast settlement, and stale fencing.
 
 Focused view tests SHALL prove the button uses the Domain eligibility Query, remains panel-independent, is enabled for configured terminal unjoined state, is disabled for join/reconnect in-flight states, and retains pending icon behavior and accessible retry/reconnect labels.
 
@@ -78,7 +78,7 @@ Focused view tests SHALL prove the button uses the Domain eligibility Query, rem
 
 - [A brief configured pre-join state is eligible before the automatic App effect runs] -> Command admission atomically sets join loading and starts the same valid join, so whichever path wins remains single-flight.
 - [Retry success and reconnect success share existing `ReconnectFinishedEvent` naming] -> Preserve the stable internal feedback contract; mode remains request-local and does not justify a second lifecycle.
-- [Join failure emits both the existing room error and request-correlated Toast error] -> Preserve existing error observability while the generic request feedback remains the only user-facing recovery result.
+- [Join failure emits both the existing room error and request-correlated Toast error] -> Preserve existing error observability while the generic request feedback remains the only user-facing recovery result; do not add a success result.
 - [A later refactor could reintroduce view/Domain drift] -> Remove joined-based view admission and test the shared derived Domain Query at both command and button boundaries.
 
 ## Migration Plan
