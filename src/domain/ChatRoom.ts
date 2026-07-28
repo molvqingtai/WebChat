@@ -47,6 +47,12 @@ type ReconnectRequest = {
   outcome: { error?: Error } | null
 }
 
+type ReconnectOperation = {
+  id: number
+  input: JoinRoomInput
+  mode: 'retry' | 'reconnect'
+}
+
 const ChatRoomDomain = Remesh.domain({
   name: 'ChatRoomDomain',
   impl: (domain) => {
@@ -78,6 +84,13 @@ const ChatRoomDomain = Remesh.domain({
       name: 'Room.ReconnectIsLoadingQuery',
       impl: ({ get }) => get(ReconnectRequestQuery()) !== null
     })
+    const ReconnectAvailableQuery = domain.query({
+      name: 'Room.ReconnectAvailableQuery',
+      impl: ({ get }) =>
+        get(userInfoDomain.query.UserInfoQuery()) !== null &&
+        !get(JoinStatus.query.IsLoadingQuery()) &&
+        get(ReconnectRequestQuery()) === null
+    })
 
     const ApplySessionsCommand = domain.command({
       name: 'Room.ApplySessionsCommand',
@@ -108,7 +121,7 @@ const ChatRoomDomain = Remesh.domain({
       impl: (_, payload: { messageId: string; reaction: 'like' | 'hate' }) => SendReactionRequestedEvent(payload)
     })
 
-    const ReconnectRequestedEvent = domain.event<number>({ name: 'Room.ReconnectRequestedEvent' })
+    const ReconnectRequestedEvent = domain.event<ReconnectOperation>({ name: 'Room.ReconnectRequestedEvent' })
     const ReconnectStartedEvent = domain.event<number>({ name: 'Room.ReconnectStartedEvent' })
     const ReconnectFinishedEvent = domain.event<{ id: number; error?: Error }>({
       name: 'Room.ReconnectFinishedEvent'
@@ -124,7 +137,10 @@ const ChatRoomDomain = Remesh.domain({
     const ReconnectCommand = domain.command({
       name: 'Room.ReconnectCommand',
       impl: ({ get }) => {
-        if (!get(JoinIsFinishedQuery()) || get(ReconnectRequestQuery()) !== null) return null
+        if (!get(ReconnectAvailableQuery())) return null
+        const joined = get(JoinIsFinishedQuery())
+        const user = get(userInfoDomain.query.UserInfoQuery())!
+        const input = joined ? get(JoinInputState())! : { user, site: getSiteMeta() }
         const id = get(ReconnectSequenceState()) + 1
         return [
           ReconnectSequenceState().new(id),
@@ -133,7 +149,8 @@ const ChatRoomDomain = Remesh.domain({
             toast: { attempted: false, settled: false },
             outcome: null
           }),
-          ReconnectRequestedEvent(id),
+          ...(joined ? [] : [JoinStatus.command.SetLoadingCommand()]),
+          ReconnectRequestedEvent({ id, input, mode: joined ? 'reconnect' : 'retry' }),
           ReconnectStartedEvent(id)
         ]
       }
@@ -211,6 +228,18 @@ const ChatRoomDomain = Remesh.domain({
         JoinStatus.command.SetFinishedCommand(),
         SelfJoinRoomEvent()
       ]
+    })
+
+    const CompleteRetryOperationCommand = domain.command({
+      name: 'Room.CompleteRetryOperationCommand',
+      impl: ({ get }, result: { id: number; input: JoinRoomInput; error?: Error }) => {
+        const request = get(ReconnectRequestQuery())
+        if (request?.id !== result.id || request.outcome !== null) return null
+        return [
+          result.error ? FailJoinCommand(result.error) : CompleteJoinCommand(result.input),
+          CompleteReconnectOperationCommand({ id: result.id, error: result.error })
+        ]
+      }
     })
 
     const ApplyLiveMessageCommand = domain.command({
@@ -344,20 +373,20 @@ const ChatRoomDomain = Remesh.domain({
 
     domain.effect({
       name: 'Room.ReconnectEffect',
-      impl: ({ fromEvent, get }) =>
+      impl: ({ fromEvent }) =>
         fromEvent(ReconnectRequestedEvent).pipe(
-          concatMap(async (id) => {
-            const input = get(JoinInputState())
-            if (!input) return CompleteReconnectOperationCommand({ id })
+          concatMap(async ({ id, input, mode }) => {
             try {
-              await chatRoom.leaveRoom()
+              if (mode === 'reconnect') await chatRoom.leaveRoom()
               await chatRoom.joinRoom(input)
-              return CompleteReconnectOperationCommand({ id })
+              return mode === 'retry'
+                ? CompleteRetryOperationCommand({ id, input })
+                : CompleteReconnectOperationCommand({ id })
             } catch (error) {
-              return CompleteReconnectOperationCommand({
-                id,
-                error: error instanceof Error ? error : new Error(String(error))
-              })
+              const normalizedError = error instanceof Error ? error : new Error(String(error))
+              return mode === 'retry'
+                ? CompleteRetryOperationCommand({ id, input, error: normalizedError })
+                : CompleteReconnectOperationCommand({ id, error: normalizedError })
             }
           })
         )
@@ -404,7 +433,13 @@ const ChatRoomDomain = Remesh.domain({
     })
 
     return {
-      query: { UserListQuery, JoinIsFinishedQuery, ReconnectRequestQuery, ReconnectIsLoadingQuery },
+      query: {
+        UserListQuery,
+        JoinIsFinishedQuery,
+        ReconnectRequestQuery,
+        ReconnectIsLoadingQuery,
+        ReconnectAvailableQuery
+      },
       command: {
         JoinRoomCommand,
         SendTextMessageCommand,

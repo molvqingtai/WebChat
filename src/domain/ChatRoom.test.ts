@@ -45,7 +45,7 @@ const deferred = () => {
   return { promise, resolve }
 }
 
-const createFixture = (options: { delayRecordWatch?: boolean } = {}) => {
+const createFixture = (options: { delayRecordWatch?: boolean; user?: UserInfo | null } = {}) => {
   vi.stubGlobal('document', {
     location: { origin: 'https://example.test' },
     title: '',
@@ -59,8 +59,9 @@ const createFixture = (options: { delayRecordWatch?: boolean } = {}) => {
       watch(stores, () => recordWatchNotifications.add(listener))) as typeof database.watch
   }
   const messageStore = createMessageStore(database)
+  const configuredUser = options.user === undefined ? SELF : options.user
   const storage: Storage = {
-    get: async <T extends StorageValue>() => SELF as T,
+    get: async <T extends StorageValue>() => configuredUser as T,
     set: async () => {},
     watch: async () => async () => {}
   }
@@ -150,7 +151,7 @@ const createFixture = (options: { delayRecordWatch?: boolean } = {}) => {
   const list = store.getDomain(listAction)
   const user = store.getDomain(userAction)
   store.igniteDomain(chatAction)
-  store.send(user.command.UpdateUserInfoCommand(SELF))
+  store.send(user.command.UpdateUserInfoCommand(configuredUser))
 
   return {
     store,
@@ -188,6 +189,109 @@ describe('ChatRoomDomain exact application port', () => {
     })
     expect(fixture.store.query(fixture.room.query.UserListQuery())).toEqual([SELF])
     await expect(fixture.records()).resolves.toEqual([])
+    fixture.store.discard()
+  })
+
+  it('derives recovery eligibility from configured identity and the initial join single-flight', async () => {
+    const missingIdentity = createFixture({ user: null })
+
+    expect(missingIdentity.store.query(missingIdentity.room.query.ReconnectAvailableQuery())).toBe(false)
+    missingIdentity.store.send(missingIdentity.room.command.ReconnectCommand())
+    expect(missingIdentity.store.query(missingIdentity.room.query.ReconnectRequestQuery())).toBeNull()
+    expect(missingIdentity.chat.joinRoom).not.toHaveBeenCalled()
+    expect(missingIdentity.chat.leaveRoom).not.toHaveBeenCalled()
+    missingIdentity.store.discard()
+
+    const initialJoin = deferred()
+    const fixture = createFixture()
+    vi.mocked(fixture.chat.joinRoom).mockReturnValueOnce(initialJoin.promise)
+
+    fixture.store.send(fixture.room.command.JoinRoomCommand())
+    await vi.waitFor(() => expect(fixture.chat.joinRoom).toHaveBeenCalledOnce())
+    expect(fixture.store.query(fixture.room.query.ReconnectAvailableQuery())).toBe(false)
+
+    fixture.store.send(fixture.room.command.ReconnectCommand())
+    expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toBeNull()
+    expect(fixture.chat.joinRoom).toHaveBeenCalledOnce()
+    expect(fixture.chat.leaveRoom).not.toHaveBeenCalled()
+
+    initialJoin.resolve()
+    await vi.waitFor(() => expect(fixture.store.query(fixture.room.query.JoinIsFinishedQuery())).toBe(true))
+    expect(fixture.store.query(fixture.room.query.ReconnectAvailableQuery())).toBe(true)
+    fixture.store.discard()
+  })
+
+  it('retries a terminal failed join directly and completes the normal joined state once', async () => {
+    const fixture = createFixture()
+    const initialError = new Error('initial join failed')
+    vi.mocked(fixture.chat.joinRoom).mockRejectedValueOnce(initialError)
+    const selfJoins: number[] = []
+    fixture.store.subscribeEvent(fixture.room.event.SelfJoinRoomEvent, () => selfJoins.push(1))
+
+    fixture.store.send(fixture.room.command.JoinRoomCommand())
+    await vi.waitFor(() => expect(fixture.store.query(fixture.room.query.ReconnectAvailableQuery())).toBe(true))
+    fixture.emitReadiness('unavailable')
+    expect(fixture.store.query(fixture.room.query.ReconnectAvailableQuery())).toBe(true)
+
+    fixture.store.send(fixture.room.command.ReconnectCommand())
+    const request = fixture.store.query(fixture.room.query.ReconnectRequestQuery())!
+    fixture.store.send(fixture.room.command.ReconnectCommand())
+    expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())?.id).toBe(request.id)
+    expect(fixture.store.query(fixture.room.query.ReconnectAvailableQuery())).toBe(false)
+    expect(fixture.chat.leaveRoom).not.toHaveBeenCalled()
+
+    await vi.waitFor(() => expect(fixture.store.query(fixture.room.query.JoinIsFinishedQuery())).toBe(true))
+    await vi.waitFor(() => expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())?.outcome).toEqual({}))
+    expect(fixture.chat.joinRoom).toHaveBeenCalledTimes(2)
+    expect(fixture.chat.joinRoom).toHaveBeenLastCalledWith({
+      user: SELF,
+      site: expect.objectContaining({ origin: 'https://example.test' })
+    })
+    expect(fixture.store.query(fixture.list.query.LoadIsFinishedQuery())).toBe(true)
+    expect(selfJoins).toEqual([1])
+
+    fixture.emitReadiness('ready')
+    await vi.waitFor(() => expect(fixture.chat.joinRoom).toHaveBeenCalledTimes(3))
+    expect(fixture.chat.joinRoom).toHaveBeenLastCalledWith({
+      user: SELF,
+      site: expect.objectContaining({ origin: 'https://example.test' })
+    })
+
+    fixture.store.send(fixture.room.command.OmitToastCommand(request.id))
+    await vi.waitFor(() => expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toBeNull())
+    expect(fixture.store.query(fixture.room.query.ReconnectAvailableQuery())).toBe(true)
+    fixture.store.discard()
+  })
+
+  it('returns a failed direct retry to the same request error and retryable join state', async () => {
+    const fixture = createFixture()
+    vi.mocked(fixture.chat.joinRoom)
+      .mockRejectedValueOnce(new Error('initial join failed'))
+      .mockRejectedValueOnce('retry transport reset')
+    const errors: Error[] = []
+    fixture.store.subscribeEvent(fixture.room.event.OnErrorEvent, (error) => errors.push(error))
+
+    fixture.store.send(fixture.room.command.JoinRoomCommand())
+    await vi.waitFor(() => expect(fixture.store.query(fixture.room.query.ReconnectAvailableQuery())).toBe(true))
+    fixture.store.send(fixture.room.command.ReconnectCommand())
+    const request = fixture.store.query(fixture.room.query.ReconnectRequestQuery())!
+
+    await vi.waitFor(() =>
+      expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())?.outcome).toEqual({
+        error: new Error('retry transport reset')
+      })
+    )
+    expect(fixture.store.query(fixture.room.query.JoinIsFinishedQuery())).toBe(false)
+    expect(fixture.store.query(fixture.room.query.ReconnectAvailableQuery())).toBe(false)
+    expect(fixture.chat.joinRoom).toHaveBeenCalledTimes(2)
+    expect(fixture.chat.leaveRoom).not.toHaveBeenCalled()
+    expect(errors).toEqual([new Error('initial join failed'), new Error('retry transport reset')])
+
+    fixture.store.send(fixture.room.command.OmitToastCommand(request.id))
+    await vi.waitFor(() => expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toBeNull())
+    expect(fixture.store.query(fixture.room.query.ReconnectAvailableQuery())).toBe(true)
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 0))
+    expect(fixture.chat.joinRoom).toHaveBeenCalledTimes(2)
     fixture.store.discard()
   })
 
