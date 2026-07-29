@@ -1,3 +1,16 @@
+## [2.0.1](https://github.com/molvqingtai/WebChat/compare/v2.0.0...v2.0.1) (2026-07-29)
+
+
+### Bug Fixes
+
+* **background:** select platform action API ([f9efac9](https://github.com/molvqingtai/WebChat/commit/f9efac92af9e0c7147f75dd36ec0f1dd67e8183f))
+* **chat-room:** restore refresh after failed join ([a602149](https://github.com/molvqingtai/WebChat/commit/a602149522c7038f29e13307bb925a48ed3848d7))
+* **e2e:** fence Firefox action operation inventory ([1b1f6cc](https://github.com/molvqingtai/WebChat/commit/1b1f6cc61d7de9adc75bca0cc1b3768d90555e04))
+* **e2e:** preserve Firefox action content control ([d52ae27](https://github.com/molvqingtai/WebChat/commit/d52ae27095d919dc24e8ddc800ad7e5bfe1057ce))
+* **e2e:** preserve Firefox tab identity across handles ([d1397d3](https://github.com/molvqingtai/WebChat/commit/d1397d3f3e028f0e99221279aa41211b5ad81592))
+* **runtime:** fence connection feedback ownership ([b8f5a4a](https://github.com/molvqingtai/WebChat/commit/b8f5a4a8d4c001a4963be706dab7c6891efe75c5))
+* **runtime:** serialize exact binding release ([2f60913](https://github.com/molvqingtai/WebChat/commit/2f60913259f9ce834ffdf75f63eef87c9563e644))
+
 # [2.0.0](https://github.com/molvqingtai/WebChat/compare/v1.9.7...v2.0.0) (2026-07-27)
 
 - feat!: release WebChat 2.0 ([fff7da8](https://github.com/molvqingtai/WebChat/commit/fff7da8e4e6f320a86d45670e108cd97451955e5))
