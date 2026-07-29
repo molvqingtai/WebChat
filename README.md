@@ -6,7 +6,7 @@
 
 [![CI](https://github.com/molvqingtai/WebChat/actions/workflows/ci.yml/badge.svg)](https://github.com/molvqingtai/WebChat/actions) [![GitHub License](https://img.shields.io/github/license/molvqingtai/WebChat)](https://github.com/molvqingtai/WebChat/blob/master/LICENSE) [![Chrome Web Store Version](https://img.shields.io/chrome-web-store/v/cpaedhbidlpnbdfegakhiamfpndhjpgf)](https://chromewebstore.google.com/detail/webchat/cpaedhbidlpnbdfegakhiamfpndhjpgf) [![GitHub Release](https://img.shields.io/github/v/release/molvqingtai/WebChat)](https://github.com/molvqingtai/WebChat/releases) [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/molvqingtai/WebChat)
 
-> Private, serverless conversations on any website.
+> Chat with anyone on any website.
 
 WebChat is a decentralized browser extension that lets people visiting the same website chat anonymously. It uses WebRTC for end-to-end encrypted, peer-to-peer communication, so there is no central chat server and your data remains on your device.
 
@@ -15,18 +15,18 @@ Turn any website into a shared chat room and connect with the people who are alr
 ## Install
 
 <p align="center">
-  <a href="https://chromewebstore.google.com/detail/webchat/cpaedhbidlpnbdfegakhiamfpndhjpgf"><img src="https://img.shields.io/badge/Chrome-Web%20Store-4285F4?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Install WebChat from the Chrome Web Store" /></a>
-  <a href="https://microsoftedge.microsoft.com/addons/detail/mmfdplbomjjlgdffecapcpgjmhfhmiob"><img src="https://img.shields.io/badge/Edge-Add--ons-0078D7?style=for-the-badge&logo=microsoftedge&logoColor=white" alt="Install WebChat from Microsoft Edge Add-ons" /></a>
-  <a href="https://addons.mozilla.org/firefox/addon/webchat/"><img src="https://img.shields.io/badge/Firefox-Add--ons-FF7139?style=for-the-badge&logo=firefoxbrowser&logoColor=white" alt="Install WebChat from Firefox Add-ons" /></a>
+  <a href="https://chromewebstore.google.com/detail/webchat/cpaedhbidlpnbdfegakhiamfpndhjpgf"><img src="https://img.shields.io/badge/Chrome-4285F4?style=for-the-badge&amp;logo=googlechrome&amp;logoColor=white" alt="Google Chrome" /></a>
+  <a href="https://microsoftedge.microsoft.com/addons/detail/mmfdplbomjjlgdffecapcpgjmhfhmiob"><img src="https://img.shields.io/badge/Edge-0078D7?style=for-the-badge&amp;logo=microsoftedge&amp;logoColor=white" alt="Microsoft Edge" /></a>
+  <a href="https://addons.mozilla.org/firefox/addon/webchat/"><img src="https://img.shields.io/badge/Firefox-FF7139?style=for-the-badge&amp;logo=firefoxbrowser&amp;logoColor=white" alt="Mozilla Firefox" /></a>
 </p>
 
-### Manual installation
-
-1. Download the archive for your browser from [GitHub Releases](https://github.com/molvqingtai/WebChat/releases).
-2. Extract the ZIP archive.
-3. Open your browser's extension management page:
-   - Chrome or Edge: open `chrome://extensions` or `edge://extensions`, enable **Developer mode**, select **Load unpacked**, and choose the extracted folder.
-   - Firefox: open `about:debugging#/runtime/this-firefox`, select **Load Temporary Add-on**, and choose the extracted extension's `manifest.json`.
+<p align="center">
+  <a href="https://chromewebstore.google.com/detail/webchat/cpaedhbidlpnbdfegakhiamfpndhjpgf">Chrome Web Store</a>
+  &nbsp;&middot;&nbsp;
+  <a href="https://microsoftedge.microsoft.com/addons/detail/mmfdplbomjjlgdffecapcpgjmhfhmiob">Microsoft Edge Add-ons</a>
+  &nbsp;&middot;&nbsp;
+  <a href="https://addons.mozilla.org/firefox/addon/webchat/">Firefox Add-ons</a>
+</p>
 
 ## Usage
 
@@ -47,6 +47,7 @@ WebChat builds on these excellent open-source projects:
 - **[Remesh](https://github.com/remesh-js/remesh)** provides the DDD-inspired state model that keeps application logic independent from the React UI.
 - **[shadcn/ui](https://ui.shadcn.com/)** provides accessible, customizable UI building blocks.
 - **[WXT](https://wxt.dev/)** provides the cross-browser extension framework and build tooling.
+- **[Comctx](https://github.com/molvqingtai/comctx)** provides RPC communication across the extension's JavaScript contexts.
 - **[Artico](https://github.com/matallui/artico)** provides the flexible WebRTC foundation for peer-to-peer communication.
 - **[ugly-avatar](https://github.com/txstc55/ugly-avatar)** generates WebChat's distinctive random avatars.
 

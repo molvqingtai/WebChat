@@ -1,6 +1,5 @@
 import { browser } from '#imports'
 import { defineProxy } from 'comctx'
-import type { Clock } from '@/domain/runtime/externs/Clock'
 import type { PresenceStore } from '@/domain/runtime/externs/PresenceStore'
 import type { RuntimeServer } from '@/runtime/Contract'
 import { RUNTIME_NAMESPACE_PREFIX } from '@/runtime/Contract'
@@ -85,12 +84,7 @@ const [, injectServer] = defineProxy(() => ({}) as RuntimeServer, {
 })
 const server = injectServer(new BackgroundInjectAdapter(messageApi))
 
-const clock: Clock = {
-  now: () => Date.now()
-}
-
 const coordinator = new Coordinator({
-  clock,
   storage: browser.storage.session,
   ensureHostDocument: import.meta.env.FIREFOX ? ensureBackgroundHost : ensureOffscreenHost,
   probeHost: async (startup) => {
@@ -104,6 +98,11 @@ const coordinator = new Coordinator({
     return startup && !import.meta.env.FIREFOX ? poll(probe, { timeoutMs: 15000, intervalMs: 250 }) : probe()
   },
   destroyHostDocument: import.meta.env.FIREFOX ? destroyBackgroundHost : destroyOffscreenHost,
+  tabs: browser.tabs,
+  attachPage: (lease) =>
+    import.meta.env.FIREFOX && backgroundHost.server
+      ? backgroundHost.server.attachPage(lease)
+      : server.attachPage(lease),
   detachPage: (lease) =>
     import.meta.env.FIREFOX && backgroundHost.server
       ? backgroundHost.server.detachPage(lease)
@@ -111,9 +110,16 @@ const coordinator = new Coordinator({
 })
 
 export const ensureHost = () => coordinator.ensureHost()
-export const registerPage = (lease: { domain: string; pageId: string }) => coordinator.registerPage(lease)
-export const unregisterPage = (lease: { domain: string; pageId: string }) => coordinator.unregisterPage(lease)
+export const registerPage = (lease: Parameters<typeof coordinator.registerPage>[0]) => coordinator.registerPage(lease)
 export const restore = () => coordinator.restore()
+
+export const watchTabs = () => {
+  browser.tabs.onRemoved.addListener((tabId) => void coordinator.removeTab(tabId))
+  browser.tabs.onUpdated.addListener((tabId, changeInfo) => {
+    if (typeof changeInfo.url === 'string') void coordinator.updateTab(tabId, changeInfo.url)
+  })
+  browser.tabs.onActivated.addListener(() => void coordinator.reconcile())
+}
 
 /** MV3 service-worker suspension does not imply that the Offscreen document died. */
 export const watchOffscreenClosed = () => coordinator.watchHost()

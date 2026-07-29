@@ -247,6 +247,7 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
       domain: this.dependencies.pageDomain,
       ...command
     })
+    if (!snapshot) throw new DOMException('ChatRoom operation cancelled', 'AbortError')
     const domainSnapshot = snapshot.domains.find((item) => item.domain === this.dependencies.pageDomain)
     if (!domainSnapshot?.localSession) throw new Error('Runtime did not create a local session')
     const generationKey = `${domainSnapshot.localSession.user.id}:${domainSnapshot.localSession.joinedAt}`
@@ -257,7 +258,8 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
   // Application reconnect retains the public leave/join composition; Lifecycle owns final release.
   async leaveRoom(): Promise<void> {
     await this.subscriptionTask
-    await this.dependencies.server.reconnectDomain({ domain: this.dependencies.pageDomain })
+    const result = await this.dependencies.server.reconnectDomain({ domain: this.dependencies.pageDomain })
+    if (result === null) throw new DOMException('ChatRoom operation cancelled', 'AbortError')
   }
 
   async sendMessage(command: SendMessageCommand): Promise<ChatMessage> {

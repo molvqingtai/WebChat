@@ -51,14 +51,6 @@ const ToastDomain = Remesh.domain({
     })
 
     domain.effect({
-      name: 'Toast.OnRoomSelfJoinRoomEffect',
-      impl: ({ fromEvent }) =>
-        fromEvent(chatRoomDomain.event.SelfJoinRoomEvent).pipe(
-          map(() => LoadingCommand({ message: 'Connected to the chat.', duration: 3000 }))
-        )
-    })
-
-    domain.effect({
       name: 'Toast.OnRoomErrorEffect',
       impl: ({ fromEvent }) =>
         merge(fromEvent(chatRoomDomain.event.OnErrorEvent), fromEvent(worldRoomDomain.event.OnErrorEvent)).pipe(

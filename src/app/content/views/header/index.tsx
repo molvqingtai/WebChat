@@ -21,7 +21,7 @@ const Header: FC = () => {
   const worldUserList = useRemeshQuery(worldRoomDomain.query.UserListQuery())
   const chatOnlineCount = chatUserList.length
 
-  const worldOnlineGroup = worldUserList
+  const worldOnlineGroup = worldUserList.toSorted((left, right) => right.users.length - left.users.length)
 
   const [chatUserListScrollParentRef, setChatUserListScrollParentRef] = useState<HTMLDivElement | null>(null)
   const [worldOnlineGroupScrollParentRef, setWorldOnlineGroupScrollParentRef] = useState<HTMLDivElement | null>(null)

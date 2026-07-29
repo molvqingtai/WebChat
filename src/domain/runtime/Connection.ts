@@ -48,6 +48,11 @@ export interface ConnectionOperationFailed {
   error: Error
 }
 
+export interface ConnectionOperationCancelled {
+  operationId: string
+  supersedingOperationId: string
+}
+
 const PHYSICAL_ROOM_JOIN_TIMEOUT_MS = 10000
 const replaceBy = <T>(items: T[], predicate: (item: T) => boolean, next: T): T[] =>
   items.some(predicate) ? items.map((item) => (predicate(item) ? next : item)) : [...items, next]
@@ -127,6 +132,9 @@ const ConnectionDomain = Remesh.domain({
     const OperationFailedEvent = domain.event<ConnectionOperationFailed>({
       name: 'Connection.OperationFailedEvent'
     })
+    const OperationCancelledEvent = domain.event<ConnectionOperationCancelled>({
+      name: 'Connection.OperationCancelledEvent'
+    })
     const AttemptStartedEvent = domain.event<JoinAttempt>({ name: 'Connection.AttemptStartedEvent' })
     const AttemptAcceptedEvent = domain.event<JoinAttempt>({ name: 'Connection.AttemptAcceptedEvent' })
     const AttemptFailedEvent = domain.event<JoinAttempt & { error: Error }>({
@@ -186,9 +194,9 @@ const ConnectionDomain = Remesh.domain({
         ...(currentAttempt ? [worldDomain.command.AbortStagedCommand(currentAttempt.attemptId)] : []),
         ...(currentAttempt?.operationId
           ? [
-              OperationFailedEvent({
+              OperationCancelledEvent({
                 operationId: currentAttempt.operationId,
-                error: new Error('Domain join superseded')
+                supersedingOperationId: payload.operationId ?? payload.attemptId
               }),
               AttemptSupersededEvent(currentAttempt)
             ]
@@ -683,18 +691,6 @@ const ConnectionDomain = Remesh.domain({
         )
     })
     domain.effect({
-      name: 'Connection.DeadHistoryPagesEffect',
-      impl: ({ fromEvent, get }) =>
-        fromEvent(historyDomain.event.DeadPagesEvent).pipe(
-          map((pageIds) =>
-            pageIds.flatMap((pageId) => {
-              const lease = get(lifecycleDomain.query.DomainLeasesQuery()).find((item) => item.pageIds.includes(pageId))
-              return lease ? [lifecycleDomain.command.DetachPageCommand({ domain: lease.domain, pageId })] : []
-            })
-          )
-        )
-    })
-    domain.effect({
       name: 'Connection.ReleaseEffect',
       impl: ({ fromEvent }) => fromEvent(lifecycleDomain.event.DomainReleasedEvent).pipe(map(ReleaseDomainCommand))
     })
@@ -733,6 +729,7 @@ const ConnectionDomain = Remesh.domain({
       event: {
         OperationSucceededEvent,
         OperationFailedEvent,
+        OperationCancelledEvent,
         AttemptStartedEvent,
         AttemptAcceptedEvent,
         AttemptFailedEvent,
