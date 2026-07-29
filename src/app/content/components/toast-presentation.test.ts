@@ -4,11 +4,14 @@ import { Remesh, type RemeshStore } from 'remesh'
 import type { ComponentType, ReactNode } from 'react'
 import AppFeedbackDomain from '@/domain/AppFeedback'
 import ChatRoomDomain from '@/domain/ChatRoom'
+import ToastDomain from '@/domain/Toast'
 import ToastPresentationDomain, { type ToastDescriptor } from '@/domain/ToastPresentation'
 import UserInfoDomain, { type UserInfo } from '@/domain/UserInfo'
 import { ChatRoomExtern, type ChatRoom } from '@/domain/externs/ChatRoom'
 import { ReadinessExtern, type ReadinessState } from '@/domain/externs/Readiness'
 import { BrowserSyncStorageExtern, LocalStorageExtern, type Storage, type StorageValue } from '@/domain/externs/Storage'
+import { ToastExtern } from '@/domain/externs/Toast'
+import { WorldRoomExtern } from '@/domain/externs/WorldRoom'
 import { MessageDatabaseExtern } from '@/domain/MessageStore'
 
 const require = createRequire(import.meta.url)
@@ -87,13 +90,15 @@ const waitFor = async (predicate: () => boolean, timeout = 2000) => {
 
 const deferred = () => {
   let resolve!: () => void
-  const promise = new Promise<void>((onResolve) => {
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<void>((onResolve, onReject) => {
     resolve = onResolve
+    reject = onReject
   })
-  return { promise, resolve }
+  return { promise, resolve, reject }
 }
 
-const descriptorId = (requestId: number) => `webchat-request-${requestId}`
+const RUNTIME_TOAST_ID = 'webchat-runtime-readiness'
 
 const PresentationHarness = ({ mounted }: { mounted: boolean }) => {
   const toasterRef = useToastPresentation()
@@ -143,12 +148,14 @@ const createFixture = () => {
   }
   const readinessListeners = new Set<(state: ReadinessState) => void>()
   let reconnectPort = () => Promise.resolve()
+  const legacyLoading = vi.fn(() => 'legacy-loading')
+  const legacyError = vi.fn(() => 'legacy-error')
   const portSnapshots: { visible: boolean; startedAt: number }[] = []
   const chat: ChatRoom = {
     joinRoom: vi.fn(async () => {}),
     leaveRoom: vi.fn(() => {
       portSnapshots.push({
-        visible: document.body.textContent.includes('Reconnecting to the chat...'),
+        visible: document.body.textContent.includes('Connected to the chat.'),
         startedAt: Date.now()
       })
       return reconnectPort()
@@ -174,11 +181,25 @@ const createFixture = () => {
       }),
       MessageDatabaseExtern.impl(database),
       BrowserSyncStorageExtern.impl(browserStorage),
-      LocalStorageExtern.impl(localStorage)
+      LocalStorageExtern.impl(localStorage),
+      ToastExtern.impl({
+        success: vi.fn(() => 'success'),
+        error: legacyError,
+        info: vi.fn(() => 'info'),
+        warning: vi.fn(() => 'warning'),
+        loading: legacyLoading,
+        cancel: vi.fn(() => 'cancelled')
+      }),
+      WorldRoomExtern.impl({
+        getState: async () => [],
+        onState: () => () => {},
+        onError: () => () => {}
+      })
     ]
   })
   const chatAction = ChatRoomDomain()
   const feedbackAction = AppFeedbackDomain()
+  const toastAction = ToastDomain()
   const presentationAction = ToastPresentationDomain()
   const userAction = UserInfoDomain()
   const room = store.getDomain(chatAction)
@@ -186,6 +207,7 @@ const createFixture = () => {
   const user = store.getDomain(userAction)
   store.igniteDomain(chatAction)
   store.igniteDomain(feedbackAction)
+  store.igniteDomain(toastAction)
   store.send(user.command.UpdateUserInfoCommand(SELF))
 
   return {
@@ -193,6 +215,8 @@ const createFixture = () => {
     room,
     presentation,
     chat,
+    legacyLoading,
+    legacyError,
     portSnapshots,
     emitReadiness: (state: ReadinessState) => readinessListeners.forEach((listener) => listener(state)),
     usePort: (port: () => Promise<void>) => {
@@ -210,6 +234,83 @@ afterAll(async () => {
 })
 
 describe('generic Toast presentation', () => {
+  it('uses one fixed connection owner for direct and manual loading', async () => {
+    const fixture = createFixture()
+    const descriptors: ToastDescriptor[] = []
+    const dismissals: string[] = []
+    fixture.store.subscribeEvent(fixture.presentation.event.DescriptorEvent, (descriptor) =>
+      descriptors.push(descriptor)
+    )
+    fixture.store.subscribeEvent(fixture.presentation.event.DismissEvent, (id) => dismissals.push(id))
+    fixture.store.send(fixture.presentation.command.SetSurfaceMountedCommand(true))
+
+    const joining = deferred()
+    vi.mocked(fixture.chat.joinRoom).mockReturnValueOnce(joining.promise)
+    fixture.store.send(fixture.room.command.JoinRoomCommand())
+    await waitFor(() => descriptors.some(({ type }) => type === 'loading'))
+    const directLoading = descriptors.find(({ type }) => type === 'loading')
+    expect.soft(directLoading).toMatchObject({
+      id: RUNTIME_TOAST_ID,
+      type: 'loading',
+      message: 'Connected to the chat.'
+    })
+
+    joining.resolve()
+    await waitFor(() => fixture.store.query(fixture.room.query.JoinIsFinishedQuery()))
+    await waitFor(() => dismissals.includes(RUNTIME_TOAST_ID))
+    expect.soft(fixture.legacyLoading).not.toHaveBeenCalled()
+
+    const reconnecting = deferred()
+    fixture.usePort(() => reconnecting.promise)
+    const descriptorCount = descriptors.length
+    fixture.store.send(fixture.room.command.ReconnectCommand())
+    await waitFor(() => descriptors.length > descriptorCount)
+    const manualLoading = descriptors.slice(descriptorCount).find(({ type }) => type === 'loading')
+    expect.soft(manualLoading).toMatchObject({
+      id: RUNTIME_TOAST_ID,
+      type: 'loading',
+      message: 'Connected to the chat.'
+    })
+    expect.soft(descriptors.some(({ message }) => message === 'Reconnecting to the chat...')).toBe(false)
+    expect(fixture.store.query(fixture.room.query.ConnectionIsLoadingQuery())).toBe(true)
+    expect(fixture.store.query(fixture.room.query.ReconnectAvailableQuery())).toBe(false)
+
+    reconnecting.resolve()
+    fixture.store.discard()
+  })
+
+  it('publishes only the fixed generic error for a final connection failure', async () => {
+    const fixture = createFixture()
+    const descriptors: ToastDescriptor[] = []
+    fixture.store.subscribeEvent(fixture.presentation.event.DescriptorEvent, (descriptor) =>
+      descriptors.push(descriptor)
+    )
+    fixture.store.send(fixture.presentation.command.SetSurfaceMountedCommand(true))
+    const joining = deferred()
+    vi.mocked(fixture.chat.joinRoom).mockReturnValueOnce(joining.promise)
+
+    fixture.store.send(fixture.room.command.JoinRoomCommand())
+    await waitFor(() => descriptors.some(({ type }) => type === 'loading'))
+    fixture.emitReadiness('unavailable')
+    joining.reject(new Error('provider detail'))
+    await waitFor(() => !fixture.store.query(fixture.room.query.ConnectionOperationIsLoadingQuery()))
+    await settle(50)
+
+    expect.soft(descriptors.find(({ type }) => type === 'loading')).toMatchObject({
+      id: RUNTIME_TOAST_ID,
+      message: 'Connected to the chat.'
+    })
+    expect.soft(descriptors.filter(({ type }) => type === 'error')).toEqual([
+      {
+        id: RUNTIME_TOAST_ID,
+        type: 'error',
+        message: 'Connection failed'
+      }
+    ])
+    expect.soft(fixture.legacyError).not.toHaveBeenCalled()
+    fixture.store.discard()
+  })
+
   it('maps business sources while preserving immediate requests, bounded absence, and unrelated Toasts', async () => {
     const fixture = createFixture()
     const descriptorIds: string[] = []
@@ -220,6 +321,7 @@ describe('generic Toast presentation', () => {
     })
     fixture.store.send(fixture.room.command.JoinRoomCommand())
     await waitFor(() => fixture.store.query(fixture.room.query.JoinIsFinishedQuery()))
+    expect(fixture.legacyLoading).not.toHaveBeenCalled()
 
     const operations: {
       type: 'loading' | 'success' | 'error' | 'dismiss'
@@ -289,6 +391,11 @@ describe('generic Toast presentation', () => {
     expect(runtimeDescriptors.length).toBeGreaterThan(unavailableDescriptorCount)
     expect(runtimeDescriptors.slice(unavailableDescriptorCount).every(({ type }) => type === 'loading')).toBe(true)
     expect(
+      runtimeDescriptors
+        .filter(({ type }) => type === 'loading')
+        .every(({ message }) => message === 'Connected to the chat.')
+    ).toBe(true)
+    expect(
       descriptors.some(
         ({ id, type, message }) =>
           id === 'webchat-runtime-readiness' && (type === 'success' || message === 'Ready to chat')
@@ -322,24 +429,39 @@ describe('generic Toast presentation', () => {
 
     activeDescriptorId = null
     firstVisibleAt = null
+    const operationCountBeforeReconnect = operations.length
+    const runtimeErrorCountBeforeReconnect = operations.filter(
+      (item) => item.type === 'error' && item.id === RUNTIME_TOAST_ID
+    ).length
     fixture.store.send(fixture.room.command.ReconnectCommand())
     fixture.store.send(fixture.room.command.ReconnectCommand())
     let request = fixture.store.query(fixture.room.query.ReconnectRequestQuery())!
-    activeDescriptorId = descriptorId(request.id)
+    activeDescriptorId = RUNTIME_TOAST_ID
     await waitFor(() => fixture.portSnapshots.length === 1)
     expect(fixture.portSnapshots[0].visible).toBe(false)
     await waitFor(() =>
       Boolean(document.querySelector(`[data-testid="${activeDescriptorId}"][data-mounted="true"][data-visible="true"]`))
     )
     await waitFor(() => fixture.store.query(fixture.room.query.ReconnectRequestQuery()) === null)
-    await waitFor(() => operations.some((item) => item.type === 'dismiss' && item.id === activeDescriptorId))
-    const dismissOperation = operations.find((item) => item.type === 'dismiss' && item.id === activeDescriptorId)!
+    await waitFor(() =>
+      operations
+        .slice(operationCountBeforeReconnect)
+        .some((item) => item.type === 'dismiss' && item.id === activeDescriptorId)
+    )
+    const reconnectOperations = operations.slice(operationCountBeforeReconnect)
+    const dismissOperation = reconnectOperations.find(
+      (item) => item.type === 'dismiss' && item.id === activeDescriptorId
+    )!
     expect(firstVisibleAt).not.toBeNull()
     expect(dismissOperation.at - firstVisibleAt!).toBeGreaterThanOrEqual(290)
-    expect(operations.some((item) => item.type === 'success' && item.id === activeDescriptorId)).toBe(false)
+    expect(reconnectOperations.some((item) => item.type === 'success' && item.id === activeDescriptorId)).toBe(false)
+    expect(operations.filter((item) => item.type === 'error' && item.id === RUNTIME_TOAST_ID)).toHaveLength(
+      runtimeErrorCountBeforeReconnect
+    )
     expect(document.body.textContent).not.toContain('Ready to chat')
     expect(vi.mocked(fixture.chat.leaveRoom)).toHaveBeenCalledOnce()
     expect(toast.getToasts().some(({ id }) => id === unrelatedId)).toBe(true)
+    await waitFor(() => document.querySelector(`[data-testid="${RUNTIME_TOAST_ID}"]`) === null)
 
     const closeDuringPresentation = deferred()
     fixture.usePort(() => closeDuringPresentation.promise)
@@ -347,7 +469,7 @@ describe('generic Toast presentation', () => {
     firstVisibleAt = null
     fixture.store.send(fixture.room.command.ReconnectCommand())
     request = fixture.store.query(fixture.room.query.ReconnectRequestQuery())!
-    activeDescriptorId = descriptorId(request.id)
+    activeDescriptorId = RUNTIME_TOAST_ID
     await waitFor(() => fixture.portSnapshots.length === 2)
     await waitFor(() => document.querySelector(`[data-testid="${activeDescriptorId}"]`) !== null)
     await waitFor(() => {
@@ -389,7 +511,7 @@ describe('generic Toast presentation', () => {
     firstVisibleAt = null
     fixture.store.send(fixture.room.command.ReconnectCommand())
     request = fixture.store.query(fixture.room.query.ReconnectRequestQuery())!
-    activeDescriptorId = descriptorId(request.id)
+    activeDescriptorId = RUNTIME_TOAST_ID
     await waitFor(() => fixture.portSnapshots.length === 3)
     await waitFor(() => {
       const active = fixture.store.query(fixture.room.query.ReconnectRequestQuery())
@@ -406,14 +528,12 @@ describe('generic Toast presentation', () => {
     setMounted(false)
     await waitForSurfaceAbsent()
     fixture.usePort(() => Promise.reject(new Error('closed reset')))
+    const descriptorCountBeforeOmitted = descriptorIds.filter((id) => id === RUNTIME_TOAST_ID).length
     fixture.store.send(fixture.room.command.ReconnectCommand())
-    request = fixture.store.query(fixture.room.query.ReconnectRequestQuery())!
-    const omittedId = descriptorId(request.id)
     await waitFor(() => fixture.store.query(fixture.room.query.ReconnectRequestQuery()) === null)
     setMounted(true)
     await settle(100)
-    expect(document.querySelector(`[data-testid="${omittedId}"]`)).toBeNull()
-    expect(descriptorIds).not.toContain(omittedId)
+    expect(descriptorIds.filter((id) => id === RUNTIME_TOAST_ID)).toHaveLength(descriptorCountBeforeOmitted)
     expect(document.body.textContent).not.toContain('closed reset')
 
     fixture.usePort(() => Promise.reject(new Error('open reset')))
@@ -421,13 +541,20 @@ describe('generic Toast presentation', () => {
     firstVisibleAt = null
     fixture.store.send(fixture.room.command.ReconnectCommand())
     request = fixture.store.query(fixture.room.query.ReconnectRequestQuery())!
-    activeDescriptorId = descriptorId(request.id)
+    activeDescriptorId = RUNTIME_TOAST_ID
     await waitFor(
       () =>
-        document.querySelector(`[data-testid="${activeDescriptorId}"]`)?.textContent?.includes('open reset') === true
+        document.querySelector(`[data-testid="${activeDescriptorId}"]`)?.textContent?.includes('Connection failed') ===
+        true
     )
     expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toBeNull()
     expect(operations.some((item) => item.type === 'error' && item.id === activeDescriptorId)).toBe(true)
+    expect(descriptors.filter(({ id, type }) => id === RUNTIME_TOAST_ID && type === 'error').at(-1)).toEqual({
+      id: RUNTIME_TOAST_ID,
+      type: 'error',
+      message: 'Connection failed'
+    })
+    expect(document.body.textContent).not.toContain('open reset')
     expect(operations.some((item) => item.type === 'dismiss' && item.id === undefined)).toBe(false)
     expect(operations.some((item) => item.type === 'dismiss' && item.id === unrelatedId)).toBe(false)
     expect(toast.getToasts().some(({ id }) => id === unrelatedId)).toBe(true)
@@ -439,7 +566,8 @@ describe('generic Toast presentation', () => {
     fixture.store.send(fixture.room.command.ReconnectCommand())
     await waitFor(() => fixture.store.query(fixture.room.query.ReconnectRequestQuery()) === null)
     expect(Date.now() - absentStartedAt).toBeLessThan(1000)
-    expect(document.body.textContent).not.toContain('Reconnecting to the chat...')
+    expect(document.body.textContent).not.toContain('Connected to the chat.')
+    expect(descriptorIds.some((id) => id.startsWith('webchat-request-'))).toBe(false)
 
     toast.dismiss(unrelatedId)
     root.unmount()

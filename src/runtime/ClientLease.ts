@@ -56,8 +56,8 @@ export class ClientLease {
   private ready = false
   private watchdog: ReturnType<typeof globalThis.setInterval> | null = null
   private lifecycle: AbortController | null = null
-  private recovering: { lifecycle: AbortController; task: Promise<void> } | null = null
-  private checking: Promise<void> | null = null
+  private recovering: { lifecycle: AbortController; deadline: number; task: Promise<void> } | null = null
+  private checking: { deadline: number; task: Promise<void> } | null = null
   private readonly readyCallbacks = new Set<() => void>()
   private readonly hostPhaseCallbacks = new Set<(phase: HostPhase) => void>()
   private hostPhase: HostPhase = 'none'
@@ -107,11 +107,13 @@ export class ClientLease {
       const remaining = deadline - Date.now()
       if (remaining <= 0) throw lastError
       try {
+        const attemptDeadline = Math.min(deadline, Date.now() + CLIENT_LEASE_RPC_TIMEOUT_MS)
         const result = await withDeadline(
           this.options.coordinator.registerPage(this.lease()),
-          Math.min(CLIENT_LEASE_RPC_TIMEOUT_MS, remaining),
+          attemptDeadline - Date.now(),
           lifecycle.signal
         )
+        if (Date.now() >= attemptDeadline) throw new Error('Runtime control-plane request timed out')
         if (result.phase !== 'ready') throw new Error(`Runtime host unavailable: ${result.phase}`)
         return result
       } catch (error) {
@@ -136,33 +138,38 @@ export class ClientLease {
 
   private recover(lifecycle: AbortController, deadline: number) {
     if (!this.isCurrent(lifecycle)) return Promise.resolve()
-    if (this.recovering?.lifecycle === lifecycle) return this.recovering.task
+    if (this.recovering?.lifecycle === lifecycle && Date.now() < this.recovering.deadline) {
+      return this.recovering.task
+    }
     this.setHostPhase('connecting')
+    const recovery = { lifecycle, deadline, task: Promise.resolve() }
     const task = this.attach(lifecycle, deadline)
       .then(() => {})
       .catch((error) => {
-        if (!this.isCurrent(lifecycle)) return
+        if (!this.isCurrent(lifecycle) || this.recovering !== recovery) return
         this.setHostPhase('unavailable')
         this.logError(error)
       })
-    this.recovering = { lifecycle, task }
+    recovery.task = task
+    this.recovering = recovery
     void task.finally(() => {
       if (this.recovering?.task === task) this.recovering = null
     })
     return task
   }
 
-  private async checkOnce() {
+  private async checkOnce(check: { deadline: number }) {
     const lifecycle = this.lifecycle
     if (!lifecycle || !this.isCurrent(lifecycle)) return
-    const deadline = Date.now() + this.startupTimeoutMs
+    const attemptDeadline = Math.min(check.deadline, Date.now() + CLIENT_LEASE_RPC_TIMEOUT_MS)
     try {
       const registration = await withDeadline(
         this.options.coordinator.registerPage(this.lease()),
-        Math.min(CLIENT_LEASE_RPC_TIMEOUT_MS, deadline - Date.now()),
+        attemptDeadline - Date.now(),
         lifecycle.signal
       )
-      if (!this.isCurrent(lifecycle)) return
+      if (Date.now() >= attemptDeadline) throw new Error('Runtime control-plane request timed out')
+      if (!this.isCurrent(lifecycle) || this.checking !== check || Date.now() >= check.deadline) return
       const lease = registration.snapshot.domains.find((item) => item.domain === this.options.domain)
       const replaced =
         registration.generation !== this.coordinatorGeneration ||
@@ -170,25 +177,29 @@ export class ClientLease {
         !lease?.pageIds.includes(this.options.pageId)
       if (replaced) {
         this.ready = false
-        await this.recover(lifecycle, deadline)
+        await this.recover(lifecycle, check.deadline)
         return
       }
       this.snapshotValue = registration.snapshot
       this.setHostPhase(registration.snapshot.hostPhase)
     } catch {
-      if (!this.isCurrent(lifecycle)) return
+      if (!this.isCurrent(lifecycle) || this.checking !== check || Date.now() >= check.deadline) return
       this.ready = false
-      await this.recover(lifecycle, deadline)
+      await this.recover(lifecycle, check.deadline)
     }
   }
 
   checkNow() {
-    if (!this.checking) {
-      this.checking = this.checkOnce().finally(() => {
-        this.checking = null
-      })
-    }
-    return this.checking
+    const now = Date.now()
+    if (this.checking && now < this.checking.deadline) return this.checking.task
+    if (this.recovering && now >= this.recovering.deadline) this.recovering = null
+    const check = { deadline: now + this.startupTimeoutMs, task: Promise.resolve() }
+    const task = this.checkOnce(check).finally(() => {
+      if (this.checking?.task === task) this.checking = null
+    })
+    check.task = task
+    this.checking = check
+    return task
   }
 
   private startWatchdog(lifecycle: AbortController) {
@@ -200,6 +211,8 @@ export class ClientLease {
 
   async init(): Promise<RuntimeSnapshot | null> {
     this.lifecycle?.abort(new DOMException('Runtime lease superseded', 'AbortError'))
+    this.recovering = null
+    this.checking = null
     if (this.watchdog) globalThis.clearInterval(this.watchdog)
     this.watchdog = null
     const lifecycle = new AbortController()
@@ -221,6 +234,8 @@ export class ClientLease {
   detach() {
     this.lifecycle?.abort(new DOMException('Runtime lease detached', 'AbortError'))
     this.lifecycle = null
+    this.recovering = null
+    this.checking = null
     this.ready = false
     this.setHostPhase('none')
     if (this.watchdog) {

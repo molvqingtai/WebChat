@@ -249,8 +249,12 @@ describe('ChatRoomDomain exact application port', () => {
     await join(fixture)
     const identityRefresh = deferred()
     const hostRecovery = deferred()
-    const errors: Error[] = []
-    fixture.store.subscribeEvent(fixture.room.event.OnErrorEvent, (error) => errors.push(error))
+    const connectionErrors: Error[] = []
+    const roomErrors: Error[] = []
+    fixture.store.subscribeEvent(fixture.room.event.ReconnectFinishedEvent, ({ error }) => {
+      if (error) connectionErrors.push(error)
+    })
+    fixture.store.subscribeEvent(fixture.room.event.OnErrorEvent, (error) => roomErrors.push(error))
     vi.mocked(fixture.chat.joinRoom)
       .mockReturnValueOnce(identityRefresh.promise)
       .mockReturnValueOnce(hostRecovery.promise)
@@ -272,12 +276,14 @@ describe('ChatRoomDomain exact application port', () => {
 
     hostRecovery.reject(new DOMException('Runtime operation superseded', 'AbortError'))
     await vi.waitFor(() => expect(fixture.store.query(fixture.room.query.ConnectionIsLoadingQuery())).toBe(false))
-    expect(errors).toEqual([])
+    expect(connectionErrors).toEqual([])
+    expect(roomErrors).toEqual([])
 
     const refreshError = new Error('Identity refresh failed')
     vi.mocked(fixture.chat.joinRoom).mockRejectedValueOnce(refreshError)
     fixture.store.send(fixture.user.command.UpdateUserInfoCommand({ ...SELF, name: 'Latest' }))
-    await vi.waitFor(() => expect(errors).toEqual([refreshError]))
+    await vi.waitFor(() => expect(connectionErrors).toEqual([refreshError]))
+    expect(roomErrors).toEqual([])
     expect(fixture.store.query(fixture.room.query.ConnectionIsLoadingQuery())).toBe(false)
     fixture.store.discard()
   })
@@ -331,8 +337,12 @@ describe('ChatRoomDomain exact application port', () => {
     vi.mocked(fixture.chat.joinRoom)
       .mockRejectedValueOnce(new Error('initial join failed'))
       .mockRejectedValueOnce('retry transport reset')
-    const errors: Error[] = []
-    fixture.store.subscribeEvent(fixture.room.event.OnErrorEvent, (error) => errors.push(error))
+    const connectionErrors: Error[] = []
+    const roomErrors: Error[] = []
+    fixture.store.subscribeEvent(fixture.room.event.ReconnectFinishedEvent, ({ error }) => {
+      if (error) connectionErrors.push(error)
+    })
+    fixture.store.subscribeEvent(fixture.room.event.OnErrorEvent, (error) => roomErrors.push(error))
 
     fixture.store.send(fixture.room.command.JoinRoomCommand())
     await vi.waitFor(() => expect(fixture.store.query(fixture.room.query.ReconnectAvailableQuery())).toBe(true))
@@ -348,10 +358,12 @@ describe('ChatRoomDomain exact application port', () => {
     expect(fixture.store.query(fixture.room.query.ReconnectAvailableQuery())).toBe(false)
     expect(fixture.chat.joinRoom).toHaveBeenCalledTimes(2)
     expect(fixture.chat.leaveRoom).not.toHaveBeenCalled()
-    expect(errors).toEqual([new Error('initial join failed'), new Error('retry transport reset')])
+    expect(connectionErrors).toEqual([new Error('initial join failed')])
+    expect(roomErrors).toEqual([])
 
     fixture.store.send(fixture.room.command.OmitToastCommand(request.id))
     await vi.waitFor(() => expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toBeNull())
+    expect(connectionErrors).toEqual([new Error('initial join failed'), new Error('retry transport reset')])
     expect(fixture.store.query(fixture.room.query.ReconnectAvailableQuery())).toBe(true)
     await new Promise((resolve) => globalThis.setTimeout(resolve, 0))
     expect(fixture.chat.joinRoom).toHaveBeenCalledTimes(2)

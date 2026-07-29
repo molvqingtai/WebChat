@@ -6,30 +6,22 @@ import ToastPresentationDomain, { type ToastDescriptor } from '@/domain/ToastPre
 import type { ReadinessState } from '@/domain/externs/Readiness'
 
 const RUNTIME_TOAST_ID = 'webchat-runtime-readiness'
-const requestToastId = (requestId: number) => `webchat-request-${requestId}`
-
-const requestLoadingDescriptor = (requestId: number): ToastDescriptor => ({
-  id: requestToastId(requestId),
-  type: 'loading',
-  message: 'Reconnecting to the chat...',
-  dismissible: false,
-  acknowledge: true,
-  minimumVisibleMs: 300
-})
 
 const readinessDescriptor = (state: Exclude<ReadinessState, 'ready'>): ToastDescriptor => {
   if (state === 'connecting') {
     return {
       id: RUNTIME_TOAST_ID,
       type: 'loading',
-      message: 'WebChat connecting',
-      dismissible: false
+      message: 'Connected to the chat.',
+      dismissible: false,
+      acknowledge: true,
+      minimumVisibleMs: 300
     }
   }
   return {
     id: RUNTIME_TOAST_ID,
     type: 'error',
-    message: 'WebChat unavailable'
+    message: 'Connection failed'
   }
 }
 
@@ -42,10 +34,7 @@ const AppFeedbackDomain = Remesh.domain({
     const RuntimeFeedbackQuery = domain.query({
       name: 'AppFeedback.RuntimeFeedbackQuery',
       impl: ({ get }) =>
-        get(chatRoomDomain.query.ConnectionOperationIsLoadingQuery()) ||
-        get(readinessDomain.query.StateQuery()) === 'connecting'
-          ? 'connecting'
-          : get(readinessDomain.query.StateQuery())
+        get(chatRoomDomain.query.ConnectionIsLoadingQuery()) ? 'connecting' : get(readinessDomain.query.StateQuery())
     })
     const runtimeFeedbackCommand = (state: ReadinessState) =>
       state === 'ready'
@@ -64,17 +53,11 @@ const AppFeedbackDomain = Remesh.domain({
       name: 'AppFeedback.OnRequestStartedEffect',
       impl: ({ fromEvent, get }) =>
         fromEvent(chatRoomDomain.event.ReconnectStartedEvent).pipe(
-          map((id) => {
-            const cleanup = id > 1 ? [presentationDomain.command.DismissCommand(requestToastId(id - 1))] : []
-            if (!get(presentationDomain.query.SurfaceMountedQuery())) {
-              return [...cleanup, chatRoomDomain.command.OmitToastCommand(id)]
-            }
-            return [
-              ...cleanup,
-              chatRoomDomain.command.BeginToastCommand(id),
-              presentationDomain.command.PublishCommand(requestLoadingDescriptor(id))
-            ]
-          })
+          map((id) =>
+            get(presentationDomain.query.SurfaceMountedQuery())
+              ? chatRoomDomain.command.BeginToastCommand(id)
+              : chatRoomDomain.command.OmitToastCommand(id)
+          )
         )
     })
 
@@ -87,11 +70,7 @@ const AppFeedbackDomain = Remesh.domain({
             const readiness = runtimeFeedbackCommand(get(RuntimeFeedbackQuery()))
             const request = get(chatRoomDomain.query.ReconnectRequestQuery())
             return request && !request.toast.attempted
-              ? [
-                  readiness,
-                  chatRoomDomain.command.BeginToastCommand(request.id),
-                  presentationDomain.command.PublishCommand(requestLoadingDescriptor(request.id))
-                ]
+              ? [chatRoomDomain.command.BeginToastCommand(request.id), readiness]
               : readiness
           })
         )
@@ -103,7 +82,7 @@ const AppFeedbackDomain = Remesh.domain({
         fromEvent(presentationDomain.event.AcknowledgedEvent).pipe(
           map(({ id, status }) => {
             const request = get(chatRoomDomain.query.ReconnectRequestQuery())
-            if (!request || requestToastId(request.id) !== id) return null
+            if (!request || id !== RUNTIME_TOAST_ID) return null
             return status === 'presented'
               ? chatRoomDomain.command.SettleToastCommand(request.id)
               : chatRoomDomain.command.OmitToastCommand(request.id)
@@ -112,17 +91,15 @@ const AppFeedbackDomain = Remesh.domain({
     })
 
     domain.effect({
-      name: 'AppFeedback.OnRequestFinishedEffect',
+      name: 'AppFeedback.OnConnectionFinishedEffect',
       impl: ({ fromEvent, get }) =>
         fromEvent(chatRoomDomain.event.ReconnectFinishedEvent).pipe(
-          map(({ id, error }) => {
-            const toastId = requestToastId(id)
+          map(({ error }) => {
+            if (!error || get(RuntimeFeedbackQuery()) !== 'ready') return null
             if (!get(presentationDomain.query.SurfaceMountedQuery())) {
-              return presentationDomain.command.DismissCommand(toastId)
+              return presentationDomain.command.DismissCommand(RUNTIME_TOAST_ID)
             }
-            return error
-              ? presentationDomain.command.PublishCommand({ id: toastId, type: 'error', message: error.message })
-              : presentationDomain.command.DismissCommand(toastId)
+            return presentationDomain.command.PublishCommand(readinessDescriptor('unavailable'))
           })
         )
     })

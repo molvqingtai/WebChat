@@ -258,7 +258,7 @@ const ChatRoomDomain = Remesh.domain({
 
     const FailJoinCommand = domain.command({
       name: 'Room.FailJoinCommand',
-      impl: (_, error: Error) => [JoinStatus.command.SetInitialCommand(), OnErrorEvent(error)]
+      impl: () => JoinStatus.command.SetInitialCommand()
     })
 
     const CompleteJoinCommand = domain.command({
@@ -280,7 +280,7 @@ const ChatRoomDomain = Remesh.domain({
           result.cancelled
             ? JoinStatus.command.SetInitialCommand()
             : result.error
-              ? FailJoinCommand(result.error)
+              ? FailJoinCommand()
               : CompleteJoinCommand(result.input),
           CompleteReconnectOperationCommand({ id: result.id, error: result.error })
         ]
@@ -303,8 +303,8 @@ const ChatRoomDomain = Remesh.domain({
         }
         if (result.error) {
           return result.mode === 'join'
-            ? [FailJoinCommand(result.error), finished]
-            : [OnErrorEvent(result.error), finished]
+            ? [FailJoinCommand(), finished, ReconnectFinishedEvent({ id: result.id, error: result.error })]
+            : [finished, ReconnectFinishedEvent({ id: result.id, error: result.error })]
         }
         return [
           result.mode === 'join' ? CompleteJoinCommand(result.input) : RetainJoinInputCommand(result.input),

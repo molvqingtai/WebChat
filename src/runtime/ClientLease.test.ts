@@ -4,10 +4,12 @@ import type { HostPhase, RuntimeCoordinator, RuntimePageRegistration, RuntimeSna
 
 const deferred = <T>() => {
   let resolve!: (value: T) => void
-  const promise = new Promise<T>((done) => {
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((done, fail) => {
     resolve = done
+    reject = fail
   })
-  return { promise, resolve }
+  return { promise, resolve, reject }
 }
 
 const snapshot: RuntimeSnapshot = {
@@ -250,6 +252,114 @@ describe('ClientLease generation ownership', () => {
     expect(phases).toEqual(['connecting', 'unavailable'])
     await checking
     client.detach()
+  })
+
+  it('fences a suspended watchdog deadline before a fresh attachment succeeds', async () => {
+    const domain = 'https://example.test'
+    const pageId = 'page-a'
+    const ownedSnapshot = (hostId: string): RuntimeSnapshot => ({
+      ...snapshot,
+      hostId,
+      domains: [
+        {
+          domain,
+          phase: 'active',
+          pageIds: [pageId],
+          chatRoomJoined: true,
+          sessions: []
+        }
+      ]
+    })
+    const staleCheck = deferred<RuntimePageRegistration>()
+    const replacement = registration(ownedSnapshot('host-b'), 2)
+    const registerPage = vi
+      .fn<RuntimeCoordinator['registerPage']>()
+      .mockResolvedValueOnce(registration(ownedSnapshot('host-a'), 1))
+      .mockReturnValueOnce(staleCheck.promise)
+      .mockResolvedValueOnce(replacement)
+      .mockResolvedValueOnce(replacement)
+    const logError = vi.fn()
+    const phases: HostPhase[] = []
+    const client = new ClientLease({
+      coordinator: coordinatorWith(registerPage),
+      pageId,
+      domain,
+      watchdogIntervalMs: 60000,
+      logError
+    })
+    client.whenHostPhase((phase) => phases.push(phase))
+    await client.init()
+    phases.length = 0
+
+    const suspended = client.checkNow()
+    await vi.waitFor(() => expect(registerPage).toHaveBeenCalledTimes(2))
+    vi.setSystemTime(Date.now() + 15001)
+    staleCheck.reject(new Error('suspended probe failed'))
+    await suspended
+    await client.checkNow()
+
+    expect(registerPage).toHaveBeenCalledTimes(4)
+    expect(phases).toEqual(['connecting', 'ready'])
+    expect(logError).not.toHaveBeenCalled()
+    expect(client.snapshot()).toMatchObject({ hostId: 'host-b', hostPhase: 'ready' })
+    client.detach()
+  })
+
+  it('hands an expired suspended check to current attachment before its stale result settles', async () => {
+    const domain = 'https://example.test'
+    const pageId = 'page-a'
+    const ownedSnapshot = (hostId: string): RuntimeSnapshot => ({
+      ...snapshot,
+      hostId,
+      domains: [
+        {
+          domain,
+          phase: 'active',
+          pageIds: [pageId],
+          chatRoomJoined: true,
+          sessions: []
+        }
+      ]
+    })
+    const staleCheck = deferred<RuntimePageRegistration>()
+    const replacement = registration(ownedSnapshot('host-b'), 2)
+    const registerPage = vi
+      .fn<RuntimeCoordinator['registerPage']>()
+      .mockResolvedValueOnce(registration(ownedSnapshot('host-a'), 1))
+      .mockReturnValueOnce(staleCheck.promise)
+      .mockResolvedValueOnce(replacement)
+      .mockResolvedValueOnce(replacement)
+    const logError = vi.fn()
+    const phases: HostPhase[] = []
+    const client = new ClientLease({
+      coordinator: coordinatorWith(registerPage),
+      pageId,
+      domain,
+      watchdogIntervalMs: 60000,
+      logError
+    })
+    client.whenHostPhase((phase) => phases.push(phase))
+    await client.init()
+    phases.length = 0
+
+    const suspended = client.checkNow()
+    await vi.waitFor(() => expect(registerPage).toHaveBeenCalledTimes(2))
+    vi.setSystemTime(Date.now() + 15001)
+    const current = client.checkNow()
+    try {
+      await vi.waitFor(() => expect(registerPage).toHaveBeenCalledTimes(4))
+      await current
+      staleCheck.reject(new Error('late suspended probe failed'))
+      await suspended
+
+      expect(phases).toEqual(['connecting', 'ready'])
+      expect(logError).not.toHaveBeenCalled()
+      expect(client.snapshot()).toMatchObject({ hostId: 'host-b', hostPhase: 'ready' })
+    } finally {
+      staleCheck.reject(new Error('test cleanup'))
+      client.detach()
+      await Promise.allSettled([suspended, current])
+    }
   })
 
   it('treats page detach as connectivity cleanup without releasing the background tab owner', async () => {
