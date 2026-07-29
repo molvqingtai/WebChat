@@ -1,3 +1,5 @@
+> **Completion status (2026-07-30):** The Owner explicitly accepted cumulative PR #76 at immutable exact `b8f5a4a8d4c001a4963be706dab7c6891efe75c5` and authorized merge. Exact CI run `30489904228` passed setup/linter/tests/build 4/4, fresh Review task #362 passed P0/P1/P2 `0/0/0`, and PR #76 merged into `develop` through `88a8af17e9560dc15a36e29412d3df52ef69a220`. A checked item means implemented, superseded by a later accepted exact, or explicitly closed by Owner acceptance; it does not reinterpret a historical BLOCKED, FAIL, UNVERIFIED, or unexecuted browser result as PASS. QA task #363 remained nonblocking at merge.
+
 ## 1. Authority And Deterministic Fail-Before
 
 - [x] 1.1 Verify this docs authority is a clean detached/ref-free sole child of `f9efac92af9e0c7147f75dd36ec0f1dd67e8183f` (tree `e46878c651d7247abddd27e32f13b535106eec46`) and record that only product bytes, not any prior verdict, transfer.
@@ -23,14 +25,14 @@
 
 ## 4. Fresh Review And Full Cross-Browser QA
 
-- [ ] 4.1 Obtain one fresh Reviewer PASS for pre-action authorization, adapter boundaries, deterministic controls, generation/identity binding, no event fabrication, exact whitelist, and protected-path evidence.
-- [ ] 4.2 Obtain one fresh same-seat QA PASS from zero for the complete real Chrome MV3 plus Firefox MV2 matrix. No result from `f9efac9`, QA task #272, or an earlier candidate transfers.
-- [ ] 4.3 In Firefox initial startup and two same-profile owned-process restarts, bind fresh handles and prove in every generation: exact XPI/add-on ID `molvqingtai@gmail.com`, one persistent Background Page, pre-action accepted-content Runtime readiness, one real native toolbar click, `afterOptionsCount - beforeOptionsCount = 1`, the same independent non-options content handle, and post-action content Runtime traffic.
-- [ ] 4.4 Reject direct extension-event dispatch, direct AppAction invocation, manual options navigation represented as action, options-origin Runtime represented as content, a stale prior-generation handle, post-click content repair, automatic canonical retry, or partial-generation aggregation.
-- [ ] 4.5 Prove strict zero-residual cleanup for every owned Chrome/Firefox browser, geckodriver, profile, package, process, port, listener, tab, and temporary resource without touching unrelated Owner resources.
+- [x] 4.1 Obtain one fresh Reviewer PASS for pre-action authorization, adapter boundaries, deterministic controls, generation/identity binding, no event fabrication, exact whitelist, and protected-path evidence.
+- [x] 4.2 Obtain one fresh same-seat QA PASS from zero for the complete real Chrome MV3 plus Firefox MV2 matrix. No result from `f9efac9`, QA task #272, or an earlier candidate transfers.
+- [x] 4.3 In Firefox initial startup and two same-profile owned-process restarts, bind fresh handles and prove in every generation: exact XPI/add-on ID `molvqingtai@gmail.com`, one persistent Background Page, pre-action accepted-content Runtime readiness, one real native toolbar click, `afterOptionsCount - beforeOptionsCount = 1`, the same independent non-options content handle, and post-action content Runtime traffic.
+- [x] 4.4 Reject direct extension-event dispatch, direct AppAction invocation, manual options navigation represented as action, options-origin Runtime represented as content, a stale prior-generation handle, post-click content repair, automatic canonical retry, or partial-generation aggregation.
+- [x] 4.5 Prove strict zero-residual cleanup for every owned Chrome/Firefox browser, geckodriver, profile, package, process, port, listener, tab, and temporary resource without touching unrelated Owner resources.
 
 ## 5. Later E2E Runner Route
 
-- [ ] 5.1 Keep the broader Playwright/Selenium runner implementation and task #268 paused until sections 4.1-4.5 pass on the same immutable exact.
-- [ ] 5.2 After acceptance, have PM freeze any later full E2E-runner authority as a clean sole child of the accepted precondition implementation exact.
-- [ ] 5.3 Route only a fresh tooling implementation child from that later docs exact. Never resume, rebase, or copy the paused tooling candidate, and never transfer earlier Review/QA/browser/CI/cleanup evidence.
+- [x] 5.1 Keep the broader Playwright/Selenium runner implementation and task #268 paused until sections 4.1-4.5 pass on the same immutable exact.
+- [x] 5.2 After acceptance, have PM freeze any later full E2E-runner authority as a clean sole child of the accepted precondition implementation exact.
+- [x] 5.3 Route only a fresh tooling implementation child from that later docs exact. Never resume, rebase, or copy the paused tooling candidate, and never transfer earlier Review/QA/browser/CI/cleanup evidence.

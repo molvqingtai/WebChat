@@ -6,22 +6,6 @@ TBD - created by archiving change refactor-to-shared-webrtc-runtime. Update Purp
 
 ## Requirements
 
-### Requirement: WorldRoom v2 is a browser singleton inside the Runtime
-
-The World wire types, schema, limits, and pure validation SHALL be defined by the public `src/protocol/index.ts` module. Runtime-only registry, projection, lifecycle, and transport orchestration SHALL remain outside that module; the dependency direction SHALL be Runtime → protocol.
-
-The system SHALL keep the WorldRoom as the cross-domain discovery index, joined exactly once per browser by the shared Runtime in a v2-namespaced room rather than once per page. `ConnectionDomain` SHALL uniquely own that physical WorldRoom membership/recovery generation, while `WorldDomain` uniquely owns its session, active-domain registry, and presence snapshots. While at least one supported domain page is online, Connection SHALL maintain one WorldRoom membership; after the last page disconnects, the membership SHALL follow the Lifecycle domain-released Event after the unified five-second grace before exit.
-
-#### Scenario: Single membership per browser
-
-- **WHEN** multiple pages across one or more domains are online in one browser
-- **THEN** `ConnectionDomain` SHALL hold exactly one WorldRoom membership, not one per page or per domain
-
-#### Scenario: Grace-aligned exit
-
-- **WHEN** the last page of the browser disconnects
-- **THEN** the WorldRoom membership SHALL exit only after the same unified 5-second grace used by domain lifecycles
-
 ### Requirement: Presence is a full per-peer snapshot
 
 WorldRoom presence SHALL be published as exactly one `WorldRoomMessage` complete snapshot per source peer: `WorldRoomMessage extends ChatSession {sites: ChatSite[]}`, `ChatSession = {sessionId,user:ChatUser}`, and `ChatSite = {origin,title?,icon?,description?}`. It SHALL have no payload discriminator. The trusted World `roomId` SHALL select this strict parser. World and Chat SHALL use the same structures while maintaining distinct session instances and room protocols. `WorldDomain` SHALL maintain the browser's active-domain registry, publish a fresh complete snapshot whenever the registry changes, atomically replace a trusted source peer's whole record on each snapshot, and delete that record when the peer leaves.
@@ -101,3 +85,22 @@ Presence SHALL be aggregated by domain: multiple pages of one browser on one dom
 
 - **WHEN** a fake World application port drives state updates and errors
 - **THEN** a World application consumer SHALL operate using only the exact-origin projected state and exact public protocol value types, while `WorldDomain` alone retains Runtime snapshot/source handling
+
+### Requirement: WorldRoom v3 is a browser singleton inside the Runtime
+
+The headless Runtime SHALL own exactly one physical WorldRoom v3 membership per browser host. All active and grace-period domains SHALL contribute to one full snapshot through `WorldDomain`; pages SHALL own no World peer. The v3 World payload SHALL remain exactly `{sessionId,user,sites}` with no `type`, `presenceId`, or `joinedAt`. Only the physical namespace generation changes so World discovery cannot advertise v1/v2 peers whose Chat protocol is incompatible with v3.
+
+#### Scenario: Single membership per browser
+
+- **WHEN** pages from one or more domains are active in one browser host
+- **THEN** the Runtime SHALL join exactly one v3 WorldRoom, publish one full per-browser snapshot, and SHALL not join v1 or v2 World rooms
+
+#### Scenario: Grace-aligned exit
+
+- **WHEN** the final domain exits after its unified grace and required final Chat release settles
+- **THEN** the Runtime SHALL publish or settle the empty v3 World state and leave the singleton according to the existing lifecycle ownership
+
+#### Scenario: Namespace changes without payload drift
+
+- **WHEN** a canonical World snapshot is published in v3
+- **THEN** its strict payload, canonical JSON, and encoded bytes SHALL remain identical to v2, while v1/v2 clients remain physically isolated and absent from the v3 discovery projection

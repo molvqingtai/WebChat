@@ -222,7 +222,7 @@ A graceful final release SHALL first durably replace the private active lease wi
 
 The peer protocol SHALL NOT bridge, translate, or interoperate with released v1 or v2 wire protocols. v1, v2, and v3 SHALL use isolated Chat and World room namespaces so none parses another generation's wire traffic or advertises an incompatible peer as currently reachable. Local-data migration and old-record handling are application/page Domain concerns defined by the `webrtc-runtime` capability. Unmerged development residues MAY be cleaned up directly.
 
-#### Scenario: v1 v2 v3 cross-traffic
+#### Scenario: v1/v2 cross-traffic
 
 - **WHEN** v1, v2, and v3 clients meet in a shared physical environment
 - **THEN** each generation SHALL use isolated Chat and World namespaces, none SHALL parse or advertise another generation's traffic, and no compatibility fallback SHALL exist
