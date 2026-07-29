@@ -4,6 +4,7 @@ import { InjectAdapterBase, type MessageApi } from '@/service/adapter/runtime/Co
 import { relayOffscreenProviderMessages } from '@/service/adapter/runtime/Relay'
 import type { MessageMeta } from '@/service/adapter/runtime/Provider'
 import { TabsProviderAdapter, type TabsApi } from '@/service/adapter/runtime/Tabs'
+import { canonicalNavigationUrl } from '@/service/adapter/runtime/Navigation'
 
 export type { MessageMeta, MessageTab } from '@/service/adapter/runtime/Provider'
 export type { RelayRejection } from '@/service/adapter/runtime/Relay'
@@ -26,7 +27,7 @@ export class InjectAdapter extends InjectAdapterBase<MessageMeta> {
   sendMessage: SendMessage<MessageMeta> = (message) => {
     this.runtime.sendMessage(this.runtime.id, {
       ...message,
-      meta: { tab: { url: document.location.href } }
+      meta: { tab: { url: canonicalNavigationUrl(document.location.href) ?? document.location.href } }
     })
   }
 }

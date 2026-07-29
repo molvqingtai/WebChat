@@ -30,7 +30,7 @@ const createBus = () => {
   }
   const tabs = {
     query: vi.fn(async () => []),
-    get: vi.fn(),
+    get: vi.fn(async (id: number) => ({ id, url: 'https://example.com/' })),
     sendMessage: vi.fn()
   }
   return { listeners, messages, runtime, tabs }

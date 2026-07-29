@@ -30,6 +30,7 @@ export interface MentionedUser extends ChatUser {
 export interface SessionMessage extends ChatSession {
   type: typeof MESSAGE_TYPE.SESSION
   presenceId: string
+  joinedAt: number
 }
 
 export interface SessionEndMessage {
@@ -102,7 +103,8 @@ export const MentionedUserSchema = v.strictObject({
 export const SessionMessageSchema = v.strictObject({
   type: v.literal(MESSAGE_TYPE.SESSION),
   ...ChatSessionSchema.entries,
-  presenceId: OpaquePresenceIdSchema
+  presenceId: OpaquePresenceIdSchema,
+  joinedAt: safeNonNegativeInteger
 })
 
 export const SessionEndMessageSchema = v.strictObject({

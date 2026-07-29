@@ -22,7 +22,7 @@ export const createArticoRoomTransport = (): RoomTransport => {
   const errorListeners = new Set<(error: Error) => void>()
 
   let peer: Artico
-  let restarting = false
+  let restartTimer: ReturnType<typeof globalThis.setTimeout> | null = null
   let disposed = false
 
   const createPendingJoin = () => {
@@ -84,15 +84,25 @@ export const createArticoRoomTransport = (): RoomTransport => {
       if (peer !== nextPeer) return
       desiredRooms.forEach(joinNow)
     })
-    nextPeer.on('error', (error) => errorListeners.forEach((listener) => listener(error)))
+    nextPeer.on('error', (error) => {
+      if (peer === nextPeer) errorListeners.forEach((listener) => listener(error))
+    })
     nextPeer.on('close', () => {
-      if (disposed || peer !== nextPeer || restarting || desiredRooms.size === 0) return
-      restarting = true
-      globalThis.setTimeout(() => {
-        restarting = false
+      if (disposed || peer !== nextPeer || restartTimer || desiredRooms.size === 0) return
+      restartTimer = globalThis.setTimeout(() => {
+        restartTimer = null
         startPeer()
       }, 1000)
     })
+  }
+
+  const repairDisconnectedPeer = () => {
+    if (peer.state !== 'disconnected') return
+    if (restartTimer) {
+      globalThis.clearTimeout(restartTimer)
+      restartTimer = null
+    }
+    startPeer()
   }
 
   startPeer()
@@ -101,6 +111,7 @@ export const createArticoRoomTransport = (): RoomTransport => {
     peerId,
     join: (roomId) => {
       desiredRooms.add(roomId)
+      repairDisconnectedPeer()
       if (rooms.has(roomId)) return Promise.resolve()
       const pending = pendingJoins.get(roomId) ?? createPendingJoin()
       pendingJoins.set(roomId, pending)
@@ -109,6 +120,10 @@ export const createArticoRoomTransport = (): RoomTransport => {
     },
     leave: (roomId) => {
       desiredRooms.delete(roomId)
+      if (desiredRooms.size === 0 && restartTimer) {
+        globalThis.clearTimeout(restartTimer)
+        restartTimer = null
+      }
       pendingJoins.get(roomId)?.reject(new Error(`Room "${roomId}" join cancelled`))
       pendingJoins.delete(roomId)
       const room = rooms.get(roomId)
@@ -162,6 +177,10 @@ export const createArticoRoomTransport = (): RoomTransport => {
     dispose: () => {
       if (disposed) return
       disposed = true
+      if (restartTimer) {
+        globalThis.clearTimeout(restartTimer)
+        restartTimer = null
+      }
       desiredRooms.clear()
       pendingJoins.forEach((pending, roomId) => pending.reject(new Error(`Room "${roomId}" join cancelled`)))
       pendingJoins.clear()

@@ -25,7 +25,7 @@ const text = () => ({
   mentions: []
 })
 
-describe('public v2 protocol contract', () => {
+describe('public v3 protocol contract', () => {
   it('exports the five independently enforced resource budgets', () => {
     expect(MAX_WIRE_BYTES).toBe(64 * 1024)
     expect(MAX_DECODED_JSON_BYTES).toBe(256 * 1024)
@@ -47,12 +47,15 @@ describe('public v2 protocol contract', () => {
       type: MESSAGE_TYPE.SESSION,
       sessionId: 'session-1',
       presenceId: 'presence-1',
+      joinedAt: NOW,
       user: USER
     }
     const end = { type: MESSAGE_TYPE.SESSION_END, presenceId: 'presence-1' }
 
     expect(parseChatRoomMessage(session)).toEqual(session)
-    expect(parseChatRoomMessage({ type: session.type, sessionId: session.sessionId, user: USER })).toBeNull()
+    for (const joinedAt of [undefined, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(parseChatRoomMessage({ ...session, joinedAt })).toBeNull()
+    }
     expect(parseChatRoomMessage({ ...session, generation: session.presenceId })).toBeNull()
     expect(parseChatRoomMessage({ ...session, presenceId: '' })).toBeNull()
     expect(parseChatRoomMessage(end)).toEqual(end)
@@ -170,7 +173,13 @@ describe('public v2 protocol contract', () => {
     expect(byteSize(exactUser)).toBe(MAX_USER_BYTES)
     expect(
       checkChatRoomMessage(
-        { type: MESSAGE_TYPE.SESSION, sessionId: 'session-1', presenceId: 'presence-1', user: exactUser },
+        {
+          type: MESSAGE_TYPE.SESSION,
+          sessionId: 'session-1',
+          presenceId: 'presence-1',
+          joinedAt: NOW,
+          user: exactUser
+        },
         NOW
       )
     ).toBe(true)
@@ -180,6 +189,7 @@ describe('public v2 protocol contract', () => {
           type: MESSAGE_TYPE.SESSION,
           sessionId: 'session-1',
           presenceId: 'presence-1',
+          joinedAt: NOW,
           user: { ...exactUser, avatar: `${exactUser.avatar}x` }
         },
         NOW

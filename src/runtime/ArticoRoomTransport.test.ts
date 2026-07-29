@@ -1,6 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const fixture = vi.hoisted(() => ({
+  peerStates: [] as ('ready' | 'connecting' | 'disconnected')[],
+  peers: [] as { state: 'ready' | 'connecting' | 'disconnected'; emit(event: string, ...args: unknown[]): void }[],
   room: null as null | {
     open(peerId: string): void
     loseReadiness(peerId: string): void
@@ -56,7 +58,13 @@ vi.mock('@rtco/client', () => {
 
   class FakeArtico extends Emitter {
     readonly id = 'local-peer'
-    readonly state = 'ready'
+    state = fixture.peerStates.shift() ?? 'ready'
+
+    constructor() {
+      super()
+      fixture.peers.push(this)
+      if (this.state === 'ready') queueMicrotask(() => this.emit('open'))
+    }
 
     join() {
       const room = new FakeRoom()
@@ -73,8 +81,11 @@ vi.mock('@rtco/client', () => {
 import { createArticoRoomTransport } from './ArticoRoomTransport'
 
 beforeEach(() => {
+  fixture.peerStates.length = 0
+  fixture.peers.length = 0
   fixture.room = null
 })
+afterEach(() => vi.useRealTimers())
 
 describe('ArticoRoomTransport per-target isolation', () => {
   it('converges initial and later full broadcasts without entering never-ready calls', async () => {
@@ -147,5 +158,67 @@ describe('ArticoRoomTransport per-target isolation', () => {
     await expect(transport.send('room-a', 'explicit-empty', [])).resolves.toBeUndefined()
     expect(fixture.room!.attempts).toEqual([])
     await expect(transport.send('missing-room', 'payload')).rejects.toThrow('Room "missing-room" not joined')
+  })
+
+  it('shares one replacement when fresh Chat and World demand finds a disconnected retained peer', async () => {
+    fixture.peerStates.push('disconnected', 'ready')
+    const transport = createArticoRoomTransport()
+    const chat = transport.join('chat-v3')
+    const world = transport.join('world-v3')
+
+    try {
+      await Promise.all([chat, world])
+      expect(fixture.peers).toHaveLength(2)
+      expect(fixture.peers[0].state).toBe('disconnected')
+      expect(fixture.peers[1].state).toBe('ready')
+    } finally {
+      transport.dispose()
+    }
+  })
+
+  it('fences stale callbacks after fresh demand replaces a disconnected peer', async () => {
+    vi.useFakeTimers()
+    fixture.peerStates.push('disconnected', 'ready')
+    const transport = createArticoRoomTransport()
+    const errors: Error[] = []
+    transport.onError((error) => errors.push(error))
+    const stalePeer = fixture.peers[0]
+
+    await transport.join('chat-v3')
+    stalePeer.emit('open')
+    stalePeer.emit('error', new Error('stale peer error'))
+    stalePeer.emit('close')
+    await vi.advanceTimersByTimeAsync(1000)
+
+    expect(fixture.peers).toHaveLength(2)
+    expect(errors).toEqual([])
+    transport.dispose()
+  })
+
+  it('cancels a queued restart when the final desired room leaves', async () => {
+    vi.useFakeTimers()
+    const transport = createArticoRoomTransport()
+    await transport.join('chat-v3')
+    const currentPeer = fixture.peers[0]
+    currentPeer.state = 'disconnected'
+    currentPeer.emit('close')
+
+    transport.leave('chat-v3')
+    await vi.advanceTimersByTimeAsync(1000)
+
+    expect(fixture.peers).toHaveLength(1)
+    transport.dispose()
+  })
+
+  it('settles a pending join when the transport is disposed', async () => {
+    fixture.peerStates.push('connecting')
+    const transport = createArticoRoomTransport()
+    const joining = transport.join('chat-v3')
+
+    transport.dispose()
+
+    await expect(joining).rejects.toThrow('Room "chat-v3" join cancelled')
+    fixture.peers[0].emit('open')
+    expect(fixture.room).toBeNull()
   })
 })

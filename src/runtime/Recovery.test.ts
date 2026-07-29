@@ -8,17 +8,21 @@ import { MESSAGE_RECORD_TYPE } from '@/domain/Message'
 import type { ChatMessage } from '@/protocol'
 import type { RuntimeCoordinator, RuntimeServer, RuntimeSnapshot } from '@/runtime/Contract'
 import { ClientLease } from '@/runtime/ClientLease'
-import {
-  COORDINATOR_HEALTH_INTERVAL_MS,
-  COORDINATOR_LEASE_TTL_MS,
-  COORDINATOR_SESSION_KEY,
-  Coordinator
-} from '@/runtime/Coordinator'
+import { COORDINATOR_HEALTH_INTERVAL_MS, COORDINATOR_SESSION_KEY, Coordinator } from '@/runtime/Coordinator'
 import { createServer } from '@/runtime/Server'
 
 const DOMAIN = 'https://example.com'
+const PAGE_URL = `${DOMAIN}/topic`
 const USER = { id: 'user-1', name: 'User', avatar: '' }
 const SITE = { origin: DOMAIN, title: 'Example' }
+
+const pageSnapshot = (pageId: string): RuntimeSnapshot => ({
+  hostId: 'restored-host',
+  hostPhase: 'ready',
+  peerId: 'restored-peer',
+  domains: [{ domain: DOMAIN, phase: 'active', pageIds: [pageId], chatRoomJoined: false, sessions: [] }],
+  world: { joined: false, peerId: 'restored-peer', presences: [] }
+})
 
 class FakeClock implements Clock {
   current = 1000
@@ -55,9 +59,9 @@ const createCoordinatorFixture = () => {
   let destroyedDocuments = 0
   let hostNumber = 0
   let currentServer: RuntimeServer | null = null
+  const tabs = new Map([[1, { id: 1, url: PAGE_URL }]])
 
   const coordinator = new Coordinator({
-    clock,
     storage: {
       get: async (key) => ({ [key]: storageState[key] }),
       set: async (items) => {
@@ -83,6 +87,17 @@ const createCoordinatorFixture = () => {
       providerAlive = false
       currentServer = null
     },
+    tabs: {
+      get: async (tabId) => {
+        const tab = tabs.get(tabId)
+        if (!tab) throw new Error('Browser tab is unavailable')
+        return tab
+      }
+    },
+    attachPage: async (lease) => {
+      if (!currentServer) throw new Error('Runtime host is absent')
+      return currentServer.attachPage(lease)
+    },
     detachPage: async (lease) => {
       detached.push(lease)
       await currentServer?.detachPage(lease)
@@ -91,8 +106,7 @@ const createCoordinatorFixture = () => {
 
   const coordinatorApi: RuntimeCoordinator = {
     ensureHost: () => coordinator.ensureHost(),
-    registerPage: (lease) => coordinator.registerPage(lease),
-    unregisterPage: (lease) => coordinator.unregisterPage(lease)
+    registerPage: (lease) => coordinator.registerPage({ ...lease, tab: tabs.get(1) })
   }
   const serverProxy = new Proxy({} as RuntimeServer, {
     get:
@@ -126,7 +140,9 @@ const createCoordinatorFixture = () => {
     },
     destroyedDocuments: () => destroyedDocuments,
     hostNumber: () => hostNumber,
-    currentServer: () => currentServer!
+    currentServer: () => currentServer!,
+    registerPage: (pageId: string) =>
+      coordinator.registerPage({ domain: DOMAIN, pageId, tab: { id: 1, url: PAGE_URL } })
   }
 }
 
@@ -136,7 +152,6 @@ describe('Runtime host recovery and coordinator liveness', () => {
     const hostPhases: RuntimeSnapshot['hostPhase'][] = []
     const client = new ClientLease({
       coordinator: fixture.coordinatorApi,
-      server: fixture.serverProxy,
       pageId: 'page-a',
       domain: DOMAIN
     })
@@ -191,7 +206,6 @@ describe('Runtime host recovery and coordinator liveness', () => {
   })
 
   it('restores persisted coordinator lease and host generation without duplicate pages', async () => {
-    const clock = new FakeClock()
     const storageState: Record<string, unknown> = {}
     const storage = {
       get: async (key: string) => ({ [key]: storageState[key] }),
@@ -199,34 +213,35 @@ describe('Runtime host recovery and coordinator liveness', () => {
         Object.assign(storageState, items)
       }
     }
+    const tabs = { get: async () => ({ id: 1, url: PAGE_URL }) }
     const create = () =>
       new Coordinator({
-        clock,
         storage,
+        tabs,
         ensureHostDocument: async () => ({ phase: 'ready', created: false }),
         probeHost: async () => ({ hostId: 'restored-host', phase: 'ready' }),
         destroyHostDocument: async () => {},
+        attachPage: async ({ pageId }) => pageSnapshot(pageId),
         detachPage: async () => {}
       })
 
     const original = create()
-    await original.registerPage({ domain: DOMAIN, pageId: 'page-a' })
+    await original.registerPage({ domain: DOMAIN, pageId: 'page-a', tab: { id: 1, url: PAGE_URL } })
     const restarted = create()
     await restarted.restore()
     await restarted.restore()
-    await restarted.registerPage({ domain: DOMAIN, pageId: 'page-a' })
+    await restarted.registerPage({ domain: DOMAIN, pageId: 'page-a', tab: { id: 1, url: PAGE_URL } })
 
     expect(restarted.snapshotForTest()).toMatchObject({
       generation: 1,
       hostPhase: 'ready',
-      pages: [{ domain: DOMAIN, pageId: 'page-a' }]
+      tabs: [{ tabId: 1, domain: DOMAIN, pageId: 'page-a' }]
     })
   })
 
   it('rebuilds a stale Offscreen provider from the background health sweep without a page watchdog', async () => {
     const fixture = createCoordinatorFixture()
-    await fixture.coordinator.registerPage({ domain: DOMAIN, pageId: 'page-a' })
-    await fixture.currentServer().attachPage({ domain: DOMAIN, pageId: 'page-a' })
+    await fixture.registerPage('page-a')
     const firstHostId = (await fixture.currentServer().getSnapshot()).hostId
 
     fixture.killProvider()
@@ -239,7 +254,7 @@ describe('Runtime host recovery and coordinator liveness', () => {
       expect(fixture.coordinator.snapshotForTest()).toMatchObject({
         generation: 2,
         hostPhase: 'ready',
-        pages: [{ domain: DOMAIN, pageId: 'page-a' }]
+        tabs: [{ tabId: 1, domain: DOMAIN, pageId: 'page-a' }]
       })
     })
     expect(fixture.destroyedDocuments()).toBe(1)
@@ -248,7 +263,7 @@ describe('Runtime host recovery and coordinator liveness', () => {
 
   it('detects a new provider identity behind an existing host document', async () => {
     const fixture = createCoordinatorFixture()
-    await fixture.coordinator.registerPage({ domain: DOMAIN, pageId: 'page-a' })
+    await fixture.registerPage('page-a')
     const firstHostId = (await fixture.currentServer().getSnapshot()).hostId
 
     fixture.replaceProvider()
@@ -266,8 +281,8 @@ describe('Runtime host recovery and coordinator liveness', () => {
     let ensureCount = 0
     let destroyed = 0
     const coordinator = new Coordinator({
-      clock: new FakeClock(),
       storage: { get: async () => ({}), set: async () => {} },
+      tabs: { get: async () => ({ id: 1, url: PAGE_URL }) },
       ensureHostDocument: async () =>
         ++ensureCount === 1 ? { phase: 'ready', created: false } : { phase: 'unavailable', created: false },
       probeHost: async () => {
@@ -276,29 +291,31 @@ describe('Runtime host recovery and coordinator liveness', () => {
       destroyHostDocument: async () => {
         destroyed += 1
       },
+      attachPage: async ({ pageId }) => pageSnapshot(pageId),
       detachPage: async () => {}
     })
 
-    await expect(coordinator.registerPage({ domain: DOMAIN, pageId: 'page-a' })).resolves.toMatchObject({
-      phase: 'unavailable'
-    })
+    await expect(
+      coordinator.registerPage({ domain: DOMAIN, pageId: 'page-a', tab: { id: 1, url: PAGE_URL } })
+    ).rejects.toThrow('Runtime host unavailable: unavailable')
     expect(coordinator.snapshotForTest()).toMatchObject({ hostPhase: 'unavailable', hostId: null })
     expect(destroyed).toBe(1)
   })
 
-  it('expires a crashed page heartbeat, synchronizes Runtime detach, and removes the persisted fact', async () => {
+  it('keeps a physical tab binding and Runtime lease across page heartbeat loss', async () => {
     const fixture = createCoordinatorFixture()
-    await fixture.coordinator.registerPage({ domain: DOMAIN, pageId: 'crashed-page' })
-    await fixture.currentServer().attachPage({ domain: DOMAIN, pageId: 'crashed-page' })
+    await fixture.registerPage('crashed-page')
 
-    fixture.clock.current += COORDINATOR_LEASE_TTL_MS
-    vi.advanceTimersByTime(COORDINATOR_HEALTH_INTERVAL_MS)
+    fixture.clock.current += 60_000
+    await vi.advanceTimersByTimeAsync(60_000)
 
-    await vi.waitFor(() => {
-      expect(fixture.detached).toEqual([{ domain: DOMAIN, pageId: 'crashed-page' }])
-      expect(fixture.storageState[COORDINATOR_SESSION_KEY]).toMatchObject({ pages: [] })
+    expect(fixture.detached).toEqual([])
+    expect(fixture.storageState[COORDINATOR_SESSION_KEY]).toMatchObject({
+      tabs: [{ tabId: 1, domain: DOMAIN, pageId: 'crashed-page' }]
     })
-    expect(fixture.coordinator.snapshotForTest().pages).toEqual([])
-    expect((await fixture.currentServer().getSnapshot()).domains[0]?.pageIds ?? []).toEqual([])
+    expect(fixture.coordinator.snapshotForTest()).toMatchObject({
+      tabs: [{ tabId: 1, domain: DOMAIN, pageId: 'crashed-page' }]
+    })
+    expect((await fixture.currentServer().getSnapshot()).domains[0]?.pageIds).toEqual(['crashed-page'])
   })
 })

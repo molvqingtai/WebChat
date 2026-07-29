@@ -488,6 +488,7 @@ const session = (user = REMOTE_USER) => ({
   type: MESSAGE_TYPE.SESSION,
   sessionId: `session-${user.id}`,
   presenceId: `presence-${user.id}`,
+  joinedAt: NOW + 1,
   user
 })
 
@@ -564,6 +565,7 @@ describe('RuntimeServer lifecycle', () => {
     await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
 
     const snapshot = await server.joinChatRoom({ domain: DOMAIN, user: USER_INFO, site: SITE })
+    if (!snapshot) throw new Error('Join was cancelled')
 
     expect(fake.joinCalls).toEqual([getChatRoomId(DOMAIN), getWorldRoomId()])
     expect(fake.physicalJoinCalls).toEqual([getChatRoomId(DOMAIN), getWorldRoomId()])
@@ -630,6 +632,7 @@ describe('RuntimeServer lifecycle', () => {
 
     fake.open()
     const [snapshot] = await Promise.all([joinTask, localSessionSeen.promise, localPresenceSeen.promise])
+    if (!snapshot) throw new Error('Join was cancelled')
 
     expect(joinResult).toBe('resolved')
     expect(fake.joined).toEqual(fake.desired)
@@ -720,9 +723,10 @@ describe('RuntimeServer lifecycle', () => {
       localPresenceSeen.promise,
       remotePresenceSeen.promise
     ])
+    if (!snapshot) throw new Error('Join was cancelled')
 
     expect(localSessions).toHaveLength(1)
-    expect(remoteSessions).toEqual([])
+    expect(remoteSessions).toEqual(['remote-peer'])
     expect(worldPresences).toEqual(['local-peer', 'remote-peer'])
     expect(fake.messages(roomId).filter((message) => message.type === MESSAGE_TYPE.SESSION)).toHaveLength(1)
     expect(fake.messages(worldRoomId).filter(isWorldPresence)).toHaveLength(1)
@@ -736,6 +740,72 @@ describe('RuntimeServer lifecycle', () => {
       localPresence: { user: USER },
       presences: [{ sourcePeerId: 'remote-peer', presence: { user: REMOTE_USER } }]
     })
+  })
+
+  it('projects a strictly later remote join received while the local join is provisional', async () => {
+    const clock = new FakeClock()
+    const fake = createFakeTransport({ physicalReady: false })
+    const server = createServer({ transport: fake.transport, clock, codec: jsonCodec })
+    const roomId = getChatRoomId(DOMAIN)
+    const remoteSessions: RuntimeSession[] = []
+    await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
+    await observeRemoteSessions(server, { pageId: 'page-a' }, ({ session }) => {
+      remoteSessions.push(session)
+    })
+    fake.hangSendsTo(roomId)
+    const firstSendAttempt = fake.waitForSendAttempt(roomId)
+    const join = server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
+    await fake.waitForDesiredRooms(2)
+    fake.open()
+    await firstSendAttempt
+
+    fake.receive(roomId, 'later-peer', {
+      ...session(),
+      joinedAt: NOW + 1
+    })
+    await settle()
+    expect(remoteSessions).toEqual([])
+
+    fake.releaseSends()
+    await join
+    expect(remoteSessions).toEqual([expect.objectContaining({ sourcePeerId: 'later-peer', user: REMOTE_USER })])
+  })
+
+  it('converges a refreshed logical projection across every physical binding', async () => {
+    const { fake, server, roomId } = await setup()
+    const presenceId = 'shared-remote-presence'
+    const originalUser = { ...REMOTE_USER, name: 'Before', avatar: 'before.png' }
+    const refreshedUser = { ...REMOTE_USER, name: 'After', avatar: 'after.png' }
+    fake.receive(roomId, 'remote-peer-a', {
+      type: MESSAGE_TYPE.SESSION,
+      sessionId: 'remote-session-a',
+      presenceId,
+      joinedAt: NOW + 1,
+      user: originalUser
+    })
+    fake.receive(roomId, 'remote-peer-b', {
+      type: MESSAGE_TYPE.SESSION,
+      sessionId: 'remote-session-b',
+      presenceId,
+      joinedAt: NOW + 1,
+      user: originalUser
+    })
+    await settle()
+
+    fake.receive(roomId, 'remote-peer-a', {
+      type: MESSAGE_TYPE.SESSION,
+      sessionId: 'remote-session-a',
+      presenceId,
+      joinedAt: NOW + 1,
+      user: refreshedUser
+    })
+    await settle()
+
+    const sessions = (await server.getSnapshot()).domains[0].sessions.filter((item) =>
+      ['remote-peer-a', 'remote-peer-b'].includes(item.sourcePeerId)
+    )
+    expect(sessions).toHaveLength(2)
+    expect(sessions.map((item) => item.user)).toEqual([refreshedUser, refreshedUser])
   })
 
   it('lets only the newest generation complete a superseded cold join', async () => {
@@ -766,11 +836,12 @@ describe('RuntimeServer lifecycle', () => {
     const refreshedUser = { ...USER, name: 'Refreshed' }
     const secondJoin = server.joinChatRoom({ domain: DOMAIN, user: refreshedUser, site: SITE })
 
-    await expect(firstJoin).resolves.toEqual(new Error('Domain join superseded'))
+    await expect(firstJoin).resolves.toBeNull()
     expect(localSessions).toEqual([])
     expect(worldPresences).toEqual([])
     fake.open()
     const [snapshot] = await Promise.all([secondJoin, localSessionSeen.promise, localPresenceSeen.promise])
+    if (!snapshot) throw new Error('Join was cancelled')
 
     expect(fake.joinCalls).toEqual([roomId, worldRoomId, roomId, worldRoomId])
     expect(fake.physicalJoinCalls).toEqual([roomId, worldRoomId])
@@ -863,6 +934,7 @@ describe('RuntimeServer lifecycle', () => {
     const replacement = createServer({ transport: replacementFake.transport, clock: oldClock, codec: jsonCodec })
     await replacement.attachPage({ domain: DOMAIN, pageId: 'page-a' })
     const snapshot = await replacement.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
+    if (!snapshot) throw new Error('Join was cancelled')
     expect(snapshot.domains[0]).toMatchObject({ chatRoomJoined: true, localSession: { user: USER } })
     expect(replacementFake.physicalJoinCalls).toEqual([getChatRoomId(DOMAIN), getWorldRoomId()])
   })
@@ -987,7 +1059,7 @@ describe('RuntimeServer lifecycle', () => {
     expect(fake.joined.has(roomId)).toBe(true)
   })
 
-  it('detaches a page whose local identity callback rejects', async () => {
+  it('keeps the page lease when its local identity callback rejects', async () => {
     const clock = new FakeClock()
     const fake = createFakeTransport()
     const server = createServer({ transport: fake.transport, clock, codec: jsonCodec })
@@ -998,7 +1070,7 @@ describe('RuntimeServer lifecycle', () => {
 
     await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
     await settle()
-    expect((await server.getSnapshot()).domains[0]).toMatchObject({ phase: 'grace', pageIds: [] })
+    expect((await server.getSnapshot()).domains[0]).toMatchObject({ phase: 'active', pageIds: ['page-a'] })
   })
 
   it('rejects invalid projected identity fields before joining transport', async () => {
@@ -1047,7 +1119,7 @@ describe('RuntimeServer lifecycle', () => {
     expect(await server.replayInbound({ domain: DOMAIN, after: 0 })).toEqual([])
   })
 
-  it('detaches a crashed page when its comctx callback rejects and releases after grace', async () => {
+  it('keeps a page owner after callback loss until an explicit detach releases it', async () => {
     const { clock, fake, server, roomId } = await setup()
     await server.onInbound({ pageId: 'page-a' }, async () => {
       throw new Error('page port closed')
@@ -1056,6 +1128,11 @@ describe('RuntimeServer lifecycle', () => {
     fake.receive(roomId, 'remote-peer', text('message-1'))
     await settle()
 
+    expect((await server.getSnapshot()).domains[0]).toMatchObject({ phase: 'active', pageIds: ['page-a'] })
+    clock.advance(RUNTIME_DOMAIN_GRACE_MS + 1)
+    expect(fake.joined.has(roomId)).toBe(true)
+
+    await server.detachPage({ domain: DOMAIN, pageId: 'page-a' })
     expect((await server.getSnapshot()).domains[0].phase).toBe('grace')
     clock.advance(RUNTIME_DOMAIN_GRACE_MS + 1)
     await vi.waitFor(() => expect(fake.joined.has(roomId)).toBe(false))
@@ -1161,6 +1238,7 @@ describe('RuntimeServer provisional recovery races', () => {
     expect((await server.getSnapshot()).domains[0].chatRoomJoined).toBe(false)
     fake.releaseSends()
     const snapshot = await join
+    if (!snapshot) throw new Error('Join was cancelled')
     await settle()
 
     const currentSession = snapshot.domains[0].localSession
@@ -1210,7 +1288,7 @@ describe('RuntimeServer provisional recovery races', () => {
     await settle()
     fake.releaseSends()
 
-    await expect(firstJoin).resolves.toEqual(new Error('Domain join superseded'))
+    await expect(firstJoin).resolves.toBeNull()
     await expect(replacement).resolves.toMatchObject({
       domains: [expect.objectContaining({ localSession: expect.objectContaining({ user: refreshedUser }) })]
     })
@@ -1243,7 +1321,7 @@ describe('RuntimeServer provisional recovery races', () => {
 
     expect.soft(eventsBeforeCommit).toEqual([])
     expect.soft(sessionsBeforeCommit).toEqual([])
-    expect(remoteSessions).toEqual([])
+    expect(remoteSessions).toEqual(['remote-peer'])
     expect((await server.getSnapshot()).domains[0].sessions).toEqual([
       expect.objectContaining({ sourcePeerId: 'remote-peer', user: REMOTE_USER })
     ])
@@ -1258,10 +1336,7 @@ describe('RuntimeServer provisional recovery races', () => {
     fake.makeNotReady()
     fake.hangSendsTo(roomId)
     const firstBroadcastStarted = fake.waitForSendAttempt(roomId)
-    const firstReconnect = server.reconnectDomain({ domain: DOMAIN }).then(
-      () => null,
-      (error: Error) => error
-    )
+    const firstReconnect = server.reconnectDomain({ domain: DOMAIN })
     await fake.waitForJoinCalls(4)
     fake.open()
     await expect(firstBroadcastStarted).resolves.toMatchObject({ roomId, to: undefined })
@@ -1271,13 +1346,14 @@ describe('RuntimeServer provisional recovery races', () => {
     const eventsBeforeSupersede = [...remoteSessions]
     const retainedBeforeSupersede = (await server.getSnapshot()).domains[0].sessions
     const replacement = server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
-    await expect(firstReconnect).resolves.toEqual(new Error('Domain join superseded'))
+    await expect(firstReconnect).resolves.toBeNull()
     await settle()
     const eventsAfterSupersede = [...remoteSessions]
     const retainedAfterSupersede = (await server.getSnapshot()).domains[0].sessions
 
     fake.releaseSends()
     const replacementSnapshot = await replacement
+    if (!replacementSnapshot) throw new Error('Join was cancelled')
     await settle()
 
     expect.soft(eventsBeforeSupersede).toEqual([])
@@ -1385,6 +1461,33 @@ describe('RuntimeServer trusted delivery', () => {
     await settle()
 
     expect(received).toEqual(['valid'])
+  })
+
+  it('binds logical identity while accepting only same-generation user projection refreshes', async () => {
+    const { fake, server, roomId } = await setup()
+    const events: RuntimeSessionEvent[] = []
+    await server.onSessionEvent({ pageId: 'page-a' }, (event) => {
+      events.push(event)
+    })
+    const accepted = session(REMOTE_USER)
+    const refreshedUser = { ...REMOTE_USER, name: 'Refreshed remote' }
+
+    fake.receive(roomId, 'peer-a', accepted)
+    fake.receive(roomId, 'peer-a', { ...accepted, user: refreshedUser })
+    fake.receive(roomId, 'peer-a', { ...accepted, user: { ...refreshedUser, id: 'forged-user' } })
+    fake.receive(roomId, 'peer-a', { ...accepted, joinedAt: accepted.joinedAt + 1 })
+    fake.receive(roomId, 'peer-a', { ...accepted, joinedAt: undefined } as unknown as TestWireMessage)
+    await settle()
+
+    expect(events.map(({ type }) => type)).toEqual(['join', 'snapshot'])
+    expect((await server.getSnapshot()).domains[0].sessions).toEqual([
+      expect.objectContaining({
+        sourcePeerId: 'peer-a',
+        sessionId: accepted.sessionId,
+        joinedAt: accepted.joinedAt,
+        user: refreshedUser
+      })
+    ])
   })
 
   it('drops old-only and old-plus-new wire keys before page projection', async () => {

@@ -707,4 +707,12 @@ describe('Runtime-backed ChatRoom application port', () => {
     expect(snapshots.at(-1)).toEqual([{ sessionId: 'local-session', user: USER }])
     expect(leaves).toEqual([])
   })
+
+  it('translates a cancelled Runtime reconnect into an AbortError', async () => {
+    const { room, server } = await setup()
+    vi.spyOn(server, 'reconnectDomain').mockResolvedValueOnce(null)
+    await settle()
+
+    await expect(room.leaveRoom()).rejects.toMatchObject({ name: 'AbortError' })
+  })
 })

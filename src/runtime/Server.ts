@@ -128,18 +128,10 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     store.send(sessionDomain.command.HydratePresenceCommand(record))
     return 'active'
   }
-  const detachDeadPages = (pageIds: string[]) => {
-    const leases = store.query(lifecycleDomain.query.DomainLeasesQuery())
-    pageIds.forEach((pageId) => {
-      const lease = leases.find((item) => item.pageIds.includes(pageId))
-      if (lease) store.send(lifecycleDomain.command.DetachPageCommand({ domain: lease.domain, pageId }))
-    })
-  }
-
   const pageBridges = [
     store.subscribeEvent(sessionDomain.event.RuntimeSessionChangedEvent, (event) => {
       const pageIds = store.query(lifecycleDomain.query.DomainLeaseQuery(event.domain))?.pageIds ?? []
-      void pagePort.emitSessionEvent(pageIds, event).then(detachDeadPages)
+      void pagePort.emitSessionEvent(pageIds, event)
     }),
     store.subscribeEvent(worldDomain.event.PresenceChangedEvent, (event) => {
       const committed = new Set(store.query(sessionDomain.query.DomainsQuery()).map((runtime) => runtime.domain))
@@ -147,31 +139,40 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
         .query(lifecycleDomain.query.DomainLeasesQuery())
         .filter((lease) => committed.has(lease.domain))
         .flatMap((lease) => lease.pageIds)
-      void pagePort.emitWorldPresence(pageIds, event).then(detachDeadPages)
+      void pagePort.emitWorldPresence(pageIds, event)
     }),
     store.subscribeEvent(connectionDomain.event.ErrorEvent, (error) => {
       const pageIds = store.query(lifecycleDomain.query.DomainLeasesQuery()).flatMap((lease) => lease.pageIds)
-      void pagePort.emitError(pageIds, error).then(detachDeadPages)
+      void pagePort.emitError(pageIds, error)
     })
   ]
 
   const runConnectionOperation = <T>(
     operationId: string,
     command: RemeshAction,
-    select: (result: ConnectionOperationSucceeded) => T
+    select: (result: ConnectionOperationSucceeded) => T,
+    cancelledResult: () => T
   ): Promise<T> =>
     new Promise<T>((resolve, reject) => {
-      const success = store.subscribeEvent(connectionDomain.event.OperationSucceededEvent, (result) => {
-        if (result.operationId !== operationId) return
+      const dispose = () => {
         success.unsubscribe()
         failure.unsubscribe()
+        cancelled.unsubscribe()
+      }
+      const success = store.subscribeEvent(connectionDomain.event.OperationSucceededEvent, (result) => {
+        if (result.operationId !== operationId) return
+        dispose()
         resolve(select(result))
       })
       const failure = store.subscribeEvent(connectionDomain.event.OperationFailedEvent, (result) => {
         if (result.operationId !== operationId) return
-        success.unsubscribe()
-        failure.unsubscribe()
+        dispose()
         reject(result.error)
+      })
+      const cancelled = store.subscribeEvent(connectionDomain.event.OperationCancelledEvent, (result) => {
+        if (result.operationId !== operationId) return
+        dispose()
+        resolve(cancelledResult())
       })
       store.send(command)
     })
@@ -222,7 +223,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
 
   const server: RuntimeServer = {
     attachPage: async (payload) => {
-      store.send(lifecycleDomain.command.AttachPageCommand({ ...payload, seenAt: clock.now() }))
+      store.send(lifecycleDomain.command.AttachPageCommand(payload))
       return snapshot()
     },
     detachPage: async (payload) => {
@@ -235,11 +236,13 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       if (presenceState === 'settled') throw new Error(INTERRUPTED_RELEASE_COMPLETED)
       if (presenceState === 'active' || !store.query(sessionDomain.query.DomainQuery(payload.domain))) {
         const operationId = nanoid()
-        await runConnectionOperation(
+        const committed = await runConnectionOperation(
           operationId,
           connectionDomain.command.JoinDomainCommand({ operationId, ...payload }),
-          () => undefined
+          () => true,
+          () => false
         )
+        if (!committed) return null
       }
       if (presenceState === 'finalizing') {
         await completeInterruptedRelease(payload.domain)
@@ -291,10 +294,11 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     replayInbound: async (payload) => store.query(deliveryDomain.query.BufferedEventsQuery(payload)),
     reconnectDomain: async (payload) => {
       const operationId = nanoid()
-      await runConnectionOperation(
+      return runConnectionOperation(
         operationId,
         connectionDomain.command.ReconnectDomainCommand({ operationId, ...payload }),
-        () => undefined
+        () => undefined,
+        () => null
       )
     },
     onInbound: async (payload, callback) => pagePort.onInbound(payload.pageId, callback),

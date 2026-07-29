@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
 import { Remesh } from 'remesh'
 import LifecycleDomain from './Lifecycle'
 import type { Clock } from '@/domain/runtime/externs/Clock'
@@ -76,5 +77,18 @@ describe('LifecycleDomain', () => {
     const leases = restarted.store.query(restarted.runtime.query.DomainLeasesQuery())
     expect(leases).toHaveLength(1)
     expect(leases[0].pageIds).toEqual(['page-a', 'page-b'])
+  })
+
+  it('has no timestamp expiry authority for physical page lifetime', () => {
+    const { store, runtime } = setup()
+    const domain = 'https://example.com'
+    store.send(runtime.command.AttachPageCommand({ domain, pageId: 'page-a' }))
+
+    expect(store.query(runtime.query.DomainLeaseQuery(domain))).not.toHaveProperty('pageLastSeenAt')
+    expect(runtime.command).not.toHaveProperty('ExpirePagesCommand')
+    expect(runtime.event).not.toHaveProperty('PageExpiredEvent')
+    expect(readFileSync(new URL('./Lifecycle.ts', import.meta.url), 'utf8')).not.toMatch(
+      /pageLastSeenAt|seenAt|ExpirePagesCommand|PageExpiredEvent/
+    )
   })
 })

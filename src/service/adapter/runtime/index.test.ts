@@ -64,11 +64,39 @@ describe('Runtime browser adapters', () => {
     expect(listeners.size).toBe(0)
   })
 
+  it('replaces forged registerPage tab claims with extension sender metadata', () => {
+    const { runtime, listeners } = createMessaging()
+    const adapter = new ProviderAdapter(runtime)
+    const received = vi.fn()
+    adapter.onMessage(received)
+    const claimedLease = {
+      domain: 'https://example.com',
+      pageId: 'page-a',
+      tab: { id: 99, url: 'https://forged.example/' }
+    }
+    const request = providerMessage('register-page', {
+      sender: { type: 'injector' },
+      path: ['registerPage'],
+      args: [claimedLease],
+      meta: { tab: claimedLease.tab }
+    })
+    const trustedTab = { id: 7, url: 'https://example.com/' }
+
+    listeners.forEach((listener) => listener(request, { tab: trustedTab } as never))
+
+    expect(received).toHaveBeenCalledWith({
+      ...request,
+      args: [{ ...claimedLease, tab: trustedTab }],
+      meta: { tab: trustedTab }
+    })
+    adapter.dispose()
+  })
+
   it('keeps Firefox/background providers on the existing tabs-capable route', async () => {
     const { runtime, sendMessage } = createMessaging()
     const tabs = {
-      query: vi.fn().mockResolvedValue([{ id: 7, url: 'https://example.com/' }]),
-      get: vi.fn(),
+      query: vi.fn(),
+      get: vi.fn().mockResolvedValue({ id: 7, url: 'https://example.com/' }),
       sendMessage: vi.fn()
     }
     const adapter = new TabsProviderAdapter(runtime, tabs)
@@ -76,7 +104,28 @@ describe('Runtime browser adapters', () => {
 
     await adapter.sendMessage(message, [])
 
-    expect(tabs.query).toHaveBeenCalledWith({ url: 'https://example.com/' })
+    expect(tabs.query).not.toHaveBeenCalled()
+    expect(tabs.get).toHaveBeenCalledWith(7)
+    expect(tabs.sendMessage).toHaveBeenCalledWith(7, message)
+    expect(sendMessage).toHaveBeenCalledWith(message)
+  })
+
+  it('routes a fragment-bearing provider response only to its exact trusted tab', async () => {
+    const { runtime, sendMessage } = createMessaging()
+    const tabs = {
+      query: vi.fn(),
+      get: vi.fn(async () => ({ id: 7, url: 'https://example.com/topic?sort=new#reply-2' })),
+      sendMessage: vi.fn()
+    }
+    const adapter = new TabsProviderAdapter(runtime, tabs)
+    const message = providerMessage('fragment-response', {
+      meta: { tab: { id: 7, url: 'https://example.com/topic?sort=new#reply-1' } }
+    })
+
+    await adapter.sendMessage(message, [])
+
+    expect(tabs.query).not.toHaveBeenCalled()
+    expect(tabs.get).toHaveBeenCalledWith(7)
     expect(tabs.sendMessage).toHaveBeenCalledWith(7, message)
     expect(sendMessage).toHaveBeenCalledWith(message)
   })
@@ -151,6 +200,40 @@ describe('Runtime browser adapters', () => {
 
     dispose()
     expect(listeners.size).toBe(0)
+  })
+
+  it('keeps hash-only navigation routable while fencing real navigation', async () => {
+    const { runtime, listeners } = createMessaging()
+    let currentUrl = 'https://example.com/topic?sort=new#reply-2'
+    const tabs = {
+      query: vi.fn(),
+      get: vi.fn(async (tabId: number) => ({ id: tabId, url: currentUrl })),
+      sendMessage: vi.fn()
+    }
+    const rejected = vi.fn()
+    relayOffscreenProviderMessages({
+      runtime: runtime as never,
+      tabs,
+      namespace: 'WEB_CHAT_RUNTIME_V2:test-extension',
+      offscreenUrl: 'chrome-extension://test-extension/offscreen.html',
+      onRejected: rejected
+    })
+    const listener = [...listeners][0]!
+    const offscreen = { url: 'chrome-extension://test-extension/offscreen.html' } as never
+    const response = providerMessage('hash-in-flight', {
+      meta: { tab: { id: 7, url: 'https://example.com/topic?sort=new#reply-1' } }
+    })
+
+    listener(response, offscreen)
+    await settle()
+    expect(tabs.sendMessage).toHaveBeenCalledWith(7, response)
+
+    tabs.sendMessage.mockClear()
+    currentUrl = 'https://example.com/other?sort=new#reply-1'
+    listener(response, offscreen)
+    await settle()
+    expect(tabs.sendMessage).not.toHaveBeenCalled()
+    expect(rejected).toHaveBeenLastCalledWith({ reason: 'target-mismatch', targetId: 7 })
   })
 
   it('guards every listener on the shared Runtime bus before raw message access', async () => {

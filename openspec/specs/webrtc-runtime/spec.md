@@ -1,8 +1,11 @@
 # webrtc-runtime Specification
 
 ## Purpose
+
 TBD - created by archiving change refactor-to-shared-webrtc-runtime. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: Shared Remesh Runtime owns all network state
 
 The headless Runtime SHALL consume the immutable public peer contract from `src/protocol/index.ts` through a one-way dependency. The application/page Domain/model layer SHALL own origin-store access, retained user input, local/UI read models, projections, LWW/order behavior, and record helpers. The uniquely owned Runtime Domains SHALL own network/history facts, Wire queue/drop scheduling, and internal page-host control contracts. None of these application or internal Runtime symbols SHALL be exported by the public protocol module.
