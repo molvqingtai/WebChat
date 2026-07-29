@@ -18,6 +18,10 @@ Round 18 source exact `3ae2b81ebaf31dfd368affabdd387fe204929420` incorporated th
 
 Read-only task #310 found the control boundary: repository canonical `e2e/chrome-runtime.ts` and CI require the caller to supply side-load-capable Chrome for Testing or Chromium, but the temporary adapter bypassed that requirement. The exact package remains internally consistent, CDP discovery was ready before the foreign worker appeared, and no evidence supports a helper-timing or helper-source repair. The missing exact worker under branded Chrome is therefore a QA setup/precondition blocker, not a product, package, activation, observation, or helper verdict under a supported executable.
 
+Round 24 implementation exact `2863c2d60d72940df6ccadc0cdbbaec6c1657352` was frozen as a clean sole child of executable docs exact `e63d9cc65f8cd8ec48ab400d7f023b7dbb708143`. Fresh source Review passed. QA task #324 then passed identity/scope/artifact SHA, install, focused `37/37`, adapter controls `35/35`, full Vitest `406/406`, TypeScript, tracked changed lint/format, and artifact syntax/lint before stopping on the first external-artifact format failure. The command was launched from the QA artifacts directory without an explicit project config. Oxfmt reported `No config found, using defaults`, then reported `chrome-canonical.mjs` and `chrome-adapter-controls.test.mjs` as mismatches. No browser profile, process, port, Chrome, or Firefox work began.
+
+That evidence does not compare either artifact against the repository's formatter policy and therefore supports no artifact-format or product defect. It exposes a test invocation/config authority gap: external files do not inherit the candidate worktree's `.oxfmtrc.json` merely because they belong to that candidate. The next run needs an explicit, cwd-independent policy bundle and distinct precondition/result semantics before a configured mismatch may be actionable.
+
 ## Goals / Non-Goals
 
 **Goals:**
@@ -30,6 +34,7 @@ Read-only task #310 found the control boundary: repository canonical `e2e/chrome
 - Make the classification deterministic and fail closed under missing, foreign, late, contradictory, or oversized evidence.
 - Make canonical Chrome executable authority explicit and auditable before any browser lifecycle: accept only caller-injected Chrome for Testing or Chromium and reject branded Chrome/Edge or any discovery/default/fallback path.
 - Keep executable validation outside the helper and distinguish harness precondition failure from the helper's seven product-lifecycle outcomes.
+- Make external-artifact formatting use one exact candidate-owned formatter/config/ignore policy regardless of the process current directory, and distinguish config/input failure from a configured format mismatch.
 - Keep the implementation to one new adapter-driven helper and one focused test with no dependency or existing-runner change.
 - Require fresh exact-bound Review and a complete fresh cross-browser QA matrix.
 
@@ -40,15 +45,17 @@ Read-only task #310 found the control boundary: repository canonical `e2e/chrome
 - Modify or extract code from the existing Chrome Runtime harness.
 - Let the implementation seat run the canonical browser matrix.
 - Modify the Round 18 helper or focused-test bytes, add a third tracked adapter, or encode executable discovery/validation inside the helper.
+- Modify `.oxfmtrc.json`, `.gitignore`, `package.json`, `pnpm-lock.yaml`, formatter dependencies, package scripts, tracked source, or either browser contract to accommodate an external artifact.
+- Treat global/default oxfmt policy, current-directory discovery, artifact-local config, or QA task #324's default-config mismatch as a candidate format verdict.
 - Treat branded Chrome/Edge, a path-derived product guess, or successful process launch as canonical side-load evidence.
 - Treat `service_worker.js` as a WebChat path, change product/package generation, or allow manifest defaults/aliases/path rewrites without fresh evidence and new authority.
-- Carry forward any partial PASS from QA task #287, QA task #298, QA task #309, or any blocked implementation.
+- Carry forward any partial PASS from QA task #287, QA task #298, QA task #309, QA task #324, or any blocked implementation.
 
 ## Decisions
 
-### 1. The package-first docs exact receives a superseding docs-only child
+### 1. The executable docs exact receives a superseding docs-only child
 
-This authority is created directly from package-first docs exact `74d0c67eaf24f68bf731c8c9205cea7aa6c6792c`. That parent contributes repository bytes only. Round 18 implementation `3ae2b81ebaf31dfd368affabdd387fe204929420`, QA task #309, blocked `bfdbfa3665a060443175ad54dd7eefb320199e79`, and every intermediate candidate are neither parents nor evidence sources for later acceptance. QA tasks #287, #298, and #309 and all prior Review/static/browser results remain exact-local history and satisfy no later gate.
+This authority is created directly from executable docs exact `e63d9cc65f8cd8ec48ab400d7f023b7dbb708143`; package-first docs exact `74d0c67eaf24f68bf731c8c9205cea7aa6c6792c` remains the sole grandparent. That parent contributes repository bytes only. Round 24 implementation `2863c2d60d72940df6ccadc0cdbbaec6c1657352`, QA task #324, Round 18 implementation `3ae2b81ebaf31dfd368affabdd387fe204929420`, blocked `bfdbfa3665a060443175ad54dd7eefb320199e79`, and every intermediate candidate are neither parents nor evidence sources for later acceptance. QA tasks #287, #298, #309, and #324 and all prior Review/static/browser results remain exact-local history and satisfy no later gate.
 
 The direct implementation whitelist is:
 
@@ -68,7 +75,41 @@ Alternative rejected: modify `e2e/chrome-runtime.ts` because it already uses the
 
 Alternative rejected: rerun QA task #309 with a different browser. Its first canonical result is immutable. A supported executable requires a new adapter artifact, new source exact, fresh Review, and fresh QA from zero.
 
-### 2. Executable authority is explicit and precedes every Chrome lifecycle
+Alternative rejected: rerun QA task #324 with `--config` added. Its first failure and stop are immutable, its partial PASS evidence cannot transfer, and the missing invocation contract must precede a fresh implementation exact, fresh artifact bundle, fresh Review, and fresh QA.
+
+### 2. External artifact formatting uses one explicit candidate policy
+
+The immutable implementation candidate worktree is the only formatter-policy root. The external adapter directory, the process current directory, an ancestor directory, the user's home directory, the global executable search path, and an Owner checkout are not policy sources. The candidate must retain these protected identities from executable docs parent `e63d9cc`:
+
+- installed formatter version `oxfmt 0.57.0`, resolved from the candidate's frozen-lockfile dependency tree rather than a global binary or network download;
+- root `.oxfmtrc.json`, Git blob `de8b360dbe361cbddd5e6e3ed96342c2fbb3610c`, SHA-256 `d33493ebef365f935cb5e05baf60bda7d0e52d2602cafa2310f0da35d4e2fe91`;
+- root `.gitignore`, Git blob `78a73c36c91468155b87ee16495c91900d672c10`, SHA-256 `969b475b5c846c9a6ad8a1f466ca930dd68f5f8e91733aab104c186c53826ead`.
+
+After candidate exact/tree, frozen-lockfile install, and the two external artifact SHA-256 identities are fixed, the implementation and QA seats invoke the candidate-local formatter in read-only `--check` mode. The invocation supplies the candidate-root `.oxfmtrc.json` through `--config`, the candidate-root `.gitignore` through `--ignore-path`, and `--disable-nested-config`. It names exactly two explicit regular-file operands: the SHA-frozen real adapter `chrome-canonical.mjs` and controls `chrome-adapter-controls.test.mjs`. It does not pass `.`, a directory, a glob, an exclusion pattern, an unmatched-input override, another source/report file, or `--write`.
+
+The canonical command shape is independently executable from any current directory after the placeholder roots and frozen file identities are resolved:
+
+```sh
+"${CANDIDATE_ROOT}/node_modules/.bin/oxfmt" \
+  --check \
+  --config="${CANDIDATE_ROOT}/.oxfmtrc.json" \
+  --ignore-path="${CANDIDATE_ROOT}/.gitignore" \
+  --disable-nested-config \
+  "${ARTIFACT_ROOT}/chrome-canonical.mjs" \
+  "${ARTIFACT_ROOT}/chrome-adapter-controls.test.mjs"
+```
+
+Before this command, the formatter path must resolve inside the candidate's frozen-lockfile dependency tree and `--version` must be exactly `0.57.0`. A missing candidate-local binary is a precondition failure, not permission to fall back to `pnpm exec`, `PATH`, a global install, or a download.
+
+Those explicit absolute paths are runtime inputs only. The report records the candidate exact/tree, `oxfmt` version, repo-relative config and ignore paths plus both blob/SHA-256 identities, a sanitized flag/operand shape, both artifact basenames and SHA-256 values, the exit/result, and the zero-side-effect state. It never retains raw candidate-root, config, ignore, or artifact absolute paths.
+
+Candidate/config/ignore/formatter/input identity is a precondition, not a format verdict. A missing or non-candidate formatter, version mismatch, missing/changed/unreadable/unparseable config or ignore file, config-load failure, `No config found` or other default-policy evidence, nested config participation, missing/ignored/unmatched input, unapproved operand, or write-capable invocation emits `artifact-format-precondition-failed`. It stops before adapter controls, helper invocation, persistent profile, CDP, browser, process, port, or native action and cannot be represented as a product, lifecycle, Chrome, or Firefox result.
+
+Only after that precondition is proven may a nonzero `--check` caused by either explicit file's formatting be called `artifact-format-failed`. The verification seat remains read-only and stops at that first failure; it does not format or repair the file. If the configured check passes, the run continues into the existing exact-bound gates. This format precondition is outside the executable/helper budgets and neither consumes nor resets the existing maximum 10-second executable precondition or either maximum 30-second helper deadline.
+
+The real adapter and controls may receive fresh hashes for the new round, but task #324's default-config output alone authorizes no byte change. If the first correctly configured implementation check proves a mismatch that requires artifact modification, work stops for a separate narrow artifact-format repair authority rather than using this invocation authority as an implicit write authorization.
+
+### 3. Executable authority is explicit and precedes every Chrome lifecycle
 
 The real test-owned adapter accepts exactly one executable path injected by its caller. The value must be absolute. The adapter has no branded application hardcode, executable default, `PATH` lookup, application-directory scan, browser discovery, fallback, or reuse of an Owner browser. Raw paths are transient launch inputs, not report fields.
 
@@ -86,7 +127,7 @@ An accepted record contains only the allowlisted product family, parsed version,
 
 Passing this executable precondition proves only that the browser family is supported for canonical side-loading. The unchanged package-first worker fence must still observe and bind the exact packaged worker. If a fresh run with an accepted executable still reaches the worker deadline without that worker, the result is new activation/observation evidence for a separate authority; the adapter does not retry, select another executable, or reinterpret task #309.
 
-### 3. Package-first worker discovery and observation precede the accepted target
+### 4. Package-first worker discovery and observation precede the accepted target
 
 After the executable precondition passes, the caller starts one owned Chrome for Testing or Chromium process at the validated canonical path with the exact unpacked production package, an isolated test profile, and `about:blank` as the only startup page. It must not pass any accepted HTTPS URL on the command line.
 
@@ -111,7 +152,7 @@ Foreign workers may appear before or after the exact worker. Once fully classifi
 
 Only after that fence may the helper request exactly one `Target.createTarget({ url: 'https://example.com/' })`. This planned first content target is not a refresh, reload, or post-click repair. The helper records its target ID and then binds only the corresponding attached session, main frame, navigation, isolated context, logs, and DOM samples. It never calls `Page.navigate`, creates a second accepted target, or substitutes a different page when the target fails.
 
-### 4. One exact binding owns the entire lifecycle
+### 5. One exact binding owns the entire lifecycle
 
 The diagnostic binding contains at least:
 
@@ -132,7 +173,7 @@ The bound worker target/session/ID/entry/manifest tuple remains immutable throug
 
 The lifecycle has one non-resetting maximum 30-second budget beginning with the authorized `Target.createTarget` request. Target attach, navigation, context, Runtime signal, and DOM polling consume that same budget. No phase receives a fresh timeout, and increasing a product, ClientLease, or existing-runner timeout is not an allowed repair.
 
-### 5. Evidence is complete for the bounded observation window and privacy-limited
+### 6. Evidence is complete for the bounded observation window and privacy-limited
 
 The helper records a monotonic timeline from the pre-target observation fence through the terminal classification. It includes:
 
@@ -149,7 +190,7 @@ Console arguments and exception stacks are normalized into JSON-safe bounded str
 
 Worker evidence is extension metadata only. It excludes storage, permissions-derived runtime data, cookies, credentials, user data, arbitrary evaluated objects, and manifest raw values outside the allowlisted projection. A JSON-path diff that exceeds its cap records a diff-overflow marker and remains non-equal by canonical digest; it is never truncated into canonical equality. Overflow of the total worker-record capacity still fails setup because the inventory is no longer complete.
 
-### 6. Terminal classification is mutually exclusive and fail closed
+### 7. Terminal classification is mutually exclusive and fail closed
 
 The diagnostic emits one immutable terminal outcome with its evidence:
 
@@ -165,13 +206,13 @@ Outcome precedence is fail closed. A Runtime-unavailable or unexpected error can
 
 The first terminal outcome is final for that run. The helper does not refresh, reload, retry, extend the deadline, create another target, or allow later evidence to rewrite the classification.
 
-### 7. The diagnostic gates but does not perform the native action
+### 8. The diagnostic gates but does not perform the native action
 
 Only `mounted` returns action authorization. Every other outcome withholds it before any native click callback may run. The authorization is bound to the same candidate, package, packaged manifest digest/entry, worker target/session/ID/Runtime-manifest digest, profile, process generation, page target/session/frame/context, accepted URL, and terminal evidence digest.
 
 The helper never clicks the toolbar, dispatches `chrome.action.onClicked`, invokes `AppAction.openOptionsPage()`, or navigates to options. Fresh QA owns one real native toolbar action only after authorization, proves `afterOptionsCount - beforeOptionsCount = 1`, and performs post-action Runtime control on the same accepted target. A new target, reload, manual navigation, or content repair after failure cannot retroactively authorize the action.
 
-### 8. Deterministic controls cover chronology, identity, and classification
+### 9. Deterministic controls cover formatter policy, chronology, identity, and classification
 
 Focused tests use an injected fake adapter and virtual clock. At minimum they prove:
 
@@ -193,18 +234,23 @@ These controls prove the support boundary but do not certify a real production p
 
 The frozen real-adapter controls separately prove both accepted product families and rejection of missing, relative, nonexistent, non-executable, branded Chrome, branded Edge, derivative, unknown, symlink-to-rejected, non-zero, timeout, output-overflow, ambiguous, and probe/launch-mismatch cases before helper invocation.
 
-### 9. Acceptance restarts the full cross-browser matrix
+The fresh external controls also prove that the same two file bytes produce the same configured format result from candidate-root and artifact-root working directories; default/global/nested config cannot satisfy the precondition; missing, changed, or invalid policy identities fail before format classification; directory/glob/extra/unmatched/write operands are rejected; and a controlled configured mismatch is distinct from config failure. These controls use fixtures and do not rerun QA task #324 or write the canonical frozen artifacts.
 
-After the implementation exact freezes, one fresh Reviewer examines only that exact's code, controls, path scope, and protected surfaces. A fresh QA seat creates a new clean detached worktree and new owned browser resources.
+### 10. Acceptance restarts the full cross-browser matrix
+
+After the implementation exact freezes, one fresh Reviewer examines only that exact's code, formatter/executable/adapter controls, path scope, and protected surfaces. A fresh QA seat creates a new clean detached worktree and new owned resources. After identity and frozen-lockfile install, QA must pass the exact-configured external-artifact format precondition and check before any browser resource exists.
 
 Chrome must receive one explicit accepted executable, freeze the real-adapter source SHA-256 and privacy-safe executable identity, pass the precondition before lifecycle, independently run the new lifecycle from `about:blank`, validate the packaged manifest, preserve every worker discovery/diff record, derive the ID from one exact worker, retain worker continuity, create the accepted target once, preserve the full diagnostic artifact, reach `mounted`, perform one real native toolbar action, prove `afterOptionsCount - beforeOptionsCount = 1` and post-action content Runtime on the same target, report no unexpected extension/browser error, and clean every owned resource.
 
-The same QA seat reruns Firefox MV2 initial startup plus two same-profile owned-process restarts with all existing native-action, options-delta, Runtime, identity, and cleanup requirements. The prior task #287 Firefox PASS is not reusable. The first terminal failure in either browser stops the matrix; there is no canonical retry or partial-result aggregation.
+The same QA seat reruns Firefox MV2 initial startup plus two same-profile owned-process restarts with all existing native-action, options-delta, Runtime, identity, and cleanup requirements. The prior task #287 Firefox PASS is not reusable. The first verification or browser failure stops the matrix; there is no canonical retry or partial-result aggregation, and no QA task #324 partial PASS transfers.
 
 ## Risks / Trade-offs
 
 - [The new helper becomes another general Chrome runner] -> Keep explicit executable validation, build, native click, report aggregation, and global cleanup outside the helper; forbid executable discovery and whitelist only one helper and one test.
 - [A hardcoded or discovered branded browser silently replaces canonical Chrome] -> Require one explicit absolute path, exact CfT/Chromium version identity, canonical-path and byte digests, and pre-lifecycle rejection with no fallback.
+- [External artifacts silently use cwd/default or nested formatter policy] -> Resolve the candidate-local pinned formatter, pass config and ignore paths explicitly, disable nested config, and fail closed on any default-policy signal.
+- [A broad format operand reads or writes unrelated files] -> Allow exactly two explicit SHA-frozen regular files under read-only `--check`; reject directory, glob, implicit current-directory, extra, unmatched-suppression, or write operands.
+- [A config failure is mislabeled as artifact mismatch] -> Separate `artifact-format-precondition-failed` from `artifact-format-failed` and require complete policy/input identity before the latter can exist.
 - [A path label disguises a branded binary] -> Resolve the canonical path and trust the bounded executable's exact version identity and byte digest, not its filename or containing directory.
 - [Auto-attach still misses process-start worker logs] -> Claim completeness only after the explicit observation fence and require worker Runtime/manifest verification before the accepted target; do not infer from unavailable earlier history.
 - [A Chrome component or foreign extension worker appears first] -> Classify every worker from package facts, wait within one bounded discovery deadline, and derive the ID only from the unique exact candidate.
@@ -219,17 +265,18 @@ The same QA seat reruns Firefox MV2 initial startup plus two same-profile owned-
 
 ## Migration Plan
 
-1. Freeze this superseding docs-only authority as the clean sole child of `74d0c67eaf24f68bf731c8c9205cea7aa6c6792c`; do not parent or amend from `3ae2b81e` or any blocked candidate.
+1. Freeze this superseding docs-only authority as the clean sole child of `e63d9cc65f8cd8ec48ab400d7f023b7dbb708143`; keep `74d0c67eaf24f68bf731c8c9205cea7aa6c6792c` as its sole grandparent and do not parent or amend from `2863c2d6`, `3ae2b81e`, or any blocked candidate.
 2. Recreate the two whitelisted source files byte-identically to their recorded Round 18 SHA-256 values; change no helper/test behavior and no existing tracked path.
-3. Freeze a test-owned real-adapter artifact that removes the branded path hardcode, accepts and validates one explicit CfT/Chromium executable, records privacy-safe identity, and has deterministic executable-precondition controls.
-4. Preserve all deterministic helper controls for package structure, foreign-first/exact-late discovery, only-foreign, duplicate exact, unresolved probes, entry/Runtime-ID/manifest mismatch, strict canonicalization, worker continuity, startup-page reuse, late observation, Runtime-unavailable, false root, and retry/repair.
-5. Run implementation-owned focused/full static, formatting, OpenSpec, production build/package/manifest, scope, lineage, and adapter-control gates; do not run canonical browsers from the implementation seat.
-6. Freeze one immutable clean sole-child implementation exact plus the real-adapter source SHA-256.
-7. Route one fresh Reviewer. Only after Review PASS, route one fresh QA seat through the complete Chrome MV3 plus Firefox MV2 matrix from zero with one accepted explicit executable.
-8. If a supported executable still exposes no exact worker, route a separate activation/observation authority. If later exact evidence selects a product-owned branch, freeze a separate product authority. Do not modify product code under this change.
+3. Freeze fresh test-owned real-adapter and controls artifacts plus a report that records the exact formatter policy and invocation identities without raw paths.
+4. Prove the cwd-independent, candidate-local `oxfmt 0.57.0` check and its fail-closed config/input controls from fixtures; do not rerun QA task #324 or write the canonical artifacts.
+5. Preserve the explicit CfT/Chromium adapter precondition, privacy-safe identity, bounded cleanup, package-first helper behavior, and all prior deterministic controls without semantic change.
+6. Run implementation-owned exact-configured external format, focused/full static, OpenSpec, production build/package/manifest, scope, lineage, and adapter-control gates; do not run canonical browsers from the implementation seat.
+7. Freeze one immutable clean sole-child implementation exact plus fresh real-adapter, controls, and report SHA-256 identities.
+8. Route one fresh Reviewer. Only after Review PASS, route one fresh QA seat from zero; QA passes the exact-configured artifact format gate before the complete Chrome MV3 plus Firefox MV2 matrix with one accepted explicit executable.
+9. If the first correctly configured implementation check proves an artifact mismatch, stop for separate narrow repair authority. If a supported executable still exposes no exact worker, route separate activation/observation authority. Do not modify product code under this change.
 
 Rollback is tooling-only: revert the two new diagnostic files and task progress and discard the test-owned real-adapter artifact. Rollback removes repository-owned Chrome lifecycle classification and invalidates evidence that depends on it; it does not change product bytes.
 
 ## Open Questions
 
-None. The lineage, two-file byte identity, explicit CfT/Chromium precondition, branded-browser exclusion, privacy-safe executable evidence, separate harness failure, package-first authority, key-order-only manifest canonical relation, bounded worker evidence, unique exact selection, immutable worker continuity, observation order, single-target rule, terminal branches, action gate, protected surfaces, and fresh acceptance route are fixed.
+None. The lineage, two-file byte identity, candidate-local formatter/version/config/ignore identities, cwd-independent read-only invocation, distinct format-precondition and configured-mismatch outcomes, explicit CfT/Chromium precondition, branded-browser exclusion, privacy-safe evidence, package-first authority, key-order-only manifest canonical relation, bounded worker evidence, unique exact selection, immutable worker continuity, observation order, single-target rule, terminal branches, action gate, protected surfaces, and fresh acceptance route are fixed.

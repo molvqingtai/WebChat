@@ -1,5 +1,55 @@
 ## ADDED Requirements
 
+### Requirement: External artifact formatting is exact-configured and cwd-independent
+
+Before either test-owned external `.mjs` artifact can receive a format verdict, the implementation and QA seats SHALL bind one immutable implementation candidate exact/tree, complete its frozen-lockfile install, and freeze SHA-256 identities for exactly `chrome-canonical.mjs` and `chrome-adapter-controls.test.mjs`. The immutable candidate worktree SHALL be the only formatter-policy root. The artifact directory, process current directory, ancestor or home directories, a global executable, an Owner checkout, default policy, and network-fetched tooling SHALL NOT supply formatter authority.
+
+The formatter policy SHALL resolve to the candidate-installed `oxfmt 0.57.0`. The candidate-root `.oxfmtrc.json` SHALL remain Git blob `de8b360dbe361cbddd5e6e3ed96342c2fbb3610c` and SHA-256 `d33493ebef365f935cb5e05baf60bda7d0e52d2602cafa2310f0da35d4e2fe91`. The candidate-root `.gitignore` SHALL remain Git blob `78a73c36c91468155b87ee16495c91900d672c10` and SHA-256 `969b475b5c846c9a6ad8a1f466ca930dd68f5f8e91733aab104c186c53826ead`. These tracked files, `package.json`, `pnpm-lock.yaml`, formatter dependencies, and package scripts SHALL remain byte-identical to docs parent `e63d9cc65f8cd8ec48ab400d7f023b7dbb708143`.
+
+The read-only invocation SHALL explicitly supply `--check`, `--config` with the candidate-root `.oxfmtrc.json`, `--ignore-path` with the candidate-root `.gitignore`, `--disable-nested-config`, and exactly the two frozen regular-file artifact paths as positional operands. It SHALL NOT use positional `.`, a directory, a glob, an exclusion pattern, implicit current-directory input, unmatched-input suppression, another artifact/source/report, or `--write`. The result SHALL be independent of whether the process current directory is the candidate root, artifact root, or another QA-owned directory.
+
+The report SHALL record the candidate exact/tree, formatter version, repo-relative config and ignore paths plus their Git blob and SHA-256 identities, a sanitized flag/operand shape, both artifact basenames and SHA-256 values, the exit/result, and the zero-side-effect state. Raw candidate-root, formatter, config, ignore, and artifact absolute paths SHALL remain transient and SHALL NOT enter reports, helper evidence, authorization, or chat.
+
+A missing, non-candidate, or wrong-version formatter; missing, changed, unreadable, or unparseable config/ignore identity; config-load failure; `No config found` or other default-policy evidence; nested config participation; missing, ignored, unmatched, symlinked, non-regular, duplicate, or unapproved input; or write-capable/broad invocation SHALL emit `artifact-format-precondition-failed`. That outcome SHALL occur before adapter controls, helper invocation, executable precondition, persistent profile, CDP, worker discovery, browser process, port, accepted target, or native action, and SHALL NOT be translated into an artifact mismatch, helper lifecycle, product, Chrome, or Firefox verdict.
+
+Only after the full formatter-policy and both input identities are proven MAY a nonzero configured `--check` caused by either explicit file emit `artifact-format-failed`. The verification seat SHALL stop at that first failure without formatting or repairing the file. A passing configured check MAY continue into the unchanged executable, package-first, lifecycle, and cross-browser gates. This formatter precondition SHALL NOT consume, reset, or extend the maximum 10-second executable-precondition budget or either maximum 30-second helper budget.
+
+#### Scenario: The same frozen artifacts are checked from another cwd
+
+- **GIVEN** one immutable candidate, the exact formatter/config/ignore identities, and two explicit regular files with their frozen SHA-256 values
+- **WHEN** the read-only invocation runs from the artifact root or another QA-owned directory with the required absolute inputs and flags
+- **THEN** it SHALL use only the candidate policy bundle and SHALL produce the same configured result as invocation from the candidate root
+
+#### Scenario: Formatter config is missing or defaults
+
+- **GIVEN** the config is missing, changed, unreadable, unparseable, not explicitly supplied, or the formatter reports `No config found` or another default-policy path
+- **WHEN** external artifact format verification begins
+- **THEN** the result SHALL be `artifact-format-precondition-failed`, no artifact mismatch SHALL be claimed, and no adapter/helper/browser side effect SHALL begin
+
+#### Scenario: Artifact-local config attempts to override policy
+
+- **GIVEN** the artifact directory or one of its descendants contains another formatter config
+- **WHEN** the check runs with explicit candidate config and `--disable-nested-config`
+- **THEN** the nested config SHALL have no authority and any evidence that it participated SHALL fail the precondition
+
+#### Scenario: A broad or unapproved operand is supplied
+
+- **GIVEN** the invocation supplies `.`, a directory, glob, extra file, duplicate file, non-regular or symlinked file, unmatched-input suppression, or write mode
+- **WHEN** operand boundaries are validated
+- **THEN** the result SHALL be `artifact-format-precondition-failed` before oxfmt can classify or modify any artifact
+
+#### Scenario: The exact configured check reports a mismatch
+
+- **GIVEN** the candidate formatter/config/ignore identities and both frozen input identities are complete
+- **WHEN** read-only `--check` reports either explicit file is not formatted under that exact policy
+- **THEN** the result SHALL be `artifact-format-failed`, QA SHALL stop without `--write` or rerun, and no product/browser verdict SHALL be inferred
+
+#### Scenario: Round 24 default-config evidence exists
+
+- **GIVEN** QA task #324 ran oxfmt from its artifacts directory, received `No config found, using defaults`, and stopped before browsers
+- **WHEN** a fresh implementation or QA run evaluates format authority
+- **THEN** task #324 SHALL remain immutable invocation-precondition history and none of its format or partial PASS evidence SHALL transfer
+
 ### Requirement: Canonical Chrome executable authority is explicit and fail closed
 
 Before any persistent browser profile, CDP connection, worker discovery budget, lifecycle helper invocation, accepted target, or native action, the real test-owned Chrome adapter SHALL receive exactly one caller-injected absolute executable path. It SHALL NOT hardcode a branded application path, discover a browser, search `PATH` or application directories, use a default or fallback, select another executable after failure, or reuse an Owner browser.
@@ -276,7 +326,9 @@ The implementation SHALL add only `e2e/chrome-native-action-lifecycle.ts` and `e
 
 The real adapter that performs executable precondition and CDP orchestration SHALL remain a test-owned QA artifact outside tracked repository scope. Its source SHALL be frozen by SHA-256 before Review and canonical QA. It MAY replace the task #309 branded executable hardcode only with explicit input, executable validation, privacy-safe identity evidence, and the controls in this specification. It SHALL NOT change helper/package/product/lifecycle semantics or add a third tracked implementation file.
 
-All existing E2E and Firefox support files, product source, WXT configuration, generated manifest/permissions, dependencies/lockfile, package scripts, existing timeouts, Runtime/coordinator/Offscreen/protocol/storage/UI, workflows/CI, reports, release metadata, and Owner checkout SHALL remain unchanged.
+The real adapter, controls, and report MAY receive fresh external SHA-256 identities for the new round, but QA task #324's default-config result SHALL NOT authorize any byte change. The first correctly configured implementation check SHALL be read-only. If it proves a mismatch that requires modifying an external artifact, implementation SHALL stop for a separate artifact-format repair authority rather than using this invocation authority to write or reformat the file.
+
+All existing E2E and Firefox support files, product source, `.oxfmtrc.json`, `.gitignore`, WXT configuration, generated manifest/permissions, dependencies/lockfile, package scripts, existing timeouts, Runtime/coordinator/Offscreen/protocol/storage/UI, workflows/CI, tracked reports, release metadata, and Owner checkout SHALL remain unchanged.
 
 #### Scenario: Review direct implementation scope
 
@@ -290,11 +342,11 @@ All existing E2E and Firefox support files, product source, WXT configuration, g
 
 ### Requirement: Acceptance uses fresh exact-bound cross-browser evidence
 
-This superseding docs authority SHALL be a clean sole child of `74d0c67eaf24f68bf731c8c9205cea7aa6c6792c`, and its implementation SHALL be a clean sole child of the superseding docs exact. Round 18 source exact `3ae2b81ebaf31dfd368affabdd387fe204929420`, blocked `bfdbfa3665a060443175ad54dd7eefb320199e79`, and every other candidate SHALL be neither parent nor transferable evidence. Only repository bytes transfer from the docs parent; the two recorded source digests constrain new bytes but transfer no verdict. No QA #287, QA #298, QA #309, intermediate static, Firefox, Chrome, action, Runtime, cleanup, Reviewer, or QA verdict transfers.
+This superseding docs authority SHALL be a clean sole child of `e63d9cc65f8cd8ec48ab400d7f023b7dbb708143`, with `74d0c67eaf24f68bf731c8c9205cea7aa6c6792c` as its sole grandparent, and its implementation SHALL be a clean sole child of the superseding docs exact. Round 24 source exact `2863c2d60d72940df6ccadc0cdbbaec6c1657352`, QA task #324, Round 18 source exact `3ae2b81ebaf31dfd368affabdd387fe204929420`, blocked `bfdbfa3665a060443175ad54dd7eefb320199e79`, and every other candidate SHALL be neither parent nor transferable evidence. Only repository bytes transfer from the docs parent; the two recorded source digests constrain new bytes but transfer no verdict. No QA #287, QA #298, QA #309, QA #324, intermediate static, format, Firefox, Chrome, action, Runtime, cleanup, Reviewer, or QA verdict transfers.
 
-One fresh Reviewer SHALL validate the immutable implementation, both tracked file digests, frozen real-adapter source digest and executable controls, package-first identity root, canonical manifest relation, worker evidence/cardinality/continuity, deterministic chronology and branch controls, action gate, exact path scope, and protected surfaces. Only after Review PASS, one fresh QA seat SHALL rerun the complete real Chrome MV3 plus Firefox MV2 matrix from zero and own the first terminal verdict and zero-residual cleanup.
+One fresh Reviewer SHALL validate the immutable implementation, both tracked file digests, frozen real-adapter/controls/report identities, exact formatter/version/config/ignore policy, cwd-independent read-only invocation and format controls, executable controls, package-first identity root, canonical manifest relation, worker evidence/cardinality/continuity, deterministic chronology and branch controls, action gate, exact path scope, and protected surfaces. Only after Review PASS, one fresh QA seat SHALL rerun all verification and the complete real Chrome MV3 plus Firefox MV2 matrix from zero and own the first terminal verdict and zero-residual cleanup.
 
-Chrome SHALL receive one explicit accepted Chrome for Testing or Chromium executable, freeze the adapter source SHA-256 and privacy-safe executable identity, pass precondition before lifecycle, use the new `about:blank` observation sequence, preserve bounded evidence for every worker, derive the extension ID only from one package-matching exact worker, retain its continuity, create the accepted target once, reach `mounted`, perform one real native action, prove `afterOptionsCount - beforeOptionsCount = 1` and pre/post-action content Runtime on the same target, preserve the full diagnostic artifact, and report no unexpected error. Firefox SHALL rerun initial startup and two same-profile owned-process restarts under all existing exact action, Runtime, identity, and cleanup requirements.
+After exact/artifact identity and frozen-lockfile install, QA SHALL pass the exact-configured external format precondition and check before any browser resource is created. Chrome SHALL then receive one explicit accepted Chrome for Testing or Chromium executable, freeze the adapter source SHA-256 and privacy-safe executable identity, pass precondition before lifecycle, use the new `about:blank` observation sequence, preserve bounded evidence for every worker, derive the extension ID only from one package-matching exact worker, retain its continuity, create the accepted target once, reach `mounted`, perform one real native action, prove `afterOptionsCount - beforeOptionsCount = 1` and pre/post-action content Runtime on the same target, preserve the full diagnostic artifact, and report no unexpected error. Firefox SHALL rerun initial startup and two same-profile owned-process restarts under all existing exact action, Runtime, identity, and cleanup requirements.
 
 #### Scenario: Prior Firefox PASS exists
 
@@ -314,6 +366,12 @@ Chrome SHALL receive one explicit accepted Chrome for Testing or Chromium execut
 - **WHEN** the superseding implementation enters QA
 - **THEN** task #309 SHALL remain immutable history, and fresh QA SHALL begin from executable precondition with a new adapter digest and one explicitly accepted Chrome for Testing or Chromium identity
 
+#### Scenario: Prior artifact-format invocation blocker exists
+
+- **GIVEN** QA task #324 used default oxfmt policy from its artifacts cwd and stopped before full repository, build/package, Chrome, or Firefox gates
+- **WHEN** the superseding implementation enters fresh QA
+- **THEN** task #324 SHALL remain immutable history, and fresh QA SHALL repeat all gates from zero using the exact-configured candidate policy before browser work
+
 #### Scenario: Supported executable still exposes no exact worker
 
 - **GIVEN** executable precondition passed for an explicitly accepted Chrome for Testing or Chromium identity
@@ -330,6 +388,11 @@ Chrome SHALL receive one explicit accepted Chrome for Testing or Chromium execut
 
 - **WHEN** either browser reaches its first terminal failure
 - **THEN** QA SHALL stop without canonical retry, preserve the exact-bound artifact and cleanup result, and SHALL NOT aggregate prior or partial evidence into PASS
+
+#### Scenario: First terminal verification failure occurs before browsers
+
+- **WHEN** the exact-configured artifact format gate or another required pre-browser gate reaches its first failure
+- **THEN** QA SHALL stop without config fallback, write repair, rerun, or browser startup and SHALL NOT aggregate prior or partial evidence into PASS
 
 #### Scenario: Executable precondition fails before Chrome lifecycle
 
