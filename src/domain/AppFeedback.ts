@@ -39,16 +39,24 @@ const AppFeedbackDomain = Remesh.domain({
     const chatRoomDomain = domain.getDomain(ChatRoomDomain())
     const readinessDomain = domain.getDomain(ReadinessDomain())
     const presentationDomain = domain.getDomain(ToastPresentationDomain())
-    const readinessFeedbackCommand = (state: ReadinessState) =>
+    const RuntimeFeedbackQuery = domain.query({
+      name: 'AppFeedback.RuntimeFeedbackQuery',
+      impl: ({ get }) =>
+        get(chatRoomDomain.query.ConnectionOperationIsLoadingQuery()) ||
+        get(readinessDomain.query.StateQuery()) === 'connecting'
+          ? 'connecting'
+          : get(readinessDomain.query.StateQuery())
+    })
+    const runtimeFeedbackCommand = (state: ReadinessState) =>
       state === 'ready'
         ? presentationDomain.command.DismissCommand(RUNTIME_TOAST_ID)
         : presentationDomain.command.PublishCommand(readinessDescriptor(state))
 
     domain.effect({
-      name: 'AppFeedback.OnReadinessEffect',
-      impl: ({ fromEvent, get }) =>
-        fromEvent(readinessDomain.event.StateChangedEvent).pipe(
-          map((state) => (get(presentationDomain.query.SurfaceMountedQuery()) ? readinessFeedbackCommand(state) : null))
+      name: 'AppFeedback.OnRuntimeFeedbackEffect',
+      impl: ({ fromQuery, get }) =>
+        fromQuery(RuntimeFeedbackQuery()).pipe(
+          map((state) => (get(presentationDomain.query.SurfaceMountedQuery()) ? runtimeFeedbackCommand(state) : null))
         )
     })
 
@@ -76,7 +84,7 @@ const AppFeedbackDomain = Remesh.domain({
         fromEvent(presentationDomain.event.SurfaceChangedEvent).pipe(
           filter(Boolean),
           map(() => {
-            const readiness = readinessFeedbackCommand(get(readinessDomain.query.StateQuery()))
+            const readiness = runtimeFeedbackCommand(get(RuntimeFeedbackQuery()))
             const request = get(chatRoomDomain.query.ReconnectRequestQuery())
             return request && !request.toast.attempted
               ? [
@@ -112,11 +120,9 @@ const AppFeedbackDomain = Remesh.domain({
             if (!get(presentationDomain.query.SurfaceMountedQuery())) {
               return presentationDomain.command.DismissCommand(toastId)
             }
-            return presentationDomain.command.PublishCommand({
-              id: toastId,
-              type: error ? 'error' : 'success',
-              message: error?.message ?? 'Ready to chat'
-            })
+            return error
+              ? presentationDomain.command.PublishCommand({ id: toastId, type: 'error', message: error.message })
+              : presentationDomain.command.DismissCommand(toastId)
           })
         )
     })

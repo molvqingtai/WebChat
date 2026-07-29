@@ -11,7 +11,7 @@ import {
   registerPage,
   relayOffscreenMessages,
   restore,
-  unregisterPage,
+  watchTabs,
   watchOffscreenClosed
 } from '@/runtime/Background'
 import { registerActionClick } from '@/app/background/ActionRegistration'
@@ -27,13 +27,13 @@ export default defineBackground({
     const appAction = provideAppAction(new ProvideAdapter())
 
     // Sole host coordinator: pages request the shared Runtime host here.
-    const [provideCoordinator] = defineProxy<() => RuntimeCoordinator>(
-      () => ({ ensureHost, registerPage, unregisterPage }),
-      { namespace: `${COORDINATOR_NAMESPACE}:${browser.runtime.id}` }
-    )
+    const [provideCoordinator] = defineProxy<() => RuntimeCoordinator>(() => ({ ensureHost, registerPage }), {
+      namespace: `${COORDINATOR_NAMESPACE}:${browser.runtime.id}`
+    })
     provideCoordinator(new ProvideAdapter())
     if (!import.meta.env.FIREFOX) relayOffscreenMessages()
     watchOffscreenClosed()
+    watchTabs()
     void restore()
 
     registerActionClick(browser, () => appAction.openOptionsPage())

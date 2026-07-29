@@ -28,7 +28,7 @@ export const pageDomain = document.location.origin
 export const coordinator = injectCoordinator(new InjectAdapter())
 export const server = injectServer(new InjectAdapter())
 
-const client = new ClientLease({ coordinator, server, pageId, domain: pageDomain })
+const client = new ClientLease({ coordinator, pageId, domain: pageDomain })
 
 export const whenReady = (callback: () => void) => client.whenReady(callback)
 export const whenHostPhase = (callback: Parameters<typeof client.whenHostPhase>[0]) => client.whenHostPhase(callback)

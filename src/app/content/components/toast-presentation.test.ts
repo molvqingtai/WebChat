@@ -168,6 +168,7 @@ const createFixture = () => {
       ReadinessExtern.impl({
         onState: (listener) => {
           readinessListeners.add(listener)
+          listener('ready')
           return () => readinessListeners.delete(listener)
         }
       }),
@@ -278,11 +279,15 @@ describe('generic Toast presentation', () => {
     toast.error('Unrelated feedback', { id: unrelatedId, duration: Infinity, testId: unrelatedId })
     await waitFor(() => document.body.textContent.includes('Unrelated feedback'))
 
-    const runtimeDescriptorCount = descriptors.filter(({ id }) => id === 'webchat-runtime-readiness').length
+    const unavailableDescriptorCount = descriptors.filter(({ id }) => id === 'webchat-runtime-readiness').length
     fixture.emitReadiness('ready')
+    await waitFor(() => vi.mocked(fixture.chat.joinRoom).mock.calls.length === 2)
     await waitFor(() => operations.some((item) => item.type === 'dismiss' && item.id === 'webchat-runtime-readiness'))
+    await settle(50)
+    const runtimeDescriptors = descriptors.filter(({ id }) => id === 'webchat-runtime-readiness')
     expect(operations.some((item) => item.type === 'success' && item.id === 'webchat-runtime-readiness')).toBe(false)
-    expect(descriptors.filter(({ id }) => id === 'webchat-runtime-readiness')).toHaveLength(runtimeDescriptorCount)
+    expect(runtimeDescriptors.length).toBeGreaterThan(unavailableDescriptorCount)
+    expect(runtimeDescriptors.slice(unavailableDescriptorCount).every(({ type }) => type === 'loading')).toBe(true)
     expect(
       descriptors.some(
         ({ id, type, message }) =>
@@ -291,6 +296,7 @@ describe('generic Toast presentation', () => {
     ).toBe(false)
     expect(toast.getToasts().some(({ id }) => id === unrelatedId)).toBe(true)
 
+    const runtimeDescriptorCount = runtimeDescriptors.length
     const runtimeDismissCount = operations.filter(
       (item) => item.type === 'dismiss' && item.id === 'webchat-runtime-readiness'
     ).length
@@ -326,13 +332,12 @@ describe('generic Toast presentation', () => {
       Boolean(document.querySelector(`[data-testid="${activeDescriptorId}"][data-mounted="true"][data-visible="true"]`))
     )
     await waitFor(() => fixture.store.query(fixture.room.query.ReconnectRequestQuery()) === null)
-    await waitFor(
-      () =>
-        document.querySelector(`[data-testid="${activeDescriptorId}"]`)?.textContent?.includes('Ready to chat') === true
-    )
-    const successOperation = operations.find((item) => item.type === 'success' && item.id === activeDescriptorId)!
+    await waitFor(() => operations.some((item) => item.type === 'dismiss' && item.id === activeDescriptorId))
+    const dismissOperation = operations.find((item) => item.type === 'dismiss' && item.id === activeDescriptorId)!
     expect(firstVisibleAt).not.toBeNull()
-    expect(successOperation.at - firstVisibleAt!).toBeGreaterThanOrEqual(290)
+    expect(dismissOperation.at - firstVisibleAt!).toBeGreaterThanOrEqual(290)
+    expect(operations.some((item) => item.type === 'success' && item.id === activeDescriptorId)).toBe(false)
+    expect(document.body.textContent).not.toContain('Ready to chat')
     expect(vi.mocked(fixture.chat.leaveRoom)).toHaveBeenCalledOnce()
     expect(toast.getToasts().some(({ id }) => id === unrelatedId)).toBe(true)
 
@@ -373,10 +378,8 @@ describe('generic Toast presentation', () => {
 
     closeDuringPresentation.resolve()
     await waitFor(() => fixture.store.query(fixture.room.query.ReconnectRequestQuery()) === null)
-    await waitFor(
-      () =>
-        document.querySelector(`[data-testid="${activeDescriptorId}"]`)?.textContent?.includes('Ready to chat') === true
-    )
+    await waitFor(() => operations.some((item) => item.type === 'dismiss' && item.id === activeDescriptorId))
+    expect(operations.some((item) => item.type === 'success' && item.id === activeDescriptorId)).toBe(false)
 
     const openDuringActive = deferred()
     fixture.usePort(() => openDuringActive.promise)

@@ -36,7 +36,7 @@ vi.mock('@/runtime/Background', () => ({
   registerPage: vi.fn(),
   relayOffscreenMessages: vi.fn(),
   restore: vi.fn(),
-  unregisterPage: vi.fn(),
+  watchTabs: vi.fn(),
   watchOffscreenClosed: vi.fn()
 }))
 

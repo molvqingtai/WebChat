@@ -107,7 +107,7 @@ const AppButton: FC<AppButtonProps> = ({ className }) => {
 
   const chatRoomDomain = useRemeshDomain(ChatRoomDomain())
   const chatRoomJoined = useRemeshQuery(chatRoomDomain.query.JoinIsFinishedQuery())
-  const reconnecting = useRemeshQuery(chatRoomDomain.query.ReconnectIsLoadingQuery())
+  const reconnecting = useRemeshQuery(chatRoomDomain.query.ConnectionIsLoadingQuery())
   const reconnectAvailable = useRemeshQuery(chatRoomDomain.query.ReconnectAvailableQuery())
   const reconnectLabel = getReconnectLabel({
     userConfigured: userInfo !== null,

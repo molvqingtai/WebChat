@@ -12,7 +12,7 @@ import type { HostPhase } from '@/runtime/Contract'
  * - the unified grace window after the last page of a domain detaches
  * - per-domain serial reconnect state machine
  *
- * Headless by contract: no DOM/browser API access; callers provide observed page timestamps.
+ * Headless by contract: no DOM/browser API access.
  */
 
 export type DomainPhase = 'active' | 'grace'
@@ -21,7 +21,6 @@ export interface DomainLease {
   domain: string
   phase: DomainPhase
   pageIds: string[]
-  pageLastSeenAt: Record<string, number>
   reconnecting: boolean
   /** Increments on every grace start so stale timers can be ignored. */
   graceGeneration: number
@@ -137,7 +136,7 @@ const LifecycleDomain = Remesh.domain({
 
     const AttachPageCommand = domain.command({
       name: 'Lifecycle.AttachPageCommand',
-      impl: ({ get }, payload: { domain: string; pageId: string; seenAt?: number }) => {
+      impl: ({ get }, payload: { domain: string; pageId: string }) => {
         const leases = get(DomainLeasesState())
         const exist = leases.find((lease) => lease.domain === payload.domain)
 
@@ -146,7 +145,6 @@ const LifecycleDomain = Remesh.domain({
             domain: payload.domain,
             phase: 'active',
             pageIds: [payload.pageId],
-            pageLastSeenAt: { [payload.pageId]: payload.seenAt ?? 0 },
             reconnecting: false,
             graceGeneration: 0
           }
@@ -157,11 +155,7 @@ const LifecycleDomain = Remesh.domain({
         const nextLease: DomainLease = {
           ...exist,
           phase: 'active',
-          pageIds: [...new Set([...exist.pageIds, payload.pageId])],
-          pageLastSeenAt: {
-            ...exist.pageLastSeenAt,
-            [payload.pageId]: payload.seenAt ?? 0
-          }
+          pageIds: [...new Set([...exist.pageIds, payload.pageId])]
         }
         return [
           DomainLeasesState().new(leases.map((lease) => (lease.domain === payload.domain ? nextLease : lease))),
@@ -181,13 +175,10 @@ const LifecycleDomain = Remesh.domain({
         }
 
         const pageIds = exist.pageIds.filter((pageId) => pageId !== payload.pageId)
-        const pageLastSeenAt = Object.fromEntries(
-          Object.entries(exist.pageLastSeenAt).filter(([pageId]) => pageId !== payload.pageId)
-        )
         if (pageIds.length > 0) {
           return [
             DomainLeasesState().new(
-              leases.map((lease) => (lease.domain === payload.domain ? { ...lease, pageIds, pageLastSeenAt } : lease))
+              leases.map((lease) => (lease.domain === payload.domain ? { ...lease, pageIds } : lease))
             ),
             PageDetachedEvent(payload)
           ]
@@ -198,7 +189,6 @@ const LifecycleDomain = Remesh.domain({
           ...exist,
           phase: 'grace',
           pageIds: [],
-          pageLastSeenAt: {},
           graceGeneration: exist.graceGeneration + 1
         }
         return [
@@ -206,20 +196,6 @@ const LifecycleDomain = Remesh.domain({
           PageDetachedEvent(payload),
           DomainGraceStartedEvent({ domain: payload.domain, generation: nextLease.graceGeneration })
         ]
-      }
-    })
-
-    const ExpirePagesCommand = domain.command({
-      name: 'Lifecycle.ExpirePagesCommand',
-      impl: ({ get }, payload: { now: number; ttlMs: number }) => {
-        const expired = get(DomainLeasesState()).flatMap((lease) =>
-          lease.pageIds
-            .filter((pageId) => payload.now - (lease.pageLastSeenAt[pageId] ?? 0) >= payload.ttlMs)
-            .map((pageId) => ({ domain: lease.domain, pageId }))
-        )
-        return expired.length > 0
-          ? expired.flatMap((lease) => [DetachPageCommand(lease), PageExpiredEvent(lease)])
-          : null
       }
     })
 
@@ -290,16 +266,12 @@ const LifecycleDomain = Remesh.domain({
     })
     const DomainReleasedEvent = domain.event<string>({ name: 'Lifecycle.DomainReleasedEvent' })
 
-    const PageAttachedEvent = domain.event<{ domain: string; pageId: string; seenAt?: number }>({
+    const PageAttachedEvent = domain.event<{ domain: string; pageId: string }>({
       name: 'Lifecycle.PageAttachedEvent'
     })
     const PageDetachedEvent = domain.event<{ domain: string; pageId: string }>({
       name: 'Lifecycle.PageDetachedEvent'
     })
-    const PageExpiredEvent = domain.event<{ domain: string; pageId: string }>({
-      name: 'Lifecycle.PageExpiredEvent'
-    })
-
     const ReconnectRequestedEvent = domain.event<string>({ name: 'Lifecycle.ReconnectRequestedEvent' })
     const ReconnectFinishedEvent = domain.event<string>({ name: 'Lifecycle.ReconnectFinishedEvent' })
 
@@ -353,7 +325,6 @@ const LifecycleDomain = Remesh.domain({
         AttachPageCommand,
         DetachPageCommand,
         GraceExpiredCommand,
-        ExpirePagesCommand,
         BeginReconnectCommand,
         FinishReconnectCommand
       },
@@ -368,7 +339,6 @@ const LifecycleDomain = Remesh.domain({
         DomainReleasedEvent,
         PageAttachedEvent,
         PageDetachedEvent,
-        PageExpiredEvent,
         ReconnectRequestedEvent,
         ReconnectFinishedEvent
       }

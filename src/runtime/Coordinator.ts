@@ -1,20 +1,39 @@
-import type { HostPhase, RuntimeHostStatus } from '@/runtime/Contract'
-import type { Clock } from '@/domain/runtime/externs/Clock'
+import type {
+  HostPhase,
+  RuntimeHostStatus,
+  RuntimePageRegistration,
+  RuntimeSnapshot,
+  RuntimeTab
+} from '@/runtime/Contract'
+import { canonicalNavigationUrl, isEligibleContentUrl, isSameNavigation } from '@/service/adapter/runtime/Navigation'
 
 export const COORDINATOR_HEALTH_INTERVAL_MS = 5000
-export const COORDINATOR_LEASE_TTL_MS = 15000
-export const COORDINATOR_SESSION_KEY = 'WEB_CHAT_RUNTIME_COORDINATOR_V2:state'
+export const COORDINATOR_RPC_TIMEOUT_MS = 5000
+export const COORDINATOR_SESSION_KEY = 'WEB_CHAT_RUNTIME_COORDINATOR_V3:state'
 
 interface PersistedState {
   generation: number
   hostId?: string
-  pages: { domain: string; pageId: string; lastSeenAt: number }[]
+  tabs: PhysicalTab[]
 }
 
-interface PhysicalPage {
+interface PhysicalTab {
+  tabId: number
   domain: string
   pageId: string
-  lastSeenAt: number
+  url: string
+}
+
+interface PendingRegistration {
+  pageId: string
+  epoch: number
+  task: Promise<RuntimePageRegistration>
+}
+
+interface PendingRelease {
+  domain: string
+  pageId: string
+  task: Promise<void>
 }
 
 export interface SessionStorage {
@@ -27,18 +46,33 @@ export interface HostEnsureResult {
   created: boolean
 }
 
+export interface CoordinatorTabsApi {
+  get: (tabId: number) => Promise<RuntimeTab>
+}
+
 export interface CoordinatorOptions {
-  clock: Clock
   storage: SessionStorage
+  tabs: CoordinatorTabsApi
   ensureHostDocument: () => Promise<HostEnsureResult>
   probeHost: (startup: boolean) => Promise<{ hostId: string; phase: HostPhase }>
   destroyHostDocument: () => Promise<void>
+  attachPage: (lease: { domain: string; pageId: string }) => Promise<RuntimeSnapshot>
   detachPage: (lease: { domain: string; pageId: string }) => Promise<void>
 }
 
+const withDeadline = <T>(task: Promise<T>, timeoutMs: number, message: string) =>
+  new Promise<T>((resolve, reject) => {
+    const timer = globalThis.setTimeout(() => reject(new Error(message)), timeoutMs)
+    task.then(resolve, reject).finally(() => globalThis.clearTimeout(timer))
+  })
+
 export class Coordinator {
-  private readonly pages = new Map<string, PhysicalPage>()
+  private readonly tabs = new Map<number, PhysicalTab>()
+  private readonly epochs = new Map<number, number>()
+  private readonly pending = new Map<number, PendingRegistration>()
+  private readonly releases = new Map<number, PendingRelease>()
   private creating: Promise<RuntimeHostStatus> | null = null
+  private restoration: Promise<void> | null = null
   private persistTail: Promise<void> = Promise.resolve()
   private healthTimer: ReturnType<typeof globalThis.setInterval> | null = null
   private hostId: string | null = null
@@ -47,15 +81,15 @@ export class Coordinator {
 
   constructor(private readonly options: CoordinatorOptions) {}
 
-  private onlinePages() {
-    return [...this.pages.values()]
+  private currentTabs() {
+    return [...this.tabs.values()].sort((left, right) => left.tabId - right.tabId)
   }
 
   private async persist() {
     const state: PersistedState = {
       generation: this.generation,
       ...(this.hostId ? { hostId: this.hostId } : {}),
-      pages: this.onlinePages()
+      tabs: this.currentTabs()
     }
     this.persistTail = this.persistTail
       .catch(() => {})
@@ -64,24 +98,14 @@ export class Coordinator {
   }
 
   private maintainHost() {
-    if (this.healthTimer || this.pages.size === 0) return
-    this.healthTimer = globalThis.setInterval(() => void this.sweep(), COORDINATOR_HEALTH_INTERVAL_MS)
+    if (this.healthTimer || this.tabs.size === 0) return
+    this.healthTimer = globalThis.setInterval(() => void this.reconcile(), COORDINATOR_HEALTH_INTERVAL_MS)
   }
 
   private stopMaintainingHost() {
-    if (this.pages.size > 0 || !this.healthTimer) return
+    if (this.tabs.size > 0 || !this.healthTimer) return
     globalThis.clearInterval(this.healthTimer)
     this.healthTimer = null
-  }
-
-  private async sweep() {
-    const now = this.options.clock.now()
-    const expired = this.onlinePages().filter((page) => now - page.lastSeenAt >= COORDINATOR_LEASE_TTL_MS)
-    expired.forEach(({ pageId }) => this.pages.delete(pageId))
-    await Promise.allSettled(expired.map(({ domain, pageId }) => this.options.detachPage({ domain, pageId })))
-    await this.persist()
-    if (this.pages.size > 0) await this.ensureHost()
-    this.stopMaintainingHost()
   }
 
   private async requireHealthyRuntime(startup: boolean) {
@@ -125,6 +149,51 @@ export class Coordinator {
     }
   }
 
+  private async currentNavigation(binding: PhysicalTab) {
+    try {
+      const tab = await this.options.tabs.get(binding.tabId)
+      const url = typeof tab.url === 'string' ? canonicalNavigationUrl(tab.url) : null
+      return url && isEligibleContentUrl(url) && new URL(url).origin === binding.domain ? url : null
+    } catch {
+      return null
+    }
+  }
+
+  private async isCurrentTab(binding: PhysicalTab) {
+    const url = await this.currentNavigation(binding)
+    return url !== null && isSameNavigation(url, binding.url)
+  }
+
+  private async reconcileTabs() {
+    await Promise.allSettled(
+      this.currentTabs().map(async (binding) => {
+        const url = await this.currentNavigation(binding)
+        if (!url) {
+          await this.removeCurrentTab(binding.tabId)
+          return
+        }
+        if (url === binding.url) return
+        const current = this.tabs.get(binding.tabId)
+        if (current?.pageId !== binding.pageId) return
+        this.tabs.set(binding.tabId, { ...current, url })
+        await this.persist()
+      })
+    )
+  }
+
+  private async rebuildTabs() {
+    await this.reconcileTabs()
+    await Promise.allSettled(
+      this.currentTabs().map((binding) =>
+        withDeadline(
+          this.options.attachPage({ domain: binding.domain, pageId: binding.pageId }),
+          COORDINATOR_RPC_TIMEOUT_MS,
+          'Runtime page attachment timed out'
+        )
+      )
+    )
+  }
+
   async ensureHost(): Promise<RuntimeHostStatus> {
     if (!this.creating) {
       this.hostPhase = 'connecting'
@@ -145,6 +214,7 @@ export class Coordinator {
             this.hostPhase = 'unavailable'
           }
           await this.persist()
+          if (result.created && this.hostPhase === 'ready') await this.rebuildTabs()
           return { phase: this.hostPhase, generation: this.generation }
         })
         .finally(() => {
@@ -154,54 +224,204 @@ export class Coordinator {
     return this.creating
   }
 
-  async registerPage(lease: { domain: string; pageId: string }): Promise<RuntimeHostStatus> {
-    this.pages.set(lease.pageId, { ...lease, lastSeenAt: this.options.clock.now() })
-    await this.persist()
-    this.maintainHost()
-    return this.ensureHost()
+  private nextEpoch(tabId: number) {
+    const next = (this.epochs.get(tabId) ?? 0) + 1
+    if (!Number.isSafeInteger(next)) throw new Error('tab generation exhausted')
+    this.epochs.set(tabId, next)
+    return next
   }
 
-  async unregisterPage(lease: { domain: string; pageId: string }): Promise<void> {
-    this.pages.delete(lease.pageId)
+  private async validateRegistration(payload: {
+    domain: string
+    pageId: string
+    tab?: RuntimeTab
+  }): Promise<PhysicalTab> {
+    const tabId = payload.tab?.id
+    const claimedUrl = payload.tab?.url
+    if (!Number.isSafeInteger(tabId) || tabId! < 0 || typeof claimedUrl !== 'string') {
+      throw new Error('Trusted browser tab metadata is required')
+    }
+    const current = await this.options.tabs.get(tabId!)
+    if (current.id !== undefined && current.id !== tabId) throw new Error('Browser tab identity changed')
+    if (
+      typeof current.url !== 'string' ||
+      !isEligibleContentUrl(current.url) ||
+      !isSameNavigation(current.url, claimedUrl)
+    ) {
+      throw new Error('Browser tab navigation is no longer eligible')
+    }
+    const canonicalUrl = canonicalNavigationUrl(current.url)
+    if (!canonicalUrl || new URL(canonicalUrl).origin !== payload.domain) {
+      throw new Error('Runtime domain does not match the trusted browser tab')
+    }
+    return { tabId: tabId!, domain: payload.domain, pageId: payload.pageId, url: canonicalUrl }
+  }
+
+  private async attachRegistration(binding: PhysicalTab, epoch: number): Promise<RuntimePageRegistration> {
+    const status = await this.ensureHost()
+    if (status.phase !== 'ready') throw new Error(`Runtime host unavailable: ${status.phase}`)
+    const lease = { domain: binding.domain, pageId: binding.pageId }
+    const attachment = this.options.attachPage(lease)
+    let snapshot: RuntimeSnapshot
+    try {
+      snapshot = await withDeadline(attachment, COORDINATOR_RPC_TIMEOUT_MS, 'Runtime page attachment timed out')
+    } catch (error) {
+      void attachment.then(
+        async () => {
+          const current = this.tabs.get(binding.tabId)
+          if (current?.pageId !== binding.pageId) await this.options.detachPage(lease)
+        },
+        () => {}
+      )
+      throw error
+    }
+    if (this.epochs.get(binding.tabId) !== epoch || !(await this.isCurrentTab(binding))) {
+      const current = this.tabs.get(binding.tabId)
+      if (current?.pageId !== binding.pageId) await this.options.detachPage(lease)
+      throw new Error('Browser tab registration was superseded')
+    }
+
+    const previous = this.tabs.get(binding.tabId)
+    if (previous && (previous.domain !== binding.domain || previous.pageId !== binding.pageId)) {
+      try {
+        await this.releaseBinding(previous)
+      } catch (error) {
+        await Promise.allSettled([this.options.detachPage(lease)])
+        throw error
+      }
+      if (this.epochs.get(binding.tabId) !== epoch || !(await this.isCurrentTab(binding))) {
+        await this.options.detachPage(lease)
+        throw new Error('Browser tab registration was superseded')
+      }
+    }
+    this.tabs.set(binding.tabId, binding)
+    await this.persist()
+    this.maintainHost()
+    return { ...status, snapshot }
+  }
+
+  async registerPage(payload: { domain: string; pageId: string; tab?: RuntimeTab }): Promise<RuntimePageRegistration> {
+    await this.restore()
+    const binding = await this.validateRegistration(payload)
+    const current = this.pending.get(binding.tabId)
+    if (current?.pageId === binding.pageId) return current.task
+    const epoch = this.nextEpoch(binding.tabId)
+    const task = this.attachRegistration(binding, epoch)
+    this.pending.set(binding.tabId, { pageId: binding.pageId, epoch, task })
+    void task
+      .finally(() => {
+        if (this.pending.get(binding.tabId)?.epoch === epoch) this.pending.delete(binding.tabId)
+      })
+      .catch(() => {})
+    return task
+  }
+
+  private releaseBinding(binding: PhysicalTab): Promise<void> {
+    const current = this.releases.get(binding.tabId)
+    if (current?.domain === binding.domain && current.pageId === binding.pageId) return current.task
+
+    const task = this.options.detachPage({ domain: binding.domain, pageId: binding.pageId })
+    this.releases.set(binding.tabId, { domain: binding.domain, pageId: binding.pageId, task })
+    void task
+      .finally(() => {
+        if (this.releases.get(binding.tabId)?.task === task) this.releases.delete(binding.tabId)
+      })
+      .catch(() => {})
+    return task
+  }
+
+  private async removeCurrentTab(tabId: number): Promise<void> {
+    const binding = this.tabs.get(tabId)
+    const release = this.releases.get(tabId)
+    if (binding && release?.domain === binding.domain && release.pageId === binding.pageId) return release.task
+
+    const epoch = this.nextEpoch(tabId)
+    this.pending.delete(tabId)
+    if (!binding) return
+    await this.releaseBinding(binding)
+    const current = this.tabs.get(tabId)
+    if (this.epochs.get(tabId) !== epoch || current?.domain !== binding.domain || current.pageId !== binding.pageId) {
+      return
+    }
+    this.tabs.delete(tabId)
     await this.persist()
     this.stopMaintainingHost()
+  }
+
+  async removeTab(tabId: number): Promise<void> {
+    await this.restore()
+    await this.removeCurrentTab(tabId)
+  }
+
+  async updateTab(tabId: number, url: string): Promise<void> {
+    await this.restore()
+    const binding = this.tabs.get(tabId)
+    if (!binding) return
+    const canonicalUrl = canonicalNavigationUrl(url)
+    if (!canonicalUrl || !isEligibleContentUrl(url) || new URL(canonicalUrl).origin !== binding.domain) {
+      await this.removeTab(tabId)
+      return
+    }
+    if (binding.url === canonicalUrl) return
+    this.tabs.set(tabId, { ...binding, url: canonicalUrl })
+    await this.persist()
   }
 
   watchHost() {
     this.maintainHost()
   }
 
-  async restore(): Promise<void> {
+  private async restoreState(): Promise<void> {
     const stored = (await this.options.storage.get(COORDINATOR_SESSION_KEY))[COORDINATOR_SESSION_KEY]
     if (stored && typeof stored === 'object' && !Array.isArray(stored)) {
       const candidate = stored as Partial<PersistedState>
       this.generation = Number.isSafeInteger(candidate.generation) ? candidate.generation! : 0
       this.hostId = typeof candidate.hostId === 'string' && candidate.hostId ? candidate.hostId : null
-      if (Array.isArray(candidate.pages)) {
-        candidate.pages.forEach((page) => {
+      if (Array.isArray(candidate.tabs)) {
+        candidate.tabs.forEach((tab) => {
           if (
-            page &&
-            typeof page.domain === 'string' &&
-            typeof page.pageId === 'string' &&
-            Number.isFinite(page.lastSeenAt) &&
-            this.options.clock.now() - page.lastSeenAt < COORDINATOR_LEASE_TTL_MS
+            tab &&
+            Number.isSafeInteger(tab.tabId) &&
+            tab.tabId >= 0 &&
+            typeof tab.domain === 'string' &&
+            typeof tab.pageId === 'string' &&
+            typeof tab.url === 'string'
           ) {
-            this.pages.set(page.pageId, page)
+            this.tabs.set(tab.tabId, tab)
           }
         })
       }
     }
     await this.persist()
-    if (this.pages.size > 0) {
+    if (this.tabs.size > 0) {
       this.maintainHost()
-      await this.ensureHost()
+      const status = await this.ensureHost()
+      if (status.phase === 'ready') await this.reconcileTabs()
+    }
+  }
+
+  restore(): Promise<void> {
+    if (!this.restoration) {
+      this.restoration = this.restoreState().catch((error) => {
+        this.restoration = null
+        throw error
+      })
+    }
+    return this.restoration
+  }
+
+  async reconcile(): Promise<void> {
+    await this.restore()
+    if (this.tabs.size > 0) {
+      const status = await this.ensureHost()
+      if (status.phase === 'ready') await this.reconcileTabs()
     }
   }
 
   snapshotForTest() {
     return {
       generation: this.generation,
-      pages: this.onlinePages(),
+      tabs: this.currentTabs(),
       hostPhase: this.hostPhase,
       hostId: this.hostId
     }

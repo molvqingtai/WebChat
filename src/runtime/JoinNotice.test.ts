@@ -49,6 +49,7 @@ interface HeldSessionEnd {
 
 class DeterministicNetwork {
   private readonly endpoints = new Map<string, Endpoint>()
+  private readonly heldDiscoveries = new Set<string>()
   private readonly heldRoutes = new Set<string>()
   private readonly heldFrames: HeldFrame[] = []
   private readonly deliveredFrames: HeldFrame[] = []
@@ -60,6 +61,16 @@ class DeterministicNetwork {
 
   holdSession(sourcePeerId: string, targetPeerId: string) {
     this.heldRoutes.add(`${sourcePeerId}->${targetPeerId}`)
+  }
+
+  holdDiscovery(roomId: string, leftPeerId: string, rightPeerId: string) {
+    this.heldDiscoveries.add(this.pairKey(roomId, leftPeerId, rightPeerId))
+  }
+
+  releaseDiscovery(roomId: string, leftPeerId: string, rightPeerId: string) {
+    const pair = this.pairKey(roomId, leftPeerId, rightPeerId)
+    this.heldDiscoveries.delete(pair)
+    this.announce(roomId, leftPeerId, rightPeerId)
   }
 
   releaseSessionWhenPeerPublishes(publishingPeerId: string, sourcePeerId: string, targetPeerId: string) {
@@ -242,11 +253,19 @@ class DeterministicNetwork {
     this.endpoints.forEach((other, otherPeerId) => {
       if (otherPeerId === peerId || !other.rooms.has(roomId)) return
       const pair = this.pairKey(roomId, peerId, otherPeerId)
-      if (this.announcedPairs.has(pair)) return
-      this.announcedPairs.add(pair)
-      other.joins.forEach((listener) => listener(roomId, peerId))
-      endpoint.joins.forEach((listener) => listener(roomId, otherPeerId))
+      if (this.heldDiscoveries.has(pair)) return
+      this.announce(roomId, peerId, otherPeerId)
     })
+  }
+
+  private announce(roomId: string, leftPeerId: string, rightPeerId: string) {
+    const left = this.endpoints.get(leftPeerId)
+    const right = this.endpoints.get(rightPeerId)
+    const pair = this.pairKey(roomId, leftPeerId, rightPeerId)
+    if (!left?.rooms.has(roomId) || !right?.rooms.has(roomId) || this.announcedPairs.has(pair)) return
+    this.announcedPairs.add(pair)
+    left.joins.forEach((listener) => listener(roomId, rightPeerId))
+    right.joins.forEach((listener) => listener(roomId, leftPeerId))
   }
 
   private pairKey(roomId: string, leftPeerId: string, rightPeerId: string) {
@@ -292,9 +311,10 @@ const createStack = async (
   network: DeterministicNetwork,
   peerId: string,
   user: ChatUser,
-  options: { presenceStore?: PresenceStore } = {}
+  options: { presenceStore?: PresenceStore; now?: number } = {}
 ): Promise<ApplicationStack> => {
-  const clock: Clock = { now: () => NOW }
+  const now = options.now ?? NOW + stacks.length
+  const clock: Clock = { now: () => now }
   const server = createServer({
     transport: network.transport(peerId),
     clock,
@@ -446,6 +466,44 @@ afterEach(async () => {
 })
 
 describe('join notice observation baseline', () => {
+  it('does not persist an earlier peer join when discovery and SESSION both arrive after local commit', async () => {
+    const network = new DeterministicNetwork()
+    const a = await createStack(
+      network,
+      'both-late-peer-a',
+      { id: 'both-late-user-a', name: 'A', avatar: '' },
+      {
+        now: NOW
+      }
+    )
+    const b = await createStack(
+      network,
+      'both-late-peer-b',
+      { id: 'both-late-user-b', name: 'B', avatar: '' },
+      {
+        now: NOW + 1
+      }
+    )
+
+    await a.join()
+    network.holdDiscovery(getChatRoomId(DOMAIN), 'both-late-peer-a', 'both-late-peer-b')
+    await b.join()
+    expect(await noticeUsers(b)).toEqual(['both-late-user-b'])
+
+    network.releaseDiscovery(getChatRoomId(DOMAIN), 'both-late-peer-a', 'both-late-peer-b')
+    await vi.waitFor(() =>
+      expect(
+        b.sessionEvents.some((event) =>
+          event.snapshot.sessions.some((session) => session.user.id === 'both-late-user-a')
+        )
+      ).toBe(true)
+    )
+    await vi.waitFor(async () => expect(await noticeUsers(b)).toEqual(['both-late-user-b']))
+    await vi.waitFor(async () =>
+      expect(await noticeUsers(a)).toEqual(expect.arrayContaining(['both-late-user-a', 'both-late-user-b']))
+    )
+  })
+
   it.each([
     { name: 'SESSION arrives during B preparation', holdBaselineSession: false },
     { name: 'pre-existing SESSION arrives immediately after B commit', holdBaselineSession: true }

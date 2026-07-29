@@ -44,4 +44,13 @@ describe('reconnect action availability', () => {
       /const handleReconnectSite = useCallback\(\(\) => \{\s*send\(chatRoomDomain\.command\.ReconnectCommand\(\)\)\s*\}/
     )
   })
+
+  it('projects direct, automatic, recovery, and manual connection loading through one control query', () => {
+    const source = readFileSync(new URL('./index.tsx', import.meta.url), 'utf8')
+
+    expect(source).toContain('const reconnecting = useRemeshQuery(chatRoomDomain.query.ConnectionIsLoadingQuery())')
+    expect(source).toContain('disabled={!reconnectAvailable}')
+    expect(source).toContain("reconnecting && 'animate-spin'")
+    expect(source).not.toContain('query.ReconnectIsLoadingQuery()')
+  })
 })

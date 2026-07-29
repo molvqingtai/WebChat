@@ -121,7 +121,7 @@ export interface RuntimeServer {
   attachPage: (payload: { domain: string; pageId: string }) => Promise<RuntimeSnapshot>
   detachPage: (payload: { domain: string; pageId: string }) => Promise<void>
   getSnapshot: () => Promise<RuntimeSnapshot>
-  joinChatRoom: (payload: { domain: string; user: ChatUser; site: ChatSite }) => Promise<RuntimeSnapshot>
+  joinChatRoom: (payload: { domain: string; user: ChatUser; site: ChatSite }) => Promise<RuntimeSnapshot | null>
   leaveChatRoom: (payload: { domain: string }) => Promise<void>
   allocateTextMessage: (payload: {
     domain: string
@@ -137,7 +137,7 @@ export interface RuntimeServer {
   sendChatMessage: (payload: { domain: string; event: ChatMessage }) => Promise<void>
   ackInbound: (payload: { domain: string; sequence: number }) => Promise<void>
   replayInbound: (payload: { domain: string; after: number }) => Promise<InboundEvent[]>
-  reconnectDomain: (payload: { domain: string }) => Promise<void>
+  reconnectDomain: (payload: { domain: string }) => Promise<void | null>
   onInbound: (payload: { pageId: string }, callback: (event: InboundEvent) => void | Promise<void>) => Promise<void>
   onSessionEvent: (
     payload: { pageId: string },
@@ -160,10 +160,18 @@ export interface RuntimeHostStatus {
   generation: number
 }
 
+export interface RuntimeTab {
+  id?: number
+  url?: string
+}
+
+export interface RuntimePageRegistration extends RuntimeHostStatus {
+  snapshot: RuntimeSnapshot
+}
+
 export interface RuntimeCoordinator {
   ensureHost: () => Promise<RuntimeHostStatus>
-  registerPage: (payload: { domain: string; pageId: string }) => Promise<RuntimeHostStatus>
-  unregisterPage: (payload: { domain: string; pageId: string }) => Promise<void>
+  registerPage: (payload: { domain: string; pageId: string }) => Promise<RuntimePageRegistration>
 }
 
 export const COORDINATOR_NAMESPACE = 'WEB_CHAT_RUNTIME_COORDINATOR_V2' as const

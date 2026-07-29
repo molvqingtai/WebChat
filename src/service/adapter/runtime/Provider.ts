@@ -23,10 +23,21 @@ export const createProviderOnMessage = (
     const handler = (rawMessage: unknown, sender: MessageSender) => {
       if (!isComctxMessage<MessageMeta>(rawMessage)) return
       const message = rawMessage
+      const tab = sender.tab ? { id: sender.tab.id, url: sender.tab.url } : undefined
       // Transport sender metadata replaces payload tab claims at the provider trust boundary.
       callback({
         ...message,
-        meta: sender.tab ? { tab: { id: sender.tab.id, url: sender.tab.url } } : message.meta
+        ...(message.type === 'apply' && message.path.at(-1) === 'registerPage' && message.args?.length
+          ? {
+              args: [
+                typeof message.args[0] === 'object' && message.args[0] !== null
+                  ? { ...message.args[0], tab }
+                  : message.args[0],
+                ...message.args.slice(1)
+              ]
+            }
+          : {}),
+        meta: sender.tab ? { tab } : message.meta
       })
     }
     runtime.onMessage.addListener(handler as (...args: unknown[]) => unknown)

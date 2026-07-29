@@ -2,6 +2,7 @@ import type { Message } from 'comctx'
 import { isComctxMessage } from '@/service/adapter/runtime/Core'
 import type { MessageMeta, MessageSender } from '@/service/adapter/runtime/Provider'
 import type { TabsApi } from '@/service/adapter/runtime/Tabs'
+import { isSameNavigation } from '@/service/adapter/runtime/Navigation'
 
 type RelayMessageListener = (message: unknown, sender: MessageSender) => unknown
 
@@ -81,7 +82,9 @@ export const relayOffscreenProviderMessages = (options: RelayOptions) => {
     void options.tabs
       .get(target.id)
       .then((tab) => {
-        if (tab.url !== target.url) return reject('target-mismatch', message, target)
+        if (typeof tab.url !== 'string' || !isSameNavigation(tab.url, target.url)) {
+          return reject('target-mismatch', message, target)
+        }
         return options.tabs.sendMessage(target.id, message)
       })
       .catch(() => reject('target-unavailable', message, target))

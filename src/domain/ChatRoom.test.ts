@@ -39,10 +39,12 @@ let databaseId = 0
 
 const deferred = () => {
   let resolve!: () => void
-  const promise = new Promise<void>((next) => {
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<void>((next, fail) => {
     resolve = next
+    reject = fail
   })
-  return { promise, resolve }
+  return { promise, resolve, reject }
 }
 
 const createFixture = (options: { delayRecordWatch?: boolean; user?: UserInfo | null } = {}) => {
@@ -130,6 +132,7 @@ const createFixture = (options: { delayRecordWatch?: boolean; user?: UserInfo | 
       ReadinessExtern.impl({
         onState: (listener) => {
           readinessListeners.add(listener)
+          listener('ready')
           return () => readinessListeners.delete(listener)
         }
       }),
@@ -221,6 +224,64 @@ describe('ChatRoomDomain exact application port', () => {
     fixture.store.discard()
   })
 
+  it('projects a pending direct join through the unified connection loading query', async () => {
+    const fixture = createFixture()
+    const pending = deferred()
+    vi.mocked(fixture.chat.joinRoom).mockReturnValueOnce(pending.promise)
+
+    fixture.store.send(fixture.room.command.JoinRoomCommand())
+    await vi.waitFor(() => expect(fixture.chat.joinRoom).toHaveBeenCalledOnce())
+
+    expect(fixture.store.query(fixture.room.query.ConnectionOperationIsLoadingQuery())).toBe(true)
+    expect(fixture.store.query(fixture.room.query.ConnectionIsLoadingQuery())).toBe(true)
+    expect(fixture.store.query(fixture.room.query.ReconnectAvailableQuery())).toBe(false)
+
+    pending.resolve()
+    await vi.waitFor(() => expect(fixture.store.query(fixture.room.query.JoinIsFinishedQuery())).toBe(true))
+    expect(fixture.store.query(fixture.room.query.ConnectionOperationIsLoadingQuery())).toBe(false)
+    expect(fixture.store.query(fixture.room.query.ConnectionIsLoadingQuery())).toBe(false)
+    expect(fixture.store.query(fixture.room.query.ReconnectAvailableQuery())).toBe(true)
+    fixture.store.discard()
+  })
+
+  it('keeps the newest automatic operation as loading owner and settles cancellation without an error', async () => {
+    const fixture = createFixture()
+    await join(fixture)
+    const identityRefresh = deferred()
+    const hostRecovery = deferred()
+    const errors: Error[] = []
+    fixture.store.subscribeEvent(fixture.room.event.OnErrorEvent, (error) => errors.push(error))
+    vi.mocked(fixture.chat.joinRoom)
+      .mockReturnValueOnce(identityRefresh.promise)
+      .mockReturnValueOnce(hostRecovery.promise)
+
+    fixture.store.send(fixture.user.command.UpdateUserInfoCommand({ ...SELF, name: 'Updated' }))
+    await vi.waitFor(() => expect(fixture.chat.joinRoom).toHaveBeenCalledTimes(2))
+    expect(fixture.store.query(fixture.room.query.ConnectionOperationIsLoadingQuery())).toBe(true)
+    expect(fixture.store.query(fixture.room.query.ConnectionIsLoadingQuery())).toBe(true)
+
+    fixture.emitReadiness('connecting')
+    fixture.emitReadiness('ready')
+    await vi.waitFor(() => expect(fixture.chat.joinRoom).toHaveBeenCalledTimes(3))
+    expect(fixture.store.query(fixture.room.query.ConnectionOperationIsLoadingQuery())).toBe(true)
+    expect(fixture.store.query(fixture.room.query.ConnectionIsLoadingQuery())).toBe(true)
+
+    identityRefresh.resolve()
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 0))
+    expect(fixture.store.query(fixture.room.query.ConnectionOperationIsLoadingQuery())).toBe(true)
+
+    hostRecovery.reject(new DOMException('Runtime operation superseded', 'AbortError'))
+    await vi.waitFor(() => expect(fixture.store.query(fixture.room.query.ConnectionIsLoadingQuery())).toBe(false))
+    expect(errors).toEqual([])
+
+    const refreshError = new Error('Identity refresh failed')
+    vi.mocked(fixture.chat.joinRoom).mockRejectedValueOnce(refreshError)
+    fixture.store.send(fixture.user.command.UpdateUserInfoCommand({ ...SELF, name: 'Latest' }))
+    await vi.waitFor(() => expect(errors).toEqual([refreshError]))
+    expect(fixture.store.query(fixture.room.query.ConnectionIsLoadingQuery())).toBe(false)
+    fixture.store.discard()
+  })
+
   it('retries a terminal failed join directly and completes the normal joined state once', async () => {
     const fixture = createFixture()
     const initialError = new Error('initial join failed')
@@ -237,6 +298,7 @@ describe('ChatRoomDomain exact application port', () => {
     const request = fixture.store.query(fixture.room.query.ReconnectRequestQuery())!
     fixture.store.send(fixture.room.command.ReconnectCommand())
     expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())?.id).toBe(request.id)
+    expect(fixture.store.query(fixture.room.query.ConnectionIsLoadingQuery())).toBe(true)
     expect(fixture.store.query(fixture.room.query.ReconnectAvailableQuery())).toBe(false)
     expect(fixture.chat.leaveRoom).not.toHaveBeenCalled()
 
@@ -259,6 +321,7 @@ describe('ChatRoomDomain exact application port', () => {
 
     fixture.store.send(fixture.room.command.OmitToastCommand(request.id))
     await vi.waitFor(() => expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toBeNull())
+    expect(fixture.store.query(fixture.room.query.ConnectionIsLoadingQuery())).toBe(false)
     expect(fixture.store.query(fixture.room.query.ReconnectAvailableQuery())).toBe(true)
     fixture.store.discard()
   })

@@ -1,6 +1,7 @@
 import type { Adapter, OnMessage, SendMessage } from 'comctx'
 import { MessageListenerRegistry, type MessageApi } from '@/service/adapter/runtime/Core'
 import { createProviderOnMessage, type MessageMeta, type MessageTab } from '@/service/adapter/runtime/Provider'
+import { isSameNavigation } from '@/service/adapter/runtime/Navigation'
 
 export interface TabsApi {
   query: (query: { url?: string }) => Promise<MessageTab[]>
@@ -20,12 +21,16 @@ export class TabsProviderAdapter implements Adapter<MessageMeta> {
   }
 
   sendMessage: SendMessage<MessageMeta> = async (message) => {
-    // Fan out to matching pages and Runtime without letting one closed receiver cancel the remaining deliveries.
-    const tabs = await this.tabs.query({ url: message.meta.tab?.url })
-    await Promise.allSettled([
-      ...tabs.flatMap((tab) => (tab.id === undefined ? [] : [Promise.resolve(this.tabs.sendMessage(tab.id, message))])),
-      Promise.resolve(this.runtime.sendMessage(message))
-    ])
+    const target = message.meta.tab
+    const tabDelivery =
+      Number.isSafeInteger(target?.id) && target!.id! >= 0 && typeof target?.url === 'string'
+        ? this.tabs.get(target!.id!).then((tab) => {
+            if (typeof tab.url === 'string' && isSameNavigation(tab.url, target!.url!)) {
+              return this.tabs.sendMessage(target!.id!, message)
+            }
+          })
+        : Promise.resolve()
+    await Promise.allSettled([tabDelivery, Promise.resolve(this.runtime.sendMessage(message))])
   }
 
   dispose() {

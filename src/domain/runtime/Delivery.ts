@@ -178,15 +178,6 @@ const DeliveryDomain = Remesh.domain({
       name: 'Delivery.InboundBatchDiscardedEvent'
     })
 
-    const DetachDeadPagesCommand = domain.command({
-      name: 'Delivery.DetachDeadPagesCommand',
-      impl: ({ get }, pageIds: string[]) =>
-        pageIds.flatMap((pageId) => {
-          const lease = get(lifecycleDomain.query.DomainLeasesQuery()).find((item) => item.pageIds.includes(pageId))
-          return lease ? [lifecycleDomain.command.DetachPageCommand({ domain: lease.domain, pageId })] : []
-        })
-    })
-
     domain.effect({
       name: 'Delivery.PageEffect',
       impl: ({ fromEvent, get }) =>
@@ -195,7 +186,7 @@ const DeliveryDomain = Remesh.domain({
             defer(() =>
               pagePort.emitInbound(get(lifecycleDomain.query.DomainLeaseQuery(event.domain))?.pageIds ?? [], event)
             ).pipe(
-              map(DetachDeadPagesCommand),
+              map(() => null),
               catchError(() => EMPTY)
             )
           )

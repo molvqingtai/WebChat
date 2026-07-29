@@ -11,7 +11,7 @@ import {
   type PendingPresenceEnd,
   type PresenceDomainRecord
 } from '@/domain/runtime/externs/PresenceStore'
-import { CHAT_ROOM_NAMESPACE_V2 } from '@/constants/config'
+import { CHAT_ROOM_NAMESPACE_V3 } from '@/constants/config'
 import {
   MESSAGE_TYPE,
   isChatRoomMessageSemanticallyValid,
@@ -119,7 +119,7 @@ export interface SessionOperationFailed {
   error: Error
 }
 
-const getChatRoomId = (domain: string): string => stringToHex(`${CHAT_ROOM_NAMESPACE_V2}:${domain}`)
+const getChatRoomId = (domain: string): string => stringToHex(`${CHAT_ROOM_NAMESPACE_V3}:${domain}`)
 const replaceBy = <T>(items: T[], predicate: (item: T) => boolean, next: T): T[] =>
   items.some(predicate) ? items.map((item) => (predicate(item) ? next : item)) : [...items, next]
 const removeBy = <T>(items: T[], predicate: (item: T) => boolean): T[] => items.filter((item) => !predicate(item))
@@ -465,6 +465,7 @@ const SessionDomain = Remesh.domain({
               type: MESSAGE_TYPE.SESSION,
               sessionId: prepared.runtime.sessionId,
               presenceId: prepared.runtime.presenceId,
+              joinedAt: prepared.runtime.joinedAt,
               user: prepared.runtime.user
             }
           })
@@ -495,16 +496,29 @@ const SessionDomain = Remesh.domain({
         if (!prepared) return null
         const domains = get(DomainsState())
         const previous = domains.find((item) => item.domain === prepared.runtime.domain)
-        const newSessions = prepared.runtime.sessions
-          .filter(
-            (session) =>
-              !previous?.sessions.some(
-                (current) => current.sourcePeerId === session.sourcePeerId && current.sessionId === session.sessionId
-              )
-          )
-          .map(projectRuntimeSession)
+        const newBindings = prepared.runtime.sessions.filter(
+          (session) =>
+            !previous?.sessions.some(
+              (current) => current.sourcePeerId === session.sourcePeerId && current.sessionId === session.sessionId
+            )
+        )
+        const newSessions = newBindings.map(projectRuntimeSession)
         const presenceDomains = get(PresenceDomainsState())
         const priorPresence = presenceDomains.find((item) => item.domain === prepared.runtime.domain)
+        const priorActiveUserIds = new Set([
+          ...(previous?.sessions.map((session) => session.user.id) ?? []),
+          ...(priorPresence?.observers.flatMap((observer) =>
+            observer.status === 'active' ? [observer.user.id] : []
+          ) ?? [])
+        ])
+        const laterJoins = newBindings.filter(
+          (session, index, sessions) =>
+            session.joinedAt > prepared.runtime.joinedAt &&
+            !priorActiveUserIds.has(session.user.id) &&
+            sessions.findIndex(
+              (candidate) => candidate.user.id === session.user.id && candidate.joinedAt > prepared.runtime.joinedAt
+            ) === index
+        )
         const finalizingIdentity = priorPresence?.pendingEnd ??
           priorPresence?.inflightEnd ?? {
             presenceId: prepared.runtime.presenceId,
@@ -568,6 +582,15 @@ const SessionDomain = Remesh.domain({
                         : 'refresh'
                 })
               ]),
+          ...laterJoins.map((session) =>
+            RuntimeSessionChangedEvent({
+              type: 'join',
+              domain: prepared.runtime.domain,
+              snapshot: snapshot(prepared.runtime),
+              session: projectRuntimeSession(session),
+              provenance: 'live'
+            })
+          ),
           DomainCommittedEvent({ attemptId, domain: prepared.runtime.domain, newSessions }),
           ...prepared.missedPeerIds.map((sourcePeerId) =>
             wireDomain.command.SendMessageCommand({
@@ -578,6 +601,7 @@ const SessionDomain = Remesh.domain({
                 type: MESSAGE_TYPE.SESSION,
                 sessionId: prepared.runtime.sessionId,
                 presenceId: prepared.runtime.presenceId,
+                joinedAt: prepared.runtime.joinedAt,
                 user: prepared.runtime.user
               }
             })
@@ -906,7 +930,7 @@ const SessionDomain = Remesh.domain({
         ) {
           return OperationFailedEvent({
             operationId: payload.operationId,
-            error: new Error('Message exceeds the v2 event contract')
+            error: new Error('Message exceeds the v3 event contract')
           })
         }
         const record: TextMessageRecord = {
@@ -968,7 +992,7 @@ const SessionDomain = Remesh.domain({
         ) {
           return OperationFailedEvent({
             operationId: payload.operationId,
-            error: new Error('Reaction exceeds the v2 event contract')
+            error: new Error('Reaction exceeds the v3 event contract')
           })
         }
         const record: ReactionMessageRecord = {
@@ -1001,7 +1025,7 @@ const SessionDomain = Remesh.domain({
         ) {
           return OperationFailedEvent({
             operationId: payload.operationId,
-            error: new Error('Chat message does not match the v2 event contract')
+            error: new Error('Chat message does not match the v3 event contract')
           })
         }
         const adopted = adoptHlc(get(HlcState()), event.hlc, clock.now())
@@ -1077,9 +1101,11 @@ const SessionDomain = Remesh.domain({
         const observed = observers.find((item) => item.presenceId === message.presenceId)
         if (
           observed?.status === 'ended' ||
-          (observed && observed.user.id !== message.user.id) ||
+          (observed && (observed.user.id !== message.user.id || observed.joinedAt !== message.joinedAt)) ||
           (current?.sessionId === message.sessionId &&
-            (current.presenceId !== message.presenceId || current.user.id !== message.user.id))
+            (current.presenceId !== message.presenceId ||
+              current.user.id !== message.user.id ||
+              current.joinedAt !== message.joinedAt))
         ) {
           return wireDomain.command.DropProtocolCommand({
             sourcePeerId: payload.sourcePeerId,
@@ -1097,7 +1123,7 @@ const SessionDomain = Remesh.domain({
           sessionId: message.sessionId,
           presenceId: message.presenceId,
           user: message.user,
-          joinedAt: observed?.joinedAt ?? clock.now()
+          joinedAt: message.joinedAt
         }
         nextObservers = replaceObservation(nextObservers, {
           presenceId: message.presenceId,
@@ -1108,7 +1134,13 @@ const SessionDomain = Remesh.domain({
         })
         const nextRuntime = {
           ...runtime,
-          sessions: replaceBy(runtime.sessions, (item) => item.sourcePeerId === payload.sourcePeerId, session)
+          sessions: replaceBy(
+            runtime.sessions.map((item) =>
+              item.presenceId === message.presenceId ? { ...item, user: message.user } : item
+            ),
+            (item) => item.sourcePeerId === payload.sourcePeerId,
+            session
+          )
         }
         if (prepared) {
           return PreparedSessionsState().new(
@@ -1142,13 +1174,14 @@ const SessionDomain = Remesh.domain({
           : baselines
         const wasLogicallyActive =
           observed?.status === 'active' || hasActiveUserPresence(nextObservers, message.user.id, message.presenceId)
+        const isLaterLogicalJoin = message.joinedAt > runtime.joinedAt
         const physicalBindingChanged =
           current?.sessionId !== message.sessionId || current?.presenceId !== message.presenceId
         const sessionSnapshot = snapshot(nextRuntime)
         const publicSession = projectRuntimeSession(session)
         // Preparation peers and known generations are membership convergence; only logical zero-to-one is a live join.
         const sessionEvent: RuntimeSessionEvent =
-          isBaselinePeer || wasLogicallyActive || (current?.user.id === message.user.id && Boolean(current))
+          !isLaterLogicalJoin || wasLogicallyActive || (current?.user.id === message.user.id && Boolean(current))
             ? { type: 'snapshot', domain: runtime.domain, snapshot: sessionSnapshot, provenance: 'refresh' }
             : current
               ? {
@@ -1357,6 +1390,7 @@ const SessionDomain = Remesh.domain({
                 type: MESSAGE_TYPE.SESSION,
                 sessionId: runtime.sessionId,
                 presenceId: runtime.presenceId,
+                joinedAt: runtime.joinedAt,
                 user: runtime.user
               }
             })
