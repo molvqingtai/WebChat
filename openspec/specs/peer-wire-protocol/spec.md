@@ -1,8 +1,11 @@
 # peer-wire-protocol Specification
 
 ## Purpose
+
 TBD - created by archiving change refactor-to-shared-webrtc-runtime. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: Public protocol module is pure and explicitly bounded
 
 The code-level public module `src/protocol/index.ts` SHALL be the third-party-facing peer contract without introducing a package, publishing flow, or SDK. Its wire structures SHALL be exactly the Owner-frozen `ChatUser`, `ChatSession`, `HLC`, `MentionedUser`, `SessionMessage`, `SessionEndMessage`, `TextMessage`, `ReactionMessage`, `ChatMessage`, `HistoryCursor`, `HistoryRequestMessage`, `HistoryResponseMessage`, `ChatRoomMessage`, `ChatSite`, and `WorldRoomMessage` contracts. It SHALL additionally export only their strict schemas, pure parse/check/validation, public limits/constants, and the public codec surface (`WireCodec`, `NativeWireCodec` reference implementation, `WireCodecError`). It SHALL NOT add or rename any field/type, export a structural alias or compatibility DTO, or expose an optional/open metadata bag without explicit Owner intervention. Pure validation SHALL cover closed-union and unknown-key rejection, field/resource limits, mention `ranges`, user/message size, origin-only and uniqueness rules, history-response reference completeness, and explicit-`now` HLC rules. The `NativeWireCodec` SHALL own only the fixed codec/security algorithm; the public protocol SHALL NOT export local persistence/UI models, projections, ordering implementations, Runtime lifecycle or page-host RPC contracts, WirePipeline queue/drop/apply/flush types, or application orchestration.

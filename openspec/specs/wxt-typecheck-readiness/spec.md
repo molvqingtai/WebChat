@@ -1,8 +1,11 @@
 # wxt-typecheck-readiness Specification
 
 ## Purpose
+
 TBD - created by archiving change repair-wxt-typecheck-readiness. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: Canonical TypeScript gate prepares WXT state
 
 The root `check` script SHALL be exactly `wxt prepare && tsc --noEmit`. The installed WXT prepare command SHALL settle successfully before strict TypeScript checking begins. CI and local automation SHALL invoke this canonical script rather than depend on an earlier install lifecycle as the only WXT-generation prerequisite.

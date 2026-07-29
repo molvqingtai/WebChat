@@ -1,8 +1,11 @@
 # world-room-presence Specification
 
 ## Purpose
+
 TBD - created by archiving change refactor-to-shared-webrtc-runtime. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: WorldRoom v2 is a browser singleton inside the Runtime
 
 The World wire types, schema, limits, and pure validation SHALL be defined by the public `src/protocol/index.ts` module. Runtime-only registry, projection, lifecycle, and transport orchestration SHALL remain outside that module; the dependency direction SHALL be Runtime → protocol.

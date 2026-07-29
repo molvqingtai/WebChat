@@ -1,8 +1,11 @@
 # source-quality-tooling Specification
 
 ## Purpose
+
 TBD - created by archiving change migrate-to-oxfmt-and-oxlint. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: Oxc tools are the sole formatter and linter
 
 The repository SHALL use oxfmt as its only source formatter and oxlint as its only source linter. Active ESLint and Prettier dependencies, configuration, scripts, caches, editor integration, staged-file integration, and workflow integration MUST be removed.
