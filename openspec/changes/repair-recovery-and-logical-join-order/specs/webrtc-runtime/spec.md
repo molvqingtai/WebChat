@@ -128,9 +128,45 @@ Readiness presentation SHALL remain downstream of Runtime truth. Every current p
 - **WHEN** a current attachment succeeds or the original recovery budget expires
 - **THEN** the same readiness entry SHALL settle to dismissal on ready or unavailable error within that budget and SHALL never remain loading permanently
 
+### Requirement: Refresh control projects current connection loading
+
+The existing mounted Refresh control SHALL project one current Chat connection loading owner rather than only a local click state. The current owner's Toast feedback entry and control SHALL remain strictly aligned: whenever that entry is `loading`, including direct/automatic connection or join, Runtime recovery, manual Refresh, and any accepted minimum loading dwell, the Refresh button SHALL be disabled and its refresh icon SHALL rotate continuously. A control that mounts or re-renders while such an owner is already loading SHALL immediately project the same disabled rotating state. Repeated activation SHALL issue no concurrent Refresh while disabled. This requirement SHALL NOT mount a Refresh control before the existing `initClient()` bootstrap boundary or add alternate loading UI.
+
+When the current owner reaches ready, genuine failure, cancellation, or another defined terminal outcome, its Toast entry SHALL leave `loading` and its control loading SHALL end in the same owner-scoped transition. Success dismisses the entry; genuine failure replaces it with the error and does not hide that error. The icon SHALL stop and ordinary Refresh eligibility SHALL be recomputed atomically. A failed connection/join with otherwise valid configuration SHALL therefore expose an enabled non-rotating retry control, while an unrelated static eligibility failure MAY keep the control disabled without rotation. Settlement from an expired, detached, aborted, or superseded owner SHALL not stop the icon, enable the button, or clear feedback while a newer owner remains loading. The control SHALL add no second loading owner, timer, connection truth, or browser-specific behavior.
+
+#### Scenario: Toast loading and Refresh control cannot diverge
+
+- **GIVEN** the current owner's Toast feedback entry exists in `loading`
+- **WHEN** the existing Refresh control is rendered for any manual or direct/automatic Chat connection flow
+- **THEN** the button SHALL be disabled and its icon SHALL rotate for the complete same interval, with no frame or owner transition that leaves loading Toast feedback beside an enabled or static Refresh control
+
+#### Scenario: Manual Refresh owns disabled rotation until loading ends
+
+- **GIVEN** Refresh is ordinarily available and no connection operation is active
+- **WHEN** the user activates Refresh
+- **THEN** the button SHALL become disabled and its icon SHALL rotate from accepted dispatch through the same owner's complete Toast loading interval, including the accepted minimum dwell, and repeated activation SHALL start no parallel Refresh
+
+#### Scenario: Direct Chat connection projects the same control state
+
+- **GIVEN** the existing Refresh control is mounted or becomes mounted while direct/automatic Chat connection or join is active
+- **WHEN** no Refresh click created that loading owner
+- **THEN** the button SHALL still be disabled and the refresh icon SHALL rotate continuously until the current direct connection owner terminates
+
+#### Scenario: Terminal failure restores retry without hiding the error
+
+- **GIVEN** a current connection loading owner has disabled and rotated Refresh
+- **WHEN** that owner ends with a genuine failure and no newer owner exists
+- **THEN** the Toast SHALL leave loading by becoming the genuine error, rotation SHALL stop in the same owner-scoped transition, ordinary availability SHALL be recomputed so a valid retry can be enabled, and the genuine error feedback SHALL remain visible
+
+#### Scenario: Stale settlement cannot stop newer rotation
+
+- **GIVEN** one loading owner was superseded and a newer connection loading owner is active
+- **WHEN** the older owner later succeeds, fails, cancels, detaches, or reaches its minimum dwell
+- **THEN** it SHALL not stop the icon, enable Refresh, clear current feedback, or otherwise alter the newer owner's disabled rotating state
+
 ### Requirement: Six repairs share one acceptance authority
 
-The Refresh recovery baseline with request-local success dismissal, disconnected-peer repair, supersession cancellation, logical join-time repair, fragment-insensitive startup, and bounded ClientLease recovery SHALL be delivered as one cumulative immutable source exact. Every current manual Refresh or recovery SHALL show its owner-scoped `Connecting` feedback while active. A successful manual Refresh SHALL dismiss only its own loading entry after the accepted dwell and SHALL NOT publish `Ready to chat`; a genuine failure SHALL retain the matching error Toast. Intermediate heads and evidence from `a6021495` or invalid `9beec650...` SHALL remain diagnostic only and SHALL not authorize final review, QA, checkout synchronization, publication, or release. The final exact SHALL receive fresh Reviewer and QA decisions on the complete combined matrix, followed by one Owner six-scenario product acceptance.
+The Refresh recovery baseline with request-local success dismissal, disabled rotating control projection, disconnected-peer repair, supersession cancellation, logical join-time repair, fragment-insensitive startup, and bounded ClientLease recovery SHALL be delivered as one cumulative immutable source exact. Every current manual Refresh or recovery SHALL show its owner-scoped `Connecting` feedback while active, and every current manual or direct/automatic Chat connection loading owner SHALL disable and rotate the existing Refresh control. A successful manual Refresh SHALL dismiss only its own loading entry after the accepted dwell and SHALL NOT publish `Ready to chat`; a genuine failure SHALL retain the matching error Toast while ending control loading. Intermediate heads and evidence from `a6021495` or invalid `9beec650...` SHALL remain diagnostic only and SHALL not authorize final review, QA, checkout synchronization, publication, or release. The final exact SHALL receive fresh Reviewer and QA decisions on the complete combined matrix, followed by one Owner six-scenario product acceptance.
 
 #### Scenario: Manual Refresh success dismisses only its Connecting owner
 
@@ -152,7 +188,7 @@ The Refresh recovery baseline with request-local success dismissal, disconnected
 #### Scenario: Final acceptance covers all six outcomes
 
 - **WHEN** the final cumulative exact passes fresh independent Reviewer and QA gates
-- **THEN** the Owner SHALL verify failed-join Refresh with active Connecting followed by no success Toast, disconnected-peer retry, multi-page identity update without supersession Toast, exact A-before-B notice projections, direct fragment-URL startup, and retained-Runtime refresh with bounded active-to-terminal Connecting before publication authority exists
+- **THEN** the Owner SHALL verify six scenarios before publication authority exists: failed-join manual Refresh and direct/automatic connection loading both show Connecting and disable/rotate Refresh until the same owner terminates, with successful manual retry dismissing its entry without a success Toast; disconnected-peer retry; multi-page identity update without supersession Toast; exact A-before-B notice projections; direct fragment-URL startup; and retained-Runtime refresh with bounded active-to-terminal Connecting
 
 ### Requirement: Peer wire protocol is replaced with v3 without compatibility
 
