@@ -345,7 +345,7 @@ The extension background SHALL be the only coordinator allowed to create or rebu
 
 When the last authoritative physical tab binding of a domain is removed because the trusted tab closed, lost content eligibility, or moved to another Runtime domain, `LifecycleDomain` SHALL uniquely own one unified five-second grace phase/deadline. Page ping, heartbeat, Port, visibility, freeze, discard, page-context detach, and connectivity timeout SHALL NOT start this grace while the physical tab binding remains. During grace, Connection SHALL retain that domain's ChatRoom connection, Session/History SHALL retain domain State, Delivery SHALL retain the volatile inbound un-ACK buffer, and World SHALL retain domain presence. On grace expiry, the Lifecycle domain-released Event SHALL begin a fenced final release: Session SHALL persist the retired private presence record with an unsettled final-end identity before publishing SESSION_END, retain that identity until the send settles, durably replace it with settled-cleanup ownership, and then remove that marker. Session's authoritative finalization state SHALL reject text/reaction allocation and live send from pending retirement through physical release. Connection SHALL physically leave Chat or the last World room only after marker removal succeeds. A trusted eligible tab binding for the same domain that returns within grace SHALL cancel grace through Lifecycle and read the current Runtime snapshot without a false offline/online transition. No persistent outbound outbox or delivery-status retry survives a successfully completed grace release; only the separately specified volatile inbound un-ACK buffer participates in this lifecycle.
 
-#### Scenario: Refresh retains the tab owner without grace
+#### Scenario: Refresh within grace
 
 - **WHEN** a user refreshes the only eligible tab of a domain and its old page context disconnects before the new document attaches
 - **THEN** the background SHALL retain the same physical tab binding, Lifecycle grace SHALL not start, and the domain connection and state SHALL continue without re-join flapping, presence flicker, or message loss caused by the refresh
@@ -506,7 +506,7 @@ The local self-join notice SHALL be generation-scoped, persist immediately after
 - **WHEN** Firefox MV2 mounts the shared Runtime in its persistent Background Page
 - **THEN** host assembly SHALL pass the concrete session-backed PresenceStore directly and preserve the same strict records, rejection semantics, and supported replacement behavior
 
-#### Scenario: Six-timepoint A B C D lifecycle
+#### Scenario: Six-timepoint A/B/C/D lifecycle
 
 - **GIVEN** independent actual Runtime Server/Session/Wire stacks use deterministic in-repo transport, A is an existing observer, B is a new local user, C is an additional physical session for B's generation, and D is B's replacement Runtime host
 - **WHEN** the control executes preparation baseline, B first join, duplicate/C publication, transient B loss/D recovery, D final release, and B later return

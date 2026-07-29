@@ -46,7 +46,7 @@ While AppMain/Toaster exists, normal Runtime `connecting` MAY publish the stable
 - **WHEN** `joinRoom()` rejects
 - **THEN** the application SHALL record the normalized error on that request, return join status to initial, settle only matching button/Toast feedback, and re-enable Refresh after the request terminal without starting an automatic loop
 
-#### Scenario: Manual joined-domain reconnect
+#### Scenario: Manual domain reconnect
 
 - **GIVEN** the current domain is joined and no join or recovery request is active
 - **WHEN** a user activates "Reconnect this site"
@@ -58,19 +58,19 @@ While AppMain/Toaster exists, normal Runtime `connecting` MAY publish the stable
 - **WHEN** the actions menu derives Refresh availability
 - **THEN** availability SHALL depend on the recovery single-flight prerequisites rather than successful joined/readiness state, and an accepted request SHALL surface its real operation outcome through the existing request feedback
 
-#### Scenario: Button and generic Toast entry share one recovery request
+#### Scenario: Button and generic Toast entry share one reconnect request
 
 - **GIVEN** `AppMain` and its original Toaster are mounted
 - **WHEN** an enabled user activates retry/reconnect and the current-domain operation succeeds or fails
 - **THEN** one request identity SHALL immediately invoke the selected operation, disable and spin the Refresh button, and correlate one generic loading entry that is dismissed on success or updated on failure; the bounded request terminal SHALL stop only the matching spin, no success Toast SHALL be published, and neither the generic Toast layer nor the button SHALL create a second recovery state owner
 
-#### Scenario: Recovery does not wait for Toast presentation
+#### Scenario: Reconnect does not wait for Toast presentation
 
 - **GIVEN** the Toast library defers its subscriber update or fails to render loading
 - **WHEN** an enabled user activates Refresh
 - **THEN** the selected join or leave/join ports SHALL be invoked immediately, the Refresh icon SHALL represent the same pending request, no Toast state SHALL delay or alter that operation, and a bounded presentation-failure outcome SHALL allow the shared request terminal rather than strand the icon or duplicate gate
 
-#### Scenario: Fast terminal recovery respects mounted feedback
+#### Scenario: Fast terminal reconnect respects mounted feedback
 
 - **GIVEN** `AppMain` remains mounted and the join or leave/join ports settle before the request-owned loading Toast receives its first visible paint
 - **WHEN** the operation outcome reaches the shared request
@@ -128,13 +128,13 @@ While AppMain/Toaster exists, normal Runtime `connecting` MAY publish the stable
 - **WHEN** Runtime is connecting or unavailable, or client bootstrap fails before App/Toaster exists
 - **THEN** `App.tsx` and `content/index.tsx` SHALL render no fixed loading, unavailable, Retry, status, or result view; mounted normal-runtime feedback MAY use generic Toast, while absent Toast presentation SHALL create no replacement UI and SHALL NOT become bootstrap or Runtime authority
 
-#### Scenario: Closed-panel recovery has no Toast prerequisite
+#### Scenario: Closed-panel reconnect has no Toast prerequisite
 
 - **GIVEN** the main panel is closed and `AppMain` plus Toaster are unmounted
 - **WHEN** an enabled user activates Refresh
 - **THEN** the panel SHALL remain closed, the selected join or leave/join operation SHALL start immediately, the matching Refresh icon SHALL remain disabled and spinning while pending, and Toast absence SHALL neither queue nor strand the operation
 
-#### Scenario: Recovery terminal feedback uses generic Toast only
+#### Scenario: Ready and result feedback use generic Toast only
 
 - **GIVEN** `AppMain` and Toaster are mounted for the recovery request
 - **WHEN** that request captures success or failure
@@ -146,7 +146,7 @@ While AppMain/Toaster exists, normal Runtime `connecting` MAY publish the stable
 - **WHEN** the user opens the panel
 - **THEN** the original generic Toaster MAY present that request-correlated loading entry once and later dismiss it on success or update it on failure, SHALL NOT restart recovery, and SHALL NOT replay any request that had already terminated
 
-#### Scenario: Recovery unavailable state is not a silent action
+#### Scenario: Reconnect unavailable state is not a silent action
 
 - **GIVEN** required user identity is absent, the initial join is loading, or a Refresh-owned request is active
 - **WHEN** the actions menu renders "Reconnect this site"
@@ -157,7 +157,7 @@ While AppMain/Toaster exists, normal Runtime `connecting` MAY publish the stable
 - **WHEN** the main plugin panel opens or closes during an active recovery
 - **THEN** the same operation and matching button spin SHALL continue without cancellation, replay, restart, duplication, or panel mutation; opening MAY mount the request-correlated generic Toast entry once, while closing MAY unmount it and SHALL settle feedback absence boundedly
 
-#### Scenario: Recovery cleanup is request-local
+#### Scenario: Reconnect cleanup is request-local
 
 - **GIVEN** unrelated Toast feedback exists before or during recovery
 - **WHEN** retry/reconnect succeeds, fails, or the main panel changes state

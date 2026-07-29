@@ -38,7 +38,7 @@ The system SHALL provide one shared Remesh Runtime core consumed by browser-spec
 
 ### Requirement: Background is the sole host coordinator
 
-The extension background SHALL be the only coordinator allowed to create or rebuild the Runtime host. Creation SHALL be single-flight: concurrent page requests SHALL wait for the same ready result. While at least one physical page port is online, a missing or destroyed Runtime within the live coordinator's supported host context SHALL be recreated automatically without user action. For Chrome/Edge, the Service Worker coordinator SHALL retain physical page-port liveness and host-phase observations outside the Offscreen host, so Offscreen destruction is recoverable; after host creation it SHALL replay idempotent attach Commands into `LifecycleDomain`. `LifecycleDomain` SHALL remain the unique owner of domain leases, ref-count, grace, and release State; the coordinator SHALL NOT keep a parallel domain lease/grace map. For Firefox, the coordinator and Runtime host SHALL share the persistent Background Page; supported recovery SHALL be limited to in-context `HostOwner` replacement, while a browser process restart SHALL be recovered when Firefox recreates the Background Page and a restored page idempotently reattaches. Direct `backgroundView.close()` SHALL be outside the supported recoverable lifecycle and SHALL NOT require an event page, reload watchdog, or business fallback. A page watchdog MAY supplement Chrome/Edge probing but SHALL NOT be the only controller. The background coordinator itself MAY be suspended or restarted by the browser; after such a supported restart it SHALL recover physical port/host observations from active ports or idempotent page reattach, reconstruct one host, and dispatch the resulting attach Commands without producing duplicate Lifecycle leases, hosts, or physical rooms.
+The extension background SHALL be the only coordinator allowed to create or rebuild the Runtime host. Creation SHALL be single-flight: concurrent page requests SHALL wait for the same ready result. While at least one eligible physical tab remains in the background-owned Tabs API registry, a missing or destroyed Runtime within the live coordinator's supported host context SHALL be recreated automatically without user action. For Chrome/Edge, the Service Worker coordinator SHALL retain the trusted host-to-tabs registry and host-phase observations outside the Offscreen host, so Offscreen destruction is recoverable; after host creation it SHALL replay idempotent attach Commands for each current eligible tab into `LifecycleDomain`. Page Port, ping, heartbeat, visibility, freeze, and discard observations SHALL remain connectivity inputs only and SHALL NOT remove tab ownership or drive domain release. `LifecycleDomain` SHALL remain the unique owner of domain leases, ref-count, grace, and release State; the coordinator SHALL NOT keep a parallel domain lease/grace map. For Firefox, the coordinator and Runtime host SHALL share the persistent Background Page; supported recovery SHALL be limited to in-context `HostOwner` replacement, while a browser process restart SHALL be recovered when Firefox recreates the Background Page and restored eligible tabs idempotently reattach. Direct `backgroundView.close()` SHALL be outside the supported recoverable lifecycle and SHALL NOT require an event page, reload watchdog, or business fallback. A page watchdog MAY supplement Chrome/Edge probing but SHALL NOT be a tab-lifetime or leave controller. The background coordinator itself MAY be suspended or restarted by the browser; after such a supported restart it SHALL inventory current eligible tabs through the Tabs API, validate trusted current reattachments, reconstruct one host-to-tabs registry and one host, and dispatch idempotent attach Commands without producing duplicate tab owners, Lifecycle leases, hosts, or physical rooms.
 
 #### Scenario: Concurrent creation requests
 
@@ -47,13 +47,13 @@ The extension background SHALL be the only coordinator allowed to create or rebu
 
 #### Scenario: Automatic rebuild in a supported host context
 
-- **WHEN** Chrome/Edge destroys its Offscreen host, or Firefox replaces an in-context Runtime provider, while a domain page remains online
-- **THEN** the coordinator SHALL rebuild the supported host context and re-establish that domain's connections and the WorldRoom without user action
+- **WHEN** Chrome/Edge destroys its Offscreen host, or Firefox replaces an in-context Runtime provider, while an eligible tab remains in the current host registry
+- **THEN** the coordinator SHALL rebuild the supported host context and re-establish each affected domain's connections and the WorldRoom without user action or a new logical join
 
 #### Scenario: Stale Offscreen document
 
-- **WHEN** the Offscreen document still exists but the Runtime provider or its identity probe does not respond while a physical page port remains online
-- **THEN** the background health sweep SHALL close and recreate the stale document, verify the replacement provider, and replay an idempotent attach Command into the replacement Lifecycle Domain without requiring a page watchdog or retaining a parallel lease map
+- **WHEN** the Offscreen document still exists but the Runtime provider or its identity probe does not respond while an eligible tab remains registered
+- **THEN** the background health sweep SHALL close and recreate the stale document, verify the replacement provider, and replay idempotent attach Commands for current eligible tabs into the replacement Lifecycle Domain without requiring a page watchdog or retaining a parallel lease map
 
 #### Scenario: DOM-free MV3 health probe
 
@@ -67,8 +67,8 @@ The extension background SHALL be the only coordinator allowed to create or rebu
 
 #### Scenario: Chrome MV3 Offscreen destruction recovery
 
-- **WHEN** the production Chrome MV3 Offscreen document is directly destroyed while the Service Worker coordinator retains an active physical page port
-- **THEN** the coordinator SHALL automatically recreate the Offscreen host, re-instantiate the shared Runtime, replay one idempotent Lifecycle attach, and restore Runtime readiness and room participation without page-owned fallback or duplicate domain lease authority
+- **WHEN** the production Chrome MV3 Offscreen document is directly destroyed while the Service Worker coordinator retains at least one eligible physical tab owner
+- **THEN** the coordinator SHALL automatically recreate the Offscreen host, re-instantiate the shared Runtime, replay idempotent Lifecycle attaches for current tabs, and restore Runtime readiness and room participation without page-owned fallback, false logical join/leave, or duplicate domain lease authority
 
 #### Scenario: Firefox MV2 process restart recovery
 
@@ -88,12 +88,12 @@ The extension background SHALL be the only coordinator allowed to create or rebu
 #### Scenario: Observable steady-state host loss
 
 - **WHEN** the coordinator detects provider loss or replacement failure after startup
-- **THEN** Lifecycle-backed Runtime snapshots exposed to pages SHALL report the resulting `connecting` or `unavailable` phase instead of a hard-coded `ready` value
+- **THEN** Lifecycle-backed Runtime snapshots exposed to pages SHALL report the resulting `connecting` or `unavailable` phase instead of a hard-coded `ready` value, while the trusted tab registry and logical presence remain owned
 
 #### Scenario: Coordinator restart
 
 - **WHEN** the background coordinator itself is suspended or restarted by the browser
-- **THEN** it SHALL recover physical page-port and host-phase observations from active ports or idempotent page reattach, reconstruct one host, and dispatch idempotent Lifecycle attach Commands without producing duplicate domain leases, hosts, or physical rooms
+- **THEN** it SHALL inventory current eligible tabs, validate trusted current reattachments, reconstruct one host-to-tabs registry and one host, and dispatch idempotent Lifecycle attach Commands without producing duplicate tab owners, domain leases, hosts, logical joins, or physical rooms
 
 ### Requirement: Background service RPC routing is service-specific
 
@@ -209,12 +209,18 @@ This per-target settlement is best-effort physical provider acceptance, not remo
 
 ### Requirement: Unified five-second lifecycle grace
 
-When the last page of a domain disconnects, `LifecycleDomain` SHALL uniquely own one unified five-second grace phase/deadline. During it, Connection SHALL retain that domain's ChatRoom connection, Session/History SHALL retain domain State, Delivery SHALL retain the volatile inbound un-ACK buffer, and World SHALL retain domain presence. On grace expiry, the Lifecycle domain-released Event SHALL begin a fenced final release: Session SHALL persist the retired private presence record with an unsettled final-end identity before publishing SESSION_END, retain that identity until the send settles, durably replace it with settled-cleanup ownership, and then remove that marker. Session's authoritative finalization state SHALL reject text/reaction allocation and live send from pending retirement through physical release. Connection SHALL physically leave Chat or the last World room only after marker removal succeeds. A page that reconnects within the grace period SHALL cancel grace through Lifecycle and read the current Runtime snapshot without a false offline/online transition. No persistent outbound outbox or delivery-status retry survives a successfully completed grace release; only the separately specified volatile inbound un-ACK buffer participates in this lifecycle.
+When the last authoritative physical tab binding of a domain is removed because the trusted tab closed, lost content eligibility, or moved to another Runtime domain, `LifecycleDomain` SHALL uniquely own one unified five-second grace phase/deadline. Page ping, heartbeat, Port, visibility, freeze, discard, page-context detach, and connectivity timeout SHALL NOT start this grace while the physical tab binding remains. During grace, Connection SHALL retain that domain's ChatRoom connection, Session/History SHALL retain domain State, Delivery SHALL retain the volatile inbound un-ACK buffer, and World SHALL retain domain presence. On grace expiry, the Lifecycle domain-released Event SHALL begin a fenced final release: Session SHALL persist the retired private presence record with an unsettled final-end identity before publishing SESSION_END, retain that identity until the send settles, durably replace it with settled-cleanup ownership, and then remove that marker. Session's authoritative finalization state SHALL reject text/reaction allocation and live send from pending retirement through physical release. Connection SHALL physically leave Chat or the last World room only after marker removal succeeds. A trusted eligible tab binding for the same domain that returns within grace SHALL cancel grace through Lifecycle and read the current Runtime snapshot without a false offline/online transition. No persistent outbound outbox or delivery-status retry survives a successfully completed grace release; only the separately specified volatile inbound un-ACK buffer participates in this lifecycle.
 
 #### Scenario: Refresh within grace
 
-- **WHEN** a user refreshes the only page of a domain and the new page attaches within 5 seconds
-- **THEN** the domain connection and state SHALL continue without re-join flapping, presence flicker, or message loss caused by the refresh
+- **WHEN** a user refreshes the only eligible tab of a domain and its old page context disconnects before the new document attaches
+- **THEN** the background SHALL retain the same physical tab binding, Lifecycle grace SHALL not start, and the domain connection and state SHALL continue without re-join flapping, presence flicker, or message loss caused by the refresh
+
+#### Scenario: Connectivity loss does not impersonate final release
+
+- **GIVEN** the only eligible tab of a domain remains open
+- **WHEN** its ping, heartbeat, Port, visibility, frozen, discarded, or page-context attachment state is lost
+- **THEN** bounded connectivity recovery MAY run, but no domain grace, SESSION_END, observer leave, or physical room departure SHALL begin
 
 #### Scenario: Application reconnect preserves the logical generation
 
@@ -271,27 +277,13 @@ When the last page of a domain disconnects, `LifecycleDomain` SHALL uniquely own
 
 #### Scenario: Grace expiry
 
-- **WHEN** no page of the domain reconnects within 5 seconds and durable retirement plus SESSION_END settlement succeed
+- **WHEN** no eligible physical tab binding for the domain returns within 5 seconds and durable retirement plus SESSION_END settlement succeed
 - **THEN** the ChatRoom connection, Runtime domain state, volatile inbound un-ACK delivery buffer, and WorldRoom presence for that domain SHALL all be released or removed in the required causal order, with no persistent outbound status or same-id crash retry retained
 
 #### Scenario: Event outside grace
 
 - **WHEN** an inbound event targets a domain that is unregistered or past its grace period
 - **THEN** the system SHALL discard the event because no persistence location exists for it
-
-### Requirement: Peer wire protocol is replaced with v2, without compatibility
-
-The peer-to-peer wire protocol SHALL be replaced with the v2 contract defined by the `peer-wire-protocol` capability. The system SHALL NOT bridge, translate, or interoperate with the released v1 protocol, and v1 and v2 clients SHALL be isolated by v2 room namespaces so neither parses the other's traffic.
-
-#### Scenario: v1/v2 isolation
-
-- **WHEN** a v1 client and a v2 client exchange traffic
-- **THEN** they SHALL NOT share a room namespace and no compatibility fallback SHALL exist
-
-#### Scenario: Old protocol removal
-
-- **WHEN** the release candidate is inspected
-- **THEN** the old protocol schemas, the JSONR interop adapter, page-side message routing, reaction toggle, history upsert, and HLC-only history cursor SHALL be absent
 
 ### Requirement: Application/page Domain owns local records and projections
 
@@ -583,12 +575,18 @@ Production Runtime/application adapters SHALL use `globalThis.setTimeout` and `g
 
 ### Requirement: Runtime Chat session lifecycle
 
-The headless Runtime SHALL bind each Chat source to a session identity and incarnation. A join SHALL send `session {sessionId, user}` before live text, reaction, or history traffic. A bound `sessionId` SHALL not change its `user.id`; live event `userId` SHALL match the transport-bound session user. A new incarnation SHALL retire the old binding and old history sync, and SHALL trigger exactly one fresh history request for the replacement without running it concurrently with unsettled old source work.
+The headless Runtime SHALL bind each Chat source to a session identity and logical generation. A join SHALL send strict `session {sessionId, user, presenceId, joinedAt}` before live text, reaction, or history traffic. `joinedAt` SHALL be allocated and persisted by Session with a new local logical generation, projected unchanged to wire, and remain unchanged with its `presenceId` across physical session replacement. It SHALL NOT be synthesized from receiver observation, discovery order, `baselinePeerIds`, or `clock.now()`. A bound `sessionId` SHALL not change its `user.id`; an accepted `presenceId` SHALL not change its bound `user.id` or `joinedAt`; live event `userId` SHALL match the transport-bound session user. `name` and `avatar` SHALL remain mutable projection fields: a SESSION for the same accepted identity binding SHALL update that current projection across attached pages without changing logical membership or notices. A new physical incarnation SHALL retire the old source binding and old history sync, and SHALL trigger exactly one fresh history request for the replacement without running it concurrently with unsettled old source work. Reconnect of the same logical generation SHALL not become a new observer join.
 
 #### Scenario: Session binding and replacement
 
-- **WHEN** a source joins Chat, sends a second session with a changed user, or reconnects with a new incarnation
-- **THEN** the Runtime SHALL require the session message first, reject a user change for the same `sessionId`, reject live events whose `userId` does not match the bound user, retire the old binding/sync for a new incarnation, and issue exactly one fresh history request for the replacement
+- **WHEN** a source joins Chat, republishes a bound logical generation, sends changed `user.id` or logical time for an accepted generation, or reconnects with a new physical incarnation
+- **THEN** the Runtime SHALL require the session message first, reject a `user.id` change for the same `sessionId`, reject a `user.id` or `joinedAt` change for the same accepted `presenceId`, reject live events whose `userId` does not match the bound user, retire the old source binding/sync for a new incarnation, and issue exactly one fresh history request for the replacement
+
+#### Scenario: Same logical presence refreshes its user projection
+
+- **GIVEN** a source and `presenceId` retain the same `user.id` and `joinedAt`
+- **WHEN** a later accepted SESSION changes `name` or `avatar`, or repeats the current values
+- **THEN** every attached same-domain page SHALL converge to the current projection idempotently without changing membership count, allocating a generation, emitting a chat/history event, or emitting a join/leave notice
 
 #### Scenario: Future HLC does not advance Runtime clock
 
@@ -857,13 +855,13 @@ Implementation SHALL move one writable owner at a time and immediately delete th
 
 ### Requirement: Session classifies logical presence across physical lifecycles
 
-Session SHALL uniquely own local active-generation state, unsettled in-flight final-end identity, rejected retryable pending-final-end identity, observer-accepted settled-cleanup identity, and a bounded observer ledger. A private two-method `PresenceStoreExtern` SHALL persist those facts through `browser.storage.session` across supported Runtime host replacement; it SHALL NOT expand MessageStore, the origin database schema, `RuntimeServer`, `ChatRoomExtern`, or any UI/public model. Active lease, in-flight final end, retryable pending final end, and settled cleanup SHALL be four mutually exclusive strict records. Session SHALL allocate a generation only for initial join or true return after complete final end. Refresh, reconnect, recovery, replay, duplicate SESSION, additional physical session, page reattach, supported host replacement, and replacement recovery of any final-end marker SHALL reuse the retained generation and emit snapshot convergence without a logical join/leave.
+Session SHALL uniquely own local active-generation state, unsettled in-flight final-end identity, rejected retryable pending-final-end identity, observer-accepted settled-cleanup identity, and a bounded observer ledger. A private two-method `PresenceStoreExtern` SHALL persist those facts through `browser.storage.session` across supported Runtime host replacement; it SHALL NOT expand MessageStore, the origin database schema, `RuntimeServer`, `ChatRoomExtern`, or any UI/public model. Active lease, in-flight final end, retryable pending final end, and settled cleanup SHALL be four mutually exclusive strict records. Session SHALL allocate exact `{presenceId, joinedAt}` only for initial join or true return after complete final end. Refresh, reconnect, recovery, replay, duplicate SESSION, additional physical session, page reattach, supported host replacement, and replacement recovery of any final-end marker SHALL reuse the retained generation and logical time and emit snapshot convergence without a logical join/leave.
 
 Chrome MV3 SHALL construct the concrete session-backed PresenceStore in the background Service Worker and expose only its existing `load`/`save` methods to the Offscreen Runtime through a dedicated comctx adapter over a point-to-point Runtime Port. Port name and comctx namespace SHALL be routing values rather than authority. Before delivering a message, Background SHALL require the transport sender's runtime id, exact Offscreen document URL, and absence of a tab; content, options, and every other extension source SHALL be disconnected without reading or writing durable state. Every provider response SHALL resolve through the exact request-to-Port binding recorded when its request arrived. If that binding has detached or been replaced, the response SHALL be dropped and SHALL NOT fall back to the current active Port. Offscreen SHALL admit a response only while that request remains pending on the same binding; uncorrelated, replayed, old-binding, wrong-namespace, wrong-direction, and broadcast responses SHALL reach no comctx callback. From request-ID response registration, each one-shot call SHALL reserve exactly one ordered transport generation. Generic response subscription SHALL NOT open a Port. The local heartbeat response subscription SHALL unregister before the actual `apply`, and that `apply` SHALL consume the oldest remaining request reservation. If the reserved generation terminates before pending insertion, the call SHALL reject before connecting or posting to a replacement and the adapter SHALL remove that operation's one-shot response entry. Port disconnect, synchronous connect/send failure, and adapter disposal SHALL reject every request and pre-send reservation owned by the terminal generation exactly once and release every adapter-owned per-operation response entry, without hanging or automatically replaying `load` or `save`; stale and late traffic SHALL traverse no terminal operation callback, and only a later new application call with a new request ID may create a replacement Port and correlation. Provider-owned long-lived callback handles SHALL retain their existing refresh/re-registration lifetime and SHALL NOT be removed by this one-shot cleanup. The dedicated adapter SHALL use Port send/disconnect as its liveness authority, satisfy comctx heartbeat preflight locally, and transmit only actual one-shot PresenceStore operations. Offscreen SHALL register no broadcast Runtime-message listener for PresenceStore, so another context cannot forge a provider response or observe one through that adapter. The Offscreen document SHALL receive the dependency through host assembly and SHALL NOT dereference an unavailable `browser.storage.session`, create memory storage, or route presence records through tabs/pages. Firefox MV2 SHALL pass the same concrete session-backed store directly from its persistent Background Page into the same shared host. Storage rejection and authenticated-Port termination SHALL reach Session's existing request-local failure fences without acknowledging, discarding, or weakening the durable transition; a later call after Service Worker recreation SHALL reconnect and use the same session-backed record.
 
-A peer discovered during preparation SHALL establish baseline membership without a historical observer join. A newly accepted post-baseline generation SHALL produce one observer-local join only when that user transitions from zero active logical generations to one. Physical `PeerLeft` SHALL not produce a logical leave. A valid SESSION_END SHALL produce one observer-local leave only when the user transitions from one active generation to zero. On graceful final local release, Session SHALL replace the active lease with an in-flight final-end identity, send SESSION_END, durably remove that identity after settlement, and only then allow Connection to leave the Chat room. The departing local client need not persist its own leave.
+The first accepted strict remote SESSION SHALL bind exact `user.id` and `joinedAt` to its source and `presenceId` in the observer ledger and record the current `name`/`avatar` projection. A SESSION with missing, malformed, non-finite, fractional, unsafe, or negative `joinedAt` SHALL fail closed before binding; a later SESSION for the same accepted generation SHALL accept a changed projection only when `user.id` and `joinedAt` match, while an equal projection is idempotent. A different `user.id` or `joinedAt` SHALL be rejected source-locally. Every rejected SESSION SHALL leave prior accepted binding, membership, projection, history, and notices unchanged; it SHALL create no fallback timestamp, user-visible notice, or global recovery. Projection refresh SHALL change no logical membership or notice eligibility. For one committed local generation, a remote generation SHALL be eligible for an observer-local join only when its accepted `joinedAt` is strictly greater than local `joinedAt` and that user transitions from zero active logical generations to one. Equal or earlier time SHALL be historical snapshot convergence even when both peer discovery and SESSION occur only after local commit. Peer discovery and `baselinePeerIds` MAY retain physical catch-up bookkeeping but SHALL NOT decide logical order. A later remote SESSION received during a provisional local attempt SHALL remain attempt-owned and invisible until that attempt commits; rollback or supersession SHALL emit nothing. Physical `PeerLeft` SHALL not produce a logical leave. A valid SESSION_END SHALL produce one observer-local leave only when the user transitions from one active generation to zero. On graceful final local release, Session SHALL replace the active lease with an in-flight final-end identity, send SESSION_END, durably remove that identity after settlement, and only then allow Connection to leave the Chat room. The departing local client need not persist its own leave.
 
-The local self-join notice SHALL be generation-scoped, persist immediately after successful new-generation join without waiting for history, and consume only Runtime private join provenance. Reconnect/recovery/host replacement SHALL not create a candidate; later true return SHALL use a later stable generation event time and produce a distinct notice. All SystemNotice records SHALL remain observer-local and SHALL never enter ChatMessage history.
+The local self-join notice SHALL be generation-scoped, persist immediately after successful new-generation join without waiting for history, and consume only Runtime private join provenance. Reconnect/recovery/host replacement SHALL not create a candidate; later true return SHALL use a later stable generation event time and produce a distinct notice. All SystemNotice records SHALL remain observer-local: they SHALL never be encoded or sent on the peer wire, included in a history request/response, or replayed from another peer's history. Sender-asserted `joinedAt` SHALL be authoritative only for observer-local notice ordering after strict source binding and SHALL NOT authorize identity, routing, resource admission, or a globally trusted total order under arbitrary clock skew.
 
 #### Scenario: Chrome Offscreen mounts with background-owned durability
 
@@ -928,6 +926,42 @@ The local self-join notice SHALL be generation-scoped, persist immediately after
 - **WHEN** the control executes preparation baseline, B first join, duplicate/C publication, transient B loss/D recovery, D final release, and B later return
 - **THEN** B and A SHALL each persist one join for the first logical transition; duplicate/C/loss/recovery SHALL add no notice; A SHALL persist one leave on final end; and later return SHALL persist one fresh self join plus one fresh observer join
 
+#### Scenario: Delayed discovery uses logical join order
+
+- **GIVEN** A logically joined before B, but B discovers A and receives A's SESSION only after B commits
+- **WHEN** A's accepted `joinedAt` is less than or equal to B's local `joinedAt`
+- **THEN** B SHALL converge A into the current membership snapshot without persisting `A joined the chat`, while A SHALL persist B's later join once
+
+#### Scenario: A-before-B is invariant across delivery timing
+
+- **GIVEN** A's accepted logical generation began before B's and remains active
+- **WHEN** B receives A discovery and the strict historical SESSION before B commit, split across B commit in either order, or both only after B commit
+- **THEN** B SHALL converge membership with exactly `[B joined]`, A SHALL converge with exactly `[A joined, B joined]`, and no delivery order or receiver clock SHALL create an `A joined` notice for B
+
+#### Scenario: Equal logical time is not later
+
+- **GIVEN** B has committed its local logical generation and has no active generation for remote A
+- **WHEN** B first accepts A's strict SESSION with `joinedAt` equal to B's local `joinedAt`
+- **THEN** B SHALL converge A as historical snapshot state without an A join notice
+
+#### Scenario: Missing or invalid logical time cannot create membership
+
+- **GIVEN** a source sends a v3 SESSION with missing or invalid `joinedAt`, or mutates `joinedAt` after its generation was accepted
+- **WHEN** the Runtime validates or applies that frame
+- **THEN** it SHALL reject the complete SESSION source-locally, preserve every prior accepted fact, synthesize no receiver-local replacement time, persist no SystemNotice, and leave other sources operational
+
+#### Scenario: Later zero-to-one generation creates one local notice only
+
+- **GIVEN** B is committed and no logical generation for remote C is active
+- **WHEN** B accepts C's strict SESSION with `joinedAt` greater than B's local time and C transitions from zero active generations to one
+- **THEN** B SHALL persist exactly one observer-local `C joined` SystemNotice, duplicates and physical recovery SHALL add none, and that notice SHALL never enter peer wire or history exchange
+
+#### Scenario: Provisional later join becomes visible only on commit
+
+- **GIVEN** B's local join is provisional and later C sends a valid SESSION whose `joinedAt` is strictly greater than B's
+- **WHEN** B's attempt commits, rolls back, or is superseded
+- **THEN** C's join candidate SHALL become observable exactly once only on commit and SHALL produce no membership or notice from rolled-back or superseded work
+
 #### Scenario: Physical loss remains provisional
 
 - **WHEN** a bound peer leaves transport without a valid final generation end and later republishes the same generation from reconnect, recovery, host replacement, or rejected-final-end replacement recovery
@@ -935,8 +969,8 @@ The local self-join notice SHALL be generation-scoped, persist immediately after
 
 #### Scenario: Duplicate and late lifecycle facts
 
-- **WHEN** SESSION or SESSION_END is duplicated, or an ended generation's SESSION arrives late
-- **THEN** Session SHALL apply the accepted generation/end at most once, reject resurrection of the ended generation, and persist no duplicate notice
+- **WHEN** SESSION or SESSION_END is duplicated, an accepted generation changes `user.id` or `joinedAt`, or an ended generation's SESSION arrives late
+- **THEN** Session SHALL apply the accepted generation/end at most once, reject mutation or resurrection of the generation, and persist no duplicate notice
 
 ### Requirement: Invalid records are isolated at send, receive, and retained-load boundaries
 
@@ -988,46 +1022,85 @@ Streaming history MAY insert Chat messages before, after, or between existing Sy
 
 ### Requirement: Domain-scoped manual reconnect
 
-The actions menu SHALL include "Reconnect this site", which SHALL rebuild only the current domain's ChatRoom connection and re-publish that domain's presence. Because the frozen `ChatRoom` has no `reconnect` method, the application Domain command SHALL use the exact public `leaveRoom()` and retained `JoinRoomCommand` with `joinRoom(command)` rather than extending the extern. Availability SHALL be exactly `joined && !reconnecting` in Chrome and Firefox; `panelOpen` SHALL NOT participate. One enabled activation SHALL create one authoritative request identity and pending fact, immediately invoke the leave/join composition, preserve the main panel's current open/closed state, disable the Refresh control, and spin that control's own icon. The button SHALL expose no Ready text, success region, result badge, or second terminal state: it SHALL return to its ordinary eligible icon when the matching request terminal settles. Every callback SHALL validate the request identity so stale work cannot clear a newer request's spin or feedback. Toast subscription, mount, paint, dwell, failure, unmount, or absence SHALL NOT delay, cancel, reject, or redefine reconnect dispatch or the independently captured network operation outcome. A visibly painted request-correlated generic loading Toast SHALL contribute the accepted minimum 300ms dwell; feedback absence, unmount, or presentation failure SHALL settle boundedly and SHALL NOT strand the button or duplicate gate. This pending lifetime SHALL reject duplicates only and SHALL NOT become Runtime or network authority.
+The actions menu SHALL include "Reconnect this site", which SHALL recover only the current domain's ChatRoom connection and re-publish that domain's presence. Because the frozen `ChatRoom` has no `reconnect` method, the application Domain SHALL use only the exact public `leaveRoom()` and `joinRoom(command)` methods rather than extending the extern. When the current domain is joined, activation SHALL retain the existing `leaveRoom()` then `joinRoom(retainedCommand)` composition. When the configured domain is unjoined because its initial connection/join has not completed or terminally failed, activation SHALL build the current user/site join command and invoke `joinRoom(command)` directly without first calling `leaveRoom()`. The application Domain SHALL expose one derived availability truth: required user identity is configured, the initial join is not actively loading, and no Refresh-owned recovery request is active. Availability SHALL NOT require `joined`, SHALL NOT depend on Runtime readiness, and SHALL NOT read or modify `panelOpen` in Chrome or Firefox.
 
-The application SHALL expose one generic Toast feedback capability, not a reconnect-owned presenter. Reconnect, Runtime readiness, and unrelated application notifications SHALL publish through the existing generic Toast APIs and share the original direct `AppMain -> <Toaster>` surface. `src/app/content/components/reconnect-toast.tsx`, `useReconnectToast`, reconnect-specific presenter/renderer naming, and any independent reconnect Toast lifecycle truth SHALL be removed. Any presentation adapter SHALL consume only generic Toast descriptors, stable IDs, and presentation acknowledgements; it SHALL NOT directly import or own ChatRoom, Readiness, Runtime, network, or panel behavior. Business Domain effects MAY map source events to generic Toast entries, but the reconnect request SHALL remain the only owner of operation outcome, duplicate rejection, button pending state, and stale-request fencing. Generic Toast state SHALL NOT become a second reconnect pending or network truth.
+One enabled activation SHALL create one authoritative request identity and pending fact. It SHALL atomically fence another initial join or recovery, immediately invoke the selected retry/reconnect operation, preserve the main panel's current open/closed state, disable the Refresh control, and spin that control's own icon. A successful unjoined retry SHALL retain the accepted join input, reload current messages, set application join status finished, and emit the existing self-join application fact before the matching request terminal settles. A failed unjoined retry SHALL return application join status to its retryable initial state and record the same request-local error. The button SHALL expose no Ready text, success region, result badge, or second terminal state: it SHALL return to its ordinary eligible icon when the matching request terminal settles. Every callback SHALL validate the request identity so stale work cannot clear a newer request's spin or feedback. Toast subscription, mount, paint, dwell, failure, unmount, or absence SHALL NOT delay, cancel, reject, or redefine recovery dispatch or the independently captured network operation outcome. A visibly painted request-correlated generic loading Toast SHALL contribute the accepted minimum 300ms dwell; after that dwell, success SHALL dismiss only the matching loading entry without publishing `Ready to chat` or another success descriptor, while failure SHALL update that entry to the request-local error. Feedback absence, unmount, or presentation failure SHALL settle boundedly and SHALL NOT strand the button or duplicate gate. This pending lifetime SHALL reject duplicates only and SHALL NOT become Runtime or network authority.
 
-The Toaster SHALL remain a direct `AppMain` child using the existing AppMain Motion translate containing mechanism. There SHALL be no wrapper, reconnect-specific Toaster, always-mounted launcher layer, host-page global overlay, second renderer, or source-specific Toast restyling. The direct Toaster SHALL retain `richColors`, current `themeMode`, `offset="70px"`, `visibleToasts={1}`, `position="top-center"`, and `dark:bg-slate-950 border dark:border-slate-600` Toast classes. No source SHALL add custom geometry, width, content-fit, placement, pointer, opacity-tracking, pseudo-element, or eligibility styles. While mounted, generic entries MAY present reconnect loading/result, Runtime connecting loading, Runtime unavailable error, and unrelated feedback through that same surface. Normal Runtime ready SHALL NOT publish a success descriptor. One reconnect request SHALL correlate only its own generic Toast ID for visible-paint acknowledgement, the accepted 300ms minimum loading dwell, terminal update, and cleanup. Absence, unmount, or presentation failure SHALL settle boundedly without delaying bootstrap, Runtime, reconnect, or the matching button. Opening during an active reconnect MAY present only its current pending entry; terminal reconnect SHALL NOT replay later. Cleanup SHALL address only the correlated ID, SHALL NOT use unscoped/global dismissal, and SHALL preserve unrelated Toasts.
+The application SHALL expose one generic Toast feedback capability, not a reconnect-owned presenter. Reconnect, join retry, Runtime readiness, and unrelated application notifications SHALL publish through the existing generic Toast APIs and share the original direct `AppMain -> <Toaster>` surface. `src/app/content/components/reconnect-toast.tsx`, `useReconnectToast`, reconnect-specific presenter/renderer naming, and any independent reconnect Toast lifecycle truth SHALL remain absent. Any presentation adapter SHALL consume only generic Toast descriptors, stable IDs, and presentation acknowledgements; it SHALL NOT directly import or own ChatRoom, Readiness, Runtime, network, or panel behavior. Business Domain effects MAY map source events to generic Toast entries, but the recovery request SHALL remain the only owner of operation outcome, duplicate rejection, button pending state, and stale-request fencing. Generic Toast state SHALL NOT become a second recovery pending or network truth.
+
+The Toaster SHALL remain a direct `AppMain` child using the existing AppMain Motion translate containing mechanism. There SHALL be no wrapper, reconnect-specific Toaster, always-mounted launcher layer, host-page global overlay, second renderer, or source-specific Toast restyling. The direct Toaster SHALL retain `richColors`, current `themeMode`, `offset="70px"`, `visibleToasts={1}`, `position="top-center"`, and `dark:bg-slate-950 border dark:border-slate-600` Toast classes. No source SHALL add custom geometry, width, content-fit, placement, pointer, opacity-tracking, pseudo-element, or eligibility styles. While mounted, generic entries MAY present retry/reconnect loading/error, Runtime connecting loading, Runtime unavailable error, and unrelated feedback through that same surface. Neither normal Runtime ready nor successful manual Refresh SHALL publish a success descriptor. One recovery request SHALL correlate only its own generic Toast ID for visible-paint acknowledgement, the accepted 300ms minimum loading dwell, failure update or success dismissal, and cleanup. Absence, unmount, or presentation failure SHALL settle boundedly without delaying bootstrap, Runtime, recovery, or the matching button. Opening during an active recovery MAY present only its current pending entry; terminal recovery SHALL NOT replay later. Cleanup SHALL address only the correlated ID, SHALL NOT use unscoped/global dismissal, and SHALL preserve unrelated Toasts.
 
 `App.tsx` SHALL NOT render a fixed readiness output, and `content/index.tsx` SHALL NOT render a pre-App loading, unavailable, Retry, status, or result fallback when client bootstrap fails. Runtime lifecycle SHALL retain its immediate-replay `connecting | ready | unavailable` state for recovery and send preconditions; only the independent presentation authority is removed. ReadinessDomain SHALL be the sole application readiness-transition authority. Its State-setting Command SHALL compare every mapped extern input to current State: equal input SHALL perform no State write and emit no `StateChangedEvent`, while a different input SHALL update State and emit exactly one Event. The current Query SHALL remain immediately available independently of transition Events. No duplicate filter or second readiness State SHALL be added to ClientLease, the Readiness implementation adapter, AppFeedback, or Toast presentation.
 
 The ClientLease watchdog SHALL retain its existing five-second cadence, page lease renewal before the Coordinator's 15-second TTL, host availability probe, generation/host-id/page-attachment comparison, and real replacement/loss recovery. Equal healthy host-phase callbacks MAY still reach the Readiness extern boundary, but after mapping they SHALL NOT become application transitions. This heartbeat SHALL remain liveness infrastructure rather than proof of a new readiness fact.
 
-While AppMain/Toaster exists, normal Runtime `connecting` MAY publish the stable loading entry and `unavailable` MAY publish the stable error entry. A genuine transition to `ready`, or an immediate mounted-surface ready Query, SHALL issue only an ID-scoped dismissal for `webchat-runtime-readiness` if present; it SHALL NOT publish `Ready to chat` or any other success descriptor. Periodic equal-state ready health samples SHALL produce neither a `StateChangedEvent` nor any AppFeedback/Toast command. Toast dismissal, automatic close, acknowledgement, and presentation settlement SHALL NOT publish another readiness descriptor or create a loop. These rules SHALL NOT change recovery or send preconditions or alter the independently request-correlated reconnect success result. If Toast cannot render because App/Toaster is absent, the application SHALL NOT create an alternate loading, unavailable, Retry, status, or result view. Presentation absence SHALL NOT redefine bootstrap, Runtime, or network truth. Reconnect SHALL NOT rebuild the shared WorldRoom; the Runtime SHALL auto-reconnect WorldRoom only on its own connection failure. The Options page SHALL NOT gain a global reconnect entry.
+While AppMain/Toaster exists, normal Runtime `connecting` MAY publish the stable loading entry and `unavailable` MAY publish the stable error entry. A genuine transition to `ready`, or an immediate mounted-surface ready Query, SHALL issue only an ID-scoped dismissal for `webchat-runtime-readiness` if present; it SHALL NOT publish `Ready to chat` or any other success descriptor. Periodic equal-state ready health samples SHALL produce neither a `StateChangedEvent` nor any AppFeedback/Toast command. Toast dismissal, automatic close, acknowledgement, and presentation settlement SHALL NOT publish another readiness descriptor or create a loop. These rules SHALL NOT change Runtime recovery or send preconditions or alter the independently request-correlated retry/reconnect operation outcome. If Toast cannot render because App/Toaster is absent, the application SHALL NOT create an alternate loading, unavailable, Retry, status, or result view. Presentation absence SHALL NOT redefine bootstrap, Runtime, or network truth. Refresh SHALL NOT rebuild the shared WorldRoom; the Runtime SHALL auto-reconnect WorldRoom only on its own connection failure. The Options page SHALL NOT gain a global reconnect entry.
+
+#### Scenario: Terminal failed join is recoverable
+
+- **GIVEN** user identity is configured, the current domain is not joined after a terminal connection/join failure, and no join or recovery request is active
+- **WHEN** the actions menu renders and the user activates Refresh
+- **THEN** Refresh SHALL be enabled, one request SHALL enter pending, `joinRoom()` SHALL start immediately with current user/site input, and `leaveRoom()` SHALL NOT be called
+
+#### Scenario: Initial join remains single-flight
+
+- **GIVEN** the automatic initial site-chat join or a Refresh-owned retry/reconnect request is actively in flight
+- **WHEN** the actions menu renders or another activation is attempted
+- **THEN** Refresh SHALL be disabled, the Domain SHALL admit no second request, and no concurrent `joinRoom()` or `leaveRoom()` composition SHALL start
+
+#### Scenario: Missing identity is not an executable recovery
+
+- **GIVEN** required user identity is not configured
+- **WHEN** the actions menu renders Refresh
+- **THEN** Refresh SHALL be visibly disabled with an accessible non-actionable label and SHALL dispatch no recovery request
+
+#### Scenario: Successful failed-join retry establishes joined state
+
+- **GIVEN** an enabled unjoined retry owns the current request identity
+- **WHEN** `joinRoom()` accepts the current user/site command
+- **THEN** the application SHALL retain that input, reload current messages, set join status finished, emit the existing self-join fact once, and record success on the same request before bounded feedback settlement returns Refresh to its eligible icon
+
+#### Scenario: Failed retry becomes retryable again
+
+- **GIVEN** an enabled unjoined retry owns the current request identity
+- **WHEN** `joinRoom()` rejects
+- **THEN** the application SHALL record the normalized error on that request, return join status to initial, settle only matching button/Toast feedback, and re-enable Refresh after the request terminal without starting an automatic loop
 
 #### Scenario: Manual domain reconnect
 
-- **WHEN** a user activates "Reconnect this site" on one domain
-- **THEN** only that domain's ChatRoom connection and presence SHALL be rebuilt, and other domains and the WorldRoom SHALL be undisturbed
+- **GIVEN** the current domain is joined and no join or recovery request is active
+- **WHEN** a user activates "Reconnect this site"
+- **THEN** only that domain's ChatRoom connection and presence SHALL be rebuilt through the existing leave/join composition, while other domains and the WorldRoom remain undisturbed
+
+#### Scenario: Runtime unavailable does not recreate the joined gate
+
+- **GIVEN** user identity is configured, no join or recovery request is active, and Runtime readiness is unavailable
+- **WHEN** the actions menu derives Refresh availability
+- **THEN** availability SHALL depend on the recovery single-flight prerequisites rather than successful joined/readiness state, and an accepted request SHALL surface its real operation outcome through the existing request feedback
 
 #### Scenario: Button and generic Toast entry share one reconnect request
 
 - **GIVEN** `AppMain` and its original Toaster are mounted
-- **WHEN** an enabled user activates reconnect and the current-domain leave/join composition succeeds or fails
-- **THEN** one request identity SHALL immediately invoke the composition, disable and spin the Refresh button, and correlate one generic loading-to-ready/success-or-failure Toast entry; the bounded request terminal SHALL stop only the matching spin, and neither the generic Toast layer nor the button SHALL create a second reconnect state owner
+- **WHEN** an enabled user activates retry/reconnect and the current-domain operation succeeds or fails
+- **THEN** one request identity SHALL immediately invoke the selected operation, disable and spin the Refresh button, and correlate one generic loading entry that is dismissed on success or updated on failure; the bounded request terminal SHALL stop only the matching spin, no success Toast SHALL be published, and neither the generic Toast layer nor the button SHALL create a second recovery state owner
 
 #### Scenario: Reconnect does not wait for Toast presentation
 
 - **GIVEN** the Toast library defers its subscriber update or fails to render loading
-- **WHEN** an enabled user activates reconnect
-- **THEN** the leave/join ports SHALL be invoked immediately, the Refresh icon SHALL represent the same pending request, no Toast state SHALL delay or alter that operation, and a bounded presentation-failure outcome SHALL allow the shared request terminal rather than strand the icon or duplicate gate
+- **WHEN** an enabled user activates Refresh
+- **THEN** the selected join or leave/join ports SHALL be invoked immediately, the Refresh icon SHALL represent the same pending request, no Toast state SHALL delay or alter that operation, and a bounded presentation-failure outcome SHALL allow the shared request terminal rather than strand the icon or duplicate gate
 
 #### Scenario: Fast terminal reconnect respects mounted feedback
 
-- **GIVEN** `AppMain` remains mounted and the leave/join ports settle before the request-owned loading Toast receives its first visible paint
+- **GIVEN** `AppMain` remains mounted and the join or leave/join ports settle before the request-owned loading Toast receives its first visible paint
 - **WHEN** the operation outcome reaches the shared request
-- **THEN** the operation outcome SHALL be captured without waiting for feedback, while the matching Refresh icon and loading Toast SHALL remain tied to that request until the visible Toast completes its 300ms minimum dwell and transitions to the matching terminal Toast result
+- **THEN** the operation outcome SHALL be captured without waiting for feedback, while the matching Refresh icon and loading Toast SHALL remain tied to that request until the visible Toast completes its 300ms minimum dwell and is dismissed on success or updated to the matching error on failure
 
 #### Scenario: Stale terminal work cannot clear a newer request
 
-- **GIVEN** one reconnect has settled and a later reconnect owns a newer request identity
+- **GIVEN** one recovery has settled and a later recovery owns a newer request identity
 - **WHEN** delayed Toast paint, dwell, or terminal cleanup from the older request completes
-- **THEN** it SHALL NOT stop the newer Refresh spin, dismiss the newer loading Toast, emit a newer error, or alter the newer reconnect operation
+- **THEN** it SHALL NOT stop the newer Refresh spin, dismiss the newer loading Toast, emit a newer error, or alter the newer recovery operation
 
 #### Scenario: Original AppMain Toaster structure and visuals are preserved
 
@@ -1036,9 +1109,9 @@ While AppMain/Toaster exists, normal Runtime `connecting` MAY publish the stable
 
 #### Scenario: Generic Toast surface carries independent business sources
 
-- **GIVEN** unrelated application Toast feedback exists before or during reconnect or a Runtime readiness transition
-- **WHEN** reconnect or Runtime status publishes feedback
-- **THEN** all sources SHALL use the same generic Toaster and generic descriptor contract, reconnect/Readiness SHALL own no presenter or renderer, source-local cleanup SHALL preserve unrelated entries, and no unscoped dismissal SHALL occur
+- **GIVEN** unrelated application Toast feedback exists before or during recovery or a Runtime readiness transition
+- **WHEN** recovery or Runtime status publishes feedback
+- **THEN** all sources SHALL use the same generic Toaster and generic descriptor contract, retry/reconnect/Readiness SHALL own no presenter or renderer, source-local cleanup SHALL preserve unrelated entries, and no unscoped dismissal SHALL occur
 
 #### Scenario: Readiness emits only actual transitions
 
@@ -1068,7 +1141,7 @@ While AppMain/Toaster exists, normal Runtime `connecting` MAY publish the stable
 
 - **GIVEN** the Runtime readiness loading entry was dismissed or a prior Toast automatically closed, acknowledged, or settled
 - **WHEN** readiness remains ready without a later connecting or unavailable transition
-- **THEN** no Toast lifecycle fact SHALL republish the ready success descriptor, while Runtime recovery, immediate-replay readiness truth, and manual reconnect feedback SHALL remain unchanged
+- **THEN** no Toast lifecycle fact SHALL republish a ready success descriptor, while Runtime recovery, immediate-replay readiness truth, and request-local manual recovery outcome SHALL remain unchanged
 
 #### Scenario: No independent readiness or bootstrap status view
 
@@ -1078,51 +1151,51 @@ While AppMain/Toaster exists, normal Runtime `connecting` MAY publish the stable
 #### Scenario: Closed-panel reconnect has no Toast prerequisite
 
 - **GIVEN** the main panel is closed and `AppMain` plus Toaster are unmounted
-- **WHEN** an enabled user activates reconnect
-- **THEN** the panel SHALL remain closed, the leave/join composition SHALL start immediately, the matching Refresh icon SHALL remain disabled and spinning while pending, and Toast absence SHALL neither queue nor strand the operation
+- **WHEN** an enabled user activates Refresh
+- **THEN** the panel SHALL remain closed, the selected join or leave/join operation SHALL start immediately, the matching Refresh icon SHALL remain disabled and spinning while pending, and Toast absence SHALL neither queue nor strand the operation
 
 #### Scenario: Ready and result feedback use generic Toast only
 
-- **GIVEN** `AppMain` and Toaster are mounted for the reconnect request
-- **WHEN** that request captures success/readiness or failure
-- **THEN** the request-correlated generic Toast entry SHALL present the matching terminal result, while the Refresh button SHALL expose no Ready text, success region, error region, result badge, or second result state
+- **GIVEN** `AppMain` and Toaster are mounted for the recovery request
+- **WHEN** that request captures success or failure
+- **THEN** the request-correlated generic Toast entry SHALL be dismissed on success without `Ready to chat` or another success descriptor and SHALL present the matching error on failure, while the Refresh button SHALL expose no Ready text, success region, error region, result badge, or second result state
 
 #### Scenario: Active request may enter a newly mounted Toaster once
 
-- **GIVEN** reconnect began while the panel was closed and the same request remains pending
+- **GIVEN** recovery began while the panel was closed and the same request remains pending
 - **WHEN** the user opens the panel
-- **THEN** the original generic Toaster MAY present that request-correlated loading-to-terminal entry once, SHALL NOT restart reconnect, and SHALL NOT replay any request that had already terminated
+- **THEN** the original generic Toaster MAY present that request-correlated loading entry once and later dismiss it on success or update it on failure, SHALL NOT restart recovery, and SHALL NOT replay any request that had already terminated
 
 #### Scenario: Reconnect unavailable state is not a silent action
 
-- **GIVEN** the current domain cannot start the reconnect composition
+- **GIVEN** required user identity is absent, the initial join is loading, or a Refresh-owned request is active
 - **WHEN** the actions menu renders "Reconnect this site"
-- **THEN** the action SHALL be visibly disabled, SHALL NOT dispatch activation, and SHALL NOT accept a click that silently produces neither feedback nor an operation
+- **THEN** the action SHALL be visibly disabled with an accessible state label, SHALL NOT dispatch activation, and SHALL NOT accept a click that silently produces neither feedback nor an operation
 
 #### Scenario: Panel state changes only Toast availability
 
-- **WHEN** the main plugin panel opens or closes during an active reconnect
+- **WHEN** the main plugin panel opens or closes during an active recovery
 - **THEN** the same operation and matching button spin SHALL continue without cancellation, replay, restart, duplication, or panel mutation; opening MAY mount the request-correlated generic Toast entry once, while closing MAY unmount it and SHALL settle feedback absence boundedly
 
 #### Scenario: Reconnect cleanup is request-local
 
-- **GIVEN** unrelated Toast feedback exists before or during reconnect
-- **WHEN** reconnect succeeds, fails, or the main panel changes state
-- **THEN** cleanup SHALL address only the generic Toast ID correlated to the matching reconnect request, SHALL NOT invoke an unscoped/global dismissal, SHALL preserve all unrelated Toast feedback, and SHALL NOT affect a newer request
+- **GIVEN** unrelated Toast feedback exists before or during recovery
+- **WHEN** retry/reconnect succeeds, fails, or the main panel changes state
+- **THEN** cleanup SHALL address only the generic Toast ID correlated to the matching recovery request, SHALL NOT invoke an unscoped/global dismissal, SHALL preserve all unrelated Toast feedback, and SHALL NOT affect a newer request
 
 #### Scenario: WorldRoom self-recovery
 
 - **WHEN** the WorldRoom connection itself fails
-- **THEN** the Runtime SHALL reconnect it automatically without requiring the domain reconnect action
+- **THEN** the Runtime SHALL reconnect it automatically without requiring the domain Refresh action
 
 ### Requirement: One-shot migration without dual architecture
 
-The change SHALL be delivered as one candidate that includes the hosts, exact eight-method ChatRoom port, state-free Runtime client, clean-cut internal comctx surface, uniquely owned Lifecycle/Connection/Session/World/History/Delivery/Wire Domain graph, private RoomTransport Extern/provider composition, message delivery, reconnect entry, current v2 peer protocol with only the authorized logical-presence exception, exact typed Database extern/default adapters, internal concrete MessageStore, canonical outer-type/outer-id `MessageRecord` with `ChatMessageRecord.message` and `SystemNoticeRecord.notice`, send-first persistence, and complete removal of page-owned WebRTC, the v1 protocol, stateful ChatRoom authority, catch-all Network ownership, and old WireExtern/provider route. Persistence and Runtime authority SHALL be complete clean-cut structural replacements rather than minimal repairs; no compatibility wrapper, alias, dual path, dead facade, hidden state channel, provider leak, or test-only accommodation may retain an obsolete owner/record/Store/outbox architecture. No intermediate release SHALL ship both architectures. Existing local message history SHALL NOT be imported, migrated, or retained by the canonical database.
+The change SHALL be delivered as one candidate that includes the hosts, exact eight-method ChatRoom port, state-free Runtime client, clean-cut internal comctx surface, uniquely owned Lifecycle/Connection/Session/World/History/Delivery/Wire Domain graph, private RoomTransport Extern/provider composition, message delivery, reconnect entry, current v3 peer protocol, exact typed Database extern/default adapters, internal concrete MessageStore, canonical outer-type/outer-id `MessageRecord` with `ChatMessageRecord.message` and `SystemNoticeRecord.notice`, send-first persistence, and complete removal of page-owned WebRTC, v1/v2 active protocol paths, stateful ChatRoom authority, catch-all Network ownership, and old WireExtern/provider route. Persistence and Runtime authority SHALL be complete clean-cut structural replacements rather than minimal repairs; no compatibility wrapper, alias, dual path, dead facade, hidden state channel, provider leak, or test-only accommodation may retain an obsolete owner/record/Store/outbox architecture. No intermediate release SHALL ship multiple architectures or protocol generations. Existing local message history SHALL NOT be imported, migrated, or retained by the canonical database.
 
 #### Scenario: Single-candidate completeness
 
 - **WHEN** the release candidate is inspected
-- **THEN** it SHALL contain the full Remesh DDD + CQRS Runtime architecture and SHALL NOT contain any active page-owned WebRTC path, v1 protocol path, stateful ChatRoom recovery authority, catch-all Network owner, old WireExtern route, or dual writable fact
+- **THEN** it SHALL contain the full Remesh DDD + CQRS Runtime architecture and current v3 protocol, and SHALL NOT contain any active page-owned WebRTC path, v1/v2 protocol room path, stateful ChatRoom recovery authority, catch-all Network owner, old WireExtern route, or dual writable fact
 
 #### Scenario: No data migration
 
@@ -1144,3 +1217,283 @@ Dependency, export, and residue checks SHALL prove that public protocol code has
 
 - **WHEN** browser Runtime behavior is accepted for release
 - **THEN** verification SHALL use the built extension and real controls rather than treating `pnpm dev`, isolated Toaster mounting, synthetic clicks, or source call order alone as product evidence
+
+### Requirement: Artico room demand repairs a retained disconnected peer
+
+The private Artico RoomTransport provider SHALL maintain this invariant: while desired room demand is non-empty, it owns either one non-terminal peer generation or exactly one restart capable of creating it. When `join(roomId)` changes demand from empty to non-empty and the retained peer is already `disconnected`, the provider SHALL enter the same generation-owned restart used by close recovery before that join waits for physical readiness. It SHALL NOT depend on receiving a future duplicate `close` event for a state transition that already occurred.
+
+Concurrent Chat and World demand, repeated joins, a close-driven restart, and a delayed restart timer SHALL converge on one replacement owner. Every peer callback and timer SHALL be generation-fenced so an old peer cannot join current rooms, reject or settle current work, or replace a newer peer. `leave()` SHALL remove only its room's demand; `dispose()` SHALL cancel owned restart work and settle pending joins once. The host-lifetime peer id SHALL remain stable across replacement peers. This repair SHALL add no unbounded retry loop, connecting watchdog, page-owned peer, or public ChatRoom method.
+
+#### Scenario: Fresh demand replaces an already disconnected peer
+
+- **GIVEN** desired rooms are empty and the retained Artico peer is already `disconnected` after its one close edge was observed while no room was desired
+- **WHEN** a later Chat or World `join(roomId)` adds fresh demand
+- **THEN** the provider SHALL create or await exactly one current replacement before the join waits for readiness and SHALL not wait for another close event from the old peer
+
+#### Scenario: Concurrent room demand shares one restart
+
+- **GIVEN** a disconnected retained peer and no desired room
+- **WHEN** Chat and World joins arrive concurrently or repeatedly while replacement is pending
+- **THEN** all current demand SHALL share one restart owner, one replacement peer generation, and the current room joins without duplicate peers or timers
+
+#### Scenario: Stale callbacks cannot affect replacement
+
+- **GIVEN** one peer generation has been superseded by a replacement
+- **WHEN** the old peer emits delayed open, error, or close, or its delayed restart timer fires
+- **THEN** that stale work SHALL not join a room, settle current pending work, schedule another current replacement, or alter the new peer generation
+
+#### Scenario: Leave and dispose settle owned recovery
+
+- **WHEN** a room leaves or the provider is disposed while restart or readiness work is pending
+- **THEN** only the matching desired demand SHALL be removed, dispose SHALL cancel all owned restart work, and every affected pending join SHALL settle exactly once without an automatic unbounded loop
+
+### Requirement: Same-domain supersession is internal cancellation
+
+Connection SHALL preserve newest-wins generation fencing for overlapping same-domain join, identity refresh, host recovery, and manual Refresh attempts. Replacing an older attempt SHALL produce one machine-classified internal cancellation rather than an ordinary message-only error. Cancellation SHALL settle the old caller and its cleanup, but SHALL emit no `Room.OnErrorEvent`, generic error Toast, success result, committed join, or stale identity/presence. The cancelled attempt SHALL not clear or overwrite a newer request, snapshot, user/site input, button pending state, or feedback owner.
+
+Only the winning attempt SHALL own the real operation success or failure and current identity convergence for every attached same-domain page. `user.id` and the logical generation time SHALL remain immutable binding facts, while the winning same-id `name`/`avatar` refresh SHALL replace the current user projection across those pages without a logical join, leave, or notice; an equal projection SHALL be idempotent. Initial join and recovery state SHALL return from cancelled work without remaining stuck in loading. Every genuine provider, protocol, persistence, Runtime, and join failure SHALL continue through its existing error/Toast path. Cancellation SHALL NOT be recognized by comparing `error.message`, translated text, or Toast copy, and SHALL not introduce a second operation/pending/error owner.
+
+#### Scenario: Superseded identity refresh is silent and settled
+
+- **GIVEN** two same-domain pages trigger overlapping identity refresh attempts and the newer generation supersedes the older
+- **WHEN** the old operation settles its cancellation
+- **THEN** it SHALL release only its own pending state, emit no error Toast or false success, retain no stale identity input, and leave the newer attempt as the sole current owner
+
+#### Scenario: Manual recovery and host recovery retain the winner
+
+- **GIVEN** avatar refresh overlaps manual Refresh or Runtime host recovery
+- **WHEN** completion and failure callbacks arrive in any order
+- **THEN** only the newest current attempt SHALL commit identity, presence, snapshot, and terminal feedback; every stale callback SHALL be unable to clear or overwrite it
+
+#### Scenario: Genuine failure remains visible
+
+- **GIVEN** the current winning attempt fails for a real provider, protocol, persistence, Runtime, or join reason rather than supersession
+- **WHEN** the operation settles
+- **THEN** the existing request-local error path and generic Toast SHALL remain observable, and the application SHALL return to its defined retryable state
+
+### Requirement: Content RPC routing ignores only URL fragment
+
+Content-script eligibility, Runtime domain identity, trusted tab binding, document-generation identity, and cross-context RPC target equivalence SHALL treat `URL.hash` as an in-document position rather than document identity. The Runtime domain SHALL remain `document.location.origin`. Background and Offscreen routing SHALL preserve the exact trusted tab id supplied by extension sender context, validate it against the background-owned Tabs API registry, and compare one canonical document-navigation identity containing scheme, host, port, path, and query while excluding only fragment. Payload-supplied tab identity SHALL not become trusted.
+
+A direct page URL containing a fragment SHALL complete coordinator/Runtime attachment and mount the existing Shadow UI exactly once. Changing only hash after mount or during the initial handshake SHALL retain the same trusted tab binding, document generation, logical lease, Runtime domain, logical presence, and UI mount; it SHALL produce no join/leave or remount. Reload or a real same-domain eligible navigation that changes the document, path, or query SHALL replace document generation and rebind the same trusted tab without replacing logical presence, but a response owned by the prior document SHALL not settle the new one. Navigation outside eligibility or to another Runtime domain SHALL release the old domain binding. Recycled tab id, wrong tab, untrusted sender, wrong namespace/direction, missing target, and stale provider response SHALL remain denied.
+
+Response routing SHALL not query or broadcast to every same-origin tab, route by origin alone, remove response correlation, add fragment-specific business logic, or add a pre-App loading/unavailable/Retry/status fallback. Tabs API inventory used only to reconstruct physical tab ownership SHALL not become a response-delivery broadcast. The existing bootstrap SHALL still mount only after valid `initClient()` settlement; this change restores that exact response route.
+
+#### Scenario: Direct fragment URL mounts the control
+
+- **WHEN** a supported HTTPS page opens directly at a URL such as `https://www.v2ex.com/t/1230408#reply1`
+- **THEN** the content client SHALL complete its first Runtime RPC route and mount exactly one existing WebChat control without stripping or navigating away from the visible fragment
+
+#### Scenario: Mounted hashchange preserves one client
+
+- **GIVEN** the WebChat control is mounted and joined
+- **WHEN** only `location.hash` changes
+- **THEN** the same trusted tab binding, document generation, logical lease, domain, UI mount, and logical presence SHALL remain, with zero reconnect, join, leave, or lifecycle notice
+
+#### Scenario: In-flight hashchange preserves the first handshake
+
+- **GIVEN** content bootstrap has started but the first coordinator or Runtime response has not settled
+- **WHEN** the page changes from one fragment to another
+- **THEN** the trusted response SHALL still route to that same live document, `initClient()` SHALL settle once, and exactly one control SHALL mount
+
+#### Scenario: Real navigation keeps stale-response protection
+
+- **GIVEN** a provider response is correlated to one tab and canonical document-navigation identity
+- **WHEN** that tab is recycled or genuinely navigates to a different scheme, host, port, path, or query before the response arrives
+- **THEN** the old response SHALL be rejected and SHALL not settle the replacement page, while another same-origin tab receives nothing
+
+### Requirement: Background Tabs API owns physical tab lifetime
+
+The background coordinator SHALL own one current host-to-tabs registry for physical browser-tab lifetime. One Runtime host MAY own multiple eligible tabs, and each live `tabId` SHALL occur at most once in the current host registry. Content-to-background comctx metadata MAY carry tab routing facts, but the background SHALL accept them only when extension-provided sender context and the current Tabs API state validate the exact tab and document binding. Page-supplied tab identity, an old host generation, an old document, or a recycled tab id SHALL not become current authority.
+
+Physical `tabId`, internal document generation, and logical `sessionId`/`presenceId`/`joinedAt` SHALL remain separate identities. Tab id SHALL route and own the physical browser tab; document generation SHALL fence reload and real-navigation responses; logical identity SHALL own membership and notice time. Tab id SHALL not replace logical session identity, and a random page id SHALL not replace browser tab ownership. Multiple tabs in the same Runtime domain SHALL remain distinct physical owners of the same shared domain connection and logical presence rather than creating one logical generation per tab.
+
+Only a trusted browser tab-removal fact, navigation outside content eligibility, or navigation to another Runtime domain SHALL release the old domain tab binding. Inactive, hidden, frozen, discarded, ping-missing, heartbeat-missing, or Port-disconnected state SHALL not release physical tab ownership, start last-tab grace, delete membership, or publish SESSION_END. Connectivity loss MAY only start or join the current bounded ClientLease recovery.
+
+Hash-only navigation SHALL retain the current tab, document generation, page attachment, and logical presence. Reload or same-domain eligible document navigation SHALL replace document generation and idempotently reattach the same tab and logical presence. After supported background or Runtime host replacement, the coordinator SHALL reconstruct one registry from still-existing eligible tabs and trusted reattachments, without a false logical join/leave, duplicate lease, origin-wide response route, or parallel Runtime lifecycle owner.
+
+#### Scenario: Inactive or disconnected page remains present
+
+- **GIVEN** an eligible tab is registered to the current host and owns a logical presence
+- **WHEN** the tab becomes inactive, hidden, frozen, or discarded, or its page ping, heartbeat, or Port disappears
+- **THEN** the background SHALL retain the tab owner and logical presence, MAY enter bounded connectivity recovery, and SHALL emit no domain release, SESSION_END, leave notice, or replacement logical join
+
+#### Scenario: Trusted close releases exactly once
+
+- **GIVEN** one host owns one or more eligible tabs and one tab owns a current domain binding
+- **WHEN** the Tabs API reports that exact tab removed
+- **THEN** only that physical tab owner SHALL be removed exactly once, and the existing domain last-tab/grace/final-release rules SHALL run only if no other tab still owns that domain
+
+#### Scenario: Same-domain tabs share logical membership
+
+- **GIVEN** one host owns two eligible tabs in the same Runtime domain
+- **WHEN** both attach and either non-last tab closes
+- **THEN** the registry SHALL retain two distinct physical tab owners before close and one after close, while Runtime retains one shared logical presence and emits no extra join, leave, SESSION_END, or lifecycle notice
+
+#### Scenario: Navigation changes the owned domain boundary
+
+- **GIVEN** an eligible tab owns a binding for Runtime domain A
+- **WHEN** it navigates outside eligibility or to eligible Runtime domain B
+- **THEN** the A binding SHALL release exactly once; an eligible B document MAY establish its own binding, and unchanged tab id SHALL not carry A's logical presence into B
+
+#### Scenario: Same-domain document replacement preserves logical presence
+
+- **GIVEN** an eligible tab owns a current logical presence for one Runtime domain
+- **WHEN** that tab reloads or performs a same-domain eligible document navigation
+- **THEN** a new document generation SHALL rebind to the same tab and logical presence, every old-document response SHALL be inert, and no join, leave, SESSION_END, duplicate lease, or lifecycle notice SHALL result
+
+#### Scenario: Host replacement reconstructs multiple tabs
+
+- **GIVEN** one host owns multiple current eligible tabs and the background or Runtime host is replaced
+- **WHEN** the coordinator inventories browser tabs and receives trusted current reattachments
+- **THEN** the replacement host SHALL reconstruct each still-existing eligible tab exactly once, resurrect no absent or ineligible tab, and preserve logical presence without duplicate rooms, leases, joins, leaves, or notices
+
+#### Scenario: Untrusted or reused tab identity is rejected
+
+- **GIVEN** comctx metadata names a tab that conflicts with sender context or current Tabs API state, or an old host/document message uses a tab id after its prior binding ended
+- **WHEN** the background handles that message
+- **THEN** it SHALL reject the binding or response without mutating current ownership, connectivity, logical membership, feedback, or another tab
+
+### Requirement: ClientLease recovery and readiness feedback are bounded
+
+Each ClientLease lifecycle SHALL own at most one current startup or recovery generation. Repeated watchdog failure, generation/host-id/page-attachment mismatch, and overlapping recovery calls SHALL share that generation rather than issue parallel attach sequences or reset its budget. The existing 15,000ms startup/recovery timeout SHALL be one overall deadline for the current logical connection operation. Every `registerPage()` and `attachPage()` attempt SHALL have a hard deadline no greater than 5,000ms and no greater than the generation's remaining budget. Expiry SHALL cancel that request's local ownership and reject the attempt; bounded retry MAY continue only inside the current logical operation. A watchdog check suspended beyond its captured deadline, an old deadline after reactivation/reconciliation, or any superseded generation SHALL lose HostPhase, readiness, and frontend settlement authority before current work settles.
+
+A fresh `init()` or page-context `detach()` SHALL abort the prior connectivity lifecycle and retire its requests. Page detach alone SHALL not remove the background-owned physical tab binding or logical presence. A response or rejection from an expired, aborted, detached, or superseded request SHALL be ignored and SHALL NOT publish HostPhase, replace a snapshot, start a watchdog, settle a newer recovery, release the current tab owner, or unregister the winning logical lease. Host replacement, Port loss, missing response, provider rejection, deadline expiry, manual Refresh, reactivation, and retry handoff SHALL remain intermediate while the current logical connection operation has an automatic continuation or handoff capable of succeeding. The current operation SHALL settle `ready` after one valid current attachment. It SHALL settle `unavailable` only when it truly terminates with no such continuation or handoff. No path SHALL leave HostPhase permanently `connecting`, but boundedness SHALL NOT grant obsolete work terminal settlement authority.
+
+Readiness presentation SHALL remain downstream of Runtime truth. Fixed Runtime `AppFeedback` owner `webchat-runtime-readiness` SHALL be the sole connection loading and terminal-error owner. Every current page Refresh or actual connect/join/reattach/host rebuild/recovery operation SHALL activate that owner with exact visible copy `Connected to the chat.` when the operation starts, including attachment to an already healthy retained Runtime, and SHALL keep it current while the logical operation is active. The past-tense copy SHALL still represent loading. `Toast.OnRoomSelfJoinRoomEffect` and its independent `SelfJoinRoomEvent -> LoadingCommand("Connected to the chat.")` random-owner producer SHALL be absent. The independent manual-Refresh `Reconnecting to the chat...` producer SHALL also be absent. The implementation SHALL NOT rename, reuse, hide, or otherwise preserve either producer or introduce another request-owned connection Toast. Passive polling, a provider identity probe, or a watchdog health check that has not promoted into an actual attachment, host rebuild, connect, join, or recovery operation SHALL publish no loading entry and SHALL not change Refresh control loading. If an observation proves repair is required, the sole owner SHALL begin exactly at promotion and SHALL inherit the current logical operation's valid remaining deadline rather than resetting it. Current ready SHALL dismiss only that owner and SHALL publish neither `Ready to chat` nor another success descriptor. Only logically final `unavailable` SHALL replace the same owner with exact copy `Connection failed` with no trailing period. Intermediate attempts, current retry/handoff work, old deadlines, and stale generations SHALL publish no terminal connection error. Detach, remount, abort, or supersession SHALL retire only obsolete ownership, and polling or stale settlement SHALL not dismiss or replace the current operation's entry. Presentation SHALL NOT delay operation, extend the recovery budget, add another readiness state, expose the diagnostic cause as connection copy, or change the Toast renderer, structure, or visual style.
+
+#### Scenario: Passive polling creates no readiness loading
+
+- **GIVEN** no manual Refresh, connect, join, attachment recovery, or host rebuild is active
+- **WHEN** a periodic poll, provider identity probe, or watchdog health check completes without promoting into one of those operations
+- **THEN** no `Connected to the chat.` entry or connection loading owner SHALL be created, Refresh SHALL remain in its ordinary eligibility state without polling-owned rotation, and the observation SHALL report no operation success or failure feedback
+
+#### Scenario: Polling promotion starts one bounded recovery owner
+
+- **GIVEN** a poll or health probe is bounded by the current ClientLease lifecycle and no connection loading owner exists
+- **WHEN** the observation proves that an actual attachment, host rebuild, connect, join, or recovery operation is required
+- **THEN** exactly one fixed-owner `Connected to the chat.` loading entry and matching Refresh control loading SHALL begin at promotion, inherit the current logical operation's valid remaining deadline without reset, and settle only with that actual operation
+
+#### Scenario: Healthy retained Runtime refresh shows only the sole readiness owner
+
+- **GIVEN** the Runtime host remains healthy and ready while one content document is refreshed
+- **WHEN** the new page lifecycle registers and attaches successfully
+- **THEN** exactly one fixed-owner `Connected to the chat.` loading entry SHALL be observable while attachment is active and dismissed by current ready, exactly one current tab binding, document attachment, logical lease, and application mount SHALL result, and no legacy self-join Toast, `Ready to chat`, unavailable feedback, host replacement, or logical join/leave SHALL be caused by the refresh
+
+#### Scenario: Pending register or attach cannot exceed its deadline
+
+- **GIVEN** the current `registerPage()` or `attachPage()` attempt never resolves or rejects
+- **WHEN** its 5,000ms per-RPC deadline and then the generation's original 15,000ms overall deadline elapse
+- **THEN** each expired request SHALL lose settlement ownership, retry SHALL remain bounded by the current logical operation, and only a logically final generation with no current continuation or handoff SHALL settle unavailable rather than remain connecting
+
+#### Scenario: Rejection or control-plane loss can recover within the budget
+
+- **GIVEN** register/attach rejects, its Port or response route is lost, or the host is replaced during recovery
+- **WHEN** a later current attempt attaches a valid replacement before the original overall deadline
+- **THEN** the shared recovery generation SHALL settle ready once with the replacement snapshot, SHALL dismiss only the fixed `Connected to the chat.` owner without publishing a success descriptor, and SHALL expose no transient unavailable or `Connection failed`
+
+#### Scenario: Concurrent recovery signals share one owner
+
+- **GIVEN** a watchdog failure and one or more generation, host-id, or page-attachment mismatch signals overlap
+- **WHEN** recovery is already in flight for the current lifecycle
+- **THEN** every signal SHALL join one recovery task, deadline, register/attach sequence owner, and feedback generation without parallel attempts or budget reset
+
+#### Scenario: Late response cannot affect the winner
+
+- **GIVEN** an old RPC expired, was aborted by detach/init, or belongs to a superseded recovery, and a newer current lease exists
+- **WHEN** the old RPC later resolves or rejects
+- **THEN** it SHALL not publish ready/unavailable, replace the snapshot, start a watchdog, clear current feedback, settle the newer task, release the winner's tab binding, or unregister its logical lease
+
+#### Scenario: Suspended watchdog deadline cannot flash terminal error before recovery
+
+- **GIVEN** a passive watchdog check is suspended beyond its captured deadline while the trusted tab binding and logical presence remain current
+- **WHEN** the page resumes or reactivates, coordinator reconciliation permits a current attach to succeed, and the old check also completes
+- **THEN** the old check SHALL have no HostPhase, readiness, or frontend settlement authority; the visible sequence SHALL contain no transient unavailable or `Connection failed`, the current operation MAY show `Connected to the chat.` only after real promotion, and successful attachment SHALL dismiss that owner while preserving the tab binding and logical presence
+
+#### Scenario: Active readiness loading always reaches a terminal state
+
+- **GIVEN** a current Refresh, connect, join, reattach, host rebuild, or recovery has activated the fixed `Connected to the chat.` readiness owner
+- **WHEN** the logical operation succeeds or truly terminates after every current automatic continuation and handoff is exhausted
+- **THEN** the same readiness entry SHALL settle to dismissal on ready or exact `Connection failed` on final unavailable and SHALL never remain loading permanently; no intermediate attempt or obsolete completion SHALL publish that terminal copy
+
+### Requirement: Refresh control projects current connection loading
+
+The existing mounted Refresh control SHALL project the sole fixed Runtime readiness owner rather than only a local click state. Its `Connected to the chat.` Toast entry and control SHALL remain strictly aligned: whenever that owner is `loading`, including direct/automatic connection or join, Runtime reattachment, host rebuild, recovery, manual Refresh, and any accepted minimum loading dwell, the Refresh button SHALL be disabled and its refresh icon SHALL rotate continuously. Passive polling or a health probe without an actual connection operation SHALL create no loading owner and SHALL not disable or rotate Refresh. If polling promotes into real connection or recovery, both projections SHALL begin once at that transition. A control that mounts or re-renders while the owner is already loading SHALL immediately project the same disabled rotating state. Repeated activation SHALL issue no concurrent Refresh while disabled. This requirement SHALL NOT mount a Refresh control before the existing `initClient()` bootstrap boundary, add alternate loading UI, or create a click-, request-, or self-join-owned loading Toast.
+
+When the current logical operation reaches ready, logically final failure, cancellation, or another defined terminal outcome, the fixed owner's Toast entry SHALL leave `loading` and its control loading SHALL end in the same transition. Success dismisses the owner. Only a logically final connection failure replaces it with exact `Connection failed` and does not hide that error; an intermediate attempt, cancellation with continuation, retry/handoff, or obsolete completion SHALL not end or replace current loading. The icon SHALL stop and ordinary Refresh eligibility SHALL be recomputed atomically. A finally failed connection/join with otherwise valid configuration SHALL therefore expose an enabled non-rotating retry control, while an unrelated static eligibility failure MAY keep the control disabled without rotation. Settlement from an expired, detached, aborted, stale-deadline, or superseded generation SHALL not stop the icon, enable the button, or clear/replace feedback while a newer or continuing logical operation remains loading. The control SHALL add no second loading owner, timer, connection truth, or browser-specific behavior.
+
+#### Scenario: Toast loading and Refresh control cannot diverge
+
+- **GIVEN** the fixed Runtime readiness owner's `Connected to the chat.` entry exists in `loading`
+- **WHEN** the existing Refresh control is rendered for any manual or direct/automatic Chat connection flow
+- **THEN** the button SHALL be disabled and its icon SHALL rotate for the complete same interval, with no frame or owner transition that leaves loading Toast feedback beside an enabled or static Refresh control
+
+#### Scenario: Polling leaves the Refresh control unchanged
+
+- **GIVEN** the existing Refresh control is mounted and no connection loading owner is active
+- **WHEN** polling or a health probe completes without promoting into an actual connect, join, attachment recovery, or host rebuild
+- **THEN** it SHALL create no Toast loading entry, SHALL not disable or rotate Refresh, and SHALL leave ordinary eligibility unchanged
+
+#### Scenario: Manual Refresh owns disabled rotation until loading ends
+
+- **GIVEN** Refresh is ordinarily available and no connection operation is active
+- **WHEN** the user activates Refresh
+- **THEN** the button SHALL become disabled and its icon SHALL rotate from accepted dispatch through the same owner's complete Toast loading interval, including the accepted minimum dwell, and repeated activation SHALL start no parallel Refresh
+
+#### Scenario: Direct Chat connection projects the same control state
+
+- **GIVEN** the existing Refresh control is mounted or becomes mounted while direct/automatic Chat connection or join is active
+- **WHEN** no Refresh click created that loading owner
+- **THEN** the button SHALL still be disabled and the refresh icon SHALL rotate continuously until the current direct connection owner terminates
+
+#### Scenario: Logical terminal failure restores retry with exact copy
+
+- **GIVEN** a current connection loading owner has disabled and rotated Refresh
+- **WHEN** the logical connection operation truly terminates with no current automatic continuation, retry, or handoff capable of succeeding
+- **THEN** the Toast SHALL leave loading by becoming exact `Connection failed`, rotation SHALL stop in the same owner-scoped transition, ordinary availability SHALL be recomputed so a valid retry can be enabled, and that terminal error SHALL remain visible
+
+#### Scenario: Stale settlement cannot stop newer rotation
+
+- **GIVEN** one loading owner was superseded and a newer connection loading owner is active
+- **WHEN** the older owner later succeeds, fails, cancels, detaches, or reaches its minimum dwell
+- **THEN** it SHALL not stop the icon, enable Refresh, clear or replace current feedback, publish `Connection failed`, or otherwise alter the newer owner's disabled rotating state
+
+### Requirement: Seven repairs share one acceptance authority
+
+The Refresh recovery baseline with sole-owner success dismissal and disabled rotating control projection, disconnected-peer repair, supersession cancellation, logical join-time repair, fragment-insensitive startup, bounded ClientLease recovery, and Tabs API-owned physical tab lifetime SHALL be delivered as one cumulative immutable source exact. Every current manual Refresh or actual connect/join/reattach/host rebuild/recovery operation SHALL show fixed owner `webchat-runtime-readiness` with exact loading copy `Connected to the chat.` while active, and that same owner SHALL disable and rotate the existing Refresh control. The legacy self-join producer and independent manual-Refresh `Reconnecting to the chat...` producer SHALL both be deleted so no second connection owner can coexist. Passive polling or a health probe that has not promoted into such an operation SHALL create neither feedback nor control loading; promotion SHALL begin both once without resetting the current logical operation's valid deadline. Every successful logical operation SHALL dismiss only the fixed readiness owner after the accepted dwell and SHALL NOT publish `Ready to chat`; only logically final failure with no current automatic continuation or handoff capable of succeeding SHALL replace the same owner with exact `Connection failed` while ending control loading. Ping/Port loss SHALL remain connectivity-only and SHALL not create physical or logical leave while the trusted tab still exists. An intermediate RPC/probe/Port/host failure, old deadline, stale generation, reactivation, retry, or handoff SHALL have no terminal frontend settlement authority. Intermediate heads and evidence from `a6021495`, source exact `2f60913259f9ce834ffdf75f63eef87c9563e644`, docs parent `5cc4e597...`, or invalid `9beec650...` SHALL remain diagnostic only and SHALL not authorize final review, QA, checkout synchronization, publication, or release. The replacement exact SHALL receive fresh Reviewer and QA decisions on the complete combined matrix, followed by one Owner seven-scenario product acceptance.
+
+#### Scenario: Manual Refresh success dismisses only the fixed readiness owner
+
+- **GIVEN** a current manual Refresh activated the fixed Runtime readiness owner's `Connected to the chat.` entry and unrelated Toasts also exist
+- **WHEN** that Refresh succeeds and its accepted minimum loading dwell completes
+- **THEN** the application SHALL dismiss only the fixed readiness owner ID, SHALL publish no `Ready to chat`, `Reconnecting to the chat...`, or other success/request descriptor, SHALL preserve unrelated Toasts, and SHALL leave no current Refresh feedback loading or transient terminal error
+
+#### Scenario: Manual Refresh displays error only at logical final failure
+
+- **GIVEN** a current manual Refresh activated the fixed Runtime readiness owner's `Connected to the chat.` entry
+- **WHEN** one attempt fails but the current logical operation can still retry or hand off, or when all such continuation finally terminates
+- **THEN** the intermediate failure SHALL retain/transfer loading without error, while only the logically final failure SHALL replace the same readiness entry with exact `Connection failed`; the request/button lifecycle SHALL become retryable rather than loading forever
+
+#### Scenario: Partial success does not authorize delivery
+
+- **WHEN** any subset of the seven repairs has a passing implementation or prior evidence
+- **THEN** no partial head SHALL be synchronized or published as the requested repair, and the remaining outcomes SHALL stay part of the same final candidate
+
+#### Scenario: Final acceptance covers all seven outcomes
+
+- **WHEN** the final cumulative exact passes fresh independent Reviewer and QA gates
+- **THEN** the Owner SHALL verify seven scenarios before publication authority exists: passive polling shows no readiness/control loading while failed-join manual Refresh and direct/automatic connection operations show exactly one `Connected to the chat.` readiness Toast and disable/rotate Refresh until that owner terminates, with no `Reconnecting to the chat...`, polling promotion starting once without deadline reset, every successful initial/manual/reactivation/reattach/recovery flow dismissing without transient error or success Toast, and only logical final failure showing exact `Connection failed`; disconnected-peer retry; multi-page identity update without supersession Toast; exact A-before-B notice projections; direct fragment-URL startup; retained-Runtime refresh/reactivation with bounded loading and zero stale-deadline error flash; and one host with multiple tabs where inactivity/connectivity loss preserves presence while trusted close or eligibility/domain exit releases exactly once
+
+### Requirement: Peer wire protocol is replaced with v3 without compatibility
+
+The peer-to-peer wire protocol SHALL use the v3 contract defined by the `peer-wire-protocol` capability. The system SHALL NOT bridge, translate, or interoperate with released v1 or v2 protocols, and v1, v2, and v3 clients SHALL be isolated by both Chat and World room namespaces so no generation parses another's traffic or advertises an incompatible peer.
+
+#### Scenario: v1 v2 v3 isolation
+
+- **WHEN** v1, v2, and v3 clients exchange traffic in a shared physical environment
+- **THEN** they SHALL not share Chat or World room namespaces and no compatibility fallback SHALL exist
+
+#### Scenario: Old protocol removal remains complete
+
+- **WHEN** the release candidate is inspected
+- **THEN** old protocol schemas, the JSONR interop adapter, page-side message routing, reaction toggle, history upsert, HLC-only history cursor, and v1/v2 active namespace inputs SHALL be absent
