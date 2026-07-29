@@ -16,15 +16,19 @@ Turn any website into a shared chat room and connect with the people who are alr
 
 <p align="center">
   <a href="https://chromewebstore.google.com/detail/webchat/cpaedhbidlpnbdfegakhiamfpndhjpgf"><img src="https://img.shields.io/badge/Chrome-4285F4?style=for-the-badge&amp;logo=googlechrome&amp;logoColor=white" alt="Google Chrome" /></a>
-  <a href="https://microsoftedge.microsoft.com/addons/detail/mmfdplbomjjlgdffecapcpgjmhfhmiob"><img src="https://img.shields.io/badge/Edge-0078D7?style=for-the-badge&amp;logo=microsoftedge&amp;logoColor=white" alt="Microsoft Edge" /></a>
-  <a href="https://addons.mozilla.org/firefox/addon/webchat/"><img src="https://img.shields.io/badge/Firefox-FF7139?style=for-the-badge&amp;logo=firefoxbrowser&amp;logoColor=white" alt="Mozilla Firefox" /></a>
+  <br />
+  <a href="https://chromewebstore.google.com/detail/webchat/cpaedhbidlpnbdfegakhiamfpndhjpgf">Chrome Web Store</a>
 </p>
 
 <p align="center">
-  <a href="https://chromewebstore.google.com/detail/webchat/cpaedhbidlpnbdfegakhiamfpndhjpgf">Chrome Web Store</a>
-  &nbsp;&middot;&nbsp;
+  <a href="https://microsoftedge.microsoft.com/addons/detail/mmfdplbomjjlgdffecapcpgjmhfhmiob"><img src="https://img.shields.io/badge/Edge-0078D7?style=for-the-badge&amp;logo=microsoftedge&amp;logoColor=white" alt="Microsoft Edge" /></a>
+  <br />
   <a href="https://microsoftedge.microsoft.com/addons/detail/mmfdplbomjjlgdffecapcpgjmhfhmiob">Microsoft Edge Add-ons</a>
-  &nbsp;&middot;&nbsp;
+</p>
+
+<p align="center">
+  <a href="https://addons.mozilla.org/firefox/addon/webchat/"><img src="https://img.shields.io/badge/Firefox-FF7139?style=for-the-badge&amp;logo=firefoxbrowser&amp;logoColor=white" alt="Mozilla Firefox" /></a>
+  <br />
   <a href="https://addons.mozilla.org/firefox/addon/webchat/">Firefox Add-ons</a>
 </p>
 
