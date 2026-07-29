@@ -6,7 +6,7 @@
 
 [![CI](https://github.com/molvqingtai/WebChat/actions/workflows/ci.yml/badge.svg)](https://github.com/molvqingtai/WebChat/actions) [![GitHub License](https://img.shields.io/github/license/molvqingtai/WebChat)](https://github.com/molvqingtai/WebChat/blob/master/LICENSE) [![Chrome Web Store Version](https://img.shields.io/chrome-web-store/v/cpaedhbidlpnbdfegakhiamfpndhjpgf)](https://chromewebstore.google.com/detail/webchat/cpaedhbidlpnbdfegakhiamfpndhjpgf) [![GitHub Release](https://img.shields.io/github/v/release/molvqingtai/WebChat)](https://github.com/molvqingtai/WebChat/releases) [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/molvqingtai/WebChat)
 
-> Private, serverless conversations on any website.
+> Chat with anyone on any website.
 
 WebChat is a decentralized browser extension that lets people visiting the same website chat anonymously. It uses WebRTC for end-to-end encrypted, peer-to-peer communication, so there is no central chat server and your data remains on your device.
 
@@ -51,6 +51,7 @@ WebChat builds on these excellent open-source projects:
 - **[Remesh](https://github.com/remesh-js/remesh)** provides the DDD-inspired state model that keeps application logic independent from the React UI.
 - **[shadcn/ui](https://ui.shadcn.com/)** provides accessible, customizable UI building blocks.
 - **[WXT](https://wxt.dev/)** provides the cross-browser extension framework and build tooling.
+- **[comctx](https://github.com/molvqingtai/comctx)** provides RPC communication across the extension's JavaScript contexts.
 - **[Artico](https://github.com/matallui/artico)** provides the flexible WebRTC foundation for peer-to-peer communication.
 - **[ugly-avatar](https://github.com/txstc55/ugly-avatar)** generates WebChat's distinctive random avatars.
 
