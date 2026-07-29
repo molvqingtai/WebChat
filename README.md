@@ -15,21 +15,11 @@ Turn any website into a shared chat room and connect with the people who are alr
 ## Install
 
 <p align="center">
-  <a href="https://chromewebstore.google.com/detail/webchat/cpaedhbidlpnbdfegakhiamfpndhjpgf"><img src="https://img.shields.io/badge/Chrome-4285F4?style=for-the-badge&amp;logo=googlechrome&amp;logoColor=white" alt="Google Chrome" /></a>
-  <br />
-  <a href="https://chromewebstore.google.com/detail/webchat/cpaedhbidlpnbdfegakhiamfpndhjpgf">Chrome Web Store</a>
-</p>
-
-<p align="center">
-  <a href="https://microsoftedge.microsoft.com/addons/detail/mmfdplbomjjlgdffecapcpgjmhfhmiob"><img src="https://img.shields.io/badge/Edge-0078D7?style=for-the-badge&amp;logo=microsoftedge&amp;logoColor=white" alt="Microsoft Edge" /></a>
-  <br />
-  <a href="https://microsoftedge.microsoft.com/addons/detail/mmfdplbomjjlgdffecapcpgjmhfhmiob">Microsoft Edge Add-ons</a>
-</p>
-
-<p align="center">
-  <a href="https://addons.mozilla.org/firefox/addon/webchat/"><img src="https://img.shields.io/badge/Firefox-FF7139?style=for-the-badge&amp;logo=firefoxbrowser&amp;logoColor=white" alt="Mozilla Firefox" /></a>
-  <br />
-  <a href="https://addons.mozilla.org/firefox/addon/webchat/">Firefox Add-ons</a>
+  <a href="https://chromewebstore.google.com/detail/webchat/cpaedhbidlpnbdfegakhiamfpndhjpgf"><ruby>Chrome Web Store<rp> (</rp><rt><img src="https://img.shields.io/badge/Chrome-4285F4?style=for-the-badge&amp;logo=googlechrome&amp;logoColor=white" alt="Google Chrome" /></rt><rp>)</rp></ruby></a>
+  &nbsp;&nbsp;&nbsp;
+  <a href="https://microsoftedge.microsoft.com/addons/detail/mmfdplbomjjlgdffecapcpgjmhfhmiob"><ruby>Microsoft Edge Add-ons<rp> (</rp><rt><img src="https://img.shields.io/badge/Edge-0078D7?style=for-the-badge&amp;logo=microsoftedge&amp;logoColor=white" alt="Microsoft Edge" /></rt><rp>)</rp></ruby></a>
+  &nbsp;&nbsp;&nbsp;
+  <a href="https://addons.mozilla.org/firefox/addon/webchat/"><ruby>Firefox Add-ons<rp> (</rp><rt><img src="https://img.shields.io/badge/Firefox-FF7139?style=for-the-badge&amp;logo=firefoxbrowser&amp;logoColor=white" alt="Mozilla Firefox" /></rt><rp>)</rp></ruby></a>
 </p>
 
 ## Usage
@@ -51,7 +41,7 @@ WebChat builds on these excellent open-source projects:
 - **[Remesh](https://github.com/remesh-js/remesh)** provides the DDD-inspired state model that keeps application logic independent from the React UI.
 - **[shadcn/ui](https://ui.shadcn.com/)** provides accessible, customizable UI building blocks.
 - **[WXT](https://wxt.dev/)** provides the cross-browser extension framework and build tooling.
-- **[comctx](https://github.com/molvqingtai/comctx)** provides RPC communication across the extension's JavaScript contexts.
+- **[Comctx](https://github.com/molvqingtai/comctx)** provides RPC communication across the extension's JavaScript contexts.
 - **[Artico](https://github.com/matallui/artico)** provides the flexible WebRTC foundation for peer-to-peer communication.
 - **[ugly-avatar](https://github.com/txstc55/ugly-avatar)** generates WebChat's distinctive random avatars.
 
