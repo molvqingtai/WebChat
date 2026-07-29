@@ -90,13 +90,13 @@ Each ClientLease lifecycle SHALL own at most one current startup or recovery gen
 
 A fresh `init()` or `detach()` SHALL abort the prior lifecycle and retire its requests. A response or rejection from an expired, aborted, detached, or superseded request SHALL be ignored and SHALL NOT publish HostPhase, replace a snapshot, start a watchdog, settle a newer recovery, or detach/unregister the current winning lease. Host replacement, Port loss, missing response, and a provider that remains pending forever SHALL therefore settle the current generation as `ready` after one valid current attachment or `unavailable` when its original budget is exhausted. No path SHALL leave HostPhase permanently `connecting`.
 
-Readiness presentation SHALL remain downstream of Runtime truth. A page refresh that attaches to an already healthy retained Runtime within the 300ms presentation grace SHALL create one current page lease and SHALL publish neither `WebChat connecting` nor `Ready to chat`. A real current connecting transition that survives the grace MAY publish the existing stable loading entry. Once visible, that entry SHALL be dismissed by current ready or replaced by unavailable no later than the original 15,000ms deadline. The grace SHALL NOT delay operation, extend the recovery budget, add another readiness state, or survive ready, unavailable, detach, remount, or a newer recovery. No alternate bootstrap UI, Toast renderer, structure, or visual style SHALL be added.
+Readiness presentation SHALL remain downstream of Runtime truth. Every current page Refresh or recovery generation SHALL publish its existing owner-scoped `Connecting` loading entry when the operation starts, including attachment to an already healthy retained Runtime, and SHALL keep that owner current while the operation is active. Current ready SHALL dismiss only that entry and SHALL publish neither `Ready to chat` nor another success descriptor. Unavailable SHALL replace the same entry no later than the original 15,000ms deadline. Detach, remount, abort, or supersession SHALL retire only the old owner's feedback, and stale settlement SHALL not dismiss or replace a newer owner's entry. Presentation SHALL NOT delay operation, extend the recovery budget, add another readiness state, or change the Toast renderer, structure, or visual style.
 
-#### Scenario: Healthy retained Runtime refresh stays silent
+#### Scenario: Healthy retained Runtime refresh shows only active Connecting
 
 - **GIVEN** the Runtime host remains healthy and ready while one content document is refreshed
-- **WHEN** the new page lifecycle registers and attaches within the 300ms feedback grace
-- **THEN** exactly one current page lease and application mount SHALL result, with no `WebChat connecting`, `Ready to chat`, unavailable feedback, host replacement, or logical join/leave caused by the refresh
+- **WHEN** the new page lifecycle registers and attaches successfully
+- **THEN** exactly one owner-scoped `Connecting` entry SHALL be observable while attachment is active and dismissed by current ready, exactly one current page lease and application mount SHALL result, and no `Ready to chat`, unavailable feedback, host replacement, or logical join/leave SHALL be caused by the refresh
 
 #### Scenario: Pending register or attach cannot exceed its deadline
 
@@ -108,7 +108,7 @@ Readiness presentation SHALL remain downstream of Runtime truth. A page refresh 
 
 - **GIVEN** register/attach rejects, its Port or response route is lost, or the host is replaced during recovery
 - **WHEN** a later current attempt attaches a valid replacement before the original overall deadline
-- **THEN** the shared recovery generation SHALL settle ready once with the replacement snapshot and SHALL cancel any pending connecting-feedback timer
+- **THEN** the shared recovery generation SHALL settle ready once with the replacement snapshot and SHALL dismiss only its current `Connecting` entry without publishing a success descriptor
 
 #### Scenario: Concurrent recovery signals share one owner
 
@@ -122,15 +122,27 @@ Readiness presentation SHALL remain downstream of Runtime truth. A page refresh 
 - **WHEN** the old RPC later resolves or rejects
 - **THEN** it SHALL not publish ready/unavailable, replace the snapshot, start a watchdog, clear current feedback, settle the newer task, or release the winner's lease
 
-#### Scenario: Visible connecting always reaches a terminal state
+#### Scenario: Active Connecting always reaches a terminal state
 
-- **GIVEN** current recovery remains connecting beyond the 300ms presentation grace and the stable loading entry becomes visible
+- **GIVEN** a current Refresh or recovery has published its stable owner-scoped `Connecting` entry
 - **WHEN** a current attachment succeeds or the original recovery budget expires
 - **THEN** the same readiness entry SHALL settle to dismissal on ready or unavailable error within that budget and SHALL never remain loading permanently
 
 ### Requirement: Six repairs share one acceptance authority
 
-The Refresh recovery baseline with request-local success dismissal, disconnected-peer repair, supersession cancellation, logical join-time repair, fragment-insensitive startup, and bounded ClientLease recovery SHALL be delivered as one cumulative immutable source exact. A successful manual Refresh SHALL dismiss only its own loading entry after the accepted dwell and SHALL NOT publish `Ready to chat`; a genuine failure SHALL retain the matching error Toast. Intermediate heads and evidence from `a6021495` SHALL remain diagnostic only and SHALL not authorize final review, QA, checkout synchronization, publication, or release. The final exact SHALL receive fresh Reviewer and QA decisions on the complete combined matrix, followed by one Owner six-scenario product acceptance.
+The Refresh recovery baseline with request-local success dismissal, disconnected-peer repair, supersession cancellation, logical join-time repair, fragment-insensitive startup, and bounded ClientLease recovery SHALL be delivered as one cumulative immutable source exact. Every current manual Refresh or recovery SHALL show its owner-scoped `Connecting` feedback while active. A successful manual Refresh SHALL dismiss only its own loading entry after the accepted dwell and SHALL NOT publish `Ready to chat`; a genuine failure SHALL retain the matching error Toast. Intermediate heads and evidence from `a6021495` or invalid `9beec650...` SHALL remain diagnostic only and SHALL not authorize final review, QA, checkout synchronization, publication, or release. The final exact SHALL receive fresh Reviewer and QA decisions on the complete combined matrix, followed by one Owner six-scenario product acceptance.
+
+#### Scenario: Manual Refresh success dismisses only its Connecting owner
+
+- **GIVEN** a current manual Refresh published its request-owned `Connecting` entry and unrelated Toasts also exist
+- **WHEN** that Refresh succeeds and its accepted minimum loading dwell completes
+- **THEN** the application SHALL dismiss only that request ID, SHALL publish no `Ready to chat` or other success descriptor, SHALL preserve unrelated Toasts, and SHALL leave no current Refresh feedback loading
+
+#### Scenario: Manual Refresh failure keeps the genuine error
+
+- **GIVEN** a current manual Refresh published its request-owned `Connecting` entry
+- **WHEN** the winning request fails for a genuine provider, Runtime, protocol, persistence, or join reason
+- **THEN** the same request entry SHALL become the genuine error feedback, SHALL not be silently dismissed as success, and SHALL leave the request/button lifecycle retryable rather than loading forever
 
 #### Scenario: Partial success does not authorize delivery
 
@@ -140,7 +152,7 @@ The Refresh recovery baseline with request-local success dismissal, disconnected
 #### Scenario: Final acceptance covers all six outcomes
 
 - **WHEN** the final cumulative exact passes fresh independent Reviewer and QA gates
-- **THEN** the Owner SHALL verify failed-join Refresh with no success Toast, disconnected-peer retry, multi-page identity update without supersession Toast, A-before-B join-notice order, direct fragment-URL startup, and retained-Runtime refresh plus bounded connecting recovery before publication authority exists
+- **THEN** the Owner SHALL verify failed-join Refresh with active Connecting followed by no success Toast, disconnected-peer retry, multi-page identity update without supersession Toast, exact A-before-B notice projections, direct fragment-URL startup, and retained-Runtime refresh with bounded active-to-terminal Connecting before publication authority exists
 
 ### Requirement: Peer wire protocol is replaced with v3 without compatibility
 
@@ -160,7 +172,7 @@ The peer-to-peer wire protocol SHALL use the v3 contract defined by the `peer-wi
 
 ### Requirement: Runtime Chat session lifecycle
 
-The headless Runtime SHALL bind each Chat source to a session identity and logical generation. A join SHALL send strict `session {sessionId, user, presenceId, joinedAt}` before live text, reaction, or history traffic. `joinedAt` SHALL be the generation time owned by Session and SHALL remain unchanged with its `presenceId` across physical session replacement. A bound `sessionId` SHALL not change its `user.id`; an accepted `presenceId` SHALL not change its bound `user.id` or `joinedAt`; live event `userId` SHALL match the transport-bound session user. `name` and `avatar` SHALL remain mutable projection fields: a SESSION for the same accepted identity binding SHALL update that current projection across attached pages without changing logical membership or notices. A new physical incarnation SHALL retire the old source binding and old history sync, and SHALL trigger exactly one fresh history request for the replacement without running it concurrently with unsettled old source work. Reconnect of the same logical generation SHALL not become a new observer join.
+The headless Runtime SHALL bind each Chat source to a session identity and logical generation. A join SHALL send strict `session {sessionId, user, presenceId, joinedAt}` before live text, reaction, or history traffic. `joinedAt` SHALL be allocated and persisted by Session with a new local logical generation, projected unchanged to wire, and remain unchanged with its `presenceId` across physical session replacement. It SHALL NOT be synthesized from receiver observation, discovery order, `baselinePeerIds`, or `clock.now()`. A bound `sessionId` SHALL not change its `user.id`; an accepted `presenceId` SHALL not change its bound `user.id` or `joinedAt`; live event `userId` SHALL match the transport-bound session user. `name` and `avatar` SHALL remain mutable projection fields: a SESSION for the same accepted identity binding SHALL update that current projection across attached pages without changing logical membership or notices. A new physical incarnation SHALL retire the old source binding and old history sync, and SHALL trigger exactly one fresh history request for the replacement without running it concurrently with unsettled old source work. Reconnect of the same logical generation SHALL not become a new observer join.
 
 #### Scenario: Session binding and replacement
 
@@ -184,9 +196,9 @@ Session SHALL uniquely own local active-generation state, unsettled in-flight fi
 
 Chrome MV3 SHALL construct the concrete session-backed PresenceStore in the background Service Worker and expose only its existing `load`/`save` methods to the Offscreen Runtime through a dedicated comctx adapter over a point-to-point Runtime Port. Port name and comctx namespace SHALL be routing values rather than authority. Before delivering a message, Background SHALL require the transport sender's runtime id, exact Offscreen document URL, and absence of a tab; content, options, and every other extension source SHALL be disconnected without reading or writing durable state. Every provider response SHALL resolve through the exact request-to-Port binding recorded when its request arrived. If that binding has detached or been replaced, the response SHALL be dropped and SHALL NOT fall back to the current active Port. Offscreen SHALL admit a response only while that request remains pending on the same binding; uncorrelated, replayed, old-binding, wrong-namespace, wrong-direction, and broadcast responses SHALL reach no comctx callback. From request-ID response registration, each one-shot call SHALL reserve exactly one ordered transport generation. Generic response subscription SHALL NOT open a Port. The local heartbeat response subscription SHALL unregister before the actual `apply`, and that `apply` SHALL consume the oldest remaining request reservation. If the reserved generation terminates before pending insertion, the call SHALL reject before connecting or posting to a replacement and the adapter SHALL remove that operation's one-shot response entry. Port disconnect, synchronous connect/send failure, and adapter disposal SHALL reject every request and pre-send reservation owned by the terminal generation exactly once and release every adapter-owned per-operation response entry, without hanging or automatically replaying `load` or `save`; stale and late traffic SHALL traverse no terminal operation callback, and only a later new application call with a new request ID may create a replacement Port and correlation. Provider-owned long-lived callback handles SHALL retain their existing refresh/re-registration lifetime and SHALL NOT be removed by this one-shot cleanup. The dedicated adapter SHALL use Port send/disconnect as its liveness authority, satisfy comctx heartbeat preflight locally, and transmit only actual one-shot PresenceStore operations. Offscreen SHALL register no broadcast Runtime-message listener for PresenceStore, so another context cannot forge a provider response or observe one through that adapter. The Offscreen document SHALL receive the dependency through host assembly and SHALL NOT dereference an unavailable `browser.storage.session`, create memory storage, or route presence records through tabs/pages. Firefox MV2 SHALL pass the same concrete session-backed store directly from its persistent Background Page into the same shared host. Storage rejection and authenticated-Port termination SHALL reach Session's existing request-local failure fences without acknowledging, discarding, or weakening the durable transition; a later call after Service Worker recreation SHALL reconnect and use the same session-backed record.
 
-The first accepted remote SESSION SHALL bind exact `user.id` and `joinedAt` to its source and `presenceId` in the observer ledger and record the current `name`/`avatar` projection. A later SESSION for the same accepted generation SHALL accept a changed projection when `user.id` and `joinedAt` match, while an equal projection is idempotent; a different `user.id` or `joinedAt` SHALL be rejected source-locally. Projection refresh SHALL change no logical membership or notice eligibility. For one committed local generation, a remote generation SHALL be eligible for an observer-local join only when its accepted `joinedAt` is strictly greater than local `joinedAt` and that user transitions from zero active logical generations to one. Equal or earlier time SHALL be historical snapshot convergence even when both peer discovery and SESSION occur only after local commit. Peer discovery and `baselinePeerIds` MAY retain physical catch-up bookkeeping but SHALL NOT decide logical order. A later remote SESSION received during a provisional local attempt SHALL remain attempt-owned and invisible until that attempt commits; rollback or supersession SHALL emit nothing. Physical `PeerLeft` SHALL not produce a logical leave. A valid SESSION_END SHALL produce one observer-local leave only when the user transitions from one active generation to zero. On graceful final local release, Session SHALL replace the active lease with an in-flight final-end identity, send SESSION_END, durably remove that identity after settlement, and only then allow Connection to leave the Chat room. The departing local client need not persist its own leave.
+The first accepted strict remote SESSION SHALL bind exact `user.id` and `joinedAt` to its source and `presenceId` in the observer ledger and record the current `name`/`avatar` projection. A SESSION with missing, malformed, non-finite, fractional, unsafe, or negative `joinedAt` SHALL fail closed before binding; a later SESSION for the same accepted generation SHALL accept a changed projection only when `user.id` and `joinedAt` match, while an equal projection is idempotent. A different `user.id` or `joinedAt` SHALL be rejected source-locally. Every rejected SESSION SHALL leave prior accepted binding, membership, projection, history, and notices unchanged; it SHALL create no fallback timestamp, user-visible notice, or global recovery. Projection refresh SHALL change no logical membership or notice eligibility. For one committed local generation, a remote generation SHALL be eligible for an observer-local join only when its accepted `joinedAt` is strictly greater than local `joinedAt` and that user transitions from zero active logical generations to one. Equal or earlier time SHALL be historical snapshot convergence even when both peer discovery and SESSION occur only after local commit. Peer discovery and `baselinePeerIds` MAY retain physical catch-up bookkeeping but SHALL NOT decide logical order. A later remote SESSION received during a provisional local attempt SHALL remain attempt-owned and invisible until that attempt commits; rollback or supersession SHALL emit nothing. Physical `PeerLeft` SHALL not produce a logical leave. A valid SESSION_END SHALL produce one observer-local leave only when the user transitions from one active generation to zero. On graceful final local release, Session SHALL replace the active lease with an in-flight final-end identity, send SESSION_END, durably remove that identity after settlement, and only then allow Connection to leave the Chat room. The departing local client need not persist its own leave.
 
-The local self-join notice SHALL be generation-scoped, persist immediately after successful new-generation join without waiting for history, and consume only Runtime private join provenance. Reconnect/recovery/host replacement SHALL not create a candidate; later true return SHALL use a later stable generation event time and produce a distinct notice. All SystemNotice records SHALL remain observer-local and SHALL never enter ChatMessage history. Sender-asserted `joinedAt` SHALL be used only for observer-local notice ordering and SHALL NOT authorize identity, routing, resource admission, or a globally trusted total order under arbitrary clock skew.
+The local self-join notice SHALL be generation-scoped, persist immediately after successful new-generation join without waiting for history, and consume only Runtime private join provenance. Reconnect/recovery/host replacement SHALL not create a candidate; later true return SHALL use a later stable generation event time and produce a distinct notice. All SystemNotice records SHALL remain observer-local: they SHALL never be encoded or sent on the peer wire, included in a history request/response, or replayed from another peer's history. Sender-asserted `joinedAt` SHALL be authoritative only for observer-local notice ordering after strict source binding and SHALL NOT authorize identity, routing, resource admission, or a globally trusted total order under arbitrary clock skew.
 
 #### Scenario: Chrome Offscreen mounts with background-owned durability
 
@@ -256,6 +268,30 @@ The local self-join notice SHALL be generation-scoped, persist immediately after
 - **GIVEN** A logically joined before B, but B discovers A and receives A's SESSION only after B commits
 - **WHEN** A's accepted `joinedAt` is less than or equal to B's local `joinedAt`
 - **THEN** B SHALL converge A into the current membership snapshot without persisting `A joined the chat`, while A SHALL persist B's later join once
+
+#### Scenario: A-before-B is invariant across delivery timing
+
+- **GIVEN** A's accepted logical generation began before B's and remains active
+- **WHEN** B receives A discovery and the strict historical SESSION before B commit, split across B commit in either order, or both only after B commit
+- **THEN** B SHALL converge membership with exactly `[B joined]`, A SHALL converge with exactly `[A joined, B joined]`, and no delivery order or receiver clock SHALL create an `A joined` notice for B
+
+#### Scenario: Equal logical time is not later
+
+- **GIVEN** B has committed its local logical generation and has no active generation for remote A
+- **WHEN** B first accepts A's strict SESSION with `joinedAt` equal to B's local `joinedAt`
+- **THEN** B SHALL converge A as historical snapshot state without an A join notice
+
+#### Scenario: Missing or invalid logical time cannot create membership
+
+- **GIVEN** a source sends a v3 SESSION with missing or invalid `joinedAt`, or mutates `joinedAt` after its generation was accepted
+- **WHEN** the Runtime validates or applies that frame
+- **THEN** it SHALL reject the complete SESSION source-locally, preserve every prior accepted fact, synthesize no receiver-local replacement time, persist no SystemNotice, and leave other sources operational
+
+#### Scenario: Later zero-to-one generation creates one local notice only
+
+- **GIVEN** B is committed and no logical generation for remote C is active
+- **WHEN** B accepts C's strict SESSION with `joinedAt` greater than B's local time and C transitions from zero active generations to one
+- **THEN** B SHALL persist exactly one observer-local `C joined` SystemNotice, duplicates and physical recovery SHALL add none, and that notice SHALL never enter peer wire or history exchange
 
 #### Scenario: Provisional later join becomes visible only on commit
 
