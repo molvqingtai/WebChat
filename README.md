@@ -14,19 +14,9 @@ Turn any website into a shared chat room and connect with the people who are alr
 
 ## Install
 
-<p align="center">
-  <a href="https://chromewebstore.google.com/detail/webchat/cpaedhbidlpnbdfegakhiamfpndhjpgf"><img src="https://img.shields.io/badge/Chrome-Web%20Store-4285F4?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Install WebChat from the Chrome Web Store" /></a>
-  <a href="https://microsoftedge.microsoft.com/addons/detail/mmfdplbomjjlgdffecapcpgjmhfhmiob"><img src="https://img.shields.io/badge/Edge-Add--ons-0078D7?style=for-the-badge&logo=microsoftedge&logoColor=white" alt="Install WebChat from Microsoft Edge Add-ons" /></a>
-  <a href="https://addons.mozilla.org/firefox/addon/webchat/"><img src="https://img.shields.io/badge/Firefox-Add--ons-FF7139?style=for-the-badge&logo=firefoxbrowser&logoColor=white" alt="Install WebChat from Firefox Add-ons" /></a>
-</p>
-
-### Manual installation
-
-1. Download the archive for your browser from [GitHub Releases](https://github.com/molvqingtai/WebChat/releases).
-2. Extract the ZIP archive.
-3. Open your browser's extension management page:
-   - Chrome or Edge: open `chrome://extensions` or `edge://extensions`, enable **Developer mode**, select **Load unpacked**, and choose the extracted folder.
-   - Firefox: open `about:debugging#/runtime/this-firefox`, select **Load Temporary Add-on**, and choose the extracted extension's `manifest.json`.
+| [![Google Chrome](https://img.shields.io/badge/Chrome-4285F4?style=for-the-badge&logo=googlechrome&logoColor=white)](https://chromewebstore.google.com/detail/webchat/cpaedhbidlpnbdfegakhiamfpndhjpgf) | [![Microsoft Edge](https://img.shields.io/badge/Edge-0078D7?style=for-the-badge&logo=microsoftedge&logoColor=white)](https://microsoftedge.microsoft.com/addons/detail/mmfdplbomjjlgdffecapcpgjmhfhmiob) | [![Mozilla Firefox](https://img.shields.io/badge/Firefox-FF7139?style=for-the-badge&logo=firefoxbrowser&logoColor=white)](https://addons.mozilla.org/firefox/addon/webchat/) |
+| :-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------: | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------: | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------: |
+|                                                  [Chrome Web Store](https://chromewebstore.google.com/detail/webchat/cpaedhbidlpnbdfegakhiamfpndhjpgf)                                                  |                                               [Microsoft Edge Add-ons](https://microsoftedge.microsoft.com/addons/detail/mmfdplbomjjlgdffecapcpgjmhfhmiob)                                               |                                                     [Firefox Add-ons](https://addons.mozilla.org/firefox/addon/webchat/)                                                     |
 
 ## Usage
 
