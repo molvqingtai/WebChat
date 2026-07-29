@@ -55,11 +55,11 @@ Only the winning attempt SHALL own the real operation success or failure and cur
 
 ### Requirement: Content RPC routing ignores only URL fragment
 
-Content-script eligibility, Runtime domain identity, page lease identity, and cross-context RPC target equivalence SHALL treat `URL.hash` as an in-document position rather than document identity. The Runtime domain SHALL remain `document.location.origin`. Background and Offscreen routing SHALL preserve the exact trusted tab id supplied by extension sender context and compare one canonical document-navigation identity containing scheme, host, port, path, and query while excluding only fragment. Payload-supplied tab identity SHALL not become trusted.
+Content-script eligibility, Runtime domain identity, trusted tab binding, document-generation identity, and cross-context RPC target equivalence SHALL treat `URL.hash` as an in-document position rather than document identity. The Runtime domain SHALL remain `document.location.origin`. Background and Offscreen routing SHALL preserve the exact trusted tab id supplied by extension sender context, validate it against the background-owned Tabs API registry, and compare one canonical document-navigation identity containing scheme, host, port, path, and query while excluding only fragment. Payload-supplied tab identity SHALL not become trusted.
 
-A direct page URL containing a fragment SHALL complete coordinator/Runtime attachment and mount the existing Shadow UI exactly once. Changing only hash after mount or during the initial handshake SHALL retain the same page id, lease, Runtime domain, logical presence, and UI mount; it SHALL produce no join/leave or remount. A real navigation that changes the document, path, or query MAY replace the page through the existing unload/new-content lifecycle, but a response owned by the prior document SHALL not settle the new one. Recycled tab id, wrong tab, untrusted sender, wrong namespace/direction, missing target, and stale provider response SHALL remain denied.
+A direct page URL containing a fragment SHALL complete coordinator/Runtime attachment and mount the existing Shadow UI exactly once. Changing only hash after mount or during the initial handshake SHALL retain the same trusted tab binding, document generation, logical lease, Runtime domain, logical presence, and UI mount; it SHALL produce no join/leave or remount. Reload or a real same-domain eligible navigation that changes the document, path, or query SHALL replace document generation and rebind the same trusted tab without replacing logical presence, but a response owned by the prior document SHALL not settle the new one. Navigation outside eligibility or to another Runtime domain SHALL release the old domain binding. Recycled tab id, wrong tab, untrusted sender, wrong namespace/direction, missing target, and stale provider response SHALL remain denied.
 
-The repair SHALL not query or broadcast to every same-origin tab, route by origin alone, remove response correlation, add fragment-specific business logic, or add a pre-App loading/unavailable/Retry/status fallback. The existing bootstrap SHALL still mount only after valid `initClient()` settlement; this change restores that exact response route.
+Response routing SHALL not query or broadcast to every same-origin tab, route by origin alone, remove response correlation, add fragment-specific business logic, or add a pre-App loading/unavailable/Retry/status fallback. Tabs API inventory used only to reconstruct physical tab ownership SHALL not become a response-delivery broadcast. The existing bootstrap SHALL still mount only after valid `initClient()` settlement; this change restores that exact response route.
 
 #### Scenario: Direct fragment URL mounts the control
 
@@ -70,7 +70,7 @@ The repair SHALL not query or broadcast to every same-origin tab, route by origi
 
 - **GIVEN** the WebChat control is mounted and joined
 - **WHEN** only `location.hash` changes
-- **THEN** the same page id, lease, domain, UI mount, and logical presence SHALL remain, with zero reconnect, join, leave, or lifecycle notice
+- **THEN** the same trusted tab binding, document generation, logical lease, domain, UI mount, and logical presence SHALL remain, with zero reconnect, join, leave, or lifecycle notice
 
 #### Scenario: In-flight hashchange preserves the first handshake
 
@@ -84,11 +84,63 @@ The repair SHALL not query or broadcast to every same-origin tab, route by origi
 - **WHEN** that tab is recycled or genuinely navigates to a different scheme, host, port, path, or query before the response arrives
 - **THEN** the old response SHALL be rejected and SHALL not settle the replacement page, while another same-origin tab receives nothing
 
+### Requirement: Background Tabs API owns physical tab lifetime
+
+The background coordinator SHALL own one current host-to-tabs registry for physical browser-tab lifetime. One Runtime host MAY own multiple eligible tabs, and each live `tabId` SHALL occur at most once in the current host registry. Content-to-background comctx metadata MAY carry tab routing facts, but the background SHALL accept them only when extension-provided sender context and the current Tabs API state validate the exact tab and document binding. Page-supplied tab identity, an old host generation, an old document, or a recycled tab id SHALL not become current authority.
+
+Physical `tabId`, internal document generation, and logical `sessionId`/`presenceId`/`joinedAt` SHALL remain separate identities. Tab id SHALL route and own the physical browser tab; document generation SHALL fence reload and real-navigation responses; logical identity SHALL own membership and notice time. Tab id SHALL not replace logical session identity, and a random page id SHALL not replace browser tab ownership. Multiple tabs in the same Runtime domain SHALL remain distinct physical owners of the same shared domain connection and logical presence rather than creating one logical generation per tab.
+
+Only a trusted browser tab-removal fact, navigation outside content eligibility, or navigation to another Runtime domain SHALL release the old domain tab binding. Inactive, hidden, frozen, discarded, ping-missing, heartbeat-missing, or Port-disconnected state SHALL not release physical tab ownership, start last-tab grace, delete membership, or publish SESSION_END. Connectivity loss MAY only start or join the current bounded ClientLease recovery.
+
+Hash-only navigation SHALL retain the current tab, document generation, page attachment, and logical presence. Reload or same-domain eligible document navigation SHALL replace document generation and idempotently reattach the same tab and logical presence. After supported background or Runtime host replacement, the coordinator SHALL reconstruct one registry from still-existing eligible tabs and trusted reattachments, without a false logical join/leave, duplicate lease, origin-wide response route, or parallel Runtime lifecycle owner.
+
+#### Scenario: Inactive or disconnected page remains present
+
+- **GIVEN** an eligible tab is registered to the current host and owns a logical presence
+- **WHEN** the tab becomes inactive, hidden, frozen, or discarded, or its page ping, heartbeat, or Port disappears
+- **THEN** the background SHALL retain the tab owner and logical presence, MAY enter bounded connectivity recovery, and SHALL emit no domain release, SESSION_END, leave notice, or replacement logical join
+
+#### Scenario: Trusted close releases exactly once
+
+- **GIVEN** one host owns one or more eligible tabs and one tab owns a current domain binding
+- **WHEN** the Tabs API reports that exact tab removed
+- **THEN** only that physical tab owner SHALL be removed exactly once, and the existing domain last-tab/grace/final-release rules SHALL run only if no other tab still owns that domain
+
+#### Scenario: Same-domain tabs share logical membership
+
+- **GIVEN** one host owns two eligible tabs in the same Runtime domain
+- **WHEN** both attach and either non-last tab closes
+- **THEN** the registry SHALL retain two distinct physical tab owners before close and one after close, while Runtime retains one shared logical presence and emits no extra join, leave, SESSION_END, or lifecycle notice
+
+#### Scenario: Navigation changes the owned domain boundary
+
+- **GIVEN** an eligible tab owns a binding for Runtime domain A
+- **WHEN** it navigates outside eligibility or to eligible Runtime domain B
+- **THEN** the A binding SHALL release exactly once; an eligible B document MAY establish its own binding, and unchanged tab id SHALL not carry A's logical presence into B
+
+#### Scenario: Same-domain document replacement preserves logical presence
+
+- **GIVEN** an eligible tab owns a current logical presence for one Runtime domain
+- **WHEN** that tab reloads or performs a same-domain eligible document navigation
+- **THEN** a new document generation SHALL rebind to the same tab and logical presence, every old-document response SHALL be inert, and no join, leave, SESSION_END, duplicate lease, or lifecycle notice SHALL result
+
+#### Scenario: Host replacement reconstructs multiple tabs
+
+- **GIVEN** one host owns multiple current eligible tabs and the background or Runtime host is replaced
+- **WHEN** the coordinator inventories browser tabs and receives trusted current reattachments
+- **THEN** the replacement host SHALL reconstruct each still-existing eligible tab exactly once, resurrect no absent or ineligible tab, and preserve logical presence without duplicate rooms, leases, joins, leaves, or notices
+
+#### Scenario: Untrusted or reused tab identity is rejected
+
+- **GIVEN** comctx metadata names a tab that conflicts with sender context or current Tabs API state, or an old host/document message uses a tab id after its prior binding ended
+- **WHEN** the background handles that message
+- **THEN** it SHALL reject the binding or response without mutating current ownership, connectivity, logical membership, feedback, or another tab
+
 ### Requirement: ClientLease recovery and connecting feedback are bounded
 
 Each ClientLease lifecycle SHALL own at most one current startup or recovery generation. Repeated watchdog failure, generation/host-id/page-attachment mismatch, and overlapping recovery calls SHALL share that generation rather than issue parallel attach sequences or reset its budget. The existing 15,000ms startup/recovery timeout SHALL be one overall generation deadline. Every `registerPage()` and `attachPage()` attempt SHALL have a hard deadline no greater than 5,000ms and no greater than the generation's remaining budget. Expiry SHALL cancel that request's local ownership and reject the attempt; bounded retry MAY continue only inside the original overall deadline.
 
-A fresh `init()` or `detach()` SHALL abort the prior lifecycle and retire its requests. A response or rejection from an expired, aborted, detached, or superseded request SHALL be ignored and SHALL NOT publish HostPhase, replace a snapshot, start a watchdog, settle a newer recovery, or detach/unregister the current winning lease. Host replacement, Port loss, missing response, and a provider that remains pending forever SHALL therefore settle the current generation as `ready` after one valid current attachment or `unavailable` when its original budget is exhausted. No path SHALL leave HostPhase permanently `connecting`.
+A fresh `init()` or page-context `detach()` SHALL abort the prior connectivity lifecycle and retire its requests. Page detach alone SHALL not remove the background-owned physical tab binding or logical presence. A response or rejection from an expired, aborted, detached, or superseded request SHALL be ignored and SHALL NOT publish HostPhase, replace a snapshot, start a watchdog, settle a newer recovery, release the current tab owner, or unregister the winning logical lease. Host replacement, Port loss, missing response, and a provider that remains pending forever SHALL therefore settle the current connectivity generation as `ready` after one valid current attachment or `unavailable` when its original budget is exhausted, while physical leave remains owned by the Tabs API requirement. No path SHALL leave HostPhase permanently `connecting`.
 
 Readiness presentation SHALL remain downstream of Runtime truth. Every current page Refresh or recovery generation SHALL publish its existing owner-scoped `Connecting` loading entry when the operation starts, including attachment to an already healthy retained Runtime, and SHALL keep that owner current while the operation is active. Current ready SHALL dismiss only that entry and SHALL publish neither `Ready to chat` nor another success descriptor. Unavailable SHALL replace the same entry no later than the original 15,000ms deadline. Detach, remount, abort, or supersession SHALL retire only the old owner's feedback, and stale settlement SHALL not dismiss or replace a newer owner's entry. Presentation SHALL NOT delay operation, extend the recovery budget, add another readiness state, or change the Toast renderer, structure, or visual style.
 
@@ -96,7 +148,7 @@ Readiness presentation SHALL remain downstream of Runtime truth. Every current p
 
 - **GIVEN** the Runtime host remains healthy and ready while one content document is refreshed
 - **WHEN** the new page lifecycle registers and attaches successfully
-- **THEN** exactly one owner-scoped `Connecting` entry SHALL be observable while attachment is active and dismissed by current ready, exactly one current page lease and application mount SHALL result, and no `Ready to chat`, unavailable feedback, host replacement, or logical join/leave SHALL be caused by the refresh
+- **THEN** exactly one owner-scoped `Connecting` entry SHALL be observable while attachment is active and dismissed by current ready, exactly one current tab binding, document attachment, logical lease, and application mount SHALL result, and no `Ready to chat`, unavailable feedback, host replacement, or logical join/leave SHALL be caused by the refresh
 
 #### Scenario: Pending register or attach cannot exceed its deadline
 
@@ -112,7 +164,7 @@ Readiness presentation SHALL remain downstream of Runtime truth. Every current p
 
 #### Scenario: Concurrent recovery signals share one owner
 
-- **GIVEN** a watchdog failure and one or more generation, host-id, or page-lease mismatch signals overlap
+- **GIVEN** a watchdog failure and one or more generation, host-id, or page-attachment mismatch signals overlap
 - **WHEN** recovery is already in flight for the current lifecycle
 - **THEN** every signal SHALL join one recovery task, deadline, register/attach sequence owner, and feedback generation without parallel attempts or budget reset
 
@@ -120,7 +172,7 @@ Readiness presentation SHALL remain downstream of Runtime truth. Every current p
 
 - **GIVEN** an old RPC expired, was aborted by detach/init, or belongs to a superseded recovery, and a newer current lease exists
 - **WHEN** the old RPC later resolves or rejects
-- **THEN** it SHALL not publish ready/unavailable, replace the snapshot, start a watchdog, clear current feedback, settle the newer task, or release the winner's lease
+- **THEN** it SHALL not publish ready/unavailable, replace the snapshot, start a watchdog, clear current feedback, settle the newer task, release the winner's tab binding, or unregister its logical lease
 
 #### Scenario: Active Connecting always reaches a terminal state
 
@@ -164,9 +216,9 @@ When the current owner reaches ready, genuine failure, cancellation, or another 
 - **WHEN** the older owner later succeeds, fails, cancels, detaches, or reaches its minimum dwell
 - **THEN** it SHALL not stop the icon, enable Refresh, clear current feedback, or otherwise alter the newer owner's disabled rotating state
 
-### Requirement: Six repairs share one acceptance authority
+### Requirement: Seven repairs share one acceptance authority
 
-The Refresh recovery baseline with request-local success dismissal, disabled rotating control projection, disconnected-peer repair, supersession cancellation, logical join-time repair, fragment-insensitive startup, and bounded ClientLease recovery SHALL be delivered as one cumulative immutable source exact. Every current manual Refresh or recovery SHALL show its owner-scoped `Connecting` feedback while active, and every current manual or direct/automatic Chat connection loading owner SHALL disable and rotate the existing Refresh control. A successful manual Refresh SHALL dismiss only its own loading entry after the accepted dwell and SHALL NOT publish `Ready to chat`; a genuine failure SHALL retain the matching error Toast while ending control loading. Intermediate heads and evidence from `a6021495` or invalid `9beec650...` SHALL remain diagnostic only and SHALL not authorize final review, QA, checkout synchronization, publication, or release. The final exact SHALL receive fresh Reviewer and QA decisions on the complete combined matrix, followed by one Owner six-scenario product acceptance.
+The Refresh recovery baseline with request-local success dismissal and disabled rotating control projection, disconnected-peer repair, supersession cancellation, logical join-time repair, fragment-insensitive startup, bounded ClientLease recovery, and Tabs API-owned physical tab lifetime SHALL be delivered as one cumulative immutable source exact. Every current manual Refresh or recovery SHALL show its owner-scoped `Connecting` feedback while active, and every current manual or direct/automatic Chat connection loading owner SHALL disable and rotate the existing Refresh control. A successful manual Refresh SHALL dismiss only its own loading entry after the accepted dwell and SHALL NOT publish `Ready to chat`; a genuine failure SHALL retain the matching error Toast while ending control loading. Ping/Port loss SHALL remain connectivity-only and SHALL not create physical or logical leave while the trusted tab still exists. Intermediate heads and evidence from `a6021495` or invalid `9beec650...` SHALL remain diagnostic only and SHALL not authorize final review, QA, checkout synchronization, publication, or release. The final exact SHALL receive fresh Reviewer and QA decisions on the complete combined matrix, followed by one Owner seven-scenario product acceptance.
 
 #### Scenario: Manual Refresh success dismisses only its Connecting owner
 
@@ -182,13 +234,13 @@ The Refresh recovery baseline with request-local success dismissal, disabled rot
 
 #### Scenario: Partial success does not authorize delivery
 
-- **WHEN** any subset of the six repairs has a passing implementation or prior evidence
+- **WHEN** any subset of the seven repairs has a passing implementation or prior evidence
 - **THEN** no partial head SHALL be synchronized or published as the requested repair, and the remaining outcomes SHALL stay part of the same final candidate
 
-#### Scenario: Final acceptance covers all six outcomes
+#### Scenario: Final acceptance covers all seven outcomes
 
 - **WHEN** the final cumulative exact passes fresh independent Reviewer and QA gates
-- **THEN** the Owner SHALL verify six scenarios before publication authority exists: failed-join manual Refresh and direct/automatic connection loading both show Connecting and disable/rotate Refresh until the same owner terminates, with successful manual retry dismissing its entry without a success Toast; disconnected-peer retry; multi-page identity update without supersession Toast; exact A-before-B notice projections; direct fragment-URL startup; and retained-Runtime refresh with bounded active-to-terminal Connecting
+- **THEN** the Owner SHALL verify seven scenarios before publication authority exists: failed-join manual Refresh and direct/automatic connection loading both show Connecting and disable/rotate Refresh until the same owner terminates, with successful manual retry dismissing its entry without a success Toast; disconnected-peer retry; multi-page identity update without supersession Toast; exact A-before-B notice projections; direct fragment-URL startup; retained-Runtime refresh with bounded active-to-terminal Connecting; and one host with multiple tabs where inactivity/connectivity loss preserves presence while trusted close or eligibility/domain exit releases exactly once
 
 ### Requirement: Peer wire protocol is replaced with v3 without compatibility
 
@@ -205,6 +257,143 @@ The peer-to-peer wire protocol SHALL use the v3 contract defined by the `peer-wi
 - **THEN** old protocol schemas, the JSONR interop adapter, page-side message routing, reaction toggle, history upsert, HLC-only history cursor, and v1/v2 active namespace inputs SHALL be absent
 
 ## MODIFIED Requirements
+
+### Requirement: Background is the sole host coordinator
+
+The extension background SHALL be the only coordinator allowed to create or rebuild the Runtime host. Creation SHALL be single-flight: concurrent page requests SHALL wait for the same ready result. While at least one eligible physical tab remains in the background-owned Tabs API registry, a missing or destroyed Runtime within the live coordinator's supported host context SHALL be recreated automatically without user action. For Chrome/Edge, the Service Worker coordinator SHALL retain the trusted host-to-tabs registry and host-phase observations outside the Offscreen host, so Offscreen destruction is recoverable; after host creation it SHALL replay idempotent attach Commands for each current eligible tab into `LifecycleDomain`. Page Port, ping, heartbeat, visibility, freeze, and discard observations SHALL remain connectivity inputs only and SHALL NOT remove tab ownership or drive domain release. `LifecycleDomain` SHALL remain the unique owner of domain leases, ref-count, grace, and release State; the coordinator SHALL NOT keep a parallel domain lease/grace map. For Firefox, the coordinator and Runtime host SHALL share the persistent Background Page; supported recovery SHALL be limited to in-context `HostOwner` replacement, while a browser process restart SHALL be recovered when Firefox recreates the Background Page and restored eligible tabs idempotently reattach. Direct `backgroundView.close()` SHALL be outside the supported recoverable lifecycle and SHALL NOT require an event page, reload watchdog, or business fallback. A page watchdog MAY supplement Chrome/Edge probing but SHALL NOT be a tab-lifetime or leave controller. The background coordinator itself MAY be suspended or restarted by the browser; after such a supported restart it SHALL inventory current eligible tabs through the Tabs API, validate trusted current reattachments, reconstruct one host-to-tabs registry and one host, and dispatch idempotent attach Commands without producing duplicate tab owners, Lifecycle leases, hosts, or physical rooms.
+
+#### Scenario: Concurrent creation requests
+
+- **WHEN** multiple pages detect a missing Runtime at the same time
+- **THEN** exactly one host creation SHALL proceed and all pages SHALL attach to its single ready result
+
+#### Scenario: Automatic rebuild in a supported host context
+
+- **WHEN** Chrome/Edge destroys its Offscreen host, or Firefox replaces an in-context Runtime provider, while an eligible tab remains in the current host registry
+- **THEN** the coordinator SHALL rebuild the supported host context and re-establish each affected domain's connections and the WorldRoom without user action or a new logical join
+
+#### Scenario: Stale Offscreen document
+
+- **WHEN** the Offscreen document still exists but the Runtime provider or its identity probe does not respond while an eligible tab remains registered
+- **THEN** the background health sweep SHALL close and recreate the stale document, verify the replacement provider, and replay idempotent attach Commands for current eligible tabs into the replacement Lifecycle Domain without requiring a page watchdog or retaining a parallel lease map
+
+#### Scenario: DOM-free MV3 health probe
+
+- **WHEN** the Chrome/Edge background service worker probes a newly created or steady-state Offscreen Runtime
+- **THEN** the injector SHALL operate without `window`, `document`, or content-page location metadata and SHALL validate the responding provider identity
+
+#### Scenario: Single Firefox replacement owner
+
+- **WHEN** the Firefox persistent Background Page replaces its in-context Runtime
+- **THEN** it SHALL dispose the old comctx provider listener, Remesh store, room transport, and Artico peer before exposing one replacement, leaving exactly one provider and physical Runtime
+
+#### Scenario: Chrome MV3 Offscreen destruction recovery
+
+- **WHEN** the production Chrome MV3 Offscreen document is directly destroyed while the Service Worker coordinator retains at least one eligible physical tab owner
+- **THEN** the coordinator SHALL automatically recreate the Offscreen host, re-instantiate the shared Runtime, replay idempotent Lifecycle attaches for current tabs, and restore Runtime readiness and room participation without page-owned fallback, false logical join/leave, or duplicate domain lease authority
+
+#### Scenario: Firefox MV2 process restart recovery
+
+- **WHEN** the test-owned Firefox process is terminated and restarted with the same isolated profile and the target tab is restored, with the harness reinstalling the same exact temporary XPI only as setup if process exit removed it
+- **THEN** the test SHALL observe one persistent Background Page, Runtime rejoin, page `ONLINE`, and state re-projection; profile and tab continuity SHALL be asserted separately, and the harness SHALL NOT claim product auto-reinstallation
+
+#### Scenario: Firefox persistent-page boundary
+
+- **WHEN** a diagnostic harness directly closes the Firefox persistent Background Page through `backgroundView.close()`
+- **THEN** the result SHALL be recorded as negative evidence of the platform's non-recoverable persistent-page boundary rather than a product failure, and SHALL NOT motivate an event page, reload watchdog, or business fallback
+
+#### Scenario: Deterministic Firefox HostOwner swap
+
+- **WHEN** the Firefox host is disposed and replaced during lifecycle recovery
+- **THEN** deterministic `HostOwner` dispose/swap tests SHALL prove that the old provider, store, rooms, and peer are fully disposed before exactly one replacement is exposed
+
+#### Scenario: Observable steady-state host loss
+
+- **WHEN** the coordinator detects provider loss or replacement failure after startup
+- **THEN** Lifecycle-backed Runtime snapshots exposed to pages SHALL report the resulting `connecting` or `unavailable` phase instead of a hard-coded `ready` value, while the trusted tab registry and logical presence remain owned
+
+#### Scenario: Coordinator restart
+
+- **WHEN** the background coordinator itself is suspended or restarted by the browser
+- **THEN** it SHALL inventory current eligible tabs, validate trusted current reattachments, reconstruct one host-to-tabs registry and one host, and dispatch idempotent Lifecycle attach Commands without producing duplicate tab owners, domain leases, hosts, logical joins, or physical rooms
+
+### Requirement: Unified five-second lifecycle grace
+
+When the last authoritative physical tab binding of a domain is removed because the trusted tab closed, lost content eligibility, or moved to another Runtime domain, `LifecycleDomain` SHALL uniquely own one unified five-second grace phase/deadline. Page ping, heartbeat, Port, visibility, freeze, discard, page-context detach, and connectivity timeout SHALL NOT start this grace while the physical tab binding remains. During grace, Connection SHALL retain that domain's ChatRoom connection, Session/History SHALL retain domain State, Delivery SHALL retain the volatile inbound un-ACK buffer, and World SHALL retain domain presence. On grace expiry, the Lifecycle domain-released Event SHALL begin a fenced final release: Session SHALL persist the retired private presence record with an unsettled final-end identity before publishing SESSION_END, retain that identity until the send settles, durably replace it with settled-cleanup ownership, and then remove that marker. Session's authoritative finalization state SHALL reject text/reaction allocation and live send from pending retirement through physical release. Connection SHALL physically leave Chat or the last World room only after marker removal succeeds. A trusted eligible tab binding for the same domain that returns within grace SHALL cancel grace through Lifecycle and read the current Runtime snapshot without a false offline/online transition. No persistent outbound outbox or delivery-status retry survives a successfully completed grace release; only the separately specified volatile inbound un-ACK buffer participates in this lifecycle.
+
+#### Scenario: Refresh retains the tab owner without grace
+
+- **WHEN** a user refreshes the only eligible tab of a domain and its old page context disconnects before the new document attaches
+- **THEN** the background SHALL retain the same physical tab binding, Lifecycle grace SHALL not start, and the domain connection and state SHALL continue without re-join flapping, presence flicker, or message loss caused by the refresh
+
+#### Scenario: Connectivity loss does not impersonate final release
+
+- **GIVEN** the only eligible tab of a domain remains open
+- **WHEN** its ping, heartbeat, Port, visibility, frozen, discarded, or page-context attachment state is lost
+- **THEN** bounded connectivity recovery MAY run, but no domain grace, SESSION_END, observer leave, or physical room departure SHALL begin
+
+#### Scenario: Application reconnect preserves the logical generation
+
+- **GIVEN** the application Reconnect Effect retains the frozen `leaveRoom()` then `joinRoom(command)` composition
+- **WHEN** the Runtime ChatRoom implementation executes that composition for an active domain
+- **THEN** `leaveRoom()` SHALL invoke current-domain Runtime reconnect rather than final logical release, the replacement physical Chat session SHALL reuse the same `presenceId`, World SHALL remain physically joined, and local plus observer views SHALL receive snapshots without SESSION_END, logical join/leave, or another notice
+
+#### Scenario: Durable retirement rejects
+
+- **GIVEN** a committed active presence generation and a PresenceStore that rejects the retired record
+- **WHEN** final release begins
+- **THEN** the same active durable and in-memory lease, Chat/World physical membership, History state, World desired presence, and joined Runtime snapshot SHALL remain; no SESSION_END, observer leave, or physical departure SHALL occur; the pending release fence SHALL be removed so allocation and live send remain usable; and the existing Runtime error path SHALL surface a retryable request-local failure
+
+#### Scenario: Retirement succeeds after storage recovery
+
+- **GIVEN** a prior retirement attempt was fenced by storage rejection and the PresenceStore later recovers
+- **WHEN** final release is requested again
+- **THEN** the same generation SHALL persist one retired identity before exactly one SESSION_END settles, durably transition it to settled-cleanup ownership, remove that marker, and only then SHALL Connection physically leave Chat and the last World room while observers classify one leave
+
+#### Scenario: Every non-active final-release phase fences live authority
+
+- **GIVEN** Session has a pending release in `retiring`, `retrying`, `publishing`, `pending`, `settling`, `settlement-failed`, `cleaning`, or `cleanup-failed`, or has restored `inflightEnd`, `pendingEnd`, or `settledEnd` without an active `local` lease
+- **WHEN** the current or replacement host requests text allocation, reaction allocation, or live Chat send
+- **THEN** both Server preflight and the authoritative Session Command SHALL reject before HLC allocation or Wire send, no live frame SHALL be added, and successful marker cleanup SHALL retain that fence until physical domain release completes
+
+#### Scenario: SESSION_END send rejects
+
+- **GIVEN** durable retirement succeeded but the SESSION_END send rejects
+- **WHEN** the send failure settles
+- **THEN** Session SHALL durably transition that generation from in-flight to retryable pending final end, Connection SHALL retain Chat/World physical membership and publish no false local departure, and a later same-host final-release request SHALL durably transition the same marker back to in-flight before retrying the idempotent end
+
+#### Scenario: Host replacement continues an unsettled final end
+
+- **GIVEN** durable retirement succeeded and a first or retry SESSION_END is unsettled or explicitly rejected
+- **WHEN** the Runtime host is replaced and the same user invokes join before END settlement
+- **THEN** the replacement SHALL use the retained `presenceId` only to physically rebind and continue the same END transaction, SHALL expose no successful active join or live-message authority, and SHALL finish with at most one observer leave plus no persistent marker; a subsequent explicit join SHALL allocate a new generation
+
+#### Scenario: Post-settlement cleanup rejects
+
+- **GIVEN** SESSION_END settled and Session durably replaced the unsettled identity with private settled-cleanup ownership
+- **WHEN** marker removal rejects
+- **THEN** Session SHALL retain settled-cleanup ownership and Chat/World physical membership still owned by the current host, surface a request-local error, publish no second SESSION_END merely to retry cleanup in the same host, and permit physical departure only after later marker removal succeeds
+
+#### Scenario: Host replacement assumes settled cleanup ownership
+
+- **GIVEN** the observer ledger accepted SESSION_END and durable settled-cleanup ownership remains after a cleanup rejection
+- **WHEN** the same user's replacement host invokes join
+- **THEN** it SHALL only remove that marker, SHALL join neither Chat nor World, SHALL publish no SESSION or SESSION_END, SHALL expose no active session or live-message authority, and SHALL preserve the observer's exactly-once leave; only a later explicit join MAY allocate a fresh `presenceId` and one new logical join
+
+#### Scenario: Readiness helper distinguishes mounted UI from convergence
+
+- **WHEN** automated acceptance observes an already-mounted usable chat textarea after a refresh or restart
+- **THEN** the helper SHALL accept that UI readiness immediately; a separate bounded eventual membership/presence wait MAY guard against a hang, and the five-second domain grace SHALL NOT be treated as a UI-convergence deadline
+
+#### Scenario: Grace expiry
+
+- **WHEN** no eligible physical tab binding for the domain returns within 5 seconds and durable retirement plus SESSION_END settlement succeed
+- **THEN** the ChatRoom connection, Runtime domain state, volatile inbound un-ACK delivery buffer, and WorldRoom presence for that domain SHALL all be released or removed in the required causal order, with no persistent outbound status or same-id crash retry retained
+
+#### Scenario: Event outside grace
+
+- **WHEN** an inbound event targets a domain that is unregistered or past its grace period
+- **THEN** the system SHALL discard the event because no persistence location exists for it
 
 ### Requirement: Runtime Chat session lifecycle
 
