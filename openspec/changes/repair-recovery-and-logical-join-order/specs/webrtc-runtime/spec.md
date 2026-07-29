@@ -136,31 +136,31 @@ Hash-only navigation SHALL retain the current tab, document generation, page att
 - **WHEN** the background handles that message
 - **THEN** it SHALL reject the binding or response without mutating current ownership, connectivity, logical membership, feedback, or another tab
 
-### Requirement: ClientLease recovery and connecting feedback are bounded
+### Requirement: ClientLease recovery and readiness feedback are bounded
 
 Each ClientLease lifecycle SHALL own at most one current startup or recovery generation. Repeated watchdog failure, generation/host-id/page-attachment mismatch, and overlapping recovery calls SHALL share that generation rather than issue parallel attach sequences or reset its budget. The existing 15,000ms startup/recovery timeout SHALL be one overall generation deadline. Every `registerPage()` and `attachPage()` attempt SHALL have a hard deadline no greater than 5,000ms and no greater than the generation's remaining budget. Expiry SHALL cancel that request's local ownership and reject the attempt; bounded retry MAY continue only inside the original overall deadline.
 
 A fresh `init()` or page-context `detach()` SHALL abort the prior connectivity lifecycle and retire its requests. Page detach alone SHALL not remove the background-owned physical tab binding or logical presence. A response or rejection from an expired, aborted, detached, or superseded request SHALL be ignored and SHALL NOT publish HostPhase, replace a snapshot, start a watchdog, settle a newer recovery, release the current tab owner, or unregister the winning logical lease. Host replacement, Port loss, missing response, and a provider that remains pending forever SHALL therefore settle the current connectivity generation as `ready` after one valid current attachment or `unavailable` when its original budget is exhausted, while physical leave remains owned by the Tabs API requirement. No path SHALL leave HostPhase permanently `connecting`.
 
-Readiness presentation SHALL remain downstream of Runtime truth. Every current page Refresh or actual connect/join/recovery operation SHALL publish its existing owner-scoped `Connecting` loading entry when that operation starts, including attachment to an already healthy retained Runtime, and SHALL keep that owner current while the operation is active. Passive polling, a provider identity probe, or a watchdog health check that has not promoted into an actual attachment, host rebuild, connect, join, or recovery operation SHALL publish no loading entry and SHALL not change Refresh control loading. If an observation proves repair is required, one feedback owner SHALL begin exactly at promotion and SHALL inherit the current lifecycle's remaining original deadline rather than resetting it. Current ready SHALL dismiss only that entry and SHALL publish neither `Ready to chat` nor another success descriptor. Unavailable SHALL replace the same entry no later than the original 15,000ms deadline. Detach, remount, abort, or supersession SHALL retire only the old owner's feedback, and polling or stale settlement SHALL not dismiss or replace a newer owner's entry. Presentation SHALL NOT delay operation, extend the recovery budget, add another readiness state, or change the Toast renderer, structure, or visual style.
+Readiness presentation SHALL remain downstream of Runtime truth. The fixed Runtime `AppFeedback` owner `webchat-runtime-readiness` SHALL be the sole loading owner. Every current page Refresh or actual connect/join/reattach/host rebuild/recovery operation SHALL activate that owner with the exact visible copy `Connected to the chat.` when the operation starts, including attachment to an already healthy retained Runtime, and SHALL keep it current while the operation is active. The past-tense copy SHALL still represent loading. `Toast.OnRoomSelfJoinRoomEffect` and its independent `SelfJoinRoomEvent -> LoadingCommand("Connected to the chat.")` random-owner producer SHALL be absent; the implementation SHALL NOT rename, reuse, hide, or otherwise preserve that effect or introduce a request-owned second loading Toast. Passive polling, a provider identity probe, or a watchdog health check that has not promoted into an actual attachment, host rebuild, connect, join, or recovery operation SHALL publish no loading entry and SHALL not change Refresh control loading. If an observation proves repair is required, the sole owner SHALL begin exactly at promotion and SHALL inherit the current lifecycle's remaining original deadline rather than resetting it. Current ready SHALL dismiss only that owner and SHALL publish neither `Ready to chat` nor another success descriptor. Unavailable SHALL replace the same owner no later than the original 15,000ms deadline. Detach, remount, abort, or supersession SHALL retire only the obsolete operation generation, and polling or stale settlement SHALL not dismiss or replace the current generation's entry. Presentation SHALL NOT delay operation, extend the recovery budget, add another readiness state, or change the Toast renderer, structure, or visual style.
 
-#### Scenario: Passive polling creates no Connecting state
+#### Scenario: Passive polling creates no readiness loading
 
 - **GIVEN** no manual Refresh, connect, join, attachment recovery, or host rebuild is active
 - **WHEN** a periodic poll, provider identity probe, or watchdog health check completes without promoting into one of those operations
-- **THEN** no `Connecting` entry or connection loading owner SHALL be created, Refresh SHALL remain in its ordinary eligibility state without polling-owned rotation, and the observation SHALL report no operation success or failure feedback
+- **THEN** no `Connected to the chat.` entry or connection loading owner SHALL be created, Refresh SHALL remain in its ordinary eligibility state without polling-owned rotation, and the observation SHALL report no operation success or failure feedback
 
 #### Scenario: Polling promotion starts one bounded recovery owner
 
 - **GIVEN** a poll or health probe is bounded by the current ClientLease lifecycle and no connection loading owner exists
 - **WHEN** the observation proves that an actual attachment, host rebuild, connect, join, or recovery operation is required
-- **THEN** exactly one owner-scoped `Connecting` entry and matching Refresh control loading SHALL begin at promotion, inherit the lifecycle's remaining original deadline without reset, and settle only with that actual operation
+- **THEN** exactly one fixed-owner `Connected to the chat.` loading entry and matching Refresh control loading SHALL begin at promotion, inherit the lifecycle's remaining original deadline without reset, and settle only with that actual operation
 
-#### Scenario: Healthy retained Runtime refresh shows only active Connecting
+#### Scenario: Healthy retained Runtime refresh shows only the sole readiness owner
 
 - **GIVEN** the Runtime host remains healthy and ready while one content document is refreshed
 - **WHEN** the new page lifecycle registers and attaches successfully
-- **THEN** exactly one owner-scoped `Connecting` entry SHALL be observable while attachment is active and dismissed by current ready, exactly one current tab binding, document attachment, logical lease, and application mount SHALL result, and no `Ready to chat`, unavailable feedback, host replacement, or logical join/leave SHALL be caused by the refresh
+- **THEN** exactly one fixed-owner `Connected to the chat.` loading entry SHALL be observable while attachment is active and dismissed by current ready, exactly one current tab binding, document attachment, logical lease, and application mount SHALL result, and no legacy self-join Toast, `Ready to chat`, unavailable feedback, host replacement, or logical join/leave SHALL be caused by the refresh
 
 #### Scenario: Pending register or attach cannot exceed its deadline
 
@@ -172,7 +172,7 @@ Readiness presentation SHALL remain downstream of Runtime truth. Every current p
 
 - **GIVEN** register/attach rejects, its Port or response route is lost, or the host is replaced during recovery
 - **WHEN** a later current attempt attaches a valid replacement before the original overall deadline
-- **THEN** the shared recovery generation SHALL settle ready once with the replacement snapshot and SHALL dismiss only its current `Connecting` entry without publishing a success descriptor
+- **THEN** the shared recovery generation SHALL settle ready once with the replacement snapshot and SHALL dismiss only the fixed `Connected to the chat.` owner without publishing a success descriptor
 
 #### Scenario: Concurrent recovery signals share one owner
 
@@ -186,21 +186,21 @@ Readiness presentation SHALL remain downstream of Runtime truth. Every current p
 - **WHEN** the old RPC later resolves or rejects
 - **THEN** it SHALL not publish ready/unavailable, replace the snapshot, start a watchdog, clear current feedback, settle the newer task, release the winner's tab binding, or unregister its logical lease
 
-#### Scenario: Active Connecting always reaches a terminal state
+#### Scenario: Active readiness loading always reaches a terminal state
 
-- **GIVEN** a current Refresh or recovery has published its stable owner-scoped `Connecting` entry
+- **GIVEN** a current Refresh or recovery has activated the fixed `Connected to the chat.` readiness owner
 - **WHEN** a current attachment succeeds or the original recovery budget expires
 - **THEN** the same readiness entry SHALL settle to dismissal on ready or unavailable error within that budget and SHALL never remain loading permanently
 
 ### Requirement: Refresh control projects current connection loading
 
-The existing mounted Refresh control SHALL project one current Chat connection loading owner rather than only a local click state. The current owner's Toast feedback entry and control SHALL remain strictly aligned: whenever that entry is `loading`, including direct/automatic connection or join, Runtime recovery, manual Refresh, and any accepted minimum loading dwell, the Refresh button SHALL be disabled and its refresh icon SHALL rotate continuously. Passive polling or a health probe without an actual connection operation SHALL create no loading owner and SHALL not disable or rotate Refresh. If polling promotes into real connection or recovery, both projections SHALL begin once at that transition. A control that mounts or re-renders while such an owner is already loading SHALL immediately project the same disabled rotating state. Repeated activation SHALL issue no concurrent Refresh while disabled. This requirement SHALL NOT mount a Refresh control before the existing `initClient()` bootstrap boundary or add alternate loading UI.
+The existing mounted Refresh control SHALL project the sole fixed Runtime readiness owner rather than only a local click state. Its `Connected to the chat.` Toast entry and control SHALL remain strictly aligned: whenever that owner is `loading`, including direct/automatic connection or join, Runtime reattachment, host rebuild, recovery, manual Refresh, and any accepted minimum loading dwell, the Refresh button SHALL be disabled and its refresh icon SHALL rotate continuously. Passive polling or a health probe without an actual connection operation SHALL create no loading owner and SHALL not disable or rotate Refresh. If polling promotes into real connection or recovery, both projections SHALL begin once at that transition. A control that mounts or re-renders while the owner is already loading SHALL immediately project the same disabled rotating state. Repeated activation SHALL issue no concurrent Refresh while disabled. This requirement SHALL NOT mount a Refresh control before the existing `initClient()` bootstrap boundary, add alternate loading UI, or create a click-, request-, or self-join-owned loading Toast.
 
-When the current owner reaches ready, genuine failure, cancellation, or another defined terminal outcome, its Toast entry SHALL leave `loading` and its control loading SHALL end in the same owner-scoped transition. Success dismisses the entry; genuine failure replaces it with the error and does not hide that error. The icon SHALL stop and ordinary Refresh eligibility SHALL be recomputed atomically. A failed connection/join with otherwise valid configuration SHALL therefore expose an enabled non-rotating retry control, while an unrelated static eligibility failure MAY keep the control disabled without rotation. Settlement from an expired, detached, aborted, or superseded owner SHALL not stop the icon, enable the button, or clear feedback while a newer owner remains loading. The control SHALL add no second loading owner, timer, connection truth, or browser-specific behavior.
+When the current operation generation reaches ready, genuine failure, cancellation, or another defined terminal outcome, the fixed owner's Toast entry SHALL leave `loading` and its control loading SHALL end in the same transition. Success dismisses the owner; genuine failure replaces it with the error and does not hide that error. The icon SHALL stop and ordinary Refresh eligibility SHALL be recomputed atomically. A failed connection/join with otherwise valid configuration SHALL therefore expose an enabled non-rotating retry control, while an unrelated static eligibility failure MAY keep the control disabled without rotation. Settlement from an expired, detached, aborted, or superseded generation SHALL not stop the icon, enable the button, or clear feedback while a newer generation remains loading. The control SHALL add no second loading owner, timer, connection truth, or browser-specific behavior.
 
 #### Scenario: Toast loading and Refresh control cannot diverge
 
-- **GIVEN** the current owner's Toast feedback entry exists in `loading`
+- **GIVEN** the fixed Runtime readiness owner's `Connected to the chat.` entry exists in `loading`
 - **WHEN** the existing Refresh control is rendered for any manual or direct/automatic Chat connection flow
 - **THEN** the button SHALL be disabled and its icon SHALL rotate for the complete same interval, with no frame or owner transition that leaves loading Toast feedback beside an enabled or static Refresh control
 
@@ -236,19 +236,19 @@ When the current owner reaches ready, genuine failure, cancellation, or another 
 
 ### Requirement: Seven repairs share one acceptance authority
 
-The Refresh recovery baseline with request-local success dismissal and disabled rotating control projection, disconnected-peer repair, supersession cancellation, logical join-time repair, fragment-insensitive startup, bounded ClientLease recovery, and Tabs API-owned physical tab lifetime SHALL be delivered as one cumulative immutable source exact. Every current manual Refresh or actual connect/join/recovery operation SHALL show its owner-scoped `Connecting` feedback while active, and every current manual or direct/automatic Chat connection loading owner SHALL disable and rotate the existing Refresh control. Passive polling or a health probe that has not promoted into such an operation SHALL create neither feedback nor control loading; promotion SHALL begin both once without resetting the current lifecycle deadline. A successful manual Refresh SHALL dismiss only its own loading entry after the accepted dwell and SHALL NOT publish `Ready to chat`; a genuine failure SHALL retain the matching error Toast while ending control loading. Ping/Port loss SHALL remain connectivity-only and SHALL not create physical or logical leave while the trusted tab still exists. Intermediate heads and evidence from `a6021495` or invalid `9beec650...` SHALL remain diagnostic only and SHALL not authorize final review, QA, checkout synchronization, publication, or release. The final exact SHALL receive fresh Reviewer and QA decisions on the complete combined matrix, followed by one Owner seven-scenario product acceptance.
+The Refresh recovery baseline with sole-owner success dismissal and disabled rotating control projection, disconnected-peer repair, supersession cancellation, logical join-time repair, fragment-insensitive startup, bounded ClientLease recovery, and Tabs API-owned physical tab lifetime SHALL be delivered as one cumulative immutable source exact. Every current manual Refresh or actual connect/join/reattach/host rebuild/recovery operation SHALL show the fixed Runtime readiness owner's exact `Connected to the chat.` copy while active, and that same owner SHALL disable and rotate the existing Refresh control. The legacy self-join producer SHALL be deleted so no independent random owner can coexist. Passive polling or a health probe that has not promoted into such an operation SHALL create neither feedback nor control loading; promotion SHALL begin both once without resetting the current lifecycle deadline. A successful manual Refresh SHALL dismiss only the fixed readiness owner after the accepted dwell and SHALL NOT publish `Ready to chat`; a genuine failure SHALL replace the same owner with the matching error while ending control loading. Ping/Port loss SHALL remain connectivity-only and SHALL not create physical or logical leave while the trusted tab still exists. Intermediate heads and evidence from `a6021495`, source exact `2f60913259f9ce834ffdf75f63eef87c9563e644`, or invalid `9beec650...` SHALL remain diagnostic only and SHALL not authorize final review, QA, checkout synchronization, publication, or release. The replacement exact SHALL receive fresh Reviewer and QA decisions on the complete combined matrix, followed by one Owner seven-scenario product acceptance.
 
-#### Scenario: Manual Refresh success dismisses only its Connecting owner
+#### Scenario: Manual Refresh success dismisses only the fixed readiness owner
 
-- **GIVEN** a current manual Refresh published its request-owned `Connecting` entry and unrelated Toasts also exist
+- **GIVEN** a current manual Refresh activated the fixed Runtime readiness owner's `Connected to the chat.` entry and unrelated Toasts also exist
 - **WHEN** that Refresh succeeds and its accepted minimum loading dwell completes
-- **THEN** the application SHALL dismiss only that request ID, SHALL publish no `Ready to chat` or other success descriptor, SHALL preserve unrelated Toasts, and SHALL leave no current Refresh feedback loading
+- **THEN** the application SHALL dismiss only the fixed readiness owner ID, SHALL publish no `Ready to chat` or other success descriptor, SHALL preserve unrelated Toasts, and SHALL leave no current Refresh feedback loading
 
 #### Scenario: Manual Refresh failure keeps the genuine error
 
-- **GIVEN** a current manual Refresh published its request-owned `Connecting` entry
+- **GIVEN** a current manual Refresh activated the fixed Runtime readiness owner's `Connected to the chat.` entry
 - **WHEN** the winning request fails for a genuine provider, Runtime, protocol, persistence, or join reason
-- **THEN** the same request entry SHALL become the genuine error feedback, SHALL not be silently dismissed as success, and SHALL leave the request/button lifecycle retryable rather than loading forever
+- **THEN** the same readiness entry SHALL become the genuine error feedback, SHALL not be silently dismissed as success, and SHALL leave the request/button lifecycle retryable rather than loading forever
 
 #### Scenario: Partial success does not authorize delivery
 
@@ -258,7 +258,7 @@ The Refresh recovery baseline with request-local success dismissal and disabled 
 #### Scenario: Final acceptance covers all seven outcomes
 
 - **WHEN** the final cumulative exact passes fresh independent Reviewer and QA gates
-- **THEN** the Owner SHALL verify seven scenarios before publication authority exists: passive polling shows no Connecting/control loading while failed-join manual Refresh and direct/automatic connection operations do show Connecting and disable/rotate Refresh until the same owner terminates, with polling promotion starting once without deadline reset and successful manual retry dismissing its entry without a success Toast; disconnected-peer retry; multi-page identity update without supersession Toast; exact A-before-B notice projections; direct fragment-URL startup; retained-Runtime refresh with bounded active-to-terminal Connecting; and one host with multiple tabs where inactivity/connectivity loss preserves presence while trusted close or eligibility/domain exit releases exactly once
+- **THEN** the Owner SHALL verify seven scenarios before publication authority exists: passive polling shows no readiness/control loading while failed-join manual Refresh and direct/automatic connection operations show exactly one `Connected to the chat.` readiness Toast and disable/rotate Refresh until that owner terminates, with polling promotion starting once without deadline reset and successful manual retry dismissing it without a success Toast; disconnected-peer retry; multi-page identity update without supersession Toast; exact A-before-B notice projections; direct fragment-URL startup; retained-Runtime refresh with bounded active-to-terminal readiness loading; and one host with multiple tabs where inactivity/connectivity loss preserves presence while trusted close or eligibility/domain exit releases exactly once
 
 ### Requirement: Peer wire protocol is replaced with v3 without compatibility
 
