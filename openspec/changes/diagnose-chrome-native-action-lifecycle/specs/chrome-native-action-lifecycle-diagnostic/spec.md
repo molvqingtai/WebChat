@@ -1,5 +1,53 @@
 ## ADDED Requirements
 
+### Requirement: Canonical Chrome executable authority is explicit and fail closed
+
+Before any persistent browser profile, CDP connection, worker discovery budget, lifecycle helper invocation, accepted target, or native action, the real test-owned Chrome adapter SHALL receive exactly one caller-injected absolute executable path. It SHALL NOT hardcode a branded application path, discover a browser, search `PATH` or application directories, use a default or fallback, select another executable after failure, or reuse an Owner browser.
+
+The adapter SHALL use one finite, non-resetting, maximum 10-second executable-precondition budget. Within that budget it SHALL resolve the requested path with `realpath`, require a regular file with execute access, compute SHA-256 identities for the requested path string, canonical path string, and executable bytes, and run exactly one bounded `--version` probe against the canonical executable. Probe output SHALL be capped at 512 bytes.
+
+The adapter SHALL accept only an exact `Google Chrome for Testing <version>` or `Chromium <version>` identity with a non-empty version. It SHALL reject branded `Google Chrome`, `Microsoft Edge`, every other derivative or unknown label, ambiguous or oversized output, a relative/missing/non-executable path, a symlink whose canonical target is rejected, non-zero probe exit, timeout, or any mismatch between the probed canonical path and the executable used for launch.
+
+Accepted evidence SHALL contain only the allowlisted product family, parsed version, requested-path SHA-256, canonical-path SHA-256, executable-byte SHA-256, bounded version-output SHA-256, and a derived privacy-safe executable identity token. Raw absolute paths SHALL remain transient adapter inputs and SHALL NOT enter the report, helper timeline, authorization, or chat evidence. The adapter SHALL pass only the privacy-safe token through the helper's existing browser-executable context field.
+
+Any missing, unsupported, ambiguous, changed, or unresolved executable identity SHALL produce a distinct `chrome-executable-precondition-failed` harness result. That result SHALL prove the bounded probe was cleaned and no persistent profile, CDP connection, helper timeline, worker discovery, accepted target, or native action began. It SHALL NOT be translated to `extension-setup-failed` or any other helper lifecycle outcome.
+
+#### Scenario: Chrome for Testing is explicitly supplied
+
+- **GIVEN** the caller supplies an absolute executable whose canonical file is executable and whose bounded identity is exactly `Google Chrome for Testing <version>`
+- **WHEN** the executable precondition completes within its original budget
+- **THEN** the adapter SHALL record the privacy-safe identity, launch exactly that canonical executable, and MAY proceed to the unchanged package-first worker fence
+
+#### Scenario: Chromium is explicitly supplied
+
+- **GIVEN** the caller supplies an absolute executable whose canonical file is executable and whose bounded identity is exactly `Chromium <version>`
+- **WHEN** the executable precondition completes within its original budget
+- **THEN** the adapter SHALL record the privacy-safe identity, launch exactly that canonical executable, and MAY proceed to the unchanged package-first worker fence
+
+#### Scenario: Executable is missing or implicit
+
+- **GIVEN** the caller omits the executable, supplies a relative path, or relies on a hardcode, default, discovery, `PATH` lookup, application scan, fallback, or Owner browser
+- **WHEN** canonical Chrome setup begins
+- **THEN** the adapter SHALL emit `chrome-executable-precondition-failed` before it creates a persistent profile or invokes the helper
+
+#### Scenario: Branded Chrome or Edge is supplied
+
+- **GIVEN** the executable identity is branded `Google Chrome`, `Microsoft Edge`, another derivative, or an unknown label
+- **WHEN** the version identity is classified
+- **THEN** the adapter SHALL reject it without starting lifecycle, worker discovery, an accepted target, or native action
+
+#### Scenario: Alias resolves to a rejected browser
+
+- **GIVEN** the requested path or filename appears acceptable but `realpath` resolves to a branded, non-executable, changed, or otherwise rejected binary
+- **WHEN** canonical identity is evaluated
+- **THEN** the canonical target SHALL control the result and the adapter SHALL fail the precondition without fallback
+
+#### Scenario: Executable identity cannot be completed
+
+- **GIVEN** the file is missing or non-executable, the probe exits non-zero, times out, exceeds 512 bytes, is ambiguous, or the launch path differs from the probed canonical path
+- **WHEN** the original precondition budget closes
+- **THEN** the adapter SHALL emit `chrome-executable-precondition-failed`, clean the probe, and record zero lifecycle/action side effects
+
 ### Requirement: Package-first discovery derives one exact worker identity
 
 Before it accepts an extension ID, the Chrome MV3 diagnostic SHALL parse the exact packaged manifest as structured JSON and require `manifest_version` equal to `3`, an object-valued `background`, and a non-empty string `background.service_worker`. The immutable candidate exact, package digest, and parsed packaged manifest SHALL be the roots of authority. A caller-supplied extension ID, the first observed extension worker, or a global one-worker inventory SHALL NOT be an identity root.
@@ -80,7 +128,7 @@ When one exact candidate exists and every current probe is resolved, the diagnos
 
 ### Requirement: Chrome lifecycle observation precedes the accepted content target
 
-The Chrome MV3 native-action diagnostic SHALL start an owned isolated-profile browser with `about:blank` as its only startup page and the exact unpacked production package. It SHALL establish target discovery, flattened auto-attach, Runtime execution-context, console, exception, Page navigation/lifecycle, and bounded DOM observation before it creates any manifest-accepted HTTPS target.
+Only after the executable precondition passes, the Chrome MV3 native-action diagnostic SHALL start one owned isolated-profile Chrome for Testing or Chromium process at the validated canonical executable with `about:blank` as its only startup page and the exact unpacked production package. It SHALL establish target discovery, flattened auto-attach, Runtime execution-context, console, exception, Page navigation/lifecycle, and bounded DOM observation before it creates any manifest-accepted HTTPS target.
 
 Before target creation, the diagnostic SHALL complete package-first discovery, derive the extension ID from one exact worker, bind its immutable target/session/ID/entry/manifest tuple, and establish the worker continuity observer. It SHALL then issue exactly one planned `Target.createTarget({ url: 'https://example.com/' })` request. It SHALL NOT adopt an accepted startup page, call `Page.navigate`, create a replacement accepted target, refresh, reload, retry, or repair a failed target.
 
@@ -104,7 +152,7 @@ Before target creation, the diagnostic SHALL complete package-first discovery, d
 
 ### Requirement: One exact binding owns all content lifecycle evidence
 
-The diagnostic SHALL bind the candidate exact, production-package digest, packaged worker entry and canonical manifest digest, owned profile and process generation, browser identity, derived extension ID, Service Worker target/session/entry/Runtime-manifest digest, completed worker decision fence, exact accepted URL, page target/session/main frame, and one absolute lifecycle deadline. All later worker, context, log, navigation, DOM, and action-authorization evidence SHALL refer to that same binding.
+The diagnostic SHALL bind the candidate exact, production-package digest, packaged worker entry and canonical manifest digest, owned profile and process generation, allowlisted browser product family/version and privacy-safe executable identity, derived extension ID, Service Worker target/session/entry/Runtime-manifest digest, completed worker decision fence, exact accepted URL, page target/session/main frame, and one absolute lifecycle deadline. All later worker, context, log, navigation, DOM, and action-authorization evidence SHALL refer to that same binding.
 
 An extension isolated context SHALL count only when its target, session, main frame, and extension origin match the binding. A worker, options page, host main world, foreign extension, unrelated page, destroyed target, replacement target, or prior process context SHALL NOT satisfy content injection.
 
@@ -160,7 +208,7 @@ The diagnostic MAY claim complete observation only after its explicit listener/s
 
 ### Requirement: Terminal Chrome lifecycle outcomes are mutually exclusive and fail closed
 
-The diagnostic SHALL emit exactly one terminal outcome:
+After executable precondition PASS and helper invocation, the diagnostic helper SHALL emit exactly one terminal outcome:
 
 - `extension-setup-failed` for packaged-manifest validation, bounded discovery, evidence capacity, unique exact-worker selection, canonical relation, or bound-worker continuity failure;
 - `target-lifecycle-failed` for sole-target creation, attach, navigation, destruction, replacement, or binding failure;
@@ -224,14 +272,16 @@ Fresh QA MAY perform one real native toolbar action only after authorization. It
 
 ### Requirement: The repository change remains a two-file support boundary
 
-The implementation SHALL add only `e2e/chrome-native-action-lifecycle.ts` and `e2e/chrome-native-action-lifecycle.test.ts`, plus checkbox-only progress updates in this change's `tasks.md`. The helper SHALL be dependency-free and driven through an injected test-owned adapter.
+The implementation SHALL add only `e2e/chrome-native-action-lifecycle.ts` and `e2e/chrome-native-action-lifecycle.test.ts`, plus checkbox-only progress updates in this change's `tasks.md`. The helper file SHALL have SHA-256 `6763e476722dd7b7675820b753806ea5908e13560eeef328a15d6ce4c27ff160`, and the focused test SHALL have SHA-256 `9f4a27172bf0f60446dd5f1c5776d14df95dc4c295e1c49c0e9d019eb7f2baa5`. The helper SHALL remain dependency-free and driven through an injected test-owned adapter.
+
+The real adapter that performs executable precondition and CDP orchestration SHALL remain a test-owned QA artifact outside tracked repository scope. Its source SHALL be frozen by SHA-256 before Review and canonical QA. It MAY replace the task #309 branded executable hardcode only with explicit input, executable validation, privacy-safe identity evidence, and the controls in this specification. It SHALL NOT change helper/package/product/lifecycle semantics or add a third tracked implementation file.
 
 All existing E2E and Firefox support files, product source, WXT configuration, generated manifest/permissions, dependencies/lockfile, package scripts, existing timeouts, Runtime/coordinator/Offscreen/protocol/storage/UI, workflows/CI, reports, release metadata, and Owner checkout SHALL remain unchanged.
 
 #### Scenario: Review direct implementation scope
 
 - **WHEN** the implementation exact is compared with this docs authority
-- **THEN** its direct changes SHALL be limited to the two new diagnostic files and checkbox-only task progress, with every protected path byte-identical
+- **THEN** its direct changes SHALL be limited to the two digest-identical diagnostic files and checkbox-only task progress, with every protected path byte-identical and the real adapter preserved only as a separately hashed test artifact
 
 #### Scenario: Existing harness reuse requires an edit
 
@@ -240,11 +290,11 @@ All existing E2E and Firefox support files, product source, WXT configuration, g
 
 ### Requirement: Acceptance uses fresh exact-bound cross-browser evidence
 
-This superseding docs authority SHALL be a clean sole child of `8b6d1fb36986df45bd9435ba170b5675273180ff`, and its implementation SHALL be a clean sole child of the superseding docs exact. Blocked `bfdbfa3665a060443175ad54dd7eefb320199e79` SHALL be neither parent nor transferable evidence. Only repository bytes transfer from the docs parent; no QA #287, QA #298, intermediate static, Firefox, Chrome, action, Runtime, cleanup, Reviewer, or QA verdict transfers.
+This superseding docs authority SHALL be a clean sole child of `74d0c67eaf24f68bf731c8c9205cea7aa6c6792c`, and its implementation SHALL be a clean sole child of the superseding docs exact. Round 18 source exact `3ae2b81ebaf31dfd368affabdd387fe204929420`, blocked `bfdbfa3665a060443175ad54dd7eefb320199e79`, and every other candidate SHALL be neither parent nor transferable evidence. Only repository bytes transfer from the docs parent; the two recorded source digests constrain new bytes but transfer no verdict. No QA #287, QA #298, QA #309, intermediate static, Firefox, Chrome, action, Runtime, cleanup, Reviewer, or QA verdict transfers.
 
-One fresh Reviewer SHALL validate the immutable implementation, package-first identity root, canonical manifest relation, worker evidence/cardinality/continuity, deterministic chronology and branch controls, action gate, exact path scope, and protected surfaces. Only after Review PASS, one fresh QA seat SHALL rerun the complete real Chrome MV3 plus Firefox MV2 matrix from zero and own the first terminal verdict and zero-residual cleanup.
+One fresh Reviewer SHALL validate the immutable implementation, both tracked file digests, frozen real-adapter source digest and executable controls, package-first identity root, canonical manifest relation, worker evidence/cardinality/continuity, deterministic chronology and branch controls, action gate, exact path scope, and protected surfaces. Only after Review PASS, one fresh QA seat SHALL rerun the complete real Chrome MV3 plus Firefox MV2 matrix from zero and own the first terminal verdict and zero-residual cleanup.
 
-Chrome SHALL use the new `about:blank` observation sequence, preserve bounded evidence for every worker, derive the extension ID only from one package-matching exact worker, retain its continuity, create the accepted target once, reach `mounted`, perform one real native action, prove `afterOptionsCount - beforeOptionsCount = 1` and pre/post-action content Runtime on the same target, preserve the full diagnostic artifact, and report no unexpected error. Firefox SHALL rerun initial startup and two same-profile owned-process restarts under all existing exact action, Runtime, identity, and cleanup requirements.
+Chrome SHALL receive one explicit accepted Chrome for Testing or Chromium executable, freeze the adapter source SHA-256 and privacy-safe executable identity, pass precondition before lifecycle, use the new `about:blank` observation sequence, preserve bounded evidence for every worker, derive the extension ID only from one package-matching exact worker, retain its continuity, create the accepted target once, reach `mounted`, perform one real native action, prove `afterOptionsCount - beforeOptionsCount = 1` and pre/post-action content Runtime on the same target, preserve the full diagnostic artifact, and report no unexpected error. Firefox SHALL rerun initial startup and two same-profile owned-process restarts under all existing exact action, Runtime, identity, and cleanup requirements.
 
 #### Scenario: Prior Firefox PASS exists
 
@@ -258,6 +308,18 @@ Chrome SHALL use the new `about:blank` observation sequence, preserve bounded ev
 - **WHEN** the superseding implementation enters QA
 - **THEN** the prior equality failure SHALL remain diagnostic history and fresh QA SHALL reproduce package-first discovery and the complete worker evidence from zero
 
+#### Scenario: Prior branded-Chrome precondition blocker exists
+
+- **GIVEN** QA task #309 used branded Chrome, observed only a foreign worker, and stopped with `extension-setup-failed`
+- **WHEN** the superseding implementation enters QA
+- **THEN** task #309 SHALL remain immutable history, and fresh QA SHALL begin from executable precondition with a new adapter digest and one explicitly accepted Chrome for Testing or Chromium identity
+
+#### Scenario: Supported executable still exposes no exact worker
+
+- **GIVEN** executable precondition passed for an explicitly accepted Chrome for Testing or Chromium identity
+- **WHEN** the unchanged package-first deadline expires without the exact packaged worker
+- **THEN** the helper SHALL preserve the new `extension-setup-failed` artifact without retry or fallback, and follow-up SHALL route to a separate activation/observation authority
+
 #### Scenario: Chrome diagnostic passes but action does not
 
 - **GIVEN** Chrome reaches `mounted`
@@ -268,3 +330,8 @@ Chrome SHALL use the new `about:blank` observation sequence, preserve bounded ev
 
 - **WHEN** either browser reaches its first terminal failure
 - **THEN** QA SHALL stop without canonical retry, preserve the exact-bound artifact and cleanup result, and SHALL NOT aggregate prior or partial evidence into PASS
+
+#### Scenario: Executable precondition fails before Chrome lifecycle
+
+- **WHEN** the explicit executable is missing, rejected, ambiguous, changed, or unresolved
+- **THEN** QA SHALL freeze `chrome-executable-precondition-failed`, prove zero lifecycle/action side effects and zero residuals, stop without selecting another browser, and SHALL NOT represent it as a product-lifecycle verdict
