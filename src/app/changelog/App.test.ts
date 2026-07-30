@@ -1,0 +1,56 @@
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { describe, expect, it } from 'vitest'
+import { ChangelogView } from './App'
+
+const links = {
+  repository: 'https://github.com/molvqingtai/WebChat',
+  release: 'https://github.com/molvqingtai/WebChat/releases/tag/v2.0.1',
+  issues: 'https://github.com/molvqingtai/WebChat/issues/new'
+}
+
+describe('ChangelogView', () => {
+  it('renders the local release record and exact outbound commands', () => {
+    const html = renderToStaticMarkup(
+      createElement(ChangelogView, {
+        version: '2.0.1',
+        release: {
+          version: '2.0.1',
+          date: '2026-07-29',
+          body: '### Bug Fixes\n\n- Preserved `offline` notes.'
+        },
+        links
+      })
+    )
+
+    expect(html).toContain('WebChat v2.0.1')
+    expect(html).toContain('2026-07-29')
+    expect(html).toContain('Bug Fixes')
+    expect(html).toContain('data-release-spine="true"')
+    expect(html).toContain(`href="${links.repository}"`)
+    expect(html).toContain(`href="${links.release}"`)
+    expect(html).toContain(`href="${links.issues}"`)
+    expect(html).toContain('target="_blank"')
+    expect(html).toContain('rel="noopener noreferrer"')
+  })
+
+  it('renders a nonblank local fallback and suppresses remote Markdown media or raw HTML', () => {
+    const fallback = renderToStaticMarkup(createElement(ChangelogView, { version: '2.0.1', release: null, links }))
+    expect(fallback).toContain('Release notes are unavailable in this build.')
+    expect(fallback).toContain('WebChat v2.0.1')
+
+    const hostile = renderToStaticMarkup(
+      createElement(ChangelogView, {
+        version: '2.0.1',
+        release: {
+          version: '2.0.1',
+          date: '2026-07-29',
+          body: '![remote](https://evil.example/image.png)\n\n<script src="https://evil.example/run.js"></script>'
+        },
+        links
+      })
+    )
+    expect(hostile).not.toContain('https://evil.example/image.png')
+    expect(hostile).not.toContain('<script')
+  })
+})
