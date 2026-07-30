@@ -1,3 +1,3 @@
 # reset-version-mismatched-persistence-stores
 
-Reset message and configuration stores only when their own persisted versions differ from their target versions.
+Use one version-neutral canonical message identity and destructively reset message/configuration stores whenever their own physical identity or persisted version is incompatible.
