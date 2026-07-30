@@ -16,12 +16,12 @@ The persistence reset requirement owns the canonical message database, per-origi
 - Render the current release notes offline from the semantic-release-maintained `CHANGELOG.md`.
 - Show the installed version, release date when available, update notes, repository, exact Release, and issue-feedback destinations.
 - Let the existing Options version control reopen the internal page at any time.
-- Present that information as a compact single-release record built from the project's existing shadcn primitives, without the rejected decorative timeline or large empty bands.
+- Present that information as a compact single-release record with a centered header built from the project's existing shadcn primitives, without the rejected decorative timeline, header divider, or large empty bands.
 - Preserve cross-browser behavior, current permissions/dependencies, and persistence-version separation.
 
 **Non-Goals:**
 
-- Fetching GitHub releases, commits, contributors, avatars, Markdown, analytics, or remote images at runtime.
+- Fetching GitHub releases, commits, contributors, avatars, Markdown, analytics, ShieldCN badges, or remote images at runtime.
 - Replacing semantic-release, rewriting historical changelog entries, or creating a second release-note source of truth.
 - Opening on first install, browser updates, same-version extension reloads, content-script reinjection, or ordinary background restarts.
 - Treating a package version as a message/configuration persistence version or triggering any data reset.
@@ -72,7 +72,7 @@ The renderer SHALL not enable raw HTML and SHALL suppress Markdown images or any
 
 ### 3. The page is a compact shadcn release record, not a timeline or marketing surface
 
-The first viewport SHALL show the exact sentence-case eyebrow `New version`, identify `WebChat v<installed version>` as the primary heading, and show the release date when the current local section provides one. `New version` is a static release-record label in automatic, manual, and fallback views; it does not determine or report transition, pending, or acknowledgement state. The update-note body follows with its semantic headings, lists, commit/compare links, and inline code preserved. GitHub destinations SHALL be derived from existing package metadata rather than duplicated base URLs and SHALL be explicit commands:
+The first viewport SHALL center the local WebChat logo, product heading, installed version, and optional release date as one compact header. The visible `New version` eyebrow SHALL be removed, while the primary semantic heading SHALL continue to identify `WebChat v<installed version>`. The update-note body follows with its semantic headings, lists, commit/compare links, and inline code preserved. GitHub destinations SHALL be derived from existing package metadata rather than duplicated base URLs and SHALL be explicit commands:
 
 - repository home from `homepage`;
 - matching `<homepage>/releases/tag/v<installed version>`;
@@ -84,20 +84,20 @@ The Options version control SHALL navigate to the internal Changelog page instea
 
 The page SHALL use the existing WebChat logo and only existing visual primitives, support system light/dark preference, remain readable from narrow mobile-like extension windows through desktop widths, and expose semantic landmarks, heading order, action names, keyboard focus, and reduced-motion behavior. It SHALL not use a marketing hero, decorative gradients/orbs, a page-level or nested card, remote imagery, animation required for comprehension, feature instructions, or unrelated settings.
 
-The subject is one installed WebChat release and the user's single job is to scan what changed, then optionally open one of three destinations. The unique visual signature SHALL be a compact release stamp: the product heading and locally sourced logo are paired with shadcn version/date metadata, followed immediately by the semantic release notes. It encodes the installed artifact without pretending that one release is a multi-step timeline.
+The subject is one installed WebChat release and the user's single job is to scan what changed, then optionally open one of three destinations. The unique visual signature SHALL be a compact centered release stamp: the locally sourced logo sits above the product heading and shadcn version/date metadata, followed immediately by the semantic release notes. It encodes the installed artifact without pretending that one release is a multi-step timeline.
 
 The visual direction SHALL be specific to that job:
 
-- use the existing shadcn `background`, `foreground`, `muted`, `border`, `accent`, and focus-ring tokens for the shell and controls; reserve emerald for the restrained `New version` eyebrow/release accent and sky for inline Markdown links so the page does not become a one-note slate surface;
+- use the existing shadcn `background`, `foreground`, `muted`, `border`, `accent`, and focus-ring tokens for the shell and controls; reserve emerald for restrained release accents such as list markers and action icons, and sky for inline Markdown links so the page does not become a one-note slate surface;
 - the existing WebChat sans role for brand, heading, and body copy, with `ui-monospace` reserved for version/date/commit metadata and zero custom letter spacing;
 - one unframed reading column no wider than the existing `max-w-3xl` measure, with 24-32 CSS pixels of desktop outer padding and 16-24 pixels on narrow viewports;
-- one compact header in which the exact `New version` eyebrow, local logo, `WebChat` heading, shadcn `Badge` version, and optional outline date badge form one readable release stamp; the semantic heading name remains `WebChat v<installed version>` even when version is visually carried by the adjacent badge;
-- the first release-note heading begins within 32 CSS pixels of the header divider, with no forced section minimum height, vertical spine, timeline dot, or empty band used to fill the viewport; and
+- one compact centered header in which the local logo, `WebChat` heading, shadcn `Badge` version, and optional outline date badge form a vertical release stamp: logo above heading and a centered wrapping metadata row below; the semantic heading name remains `WebChat v<installed version>` even when version is visually carried by the badge;
+- no eyebrow, ShieldCN or other remote badge, bottom border, rule, or divider between the header and release notes; the first release-note heading begins within 32 CSS pixels of the centered metadata row, with no forced section minimum height, vertical spine, timeline dot, or empty band used to fill the viewport; and
 - a final responsive action group using the existing shadcn `Button` with `asChild`, `variant="outline"`, Lucide icon, visible text, and stable at-least-40-pixel height for Repository, exact Release, and Report an issue.
 
 The version SHALL use the existing `Badge` secondary treatment and the date, when present, SHALL use its outline treatment; absence of a release date omits that badge without reserving space. The three action buttons SHALL fill a three-column grid at desktop widths and a one-column stack at narrow widths. Notes SHALL use natural page scrolling: the existing `ScrollArea` SHALL not wrap or height-limit the document, because an internal scrollbar would add a second navigation surface without a bounded tool-panel need. Tables and code MAY retain local horizontal overflow containment.
 
-The header SHALL remain legible without oversized hero typography. The Markdown body SHALL keep compact, consistent heading/list/paragraph spacing and preserve inline-code and commit-link legibility. Motion is limited to existing Button/link focus and hover feedback and is removed under reduced-motion preference; the metadata Badges remain static labels rather than controls. The rendered fallback SHALL use the same header, density, and action group rather than a visually separate error card.
+The centered header SHALL remain legible without oversized hero typography and SHALL not reserve the deleted eyebrow's space. The Markdown body SHALL keep compact, consistent heading/list/paragraph spacing and preserve inline-code and commit-link legibility. Motion is limited to existing Button/link focus and hover feedback and is removed under reduced-motion preference; the local shadcn metadata Badges remain static labels rather than controls. The rendered fallback SHALL use the same header, density, and action group rather than a visually separate error card.
 
 The visual replacement SHALL affect only `src/app/changelog/App.tsx` and its focused `App.test.ts`. It SHALL import `Badge` and `Button` from `src/components/ui` without editing, copying, or wrapping the shared primitives. Version detection, acknowledgement, background reconciliation, local release-note extraction, Markdown safety, outbound URL derivation, offline behavior, and persistence isolation SHALL remain byte-for-byte outside this visual child.
 
