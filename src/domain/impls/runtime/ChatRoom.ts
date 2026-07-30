@@ -456,16 +456,15 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
         activeHistorySupplies.delete(event.supplyId)
         const reason = abortError('History supply cancelled')
         controller.abort(reason)
-        void raceWithSignal(
-          dependencies.server.rejectHistorySupply({
+        void dependencies.server
+          .rejectHistorySupply({
             pageId: dependencies.pageId,
             supplyId: event.supplyId,
             reason: reason.message
-          }),
-          signal
-        ).catch((error) => {
-          if (isCurrent()) this.emit('error', error as Error)
-        })
+          })
+          .catch((error) => {
+            if (isCurrent()) this.emit('error', error as Error)
+          })
         return
       }
       const { request } = event
