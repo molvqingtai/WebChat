@@ -1,3 +1,5 @@
+> **Completion status (2026-07-30):** The Owner explicitly accepted PR #81 at implementation exact `7d86309636ccef56ec4d9cb495114b3ce907aef3` and authorized merge after this documentation and task closeout. Exact CI run `30551473319` passed setup/linter/tests/build 4/4, and fresh Review task #416 passed P0/P1/P2 `0/0/0`. Browser evidence remains exact-bound: Chrome MV3 passed only on superseded exact `f44f25015a38d4ef65d94a8b768d9e620d8f3463`; a final-exact browser rerun, a real no-Web-Locks environment, and Firefox MV2 remain `UNVERIFIED` and nonblocking. A checked item means implemented, freshly gated, truthfully recorded, or explicitly closed by Owner acceptance; it does not reinterpret any `UNVERIFIED` result as PASS.
+
 ## 1. Persistence Authority
 
 - [x] 1.1 Move configurable `MESSAGE_STORE_VERSION = 2` into `src/constants/storage.ts` without advancing it for the initial reset lifecycle and without renaming any public persistence API.
@@ -37,7 +39,7 @@
 ## 6. Delivery Gates
 
 - [x] 6.1 Run the initial reset lifecycle's focused fail-before controls and complete repository source, type, lint, format, build, and strict OpenSpec gates on one immutable implementation exact.
-- [ ] 6.2 Obtain fresh Reviewer findings on the complete two-family contract, concurrency, failure, isolation, and regression matrix.
-- [ ] 6.3 Record nonblocking Chrome MV3 and Firefox MV2 baseline/mismatch/console-only behavior truth where the established environments can create the required persisted states; do not convert unavailable evidence into PASS.
-- [ ] 6.4 Keep implementation on the same requirement branch and PR, and wait for separate explicit Owner authorization before merge.
-- [ ] 6.5 Re-run focused, complete static/source/build, and Review gates on the replacement exact after the direct `STORAGE_NAME` identity switch and history-specific test cleanup; prior exact evidence does not transfer.
+- [x] 6.2 Obtain fresh Reviewer findings on the complete two-family contract, concurrency, failure, isolation, and regression matrix.
+- [x] 6.3 Record nonblocking Chrome MV3 and Firefox MV2 baseline/mismatch/console-only behavior truth where the established environments can create the required persisted states; do not convert unavailable evidence into PASS.
+- [x] 6.4 Keep implementation on the same requirement branch and PR, and wait for separate explicit Owner authorization before merge.
+- [x] 6.5 Re-run focused, complete static/source/build, and Review gates on the replacement exact after the direct `STORAGE_NAME` identity switch and history-specific test cleanup; prior exact evidence does not transfer.
