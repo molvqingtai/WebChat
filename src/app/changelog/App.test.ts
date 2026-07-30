@@ -26,7 +26,14 @@ describe('ChangelogView', () => {
     expect(html).toContain('WebChat v2.0.1')
     expect(html).toContain('2026-07-29')
     expect(html).toContain('Bug Fixes')
-    expect(html).toContain('data-release-spine="true"')
+    expect(html).not.toContain('data-release-spine')
+    expect(html.match(/data-slot="badge"/g)).toHaveLength(2)
+    expect(html.match(/data-slot="button"/g)).toHaveLength(3)
+    expect(html).toContain('>New version</p>')
+    expect(html).toContain('aria-label="WebChat v2.0.1"')
+    expect(html).toContain('grid-cols-1')
+    expect(html).toContain('sm:grid-cols-3')
+    expect(html).toContain('h-10')
     expect(html).toContain(`href="${links.repository}"`)
     expect(html).toContain(`href="${links.release}"`)
     expect(html).toContain(`href="${links.issues}"`)
@@ -38,6 +45,9 @@ describe('ChangelogView', () => {
     const fallback = renderToStaticMarkup(createElement(ChangelogView, { version: '2.0.1', release: null, links }))
     expect(fallback).toContain('Release notes are unavailable in this build.')
     expect(fallback).toContain('WebChat v2.0.1')
+    expect(fallback).not.toContain('data-release-spine')
+    expect(fallback.match(/data-slot="badge"/g)).toHaveLength(1)
+    expect(fallback.match(/data-slot="button"/g)).toHaveLength(3)
 
     const hostile = renderToStaticMarkup(
       createElement(ChangelogView, {
