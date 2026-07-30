@@ -30,7 +30,6 @@ vi.mock('#imports', () => ({
 let fixtureId = 0
 const databaseNames = new Set<string>()
 const nextOrigin = (label: string) => `https://${label}-${fixtureId++}.test`
-const messageDatabaseName = (_origin: string) => MESSAGE_STORE_NAME
 const localKey = (key: string) => `${STORAGE_NAME}:${key}`
 
 const createBrowserArea = (initial: Record<string, unknown>) => {
@@ -83,17 +82,16 @@ const loadLocalPreparation = async (origin: string, localStorage: Storage) => {
   }
 }
 
-const seedTargetMessage = async (origin: string, value: unknown) => {
-  const name = messageDatabaseName(origin)
-  databaseNames.add(name)
-  await prepareIndexedDBMessageDatabase(origin)
-  const database = await openDB(name)
+const seedTargetMessage = async (value: unknown) => {
+  databaseNames.add(MESSAGE_STORE_NAME)
+  await prepareIndexedDBMessageDatabase()
+  const database = await openDB(MESSAGE_STORE_NAME)
   await database.put('records', value, 'sentinel')
   database.close()
 }
 
-const readTargetMessage = async (origin: string) => {
-  const database = await openDB(messageDatabaseName(origin))
+const readTargetMessage = async () => {
+  const database = await openDB(MESSAGE_STORE_NAME)
   const value = await database.get('records', 'sentinel')
   database.close()
   return value
@@ -140,16 +138,15 @@ describe('physical persistence isolation', () => {
     await deprecated.put(deprecatedName, 'deprecated-message', `${STORAGE_NAME}::message`)
     deprecated.close()
 
-    const name = messageDatabaseName(origin)
-    databaseNames.add(name)
-    const legacy = await openDB(name, 1, {
+    databaseNames.add(MESSAGE_STORE_NAME)
+    const legacy = await openDB(MESSAGE_STORE_NAME, 1, {
       upgrade(database) {
         database.createObjectStore('legacy')
       }
     })
     legacy.close()
 
-    await prepareIndexedDBMessageDatabase(origin)
+    await prepareIndexedDBMessageDatabase()
 
     expect(localStorage.getItem(localKey(APP_STATUS_STORAGE_KEY))).toBe('local-configuration')
     expect(localStorage.getItem(localKey(CONFIG_STORE_VERSION_KEY))).toBe(String(CONFIG_STORE_VERSION))
@@ -174,7 +171,7 @@ describe('physical persistence isolation', () => {
     otherStorage.setItem('OTHER_HOST_KEY', 'preserved')
     otherStorage.setItem(localKey(CONFIG_STORE_VERSION_KEY), '7')
     otherStorage.setItem(localKey(APP_STATUS_STORAGE_KEY), 'other-old')
-    await seedTargetMessage(currentOrigin, 'canonical-message')
+    await seedTargetMessage('canonical-message')
 
     await prepareCurrent()
 
@@ -183,7 +180,7 @@ describe('physical persistence isolation', () => {
     expect(currentStorage.getItem('CURRENT_HOST_KEY')).toBe('preserved')
     expect(otherStorage.getItem(localKey(APP_STATUS_STORAGE_KEY))).toBe('other-old')
     expect(otherStorage.getItem(localKey(CONFIG_STORE_VERSION_KEY))).toBe('7')
-    await expect(readTargetMessage(currentOrigin)).resolves.toBe('canonical-message')
+    await expect(readTargetMessage()).resolves.toBe('canonical-message')
 
     currentStorage.setItem(localKey(APP_STATUS_STORAGE_KEY), 'current-new')
     await prepareOther()
@@ -192,7 +189,7 @@ describe('physical persistence isolation', () => {
     expect(otherStorage.getItem(localKey(CONFIG_STORE_VERSION_KEY))).toBe(String(CONFIG_STORE_VERSION))
     expect(otherStorage.getItem('OTHER_HOST_KEY')).toBe('preserved')
     expect(currentStorage.getItem(localKey(APP_STATUS_STORAGE_KEY))).toBe('current-new')
-    await expect(readTargetMessage(currentOrigin)).resolves.toBe('canonical-message')
+    await expect(readTargetMessage()).resolves.toBe('canonical-message')
   })
 
   it('keeps canonical, origin-local, and non-sync browser areas during a sync reset', async () => {
@@ -201,7 +198,7 @@ describe('physical persistence isolation', () => {
     const prepareLocal = await loadLocalPreparation(origin, localStorage)
     localStorage.setItem(localKey(APP_STATUS_STORAGE_KEY), 'local-current')
     await prepareLocal()
-    await seedTargetMessage(origin, 'canonical-current')
+    await seedTargetMessage('canonical-current')
     const sync = createBrowserArea({ [CONFIG_STORE_VERSION_KEY]: 2, user: 'sync-old' })
     const browserLocal = createBrowserArea({ sentinel: 'browser-local' })
     const browserSession = createBrowserArea({ sentinel: 'browser-session' })
@@ -214,7 +211,7 @@ describe('physical persistence isolation', () => {
     expect(sync.values).toEqual({ [CONFIG_STORE_VERSION_KEY]: CONFIG_STORE_VERSION })
     expect(sync.clear).toHaveBeenCalledTimes(1)
     expect(localStorage.getItem(localKey(APP_STATUS_STORAGE_KEY))).toBe('local-current')
-    await expect(readTargetMessage(origin)).resolves.toBe('canonical-current')
+    await expect(readTargetMessage()).resolves.toBe('canonical-current')
     expect(browserLocal.values).toEqual({ sentinel: 'browser-local' })
     expect(browserSession.values).toEqual({ sentinel: 'browser-session' })
     expect(browserLocal.clear).not.toHaveBeenCalled()

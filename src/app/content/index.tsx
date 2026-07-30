@@ -36,11 +36,10 @@ export default defineContentScript({
     // Attach to the shared Runtime before igniting any domain: the background
     // coordinator creates the host single-flight; pages own no WebRTC state.
     window.addEventListener('beforeunload', detachClient, { once: true })
-    const origin = globalThis.document.location.origin
     try {
       await requestBrowserSyncStoragePreparation()
       await prepareLocalConfigurationStorage()
-      await prepareIndexedDBMessageDatabase(origin)
+      await prepareIndexedDBMessageDatabase()
     } catch {
       return
     }

@@ -220,12 +220,12 @@ describe('replaceable application boundaries', () => {
 
     expect(content).toContain('await requestBrowserSyncStoragePreparation()')
     expect(content).toContain('await prepareLocalConfigurationStorage()')
-    expect(content).toContain('await prepareIndexedDBMessageDatabase(origin)')
+    expect(content).toContain('await prepareIndexedDBMessageDatabase()')
     expect(background).toContain('registerBrowserSyncStoragePreparation()')
     for (const preparation of [
       'await requestBrowserSyncStoragePreparation()',
       'await prepareLocalConfigurationStorage()',
-      'await prepareIndexedDBMessageDatabase(origin)'
+      'await prepareIndexedDBMessageDatabase()'
     ]) {
       expect(content.indexOf(preparation)).toBeLessThan(content.indexOf('await initClient()'))
       expect(content.indexOf(preparation)).toBeLessThan(content.indexOf('Remesh.store('))

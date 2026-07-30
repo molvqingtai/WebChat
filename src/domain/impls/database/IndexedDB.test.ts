@@ -12,8 +12,6 @@ import { createIndexedDBMessageDatabase, prepareIndexedDBMessageDatabase } from 
 const USER = { id: 'user-1', name: 'User', avatar: '' }
 let databaseId = 0
 const names = new Set<string>()
-const nextOrigin = (label: string) => `https://${label}-${databaseId++}.test`
-const messageDatabaseName = (_origin: string) => MESSAGE_STORE_NAME
 
 const trackWebChatDatabases = async () => {
   const databases = (await indexedDB.databases()).filter((database) => database.name?.startsWith(STORAGE_NAME))
@@ -82,15 +80,12 @@ afterEach(async () => {
 describe('IndexedDB Message database version ownership', () => {
   describe('version-neutral target identity', () => {
     it('creates an absent target directly at the configured version', async () => {
-      const origin = nextOrigin('target-absent')
-
-      await prepareIndexedDBMessageDatabase(origin)
+      await prepareIndexedDBMessageDatabase()
 
       expect(await trackWebChatDatabases()).toEqual([{ name: MESSAGE_STORE_NAME, version: MESSAGE_STORE_VERSION }])
     })
 
     it('preserves records in an existing same-version target', async () => {
-      const origin = nextOrigin('target-same')
       names.add(MESSAGE_STORE_NAME)
       const record = textRecord('target-same-version')
       const target = await openDB(MESSAGE_STORE_NAME, MESSAGE_STORE_VERSION, {
@@ -102,7 +97,7 @@ describe('IndexedDB Message database version ownership', () => {
       await target.put('records', record, record.id)
       target.close()
 
-      await prepareIndexedDBMessageDatabase(origin)
+      await prepareIndexedDBMessageDatabase()
 
       expect(await trackWebChatDatabases()).toEqual([{ name: MESSAGE_STORE_NAME, version: MESSAGE_STORE_VERSION }])
       const reopened = await openDB(MESSAGE_STORE_NAME)
@@ -111,7 +106,6 @@ describe('IndexedDB Message database version ownership', () => {
     })
 
     it('destructively rebuilds an existing mismatched target', async () => {
-      const origin = nextOrigin('target-mismatch')
       names.add(MESSAGE_STORE_NAME)
       const target = await openDB(MESSAGE_STORE_NAME, 1, {
         upgrade(database) {
@@ -121,7 +115,7 @@ describe('IndexedDB Message database version ownership', () => {
       await target.put('legacy', 'old-generation', 'sentinel')
       target.close()
 
-      await prepareIndexedDBMessageDatabase(origin)
+      await prepareIndexedDBMessageDatabase()
 
       expect(await trackWebChatDatabases()).toEqual([{ name: MESSAGE_STORE_NAME, version: MESSAGE_STORE_VERSION }])
       const rebuilt = await openDB(MESSAGE_STORE_NAME)
@@ -131,12 +125,11 @@ describe('IndexedDB Message database version ownership', () => {
   })
 
   it('creates an absent database at the target without issuing a delete', async () => {
-    const origin = nextOrigin('message-baseline')
-    const name = messageDatabaseName(origin)
+    const name = MESSAGE_STORE_NAME
     names.add(name)
     const deletion = vi.spyOn(indexedDB, 'deleteDatabase')
 
-    await prepareIndexedDBMessageDatabase(origin)
+    await prepareIndexedDBMessageDatabase()
 
     expect(deletion).not.toHaveBeenCalled()
     deletion.mockRestore()
@@ -146,8 +139,7 @@ describe('IndexedDB Message database version ownership', () => {
   })
 
   it('deletes the complete existing v1 database before rebuilding v2', async () => {
-    const origin = nextOrigin('message-upgrade')
-    const name = messageDatabaseName(origin)
+    const name = MESSAGE_STORE_NAME
     names.add(name)
     const record = textRecord('survives-upgrade')
     const v1 = await openDB(name, 1, {
@@ -161,8 +153,8 @@ describe('IndexedDB Message database version ownership', () => {
     await v1.put('unknown-residue', 'old-generation', 'sentinel')
     v1.close()
 
-    await prepareIndexedDBMessageDatabase(origin)
-    const database = createIndexedDBMessageDatabase(origin)
+    await prepareIndexedDBMessageDatabase()
+    const database = createIndexedDBMessageDatabase()
     const messageStore = createMessageStore(database)
     await expect(messageStore.query()).resolves.toEqual([])
     await database.close()
@@ -175,18 +167,17 @@ describe('IndexedDB Message database version ownership', () => {
   })
 
   it('reopens v2 without clearing or advancing the schema', async () => {
-    const origin = nextOrigin('message-reopen')
-    const name = messageDatabaseName(origin)
+    const name = MESSAGE_STORE_NAME
     names.add(name)
-    await prepareIndexedDBMessageDatabase(origin)
-    const firstDatabase = createIndexedDBMessageDatabase(origin)
+    await prepareIndexedDBMessageDatabase()
+    const firstDatabase = createIndexedDBMessageDatabase()
     const firstStore = createMessageStore(firstDatabase)
     const record = textRecord('survives-reopen')
     await firstStore.insert(record)
     await firstDatabase.close()
 
-    await prepareIndexedDBMessageDatabase(origin)
-    const secondDatabase = createIndexedDBMessageDatabase(origin)
+    await prepareIndexedDBMessageDatabase()
+    const secondDatabase = createIndexedDBMessageDatabase()
     await expect(createMessageStore(secondDatabase).query()).resolves.toEqual([record])
     await secondDatabase.close()
 
@@ -196,8 +187,7 @@ describe('IndexedDB Message database version ownership', () => {
   })
 
   it.each([3, 7])('uses the same destructive reset for reverse/skipped native version %s', async (version) => {
-    const origin = nextOrigin(`message-version-${version}`)
-    const name = messageDatabaseName(origin)
+    const name = MESSAGE_STORE_NAME
     names.add(name)
     const legacy = await openDB(name, version, {
       upgrade(database) {
@@ -207,7 +197,7 @@ describe('IndexedDB Message database version ownership', () => {
     await legacy.put('legacy', 'old-generation', 'sentinel')
     legacy.close()
 
-    await prepareIndexedDBMessageDatabase(origin)
+    await prepareIndexedDBMessageDatabase()
 
     const physical = await openDB(name)
     expect(physical.version).toBe(MESSAGE_STORE_VERSION)
@@ -215,9 +205,8 @@ describe('IndexedDB Message database version ownership', () => {
     physical.close()
   })
 
-  it('joins concurrent same-origin contenders and deletes only once', async () => {
-    const origin = nextOrigin('message-concurrent')
-    const name = messageDatabaseName(origin)
+  it('joins concurrent target contenders and deletes only once', async () => {
+    const name = MESSAGE_STORE_NAME
     names.add(name)
     const legacy = await openDB(name, 1, {
       upgrade(database) {
@@ -228,9 +217,9 @@ describe('IndexedDB Message database version ownership', () => {
     const deletion = vi.spyOn(indexedDB, 'deleteDatabase')
 
     await Promise.all([
-      prepareIndexedDBMessageDatabase(origin),
-      prepareIndexedDBMessageDatabase(origin),
-      prepareIndexedDBMessageDatabase(origin)
+      prepareIndexedDBMessageDatabase(),
+      prepareIndexedDBMessageDatabase(),
+      prepareIndexedDBMessageDatabase()
     ])
 
     expect(deletion).toHaveBeenCalledTimes(1)
@@ -244,8 +233,7 @@ describe('IndexedDB Message database version ownership', () => {
     })
     const firstRealm = await importMessageDatabaseRealm()
     const secondRealm = await importMessageDatabaseRealm()
-    const origin = nextOrigin('message-cross-realm')
-    const name = messageDatabaseName(origin)
+    const name = MESSAGE_STORE_NAME
     names.add(name)
     const legacy = await openDB(name, 1, {
       upgrade(database) {
@@ -255,17 +243,17 @@ describe('IndexedDB Message database version ownership', () => {
     legacy.close()
     const deletion = vi.spyOn(indexedDB, 'deleteDatabase')
 
-    const first = firstRealm.prepareIndexedDBMessageDatabase(origin)
-    const second = secondRealm.prepareIndexedDBMessageDatabase(origin)
+    const first = firstRealm.prepareIndexedDBMessageDatabase()
+    const second = secondRealm.prepareIndexedDBMessageDatabase()
     await first
-    const target = firstRealm.createIndexedDBMessageDatabase(origin)
+    const target = firstRealm.createIndexedDBMessageDatabase()
     const record = textRecord('new-generation-cross-realm')
     await createMessageStore(target).insert(record)
     await target.close()
     secondGrant.resolve()
     await second
 
-    const reopened = firstRealm.createIndexedDBMessageDatabase(origin)
+    const reopened = firstRealm.createIndexedDBMessageDatabase()
     await expect(createMessageStore(reopened).query()).resolves.toEqual([record])
     await reopened.close()
     expect(deletion).toHaveBeenCalledTimes(1)
@@ -279,8 +267,7 @@ describe('IndexedDB Message database version ownership', () => {
     const releaseSecondRead = deferred()
     const firstRealm = await importMessageDatabaseRealm()
     const secondRealm = await importMessageDatabaseRealm()
-    const origin = nextOrigin('message-lost-lock')
-    const name = messageDatabaseName(origin)
+    const name = MESSAGE_STORE_NAME
     names.add(name)
     const legacy = await openDB(name, 1, {
       upgrade(database) {
@@ -305,10 +292,10 @@ describe('IndexedDB Message database version ownership', () => {
     const deletion = vi.spyOn(indexedDB, 'deleteDatabase')
     const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
 
-    const first = firstRealm.prepareIndexedDBMessageDatabase(origin)
+    const first = firstRealm.prepareIndexedDBMessageDatabase()
     await firstReadStarted.promise
     vi.stubGlobal('navigator', {})
-    const second = secondRealm.prepareIndexedDBMessageDatabase(origin)
+    const second = secondRealm.prepareIndexedDBMessageDatabase()
     const secondSettled = second.then(
       () => undefined,
       () => undefined
@@ -317,7 +304,7 @@ describe('IndexedDB Message database version ownership', () => {
 
     releaseFirstRead.resolve()
     await first
-    const target = firstRealm.createIndexedDBMessageDatabase(origin)
+    const target = firstRealm.createIndexedDBMessageDatabase()
     const record = textRecord('new-generation-lost-lock')
     await createMessageStore(target).insert(record)
     await target.close()
@@ -327,7 +314,7 @@ describe('IndexedDB Message database version ownership', () => {
       () => ({ status: 'resolved' as const }),
       (error: unknown) => ({ status: 'rejected' as const, error })
     )
-    const reopened = firstRealm.createIndexedDBMessageDatabase(origin)
+    const reopened = firstRealm.createIndexedDBMessageDatabase()
     const records = await createMessageStore(reopened).query()
     await reopened.close()
     const deletionCount = deletion.mock.calls.length
@@ -346,8 +333,7 @@ describe('IndexedDB Message database version ownership', () => {
   })
 
   it('keeps a blocked delete non-ready and completes the same request after release', async () => {
-    const origin = nextOrigin('message-blocked')
-    const name = messageDatabaseName(origin)
+    const name = MESSAGE_STORE_NAME
     names.add(name)
     const blocker = await openDB(name, 1, {
       upgrade(database) {
@@ -358,7 +344,7 @@ describe('IndexedDB Message database version ownership', () => {
     const deletion = vi.spyOn(indexedDB, 'deleteDatabase')
     let ready = false
 
-    const preparation = prepareIndexedDBMessageDatabase(origin).then(() => {
+    const preparation = prepareIndexedDBMessageDatabase().then(() => {
       ready = true
     })
     await vi.waitFor(() => expect(warning).toHaveBeenCalledTimes(1))
@@ -374,8 +360,7 @@ describe('IndexedDB Message database version ownership', () => {
   })
 
   it('logs a bounded read failure, leaves the old version intact, and retries', async () => {
-    const origin = nextOrigin('message-retry')
-    const name = messageDatabaseName(origin)
+    const name = MESSAGE_STORE_NAME
     names.add(name)
     const legacy = await openDB(name, 1, {
       upgrade(database) {
@@ -386,7 +371,7 @@ describe('IndexedDB Message database version ownership', () => {
     const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
     const enumeration = vi.spyOn(indexedDB, 'databases').mockRejectedValueOnce(new Error('private failure'))
 
-    await expect(prepareIndexedDBMessageDatabase(origin)).rejects.toThrow('Message store preparation failed')
+    await expect(prepareIndexedDBMessageDatabase()).rejects.toThrow('Message store preparation failed')
     expect(diagnostic).toHaveBeenCalledWith('[WebChat] Message store preparation failed')
     enumeration.mockRestore()
 
@@ -394,7 +379,7 @@ describe('IndexedDB Message database version ownership', () => {
     expect(unchanged.version).toBe(1)
     unchanged.close()
 
-    await prepareIndexedDBMessageDatabase(origin)
+    await prepareIndexedDBMessageDatabase()
     const rebuilt = await openDB(name)
     expect(rebuilt.version).toBe(MESSAGE_STORE_VERSION)
     rebuilt.close()
@@ -402,8 +387,7 @@ describe('IndexedDB Message database version ownership', () => {
   })
 
   it('does not advance past a deletion error and retries the old generation', async () => {
-    const origin = nextOrigin('message-delete-error')
-    const name = messageDatabaseName(origin)
+    const name = MESSAGE_STORE_NAME
     names.add(name)
     const legacy = await openDB(name, 1, {
       upgrade(database) {
@@ -417,7 +401,7 @@ describe('IndexedDB Message database version ownership', () => {
       .mockImplementationOnce(() => failedRequest(new DOMException('private failure', 'UnknownError')))
     const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
 
-    await expect(prepareIndexedDBMessageDatabase(origin)).rejects.toThrow('Message store preparation failed')
+    await expect(prepareIndexedDBMessageDatabase()).rejects.toThrow('Message store preparation failed')
     expect(diagnostic).toHaveBeenCalledWith('[WebChat] Message store preparation failed')
     deletion.mockImplementation(nativeDelete)
 
@@ -425,15 +409,14 @@ describe('IndexedDB Message database version ownership', () => {
     expect(unchanged.version).toBe(1)
     unchanged.close()
 
-    await prepareIndexedDBMessageDatabase(origin)
+    await prepareIndexedDBMessageDatabase()
     expect(deletion).toHaveBeenCalledTimes(2)
     deletion.mockRestore()
     diagnostic.mockRestore()
   })
 
   it('rebuilds empty on retry when target recreation failed after deletion', async () => {
-    const origin = nextOrigin('message-recreate-error')
-    const name = messageDatabaseName(origin)
+    const name = MESSAGE_STORE_NAME
     names.add(name)
     const legacy = await openDB(name, 1, {
       upgrade(database) {
@@ -448,11 +431,11 @@ describe('IndexedDB Message database version ownership', () => {
       .mockImplementationOnce(() => failedRequest(new DOMException('private failure', 'UnknownError')))
     const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
 
-    await expect(prepareIndexedDBMessageDatabase(origin)).rejects.toThrow('Message store preparation failed')
+    await expect(prepareIndexedDBMessageDatabase()).rejects.toThrow('Message store preparation failed')
     expect((await indexedDB.databases()).some((database) => database.name === name)).toBe(false)
     opening.mockImplementation(nativeOpen)
 
-    await prepareIndexedDBMessageDatabase(origin)
+    await prepareIndexedDBMessageDatabase()
     const rebuilt = await openDB(name)
     expect(rebuilt.version).toBe(MESSAGE_STORE_VERSION)
     expect([...rebuilt.objectStoreNames]).toEqual(['conflicts', 'records'])
@@ -462,8 +445,7 @@ describe('IndexedDB Message database version ownership', () => {
   })
 
   it('preserves unrelated IndexedDB identities during a target reset', async () => {
-    const origin = nextOrigin('message-isolation')
-    const name = messageDatabaseName(origin)
+    const name = MESSAGE_STORE_NAME
     const unrelatedName = `unrelated-${databaseId++}`
     names.add(name)
     names.add(unrelatedName)
@@ -481,7 +463,7 @@ describe('IndexedDB Message database version ownership', () => {
     await unrelated.put('sentinels', 'preserved', 'key')
     unrelated.close()
 
-    await prepareIndexedDBMessageDatabase(origin)
+    await prepareIndexedDBMessageDatabase()
 
     const preserved = await openDB(unrelatedName)
     await expect(preserved.get('sentinels', 'key')).resolves.toBe('preserved')
@@ -494,25 +476,25 @@ describe('IndexedDB Message database version ownership', () => {
     const firstRecord = textRecord('first-origin')
     const secondRecord = textRecord('second-origin')
 
-    const seedPartition = async (factory: IDBFactory, origin: string, record: TextMessageRecord) => {
+    const seedPartition = async (factory: IDBFactory, record: TextMessageRecord) => {
       vi.stubGlobal('indexedDB', factory)
-      await prepareIndexedDBMessageDatabase(origin)
-      const database = createIndexedDBMessageDatabase(origin)
+      await prepareIndexedDBMessageDatabase()
+      const database = createIndexedDBMessageDatabase()
       await createMessageStore(database).insert(record)
       await database.close()
       expect(await factory.databases()).toEqual([{ name: MESSAGE_STORE_NAME, version: MESSAGE_STORE_VERSION }])
     }
 
-    await seedPartition(firstFactory, nextOrigin('first-partition'), firstRecord)
-    await seedPartition(secondFactory, nextOrigin('second-partition'), secondRecord)
+    await seedPartition(firstFactory, firstRecord)
+    await seedPartition(secondFactory, secondRecord)
 
     vi.stubGlobal('indexedDB', firstFactory)
-    const first = createIndexedDBMessageDatabase(nextOrigin('first-reader'))
+    const first = createIndexedDBMessageDatabase()
     await expect(createMessageStore(first).query()).resolves.toEqual([firstRecord])
     await first.close()
 
     vi.stubGlobal('indexedDB', secondFactory)
-    const second = createIndexedDBMessageDatabase(nextOrigin('second-reader'))
+    const second = createIndexedDBMessageDatabase()
     await expect(createMessageStore(second).query()).resolves.toEqual([secondRecord])
     await second.close()
   })

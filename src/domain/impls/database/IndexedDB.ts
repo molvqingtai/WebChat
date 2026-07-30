@@ -555,7 +555,7 @@ const deleteMessageDatabase = (name: string): Promise<void> =>
     request.addEventListener('error', () => reject(new Error('Message store deletion failed')), { once: true })
   })
 
-export const prepareIndexedDBMessageDatabase = (_origin: string): Promise<void> => {
+export const prepareIndexedDBMessageDatabase = (): Promise<void> => {
   const definition = createMessageDatabaseDefinition(MESSAGE_STORE_NAME, MESSAGE_STORE_VERSION)
 
   return withPreparationLock(`message:${MESSAGE_STORE_NAME}`, async () => {
@@ -573,8 +573,7 @@ export const prepareIndexedDBMessageDatabase = (_origin: string): Promise<void> 
   })
 }
 
-export const createIndexedDBMessageDatabase = (_origin: string): Database<MessageDatabaseSchema> =>
+export const createIndexedDBMessageDatabase = (): Database<MessageDatabaseSchema> =>
   createIndexedDBDatabase(createMessageDatabaseDefinition(MESSAGE_STORE_NAME, MESSAGE_STORE_VERSION))
 
-const origin = globalThis.document?.location.origin ?? 'headless'
-export const MessageDatabaseImpl = MessageDatabaseExtern.impl(createIndexedDBMessageDatabase(origin))
+export const MessageDatabaseImpl = MessageDatabaseExtern.impl(createIndexedDBMessageDatabase())
