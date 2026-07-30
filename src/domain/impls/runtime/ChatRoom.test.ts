@@ -566,7 +566,7 @@ describe('Runtime-backed ChatRoom application port', () => {
     expect(messages).toEqual([record.message])
   })
 
-  it('emits the winning live insert across a host swap without ACKing its stale sequence', async () => {
+  it('persists but does not project a winning live insert from a stale host callback', async () => {
     const controlled = new ControlledDatabase(createMemoryMessageDatabase(`host-swap-${databaseId++}`))
     let release!: () => void
     controlled.beforeWrite = () =>
@@ -585,7 +585,8 @@ describe('Runtime-backed ChatRoom application port', () => {
     release()
     await inbound
 
-    expect(messages).toEqual([record.message])
+    expect(messages).toEqual([])
+    await expect(fixture.messageStore.query()).resolves.toEqual([record])
     expect(fixture.server.ackInbound).not.toHaveBeenCalled()
   })
 
@@ -714,5 +715,71 @@ describe('Runtime-backed ChatRoom application port', () => {
     await settle()
 
     await expect(room.leaveRoom()).rejects.toMatchObject({ name: 'AbortError' })
+  })
+
+  it('cancels pending replay on page disposal without blocking a replacement page', async () => {
+    const fixture = serverFixture()
+    const replayStarted = Promise.withResolvers<void>()
+    const releaseReplay = Promise.withResolvers<void>()
+    let replayCalls = 0
+    let joinCalls = 0
+    const server: RuntimeServer = {
+      ...fixture.server,
+      joinChatRoom: async (payload) => {
+        joinCalls += 1
+        return fixture.server.joinChatRoom(payload)
+      },
+      replayInbound: async () => {
+        replayCalls += 1
+        if (replayCalls === 1) {
+          replayStarted.resolve()
+          await releaseReplay.promise
+        }
+        return []
+      }
+    }
+    const database = createMemoryMessageDatabase(`disposed-replay-${databaseId++}`)
+    const messageStore = createMessageStore(database)
+    const createRoom = () =>
+      new ChatRoom({
+        server,
+        messageStore,
+        pageDomain: DOMAIN,
+        pageId: 'page-1',
+        getSnapshot: () => domainSnapshot(),
+        whenReady: (listener) => {
+          listener()
+          return () => {}
+        }
+      })
+    const firstRoom = createRoom()
+    let firstResult: Error | 'pending' | null = 'pending'
+    const firstJoin = firstRoom.joinRoom({ user: USER, site: SITE }).then(
+      () => {
+        firstResult = null
+      },
+      (error: Error) => {
+        firstResult = error
+      }
+    )
+    await replayStarted.promise
+
+    try {
+      firstRoom.dispose()
+      await settle()
+      expect(firstResult).toMatchObject({ name: 'AbortError' })
+      expect(joinCalls).toBe(0)
+
+      const replacement = createRoom()
+      await replacement.joinRoom({ user: USER, site: SITE })
+      expect(replayCalls).toBe(2)
+      expect(joinCalls).toBe(1)
+      replacement.dispose()
+    } finally {
+      releaseReplay.resolve()
+      await firstJoin
+      firstRoom.dispose()
+      await database.close()
+    }
   })
 })

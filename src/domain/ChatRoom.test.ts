@@ -181,6 +181,217 @@ const join = async (fixture: ReturnType<typeof createFixture>) => {
   fixture.emitSessions([SELF_SESSION])
 }
 
+type PendingConnectionStage = 'callback-registration' | 'replay' | 'replay-write'
+
+const createPendingConnectionFixture = (stage: PendingConnectionStage) => {
+  vi.stubGlobal('document', {
+    location: { origin: 'https://pending-connection.example' },
+    title: '',
+    querySelector: () => null
+  })
+  const domain = 'https://pending-connection.example'
+  const localUser = { id: SELF.id, name: SELF.name, avatar: SELF.avatar }
+  const local = { sessionId: 'local-session', user: localUser, joinedAt: 1 }
+  const remote = { sourcePeerId: 'remote-peer', sessionId: 'remote-session', user: REMOTE, joinedAt: 2 }
+  let hostId = 'host-1'
+  let joinCalls = 0
+  let sessionRegistrationCalls = 0
+  let replayCalls = 0
+  let readyListener: (() => void) | null = null
+  let sessionListener: ((event: RuntimeSessionEvent) => void | Promise<void>) | undefined
+  const entered = Promise.withResolvers<void>()
+  const release = Promise.withResolvers<void>()
+  const errors: Error[] = []
+  const connectedSnapshot = (): RuntimeSnapshot => ({
+    hostId,
+    hostPhase: 'ready',
+    peerId: 'local-peer',
+    domains: [
+      {
+        domain,
+        phase: 'active',
+        pageIds: ['page-1'],
+        chatRoomJoined: true,
+        localSession: local,
+        sessions: []
+      }
+    ],
+    world: { joined: true, peerId: 'local-peer', presences: [] }
+  })
+  const replayRecord: TextMessageRecord = {
+    type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE,
+    id: 'replayed-message',
+    message: {
+      type: MESSAGE_TYPE.TEXT,
+      id: 'replayed-message',
+      hlc: { timestamp: 1, counter: 0 },
+      userId: REMOTE.id,
+      body: 'replayed',
+      mentions: []
+    },
+    user: REMOTE,
+    receivedAt: 1
+  }
+  const server: RuntimeServer = {
+    attachPage: async () => connectedSnapshot(),
+    detachPage: async () => {},
+    getSnapshot: async () => connectedSnapshot(),
+    joinChatRoom: async () => {
+      joinCalls += 1
+      await sessionListener?.({
+        type: 'snapshot',
+        domain,
+        snapshot: { localSession: local, sessions: [] },
+        provenance: 'join'
+      })
+      return connectedSnapshot()
+    },
+    leaveChatRoom: async () => {},
+    allocateTextMessage: async () => {
+      throw new Error('not used')
+    },
+    allocateReactionMessage: async () => {
+      throw new Error('not used')
+    },
+    sendChatMessage: async () => {},
+    ackInbound: async () => {},
+    replayInbound: async () => {
+      replayCalls += 1
+      if (stage === 'replay' && replayCalls === 1) {
+        entered.resolve()
+        await release.promise
+      }
+      return stage === 'replay-write' ? [{ sequence: 1, domain, record: replayRecord, source: 'history' as const }] : []
+    },
+    reconnectDomain: async () => {},
+    onInbound: async () => {},
+    onSessionEvent: async (_payload, listener) => {
+      sessionRegistrationCalls += 1
+      if (stage === 'callback-registration' && sessionRegistrationCalls === 1) {
+        entered.resolve()
+        await release.promise
+      }
+      sessionListener = listener
+    },
+    onWorldPresence: async () => {},
+    onError: async () => {},
+    provideHistory: async () => {},
+    resolveHistorySupply: async () => {},
+    rejectHistorySupply: async () => {}
+  }
+  const database = createMemoryMessageDatabase(`pending-connection-${stage}-${databaseId++}`)
+  const messageStore = createMessageStore(database)
+  let replayWriteCalls = 0
+  let replayWriteAborted = false
+  if (stage === 'replay-write') {
+    const insert = messageStore.insert.bind(messageStore)
+    const controlled = messageStore as typeof messageStore & {
+      insert: (record: MessageRecord, options?: { signal?: AbortSignal }) => ReturnType<typeof messageStore.insert>
+    }
+    controlled.insert = async (record, options: { signal?: AbortSignal } = {}) => {
+      if (record.id === replayRecord.id && replayWriteCalls === 0) {
+        replayWriteCalls += 1
+        entered.resolve()
+        await new Promise<void>((resolve, reject) => {
+          const onAbort = () => {
+            replayWriteAborted = true
+            options?.signal?.removeEventListener('abort', onAbort)
+            reject(options?.signal?.reason ?? new DOMException('Replay write aborted', 'AbortError'))
+          }
+          options?.signal?.addEventListener('abort', onAbort, { once: true })
+          release.promise.then(() => {
+            options?.signal?.removeEventListener('abort', onAbort)
+            resolve()
+          }, reject)
+          if (options?.signal?.aborted) onAbort()
+        })
+      }
+      return insert(record)
+    }
+  }
+  const adapter = new RuntimeChatRoom({
+    server,
+    messageStore,
+    pageDomain: domain,
+    pageId: 'page-1',
+    getSnapshot: connectedSnapshot,
+    whenReady: (listener) => {
+      readyListener = listener
+      listener()
+      return () => {
+        if (readyListener === listener) readyListener = null
+      }
+    }
+  })
+  const storage: Storage = {
+    get: async <T extends StorageValue>() => SELF as T,
+    set: async () => {},
+    watch: async () => async () => {}
+  }
+  const store = Remesh.store({
+    externs: [
+      ChatRoomExtern.impl(adapter),
+      ReadinessExtern.impl({
+        onState: (listener) => {
+          listener('ready')
+          return () => {}
+        }
+      }),
+      MessageDatabaseExtern.impl(database),
+      BrowserSyncStorageExtern.impl(storage),
+      WorldRoomExtern.impl({
+        getState: async () => [],
+        onState: () => () => {},
+        onError: () => () => {}
+      })
+    ]
+  })
+  const chatAction = ChatRoomDomain()
+  const userAction = UserInfoDomain()
+  const room = store.getDomain(chatAction)
+  const user = store.getDomain(userAction)
+  store.igniteDomain(chatAction)
+  store.subscribeEvent(room.event.ReconnectFinishedEvent, ({ error }) => {
+    if (error) errors.push(error)
+  })
+  store.send(user.command.UpdateUserInfoCommand(SELF))
+
+  return {
+    adapter,
+    entered: entered.promise,
+    release: () => release.resolve(),
+    startJoin: () => store.send(room.command.JoinRoomCommand()),
+    loading: () => store.query(room.query.ConnectionIsLoadingQuery()),
+    finished: () => store.query(room.query.JoinIsFinishedQuery()),
+    users: () => store.query(room.query.UserListQuery()),
+    errors,
+    joinCalls: () => joinCalls,
+    sessionRegistrationCalls: () => sessionRegistrationCalls,
+    replayWriteAborted: () => replayWriteAborted,
+    localUser,
+    replaceHost: () => {
+      hostId = 'host-2'
+      readyListener?.()
+    },
+    emitRemote: async () => {
+      await sessionListener?.({
+        type: 'join',
+        domain,
+        snapshot: { localSession: local, sessions: [remote] },
+        session: remote,
+        provenance: 'live'
+      })
+    },
+    records: () => messageStore.query(),
+    dispose: async () => {
+      release.resolve()
+      store.discard()
+      adapter.dispose()
+      await database.close()
+    }
+  }
+}
+
 describe('ChatRoomDomain exact application port', () => {
   it('joins with the current protocol user/site and derives users from sessions', async () => {
     const fixture = createFixture()
@@ -242,6 +453,90 @@ describe('ChatRoomDomain exact application port', () => {
     expect(fixture.store.query(fixture.room.query.ConnectionIsLoadingQuery())).toBe(false)
     expect(fixture.store.query(fixture.room.query.ReconnectAvailableQuery())).toBe(true)
     fixture.store.discard()
+  })
+
+  it.each(['callback-registration', 'replay', 'replay-write'] as const)(
+    'settles a timed-out %s attempt and admits a fresh page attempt',
+    async (stage) => {
+      vi.useFakeTimers()
+      const fixture = createPendingConnectionFixture(stage)
+      fixture.startJoin()
+      await fixture.entered
+      expect(fixture.users()).toEqual([])
+      expect(fixture.loading()).toBe(true)
+
+      try {
+        await vi.advanceTimersByTimeAsync(10001)
+        await vi.advanceTimersByTimeAsync(0)
+
+        expect(fixture.finished()).toBe(false)
+        expect(fixture.loading()).toBe(false)
+        expect(fixture.users()).toEqual([])
+        expect(fixture.joinCalls()).toBe(0)
+        expect(fixture.errors).toEqual([new Error('Page connection prerequisites timed out')])
+
+        fixture.startJoin()
+        await vi.waitFor(() => expect(fixture.finished()).toBe(true))
+        expect(fixture.loading()).toBe(false)
+        expect(fixture.users()).toEqual([fixture.localUser])
+        expect(fixture.joinCalls()).toBe(1)
+        if (stage === 'replay-write') {
+          expect(fixture.replayWriteAborted()).toBe(true)
+          await expect(fixture.records()).resolves.toEqual(
+            expect.arrayContaining([expect.objectContaining({ id: 'replayed-message' })])
+          )
+        }
+
+        fixture.release()
+        await vi.advanceTimersByTimeAsync(0)
+        if (stage === 'callback-registration') {
+          await vi.waitFor(() => expect(fixture.sessionRegistrationCalls()).toBeGreaterThanOrEqual(3))
+          await fixture.emitRemote()
+          expect(fixture.users()).toEqual([fixture.localUser, REMOTE])
+        }
+        expect(fixture.joinCalls()).toBe(1)
+      } finally {
+        fixture.release()
+        await vi.advanceTimersByTimeAsync(0)
+        await fixture.dispose()
+        vi.useRealTimers()
+      }
+    }
+  )
+
+  it('cancels the old page attempt on host replacement and settles only the fresh generation', async () => {
+    vi.useFakeTimers()
+    const fixture = createPendingConnectionFixture('callback-registration')
+    fixture.startJoin()
+    await fixture.entered
+
+    try {
+      fixture.replaceHost()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(fixture.loading()).toBe(false)
+      expect(fixture.finished()).toBe(false)
+      expect(fixture.users()).toEqual([])
+      expect(fixture.joinCalls()).toBe(0)
+      expect(fixture.errors).toEqual([])
+
+      fixture.startJoin()
+      await vi.waitFor(() => expect(fixture.finished()).toBe(true))
+      expect(fixture.loading()).toBe(false)
+      expect(fixture.users()).toEqual([fixture.localUser])
+      expect(fixture.joinCalls()).toBe(1)
+
+      fixture.release()
+      await vi.advanceTimersByTimeAsync(0)
+      await vi.waitFor(() => expect(fixture.sessionRegistrationCalls()).toBeGreaterThanOrEqual(3))
+      await fixture.emitRemote()
+      expect(fixture.users()).toEqual([fixture.localUser, REMOTE])
+      expect(fixture.joinCalls()).toBe(1)
+    } finally {
+      fixture.release()
+      await vi.advanceTimersByTimeAsync(0)
+      await fixture.dispose()
+      vi.useRealTimers()
+    }
   })
 
   it('keeps the newest automatic operation as loading owner and settles cancellation without an error', async () => {

@@ -54,6 +54,8 @@ export interface MessageStore {
   watch(listener: () => void): Unsubscribe
 }
 
+type MessageInsertOptions = Readonly<{ signal?: AbortSignal }>
+
 const validateMessageQuery = (input: MessageQuery | undefined): MessageQuery => {
   if (input === undefined) return {}
   if (
@@ -257,35 +259,40 @@ const decodeInput = (record: MessageRecord): MessageRecord => {
 const reportedDiagnosticFailures = new WeakSet<Database<MessageDatabaseSchema>>()
 
 export const createMessageStore = (database: Database<MessageDatabaseSchema>): MessageStore => ({
-  insert: async (input) => {
+  insert: async (input, { signal }: MessageInsertOptions = {}) => {
     const record = decodeInput(input)
-    return database.write(['records', 'conflicts'], async (transaction) => {
-      const result = await transaction.insert('records', record.id, record)
-      if (result.inserted) return { inserted: true }
-      const existing = decodeMessageRecord({ key: record.id, value: result.existing })
-      if (contentEquals(existing, record)) return { inserted: false, existing }
+    signal?.throwIfAborted()
+    return database.write(
+      ['records', 'conflicts'],
+      async (transaction) => {
+        const result = await transaction.insert('records', record.id, record)
+        if (result.inserted) return { inserted: true }
+        const existing = decodeMessageRecord({ key: record.id, value: result.existing })
+        if (contentEquals(existing, record)) return { inserted: false, existing }
 
-      const incomingHash = hashString(canonicalJson(record))
-      const conflictKey = `${record.id}:${incomingHash}`
-      const duplicate = await transaction.get('conflicts', conflictKey)
-      if (!duplicate) {
-        const [total, forRecord] = await Promise.all([
-          transaction.count('conflicts'),
-          transaction.count('conflicts', { index: 'byEventId', range: { lower: record.id, upper: record.id } })
-        ])
-        if (total < MAX_STORED_CONFLICTS && forRecord < MAX_CONFLICTS_PER_RECORD) {
-          const conflict: StoredConflict = {
-            eventId: record.id,
-            incomingHash,
-            existing,
-            incoming: record,
-            recordedAt: Date.now()
+        const incomingHash = hashString(canonicalJson(record))
+        const conflictKey = `${record.id}:${incomingHash}`
+        const duplicate = await transaction.get('conflicts', conflictKey)
+        if (!duplicate) {
+          const [total, forRecord] = await Promise.all([
+            transaction.count('conflicts'),
+            transaction.count('conflicts', { index: 'byEventId', range: { lower: record.id, upper: record.id } })
+          ])
+          if (total < MAX_STORED_CONFLICTS && forRecord < MAX_CONFLICTS_PER_RECORD) {
+            const conflict: StoredConflict = {
+              eventId: record.id,
+              incomingHash,
+              existing,
+              incoming: record,
+              recordedAt: Date.now()
+            }
+            await transaction.insert('conflicts', conflictKey, conflict)
           }
-          await transaction.insert('conflicts', conflictKey, conflict)
         }
-      }
-      return { inserted: false, existing }
-    })
+        return { inserted: false, existing }
+      },
+      signal
+    )
   },
 
   query: async (input) => {

@@ -17,7 +17,7 @@ import { NativeWireCodec, type WireCodec } from '@/protocol'
 import type { RuntimeServer, RuntimeSnapshot } from '@/runtime/Contract'
 import { MAX_HISTORY_SESSION_BYTES, MAX_HISTORY_SESSION_MESSAGES } from '@/constants/config'
 import { PagePort, createPagePortImpl } from '@/runtime/PagePort'
-import { createMemoryPresenceStore } from '@/runtime/PresenceStore'
+import { createBoundedPresenceStore, createMemoryPresenceStore } from '@/runtime/PresenceStore'
 
 export interface ServerConfig {
   transport: RoomTransport
@@ -37,7 +37,9 @@ export const disposeServer = (server: RuntimeServer) => serverDisposers.get(serv
 export const createServer = (config: ServerConfig): RuntimeServer => {
   const clock = config.clock ?? defaultClock
   const pagePort = new PagePort()
-  const presenceStore = config.presenceStore ?? createMemoryPresenceStore()
+  const presenceStore = config.presenceStore
+    ? createBoundedPresenceStore(config.presenceStore)
+    : createMemoryPresenceStore()
   const worldSessionId = nanoid()
   const historyOptions = {
     historySessionBytes: config.historySessionBytes ?? MAX_HISTORY_SESSION_BYTES,
@@ -248,8 +250,6 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
         await completeInterruptedRelease(payload.domain)
         throw new Error(INTERRUPTED_RELEASE_COMPLETED)
       }
-      const presence = store.query(sessionDomain.query.PresenceDomainQuery(payload.domain))
-      if (presence) await presenceStore.save(presence)
       return snapshot()
     },
     leaveChatRoom: async ({ domain }) => {
