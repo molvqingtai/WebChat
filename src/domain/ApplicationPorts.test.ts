@@ -203,7 +203,9 @@ describe('replaceable application boundaries', () => {
     expect(indexedDB.match(/createMessageDatabaseDefinition\(STORAGE_NAME, MESSAGE_STORE_VERSION\)/g)).toHaveLength(2)
     expect(indexedDB).toContain('withPreparationLock(`message:${STORAGE_NAME}`')
     expect(indexedDB).toContain('database.name === STORAGE_NAME')
-    expect(indexedDB).toContain('deleteMessageDatabase(STORAGE_NAME)')
+    expect(indexedDB).toContain('const deleteMessageDatabase = (): Promise<void> =>')
+    expect(indexedDB).toContain('indexedDB.deleteDatabase(STORAGE_NAME)')
+    expect(indexedDB).toContain('await deleteMessageDatabase()')
 
     const storageConstantNames = [
       'STORAGE_NAME',

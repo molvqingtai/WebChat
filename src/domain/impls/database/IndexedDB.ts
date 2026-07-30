@@ -547,9 +547,9 @@ export const createIndexedDBDatabase = <Schema extends DatabaseSchema<Schema>>(
   definition: DatabaseDefinition<Schema>
 ): Database<Schema> => new IndexedDBDatabase(definition)
 
-const deleteMessageDatabase = (name: string): Promise<void> =>
+const deleteMessageDatabase = (): Promise<void> =>
   new Promise((resolve, reject) => {
-    const request = indexedDB.deleteDatabase(name)
+    const request = indexedDB.deleteDatabase(STORAGE_NAME)
     request.addEventListener('blocked', () => console.warn('[WebChat] Message store reset is blocked'), { once: true })
     request.addEventListener('success', () => resolve(), { once: true })
     request.addEventListener('error', () => reject(new Error('Message store deletion failed')), { once: true })
@@ -562,7 +562,7 @@ export const prepareIndexedDBMessageDatabase = (): Promise<void> => {
     try {
       const databases = await indexedDB.databases()
       const existing = databases.find((database) => database.name === STORAGE_NAME)
-      if (existing && existing.version !== MESSAGE_STORE_VERSION) await deleteMessageDatabase(STORAGE_NAME)
+      if (existing && existing.version !== MESSAGE_STORE_VERSION) await deleteMessageDatabase()
 
       const database = await openDatabase(definition)
       database.close()
