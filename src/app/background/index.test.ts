@@ -14,7 +14,8 @@ const fixture = vi.hoisted(() => ({
   },
   openOptionsPage: vi.fn(async () => {}),
   provideNotification: vi.fn(),
-  provideCoordinator: vi.fn()
+  provideCoordinator: vi.fn(),
+  registerBrowserSyncStoragePreparation: vi.fn()
 }))
 
 vi.mock('#imports', () => ({
@@ -38,6 +39,9 @@ vi.mock('@/runtime/Background', () => ({
   restore: vi.fn(),
   watchTabs: vi.fn(),
   watchOffscreenClosed: vi.fn()
+}))
+vi.mock('@/service/StoragePreparation', () => ({
+  registerBrowserSyncStoragePreparation: fixture.registerBrowserSyncStoragePreparation
 }))
 
 import background from '@/app/background'

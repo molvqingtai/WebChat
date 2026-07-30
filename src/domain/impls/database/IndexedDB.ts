@@ -9,7 +9,7 @@ import type {
   WriteTransaction
 } from '@/domain/externs/Database'
 import type { Unsubscribe } from '@/domain/Subscription'
-import { STORAGE_NAME } from '@/constants/config'
+import { MESSAGE_STORE_VERSION, STORAGE_NAME } from '@/constants/storage'
 import {
   MessageDatabaseExtern,
   createMessageDatabaseDefinition,
@@ -25,6 +25,7 @@ import {
   type StoreDefinition,
   type ValidatedQuery
 } from './Definition'
+import { withPreparationLock } from '@/utils/withPreparationLock'
 
 type StoreName<Schema> = keyof Schema & string
 
@@ -83,7 +84,15 @@ const openDatabase = <Schema extends DatabaseSchema<Schema>>(
       },
       { once: true }
     )
-    request.addEventListener('success', () => resolve(request.result), { once: true })
+    request.addEventListener(
+      'success',
+      () => {
+        const database = request.result
+        database.addEventListener('versionchange', () => database.close(), { once: true })
+        resolve(database)
+      },
+      { once: true }
+    )
     request.addEventListener('error', () => reject(request.error ?? new Error('IndexedDB open failed')), {
       once: true
     })
@@ -538,11 +547,33 @@ export const createIndexedDBDatabase = <Schema extends DatabaseSchema<Schema>>(
   definition: DatabaseDefinition<Schema>
 ): Database<Schema> => new IndexedDBDatabase(definition)
 
-const MESSAGE_STORE_VERSION = 2
-const messageDatabaseName = (origin: string) => `${STORAGE_NAME}:EVENTS_V2_CANONICAL_RECORDS:${origin}`
+const deleteMessageDatabase = (): Promise<void> =>
+  new Promise((resolve, reject) => {
+    const request = indexedDB.deleteDatabase(STORAGE_NAME)
+    request.addEventListener('blocked', () => console.warn('[WebChat] Message store reset is blocked'), { once: true })
+    request.addEventListener('success', () => resolve(), { once: true })
+    request.addEventListener('error', () => reject(new Error('Message store deletion failed')), { once: true })
+  })
 
-export const createIndexedDBMessageDatabase = (origin: string): Database<MessageDatabaseSchema> =>
-  createIndexedDBDatabase(createMessageDatabaseDefinition(messageDatabaseName(origin), MESSAGE_STORE_VERSION))
+export const prepareIndexedDBMessageDatabase = (): Promise<void> => {
+  const definition = createMessageDatabaseDefinition(STORAGE_NAME, MESSAGE_STORE_VERSION)
 
-const origin = globalThis.document?.location.origin ?? 'headless'
-export const MessageDatabaseImpl = MessageDatabaseExtern.impl(createIndexedDBMessageDatabase(origin))
+  return withPreparationLock(`message:${STORAGE_NAME}`, async () => {
+    try {
+      const databases = await indexedDB.databases()
+      const existing = databases.find((database) => database.name === STORAGE_NAME)
+      if (existing && existing.version !== MESSAGE_STORE_VERSION) await deleteMessageDatabase()
+
+      const database = await openDatabase(definition)
+      database.close()
+    } catch {
+      console.error('[WebChat] Message store preparation failed')
+      throw new Error('Message store preparation failed')
+    }
+  })
+}
+
+export const createIndexedDBMessageDatabase = (): Database<MessageDatabaseSchema> =>
+  createIndexedDBDatabase(createMessageDatabaseDefinition(STORAGE_NAME, MESSAGE_STORE_VERSION))
+
+export const MessageDatabaseImpl = MessageDatabaseExtern.impl(createIndexedDBMessageDatabase())
