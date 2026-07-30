@@ -71,9 +71,11 @@ export const registerChangelogLifecycle = (browser: ChangelogBrowser) => {
   })
 
   const startup = coordinator.start(createInstallRuntime(browser))
-  browser.runtime.onMessage.addListener((message) => {
-    if (!isAcknowledgement(message)) return undefined
-    return coordinator.acknowledge(message.version)
+  browser.runtime.onMessage.addListener((message, sender) => {
+    if (sender.url !== pageUrl || !isAcknowledgement(message)) return undefined
+    const currentVersion = browser.runtime.getManifest().version
+    if (message.version !== currentVersion || !isExtensionVersion(currentVersion)) return undefined
+    return coordinator.acknowledge(currentVersion)
   })
   void startup
 

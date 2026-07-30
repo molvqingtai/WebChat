@@ -116,6 +116,26 @@ describe('ChangelogCoordinator', () => {
     expect(tabs.creates).toBe(1)
   })
 
+  it('joins startup with trusted update evidence that arrives during the pending operation', async () => {
+    let resolveRead!: (value: unknown) => void
+    const store = new MemoryStateStore()
+    vi.spyOn(store, 'read').mockImplementationOnce(() => new Promise((resolve) => (resolveRead = resolve)))
+    const tabs = new MemoryTabs()
+    const coordinator = new ChangelogCoordinator({ currentVersion: () => VERSION, store, tabs })
+
+    const startup = coordinator.reconcile()
+    await vi.waitFor(() => expect(store.read).toHaveBeenCalledTimes(1))
+    const update = coordinator.reconcile({ reason: 'update', previousVersion: '2.0.0' })
+    const joined = startup === update
+    resolveRead(undefined)
+    await Promise.all([startup, update])
+
+    expect(joined).toBe(true)
+    expect(store.value).toEqual(state({ pendingVersion: VERSION }))
+    expect(tabs.creates).toBe(1)
+    expect(tabs.focuses).toHaveLength(0)
+  })
+
   it.each([
     { details: undefined, name: 'startup' },
     { details: { reason: 'install' }, name: 'install' },
@@ -170,14 +190,16 @@ describe('ChangelogCoordinator', () => {
   it('serializes concurrent lifecycle signals and leaves one live page', async () => {
     const { coordinator, tabs } = setup(state({ observedVersion: '2.0.0' }))
 
-    await Promise.all([
-      coordinator.reconcile(),
-      coordinator.reconcile({ reason: 'update', previousVersion: '2.0.0' }),
-      coordinator.reconcile()
-    ])
+    const startup = coordinator.reconcile()
+    const update = coordinator.reconcile({ reason: 'update', previousVersion: '2.0.0' })
+    const retry = coordinator.reconcile()
+    const joined = startup === update && update === retry
+    await Promise.all([startup, update, retry])
 
+    expect(joined).toBe(true)
     expect(tabs.live).toHaveLength(1)
     expect(tabs.creates).toBe(1)
+    expect(tabs.focuses).toHaveLength(0)
   })
 
   it('fails closed on storage failure and retains pending state on tab failure', async () => {

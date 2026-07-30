@@ -116,6 +116,8 @@ export class ChangelogCoordinator {
   readonly #tabs: ChangelogTabs
   readonly #log: (message: string) => void
   #operation = Promise.resolve()
+  #reconciliation?: Promise<void>
+  #trustedUpdate = false
 
   constructor({ currentVersion, store, tabs, log = console.error }: ChangelogCoordinatorOptions) {
     this.#currentVersion = currentVersion
@@ -130,13 +132,20 @@ export class ChangelogCoordinator {
   }
 
   reconcile(details?: ChangelogInstallDetails) {
-    return this.#enqueue(async () => {
+    if (details && isTrustedUpdate(details, this.#currentVersion())) this.#trustedUpdate = true
+    if (this.#reconciliation) return this.#reconciliation
+
+    const reconciliation = this.#enqueue(async () => {
       try {
-        await this.#reconcile(details)
+        await this.#reconcileCurrentVersion()
       } catch {
         this.#log('Changelog reconciliation failed')
+      } finally {
+        this.#reconciliation = undefined
       }
     })
+    this.#reconciliation = reconciliation
+    return reconciliation
   }
 
   acknowledge(version: string) {
@@ -149,16 +158,29 @@ export class ChangelogCoordinator {
     return result
   }
 
-  async #reconcile(details: ChangelogInstallDetails | undefined) {
+  async #reconcileCurrentVersion() {
     const currentVersion = this.#currentVersion()
     if (!isExtensionVersion(currentVersion)) throw new Error('Invalid extension version')
 
-    const trustedUpdate = isTrustedUpdate(details, currentVersion)
+    let shouldOpen = false
+    do {
+      const trustedUpdate = this.#trustedUpdate
+      this.#trustedUpdate = false
+      const currentShouldOpen = await this.#reconcileState(currentVersion, trustedUpdate)
+      shouldOpen ||= currentShouldOpen
+    } while (this.#trustedUpdate)
+
+    if (shouldOpen) {
+      await this.#openOrFocus()
+      this.#trustedUpdate = false
+    }
+  }
+
+  async #reconcileState(currentVersion: string, trustedUpdate: boolean) {
     const parsed = parseChangelogState(await this.#store.read())
     if (!parsed) {
       await this.#store.write(baseline(currentVersion, trustedUpdate))
-      if (trustedUpdate) await this.#openOrFocus()
-      return
+      return trustedUpdate
     }
 
     const currentWasShown = parsed.shownVersions.includes(currentVersion)
@@ -182,7 +204,7 @@ export class ChangelogCoordinator {
     }
 
     if (!statesEqual(parsed, next)) await this.#store.write(next)
-    if (shouldOpen) await this.#openOrFocus()
+    return shouldOpen
   }
 
   async #openOrFocus() {

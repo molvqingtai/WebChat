@@ -57,9 +57,9 @@ const createBrowser = () => {
       if (!installedListener) throw new Error('Install listener was not registered')
       Reflect.apply(installedListener, undefined, [details])
     },
-    emitMessage(message: unknown) {
+    emitMessage(message: unknown, sender: Parameters<MessageListener>[1] = {}) {
       if (!messageListener) throw new Error('Message listener was not registered')
-      return Reflect.apply(messageListener, undefined, [message, {}, vi.fn()])
+      return Reflect.apply(messageListener, undefined, [message, sender, vi.fn()])
     }
   }
 }
@@ -86,7 +86,7 @@ describe('browser changelog lifecycle', () => {
     expect(fixture.tabs[0]?.url).toBe(`moz-extension://webchat${CHANGELOG_PAGE_PATH}`)
   })
 
-  it('accepts only the bounded acknowledgement message and clears pending state', async () => {
+  it('accepts acknowledgement only from the exact Changelog page for the installed version', async () => {
     const fixture = createBrowser()
     fixture.storage[CHANGELOG_STATE_KEY] = {
       observedVersion: VERSION,
@@ -96,17 +96,28 @@ describe('browser changelog lifecycle', () => {
     const coordinator = registerChangelogLifecycle(fixture.browser)
     await coordinator.reconcile()
     fixture.set.mockClear()
+    vi.mocked(fixture.browser.runtime.getManifest).mockClear()
+    const changelogSender = { url: `moz-extension://webchat${CHANGELOG_PAGE_PATH}` }
 
-    expect(fixture.emitMessage({ type: 'unrelated', version: VERSION })).toBeUndefined()
+    await fixture.emitMessage({ type: 'unrelated', version: VERSION }, changelogSender)
     expect(fixture.set).not.toHaveBeenCalled()
 
-    await fixture.emitMessage({ type: CHANGELOG_ACKNOWLEDGEMENT, version: VERSION })
+    await fixture.emitMessage({ type: CHANGELOG_ACKNOWLEDGEMENT, version: VERSION }, {})
+    await fixture.emitMessage(
+      { type: CHANGELOG_ACKNOWLEDGEMENT, version: VERSION },
+      { url: `${changelogSender.url}?forged` }
+    )
+    await fixture.emitMessage({ type: CHANGELOG_ACKNOWLEDGEMENT, version: '2.0.0' }, changelogSender)
+    expect(fixture.set).not.toHaveBeenCalled()
+
+    await fixture.emitMessage({ type: CHANGELOG_ACKNOWLEDGEMENT, version: VERSION }, changelogSender)
 
     expect(fixture.storage[CHANGELOG_STATE_KEY]).toEqual({
       observedVersion: VERSION,
       shownVersions: [VERSION]
     })
     expect(fixture.set).toHaveBeenCalledTimes(1)
+    expect(fixture.browser.runtime.getManifest).toHaveBeenCalledTimes(2)
   })
 
   it('sends the rendered manifest version through the background acknowledgement boundary', async () => {
