@@ -9,7 +9,7 @@ import type {
   WriteTransaction
 } from '@/domain/externs/Database'
 import type { Unsubscribe } from '@/domain/Subscription'
-import { MESSAGE_STORE_NAME, MESSAGE_STORE_VERSION } from '@/constants/storage'
+import { MESSAGE_STORE_VERSION, STORAGE_NAME } from '@/constants/storage'
 import {
   MessageDatabaseExtern,
   createMessageDatabaseDefinition,
@@ -556,13 +556,13 @@ const deleteMessageDatabase = (name: string): Promise<void> =>
   })
 
 export const prepareIndexedDBMessageDatabase = (): Promise<void> => {
-  const definition = createMessageDatabaseDefinition(MESSAGE_STORE_NAME, MESSAGE_STORE_VERSION)
+  const definition = createMessageDatabaseDefinition(STORAGE_NAME, MESSAGE_STORE_VERSION)
 
-  return withPreparationLock(`message:${MESSAGE_STORE_NAME}`, async () => {
+  return withPreparationLock(`message:${STORAGE_NAME}`, async () => {
     try {
       const databases = await indexedDB.databases()
-      const existing = databases.find((database) => database.name === MESSAGE_STORE_NAME)
-      if (existing && existing.version !== MESSAGE_STORE_VERSION) await deleteMessageDatabase(MESSAGE_STORE_NAME)
+      const existing = databases.find((database) => database.name === STORAGE_NAME)
+      if (existing && existing.version !== MESSAGE_STORE_VERSION) await deleteMessageDatabase(STORAGE_NAME)
 
       const database = await openDatabase(definition)
       database.close()
@@ -574,6 +574,6 @@ export const prepareIndexedDBMessageDatabase = (): Promise<void> => {
 }
 
 export const createIndexedDBMessageDatabase = (): Database<MessageDatabaseSchema> =>
-  createIndexedDBDatabase(createMessageDatabaseDefinition(MESSAGE_STORE_NAME, MESSAGE_STORE_VERSION))
+  createIndexedDBDatabase(createMessageDatabaseDefinition(STORAGE_NAME, MESSAGE_STORE_VERSION))
 
 export const MessageDatabaseImpl = MessageDatabaseExtern.impl(createIndexedDBMessageDatabase())

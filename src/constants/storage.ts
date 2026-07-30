@@ -1,7 +1,5 @@
 export const STORAGE_NAME = 'WEB_CHAT_STORAGE' as const
 
-export const MESSAGE_STORE_NAME = `${STORAGE_NAME}:MESSAGES` as const
-
 export const MESSAGE_STORE_VERSION = 2
 
 export const APP_STATUS_STORAGE_KEY = 'WEB_CHAT_APP_STATUS' as const

@@ -5,7 +5,6 @@ import {
   APP_STATUS_STORAGE_KEY,
   CONFIG_STORE_VERSION,
   CONFIG_STORE_VERSION_KEY,
-  MESSAGE_STORE_NAME,
   STORAGE_NAME
 } from '@/constants/storage'
 import { prepareIndexedDBMessageDatabase } from '@/domain/impls/database/IndexedDB'
@@ -31,6 +30,7 @@ let fixtureId = 0
 const databaseNames = new Set<string>()
 const nextOrigin = (label: string) => `https://${label}-${fixtureId++}.test`
 const localKey = (key: string) => `${STORAGE_NAME}:${key}`
+const retiredMessageIdentity = `${STORAGE_NAME}:${['MESSAGE', 'S'].join('')}`
 
 const createBrowserArea = (initial: Record<string, unknown>) => {
   const values = { ...initial }
@@ -83,15 +83,15 @@ const loadLocalPreparation = async (origin: string, localStorage: Storage) => {
 }
 
 const seedTargetMessage = async (value: unknown) => {
-  databaseNames.add(MESSAGE_STORE_NAME)
+  databaseNames.add(STORAGE_NAME)
   await prepareIndexedDBMessageDatabase()
-  const database = await openDB(MESSAGE_STORE_NAME)
+  const database = await openDB(STORAGE_NAME)
   await database.put('records', value, 'sentinel')
   database.close()
 }
 
 const readTargetMessage = async () => {
-  const database = await openDB(MESSAGE_STORE_NAME)
+  const database = await openDB(STORAGE_NAME)
   const value = await database.get('records', 'sentinel')
   database.close()
   return value
@@ -119,7 +119,7 @@ afterEach(async () => {
 })
 
 describe('physical persistence isolation', () => {
-  it('keeps configuration scopes and deprecated unstorage data during a message reset', async () => {
+  it('keeps configuration scopes, non-target databases, and deprecated unstorage data during a message reset', async () => {
     const origin = nextOrigin('message-family')
     const localStorage = createTestLocalStorage()
     const prepareLocal = await loadLocalPreparation(origin, localStorage)
@@ -138,19 +138,41 @@ describe('physical persistence isolation', () => {
     await deprecated.put(deprecatedName, 'deprecated-message', `${STORAGE_NAME}::message`)
     deprecated.close()
 
-    databaseNames.add(MESSAGE_STORE_NAME)
-    const legacy = await openDB(MESSAGE_STORE_NAME, 1, {
+    databaseNames.add(retiredMessageIdentity)
+    const retired = await openDB(retiredMessageIdentity, 1, {
+      upgrade(database) {
+        database.createObjectStore('sentinels')
+      }
+    })
+    await retired.put('sentinels', 'retired-message', 'sentinel')
+    retired.close()
+
+    databaseNames.add(STORAGE_NAME)
+    const legacy = await openDB(STORAGE_NAME, 1, {
       upgrade(database) {
         database.createObjectStore('legacy')
       }
     })
     legacy.close()
+    const deletion = vi.spyOn(indexedDB, 'deleteDatabase')
 
     await prepareIndexedDBMessageDatabase()
+
+    const deletedNames = deletion.mock.calls.map(([name]) => name)
+    deletion.mockRestore()
 
     expect(localStorage.getItem(localKey(APP_STATUS_STORAGE_KEY))).toBe('local-configuration')
     expect(localStorage.getItem(localKey(CONFIG_STORE_VERSION_KEY))).toBe(String(CONFIG_STORE_VERSION))
     expect(sync.values).toEqual({ user: 'sync-configuration', [CONFIG_STORE_VERSION_KEY]: CONFIG_STORE_VERSION })
+    expect(deletedNames).toEqual([STORAGE_NAME])
+    const preservedRetired = await openDB(retiredMessageIdentity)
+    const retiredStoreNames = [...preservedRetired.objectStoreNames]
+    const retiredValue = retiredStoreNames.includes('sentinels')
+      ? await preservedRetired.get('sentinels', 'sentinel')
+      : undefined
+    preservedRetired.close()
+    expect(retiredStoreNames).toEqual(['sentinels'])
+    expect(retiredValue).toBe('retired-message')
     const preservedDeprecated = await openDB(deprecatedName)
     await expect(preservedDeprecated.get(deprecatedName, `${STORAGE_NAME}::message`)).resolves.toBe(
       'deprecated-message'

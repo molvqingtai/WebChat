@@ -3,15 +3,15 @@
 - [x] 1.1 Move configurable `MESSAGE_STORE_VERSION = 2` into `src/constants/storage.ts` without advancing it for the initial reset lifecycle and without renaming any public persistence API.
 - [x] 1.2 Add configurable `CONFIG_STORE_VERSION = 1` and private `CONFIG_STORE_VERSION_KEY` in `src/constants/storage.ts`, with scoped completion records for the extension-wide sync configuration scope and each origin-local WebChat configuration scope.
 - [x] 1.3 Keep extension/package/wire versions, deprecated `WEB_CHAT_VERSION`/`VERSION_STORAGE_KEY`, and deprecated unstorage message data outside both decisions.
-- [ ] 1.4 Keep `STORAGE_NAME`, `APP_STATUS_STORAGE_KEY`, and `USER_INFO_STORAGE_KEY` in `src/constants/storage.ts`; remove `MESSAGE_STORE_NAME` and use exact direct `STORAGE_NAME` as the canonical IndexedDB name, while `${STORAGE_NAME}:` remains the separate localStorage configuration prefix.
-- [ ] 1.5 Remove every non-target identity from production persistence logic entirely: no constant/construction, lookup, branch, open/read, migration/conversion/export/copy, clear/delete, error/retry, readiness, or completion path; encode no message or origin suffix in the target name.
+- [x] 1.4 Keep `STORAGE_NAME`, `APP_STATUS_STORAGE_KEY`, and `USER_INFO_STORAGE_KEY` in `src/constants/storage.ts`; remove `MESSAGE_STORE_NAME` and use exact direct `STORAGE_NAME` as the canonical IndexedDB name, while `${STORAGE_NAME}:` remains the separate localStorage configuration prefix.
+- [x] 1.5 Remove every non-target identity from production persistence logic entirely: no constant/construction, lookup, branch, open/read, migration/conversion/export/copy, clear/delete, error/retry, readiness, or completion path; encode no message or origin suffix in the target name.
 
 ## 2. Message Store Reset
 
 - [x] 2.1 Add a private canonical database preparation lifecycle that distinguishes absent, same-version, and any existing non-equal native version before exposing the Database-backed MessageStore.
 - [x] 2.2 On a non-equal native version, delete the whole active canonical database and recreate its configured target identity empty at `MESSAGE_STORE_VERSION`; do not migrate or clear known stores in place.
 - [x] 2.3 Serialize same-origin contenders, handle native `blocked`/`error`/interruption without a second or late-unowned delete, and prevent target-generation writers until recreation is ready.
-- [ ] 2.4 Switch the active canonical definition and serialized preparation lifecycle to direct `STORAGE_NAME`; leave every non-target database untouched and evaluate only target absence, same native version, or target native-version mismatch.
+- [x] 2.4 Switch the active canonical definition and serialized preparation lifecycle to direct `STORAGE_NAME`; leave every non-target database untouched and evaluate only target absence, same native version, or target native-version mismatch.
 
 ## 3. Configuration Store Reset
 
@@ -30,9 +30,9 @@
 
 - [x] 5.1 Add deterministic message-store coverage for absence baseline, same-version preservation, adjacent/skipped/reverse mismatch, complete residue deletion, blocked/error paths, pre/post-delete interruption, retry, recreation, and concurrent no-double-reset behavior.
 - [x] 5.2 Add deterministic configuration coverage for missing-marker baseline with existing data, same-version preservation, adjacent/skipped/reverse/malformed mismatch, extension-sync and multi-origin local scopes, failure/retry, interruption, and concurrency.
-- [ ] 5.3 Update cross-family and isolation sentinels proving message/config independence, other-origin laziness, host localStorage namespace isolation, non-target IndexedDB preservation, browser-area preservation, and deprecated unstorage message-data preservation.
+- [x] 5.3 Update cross-family and isolation sentinels proving message/config independence, other-origin laziness, host localStorage namespace isolation, non-target IndexedDB preservation, browser-area preservation, and deprecated unstorage message-data preservation.
 - [x] 5.4 Add static/startup guards rejecting package-version ownership, old marker/clear paths, public API widening, user-visible migration feedback, and application access before preparation.
-- [ ] 5.5 Update deterministic exact-target-name regressions to direct `STORAGE_NAME` with no message/origin suffix for target absence, same version, mismatch, same-origin contenders, and separate origins sharing the name; statically reject every non-target database production path, but add no non-target-database delete/no-op/failure/retry lifecycle tests.
+- [x] 5.5 Update deterministic exact-target-name regressions to direct `STORAGE_NAME` with no message/origin suffix for target absence, same version, mismatch, same-origin contenders, and separate origins sharing the name; statically reject every non-target database production path, but add no non-target-database delete/no-op/failure/retry lifecycle tests.
 
 ## 6. Delivery Gates
 
