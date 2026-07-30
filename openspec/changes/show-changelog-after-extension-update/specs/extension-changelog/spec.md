@@ -70,7 +70,11 @@ The page SHALL initiate no network request during loading or rendering. Raw HTML
 
 The primary heading SHALL identify `WebChat v<installed version>`. The page SHALL show the release date when available, the current update notes with semantic headings/lists/inline code/links, and explicit links derived from package metadata: repository `homepage`, exact `<homepage>/releases/tag/v<installed version>` Release, and `<bugs.url>/new` issue feedback. External destinations SHALL open only after activation, in a separate tab with no opener relationship. The existing Options version control SHALL open the internal page, and a manually opened rendered page SHALL acknowledge the installed version.
 
-The surface SHALL use the local WebChat logo and existing visual primitives, support system light/dark preference and reduced motion, remain readable at narrow and desktop widths, and provide semantic landmarks, ordered headings, descriptive link names, and visible keyboard focus. Its compact release-record composition SHALL use one unframed reading column, restrained version masthead, thin dividers, a chronology-bearing release spine, and final icon-plus-text GitHub action row. It SHALL keep brand/body in the existing sans role, reserve monospace for version/date/commit metadata, use zero custom letter spacing, and keep distinct neutral/emerald/sky color roles with accessible light/dark contrast. It SHALL contain no oversized marketing hero, gradient/orb decoration, remote media, nested cards, update-success Toast, permission request, unrelated setting, or overlapping/truncated text or controls.
+The surface SHALL use the local WebChat logo and the existing shadcn `Badge` and `Button` primitives without modifying or copying those primitives. Its one unframed `max-w-3xl` reading column SHALL contain a compact release-stamp header, the natural-height current-note body beginning within 32 CSS pixels of the header divider, and a final responsive action group. The visible version SHALL use a secondary Badge adjacent to the product heading, the optional date SHALL use an outline Badge, and their combined semantic heading name SHALL identify `WebChat v<installed version>`. A missing date SHALL reserve no empty space.
+
+Repository, exact Release, and issue feedback SHALL each use an existing outline Button with `asChild`, Lucide icon, visible text, and an at-least-40-pixel stable hit area. The action group SHALL form three equal columns on desktop and one column on narrow viewports. The release notes SHALL use natural document scrolling; the whole page SHALL NOT be wrapped or height-limited by `ScrollArea`. Tables and code MAY contain only their own horizontal overflow.
+
+The surface SHALL support system light/dark preference and reduced motion, remain readable at narrow and desktop widths, and provide semantic landmarks, ordered headings, descriptive action names, and visible keyboard focus. It SHALL use existing shadcn semantic canvas/control tokens, retain restrained emerald release and sky inline-link accents, keep brand/body in the existing sans role, reserve monospace for version/date/commit metadata, and use zero custom letter spacing. It SHALL contain no release spine or timeline dot, forced viewport-filling section height, page-level or nested card, oversized marketing hero, gradient/orb decoration, remote media, update-success Toast, permission request, unrelated setting, or overlapping/truncated text or controls. The current and fallback states SHALL share this same shell and action hierarchy.
 
 #### Scenario: Current release notes render without network
 
@@ -102,11 +106,24 @@ The surface SHALL use the local WebChat logo and existing visual primitives, sup
 - **THEN** it SHALL open the internal Changelog page rather than the generic external Releases index
 - **AND** a successfully rendered manual visit SHALL acknowledge the installed version without causing another automatic tab
 
-#### Scenario: Release record remains usable across viewports and themes
+#### Scenario: Rejected timeline is replaced by one compact shadcn release record
 
-- **WHEN** the page is rendered at narrow and desktop widths in light, dark, keyboard-focus, and reduced-motion states
-- **THEN** its logo, version/date, current notes, release spine, and three outbound commands SHALL remain legible, ordered, nonoverlapping, and fully operable
-- **AND** no dynamic content SHALL resize or occlude adjacent controls
+- **WHEN** the current release is rendered at the Owner screenshot viewport of 915 by 694 CSS pixels
+- **THEN** the logo, product heading, version/date Badges, and first note heading SHALL form one compact top sequence with at most 32 CSS pixels between the header divider and note content
+- **AND** no vertical release spine, timeline dot, forced empty band, page-level card, or bare-link footer SHALL remain
+- **AND** Repository, exact Release, and issue feedback SHALL appear as three equal shadcn outline Buttons with icons and visible labels
+
+#### Scenario: Compact release record remains usable across narrow and theme states
+
+- **WHEN** the page is rendered at 360 CSS pixels wide and at desktop width in light, dark, keyboard-focus, and reduced-motion states
+- **THEN** the logo, semantic `WebChat v<installed version>` heading, version/date Badges, current notes, and three outbound Buttons SHALL remain legible, ordered, nonoverlapping, and fully operable
+- **AND** metadata SHALL wrap without truncation, actions SHALL stack to one column when needed, the document SHALL use one natural page scroll surface, and no dynamic content SHALL resize or occlude adjacent controls
+
+#### Scenario: Fallback keeps the same release hierarchy
+
+- **GIVEN** the current release notes are unavailable or mismatched
+- **WHEN** the local fallback renders
+- **THEN** it SHALL reuse the same compact release-stamp header and three-Button action group without adding an error card, nested scroller, or reserved blank region
 
 ### Requirement: Package version behavior is separate from persistence versions
 

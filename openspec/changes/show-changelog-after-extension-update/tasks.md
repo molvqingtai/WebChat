@@ -13,9 +13,10 @@
 ## 3. Build The Internal Changelog Page
 
 - [x] 3.1 Add a WXT Changelog entrypoint that bundles raw `CHANGELOG.md`, extracts the current semantic-release section, verifies installed-version identity, and renders a nonblank local fallback on mismatch.
-- [x] 3.2 Render the local WebChat logo and restrained version masthead, unframed release-spine reading column, version/date/current notes, icon-plus-text repository/exact Release/issue actions, light/dark and reduced-motion states, responsive layout, semantic landmarks/headings, keyboard focus, and no remote-loading Markdown elements.
+- [x] 3.2 Render the local WebChat logo, restrained version metadata, unframed single-release reading column, version/date/current notes, icon-plus-text repository/exact Release/issue actions, light/dark and reduced-motion states, responsive layout, semantic landmarks/headings, keyboard focus, and no remote-loading Markdown elements.
 - [x] 3.3 Acknowledge the installed version only after the current or fallback surface renders; ensure manual Options access uses the same path and acknowledgement.
 - [x] 3.4 Change the existing Options version control from the generic external Releases index to the internal page without adding settings, permissions, or navigation duplication.
+- [ ] 3.5 Replace the Owner-rejected timeline presentation in `App.tsx`/`App.test.ts` with the compact shadcn release record: existing version/date Badges, three existing outline Button actions, natural document scrolling, tight note spacing, shared fallback shell, and no release spine, timeline dot, forced empty band, page-level card, or shared-primitive edit.
 
 ## 4. Protect Release And Persistence Boundaries
 
@@ -27,5 +28,5 @@
 
 - [ ] 5.1 Run focused fail-before controls, then full test/type/lint/format/build and strict OpenSpec gates on one immutable implementation exact.
 - [ ] 5.2 Verify both packaged browser artifacts contain the internal page and local current notes, and obtain fresh Reviewer findings for lifecycle idempotence, crash boundaries, content safety, version parity, accessibility, and scope.
-- [ ] 5.3 Record nonblocking real-browser evidence for first install silence, one different-version open, same-version restart silence, manual Options reopening, offline content, exact links, and zero duplicate live tabs where available; capture narrow/desktop light/dark screenshots and verify nonblank pixels, framing, focus, overflow, and overlap; never report unavailable scenarios as PASS.
+- [ ] 5.3 Record nonblocking real-browser evidence for first install silence, one different-version open, same-version restart silence, manual Options reopening, offline content, exact links, and zero duplicate live tabs where available; capture 915x694 and 360px-wide light/dark screenshots and verify the compact header-to-notes sequence, absent timeline/dead space, three-Button desktop grid, one-column narrow actions, nonblank pixels, framing, focus, natural page scroll, overflow, and overlap; never report unavailable scenarios as PASS.
 - [ ] 5.4 Keep this requirement on one independent branch/PR and wait for separate explicit Owner merge authorization.
