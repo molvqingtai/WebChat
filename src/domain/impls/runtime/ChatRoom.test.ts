@@ -19,6 +19,7 @@ import type {
   RuntimeSessionEvent,
   RuntimeSnapshot
 } from '@/runtime/Contract'
+import { PagePort } from '@/runtime/PagePort'
 
 const DOMAIN = 'https://example.com'
 const USER = { id: 'local-user', name: 'Local', avatar: '' }
@@ -237,6 +238,45 @@ const setup = async (
     },
     ...server
   }
+}
+
+const setupHistoryCancellation = async () => {
+  const fixture = serverFixture()
+  const pagePort = new PagePort()
+  const server: RuntimeServer = {
+    ...fixture.server,
+    provideHistory: async ({ pageId, domain }, listener) => {
+      pagePort.provideHistory(pageId, domain, listener)
+    },
+    resolveHistorySupply: vi.fn(async ({ pageId, supplyId, result }) => {
+      pagePort.resolveHistorySupply(pageId, supplyId, result)
+    }),
+    rejectHistorySupply: vi.fn(async ({ pageId, supplyId, reason }) => {
+      pagePort.rejectHistorySupply(pageId, supplyId, reason)
+    })
+  }
+  const database = createMemoryMessageDatabase(`history-cancel-${databaseId++}`)
+  const messageStore = createMessageStore(database)
+  const queryStarted = Promise.withResolvers<AbortSignal>()
+  const releaseQuery = Promise.withResolvers<readonly MessageRecord[]>()
+  vi.spyOn(messageStore, 'query').mockImplementation(async (query) => {
+    if (!query?.signal) throw new Error('History query must be abortable')
+    queryStarted.resolve(query.signal)
+    return releaseQuery.promise
+  })
+  const room = new ChatRoom({
+    server,
+    messageStore,
+    pageDomain: DOMAIN,
+    pageId: 'page-1',
+    getSnapshot: () => domainSnapshot(),
+    whenReady: (listener) => {
+      listener()
+      return () => {}
+    }
+  })
+  await settle()
+  return { database, pagePort, queryStarted, releaseQuery, room, server }
 }
 
 beforeEach(() => vi.useFakeTimers())
@@ -690,6 +730,102 @@ describe('Runtime-backed ChatRoom application port', () => {
       type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE,
       signal: expect.any(AbortSignal)
     })
+  })
+
+  it('terminally rejects a cancelled slow history query exactly once', async () => {
+    const fixture = await setupHistoryCancellation()
+    const request = { supplyId: 'supply-cancel', domain: DOMAIN, syncId: 'sync-cancel', cutoff: 0 }
+    let suppliedResult: Error | 'pending' = 'pending'
+    const supplied = fixture.pagePort.supplyHistory('page-1', request).then(
+      () => {
+        suppliedResult = new Error('History supply unexpectedly resolved')
+      },
+      (error: Error) => {
+        suppliedResult = error
+      }
+    )
+    const signal = await fixture.queryStarted.promise
+    let cancellationSettled = false
+    const cancelled = fixture.pagePort.cancelHistorySupply(request.supplyId).then(() => {
+      cancellationSettled = true
+    })
+
+    try {
+      await settle()
+
+      expect(signal.aborted).toBe(true)
+      expect(fixture.server.rejectHistorySupply).toHaveBeenCalledOnce()
+      expect(fixture.server.rejectHistorySupply).toHaveBeenCalledWith({
+        pageId: 'page-1',
+        supplyId: request.supplyId,
+        reason: 'History supply cancelled'
+      })
+      expect(cancellationSettled).toBe(true)
+      expect(suppliedResult).toEqual(new Error('History supplier timed out'))
+      expect(fixture.pagePort.pendingHistoryCountForTest()).toBe(0)
+
+      fixture.releaseQuery.resolve([])
+      await settle()
+      expect(fixture.server.rejectHistorySupply).toHaveBeenCalledOnce()
+      expect(fixture.server.resolveHistorySupply).not.toHaveBeenCalled()
+    } finally {
+      fixture.releaseQuery.resolve([])
+      fixture.room.dispose()
+      fixture.pagePort.dispose()
+      await Promise.all([supplied, cancelled])
+      await fixture.database.close()
+    }
+  })
+
+  it('settles provider replacement while fencing the old query from a new supply', async () => {
+    const fixture = await setupHistoryCancellation()
+    const oldRequest = { supplyId: 'supply-old', domain: DOMAIN, syncId: 'sync-old', cutoff: 0 }
+    let oldSupplyResult: Error | 'pending' | null = 'pending'
+    const oldSupply = fixture.pagePort.supplyHistory('page-1', oldRequest).then(
+      (result) => {
+        oldSupplyResult = result === null ? null : new Error('Old history supply unexpectedly returned records')
+      },
+      (error: Error) => {
+        oldSupplyResult = error
+      }
+    )
+    const oldSignal = await fixture.queryStarted.promise
+    const replacementEvents: HistorySupplyEvent[] = []
+
+    try {
+      await fixture.server.provideHistory({ pageId: 'page-1', domain: DOMAIN }, (event) => {
+        replacementEvents.push(event)
+      })
+      await settle()
+
+      expect(oldSignal.aborted).toBe(true)
+      expect(fixture.server.rejectHistorySupply).toHaveBeenCalledOnce()
+      expect(fixture.server.rejectHistorySupply).toHaveBeenCalledWith({
+        pageId: 'page-1',
+        supplyId: oldRequest.supplyId,
+        reason: 'History supply cancelled'
+      })
+      expect(oldSupplyResult).toBeNull()
+
+      const newRequest = { supplyId: 'supply-new', domain: DOMAIN, syncId: 'sync-new', cutoff: 0 }
+      const newSupply = fixture.pagePort.supplyHistory('page-1', newRequest).catch((error: Error) => error)
+      expect(replacementEvents).toEqual([{ type: 'request', request: newRequest }])
+      fixture.releaseQuery.resolve([])
+      await settle()
+
+      expect(fixture.pagePort.pendingHistoryCountForTest()).toBe(1)
+      expect(fixture.server.rejectHistorySupply).toHaveBeenCalledOnce()
+      expect(fixture.server.resolveHistorySupply).not.toHaveBeenCalled()
+
+      fixture.pagePort.removePage('page-1')
+      await expect(newSupply).resolves.toEqual(new Error('History supplier page detached'))
+    } finally {
+      fixture.releaseQuery.resolve([])
+      fixture.room.dispose()
+      fixture.pagePort.dispose()
+      await oldSupply
+      await fixture.database.close()
+    }
   })
 
   it('reconnects the current room without publishing a synthetic leave snapshot', async () => {
