@@ -14,7 +14,8 @@ const fixture = vi.hoisted(() => ({
   },
   openOptionsPage: vi.fn(async () => {}),
   provideNotification: vi.fn(),
-  provideCoordinator: vi.fn()
+  provideCoordinator: vi.fn(),
+  registerChangelogLifecycle: vi.fn()
 }))
 
 vi.mock('#imports', () => ({
@@ -39,6 +40,7 @@ vi.mock('@/runtime/Background', () => ({
   watchTabs: vi.fn(),
   watchOffscreenClosed: vi.fn()
 }))
+vi.mock('@/changelog/Browser', () => ({ registerChangelogLifecycle: fixture.registerChangelogLifecycle }))
 
 import background from '@/app/background'
 
@@ -99,6 +101,7 @@ describe.each([
     const { unusedRead } = usePlatform(firefox, action.namespace)
 
     expect(startBackground).not.toThrow()
+    expect(fixture.registerChangelogLifecycle.mock.calls[0]?.[0]).toBe(fixture.browser)
     expect(unusedRead).not.toHaveBeenCalled()
     expect(action.addListener).toHaveBeenCalledTimes(1)
     expect(action.listeners.size).toBe(1)

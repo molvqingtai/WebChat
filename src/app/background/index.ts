@@ -15,10 +15,13 @@ import {
   watchOffscreenClosed
 } from '@/runtime/Background'
 import { registerActionClick } from '@/app/background/ActionRegistration'
+import { registerChangelogLifecycle } from '@/changelog/Browser'
 
 export default defineBackground({
   type: 'module',
   main() {
+    registerChangelogLifecycle(browser)
+
     const [provideNotification] = defineNotificationProxy(() => new Notification(), browser.runtime.id)
     const [provideAppAction] = defineAppActionProxy(() => new AppAction(), browser.runtime.id)
 
