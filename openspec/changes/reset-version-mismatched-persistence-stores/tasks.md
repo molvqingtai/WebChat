@@ -4,14 +4,14 @@
 - [x] 1.2 Add configurable `CONFIG_STORE_VERSION = 1` and private `CONFIG_STORE_VERSION_KEY` in `src/constants/storage.ts`, with scoped completion records for the extension-wide sync configuration scope and each origin-local WebChat configuration scope.
 - [x] 1.3 Keep extension/package/wire versions, deprecated `WEB_CHAT_VERSION`/`VERSION_STORAGE_KEY`, and deprecated unstorage message data outside both decisions.
 - [ ] 1.4 Move `STORAGE_NAME`, `APP_STATUS_STORAGE_KEY`, and `USER_INFO_STORAGE_KEY` from generic `config.ts` into `src/constants/storage.ts`; define `MESSAGE_STORE_NAME` there with exact value `${STORAGE_NAME}:MESSAGES` so all persistence identities, keys, and versions have one constants owner.
-- [ ] 1.5 Remove every old-canonical compatibility path: no open/read/version inspection/data decode/migration/conversion/backfill/export/copy/retention from `${STORAGE_NAME}:EVENTS_V2_CANONICAL_RECORDS:${origin}` and no encoded origin suffix in the target name.
+- [ ] 1.5 Remove the retired canonical identity from production persistence logic entirely: no name construction, lookup, branch, open/read, migration/conversion/export/copy, clear/delete, error/retry, readiness, or completion path; encode no origin suffix in the target name.
 
 ## 2. Message Store Reset
 
 - [x] 2.1 Add a private canonical database preparation lifecycle that distinguishes absent, same-version, and any existing non-equal native version before exposing the Database-backed MessageStore.
 - [x] 2.2 On a non-equal native version, delete the whole active canonical database and recreate its configured target identity empty at `MESSAGE_STORE_VERSION`; do not migrate or clear known stores in place.
 - [x] 2.3 Serialize same-origin contenders, handle native `blocked`/`error`/interruption without a second or late-unowned delete, and prevent target-generation writers until recreation is ready.
-- [ ] 2.4 Extend the same serialized preparation lifecycle to delete the old identity before evaluating `MESSAGE_STORE_NAME`; when both exist, delete old then preserve a same-version target or independently reset a mismatched target.
+- [ ] 2.4 Switch the active canonical definition and serialized preparation lifecycle to only `MESSAGE_STORE_NAME`; leave every retired database untouched and evaluate only target absence, same native version, or target native-version mismatch.
 
 ## 3. Configuration Store Reset
 
@@ -32,7 +32,7 @@
 - [x] 5.2 Add deterministic configuration coverage for missing-marker baseline with existing data, same-version preservation, adjacent/skipped/reverse/malformed mismatch, extension-sync and multi-origin local scopes, failure/retry, interruption, and concurrency.
 - [x] 5.3 Add cross-family and isolation sentinels proving message/config independence, other-origin laziness, host localStorage namespace isolation, unrelated IndexedDB/browser-area preservation, and deprecated unstorage message-data preservation.
 - [x] 5.4 Add static/startup guards rejecting package-version ownership, old marker/clear paths, public API widening, user-visible migration feedback, and application access before preparation.
-- [ ] 5.5 Add deterministic old-identity regressions for absent/present, arbitrary native version, exact full deletion, both identities present, no compatibility access, blocked/error/interruption/retry, same-version target preservation, target mismatch, same-origin contenders, and separate origins sharing the exact target name.
+- [ ] 5.5 Add deterministic exact-target-name/no-origin-suffix regressions for target absence, same version, mismatch, same-origin contenders, and separate origins sharing the name; add a static no-retired-identity-production-path guard, but no retired-database delete/no-op/failure/retry lifecycle tests.
 
 ## 6. Delivery Gates
 
@@ -40,4 +40,4 @@
 - [ ] 6.2 Obtain fresh Reviewer findings on the complete two-family contract, concurrency, failure, isolation, and regression matrix.
 - [ ] 6.3 Record nonblocking Chrome MV3 and Firefox MV2 baseline/mismatch/console-only behavior truth where the established environments can create the required persisted states; do not convert unavailable evidence into PASS.
 - [ ] 6.4 Keep implementation on the same requirement branch and PR, and wait for separate explicit Owner authorization before merge.
-- [ ] 6.5 Re-run focused fail-before, complete static/source/build, Review, and nonblocking browser gates on the replacement exact after identity cleanup and constants centralization; prior exact evidence does not transfer.
+- [ ] 6.5 Re-run focused fail-before, complete static/source/build, Review, and nonblocking browser gates on the replacement exact after the untouched identity switch and constants centralization; prior exact evidence does not transfer.
