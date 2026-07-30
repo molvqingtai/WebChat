@@ -16,7 +16,7 @@
 - [x] 3.2 Render the local WebChat logo, restrained version metadata, unframed single-release reading column, version/date/current notes, icon-plus-text repository/exact Release/issue actions, light/dark and reduced-motion states, responsive layout, semantic landmarks/headings, keyboard focus, and no remote-loading Markdown elements.
 - [x] 3.3 Acknowledge the installed version only after the current or fallback surface renders; ensure manual Options access uses the same path and acknowledgement.
 - [x] 3.4 Change the existing Options version control from the generic external Releases index to the internal page without adding settings, permissions, or navigation duplication.
-- [ ] 3.5 Replace the Owner-rejected timeline presentation in `App.tsx`/`App.test.ts` with the compact shadcn release record: existing version/date Badges, three existing outline Button actions, natural document scrolling, tight note spacing, shared fallback shell, and no release spine, timeline dot, forced empty band, page-level card, or shared-primitive edit.
+- [ ] 3.5 Replace the Owner-rejected timeline presentation in `App.tsx`/`App.test.ts` with the compact shadcn release record: exact `New version` eyebrow, existing version/date Badges, three existing outline Button actions, natural document scrolling, tight note spacing, shared fallback shell, and no release spine, timeline dot, forced empty band, page-level card, or shared-primitive edit.
 
 ## 4. Protect Release And Persistence Boundaries
 

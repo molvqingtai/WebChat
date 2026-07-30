@@ -72,7 +72,7 @@ The renderer SHALL not enable raw HTML and SHALL suppress Markdown images or any
 
 ### 3. The page is a compact shadcn release record, not a timeline or marketing surface
 
-The first viewport SHALL identify `WebChat v<installed version>` as the primary heading and show the release date when the current local section provides one. The update-note body follows with its semantic headings, lists, commit/compare links, and inline code preserved. GitHub destinations SHALL be derived from existing package metadata rather than duplicated base URLs and SHALL be explicit commands:
+The first viewport SHALL show the exact sentence-case eyebrow `New version`, identify `WebChat v<installed version>` as the primary heading, and show the release date when the current local section provides one. `New version` is a static release-record label in automatic, manual, and fallback views; it does not determine or report transition, pending, or acknowledgement state. The update-note body follows with its semantic headings, lists, commit/compare links, and inline code preserved. GitHub destinations SHALL be derived from existing package metadata rather than duplicated base URLs and SHALL be explicit commands:
 
 - repository home from `homepage`;
 - matching `<homepage>/releases/tag/v<installed version>`;
@@ -88,10 +88,10 @@ The subject is one installed WebChat release and the user's single job is to sca
 
 The visual direction SHALL be specific to that job:
 
-- use the existing shadcn `background`, `foreground`, `muted`, `border`, `accent`, and focus-ring tokens for the shell and controls; reserve emerald for the restrained Changelog/release accent and sky for inline Markdown links so the page does not become a one-note slate surface;
+- use the existing shadcn `background`, `foreground`, `muted`, `border`, `accent`, and focus-ring tokens for the shell and controls; reserve emerald for the restrained `New version` eyebrow/release accent and sky for inline Markdown links so the page does not become a one-note slate surface;
 - the existing WebChat sans role for brand, heading, and body copy, with `ui-monospace` reserved for version/date/commit metadata and zero custom letter spacing;
 - one unframed reading column no wider than the existing `max-w-3xl` measure, with 24-32 CSS pixels of desktop outer padding and 16-24 pixels on narrow viewports;
-- one compact header in which the local logo, `WebChat` heading, shadcn `Badge` version, and optional outline date badge form one readable release stamp; the semantic heading name remains `WebChat v<installed version>` even when version is visually carried by the adjacent badge;
+- one compact header in which the exact `New version` eyebrow, local logo, `WebChat` heading, shadcn `Badge` version, and optional outline date badge form one readable release stamp; the semantic heading name remains `WebChat v<installed version>` even when version is visually carried by the adjacent badge;
 - the first release-note heading begins within 32 CSS pixels of the header divider, with no forced section minimum height, vertical spine, timeline dot, or empty band used to fill the viewport; and
 - a final responsive action group using the existing shadcn `Button` with `asChild`, `variant="outline"`, Lucide icon, visible text, and stable at-least-40-pixel height for Repository, exact Release, and Report an issue.
 
