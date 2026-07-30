@@ -6,8 +6,8 @@ import { RemeshRoot, RemeshScope } from 'remesh-react'
 import { defineContentScript, createShadowRootUi } from '#imports'
 
 import App from './App'
-import { LocalStorageImpl, BrowserSyncStorageImpl } from '@/domain/impls/Storage'
-import { MessageDatabaseImpl } from '@/domain/impls/database/IndexedDB'
+import { LocalStorageImpl, BrowserSyncStorageImpl, prepareLocalConfigurationStorage } from '@/domain/impls/Storage'
+import { MessageDatabaseImpl, prepareIndexedDBMessageDatabase } from '@/domain/impls/database/IndexedDB'
 import { detachClient, initClient, whenHostPhase } from '@/domain/impls/runtime/Client'
 import { DanmakuImpl } from '@/domain/impls/Danmaku'
 import { NotificationImpl } from '@/domain/impls/Notification'
@@ -25,6 +25,7 @@ import ToastDomain from '@/domain/Toast'
 import ToastPresentationDomain from '@/domain/ToastPresentation'
 import AppFeedbackDomain from '@/domain/AppFeedback'
 import { createElement } from '@/utils'
+import { requestBrowserSyncStoragePreparation } from '@/service/StoragePreparation'
 
 export default defineContentScript({
   cssInjectionMode: 'ui',
@@ -35,6 +36,15 @@ export default defineContentScript({
     // Attach to the shared Runtime before igniting any domain: the background
     // coordinator creates the host single-flight; pages own no WebRTC state.
     window.addEventListener('beforeunload', detachClient, { once: true })
+    const origin = globalThis.document.location.origin
+    try {
+      await requestBrowserSyncStoragePreparation()
+      await prepareLocalConfigurationStorage()
+      await prepareIndexedDBMessageDatabase(origin)
+    } catch {
+      return
+    }
+
     try {
       if (!(await initClient())) return
     } catch (error) {

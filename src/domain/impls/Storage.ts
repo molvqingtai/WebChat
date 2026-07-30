@@ -5,6 +5,8 @@ import { STORAGE_NAME } from '@/constants/config'
 import webExtensionDriver from '@/utils/webExtensionDriver'
 import type { Storage } from '@/domain/externs/Storage'
 import { EVENT } from '@/constants/event'
+import { CONFIG_STORE_VERSION_KEY } from '@/constants/storage'
+import { prepareConfigurationStorage } from './StorageVersion'
 
 /**
  * Waiting to be resolved
@@ -17,6 +19,19 @@ const localStorage = createStorage({
 const browserSyncStorage = createStorage({
   driver: webExtensionDriver({ storageArea: 'sync' })
 })
+
+export const prepareLocalConfigurationStorage = (): Promise<void> =>
+  prepareConfigurationStorage(`origin-local:${globalThis.location?.origin ?? 'headless'}`, {
+    async readVersion() {
+      const exists = await localStorage.hasItem(CONFIG_STORE_VERSION_KEY)
+      return {
+        exists,
+        value: exists ? await localStorage.getItem(CONFIG_STORE_VERSION_KEY) : undefined
+      }
+    },
+    writeVersion: (version) => localStorage.setItem(CONFIG_STORE_VERSION_KEY, version),
+    clear: () => localStorage.clear()
+  })
 
 export const LocalStorageImpl = LocalStorageExtern.impl({
   get: localStorage.getItem,

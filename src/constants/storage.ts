@@ -1,0 +1,5 @@
+export const MESSAGE_STORE_VERSION = 2
+
+export const CONFIG_STORE_VERSION = 1
+
+export const CONFIG_STORE_VERSION_KEY = 'WEB_CHAT_CONFIG_STORE_VERSION' as const

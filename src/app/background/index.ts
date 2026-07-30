@@ -15,10 +15,13 @@ import {
   watchOffscreenClosed
 } from '@/runtime/Background'
 import { registerActionClick } from '@/app/background/ActionRegistration'
+import { registerBrowserSyncStoragePreparation } from '@/service/StoragePreparation'
 
 export default defineBackground({
   type: 'module',
   main() {
+    registerBrowserSyncStoragePreparation()
+
     const [provideNotification] = defineNotificationProxy(() => new Notification(), browser.runtime.id)
     const [provideAppAction] = defineAppActionProxy(() => new AppAction(), browser.runtime.id)
 

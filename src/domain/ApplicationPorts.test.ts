@@ -152,19 +152,63 @@ describe('replaceable application boundaries', () => {
     expect(await source('src/runtime/RoomTransport.ts')).not.toContain('Remesh.extern')
   })
 
-  it('keeps the canonical IndexedDB identity on its private version authority', async () => {
-    const [content, config, indexedDB, storage] = await Promise.all([
+  it('gates both persistence families on independent private version authorities', async () => {
+    const [
+      background,
+      content,
+      options,
+      config,
+      storageConstants,
+      indexedDB,
+      storage,
+      storageVersion,
+      storagePreparation
+    ] = await Promise.all([
+      source('src/app/background/index.ts'),
       source('src/app/content/index.tsx'),
+      source('src/app/options/main.tsx'),
       source('src/constants/config.ts'),
+      source('src/constants/storage.ts'),
       source('src/domain/impls/database/IndexedDB.ts'),
-      source('src/domain/impls/Storage.ts')
+      source('src/domain/impls/Storage.ts'),
+      source('src/domain/impls/StorageVersion.ts'),
+      source('src/service/StoragePreparation.ts')
     ])
 
     expect(content).not.toMatch(/VERSION_STORAGE_KEY|indexDBStorage|package\.json|storedVersion/)
     expect(config).not.toContain('VERSION_STORAGE_KEY')
     expect(storage).not.toMatch(/indexedDbDriver|indexDBStorage/)
-    expect(indexedDB).toContain('const MESSAGE_STORE_VERSION = 2')
+    expect(storageConstants).toContain('export const MESSAGE_STORE_VERSION = 2')
+    expect(storageConstants).toContain('export const CONFIG_STORE_VERSION = 1')
+    expect(storageConstants).toContain("export const CONFIG_STORE_VERSION_KEY = 'WEB_CHAT_CONFIG_STORE_VERSION'")
+    expect(indexedDB).toContain("from '@/constants/storage'")
+    expect(indexedDB).not.toContain('const MESSAGE_STORE_VERSION =')
+    expect(storageVersion).toContain("import { CONFIG_STORE_VERSION } from '@/constants/storage'")
+    expect(storage).toContain("import { CONFIG_STORE_VERSION_KEY } from '@/constants/storage'")
+    expect(storagePreparation).toContain("import { CONFIG_STORE_VERSION_KEY } from '@/constants/storage'")
     expect(indexedDB).toContain('EVENTS_V2_CANONICAL_RECORDS')
+    expect(content).toContain('await requestBrowserSyncStoragePreparation()')
+    expect(content).toContain('await prepareLocalConfigurationStorage()')
+    expect(content).toContain('await prepareIndexedDBMessageDatabase(origin)')
+    expect(background).toContain('registerBrowserSyncStoragePreparation()')
+    for (const preparation of [
+      'await requestBrowserSyncStoragePreparation()',
+      'await prepareLocalConfigurationStorage()',
+      'await prepareIndexedDBMessageDatabase(origin)'
+    ]) {
+      expect(content.indexOf(preparation)).toBeLessThan(content.indexOf('await initClient()'))
+      expect(content.indexOf(preparation)).toBeLessThan(content.indexOf('Remesh.store('))
+    }
+    expect(options.indexOf('await requestBrowserSyncStoragePreparation()')).toBeLessThan(
+      options.indexOf('Remesh.store(')
+    )
+    expect(options.indexOf('await requestBrowserSyncStoragePreparation()')).toBeLessThan(options.indexOf('createRoot('))
+    expect(
+      `${background}\n${content}\n${options}\n${indexedDB}\n${storage}\n${storageVersion}\n${storagePreparation}`
+    ).not.toMatch(/package\.json|WEB_CHAT_VERSION|VERSION_STORAGE_KEY/)
+    expect(`${indexedDB}\n${storage}\n${storageVersion}\n${storagePreparation}`).not.toMatch(
+      /AppFeedback|ToastDomain|SystemNotice|alert\(/
+    )
   })
 
   it('does not leak Database primitives or adapters into Chat/UI or public protocol exports', async () => {
