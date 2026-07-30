@@ -9,8 +9,7 @@ import type {
   WriteTransaction
 } from '@/domain/externs/Database'
 import type { Unsubscribe } from '@/domain/Subscription'
-import { STORAGE_NAME } from '@/constants/config'
-import { MESSAGE_STORE_VERSION } from '@/constants/storage'
+import { MESSAGE_STORE_NAME, MESSAGE_STORE_VERSION } from '@/constants/storage'
 import {
   MessageDatabaseExtern,
   createMessageDatabaseDefinition,
@@ -26,7 +25,7 @@ import {
   type StoreDefinition,
   type ValidatedQuery
 } from './Definition'
-import { serializePreparation } from '@/utils/serializedPreparation'
+import { withPreparationLock } from '@/utils/withPreparationLock'
 
 type StoreName<Schema> = keyof Schema & string
 
@@ -548,8 +547,6 @@ export const createIndexedDBDatabase = <Schema extends DatabaseSchema<Schema>>(
   definition: DatabaseDefinition<Schema>
 ): Database<Schema> => new IndexedDBDatabase(definition)
 
-const messageDatabaseName = (origin: string) => `${STORAGE_NAME}:EVENTS_V2_CANONICAL_RECORDS:${origin}`
-
 const deleteMessageDatabase = (name: string): Promise<void> =>
   new Promise((resolve, reject) => {
     const request = indexedDB.deleteDatabase(name)
@@ -558,15 +555,14 @@ const deleteMessageDatabase = (name: string): Promise<void> =>
     request.addEventListener('error', () => reject(new Error('Message store deletion failed')), { once: true })
   })
 
-export const prepareIndexedDBMessageDatabase = (origin: string): Promise<void> => {
-  const name = messageDatabaseName(origin)
-  const definition = createMessageDatabaseDefinition(name, MESSAGE_STORE_VERSION)
+export const prepareIndexedDBMessageDatabase = (_origin: string): Promise<void> => {
+  const definition = createMessageDatabaseDefinition(MESSAGE_STORE_NAME, MESSAGE_STORE_VERSION)
 
-  return serializePreparation(`message:${name}`, async () => {
+  return withPreparationLock(`message:${MESSAGE_STORE_NAME}`, async () => {
     try {
       const databases = await indexedDB.databases()
-      const existing = databases.find((database) => database.name === name)
-      if (existing && existing.version !== MESSAGE_STORE_VERSION) await deleteMessageDatabase(name)
+      const existing = databases.find((database) => database.name === MESSAGE_STORE_NAME)
+      if (existing && existing.version !== MESSAGE_STORE_VERSION) await deleteMessageDatabase(MESSAGE_STORE_NAME)
 
       const database = await openDatabase(definition)
       database.close()
@@ -577,8 +573,8 @@ export const prepareIndexedDBMessageDatabase = (origin: string): Promise<void> =
   })
 }
 
-export const createIndexedDBMessageDatabase = (origin: string): Database<MessageDatabaseSchema> =>
-  createIndexedDBDatabase(createMessageDatabaseDefinition(messageDatabaseName(origin), MESSAGE_STORE_VERSION))
+export const createIndexedDBMessageDatabase = (_origin: string): Database<MessageDatabaseSchema> =>
+  createIndexedDBDatabase(createMessageDatabaseDefinition(MESSAGE_STORE_NAME, MESSAGE_STORE_VERSION))
 
 const origin = globalThis.document?.location.origin ?? 'headless'
 export const MessageDatabaseImpl = MessageDatabaseExtern.impl(createIndexedDBMessageDatabase(origin))

@@ -1,18 +1,18 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { serializePreparation } from './serializedPreparation'
-import { installTestWebLocks } from './serializedPreparation.test-utils'
+import { installTestWebLocks } from './withPreparationLock.test-utils'
+import { withPreparationLock } from './withPreparationLock'
 
 afterEach(() => {
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
 })
 
-describe('serialized persistence preparation', () => {
+describe('persistence preparation lock', () => {
   it('runs an owned preparation while cross-realm Web Locks are available', async () => {
     installTestWebLocks()
     const prepare = vi.fn(async () => {})
 
-    await serializePreparation('available', prepare)
+    await withPreparationLock('available', prepare)
 
     expect(prepare).toHaveBeenCalledTimes(1)
   })
@@ -22,7 +22,7 @@ describe('serialized persistence preparation', () => {
     const prepare = vi.fn(async () => {})
     const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
 
-    await expect(serializePreparation('unavailable', prepare)).rejects.toThrow(
+    await expect(withPreparationLock('unavailable', prepare)).rejects.toThrow(
       'Persistence preparation coordination unavailable'
     )
 

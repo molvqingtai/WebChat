@@ -186,12 +186,6 @@ export const MESSAGE_MAX_LENGTH = 500 as const
 /** Compression target only; the expanded canonical event remains the hard send boundary. */
 export const MESSAGE_IMAGE_TARGET_SIZE = 30 * 1024
 
-export const STORAGE_NAME = `WEB_CHAT_STORAGE` as const
-
-export const USER_INFO_STORAGE_KEY = 'WEB_CHAT_USER_INFO' as const
-
-export const APP_STATUS_STORAGE_KEY = 'WEB_CHAT_APP_STATUS' as const
-
 /**
  * In chrome storage.sync, each key-value pair supports a maximum storage of 8kb
  * Image is encoded as base64, and the size is increased by about 33%.

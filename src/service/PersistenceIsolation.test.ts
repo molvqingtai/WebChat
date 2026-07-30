@@ -1,10 +1,15 @@
 import 'fake-indexeddb/auto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { openDB } from 'idb'
-import { APP_STATUS_STORAGE_KEY, STORAGE_NAME } from '@/constants/config'
-import { CONFIG_STORE_VERSION, CONFIG_STORE_VERSION_KEY } from '@/constants/storage'
+import {
+  APP_STATUS_STORAGE_KEY,
+  CONFIG_STORE_VERSION,
+  CONFIG_STORE_VERSION_KEY,
+  MESSAGE_STORE_NAME,
+  STORAGE_NAME
+} from '@/constants/storage'
 import { prepareIndexedDBMessageDatabase } from '@/domain/impls/database/IndexedDB'
-import { installTestWebLocks } from '@/utils/serializedPreparation.test-utils'
+import { installTestWebLocks } from '@/utils/withPreparationLock.test-utils'
 import { createTestLocalStorage } from '@/utils/storage.test-utils'
 import { registerBrowserSyncStoragePreparation, requestBrowserSyncStoragePreparation } from './StoragePreparation'
 
@@ -25,7 +30,7 @@ vi.mock('#imports', () => ({
 let fixtureId = 0
 const databaseNames = new Set<string>()
 const nextOrigin = (label: string) => `https://${label}-${fixtureId++}.test`
-const messageDatabaseName = (origin: string) => `${STORAGE_NAME}:EVENTS_V2_CANONICAL_RECORDS:${origin}`
+const messageDatabaseName = (_origin: string) => MESSAGE_STORE_NAME
 const localKey = (key: string) => `${STORAGE_NAME}:${key}`
 
 const createBrowserArea = (initial: Record<string, unknown>) => {

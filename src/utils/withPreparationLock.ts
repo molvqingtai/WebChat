@@ -1,6 +1,6 @@
 const preparations = new Map<string, Promise<void>>()
 
-export const serializePreparation = (identity: string, prepare: () => Promise<void>): Promise<void> => {
+export const withPreparationLock = (identity: string, prepare: () => Promise<void>): Promise<void> => {
   const current = preparations.get(identity)
   if (current) return current
 

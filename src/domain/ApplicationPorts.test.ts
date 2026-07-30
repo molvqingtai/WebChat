@@ -152,28 +152,31 @@ describe('replaceable application boundaries', () => {
     expect(await source('src/runtime/RoomTransport.ts')).not.toContain('Remesh.extern')
   })
 
+  it('keeps the retired message identity out of source and runtime tests', async () => {
+    const retiredMessageIdentity = ['EVENTS', 'V2', 'CANONICAL', 'RECORDS'].join('_')
+    const sourceEntries = await Promise.all(
+      (await codeFiles(projectPath('src'))).map(async (file) => [file, await source(file)] as const)
+    )
+
+    expect(
+      sourceEntries
+        .filter(([, value]) => value.includes(retiredMessageIdentity))
+        .map(([file]) => path.relative(ROOT, file))
+    ).toEqual([])
+  })
+
   it('gates both persistence families on independent private version authorities', async () => {
-    const [
-      background,
-      content,
-      options,
-      config,
-      storageConstants,
-      indexedDB,
-      storage,
-      storageVersion,
-      storagePreparation
-    ] = await Promise.all([
-      source('src/app/background/index.ts'),
-      source('src/app/content/index.tsx'),
-      source('src/app/options/main.tsx'),
-      source('src/constants/config.ts'),
-      source('src/constants/storage.ts'),
-      source('src/domain/impls/database/IndexedDB.ts'),
-      source('src/domain/impls/Storage.ts'),
-      source('src/domain/impls/StorageVersion.ts'),
-      source('src/service/StoragePreparation.ts')
-    ])
+    const [background, content, options, config, storageConstants, indexedDB, storage, storagePreparation] =
+      await Promise.all([
+        source('src/app/background/index.ts'),
+        source('src/app/content/index.tsx'),
+        source('src/app/options/main.tsx'),
+        source('src/constants/config.ts'),
+        source('src/constants/storage.ts'),
+        source('src/domain/impls/database/IndexedDB.ts'),
+        source('src/domain/impls/Storage.ts'),
+        source('src/service/StoragePreparation.ts')
+      ])
 
     expect(content).not.toMatch(/VERSION_STORAGE_KEY|indexDBStorage|package\.json|storedVersion/)
     expect(config).not.toContain('VERSION_STORAGE_KEY')
@@ -183,10 +186,38 @@ describe('replaceable application boundaries', () => {
     expect(storageConstants).toContain("export const CONFIG_STORE_VERSION_KEY = 'WEB_CHAT_CONFIG_STORE_VERSION'")
     expect(indexedDB).toContain("from '@/constants/storage'")
     expect(indexedDB).not.toContain('const MESSAGE_STORE_VERSION =')
-    expect(storageVersion).toContain("import { CONFIG_STORE_VERSION } from '@/constants/storage'")
-    expect(storage).toContain("import { CONFIG_STORE_VERSION_KEY } from '@/constants/storage'")
-    expect(storagePreparation).toContain("import { CONFIG_STORE_VERSION_KEY } from '@/constants/storage'")
-    expect(indexedDB).toContain('EVENTS_V2_CANONICAL_RECORDS')
+    expect(storage).toContain('CONFIG_STORE_VERSION')
+    expect(storage).toMatch(
+      /import \{[^}]*CONFIG_STORE_VERSION_KEY[^}]*STORAGE_NAME[^}]*\} from '@\/constants\/storage'/
+    )
+    expect(storagePreparation).toMatch(
+      /import \{[^}]*\bCONFIG_STORE_VERSION\b[^}]*\bCONFIG_STORE_VERSION_KEY\b[^}]*\} from '@\/constants\/storage'/
+    )
+    expect(storageConstants).toContain("export const STORAGE_NAME = 'WEB_CHAT_STORAGE'")
+    expect(storageConstants).toContain('export const MESSAGE_STORE_NAME = `${STORAGE_NAME}:MESSAGES`')
+    expect(storageConstants).toContain("export const APP_STATUS_STORAGE_KEY = 'WEB_CHAT_APP_STATUS'")
+    expect(storageConstants).toContain("export const USER_INFO_STORAGE_KEY = 'WEB_CHAT_USER_INFO'")
+
+    const storageConstantNames = [
+      'STORAGE_NAME',
+      'MESSAGE_STORE_NAME',
+      'MESSAGE_STORE_VERSION',
+      'APP_STATUS_STORAGE_KEY',
+      'USER_INFO_STORAGE_KEY',
+      'CONFIG_STORE_VERSION',
+      'CONFIG_STORE_VERSION_KEY'
+    ]
+    const sourceEntries = await Promise.all(
+      (await codeFiles(projectPath('src'))).map(async (file) => [file, await source(file)] as const)
+    )
+    for (const name of storageConstantNames) {
+      expect(
+        sourceEntries
+          .filter(([, value]) => new RegExp(`^export const ${name}(?:\\s|=)`, 'm').test(value))
+          .map(([file]) => path.relative(ROOT, file))
+      ).toEqual(['src/constants/storage.ts'])
+    }
+
     expect(content).toContain('await requestBrowserSyncStoragePreparation()')
     expect(content).toContain('await prepareLocalConfigurationStorage()')
     expect(content).toContain('await prepareIndexedDBMessageDatabase(origin)')
@@ -203,10 +234,10 @@ describe('replaceable application boundaries', () => {
       options.indexOf('Remesh.store(')
     )
     expect(options.indexOf('await requestBrowserSyncStoragePreparation()')).toBeLessThan(options.indexOf('createRoot('))
-    expect(
-      `${background}\n${content}\n${options}\n${indexedDB}\n${storage}\n${storageVersion}\n${storagePreparation}`
-    ).not.toMatch(/package\.json|WEB_CHAT_VERSION|VERSION_STORAGE_KEY/)
-    expect(`${indexedDB}\n${storage}\n${storageVersion}\n${storagePreparation}`).not.toMatch(
+    expect(`${background}\n${content}\n${options}\n${indexedDB}\n${storage}\n${storagePreparation}`).not.toMatch(
+      /package\.json|WEB_CHAT_VERSION|VERSION_STORAGE_KEY/
+    )
+    expect(`${indexedDB}\n${storage}\n${storagePreparation}`).not.toMatch(
       /AppFeedback|ToastDomain|SystemNotice|alert\(/
     )
   })

@@ -1,7 +1,7 @@
 import { Remesh } from 'remesh'
 import StatusModule from './modules/Status'
 import { LocalStorageExtern } from './externs/Storage'
-import { APP_STATUS_STORAGE_KEY } from '@/constants/config'
+import { APP_STATUS_STORAGE_KEY } from '@/constants/storage'
 import StorageEffect from './modules/StorageEffect'
 import ChatRoomDomain from '@/domain/ChatRoom'
 import UserInfoDomain from '@/domain/UserInfo'

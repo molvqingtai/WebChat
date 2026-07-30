@@ -2,7 +2,7 @@ import { Remesh } from 'remesh'
 import { BrowserSyncStorageExtern } from '@/domain/externs/Storage'
 import StorageEffect from '@/domain/modules/StorageEffect'
 import StatusModule from './modules/Status'
-import { USER_INFO_STORAGE_KEY } from '@/constants/config'
+import { USER_INFO_STORAGE_KEY } from '@/constants/storage'
 
 export interface UserInfo {
   id: string

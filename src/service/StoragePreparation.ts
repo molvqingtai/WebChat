@@ -1,6 +1,6 @@
 import { browser } from '#imports'
-import { CONFIG_STORE_VERSION_KEY } from '@/constants/storage'
-import { prepareConfigurationStorage, type ConfigurationVersionStorage } from '@/domain/impls/StorageVersion'
+import { CONFIG_STORE_VERSION, CONFIG_STORE_VERSION_KEY } from '@/constants/storage'
+import { withPreparationLock } from '@/utils/withPreparationLock'
 
 const PREPARE_BROWSER_SYNC_STORAGE = 'WEB_CHAT_PREPARE_BROWSER_SYNC_STORAGE_V1'
 
@@ -21,17 +21,23 @@ interface RuntimeApi {
   sendMessage(message: unknown): Promise<unknown>
 }
 
-const versionStorage = (storage: StorageArea): ConfigurationVersionStorage => ({
-  async readVersion() {
-    const values = await storage.get(CONFIG_STORE_VERSION_KEY)
-    return {
-      exists: Object.prototype.hasOwnProperty.call(values, CONFIG_STORE_VERSION_KEY),
-      value: values[CONFIG_STORE_VERSION_KEY]
+const prepareConfigurationStorage = (identity: string, storage: StorageArea): Promise<void> =>
+  withPreparationLock(`configuration:${identity}`, async () => {
+    try {
+      const values = await storage.get(CONFIG_STORE_VERSION_KEY)
+      if (!Object.prototype.hasOwnProperty.call(values, CONFIG_STORE_VERSION_KEY)) {
+        await storage.set({ [CONFIG_STORE_VERSION_KEY]: CONFIG_STORE_VERSION })
+        return
+      }
+      if (values[CONFIG_STORE_VERSION_KEY] === CONFIG_STORE_VERSION) return
+
+      await storage.clear()
+      await storage.set({ [CONFIG_STORE_VERSION_KEY]: CONFIG_STORE_VERSION })
+    } catch {
+      console.error('[WebChat] Configuration store preparation failed')
+      throw new Error('Configuration store preparation failed')
     }
-  },
-  writeVersion: (version) => storage.set({ [CONFIG_STORE_VERSION_KEY]: version }),
-  clear: () => storage.clear()
-})
+  })
 
 const runtimeApi = () => browser.runtime as unknown as RuntimeApi
 const syncStorage = () => browser.storage.sync as unknown as StorageArea
@@ -40,7 +46,7 @@ export const registerBrowserSyncStoragePreparation = (
   runtime: RuntimeApi = runtimeApi(),
   storage: StorageArea = syncStorage()
 ) => {
-  const prepare = () => prepareConfigurationStorage(`browser-sync:${runtime.id}`, versionStorage(storage))
+  const prepare = () => prepareConfigurationStorage(`browser-sync:${runtime.id}`, storage)
 
   runtime.onInstalled.addListener(() => prepare().catch(() => {}))
   runtime.onMessage.addListener((message) => {

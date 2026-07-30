@@ -1,19 +1,27 @@
 import 'fake-indexeddb/auto'
+import { IDBFactory } from 'fake-indexeddb'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { openDB } from 'idb'
 import { createMessageStore } from '@/domain/MessageStore'
 import { MESSAGE_RECORD_TYPE, type TextMessageRecord } from '@/domain/Message'
 import { MESSAGE_TYPE } from '@/protocol/ChatRoom'
-import { STORAGE_NAME } from '@/constants/config'
-import { MESSAGE_STORE_VERSION } from '@/constants/storage'
-import { installTestWebLocks } from '@/utils/serializedPreparation.test-utils'
+import { MESSAGE_STORE_NAME, MESSAGE_STORE_VERSION, STORAGE_NAME } from '@/constants/storage'
+import { installTestWebLocks } from '@/utils/withPreparationLock.test-utils'
 import { createIndexedDBMessageDatabase, prepareIndexedDBMessageDatabase } from './IndexedDB'
 
 const USER = { id: 'user-1', name: 'User', avatar: '' }
 let databaseId = 0
 const names = new Set<string>()
 const nextOrigin = (label: string) => `https://${label}-${databaseId++}.test`
-const messageDatabaseName = (origin: string) => `${STORAGE_NAME}:EVENTS_V2_CANONICAL_RECORDS:${origin}`
+const messageDatabaseName = (_origin: string) => MESSAGE_STORE_NAME
+
+const trackWebChatDatabases = async () => {
+  const databases = (await indexedDB.databases()).filter((database) => database.name?.startsWith(STORAGE_NAME))
+  databases.forEach((database) => {
+    if (database.name) names.add(database.name)
+  })
+  return databases
+}
 
 const failedRequest = (error: DOMException): IDBOpenDBRequest => {
   const request = new EventTarget() as IDBOpenDBRequest
@@ -72,6 +80,56 @@ afterEach(async () => {
 })
 
 describe('IndexedDB Message database version ownership', () => {
+  describe('version-neutral target identity', () => {
+    it('creates an absent target directly at the configured version', async () => {
+      const origin = nextOrigin('target-absent')
+
+      await prepareIndexedDBMessageDatabase(origin)
+
+      expect(await trackWebChatDatabases()).toEqual([{ name: MESSAGE_STORE_NAME, version: MESSAGE_STORE_VERSION }])
+    })
+
+    it('preserves records in an existing same-version target', async () => {
+      const origin = nextOrigin('target-same')
+      names.add(MESSAGE_STORE_NAME)
+      const record = textRecord('target-same-version')
+      const target = await openDB(MESSAGE_STORE_NAME, MESSAGE_STORE_VERSION, {
+        upgrade(database) {
+          database.createObjectStore('records')
+          database.createObjectStore('conflicts').createIndex('byEventId', 'eventId')
+        }
+      })
+      await target.put('records', record, record.id)
+      target.close()
+
+      await prepareIndexedDBMessageDatabase(origin)
+
+      expect(await trackWebChatDatabases()).toEqual([{ name: MESSAGE_STORE_NAME, version: MESSAGE_STORE_VERSION }])
+      const reopened = await openDB(MESSAGE_STORE_NAME)
+      await expect(reopened.get('records', record.id)).resolves.toEqual(record)
+      reopened.close()
+    })
+
+    it('destructively rebuilds an existing mismatched target', async () => {
+      const origin = nextOrigin('target-mismatch')
+      names.add(MESSAGE_STORE_NAME)
+      const target = await openDB(MESSAGE_STORE_NAME, 1, {
+        upgrade(database) {
+          database.createObjectStore('legacy')
+        }
+      })
+      await target.put('legacy', 'old-generation', 'sentinel')
+      target.close()
+
+      await prepareIndexedDBMessageDatabase(origin)
+
+      expect(await trackWebChatDatabases()).toEqual([{ name: MESSAGE_STORE_NAME, version: MESSAGE_STORE_VERSION }])
+      const rebuilt = await openDB(MESSAGE_STORE_NAME)
+      expect([...rebuilt.objectStoreNames]).toEqual(['conflicts', 'records'])
+      rebuilt.close()
+    })
+  })
+
   it('creates an absent database at the target without issuing a delete', async () => {
     const origin = nextOrigin('message-baseline')
     const name = messageDatabaseName(origin)
@@ -403,33 +461,59 @@ describe('IndexedDB Message database version ownership', () => {
     diagnostic.mockRestore()
   })
 
-  it('preserves another origin and unrelated IndexedDB identities', async () => {
-    const currentOrigin = nextOrigin('message-current-origin')
-    const otherOrigin = nextOrigin('message-other-origin')
-    const currentName = messageDatabaseName(currentOrigin)
-    const otherName = messageDatabaseName(otherOrigin)
+  it('preserves unrelated IndexedDB identities during a target reset', async () => {
+    const origin = nextOrigin('message-isolation')
+    const name = messageDatabaseName(origin)
     const unrelatedName = `unrelated-${databaseId++}`
-    names.add(currentName)
-    names.add(otherName)
+    names.add(name)
     names.add(unrelatedName)
-    const seed = async (name: string) => {
-      const database = await openDB(name, 1, {
-        upgrade(value) {
-          value.createObjectStore('sentinels')
-        }
-      })
-      await database.put('sentinels', 'preserved', 'key')
-      database.close()
-    }
-    await Promise.all([seed(currentName), seed(otherName), seed(unrelatedName)])
-
-    await prepareIndexedDBMessageDatabase(currentOrigin)
-
-    const other = await openDB(otherName)
-    const unrelated = await openDB(unrelatedName)
-    await expect(other.get('sentinels', 'key')).resolves.toBe('preserved')
-    await expect(unrelated.get('sentinels', 'key')).resolves.toBe('preserved')
-    other.close()
+    const target = await openDB(name, 1, {
+      upgrade(database) {
+        database.createObjectStore('legacy')
+      }
+    })
+    target.close()
+    const unrelated = await openDB(unrelatedName, 1, {
+      upgrade(database) {
+        database.createObjectStore('sentinels')
+      }
+    })
+    await unrelated.put('sentinels', 'preserved', 'key')
     unrelated.close()
+
+    await prepareIndexedDBMessageDatabase(origin)
+
+    const preserved = await openDB(unrelatedName)
+    await expect(preserved.get('sentinels', 'key')).resolves.toBe('preserved')
+    preserved.close()
+  })
+
+  it('uses the same target name in independent native origin partitions', async () => {
+    const firstFactory = new IDBFactory()
+    const secondFactory = new IDBFactory()
+    const firstRecord = textRecord('first-origin')
+    const secondRecord = textRecord('second-origin')
+
+    const seedPartition = async (factory: IDBFactory, origin: string, record: TextMessageRecord) => {
+      vi.stubGlobal('indexedDB', factory)
+      await prepareIndexedDBMessageDatabase(origin)
+      const database = createIndexedDBMessageDatabase(origin)
+      await createMessageStore(database).insert(record)
+      await database.close()
+      expect(await factory.databases()).toEqual([{ name: MESSAGE_STORE_NAME, version: MESSAGE_STORE_VERSION }])
+    }
+
+    await seedPartition(firstFactory, nextOrigin('first-partition'), firstRecord)
+    await seedPartition(secondFactory, nextOrigin('second-partition'), secondRecord)
+
+    vi.stubGlobal('indexedDB', firstFactory)
+    const first = createIndexedDBMessageDatabase(nextOrigin('first-reader'))
+    await expect(createMessageStore(first).query()).resolves.toEqual([firstRecord])
+    await first.close()
+
+    vi.stubGlobal('indexedDB', secondFactory)
+    const second = createIndexedDBMessageDatabase(nextOrigin('second-reader'))
+    await expect(createMessageStore(second).query()).resolves.toEqual([secondRecord])
+    await second.close()
   })
 })

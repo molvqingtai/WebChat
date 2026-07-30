@@ -1,8 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { APP_STATUS_STORAGE_KEY, STORAGE_NAME } from '@/constants/config'
-import { CONFIG_STORE_VERSION_KEY } from '@/constants/storage'
-import { installTestWebLocks } from '@/utils/serializedPreparation.test-utils'
+import {
+  APP_STATUS_STORAGE_KEY,
+  CONFIG_STORE_VERSION,
+  CONFIG_STORE_VERSION_KEY,
+  STORAGE_NAME
+} from '@/constants/storage'
+import { installTestWebLocks } from '@/utils/withPreparationLock.test-utils'
 import { createTestLocalStorage } from '@/utils/storage.test-utils'
+import type { ConfigurationVersionStorage } from './Storage'
 
 vi.mock('#imports', () => ({
   browser: {
@@ -33,6 +38,37 @@ const deferred = () => {
     resolve = settle
   })
   return { promise, resolve }
+}
+
+let configurationStorageId = 0
+
+const createVersionStorage = (version: { exists: boolean; value?: unknown }, values = new Map<string, unknown>()) => {
+  let storedVersion = version
+  const storage: ConfigurationVersionStorage = {
+    readVersion: vi.fn(async () => ({ exists: storedVersion.exists, value: storedVersion.value })),
+    writeVersion: vi.fn(async (value) => {
+      storedVersion = { exists: true, value }
+    }),
+    clear: vi.fn(async () => {
+      values.clear()
+      storedVersion = { exists: false }
+    })
+  }
+  return { storage, values, version: () => storedVersion }
+}
+
+const prepareVersionStorage = async (fixture: ReturnType<typeof createVersionStorage>) => {
+  vi.stubGlobal('window', { localStorage: createTestLocalStorage() })
+  vi.stubGlobal('location', { origin: 'https://version-storage.test' })
+  const { prepareConfigurationStorage } = await import('./Storage')
+  return prepareConfigurationStorage(`test-${configurationStorageId++}`, fixture.storage)
+}
+
+const loadConfigurationPreparationRealm = async () => {
+  vi.stubGlobal('window', { localStorage: createTestLocalStorage() })
+  vi.stubGlobal('location', { origin: `https://version-realm-${configurationStorageId++}.test` })
+  vi.resetModules()
+  return (await import('./Storage')).prepareConfigurationStorage
 }
 
 const loadLocalPreparationRealm = async (origin: string, localStorage: Storage) => {
@@ -91,5 +127,198 @@ describe('origin-local configuration preparation', () => {
 
     expect(localStorage.getItem(statusKey)).toBe('new-generation')
     expect(localStorage.getItem(versionKey)).toBe('1')
+  })
+})
+
+describe('configuration storage version ownership', () => {
+  it('establishes a missing baseline without clearing pre-version data', async () => {
+    const fixture = createVersionStorage({ exists: false }, new Map([['user-info', 'preserved']]))
+
+    await prepareVersionStorage(fixture)
+
+    expect(fixture.storage.clear).not.toHaveBeenCalled()
+    expect(fixture.values.get('user-info')).toBe('preserved')
+    expect(fixture.version()).toEqual({ exists: true, value: CONFIG_STORE_VERSION })
+  })
+
+  it('preserves all values on the same version', async () => {
+    const fixture = createVersionStorage(
+      { exists: true, value: CONFIG_STORE_VERSION },
+      new Map([['app-status', 'preserved']])
+    )
+
+    await prepareVersionStorage(fixture)
+
+    expect(fixture.storage.clear).not.toHaveBeenCalled()
+    expect(fixture.storage.writeVersion).not.toHaveBeenCalled()
+    expect(fixture.values.get('app-status')).toBe('preserved')
+  })
+
+  it.each([0, 2, 7, -1, '1', null, { version: 1 }])(
+    'clears an existing non-equal or malformed completion value %j',
+    async (storedVersion) => {
+      const fixture = createVersionStorage({ exists: true, value: storedVersion }, new Map([['old', 'generation']]))
+
+      await prepareVersionStorage(fixture)
+
+      expect(fixture.storage.clear).toHaveBeenCalledTimes(1)
+      expect(fixture.values.size).toBe(0)
+      expect(fixture.version()).toEqual({ exists: true, value: CONFIG_STORE_VERSION })
+    }
+  )
+
+  it('joins concurrent contenders and preserves writes after target completion', async () => {
+    const fixture = createVersionStorage({ exists: true, value: 2 }, new Map([['old', 'generation']]))
+    let releaseClear!: () => void
+    vi.mocked(fixture.storage.clear).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseClear = () => {
+            fixture.values.clear()
+            resolve()
+          }
+        })
+    )
+    const identity = `concurrent-${configurationStorageId++}`
+    const { prepareConfigurationStorage } = await import('./Storage')
+
+    const first = prepareConfigurationStorage(identity, fixture.storage)
+    const second = prepareConfigurationStorage(identity, fixture.storage)
+    await vi.waitFor(() => expect(fixture.storage.clear).toHaveBeenCalledTimes(1))
+    releaseClear()
+    await Promise.all([first, second])
+
+    fixture.values.set('new', 'generation')
+    await prepareConfigurationStorage(identity, fixture.storage)
+    expect(fixture.storage.clear).toHaveBeenCalledTimes(1)
+    expect(fixture.values.get('new')).toBe('generation')
+  })
+
+  it('serializes independent realms so the later owner rereads target completion', async () => {
+    const secondGrant = deferred()
+    installTestWebLocks({
+      beforeGrant: (_name, request) => (request === 2 ? secondGrant.promise : undefined)
+    })
+    const firstRealm = await loadConfigurationPreparationRealm()
+    const secondRealm = await loadConfigurationPreparationRealm()
+    const fixture = createVersionStorage({ exists: true, value: 2 }, new Map([['old', 'generation']]))
+    const identity = `cross-realm-${configurationStorageId++}`
+
+    const first = firstRealm(identity, fixture.storage)
+    const second = secondRealm(identity, fixture.storage)
+    await first
+    fixture.values.set('new', 'generation')
+    secondGrant.resolve()
+    await second
+
+    expect(fixture.storage.clear).toHaveBeenCalledTimes(1)
+    expect(fixture.values.get('new')).toBe('generation')
+    expect(fixture.version()).toEqual({ exists: true, value: CONFIG_STORE_VERSION })
+  })
+
+  it('fails an independent late owner closed when cross-realm locking disappears', async () => {
+    const firstClearStarted = deferred()
+    const releaseFirstClear = deferred()
+    const secondClearStarted = deferred()
+    const releaseSecondClear = deferred()
+    let storedVersion: { exists: boolean; value: unknown } = { exists: true, value: 2 }
+    const values = new Map<string, unknown>([['old', 'generation']])
+    const createOwnerStorage = (clearStarted: ReturnType<typeof deferred>, clearRelease: ReturnType<typeof deferred>) =>
+      ({
+        readVersion: vi.fn(async () => ({ ...storedVersion })),
+        writeVersion: vi.fn(async (value: number) => {
+          storedVersion = { exists: true, value }
+        }),
+        clear: vi.fn(async () => {
+          clearStarted.resolve()
+          await clearRelease.promise
+          values.clear()
+          storedVersion = { exists: false, value: undefined }
+        })
+      }) satisfies ConfigurationVersionStorage
+    const firstStorage = createOwnerStorage(firstClearStarted, releaseFirstClear)
+    const secondStorage = createOwnerStorage(secondClearStarted, releaseSecondClear)
+    const firstRealm = await loadConfigurationPreparationRealm()
+    const secondRealm = await loadConfigurationPreparationRealm()
+    const identity = `lost-lock-${configurationStorageId++}`
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const first = firstRealm(identity, firstStorage)
+    await firstClearStarted.promise
+    vi.stubGlobal('navigator', {})
+    const second = secondRealm(identity, secondStorage)
+    const secondSettled = second.then(
+      () => undefined,
+      () => undefined
+    )
+    await Promise.race([secondClearStarted.promise, secondSettled])
+
+    releaseFirstClear.resolve()
+    await first
+    values.set('new', 'generation')
+    releaseSecondClear.resolve()
+
+    await expect(second).rejects.toThrow('Persistence preparation coordination unavailable')
+    expect(secondStorage.readVersion).not.toHaveBeenCalled()
+    expect(secondStorage.clear).not.toHaveBeenCalled()
+    expect(values.get('new')).toBe('generation')
+    expect(storedVersion).toEqual({ exists: true, value: CONFIG_STORE_VERSION })
+    expect(diagnostic).toHaveBeenCalledWith('[WebChat] Persistence preparation coordination unavailable')
+    diagnostic.mockRestore()
+  })
+
+  it('does not advance completion after clear failure and retries later', async () => {
+    const fixture = createVersionStorage({ exists: true, value: 2 }, new Map([['old', 'generation']]))
+    vi.mocked(fixture.storage.clear).mockRejectedValueOnce(new Error('private failure'))
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const identity = `retry-${configurationStorageId++}`
+    const { prepareConfigurationStorage } = await import('./Storage')
+
+    await expect(prepareConfigurationStorage(identity, fixture.storage)).rejects.toThrow(
+      'Configuration store preparation failed'
+    )
+    expect(fixture.version()).toEqual({ exists: true, value: 2 })
+    expect(fixture.storage.writeVersion).not.toHaveBeenCalled()
+    expect(diagnostic).toHaveBeenCalledWith('[WebChat] Configuration store preparation failed')
+
+    await prepareConfigurationStorage(identity, fixture.storage)
+    expect(fixture.storage.clear).toHaveBeenCalledTimes(2)
+    expect(fixture.version()).toEqual({ exists: true, value: CONFIG_STORE_VERSION })
+    diagnostic.mockRestore()
+  })
+
+  it('retries marker completion after a successful clear without clearing twice', async () => {
+    const fixture = createVersionStorage({ exists: true, value: 2 }, new Map([['old', 'generation']]))
+    vi.mocked(fixture.storage.writeVersion).mockRejectedValueOnce(new Error('private failure'))
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const identity = `completion-retry-${configurationStorageId++}`
+    const { prepareConfigurationStorage } = await import('./Storage')
+
+    await expect(prepareConfigurationStorage(identity, fixture.storage)).rejects.toThrow(
+      'Configuration store preparation failed'
+    )
+    expect(fixture.values.size).toBe(0)
+    expect(fixture.version()).toEqual({ exists: false })
+
+    await prepareConfigurationStorage(identity, fixture.storage)
+    expect(fixture.storage.clear).toHaveBeenCalledTimes(1)
+    expect(fixture.version()).toEqual({ exists: true, value: CONFIG_STORE_VERSION })
+    expect(diagnostic).toHaveBeenCalledTimes(1)
+    diagnostic.mockRestore()
+  })
+
+  it('keeps independent physical scopes isolated', async () => {
+    const current = createVersionStorage({ exists: true, value: 2 }, new Map([['current', 'old']]))
+    const other = createVersionStorage({ exists: true, value: CONFIG_STORE_VERSION }, new Map([['other', 'preserved']]))
+    const { prepareConfigurationStorage } = await import('./Storage')
+
+    await Promise.all([
+      prepareConfigurationStorage(`current-${configurationStorageId++}`, current.storage),
+      prepareConfigurationStorage(`other-${configurationStorageId++}`, other.storage)
+    ])
+
+    expect(current.values.size).toBe(0)
+    expect(other.values.get('other')).toBe('preserved')
+    expect(other.storage.clear).not.toHaveBeenCalled()
   })
 })

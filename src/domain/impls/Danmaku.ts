@@ -8,7 +8,7 @@ import type { Manager } from 'danmu'
 import { create } from 'danmu'
 import { LocalStorageImpl } from './Storage'
 import type { AppStatus } from '../AppStatus'
-import { APP_STATUS_STORAGE_KEY } from '@/constants/config'
+import { APP_STATUS_STORAGE_KEY } from '@/constants/storage'
 import { EVENT } from '@/constants/event'
 
 export class Danmaku {
