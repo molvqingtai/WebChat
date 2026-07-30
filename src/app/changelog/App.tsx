@@ -111,25 +111,20 @@ const ActionLink = ({ href, icon: Icon, children }: ActionLinkProps) => (
 export const ChangelogView = ({ version, release, links }: ChangelogViewProps) => (
   <main className="bg-background text-foreground min-h-screen">
     <div className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-8 sm:py-8">
-      <header className="border-border border-b pb-6">
-        <div className="flex min-w-0 items-start gap-4">
-          <img src="/logo.png" alt="" className="size-12 shrink-0 rounded-md" width="48" height="48" />
-          <div className="min-w-0 flex-1">
-            <p className="text-sm font-medium text-emerald-700 dark:text-emerald-400">New version</p>
-            <div className="mt-1 flex flex-wrap items-center gap-2">
-              <h1 aria-label={`WebChat v${version}`} className="text-2xl font-semibold wrap-break-word sm:text-3xl">
-                WebChat
-              </h1>
-              <Badge variant="secondary" className="font-mono">
-                v{version}
-              </Badge>
-              {release?.date ? (
-                <Badge asChild variant="outline" className="font-mono">
-                  <time dateTime={release.date}>{release.date}</time>
-                </Badge>
-              ) : null}
-            </div>
-          </div>
+      <header className="flex flex-col items-center text-center">
+        <img src="/logo.png" alt="" className="size-12 rounded-md" width="48" height="48" />
+        <h1 aria-label={`WebChat v${version}`} className="mt-3 text-2xl font-semibold wrap-break-word sm:text-3xl">
+          WebChat
+        </h1>
+        <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
+          <Badge variant="secondary" className="font-mono">
+            v{version}
+          </Badge>
+          {release?.date ? (
+            <Badge asChild variant="outline" className="font-mono">
+              <time dateTime={release.date}>{release.date}</time>
+            </Badge>
+          ) : null}
         </div>
       </header>
 
