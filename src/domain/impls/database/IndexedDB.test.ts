@@ -1,11 +1,12 @@
 import 'fake-indexeddb/auto'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { openDB } from 'idb'
 import { createMessageStore } from '@/domain/MessageStore'
 import { MESSAGE_RECORD_TYPE, type TextMessageRecord } from '@/domain/Message'
 import { MESSAGE_TYPE } from '@/protocol/ChatRoom'
 import { STORAGE_NAME } from '@/constants/config'
 import { MESSAGE_STORE_VERSION } from '@/constants/storage'
+import { installTestWebLocks } from '@/utils/serializedPreparation.test-utils'
 import { createIndexedDBMessageDatabase, prepareIndexedDBMessageDatabase } from './IndexedDB'
 
 const USER = { id: 'user-1', name: 'User', avatar: '' }
@@ -36,7 +37,25 @@ const textRecord = (id: string): TextMessageRecord => ({
   receivedAt: 1
 })
 
+const deferred = () => {
+  let resolve!: () => void
+  const promise = new Promise<void>((settle) => {
+    resolve = settle
+  })
+  return { promise, resolve }
+}
+
+const importMessageDatabaseRealm = async () => {
+  vi.resetModules()
+  return import('./IndexedDB')
+}
+
+beforeEach(() => {
+  installTestWebLocks()
+})
+
 afterEach(async () => {
+  vi.restoreAllMocks()
   await Promise.all(
     [...names].map(
       (name) =>
@@ -49,6 +68,7 @@ afterEach(async () => {
     )
   )
   names.clear()
+  vi.unstubAllGlobals()
 })
 
 describe('IndexedDB Message database version ownership', () => {
@@ -157,6 +177,114 @@ describe('IndexedDB Message database version ownership', () => {
 
     expect(deletion).toHaveBeenCalledTimes(1)
     deletion.mockRestore()
+  })
+
+  it('serializes independent realms so the later message owner preserves target writes', async () => {
+    const secondGrant = deferred()
+    installTestWebLocks({
+      beforeGrant: (_name, request) => (request === 2 ? secondGrant.promise : undefined)
+    })
+    const firstRealm = await importMessageDatabaseRealm()
+    const secondRealm = await importMessageDatabaseRealm()
+    const origin = nextOrigin('message-cross-realm')
+    const name = messageDatabaseName(origin)
+    names.add(name)
+    const legacy = await openDB(name, 1, {
+      upgrade(database) {
+        database.createObjectStore('legacy')
+      }
+    })
+    legacy.close()
+    const deletion = vi.spyOn(indexedDB, 'deleteDatabase')
+
+    const first = firstRealm.prepareIndexedDBMessageDatabase(origin)
+    const second = secondRealm.prepareIndexedDBMessageDatabase(origin)
+    await first
+    const target = firstRealm.createIndexedDBMessageDatabase(origin)
+    const record = textRecord('new-generation-cross-realm')
+    await createMessageStore(target).insert(record)
+    await target.close()
+    secondGrant.resolve()
+    await second
+
+    const reopened = firstRealm.createIndexedDBMessageDatabase(origin)
+    await expect(createMessageStore(reopened).query()).resolves.toEqual([record])
+    await reopened.close()
+    expect(deletion).toHaveBeenCalledTimes(1)
+    deletion.mockRestore()
+  })
+
+  it('fails an independent late message owner closed when cross-realm locking disappears', async () => {
+    const firstReadStarted = deferred()
+    const releaseFirstRead = deferred()
+    const secondReadStarted = deferred()
+    const releaseSecondRead = deferred()
+    const firstRealm = await importMessageDatabaseRealm()
+    const secondRealm = await importMessageDatabaseRealm()
+    const origin = nextOrigin('message-lost-lock')
+    const name = messageDatabaseName(origin)
+    names.add(name)
+    const legacy = await openDB(name, 1, {
+      upgrade(database) {
+        database.createObjectStore('legacy')
+      }
+    })
+    legacy.close()
+    const nativeDatabases = indexedDB.databases.bind(indexedDB)
+    let readCount = 0
+    const databaseEnumeration = vi.spyOn(indexedDB, 'databases').mockImplementation(async () => {
+      const snapshot = await nativeDatabases()
+      readCount += 1
+      if (readCount === 1) {
+        firstReadStarted.resolve()
+        await releaseFirstRead.promise
+      } else if (readCount === 2) {
+        secondReadStarted.resolve()
+        await releaseSecondRead.promise
+      }
+      return snapshot
+    })
+    const deletion = vi.spyOn(indexedDB, 'deleteDatabase')
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const first = firstRealm.prepareIndexedDBMessageDatabase(origin)
+    await firstReadStarted.promise
+    vi.stubGlobal('navigator', {})
+    const second = secondRealm.prepareIndexedDBMessageDatabase(origin)
+    const secondSettled = second.then(
+      () => undefined,
+      () => undefined
+    )
+    await Promise.race([secondReadStarted.promise, secondSettled])
+
+    releaseFirstRead.resolve()
+    await first
+    const target = firstRealm.createIndexedDBMessageDatabase(origin)
+    const record = textRecord('new-generation-lost-lock')
+    await createMessageStore(target).insert(record)
+    await target.close()
+    releaseSecondRead.resolve()
+
+    const secondResult = await second.then(
+      () => ({ status: 'resolved' as const }),
+      (error: unknown) => ({ status: 'rejected' as const, error })
+    )
+    const reopened = firstRealm.createIndexedDBMessageDatabase(origin)
+    const records = await createMessageStore(reopened).query()
+    await reopened.close()
+    const deletionCount = deletion.mock.calls.length
+    const diagnostics = diagnostic.mock.calls
+    databaseEnumeration.mockRestore()
+    deletion.mockRestore()
+    diagnostic.mockRestore()
+
+    expect(secondResult.status).toBe('rejected')
+    if (secondResult.status === 'rejected') {
+      expect(secondResult.error).toEqual(new Error('Persistence preparation coordination unavailable'))
+    }
+    expect(records).toEqual([record])
+    expect(deletionCount).toBe(1)
+    expect(diagnostics).toContainEqual(['[WebChat] Persistence preparation coordination unavailable'])
   })
 
   it('keeps a blocked delete non-ready and completes the same request after release', async () => {

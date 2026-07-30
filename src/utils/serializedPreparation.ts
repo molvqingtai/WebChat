@@ -6,7 +6,11 @@ export const serializePreparation = (identity: string, prepare: () => Promise<vo
 
   const preparation = Promise.resolve().then(() => {
     const locks = typeof navigator === 'undefined' ? undefined : navigator.locks
-    return locks ? locks.request(`webchat-persistence:${identity}`, prepare) : prepare()
+    if (!locks) {
+      console.error('[WebChat] Persistence preparation coordination unavailable')
+      throw new Error('Persistence preparation coordination unavailable')
+    }
+    return locks.request(`webchat-persistence:${identity}`, prepare)
   })
   preparations.set(identity, preparation)
   void preparation

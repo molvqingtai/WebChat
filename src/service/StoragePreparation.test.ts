@@ -1,5 +1,6 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CONFIG_STORE_VERSION, CONFIG_STORE_VERSION_KEY } from '@/constants/storage'
+import { installTestWebLocks } from '@/utils/serializedPreparation.test-utils'
 
 vi.mock('#imports', () => ({
   browser: { runtime: {}, storage: { sync: {} } }
@@ -8,6 +9,15 @@ vi.mock('#imports', () => ({
 import { registerBrowserSyncStoragePreparation, requestBrowserSyncStoragePreparation } from './StoragePreparation'
 
 let runtimeId = 0
+
+beforeEach(() => {
+  installTestWebLocks()
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
+  vi.unstubAllGlobals()
+})
 
 const createFixture = (initial: Record<string, unknown>) => {
   const values = { ...initial }
