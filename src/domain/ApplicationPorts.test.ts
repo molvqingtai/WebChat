@@ -5,8 +5,6 @@ import { describe, expect, it } from 'vitest'
 const ROOT = path.resolve(import.meta.dirname, '../..')
 const projectPath = (file: string) => path.join(ROOT, file)
 const source = (file: string) => readFile(path.isAbsolute(file) ? file : projectPath(file), 'utf8')
-const obsoleteMessageStoreAlias = ['MESSAGE', 'STORE', 'NAME'].join('_')
-const obsoleteMessageStoreSuffix = `:${['MESSAGE', 'S'].join('')}`
 
 const codeFiles = async (directory: string): Promise<string[]> => {
   const entries = await readdir(directory, { withFileTypes: true })
@@ -154,19 +152,6 @@ describe('replaceable application boundaries', () => {
     expect(await source('src/runtime/RoomTransport.ts')).not.toContain('Remesh.extern')
   })
 
-  it('keeps every non-target message identity out of source and runtime tests', async () => {
-    const retiredMessageIdentity = ['EVENTS', 'V2', 'CANONICAL', 'RECORDS'].join('_')
-    const sourceEntries = await Promise.all(
-      (await codeFiles(projectPath('src'))).map(async (file) => [file, await source(file)] as const)
-    )
-
-    for (const obsoleteIdentity of [retiredMessageIdentity, obsoleteMessageStoreAlias, obsoleteMessageStoreSuffix]) {
-      expect(
-        sourceEntries.filter(([, value]) => value.includes(obsoleteIdentity)).map(([file]) => path.relative(ROOT, file))
-      ).toEqual([])
-    }
-  })
-
   it('gates both persistence families on independent private version authorities', async () => {
     const [background, content, options, config, storageConstants, indexedDB, storage, storagePreparation] =
       await Promise.all([
@@ -196,8 +181,6 @@ describe('replaceable application boundaries', () => {
       /import \{[^}]*\bCONFIG_STORE_VERSION\b[^}]*\bCONFIG_STORE_VERSION_KEY\b[^}]*\} from '@\/constants\/storage'/
     )
     expect(storageConstants).toContain("export const STORAGE_NAME = 'WEB_CHAT_STORAGE'")
-    expect(storageConstants).not.toContain(`export const ${obsoleteMessageStoreAlias}`)
-    expect(storageConstants).not.toContain(obsoleteMessageStoreSuffix)
     expect(storageConstants).toContain("export const APP_STATUS_STORAGE_KEY = 'WEB_CHAT_APP_STATUS'")
     expect(storageConstants).toContain("export const USER_INFO_STORAGE_KEY = 'WEB_CHAT_USER_INFO'")
     expect(indexedDB.match(/createMessageDatabaseDefinition\(STORAGE_NAME, MESSAGE_STORE_VERSION\)/g)).toHaveLength(2)

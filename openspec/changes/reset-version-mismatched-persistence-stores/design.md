@@ -2,19 +2,19 @@
 
 WebChat currently owns two persistence families with different physical scopes:
 
-1. The canonical message store is one IndexedDB database per page origin. Its released logical name is `${STORAGE_NAME}:EVENTS_V2_CANONICAL_RECORDS:${origin}`, whose embedded `V2` duplicates version language and whose `${origin}` suffix duplicates IndexedDB's native origin isolation. The target stable name is `STORAGE_NAME` itself (currently `WEB_CHAT_STORAGE`), and its private native version remains `MESSAGE_STORE_VERSION = 2`.
+1. The canonical message store is one IndexedDB database per page origin. Its stable name is `STORAGE_NAME` itself (currently `WEB_CHAT_STORAGE`), IndexedDB provides native origin isolation, and its private native version is `MESSAGE_STORE_VERSION = 2`.
 2. The configuration store is the existing `Storage` boundary. `LocalStorageImpl` owns the `${STORAGE_NAME}:` namespace in each page origin for `AppStatus`; `BrowserSyncStorageImpl` owns WebChat's extension-wide `browser.storage.sync` area for `UserInfo`.
 
 The first family currently performs an in-place, record-preserving IndexedDB upgrade. The second has no persisted compatibility version. The Owner has restored the original contract: these are independent active generations, each controlled by its own constant, and any active target's persisted version that is not strictly equal to its target makes that scope's values incompatible. Ordinary extension, package, semantic-release, wire, protocol, and non-target-database states do not participate.
 
-The configuration version mechanism is introduced as a non-destructive baseline: a missing completion value records the current target without deleting pre-version configuration data. Message identity replacement is also a clean baseline: production logic stops naming every non-target database and creates the new target empty when absent. It does not inspect or clean up any non-target identity. From then on, every non-equal existing target version resets that active physical store directly to the target. Active-store failures are observable only in the developer console.
+The configuration version mechanism is introduced as a non-destructive baseline: a missing completion value records the current target without deleting pre-version configuration data. The message target follows the same clean boundary: production logic uses only `STORAGE_NAME` and creates it empty when absent. It does not inspect or clean up any non-target identity. Every non-equal existing target version resets that active physical store directly to the target. Active-store failures are observable only in the developer console.
 
 ## Goals / Non-Goals
 
 **Goals:**
 
 - Centralize every persistence namespace, database identity, business key, marker key, and version authority in `src/constants/storage.ts`.
-- Replace the misleading old canonical message identity with version-neutral `STORAGE_NAME`, using the browser's separate IndexedDB/localStorage namespaces, native IndexedDB origin isolation, and no compatibility path.
+- Use version-neutral `STORAGE_NAME` as the canonical message identity, with the browser's separate IndexedDB/localStorage namespaces, native IndexedDB origin isolation, and no compatibility path.
 - Name the two target version authorities symmetrically as `MESSAGE_STORE_VERSION` and `CONFIG_STORE_VERSION`.
 - Reset each active persistence scope on strict version inequality in either direction, including skipped versions, without ordered migrations or compatibility reads.
 - Preserve existing configuration data when establishing its first marker baseline and preserve target-name message data on every same-version reopen; non-target message data is neither a baseline nor a cleanup target and remains untouched.
@@ -28,7 +28,6 @@ The configuration version mechanism is introduced as a non-destructive baseline:
 - Migrating, exporting, backing up, selectively retaining, restoring, reading, decoding, or converting data from a mismatched active generation.
 - Comparing versions by magnitude, supporting an ordered upgrade chain, or preserving a newer stored generation during rollback.
 - Clearing data merely because the extension/package/wire/protocol version or `runtime.onInstalled` reason changed.
-- Reading, converting, deleting, or marking deprecated unstorage message history.
 - Clearing host-page `localStorage` outside the WebChat namespace, another origin eagerly, unrelated IndexedDB databases, or browser storage areas not owned by the current configuration adapters.
 - Changing peer wire, Runtime ownership, Chat/World behavior, Memory database semantics, public `Database`/`MessageStore`/`Storage` contracts, dependencies, or UI presentation.
 - Advancing either store version merely to land this lifecycle mechanism; a future value change remains an explicit destructive product decision.
@@ -52,7 +51,7 @@ const CONFIG_STORE_VERSION_KEY = 'WEB_CHAT_CONFIG_STORE_VERSION'
 
 Both version names use `<domain>_STORE_VERSION`. `USER_STORE_VERSION` is rejected because it would omit `AppStatus`; generic `STORAGE_VERSION` is rejected because it is not symmetric with the specific message-store owner; `APP_VERSION` and `PACKAGE_VERSION` are rejected because they reintroduce release-version coupling. `STORAGE_NAME` is a physical identity/name root, not a version authority, and `CONFIG_STORE_VERSION_KEY` is a marker location, not a third version.
 
-All six constants SHALL live in `src/constants/storage.ts`, not partly in generic `config.ts` and not inside an IndexedDB, storage-adapter, background, or content implementation. Their persistence owners import them from that module. No `MESSAGE_STORE_NAME` alias or composition SHALL exist. This centralizes storage constants without moving unrelated layout, protocol, runtime, or emoji values.
+All six constants SHALL live in `src/constants/storage.ts`, not partly in generic `config.ts` and not inside an IndexedDB, storage-adapter, background, or content implementation. Their persistence owners import them from that module. This centralizes storage constants without moving unrelated layout, protocol, runtime, or emoji values.
 
 The message database uses its native positive IndexedDB version as the persisted version. Configuration scopes use a private `CONFIG_STORE_VERSION_KEY` completion value. The same target constant governs both current configuration scopes, but each physical scope records completion separately: once for the extension-wide sync area and once in each origin's WebChat local namespace. These completion values record application of the one configuration authority; they are not additional version authorities.
 
@@ -75,9 +74,9 @@ The missing configuration value rule deliberately preserves installations that p
 
 The target canonical database identity SHALL be `STORAGE_NAME` with the exact current value `WEB_CHAT_STORAGE`. IndexedDB's API namespace and origin partition supply boundaries from localStorage and other origins, so every origin independently owns a database with that same opaque name; a message suffix and `${origin}` SHALL NOT be encoded in the name.
 
-Production persistence logic SHALL use only `STORAGE_NAME` as the canonical IndexedDB database identity. The released-retired `${STORAGE_NAME}:EVENTS_V2_CANONICAL_RECORDS:${origin}` identity and every other non-target identity SHALL have no production constant, construction, lookup, branch, open/read path, compatibility decoder, migration/export/copy path, clear/delete request, blocked/error handling, retry, readiness dependency, or completion marker. Their browser-managed bytes remain untouched, and their presence does not delay or change target preparation.
+Production persistence logic SHALL use only `STORAGE_NAME` as the canonical IndexedDB database identity. Every non-target identity SHALL have no production constant, construction, lookup, branch, open/read path, compatibility decoder, migration/export/copy path, clear/delete request, blocked/error handling, retry, readiness dependency, or completion marker. Non-target browser-managed bytes remain untouched, and their presence does not delay or change target preparation.
 
-For a native-version mismatch on the target identity, the implementation deletes exactly the IndexedDB database named `STORAGE_NAME` in the current origin partition and recreates it empty from the target private `MessageDatabaseSchema` at `MESSAGE_STORE_VERSION`. Clearing known stores in place is insufficient because a skipped generation can contain unknown schema residue. This one-time physical identity replacement does not advance `MESSAGE_STORE_VERSION` because it changes naming, not the target schema generation.
+For a native-version mismatch on the target identity, the implementation deletes exactly the IndexedDB database named `STORAGE_NAME` in the current origin partition and recreates it empty from the target private `MessageDatabaseSchema` at `MESSAGE_STORE_VERSION`. Clearing known stores in place is insufficient because a skipped generation can contain unknown schema residue.
 
 For a configuration mismatch, each non-current physical scope is cleared completely:
 
@@ -86,7 +85,7 @@ For a configuration mismatch, each non-current physical scope is cleared complet
 
 After clear success, only the matching private completion value is established before ordinary defaults or newly entered values may be written. Resetting one configuration scope does not broadly clear unrelated host-page keys, another origin, browser storage areas outside current ownership, or any IndexedDB database. Resetting the message store does not clear configuration, and resetting configuration does not delete the canonical message database.
 
-The released-retired canonical database, every other non-target IndexedDB database, and deprecated unstorage IndexedDB message data are neither the active canonical message database nor active configuration data. They remain unread, unconverted, uncleared, unmarked, and outside readiness. The active `LocalStorageImpl` and `BrowserSyncStorageImpl` wrappers are configuration stores and therefore are reset only by `CONFIG_STORE_VERSION`.
+Every non-target IndexedDB database is outside the active canonical message database and active configuration data. It remains unread, unconverted, uncleared, unmarked, and outside readiness. The active `LocalStorageImpl` and `BrowserSyncStorageImpl` wrappers are configuration stores and therefore are reset only by `CONFIG_STORE_VERSION`.
 
 ### 4. `onInstalled` is eager; injection is the required gate and fallback
 
@@ -127,14 +126,14 @@ There SHALL be no Toast, `AppFeedback`, alert, DOM error, status page, notificat
 
 Deterministic tests SHALL cover, separately for message and configuration persistence: missing-state baseline, same-version preservation, adjacent mismatch, skipped mismatch, reverse mismatch, deletion/clear failure, interruption before and after the irreversible boundary, retry, target reconstruction, and concurrent contenders without double reset. IndexedDB tests SHALL additionally cover exact `STORAGE_NAME` target identity, absence of a message or origin suffix, target mismatch cleanup, same-origin concurrent opens, and two browser origins independently using the same target name. Static guards SHALL reject any production non-target identity construction, access, compatibility, or cleanup path without introducing a non-target-database runtime lifecycle suite. Configuration tests SHALL cover the extension-wide sync scope and multiple independent origin-local scopes, including malformed completion values.
 
-Sentinels SHALL prove family independence and isolation: a message reset preserves configuration; a configuration reset preserves the active canonical database; resetting one origin preserves another origin; host-page local keys outside `${STORAGE_NAME}:`, non-target IndexedDB databases, browser areas outside current ownership, and deprecated unstorage message data remain unchanged. Startup and static tests SHALL reject package-version imports, `WEB_CHAT_VERSION`, `VERSION_STORAGE_KEY`, app-version comparisons, non-target-database handling, old startup `clear()` ownership, user-visible migration feedback, and public API widening.
+Sentinels SHALL prove family independence and isolation: a message reset preserves configuration; a configuration reset preserves the active canonical database; resetting one origin preserves another origin; host-page local keys outside `${STORAGE_NAME}:`, a generated unrelated IndexedDB database, and browser areas outside current ownership remain unchanged. Startup and static tests SHALL reject package-version ownership, app-version comparisons, non-target-database handling, startup `clear()` ownership, user-visible migration feedback, and public API widening.
 
 Nonblocking production Chrome MV3 and Firefox MV2 verification SHOULD record baseline, mismatch, silent-success/default-state, and console-only failure outcomes when the established browser environments can create those persisted starting states. Browser evidence does not replace deterministic source tests and remains nonblocking under the Owner's established workflow.
 
 ## Risks / Trade-offs
 
 - [Every active target mismatch permanently deletes the affected generation, including rollback] -> This is the explicit product rule; keep the two version triggers narrow and prove ordinary release updates preserve data.
-- [The identity switch stops exposing released history while leaving those database bytes behind] -> This is the Owner's explicit no-compatibility/no-cleanup decision; production code neither reads nor deletes any non-target identity, and the `STORAGE_NAME` target starts independently.
+- [A non-target database may coexist with the active target] -> Production code neither reads nor deletes any non-target identity, and an arbitrary generated sentinel proves that boundary without encoding another identity into the contract.
 - [A missing marker preserves pre-version data] -> This is the explicit baseline rule; only a later existing unequal value authorizes deletion.
 - [Per-origin persistence cannot be cleared globally from `onInstalled`] -> Gate and lazily reset each origin on its next injection, while eagerly handling only the extension-wide configuration scope.
 - [Concurrent tabs can observe the same stale version] -> Serialize by physical identity, prohibit writers before readiness, and require every later contender to re-read completion before deleting.
@@ -145,12 +144,12 @@ Nonblocking production Chrome MV3 and Firefox MV2 verification SHOULD record bas
 ## Migration Plan
 
 1. Freeze this requirements-only OpenSpec authority on the existing requirement branch and PR without advancing either store version.
-2. After explicit Owner/Planner release, centralize the storage constants, replace the active canonical message identity with direct `STORAGE_NAME` without any non-target-identity access or cleanup, and extend the two private target reset lifecycles/regressions as the sole source continuation on the same requirement branch and PR.
+2. After explicit Owner/Planner release, centralize the storage constants, bind the active canonical message identity to direct `STORAGE_NAME` without any non-target-identity access or cleanup, and extend the two private target reset lifecycles/regressions as the sole source continuation on the same requirement branch and PR.
 3. Run the repository source/static/build gates on one immutable implementation exact, then obtain fresh Review and record nonblocking Chrome MV3/Firefox MV2 behavior truth.
 4. Release only through the normal PR flow and separate explicit Owner merge authorization. Future changes to either constant remain independent destructive product decisions.
 
-Before release, rollback is code-only by reverting the requirement branch. After release, an older build that still names the released-retired database may expose its untouched stale history and ignore the new target; the forward implementation provides no compatibility bridge. After any active target mismatch reset succeeds, rollback cannot restore the deleted target values, and reverse mismatch remains destructive.
+Before release, rollback is code-only by reverting the requirement branch. After any active target mismatch reset succeeds, rollback cannot restore the deleted target values, and reverse mismatch remains destructive.
 
 ## Open Questions
 
-None. The Owner has fixed the two persistence families, six centralized storage constants with no `MESSAGE_STORE_NAME`, exact direct `STORAGE_NAME` canonical IndexedDB identity, separate browser API namespaces, native origin isolation, completely untouched non-target identities, no compatibility under any identity/version change, strict target-version non-equality semantics, baseline, independent scope, lazy origin handling, direct active-target reset, awaited completion, console-only failure, and ordinary app-version exclusion.
+None. The Owner has fixed the two persistence families, six centralized storage constants, exact direct `STORAGE_NAME` canonical IndexedDB identity, separate browser API namespaces, native origin isolation, completely untouched non-target identities, no compatibility under any identity/version change, strict target-version non-equality semantics, baseline, independent scope, lazy origin handling, direct active-target reset, awaited completion, console-only failure, and ordinary app-version exclusion.
