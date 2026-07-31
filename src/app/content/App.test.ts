@@ -88,7 +88,7 @@ describe('single existing Toast capability', () => {
 
     expect(toastExtern).not.toMatch(/\btestId\??:/)
     expect(initialization).not.toMatch(
-      /export (?:const CONTENT_INITIALIZATION_TIMEOUT_MS|type InitializationPhase|interface InitializationLifecycleOptions)/
+      /export (?:const (?:CONTENT_INITIALIZATION_TIMEOUT_MS|runInitializationAttempt)|type InitializationPhase|interface InitializationLifecycleOptions)/
     )
     expect(chatRoom).not.toMatch(/export const RECONNECT_FEEDBACK_MINIMUM_MS/)
     expect(toast).not.toMatch(/export type ToastMessage/)

@@ -39,7 +39,7 @@ const withDeadline = <Value>(task: Promise<Value>, signal: AbortSignal, timeoutM
     if (signal.aborted) onAbort()
   })
 
-export const runInitializationAttempt = async (
+const runInitializationAttempt = async (
   dependencies: InitializationDependencies,
   signal: AbortSignal,
   onRuntimeStarted: () => void = () => {},
