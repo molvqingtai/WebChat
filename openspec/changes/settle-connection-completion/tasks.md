@@ -1,3 +1,5 @@
+> **Acceptance status (2026-07-31):** The Owner explicitly accepted PR #85 while its published immutable source head was `87e93e3a5324e721e620962fbd953e1cb54ebd1f`. Exact CI run `30607637081` passed setup/linter/tests/build 4/4, and fresh Review task #445 passed P0/P1/P2 `0/0/0` with report SHA-256 `c73932163c6a85ef76cdf4cedc27d1013823b6866100dea36791aeb01557c117`. Nonblocking browser task #447 passed its reached Chrome for Testing 149 and Firefox failure-shell paths with report SHA-256 `a4d456b752bfbb08727508883b9235035f96cdeebb40478860df717d5f817966`; Firefox ready/recovery, system Chrome 151 side-load, and the final-exact connected-visible-user, zero-user, ordinary-refresh, grace-return, and post-grace-rejoin browser cases that task #447 did not rerun remain `UNVERIFIED`. Owner acceptance is conditional merge authorization after this documentation/task closeout and the final exact's identity and CI gates pass; the PR remains Draft and unmerged until those conditions finish. A checked item means implemented, freshly gated, truthfully recorded, or explicitly accepted; it does not reinterpret an `UNVERIFIED` result as PASS.
+
 ## 1. Authority And Evidence
 
 - [x] 1.1 Freeze `develop@d7fa3d386250aee22a740ca84e3cd29dadbbc724`, task #422 diagnostic SHA-256 `256872c6688aedeb03859a75ac68ec331fb48bfe3ef0d12434a7aebde72dad27`, the four RED signatures, and the lifecycle PASS before source edits.
@@ -24,7 +26,7 @@
 
 - [x] 4.1 Run the focused settlement controls, canonical full tests, TypeScript, format, lint, OpenSpec strict validation/doctor, and applicable Chrome/Firefox production builds on one immutable source exact.
 - [x] 4.2 Prove the connection-settlement diff contains no Toast copy/duration mask, independent readiness authority, fixed pre-App status view, `pageId` business field, provider-specific compatibility path, protocol/public-port/schema/version/dependency/workflow drift, or permanent diagnostic bulk.
-- [ ] 4.3 Freeze exact/tree/sole-parent/patch identity, branch/remote/PR identity, clean worktree, and all PASS/FAIL/BLOCKED/UNVERIFIED evidence without transferring task #422 diagnostic results as implementation PASS.
+- [x] 4.3 Freeze exact/tree/sole-parent/patch identity, branch/remote/PR identity, clean worktree, and all PASS/FAIL/BLOCKED/UNVERIFIED evidence without transferring task #422 diagnostic results as implementation PASS.
 
 ## 5. Panel Shell Continuity
 
@@ -36,7 +38,8 @@
 
 ## 6. Review And Release
 
-- [ ] 6.1 Obtain fresh independent Review for terminal ownership, post-commit success boundary, prerequisite cleanup, persistence-tail recovery, shell continuity/recovery, stale-generation fencing, lifecycle preservation, and minimum-code scope.
-- [ ] 6.2 Keep the single `fix/settle-connection-completion` Draft PR updated to each reviewed exact by verified normal fast-forward only; stop on remote drift and do not merge.
-- [ ] 6.3 Run nonblocking exact-bound Chrome MV3 and Firefox MV2 behavior observation for shell continuity on storage-preparation and Runtime startup failure, in-place retry, connected-visible-user and zero-user failure signatures, ordinary refresh, return during grace, post-grace rejoin, and cleanup; report unexecuted cases as UNVERIFIED.
-- [ ] 6.4 After all required source/review/CI steps finish, request Owner authorization for final merge. No earlier step requires another Owner checkpoint.
+- [x] 6.1 Obtain fresh independent Review for terminal ownership, post-commit success boundary, prerequisite cleanup, persistence-tail recovery, shell continuity/recovery, stale-generation fencing, lifecycle preservation, and minimum-code scope.
+- [x] 6.2 Keep the single `fix/settle-connection-completion` Draft PR updated to each reviewed exact by verified normal fast-forward only; stop on remote drift and do not merge.
+- [x] 6.3 Run nonblocking exact-bound Chrome MV3 and Firefox MV2 behavior observation for shell continuity on storage-preparation and Runtime startup failure, in-place retry, connected-visible-user and zero-user failure signatures, ordinary refresh, return during grace, post-grace rejoin, and cleanup; report unexecuted cases as UNVERIFIED.
+- [x] 6.4 Record Owner smoke acceptance on the published immutable source exact as conditional merge authorization after documentation/task closeout and final gates.
+- [ ] 6.5 Publish this documentation/status child by verified normal fast-forward, require its exact identity and CI gates to pass, then perform normal Ready and merge under the Owner's conditional authorization; stop on failure or drift.
