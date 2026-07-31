@@ -1,3 +1,15 @@
+## [2.1.1](https://github.com/molvqingtai/WebChat/compare/v2.1.0...v2.1.1) (2026-07-31)
+
+### Bug Fixes
+
+- **content:** enforce initialization attempt deadline ([c4e22ed](https://github.com/molvqingtai/WebChat/commit/c4e22ed7a73be76f8be79e3a860346cf707b1baa))
+- **content:** gate Runtime startup by attempt deadline ([aef4244](https://github.com/molvqingtai/WebChat/commit/aef4244f18b33b6cfdc921ea9aeab034de19c502))
+- **content:** keep initialization inside app shell ([9eee4e9](https://github.com/molvqingtai/WebChat/commit/9eee4e9d5f1fcda098c222444ea2673610707b54))
+- **content:** preserve Toaster viewport placement ([416c816](https://github.com/molvqingtai/WebChat/commit/416c816968b49c1d9172a8a1d6beb01b75c975ee))
+- **content:** restore shell state before bootstrap ([a245c06](https://github.com/molvqingtai/WebChat/commit/a245c06c1e2f391c0812a90803114ac962736d50))
+- **content:** restore single-shell initialization ([f8b6f74](https://github.com/molvqingtai/WebChat/commit/f8b6f741735119b3e25bd416e0f358d7b9e143be))
+- **storage:** preserve shell status on version reset ([8f1f1d2](https://github.com/molvqingtai/WebChat/commit/8f1f1d258a486b0a78908346acb415272de56875))
+
 # [2.1.0](https://github.com/molvqingtai/WebChat/compare/v2.0.1...v2.1.0) (2026-07-31)
 
 ### Bug Fixes
