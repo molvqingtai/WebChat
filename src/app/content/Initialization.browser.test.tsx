@@ -1,7 +1,7 @@
 import { render } from 'vitest-browser-react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { Remesh } from 'remesh'
-import { Toaster } from 'sonner'
+import { Toaster, toast } from 'sonner'
 import { startInitializationLifecycle, type InitializationDependencies } from '@/app/content/Initialization'
 import AppStatusDomain from '@/domain/AppStatus'
 import { ChatRoomExtern } from '@/domain/externs/ChatRoom'
@@ -62,10 +62,6 @@ const errorToast = () => {
 }
 
 describe('initialization error toast ownership (real Sonner boundary)', () => {
-  afterEach(() => {
-    document.querySelector('[data-sonner-toaster]')?.remove()
-  })
-
   it('keeps the failure error toast presented and replaces it with a new one after a failed retry', async () => {
     const failing: InitializationDependencies = {
       prepareBrowserSyncStorage: vi.fn(async () => {}),
@@ -101,5 +97,7 @@ describe('initialization error toast ownership (real Sonner boundary)', () => {
     expect(errorToast(), 'retry error toast must remain presented after the failed attempt').toBeTruthy()
 
     stop()
+    // Let the mounted Toaster dismiss the terminal toast through its own lifecycle before React unmounts.
+    toast.dismiss()
   })
 })
