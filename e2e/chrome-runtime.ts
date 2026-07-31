@@ -394,17 +394,30 @@ try {
       const extensionId = new URL(contentContext.origin).host
       const extensionTargets = () =>
         [...targets.values()].filter((target) => target.url.startsWith('chrome-extension://'))
-      const offscreenTargets = extensionTargets().filter(
-        (target) => new URL(target.url).host === extensionId && target.url.endsWith('/offscreen.html')
+      const offscreenTarget = await waitFor(
+        () => {
+          const candidates = extensionTargets().filter(
+            (target) => new URL(target.url).host === extensionId && target.url.endsWith('/offscreen.html')
+          )
+          if (candidates.length > 1)
+            throw new Error(`Expected one WebChat Offscreen target, received ${candidates.length}`)
+          return candidates[0]
+        },
+        { timeoutMs: startupTimeoutMs, label: 'WebChat Offscreen target' }
       )
-      if (offscreenTargets.length !== 1)
-        throw new Error(`Expected one WebChat Offscreen target, received ${offscreenTargets.length}`)
-      const worker = extensionTargets().find(
-        (target) => target.type === 'service_worker' && new URL(target.url).host === extensionId
+      const worker = await waitFor(
+        () => {
+          const candidates = extensionTargets().filter(
+            (target) => target.type === 'service_worker' && new URL(target.url).host === extensionId
+          )
+          if (candidates.length > 1)
+            throw new Error(`Expected one WebChat Runtime service worker target, received ${candidates.length}`)
+          return candidates[0]
+        },
+        { timeoutMs: startupTimeoutMs, label: 'WebChat Runtime service worker target' }
       )
-      if (!worker) throw new Error('WebChat Runtime service worker target is missing')
 
-      const offscreenSession = await sessionForTarget(offscreenTargets[0], 'Offscreen CDP session')
+      const offscreenSession = await sessionForTarget(offscreenTarget, 'Offscreen CDP session')
       const workerSession = await sessionForTarget(worker, 'Service Worker CDP session')
       const presenceNamespace = `WEB_CHAT_RUNTIME_PRESENCE_STORE_V1:${extensionId}`
       const forgedPresence = {
