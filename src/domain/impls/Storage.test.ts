@@ -446,4 +446,25 @@ describe('configuration storage version ownership', () => {
     expect(other.values.get('other')).toBe('preserved')
     expect(other.storage.clear).not.toHaveBeenCalled()
   })
+
+  it('arbitrates an injected coordinator lease across the preparation lifecycle', async () => {
+    const fixture = createVersionStorage({ exists: false })
+    const events: string[] = []
+    const coordinator = {
+      acquire: vi.fn(async () => {
+        events.push('acquire')
+        return () => {
+          events.push('release')
+        }
+      })
+    }
+    const identity = `coordinated-${configurationStorageId++}`
+    const { prepareConfigurationStorage } = await import('./Storage')
+
+    await prepareConfigurationStorage(identity, fixture.storage, coordinator)
+
+    expect(coordinator.acquire).toHaveBeenCalledWith(`configuration:${identity}`)
+    expect(events).toEqual(['acquire', 'release'])
+    expect(fixture.version()).toEqual({ exists: true, value: CONFIG_STORE_VERSION })
+  })
 })
