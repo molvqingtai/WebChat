@@ -29,10 +29,10 @@
 ## 5. Panel Shell Continuity
 
 - [x] 5.1 Freeze the Owner boundary that any Runtime, storage-preparation, or other bootstrap error may gate only its dependent capability and never the existing launcher or openable panel shell.
-- [ ] 5.2 Add parent-sensitive regressions proving browser-sync/local configuration, MessageStore, and Runtime bootstrap failure currently leaves no Shadow UI, while the repair mounts exactly one shell, reaches a finite degraded state, and fences late old results.
-- [ ] 5.3 Mount the bootstrap-independent Shadow UI/shell before asynchronous preparation; ignite each application Domain and side effect only after its own prerequisite is ready, with no duplicate root/store or panel visual redesign.
-- [ ] 5.4 Present one visible, accessible unavailable state and Retry action for the current failed bootstrap generation; recover the same shell in place on success and return to retryable unavailable without infinite loading on failure.
-- [ ] 5.5 Prove one fresh shell/generation after reload or genuine replacement, current-generation-only hydration, keyboard/focus accessibility, and no stale bootstrap result or Retry terminal mutates the current shell.
+- [x] 5.2 Add parent-sensitive regressions proving browser-sync/local configuration, MessageStore, and Runtime bootstrap failure currently leaves no Shadow UI, while the repair mounts exactly one shell, reaches a finite degraded state, and fences late old results.
+- [x] 5.3 Mount the bootstrap-independent Shadow UI/shell before asynchronous preparation; ignite each application Domain and side effect only after its own prerequisite is ready, with no duplicate root/store or panel visual redesign.
+- [x] 5.4 Present one visible, accessible unavailable state and Retry action for the current failed bootstrap generation; recover the same shell in place on success and return to retryable unavailable without infinite loading on failure.
+- [x] 5.5 Prove one fresh shell/generation after reload or genuine replacement, current-generation-only hydration, keyboard/focus accessibility, and no stale bootstrap result or Retry terminal mutates the current shell.
 
 ## 6. Review And Release
 

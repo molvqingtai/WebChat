@@ -1,4 +1,4 @@
-import { type FC, useState, type MouseEvent, useCallback, useEffect, useMemo } from 'react'
+import { type FC, useState, type MouseEvent, type MouseEventHandler, useCallback, useEffect, useMemo } from 'react'
 import { SettingsIcon, MoonIcon, SunIcon, HandIcon, RefreshCwIcon } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 
@@ -42,6 +42,55 @@ export const getReconnectLabel = ({
   return joined ? 'Reconnect this site' : 'Retry connecting this site chat'
 }
 
+export interface AppLauncherButtonProps {
+  hasUnread?: boolean
+  label: string
+  onClick: MouseEventHandler<HTMLButtonElement>
+  onContextMenu?: MouseEventHandler<HTMLButtonElement>
+}
+
+export const AppLauncherButton: FC<AppLauncherButtonProps> = ({ hasUnread = false, label, onClick, onContextMenu }) => {
+  const DayLogo = [LogoIcon0, LogoIcon1, LogoIcon2, LogoIcon3, LogoIcon4, LogoIcon5, LogoIcon6][getDay(Date())]
+  const content = useMemo(
+    () => (
+      <>
+        <AnimatePresence>
+          {hasUnread && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.1 }}
+              className="absolute -top-1 -right-1 z-30 flex size-5 items-center justify-center"
+            >
+              <span
+                className={cn('absolute inline-flex size-full animate-ping rounded-full opacity-75', 'bg-orange-400')}
+              ></span>
+              <span className={cn('relative inline-flex size-3 rounded-full', 'bg-orange-500')}></span>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        <DayLogo className="relative z-20 size-full max-h-full max-w-full overflow-hidden"></DayLogo>
+      </>
+    ),
+    [hasUnread, DayLogo]
+  )
+
+  return (
+    <Button
+      type="button"
+      onClick={onClick}
+      onContextMenu={onContextMenu}
+      aria-label={label}
+      title={label}
+      className="relative z-20 size-11 rounded-full text-xs shadow-lg shadow-slate-500/50 after:absolute after:-inset-0.5 after:z-10 after:animate-[shimmer_2s_linear_infinite] after:rounded-full after:bg-[conic-gradient(from_var(--shimmer-angle),theme(colors.slate.500)_0%,theme(colors.white)_10%,theme(colors.slate.500)_20%)] has-[>svg]:p-0"
+    >
+      {content}
+    </Button>
+  )
+}
+
 const AppButton: FC<AppButtonProps> = ({ className }) => {
   const send = useRemeshSend()
   const appActionDomain = useRemeshDomain(AppActionDomain())
@@ -51,8 +100,6 @@ const AppButton: FC<AppButtonProps> = ({ className }) => {
   const userInfoDomain = useRemeshDomain(UserInfoDomain())
   const userInfo = useRemeshQuery(userInfoDomain.query.UserInfoQuery())
   const appPosition = useRemeshQuery(appStatusDomain.query.PositionQuery())
-
-  const DayLogo = [LogoIcon0, LogoIcon1, LogoIcon2, LogoIcon3, LogoIcon4, LogoIcon5, LogoIcon6][getDay(Date())]
 
   const isDarkMode = userInfo?.themeMode === 'dark' ? true : userInfo?.themeMode === 'light' ? false : checkDarkMode()
 
@@ -180,33 +227,6 @@ const AppButton: FC<AppButtonProps> = ({ className }) => {
     ]
   )
 
-  // Memoize main button content to prevent re-render when position changes
-  const mainButtonContent = useMemo(
-    () => (
-      <>
-        <AnimatePresence>
-          {hasUnreadQuery && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.1 }}
-              className="absolute -top-1 -right-1 z-30 flex size-5 items-center justify-center"
-            >
-              <span
-                className={cn('absolute inline-flex size-full animate-ping rounded-full opacity-75', 'bg-orange-400')}
-              ></span>
-              <span className={cn('relative inline-flex size-3 rounded-full', 'bg-orange-500')}></span>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        <DayLogo className="relative z-20 size-full max-h-full max-w-full overflow-hidden"></DayLogo>
-      </>
-    ),
-    [hasUnreadQuery, DayLogo]
-  )
-
   return (
     <div
       ref={appMenuRef}
@@ -230,13 +250,12 @@ const AppButton: FC<AppButtonProps> = ({ className }) => {
           </motion.div>
         )}
       </AnimatePresence>
-      <Button
+      <AppLauncherButton
         onClick={handleToggleApp}
         onContextMenu={handleToggleMenu}
-        className="relative z-20 size-11 rounded-full text-xs shadow-lg shadow-slate-500/50 after:absolute after:-inset-0.5 after:z-10 after:animate-[shimmer_2s_linear_infinite] after:rounded-full after:bg-[conic-gradient(from_var(--shimmer-angle),theme(colors.slate.500)_0%,theme(colors.white)_10%,theme(colors.slate.500)_20%)] has-[>svg]:p-0"
-      >
-        {mainButtonContent}
-      </Button>
+        hasUnread={hasUnreadQuery}
+        label={appOpenStatus ? 'Close WebChat' : 'Open WebChat'}
+      />
     </div>
   )
 }

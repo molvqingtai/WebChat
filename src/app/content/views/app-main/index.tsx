@@ -11,11 +11,12 @@ export interface AppMainProps {
   className?: string
 }
 
-const AppMain: FC<AppMainProps> = ({ children, className }) => {
-  const appStatusDomain = useRemeshDomain(AppStatusDomain())
-  const appOpenStatus = useRemeshQuery(appStatusDomain.query.OpenQuery())
-  const { x, y } = useRemeshQuery(appStatusDomain.query.PositionQuery())
+export interface AppMainFrameProps extends AppMainProps {
+  open: boolean
+  position: { x: number; y: number }
+}
 
+export const AppMainFrame: FC<AppMainFrameProps> = ({ children, className, open, position: { x, y } }) => {
   const { width, height } = useWindowResize()
 
   // Position x,y is offset from bottom-right corner
@@ -39,7 +40,7 @@ const AppMain: FC<AppMainProps> = ({ children, className }) => {
 
   return (
     <AnimatePresence>
-      {appOpenStatus && (
+      {open && (
         <motion.div
           initial={{ opacity: 0, y: 10, x: isOnRightSide ? '-100%' : '0' }}
           animate={{ opacity: 1, y: 0, x: isOnRightSide ? '-100%' : '0' }}
@@ -70,6 +71,14 @@ const AppMain: FC<AppMainProps> = ({ children, className }) => {
       )}
     </AnimatePresence>
   )
+}
+
+const AppMain: FC<AppMainProps> = (props) => {
+  const appStatusDomain = useRemeshDomain(AppStatusDomain())
+  const open = useRemeshQuery(appStatusDomain.query.OpenQuery())
+  const position = useRemeshQuery(appStatusDomain.query.PositionQuery())
+
+  return <AppMainFrame {...props} open={open} position={position} />
 }
 
 AppMain.displayName = 'AppMain'

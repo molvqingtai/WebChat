@@ -30,15 +30,21 @@ describe('generic AppMain Toast ownership', () => {
     expect(styles).not.toMatch(/webchat-(?:panel|launcher|reconnect)-toaster|data-webchat-interactive/)
   })
 
-  it('removes alternate readiness and bootstrap status views without deleting lifecycle truth', () => {
+  it('keeps Runtime readiness unique while bootstrap exposes accessible shell recovery', () => {
     const appSource = source('./App.tsx')
-    const bootstrapSource = source('./index.tsx')
+    const entrySource = source('./index.tsx')
+    const bootstrapSource = source('./Bootstrap.tsx')
+    const bootstrapShellSource = source('./BootstrapShell.tsx')
     const readinessSource = source('../../domain/Readiness.ts')
 
     expect(appSource).not.toMatch(/runtimeHostPhase|ReadinessDomain|WebChat connecting|WebChat unavailable|<output/)
     expect(appSource).not.toMatch(/AlertCircleIcon|LoaderCircleIcon/)
-    expect(bootstrapSource).not.toMatch(/runtime-unavailable|WebChat unavailable|aria-label="Retry"|location\.reload/)
-    expect(bootstrapSource).not.toMatch(/AlertCircleIcon|RefreshCwIcon|@\/components\/ui\/button/)
+    expect(entrySource).not.toMatch(/runtime-unavailable|WebChat unavailable|location\.reload/)
+    expect(`${bootstrapSource}\n${bootstrapShellSource}`).not.toMatch(/ReadinessDomain|ToastDomain|location\.reload/)
+    expect(bootstrapShellSource).toContain("role={unavailable ? 'alert' : 'status'}")
+    expect(bootstrapShellSource).toContain('aria-label="Retry WebChat setup"')
+    expect(bootstrapShellSource).toContain('WebChat unavailable')
+    expect(bootstrapShellSource).toContain('<AppLauncherButton')
     expect(readinessSource).toContain("default: 'connecting'")
     expect(readinessSource).toContain('StateChangedEvent')
   })
