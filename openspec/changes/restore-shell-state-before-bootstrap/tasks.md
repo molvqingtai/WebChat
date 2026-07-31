@@ -1,3 +1,5 @@
+> **Acceptance status (2026-08-01):** The Owner explicitly accepted PR #87 while its published immutable source head was `aef4244f18b33b6cfdc921ea9aeab034de19c502`. Exact CI run `30661430841` passed setup/tests/build/linter 4/4, and fresh architecture-first Review task #505 passed P0/P1/P2 `0/0/0` with report SHA-256 `1caf215ba8e6da24554142847a15f9dfc488b74478342ead3eda4c649ede8177`. QA, QC, and UX were not routed under the Owner's explicit role boundary, so no unperformed result is recorded as PASS. Owner acceptance is conditional Ready/merge authorization after this documentation/task closeout and the final exact's identity and CI gates pass; the PR remains Draft and unmerged until those conditions finish. A checked item means implemented, freshly gated, truthfully recorded, or explicitly accepted; it does not invent a missing verification result.
+
 ## 1. Product Authority
 
 - [x] 1.1 Define the root as `StrictMode -> RemeshRoot(store) -> RemeshScope -> App`, with exactly `NotificationDomain()` and `AppFeedbackDomain()` at root and AppFeedback retaining its nested AppStatus and Toast dependencies.
@@ -19,7 +21,8 @@
 ## 3. Delivery Gates
 
 - [x] 3.1 Run focused tests, complete repository tests, typecheck, lint, format, Chrome/Firefox builds, strict OpenSpec, and exact scope/identity checks on one immutable source exact.
-- [ ] 3.2 Obtain fresh architecture-first Review of the complete branch against `The-Absolute-Code.md`; every Domain, state, effect, dependency, and abstraction must be globally necessary.
-- [ ] 3.3 Publish only the reviewed exact to the existing Draft PR and require exact CI to pass without unrelated scope.
-- [ ] 3.4 Keep QA, QC, and UX absent unless the Owner explicitly requests the corresponding role; never report an unperformed result as PASS.
-- [ ] 3.5 After Owner acceptance, update OpenSpec/task truth, recheck final exact identity and CI, and follow the established conditional Ready/merge authorization flow.
+- [x] 3.2 Obtain fresh architecture-first Review of the complete branch against `The-Absolute-Code.md`; every Domain, state, effect, dependency, and abstraction must be globally necessary.
+- [x] 3.3 Publish only the reviewed exact to the existing Draft PR and require exact CI to pass without unrelated scope.
+- [x] 3.4 Keep QA, QC, and UX absent unless the Owner explicitly requests the corresponding role; never report an unperformed result as PASS.
+- [x] 3.5 Record Owner acceptance and task truth as conditional Ready/merge authorization after documentation closeout and final gates.
+- [ ] 3.6 Publish this documentation/status child by verified normal fast-forward, require the final exact identity and CI gates to pass, then hand off normal Ready and merge to Coder under the Owner's conditional authorization; stop on failure or drift.
