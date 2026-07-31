@@ -60,12 +60,14 @@ describe('reconnect action availability', () => {
 
     expect(value).toContain('const AppButtonMenu')
     expect(value).not.toMatch(/InitializationAppButtonMenu|ApplicationAppButtonMenu/)
+    expect(value).toContain('const appStatusDomain = useRemeshDomain(AppStatusDomain())')
     expect(value).toContain("const initializationConnecting = initializationPhase === 'connecting'")
     expect(value).toContain("'Retry WebChat setup'")
-    expect(value).toContain('initializationDomain.command.RetryCommand()')
+    expect(value).toContain('appStatusDomain.command.RetryCommand()')
     expect(value).toMatch(
-      /applicationReady\s*\?\s*chatRoomDomain\.command\.ReconnectCommand\(\)\s*:\s*initializationDomain\.command\.RetryCommand\(\)/
+      /applicationReady\s*\?\s*chatRoomDomain\.command\.ReconnectCommand\(\)\s*:\s*appStatusDomain\.command\.RetryCommand\(\)/
     )
+    expect(value).not.toMatch(/InitializationDomain/)
     expect(value).toContain('onContextMenu={handleToggleMenu}')
     expect(value.match(/<RefreshCwIcon/g)).toHaveLength(1)
   })

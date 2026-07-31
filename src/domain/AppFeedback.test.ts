@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Remesh, type RemeshStore } from 'remesh'
-import InitializationDomain from '@/app/content/Initialization'
+import AppStatusDomain from '@/domain/AppStatus'
 import AppFeedbackDomain from '@/domain/AppFeedback'
 import ChatRoomDomain from '@/domain/ChatRoom'
 import UserInfoDomain, { type UserInfo } from '@/domain/UserInfo'
 import { ChatRoomExtern, type ChatRoom } from '@/domain/externs/ChatRoom'
 import { ReadinessExtern, type ReadinessState } from '@/domain/externs/Readiness'
-import { BrowserSyncStorageExtern, type Storage, type StorageValue } from '@/domain/externs/Storage'
+import { BrowserSyncStorageExtern, LocalStorageExtern, type Storage, type StorageValue } from '@/domain/externs/Storage'
 import { ToastExtern, type Toast } from '@/domain/externs/Toast'
 import { WorldRoomExtern } from '@/domain/externs/WorldRoom'
 import { createMemoryMessageDatabase } from '@/domain/impls/database/Memory'
@@ -79,6 +79,11 @@ const createFixture = () => {
           return () => readinessListeners.delete(listener)
         }
       }),
+      LocalStorageExtern.impl({
+        get: async () => null,
+        set: async () => {},
+        watch: async () => async () => {}
+      }),
       BrowserSyncStorageExtern.impl(storage),
       MessageDatabaseExtern.impl(createMemoryMessageDatabase(`app-feedback-${databaseId++}`)),
       ToastExtern.impl(toast),
@@ -89,11 +94,11 @@ const createFixture = () => {
       })
     ]
   })
-  const initializationAction = InitializationDomain()
+  const appStatusAction = AppStatusDomain()
   const feedbackAction = AppFeedbackDomain()
   const roomAction = ChatRoomDomain()
   const userAction = UserInfoDomain()
-  const initialization = store.getDomain(initializationAction)
+  const appStatus = store.getDomain(appStatusAction)
   const room = store.getDomain(roomAction)
   const user = store.getDomain(userAction)
   store.igniteDomain(roomAction)
@@ -103,7 +108,7 @@ const createFixture = () => {
 
   return {
     store,
-    initialization,
+    appStatus,
     room,
     chat,
     toast,
@@ -112,7 +117,7 @@ const createFixture = () => {
 }
 
 const markReady = (fixture: ReturnType<typeof createFixture>) => {
-  fixture.store.send(fixture.initialization.command.MarkReadyCommand())
+  fixture.store.send(fixture.appStatus.command.MarkReadyCommand())
 }
 
 const join = async (fixture: ReturnType<typeof createFixture>) => {

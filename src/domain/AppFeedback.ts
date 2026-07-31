@@ -1,6 +1,6 @@
 import { Remesh } from 'remesh'
 import { map } from 'rxjs'
-import InitializationDomain from '@/app/content/Initialization'
+import AppStatusDomain from '@/domain/AppStatus'
 import ChatRoomDomain from '@/domain/ChatRoom'
 import ReadinessDomain from '@/domain/Readiness'
 import ToastDomain from '@/domain/Toast'
@@ -11,7 +11,7 @@ const RUNTIME_TOAST_ID = 'webchat-runtime-readiness'
 const AppFeedbackDomain = Remesh.domain({
   name: 'AppFeedbackDomain',
   impl: (domain) => {
-    const initializationDomain = domain.getDomain(InitializationDomain())
+    const appStatusDomain = domain.getDomain(AppStatusDomain())
     const chatRoomDomain = domain.getDomain(ChatRoomDomain())
     const readinessDomain = domain.getDomain(ReadinessDomain())
     const toastDomain = domain.getDomain(ToastDomain())
@@ -22,7 +22,7 @@ const AppFeedbackDomain = Remesh.domain({
     const RuntimeFeedbackQuery = domain.query({
       name: 'AppFeedback.RuntimeFeedbackQuery',
       impl: ({ get }): ReadinessState | null => {
-        if (!get(initializationDomain.query.ReadyQuery())) return null
+        if (!get(appStatusDomain.query.ReadyQuery())) return null
         return get(chatRoomDomain.query.ConnectionIsLoadingQuery())
           ? 'connecting'
           : get(readinessDomain.query.StateQuery())

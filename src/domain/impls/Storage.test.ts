@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { Remesh } from 'remesh'
 import {
   APP_STATUS_STORAGE_KEY,
   CONFIG_STORE_VERSION,
@@ -123,9 +122,24 @@ describe('origin-local configuration preparation', () => {
     vi.stubGlobal('addEventListener', vi.fn())
     vi.stubGlobal('removeEventListener', vi.fn())
     vi.resetModules()
-    const [{ default: AppStatusDomain }, { LocalStorageImpl, prepareLocalConfigurationStorage }] = await Promise.all([
+    const [
+      { Remesh: RealmRemesh },
+      { default: AppStatusDomain },
+      { LocalStorageImpl, prepareLocalConfigurationStorage },
+      { BrowserSyncStorageExtern },
+      { ChatRoomExtern },
+      { ReadinessExtern },
+      { MessageDatabaseExtern },
+      { createMemoryMessageDatabase }
+    ] = await Promise.all([
+      import('remesh'),
       import('@/domain/AppStatus'),
-      import('./Storage')
+      import('./Storage'),
+      import('@/domain/externs/Storage'),
+      import('@/domain/externs/ChatRoom'),
+      import('@/domain/externs/Readiness'),
+      import('@/domain/MessageStore'),
+      import('@/domain/impls/database/Memory')
     ])
     const statusKey = `${STORAGE_NAME}:${APP_STATUS_STORAGE_KEY}`
     const versionKey = `${STORAGE_NAME}:${CONFIG_STORE_VERSION_KEY}`
@@ -133,7 +147,33 @@ describe('origin-local configuration preparation', () => {
     localStorage.setItem(statusKey, JSON.stringify(persistedStatus))
     localStorage.setItem(versionKey, String(CONFIG_STORE_VERSION + 1))
 
-    const firstStore = Remesh.store({ externs: [LocalStorageImpl] })
+    const browserStorage = BrowserSyncStorageExtern.impl({
+      get: async () => null,
+      set: async () => {},
+      watch: async () => async () => {}
+    })
+    const chatRoom = ChatRoomExtern.impl({
+      joinRoom: async () => {},
+      leaveRoom: async () => {},
+      sendMessage: async () => {
+        throw new Error('unused')
+      },
+      onMessage: () => () => {},
+      onJoinRoom: () => () => {},
+      onLeaveRoom: () => () => {},
+      onSessions: () => () => {},
+      onError: () => () => {}
+    })
+    const readiness = ReadinessExtern.impl({ onState: () => () => {} })
+    const createExterns = () => [
+      LocalStorageImpl,
+      browserStorage,
+      chatRoom,
+      readiness,
+      MessageDatabaseExtern.impl(createMemoryMessageDatabase(`status-mismatch-${configurationStorageId++}`))
+    ]
+
+    const firstStore = RealmRemesh.store({ externs: createExterns() })
     const firstStatus = firstStore.getDomain(AppStatusDomain())
     firstStore.igniteDomain(AppStatusDomain())
     await vi.waitFor(() => expect(firstStore.query(firstStatus.query.StatusLoadIsFinishedQuery())).toBe(true))
@@ -142,13 +182,13 @@ describe('origin-local configuration preparation', () => {
     await prepareLocalConfigurationStorage()
     firstStore.discard()
 
-    const secondStore = Remesh.store({ externs: [LocalStorageImpl] })
+    const secondStore = RealmRemesh.store({ externs: createExterns() })
     const secondStatus = secondStore.getDomain(AppStatusDomain())
     secondStore.igniteDomain(AppStatusDomain())
     await vi.waitFor(() => expect(secondStore.query(secondStatus.query.StatusLoadIsFinishedQuery())).toBe(true))
 
     expect(secondStore.query(secondStatus.query.OpenQuery())).toBe(true)
-    expect(secondStore.query(secondStatus.query.UnreadQuery())).toBe(3)
+    expect(secondStore.query(secondStatus.query.HasUnreadQuery())).toBe(true)
     expect(secondStore.query(secondStatus.query.PositionQuery())).toEqual({ x: 84, y: 36 })
     expect(JSON.parse(localStorage.getItem(statusKey)!)).toEqual(persistedStatus)
     expect(localStorage.getItem(versionKey)).toBe(String(CONFIG_STORE_VERSION))

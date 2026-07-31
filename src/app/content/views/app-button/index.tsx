@@ -29,7 +29,6 @@ import useDraggable from '@/hooks/useDraggable'
 import useWindowResize from '@/hooks/useWindowResize'
 import AppActionDomain from '@/domain/AppAction'
 import ChatRoomDomain from '@/domain/ChatRoom'
-import InitializationDomain from '@/app/content/Initialization'
 
 export const getReconnectLabel = ({
   userConfigured,
@@ -104,8 +103,8 @@ interface AppButtonMenuProps {
 
 const AppButtonMenu: FC<AppButtonMenuProps> = ({ open, appButtonRef }) => {
   const send = useRemeshSend()
-  const initializationDomain = useRemeshDomain(InitializationDomain())
-  const initializationPhase = useRemeshQuery(initializationDomain.query.PhaseQuery())
+  const appStatusDomain = useRemeshDomain(AppStatusDomain())
+  const initializationPhase = useRemeshQuery(appStatusDomain.query.PhaseQuery())
   const applicationReady = initializationPhase === 'ready'
   const appActionDomain = useRemeshDomain(AppActionDomain())
   const userInfoDomain = useRemeshDomain(UserInfoDomain())
@@ -144,8 +143,8 @@ const AppButtonMenu: FC<AppButtonMenuProps> = ({ open, appButtonRef }) => {
   const refreshLoading = applicationReady ? reconnecting : initializationConnecting
 
   const handleRefresh = useCallback(() => {
-    send(applicationReady ? chatRoomDomain.command.ReconnectCommand() : initializationDomain.command.RetryCommand())
-  }, [applicationReady, chatRoomDomain.command, initializationDomain.command, send])
+    send(applicationReady ? chatRoomDomain.command.ReconnectCommand() : appStatusDomain.command.RetryCommand())
+  }, [applicationReady, appStatusDomain.command, chatRoomDomain.command, send])
 
   // Memoize menu buttons to prevent re-render when position changes
   const menuButtons = useMemo(

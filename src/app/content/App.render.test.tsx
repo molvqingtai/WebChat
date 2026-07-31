@@ -19,7 +19,7 @@ vi.mock('remesh-react', () => ({
     }
   }
 }))
-vi.mock('@/app/content/Initialization', () => ({
+vi.mock('@/domain/AppStatus', () => ({
   default: () => ({ query: { ReadyQuery: () => 'initialization-ready' } })
 }))
 vi.mock('@/domain/ChatRoom', () => ({

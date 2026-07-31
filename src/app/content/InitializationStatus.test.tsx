@@ -3,10 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Remesh } from 'remesh'
 import { RemeshRoot, RemeshScope, useRemeshDomain, useRemeshQuery, useRemeshSend } from 'remesh-react'
 import AppStatusDomain, { type AppStatus } from '@/domain/AppStatus'
-import InitializationDomain, {
-  startInitializationLifecycle,
-  type InitializationDependencies
-} from '@/app/content/Initialization'
+import { startInitializationLifecycle, type InitializationDependencies } from '@/app/content/Initialization'
 import { APP_STATUS_STORAGE_KEY } from '@/constants/storage'
 import { LocalStorageExtern, BrowserSyncStorageExtern, type Storage } from '@/domain/externs/Storage'
 import { ToastExtern } from '@/domain/externs/Toast'
@@ -45,10 +42,9 @@ const createDependencies = (): InitializationDependencies => ({
 const StatusHarness = () => {
   const send = useRemeshSend()
   const status = useRemeshDomain(AppStatusDomain())
-  const initialization = useRemeshDomain(InitializationDomain())
   const open = useRemeshQuery(status.query.OpenQuery())
   const loaded = useRemeshQuery(status.query.StatusLoadIsFinishedQuery())
-  const phase = useRemeshQuery(initialization.query.PhaseQuery())
+  const phase = useRemeshQuery(status.query.PhaseQuery())
 
   return (
     <section data-testid="shell" data-phase={phase} data-open={String(open)} data-loaded={String(loaded)}>
@@ -59,7 +55,7 @@ const StatusHarness = () => {
         type="button"
         data-testid="initialization-refresh"
         disabled={phase !== 'unavailable'}
-        onClick={() => send(initialization.command.RetryCommand())}
+        onClick={() => send(status.command.RetryCommand())}
       >
         Refresh
       </button>
@@ -109,7 +105,7 @@ const renderStatus = (storage: Storage, dependencies: InitializationDependencies
   const activateApplicationDependencies = vi.fn()
   const view = render(
     <RemeshRoot store={store}>
-      <RemeshScope domains={[AppStatusDomain(), InitializationDomain()]}>
+      <RemeshScope domains={[AppStatusDomain()]}>
         <StatusHarness />
       </RemeshScope>
     </RemeshRoot>

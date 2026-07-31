@@ -1,9 +1,10 @@
-import { Remesh, type RemeshStore } from 'remesh'
+import type { RemeshStore } from 'remesh'
+import AppStatusDomain from '@/domain/AppStatus'
 import ToastDomain from '@/domain/Toast'
 
 const CONTENT_INITIALIZATION_TIMEOUT_MS = 16000
 
-export const INITIALIZATION_TOAST_ID = 'webchat-initialization'
+const INITIALIZATION_TOAST_ID = 'webchat-initialization'
 
 export interface InitializationDependencies {
   prepareBrowserSyncStorage: () => Promise<void>
@@ -12,8 +13,6 @@ export interface InitializationDependencies {
   initializeRuntime: () => Promise<unknown | null>
   detachRuntime: () => void
 }
-
-type InitializationPhase = 'connecting' | 'unavailable' | 'ready'
 
 const withDeadline = <Value>(task: Promise<Value>, signal: AbortSignal, timeoutMs: number): Promise<Value> =>
   new Promise<Value>((resolve, reject) => {
@@ -58,44 +57,6 @@ const runInitializationAttempt = async (
   if (!runtime) throw new Error('Shared runtime unavailable')
 }
 
-const InitializationDomain = Remesh.domain({
-  name: 'InitializationDomain',
-  impl: (domain) => {
-    const PhaseState = domain.state<InitializationPhase>({
-      name: 'Initialization.PhaseState',
-      default: 'connecting'
-    })
-    const PhaseQuery = domain.query({
-      name: 'Initialization.PhaseQuery',
-      impl: ({ get }) => get(PhaseState())
-    })
-    const ReadyQuery = domain.query({
-      name: 'Initialization.ReadyQuery',
-      impl: ({ get }) => get(PhaseQuery()) === 'ready'
-    })
-    const RetryRequestedEvent = domain.event({ name: 'Initialization.RetryRequestedEvent' })
-    const RetryCommand = domain.command({
-      name: 'Initialization.RetryCommand',
-      impl: ({ get }) =>
-        get(PhaseQuery()) === 'unavailable' ? [PhaseState().new('connecting'), RetryRequestedEvent()] : null
-    })
-    const MarkReadyCommand = domain.command({
-      name: 'Initialization.MarkReadyCommand',
-      impl: ({ get }) => (get(PhaseQuery()) === 'connecting' ? PhaseState().new('ready') : null)
-    })
-    const MarkUnavailableCommand = domain.command({
-      name: 'Initialization.MarkUnavailableCommand',
-      impl: ({ get }) => (get(PhaseQuery()) === 'connecting' ? PhaseState().new('unavailable') : null)
-    })
-
-    return {
-      query: { PhaseQuery, ReadyQuery },
-      command: { RetryCommand, MarkReadyCommand, MarkUnavailableCommand },
-      event: { RetryRequestedEvent }
-    }
-  }
-})
-
 interface InitializationLifecycleOptions {
   store: RemeshStore
   dependencies: InitializationDependencies
@@ -109,7 +70,7 @@ export const startInitializationLifecycle = ({
   activateApplicationDependencies,
   timeoutMs = CONTENT_INITIALIZATION_TIMEOUT_MS
 }: InitializationLifecycleOptions) => {
-  const initialization = store.getDomain(InitializationDomain())
+  const appStatus = store.getDomain(AppStatusDomain())
   const toast = store.getDomain(ToastDomain())
   let active = true
   let generation = 0
@@ -148,21 +109,21 @@ export const startInitializationLifecycle = ({
         if (!active || signal.aborted || generation !== attemptGeneration) return
         activateApplicationDependencies()
         if (!active || signal.aborted || generation !== attemptGeneration) return
-        store.send([initialization.command.MarkReadyCommand(), toast.command.CancelCommand(INITIALIZATION_TOAST_ID)])
+        store.send([appStatus.command.MarkReadyCommand(), toast.command.CancelCommand(INITIALIZATION_TOAST_ID)])
       })
       .catch((error) => {
         if (!active || signal.aborted || generation !== attemptGeneration) return
         detachRuntime()
         console.error('[WebChat] Initialization unavailable:', error)
         store.send([
-          initialization.command.MarkUnavailableCommand(),
+          appStatus.command.MarkUnavailableCommand(),
           toast.command.CancelCommand(INITIALIZATION_TOAST_ID),
           toast.command.ErrorCommand({ id: INITIALIZATION_TOAST_ID, message: 'WebChat unavailable' })
         ])
       })
   }
 
-  const retrySubscription = store.subscribeEvent(initialization.event.RetryRequestedEvent, startAttempt)
+  const retrySubscription = store.subscribeEvent(appStatus.event.RetryRequestedEvent, startAttempt)
   startAttempt()
 
   return () => {
@@ -173,5 +134,3 @@ export const startInitializationLifecycle = ({
     retrySubscription.unsubscribe()
   }
 }
-
-export default InitializationDomain

@@ -6,7 +6,7 @@ import { RemeshRoot, RemeshScope } from 'remesh-react'
 import { defineContentScript, createShadowRootUi } from '#imports'
 
 import App from './App'
-import InitializationDomain, { startInitializationLifecycle, type InitializationDependencies } from './Initialization'
+import { startInitializationLifecycle, type InitializationDependencies } from './Initialization'
 import { LocalStorageImpl, BrowserSyncStorageImpl, prepareLocalConfigurationStorage } from '@/domain/impls/Storage'
 import { createIndexedDBMessageDatabase, prepareIndexedDBMessageDatabase } from '@/domain/impls/database/IndexedDB'
 import { detachClient, initClient, whenHostPhase } from '@/domain/impls/runtime/Client'
@@ -21,10 +21,7 @@ import { AppActionImpl } from '@/domain/impls/AppAction'
 import 'sonner/dist/styles.css'
 import '@/assets/styles/tailwind.css'
 import '@/assets/styles/overlay.css'
-import AppStatusDomain from '@/domain/AppStatus'
-import AppStatusEffectsDomain from '@/domain/AppStatusEffects'
 import NotificationDomain from '@/domain/Notification'
-import ToastDomain from '@/domain/Toast'
 import AppFeedbackDomain from '@/domain/AppFeedback'
 import { createElement } from '@/utils'
 import { requestBrowserSyncStoragePreparation } from '@/service/StoragePreparation'
@@ -171,16 +168,7 @@ export default defineContentScript({
         root.render(
           <StrictMode>
             <RemeshRoot store={store}>
-              <RemeshScope
-                domains={[
-                  AppStatusDomain(),
-                  InitializationDomain(),
-                  AppStatusEffectsDomain(),
-                  NotificationDomain(),
-                  ToastDomain(),
-                  AppFeedbackDomain()
-                ]}
-              >
+              <RemeshScope domains={[NotificationDomain(), AppFeedbackDomain()]}>
                 <App />
               </RemeshScope>
             </RemeshRoot>

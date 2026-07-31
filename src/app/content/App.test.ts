@@ -59,7 +59,23 @@ describe('frozen v1.9.7 component hierarchy', () => {
 
     expect(app).not.toMatch(/interface AppProps|dependencies:|activateApplicationDependencies|timeoutMs/)
     expect(appButton).not.toMatch(/initializationPhase\??:|onInitializationRetry/)
-    expect(appButton).toMatch(/useInitialization|InitializationDomain/)
+    expect(app).toMatch(/AppStatusDomain/)
+    expect(appButton).toMatch(/AppStatusDomain/)
+    expect(`${app}\n${appButton}`).not.toMatch(/InitializationDomain/)
+  })
+})
+
+describe('single application status domain', () => {
+  it('keeps initialization as plain orchestration and removes the separate effects owner', () => {
+    const initialization = source('./Initialization.ts')
+    const feedback = source('../../domain/AppFeedback.ts')
+
+    expect(existsSync(new URL('../../domain/AppStatusEffects.ts', import.meta.url))).toBe(false)
+    expect(initialization).not.toMatch(/Remesh\.domain|InitializationDomain|export default/)
+    expect(initialization).toMatch(/store\.getDomain\(AppStatusDomain\(\)\)/)
+    expect(feedback).toMatch(/getDomain\(AppStatusDomain\(\)\)/)
+    expect(feedback).toMatch(/getDomain\(ToastDomain\(\)\)/)
+    expect(feedback).not.toMatch(/InitializationDomain/)
   })
 })
 
@@ -82,14 +98,17 @@ describe('single existing Toast capability', () => {
 
   it('keeps file-local implementation details out of the public source surface', () => {
     const initialization = source('./Initialization.ts')
+    const appStatus = source('../../domain/AppStatus.ts')
     const chatRoom = source('../../domain/ChatRoom.ts')
     const toast = source('../../domain/Toast.ts')
     const toastExtern = source('../../domain/externs/Toast.ts')
 
     expect(toastExtern).not.toMatch(/\btestId\??:/)
     expect(initialization).not.toMatch(
-      /export (?:const (?:CONTENT_INITIALIZATION_TIMEOUT_MS|runInitializationAttempt)|type InitializationPhase|interface InitializationLifecycleOptions)/
+      /export (?:const (?:CONTENT_INITIALIZATION_TIMEOUT_MS|INITIALIZATION_TOAST_ID|runInitializationAttempt)|type InitializationPhase|interface InitializationLifecycleOptions)/
     )
+    expect(appStatus).not.toMatch(/export const defaultStatusState|\bUnreadQuery\b/)
+    expect(appStatus).toContain("name: 'AppStatus.SyncToStorageEvent'")
     expect(chatRoom).not.toMatch(/export const RECONNECT_FEEDBACK_MINIMUM_MS/)
     expect(toast).not.toMatch(/export type ToastMessage/)
   })

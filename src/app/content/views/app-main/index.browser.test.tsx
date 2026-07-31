@@ -19,12 +19,10 @@ vi.mock('@/domain/AppStatus', () => ({
   default: () => ({
     query: {
       OpenQuery: () => 'app-open',
-      PositionQuery: () => 'app-position'
+      PositionQuery: () => 'app-position',
+      ReadyQuery: () => 'initialization-ready'
     }
   })
-}))
-vi.mock('@/app/content/Initialization', () => ({
-  default: () => ({ query: { ReadyQuery: () => 'initialization-ready' } })
 }))
 vi.mock('@/domain/ChatRoom', () => ({
   default: () => ({

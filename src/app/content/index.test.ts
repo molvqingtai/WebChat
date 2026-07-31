@@ -37,11 +37,8 @@ const fixture = vi.hoisted(() => ({
   createElement: vi.fn(),
   scope: vi.fn(),
   actions: {
-    appStatus: { owner: 'app-status' },
     initialization: { owner: 'initialization' },
-    appStatusEffects: { owner: 'app-status-effects' },
     notification: { owner: 'notification' },
-    toast: { owner: 'toast' },
     appFeedback: { owner: 'app-feedback' }
   },
   database: { read: vi.fn(), write: vi.fn(), watch: vi.fn(), close: vi.fn() },
@@ -107,10 +104,7 @@ vi.mock('@/domain/impls/Danmaku', () => ({ DanmakuImpl: {} }))
 vi.mock('@/domain/impls/Notification', () => ({ NotificationImpl: {} }))
 vi.mock('@/domain/impls/Toast', () => ({ ToastImpl: {} }))
 vi.mock('@/domain/impls/AppAction', () => ({ AppActionImpl: {} }))
-vi.mock('@/domain/AppStatus', () => ({ default: () => fixture.actions.appStatus }))
-vi.mock('@/domain/AppStatusEffects', () => ({ default: () => fixture.actions.appStatusEffects }))
 vi.mock('@/domain/Notification', () => ({ default: () => fixture.actions.notification }))
-vi.mock('@/domain/Toast', () => ({ default: () => fixture.actions.toast }))
 vi.mock('@/domain/AppFeedback', () => ({ default: () => fixture.actions.appFeedback }))
 vi.mock('@/utils', () => ({ createElement: fixture.createElement }))
 vi.mock('@/service/StoragePreparation', () => ({
@@ -174,14 +168,7 @@ describe('content composition root', () => {
     expect(fixture.createStore).toHaveBeenCalledOnce()
     expect(fixture.startInitializationLifecycle).toHaveBeenCalledOnce()
     expect(fixture.scope).toHaveBeenCalled()
-    expect(fixture.scope).toHaveBeenLastCalledWith([
-      fixture.actions.appStatus,
-      fixture.actions.initialization,
-      fixture.actions.appStatusEffects,
-      fixture.actions.notification,
-      fixture.actions.toast,
-      fixture.actions.appFeedback
-    ])
+    expect(fixture.scope).toHaveBeenLastCalledWith([fixture.actions.notification, fixture.actions.appFeedback])
     expect(fixture.appProps.every((props) => Object.keys(props).length === 0)).toBe(true)
     expect(fixture.createIndexedDBMessageDatabase).not.toHaveBeenCalled()
     expect(fixture.createChatRoomImpl).not.toHaveBeenCalled()

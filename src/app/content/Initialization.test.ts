@@ -1,14 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Remesh } from 'remesh'
-import InitializationDomain, {
-  INITIALIZATION_TOAST_ID,
-  startInitializationLifecycle,
-  type InitializationDependencies
-} from '@/app/content/Initialization'
+import { startInitializationLifecycle, type InitializationDependencies } from '@/app/content/Initialization'
+import AppStatusDomain from '@/domain/AppStatus'
 import { ChatRoomExtern } from '@/domain/externs/ChatRoom'
 import { WorldRoomExtern } from '@/domain/externs/WorldRoom'
 import { ReadinessExtern } from '@/domain/externs/Readiness'
-import { BrowserSyncStorageExtern } from '@/domain/externs/Storage'
+import { BrowserSyncStorageExtern, LocalStorageExtern } from '@/domain/externs/Storage'
 import { ToastExtern, type Toast } from '@/domain/externs/Toast'
 import { MessageDatabaseExtern } from '@/domain/MessageStore'
 import { createMemoryMessageDatabase } from '@/domain/impls/database/Memory'
@@ -22,6 +19,8 @@ const deferred = <Value>() => {
   })
   return { promise, resolve, reject }
 }
+
+const INITIALIZATION_TOAST_ID = 'webchat-initialization'
 
 let fixtureId = 0
 
@@ -57,6 +56,7 @@ const createFixture = () => {
   const store = Remesh.store({
     externs: [
       ToastExtern.impl(toast),
+      LocalStorageExtern.impl(storage),
       BrowserSyncStorageExtern.impl(storage),
       MessageDatabaseExtern.impl(createMemoryMessageDatabase(`initialization-${fixtureId++}`)),
       ChatRoomExtern.impl(chat),
@@ -72,7 +72,7 @@ const createFixture = () => {
     detachRuntime: vi.fn()
   }
   const activateApplicationDependencies = vi.fn()
-  const action = InitializationDomain()
+  const action = AppStatusDomain()
   const domain = store.getDomain(action)
   return { store, domain, dependencies, activateApplicationDependencies, toast }
 }

@@ -14,7 +14,7 @@ import UserInfoDomain from '@/domain/UserInfo'
 import MessageListDomain from '@/domain/MessageList'
 import WorldRoomDomain from '@/domain/WorldRoom'
 import DanmakuDomain from '@/domain/Danmaku'
-import InitializationDomain from '@/app/content/Initialization'
+import AppStatusDomain from '@/domain/AppStatus'
 import { checkDarkMode, cn } from '@/utils'
 
 if (import.meta.env.FIREFOX) {
@@ -23,8 +23,8 @@ if (import.meta.env.FIREFOX) {
 
 const App = () => {
   const send = useRemeshSend()
-  const initializationDomain = useRemeshDomain(InitializationDomain())
-  const initializationReady = useRemeshQuery(initializationDomain.query.ReadyQuery())
+  const appStatusDomain = useRemeshDomain(AppStatusDomain())
+  const initializationReady = useRemeshQuery(appStatusDomain.query.ReadyQuery())
   const chatRoomDomain = useRemeshDomain(ChatRoomDomain())
   const worldRoomDomain = useRemeshDomain(WorldRoomDomain())
   const userInfoDomain = useRemeshDomain(UserInfoDomain())
