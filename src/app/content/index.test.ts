@@ -37,7 +37,6 @@ const fixture = vi.hoisted(() => ({
   createElement: vi.fn(),
   scope: vi.fn(),
   actions: {
-    initialization: { owner: 'initialization' },
     notification: { owner: 'notification' },
     appFeedback: { owner: 'app-feedback' }
   },
@@ -76,7 +75,6 @@ vi.mock('@/app/content/App', async () => {
   }
 })
 vi.mock('@/app/content/Initialization', () => ({
-  default: () => fixture.actions.initialization,
   startInitializationLifecycle: (options: Record<string, unknown>) => {
     fixture.initializationOptions.push(options)
     fixture.startInitializationLifecycle(options)

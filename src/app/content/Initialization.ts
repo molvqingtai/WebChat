@@ -44,9 +44,13 @@ const runInitializationAttempt = async (
   onRuntimeStarted: () => void = () => {},
   timeoutMs = CONTENT_INITIALIZATION_TIMEOUT_MS
 ) => {
+  const deadline = Date.now() + timeoutMs
+
   const run = <Value>(task: () => Promise<Value>) => {
     signal.throwIfAborted()
-    return withDeadline(task(), signal, timeoutMs)
+    const remaining = deadline - Date.now()
+    if (remaining <= 0) return Promise.reject(new Error('WebChat initialization timed out'))
+    return withDeadline(task(), signal, remaining)
   }
 
   await run(dependencies.prepareBrowserSyncStorage)

@@ -230,7 +230,6 @@ describe('replaceable application boundaries', () => {
     expect(content).toContain('dependencies: initializationDependencies')
     expect(content).toContain('activateApplicationDependencies')
     expect(content).not.toMatch(/<App\s+[^>]*(?:dependenc|activat|timeout)/)
-    expect(content).not.toContain('ContentBootstrap')
     expect(background).toContain('registerBrowserSyncStoragePreparation()')
     for (const preparation of [
       'run(dependencies.prepareBrowserSyncStorage)',

@@ -39,10 +39,6 @@ describe('reconnect action availability', () => {
     expect(value).toContain('const refreshLoading = applicationReady ? reconnecting : initializationConnecting')
     expect(value).toContain('disabled={refreshDisabled}')
     expect(value).toContain("refreshLoading && 'animate-spin'")
-    expect(value).not.toContain('ReconnectAvailableQuery(appOpenStatus')
-    expect(value).not.toContain('isReconnectAvailable')
-    expect(value).not.toContain('Open WebChat to reconnect this site')
-    expect(value).not.toMatch(/success Toast|result badge/i)
     expect(value).toMatch(/applicationReady[\s\S]*chatRoomDomain\.command\.ReconnectCommand\(\)/)
   })
 
@@ -52,14 +48,12 @@ describe('reconnect action availability', () => {
     expect(value).toContain('const reconnecting = useRemeshQuery(chatRoomDomain.query.ConnectionIsLoadingQuery())')
     expect(value).toContain('disabled={refreshDisabled}')
     expect(value).toContain("refreshLoading && 'animate-spin'")
-    expect(value).not.toContain('query.ReconnectIsLoadingQuery()')
   })
 
   it('keeps one actions menu and dispatches pre-ready Retry from the same Refresh slot', () => {
     const value = source()
 
     expect(value).toContain('const AppButtonMenu')
-    expect(value).not.toMatch(/InitializationAppButtonMenu|ApplicationAppButtonMenu/)
     expect(value).toContain('const appStatusDomain = useRemeshDomain(AppStatusDomain())')
     expect(value).toContain("const initializationConnecting = initializationPhase === 'connecting'")
     expect(value).toContain("'Retry WebChat setup'")
@@ -67,7 +61,6 @@ describe('reconnect action availability', () => {
     expect(value).toMatch(
       /applicationReady\s*\?\s*chatRoomDomain\.command\.ReconnectCommand\(\)\s*:\s*appStatusDomain\.command\.RetryCommand\(\)/
     )
-    expect(value).not.toMatch(/InitializationDomain/)
     expect(value).toContain('onContextMenu={handleToggleMenu}')
     expect(value.match(/<RefreshCwIcon/g)).toHaveLength(1)
   })

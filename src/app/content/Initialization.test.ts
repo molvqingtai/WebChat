@@ -184,6 +184,30 @@ describe('initialization lifecycle ownership', () => {
     stop()
   })
 
+  it('shares one absolute deadline across sequential initialization stages', async () => {
+    vi.useFakeTimers()
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const fixture = createFixture()
+    const pending = deferred<void>()
+    vi.mocked(fixture.dependencies.prepareBrowserSyncStorage).mockImplementationOnce(
+      () => new Promise((resolve) => globalThis.setTimeout(resolve, 40))
+    )
+    vi.mocked(fixture.dependencies.prepareLocalStorage).mockReturnValueOnce(pending.promise)
+    const stop = start(fixture, 100)
+
+    await vi.advanceTimersByTimeAsync(40)
+    expect(fixture.dependencies.prepareLocalStorage).toHaveBeenCalledOnce()
+
+    await vi.advanceTimersByTimeAsync(59)
+    expect(phase(fixture)).toBe('connecting')
+
+    await vi.advanceTimersByTimeAsync(1)
+    expect(phase(fixture)).toBe('unavailable')
+    expect(fixture.dependencies.prepareMessageDatabase).not.toHaveBeenCalled()
+    expect(fixture.activateApplicationDependencies).not.toHaveBeenCalled()
+    stop()
+  })
+
   it('detaches a failed Runtime generation before one single-flight Retry', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     const fixture = createFixture()
