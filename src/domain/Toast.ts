@@ -4,7 +4,7 @@ import ChatRoomDomain from '@/domain/ChatRoom'
 import WorldRoomDomain from '@/domain/WorldRoom'
 import { ToastExtern, type ToastOptions } from '@/domain/externs/Toast'
 
-export type ToastMessage = string | ({ message: string } & ToastOptions)
+type ToastMessage = string | ({ message: string } & ToastOptions)
 
 const ToastDomain = Remesh.domain({
   name: 'ToastDomain',

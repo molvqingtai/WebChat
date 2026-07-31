@@ -79,6 +79,20 @@ describe('single existing Toast capability', () => {
     expect(initialization).toContain("'Preparing WebChat'")
     expect(initialization).toContain("'WebChat unavailable'")
   })
+
+  it('keeps file-local implementation details out of the public source surface', () => {
+    const initialization = source('./Initialization.ts')
+    const chatRoom = source('../../domain/ChatRoom.ts')
+    const toast = source('../../domain/Toast.ts')
+    const toastExtern = source('../../domain/externs/Toast.ts')
+
+    expect(toastExtern).not.toMatch(/\btestId\??:/)
+    expect(initialization).not.toMatch(
+      /export (?:const CONTENT_INITIALIZATION_TIMEOUT_MS|type InitializationPhase|interface InitializationLifecycleOptions)/
+    )
+    expect(chatRoom).not.toMatch(/export const RECONNECT_FEEDBACK_MINIMUM_MS/)
+    expect(toast).not.toMatch(/export type ToastMessage/)
+  })
 })
 
 describe('fixed test stack', () => {

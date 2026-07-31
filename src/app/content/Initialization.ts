@@ -1,7 +1,7 @@
 import { Remesh, type RemeshStore } from 'remesh'
 import ToastDomain from '@/domain/Toast'
 
-export const CONTENT_INITIALIZATION_TIMEOUT_MS = 16000
+const CONTENT_INITIALIZATION_TIMEOUT_MS = 16000
 
 export const INITIALIZATION_TOAST_ID = 'webchat-initialization'
 
@@ -13,7 +13,7 @@ export interface InitializationDependencies {
   detachRuntime: () => void
 }
 
-export type InitializationPhase = 'connecting' | 'unavailable' | 'ready'
+type InitializationPhase = 'connecting' | 'unavailable' | 'ready'
 
 const withDeadline = <Value>(task: Promise<Value>, signal: AbortSignal, timeoutMs: number): Promise<Value> =>
   new Promise<Value>((resolve, reject) => {
@@ -96,7 +96,7 @@ const InitializationDomain = Remesh.domain({
   }
 })
 
-export interface InitializationLifecycleOptions {
+interface InitializationLifecycleOptions {
   store: RemeshStore
   dependencies: InitializationDependencies
   activateApplicationDependencies: () => void

@@ -44,7 +44,7 @@ type ReconnectRequest = {
   outcome: { error?: Error } | null
 }
 
-export const RECONNECT_FEEDBACK_MINIMUM_MS = 300
+const RECONNECT_FEEDBACK_MINIMUM_MS = 300
 
 type ReconnectOperation = {
   id: number

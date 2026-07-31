@@ -13,7 +13,6 @@ export interface ToastOptions {
   id?: number | string
   duration?: number
   dismissible?: boolean
-  testId?: string
 }
 
 export const ToastExtern = Remesh.extern<Toast>({
