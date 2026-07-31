@@ -48,12 +48,39 @@ describe('content component hierarchy', () => {
     expect(appMain).toContain('data-webchat-panel')
   })
 
-  it('reads shell readiness from the existing application status domain', () => {
+  it('uses the existing application status domain directly in every required consumer', () => {
     const app = source('./App.tsx')
     const appButton = source('./views/app-button/index.tsx')
+    const feedback = source('../../domain/AppFeedback.ts')
+    const initialization = source('./Initialization.ts')
 
     expect(app).toContain('useRemeshDomain(AppStatusDomain())')
     expect(appButton).toContain('useRemeshDomain(AppStatusDomain())')
+    expect(feedback).toContain('domain.getDomain(AppStatusDomain())')
+    expect(initialization).toContain('store.getDomain(AppStatusDomain())')
+    expect(feedback).toContain('domain.getDomain(ToastDomain())')
+    expect(initialization).toContain('store.getDomain(ToastDomain())')
+  })
+})
+
+describe('application status ownership', () => {
+  it('keeps initialization plain and runtime module exports production-only', async () => {
+    const initializationSource = source('./Initialization.ts')
+    const modules = await Promise.all([
+      import('@/app/content/Initialization'),
+      import('@/domain/AppStatus'),
+      import('@/domain/AppFeedback'),
+      import('@/domain/Toast')
+    ])
+
+    expect(modules.map((module) => Object.keys(module).sort())).toEqual([
+      ['startInitializationLifecycle'],
+      ['default'],
+      ['default'],
+      ['default']
+    ])
+    expect(initializationSource).not.toMatch(/\bRemesh\.domain\s*\(/)
+    expect(initializationSource).toContain('store.getDomain(AppStatusDomain())')
   })
 })
 

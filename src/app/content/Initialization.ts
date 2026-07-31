@@ -56,8 +56,10 @@ const runInitializationAttempt = async (
   await run(dependencies.prepareBrowserSyncStorage)
   await run(dependencies.prepareLocalStorage)
   await run(dependencies.prepareMessageDatabase)
-  onRuntimeStarted()
-  const runtime = await run(dependencies.initializeRuntime)
+  const runtime = await run(() => {
+    onRuntimeStarted()
+    return dependencies.initializeRuntime()
+  })
   if (!runtime) throw new Error('Shared runtime unavailable')
 }
 

@@ -237,7 +237,7 @@ describe('replaceable application boundaries', () => {
       'run(dependencies.prepareMessageDatabase)'
     ]) {
       expect(initialization.indexOf(preparation)).toBeLessThan(
-        initialization.indexOf('run(dependencies.initializeRuntime)')
+        initialization.indexOf('return dependencies.initializeRuntime()')
       )
       expect(initialization.indexOf(preparation)).toBeLessThan(
         initialization.lastIndexOf('activateApplicationDependencies()')

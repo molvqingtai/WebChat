@@ -208,6 +208,29 @@ describe('initialization lifecycle ownership', () => {
     stop()
   })
 
+  it('does not detach Runtime when the deadline expires before the Runtime task starts', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(0))
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const fixture = createFixture()
+    const database = deferred<void>()
+    vi.mocked(fixture.dependencies.prepareMessageDatabase).mockReturnValueOnce(database.promise)
+    const stop = start(fixture, 100)
+
+    await flushMicrotasks()
+    expect(fixture.dependencies.prepareMessageDatabase).toHaveBeenCalledOnce()
+
+    vi.setSystemTime(new Date(100))
+    database.resolve()
+    await flushMicrotasks()
+
+    expect(phase(fixture)).toBe('unavailable')
+    expect(fixture.dependencies.initializeRuntime).not.toHaveBeenCalled()
+    expect(fixture.dependencies.detachRuntime).not.toHaveBeenCalled()
+    expect(fixture.activateApplicationDependencies).not.toHaveBeenCalled()
+    stop()
+  })
+
   it('detaches a failed Runtime generation before one single-flight Retry', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     const fixture = createFixture()
