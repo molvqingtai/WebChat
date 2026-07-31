@@ -5,12 +5,41 @@ import type { BootstrapDependencies } from '@/app/content/Bootstrap'
 vi.mock('@/app/content/BootstrapShell', async () => {
   const React = await import('react')
   return {
-    default: ({ phase, onRetry }: { phase: string; onRetry: () => void }) =>
-      React.createElement(
-        'button',
-        { type: 'button', 'data-testid': 'bootstrap-shell', 'data-phase': phase, onClick: onRetry },
-        phase
+    useAppTheme: () => vi.fn(),
+    default: ({
+      phase,
+      onRetry,
+      application
+    }: {
+      phase: string
+      onRetry: () => void
+      application?: React.ReactNode
+    }) => {
+      const [open, setOpen] = React.useState(false)
+      return React.createElement(
+        React.Fragment,
+        null,
+        React.createElement(
+          'section',
+          { 'data-testid': 'application-frame', 'data-open': String(open) },
+          application ??
+            React.createElement(
+              'button',
+              { type: 'button', 'data-testid': 'bootstrap-shell', 'data-phase': phase, onClick: onRetry },
+              phase
+            )
+        ),
+        React.createElement(
+          'button',
+          {
+            type: 'button',
+            'data-testid': 'application-launcher',
+            onClick: () => setOpen((current) => !current)
+          },
+          open ? 'Close WebChat' : 'Open WebChat'
+        )
       )
+    }
   }
 })
 
@@ -38,7 +67,7 @@ vi.mock('@/app/content/views/app-main', async () => {
   const React = await import('react')
   return {
     default: ({ children }: { children?: React.ReactNode }) =>
-      React.createElement('section', { 'data-testid': 'application-frame' }, children)
+      React.createElement('section', { 'data-testid': 'application-frame', 'data-open': 'false' }, children)
   }
 })
 vi.mock('@/app/content/views/app-button', async () => {
@@ -273,7 +302,7 @@ describe('ContentBootstrap generation ownership', () => {
       const rendered = await renderBootstrap(fixture)
 
       try {
-        await waitFor(() => rendered.container.querySelector('#app') !== null)
+        await waitFor(() => rendered.container.querySelector('[data-testid="bootstrap-shell"]') === null)
 
         expect(rendered.container.querySelector('[data-testid="bootstrap-shell"]')).toBeNull()
         expect(rendered.container.querySelectorAll('[data-testid="application-frame"]')).toHaveLength(1)
@@ -284,4 +313,34 @@ describe('ContentBootstrap generation ownership', () => {
       }
     }
   )
+
+  it('keeps the same open frame and launcher when Runtime success hydrates the application', async () => {
+    const fixture = createFixture()
+    const runtime = deferred<unknown | null>()
+    appStatus.load = 'pending'
+    vi.mocked(fixture.dependencies.initializeRuntime).mockReturnValueOnce(runtime.promise)
+    fixture.createApplication.mockImplementation(() => React.createElement(App))
+    const rendered = await renderBootstrap(fixture)
+
+    try {
+      await waitFor(() => phase(rendered.container) === 'connecting')
+      const frame = rendered.container.querySelector<HTMLElement>('[data-testid="application-frame"]')
+      const launcher = rendered.container.querySelector<HTMLButtonElement>('[data-testid="application-launcher"]')
+      if (!launcher) throw new Error('Application launcher is unavailable')
+
+      await act(async () => launcher.dispatchEvent(new window.Event('click', { bubbles: true })))
+      expect(frame?.dataset.open).toBe('true')
+
+      runtime.resolve({})
+      await waitFor(() => rendered.container.querySelector('[data-testid="bootstrap-shell"]') === null)
+
+      expect(rendered.container.querySelector('[data-testid="application-frame"]')).toBe(frame)
+      expect(rendered.container.querySelector('[data-testid="application-launcher"]')).toBe(launcher)
+      expect(frame?.dataset.open).toBe('true')
+      expect(fixture.createApplication).toHaveBeenCalledOnce()
+    } finally {
+      runtime.resolve({})
+      await rendered.cleanup()
+    }
+  })
 })

@@ -23,6 +23,7 @@ import ChatRoomDomain from '@/domain/ChatRoom'
 
 export interface AppButtonProps {
   className?: string
+  bootstrapPhase?: 'connecting' | 'unavailable'
 }
 
 export const getReconnectLabel = ({
@@ -91,50 +92,17 @@ export const AppLauncherButton: FC<AppLauncherButtonProps> = ({ hasUnread = fals
   )
 }
 
-const AppButton: FC<AppButtonProps> = ({ className }) => {
+interface AppButtonMenuProps {
+  open: boolean
+  appButtonRef: ReturnType<typeof useDraggable>['setRef']
+}
+
+const AppButtonMenu: FC<AppButtonMenuProps> = ({ open, appButtonRef }) => {
   const send = useRemeshSend()
   const appActionDomain = useRemeshDomain(AppActionDomain())
-  const appStatusDomain = useRemeshDomain(AppStatusDomain())
-  const appOpenStatus = useRemeshQuery(appStatusDomain.query.OpenQuery())
-  const hasUnreadQuery = useRemeshQuery(appStatusDomain.query.HasUnreadQuery())
   const userInfoDomain = useRemeshDomain(UserInfoDomain())
   const userInfo = useRemeshQuery(userInfoDomain.query.UserInfoQuery())
-  const appPosition = useRemeshQuery(appStatusDomain.query.PositionQuery())
-
   const isDarkMode = userInfo?.themeMode === 'dark' ? true : userInfo?.themeMode === 'light' ? false : checkDarkMode()
-
-  const [menuOpen, setMenuOpen] = useState(false)
-
-  // Get current window size to recalculate position on resize
-  const windowSize = useWindowResize(() => {
-    // Reset to default position when window resizes
-    send(appStatusDomain.command.UpdatePositionCommand({ x: 50, y: 22 }))
-  })
-
-  const {
-    x,
-    y,
-    setRef: appButtonRef
-  } = useDraggable({
-    initX: appPosition.x,
-    initY: appPosition.y,
-    minX: 50,
-    maxX: windowSize.width - 50,
-    maxY: windowSize.height - 22,
-    minY: 750,
-    reverse: true
-  })
-
-  useEffect(() => {
-    send(appStatusDomain.command.UpdatePositionCommand({ x, y }))
-  }, [x, y, send, appStatusDomain.command])
-
-  const { setRef: appMenuRef } = useTriggerAway(['click'], () => setMenuOpen(false))
-
-  const handleToggleMenu = (e: MouseEvent<HTMLButtonElement>) => {
-    e.preventDefault()
-    setMenuOpen(!menuOpen)
-  }
 
   const handleOpenOptionsPage = useCallback(() => {
     send(appActionDomain.command.OpenOptionsCommand())
@@ -147,10 +115,6 @@ const AppButton: FC<AppButtonProps> = ({ className }) => {
       handleOpenOptionsPage()
     }
   }, [handleOpenOptionsPage, isDarkMode, send, userInfo, userInfoDomain.command])
-
-  const handleToggleApp = () => {
-    send(appStatusDomain.command.UpdateOpenCommand(!appOpenStatus))
-  }
 
   const chatRoomDomain = useRemeshDomain(ChatRoomDomain())
   const chatRoomJoined = useRemeshQuery(chatRoomDomain.query.JoinIsFinishedQuery())
@@ -228,6 +192,70 @@ const AppButton: FC<AppButtonProps> = ({ className }) => {
   )
 
   return (
+    <AnimatePresence>
+      {open && (
+        <motion.div
+          className="z-10 grid gap-y-3"
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: 12 }}
+          transition={{ duration: 0.1 }}
+        >
+          {menuButtons}
+        </motion.div>
+      )}
+    </AnimatePresence>
+  )
+}
+
+const AppButton: FC<AppButtonProps> = ({ className, bootstrapPhase }) => {
+  const send = useRemeshSend()
+  const appStatusDomain = useRemeshDomain(AppStatusDomain())
+  const appOpenStatus = useRemeshQuery(appStatusDomain.query.OpenQuery())
+  const hasUnreadQuery = useRemeshQuery(appStatusDomain.query.HasUnreadQuery())
+  const appPosition = useRemeshQuery(appStatusDomain.query.PositionQuery())
+  const [menuOpen, setMenuOpen] = useState(false)
+  const applicationAvailable = bootstrapPhase === undefined
+
+  // Get current window size to recalculate position on resize
+  const windowSize = useWindowResize(() => {
+    // Reset to default position when window resizes
+    send(appStatusDomain.command.UpdatePositionCommand({ x: 50, y: 22 }))
+  })
+
+  const {
+    x,
+    y,
+    setRef: appButtonRef
+  } = useDraggable({
+    initX: appPosition.x,
+    initY: appPosition.y,
+    minX: 50,
+    maxX: windowSize.width - 50,
+    maxY: windowSize.height - 22,
+    minY: 750,
+    reverse: true
+  })
+
+  useEffect(() => {
+    send(appStatusDomain.command.UpdatePositionCommand({ x, y }))
+  }, [x, y, send, appStatusDomain.command])
+
+  const { setRef: appMenuRef } = useTriggerAway(['click'], () => setMenuOpen(false))
+
+  const handleToggleMenu = (event: MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault()
+    setMenuOpen((current) => !current)
+  }
+
+  const handleToggleApp = () => {
+    send(appStatusDomain.command.UpdateOpenCommand(!appOpenStatus))
+  }
+
+  const action = appOpenStatus ? 'Close WebChat' : 'Open WebChat'
+  const launcherLabel = bootstrapPhase === 'unavailable' ? `WebChat unavailable. ${action}` : action
+
+  return (
     <div
       ref={appMenuRef}
       className={cn('fixed z-infinity grid w-min select-none justify-center gap-y-3', className)}
@@ -237,24 +265,12 @@ const AppButton: FC<AppButtonProps> = ({ className }) => {
         transform: 'translateX(50%)'
       }}
     >
-      <AnimatePresence>
-        {menuOpen && (
-          <motion.div
-            className="z-10 grid gap-y-3"
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 12 }}
-            transition={{ duration: 0.1 }}
-          >
-            {menuButtons}
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {applicationAvailable && <AppButtonMenu open={menuOpen} appButtonRef={appButtonRef} />}
       <AppLauncherButton
         onClick={handleToggleApp}
-        onContextMenu={handleToggleMenu}
+        onContextMenu={applicationAvailable ? handleToggleMenu : undefined}
         hasUnread={hasUnreadQuery}
-        label={appOpenStatus ? 'Close WebChat' : 'Open WebChat'}
+        label={launcherLabel}
       />
     </div>
   )

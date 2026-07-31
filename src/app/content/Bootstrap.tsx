@@ -115,7 +115,7 @@ const ContentBootstrap = ({
     setAttempt((current) => current + 1)
   }, [phase])
 
-  return application ?? <BootstrapShell phase={phase} onRetry={retry} />
+  return <BootstrapShell phase={phase} onRetry={retry} application={application} />
 }
 
 export default ContentBootstrap

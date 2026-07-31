@@ -1,12 +1,5 @@
 import { Remesh } from 'remesh'
 import StatusModule from './modules/Status'
-import { LocalStorageExtern } from './externs/Storage'
-import { APP_STATUS_STORAGE_KEY } from '@/constants/storage'
-import StorageEffect from './modules/StorageEffect'
-import ChatRoomDomain from '@/domain/ChatRoom'
-import UserInfoDomain from '@/domain/UserInfo'
-import { map } from 'rxjs'
-import { MESSAGE_TYPE } from '@/protocol/ChatRoom'
 
 export interface AppStatus {
   open: boolean
@@ -15,7 +8,7 @@ export interface AppStatus {
 }
 
 // Position is stored as offset from bottom-right corner
-export const defaultStatusState = {
+export const defaultStatusState: AppStatus = {
   open: false,
   unread: 0,
   position: { x: 50, y: 22 }
@@ -24,14 +17,6 @@ export const defaultStatusState = {
 const AppStatusDomain = Remesh.domain({
   name: 'AppStatusDomain',
   impl: (domain) => {
-    const storageEffect = new StorageEffect({
-      domain,
-      extern: LocalStorageExtern,
-      key: APP_STATUS_STORAGE_KEY
-    })
-    const chatRoomDomain = domain.getDomain(ChatRoomDomain())
-    const userInfoDomain = domain.getDomain(UserInfoDomain())
-
     const LoadStatus = StatusModule(domain, {
       name: 'AppStatus.LoadStatusModule'
     })
@@ -46,6 +31,11 @@ const AppStatusDomain = Remesh.domain({
     const StatusState = domain.state<AppStatus>({
       name: 'AppStatus.StatusState',
       default: defaultStatusState
+    })
+
+    const OpenWasUpdatedState = domain.state({
+      name: 'AppStatus.OpenWasUpdatedState',
+      default: false
     })
 
     const OpenQuery = domain.query({
@@ -80,11 +70,14 @@ const AppStatusDomain = Remesh.domain({
       name: 'AppStatus.UpdateOpenCommand',
       impl: ({ get }, value: boolean) => {
         const status = get(StatusState())
-        return UpdateStatusCommand({
-          ...status,
-          unread: value ? 0 : status.unread,
-          open: value
-        })
+        return [
+          OpenWasUpdatedState().new(true),
+          UpdateStatusCommand({
+            ...status,
+            unread: value ? 0 : status.unread,
+            open: value
+          })
+        ]
       }
     })
 
@@ -124,30 +117,12 @@ const AppStatusDomain = Remesh.domain({
       }
     })
 
-    storageEffect
-      .set(SyncToStorageEvent)
-      .get<AppStatus>((value) => [
-        UpdateStatusCommand(value ?? defaultStatusState),
-        LoadStatus.command.SetFinishedCommand()
-      ])
-      .watch<AppStatus>((value) => [UpdateStatusCommand(value ?? defaultStatusState)])
-
-    domain.effect({
-      name: 'OnMessageEffect',
-      impl: ({ fromEvent, get }) => {
-        // Unread increments once per message: only the first atomic insert wins.
-        // Self-sent messages never count (parity with the old inbound-only path).
-        const onMessage$ = fromEvent(chatRoomDomain.event.OnTextMessageEvent).pipe(
-          map((message) => {
-            const status = get(StatusState())
-            const selfId = get(userInfoDomain.query.UserInfoQuery())?.id
-            if (!status.open && message.type === MESSAGE_TYPE.TEXT && message.author.id !== selfId) {
-              return UpdateUnreadCommand(status.unread + 1)
-            }
-            return null
-          })
-        )
-        return onMessage$
+    const HydrateStatusCommand = domain.command({
+      name: 'AppStatus.HydrateStatusCommand',
+      impl: ({ get }, value: AppStatus) => {
+        const current = get(StatusState())
+        const next = get(OpenWasUpdatedState()) ? { ...value, open: current.open, unread: current.unread } : value
+        return [UpdateStatusCommand(next), LoadStatus.command.SetFinishedCommand()]
       }
     })
 
@@ -162,7 +137,9 @@ const AppStatusDomain = Remesh.domain({
       command: {
         UpdateOpenCommand,
         UpdateUnreadCommand,
-        UpdatePositionCommand
+        UpdatePositionCommand,
+        UpdateStatusCommand,
+        HydrateStatusCommand
       },
       event: {
         SyncToStorageEvent

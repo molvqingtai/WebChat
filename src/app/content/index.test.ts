@@ -25,7 +25,7 @@ vi.mock('#imports', () => ({
   defineContentScript: <Definition>(definition: Definition) => definition,
   createShadowRootUi: fixture.createShadowRootUi
 }))
-vi.mock('remesh', () => ({ Remesh: { store: fixture.createStore } }))
+vi.mock('remesh', () => ({ Remesh: { store: fixture.createStore, domain: vi.fn(() => vi.fn(() => ({}))) } }))
 vi.mock('remesh-react', () => ({ RemeshRoot: 'remesh-root', RemeshScope: 'remesh-scope' }))
 vi.mock('react-dom/client', () => ({ createRoot: vi.fn() }))
 vi.mock('@/app/content/App', () => ({ default: () => null }))
@@ -55,6 +55,7 @@ vi.mock('@/domain/Notification', () => ({ default: vi.fn(() => ({})) }))
 vi.mock('@/domain/Toast', () => ({ default: vi.fn(() => ({})) }))
 vi.mock('@/domain/ToastPresentation', () => ({ default: vi.fn(() => ({})) }))
 vi.mock('@/domain/AppFeedback', () => ({ default: vi.fn(() => ({})) }))
+vi.mock('@/domain/AppStatusEffects', () => ({ default: vi.fn(() => ({})) }))
 vi.mock('@/utils', () => ({ createElement: vi.fn() }))
 vi.mock('@/service/StoragePreparation', () => ({
   requestBrowserSyncStoragePreparation: fixture.requestBrowserSyncStoragePreparation

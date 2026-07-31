@@ -2,20 +2,52 @@ import { createRequire } from 'node:module'
 import { afterAll, describe, expect, it, vi } from 'vitest'
 import type { ReactNode } from 'react'
 
+const shellState = vi.hoisted(() => {
+  let open = false
+  const listeners = new Set<() => void>()
+  return {
+    getSnapshot: () => open,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
+    setOpen: (value: boolean) => {
+      open = value
+      listeners.forEach((listener) => listener())
+    }
+  }
+})
+
 vi.mock('@/app/content/views/app-button', async () => {
   const React = await import('react')
   return {
-    AppLauncherButton: ({ label, onClick }: { label: string; onClick: () => void }) =>
-      React.createElement('button', { type: 'button', 'data-testid': 'launcher', 'aria-label': label, onClick }, label)
+    default: ({ bootstrapPhase }: { bootstrapPhase?: 'connecting' | 'unavailable' }) => {
+      const open = React.useSyncExternalStore(shellState.subscribe, shellState.getSnapshot, shellState.getSnapshot)
+      const action = open ? 'Close WebChat' : 'Open WebChat'
+      const label = bootstrapPhase === 'unavailable' ? `WebChat unavailable. ${action}` : action
+      return React.createElement(
+        'button',
+        {
+          type: 'button',
+          'data-testid': 'launcher',
+          'aria-label': label,
+          onClick: () => shellState.setOpen(!open)
+        },
+        label
+      )
+    }
   }
 })
 vi.mock('@/app/content/views/app-main', async () => {
   const React = await import('react')
   return {
-    AppMainFrame: ({ open, children }: { open: boolean; children: ReactNode }) =>
-      open ? React.createElement('div', { 'data-testid': 'panel' }, children) : null
+    default: ({ children }: { children: ReactNode }) => {
+      const open = React.useSyncExternalStore(shellState.subscribe, shellState.getSnapshot, shellState.getSnapshot)
+      return open ? React.createElement('div', { 'data-testid': 'panel' }, children) : null
+    }
   }
 })
+vi.mock('@/app/content/components/danmaku-presentation', () => ({ default: () => null }))
 vi.mock('@/components/ui/button', async () => {
   const React = await import('react')
   return {
@@ -64,6 +96,7 @@ const { createRoot } = await import('react-dom/client')
 const { default: BootstrapShell } = await import('@/app/content/BootstrapShell')
 
 const renderShell = async (phase: 'connecting' | 'unavailable', onRetry = vi.fn()) => {
+  shellState.setOpen(false)
   const container = document.createElement('div')
   document.body.append(container)
   const root = createRoot(container)

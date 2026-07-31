@@ -24,6 +24,7 @@ import NotificationDomain from '@/domain/Notification'
 import ToastDomain from '@/domain/Toast'
 import ToastPresentationDomain from '@/domain/ToastPresentation'
 import AppFeedbackDomain from '@/domain/AppFeedback'
+import AppStatusEffectsDomain from '@/domain/AppStatusEffects'
 import { createElement } from '@/utils'
 import { requestBrowserSyncStoragePreparation } from '@/service/StoragePreparation'
 import ContentBootstrap, { type BootstrapDependencies } from '@/app/content/Bootstrap'
@@ -36,11 +37,11 @@ const bootstrapDependencies: BootstrapDependencies = {
   detachRuntime: detachClient
 }
 
-const createApplication = () => {
+const createApplicationStore = () => {
   const ChatRoomImpl = createChatRoomImpl(MessageDatabaseImpl.value)
   const WorldRoomImpl = createWorldRoomImpl()
   const ReadinessImpl = createReadinessImpl(whenHostPhase)
-  const store = Remesh.store({
+  return Remesh.store({
     externs: [
       LocalStorageImpl,
       BrowserSyncStorageImpl,
@@ -55,14 +56,22 @@ const createApplication = () => {
     ]
     // inspectors: __DEV__ ? [RemeshLogger()] : []
   })
+}
 
+const createApplication = () => {
   return (
     <React.StrictMode>
-      <RemeshRoot store={store}>
-        <RemeshScope domains={[NotificationDomain(), ToastDomain(), ToastPresentationDomain(), AppFeedbackDomain()]}>
-          <App />
-        </RemeshScope>
-      </RemeshRoot>
+      <RemeshScope
+        domains={[
+          AppStatusEffectsDomain(),
+          NotificationDomain(),
+          ToastDomain(),
+          ToastPresentationDomain(),
+          AppFeedbackDomain()
+        ]}
+      >
+        <App />
+      </RemeshScope>
     </React.StrictMode>
   )
 }
@@ -88,7 +97,12 @@ export default defineContentScript({
         const app = createElement('<div id="root"></div>')
         container.append(app)
         const root = createRoot(app)
-        root.render(<ContentBootstrap dependencies={bootstrapDependencies} createApplication={createApplication} />)
+        const store = createApplicationStore()
+        root.render(
+          <RemeshRoot store={store}>
+            <ContentBootstrap dependencies={bootstrapDependencies} createApplication={createApplication} />
+          </RemeshRoot>
+        )
         return root
       },
       onRemove: (root) => {
