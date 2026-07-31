@@ -1,112 +1,88 @@
 ## Context
 
-WebChat requires asynchronous browser-sync preparation, page-local configuration preparation, MessageStore/IndexedDB preparation, and shared Runtime initialization before particular Runtime-backed operations can execute. Those dependencies are not page-rendering inputs. Business components obtain them through their existing hooks, Domains, stores, and services at the use site.
-
-Remote release tag `v1.9.7` resolves to exact `b5f1b0183a80ba089ad8e51f15f40dabd8089a50` and is the frozen component-composition reference. Its content root is `StrictMode -> RemeshRoot(store) -> RemeshScope -> App`; the example Domain list is not a contract and this change does not replace the current business-required set. `App` receives no initialization dependency props and there is no `Application` middle layer. The original component order and panel-owned Toaster placement remain unchanged, but historical whole-page gates are not frozen: `appStatusLoadIsFinished` is removed alongside initialization `ready` gating.
+WebChat mounts a local shell before browser-sync preparation, page-local configuration preparation, MessageStore/IndexedDB preparation, and shared Runtime initialization finish. The shell has persisted `open`, `unread`, and `position` state. Initialization has an in-memory `connecting | unavailable | ready` phase and Retry action. Incoming messages can update unread. These are one app-status lifecycle and use one `AppStatusDomain`.
 
 ## Goals / Non-Goals
 
 **Goals:**
 
-- Keep the frozen `v1.9.7` content-root, `App`, and `AppMain` composition through initialization, terminal failure, user Retry, ready capability activation, and later recovery.
-- Render the page independently of `ready`; use readiness only at the specific Runtime-dependent business operation.
-- Remove initialization, activation, business-state, and test-only dependency props from business components and consume existing capabilities where they are used.
-- Start local shell-status hydration/persistence and the existing `Toast.ts` feedback path from that shell lifetime.
-- Remove every initialization wrapper, alternate shell, fallback view, and independent loading/error/result component.
-- Express initialization loading and failure only through the original Toaster inside the `AppMain` visual panel.
-- Make the existing Refresh control dispatch the current lifecycle operation and project its single-flight state.
-- Preserve newer shell interaction and fence late initialization, hydration, and old-document results.
+- Keep one normal shell mounted independently of status hydration and application initialization.
+- Make `AppStatusDomain` the sole owner of shell state, initialization state, Retry, and the incoming unread effect.
+- Keep initialization sequencing as plain lifecycle orchestration in `Initialization.ts`.
+- Let `App`, `AppButton`, and `AppFeedbackDomain` consume the same status authority directly.
+- Keep one panel-owned generic Toaster and one context-sensitive Refresh control.
+- Preserve user interaction and current-generation truth across asynchronous settlement.
 
 **Non-Goals:**
 
-- Removing the required initialization sequence, its deadlines/cancellation, dependency gating, Runtime detach behavior, or attempt identity.
-- Adding an error page, second Toaster, second Retry control, success Toast, automatic open, raw exception text, or visual redesign.
-- Replacing dependency props with a new Provider, context, controller, service locator, or injection abstraction.
-- Adding a second Toast Domain or presentation adapter instead of using the existing `Toast.ts` capability.
-- Changing generic error duration/replacement/dismissal rules, ready-state ChatRoom reconnect scope, WorldRoom recovery, or Runtime readiness truth.
-- Changing storage schema/version/key, unread/position semantics, initialization stage order/deadlines, protocol, public APIs, permissions, or production dependencies.
-- Repairing the WXT/Chromium preload warning or requiring stage-specific production logging.
+- Changing the persisted AppStatus key, record shape, or field semantics.
+- Changing initialization stage order, deadlines, cancellation, Runtime detach, or dependency activation.
+- Changing ChatRoom, WorldRoom, Runtime, protocol, public APIs, permissions, production dependencies, or visual design.
+- Adding another app-status store, initialization-status owner, Retry control, Toaster, success Toast, Provider, controller, or dependency-injection surface.
+- Changing generic Toast lifetime, dismissal, or replacement behavior.
 
 ## Decisions
 
-### 1. The content root has one exact composition
+### 1. The root has one exact composition
 
-The content-script root preserves the `v1.9.7` component hierarchy `StrictMode -> RemeshRoot(store) -> RemeshScope(existing required Domains) -> App`. There is no other component between those ownership layers, no `Application` middle layer, no additional root-level Scope selected by initialization, and no initialization prop on `<App />`. The Domain list remains the current business composition and is not narrowed to the sample list from `v1.9.7`. This freezes component ownership, not historical whole-tree rendering gates.
+The content root is `StrictMode -> RemeshRoot(store) -> RemeshScope -> App`. The root Scope mounts exactly `AppStatusDomain()`, `NotificationDomain()`, `ToastDomain()`, and `AppFeedbackDomain()`. Nested business dependencies remain owned by the Domains that consume them.
 
-Inside the themed `#app`, render `AppMain` then `AppButton`, followed by `DanmakuContainer` at the app level. `AppMain` directly receives `Header`, `Main`, `Footer`, conditional `Setup`, and the generic `Toaster` in that order. Remove the historical `appStatusLoadIsFinished` condition and every initialization `ready` condition around this tree. Failure or Retry changes operation availability and feedback, never page identity or composition.
+Inside themed `#app`, `AppMain` precedes `AppButton`, followed by `DanmakuContainer`. `AppMain` directly contains `Header`, `Main`, `Footer`, conditional `Setup`, and the generic `Toaster` in that order. Status hydration and initialization phase do not select or replace this component tree.
 
-### 2. Business components own dependencies at their use sites
+### 2. AppStatusDomain is the single app-status owner
 
-`App`, `AppMain`, `AppButton`, and other business components do not receive initialization functions, deferred-capability activators, business-state bundles, ownership callbacks, or test-only timeout controls as props. They use existing hooks, Domains, stores, and services where the capability is needed. Tests mock those boundaries rather than changing the production component API. The `Application` component introduced after `v1.9.7` is not part of the frozen hierarchy.
+`AppStatusDomain` owns persisted `open`, `unread`, and `position` in the one AppStatus storage record. It also owns the non-persisted initialization phase, the Retry command/event, and the effect that increments unread for an incoming text message from another user while the panel is closed.
 
-Among WebChat-owned components, pure presentation components under `components` may receive the minimal values and callbacks required to render. This exception does not permit repackaging business dependencies or adding a Provider, context, controller, service locator, or injection layer to preserve the same indirection. Ordinary structural `children` composition and the fixed third-party Toaster configuration are not dependency bundles.
+Initialization phase never enters the persisted record. Unread processing uses the same `OpenQuery`, `UnreadQuery`, and update command as the rest of AppStatus. The Domain exposes only the queries, commands, and events required by its consumers.
 
-### 3. Initialization is lifecycle logic, not presentation
+### 3. Initialization.ts is lifecycle orchestration
 
-Keep one bounded current attempt for the required sequential dependency preparation. Each attempt retains its deadline, cancellation, Runtime-start/detach boundary, duplicate rejection, and generation fencing. A stale, aborted, unmounted, or superseded result cannot mutate current feedback, Refresh eligibility, capability availability, or shell state.
+`Initialization.ts` owns the ordered asynchronous attempt: browser-sync storage, local configuration storage, message database, Runtime initialization, application dependency activation, and Runtime detach. Each attempt has one deadline, AbortSignal, generation, and terminal.
 
-This orchestration may be implemented as a hook/service or equivalent non-presentational owner invoked from the normal shell lifecycle. It must not return or select an alternate shell/status tree. The product contract does not preserve a wrapper component or source filename.
+The lifecycle obtains `AppStatusDomain` from the store, sends its phase commands, and subscribes to its Retry event. It issues `Preparing WebChat` and `WebChat unavailable` through `Toast.ts`. It declares no Remesh Domain and owns no phase state parallel to `AppStatusDomain`.
 
-### 4. The original panel-owned Toaster is the only status surface
+### 4. Consumers use AppStatusDomain directly
 
-The frozen `AppMain` children are `Header`, `Main`, `Footer`, conditional `Setup`, and exactly one generic `Toaster` as direct React siblings. `AppMain` retains `AnimatePresence -> appOpenStatus && motion.div -> children -> resize handle`, so the Toaster's DOM ancestry includes that positioned `motion.div` visual panel. It is not passed separately into `AppMain`, rendered beside the panel, mounted as a second root or host-page portal, or moved to an external container to remain visible while the panel is collapsed.
+`App` reads the initialization-ready query before dispatching Runtime-dependent ChatRoom and WorldRoom operations. `AppButton` reads phase and sends Retry before ready, then uses the ChatRoom recovery contract after ready. `AppFeedbackDomain` reads readiness from `AppStatusDomain` before projecting Runtime feedback. The initialization lifecycle reads and updates the same Domain through the store.
 
-`Toast.ts -> ToastExtern -> ToastImpl -> Sonner` is the sole Toast capability. `ToastPresentation.ts` and `toast-presentation.tsx` are removed. If initialization or reconnect requires a stable ID, dismissibility, or another presentation option, extend the existing Toast command/input minimally rather than creating a second Domain, mounted-surface state, descriptor bus, acknowledgement protocol, or DOM-paint observer.
+Business components do not receive initialization functions, state bundles, ownership callbacks, or test-only timing controls as props. Tests mock the actual Domain, store, service, and extern boundaries.
 
-An active initial or user-retried initialization attempt issues one `Preparing WebChat` loading command through `Toast.ts`. A current terminal rejection, timeout, or unavailable result cancels only that attempt's matching loading ID and issues one normalized `WebChat unavailable` error command. Superseded-generation and unmount cancellation remain silent. Success cancels only matching loading and publishes no success Toast.
+### 5. Shell state is independent of dependencies
 
-There is no independent loading, unavailable, error, result, alert, busy, or Retry status component. Toaster rendering, unmount, default expiry, or user dismissal cannot redefine attempt truth or Refresh eligibility. Ready Runtime/reconnect and unrelated sources use the same existing Toast commands and retain source-local operation ownership.
+The normal component tree and AppStatus hydration start as soon as the configured DOM anchor is available. Browser-sync preparation, page-local configuration, IndexedDB, Runtime, and application readiness do not gate shell creation or persisted state restoration.
 
-### 5. Shell-local state starts before dependencies
+The mounted root owns one hydration and persistence lifecycle. If the user expands or collapses the panel while hydration is pending, that accepted choice wins over the stored snapshot and flows through the same persistence path. A stale document or attempt cannot mutate current shell state.
 
-Mount the normal component tree and start the existing local `AppStatus` hydration/persistence without making the read or any application dependency a rendering prerequisite. The panel may first show its historical default while the read is pending, then apply the saved expanded or collapsed choice independently of browser-sync, page-local configuration, IndexedDB, or Runtime.
+### 6. The panel Toaster is the only status surface
 
-Keep one state authority and one storage record. If a current combined effect includes Chat, World, database, Runtime, unread, or other dependency-backed work, isolate or gate that work rather than igniting it early merely to reach shell-local behavior. A second React state mirror, durable timestamp, storage key, or parallel shell store is rejected.
+The generic `Toaster` is the final business child of `AppMain`, inside its positioned `motion.div`. `Toast.ts -> ToastExtern -> ToastImpl -> Sonner` is the one Toast capability for initialization, Runtime readiness, reconnect, join Retry, and unrelated notifications.
 
-### 6. Refresh is a shell action adapter with two exclusive contexts
+An active initialization attempt publishes one `Preparing WebChat` loading command. A current terminal failure cancels only its matching loading ID and publishes one `WebChat unavailable` error. Success cancels only matching loading and publishes no success Toast. Operation truth remains independent of Toaster mount and paint.
 
-Keep one familiar Refresh slot in the existing AppButton actions menu. Before dependent application capabilities are ready, its availability and dispatch come only from the current initialization attempt: active attempt means disabled/rotating; terminal failure means enabled/static; activation starts one fresh bounded attempt in the same shell. It does not require user identity and does not call ChatRoom, WorldRoom, or Runtime reconnect directly.
+### 7. Refresh has two exclusive contexts
 
-After ready capability activation, the slot switches atomically to the existing current-site ChatRoom retry/reconnect contract, including its identity, join/rejoin scope, fixed readiness owner, and WorldRoom exclusion. The initialization owner is then terminal and cannot regain dispatch authority. Context-specific accessible labels distinguish setup Retry from current-site reconnect without adding another visible control.
+Before ready, the AppButton Refresh slot reflects the current initialization attempt: active is disabled and rotating; unavailable is enabled and static; activation starts one bounded Retry. It requires no configured user identity and does not dispatch ChatRoom or WorldRoom recovery.
 
-### 7. Operation state is single-flight and presentation-independent
+At ready, the same slot switches atomically to current-site ChatRoom retry/reconnect. This context retains its identity, join/rejoin scope, minimum loading interval, and WorldRoom exclusion. Initialization cannot regain control after the switch.
 
-Initial initialization and each accepted initialization Refresh have one current generation. The Refresh icon projects only that current attempt while pre-ready. A duplicate click starts nothing; the matching terminal stops its rotation and recomputes eligibility; stale completion cannot stop or enable a newer attempt. Success enables ready capabilities in the existing shell and publishes no success Toast. Failure publishes the matching generic error independently, leaving Refresh retryable.
+### 8. Current operation identity fences asynchronous work
 
-The ready-application connection owner continues to control its own loading/Toast/Refresh interval after the context switch. Initialization and ChatRoom owners never run as competing Refresh authorities.
+Initialization and ready-context recovery each admit one current operation in their exclusive context. Duplicate activation starts nothing. Matching terminal settlement updates only its own control and Toast ID. Aborted, detached, timed-out, unmounted, and stale generations cannot clear or replace current feedback, enable Refresh, switch context, or write shell state.
 
-### 8. A newer user shell choice wins hydration
+### 9. Tests bind final ownership
 
-The initial stored snapshot is older than an expansion or collapse accepted while the read is unresolved. Preserve the accepted current `open` value when hydration settles and persist it through the single shell-owned write path. Existing fields untouched by that interaction retain their current hydration semantics. Retry and ready capability activation do not repeat the initial read or mount another watcher.
+Regression controls verify the exact root Domain list, one `AppStatusDomain` declaration and mount, no additional app-status state owner, plain `Initialization.ts` orchestration, and direct App/AppButton/AppFeedback consumers. They also cover component ancestry, persisted expanded/collapsed/no-record state, pre-hydration interaction, incoming self/non-self/open/closed unread cases, initialization stage terminals, Retry contexts, single-flight behavior, and stale settlement.
 
-A genuine document replacement owns a new shell lifecycle. Cancellation or an equivalent live-generation guard prevents an old asynchronous hydration, persistence, or initialization continuation from mutating the replacement.
-
-### 9. Evidence binds final ownership
-
-Regression controls record only the final result: the content root, `App`, and `AppMain` match the frozen `v1.9.7` component hierarchy; `<App />` has no initialization props or `Application` middle layer; neither `appStatusLoadIsFinished` nor initialization `ready` creates a composition branch; the sole Toaster is a sibling of the page content and a descendant of the positioned `AppMain` panel; all feedback uses `Toast.ts` without a presentation Domain/adapter; and business dependencies are consumed at use sites without replacement injection. The same suite covers every initialization stage class, expanded/collapsed/no-record hydration, pre-hydration interaction, loading/error Toast delivery, initial and manual single-flight, same-page success, context switch to ChatRoom reconnect, duplicate effects, and stale generations.
-
-Run those unchanged final-result assertions against the implementation parent to establish fail-before; do not add an assertion that accepts or preserves the parent's transitional structure. Because collapsed equals the default, its control must also prove the stored snapshot was consumed rather than passing because hydration did not run. Structure-sensitive controls must inspect the real rendered ancestry: sharing a React root or Shadow root is insufficient, and the Toaster being a sibling of `[data-webchat-panel]` is a failure.
-
-The fixed test stack is `vitest`, `happy-dom`, the complete `@testing-library/*` and `@vitest/*` families as needed, and `vitest-browser-react`. DOM/component controls use happy-dom and the applicable Testing Library packages; browser-rendered controls use Vitest Browser Mode through `@vitest/browser-playwright` and the React integration. `linkedom`, a custom DOM parser, and an alternate test framework are not accepted substitutes. Test-only development dependencies may change only to establish this fixed stack.
-
-Stable test selectors may be literal `data-testid` attributes on the existing production JSX. Do not dynamically inject selectors, add test-only component props or wrappers, or rewrite the runtime DOM. A selector is static observability only; it cannot create another structure or behavior.
+The fixed stack is `vitest`, `happy-dom`, the applicable `@testing-library/*` and `@vitest/*` packages, `vitest-browser-react`, and `@vitest/browser-playwright`. Stable selectors may be literal `data-testid` attributes on production JSX. Tests do not add production dependency props, wrappers, dynamic selector injection, or runtime DOM rewriting.
 
 ## Risks / Trade-offs
 
-- [Normal application composition can touch unavailable dependencies] -> Keep the page mounted and guard only the exact Runtime-dependent operation at its use site.
-- [Removing dependency props reduces test injection points] -> Mock the existing hook/Domain/store/service boundary; do not preserve a production prop solely for tests.
-- [The normal tree briefly renders the default before asynchronous hydration] -> Apply the saved choice as soon as the independent read settles and preserve a newer user choice; never block component creation on storage.
-- [A panel-owned Toaster is hoisted to remain visible while collapsed] -> Keep operation truth independent of Toaster rendering, and never externalize or duplicate the renderer to change panel lifecycle.
-- [One Refresh can dispatch the wrong operation during transition] -> Use an exclusive initialization/ready context boundary and fence old attempts before enabling ChatRoom dispatch.
-- [Toast settlement can be mistaken for operation truth] -> Keep attempt outcome and eligibility in lifecycle logic; existing Toast commands only project feedback.
-- [A late read or attempt can overwrite current UI] -> Preserve newer interaction and current-generation checks at each asynchronous settlement.
+- [One Domain spans durable and transient status] -> Keep persistence attached only to the AppStatus record; initialization phase remains in-memory.
+- [Unread effect introduces ChatRoom/UserInfo dependencies] -> Keep the effect inside the Domain that owns unread and use the established nested Domain boundaries.
+- [Normal shell can render while dependencies are unavailable] -> Gate only the exact Runtime-dependent operation at its use site.
+- [One Refresh can dispatch the wrong operation at readiness] -> Use the single initialization phase as the exclusive context switch and fence attempt identity.
+- [Late hydration or attempt settlement can overwrite current state] -> Preserve user-updated open state and validate the current shell/attempt generation before every asynchronous terminal.
 
-## Migration Plan
+## Validation
 
-1. Publish this corrected requirements authority as a docs-only child on the existing branch and Draft PR.
-2. Add deterministic structure-sensitive final-result controls for the frozen `v1.9.7` root/App/AppMain component tree, prop-free `App`, absence of an `Application` middle layer or whole-tree `appStatusLoadIsFinished` / initialization-ready branch, real panel ancestry, and single `Toast.ts` path; establish fail-before on the parent without encoding its transitional behavior as expected output.
-3. Replace that composition on the same branch/PR: restore the frozen `v1.9.7` component hierarchy, consume dependencies inside business components, remove both whole-tree rendering gates and the `ToastPresentation` layer, and route every status through existing `Toast.ts` and the original panel-owned Toaster.
-4. Run focused and repository source gates, strict OpenSpec, exact identity checks, CI, and fresh independent Review on one immutable candidate.
-5. Do not route QA, QC, or UX unless the Owner explicitly requests that role. Follow the established Owner acceptance and conditional merge-authorization flow.
-
-No persisted-data migration exists. Reverting the source repair changes rendering and lifecycle ownership only; it does not change stored data format.
+Validate the four OpenSpec artifacts strictly, format the repository, and verify the docs-only authority diff. The source exact must pass focused final-result controls, the complete repository source gates, fresh architecture-first Review against `The-Absolute-Code.md`, exact CI, and identity checks before Owner acceptance.
