@@ -13,25 +13,25 @@
 
 ## 2. Deterministic FAIL-Before
 
-- [ ] 2.1 Prove the parent does not restore persisted expanded state while representative browser-sync, page-local configuration, IndexedDB, and Runtime stages remain pending or settle terminally unavailable.
-- [ ] 2.2 Prove the parent hides the AppButton actions menu/Refresh before ready and routes ready Refresh only to ChatRoom reconnect.
-- [ ] 2.3 Prove the parent renders panel-local `WebChat unavailable + Retry` after bootstrap failure while the generic Toaster/presentation owner is absent.
-- [ ] 2.4 Add provenance-sensitive persisted-collapsed and no-record controls plus an opposite-value pre-hydration user interaction race.
-- [ ] 2.5 Prove Retry/ready activation and superseded hydration/bootstrap results can currently threaten duplicate or stale ownership boundaries.
+- [x] 2.1 Prove the parent does not restore persisted expanded state while representative browser-sync, page-local configuration, IndexedDB, and Runtime stages remain pending or settle terminally unavailable.
+- [x] 2.2 Prove the parent hides the AppButton actions menu/Refresh before ready and routes ready Refresh only to ChatRoom reconnect.
+- [x] 2.3 Prove the parent renders panel-local `WebChat unavailable + Retry` after bootstrap failure while the generic Toaster/presentation owner is absent.
+- [x] 2.4 Add provenance-sensitive persisted-collapsed and no-record controls plus an opposite-value pre-hydration user interaction race.
+- [x] 2.5 Prove Retry/ready activation and superseded hydration/bootstrap results can currently threaten duplicate or stale ownership boundaries.
 
 ## 3. Minimum Repair
 
-- [ ] 3.1 Activate existing shell-status hydration/persistence and the one generic Toast presentation lifecycle from the mounted shell without awaiting application dependencies.
-- [ ] 3.2 Keep `Preparing WebChat` only as loading content; remove bootstrap error/Retry UI from the panel and publish one normalized generic error descriptor at the current attempt terminal.
-- [ ] 3.3 Keep the AppButton actions menu and Refresh slot reachable pre-ready, with bootstrap-only dispatch/eligibility before ready and existing ChatRoom-only dispatch/eligibility after the atomic ready switch.
-- [ ] 3.4 Project the current bootstrap attempt through disabled/rotating Refresh, reject duplicates, restore retry eligibility on matching failure, recover the same root on success, and fence stale generations.
-- [ ] 3.5 Preserve a newer user expand/collapse through late hydration and persist it through the single shell-owned path without changing untouched status fields.
-- [ ] 3.6 Keep dependency-backed Domain/effect work gated, exactly one Toaster/status watcher/effect/root/store, existing error lifetime, no success Toast, and no WorldRoom rebuild from Refresh.
+- [x] 3.1 Activate existing shell-status hydration/persistence and the one generic Toast presentation lifecycle from the mounted shell without awaiting application dependencies.
+- [x] 3.2 Keep `Preparing WebChat` only as loading content; remove bootstrap error/Retry UI from the panel and publish one normalized generic error descriptor at the current attempt terminal.
+- [x] 3.3 Keep the AppButton actions menu and Refresh slot reachable pre-ready, with bootstrap-only dispatch/eligibility before ready and existing ChatRoom-only dispatch/eligibility after the atomic ready switch.
+- [x] 3.4 Project the current bootstrap attempt through disabled/rotating Refresh, reject duplicates, restore retry eligibility on matching failure, recover the same root on success, and fence stale generations.
+- [x] 3.5 Preserve a newer user expand/collapse through late hydration and persist it through the single shell-owned path without changing untouched status fields.
+- [x] 3.6 Keep dependency-backed Domain/effect work gated, exactly one Toaster/status watcher/effect/root/store, existing error lifetime, no success Toast, and no WorldRoom rebuild from Refresh.
 
 ## 4. Source And Delivery Gates
 
-- [ ] 4.1 Run focused parent FAIL-before and candidate controls for every bootstrap stage class, status restoration, pre-ready menu/Refresh, Toast-only terminal, open/closed panel, single-flight, same-root recovery, ready context switch, duplicates, and stale generations.
-- [ ] 4.2 Run complete repository source tests, typecheck, lint, format, Chrome/Firefox builds, strict OpenSpec, and exact identity/scope gates on one immutable source candidate.
+- [x] 4.1 Run focused parent FAIL-before and candidate controls for every bootstrap stage class, status restoration, pre-ready menu/Refresh, Toast-only terminal, open/closed panel, single-flight, same-root recovery, ready context switch, duplicates, and stale generations.
+- [x] 4.2 Run complete repository source tests, typecheck, lint, format, Chrome/Firefox builds, strict OpenSpec, and exact identity/scope gates on one immutable source candidate.
 - [ ] 4.3 Obtain fresh independent Review of the complete branch diff and close every finding on a replacement exact before release.
 - [ ] 4.4 Publish only the same reviewed exact to the single `fix/restore-shell-state` Draft PR and require exact CI to pass without force, rebase, or unrelated scope.
 - [ ] 4.5 Keep QA, QC, and UX absent unless the Owner explicitly requests the corresponding role; never report an unperformed result as PASS.

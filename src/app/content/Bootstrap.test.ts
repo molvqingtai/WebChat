@@ -1,5 +1,5 @@
 import { createRequire } from 'node:module'
-import { afterAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { BootstrapDependencies } from '@/app/content/Bootstrap'
 
 vi.mock('@/app/content/BootstrapShell', async () => {
@@ -24,9 +24,25 @@ vi.mock('@/app/content/BootstrapShell', async () => {
           { 'data-testid': 'application-frame', 'data-open': String(open) },
           application ??
             React.createElement(
-              'button',
-              { type: 'button', 'data-testid': 'bootstrap-shell', 'data-phase': phase, onClick: onRetry },
-              phase
+              'section',
+              {
+                'data-testid': 'bootstrap-shell',
+                'data-phase': phase,
+                'data-open': String(open),
+                'aria-busy': String(phase === 'connecting')
+              },
+              React.createElement('p', { 'data-testid': 'bootstrap-copy' }, 'Preparing WebChat'),
+              React.createElement(
+                'button',
+                {
+                  type: 'button',
+                  'data-testid': 'bootstrap-refresh',
+                  disabled: phase === 'connecting',
+                  'data-rotating': String(phase === 'connecting'),
+                  onClick: onRetry
+                },
+                'Refresh'
+              )
             )
         ),
         React.createElement(
@@ -46,7 +62,14 @@ vi.mock('@/app/content/BootstrapShell', async () => {
 const appStatus = vi.hoisted(() => ({ load: 'pending' as 'pending' | 'rejected' | 'finished' }))
 const remesh = vi.hoisted(() => {
   const query = new Proxy<Record<string, () => string>>({}, { get: (_, name) => () => String(name) })
-  const command = new Proxy<Record<string, () => string>>({}, { get: (_, name) => () => String(name) })
+  const command = new Proxy<Record<string, (...args: unknown[]) => { name: string; args: unknown[] }>>(
+    {},
+    {
+      get:
+        (_, name) =>
+        (...args: unknown[]) => ({ name: String(name), args })
+    }
+  )
   return { domain: { query, command }, send: vi.fn() }
 })
 
@@ -176,10 +199,25 @@ const phase = (container: HTMLElement) =>
   container.querySelector<HTMLElement>('[data-testid="bootstrap-shell"]')?.dataset.phase
 
 const retry = async (container: HTMLElement) => {
-  const button = container.querySelector<HTMLButtonElement>('[data-testid="bootstrap-shell"]')
+  const button = container.querySelector<HTMLButtonElement>('[data-testid="bootstrap-refresh"]')
   if (!button) throw new Error('Bootstrap Retry is unavailable')
   await act(async () => button.dispatchEvent(new window.Event('click', { bubbles: true })))
 }
+
+const bootstrapError = {
+  id: 'webchat-bootstrap',
+  type: 'error',
+  message: 'WebChat unavailable'
+}
+
+const expectBootstrapErrorPublished = () => {
+  expect(remesh.send).toHaveBeenCalledWith({ name: 'PublishCommand', args: [bootstrapError] })
+}
+
+beforeEach(() => {
+  remesh.send.mockClear()
+  appStatus.load = 'pending'
+})
 
 afterAll(() => {
   for (const [name, descriptor] of previousGlobals) {
@@ -216,6 +254,7 @@ describe('ContentBootstrap generation ownership', () => {
       })
       expect(fixture.dependencies.initializeRuntime).not.toHaveBeenCalled()
       expect(fixture.createApplication).not.toHaveBeenCalled()
+      expectBootstrapErrorPublished()
     } finally {
       preparation.reject(new Error('test cleanup'))
       await rendered.cleanup()
@@ -238,6 +277,7 @@ describe('ContentBootstrap generation ownership', () => {
       expect(fixture.dependencies.prepareMessageDatabase).toHaveBeenCalledOnce()
       expect(fixture.dependencies.initializeRuntime).toHaveBeenCalledOnce()
       expect(fixture.createApplication).toHaveBeenCalledOnce()
+      expectBootstrapErrorPublished()
 
       stale.resolve()
       await act(async () => settle())
@@ -267,6 +307,8 @@ describe('ContentBootstrap generation ownership', () => {
       expect(fixture.dependencies.detachRuntime).toHaveBeenCalledOnce()
       expect(fixture.dependencies.initializeRuntime).toHaveBeenCalledTimes(2)
       expect(fixture.createApplication).toHaveBeenCalledOnce()
+      expectBootstrapErrorPublished()
+      expect(remesh.send).not.toHaveBeenCalledWith(expect.objectContaining({ name: 'DismissCommand' }))
     } finally {
       await rendered.cleanup()
     }
@@ -288,7 +330,39 @@ describe('ContentBootstrap generation ownership', () => {
 
       expect(fixture.createApplication).not.toHaveBeenCalled()
       expect(rendered.container.querySelector('[data-testid="bootstrap-shell"]')).not.toBeNull()
+      expect(remesh.send.mock.calls.filter(([action]) => action.name === 'PublishCommand')).toHaveLength(2)
     } finally {
+      await rendered.cleanup()
+    }
+  })
+
+  it('keeps initial and accepted Retry attempts single-flight through one disabled rotating control', async () => {
+    const fixture = createFixture()
+    const retryAttempt = deferred<void>()
+    vi.mocked(fixture.dependencies.prepareBrowserSyncStorage)
+      .mockRejectedValueOnce(new Error('initial failure'))
+      .mockReturnValueOnce(retryAttempt.promise)
+    const rendered = await renderBootstrap(fixture)
+
+    try {
+      await waitFor(() => phase(rendered.container) === 'unavailable')
+      const refresh = rendered.container.querySelector<HTMLButtonElement>('[data-testid="bootstrap-refresh"]')
+      expect(refresh?.disabled).toBe(false)
+      expect(refresh?.dataset.rotating).toBe('false')
+
+      await act(async () => {
+        refresh?.dispatchEvent(new window.Event('click', { bubbles: true }))
+        refresh?.dispatchEvent(new window.Event('click', { bubbles: true }))
+      })
+      await waitFor(() => phase(rendered.container) === 'connecting')
+
+      const busyRefresh = rendered.container.querySelector<HTMLButtonElement>('[data-testid="bootstrap-refresh"]')
+      expect(busyRefresh?.disabled).toBe(true)
+      expect(busyRefresh?.dataset.rotating).toBe('true')
+      expect(fixture.dependencies.prepareBrowserSyncStorage).toHaveBeenCalledTimes(2)
+      expect(remesh.send.mock.calls.filter(([action]) => action.name === 'PublishCommand')).toHaveLength(1)
+    } finally {
+      retryAttempt.resolve()
       await rendered.cleanup()
     }
   })

@@ -1,7 +1,15 @@
 import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react'
+import { useRemeshDomain, useRemeshSend } from 'remesh-react'
 import BootstrapShell, { type BootstrapPhase } from '@/app/content/BootstrapShell'
+import ToastPresentationDomain, { type ToastDescriptor } from '@/domain/ToastPresentation'
 
 export const CONTENT_BOOTSTRAP_TIMEOUT_MS = 16000
+
+const BOOTSTRAP_ERROR_TOAST = {
+  id: 'webchat-bootstrap',
+  type: 'error',
+  message: 'WebChat unavailable'
+} satisfies ToastDescriptor
 
 export interface BootstrapDependencies {
   prepareBrowserSyncStorage: () => Promise<void>
@@ -64,6 +72,8 @@ const ContentBootstrap = ({
   createApplication,
   timeoutMs = CONTENT_BOOTSTRAP_TIMEOUT_MS
 }: ContentBootstrapProps) => {
+  const send = useRemeshSend()
+  const toastPresentationDomain = useRemeshDomain(ToastPresentationDomain())
   const [attempt, setAttempt] = useState(0)
   const [phase, setPhase] = useState<BootstrapPhase>('connecting')
   const [application, setApplication] = useState<ReactElement | null>(null)
@@ -98,6 +108,7 @@ const ContentBootstrap = ({
         detachRuntime()
         retryInFlight.current = false
         console.error('[WebChat] Bootstrap unavailable:', error)
+        send(toastPresentationDomain.command.PublishCommand(BOOTSTRAP_ERROR_TOAST))
         setPhase('unavailable')
       })
 
@@ -106,7 +117,7 @@ const ContentBootstrap = ({
       controller.abort(new DOMException('Bootstrap superseded', 'AbortError'))
       detachRuntime()
     }
-  }, [attempt, createApplication, dependencies, timeoutMs])
+  }, [attempt, createApplication, dependencies, send, timeoutMs, toastPresentationDomain.command])
 
   const retry = useCallback(() => {
     if (phase !== 'unavailable' || retryInFlight.current) return

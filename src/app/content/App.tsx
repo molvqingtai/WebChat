@@ -8,12 +8,10 @@ import UserInfoDomain from '@/domain/UserInfo'
 import Setup from '@/app/content/views/setup'
 import MessageListDomain from '@/domain/MessageList'
 import { useEffect } from 'react'
-import { Toaster } from 'sonner'
 
 import AppStatusDomain from '@/domain/AppStatus'
 import { checkDarkMode } from '@/utils'
 import WorldRoomDomain from '@/domain/WorldRoom'
-import { useToastPresentation } from './components/toast-presentation'
 import { useAppTheme } from '@/app/content/BootstrapShell'
 
 /**
@@ -38,7 +36,6 @@ export default function App() {
   const appStatusLoadIsFinished = useRemeshQuery(appStatusDomain.query.StatusLoadIsFinishedQuery())
   const chatRoomJoinIsFinished = useRemeshQuery(chatRoomDomain.query.JoinIsFinishedQuery())
   const worldRoomJoinIsFinished = useRemeshQuery(worldRoomDomain.query.JoinIsFinishedQuery())
-  const toasterRef = useToastPresentation()
 
   const userInfo = useRemeshQuery(userInfoDomain.query.UserInfoQuery())
   const notUserInfo = userInfoLoadFinished && !userInfoSetFinished
@@ -71,19 +68,6 @@ export default function App() {
         <Main />
         <Footer />
         {notUserInfo && <Setup></Setup>}
-        <Toaster
-          ref={toasterRef}
-          richColors
-          theme={themeMode}
-          offset="70px"
-          visibleToasts={1}
-          toastOptions={{
-            classNames: {
-              toast: 'dark:bg-slate-950 border dark:border-slate-600'
-            }
-          }}
-          position="top-center"
-        ></Toaster>
       </>
     )
   )

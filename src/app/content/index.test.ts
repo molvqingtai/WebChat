@@ -41,7 +41,20 @@ const fixture = vi.hoisted(() => {
     createWorldRoomImpl: vi.fn(),
     createReadinessImpl: vi.fn(),
     createStore: vi.fn(() => ({})),
-    createElement: vi.fn()
+    createElement: vi.fn(),
+    scope: vi.fn(),
+    shellStatusAction: { owner: 'shell-status' },
+    toastPresentationAction: { owner: 'toast-presentation' },
+    appStatusEffectsAction: { owner: 'app-status-effects' },
+    notificationAction: { owner: 'notification' },
+    toastAction: { owner: 'toast' },
+    appFeedbackAction: { owner: 'app-feedback' },
+    send: vi.fn(),
+    presentationDomain: {
+      command: {
+        PublishCommand: (descriptor: unknown) => ({ descriptor })
+      }
+    }
   }
 })
 
@@ -55,8 +68,17 @@ vi.mock('remesh', async (importOriginal) => {
 })
 vi.mock('remesh-react', async () => {
   const React = await import('react')
-  const PassThrough = ({ children }: { children?: ReactNode }) => React.createElement(React.Fragment, null, children)
-  return { RemeshRoot: PassThrough, RemeshScope: PassThrough }
+  const RemeshRoot = ({ children }: { children?: ReactNode }) => React.createElement(React.Fragment, null, children)
+  const RemeshScope = ({ children, domains }: { children?: ReactNode; domains: unknown[] }) => {
+    fixture.scope(domains)
+    return React.createElement(React.Fragment, null, children)
+  }
+  return {
+    RemeshRoot,
+    RemeshScope,
+    useRemeshDomain: () => fixture.presentationDomain,
+    useRemeshSend: () => fixture.send
+  }
 })
 vi.mock('@/app/content/App', async () => {
   const React = await import('react')
@@ -117,11 +139,12 @@ vi.mock('@/domain/impls/Danmaku', () => ({ DanmakuImpl: {} }))
 vi.mock('@/domain/impls/Notification', () => ({ NotificationImpl: {} }))
 vi.mock('@/domain/impls/Toast', () => ({ ToastImpl: {} }))
 vi.mock('@/domain/impls/AppAction', () => ({ AppActionImpl: {} }))
-vi.mock('@/domain/Notification', () => ({ default: vi.fn(() => ({})) }))
-vi.mock('@/domain/Toast', () => ({ default: vi.fn(() => ({})) }))
-vi.mock('@/domain/ToastPresentation', () => ({ default: vi.fn(() => ({})) }))
-vi.mock('@/domain/AppFeedback', () => ({ default: vi.fn(() => ({})) }))
-vi.mock('@/domain/AppStatusEffects', () => ({ default: vi.fn(() => ({})) }))
+vi.mock('@/domain/AppStatus', () => ({ default: vi.fn(() => fixture.shellStatusAction) }))
+vi.mock('@/domain/Notification', () => ({ default: vi.fn(() => fixture.notificationAction) }))
+vi.mock('@/domain/Toast', () => ({ default: vi.fn(() => fixture.toastAction) }))
+vi.mock('@/domain/ToastPresentation', () => ({ default: vi.fn(() => fixture.toastPresentationAction) }))
+vi.mock('@/domain/AppFeedback', () => ({ default: vi.fn(() => fixture.appFeedbackAction) }))
+vi.mock('@/domain/AppStatusEffects', () => ({ default: vi.fn(() => fixture.appStatusEffectsAction) }))
 vi.mock('@/utils', () => ({ createElement: fixture.createElement }))
 vi.mock('@/service/StoragePreparation', () => ({
   requestBrowserSyncStoragePreparation: fixture.requestBrowserSyncStoragePreparation
@@ -253,6 +276,8 @@ describe('content production bootstrap dependency boundary', () => {
         expect(fixture.mount).toHaveBeenCalledOnce()
         expect(fixture.createStore).toHaveBeenCalledOnce()
         expect(phase()).toBe('connecting')
+        expect(fixture.scope).toHaveBeenCalledOnce()
+        expect(fixture.scope).toHaveBeenLastCalledWith([fixture.shellStatusAction, fixture.toastPresentationAction])
         expectDependenciesUnconstructed()
 
         prerequisite.reject(new Error('prerequisite unavailable'))
@@ -271,6 +296,11 @@ describe('content production bootstrap dependency boundary', () => {
     await vi.waitFor(expectDependenciesConstructedOnce)
     expect(document.querySelector('[data-testid="application"]')).not.toBeNull()
     expect(fixture.createStore).toHaveBeenCalledOnce()
+    expect(fixture.scope.mock.calls.map(([domains]) => domains)).toEqual([
+      [fixture.shellStatusAction, fixture.toastPresentationAction],
+      [fixture.appStatusEffectsAction, fixture.notificationAction, fixture.toastAction, fixture.appFeedbackAction],
+      [fixture.appStatusEffectsAction, fixture.notificationAction, fixture.toastAction, fixture.appFeedbackAction]
+    ])
   })
 
   it('constructs only the successful Retry generation after a stale preparation times out and resolves late', async () => {
@@ -298,11 +328,17 @@ describe('content production bootstrap dependency boundary', () => {
 
       expectDependenciesConstructedOnce()
       expect(document.querySelector('[data-testid="application"]')).not.toBeNull()
+      expect(fixture.scope.mock.calls.map(([domains]) => domains)).toEqual([
+        [fixture.shellStatusAction, fixture.toastPresentationAction],
+        [fixture.appStatusEffectsAction, fixture.notificationAction, fixture.toastAction, fixture.appFeedbackAction],
+        [fixture.appStatusEffectsAction, fixture.notificationAction, fixture.toastAction, fixture.appFeedbackAction]
+      ])
 
       stale.resolve()
       await act(flushMicrotasks)
 
       expectDependenciesConstructedOnce()
+      expect(fixture.scope).toHaveBeenCalledTimes(3)
     } finally {
       stale.resolve()
     }

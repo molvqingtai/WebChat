@@ -53,4 +53,39 @@ describe('reconnect action availability', () => {
     expect(source).toContain("reconnecting && 'animate-spin'")
     expect(source).not.toContain('query.ReconnectIsLoadingQuery()')
   })
+
+  it('keeps pre-ready Refresh reachable without constructing ready-only domains', () => {
+    const source = readFileSync(new URL('./index.tsx', import.meta.url), 'utf8')
+    const bootstrapMenuStart = source.indexOf('const BootstrapAppButtonMenu')
+    const applicationMenuStart = source.indexOf('const ApplicationAppButtonMenu')
+    const bootstrapMenu = source.slice(bootstrapMenuStart, applicationMenuStart)
+
+    expect(bootstrapMenuStart).toBeGreaterThan(-1)
+    expect(applicationMenuStart).toBeGreaterThan(bootstrapMenuStart)
+    expect(bootstrapMenu).toContain("bootstrapPhase === 'connecting'")
+    expect(bootstrapMenu).toContain('disabled={connecting}')
+    expect(bootstrapMenu).toContain("connecting && 'animate-spin'")
+    expect(bootstrapMenu).toContain('onClick={onBootstrapRetry}')
+    expect(bootstrapMenu).toContain('Retry WebChat setup')
+    expect(bootstrapMenu).not.toMatch(/ChatRoomDomain|UserInfoDomain|AppActionDomain|ReconnectCommand/)
+    expect(source).toContain('onContextMenu={handleToggleMenu}')
+    expect(source).not.toContain('onContextMenu={applicationAvailable ? handleToggleMenu : undefined}')
+  })
+
+  it('does not persist automatic default position before shell status hydration', () => {
+    const source = readFileSync(new URL('./index.tsx', import.meta.url), 'utf8')
+    const resizeEffect = source.slice(source.indexOf('useWindowResize(() => {'), source.indexOf('const {\n    x,'))
+
+    expect(source).toContain(
+      'const statusLoadIsFinished = useRemeshQuery(appStatusDomain.query.StatusLoadIsFinishedQuery())'
+    )
+    expect(resizeEffect.indexOf('if (!statusLoadIsFinished) return')).toBeGreaterThan(-1)
+    expect(resizeEffect.indexOf('if (!statusLoadIsFinished) return')).toBeLessThan(
+      resizeEffect.indexOf('send(appStatusDomain.command.UpdatePositionCommand')
+    )
+    expect(source).toContain('const positionPersistenceStarted = useRef(false)')
+    expect(source).toMatch(
+      /useEffect\(\(\) => \{\s*if \(!statusLoadIsFinished\) return\s*if \(!positionPersistenceStarted\.current\) \{[\s\S]*?return\s*\}\s*send\(appStatusDomain\.command\.UpdatePositionCommand\(\{ x, y \}\)\)/
+    )
+  })
 })

@@ -24,6 +24,7 @@ import NotificationDomain from '@/domain/Notification'
 import ToastDomain from '@/domain/Toast'
 import ToastPresentationDomain from '@/domain/ToastPresentation'
 import AppFeedbackDomain from '@/domain/AppFeedback'
+import AppStatusDomain from '@/domain/AppStatus'
 import AppStatusEffectsDomain from '@/domain/AppStatusEffects'
 import { createElement } from '@/utils'
 import { requestBrowserSyncStoragePreparation } from '@/service/StoragePreparation'
@@ -98,15 +99,7 @@ const createShellStore = () => {
 const createApplication = () => {
   return (
     <React.StrictMode>
-      <RemeshScope
-        domains={[
-          AppStatusEffectsDomain(),
-          NotificationDomain(),
-          ToastDomain(),
-          ToastPresentationDomain(),
-          AppFeedbackDomain()
-        ]}
-      >
+      <RemeshScope domains={[AppStatusEffectsDomain(), NotificationDomain(), ToastDomain(), AppFeedbackDomain()]}>
         <App />
       </RemeshScope>
     </React.StrictMode>
@@ -141,7 +134,9 @@ export default defineContentScript({
         }
         root.render(
           <RemeshRoot store={store}>
-            <ContentBootstrap dependencies={bootstrapDependencies} createApplication={createReadyApplication} />
+            <RemeshScope domains={[AppStatusDomain(), ToastPresentationDomain()]}>
+              <ContentBootstrap dependencies={bootstrapDependencies} createApplication={createReadyApplication} />
+            </RemeshScope>
           </RemeshRoot>
         )
         return root

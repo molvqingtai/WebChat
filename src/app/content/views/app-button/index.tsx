@@ -1,4 +1,13 @@
-import { type FC, useState, type MouseEvent, type MouseEventHandler, useCallback, useEffect, useMemo } from 'react'
+import {
+  type FC,
+  useState,
+  type MouseEvent,
+  type MouseEventHandler,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef
+} from 'react'
 import { SettingsIcon, MoonIcon, SunIcon, HandIcon, RefreshCwIcon } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 
@@ -24,6 +33,7 @@ import ChatRoomDomain from '@/domain/ChatRoom'
 export interface AppButtonProps {
   className?: string
   bootstrapPhase?: 'connecting' | 'unavailable'
+  onBootstrapRetry: () => void
 }
 
 export const getReconnectLabel = ({
@@ -92,12 +102,49 @@ export const AppLauncherButton: FC<AppLauncherButtonProps> = ({ hasUnread = fals
   )
 }
 
-interface AppButtonMenuProps {
+interface ApplicationAppButtonMenuProps {
   open: boolean
   appButtonRef: ReturnType<typeof useDraggable>['setRef']
 }
 
-const AppButtonMenu: FC<AppButtonMenuProps> = ({ open, appButtonRef }) => {
+interface BootstrapAppButtonMenuProps {
+  open: boolean
+  bootstrapPhase: 'connecting' | 'unavailable'
+  onBootstrapRetry: () => void
+}
+
+const BootstrapAppButtonMenu: FC<BootstrapAppButtonMenuProps> = ({ open, bootstrapPhase, onBootstrapRetry }) => {
+  const connecting = bootstrapPhase === 'connecting'
+  const label = connecting ? 'Preparing WebChat setup' : 'Retry WebChat setup'
+
+  return (
+    <AnimatePresence>
+      {open && (
+        <motion.div
+          className="z-10 grid gap-y-3"
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: 12 }}
+          transition={{ duration: 0.1 }}
+        >
+          <Button
+            type="button"
+            onClick={onBootstrapRetry}
+            variant="outline"
+            disabled={connecting}
+            aria-label={label}
+            title={label}
+            className="dark:bg-background dark:text-foreground dark:hover:bg-accent size-10 rounded-full p-0 shadow dark:border-slate-600"
+          >
+            <RefreshCwIcon className={cn('size-5', connecting && 'animate-spin')} />
+          </Button>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  )
+}
+
+const ApplicationAppButtonMenu: FC<ApplicationAppButtonMenuProps> = ({ open, appButtonRef }) => {
   const send = useRemeshSend()
   const appActionDomain = useRemeshDomain(AppActionDomain())
   const userInfoDomain = useRemeshDomain(UserInfoDomain())
@@ -208,18 +255,20 @@ const AppButtonMenu: FC<AppButtonMenuProps> = ({ open, appButtonRef }) => {
   )
 }
 
-const AppButton: FC<AppButtonProps> = ({ className, bootstrapPhase }) => {
+const AppButton: FC<AppButtonProps> = ({ className, bootstrapPhase, onBootstrapRetry }) => {
   const send = useRemeshSend()
   const appStatusDomain = useRemeshDomain(AppStatusDomain())
   const appOpenStatus = useRemeshQuery(appStatusDomain.query.OpenQuery())
   const hasUnreadQuery = useRemeshQuery(appStatusDomain.query.HasUnreadQuery())
   const appPosition = useRemeshQuery(appStatusDomain.query.PositionQuery())
+  const statusLoadIsFinished = useRemeshQuery(appStatusDomain.query.StatusLoadIsFinishedQuery())
+  const positionPersistenceStarted = useRef(false)
   const [menuOpen, setMenuOpen] = useState(false)
-  const applicationAvailable = bootstrapPhase === undefined
 
   // Get current window size to recalculate position on resize
   const windowSize = useWindowResize(() => {
     // Reset to default position when window resizes
+    if (!statusLoadIsFinished) return
     send(appStatusDomain.command.UpdatePositionCommand({ x: 50, y: 22 }))
   })
 
@@ -238,8 +287,13 @@ const AppButton: FC<AppButtonProps> = ({ className, bootstrapPhase }) => {
   })
 
   useEffect(() => {
+    if (!statusLoadIsFinished) return
+    if (!positionPersistenceStarted.current) {
+      positionPersistenceStarted.current = true
+      return
+    }
     send(appStatusDomain.command.UpdatePositionCommand({ x, y }))
-  }, [x, y, send, appStatusDomain.command])
+  }, [x, y, send, appStatusDomain.command, statusLoadIsFinished])
 
   const { setRef: appMenuRef } = useTriggerAway(['click'], () => setMenuOpen(false))
 
@@ -253,7 +307,6 @@ const AppButton: FC<AppButtonProps> = ({ className, bootstrapPhase }) => {
   }
 
   const action = appOpenStatus ? 'Close WebChat' : 'Open WebChat'
-  const launcherLabel = bootstrapPhase === 'unavailable' ? `WebChat unavailable. ${action}` : action
 
   return (
     <div
@@ -265,12 +318,16 @@ const AppButton: FC<AppButtonProps> = ({ className, bootstrapPhase }) => {
         transform: 'translateX(50%)'
       }}
     >
-      {applicationAvailable && <AppButtonMenu open={menuOpen} appButtonRef={appButtonRef} />}
+      {bootstrapPhase === undefined ? (
+        <ApplicationAppButtonMenu open={menuOpen} appButtonRef={appButtonRef} />
+      ) : (
+        <BootstrapAppButtonMenu open={menuOpen} bootstrapPhase={bootstrapPhase} onBootstrapRetry={onBootstrapRetry} />
+      )}
       <AppLauncherButton
         onClick={handleToggleApp}
-        onContextMenu={applicationAvailable ? handleToggleMenu : undefined}
+        onContextMenu={handleToggleMenu}
         hasUnread={hasUnreadQuery}
-        label={launcherLabel}
+        label={action}
       />
     </div>
   )

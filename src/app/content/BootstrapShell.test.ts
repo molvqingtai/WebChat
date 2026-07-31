@@ -21,19 +21,49 @@ const shellState = vi.hoisted(() => {
 vi.mock('@/app/content/views/app-button', async () => {
   const React = await import('react')
   return {
-    default: ({ bootstrapPhase }: { bootstrapPhase?: 'connecting' | 'unavailable' }) => {
+    default: ({
+      bootstrapPhase,
+      onBootstrapRetry
+    }: {
+      bootstrapPhase?: 'connecting' | 'unavailable'
+      onBootstrapRetry?: () => void
+    }) => {
       const open = React.useSyncExternalStore(shellState.subscribe, shellState.getSnapshot, shellState.getSnapshot)
+      const [menuOpen, setMenuOpen] = React.useState(false)
       const action = open ? 'Close WebChat' : 'Open WebChat'
-      const label = bootstrapPhase === 'unavailable' ? `WebChat unavailable. ${action}` : action
       return React.createElement(
-        'button',
-        {
-          type: 'button',
-          'data-testid': 'launcher',
-          'aria-label': label,
-          onClick: () => shellState.setOpen(!open)
-        },
-        label
+        React.Fragment,
+        null,
+        menuOpen &&
+          bootstrapPhase &&
+          React.createElement(
+            'button',
+            {
+              type: 'button',
+              'data-testid': 'bootstrap-refresh',
+              'aria-label': bootstrapPhase === 'connecting' ? 'Preparing WebChat setup' : 'Retry WebChat setup',
+              disabled: bootstrapPhase === 'connecting',
+              onClick: onBootstrapRetry
+            },
+            React.createElement('span', {
+              'data-testid': 'bootstrap-refresh-icon',
+              'data-rotating': String(bootstrapPhase === 'connecting')
+            })
+          ),
+        React.createElement(
+          'button',
+          {
+            type: 'button',
+            'data-testid': 'launcher',
+            'aria-label': action,
+            onClick: () => shellState.setOpen(!open),
+            onContextMenu: (event: Event) => {
+              event.preventDefault()
+              setMenuOpen((current) => !current)
+            }
+          },
+          action
+        )
       )
     }
   }
@@ -48,6 +78,15 @@ vi.mock('@/app/content/views/app-main', async () => {
   }
 })
 vi.mock('@/app/content/components/danmaku-presentation', () => ({ default: () => null }))
+vi.mock('@/app/content/components/toast-presentation', () => ({ useToastPresentation: () => () => {} }))
+vi.mock('sonner', async () => {
+  const React = await import('react')
+  return {
+    Toaster: React.forwardRef((props: Record<string, unknown>, ref) =>
+      React.createElement('div', { ...props, ref, 'data-testid': 'generic-toaster' })
+    )
+  }
+})
 vi.mock('@/components/ui/button', async () => {
   const React = await import('react')
   return {
@@ -111,9 +150,9 @@ const renderShell = async (phase: 'connecting' | 'unavailable', onRetry = vi.fn(
   }
 }
 
-const click = async (element: Element | null) => {
+const dispatch = async (element: Element | null, type = 'click') => {
   if (!element) throw new Error('Expected interactive control')
-  await act(async () => element.dispatchEvent(new window.Event('click', { bubbles: true })))
+  await act(async () => element.dispatchEvent(new window.Event(type, { bubbles: true, cancelable: true })))
 }
 
 afterAll(() => {
@@ -124,41 +163,64 @@ afterAll(() => {
 })
 
 describe('BootstrapShell accessibility', () => {
-  it('keeps a named launcher and exposes one alert with a keyboard-native Retry button', async () => {
+  it('keeps one Toaster outside the panel and routes unavailable recovery through actions Refresh', async () => {
     const rendered = await renderShell('unavailable')
 
     try {
       const launcher = rendered.container.querySelector<HTMLButtonElement>('[data-testid="launcher"]')
-      expect(launcher?.getAttribute('aria-label')).toBe('WebChat unavailable. Open WebChat')
+      const toaster = rendered.container.querySelector('[data-testid="generic-toaster"]')
+      expect(launcher?.getAttribute('aria-label')).toBe('Open WebChat')
       expect(launcher?.type).toBe('button')
       expect(rendered.container.querySelector('[data-testid="panel"]')).toBeNull()
+      expect(toaster).not.toBeNull()
 
-      await click(launcher)
-
-      expect(rendered.container.querySelector('[role="alert"]')?.textContent).toContain('WebChat unavailable')
-      const retry = rendered.container.querySelector<HTMLButtonElement>('[aria-label="Retry WebChat setup"]')
-      expect(retry?.type).toBe('button')
-      expect(launcher?.getAttribute('aria-label')).toBe('WebChat unavailable. Close WebChat')
-
-      await click(retry)
+      await dispatch(launcher, 'contextmenu')
+      const refresh = rendered.container.querySelector<HTMLButtonElement>('[data-testid="bootstrap-refresh"]')
+      expect(refresh?.disabled).toBe(false)
+      expect(refresh?.getAttribute('aria-label')).toBe('Retry WebChat setup')
+      expect(
+        rendered.container.querySelector('[data-testid="bootstrap-refresh-icon"]')?.getAttribute('data-rotating')
+      ).toBe('false')
+      await dispatch(refresh)
       expect(rendered.onRetry).toHaveBeenCalledOnce()
+
+      await dispatch(launcher)
+
+      const panel = rendered.container.querySelector('[data-testid="panel"]')
+      expect(panel?.textContent).toContain('Preparing WebChat')
+      expect(panel?.textContent).not.toContain('WebChat unavailable')
+      expect(panel?.querySelector('[role="alert"]')).toBeNull()
+      expect(panel?.querySelector('[aria-label="Retry WebChat setup"]')).toBeNull()
+      expect(panel?.querySelector('section')?.getAttribute('aria-busy')).toBe('false')
+      expect(rendered.container.querySelector('[data-testid="generic-toaster"]')).toBe(toaster)
     } finally {
       await rendered.cleanup()
     }
   })
 
-  it('keeps the closed launcher usable while preparation is still bounded and busy', async () => {
+  it('projects an active bootstrap through busy loading content and disabled rotating actions Refresh', async () => {
     const rendered = await renderShell('connecting')
 
     try {
       const launcher = rendered.container.querySelector<HTMLButtonElement>('[data-testid="launcher"]')
       expect(launcher?.getAttribute('aria-label')).toBe('Open WebChat')
 
-      await click(launcher)
+      await dispatch(launcher, 'contextmenu')
+      const refresh = rendered.container.querySelector<HTMLButtonElement>('[data-testid="bootstrap-refresh"]')
+      expect(refresh?.disabled).toBe(true)
+      expect(refresh?.getAttribute('aria-label')).toBe('Preparing WebChat setup')
+      expect(
+        rendered.container.querySelector('[data-testid="bootstrap-refresh-icon"]')?.getAttribute('data-rotating')
+      ).toBe('true')
+      await dispatch(refresh)
+      expect(rendered.onRetry).not.toHaveBeenCalled()
 
-      expect(rendered.container.querySelector('[role="status"]')?.textContent).toContain('Preparing WebChat')
+      await dispatch(launcher)
+
+      expect(rendered.container.querySelector('output')?.textContent).toContain('Preparing WebChat')
       expect(rendered.container.querySelector('section')?.getAttribute('aria-busy')).toBe('true')
-      expect(rendered.container.querySelector('[aria-label="Retry WebChat setup"]')).toBeNull()
+      expect(rendered.container.querySelector('[role="alert"]')).toBeNull()
+      expect(rendered.container.querySelector('[data-testid="generic-toaster"]')).not.toBeNull()
     } finally {
       await rendered.cleanup()
     }

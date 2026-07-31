@@ -1,11 +1,8 @@
 import { Remesh } from 'remesh'
 import { map } from 'rxjs'
-import AppStatusDomain, { defaultStatusState, type AppStatus } from '@/domain/AppStatus'
+import AppStatusDomain from '@/domain/AppStatus'
 import ChatRoomDomain from '@/domain/ChatRoom'
 import UserInfoDomain from '@/domain/UserInfo'
-import { LocalStorageExtern } from '@/domain/externs/Storage'
-import StorageEffect from '@/domain/modules/StorageEffect'
-import { APP_STATUS_STORAGE_KEY } from '@/constants/storage'
 import { MESSAGE_TYPE } from '@/protocol/ChatRoom'
 
 const AppStatusEffectsDomain = Remesh.domain({
@@ -14,16 +11,6 @@ const AppStatusEffectsDomain = Remesh.domain({
     const appStatusDomain = domain.getDomain(AppStatusDomain())
     const chatRoomDomain = domain.getDomain(ChatRoomDomain())
     const userInfoDomain = domain.getDomain(UserInfoDomain())
-    const storageEffect = new StorageEffect({
-      domain,
-      extern: LocalStorageExtern,
-      key: APP_STATUS_STORAGE_KEY
-    })
-
-    storageEffect
-      .set(appStatusDomain.event.SyncToStorageEvent)
-      .get<AppStatus>((value) => appStatusDomain.command.HydrateStatusCommand(value ?? defaultStatusState))
-      .watch<AppStatus>((value) => appStatusDomain.command.UpdateStatusCommand(value ?? defaultStatusState))
 
     domain.effect({
       name: 'OnMessageEffect',

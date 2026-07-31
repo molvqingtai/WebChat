@@ -1,5 +1,8 @@
 import { Remesh } from 'remesh'
 import StatusModule from './modules/Status'
+import { APP_STATUS_STORAGE_KEY } from '@/constants/storage'
+import { LocalStorageExtern } from '@/domain/externs/Storage'
+import StorageEffect from '@/domain/modules/StorageEffect'
 
 export interface AppStatus {
   open: boolean
@@ -125,6 +128,17 @@ const AppStatusDomain = Remesh.domain({
         return [UpdateStatusCommand(next), LoadStatus.command.SetFinishedCommand()]
       }
     })
+
+    const storageEffect = new StorageEffect({
+      domain,
+      extern: LocalStorageExtern,
+      key: APP_STATUS_STORAGE_KEY
+    })
+
+    storageEffect
+      .set(SyncToStorageEvent)
+      .get<AppStatus>((value) => HydrateStatusCommand(value ?? defaultStatusState))
+      .watch<AppStatus>((value) => UpdateStatusCommand(value ?? defaultStatusState))
 
     return {
       query: {

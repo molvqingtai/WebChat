@@ -1,10 +1,11 @@
 import { createContext, useContext, useState, type Dispatch, type ReactElement, type SetStateAction } from 'react'
-import { AlertCircleIcon, LoaderCircleIcon, RefreshCwIcon } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { LoaderCircleIcon } from 'lucide-react'
+import { Toaster } from 'sonner'
 import { checkDarkMode, cn } from '@/utils'
 import AppButton from '@/app/content/views/app-button'
 import AppMain from '@/app/content/views/app-main'
 import DanmakuPresentation from '@/app/content/components/danmaku-presentation'
+import { useToastPresentation } from '@/app/content/components/toast-presentation'
 
 export type BootstrapPhase = 'connecting' | 'unavailable'
 
@@ -26,7 +27,8 @@ export const useAppTheme = () => {
 
 const BootstrapShell = ({ phase, onRetry, application = null }: BootstrapShellProps) => {
   const [themeMode, setThemeMode] = useState<AppThemeMode>(() => (checkDarkMode() ? 'dark' : 'light'))
-  const unavailable = phase === 'unavailable'
+  const toasterRef = useToastPresentation()
+  const connecting = phase === 'connecting'
   const ready = application !== null
 
   return (
@@ -35,31 +37,32 @@ const BootstrapShell = ({ phase, onRetry, application = null }: BootstrapShellPr
         <AppMain>
           {application ?? (
             <section
-              aria-busy={!unavailable}
+              aria-busy={connecting}
               className="row-span-3 flex min-h-0 items-center justify-center rounded-xl bg-slate-50 p-6 text-center dark:bg-slate-950"
             >
               <div className="flex flex-col items-center gap-4 text-slate-600 dark:text-slate-100">
-                <div role={unavailable ? 'alert' : 'status'} aria-live={unavailable ? 'assertive' : 'polite'}>
-                  {unavailable ? (
-                    <AlertCircleIcon aria-hidden="true" className="mx-auto size-6 text-red-500" />
-                  ) : (
-                    <LoaderCircleIcon aria-hidden="true" className="mx-auto size-6 animate-spin" />
-                  )}
-                  <p className="mt-4 text-sm font-medium">
-                    {unavailable ? 'WebChat unavailable' : 'Preparing WebChat'}
-                  </p>
-                </div>
-                {unavailable && (
-                  <Button type="button" onClick={onRetry} aria-label="Retry WebChat setup">
-                    <RefreshCwIcon aria-hidden="true" className="size-4" />
-                    <span>Retry</span>
-                  </Button>
-                )}
+                <output aria-live="polite">
+                  <LoaderCircleIcon aria-hidden="true" className={cn('mx-auto size-6', connecting && 'animate-spin')} />
+                  <p className="mt-4 text-sm font-medium">Preparing WebChat</p>
+                </output>
               </div>
             </section>
           )}
         </AppMain>
-        <AppButton bootstrapPhase={ready ? undefined : phase} />
+        <AppButton bootstrapPhase={ready ? undefined : phase} onBootstrapRetry={onRetry} />
+        <Toaster
+          ref={toasterRef}
+          richColors
+          theme={themeMode}
+          offset="70px"
+          visibleToasts={1}
+          toastOptions={{
+            classNames: {
+              toast: 'dark:bg-slate-950 border dark:border-slate-600'
+            }
+          }}
+          position="top-center"
+        ></Toaster>
         {ready && <DanmakuPresentation />}
       </div>
     </AppThemeContext.Provider>
