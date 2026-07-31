@@ -1,4 +1,4 @@
-import { type FC, useState, type MouseEvent, useCallback, useEffect, useMemo } from 'react'
+import { type FC, useState, type MouseEvent, type MouseEventHandler, useCallback, useEffect, useMemo } from 'react'
 import { SettingsIcon, MoonIcon, SunIcon, HandIcon, RefreshCwIcon } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 
@@ -23,6 +23,7 @@ import ChatRoomDomain from '@/domain/ChatRoom'
 
 export interface AppButtonProps {
   className?: string
+  bootstrapPhase?: 'connecting' | 'unavailable'
 }
 
 export const getReconnectLabel = ({
@@ -42,52 +43,66 @@ export const getReconnectLabel = ({
   return joined ? 'Reconnect this site' : 'Retry connecting this site chat'
 }
 
-const AppButton: FC<AppButtonProps> = ({ className }) => {
+export interface AppLauncherButtonProps {
+  hasUnread?: boolean
+  label: string
+  onClick: MouseEventHandler<HTMLButtonElement>
+  onContextMenu?: MouseEventHandler<HTMLButtonElement>
+}
+
+export const AppLauncherButton: FC<AppLauncherButtonProps> = ({ hasUnread = false, label, onClick, onContextMenu }) => {
+  const DayLogo = [LogoIcon0, LogoIcon1, LogoIcon2, LogoIcon3, LogoIcon4, LogoIcon5, LogoIcon6][getDay(Date())]
+  const content = useMemo(
+    () => (
+      <>
+        <AnimatePresence>
+          {hasUnread && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.1 }}
+              className="absolute -top-1 -right-1 z-30 flex size-5 items-center justify-center"
+            >
+              <span
+                className={cn('absolute inline-flex size-full animate-ping rounded-full opacity-75', 'bg-orange-400')}
+              ></span>
+              <span className={cn('relative inline-flex size-3 rounded-full', 'bg-orange-500')}></span>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        <DayLogo className="relative z-20 size-full max-h-full max-w-full overflow-hidden"></DayLogo>
+      </>
+    ),
+    [hasUnread, DayLogo]
+  )
+
+  return (
+    <Button
+      type="button"
+      onClick={onClick}
+      onContextMenu={onContextMenu}
+      aria-label={label}
+      title={label}
+      className="relative z-20 size-11 rounded-full text-xs shadow-lg shadow-slate-500/50 after:absolute after:-inset-0.5 after:z-10 after:animate-[shimmer_2s_linear_infinite] after:rounded-full after:bg-[conic-gradient(from_var(--shimmer-angle),theme(colors.slate.500)_0%,theme(colors.white)_10%,theme(colors.slate.500)_20%)] has-[>svg]:p-0"
+    >
+      {content}
+    </Button>
+  )
+}
+
+interface AppButtonMenuProps {
+  open: boolean
+  appButtonRef: ReturnType<typeof useDraggable>['setRef']
+}
+
+const AppButtonMenu: FC<AppButtonMenuProps> = ({ open, appButtonRef }) => {
   const send = useRemeshSend()
   const appActionDomain = useRemeshDomain(AppActionDomain())
-  const appStatusDomain = useRemeshDomain(AppStatusDomain())
-  const appOpenStatus = useRemeshQuery(appStatusDomain.query.OpenQuery())
-  const hasUnreadQuery = useRemeshQuery(appStatusDomain.query.HasUnreadQuery())
   const userInfoDomain = useRemeshDomain(UserInfoDomain())
   const userInfo = useRemeshQuery(userInfoDomain.query.UserInfoQuery())
-  const appPosition = useRemeshQuery(appStatusDomain.query.PositionQuery())
-
-  const DayLogo = [LogoIcon0, LogoIcon1, LogoIcon2, LogoIcon3, LogoIcon4, LogoIcon5, LogoIcon6][getDay(Date())]
-
   const isDarkMode = userInfo?.themeMode === 'dark' ? true : userInfo?.themeMode === 'light' ? false : checkDarkMode()
-
-  const [menuOpen, setMenuOpen] = useState(false)
-
-  // Get current window size to recalculate position on resize
-  const windowSize = useWindowResize(() => {
-    // Reset to default position when window resizes
-    send(appStatusDomain.command.UpdatePositionCommand({ x: 50, y: 22 }))
-  })
-
-  const {
-    x,
-    y,
-    setRef: appButtonRef
-  } = useDraggable({
-    initX: appPosition.x,
-    initY: appPosition.y,
-    minX: 50,
-    maxX: windowSize.width - 50,
-    maxY: windowSize.height - 22,
-    minY: 750,
-    reverse: true
-  })
-
-  useEffect(() => {
-    send(appStatusDomain.command.UpdatePositionCommand({ x, y }))
-  }, [x, y, send, appStatusDomain.command])
-
-  const { setRef: appMenuRef } = useTriggerAway(['click'], () => setMenuOpen(false))
-
-  const handleToggleMenu = (e: MouseEvent<HTMLButtonElement>) => {
-    e.preventDefault()
-    setMenuOpen(!menuOpen)
-  }
 
   const handleOpenOptionsPage = useCallback(() => {
     send(appActionDomain.command.OpenOptionsCommand())
@@ -100,10 +115,6 @@ const AppButton: FC<AppButtonProps> = ({ className }) => {
       handleOpenOptionsPage()
     }
   }, [handleOpenOptionsPage, isDarkMode, send, userInfo, userInfoDomain.command])
-
-  const handleToggleApp = () => {
-    send(appStatusDomain.command.UpdateOpenCommand(!appOpenStatus))
-  }
 
   const chatRoomDomain = useRemeshDomain(ChatRoomDomain())
   const chatRoomJoined = useRemeshQuery(chatRoomDomain.query.JoinIsFinishedQuery())
@@ -180,32 +191,69 @@ const AppButton: FC<AppButtonProps> = ({ className }) => {
     ]
   )
 
-  // Memoize main button content to prevent re-render when position changes
-  const mainButtonContent = useMemo(
-    () => (
-      <>
-        <AnimatePresence>
-          {hasUnreadQuery && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.1 }}
-              className="absolute -top-1 -right-1 z-30 flex size-5 items-center justify-center"
-            >
-              <span
-                className={cn('absolute inline-flex size-full animate-ping rounded-full opacity-75', 'bg-orange-400')}
-              ></span>
-              <span className={cn('relative inline-flex size-3 rounded-full', 'bg-orange-500')}></span>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        <DayLogo className="relative z-20 size-full max-h-full max-w-full overflow-hidden"></DayLogo>
-      </>
-    ),
-    [hasUnreadQuery, DayLogo]
+  return (
+    <AnimatePresence>
+      {open && (
+        <motion.div
+          className="z-10 grid gap-y-3"
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: 12 }}
+          transition={{ duration: 0.1 }}
+        >
+          {menuButtons}
+        </motion.div>
+      )}
+    </AnimatePresence>
   )
+}
+
+const AppButton: FC<AppButtonProps> = ({ className, bootstrapPhase }) => {
+  const send = useRemeshSend()
+  const appStatusDomain = useRemeshDomain(AppStatusDomain())
+  const appOpenStatus = useRemeshQuery(appStatusDomain.query.OpenQuery())
+  const hasUnreadQuery = useRemeshQuery(appStatusDomain.query.HasUnreadQuery())
+  const appPosition = useRemeshQuery(appStatusDomain.query.PositionQuery())
+  const [menuOpen, setMenuOpen] = useState(false)
+  const applicationAvailable = bootstrapPhase === undefined
+
+  // Get current window size to recalculate position on resize
+  const windowSize = useWindowResize(() => {
+    // Reset to default position when window resizes
+    send(appStatusDomain.command.UpdatePositionCommand({ x: 50, y: 22 }))
+  })
+
+  const {
+    x,
+    y,
+    setRef: appButtonRef
+  } = useDraggable({
+    initX: appPosition.x,
+    initY: appPosition.y,
+    minX: 50,
+    maxX: windowSize.width - 50,
+    maxY: windowSize.height - 22,
+    minY: 750,
+    reverse: true
+  })
+
+  useEffect(() => {
+    send(appStatusDomain.command.UpdatePositionCommand({ x, y }))
+  }, [x, y, send, appStatusDomain.command])
+
+  const { setRef: appMenuRef } = useTriggerAway(['click'], () => setMenuOpen(false))
+
+  const handleToggleMenu = (event: MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault()
+    setMenuOpen((current) => !current)
+  }
+
+  const handleToggleApp = () => {
+    send(appStatusDomain.command.UpdateOpenCommand(!appOpenStatus))
+  }
+
+  const action = appOpenStatus ? 'Close WebChat' : 'Open WebChat'
+  const launcherLabel = bootstrapPhase === 'unavailable' ? `WebChat unavailable. ${action}` : action
 
   return (
     <div
@@ -217,26 +265,13 @@ const AppButton: FC<AppButtonProps> = ({ className }) => {
         transform: 'translateX(50%)'
       }}
     >
-      <AnimatePresence>
-        {menuOpen && (
-          <motion.div
-            className="z-10 grid gap-y-3"
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 12 }}
-            transition={{ duration: 0.1 }}
-          >
-            {menuButtons}
-          </motion.div>
-        )}
-      </AnimatePresence>
-      <Button
+      {applicationAvailable && <AppButtonMenu open={menuOpen} appButtonRef={appButtonRef} />}
+      <AppLauncherButton
         onClick={handleToggleApp}
-        onContextMenu={handleToggleMenu}
-        className="relative z-20 size-11 rounded-full text-xs shadow-lg shadow-slate-500/50 after:absolute after:-inset-0.5 after:z-10 after:animate-[shimmer_2s_linear_infinite] after:rounded-full after:bg-[conic-gradient(from_var(--shimmer-angle),theme(colors.slate.500)_0%,theme(colors.white)_10%,theme(colors.slate.500)_20%)] has-[>svg]:p-0"
-      >
-        {mainButtonContent}
-      </Button>
+        onContextMenu={applicationAvailable ? handleToggleMenu : undefined}
+        hasUnread={hasUnreadQuery}
+        label={launcherLabel}
+      />
     </div>
   )
 }

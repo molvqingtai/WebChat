@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
-import { CdpClient, evaluateRuntimeMessage, terminateOwnedProcesses, withDeadline } from './chrome-harness.ts'
+import {
+  CdpClient,
+  evaluateRuntimeMessage,
+  terminateOwnedProcesses,
+  waitForUniqueTarget,
+  withDeadline
+} from './chrome-harness.ts'
 
 type FakeEvent = Record<string, unknown>
 type FakeListener = (event: FakeEvent) => void
@@ -61,6 +67,29 @@ describe('Chrome Runtime harness', () => {
       'Timed out waiting for Chrome Runtime suite after 10ms'
     )
     expect(onTimeout).toHaveBeenCalledOnce()
+  })
+
+  it('waits while a target is absent and accepts the first unique target', async () => {
+    const target = { id: 'only-target' }
+    const candidates = vi.fn<() => { id: string }[]>().mockReturnValueOnce([]).mockReturnValueOnce([target])
+
+    await expect(
+      waitForUniqueTarget(candidates, { timeoutMs: 100, intervalMs: 0, label: 'WebChat test target' })
+    ).resolves.toBe(target)
+    expect(candidates).toHaveBeenCalledTimes(2)
+  })
+
+  it('fails closed on multiple targets without accepting a later singleton', async () => {
+    const first = { id: 'first-target' }
+    const candidates = vi
+      .fn<() => { id: string }[]>()
+      .mockReturnValueOnce([first, { id: 'second-target' }])
+      .mockReturnValue([first])
+
+    await expect(
+      waitForUniqueTarget(candidates, { timeoutMs: 100, intervalMs: 0, label: 'WebChat test target' })
+    ).rejects.toThrow('Expected one WebChat test target, received 2')
+    expect(candidates).toHaveBeenCalledOnce()
   })
 
   it('terminates a matching profile child even when the browser root exited first', async () => {

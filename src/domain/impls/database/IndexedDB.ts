@@ -10,11 +10,7 @@ import type {
 } from '@/domain/externs/Database'
 import type { Unsubscribe } from '@/domain/Subscription'
 import { MESSAGE_STORE_VERSION, STORAGE_NAME } from '@/constants/storage'
-import {
-  MessageDatabaseExtern,
-  createMessageDatabaseDefinition,
-  type MessageDatabaseSchema
-} from '@/domain/MessageStore'
+import { createMessageDatabaseDefinition, type MessageDatabaseSchema } from '@/domain/MessageStore'
 import {
   assertDatabaseKey,
   cloneValue,
@@ -558,15 +554,22 @@ const deleteMessageDatabase = (): Promise<void> =>
 export const prepareIndexedDBMessageDatabase = (): Promise<void> => {
   const definition = createMessageDatabaseDefinition(STORAGE_NAME, MESSAGE_STORE_VERSION)
 
-  return withPreparationLock(`message:${STORAGE_NAME}`, async () => {
+  return withPreparationLock(`message:${STORAGE_NAME}`, async (lock) => {
     try {
-      const databases = await indexedDB.databases()
+      const databases = await lock.read(indexedDB.databases())
       const existing = databases.find((database) => database.name === STORAGE_NAME)
-      if (existing && existing.version !== MESSAGE_STORE_VERSION) await deleteMessageDatabase()
+      if (existing && existing.version !== MESSAGE_STORE_VERSION) {
+        await lock.write(async () => {
+          await deleteMessageDatabase()
+        })
+        lock.checkpoint()
+      }
 
-      const database = await openDatabase(definition)
+      const database = await lock.write(() => openDatabase(definition))
       database.close()
-    } catch {
+      lock.checkpoint()
+    } catch (error) {
+      if (lock.signal.aborted) throw error
       console.error('[WebChat] Message store preparation failed')
       throw new Error('Message store preparation failed')
     }
@@ -575,5 +578,3 @@ export const prepareIndexedDBMessageDatabase = (): Promise<void> => {
 
 export const createIndexedDBMessageDatabase = (): Database<MessageDatabaseSchema> =>
   createIndexedDBDatabase(createMessageDatabaseDefinition(STORAGE_NAME, MESSAGE_STORE_VERSION))
-
-export const MessageDatabaseImpl = MessageDatabaseExtern.impl(createIndexedDBMessageDatabase())

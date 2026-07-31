@@ -22,18 +22,22 @@ interface RuntimeApi {
 }
 
 const prepareConfigurationStorage = (identity: string, storage: StorageArea): Promise<void> =>
-  withPreparationLock(`configuration:${identity}`, async () => {
+  withPreparationLock(`configuration:${identity}`, async (lock) => {
     try {
-      const values = await storage.get(CONFIG_STORE_VERSION_KEY)
+      const values = await lock.read(storage.get(CONFIG_STORE_VERSION_KEY))
       if (!Object.prototype.hasOwnProperty.call(values, CONFIG_STORE_VERSION_KEY)) {
-        await storage.set({ [CONFIG_STORE_VERSION_KEY]: CONFIG_STORE_VERSION })
+        await lock.write(() => storage.set({ [CONFIG_STORE_VERSION_KEY]: CONFIG_STORE_VERSION }))
+        lock.checkpoint()
         return
       }
       if (values[CONFIG_STORE_VERSION_KEY] === CONFIG_STORE_VERSION) return
 
-      await storage.clear()
-      await storage.set({ [CONFIG_STORE_VERSION_KEY]: CONFIG_STORE_VERSION })
-    } catch {
+      await lock.write(() => storage.clear())
+      lock.checkpoint()
+      await lock.write(() => storage.set({ [CONFIG_STORE_VERSION_KEY]: CONFIG_STORE_VERSION }))
+      lock.checkpoint()
+    } catch (error) {
+      if (lock.signal.aborted) throw error
       console.error('[WebChat] Configuration store preparation failed')
       throw new Error('Configuration store preparation failed')
     }

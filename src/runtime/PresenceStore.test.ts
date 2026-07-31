@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { PresenceDomainRecord } from '@/domain/runtime/externs/PresenceStore'
 import { createBrowserPresenceStore, createMemoryPresenceStore } from '@/runtime/PresenceStore'
 
@@ -115,5 +115,114 @@ describe('presence store', () => {
       store.save({ ...record, local: { ...record.local!, status: 'unknown' } } as unknown as PresenceDomainRecord)
     ).rejects.toThrow('Invalid Runtime presence record')
     await expect(store.load(DOMAIN)).resolves.toEqual(record)
+  })
+
+  it('bounds a stale per-domain save and restores the newest record after its late completion', async () => {
+    vi.useFakeTimers()
+    const values: Record<string, unknown> = {}
+    const firstStarted = Promise.withResolvers<void>()
+    const releaseFirst = Promise.withResolvers<void>()
+    let writeCount = 0
+    const storage = {
+      get: vi.fn(async (key: string) => ({ [key]: values[key] })),
+      set: vi.fn(async (items: Record<string, unknown>) => {
+        writeCount += 1
+        if (writeCount === 1) {
+          firstStarted.resolve()
+          await releaseFirst.promise
+        }
+        Object.assign(values, items)
+      })
+    }
+    const store = createBrowserPresenceStore(storage)
+    const newer: PresenceDomainRecord = {
+      ...record,
+      lastJoinedAt: 20,
+      local: { ...record.local!, presenceId: 'newer-generation', joinedAt: 20 }
+    }
+    let firstError: Error | null = null
+    let secondSettled = false
+    const first = store.save(record).catch((error: Error) => {
+      firstError = error
+    })
+    await firstStarted.promise
+    const second = store.save(newer).then(() => {
+      secondSettled = true
+    })
+
+    try {
+      await vi.advanceTimersByTimeAsync(5001)
+
+      expect(firstError).toEqual(new Error('Presence store operation timed out'))
+      expect(secondSettled).toBe(true)
+
+      releaseFirst.resolve()
+      await Promise.allSettled([first, second])
+      await vi.waitFor(() => expect(storage.set).toHaveBeenCalledTimes(3))
+      await expect(store.load(DOMAIN)).resolves.toEqual(newer)
+    } finally {
+      releaseFirst.resolve()
+      await Promise.allSettled([first, second])
+      vi.useRealTimers()
+    }
+  })
+
+  it('fences a late timed-out restoration behind the newest revision', async () => {
+    vi.useFakeTimers()
+    const values: Record<string, unknown> = {}
+    const firstStarted = Promise.withResolvers<void>()
+    const releaseFirst = Promise.withResolvers<void>()
+    const restorationStarted = Promise.withResolvers<void>()
+    const releaseRestoration = Promise.withResolvers<void>()
+    let writeCount = 0
+    const storage = {
+      get: vi.fn(async (key: string) => ({ [key]: values[key] })),
+      set: vi.fn(async (items: Record<string, unknown>) => {
+        writeCount += 1
+        if (writeCount === 1) {
+          firstStarted.resolve()
+          await releaseFirst.promise
+        } else if (writeCount === 3) {
+          restorationStarted.resolve()
+          await releaseRestoration.promise
+        }
+        Object.assign(values, items)
+      })
+    }
+    const store = createBrowserPresenceStore(storage)
+    const secondRecord: PresenceDomainRecord = {
+      ...record,
+      lastJoinedAt: 20,
+      local: { ...record.local!, presenceId: 'second-generation', joinedAt: 20 }
+    }
+    const newestRecord: PresenceDomainRecord = {
+      ...record,
+      lastJoinedAt: 30,
+      local: { ...record.local!, presenceId: 'newest-generation', joinedAt: 30 }
+    }
+    const first = store.save(record).catch(() => {})
+    await firstStarted.promise
+    const second = store.save(secondRecord)
+    let newest: Promise<void> | null = null
+
+    try {
+      await vi.advanceTimersByTimeAsync(5001)
+      await second
+
+      releaseFirst.resolve()
+      await restorationStarted.promise
+      newest = store.save(newestRecord)
+      await vi.advanceTimersByTimeAsync(5001)
+      await newest
+
+      releaseRestoration.resolve()
+      await vi.waitFor(() => expect(storage.set).toHaveBeenCalledTimes(5))
+      await expect(store.load(DOMAIN)).resolves.toEqual(newestRecord)
+    } finally {
+      releaseFirst.resolve()
+      releaseRestoration.resolve()
+      await Promise.allSettled([first, second, ...(newest ? [newest] : [])])
+      vi.useRealTimers()
+    }
   })
 })

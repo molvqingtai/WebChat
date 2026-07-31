@@ -84,8 +84,10 @@ describe('replaceable application boundaries', () => {
 
     expect(content.indexOf("window.addEventListener('beforeunload', detachClient")).toBeGreaterThan(-1)
     expect(content.indexOf("window.addEventListener('beforeunload', detachClient")).toBeLessThan(
-      content.indexOf('await initClient()')
+      content.indexOf('createShadowRootUi(ctx')
     )
+    expect(content).toContain('initializeRuntime: initClient')
+    expect(content).toContain('detachRuntime: detachClient')
   })
 
   it('keeps the UI projection free of the obsolete local record alias', async () => {
@@ -153,10 +155,11 @@ describe('replaceable application boundaries', () => {
   })
 
   it('gates both persistence families on independent private version authorities', async () => {
-    const [background, content, options, config, storageConstants, indexedDB, storage, storagePreparation] =
+    const [background, content, bootstrap, options, config, storageConstants, indexedDB, storage, storagePreparation] =
       await Promise.all([
         source('src/app/background/index.ts'),
         source('src/app/content/index.tsx'),
+        source('src/app/content/Bootstrap.tsx'),
         source('src/app/options/main.tsx'),
         source('src/constants/config.ts'),
         source('src/constants/storage.ts'),
@@ -209,25 +212,27 @@ describe('replaceable application boundaries', () => {
       ).toEqual(['src/constants/storage.ts'])
     }
 
-    expect(content).toContain('await requestBrowserSyncStoragePreparation()')
-    expect(content).toContain('await prepareLocalConfigurationStorage()')
-    expect(content).toContain('await prepareIndexedDBMessageDatabase()')
+    expect(content).toContain('prepareBrowserSyncStorage: requestBrowserSyncStoragePreparation')
+    expect(content).toContain('prepareLocalStorage: prepareLocalConfigurationStorage')
+    expect(content).toContain('prepareMessageDatabase: prepareIndexedDBMessageDatabase')
+    expect(content).toContain('initializeRuntime: initClient')
+    expect(content).toContain('<ContentBootstrap dependencies={bootstrapDependencies}')
     expect(background).toContain('registerBrowserSyncStoragePreparation()')
     for (const preparation of [
-      'await requestBrowserSyncStoragePreparation()',
-      'await prepareLocalConfigurationStorage()',
-      'await prepareIndexedDBMessageDatabase()'
+      'run(dependencies.prepareBrowserSyncStorage)',
+      'run(dependencies.prepareLocalStorage)',
+      'run(dependencies.prepareMessageDatabase)'
     ]) {
-      expect(content.indexOf(preparation)).toBeLessThan(content.indexOf('await initClient()'))
-      expect(content.indexOf(preparation)).toBeLessThan(content.indexOf('Remesh.store('))
+      expect(bootstrap.indexOf(preparation)).toBeLessThan(bootstrap.indexOf('run(dependencies.initializeRuntime)'))
+      expect(bootstrap.indexOf(preparation)).toBeLessThan(bootstrap.indexOf('setApplication(createApplication())'))
     }
     expect(options.indexOf('await requestBrowserSyncStoragePreparation()')).toBeLessThan(
       options.indexOf('Remesh.store(')
     )
     expect(options.indexOf('await requestBrowserSyncStoragePreparation()')).toBeLessThan(options.indexOf('createRoot('))
-    expect(`${background}\n${content}\n${options}\n${indexedDB}\n${storage}\n${storagePreparation}`).not.toMatch(
-      /package\.json|WEB_CHAT_VERSION|VERSION_STORAGE_KEY/
-    )
+    expect(
+      `${background}\n${content}\n${bootstrap}\n${options}\n${indexedDB}\n${storage}\n${storagePreparation}`
+    ).not.toMatch(/package\.json|WEB_CHAT_VERSION|VERSION_STORAGE_KEY/)
     expect(`${indexedDB}\n${storage}\n${storagePreparation}`).not.toMatch(
       /AppFeedback|ToastDomain|SystemNotice|alert\(/
     )
@@ -241,6 +246,7 @@ describe('replaceable application boundaries', () => {
     ]
     const violations: string[] = []
     for (const file of files) {
+      if (/\.test\.[cm]?[jt]sx?$/.test(file)) continue
       const value = await source(file)
       if (/domain\/(?:externs\/Database|impls\/database)/.test(value)) violations.push(file)
     }

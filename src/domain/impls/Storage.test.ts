@@ -40,6 +40,14 @@ const deferred = () => {
   return { promise, resolve }
 }
 
+const deferredValue = <Value>() => {
+  let resolve!: (value: Value) => void
+  const promise = new Promise<Value>((settle) => {
+    resolve = settle
+  })
+  return { promise, resolve }
+}
+
 let configurationStorageId = 0
 
 const createVersionStorage = (version: { exists: boolean; value?: unknown }, values = new Map<string, unknown>()) => {
@@ -192,6 +200,40 @@ describe('configuration storage version ownership', () => {
     await prepareConfigurationStorage(identity, fixture.storage)
     expect(fixture.storage.clear).toHaveBeenCalledTimes(1)
     expect(fixture.values.get('new')).toBe('generation')
+  })
+
+  it('shares one completion while Retry replaces an unresolved read owner and fences the late result', async () => {
+    const staleRead = deferredValue<{ readonly exists: boolean; readonly value: unknown }>()
+    const storage: ConfigurationVersionStorage = {
+      readVersion: vi
+        .fn()
+        .mockImplementationOnce(() => staleRead.promise)
+        .mockResolvedValue({ exists: true, value: CONFIG_STORE_VERSION }),
+      writeVersion: vi.fn(async () => {}),
+      clear: vi.fn(async () => {})
+    }
+    const identity = `retry-unresolved-${configurationStorageId++}`
+    const { prepareConfigurationStorage } = await import('./Storage')
+
+    const first = prepareConfigurationStorage(identity, storage)
+    await vi.waitFor(() => expect(storage.readVersion).toHaveBeenCalledOnce())
+    const retry = prepareConfigurationStorage(identity, storage)
+
+    try {
+      expect(retry).toBe(first)
+      await vi.waitFor(() => expect(storage.readVersion).toHaveBeenCalledTimes(2), { interval: 5, timeout: 100 })
+      await expect(retry).resolves.toBeUndefined()
+      await expect(first).resolves.toBeUndefined()
+
+      staleRead.resolve({ exists: true, value: CONFIG_STORE_VERSION + 1 })
+      await Promise.resolve()
+
+      expect(storage.clear).not.toHaveBeenCalled()
+      expect(storage.writeVersion).not.toHaveBeenCalled()
+    } finally {
+      staleRead.resolve({ exists: true, value: CONFIG_STORE_VERSION + 1 })
+      await Promise.allSettled([first, retry])
+    }
   })
 
   it('serializes independent realms so the later owner rereads target completion', async () => {

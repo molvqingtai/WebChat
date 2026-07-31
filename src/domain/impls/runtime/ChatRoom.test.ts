@@ -19,6 +19,7 @@ import type {
   RuntimeSessionEvent,
   RuntimeSnapshot
 } from '@/runtime/Contract'
+import { PagePort } from '@/runtime/PagePort'
 
 const DOMAIN = 'https://example.com'
 const USER = { id: 'local-user', name: 'Local', avatar: '' }
@@ -237,6 +238,45 @@ const setup = async (
     },
     ...server
   }
+}
+
+const setupHistoryCancellation = async () => {
+  const fixture = serverFixture()
+  const pagePort = new PagePort()
+  const server: RuntimeServer = {
+    ...fixture.server,
+    provideHistory: async ({ pageId, domain }, listener) => {
+      pagePort.provideHistory(pageId, domain, listener)
+    },
+    resolveHistorySupply: vi.fn(async ({ pageId, supplyId, result }) => {
+      pagePort.resolveHistorySupply(pageId, supplyId, result)
+    }),
+    rejectHistorySupply: vi.fn(async ({ pageId, supplyId, reason }) => {
+      pagePort.rejectHistorySupply(pageId, supplyId, reason)
+    })
+  }
+  const database = createMemoryMessageDatabase(`history-cancel-${databaseId++}`)
+  const messageStore = createMessageStore(database)
+  const queryStarted = Promise.withResolvers<AbortSignal>()
+  const releaseQuery = Promise.withResolvers<readonly MessageRecord[]>()
+  vi.spyOn(messageStore, 'query').mockImplementation(async (query) => {
+    if (!query?.signal) throw new Error('History query must be abortable')
+    queryStarted.resolve(query.signal)
+    return releaseQuery.promise
+  })
+  const room = new ChatRoom({
+    server,
+    messageStore,
+    pageDomain: DOMAIN,
+    pageId: 'page-1',
+    getSnapshot: () => domainSnapshot(),
+    whenReady: (listener) => {
+      listener()
+      return () => {}
+    }
+  })
+  await settle()
+  return { database, pagePort, queryStarted, releaseQuery, room, server }
 }
 
 beforeEach(() => vi.useFakeTimers())
@@ -566,7 +606,7 @@ describe('Runtime-backed ChatRoom application port', () => {
     expect(messages).toEqual([record.message])
   })
 
-  it('emits the winning live insert across a host swap without ACKing its stale sequence', async () => {
+  it('persists but does not project a winning live insert from a stale host callback', async () => {
     const controlled = new ControlledDatabase(createMemoryMessageDatabase(`host-swap-${databaseId++}`))
     let release!: () => void
     controlled.beforeWrite = () =>
@@ -585,7 +625,8 @@ describe('Runtime-backed ChatRoom application port', () => {
     release()
     await inbound
 
-    expect(messages).toEqual([record.message])
+    expect(messages).toEqual([])
+    await expect(fixture.messageStore.query()).resolves.toEqual([record])
     expect(fixture.server.ackInbound).not.toHaveBeenCalled()
   })
 
@@ -691,6 +732,102 @@ describe('Runtime-backed ChatRoom application port', () => {
     })
   })
 
+  it('terminally rejects a cancelled slow history query exactly once', async () => {
+    const fixture = await setupHistoryCancellation()
+    const request = { supplyId: 'supply-cancel', domain: DOMAIN, syncId: 'sync-cancel', cutoff: 0 }
+    let suppliedResult: Error | 'pending' = 'pending'
+    const supplied = fixture.pagePort.supplyHistory('page-1', request).then(
+      () => {
+        suppliedResult = new Error('History supply unexpectedly resolved')
+      },
+      (error: Error) => {
+        suppliedResult = error
+      }
+    )
+    const signal = await fixture.queryStarted.promise
+    let cancellationSettled = false
+    const cancelled = fixture.pagePort.cancelHistorySupply(request.supplyId).then(() => {
+      cancellationSettled = true
+    })
+
+    try {
+      await settle()
+
+      expect(signal.aborted).toBe(true)
+      expect(fixture.server.rejectHistorySupply).toHaveBeenCalledOnce()
+      expect(fixture.server.rejectHistorySupply).toHaveBeenCalledWith({
+        pageId: 'page-1',
+        supplyId: request.supplyId,
+        reason: 'History supply cancelled'
+      })
+      expect(cancellationSettled).toBe(true)
+      expect(suppliedResult).toEqual(new Error('History supplier timed out'))
+      expect(fixture.pagePort.pendingHistoryCountForTest()).toBe(0)
+
+      fixture.releaseQuery.resolve([])
+      await settle()
+      expect(fixture.server.rejectHistorySupply).toHaveBeenCalledOnce()
+      expect(fixture.server.resolveHistorySupply).not.toHaveBeenCalled()
+    } finally {
+      fixture.releaseQuery.resolve([])
+      fixture.room.dispose()
+      fixture.pagePort.dispose()
+      await Promise.all([supplied, cancelled])
+      await fixture.database.close()
+    }
+  })
+
+  it('settles provider replacement while fencing the old query from a new supply', async () => {
+    const fixture = await setupHistoryCancellation()
+    const oldRequest = { supplyId: 'supply-old', domain: DOMAIN, syncId: 'sync-old', cutoff: 0 }
+    let oldSupplyResult: Error | 'pending' | null = 'pending'
+    const oldSupply = fixture.pagePort.supplyHistory('page-1', oldRequest).then(
+      (result) => {
+        oldSupplyResult = result === null ? null : new Error('Old history supply unexpectedly returned records')
+      },
+      (error: Error) => {
+        oldSupplyResult = error
+      }
+    )
+    const oldSignal = await fixture.queryStarted.promise
+    const replacementEvents: HistorySupplyEvent[] = []
+
+    try {
+      await fixture.server.provideHistory({ pageId: 'page-1', domain: DOMAIN }, (event) => {
+        replacementEvents.push(event)
+      })
+      await settle()
+
+      expect(oldSignal.aborted).toBe(true)
+      expect(fixture.server.rejectHistorySupply).toHaveBeenCalledOnce()
+      expect(fixture.server.rejectHistorySupply).toHaveBeenCalledWith({
+        pageId: 'page-1',
+        supplyId: oldRequest.supplyId,
+        reason: 'History supply cancelled'
+      })
+      expect(oldSupplyResult).toBeNull()
+
+      const newRequest = { supplyId: 'supply-new', domain: DOMAIN, syncId: 'sync-new', cutoff: 0 }
+      const newSupply = fixture.pagePort.supplyHistory('page-1', newRequest).catch((error: Error) => error)
+      expect(replacementEvents).toEqual([{ type: 'request', request: newRequest }])
+      fixture.releaseQuery.resolve([])
+      await settle()
+
+      expect(fixture.pagePort.pendingHistoryCountForTest()).toBe(1)
+      expect(fixture.server.rejectHistorySupply).toHaveBeenCalledOnce()
+      expect(fixture.server.resolveHistorySupply).not.toHaveBeenCalled()
+
+      fixture.pagePort.removePage('page-1')
+      await expect(newSupply).resolves.toEqual(new Error('History supplier page detached'))
+    } finally {
+      fixture.releaseQuery.resolve([])
+      fixture.room.dispose()
+      fixture.pagePort.dispose()
+      await oldSupply
+      await fixture.database.close()
+    }
+  })
+
   it('reconnects the current room without publishing a synthetic leave snapshot', async () => {
     const { room, leaveCount, reconnectCount } = await setup()
     const snapshots: Array<readonly ChatSession[]> = []
@@ -714,5 +851,71 @@ describe('Runtime-backed ChatRoom application port', () => {
     await settle()
 
     await expect(room.leaveRoom()).rejects.toMatchObject({ name: 'AbortError' })
+  })
+
+  it('cancels pending replay on page disposal without blocking a replacement page', async () => {
+    const fixture = serverFixture()
+    const replayStarted = Promise.withResolvers<void>()
+    const releaseReplay = Promise.withResolvers<void>()
+    let replayCalls = 0
+    let joinCalls = 0
+    const server: RuntimeServer = {
+      ...fixture.server,
+      joinChatRoom: async (payload) => {
+        joinCalls += 1
+        return fixture.server.joinChatRoom(payload)
+      },
+      replayInbound: async () => {
+        replayCalls += 1
+        if (replayCalls === 1) {
+          replayStarted.resolve()
+          await releaseReplay.promise
+        }
+        return []
+      }
+    }
+    const database = createMemoryMessageDatabase(`disposed-replay-${databaseId++}`)
+    const messageStore = createMessageStore(database)
+    const createRoom = () =>
+      new ChatRoom({
+        server,
+        messageStore,
+        pageDomain: DOMAIN,
+        pageId: 'page-1',
+        getSnapshot: () => domainSnapshot(),
+        whenReady: (listener) => {
+          listener()
+          return () => {}
+        }
+      })
+    const firstRoom = createRoom()
+    let firstResult: Error | 'pending' | null = 'pending'
+    const firstJoin = firstRoom.joinRoom({ user: USER, site: SITE }).then(
+      () => {
+        firstResult = null
+      },
+      (error: Error) => {
+        firstResult = error
+      }
+    )
+    await replayStarted.promise
+
+    try {
+      firstRoom.dispose()
+      await settle()
+      expect(firstResult).toMatchObject({ name: 'AbortError' })
+      expect(joinCalls).toBe(0)
+
+      const replacement = createRoom()
+      await replacement.joinRoom({ user: USER, site: SITE })
+      expect(replayCalls).toBe(2)
+      expect(joinCalls).toBe(1)
+      replacement.dispose()
+    } finally {
+      releaseReplay.resolve()
+      await firstJoin
+      firstRoom.dispose()
+      await database.close()
+    }
   })
 })
