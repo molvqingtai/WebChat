@@ -89,6 +89,7 @@ export const useInitialization = ({
   const retryInFlight = useRef(false)
 
   useEffect(() => {
+    // Cleanup owns any Runtime started by this generation; stale continuations may neither activate externs nor settle feedback.
     const generation = ++currentGeneration.current
     const controller = new AbortController()
     let active = true

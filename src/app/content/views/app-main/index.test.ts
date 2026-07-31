@@ -1,18 +1,30 @@
 import { createRequire } from 'node:module'
 import { afterAll, describe, expect, it, vi } from 'vitest'
 
+const presence = vi.hoisted(() => ({ completeExit: null as (() => void) | null }))
+
 vi.mock('framer-motion', async () => {
   const React = await import('react')
   return {
-    AnimatePresence: ({ children, onExitComplete }: { children?: React.ReactNode; onExitComplete?: () => void }) => {
+    AnimatePresence: ({ children }: { children?: React.ReactNode }) => {
+      const [presentChildren, setPresentChildren] = React.useState(children)
       React.useEffect(() => {
-        if (!children) onExitComplete?.()
-      }, [children, onExitComplete])
-      return React.createElement(React.Fragment, null, children)
+        if (children) {
+          presence.completeExit = null
+          setPresentChildren(children)
+          return
+        }
+        presence.completeExit = () => setPresentChildren(null)
+      }, [children])
+      return React.createElement(React.Fragment, null, presentChildren)
     },
     motion: {
-      div: ({ children, ...props }: { children?: React.ReactNode } & Record<string, unknown>) =>
-        React.createElement('div', props, children)
+      div: ({ children, animate, ...props }: { children?: React.ReactNode } & Record<string, unknown>) =>
+        React.createElement(
+          'div',
+          { ...props, 'data-motion-x': (animate as { x?: string } | undefined)?.x ?? '' },
+          children
+        )
     }
   }
 })
@@ -57,7 +69,7 @@ afterAll(() => {
 })
 
 describe('stable normal shell', () => {
-  it('keeps the same shell-owned Toaster mounted across collapsed and expanded panel states', async () => {
+  it('keeps the same viewport-relative shell Toaster across collapsed, expanded, and exiting panel states', async () => {
     const container = document.createElement('div')
     document.body.append(container)
     const root = createRoot(container)
@@ -82,22 +94,35 @@ describe('stable normal shell', () => {
       expect(initialToaster).not.toBeNull()
       expect(shell?.contains(initialToaster)).toBe(true)
       expect(shell?.className).toBe('contents')
+      expect(shell?.style.transform).toBe('')
+      expect(initialToaster?.closest('[data-webchat-panel]')).toBeNull()
       expect(container.querySelector('[data-webchat-panel]')).toBeNull()
 
       await render(true)
+      const panel = container.querySelector<HTMLElement>('[data-webchat-panel]')
       expect(container.querySelector('[data-webchat-shell]')).toBe(shell)
       expect(container.querySelector('[data-testid="toaster"]')).toBe(initialToaster)
-      expect(shell?.className).not.toBe('contents')
-      expect(container.querySelector('[data-webchat-panel]')).not.toBeNull()
+      expect(shell?.className).toBe('contents')
+      expect(shell?.style.transform).toBe('')
+      expect(panel?.className).toContain('fixed')
+      expect(panel?.dataset.motionX).toBe('-100%')
+      expect(initialToaster?.closest('[data-webchat-panel]')).toBeNull()
       expect(container.querySelector('[data-testid="chat-area"]')).not.toBeNull()
 
       await render(false)
       expect(container.querySelector('[data-webchat-shell]')).toBe(shell)
       expect(container.querySelector('[data-testid="toaster"]')).toBe(initialToaster)
+      expect(container.querySelector('[data-webchat-panel]')).toBe(panel)
       expect(shell?.className).toBe('contents')
+      expect(shell?.style.transform).toBe('')
+      expect(initialToaster?.closest('[data-webchat-panel]')).toBeNull()
+
+      await act(async () => presence.completeExit?.())
       expect(container.querySelector('[data-webchat-panel]')).toBeNull()
+      expect(container.querySelector('[data-testid="toaster"]')).toBe(initialToaster)
     } finally {
       await act(async () => root.unmount())
+      presence.completeExit = null
       container.remove()
     }
   })

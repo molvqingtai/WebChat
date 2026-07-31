@@ -1,4 +1,4 @@
-import { type ReactNode, type FC, useEffect, useState, useMemo } from 'react'
+import { type ReactNode, type FC, useState, useMemo } from 'react'
 import useResizable from '@/hooks/useResizable'
 import { motion, AnimatePresence } from 'framer-motion'
 import AppStatusDomain from '@/domain/AppStatus'
@@ -35,50 +35,32 @@ export const AppMainFrame: FC<AppMainFrameProps> = ({ children, className, toast
   })
 
   const [isAnimationComplete, setIsAnimationComplete] = useState(false)
-  const [panelPositioned, setPanelPositioned] = useState(open)
-
-  useEffect(() => {
-    if (open) setPanelPositioned(true)
-  }, [open])
 
   // Memoize children to prevent unnecessary re-renders when position changes
   const memoizedChildren = useMemo(() => children, [children])
 
   return (
-    <div
-      data-webchat-shell
-      style={
-        open || panelPositioned
-          ? {
-              width: `${size}px`,
-              left: `${absoluteX}px`,
-              bottom: `calc(100vh - ${absoluteY}px + 22px)`,
-              transform: isOnRightSide ? 'translateX(-100%)' : 'translateX(0)'
-            }
-          : undefined
-      }
-      className={
-        open || panelPositioned
-          ? cn(
-              'fixed inset-y-10 right-10 z-infinity mt-auto mb-0 box-border max-h-[min(calc(100vh_-60px),_1000px)] min-h-[375px] font-sans',
-              { 'transition-transform': isAnimationComplete }
-            )
-          : 'contents'
-      }
-    >
-      <AnimatePresence onExitComplete={() => !open && setPanelPositioned(false)}>
+    <div data-webchat-shell className="contents">
+      {/* Keep positioning and exit transforms panel-local so the shell-owned fixed Toaster remains viewport-relative. */}
+      <AnimatePresence>
         {open && (
           <motion.div
             data-webchat-panel
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
+            initial={{ opacity: 0, y: 10, x: isOnRightSide ? '-100%' : '0' }}
+            animate={{ opacity: 1, y: 0, x: isOnRightSide ? '-100%' : '0' }}
             exit={{ opacity: 0, y: 10 }}
             transition={{ duration: 0.3, ease: 'linear' }}
             onAnimationEnd={() => setIsAnimationComplete(true)}
             onAnimationStart={() => setIsAnimationComplete(false)}
+            style={{
+              width: `${size}px`,
+              left: `${absoluteX}px`,
+              bottom: `calc(100vh - ${absoluteY}px + 22px)`
+            }}
             className={cn(
-              'absolute inset-0 grid grid-flow-col grid-rows-[auto_1fr_auto] rounded-xl bg-slate-50 shadow-2xl dark:bg-slate-950',
-              className
+              'z-infinity fixed inset-y-10 right-10 mt-auto mb-0 box-border grid max-h-[min(calc(100vh_-60px),_1000px)] min-h-[375px] grid-flow-col grid-rows-[auto_1fr_auto] rounded-xl bg-slate-50 font-sans shadow-2xl dark:bg-slate-950',
+              className,
+              { 'transition-transform': isAnimationComplete }
             )}
           >
             {memoizedChildren}
