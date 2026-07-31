@@ -14,6 +14,44 @@ vi.mock('@/app/content/BootstrapShell', async () => {
   }
 })
 
+const appStatus = vi.hoisted(() => ({ load: 'pending' as 'pending' | 'rejected' | 'finished' }))
+const remesh = vi.hoisted(() => {
+  const query = new Proxy<Record<string, () => string>>({}, { get: (_, name) => () => String(name) })
+  const command = new Proxy<Record<string, () => string>>({}, { get: (_, name) => () => String(name) })
+  return { domain: { query, command }, send: vi.fn() }
+})
+
+vi.mock('remesh-react', () => ({
+  useRemeshDomain: () => remesh.domain,
+  useRemeshQuery: (query: string) => (query === 'StatusLoadIsFinishedQuery' ? appStatus.load === 'finished' : false),
+  useRemeshSend: () => remesh.send
+}))
+vi.mock('@webcomponents/custom-elements', () => ({}))
+vi.mock('@/app/content/views/header', async () => {
+  const React = await import('react')
+  return { default: () => React.createElement('div', { 'data-testid': 'dependent-content' }) }
+})
+vi.mock('@/app/content/views/footer', () => ({ default: () => null }))
+vi.mock('@/app/content/views/main', () => ({ default: () => null }))
+vi.mock('@/app/content/views/setup', () => ({ default: () => null }))
+vi.mock('@/app/content/views/app-main', async () => {
+  const React = await import('react')
+  return {
+    default: ({ children }: { children?: React.ReactNode }) =>
+      React.createElement('section', { 'data-testid': 'application-frame' }, children)
+  }
+})
+vi.mock('@/app/content/views/app-button', async () => {
+  const React = await import('react')
+  return { default: () => React.createElement('button', { type: 'button', 'data-testid': 'application-launcher' }) }
+})
+vi.mock('@/app/content/components/danmaku-container', async () => {
+  const React = await import('react')
+  return { default: React.forwardRef(() => React.createElement('div', { 'data-testid': 'danmaku-container' })) }
+})
+vi.mock('@/app/content/components/toast-presentation', () => ({ useToastPresentation: () => null }))
+vi.mock('sonner', () => ({ Toaster: () => null }))
+
 const require = createRequire(import.meta.url)
 const wxtRequire = createRequire(require.resolve('wxt'))
 const { parseHTML } = wxtRequire('linkedom') as {
@@ -22,6 +60,14 @@ const { parseHTML } = wxtRequire('linkedom') as {
 const { window, document } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>')
 Object.defineProperty(window, 'location', { value: new URL('https://bootstrap.test/'), configurable: true })
 Object.defineProperty(document, 'location', { value: window.location, configurable: true })
+window.matchMedia = () =>
+  ({
+    matches: false,
+    addEventListener() {},
+    removeEventListener() {},
+    addListener() {},
+    removeListener() {}
+  }) as unknown as MediaQueryList
 const previousGlobals = new Map<string, PropertyDescriptor | undefined>()
 for (const [name, value] of Object.entries({
   window,
@@ -43,6 +89,7 @@ const React = await import('react')
 const { act } = React
 const { createRoot } = await import('react-dom/client')
 const { default: ContentBootstrap } = await import('@/app/content/Bootstrap')
+const { default: App } = await import('@/app/content/App')
 
 const settle = (milliseconds = 0) => new Promise((resolve) => setTimeout(resolve, milliseconds))
 const waitFor = async (predicate: () => boolean, timeout = 2000) => {
@@ -216,4 +263,25 @@ describe('ContentBootstrap generation ownership', () => {
       await rendered.cleanup()
     }
   })
+
+  it.each(['pending', 'rejected'] as const)(
+    'keeps the application frame and launcher after Runtime succeeds while AppStatus loading is %s',
+    async (load) => {
+      const fixture = createFixture()
+      appStatus.load = load
+      fixture.createApplication.mockImplementation(() => React.createElement(App))
+      const rendered = await renderBootstrap(fixture)
+
+      try {
+        await waitFor(() => rendered.container.querySelector('#app') !== null)
+
+        expect(rendered.container.querySelector('[data-testid="bootstrap-shell"]')).toBeNull()
+        expect(rendered.container.querySelectorAll('[data-testid="application-frame"]')).toHaveLength(1)
+        expect(rendered.container.querySelectorAll('[data-testid="application-launcher"]')).toHaveLength(1)
+        expect(rendered.container.querySelector('[data-testid="dependent-content"]')).toBeNull()
+      } finally {
+        await rendered.cleanup()
+      }
+    }
+  )
 })

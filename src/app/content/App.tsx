@@ -76,9 +76,9 @@ export default function App() {
 
   return (
     <div id="app" className={cn('contents', themeMode)}>
-      {appStatusLoadIsFinished && (
-        <>
-          <AppMain>
+      <AppMain>
+        {appStatusLoadIsFinished && (
+          <>
             <Header />
             <Main />
             <Footer />
@@ -96,10 +96,10 @@ export default function App() {
               }}
               position="top-center"
             ></Toaster>
-          </AppMain>
-          <AppButton></AppButton>
-        </>
-      )}
+          </>
+        )}
+      </AppMain>
+      <AppButton></AppButton>
       <DanmakuContainer ref={danmakuContainerRef} />
     </div>
   )

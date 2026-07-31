@@ -2,7 +2,15 @@ import { execFileSync, spawn } from 'node:child_process'
 import { access, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
-import { CdpClient, delay, evaluateRuntimeMessage, terminateOwnedProcesses, withDeadline } from './chrome-harness.ts'
+import {
+  CdpClient,
+  delay,
+  evaluateRuntimeMessage,
+  terminateOwnedProcesses,
+  waitFor,
+  waitForUniqueTarget,
+  withDeadline
+} from './chrome-harness.ts'
 
 type ProcessEntry = {
   pid: number
@@ -121,24 +129,6 @@ if (
   throw new Error('Chrome extension manifest name must be a non-empty string')
 }
 const extensionName = extensionManifest.name
-
-const waitFor = async <T>(
-  check: () => T | null | undefined | false | Promise<T | null | undefined | false>,
-  { timeoutMs, label, intervalMs = 100 }: { timeoutMs: number; label: string; intervalMs?: number }
-): Promise<T> => {
-  const startedAt = Date.now()
-  let lastError: unknown
-  while (Date.now() - startedAt < timeoutMs) {
-    try {
-      const value = await check()
-      if (value) return value
-    } catch (error) {
-      lastError = error
-    }
-    await delay(intervalMs)
-  }
-  throw new Error(`Timed out waiting for ${label}${lastError ? `: ${errorMessage(lastError)}` : ''}`)
-}
 
 const remoteValue = (value: any): unknown => {
   if (Object.hasOwn(value, 'value')) return value.value
@@ -394,26 +384,18 @@ try {
       const extensionId = new URL(contentContext.origin).host
       const extensionTargets = () =>
         [...targets.values()].filter((target) => target.url.startsWith('chrome-extension://'))
-      const offscreenTarget = await waitFor(
-        () => {
-          const candidates = extensionTargets().filter(
+      const offscreenTarget = await waitForUniqueTarget(
+        () =>
+          extensionTargets().filter(
             (target) => new URL(target.url).host === extensionId && target.url.endsWith('/offscreen.html')
-          )
-          if (candidates.length > 1)
-            throw new Error(`Expected one WebChat Offscreen target, received ${candidates.length}`)
-          return candidates[0]
-        },
+          ),
         { timeoutMs: startupTimeoutMs, label: 'WebChat Offscreen target' }
       )
-      const worker = await waitFor(
-        () => {
-          const candidates = extensionTargets().filter(
+      const worker = await waitForUniqueTarget(
+        () =>
+          extensionTargets().filter(
             (target) => target.type === 'service_worker' && new URL(target.url).host === extensionId
-          )
-          if (candidates.length > 1)
-            throw new Error(`Expected one WebChat Runtime service worker target, received ${candidates.length}`)
-          return candidates[0]
-        },
+          ),
         { timeoutMs: startupTimeoutMs, label: 'WebChat Runtime service worker target' }
       )
 

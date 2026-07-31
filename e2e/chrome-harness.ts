@@ -50,6 +50,38 @@ type CleanupOptions = {
 
 export const delay = (durationMs: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, durationMs))
 
+const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error))
+
+export const waitFor = async <T>(
+  check: () => T | null | undefined | false | Promise<T | null | undefined | false>,
+  { timeoutMs, label, intervalMs = 100 }: { timeoutMs: number; label: string; intervalMs?: number }
+): Promise<T> => {
+  const startedAt = Date.now()
+  let lastError: unknown
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      const value = await check()
+      if (value) return value
+    } catch (error) {
+      lastError = error
+    }
+    await delay(intervalMs)
+  }
+  throw new Error(`Timed out waiting for ${label}${lastError ? `: ${errorMessage(lastError)}` : ''}`)
+}
+
+export const waitForUniqueTarget = <Target>(
+  candidates: () => readonly Target[] | Promise<readonly Target[]>,
+  options: { timeoutMs: number; label: string; intervalMs?: number }
+): Promise<Target> =>
+  waitFor(async () => {
+    const current = await candidates()
+    return current.length === 0 ? null : current
+  }, options).then((current) => {
+    if (current.length !== 1) throw new Error(`Expected one ${options.label}, received ${current.length}`)
+    return current[0]
+  })
+
 export const withDeadline = <T>(
   promise: PromiseLike<T> | T,
   timeoutMs: number,
