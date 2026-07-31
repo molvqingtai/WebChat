@@ -62,8 +62,33 @@ jobs:
       - name: Generate WXT types
         run: pnpm exec wxt prepare
       - run: pnpm run check
+
+  tests:
+    needs: [setup]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: lts/*
+      - uses: pnpm/action-setup@v5
+        with:
+          version: latest
+      - name: Restore pnpm cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.pnpm-store
+            node_modules
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
       - name: Install Chromium for Vitest Browser Mode
         run: pnpm exec playwright install --with-deps chromium
+      - name: Generate WXT types
+        run: pnpm exec wxt prepare
       - run: pnpm run test
 
   build:
@@ -91,7 +116,7 @@ jobs:
       - run: pnpm run build
 
   release:
-    needs: [setup, linter, build]
+    needs: [setup, linter, tests, build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
