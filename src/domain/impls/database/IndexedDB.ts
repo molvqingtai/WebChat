@@ -10,11 +10,7 @@ import type {
 } from '@/domain/externs/Database'
 import type { Unsubscribe } from '@/domain/Subscription'
 import { MESSAGE_STORE_VERSION, STORAGE_NAME } from '@/constants/storage'
-import {
-  MessageDatabaseExtern,
-  createMessageDatabaseDefinition,
-  type MessageDatabaseSchema
-} from '@/domain/MessageStore'
+import { createMessageDatabaseDefinition, type MessageDatabaseSchema } from '@/domain/MessageStore'
 import {
   assertDatabaseKey,
   cloneValue,
@@ -575,5 +571,3 @@ export const prepareIndexedDBMessageDatabase = (): Promise<void> => {
 
 export const createIndexedDBMessageDatabase = (): Database<MessageDatabaseSchema> =>
   createIndexedDBDatabase(createMessageDatabaseDefinition(STORAGE_NAME, MESSAGE_STORE_VERSION))
-
-export const MessageDatabaseImpl = MessageDatabaseExtern.impl(createIndexedDBMessageDatabase())

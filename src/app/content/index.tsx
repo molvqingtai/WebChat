@@ -1,13 +1,13 @@
 import React from 'react'
 import { createRoot } from 'react-dom/client'
-import { Remesh } from 'remesh'
+import { Remesh, type RemeshExtern, type RemeshExternImpl } from 'remesh'
 import { RemeshRoot, RemeshScope } from 'remesh-react'
 // import { RemeshLogger } from 'remesh-logger'
 import { defineContentScript, createShadowRootUi } from '#imports'
 
 import App from './App'
 import { LocalStorageImpl, BrowserSyncStorageImpl, prepareLocalConfigurationStorage } from '@/domain/impls/Storage'
-import { MessageDatabaseImpl, prepareIndexedDBMessageDatabase } from '@/domain/impls/database/IndexedDB'
+import { createIndexedDBMessageDatabase, prepareIndexedDBMessageDatabase } from '@/domain/impls/database/IndexedDB'
 import { detachClient, initClient, whenHostPhase } from '@/domain/impls/runtime/Client'
 import { DanmakuImpl } from '@/domain/impls/Danmaku'
 import { NotificationImpl } from '@/domain/impls/Notification'
@@ -28,6 +28,10 @@ import AppStatusEffectsDomain from '@/domain/AppStatusEffects'
 import { createElement } from '@/utils'
 import { requestBrowserSyncStoragePreparation } from '@/service/StoragePreparation'
 import ContentBootstrap, { type BootstrapDependencies } from '@/app/content/Bootstrap'
+import { MessageDatabaseExtern } from '@/domain/MessageStore'
+import { ChatRoomExtern } from '@/domain/externs/ChatRoom'
+import { WorldRoomExtern } from '@/domain/externs/WorldRoom'
+import { ReadinessExtern } from '@/domain/externs/Readiness'
 
 const bootstrapDependencies: BootstrapDependencies = {
   prepareBrowserSyncStorage: requestBrowserSyncStoragePreparation,
@@ -37,18 +41,38 @@ const bootstrapDependencies: BootstrapDependencies = {
   detachRuntime: detachClient
 }
 
-const createApplicationStore = () => {
-  const ChatRoomImpl = createChatRoomImpl(MessageDatabaseImpl.value)
-  const WorldRoomImpl = createWorldRoomImpl()
-  const ReadinessImpl = createReadinessImpl(whenHostPhase)
-  return Remesh.store({
+const createDeferredExtern = <Value,>(Extern: RemeshExtern<Value>) => {
+  let resolved: { value: Value } | null = null
+  const implementation: RemeshExternImpl<Value> = {
+    type: 'RemeshExternImpl',
+    Extern,
+    get value() {
+      if (!resolved) throw new Error('Application dependency is unavailable before bootstrap')
+      return resolved.value
+    }
+  }
+  return {
+    implementation,
+    resolve: (value: Value) => {
+      if (resolved) throw new Error('Application dependency is already initialized')
+      resolved = { value }
+    }
+  }
+}
+
+const createShellStore = () => {
+  const messageDatabase = createDeferredExtern(MessageDatabaseExtern)
+  const chatRoom = createDeferredExtern(ChatRoomExtern)
+  const worldRoom = createDeferredExtern(WorldRoomExtern)
+  const readiness = createDeferredExtern(ReadinessExtern)
+  const store = Remesh.store({
     externs: [
       LocalStorageImpl,
       BrowserSyncStorageImpl,
-      MessageDatabaseImpl,
-      ChatRoomImpl,
-      WorldRoomImpl,
-      ReadinessImpl,
+      messageDatabase.implementation,
+      chatRoom.implementation,
+      worldRoom.implementation,
+      readiness.implementation,
       AppActionImpl,
       ToastImpl,
       DanmakuImpl,
@@ -56,6 +80,19 @@ const createApplicationStore = () => {
     ]
     // inspectors: __DEV__ ? [RemeshLogger()] : []
   })
+  return {
+    store,
+    activateApplicationDependencies: () => {
+      const database = createIndexedDBMessageDatabase()
+      const ChatRoomImpl = createChatRoomImpl(database)
+      const WorldRoomImpl = createWorldRoomImpl()
+      const ReadinessImpl = createReadinessImpl(whenHostPhase)
+      messageDatabase.resolve(database)
+      chatRoom.resolve(ChatRoomImpl.value)
+      worldRoom.resolve(WorldRoomImpl.value)
+      readiness.resolve(ReadinessImpl.value)
+    }
+  }
 }
 
 const createApplication = () => {
@@ -97,10 +134,14 @@ export default defineContentScript({
         const app = createElement('<div id="root"></div>')
         container.append(app)
         const root = createRoot(app)
-        const store = createApplicationStore()
+        const { store, activateApplicationDependencies } = createShellStore()
+        const createReadyApplication = () => {
+          activateApplicationDependencies()
+          return createApplication()
+        }
         root.render(
           <RemeshRoot store={store}>
-            <ContentBootstrap dependencies={bootstrapDependencies} createApplication={createApplication} />
+            <ContentBootstrap dependencies={bootstrapDependencies} createApplication={createReadyApplication} />
           </RemeshRoot>
         )
         return root
