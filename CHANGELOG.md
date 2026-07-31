@@ -1,3 +1,24 @@
+# [2.1.0](https://github.com/molvqingtai/WebChat/compare/v2.0.1...v2.1.0) (2026-07-31)
+
+### Bug Fixes
+
+- **content:** defer runtime dependencies until ready ([c318974](https://github.com/molvqingtai/WebChat/commit/c318974a887452485862b00cc232fe21a72bf2d0))
+- **content:** keep shell available during bootstrap ([f43c151](https://github.com/molvqingtai/WebChat/commit/f43c1511f13ca72adc4a6eea80f3570bc7945503))
+- **content:** keep shell visible through status loading ([5b40948](https://github.com/molvqingtai/WebChat/commit/5b409481ea5785200f836fdd08f0164b8400e424))
+- **content:** preserve shell through runtime handoff ([6f2fc86](https://github.com/molvqingtai/WebChat/commit/6f2fc8622d3557aa8139642c373fd071e87d29f3))
+- **persistence:** use canonical IndexedDB identity ([eec7195](https://github.com/molvqingtai/WebChat/commit/eec7195f5dcdd1f26b8c86651d51d1361e8882f4))
+- **runtime:** settle cancelled history supplies ([24dbf85](https://github.com/molvqingtai/WebChat/commit/24dbf85ed721533c6faa4c8ebde168878e0a6d5f))
+- **runtime:** settle page connection completion ([e661598](https://github.com/molvqingtai/WebChat/commit/e661598989e70b67c6437db86ad773ec5e745cc0))
+- **storage:** lock message database deletion ([b0254c2](https://github.com/molvqingtai/WebChat/commit/b0254c2c864385b4d911a42a6a4e57dde9d0f222))
+- **storage:** replace stalled preparation generations ([838824b](https://github.com/molvqingtai/WebChat/commit/838824b8bf3b30a0ad13c91a17984332eb5279dd))
+- **storage:** require cross-context preparation locks ([f44f250](https://github.com/molvqingtai/WebChat/commit/f44f25015a38d4ef65d94a8b768d9e620d8f3463))
+- **toast:** preserve error default duration ([34d10cf](https://github.com/molvqingtai/WebChat/commit/34d10cf83e62b8e43e08866da234dabf37b20b8b))
+
+### Features
+
+- reset incompatible persistence stores ([e9eaead](https://github.com/molvqingtai/WebChat/commit/e9eaead37d2bdedae2d4d0b17a981ddfc7db7629))
+- **storage:** use version-neutral message identity ([c983691](https://github.com/molvqingtai/WebChat/commit/c98369120cbf5d323d5f08c9694ffc1de3c7e48e))
+
 ## [2.0.1](https://github.com/molvqingtai/WebChat/compare/v2.0.0...v2.0.1) (2026-07-29)
 
 ### Bug Fixes
