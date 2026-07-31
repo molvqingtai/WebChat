@@ -32,8 +32,8 @@ import ChatRoomDomain from '@/domain/ChatRoom'
 
 export interface AppButtonProps {
   className?: string
-  bootstrapPhase?: 'connecting' | 'unavailable'
-  onBootstrapRetry: () => void
+  initializationPhase?: 'connecting' | 'unavailable'
+  onInitializationRetry: () => void
 }
 
 export const getReconnectLabel = ({
@@ -107,14 +107,18 @@ interface ApplicationAppButtonMenuProps {
   appButtonRef: ReturnType<typeof useDraggable>['setRef']
 }
 
-interface BootstrapAppButtonMenuProps {
+interface InitializationAppButtonMenuProps {
   open: boolean
-  bootstrapPhase: 'connecting' | 'unavailable'
-  onBootstrapRetry: () => void
+  initializationPhase: 'connecting' | 'unavailable'
+  onInitializationRetry: () => void
 }
 
-const BootstrapAppButtonMenu: FC<BootstrapAppButtonMenuProps> = ({ open, bootstrapPhase, onBootstrapRetry }) => {
-  const connecting = bootstrapPhase === 'connecting'
+const InitializationAppButtonMenu: FC<InitializationAppButtonMenuProps> = ({
+  open,
+  initializationPhase,
+  onInitializationRetry
+}) => {
+  const connecting = initializationPhase === 'connecting'
   const label = connecting ? 'Preparing WebChat setup' : 'Retry WebChat setup'
 
   return (
@@ -129,7 +133,7 @@ const BootstrapAppButtonMenu: FC<BootstrapAppButtonMenuProps> = ({ open, bootstr
         >
           <Button
             type="button"
-            onClick={onBootstrapRetry}
+            onClick={onInitializationRetry}
             variant="outline"
             disabled={connecting}
             aria-label={label}
@@ -255,7 +259,7 @@ const ApplicationAppButtonMenu: FC<ApplicationAppButtonMenuProps> = ({ open, app
   )
 }
 
-const AppButton: FC<AppButtonProps> = ({ className, bootstrapPhase, onBootstrapRetry }) => {
+const AppButton: FC<AppButtonProps> = ({ className, initializationPhase, onInitializationRetry }) => {
   const send = useRemeshSend()
   const appStatusDomain = useRemeshDomain(AppStatusDomain())
   const appOpenStatus = useRemeshQuery(appStatusDomain.query.OpenQuery())
@@ -318,10 +322,14 @@ const AppButton: FC<AppButtonProps> = ({ className, bootstrapPhase, onBootstrapR
         transform: 'translateX(50%)'
       }}
     >
-      {bootstrapPhase === undefined ? (
+      {initializationPhase === undefined ? (
         <ApplicationAppButtonMenu open={menuOpen} appButtonRef={appButtonRef} />
       ) : (
-        <BootstrapAppButtonMenu open={menuOpen} bootstrapPhase={bootstrapPhase} onBootstrapRetry={onBootstrapRetry} />
+        <InitializationAppButtonMenu
+          open={menuOpen}
+          initializationPhase={initializationPhase}
+          onInitializationRetry={onInitializationRetry}
+        />
       )}
       <AppLauncherButton
         onClick={handleToggleApp}

@@ -155,18 +155,27 @@ describe('replaceable application boundaries', () => {
   })
 
   it('gates both persistence families on independent private version authorities', async () => {
-    const [background, content, bootstrap, options, config, storageConstants, indexedDB, storage, storagePreparation] =
-      await Promise.all([
-        source('src/app/background/index.ts'),
-        source('src/app/content/index.tsx'),
-        source('src/app/content/Bootstrap.tsx'),
-        source('src/app/options/main.tsx'),
-        source('src/constants/config.ts'),
-        source('src/constants/storage.ts'),
-        source('src/domain/impls/database/IndexedDB.ts'),
-        source('src/domain/impls/Storage.ts'),
-        source('src/service/StoragePreparation.ts')
-      ])
+    const [
+      background,
+      content,
+      initialization,
+      options,
+      config,
+      storageConstants,
+      indexedDB,
+      storage,
+      storagePreparation
+    ] = await Promise.all([
+      source('src/app/background/index.ts'),
+      source('src/app/content/index.tsx'),
+      source('src/app/content/Initialization.ts'),
+      source('src/app/options/main.tsx'),
+      source('src/constants/config.ts'),
+      source('src/constants/storage.ts'),
+      source('src/domain/impls/database/IndexedDB.ts'),
+      source('src/domain/impls/Storage.ts'),
+      source('src/service/StoragePreparation.ts')
+    ])
 
     expect(content).not.toMatch(/VERSION_STORAGE_KEY|indexDBStorage|package\.json|storedVersion/)
     expect(config).not.toContain('VERSION_STORAGE_KEY')
@@ -216,22 +225,28 @@ describe('replaceable application boundaries', () => {
     expect(content).toContain('prepareLocalStorage: prepareLocalConfigurationStorage')
     expect(content).toContain('prepareMessageDatabase: prepareIndexedDBMessageDatabase')
     expect(content).toContain('initializeRuntime: initClient')
-    expect(content).toContain('<ContentBootstrap dependencies={bootstrapDependencies}')
+    expect(content).toContain('dependencies={initializationDependencies}')
+    expect(content).toContain('activateApplicationDependencies={activateApplicationDependencies}')
+    expect(content).not.toContain('ContentBootstrap')
     expect(background).toContain('registerBrowserSyncStoragePreparation()')
     for (const preparation of [
       'run(dependencies.prepareBrowserSyncStorage)',
       'run(dependencies.prepareLocalStorage)',
       'run(dependencies.prepareMessageDatabase)'
     ]) {
-      expect(bootstrap.indexOf(preparation)).toBeLessThan(bootstrap.indexOf('run(dependencies.initializeRuntime)'))
-      expect(bootstrap.indexOf(preparation)).toBeLessThan(bootstrap.indexOf('setApplication(createApplication())'))
+      expect(initialization.indexOf(preparation)).toBeLessThan(
+        initialization.indexOf('run(dependencies.initializeRuntime)')
+      )
+      expect(initialization.indexOf(preparation)).toBeLessThan(
+        initialization.lastIndexOf('activateApplicationDependencies()')
+      )
     }
     expect(options.indexOf('await requestBrowserSyncStoragePreparation()')).toBeLessThan(
       options.indexOf('Remesh.store(')
     )
     expect(options.indexOf('await requestBrowserSyncStoragePreparation()')).toBeLessThan(options.indexOf('createRoot('))
     expect(
-      `${background}\n${content}\n${bootstrap}\n${options}\n${indexedDB}\n${storage}\n${storagePreparation}`
+      `${background}\n${content}\n${initialization}\n${options}\n${indexedDB}\n${storage}\n${storagePreparation}`
     ).not.toMatch(/package\.json|WEB_CHAT_VERSION|VERSION_STORAGE_KEY/)
     expect(`${indexedDB}\n${storage}\n${storagePreparation}`).not.toMatch(
       /AppFeedback|ToastDomain|SystemNotice|alert\(/

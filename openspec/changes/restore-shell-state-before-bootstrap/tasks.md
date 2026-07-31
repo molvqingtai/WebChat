@@ -14,27 +14,27 @@
 
 ## 2. Final-Result Regression And FAIL-Before
 
-- [ ] 2.1 Add a final-result structural control requiring the content root to mount one normal application shell directly, independent of initialization settlement.
-- [ ] 2.2 Require the sole generic Toaster to be a descendant owned by that normal shell, never a wrapper/shell sibling, second root, or host-page portal.
-- [ ] 2.3 Forbid every independent initialization loading/error/result component and require active/terminal status to use generic Toast descriptors only.
-- [ ] 2.4 Retain final-result expanded/collapsed/no-record hydration and opposite-value pre-hydration interaction controls.
-- [ ] 2.5 Retain final-result Refresh/readiness, single-flight, same-shell success, and stale hydration/initialization fencing controls.
-- [ ] 2.6 Run the unchanged final-result assertions on the implementation parent to establish fail-before without committing any parent-state expectation.
+- [x] 2.1 Add a final-result structural control requiring the content root to mount one normal application shell directly, independent of initialization settlement.
+- [x] 2.2 Require the sole generic Toaster to be a descendant owned by that normal shell, never a wrapper/shell sibling, second root, or host-page portal.
+- [x] 2.3 Forbid every independent initialization loading/error/result component and require active/terminal status to use generic Toast descriptors only.
+- [x] 2.4 Retain final-result expanded/collapsed/no-record hydration and opposite-value pre-hydration interaction controls.
+- [x] 2.5 Retain final-result Refresh/readiness, single-flight, same-shell success, and stale hydration/initialization fencing controls.
+- [x] 2.6 Run the unchanged final-result assertions on the implementation parent to establish fail-before without committing any parent-state expectation.
 
 ## 3. Replacement
 
-- [ ] 3.1 Mount the one normal shell directly and remove every initialization wrapper, alternate shell, fallback tree, and independent status component.
-- [ ] 3.2 Run required initialization as non-presentational lifecycle logic without changing dependency order, deadlines, cancellation, Runtime detach, single-flight, or stale fencing.
-- [ ] 3.3 Mount exactly one generic Toaster inside normal-shell ownership and route active initialization loading and matching terminal failure through generic descriptors only.
-- [ ] 3.4 Activate shell-status hydration/persistence without awaiting application dependencies; preserve newer user interaction and the single existing storage path.
-- [ ] 3.5 Keep the AppButton actions menu and Refresh slot reachable pre-ready, with initialization-only dispatch/eligibility before ready and existing ChatRoom-only dispatch/eligibility after the atomic switch.
-- [ ] 3.6 Project the current attempt through disabled/rotating Refresh, reject duplicates, restore retry eligibility on matching failure, enable ready capabilities in the same shell on success, and fence stale generations.
-- [ ] 3.7 Keep dependency-backed Domain/effect work gated, exactly one Toaster/status watcher/effect/root/store, existing feedback lifetime and visuals, no success Toast, and no WorldRoom rebuild from Refresh.
+- [x] 3.1 Mount the one normal shell directly and remove every initialization wrapper, alternate shell, fallback tree, and independent status component.
+- [x] 3.2 Run required initialization as non-presentational lifecycle logic without changing dependency order, deadlines, cancellation, Runtime detach, single-flight, or stale fencing.
+- [x] 3.3 Mount exactly one generic Toaster inside normal-shell ownership and route active initialization loading and matching terminal failure through generic descriptors only.
+- [x] 3.4 Activate shell-status hydration/persistence without awaiting application dependencies; preserve newer user interaction and the single existing storage path.
+- [x] 3.5 Keep the AppButton actions menu and Refresh slot reachable pre-ready, with initialization-only dispatch/eligibility before ready and existing ChatRoom-only dispatch/eligibility after the atomic switch.
+- [x] 3.6 Project the current attempt through disabled/rotating Refresh, reject duplicates, restore retry eligibility on matching failure, enable ready capabilities in the same shell on success, and fence stale generations.
+- [x] 3.7 Keep dependency-backed Domain/effect work gated, exactly one Toaster/status watcher/effect/root/store, existing feedback lifetime and visuals, no success Toast, and no WorldRoom rebuild from Refresh.
 
 ## 4. Source And Delivery Gates
 
-- [ ] 4.1 Run focused parent FAIL-before and replacement controls for structural ownership, all initialization stage classes, status restoration, pre-ready menu/Refresh, Toast-only status, expanded/collapsed behavior, single-flight, same-shell recovery, ready context switch, duplicates, and stale generations.
-- [ ] 4.2 Run complete repository source tests, typecheck, lint, format, Chrome/Firefox builds, strict OpenSpec, and exact identity/scope gates on one immutable replacement exact.
+- [x] 4.1 Run focused parent FAIL-before and replacement controls for structural ownership, all initialization stage classes, status restoration, pre-ready menu/Refresh, Toast-only status, expanded/collapsed behavior, single-flight, same-shell recovery, ready context switch, duplicates, and stale generations.
+- [x] 4.2 Run complete repository source tests, typecheck, lint, format, Chrome/Firefox builds, strict OpenSpec, and exact identity/scope gates on one immutable replacement exact.
 - [ ] 4.3 Obtain fresh independent Review of the complete branch diff and close every finding on a replacement exact before release.
 - [ ] 4.4 Publish only the same reviewed exact to the single `fix/restore-shell-state` Draft PR and require exact CI to pass without force, rebase, or unrelated scope.
 - [ ] 4.5 Keep QA, QC, and UX absent unless the Owner explicitly requests the corresponding role; never report an unperformed result as PASS.

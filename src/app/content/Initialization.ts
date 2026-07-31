@@ -1,17 +1,25 @@
-import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRemeshDomain, useRemeshSend } from 'remesh-react'
-import BootstrapShell, { type BootstrapPhase } from '@/app/content/BootstrapShell'
 import ToastPresentationDomain, { type ToastDescriptor } from '@/domain/ToastPresentation'
 
-export const CONTENT_BOOTSTRAP_TIMEOUT_MS = 16000
+export const CONTENT_INITIALIZATION_TIMEOUT_MS = 16000
 
-const BOOTSTRAP_ERROR_TOAST = {
-  id: 'webchat-bootstrap',
+const INITIALIZATION_TOAST_ID = 'webchat-initialization'
+
+const INITIALIZATION_LOADING_TOAST = {
+  id: INITIALIZATION_TOAST_ID,
+  type: 'loading',
+  message: 'Preparing WebChat',
+  dismissible: false
+} satisfies ToastDescriptor
+
+const INITIALIZATION_ERROR_TOAST = {
+  id: INITIALIZATION_TOAST_ID,
   type: 'error',
   message: 'WebChat unavailable'
 } satisfies ToastDescriptor
 
-export interface BootstrapDependencies {
+export interface InitializationDependencies {
   prepareBrowserSyncStorage: () => Promise<void>
   prepareLocalStorage: () => Promise<void>
   prepareMessageDatabase: () => Promise<void>
@@ -19,13 +27,9 @@ export interface BootstrapDependencies {
   detachRuntime: () => void
 }
 
-export interface ContentBootstrapProps {
-  dependencies: BootstrapDependencies
-  createApplication: () => ReactElement
-  timeoutMs?: number
-}
+export type InitializationPhase = 'connecting' | 'unavailable' | 'ready'
 
-const withDeadline = <Value,>(task: Promise<Value>, signal: AbortSignal, timeoutMs: number): Promise<Value> =>
+const withDeadline = <Value>(task: Promise<Value>, signal: AbortSignal, timeoutMs: number): Promise<Value> =>
   new Promise<Value>((resolve, reject) => {
     let settled = false
     const finish = (callback: () => void) => {
@@ -35,9 +39,10 @@ const withDeadline = <Value,>(task: Promise<Value>, signal: AbortSignal, timeout
       signal.removeEventListener('abort', onAbort)
       callback()
     }
-    const onAbort = () => finish(() => reject(signal.reason ?? new DOMException('Bootstrap aborted', 'AbortError')))
+    const onAbort = () =>
+      finish(() => reject(signal.reason ?? new DOMException('Initialization aborted', 'AbortError')))
     const timeout = globalThis.setTimeout(
-      () => finish(() => reject(new Error('WebChat bootstrap timed out'))),
+      () => finish(() => reject(new Error('WebChat initialization timed out'))),
       timeoutMs
     )
     signal.addEventListener('abort', onAbort, { once: true })
@@ -48,13 +53,13 @@ const withDeadline = <Value,>(task: Promise<Value>, signal: AbortSignal, timeout
     if (signal.aborted) onAbort()
   })
 
-export const runBootstrapAttempt = async (
-  dependencies: BootstrapDependencies,
+export const runInitializationAttempt = async (
+  dependencies: InitializationDependencies,
   signal: AbortSignal,
   onRuntimeStarted: () => void = () => {},
-  timeoutMs = CONTENT_BOOTSTRAP_TIMEOUT_MS
+  timeoutMs = CONTENT_INITIALIZATION_TIMEOUT_MS
 ) => {
-  const run = <Value,>(task: () => Promise<Value>) => {
+  const run = <Value>(task: () => Promise<Value>) => {
     signal.throwIfAborted()
     return withDeadline(task(), signal, timeoutMs)
   }
@@ -67,16 +72,19 @@ export const runBootstrapAttempt = async (
   if (!runtime) throw new Error('Shared runtime unavailable')
 }
 
-const ContentBootstrap = ({
+export const useInitialization = ({
   dependencies,
-  createApplication,
-  timeoutMs = CONTENT_BOOTSTRAP_TIMEOUT_MS
-}: ContentBootstrapProps) => {
+  activateApplicationDependencies,
+  timeoutMs = CONTENT_INITIALIZATION_TIMEOUT_MS
+}: {
+  dependencies: InitializationDependencies
+  activateApplicationDependencies: () => void
+  timeoutMs?: number
+}) => {
   const send = useRemeshSend()
-  const toastPresentationDomain = useRemeshDomain(ToastPresentationDomain())
+  const presentationDomain = useRemeshDomain(ToastPresentationDomain())
   const [attempt, setAttempt] = useState(0)
-  const [phase, setPhase] = useState<BootstrapPhase>('connecting')
-  const [application, setApplication] = useState<ReactElement | null>(null)
+  const [phase, setPhase] = useState<InitializationPhase>('connecting')
   const currentGeneration = useRef(0)
   const retryInFlight = useRef(false)
 
@@ -90,8 +98,10 @@ const ContentBootstrap = ({
       runtimeStarted = false
       dependencies.detachRuntime()
     }
+
     setPhase('connecting')
-    void runBootstrapAttempt(
+    send(presentationDomain.command.PublishCommand(INITIALIZATION_LOADING_TOAST))
+    void runInitializationAttempt(
       dependencies,
       controller.signal,
       () => {
@@ -101,23 +111,26 @@ const ContentBootstrap = ({
     )
       .then(() => {
         if (!active || controller.signal.aborted || currentGeneration.current !== generation) return
-        setApplication(createApplication())
+        activateApplicationDependencies()
+        retryInFlight.current = false
+        setPhase('ready')
+        send(presentationDomain.command.DismissCommand(INITIALIZATION_TOAST_ID))
       })
       .catch((error) => {
         if (!active || currentGeneration.current !== generation) return
         detachRuntime()
         retryInFlight.current = false
-        console.error('[WebChat] Bootstrap unavailable:', error)
-        send(toastPresentationDomain.command.PublishCommand(BOOTSTRAP_ERROR_TOAST))
+        console.error('[WebChat] Initialization unavailable:', error)
+        send(presentationDomain.command.PublishCommand(INITIALIZATION_ERROR_TOAST))
         setPhase('unavailable')
       })
 
     return () => {
       active = false
-      controller.abort(new DOMException('Bootstrap superseded', 'AbortError'))
+      controller.abort(new DOMException('Initialization superseded', 'AbortError'))
       detachRuntime()
     }
-  }, [attempt, createApplication, dependencies, send, timeoutMs, toastPresentationDomain.command])
+  }, [activateApplicationDependencies, attempt, dependencies, presentationDomain.command, send, timeoutMs])
 
   const retry = useCallback(() => {
     if (phase !== 'unavailable' || retryInFlight.current) return
@@ -126,7 +139,5 @@ const ContentBootstrap = ({
     setAttempt((current) => current + 1)
   }, [phase])
 
-  return <BootstrapShell phase={phase} onRetry={retry} application={application} />
+  return { phase, retry }
 }
-
-export default ContentBootstrap

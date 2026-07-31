@@ -52,7 +52,8 @@ const fixture = vi.hoisted(() => {
     send: vi.fn(),
     presentationDomain: {
       command: {
-        PublishCommand: (descriptor: unknown) => ({ descriptor })
+        PublishCommand: (descriptor: unknown) => ({ type: 'publish', descriptor }),
+        DismissCommand: (id: string) => ({ type: 'dismiss', id })
       }
     }
   }
@@ -82,18 +83,23 @@ vi.mock('remesh-react', async () => {
 })
 vi.mock('@/app/content/App', async () => {
   const React = await import('react')
-  return { default: () => React.createElement('div', { 'data-testid': 'application' }, 'ready') }
-})
-vi.mock('@/app/content/BootstrapShell', async () => {
-  const React = await import('react')
+  const { useInitialization } = await import('@/app/content/Initialization')
   return {
-    default: ({ phase, onRetry, application }: { phase: string; onRetry: () => void; application?: ReactNode }) =>
-      React.createElement(
+    default: ({
+      dependencies,
+      activateApplicationDependencies
+    }: {
+      dependencies: Parameters<typeof useInitialization>[0]['dependencies']
+      activateApplicationDependencies: () => void
+    }) => {
+      const { phase, retry } = useInitialization({ dependencies, activateApplicationDependencies })
+      return React.createElement(
         'section',
-        { 'data-testid': 'bootstrap-shell', 'data-phase': phase },
-        React.createElement('button', { type: 'button', 'data-testid': 'retry', onClick: onRetry }, 'Retry'),
-        application
+        { 'data-testid': 'application-shell', 'data-phase': phase },
+        React.createElement('button', { type: 'button', 'data-testid': 'retry', onClick: retry }, 'Retry'),
+        phase === 'ready' && React.createElement('div', { 'data-testid': 'application' }, 'ready')
       )
+    }
   }
 })
 vi.mock('@/domain/impls/Storage', () => ({
@@ -178,7 +184,7 @@ for (const [name, value] of Object.entries({
 
 const React = await import('react')
 const { act } = React
-const { CONTENT_BOOTSTRAP_TIMEOUT_MS } = await import('@/app/content/Bootstrap')
+const { CONTENT_INITIALIZATION_TIMEOUT_MS } = await import('@/app/content/Initialization')
 const { default: content } = await import('@/app/content')
 
 const roots: Root[] = []
@@ -189,7 +195,7 @@ const startContent = async () => {
   await act(async () => content.main({} as never))
 }
 
-const phase = () => document.querySelector<HTMLElement>('[data-testid="bootstrap-shell"]')?.dataset.phase
+const phase = () => document.querySelector<HTMLElement>('[data-testid="application-shell"]')?.dataset.phase
 
 const flushMicrotasks = async () => {
   for (let index = 0; index < 12; index += 1) await Promise.resolve()
@@ -254,7 +260,7 @@ afterAll(() => {
   }
 })
 
-describe('content production bootstrap dependency boundary', () => {
+describe('content production initialization dependency boundary', () => {
   const prerequisites = [
     'requestBrowserSyncStoragePreparation',
     'prepareLocalConfigurationStorage',
@@ -297,9 +303,7 @@ describe('content production bootstrap dependency boundary', () => {
     expect(document.querySelector('[data-testid="application"]')).not.toBeNull()
     expect(fixture.createStore).toHaveBeenCalledOnce()
     expect(fixture.scope.mock.calls.map(([domains]) => domains)).toEqual([
-      [fixture.shellStatusAction, fixture.toastPresentationAction],
-      [fixture.appStatusEffectsAction, fixture.notificationAction, fixture.toastAction, fixture.appFeedbackAction],
-      [fixture.appStatusEffectsAction, fixture.notificationAction, fixture.toastAction, fixture.appFeedbackAction]
+      [fixture.shellStatusAction, fixture.toastPresentationAction]
     ])
   })
 
@@ -313,7 +317,7 @@ describe('content production bootstrap dependency boundary', () => {
       expectDependenciesUnconstructed()
 
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(CONTENT_BOOTSTRAP_TIMEOUT_MS)
+        await vi.advanceTimersByTimeAsync(CONTENT_INITIALIZATION_TIMEOUT_MS)
         await flushMicrotasks()
       })
       expect(phase()).toBe('unavailable')
@@ -329,16 +333,14 @@ describe('content production bootstrap dependency boundary', () => {
       expectDependenciesConstructedOnce()
       expect(document.querySelector('[data-testid="application"]')).not.toBeNull()
       expect(fixture.scope.mock.calls.map(([domains]) => domains)).toEqual([
-        [fixture.shellStatusAction, fixture.toastPresentationAction],
-        [fixture.appStatusEffectsAction, fixture.notificationAction, fixture.toastAction, fixture.appFeedbackAction],
-        [fixture.appStatusEffectsAction, fixture.notificationAction, fixture.toastAction, fixture.appFeedbackAction]
+        [fixture.shellStatusAction, fixture.toastPresentationAction]
       ])
 
       stale.resolve()
       await act(flushMicrotasks)
 
       expectDependenciesConstructedOnce()
-      expect(fixture.scope).toHaveBeenCalledTimes(3)
+      expect(fixture.scope).toHaveBeenCalledOnce()
     } finally {
       stale.resolve()
     }

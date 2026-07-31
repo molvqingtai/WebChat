@@ -7,60 +7,7 @@ import AppStatusDomain, { type AppStatus } from '@/domain/AppStatus'
 import ToastPresentationDomain from '@/domain/ToastPresentation'
 import { APP_STATUS_STORAGE_KEY } from '@/constants/storage'
 import { LocalStorageExtern, type Storage } from '@/domain/externs/Storage'
-import type { BootstrapDependencies } from '@/app/content/Bootstrap'
-
-vi.mock('@/app/content/BootstrapShell', async () => {
-  const React = await import('react')
-  const { useRemeshDomain, useRemeshQuery, useRemeshSend } = await import('remesh-react')
-  const { default: AppStatus } = await import('@/domain/AppStatus')
-
-  return {
-    default: ({
-      phase,
-      onRetry,
-      application
-    }: {
-      phase: 'connecting' | 'unavailable'
-      onRetry: () => void
-      application?: ReactNode
-    }) => {
-      const send = useRemeshSend()
-      const status = useRemeshDomain(AppStatus())
-      const open = useRemeshQuery(status.query.OpenQuery())
-      const loaded = useRemeshQuery(status.query.StatusLoadIsFinishedQuery())
-
-      return React.createElement(
-        'section',
-        {
-          'data-testid': 'shell',
-          'data-phase': phase,
-          'data-open': String(open),
-          'data-loaded': String(loaded)
-        },
-        React.createElement(
-          'button',
-          {
-            type: 'button',
-            'data-testid': 'launcher',
-            onClick: () => send(status.command.UpdateOpenCommand(!open))
-          },
-          open ? 'Close WebChat' : 'Open WebChat'
-        ),
-        React.createElement(
-          'button',
-          {
-            type: 'button',
-            'data-testid': 'bootstrap-refresh',
-            disabled: phase === 'connecting',
-            onClick: onRetry
-          },
-          'Refresh'
-        ),
-        application
-      )
-    }
-  }
-})
+import { useInitialization, type InitializationDependencies } from '@/app/content/Initialization'
 
 const require = createRequire(import.meta.url)
 const wxtRequire = createRequire(require.resolve('wxt'))
@@ -68,7 +15,7 @@ const { parseHTML } = wxtRequire('linkedom') as {
   parseHTML: (html: string) => { window: Window & typeof globalThis; document: Document }
 }
 const { window, document } = parseHTML('<!doctype html><html><body></body></html>')
-Object.defineProperty(window, 'location', { value: new URL('https://status-bootstrap.test/'), configurable: true })
+Object.defineProperty(window, 'location', { value: new URL('https://status-initialization.test/'), configurable: true })
 Object.defineProperty(document, 'location', { value: window.location, configurable: true })
 const previousGlobals = new Map<string, PropertyDescriptor | undefined>()
 for (const [name, value] of Object.entries({
@@ -90,8 +37,7 @@ for (const [name, value] of Object.entries({
 const React = await import('react')
 const { act } = React
 const { createRoot } = await import('react-dom/client')
-const { RemeshRoot, RemeshScope } = await import('remesh-react')
-const { default: ContentBootstrap } = await import('@/app/content/Bootstrap')
+const { RemeshRoot, RemeshScope, useRemeshDomain, useRemeshQuery, useRemeshSend } = await import('remesh-react')
 const TestRemeshRoot = RemeshRoot as ComponentType<{ store: RemeshStore; children?: ReactNode }>
 const TestRemeshScope = RemeshScope as ComponentType<{ domains: unknown[]; children?: ReactNode }>
 
@@ -120,23 +66,64 @@ const createStorage = (read: Promise<AppStatus | null>) => {
   return { storage, get, set, watch }
 }
 
-const createDependencies = () => {
-  const dependencies: BootstrapDependencies = {
-    prepareBrowserSyncStorage: vi.fn(async () => {}),
-    prepareLocalStorage: vi.fn(async () => {}),
-    prepareMessageDatabase: vi.fn(async () => {}),
-    initializeRuntime: vi.fn(async () => ({})),
-    detachRuntime: vi.fn()
-  }
-  return dependencies
+const createDependencies = (): InitializationDependencies => ({
+  prepareBrowserSyncStorage: vi.fn(async () => {}),
+  prepareLocalStorage: vi.fn(async () => {}),
+  prepareMessageDatabase: vi.fn(async () => {}),
+  initializeRuntime: vi.fn(async () => ({})),
+  detachRuntime: vi.fn()
+})
+
+const StatusHarness = ({
+  dependencies,
+  activateApplicationDependencies
+}: {
+  dependencies: InitializationDependencies
+  activateApplicationDependencies: () => void
+}) => {
+  const send = useRemeshSend()
+  const status = useRemeshDomain(AppStatusDomain())
+  const open = useRemeshQuery(status.query.OpenQuery())
+  const loaded = useRemeshQuery(status.query.StatusLoadIsFinishedQuery())
+  const { phase, retry } = useInitialization({ dependencies, activateApplicationDependencies })
+
+  return React.createElement(
+    'section',
+    {
+      'data-testid': 'shell',
+      'data-phase': phase,
+      'data-open': String(open),
+      'data-loaded': String(loaded)
+    },
+    React.createElement(
+      'button',
+      {
+        type: 'button',
+        'data-testid': 'launcher',
+        onClick: () => send(status.command.UpdateOpenCommand(!open))
+      },
+      open ? 'Close WebChat' : 'Open WebChat'
+    ),
+    React.createElement(
+      'button',
+      {
+        type: 'button',
+        'data-testid': 'initialization-refresh',
+        disabled: phase !== 'unavailable',
+        onClick: retry
+      },
+      'Refresh'
+    ),
+    phase === 'ready' && React.createElement('div', { 'data-testid': 'application' })
+  )
 }
 
-const render = async (storage: Storage, dependencies: BootstrapDependencies) => {
+const render = async (storage: Storage, dependencies: InitializationDependencies) => {
   const store = Remesh.store({ externs: [LocalStorageExtern.impl(storage)] })
   const container = document.createElement('div')
   document.body.append(container)
   const root = createRoot(container)
-  const createApplication = vi.fn(() => React.createElement('div', { 'data-testid': 'application' }, 'ready'))
+  const activateApplicationDependencies = vi.fn()
   roots.push(root)
   stores.push(store)
 
@@ -148,13 +135,13 @@ const render = async (storage: Storage, dependencies: BootstrapDependencies) => 
         React.createElement(
           TestRemeshScope,
           { domains: [AppStatusDomain(), ToastPresentationDomain()] },
-          React.createElement(ContentBootstrap, { dependencies, createApplication })
+          React.createElement(StatusHarness, { dependencies, activateApplicationDependencies })
         )
       )
     )
   })
 
-  return { container, createApplication }
+  return { container, activateApplicationDependencies }
 }
 
 const shell = (container: HTMLElement) => container.querySelector<HTMLElement>('[data-testid="shell"]')
@@ -178,7 +165,7 @@ afterAll(() => {
   }
 })
 
-describe('shell status and bootstrap independence', () => {
+describe('shell status and initialization independence', () => {
   const stages = [
     'prepareBrowserSyncStorage',
     'prepareLocalStorage',
@@ -201,13 +188,13 @@ describe('shell status and bootstrap independence', () => {
     statusRead.resolve({ open: true, unread: 2, position: { x: 72, y: 31 } })
     await vi.waitFor(() => expect(shell(rendered.container)?.dataset.loaded).toBe('true'))
     expect(shell(rendered.container)?.dataset.open).toBe('true')
-    expect(rendered.createApplication).not.toHaveBeenCalled()
+    expect(rendered.activateApplicationDependencies).not.toHaveBeenCalled()
 
     stageWork.reject(new Error(`${stage} unavailable`))
     await vi.waitFor(() => expect(shell(rendered.container)?.dataset.phase).toBe('unavailable'))
 
     expect(shell(rendered.container)?.dataset.open).toBe('true')
-    expect(rendered.createApplication).not.toHaveBeenCalled()
+    expect(rendered.activateApplicationDependencies).not.toHaveBeenCalled()
     await vi.waitFor(() =>
       expect(storage.set).toHaveBeenLastCalledWith(APP_STATUS_STORAGE_KEY, expect.objectContaining({ open: true }))
     )
@@ -230,7 +217,7 @@ describe('shell status and bootstrap independence', () => {
     await vi.waitFor(() => expect(shell(rendered.container)?.dataset.loaded).toBe('true'))
     expect(shell(rendered.container)?.dataset.open).toBe('true')
 
-    stageWork.reject(new Error('bootstrap unavailable'))
+    stageWork.reject(new Error('initialization unavailable'))
     await vi.waitFor(() => expect(shell(rendered.container)?.dataset.phase).toBe('unavailable'))
     expect(shell(rendered.container)?.dataset.open).toBe('true')
     await vi.waitFor(() =>
@@ -238,7 +225,7 @@ describe('shell status and bootstrap independence', () => {
     )
   })
 
-  it('reuses one status read and watcher across bootstrap failure, Retry, and ready activation', async () => {
+  it('reuses one status read and watcher across failure, Retry, and ready activation', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     const storage = createStorage(Promise.resolve({ open: true, unread: 0, position: { x: 70, y: 30 } }))
     const dependencies = createDependencies()
@@ -251,12 +238,12 @@ describe('shell status and bootstrap independence', () => {
     await vi.waitFor(() => expect(shell(rendered.container)?.dataset.open).toBe('true'))
     const originalShell = shell(rendered.container)
 
-    await click(rendered.container.querySelector('[data-testid="bootstrap-refresh"]'))
+    await click(rendered.container.querySelector('[data-testid="initialization-refresh"]'))
     await vi.waitFor(() => expect(rendered.container.querySelector('[data-testid="application"]')).not.toBeNull())
 
     expect(shell(rendered.container)).toBe(originalShell)
     expect(storage.get).toHaveBeenCalledOnce()
     expect(storage.watch).toHaveBeenCalledOnce()
-    expect(rendered.createApplication).toHaveBeenCalledOnce()
+    expect(rendered.activateApplicationDependencies).toHaveBeenCalledOnce()
   })
 })

@@ -1,4 +1,3 @@
-import React from 'react'
 import { createRoot } from 'react-dom/client'
 import { Remesh, type RemeshExtern, type RemeshExternImpl } from 'remesh'
 import { RemeshRoot, RemeshScope } from 'remesh-react'
@@ -20,21 +19,17 @@ import { AppActionImpl } from '@/domain/impls/AppAction'
 import 'sonner/dist/styles.css'
 import '@/assets/styles/tailwind.css'
 import '@/assets/styles/overlay.css'
-import NotificationDomain from '@/domain/Notification'
-import ToastDomain from '@/domain/Toast'
 import ToastPresentationDomain from '@/domain/ToastPresentation'
-import AppFeedbackDomain from '@/domain/AppFeedback'
 import AppStatusDomain from '@/domain/AppStatus'
-import AppStatusEffectsDomain from '@/domain/AppStatusEffects'
 import { createElement } from '@/utils'
 import { requestBrowserSyncStoragePreparation } from '@/service/StoragePreparation'
-import ContentBootstrap, { type BootstrapDependencies } from '@/app/content/Bootstrap'
+import { type InitializationDependencies } from '@/app/content/Initialization'
 import { MessageDatabaseExtern } from '@/domain/MessageStore'
 import { ChatRoomExtern } from '@/domain/externs/ChatRoom'
 import { WorldRoomExtern } from '@/domain/externs/WorldRoom'
 import { ReadinessExtern } from '@/domain/externs/Readiness'
 
-const bootstrapDependencies: BootstrapDependencies = {
+const initializationDependencies: InitializationDependencies = {
   prepareBrowserSyncStorage: requestBrowserSyncStoragePreparation,
   prepareLocalStorage: prepareLocalConfigurationStorage,
   prepareMessageDatabase: prepareIndexedDBMessageDatabase,
@@ -48,7 +43,7 @@ const createDeferredExtern = <Value,>(Extern: RemeshExtern<Value>) => {
     type: 'RemeshExternImpl',
     Extern,
     get value() {
-      if (!resolved) throw new Error('Application dependency is unavailable before bootstrap')
+      if (!resolved) throw new Error('Application dependency is unavailable before initialization')
       return resolved.value
     }
   }
@@ -96,16 +91,6 @@ const createShellStore = () => {
   }
 }
 
-const createApplication = () => {
-  return (
-    <React.StrictMode>
-      <RemeshScope domains={[AppStatusEffectsDomain(), NotificationDomain(), ToastDomain(), AppFeedbackDomain()]}>
-        <App />
-      </RemeshScope>
-    </React.StrictMode>
-  )
-}
-
 export default defineContentScript({
   cssInjectionMode: 'ui',
   runAt: 'document_idle',
@@ -128,14 +113,13 @@ export default defineContentScript({
         container.append(app)
         const root = createRoot(app)
         const { store, activateApplicationDependencies } = createShellStore()
-        const createReadyApplication = () => {
-          activateApplicationDependencies()
-          return createApplication()
-        }
         root.render(
           <RemeshRoot store={store}>
             <RemeshScope domains={[AppStatusDomain(), ToastPresentationDomain()]}>
-              <ContentBootstrap dependencies={bootstrapDependencies} createApplication={createReadyApplication} />
+              <App
+                dependencies={initializationDependencies}
+                activateApplicationDependencies={activateApplicationDependencies}
+              />
             </RemeshScope>
           </RemeshRoot>
         )
