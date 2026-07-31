@@ -419,11 +419,10 @@ describe('generic Toast presentation', () => {
     await waitForSurfaceAbsent()
     setMounted(true)
     await waitFor(() => fixture.store.query(fixture.presentation.query.SurfaceMountedQuery()))
-    await waitFor(
-      () =>
-        operations.filter((item) => item.type === 'dismiss' && item.id === 'webchat-runtime-readiness').length ===
-        runtimeDismissCount + 1
-    )
+    await settle(100)
+    expect
+      .soft(operations.filter((item) => item.type === 'dismiss' && item.id === 'webchat-runtime-readiness'))
+      .toHaveLength(runtimeDismissCount)
     expect(descriptors.filter(({ id }) => id === 'webchat-runtime-readiness')).toHaveLength(runtimeDescriptorCount)
     expect(toast.getToasts().some(({ id }) => id === unrelatedId)).toBe(true)
 
@@ -536,6 +535,7 @@ describe('generic Toast presentation', () => {
     expect(descriptorIds.filter((id) => id === RUNTIME_TOAST_ID)).toHaveLength(descriptorCountBeforeOmitted)
     expect(document.body.textContent).not.toContain('closed reset')
 
+    const operationCountBeforeOpenReset = operations.length
     fixture.usePort(() => Promise.reject(new Error('open reset')))
     activeDescriptorId = null
     firstVisibleAt = null
@@ -559,6 +559,72 @@ describe('generic Toast presentation', () => {
     expect(operations.some((item) => item.type === 'dismiss' && item.id === unrelatedId)).toBe(false)
     expect(toast.getToasts().some(({ id }) => id === unrelatedId)).toBe(true)
 
+    await settle(50)
+    const openResetOperations = operations
+      .slice(operationCountBeforeOpenReset)
+      .filter((item) => item.id === RUNTIME_TOAST_ID)
+    const errorAt = openResetOperations.find((item) => item.type === 'error')!.at
+    expect.soft(openResetOperations.map(({ type, id }) => ({ type, id }))).toEqual([
+      { type: 'loading', id: RUNTIME_TOAST_ID },
+      { type: 'error', id: RUNTIME_TOAST_ID }
+    ])
+    expect.soft(fixture.store.query(fixture.presentation.query.SurfaceMountedQuery())).toBe(true)
+    expect.soft(toast.getToasts().some(({ id }) => id === RUNTIME_TOAST_ID)).toBe(true)
+    expect.soft(toast.getToasts().some(({ id }) => id === unrelatedId)).toBe(true)
+    await waitFor(() => !toast.getToasts().some(({ id }) => id === RUNTIME_TOAST_ID), 6000)
+    expect(Date.now() - errorAt).toBeGreaterThanOrEqual(3500)
+    expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toBeNull()
+    expect(toast.getToasts().some(({ id }) => id === unrelatedId)).toBe(true)
+
+    fixture.store.send(
+      fixture.presentation.command.PublishCommand({
+        id: RUNTIME_TOAST_ID,
+        type: 'error',
+        message: 'User dismissal control'
+      })
+    )
+    await waitFor(() => toast.getToasts().some(({ id }) => id === RUNTIME_TOAST_ID))
+    toast.dismiss(RUNTIME_TOAST_ID)
+    await waitFor(() => !toast.getToasts().some(({ id }) => id === RUNTIME_TOAST_ID))
+    expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toBeNull()
+
+    fixture.store.send(
+      fixture.presentation.command.PublishCommand({
+        id: RUNTIME_TOAST_ID,
+        type: 'error',
+        message: 'Replace this error'
+      })
+    )
+    await waitFor(() => document.body.textContent.includes('Replace this error'))
+    fixture.store.send(
+      fixture.presentation.command.PublishCommand({
+        id: RUNTIME_TOAST_ID,
+        type: 'info',
+        message: 'Explicit successor'
+      })
+    )
+    await waitFor(() => document.body.textContent.includes('Explicit successor'))
+    expect(toast.getToasts().filter(({ id }) => id === RUNTIME_TOAST_ID)).toHaveLength(1)
+    toast.dismiss(RUNTIME_TOAST_ID)
+
+    const descriptorCountBeforeTeardown = descriptors.filter(({ id }) => id === RUNTIME_TOAST_ID).length
+    fixture.store.send(
+      fixture.presentation.command.PublishCommand({
+        id: RUNTIME_TOAST_ID,
+        type: 'error',
+        message: 'Surface teardown control'
+      })
+    )
+    await waitFor(() => document.body.textContent.includes('Surface teardown control'))
+    setMounted(false)
+    await waitForSurfaceAbsent()
+    setMounted(true)
+    await waitFor(() => fixture.store.query(fixture.presentation.query.SurfaceMountedQuery()))
+    await settle(100)
+    expect(descriptors.filter(({ id }) => id === RUNTIME_TOAST_ID)).toHaveLength(descriptorCountBeforeTeardown + 1)
+    expect(document.body.textContent).not.toContain('Surface teardown control')
+    expect(toast.getToasts().some(({ id }) => id === unrelatedId)).toBe(true)
+
     setMounted(false)
     await waitForSurfaceAbsent()
     fixture.usePort(() => Promise.resolve())
@@ -578,5 +644,5 @@ describe('generic Toast presentation', () => {
     toast.error = error
     toast.dismiss = dismiss
     activeDescriptorId = null
-  }, 10000)
+  }, 20000)
 })
