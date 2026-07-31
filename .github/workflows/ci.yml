@@ -85,6 +85,8 @@ jobs:
             ${{ runner.os }}-pnpm-
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+      - name: Install Chromium for Vitest Browser Mode
+        run: pnpm exec playwright install --with-deps chromium
       - name: Generate WXT types
         run: pnpm exec wxt prepare
       - run: pnpm run test

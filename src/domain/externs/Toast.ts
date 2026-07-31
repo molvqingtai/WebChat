@@ -1,12 +1,19 @@
 import { Remesh } from 'remesh'
 
 export interface Toast {
-  success: (message: string, duration?: number) => number | string
-  error: (message: string, duration?: number) => number | string
-  info: (message: string, duration?: number) => number | string
-  warning: (message: string, duration?: number) => number | string
-  loading: (message: string, duration?: number) => number | string
+  success: (message: string, options?: ToastOptions | number) => number | string
+  error: (message: string, options?: ToastOptions | number) => number | string
+  info: (message: string, options?: ToastOptions | number) => number | string
+  warning: (message: string, options?: ToastOptions | number) => number | string
+  loading: (message: string, options?: ToastOptions | number) => number | string
   cancel: (id: number | string) => number | string
+}
+
+export interface ToastOptions {
+  id?: number | string
+  duration?: number
+  dismissible?: boolean
+  testId?: string
 }
 
 export const ToastExtern = Remesh.extern<Toast>({

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
+import path from 'node:path'
 import { getChatRoomId, getWorldRoomId } from '@/runtime/Server'
 import stringToHex from '@/utils/stringToHex'
 
@@ -10,8 +11,8 @@ describe('current peer protocol generation', () => {
   })
 
   it('labels current Session and Wire rejection diagnostics as v3', () => {
-    const session = readFileSync(new URL('../domain/runtime/Session.ts', import.meta.url), 'utf8')
-    const wire = readFileSync(new URL('../domain/runtime/Wire.ts', import.meta.url), 'utf8')
+    const session = readFileSync(path.resolve(process.cwd(), 'src/domain/runtime/Session.ts'), 'utf8')
+    const wire = readFileSync(path.resolve(process.cwd(), 'src/domain/runtime/Wire.ts'), 'utf8')
 
     expect(session).toContain('Message exceeds the v3 event contract')
     expect(session).toContain('Reaction exceeds the v3 event contract')

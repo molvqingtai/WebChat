@@ -1,5 +1,5 @@
 import { Remesh } from 'remesh'
-import { concatMap, filter, fromEventPattern, map, mergeMap } from 'rxjs'
+import { concatMap, filter, fromEventPattern, map, mergeMap, timer } from 'rxjs'
 import {
   ChatRoomExtern,
   type JoinRoomCommand as JoinRoomInput,
@@ -40,12 +40,11 @@ const uniqueUsers = (sessions: readonly ChatSession[]) => {
 
 type ReconnectRequest = {
   id: number
-  toast: {
-    attempted: boolean
-    settled: boolean
-  }
+  intervalSettled: boolean
   outcome: { error?: Error } | null
 }
+
+export const RECONNECT_FEEDBACK_MINIMUM_MS = 300
 
 type ReconnectOperation = {
   id: number
@@ -169,7 +168,7 @@ const ChatRoomDomain = Remesh.domain({
     })
 
     const settleReconnectRequest = (request: ReconnectRequest) => {
-      if (!request.toast.settled || request.outcome === null) {
+      if (!request.intervalSettled || request.outcome === null) {
         return ReconnectRequestState().new(request)
       }
       return [ReconnectRequestState().new(null), ReconnectFinishedEvent({ id: request.id, ...request.outcome })]
@@ -187,7 +186,7 @@ const ChatRoomDomain = Remesh.domain({
           ReconnectSequenceState().new(id),
           ReconnectRequestState().new({
             id,
-            toast: { attempted: false, settled: false },
+            intervalSettled: false,
             outcome: null
           }),
           ...(joined ? [] : [JoinStatus.command.SetLoadingCommand()]),
@@ -197,39 +196,12 @@ const ChatRoomDomain = Remesh.domain({
       }
     })
 
-    const BeginToastCommand = domain.command({
-      name: 'Room.BeginToastCommand',
+    const SettleReconnectIntervalCommand = domain.command({
+      name: 'Room.SettleReconnectIntervalCommand',
       impl: ({ get }, id: number) => {
         const request = get(ReconnectRequestQuery())
-        if (request?.id !== id || request.toast.attempted) return null
-        return ReconnectRequestState().new({
-          ...request,
-          toast: { attempted: true, settled: false }
-        })
-      }
-    })
-
-    const OmitToastCommand = domain.command({
-      name: 'Room.OmitToastCommand',
-      impl: ({ get }, id: number) => {
-        const request = get(ReconnectRequestQuery())
-        if (request?.id !== id || (!request.toast.attempted && request.toast.settled)) return null
-        return settleReconnectRequest({
-          ...request,
-          toast: { attempted: false, settled: true }
-        })
-      }
-    })
-
-    const SettleToastCommand = domain.command({
-      name: 'Room.SettleToastCommand',
-      impl: ({ get }, id: number) => {
-        const request = get(ReconnectRequestQuery())
-        if (request?.id !== id || !request.toast.attempted || request.toast.settled) return null
-        return settleReconnectRequest({
-          ...request,
-          toast: { ...request.toast, settled: true }
-        })
+        if (request?.id !== id || request.intervalSettled) return null
+        return settleReconnectRequest({ ...request, intervalSettled: true })
       }
     })
 
@@ -456,6 +428,14 @@ const ChatRoomDomain = Remesh.domain({
     })
 
     domain.effect({
+      name: 'Room.ReconnectIntervalEffect',
+      impl: ({ fromEvent }) =>
+        fromEvent(ReconnectStartedEvent).pipe(
+          mergeMap((id) => timer(RECONNECT_FEEDBACK_MINIMUM_MS).pipe(map(() => SettleReconnectIntervalCommand(id))))
+        )
+    })
+
+    domain.effect({
       name: 'Room.OnMessageEffect',
       impl: () =>
         fromEventPattern<ChatMessage>(chatRoom.onMessage.bind(chatRoom), (_handler, dispose) => dispose()).pipe(
@@ -510,9 +490,7 @@ const ChatRoomDomain = Remesh.domain({
         SendTextMessageCommand,
         SendReactionCommand,
         ReconnectCommand,
-        BeginToastCommand,
-        OmitToastCommand,
-        SettleToastCommand
+        SettleReconnectIntervalCommand
       },
       event: {
         SendTextMessageEvent,

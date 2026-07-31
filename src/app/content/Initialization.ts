@@ -1,23 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { useRemeshDomain, useRemeshSend } from 'remesh-react'
-import ToastPresentationDomain, { type ToastDescriptor } from '@/domain/ToastPresentation'
+import { Remesh, type RemeshStore } from 'remesh'
+import ToastDomain from '@/domain/Toast'
 
 export const CONTENT_INITIALIZATION_TIMEOUT_MS = 16000
 
-const INITIALIZATION_TOAST_ID = 'webchat-initialization'
-
-const INITIALIZATION_LOADING_TOAST = {
-  id: INITIALIZATION_TOAST_ID,
-  type: 'loading',
-  message: 'Preparing WebChat',
-  dismissible: false
-} satisfies ToastDescriptor
-
-const INITIALIZATION_ERROR_TOAST = {
-  id: INITIALIZATION_TOAST_ID,
-  type: 'error',
-  message: 'WebChat unavailable'
-} satisfies ToastDescriptor
+export const INITIALIZATION_TOAST_ID = 'webchat-initialization'
 
 export interface InitializationDependencies {
   prepareBrowserSyncStorage: () => Promise<void>
@@ -72,73 +58,120 @@ export const runInitializationAttempt = async (
   if (!runtime) throw new Error('Shared runtime unavailable')
 }
 
-export const useInitialization = ({
-  dependencies,
-  activateApplicationDependencies,
-  timeoutMs = CONTENT_INITIALIZATION_TIMEOUT_MS
-}: {
+const InitializationDomain = Remesh.domain({
+  name: 'InitializationDomain',
+  impl: (domain) => {
+    const PhaseState = domain.state<InitializationPhase>({
+      name: 'Initialization.PhaseState',
+      default: 'connecting'
+    })
+    const PhaseQuery = domain.query({
+      name: 'Initialization.PhaseQuery',
+      impl: ({ get }) => get(PhaseState())
+    })
+    const ReadyQuery = domain.query({
+      name: 'Initialization.ReadyQuery',
+      impl: ({ get }) => get(PhaseQuery()) === 'ready'
+    })
+    const RetryRequestedEvent = domain.event({ name: 'Initialization.RetryRequestedEvent' })
+    const RetryCommand = domain.command({
+      name: 'Initialization.RetryCommand',
+      impl: ({ get }) =>
+        get(PhaseQuery()) === 'unavailable' ? [PhaseState().new('connecting'), RetryRequestedEvent()] : null
+    })
+    const MarkReadyCommand = domain.command({
+      name: 'Initialization.MarkReadyCommand',
+      impl: ({ get }) => (get(PhaseQuery()) === 'connecting' ? PhaseState().new('ready') : null)
+    })
+    const MarkUnavailableCommand = domain.command({
+      name: 'Initialization.MarkUnavailableCommand',
+      impl: ({ get }) => (get(PhaseQuery()) === 'connecting' ? PhaseState().new('unavailable') : null)
+    })
+
+    return {
+      query: { PhaseQuery, ReadyQuery },
+      command: { RetryCommand, MarkReadyCommand, MarkUnavailableCommand },
+      event: { RetryRequestedEvent }
+    }
+  }
+})
+
+export interface InitializationLifecycleOptions {
+  store: RemeshStore
   dependencies: InitializationDependencies
   activateApplicationDependencies: () => void
   timeoutMs?: number
-}) => {
-  const send = useRemeshSend()
-  const presentationDomain = useRemeshDomain(ToastPresentationDomain())
-  const [attempt, setAttempt] = useState(0)
-  const [phase, setPhase] = useState<InitializationPhase>('connecting')
-  const currentGeneration = useRef(0)
-  const retryInFlight = useRef(false)
+}
 
-  useEffect(() => {
-    // Cleanup owns any Runtime started by this generation; stale continuations may neither activate externs nor settle feedback.
-    const generation = ++currentGeneration.current
-    const controller = new AbortController()
-    let active = true
-    let runtimeStarted = false
-    const detachRuntime = () => {
-      if (!runtimeStarted) return
-      runtimeStarted = false
-      dependencies.detachRuntime()
-    }
+export const startInitializationLifecycle = ({
+  store,
+  dependencies,
+  activateApplicationDependencies,
+  timeoutMs = CONTENT_INITIALIZATION_TIMEOUT_MS
+}: InitializationLifecycleOptions) => {
+  const initialization = store.getDomain(InitializationDomain())
+  const toast = store.getDomain(ToastDomain())
+  let active = true
+  let generation = 0
+  let controller: AbortController | null = null
+  let runtimeStarted = false
 
-    setPhase('connecting')
-    send(presentationDomain.command.PublishCommand(INITIALIZATION_LOADING_TOAST))
+  const detachRuntime = () => {
+    if (!runtimeStarted) return
+    runtimeStarted = false
+    dependencies.detachRuntime()
+  }
+
+  const startAttempt = () => {
+    const attemptGeneration = ++generation
+    controller?.abort(new DOMException('Initialization superseded', 'AbortError'))
+    controller = new AbortController()
+    const signal = controller.signal
+
+    store.send(
+      toast.command.LoadingCommand({
+        id: INITIALIZATION_TOAST_ID,
+        message: 'Preparing WebChat',
+        dismissible: false
+      })
+    )
+
     void runInitializationAttempt(
       dependencies,
-      controller.signal,
+      signal,
       () => {
         runtimeStarted = true
       },
       timeoutMs
     )
       .then(() => {
-        if (!active || controller.signal.aborted || currentGeneration.current !== generation) return
+        if (!active || signal.aborted || generation !== attemptGeneration) return
         activateApplicationDependencies()
-        retryInFlight.current = false
-        setPhase('ready')
-        send(presentationDomain.command.DismissCommand(INITIALIZATION_TOAST_ID))
+        if (!active || signal.aborted || generation !== attemptGeneration) return
+        store.send([initialization.command.MarkReadyCommand(), toast.command.CancelCommand(INITIALIZATION_TOAST_ID)])
       })
       .catch((error) => {
-        if (!active || currentGeneration.current !== generation) return
+        if (!active || signal.aborted || generation !== attemptGeneration) return
         detachRuntime()
-        retryInFlight.current = false
         console.error('[WebChat] Initialization unavailable:', error)
-        send(presentationDomain.command.PublishCommand(INITIALIZATION_ERROR_TOAST))
-        setPhase('unavailable')
+        store.send([
+          initialization.command.MarkUnavailableCommand(),
+          toast.command.CancelCommand(INITIALIZATION_TOAST_ID),
+          toast.command.ErrorCommand({ id: INITIALIZATION_TOAST_ID, message: 'WebChat unavailable' })
+        ])
       })
+  }
 
-    return () => {
-      active = false
-      controller.abort(new DOMException('Initialization superseded', 'AbortError'))
-      detachRuntime()
-    }
-  }, [activateApplicationDependencies, attempt, dependencies, presentationDomain.command, send, timeoutMs])
+  const retrySubscription = store.subscribeEvent(initialization.event.RetryRequestedEvent, startAttempt)
+  startAttempt()
 
-  const retry = useCallback(() => {
-    if (phase !== 'unavailable' || retryInFlight.current) return
-    retryInFlight.current = true
-    setPhase('connecting')
-    setAttempt((current) => current + 1)
-  }, [phase])
-
-  return { phase, retry }
+  return () => {
+    active = false
+    generation += 1
+    controller?.abort(new DOMException('Initialization unmounted', 'AbortError'))
+    detachRuntime()
+    retrySubscription.unsubscribe()
+  }
 }
+
+export default InitializationDomain

@@ -22,13 +22,15 @@ const createMessaging = () => {
 
 describe('Runtime production host boundaries', () => {
   it('sends a Chrome background probe without reading a DOM location', () => {
+    vi.stubGlobal('document', undefined)
     const { runtime, sendMessage } = createMessaging()
     const adapter = new BackgroundInjectAdapter(runtime)
-    expect(globalThis).not.toHaveProperty('document')
+    expect(globalThis.document).toBeUndefined()
 
     adapter.sendMessage({ meta: { tab: { url: 'content-only' } } } as never, [])
 
     expect(sendMessage).toHaveBeenCalledWith('test-extension', { meta: {} })
+    vi.unstubAllGlobals()
   })
 
   it('disposes every comctx provider listener owned by a host adapter', () => {

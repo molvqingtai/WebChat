@@ -620,7 +620,7 @@ describe('ChatRoomDomain exact application port', () => {
       site: expect.objectContaining({ origin: 'https://example.test' })
     })
 
-    fixture.store.send(fixture.room.command.OmitToastCommand(request.id))
+    fixture.store.send(fixture.room.command.SettleReconnectIntervalCommand(request.id))
     await vi.waitFor(() => expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toBeNull())
     expect(fixture.store.query(fixture.room.query.ConnectionIsLoadingQuery())).toBe(false)
     expect(fixture.store.query(fixture.room.query.ReconnectAvailableQuery())).toBe(true)
@@ -656,7 +656,7 @@ describe('ChatRoomDomain exact application port', () => {
     expect(connectionErrors).toEqual([new Error('initial join failed')])
     expect(roomErrors).toEqual([])
 
-    fixture.store.send(fixture.room.command.OmitToastCommand(request.id))
+    fixture.store.send(fixture.room.command.SettleReconnectIntervalCommand(request.id))
     await vi.waitFor(() => expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toBeNull())
     expect(connectionErrors).toEqual([new Error('initial join failed'), new Error('retry transport reset')])
     expect(fixture.store.query(fixture.room.query.ReconnectAvailableQuery())).toBe(true)
@@ -969,7 +969,7 @@ describe('ChatRoomDomain exact application port', () => {
     const request = fixture.store.query(fixture.room.query.ReconnectRequestQuery())!
     expect(request).toEqual({
       id: 1,
-      toast: { attempted: false, settled: false },
+      intervalSettled: false,
       outcome: null
     })
     await vi.waitFor(() => expect(fixture.chat.leaveRoom).toHaveBeenCalledTimes(1))
@@ -981,12 +981,12 @@ describe('ChatRoomDomain exact application port', () => {
       })
     )
 
-    fixture.store.send(fixture.room.command.OmitToastCommand(request.id))
+    fixture.store.send(fixture.room.command.SettleReconnectIntervalCommand(request.id))
     await vi.waitFor(() => expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toBeNull())
     fixture.store.discard()
   })
 
-  it('joins immediate operation and Toast settlement while fencing duplicate and stale signals', async () => {
+  it('starts the operation immediately and settles only its matching request interval', async () => {
     const reconnect = deferred()
     const fixture = createFixture()
     await join(fixture)
@@ -1002,33 +1002,24 @@ describe('ChatRoomDomain exact application port', () => {
     const request = fixture.store.query(fixture.room.query.ReconnectRequestQuery())!
     expect(request).toEqual({
       id: 1,
-      toast: { attempted: false, settled: false },
+      intervalSettled: false,
       outcome: null
     })
     expect(fixture.store.query(fixture.room.query.ReconnectIsLoadingQuery())).toBe(true)
     expect(started).toEqual([request.id])
     await vi.waitFor(() => expect(fixture.chat.leaveRoom).toHaveBeenCalledOnce())
 
-    fixture.store.send(fixture.room.command.BeginToastCommand(request.id + 1))
+    fixture.store.send(fixture.room.command.SettleReconnectIntervalCommand(request.id + 1))
     expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toEqual(request)
-    fixture.store.send(fixture.room.command.BeginToastCommand(request.id))
-    fixture.store.send(fixture.room.command.BeginToastCommand(request.id))
+    fixture.store.send(fixture.room.command.SettleReconnectIntervalCommand(request.id))
+    fixture.store.send(fixture.room.command.SettleReconnectIntervalCommand(request.id))
 
     expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toEqual({
       id: request.id,
-      toast: { attempted: true, settled: false },
+      intervalSettled: true,
       outcome: null
     })
-
-    fixture.store.send(fixture.room.command.SettleToastCommand(request.id + 1))
-    fixture.store.send(fixture.room.command.SettleToastCommand(request.id))
-    fixture.store.send(fixture.room.command.SettleToastCommand(request.id))
     expect(finished).toEqual([])
-    expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toEqual({
-      id: request.id,
-      toast: { attempted: true, settled: true },
-      outcome: null
-    })
 
     reconnect.resolve()
     await vi.waitFor(() => expect(finished).toEqual([{ id: request.id }]))
@@ -1038,7 +1029,8 @@ describe('ChatRoomDomain exact application port', () => {
     fixture.store.discard()
   })
 
-  it('releases unavailable and presented Toast attempts while fencing stale callbacks', async () => {
+  it('owns the 300ms minimum interval independently and fences stale settlement', async () => {
+    vi.useFakeTimers()
     const firstReconnect = deferred()
     const secondReconnect = deferred()
     const fixture = createFixture()
@@ -1049,74 +1041,36 @@ describe('ChatRoomDomain exact application port', () => {
 
     fixture.store.send(fixture.room.command.ReconnectCommand())
     const first = fixture.store.query(fixture.room.query.ReconnectRequestQuery())!
-    await vi.waitFor(() => expect(fixture.chat.leaveRoom).toHaveBeenCalledOnce())
-    fixture.store.send(fixture.room.command.OmitToastCommand(first.id))
-    expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toEqual({
-      ...first,
-      toast: { attempted: false, settled: true }
-    })
+    expect(fixture.chat.leaveRoom).toHaveBeenCalledOnce()
 
-    fixture.store.send(fixture.room.command.BeginToastCommand(first.id))
+    await vi.advanceTimersByTimeAsync(299)
+    expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toEqual(first)
+    await vi.advanceTimersByTimeAsync(1)
     expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toEqual({
       ...first,
-      toast: { attempted: true, settled: false }
+      intervalSettled: true
     })
-    fixture.store.send(fixture.room.command.OmitToastCommand(first.id))
-    expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toEqual({
-      ...first,
-      toast: { attempted: false, settled: true }
-    })
-    fixture.store.send(fixture.room.command.BeginToastCommand(first.id))
-    expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toEqual({
-      ...first,
-      toast: { attempted: true, settled: false }
-    })
-    fixture.store.send(fixture.room.command.SettleToastCommand(first.id))
-    const settled = fixture.store.query(fixture.room.query.ReconnectRequestQuery())
-    expect(settled).toEqual({
-      ...first,
-      toast: { attempted: true, settled: true }
-    })
-    fixture.store.send(fixture.room.command.BeginToastCommand(first.id))
-    expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toEqual(settled)
-
-    fixture.store.send(fixture.room.command.OmitToastCommand(first.id))
-    const released = fixture.store.query(fixture.room.query.ReconnectRequestQuery())
-    expect(released).toEqual({
-      ...first,
-      toast: { attempted: false, settled: true }
-    })
-    fixture.store.send(fixture.room.command.OmitToastCommand(first.id))
-    expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toEqual(released)
-
-    fixture.store.send(fixture.room.command.BeginToastCommand(first.id))
-    expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toEqual({
-      ...first,
-      toast: { attempted: true, settled: false }
-    })
-    fixture.store.send(fixture.room.command.SettleToastCommand(first.id))
 
     firstReconnect.resolve()
     await vi.waitFor(() => expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toBeNull())
 
     fixture.store.send(fixture.room.command.ReconnectCommand())
     const second = fixture.store.query(fixture.room.query.ReconnectRequestQuery())!
-    await vi.waitFor(() => expect(fixture.chat.leaveRoom).toHaveBeenCalledTimes(2))
-    fixture.store.send(fixture.room.command.BeginToastCommand(first.id))
-    fixture.store.send(fixture.room.command.SettleToastCommand(first.id))
-    fixture.store.send(fixture.room.command.OmitToastCommand(first.id))
+    expect(fixture.chat.leaveRoom).toHaveBeenCalledTimes(2)
+    fixture.store.send(fixture.room.command.SettleReconnectIntervalCommand(first.id))
     expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toEqual(second)
 
-    fixture.store.send(fixture.room.command.OmitToastCommand(second.id))
     secondReconnect.resolve()
+    await vi.advanceTimersByTimeAsync(300)
     await vi.waitFor(() => expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toBeNull())
     fixture.store.discard()
+    vi.useRealTimers()
   })
 
   it.each([
     { rejection: new Error('reconnect failed'), message: 'reconnect failed' },
     { rejection: 'transport reset', message: 'transport reset' }
-  ])('normalizes $message and settles it through an omitted Toast', async ({ rejection, message }) => {
+  ])('normalizes $message and settles it through the request-owned interval', async ({ rejection, message }) => {
     const fixture = createFixture()
     await join(fixture)
     vi.mocked(fixture.chat.leaveRoom).mockRejectedValueOnce(rejection)
@@ -1132,7 +1086,7 @@ describe('ChatRoomDomain exact application port', () => {
         error: new Error(message)
       })
     )
-    fixture.store.send(fixture.room.command.OmitToastCommand(request.id))
+    fixture.store.send(fixture.room.command.SettleReconnectIntervalCommand(request.id))
 
     await vi.waitFor(() => expect(finished).toHaveLength(1))
     expect(finished[0]).toEqual({ id: request.id, error: new Error(message) })

@@ -9,15 +9,12 @@ import useWindowResize from '@/hooks/useWindowResize'
 export interface AppMainProps {
   children?: ReactNode
   className?: string
-  toaster?: ReactNode
 }
 
-export interface AppMainFrameProps extends AppMainProps {
-  open: boolean
-  position: { x: number; y: number }
-}
-
-export const AppMainFrame: FC<AppMainFrameProps> = ({ children, className, toaster, open, position: { x, y } }) => {
+const AppMain: FC<AppMainProps> = ({ children, className }) => {
+  const appStatusDomain = useRemeshDomain(AppStatusDomain())
+  const appOpenStatus = useRemeshQuery(appStatusDomain.query.OpenQuery())
+  const { x, y } = useRemeshQuery(appStatusDomain.query.PositionQuery())
   const { width, height } = useWindowResize()
 
   // Position x,y is offset from bottom-right corner
@@ -40,51 +37,39 @@ export const AppMainFrame: FC<AppMainFrameProps> = ({ children, className, toast
   const memoizedChildren = useMemo(() => children, [children])
 
   return (
-    <div data-webchat-shell className="contents">
-      {/* Keep positioning and exit transforms panel-local so the shell-owned fixed Toaster remains viewport-relative. */}
-      <AnimatePresence>
-        {open && (
-          <motion.div
-            data-webchat-panel
-            initial={{ opacity: 0, y: 10, x: isOnRightSide ? '-100%' : '0' }}
-            animate={{ opacity: 1, y: 0, x: isOnRightSide ? '-100%' : '0' }}
-            exit={{ opacity: 0, y: 10 }}
-            transition={{ duration: 0.3, ease: 'linear' }}
-            onAnimationEnd={() => setIsAnimationComplete(true)}
-            onAnimationStart={() => setIsAnimationComplete(false)}
-            style={{
-              width: `${size}px`,
-              left: `${absoluteX}px`,
-              bottom: `calc(100vh - ${absoluteY}px + 22px)`
-            }}
+    <AnimatePresence>
+      {appOpenStatus && (
+        <motion.div
+          data-webchat-panel
+          initial={{ opacity: 0, y: 10, x: isOnRightSide ? '-100%' : '0' }}
+          animate={{ opacity: 1, y: 0, x: isOnRightSide ? '-100%' : '0' }}
+          exit={{ opacity: 0, y: 10 }}
+          transition={{ duration: 0.3, ease: 'linear' }}
+          onAnimationEnd={() => setIsAnimationComplete(true)}
+          onAnimationStart={() => setIsAnimationComplete(false)}
+          style={{
+            width: `${size}px`,
+            left: `${absoluteX}px`,
+            bottom: `calc(100vh - ${absoluteY}px + 22px)`
+          }}
+          className={cn(
+            'z-infinity fixed inset-y-10 right-10 mt-auto mb-0 box-border grid max-h-[min(calc(100vh_-60px),_1000px)] min-h-[375px] grid-flow-col grid-rows-[auto_1fr_auto] rounded-xl bg-slate-50 font-sans shadow-2xl dark:bg-slate-950',
+            className,
+            { 'transition-transform': isAnimationComplete }
+          )}
+        >
+          {memoizedChildren}
+          <div
+            ref={setRef}
             className={cn(
-              'z-infinity fixed inset-y-10 right-10 mt-auto mb-0 box-border grid max-h-[min(calc(100vh_-60px),_1000px)] min-h-[375px] grid-flow-col grid-rows-[auto_1fr_auto] rounded-xl bg-slate-50 font-sans shadow-2xl dark:bg-slate-950',
-              className,
-              { 'transition-transform': isAnimationComplete }
+              'absolute inset-y-3 z-infinity w-1 dark:bg-slate-600 cursor-ew-resize rounded-xl bg-slate-100 opacity-0 shadow transition-opacity duration-200 ease-in hover:opacity-100',
+              isOnRightSide ? '-left-0.5' : '-right-0.5'
             )}
-          >
-            {memoizedChildren}
-            <div
-              ref={setRef}
-              className={cn(
-                'absolute inset-y-3 z-infinity w-1 dark:bg-slate-600 cursor-ew-resize rounded-xl bg-slate-100 opacity-0 shadow transition-opacity duration-200 ease-in hover:opacity-100',
-                isOnRightSide ? '-left-0.5' : '-right-0.5'
-              )}
-            ></div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-      {toaster}
-    </div>
+          ></div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   )
-}
-
-const AppMain: FC<AppMainProps> = (props) => {
-  const appStatusDomain = useRemeshDomain(AppStatusDomain())
-  const open = useRemeshQuery(appStatusDomain.query.OpenQuery())
-  const position = useRemeshQuery(appStatusDomain.query.PositionQuery())
-
-  return <AppMainFrame {...props} open={open} position={position} />
 }
 
 AppMain.displayName = 'AppMain'

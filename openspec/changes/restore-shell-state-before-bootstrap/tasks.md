@@ -19,29 +19,29 @@
 
 ## 2. Final-Result Regression And FAIL-Before
 
-- [ ] 2.1 Add a structural control that compares the production root/App/AppMain hierarchy with the frozen `v1.9.7` result while allowing the current business-required Scope Domain list.
-- [ ] 2.2 Prove the implementation parent fails because it adds `Application`, passes initialization dependencies/callbacks/test timing into business components, and gates page composition; require both `appStatusLoadIsFinished` and initialization `ready` to be absent from component-tree conditions.
-- [ ] 2.3 Render the real AppMain path with the fixed happy-dom/Testing Library and Vitest Browser Mode stack, and prove the sole Toaster's actual DOM ancestors include the positioned visual panel; use literal production `data-testid` attributes when stable selectors are needed, and reject `linkedom`, dynamic injection, a shared React/Shadow root, `display: contents` shell, mocked broad wrapper, or panel-sibling Toaster as insufficient.
-- [ ] 2.4 Assert `ToastPresentation.ts`, `toast-presentation.tsx`, `useToastPresentation`, mounted-surface state, acknowledgement/paint observers, and replacement dependency injection are absent.
-- [ ] 2.5 Retain final-result expanded/collapsed/no-record hydration, opposite-value pre-hydration interaction, Toast-only initialization status, Refresh/readiness, single-flight, same-page success, and stale-generation controls.
-- [ ] 2.6 Run the unchanged final-result assertions on the implementation parent to establish fail-before without committing any parent-state expectation.
+- [x] 2.1 Add a structural control that compares the production root/App/AppMain hierarchy with the frozen `v1.9.7` result while allowing the current business-required Scope Domain list.
+- [x] 2.2 Prove the implementation parent fails because it adds `Application`, passes initialization dependencies/callbacks/test timing into business components, and gates page composition; require both `appStatusLoadIsFinished` and initialization `ready` to be absent from component-tree conditions.
+- [x] 2.3 Render the real AppMain path with the fixed happy-dom/Testing Library and Vitest Browser Mode stack, and prove the sole Toaster's actual DOM ancestors include the positioned visual panel; use literal production `data-testid` attributes when stable selectors are needed, and reject `linkedom`, dynamic injection, a shared React/Shadow root, `display: contents` shell, mocked broad wrapper, or panel-sibling Toaster as insufficient.
+- [x] 2.4 Assert `ToastPresentation.ts`, `toast-presentation.tsx`, `useToastPresentation`, mounted-surface state, acknowledgement/paint observers, and replacement dependency injection are absent.
+- [x] 2.5 Retain final-result expanded/collapsed/no-record hydration, opposite-value pre-hydration interaction, Toast-only initialization status, Refresh/readiness, single-flight, same-page success, and stale-generation controls.
+- [x] 2.6 Run the unchanged final-result assertions on the implementation parent to establish fail-before without committing any parent-state expectation.
 
 ## 3. Replacement
 
-- [ ] 3.1 Restore the frozen `v1.9.7` root/App/AppMain component hierarchy and remove `Application`, every initialization wrapper/alternate tree, and every `appStatusLoadIsFinished` or initialization `ready` composition branch.
-- [ ] 3.2 Remove initialization dependencies, activation callbacks, business-state projections, and test-only controls from business-component props; consume existing capabilities directly at their use sites without replacement injection.
-- [ ] 3.3 Delete the `ToastPresentation` Domain/adapter path and route initialization, Runtime readiness, reconnect, join retry, and unrelated feedback through existing `Toast.ts` commands.
-- [ ] 3.4 Restore the sole Toaster as the last AppMain business child inside the positioned panel with the frozen props and no external renderer.
-- [ ] 3.5 Run required initialization as non-presentational lifecycle logic without changing dependency order, deadlines, cancellation, Runtime detach, single-flight, or stale fencing.
-- [ ] 3.6 Mount the normal component tree before AppStatus hydration or application dependencies settle; preserve a newer pre-hydration user choice, later user persistence, and the single existing storage path.
-- [ ] 3.7 Keep AppButton and its Refresh slot reachable pre-ready, with initialization-only dispatch before ready and existing ChatRoom-only dispatch after the atomic switch.
-- [ ] 3.8 Project the current attempt through disabled/rotating Refresh, reject duplicates, restore retry eligibility on matching failure, activate dependent capabilities in place on success, and fence stale generations.
-- [ ] 3.9 Align test-only development dependencies and regression configuration with the fixed stack, including any required `@testing-library/*` and `@vitest/*` packages; remove `linkedom` usage without changing production dependencies or behavior.
+- [x] 3.1 Restore the frozen `v1.9.7` root/App/AppMain component hierarchy and remove `Application`, every initialization wrapper/alternate tree, and every `appStatusLoadIsFinished` or initialization `ready` composition branch.
+- [x] 3.2 Remove initialization dependencies, activation callbacks, business-state projections, and test-only controls from business-component props; consume existing capabilities directly at their use sites without replacement injection.
+- [x] 3.3 Delete the `ToastPresentation` Domain/adapter path and route initialization, Runtime readiness, reconnect, join retry, and unrelated feedback through existing `Toast.ts` commands.
+- [x] 3.4 Restore the sole Toaster as the last AppMain business child inside the positioned panel with the frozen props and no external renderer.
+- [x] 3.5 Run required initialization as non-presentational lifecycle logic without changing dependency order, deadlines, cancellation, Runtime detach, single-flight, or stale fencing.
+- [x] 3.6 Mount the normal component tree before AppStatus hydration or application dependencies settle; preserve a newer pre-hydration user choice, later user persistence, and the single existing storage path.
+- [x] 3.7 Keep AppButton and its Refresh slot reachable pre-ready, with initialization-only dispatch before ready and existing ChatRoom-only dispatch after the atomic switch.
+- [x] 3.8 Project the current attempt through disabled/rotating Refresh, reject duplicates, restore retry eligibility on matching failure, activate dependent capabilities in place on success, and fence stale generations.
+- [x] 3.9 Align test-only development dependencies and regression configuration with the fixed stack, including any required `@testing-library/*` and `@vitest/*` packages; remove `linkedom` usage without changing production dependencies or behavior.
 
 ## 4. Source And Delivery Gates
 
-- [ ] 4.1 Run focused parent FAIL-before and replacement controls for structure, real Toaster ancestry, single Toast path, all initialization stage classes, status restoration, pre-ready Refresh, expanded/collapsed behavior, same-page recovery, ready context switch, duplicates, and stale generations.
-- [ ] 4.2 Run fixed-stack DOM/component and browser-mode controls, complete repository source tests, typecheck, lint, format, Chrome/Firefox builds, strict OpenSpec, and exact identity/scope gates on one immutable replacement exact.
+- [x] 4.1 Run focused parent FAIL-before and replacement controls for structure, real Toaster ancestry, single Toast path, all initialization stage classes, status restoration, pre-ready Refresh, expanded/collapsed behavior, same-page recovery, ready context switch, duplicates, and stale generations.
+- [x] 4.2 Run fixed-stack DOM/component and browser-mode controls, complete repository source tests, typecheck, lint, format, Chrome/Firefox builds, strict OpenSpec, and exact identity/scope gates on one immutable replacement exact.
 - [ ] 4.3 Obtain fresh independent Review of the complete branch diff against `The-Absolute-Code.md` and the frozen `v1.9.7` hierarchy; close every finding on a replacement exact before release.
 - [ ] 4.4 Publish only the same reviewed exact to the single `fix/restore-shell-state` Draft PR and require exact CI to pass without force, rebase, or unrelated scope.
 - [ ] 4.5 Keep QA, QC, and UX absent unless the Owner explicitly requests the corresponding role; never report an unperformed result as PASS.

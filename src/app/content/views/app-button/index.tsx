@@ -29,12 +29,7 @@ import useDraggable from '@/hooks/useDraggable'
 import useWindowResize from '@/hooks/useWindowResize'
 import AppActionDomain from '@/domain/AppAction'
 import ChatRoomDomain from '@/domain/ChatRoom'
-
-export interface AppButtonProps {
-  className?: string
-  initializationPhase?: 'connecting' | 'unavailable'
-  onInitializationRetry: () => void
-}
+import InitializationDomain from '@/app/content/Initialization'
 
 export const getReconnectLabel = ({
   userConfigured,
@@ -102,54 +97,16 @@ export const AppLauncherButton: FC<AppLauncherButtonProps> = ({ hasUnread = fals
   )
 }
 
-interface ApplicationAppButtonMenuProps {
+interface AppButtonMenuProps {
   open: boolean
   appButtonRef: ReturnType<typeof useDraggable>['setRef']
 }
 
-interface InitializationAppButtonMenuProps {
-  open: boolean
-  initializationPhase: 'connecting' | 'unavailable'
-  onInitializationRetry: () => void
-}
-
-const InitializationAppButtonMenu: FC<InitializationAppButtonMenuProps> = ({
-  open,
-  initializationPhase,
-  onInitializationRetry
-}) => {
-  const connecting = initializationPhase === 'connecting'
-  const label = connecting ? 'Preparing WebChat setup' : 'Retry WebChat setup'
-
-  return (
-    <AnimatePresence>
-      {open && (
-        <motion.div
-          className="z-10 grid gap-y-3"
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: 12 }}
-          transition={{ duration: 0.1 }}
-        >
-          <Button
-            type="button"
-            onClick={onInitializationRetry}
-            variant="outline"
-            disabled={connecting}
-            aria-label={label}
-            title={label}
-            className="dark:bg-background dark:text-foreground dark:hover:bg-accent size-10 rounded-full p-0 shadow dark:border-slate-600"
-          >
-            <RefreshCwIcon className={cn('size-5', connecting && 'animate-spin')} />
-          </Button>
-        </motion.div>
-      )}
-    </AnimatePresence>
-  )
-}
-
-const ApplicationAppButtonMenu: FC<ApplicationAppButtonMenuProps> = ({ open, appButtonRef }) => {
+const AppButtonMenu: FC<AppButtonMenuProps> = ({ open, appButtonRef }) => {
   const send = useRemeshSend()
+  const initializationDomain = useRemeshDomain(InitializationDomain())
+  const initializationPhase = useRemeshQuery(initializationDomain.query.PhaseQuery())
+  const applicationReady = initializationPhase === 'ready'
   const appActionDomain = useRemeshDomain(AppActionDomain())
   const userInfoDomain = useRemeshDomain(UserInfoDomain())
   const userInfo = useRemeshQuery(userInfoDomain.query.UserInfoQuery())
@@ -177,11 +134,18 @@ const ApplicationAppButtonMenu: FC<ApplicationAppButtonMenuProps> = ({ open, app
     reconnecting,
     available: reconnectAvailable
   })
+  const initializationConnecting = initializationPhase === 'connecting'
+  const refreshLabel = applicationReady
+    ? reconnectLabel
+    : initializationConnecting
+      ? 'Preparing WebChat setup'
+      : 'Retry WebChat setup'
+  const refreshDisabled = applicationReady ? !reconnectAvailable : initializationConnecting
+  const refreshLoading = applicationReady ? reconnecting : initializationConnecting
 
-  // Rebuilds only this domain's ChatRoom; the shared WorldRoom is untouched.
-  const handleReconnectSite = useCallback(() => {
-    send(chatRoomDomain.command.ReconnectCommand())
-  }, [chatRoomDomain.command, send])
+  const handleRefresh = useCallback(() => {
+    send(applicationReady ? chatRoomDomain.command.ReconnectCommand() : initializationDomain.command.RetryCommand())
+  }, [applicationReady, chatRoomDomain.command, initializationDomain.command, send])
 
   // Memoize menu buttons to prevent re-render when position changes
   const menuButtons = useMemo(
@@ -212,14 +176,14 @@ const ApplicationAppButtonMenu: FC<ApplicationAppButtonMenuProps> = ({ open, app
           <SettingsIcon className="size-5" />
         </Button>
         <Button
-          onClick={handleReconnectSite}
+          onClick={handleRefresh}
           variant="outline"
-          disabled={!reconnectAvailable}
-          aria-label={reconnectLabel}
-          title={reconnectLabel}
+          disabled={refreshDisabled}
+          aria-label={refreshLabel}
+          title={refreshLabel}
           className="dark:bg-background dark:text-foreground dark:hover:bg-accent size-10 rounded-full p-0 shadow dark:border-slate-600"
         >
-          <RefreshCwIcon className={cn('size-5', reconnecting && 'animate-spin')} />
+          <RefreshCwIcon className={cn('size-5', refreshLoading && 'animate-spin')} />
         </Button>
         <Button
           ref={appButtonRef}
@@ -234,11 +198,11 @@ const ApplicationAppButtonMenu: FC<ApplicationAppButtonMenuProps> = ({ open, app
       isDarkMode,
       handleSwitchTheme,
       handleOpenOptionsPage,
-      handleReconnectSite,
+      handleRefresh,
       appButtonRef,
-      reconnectAvailable,
-      reconnectLabel,
-      reconnecting
+      refreshDisabled,
+      refreshLabel,
+      refreshLoading
     ]
   )
 
@@ -259,7 +223,7 @@ const ApplicationAppButtonMenu: FC<ApplicationAppButtonMenuProps> = ({ open, app
   )
 }
 
-const AppButton: FC<AppButtonProps> = ({ className, initializationPhase, onInitializationRetry }) => {
+const AppButton: FC = () => {
   const send = useRemeshSend()
   const appStatusDomain = useRemeshDomain(AppStatusDomain())
   const appOpenStatus = useRemeshQuery(appStatusDomain.query.OpenQuery())
@@ -315,22 +279,14 @@ const AppButton: FC<AppButtonProps> = ({ className, initializationPhase, onIniti
   return (
     <div
       ref={appMenuRef}
-      className={cn('fixed z-infinity grid w-min select-none justify-center gap-y-3', className)}
+      className="z-infinity fixed grid w-min justify-center gap-y-3 select-none"
       style={{
         right: `${x}px`,
         bottom: `${y}px`,
         transform: 'translateX(50%)'
       }}
     >
-      {initializationPhase === undefined ? (
-        <ApplicationAppButtonMenu open={menuOpen} appButtonRef={appButtonRef} />
-      ) : (
-        <InitializationAppButtonMenu
-          open={menuOpen}
-          initializationPhase={initializationPhase}
-          onInitializationRetry={onInitializationRetry}
-        />
-      )}
+      <AppButtonMenu open={menuOpen} appButtonRef={appButtonRef} />
       <AppLauncherButton
         onClick={handleToggleApp}
         onContextMenu={handleToggleMenu}

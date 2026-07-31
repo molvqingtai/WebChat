@@ -1,65 +1,94 @@
-import { StrictMode, useMemo, useState } from 'react'
-import { RemeshScope } from 'remesh-react'
+import '@webcomponents/custom-elements'
+import { useEffect, useRef } from 'react'
+import { useRemeshDomain, useRemeshQuery, useRemeshSend } from 'remesh-react'
 import { Toaster } from 'sonner'
-import Application from '@/app/content/Application'
+import Header from '@/app/content/views/header'
+import Footer from '@/app/content/views/footer'
+import Main from '@/app/content/views/main'
+import Setup from '@/app/content/views/setup'
 import AppButton from '@/app/content/views/app-button'
 import AppMain from '@/app/content/views/app-main'
-import DanmakuPresentation from '@/app/content/components/danmaku-presentation'
-import { useToastPresentation } from '@/app/content/components/toast-presentation'
-import { useInitialization, type InitializationDependencies } from '@/app/content/Initialization'
-import AppStatusEffectsDomain from '@/domain/AppStatusEffects'
-import NotificationDomain from '@/domain/Notification'
-import ToastDomain from '@/domain/Toast'
-import AppFeedbackDomain from '@/domain/AppFeedback'
+import DanmakuContainer from '@/app/content/components/danmaku-container'
+import ChatRoomDomain from '@/domain/ChatRoom'
+import UserInfoDomain from '@/domain/UserInfo'
+import MessageListDomain from '@/domain/MessageList'
+import WorldRoomDomain from '@/domain/WorldRoom'
+import DanmakuDomain from '@/domain/Danmaku'
+import InitializationDomain from '@/app/content/Initialization'
 import { checkDarkMode, cn } from '@/utils'
 
-export interface AppProps {
-  dependencies: InitializationDependencies
-  activateApplicationDependencies: () => void
-  timeoutMs?: number
+if (import.meta.env.FIREFOX) {
+  window.requestAnimationFrame = window.requestAnimationFrame.bind(window)
 }
 
-const App = ({ dependencies, activateApplicationDependencies, timeoutMs }: AppProps) => {
-  const [themeMode, setThemeMode] = useState<'dark' | 'light'>(() => (checkDarkMode() ? 'dark' : 'light'))
-  const toasterRef = useToastPresentation()
-  const { phase, retry } = useInitialization({ dependencies, activateApplicationDependencies, timeoutMs })
-  const ready = phase === 'ready'
-  const initializationPhase = ready ? undefined : phase
-  const applicationDomains = useMemo(
-    () => (ready ? [AppStatusEffectsDomain(), NotificationDomain(), ToastDomain(), AppFeedbackDomain()] : []),
-    [ready]
-  )
+const App = () => {
+  const send = useRemeshSend()
+  const initializationDomain = useRemeshDomain(InitializationDomain())
+  const initializationReady = useRemeshQuery(initializationDomain.query.ReadyQuery())
+  const chatRoomDomain = useRemeshDomain(ChatRoomDomain())
+  const worldRoomDomain = useRemeshDomain(WorldRoomDomain())
+  const userInfoDomain = useRemeshDomain(UserInfoDomain())
+  const messageListDomain = useRemeshDomain(MessageListDomain())
+  const danmakuDomain = useRemeshDomain(DanmakuDomain())
+  const danmakuIsEnabled = useRemeshQuery(danmakuDomain.query.IsEnabledQuery())
+  const userInfoSetFinished = useRemeshQuery(userInfoDomain.query.UserInfoSetIsFinishedQuery())
+  const messageListLoadFinished = useRemeshQuery(messageListDomain.query.LoadIsFinishedQuery())
+  const userInfoLoadFinished = useRemeshQuery(userInfoDomain.query.UserInfoLoadIsFinishedQuery())
+  const chatRoomJoinIsFinished = useRemeshQuery(chatRoomDomain.query.JoinIsFinishedQuery())
+  const worldRoomJoinIsFinished = useRemeshQuery(worldRoomDomain.query.JoinIsFinishedQuery())
+  const userInfo = useRemeshQuery(userInfoDomain.query.UserInfoQuery())
+  const danmakuContainerRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (initializationReady && messageListLoadFinished && userInfoSetFinished) {
+      send(chatRoomDomain.command.JoinRoomCommand())
+    }
+  }, [initializationReady, userInfoSetFinished, messageListLoadFinished, send, chatRoomDomain.command])
+
+  useEffect(() => {
+    if (initializationReady && chatRoomJoinIsFinished && !worldRoomJoinIsFinished) {
+      send(worldRoomDomain.command.JoinRoomCommand())
+    }
+  }, [initializationReady, chatRoomJoinIsFinished, worldRoomJoinIsFinished, send, worldRoomDomain.command])
+
+  useEffect(() => {
+    if (danmakuIsEnabled) send(danmakuDomain.command.MountCommand(danmakuContainerRef.current!))
+    return () => {
+      if (danmakuIsEnabled) send(danmakuDomain.command.UnmountCommand())
+    }
+  }, [danmakuIsEnabled, send, danmakuDomain.command])
+
+  const notUserInfo = userInfoLoadFinished && !userInfoSetFinished
+  const themeMode =
+    userInfo?.themeMode === 'system'
+      ? checkDarkMode()
+        ? 'dark'
+        : 'light'
+      : (userInfo?.themeMode ?? (checkDarkMode() ? 'dark' : 'light'))
 
   return (
-    <RemeshScope domains={applicationDomains}>
-      <div id="app" className={cn('contents', themeMode)}>
-        <AppMain
-          toaster={
-            <Toaster
-              ref={toasterRef}
-              richColors
-              theme={themeMode}
-              offset="70px"
-              visibleToasts={1}
-              toastOptions={{
-                classNames: {
-                  toast: 'dark:bg-slate-950 border dark:border-slate-600'
-                }
-              }}
-              position="top-center"
-            ></Toaster>
-          }
-        >
-          {ready && (
-            <StrictMode>
-              <Application onThemeModeChange={setThemeMode} />
-            </StrictMode>
-          )}
-        </AppMain>
-        <AppButton initializationPhase={initializationPhase} onInitializationRetry={retry} />
-        {ready && <DanmakuPresentation />}
-      </div>
-    </RemeshScope>
+    <div id="app" className={cn('contents', themeMode)}>
+      <AppMain>
+        <Header />
+        <Main />
+        <Footer />
+        {notUserInfo && <Setup />}
+        <Toaster
+          richColors
+          theme={themeMode}
+          offset="70px"
+          visibleToasts={1}
+          toastOptions={{
+            classNames: {
+              toast: 'dark:bg-slate-950 border dark:border-slate-600'
+            }
+          }}
+          position="top-center"
+        />
+      </AppMain>
+      <AppButton />
+      <DanmakuContainer ref={danmakuContainerRef} />
+    </div>
   )
 }
 

@@ -3,91 +3,104 @@ import { describe, expect, it } from 'vitest'
 
 const source = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8')
 
-describe('single normal-shell ownership', () => {
-  it('mounts App directly without a Bootstrap UI layer', () => {
-    const entrySource = source('./index.tsx')
+const ordered = (value: string, needles: string[]) => {
+  let cursor = -1
+  for (const needle of needles) {
+    const next = value.indexOf(needle, cursor + 1)
+    expect(next, `Missing or out-of-order source token: ${needle}`).toBeGreaterThan(cursor)
+    cursor = next
+  }
+}
 
-    expect(existsSync(new URL('./Bootstrap.tsx', import.meta.url))).toBe(false)
-    expect(existsSync(new URL('./BootstrapShell.tsx', import.meta.url))).toBe(false)
-    expect(entrySource).toContain('<App')
-    expect(entrySource).toContain('dependencies={initializationDependencies}')
-    expect(entrySource).toContain('activateApplicationDependencies={activateApplicationDependencies}')
-    expect(entrySource).not.toMatch(/ContentBootstrap|createReadyApplication|createApplication\(\)/)
+describe('frozen v1.9.7 component hierarchy', () => {
+  it('keeps StrictMode -> RemeshRoot -> RemeshScope -> prop-free App at the content root', () => {
+    const entry = source('./index.tsx')
+
+    ordered(entry, ['<StrictMode>', '<RemeshRoot store={store}>', '<RemeshScope', '<App />'])
+    expect(entry).not.toMatch(/<App\s+[^>]*(?:dependenc|activat|ready|phase|timeout)/)
+    expect(entry).not.toMatch(/ContentBootstrap|BootstrapShell|<Application\b|from ['"].*Application['"]/)
+    expect(existsSync(new URL('./Application.tsx', import.meta.url))).toBe(false)
   })
 
-  it('keeps the sole content Toaster inside the stable normal shell', () => {
-    const appSource = source('./App.tsx')
-    const applicationSource = source('./Application.tsx')
-    const appMainSource = source('./views/app-main/index.tsx')
-    const styles = source('../../assets/styles/tailwind.css')
-    const shellStart = appSource.indexOf('<AppMain')
-    const shellEnd = appSource.indexOf('</AppMain>')
-    const toaster = appSource.indexOf('<Toaster')
+  it('renders the original App and AppMain composition without whole-tree state gates', () => {
+    const app = source('./App.tsx')
+    const appMain = source('./views/app-main/index.tsx')
 
-    expect(shellStart).toBeGreaterThan(-1)
-    expect(shellEnd).toBeGreaterThan(shellStart)
-    expect(toaster).toBeGreaterThan(shellStart)
-    expect(toaster).toBeLessThan(shellEnd)
-    expect(appSource.match(/<Toaster\b/g)).toHaveLength(1)
-    expect(applicationSource).not.toMatch(/<Toaster\b|from 'sonner'|useToastPresentation/)
-    expect(appSource).toContain("import { Toaster } from 'sonner'")
-    expect(appSource).toContain('useToastPresentation()')
-    expect(appSource).toContain('richColors')
-    expect(appSource).toContain('theme={themeMode}')
-    expect(appSource).toContain('offset="70px"')
-    expect(appSource).toContain('visibleToasts={1}')
-    expect(appSource).toContain('position="top-center"')
-    expect(appSource).toContain("toast: 'dark:bg-slate-950 border dark:border-slate-600'")
-    expect(appMainSource).toContain('data-webchat-shell')
-    expect(appMainSource).toContain('{toaster}')
-    expect(appMainSource.indexOf('{toaster}')).toBeLessThan(appMainSource.lastIndexOf('</div>'))
-    expect(appMainSource).toContain('className="contents"')
-    expect(appMainSource).toContain("initial={{ opacity: 0, y: 10, x: isOnRightSide ? '-100%' : '0' }}")
-    expect(appMainSource).toContain("animate={{ opacity: 1, y: 0, x: isOnRightSide ? '-100%' : '0' }}")
-    expect(appMainSource).not.toContain('panelPositioned')
-    expect(appMainSource).not.toContain("transform: isOnRightSide ? 'translateX(-100%)' : 'translateX(0)'")
-    expect(appMainSource).not.toMatch(/data-webchat-toaster-owner|pointer-events/)
-    expect(styles).not.toMatch(/webchat-(?:panel|launcher|reconnect)-toaster|data-webchat-interactive/)
+    expect(app).toMatch(/(?:function App\(\)|const App = \(\) =>)/)
+    expect(app).not.toMatch(/appStatusLoadIsFinished|\bready\s*&&|<Application/)
+    ordered(app, [
+      '<div id="app"',
+      '<AppMain>',
+      '<Header />',
+      '<Main />',
+      '<Footer />',
+      '<Setup',
+      '<Toaster',
+      '</AppMain>',
+      '<AppButton',
+      '<DanmakuContainer'
+    ])
+    expect(app.match(/<Toaster\b/g)).toHaveLength(1)
+    expect(app).toContain('richColors')
+    expect(app).toContain('theme={themeMode}')
+    expect(app).toContain('offset="70px"')
+    expect(app).toContain('visibleToasts={1}')
+    expect(app).toContain('position="top-center"')
+    expect(app).toContain("toast: 'dark:bg-slate-950 border dark:border-slate-600'")
+
+    expect(appMain).not.toMatch(/\btoaster\??:|\{toaster\}/)
+    ordered(appMain, ['<AnimatePresence>', 'appOpenStatus &&', '<motion.div', '{memoizedChildren}', 'ref={setRef}'])
+    expect(appMain).toContain('data-webchat-panel')
   })
 
-  it('uses a non-visual initialization hook and generic Toast descriptors only', () => {
-    const appSource = source('./App.tsx')
-    const applicationSource = source('./Application.tsx')
-    const entrySource = source('./index.tsx')
-    const initializationSource = source('./Initialization.ts')
-    const readinessSource = source('../../domain/Readiness.ts')
+  it('keeps business dependencies at use sites instead of business-component props', () => {
+    const app = source('./App.tsx')
+    const appButton = source('./views/app-button/index.tsx')
 
-    expect(initializationSource).toContain('export const useInitialization')
-    expect(initializationSource).toContain("const INITIALIZATION_TOAST_ID = 'webchat-initialization'")
-    expect(initializationSource.match(/id: INITIALIZATION_TOAST_ID/g)).toHaveLength(2)
-    expect(initializationSource).toContain("type: 'loading'")
-    expect(initializationSource).toContain("message: 'Preparing WebChat'")
-    expect(initializationSource).toContain("type: 'error'")
-    expect(initializationSource).toContain("message: 'WebChat unavailable'")
-    expect(initializationSource).toContain('presentationDomain.command.DismissCommand(INITIALIZATION_TOAST_ID)')
-    expect(initializationSource).not.toMatch(/ReactElement|ReactNode|createElement|return\s*</)
-    expect(`${appSource}\n${applicationSource}`).not.toMatch(
-      /<output|aria-busy|LoaderCircleIcon|AlertCircleIcon|WebChat unavailable|Preparing WebChat/
+    expect(app).not.toMatch(/interface AppProps|dependencies:|activateApplicationDependencies|timeoutMs/)
+    expect(appButton).not.toMatch(/initializationPhase\??:|onInitializationRetry/)
+    expect(appButton).toMatch(/useInitialization|InitializationDomain/)
+  })
+})
+
+describe('single existing Toast capability', () => {
+  it('removes ToastPresentation and routes business feedback through Toast.ts', () => {
+    const initialization = source('./Initialization.ts')
+    const feedback = source('../../domain/AppFeedback.ts')
+
+    expect(existsSync(new URL('../../domain/ToastPresentation.ts', import.meta.url))).toBe(false)
+    expect(existsSync(new URL('./components/toast-presentation.tsx', import.meta.url))).toBe(false)
+    expect(existsSync(new URL('./components/toast-presentation.test.ts', import.meta.url))).toBe(false)
+    expect(`${initialization}\n${feedback}`).not.toMatch(
+      /ToastPresentation|useToastPresentation|SurfaceMounted|Acknowledg|observeVisibleDwell/
     )
-    expect(entrySource).not.toMatch(/runtime-unavailable|WebChat unavailable|location\.reload/)
-    expect(initializationSource).not.toMatch(/ReadinessDomain|ToastDomain|location\.reload|type:\s*'success'/)
-    expect(readinessSource).toContain("default: 'connecting'")
-    expect(readinessSource).toContain('StateChangedEvent')
+    expect(initialization).toMatch(/ToastDomain/)
+    expect(feedback).toMatch(/ToastDomain/)
+    expect(initialization).toContain("'Preparing WebChat'")
+    expect(initialization).toContain("'WebChat unavailable'")
   })
+})
 
-  it('deletes reconnect presentation residue and isolates the generic adapter from business sources', () => {
-    const presenterSource = source('./components/toast-presentation.tsx')
-    const feedbackSource = source('../../domain/AppFeedback.ts')
-    const toastSource = source('../../domain/Toast.ts')
+describe('fixed test stack', () => {
+  it('uses happy-dom, Testing Library, and Vitest Browser Mode without linkedom', () => {
+    const packageJson = source('../../../package.json')
+    const config = source('../../../vitest.config.ts')
+    const migratedSuites = [
+      './index.test.ts',
+      './App.render.test.tsx',
+      './Initialization.test.ts',
+      './InitializationStatus.test.tsx',
+      './views/app-main/index.test.ts'
+    ].map(source)
 
-    expect(existsSync(new URL('./components/reconnect-toast.tsx', import.meta.url))).toBe(false)
-    expect(existsSync(new URL('./components/reconnect-toast.test.ts', import.meta.url))).toBe(false)
-    expect(presenterSource).not.toMatch(/ChatRoom|Readiness|Runtime|Network|AppStatus|panel|reconnect/i)
-    expect(presenterSource).toContain("from '@/domain/ToastPresentation'")
-    expect(feedbackSource).toContain("from '@/domain/ChatRoom'")
-    expect(feedbackSource).toContain("from '@/domain/Readiness'")
-    expect(feedbackSource).toContain("from '@/domain/ToastPresentation'")
-    expect(feedbackSource).toContain('minimumVisibleMs: 300')
-    expect(toastSource).not.toMatch(/Descriptor|Presentation|SurfaceMounted|Acknowledge/)
+    expect(packageJson).toContain('"happy-dom"')
+    expect(packageJson).toContain('"@testing-library/react"')
+    expect(packageJson).toContain('"@testing-library/dom"')
+    expect(packageJson).toContain('"@vitest/browser-playwright"')
+    expect(packageJson).toContain('"vitest-browser-react"')
+    expect(config).toContain("environment: 'happy-dom'")
+    expect(config).toContain('provider: playwright()')
+    expect(source('./views/app-main/index.browser.test.tsx')).toContain("from 'vitest-browser-react'")
+    expect(migratedSuites.join('\n')).not.toMatch(/linkedom|parseHTML|createRequire\(require\.resolve\('wxt'\)\)/)
   })
 })

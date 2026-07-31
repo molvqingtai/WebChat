@@ -1,6 +1,9 @@
 import { readFileSync } from 'node:fs'
+import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { getReconnectLabel } from '.'
+
+const source = () => readFileSync(path.resolve(process.cwd(), 'src/app/content/views/app-button/index.tsx'), 'utf8')
 
 describe('reconnect action availability', () => {
   it.each([
@@ -29,62 +32,57 @@ describe('reconnect action availability', () => {
   })
 
   it('uses the Domain eligibility truth while preserving panel state and native pending UI', () => {
-    const source = readFileSync(new URL('./index.tsx', import.meta.url), 'utf8')
+    const value = source()
 
-    expect(source).toContain(
-      'const reconnectAvailable = useRemeshQuery(chatRoomDomain.query.ReconnectAvailableQuery())'
-    )
-    expect(source).toContain('disabled={!reconnectAvailable}')
-    expect(source).toContain("reconnecting && 'animate-spin'")
-    expect(source).not.toContain('ReconnectAvailableQuery(appOpenStatus')
-    expect(source).not.toContain('isReconnectAvailable')
-    expect(source).not.toContain('Open WebChat to reconnect this site')
-    expect(source).not.toMatch(/Ready|success|result badge/i)
-    expect(source).toMatch(
-      /const handleReconnectSite = useCallback\(\(\) => \{\s*send\(chatRoomDomain\.command\.ReconnectCommand\(\)\)\s*\}/
-    )
+    expect(value).toContain('const reconnectAvailable = useRemeshQuery(chatRoomDomain.query.ReconnectAvailableQuery())')
+    expect(value).toContain('const refreshDisabled = applicationReady ? !reconnectAvailable : initializationConnecting')
+    expect(value).toContain('const refreshLoading = applicationReady ? reconnecting : initializationConnecting')
+    expect(value).toContain('disabled={refreshDisabled}')
+    expect(value).toContain("refreshLoading && 'animate-spin'")
+    expect(value).not.toContain('ReconnectAvailableQuery(appOpenStatus')
+    expect(value).not.toContain('isReconnectAvailable')
+    expect(value).not.toContain('Open WebChat to reconnect this site')
+    expect(value).not.toMatch(/success Toast|result badge/i)
+    expect(value).toMatch(/applicationReady[\s\S]*chatRoomDomain\.command\.ReconnectCommand\(\)/)
   })
 
   it('projects direct, automatic, recovery, and manual connection loading through one control query', () => {
-    const source = readFileSync(new URL('./index.tsx', import.meta.url), 'utf8')
+    const value = source()
 
-    expect(source).toContain('const reconnecting = useRemeshQuery(chatRoomDomain.query.ConnectionIsLoadingQuery())')
-    expect(source).toContain('disabled={!reconnectAvailable}')
-    expect(source).toContain("reconnecting && 'animate-spin'")
-    expect(source).not.toContain('query.ReconnectIsLoadingQuery()')
+    expect(value).toContain('const reconnecting = useRemeshQuery(chatRoomDomain.query.ConnectionIsLoadingQuery())')
+    expect(value).toContain('disabled={refreshDisabled}')
+    expect(value).toContain("refreshLoading && 'animate-spin'")
+    expect(value).not.toContain('query.ReconnectIsLoadingQuery()')
   })
 
-  it('keeps pre-ready Refresh reachable without constructing ready-only domains', () => {
-    const source = readFileSync(new URL('./index.tsx', import.meta.url), 'utf8')
-    const initializationMenuStart = source.indexOf('const InitializationAppButtonMenu')
-    const applicationMenuStart = source.indexOf('const ApplicationAppButtonMenu')
-    const initializationMenu = source.slice(initializationMenuStart, applicationMenuStart)
+  it('keeps one actions menu and dispatches pre-ready Retry from the same Refresh slot', () => {
+    const value = source()
 
-    expect(initializationMenuStart).toBeGreaterThan(-1)
-    expect(applicationMenuStart).toBeGreaterThan(initializationMenuStart)
-    expect(initializationMenu).toContain("initializationPhase === 'connecting'")
-    expect(initializationMenu).toContain('disabled={connecting}')
-    expect(initializationMenu).toContain("connecting && 'animate-spin'")
-    expect(initializationMenu).toContain('onClick={onInitializationRetry}')
-    expect(initializationMenu).toContain('Retry WebChat setup')
-    expect(initializationMenu).not.toMatch(/ChatRoomDomain|UserInfoDomain|AppActionDomain|ReconnectCommand/)
-    expect(source).toContain('onContextMenu={handleToggleMenu}')
-    expect(source).not.toContain('onContextMenu={applicationAvailable ? handleToggleMenu : undefined}')
+    expect(value).toContain('const AppButtonMenu')
+    expect(value).not.toMatch(/InitializationAppButtonMenu|ApplicationAppButtonMenu/)
+    expect(value).toContain("const initializationConnecting = initializationPhase === 'connecting'")
+    expect(value).toContain("'Retry WebChat setup'")
+    expect(value).toContain('initializationDomain.command.RetryCommand()')
+    expect(value).toMatch(
+      /applicationReady\s*\?\s*chatRoomDomain\.command\.ReconnectCommand\(\)\s*:\s*initializationDomain\.command\.RetryCommand\(\)/
+    )
+    expect(value).toContain('onContextMenu={handleToggleMenu}')
+    expect(value.match(/<RefreshCwIcon/g)).toHaveLength(1)
   })
 
   it('does not persist automatic default position before shell status hydration', () => {
-    const source = readFileSync(new URL('./index.tsx', import.meta.url), 'utf8')
-    const resizeEffect = source.slice(source.indexOf('useWindowResize(() => {'), source.indexOf('const {\n    x,'))
+    const value = source()
+    const resizeEffect = value.slice(value.indexOf('useWindowResize(() => {'), value.indexOf('const {\n    x,'))
 
-    expect(source).toContain(
+    expect(value).toContain(
       'const statusLoadIsFinished = useRemeshQuery(appStatusDomain.query.StatusLoadIsFinishedQuery())'
     )
     expect(resizeEffect.indexOf('if (!statusLoadIsFinished) return')).toBeGreaterThan(-1)
     expect(resizeEffect.indexOf('if (!statusLoadIsFinished) return')).toBeLessThan(
       resizeEffect.indexOf('send(appStatusDomain.command.UpdatePositionCommand')
     )
-    expect(source).toContain('const positionPersistenceStarted = useRef(false)')
-    expect(source).toMatch(
+    expect(value).toContain('const positionPersistenceStarted = useRef(false)')
+    expect(value).toMatch(
       /useEffect\(\(\) => \{\s*if \(!statusLoadIsFinished\) return\s*if \(!positionPersistenceStarted\.current\) \{[\s\S]*?return\s*\}\s*send\(appStatusDomain\.command\.UpdatePositionCommand\(\{ x, y \}\)\)/
     )
   })

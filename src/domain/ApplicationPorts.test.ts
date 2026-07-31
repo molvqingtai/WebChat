@@ -129,6 +129,7 @@ describe('replaceable application boundaries', () => {
     const violations: string[] = []
 
     for (const file of await codeFiles(projectPath('src/app'))) {
+      if (/\.test\.[cm]?[jt]sx?$/.test(file)) continue
       if (roots.has(file)) continue
       const value = await source(file)
       if (/from ['"]@\/(?:domain\/impls|runtime)\//.test(value) || /(?:AppActionImpl|ToastImpl)\.value/.test(value)) {
@@ -225,8 +226,10 @@ describe('replaceable application boundaries', () => {
     expect(content).toContain('prepareLocalStorage: prepareLocalConfigurationStorage')
     expect(content).toContain('prepareMessageDatabase: prepareIndexedDBMessageDatabase')
     expect(content).toContain('initializeRuntime: initClient')
-    expect(content).toContain('dependencies={initializationDependencies}')
-    expect(content).toContain('activateApplicationDependencies={activateApplicationDependencies}')
+    expect(content).toContain('startInitializationLifecycle({')
+    expect(content).toContain('dependencies: initializationDependencies')
+    expect(content).toContain('activateApplicationDependencies')
+    expect(content).not.toMatch(/<App\s+[^>]*(?:dependenc|activat|timeout)/)
     expect(content).not.toContain('ContentBootstrap')
     expect(background).toContain('registerBrowserSyncStoragePreparation()')
     for (const preparation of [
