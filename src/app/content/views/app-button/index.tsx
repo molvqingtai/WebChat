@@ -1,4 +1,13 @@
-import { type FC, useState, type MouseEvent, type MouseEventHandler, useCallback, useEffect, useMemo } from 'react'
+import {
+  type FC,
+  useState,
+  type MouseEvent,
+  type MouseEventHandler,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef
+} from 'react'
 import { SettingsIcon, MoonIcon, SunIcon, HandIcon, RefreshCwIcon } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 
@@ -20,11 +29,6 @@ import useDraggable from '@/hooks/useDraggable'
 import useWindowResize from '@/hooks/useWindowResize'
 import AppActionDomain from '@/domain/AppAction'
 import ChatRoomDomain from '@/domain/ChatRoom'
-
-export interface AppButtonProps {
-  className?: string
-  bootstrapPhase?: 'connecting' | 'unavailable'
-}
 
 export const getReconnectLabel = ({
   userConfigured,
@@ -99,6 +103,9 @@ interface AppButtonMenuProps {
 
 const AppButtonMenu: FC<AppButtonMenuProps> = ({ open, appButtonRef }) => {
   const send = useRemeshSend()
+  const appStatusDomain = useRemeshDomain(AppStatusDomain())
+  const initializationPhase = useRemeshQuery(appStatusDomain.query.PhaseQuery())
+  const applicationReady = initializationPhase === 'ready'
   const appActionDomain = useRemeshDomain(AppActionDomain())
   const userInfoDomain = useRemeshDomain(UserInfoDomain())
   const userInfo = useRemeshQuery(userInfoDomain.query.UserInfoQuery())
@@ -126,11 +133,18 @@ const AppButtonMenu: FC<AppButtonMenuProps> = ({ open, appButtonRef }) => {
     reconnecting,
     available: reconnectAvailable
   })
+  const initializationConnecting = initializationPhase === 'connecting'
+  const refreshLabel = applicationReady
+    ? reconnectLabel
+    : initializationConnecting
+      ? 'Preparing WebChat setup'
+      : 'Retry WebChat setup'
+  const refreshDisabled = applicationReady ? !reconnectAvailable : initializationConnecting
+  const refreshLoading = applicationReady ? reconnecting : initializationConnecting
 
-  // Rebuilds only this domain's ChatRoom; the shared WorldRoom is untouched.
-  const handleReconnectSite = useCallback(() => {
-    send(chatRoomDomain.command.ReconnectCommand())
-  }, [chatRoomDomain.command, send])
+  const handleRefresh = useCallback(() => {
+    send(applicationReady ? chatRoomDomain.command.ReconnectCommand() : appStatusDomain.command.RetryCommand())
+  }, [applicationReady, appStatusDomain.command, chatRoomDomain.command, send])
 
   // Memoize menu buttons to prevent re-render when position changes
   const menuButtons = useMemo(
@@ -161,14 +175,14 @@ const AppButtonMenu: FC<AppButtonMenuProps> = ({ open, appButtonRef }) => {
           <SettingsIcon className="size-5" />
         </Button>
         <Button
-          onClick={handleReconnectSite}
+          onClick={handleRefresh}
           variant="outline"
-          disabled={!reconnectAvailable}
-          aria-label={reconnectLabel}
-          title={reconnectLabel}
+          disabled={refreshDisabled}
+          aria-label={refreshLabel}
+          title={refreshLabel}
           className="dark:bg-background dark:text-foreground dark:hover:bg-accent size-10 rounded-full p-0 shadow dark:border-slate-600"
         >
-          <RefreshCwIcon className={cn('size-5', reconnecting && 'animate-spin')} />
+          <RefreshCwIcon className={cn('size-5', refreshLoading && 'animate-spin')} />
         </Button>
         <Button
           ref={appButtonRef}
@@ -183,11 +197,11 @@ const AppButtonMenu: FC<AppButtonMenuProps> = ({ open, appButtonRef }) => {
       isDarkMode,
       handleSwitchTheme,
       handleOpenOptionsPage,
-      handleReconnectSite,
+      handleRefresh,
       appButtonRef,
-      reconnectAvailable,
-      reconnectLabel,
-      reconnecting
+      refreshDisabled,
+      refreshLabel,
+      refreshLoading
     ]
   )
 
@@ -208,18 +222,20 @@ const AppButtonMenu: FC<AppButtonMenuProps> = ({ open, appButtonRef }) => {
   )
 }
 
-const AppButton: FC<AppButtonProps> = ({ className, bootstrapPhase }) => {
+const AppButton: FC = () => {
   const send = useRemeshSend()
   const appStatusDomain = useRemeshDomain(AppStatusDomain())
   const appOpenStatus = useRemeshQuery(appStatusDomain.query.OpenQuery())
   const hasUnreadQuery = useRemeshQuery(appStatusDomain.query.HasUnreadQuery())
   const appPosition = useRemeshQuery(appStatusDomain.query.PositionQuery())
+  const statusLoadIsFinished = useRemeshQuery(appStatusDomain.query.StatusLoadIsFinishedQuery())
+  const positionPersistenceStarted = useRef(false)
   const [menuOpen, setMenuOpen] = useState(false)
-  const applicationAvailable = bootstrapPhase === undefined
 
   // Get current window size to recalculate position on resize
   const windowSize = useWindowResize(() => {
     // Reset to default position when window resizes
+    if (!statusLoadIsFinished) return
     send(appStatusDomain.command.UpdatePositionCommand({ x: 50, y: 22 }))
   })
 
@@ -238,8 +254,13 @@ const AppButton: FC<AppButtonProps> = ({ className, bootstrapPhase }) => {
   })
 
   useEffect(() => {
+    if (!statusLoadIsFinished) return
+    if (!positionPersistenceStarted.current) {
+      positionPersistenceStarted.current = true
+      return
+    }
     send(appStatusDomain.command.UpdatePositionCommand({ x, y }))
-  }, [x, y, send, appStatusDomain.command])
+  }, [x, y, send, appStatusDomain.command, statusLoadIsFinished])
 
   const { setRef: appMenuRef } = useTriggerAway(['click'], () => setMenuOpen(false))
 
@@ -253,24 +274,23 @@ const AppButton: FC<AppButtonProps> = ({ className, bootstrapPhase }) => {
   }
 
   const action = appOpenStatus ? 'Close WebChat' : 'Open WebChat'
-  const launcherLabel = bootstrapPhase === 'unavailable' ? `WebChat unavailable. ${action}` : action
 
   return (
     <div
       ref={appMenuRef}
-      className={cn('fixed z-infinity grid w-min select-none justify-center gap-y-3', className)}
+      className="z-infinity fixed grid w-min justify-center gap-y-3 select-none"
       style={{
         right: `${x}px`,
         bottom: `${y}px`,
         transform: 'translateX(50%)'
       }}
     >
-      {applicationAvailable && <AppButtonMenu open={menuOpen} appButtonRef={appButtonRef} />}
+      <AppButtonMenu open={menuOpen} appButtonRef={appButtonRef} />
       <AppLauncherButton
         onClick={handleToggleApp}
-        onContextMenu={applicationAvailable ? handleToggleMenu : undefined}
+        onContextMenu={handleToggleMenu}
         hasUnread={hasUnreadQuery}
-        label={launcherLabel}
+        label={action}
       />
     </div>
   )

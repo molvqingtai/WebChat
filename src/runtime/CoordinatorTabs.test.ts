@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
+import path from 'node:path'
 import { COORDINATOR_HEALTH_INTERVAL_MS, Coordinator } from '@/runtime/Coordinator'
 import type { RuntimeSnapshot } from '@/runtime/Contract'
 
@@ -325,7 +326,7 @@ describe('Coordinator trusted Tabs lifecycle', () => {
   })
 
   it('uses tab activation only as a wake and reconciliation trigger', () => {
-    const source = readFileSync(new URL('./Background.ts', import.meta.url), 'utf8')
+    const source = readFileSync(path.resolve(process.cwd(), 'src/runtime/Background.ts'), 'utf8')
 
     expect(source).toContain('browser.tabs.onActivated.addListener(() => void coordinator.reconcile())')
     expect(source).not.toMatch(/onActivated\.addListener\([^\n]*(removeTab|detachPage|updateTab)/)

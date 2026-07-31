@@ -1,70 +1,109 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 const source = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8')
 
-describe('generic AppMain Toast ownership', () => {
-  it('renders one direct Toaster with the original parameters and Motion behavior', () => {
-    const appSource = source('./App.tsx')
-    const bootstrapShellSource = source('./BootstrapShell.tsx')
-    const appMainSource = source('./views/app-main/index.tsx')
-    const styles = source('../../assets/styles/tailwind.css')
-    const panelStart = bootstrapShellSource.indexOf('<AppMain>')
-    const panelEnd = bootstrapShellSource.indexOf('</AppMain>')
-    const application = bootstrapShellSource.indexOf('{application ??')
-    const toaster = appSource.indexOf('<Toaster')
+const ordered = (value: string, needles: string[]) => {
+  let cursor = -1
+  for (const needle of needles) {
+    const next = value.indexOf(needle, cursor + 1)
+    expect(next, `Missing or out-of-order source token: ${needle}`).toBeGreaterThan(cursor)
+    cursor = next
+  }
+}
 
-    expect(panelStart).toBeGreaterThan(-1)
-    expect(panelEnd).toBeGreaterThan(panelStart)
-    expect(application).toBeGreaterThan(panelStart)
-    expect(application).toBeLessThan(panelEnd)
-    expect(toaster).toBeGreaterThan(-1)
-    expect(appSource.match(/<Toaster\b/g)).toHaveLength(1)
-    expect(appSource).toContain("import { Toaster } from 'sonner'")
-    expect(appSource).toContain('richColors')
-    expect(appSource).toContain('theme={themeMode}')
-    expect(appSource).toContain('offset="70px"')
-    expect(appSource).toContain('visibleToasts={1}')
-    expect(appSource).toContain('position="top-center"')
-    expect(appSource).toContain("toast: 'dark:bg-slate-950 border dark:border-slate-600'")
-    expect(appMainSource).toContain("initial={{ opacity: 0, y: 10, x: isOnRightSide ? '-100%' : '0' }}")
-    expect(appMainSource).toContain("animate={{ opacity: 1, y: 0, x: isOnRightSide ? '-100%' : '0' }}")
-    expect(appMainSource).not.toContain('transformTemplate')
-    expect(styles).not.toMatch(/webchat-(?:panel|launcher|reconnect)-toaster|data-webchat-interactive/)
+describe('content component hierarchy', () => {
+  it('keeps StrictMode -> RemeshRoot -> RemeshScope -> prop-free App at the content root', () => {
+    const entry = source('./index.tsx')
+
+    ordered(entry, ['<StrictMode>', '<RemeshRoot store={store}>', '<RemeshScope', '<App />'])
   })
 
-  it('keeps Runtime readiness unique while bootstrap exposes accessible shell recovery', () => {
-    const appSource = source('./App.tsx')
-    const entrySource = source('./index.tsx')
-    const bootstrapSource = source('./Bootstrap.tsx')
-    const bootstrapShellSource = source('./BootstrapShell.tsx')
-    const readinessSource = source('../../domain/Readiness.ts')
+  it('renders the App and AppMain composition', () => {
+    const app = source('./App.tsx')
+    const appMain = source('./views/app-main/index.tsx')
 
-    expect(appSource).not.toMatch(/runtimeHostPhase|ReadinessDomain|WebChat connecting|WebChat unavailable|<output/)
-    expect(appSource).not.toMatch(/AlertCircleIcon|LoaderCircleIcon/)
-    expect(entrySource).not.toMatch(/runtime-unavailable|WebChat unavailable|location\.reload/)
-    expect(`${bootstrapSource}\n${bootstrapShellSource}`).not.toMatch(/ReadinessDomain|ToastDomain|location\.reload/)
-    expect(bootstrapShellSource).toContain("role={unavailable ? 'alert' : 'status'}")
-    expect(bootstrapShellSource).toContain('aria-label="Retry WebChat setup"')
-    expect(bootstrapShellSource).toContain('WebChat unavailable')
-    expect(bootstrapShellSource).toContain('<AppButton')
-    expect(readinessSource).toContain("default: 'connecting'")
-    expect(readinessSource).toContain('StateChangedEvent')
+    expect(app).toMatch(/(?:function App\(\)|const App = \(\) =>)/)
+    ordered(app, [
+      '<div id="app"',
+      '<AppMain>',
+      '<Header />',
+      '<Main />',
+      '<Footer />',
+      '<Setup',
+      '<Toaster',
+      '</AppMain>',
+      '<AppButton',
+      '<DanmakuContainer'
+    ])
+    expect(app.match(/<Toaster\b/g)).toHaveLength(1)
+    expect(app).toContain('richColors')
+    expect(app).toContain('theme={themeMode}')
+    expect(app).toContain('offset="70px"')
+    expect(app).toContain('visibleToasts={1}')
+    expect(app).toContain('position="top-center"')
+    expect(app).toContain("toast: 'dark:bg-slate-950 border dark:border-slate-600'")
+
+    ordered(appMain, ['<AnimatePresence>', 'appOpenStatus &&', '<motion.div', '{memoizedChildren}', 'ref={setRef}'])
+    expect(appMain).toContain('data-webchat-panel')
   })
 
-  it('deletes reconnect presentation residue and isolates the generic adapter from business sources', () => {
-    const presenterSource = source('./components/toast-presentation.tsx')
-    const feedbackSource = source('../../domain/AppFeedback.ts')
-    const toastSource = source('../../domain/Toast.ts')
+  it('uses the existing application status domain directly in every required consumer', () => {
+    const app = source('./App.tsx')
+    const appButton = source('./views/app-button/index.tsx')
+    const feedback = source('../../domain/AppFeedback.ts')
+    const initialization = source('./Initialization.ts')
 
-    expect(existsSync(new URL('./components/reconnect-toast.tsx', import.meta.url))).toBe(false)
-    expect(existsSync(new URL('./components/reconnect-toast.test.ts', import.meta.url))).toBe(false)
-    expect(presenterSource).not.toMatch(/ChatRoom|Readiness|Runtime|Network|AppStatus|panel|reconnect/i)
-    expect(presenterSource).toContain("from '@/domain/ToastPresentation'")
-    expect(feedbackSource).toContain("from '@/domain/ChatRoom'")
-    expect(feedbackSource).toContain("from '@/domain/Readiness'")
-    expect(feedbackSource).toContain("from '@/domain/ToastPresentation'")
-    expect(feedbackSource).toContain('minimumVisibleMs: 300')
-    expect(toastSource).not.toMatch(/Descriptor|Presentation|SurfaceMounted|Acknowledge/)
+    expect(app).toContain('useRemeshDomain(AppStatusDomain())')
+    expect(appButton).toContain('useRemeshDomain(AppStatusDomain())')
+    expect(feedback).toContain('domain.getDomain(AppStatusDomain())')
+    expect(initialization).toContain('store.getDomain(AppStatusDomain())')
+    expect(feedback).toContain('domain.getDomain(ToastDomain())')
+    expect(initialization).toContain('store.getDomain(ToastDomain())')
+  })
+})
+
+describe('application status ownership', () => {
+  it('keeps initialization plain and runtime module exports production-only', async () => {
+    const initializationSource = source('./Initialization.ts')
+    const modules = await Promise.all([
+      import('@/app/content/Initialization'),
+      import('@/domain/AppStatus'),
+      import('@/domain/AppFeedback'),
+      import('@/domain/Toast')
+    ])
+
+    expect(modules.map((module) => Object.keys(module).sort())).toEqual([
+      ['startInitializationLifecycle'],
+      ['default'],
+      ['default'],
+      ['default']
+    ])
+    expect(initializationSource).not.toMatch(/\bRemesh\.domain\s*\(/)
+    expect(initializationSource).toContain('store.getDomain(AppStatusDomain())')
+  })
+})
+
+describe('fixed test stack', () => {
+  it('uses happy-dom, Testing Library, and Vitest Browser Mode without linkedom', () => {
+    const packageJson = source('../../../package.json')
+    const config = source('../../../vitest.config.ts')
+    const configuredSuites = [
+      './index.test.ts',
+      './App.render.test.tsx',
+      './Initialization.test.ts',
+      './InitializationStatus.test.tsx',
+      './views/app-main/index.test.ts'
+    ].map(source)
+
+    expect(packageJson).toContain('"happy-dom"')
+    expect(packageJson).toContain('"@testing-library/react"')
+    expect(packageJson).toContain('"@testing-library/dom"')
+    expect(packageJson).toContain('"@vitest/browser-playwright"')
+    expect(packageJson).toContain('"vitest-browser-react"')
+    expect(config).toContain("environment: 'happy-dom'")
+    expect(config).toContain('provider: playwright()')
+    expect(source('./views/app-main/index.browser.test.tsx')).toContain("from 'vitest-browser-react'")
+    expect(configuredSuites.join('\n')).not.toMatch(/linkedom|parseHTML|createRequire\(require\.resolve\('wxt'\)\)/)
   })
 })
