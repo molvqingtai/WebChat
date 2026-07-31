@@ -56,16 +56,23 @@ A user expansion or collapse accepted before hydration settles SHALL be newer th
 
 `AppStatusDomain` SHALL be the one Remesh owner for persisted `open`, `unread`, and `position`; non-persisted initialization phase `connecting | unavailable | ready`; the initialization Retry command and event; and incoming-message unread processing. Only `open`, `unread`, and `position` SHALL enter the AppStatus storage record.
 
-The unread effect SHALL consume ChatRoom text-message events and current UserInfo through their Domain boundaries. It SHALL increment unread exactly once when the panel is closed and the author is not the current user. It SHALL not increment for an open panel, a self-authored message, or a non-text event.
+The unread effect SHALL consume ChatRoom text-message events and current UserInfo through their Domain boundaries. It SHALL increment unread exactly once when the panel is closed and the author is not the current user. It SHALL not increment for an open panel or a self-authored message.
+
+`AppStatusDomain` SHALL expose only queries, commands, and events used by production consumers. Hydration, persistence, and unread mutation actions plus storage synchronization events SHALL remain file-local, together with internal state defaults and effect identifiers. No module member SHALL be exported solely for tests. Regression controls for AppStatus SHALL drive the production public Domain and storage extern boundaries and assert public projections without importing internal actions or state.
 
 `Initialization.ts` SHALL perform the bounded sequential initialization attempt as plain lifecycle orchestration. It SHALL obtain `AppStatusDomain` from the store, update its phase, subscribe to its Retry event, activate application dependencies, detach Runtime when required, and issue matching Toast commands. It SHALL declare no Remesh Domain and own no parallel phase, Retry, or readiness state.
 
-The root `RemeshScope` SHALL mount exactly one `AppStatusDomain()` together with `NotificationDomain()`, `ToastDomain()`, and `AppFeedbackDomain()`. `App`, `AppButton`, `AppFeedbackDomain`, and the initialization lifecycle SHALL consume `AppStatusDomain` directly. Nested business Domains MAY be obtained by the Domain that owns the corresponding behavior; they SHALL not create another app-status owner.
+The root `RemeshScope` SHALL mount exactly `NotificationDomain()` and `AppFeedbackDomain()`. `AppFeedbackDomain` SHALL obtain and retain `AppStatusDomain` and `ToastDomain` through its Domain dependencies, and the root SHALL NOT duplicate those nested holders. `App`, `AppButton`, `AppFeedbackDomain`, and the initialization lifecycle SHALL consume the same `AppStatusDomain` directly and SHALL NOT create another app-status owner.
 
-#### Scenario: Root mounts one AppStatusDomain
+#### Scenario: Root mounts only independent Domain holders
 
 - **WHEN** the content script creates the Remesh root
-- **THEN** the root Scope SHALL contain exactly `AppStatusDomain()`, `NotificationDomain()`, `ToastDomain()`, and `AppFeedbackDomain()`, with exactly one app-status owner
+- **THEN** the root Scope SHALL contain exactly `NotificationDomain()` and `AppFeedbackDomain()`, while `AppFeedbackDomain` retains the sole `AppStatusDomain` and `ToastDomain` instances through its dependencies
+
+#### Scenario: AppStatus internals remain private
+
+- **WHEN** AppStatus hydration, persistence, unread mutation, or storage synchronization runs
+- **THEN** it SHALL use file-local actions, defaults, and effect identifiers, while production consumers and tests observe only public Domain projections and the real storage extern
 
 #### Scenario: Initialization uses AppStatusDomain
 
@@ -81,7 +88,7 @@ The root `RemeshScope` SHALL mount exactly one `AppStatusDomain()` together with
 
 #### Scenario: Unread exclusions remain exact
 
-- **WHEN** the panel is open, the text author is the current user, or the event is not a text message
+- **WHEN** the panel is open or the text author is the current user
 - **THEN** `AppStatusDomain` SHALL not increment unread
 
 #### Scenario: Consumers share one status authority

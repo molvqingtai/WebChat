@@ -25,7 +25,7 @@ WebChat mounts a local shell before browser-sync preparation, page-local configu
 
 ### 1. The root has one exact composition
 
-The content root is `StrictMode -> RemeshRoot(store) -> RemeshScope -> App`. The root Scope mounts exactly `AppStatusDomain()`, `NotificationDomain()`, `ToastDomain()`, and `AppFeedbackDomain()`. Nested business dependencies remain owned by the Domains that consume them.
+The content root is `StrictMode -> RemeshRoot(store) -> RemeshScope -> App`. The root Scope mounts exactly `NotificationDomain()` and `AppFeedbackDomain()`. `AppFeedbackDomain` obtains and retains `AppStatusDomain` and `ToastDomain` through its Domain dependencies; the root does not duplicate those nested holders.
 
 Inside themed `#app`, `AppMain` precedes `AppButton`, followed by `DanmakuContainer`. `AppMain` directly contains `Header`, `Main`, `Footer`, conditional `Setup`, and the generic `Toaster` in that order. Status hydration and initialization phase do not select or replace this component tree.
 
@@ -33,7 +33,7 @@ Inside themed `#app`, `AppMain` precedes `AppButton`, followed by `DanmakuContai
 
 `AppStatusDomain` owns persisted `open`, `unread`, and `position` in the one AppStatus storage record. It also owns the non-persisted initialization phase, the Retry command/event, and the effect that increments unread for an incoming text message from another user while the panel is closed.
 
-Initialization phase never enters the persisted record. Unread processing uses the same `OpenQuery`, `UnreadQuery`, and update command as the rest of AppStatus. The Domain exposes only the queries, commands, and events required by its consumers.
+Initialization phase never enters the persisted record. `AppStatusDomain` exposes only the queries, commands, and events used by production consumers. Hydration, persistence, and unread mutation actions plus storage synchronization events remain file-local, as do internal state defaults and effect identifiers; no module member is exported solely for tests.
 
 ### 3. Initialization.ts is lifecycle orchestration
 
@@ -45,7 +45,7 @@ The lifecycle obtains `AppStatusDomain` from the store, sends its phase commands
 
 `App` reads the initialization-ready query before dispatching Runtime-dependent ChatRoom and WorldRoom operations. `AppButton` reads phase and sends Retry before ready, then uses the ChatRoom recovery contract after ready. `AppFeedbackDomain` reads readiness from `AppStatusDomain` before projecting Runtime feedback. The initialization lifecycle reads and updates the same Domain through the store.
 
-Business components do not receive initialization functions, state bundles, ownership callbacks, or test-only timing controls as props. Tests mock the actual Domain, store, service, and extern boundaries.
+Business components do not receive initialization functions, state bundles, ownership callbacks, or test-only timing controls as props. AppStatus tests drive the production public Domain and storage extern boundaries, then assert public projections instead of importing internal actions or state.
 
 ### 5. Shell state is independent of dependencies
 
@@ -71,7 +71,7 @@ Initialization and ready-context recovery each admit one current operation in th
 
 ### 9. Tests bind final ownership
 
-Regression controls verify the exact root Domain list, one `AppStatusDomain` declaration and mount, no additional app-status state owner, plain `Initialization.ts` orchestration, and direct App/AppButton/AppFeedback consumers. They also cover component ancestry, persisted expanded/collapsed/no-record state, pre-hydration interaction, incoming self/non-self/open/closed unread cases, initialization stage terminals, Retry contexts, single-flight behavior, and stale settlement.
+Regression controls verify the exact minimal root Domain list, one `AppStatusDomain` retained by `AppFeedbackDomain`, no duplicate root holder or additional app-status owner, plain `Initialization.ts` orchestration, production-only Domain exports, and direct App/AppButton/AppFeedback consumers. Through real storage and public projections, they also cover component ancestry, persisted expanded/collapsed/no-record state, pre-hydration interaction, incoming self/non-self/open/closed unread cases, initialization stage terminals, Retry contexts, single-flight behavior, and stale settlement.
 
 The fixed stack is `vitest`, `happy-dom`, the applicable `@testing-library/*` and `@vitest/*` packages, `vitest-browser-react`, and `@vitest/browser-playwright`. Stable selectors may be literal `data-testid` attributes on production JSX. Tests do not add production dependency props, wrappers, dynamic selector injection, or runtime DOM rewriting.
 

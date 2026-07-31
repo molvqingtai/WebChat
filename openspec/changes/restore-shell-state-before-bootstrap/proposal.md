@@ -4,8 +4,9 @@ WebChat needs one normal shell whose local status and initialization status have
 
 ## What Changes
 
-- The content root is `StrictMode -> RemeshRoot(store) -> RemeshScope -> App`. The root Scope mounts one `AppStatusDomain()` together with `NotificationDomain()`, `ToastDomain()`, and `AppFeedbackDomain()`.
+- The content root is `StrictMode -> RemeshRoot(store) -> RemeshScope -> App`. The root Scope mounts exactly `NotificationDomain()` and `AppFeedbackDomain()`; `AppFeedbackDomain` owns its nested `AppStatusDomain` and `ToastDomain` dependencies.
 - `AppStatusDomain` is the single owner of persisted `open`, `unread`, and `position`; non-persisted initialization phase and Retry; and the incoming non-self text-message effect that increments unread while the panel is closed.
+- `AppStatusDomain` exposes only production-consumed queries, commands, and events. Hydration, persistence, and unread mutation actions plus storage synchronization events remain file-local, and tests exercise real storage and public projections without test-only exports.
 - `Initialization.ts` performs only the bounded initialization lifecycle: ordered dependency preparation, deadline and cancellation, generation fencing, application dependency activation, Runtime detach, and matching Toast commands. It reads and updates `AppStatusDomain` without declaring another Domain.
 - `App`, `AppButton`, and `AppFeedbackDomain` consume `AppStatusDomain` directly. Readiness gates only the Runtime-dependent operation at its use site.
 - The normal `AppMain`, `AppButton`, and `DanmakuContainer` composition mounts independently of status hydration and initialization. `AppMain` contains `Header`, `Main`, `Footer`, conditional `Setup`, and one panel-owned generic `Toaster`.
