@@ -202,7 +202,7 @@ describe('configuration storage version ownership', () => {
     expect(fixture.values.get('new')).toBe('generation')
   })
 
-  it('lets Retry replace an unresolved read owner and fences the late result', async () => {
+  it('shares one completion while Retry replaces an unresolved read owner and fences the late result', async () => {
     const staleRead = deferredValue<{ readonly exists: boolean; readonly value: unknown }>()
     const storage: ConfigurationVersionStorage = {
       readVersion: vi
@@ -220,6 +220,7 @@ describe('configuration storage version ownership', () => {
     const retry = prepareConfigurationStorage(identity, storage)
 
     try {
+      expect(retry).toBe(first)
       await vi.waitFor(() => expect(storage.readVersion).toHaveBeenCalledTimes(2), { interval: 5, timeout: 100 })
       await expect(retry).resolves.toBeUndefined()
       await expect(first).resolves.toBeUndefined()

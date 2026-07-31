@@ -5,7 +5,7 @@ export interface PreparationLock {
   checkpoint(): void
 }
 
-interface PreparationWaiter {
+interface PreparationCompletion {
   readonly promise: Promise<void>
   readonly resolve: () => void
   readonly reject: (reason: unknown) => void
@@ -13,14 +13,14 @@ interface PreparationWaiter {
 
 interface PreparationGeneration {
   readonly controller: AbortController
-  readonly waiters: Set<PreparationWaiter>
+  readonly completion: PreparationCompletion
 }
 
 type PreparationOutcome = { readonly status: 'resolved' } | { readonly status: 'rejected'; readonly error: unknown }
 
 const preparations = new Map<string, PreparationGeneration>()
 
-const createWaiter = (): PreparationWaiter => {
+const createCompletion = (): PreparationCompletion => {
   let resolve!: () => void
   let reject!: (reason: unknown) => void
   const promise = new Promise<void>((onResolve, onReject) => {
@@ -54,11 +54,8 @@ const raceWithSignal = <Value>(operation: Promise<Value>, signal: AbortSignal): 
 const settleGeneration = (identity: string, generation: PreparationGeneration, outcome: PreparationOutcome): void => {
   if (preparations.get(identity) !== generation) return
   preparations.delete(identity)
-  for (const waiter of generation.waiters) {
-    if (outcome.status === 'resolved') waiter.resolve()
-    else waiter.reject(outcome.error)
-  }
-  generation.waiters.clear()
+  if (outcome.status === 'resolved') generation.completion.resolve()
+  else generation.completion.reject(outcome.error)
 }
 
 export const withPreparationLock = (
@@ -66,12 +63,11 @@ export const withPreparationLock = (
   prepare: (lock: PreparationLock) => Promise<void>
 ): Promise<void> => {
   const current = preparations.get(identity)
-  const waiter = createWaiter()
+  const completion = current?.completion ?? createCompletion()
   const generation: PreparationGeneration = {
     controller: new AbortController(),
-    waiters: current?.waiters ?? new Set()
+    completion
   }
-  generation.waiters.add(waiter)
   preparations.set(identity, generation)
   current?.controller.abort(new DOMException('Persistence preparation superseded', 'AbortError'))
 
@@ -103,5 +99,5 @@ export const withPreparationLock = (
     () => settleGeneration(identity, generation, { status: 'resolved' }),
     (error: unknown) => settleGeneration(identity, generation, { status: 'rejected', error })
   )
-  return waiter.promise
+  return completion.promise
 }
