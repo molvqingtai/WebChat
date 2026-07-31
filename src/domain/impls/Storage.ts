@@ -14,18 +14,22 @@ export interface ConfigurationVersionStorage {
 }
 
 export const prepareConfigurationStorage = (identity: string, storage: ConfigurationVersionStorage): Promise<void> =>
-  withPreparationLock(`configuration:${identity}`, async () => {
+  withPreparationLock(`configuration:${identity}`, async (lock) => {
     try {
-      const stored = await storage.readVersion()
+      const stored = await lock.read(storage.readVersion())
       if (!stored.exists) {
-        await storage.writeVersion(CONFIG_STORE_VERSION)
+        await lock.write(() => storage.writeVersion(CONFIG_STORE_VERSION))
+        lock.checkpoint()
         return
       }
       if (stored.value === CONFIG_STORE_VERSION) return
 
-      await storage.clear()
-      await storage.writeVersion(CONFIG_STORE_VERSION)
-    } catch {
+      await lock.write(() => storage.clear())
+      lock.checkpoint()
+      await lock.write(() => storage.writeVersion(CONFIG_STORE_VERSION))
+      lock.checkpoint()
+    } catch (error) {
+      if (lock.signal.aborted) throw error
       console.error('[WebChat] Configuration store preparation failed')
       throw new Error('Configuration store preparation failed')
     }
