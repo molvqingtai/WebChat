@@ -9,20 +9,20 @@
 
 ## 2. Deterministic FAIL-before
 
-- [ ] 2.1 Convert the confirmed mounted Remesh/Sonner trace into a tracked parent regression that proves `loading -> error -> dismiss` in the current source and immediate removal from the Sonner store.
-- [ ] 2.2 Prove the surface and an unrelated Toast remain mounted so replacement, remount, global cleanup, and default-duration expiry stay excluded.
+- [x] 2.1 Convert the confirmed mounted Remesh/Sonner trace into a tracked parent regression that proves `loading -> error -> dismiss` in the current source and immediate removal from the Sonner store.
+- [x] 2.2 Prove the surface and an unrelated Toast remain mounted so replacement, remount, global cleanup, and default-duration expiry stay excluded.
 
 ## 3. Minimum Repair
 
-- [ ] 3.1 Prevent ready/success/bootstrap/panel/request-settlement cleanup from actively dismissing a current error descriptor, without introducing another Toast owner or custom timer.
-- [ ] 3.2 Preserve ID-scoped dismissal of matching loading feedback after its existing dwell and preserve stale-request/generation fencing.
-- [ ] 3.3 Preserve explicit same-ID descriptor replacement, user dismissal, default-duration expiry, actual surface teardown, and no terminal replay on remount.
-- [ ] 3.4 Keep unrelated Toasts, current error accessibility, existing Retry/reconnect controls, panel state, Runtime truth, and network outcomes unchanged.
+- [x] 3.1 Prevent ready/success/bootstrap/panel/request-settlement cleanup from actively dismissing a current error descriptor, without introducing another Toast owner or custom timer.
+- [x] 3.2 Preserve ID-scoped dismissal of matching loading feedback after its existing dwell and preserve stale-request/generation fencing.
+- [x] 3.3 Preserve explicit same-ID descriptor replacement, user dismissal, default-duration expiry, actual surface teardown, and no terminal replay on remount.
+- [x] 3.4 Keep unrelated Toasts, current error accessibility, existing Retry/reconnect controls, panel state, Runtime truth, and network outcomes unchanged.
 
 ## 4. Source And Delivery Gates
 
-- [ ] 4.1 Run focused parent FAIL-before and candidate controls for error lifetime, loading-only cleanup, successor replacement, user/default expiry, teardown/non-replay, stale ownership, and unrelated Toast isolation.
-- [ ] 4.2 Run complete repository source tests, typecheck, lint, format, Chrome/Firefox builds, strict OpenSpec, and identity/scope gates on one immutable candidate exact.
+- [x] 4.1 Run focused parent FAIL-before and candidate controls for error lifetime, loading-only cleanup, successor replacement, user/default expiry, teardown/non-replay, stale ownership, and unrelated Toast isolation.
+- [x] 4.2 Run complete repository source tests, typecheck, lint, format, Chrome/Firefox builds, strict OpenSpec, and identity/scope gates on one immutable candidate exact.
 - [ ] 4.3 Obtain fresh Review of the complete branch diff and close every finding on a replacement exact before release.
-- [ ] 4.4 Keep QA, QC, and UX absent unless the Owner explicitly requests them; do not report an unperformed browser result as PASS.
+- [x] 4.4 Keep QA, QC, and UX absent unless the Owner explicitly requests them; do not report an unperformed browser result as PASS.
 - [ ] 4.5 Keep the PR Draft until its source/review/CI flow is complete, and require separate explicit Owner authorization for Ready/merge.

@@ -31,15 +31,34 @@ const AppFeedbackDomain = Remesh.domain({
     const chatRoomDomain = domain.getDomain(ChatRoomDomain())
     const readinessDomain = domain.getDomain(ReadinessDomain())
     const presentationDomain = domain.getDomain(ToastPresentationDomain())
+    const RuntimeDescriptorTypeState = domain.state<ToastDescriptor['type'] | null>({
+      name: 'AppFeedback.RuntimeDescriptorTypeState',
+      default: null
+    })
     const RuntimeFeedbackQuery = domain.query({
       name: 'AppFeedback.RuntimeFeedbackQuery',
       impl: ({ get }) =>
         get(chatRoomDomain.query.ConnectionIsLoadingQuery()) ? 'connecting' : get(readinessDomain.query.StateQuery())
     })
+    const PublishRuntimeFeedbackCommand = domain.command({
+      name: 'AppFeedback.PublishRuntimeFeedbackCommand',
+      impl: (_, state: Exclude<ReadinessState, 'ready'>) => {
+        const descriptor = readinessDescriptor(state)
+        return [
+          RuntimeDescriptorTypeState().new(descriptor.type),
+          presentationDomain.command.PublishCommand(descriptor)
+        ]
+      }
+    })
+    const DismissRuntimeLoadingCommand = domain.command({
+      name: 'AppFeedback.DismissRuntimeLoadingCommand',
+      impl: ({ get }) =>
+        get(RuntimeDescriptorTypeState()) === 'loading'
+          ? [RuntimeDescriptorTypeState().new(null), presentationDomain.command.DismissCommand(RUNTIME_TOAST_ID)]
+          : null
+    })
     const runtimeFeedbackCommand = (state: ReadinessState) =>
-      state === 'ready'
-        ? presentationDomain.command.DismissCommand(RUNTIME_TOAST_ID)
-        : presentationDomain.command.PublishCommand(readinessDescriptor(state))
+      state === 'ready' ? DismissRuntimeLoadingCommand() : PublishRuntimeFeedbackCommand(state)
 
     domain.effect({
       name: 'AppFeedback.OnRuntimeFeedbackEffect',
@@ -97,9 +116,9 @@ const AppFeedbackDomain = Remesh.domain({
           map(({ error }) => {
             if (!error || get(RuntimeFeedbackQuery()) !== 'ready') return null
             if (!get(presentationDomain.query.SurfaceMountedQuery())) {
-              return presentationDomain.command.DismissCommand(RUNTIME_TOAST_ID)
+              return DismissRuntimeLoadingCommand()
             }
-            return presentationDomain.command.PublishCommand(readinessDescriptor('unavailable'))
+            return PublishRuntimeFeedbackCommand('unavailable')
           })
         )
     })
