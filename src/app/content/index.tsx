@@ -1,11 +1,12 @@
-import React from 'react'
+import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { Remesh, type RemeshExtern, type RemeshExternImpl } from 'remesh'
+import { Remesh } from 'remesh'
 import { RemeshRoot, RemeshScope } from 'remesh-react'
 // import { RemeshLogger } from 'remesh-logger'
 import { defineContentScript, createShadowRootUi } from '#imports'
 
 import App from './App'
+import { startInitializationLifecycle, type InitializationDependencies } from './Initialization'
 import { LocalStorageImpl, BrowserSyncStorageImpl, prepareLocalConfigurationStorage } from '@/domain/impls/Storage'
 import { createIndexedDBMessageDatabase, prepareIndexedDBMessageDatabase } from '@/domain/impls/database/IndexedDB'
 import { detachClient, initClient, whenHostPhase } from '@/domain/impls/runtime/Client'
@@ -21,19 +22,17 @@ import 'sonner/dist/styles.css'
 import '@/assets/styles/tailwind.css'
 import '@/assets/styles/overlay.css'
 import NotificationDomain from '@/domain/Notification'
-import ToastDomain from '@/domain/Toast'
-import ToastPresentationDomain from '@/domain/ToastPresentation'
 import AppFeedbackDomain from '@/domain/AppFeedback'
-import AppStatusEffectsDomain from '@/domain/AppStatusEffects'
 import { createElement } from '@/utils'
 import { requestBrowserSyncStoragePreparation } from '@/service/StoragePreparation'
-import ContentBootstrap, { type BootstrapDependencies } from '@/app/content/Bootstrap'
-import { MessageDatabaseExtern } from '@/domain/MessageStore'
-import { ChatRoomExtern } from '@/domain/externs/ChatRoom'
-import { WorldRoomExtern } from '@/domain/externs/WorldRoom'
-import { ReadinessExtern } from '@/domain/externs/Readiness'
+import { MessageDatabaseExtern, type MessageDatabaseSchema } from '@/domain/MessageStore'
+import { ChatRoomExtern, type ChatRoom } from '@/domain/externs/ChatRoom'
+import { WorldRoomExtern, type WorldRoom } from '@/domain/externs/WorldRoom'
+import { ReadinessExtern, type Readiness } from '@/domain/externs/Readiness'
+import { BrowserSyncStorageExtern, type Storage, type StorageValue } from '@/domain/externs/Storage'
+import type { Database } from '@/domain/externs/Database'
 
-const bootstrapDependencies: BootstrapDependencies = {
+const initializationDependencies: InitializationDependencies = {
   prepareBrowserSyncStorage: requestBrowserSyncStoragePreparation,
   prepareLocalStorage: prepareLocalConfigurationStorage,
   prepareMessageDatabase: prepareIndexedDBMessageDatabase,
@@ -41,38 +40,87 @@ const bootstrapDependencies: BootstrapDependencies = {
   detachRuntime: detachClient
 }
 
-const createDeferredExtern = <Value,>(Extern: RemeshExtern<Value>) => {
-  let resolved: { value: Value } | null = null
-  const implementation: RemeshExternImpl<Value> = {
-    type: 'RemeshExternImpl',
-    Extern,
-    get value() {
-      if (!resolved) throw new Error('Application dependency is unavailable before bootstrap')
-      return resolved.value
-    }
-  }
+const createDeferredValue = <Value,>() => {
+  let current: Value | null = null
+  let resolvePromise!: (value: Value) => void
+  const promise = new Promise<Value>((resolve) => {
+    resolvePromise = resolve
+  })
+
   return {
-    implementation,
+    get: () => (current === null ? promise : Promise.resolve(current)),
     resolve: (value: Value) => {
-      if (resolved) throw new Error('Application dependency is already initialized')
-      resolved = { value }
+      if (current !== null) throw new Error('Application dependency is already initialized')
+      current = value
+      resolvePromise(value)
     }
   }
 }
 
-const createShellStore = () => {
-  const messageDatabase = createDeferredExtern(MessageDatabaseExtern)
-  const chatRoom = createDeferredExtern(ChatRoomExtern)
-  const worldRoom = createDeferredExtern(WorldRoomExtern)
-  const readiness = createDeferredExtern(ReadinessExtern)
+const subscribeDeferred = <Value,>(
+  deferred: ReturnType<typeof createDeferredValue<Value>>,
+  subscribe: (value: Value) => () => void
+) => {
+  let active = true
+  let unsubscribe: (() => void) | null = null
+  void deferred.get().then((value) => {
+    if (!active) return
+    const next = subscribe(value)
+    if (active) unsubscribe = next
+    else next()
+  })
+  return () => {
+    active = false
+    unsubscribe?.()
+  }
+}
+
+const createContentStore = () => {
+  const browserSyncStorage = createDeferredValue<Storage>()
+  const messageDatabase = createDeferredValue<Database<MessageDatabaseSchema>>()
+  const chatRoom = createDeferredValue<ChatRoom>()
+  const worldRoom = createDeferredValue<WorldRoom>()
+  const readiness = createDeferredValue<Readiness>()
+
+  const deferredBrowserSyncStorage: Storage = {
+    get: async <Value extends StorageValue>(key: string) => (await browserSyncStorage.get()).get<Value>(key),
+    set: async <Value extends StorageValue>(key: string, value: Value) =>
+      (await browserSyncStorage.get()).set(key, value),
+    watch: async (callback) => (await browserSyncStorage.get()).watch(callback)
+  }
+  const deferredMessageDatabase: Database<MessageDatabaseSchema> = {
+    read: async (stores, operation, signal) => (await messageDatabase.get()).read(stores, operation, signal),
+    write: async (stores, operation, signal) => (await messageDatabase.get()).write(stores, operation, signal),
+    watch: (stores, listener) => subscribeDeferred(messageDatabase, (database) => database.watch(stores, listener)),
+    close: async () => (await messageDatabase.get()).close()
+  }
+  const deferredChatRoom: ChatRoom = {
+    joinRoom: async (command) => (await chatRoom.get()).joinRoom(command),
+    leaveRoom: async () => (await chatRoom.get()).leaveRoom(),
+    sendMessage: async (command) => (await chatRoom.get()).sendMessage(command),
+    onMessage: (listener) => subscribeDeferred(chatRoom, (room) => room.onMessage(listener)),
+    onJoinRoom: (listener) => subscribeDeferred(chatRoom, (room) => room.onJoinRoom(listener)),
+    onLeaveRoom: (listener) => subscribeDeferred(chatRoom, (room) => room.onLeaveRoom(listener)),
+    onSessions: (listener) => subscribeDeferred(chatRoom, (room) => room.onSessions(listener)),
+    onError: (listener) => subscribeDeferred(chatRoom, (room) => room.onError(listener))
+  }
+  const deferredWorldRoom: WorldRoom = {
+    getState: async () => (await worldRoom.get()).getState(),
+    onState: (listener) => subscribeDeferred(worldRoom, (room) => room.onState(listener)),
+    onError: (listener) => subscribeDeferred(worldRoom, (room) => room.onError(listener))
+  }
+  const deferredReadiness: Readiness = {
+    onState: (listener) => subscribeDeferred(readiness, (value) => value.onState(listener))
+  }
+
   const store = Remesh.store({
     externs: [
       LocalStorageImpl,
-      BrowserSyncStorageImpl,
-      messageDatabase.implementation,
-      chatRoom.implementation,
-      worldRoom.implementation,
-      readiness.implementation,
+      BrowserSyncStorageExtern.impl(deferredBrowserSyncStorage),
+      MessageDatabaseExtern.impl(deferredMessageDatabase),
+      ChatRoomExtern.impl(deferredChatRoom),
+      WorldRoomExtern.impl(deferredWorldRoom),
+      ReadinessExtern.impl(deferredReadiness),
       AppActionImpl,
       ToastImpl,
       DanmakuImpl,
@@ -80,37 +128,21 @@ const createShellStore = () => {
     ]
     // inspectors: __DEV__ ? [RemeshLogger()] : []
   })
-  return {
-    store,
-    activateApplicationDependencies: () => {
-      const database = createIndexedDBMessageDatabase()
-      const ChatRoomImpl = createChatRoomImpl(database)
-      const WorldRoomImpl = createWorldRoomImpl()
-      const ReadinessImpl = createReadinessImpl(whenHostPhase)
-      messageDatabase.resolve(database)
-      chatRoom.resolve(ChatRoomImpl.value)
-      worldRoom.resolve(WorldRoomImpl.value)
-      readiness.resolve(ReadinessImpl.value)
-    }
-  }
-}
 
-const createApplication = () => {
-  return (
-    <React.StrictMode>
-      <RemeshScope
-        domains={[
-          AppStatusEffectsDomain(),
-          NotificationDomain(),
-          ToastDomain(),
-          ToastPresentationDomain(),
-          AppFeedbackDomain()
-        ]}
-      >
-        <App />
-      </RemeshScope>
-    </React.StrictMode>
-  )
+  const activateApplicationDependencies = () => {
+    const database = createIndexedDBMessageDatabase()
+    const ChatRoomImpl = createChatRoomImpl(database)
+    const WorldRoomImpl = createWorldRoomImpl()
+    const ReadinessImpl = createReadinessImpl(whenHostPhase)
+
+    browserSyncStorage.resolve(BrowserSyncStorageImpl.value)
+    messageDatabase.resolve(database)
+    chatRoom.resolve(ChatRoomImpl.value)
+    worldRoom.resolve(WorldRoomImpl.value)
+    readiness.resolve(ReadinessImpl.value)
+  }
+
+  return { store, activateApplicationDependencies }
 }
 
 export default defineContentScript({
@@ -119,8 +151,6 @@ export default defineContentScript({
   matches: ['https://*/*'],
   excludeMatches: ['*://localhost/*', '*://127.0.0.1/*', '*://*.csdn.net/*', '*://*.csdn.com/*'],
   async main(ctx) {
-    // Attach to the shared Runtime before igniting any domain: the background
-    // coordinator creates the host single-flight; pages own no WebRTC state.
     window.addEventListener('beforeunload', detachClient, { once: true })
 
     const ui = await createShadowRootUi(ctx, {
@@ -134,20 +164,27 @@ export default defineContentScript({
         const app = createElement('<div id="root"></div>')
         container.append(app)
         const root = createRoot(app)
-        const { store, activateApplicationDependencies } = createShellStore()
-        const createReadyApplication = () => {
-          activateApplicationDependencies()
-          return createApplication()
-        }
+        const { store, activateApplicationDependencies } = createContentStore()
         root.render(
-          <RemeshRoot store={store}>
-            <ContentBootstrap dependencies={bootstrapDependencies} createApplication={createReadyApplication} />
-          </RemeshRoot>
+          <StrictMode>
+            <RemeshRoot store={store}>
+              <RemeshScope domains={[NotificationDomain(), AppFeedbackDomain()]}>
+                <App />
+              </RemeshScope>
+            </RemeshRoot>
+          </StrictMode>
         )
-        return root
+        const stopInitialization = startInitializationLifecycle({
+          store,
+          dependencies: initializationDependencies,
+          activateApplicationDependencies
+        })
+        return { root, store, stopInitialization }
       },
-      onRemove: (root) => {
-        root?.unmount()
+      onRemove: (content) => {
+        content?.stopInitialization()
+        content?.root.unmount()
+        content?.store.discard()
       }
     })
     ui.mount()

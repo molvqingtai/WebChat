@@ -1,58 +1,64 @@
 import '@webcomponents/custom-elements'
+import { useEffect, useRef } from 'react'
+import { useRemeshDomain, useRemeshQuery, useRemeshSend } from 'remesh-react'
+import { Toaster } from 'sonner'
 import Header from '@/app/content/views/header'
 import Footer from '@/app/content/views/footer'
 import Main from '@/app/content/views/main'
-import { useRemeshDomain, useRemeshQuery, useRemeshSend } from 'remesh-react'
+import Setup from '@/app/content/views/setup'
+import AppButton from '@/app/content/views/app-button'
+import AppMain from '@/app/content/views/app-main'
+import DanmakuContainer from '@/app/content/components/danmaku-container'
 import ChatRoomDomain from '@/domain/ChatRoom'
 import UserInfoDomain from '@/domain/UserInfo'
-import Setup from '@/app/content/views/setup'
 import MessageListDomain from '@/domain/MessageList'
-import { useEffect } from 'react'
-import { Toaster } from 'sonner'
-
-import AppStatusDomain from '@/domain/AppStatus'
-import { checkDarkMode } from '@/utils'
 import WorldRoomDomain from '@/domain/WorldRoom'
-import { useToastPresentation } from './components/toast-presentation'
-import { useAppTheme } from '@/app/content/BootstrapShell'
+import DanmakuDomain from '@/domain/Danmaku'
+import AppStatusDomain from '@/domain/AppStatus'
+import { checkDarkMode, cn } from '@/utils'
 
-/**
- * Fix requestAnimationFrame error in jest
- * @see https://github.com/facebook/react/issues/16606
- * @see https://bugzilla.mozilla.org/show_bug.cgi?id=1469304
- */
 if (import.meta.env.FIREFOX) {
   window.requestAnimationFrame = window.requestAnimationFrame.bind(window)
 }
 
-export default function App() {
+const App = () => {
   const send = useRemeshSend()
+  const appStatusDomain = useRemeshDomain(AppStatusDomain())
+  const initializationReady = useRemeshQuery(appStatusDomain.query.ReadyQuery())
   const chatRoomDomain = useRemeshDomain(ChatRoomDomain())
   const worldRoomDomain = useRemeshDomain(WorldRoomDomain())
   const userInfoDomain = useRemeshDomain(UserInfoDomain())
   const messageListDomain = useRemeshDomain(MessageListDomain())
+  const danmakuDomain = useRemeshDomain(DanmakuDomain())
+  const danmakuIsEnabled = useRemeshQuery(danmakuDomain.query.IsEnabledQuery())
   const userInfoSetFinished = useRemeshQuery(userInfoDomain.query.UserInfoSetIsFinishedQuery())
   const messageListLoadFinished = useRemeshQuery(messageListDomain.query.LoadIsFinishedQuery())
   const userInfoLoadFinished = useRemeshQuery(userInfoDomain.query.UserInfoLoadIsFinishedQuery())
-  const appStatusDomain = useRemeshDomain(AppStatusDomain())
-  const appStatusLoadIsFinished = useRemeshQuery(appStatusDomain.query.StatusLoadIsFinishedQuery())
   const chatRoomJoinIsFinished = useRemeshQuery(chatRoomDomain.query.JoinIsFinishedQuery())
   const worldRoomJoinIsFinished = useRemeshQuery(worldRoomDomain.query.JoinIsFinishedQuery())
-  const toasterRef = useToastPresentation()
-
   const userInfo = useRemeshQuery(userInfoDomain.query.UserInfoQuery())
-  const notUserInfo = userInfoLoadFinished && !userInfoSetFinished
+  const danmakuContainerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    if (messageListLoadFinished && userInfoSetFinished) send(chatRoomDomain.command.JoinRoomCommand())
-  }, [userInfoSetFinished, messageListLoadFinished, send, chatRoomDomain.command])
+    if (initializationReady && messageListLoadFinished && userInfoSetFinished) {
+      send(chatRoomDomain.command.JoinRoomCommand())
+    }
+  }, [initializationReady, userInfoSetFinished, messageListLoadFinished, send, chatRoomDomain.command])
 
   useEffect(() => {
-    if (chatRoomJoinIsFinished && !worldRoomJoinIsFinished) {
+    if (initializationReady && chatRoomJoinIsFinished && !worldRoomJoinIsFinished) {
       send(worldRoomDomain.command.JoinRoomCommand())
     }
-  }, [chatRoomJoinIsFinished, worldRoomJoinIsFinished, send, worldRoomDomain.command])
+  }, [initializationReady, chatRoomJoinIsFinished, worldRoomJoinIsFinished, send, worldRoomDomain.command])
 
+  useEffect(() => {
+    if (danmakuIsEnabled) send(danmakuDomain.command.MountCommand(danmakuContainerRef.current!))
+    return () => {
+      if (danmakuIsEnabled) send(danmakuDomain.command.UnmountCommand())
+    }
+  }, [danmakuIsEnabled, send, danmakuDomain.command])
+
+  const notUserInfo = userInfoLoadFinished && !userInfoSetFinished
   const themeMode =
     userInfo?.themeMode === 'system'
       ? checkDarkMode()
@@ -60,19 +66,14 @@ export default function App() {
         : 'light'
       : (userInfo?.themeMode ?? (checkDarkMode() ? 'dark' : 'light'))
 
-  const setThemeMode = useAppTheme()
-
-  useEffect(() => setThemeMode(themeMode), [setThemeMode, themeMode])
-
   return (
-    appStatusLoadIsFinished && (
-      <>
+    <div id="app" className={cn('contents', themeMode)}>
+      <AppMain>
         <Header />
         <Main />
         <Footer />
-        {notUserInfo && <Setup></Setup>}
+        {notUserInfo && <Setup />}
         <Toaster
-          ref={toasterRef}
           richColors
           theme={themeMode}
           offset="70px"
@@ -83,8 +84,12 @@ export default function App() {
             }
           }}
           position="top-center"
-        ></Toaster>
-      </>
-    )
+        />
+      </AppMain>
+      <AppButton />
+      <DanmakuContainer ref={danmakuContainerRef} />
+    </div>
   )
 }
+
+export default App

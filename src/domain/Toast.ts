@@ -2,7 +2,9 @@ import { Remesh } from 'remesh'
 import { map, merge } from 'rxjs'
 import ChatRoomDomain from '@/domain/ChatRoom'
 import WorldRoomDomain from '@/domain/WorldRoom'
-import { ToastExtern } from '@/domain/externs/Toast'
+import { ToastExtern, type ToastOptions } from '@/domain/externs/Toast'
+
+type ToastMessage = string | ({ message: string } & ToastOptions)
 
 const ToastDomain = Remesh.domain({
   name: 'ToastDomain',
@@ -11,9 +13,14 @@ const ToastDomain = Remesh.domain({
     const worldRoomDomain = domain.getDomain(WorldRoomDomain())
     const toast = domain.getExtern(ToastExtern)
 
-    type Message = string | { message: string; duration?: number }
-    const args = (input: Message): [string, number | undefined] =>
-      typeof input === 'string' ? [input, undefined] : [input.message, input.duration]
+    const show = (
+      method: (message: string, options?: ToastOptions | number) => number | string,
+      input: ToastMessage
+    ) => {
+      if (typeof input === 'string') return method(input)
+      const { message, ...options } = input
+      return method(message, options)
+    }
 
     const SuccessEvent = domain.event<number | string>({ name: 'Toast.SuccessEvent' })
     const ErrorEvent = domain.event<number | string>({ name: 'Toast.ErrorEvent' })
@@ -24,23 +31,23 @@ const ToastDomain = Remesh.domain({
 
     const SuccessCommand = domain.command({
       name: 'Toast.SuccessCommand',
-      impl: (_, message: Message) => SuccessEvent(toast.success(...args(message)))
+      impl: (_, message: ToastMessage) => SuccessEvent(show(toast.success, message))
     })
     const ErrorCommand = domain.command({
       name: 'Toast.ErrorCommand',
-      impl: (_, message: Message) => ErrorEvent(toast.error(...args(message)))
+      impl: (_, message: ToastMessage) => ErrorEvent(show(toast.error, message))
     })
     const InfoCommand = domain.command({
       name: 'Toast.InfoCommand',
-      impl: (_, message: Message) => InfoEvent(toast.info(...args(message)))
+      impl: (_, message: ToastMessage) => InfoEvent(show(toast.info, message))
     })
     const WarningCommand = domain.command({
       name: 'Toast.WarningCommand',
-      impl: (_, message: Message) => WarningEvent(toast.warning(...args(message)))
+      impl: (_, message: ToastMessage) => WarningEvent(show(toast.warning, message))
     })
     const LoadingCommand = domain.command({
       name: 'Toast.LoadingCommand',
-      impl: (_, message: Message) => LoadingEvent(toast.loading(...args(message)))
+      impl: (_, message: ToastMessage) => LoadingEvent(show(toast.loading, message))
     })
     const CancelCommand = domain.command({
       name: 'Toast.CancelCommand',

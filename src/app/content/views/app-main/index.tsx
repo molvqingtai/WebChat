@@ -11,12 +11,10 @@ export interface AppMainProps {
   className?: string
 }
 
-export interface AppMainFrameProps extends AppMainProps {
-  open: boolean
-  position: { x: number; y: number }
-}
-
-export const AppMainFrame: FC<AppMainFrameProps> = ({ children, className, open, position: { x, y } }) => {
+const AppMain: FC<AppMainProps> = ({ children, className }) => {
+  const appStatusDomain = useRemeshDomain(AppStatusDomain())
+  const appOpenStatus = useRemeshQuery(appStatusDomain.query.OpenQuery())
+  const { x, y } = useRemeshQuery(appStatusDomain.query.PositionQuery())
   const { width, height } = useWindowResize()
 
   // Position x,y is offset from bottom-right corner
@@ -40,8 +38,9 @@ export const AppMainFrame: FC<AppMainFrameProps> = ({ children, className, open,
 
   return (
     <AnimatePresence>
-      {open && (
+      {appOpenStatus && (
         <motion.div
+          data-webchat-panel
           initial={{ opacity: 0, y: 10, x: isOnRightSide ? '-100%' : '0' }}
           animate={{ opacity: 1, y: 0, x: isOnRightSide ? '-100%' : '0' }}
           exit={{ opacity: 0, y: 10 }}
@@ -54,7 +53,7 @@ export const AppMainFrame: FC<AppMainFrameProps> = ({ children, className, open,
             bottom: `calc(100vh - ${absoluteY}px + 22px)`
           }}
           className={cn(
-            `z-infinity fixed inset-y-10 right-10 mt-auto mb-0 box-border grid max-h-[min(calc(100vh_-60px),_1000px)] min-h-[375px] grid-flow-col grid-rows-[auto_1fr_auto] rounded-xl bg-slate-50 font-sans shadow-2xl dark:bg-slate-950`,
+            'z-infinity fixed inset-y-10 right-10 mt-auto mb-0 box-border grid max-h-[min(calc(100vh_-60px),_1000px)] min-h-[375px] grid-flow-col grid-rows-[auto_1fr_auto] rounded-xl bg-slate-50 font-sans shadow-2xl dark:bg-slate-950',
             className,
             { 'transition-transform': isAnimationComplete }
           )}
@@ -71,14 +70,6 @@ export const AppMainFrame: FC<AppMainFrameProps> = ({ children, className, open,
       )}
     </AnimatePresence>
   )
-}
-
-const AppMain: FC<AppMainProps> = (props) => {
-  const appStatusDomain = useRemeshDomain(AppStatusDomain())
-  const open = useRemeshQuery(appStatusDomain.query.OpenQuery())
-  const position = useRemeshQuery(appStatusDomain.query.PositionQuery())
-
-  return <AppMainFrame {...props} open={open} position={position} />
 }
 
 AppMain.displayName = 'AppMain'

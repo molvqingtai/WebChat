@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
+import path from 'node:path'
 import { Remesh } from 'remesh'
 import LifecycleDomain from './Lifecycle'
 import type { Clock } from '@/domain/runtime/externs/Clock'
@@ -87,7 +88,7 @@ describe('LifecycleDomain', () => {
     expect(store.query(runtime.query.DomainLeaseQuery(domain))).not.toHaveProperty('pageLastSeenAt')
     expect(runtime.command).not.toHaveProperty('ExpirePagesCommand')
     expect(runtime.event).not.toHaveProperty('PageExpiredEvent')
-    expect(readFileSync(new URL('./Lifecycle.ts', import.meta.url), 'utf8')).not.toMatch(
+    expect(readFileSync(path.resolve(process.cwd(), 'src/domain/runtime/Lifecycle.ts'), 'utf8')).not.toMatch(
       /pageLastSeenAt|seenAt|ExpirePagesCommand|PageExpiredEvent/
     )
   })

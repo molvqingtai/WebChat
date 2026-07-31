@@ -1,7 +1,12 @@
 import { createStorage } from 'unstorage'
 import localStorageDriver from 'unstorage/drivers/localstorage'
 import { LocalStorageExtern, BrowserSyncStorageExtern } from '@/domain/externs/Storage'
-import { CONFIG_STORE_VERSION, CONFIG_STORE_VERSION_KEY, STORAGE_NAME } from '@/constants/storage'
+import {
+  APP_STATUS_STORAGE_KEY,
+  CONFIG_STORE_VERSION,
+  CONFIG_STORE_VERSION_KEY,
+  STORAGE_NAME
+} from '@/constants/storage'
 import webExtensionDriver from '@/utils/webExtensionDriver'
 import { withPreparationLock } from '@/utils/withPreparationLock'
 import type { Storage } from '@/domain/externs/Storage'
@@ -47,6 +52,11 @@ const browserSyncStorage = createStorage({
   driver: webExtensionDriver({ storageArea: 'sync' })
 })
 
+const clearVersionManagedLocalConfiguration = async () => {
+  const keys = await localStorage.getKeys()
+  await Promise.all(keys.filter((key) => key !== APP_STATUS_STORAGE_KEY).map((key) => localStorage.removeItem(key)))
+}
+
 export const prepareLocalConfigurationStorage = (): Promise<void> =>
   prepareConfigurationStorage(`origin-local:${globalThis.location?.origin ?? 'headless'}`, {
     async readVersion() {
@@ -57,7 +67,7 @@ export const prepareLocalConfigurationStorage = (): Promise<void> =>
       }
     },
     writeVersion: (version) => localStorage.setItem(CONFIG_STORE_VERSION_KEY, version),
-    clear: () => localStorage.clear()
+    clear: clearVersionManagedLocalConfiguration
   })
 
 export const LocalStorageImpl = LocalStorageExtern.impl({
