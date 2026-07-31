@@ -71,3 +71,51 @@ This requirement SHALL add no success Toast, copy/duration masking, readiness or
 - **GIVEN** an active domain begins final release after page connection success
 - **WHEN** durable retirement, SESSION_END, or cleanup rejects or remains unsettled
 - **THEN** the existing release failure and retry ownership SHALL remain authoritative, physical departure SHALL not bypass its required order, and active-persistence decoupling SHALL NOT convert final release into success
+
+### Requirement: Bootstrap errors do not block the panel shell
+
+Once the content script runs and receives the configured DOM anchor, it SHALL create exactly one existing Shadow UI root, launcher, and openable panel shell before awaiting browser-sync/local configuration preparation, MessageStore/IndexedDB preparation, Runtime registration, or another asynchronous bootstrap dependency. Any dependency deadline, rejection, cancellation, or unavailable result MAY gate only the capabilities that require it. It SHALL NOT return before shell mount, remove or blank the mounted shell, hide the launcher, automatically open the panel, or create another root on retry.
+
+Each bootstrap attempt SHALL belong to one finite current generation. Before a prerequisite is ready, the application SHALL NOT ignite its dependent Domain, automatic Chat/World join, database read/write, callback, or other side effect. Bootstrap-independent shell controls SHALL remain usable. When the prerequisites for a Domain become ready, the same mounted root SHALL initialize that Domain and its application state exactly once; a Retry SHALL NOT create a duplicate store, Domain, listener, join, or UI root.
+
+A terminal bootstrap failure SHALL leave one visible generic unavailable state and one Retry action inside the mounted shell. The launcher SHALL remain focusable and named; the unavailable state and Retry SHALL be discernible to assistive technology, and Retry SHALL be keyboard-operable with an accessible current label. The raw exception remains diagnostic rather than detailed user-facing copy. If only Runtime fails after the normal application surface is ready, the existing `ReadinessDomain`, generic feedback, `Connection failed`, ready dismissal, and retry/reconnect behavior SHALL remain the sole Runtime state and feedback authority.
+
+One accepted Retry SHALL start one fresh bounded bootstrap generation, reuse an already valid dependency result only when that reuse preserves its ownership contract, and fence every late result from the failed generation. Success SHALL hydrate or recover the same shell in place and continue each newly available dependent flow once without requiring a document reload. Failure SHALL settle only the current Retry loading and return to the same accessible unavailable state without an infinite loading owner. A reload or genuine document replacement SHALL mount one fresh shell and generation; old work SHALL NOT mutate its shell, dependency state, or request result.
+
+This requirement changes no connection or persistence truth after its prerequisites are ready. It SHALL add no success feedback, second Runtime readiness or Toast owner, raw diagnostic detail, panel visual redesign, protocol/public-port/schema/version change, or weakened final release behavior.
+
+#### Scenario: Storage preparation failure preserves the shell
+
+- **GIVEN** the content script has a body anchor and browser-sync/local configuration or MessageStore preparation rejects or reaches its current terminal
+- **WHEN** full application initialization cannot continue
+- **THEN** exactly one launcher and openable panel shell SHALL remain mounted with one accessible unavailable state and Retry, while no dependent storage Domain or side effect is ignited
+
+#### Scenario: Initial control-plane timeout preserves the shell
+
+- **GIVEN** the shell is mounted and initial Runtime registration never returns within the current bounded startup budget
+- **WHEN** the Runtime attempt settles unavailable with `Runtime control-plane request timed out`
+- **THEN** the shell and launcher SHALL remain usable, Runtime-dependent work SHALL remain unavailable, the current failure SHALL be visibly and accessibly recoverable, and no full blank or pre-mount return SHALL occur
+
+#### Scenario: Unready dependencies cannot ignite application work
+
+- **GIVEN** one or more bootstrap dependencies have not reached ready
+- **WHEN** the shell renders or another dependency independently becomes ready
+- **THEN** no Domain, automatic join, database operation, callback, or listener that requires an unready dependency SHALL start, while each newly satisfied dependent flow MAY initialize exactly once
+
+#### Scenario: Retry recovers the same mounted shell
+
+- **GIVEN** the shell is mounted in a bootstrap-unavailable state
+- **WHEN** one accepted Retry owns a fresh bounded generation and every required dependency becomes ready
+- **THEN** the same root SHALL recover the normal application UI, each dependent Domain/flow SHALL initialize once, and no page reload, duplicate root/store, or stale attempt settlement SHALL occur
+
+#### Scenario: Repeated Retry failure remains finite and accessible
+
+- **GIVEN** the shell is mounted in the unavailable state
+- **WHEN** the current Retry also reaches its bounded failure terminal
+- **THEN** only that Retry loading SHALL settle, the launcher and panel SHALL remain usable, the unavailable state and Retry SHALL remain accessibly discernible, and no infinite loading or shell unmount SHALL occur
+
+#### Scenario: Reload creates one fresh shell generation
+
+- **GIVEN** a document generation has a mounted shell and pending or failed bootstrap work
+- **WHEN** a genuine reload or document replacement creates the next content-script generation
+- **THEN** the replacement SHALL mount exactly one fresh shell and start one fresh bootstrap generation, while late work from the old generation SHALL NOT alter the replacement shell, dependency state, readiness, or request outcome

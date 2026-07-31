@@ -10,6 +10,8 @@ Task #422 added one uncommitted diagnostic test on `develop@d7fa3d386250aee22a74
 
 The evidence does not identify which of the three zero-user requests hangs in the field. It also does not prove that `pageId` metadata or provider callback re-registration is the repair.
 
+Owner smoke on source exact `8c4905804b49669ad748ee3a55ac708a90bb3d46` then exposed a separate shell boundary. `content/index.tsx` awaits browser-sync/local configuration and MessageStore preparation, then the initial `ClientLease` registration, before creating the Shadow UI. Either catch path returns with no launcher or panel; the observed Runtime path logs `Shared runtime unavailable: Runtime control-plane request timed out`. Those terminals are valid dependency truth but incorrectly own whether the product surface mounts.
+
 ## Goals / Non-Goals
 
 **Goals:**
@@ -18,6 +20,8 @@ The evidence does not identify which of the three zero-user requests hangs in th
 - Preserve callback registration and replay durability before physical connection without permitting either to strand page loading.
 - Let a committed connection and accepted current snapshot settle page success independently of active Presence persistence.
 - Prevent a timed-out, released, or superseded attempt or persistence tail from blocking a later current generation.
+- Mount the existing launcher and openable panel shell once before browser-sync/local configuration, MessageStore, or Runtime bootstrap can fail.
+- Present any bootstrap terminal as one visible, accessible, retryable degraded state; ignite each dependency-backed Domain only after its prerequisite is ready and recover the same mounted shell in place.
 - Preserve current same-domain grace, room reuse/release, final-retirement durability, and request-local stale fencing.
 
 **Non-Goals:**
@@ -26,7 +30,7 @@ The evidence does not identify which of the three zero-user requests hangs in th
 - No required `pageId` transport metadata, provider callback re-registration design, or Injector/Provider API change.
 - No shortcut that connects before required callback registration and replay persistence finish.
 - No change to peer wire, public ports, schema/version, message history semantics, active/final Presence record shapes, or release ordering.
-- No Toast text, duration, success feedback, readiness, panel, or bootstrap change.
+- No success feedback, detailed diagnostic copy, panel visual redesign, automatically opened panel, or second Runtime-readiness authority.
 - No permanent production trace surface unless implementation evidence proves it necessary.
 
 ## Decisions
@@ -67,7 +71,17 @@ The repair SHALL not start grace for an ordinary page-context refresh while the 
 
 The implementation MAY use existing request IDs, generations, abort signals, deadlines, queue tokens, or smaller direct composition, provided it satisfies the terminal and stale-result behavior above with minimum human-readable code. It SHALL not add `pageId` business data, provider re-registration, callback fencing, a compatibility path, or another state owner merely because those were investigation hypotheses.
 
-### 6. Verification preserves RED sensitivity without shipping diagnostic bulk
+### 6. Bootstrap dependencies do not own the panel shell
+
+Once the content script runs and receives the existing body anchor, it SHALL create one Shadow UI root, launcher, and openable panel shell before awaiting browser-sync/local configuration, MessageStore, or Runtime bootstrap results. Dependency `connecting`, deadline expiry, rejection, or unavailable MAY gate only the capabilities that need that dependency. It SHALL not return before shell mount, remove the launcher, blank an already mounted panel, or create another root/store on retry.
+
+Each bootstrap generation SHALL own one finite result for every attempted dependency. Before a prerequisite is ready, the application SHALL not ignite its dependent Domain, automatic join, database read/write, callback, or other side effect. Independent shell controls remain usable. A failure before the full application is ready SHALL leave one visible generic unavailable state and one keyboard-operable, accessibly named Retry action inside the mounted shell; the underlying exception remains diagnostic rather than detailed user-facing copy. Runtime-only failure after the application is ready SHALL continue through the sole existing `ReadinessDomain`, generic feedback, and retry/reconnect behavior rather than create another Runtime state owner.
+
+One Retry SHALL create one fresh bounded bootstrap generation, reuse already valid dependency results where safe, and fence every late result from the failed generation. If all required dependencies become ready, the same root SHALL ignite each dependent Domain exactly once and recover the normal UI without requiring a document reload. If Retry fails, its loading owner SHALL settle back to the same accessible unavailable state. Reload or genuine document replacement SHALL mount one fresh shell and start one fresh generation; old work remains fenced by the existing attempt rules.
+
+The shell continuity rule changes no Runtime truth. Runtime `connecting | ready | unavailable`, `Connection failed`, ready dismissal, manual reconnect ownership, Chat/World prerequisites, and final release remain authoritative after their dependencies are available. It adds no success feedback, second Toast/Readiness owner, raw diagnostic detail, or panel visual redesign.
+
+### 7. Verification preserves RED sensitivity without shipping diagnostic bulk
 
 Focused tests SHALL prove all four pending boundaries against application-observable users/loading/completion, not only internal calls. The repaired exact SHALL turn them into terminal outcomes while keeping the lifecycle control green. Existing tests SHOULD be extended where they express the same contract; the 481-line diagnostic trace is evidence, not a requirement to ship a parallel harness or production trace API.
 
@@ -78,12 +92,14 @@ Focused tests SHALL prove all four pending boundaries against application-observ
 - [A finite deadline can reject a genuinely slow browser operation] -> Keep the deadline implementation-owned and deterministic, reuse existing cancellation/error semantics, and make retry/new-page admission fresh rather than permanently blocked.
 - [Resetting a persistence tail can admit late old work] -> Fence late completion against the current Presence generation and prove later persistence/release remains authoritative.
 - [Field zero-user evidence is not request-unique] -> Cover callback registration, replay, and replay persistence under the same terminal contract instead of guessing one provider bug.
+- [Mounting before preparation can ignite code with missing dependencies] -> Keep the shell bootstrap-independent and gate each Domain/side effect until its own prerequisite is ready.
+- [A late failed generation can overwrite recovered UI] -> Give bootstrap and Retry one current generation and ignore every superseded result without remounting the root.
 
 ## Migration Plan
 
-1. Publish this OpenSpec authority as a docs-only child of `develop@d7fa3d386250aee22a740ca84e3cd29dadbbc724` on the single requirement branch and open or reuse its single Draft PR.
-2. Adapt the task #422 RED controls into the minimum focused regressions, preserving the four application signatures and lifecycle control without committing unnecessary diagnostic tracing.
-3. Implement attempt-owned prerequisite settlement and independent post-commit active Presence persistence on the same branch.
+1. Publish the shell-continuity authority as a docs-only child of repaired source exact `8c4905804b49669ad748ee3a55ac708a90bb3d46` on the existing single requirement branch and Draft PR.
+2. Add the minimum parent-sensitive regressions for absent mount on storage-preparation and Runtime startup failure, dependency gating, in-place recovery, and generation fencing.
+3. Mount the bootstrap-independent shell first, then ignite each dependency-backed Domain only after its prerequisite is ready and reuse the existing Runtime readiness/feedback authorities once available.
 4. Run exact-bound source gates, fresh independent Review, CI, and nonblocking Chrome/Firefox behavior observation.
 5. Request Owner authorization only for final merge; stop on branch, exact, or remote drift.
 

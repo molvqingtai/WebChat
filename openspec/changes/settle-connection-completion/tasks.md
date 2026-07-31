@@ -23,12 +23,20 @@
 ## 4. Exact-Bound Verification
 
 - [x] 4.1 Run the focused settlement controls, canonical full tests, TypeScript, format, lint, OpenSpec strict validation/doctor, and applicable Chrome/Firefox production builds on one immutable source exact.
-- [x] 4.2 Prove production diff contains no Toast copy/duration mask, readiness/panel fallback, `pageId` business field, provider-specific compatibility path, protocol/public-port/schema/version/dependency/workflow drift, or permanent diagnostic bulk.
+- [x] 4.2 Prove the connection-settlement diff contains no Toast copy/duration mask, independent readiness authority, fixed pre-App status view, `pageId` business field, provider-specific compatibility path, protocol/public-port/schema/version/dependency/workflow drift, or permanent diagnostic bulk.
 - [ ] 4.3 Freeze exact/tree/sole-parent/patch identity, branch/remote/PR identity, clean worktree, and all PASS/FAIL/BLOCKED/UNVERIFIED evidence without transferring task #422 diagnostic results as implementation PASS.
 
-## 5. Review And Release
+## 5. Panel Shell Continuity
 
-- [ ] 5.1 Obtain fresh independent Review for terminal ownership, post-commit success boundary, prerequisite cleanup, persistence-tail recovery, stale-generation fencing, lifecycle preservation, and minimum-code scope.
-- [ ] 5.2 Keep the single `fix/settle-connection-completion` Draft PR updated to each reviewed exact by verified normal fast-forward only; stop on remote drift and do not merge.
-- [ ] 5.3 Run nonblocking exact-bound Chrome MV3 and Firefox MV2 behavior observation for the connected-visible-user and zero-user failure signatures, ordinary refresh, return during grace, post-grace rejoin, and cleanup; report unexecuted cases as UNVERIFIED.
-- [ ] 5.4 After all required source/review/CI steps finish, request Owner authorization for final merge. No earlier step requires another Owner checkpoint.
+- [x] 5.1 Freeze the Owner boundary that any Runtime, storage-preparation, or other bootstrap error may gate only its dependent capability and never the existing launcher or openable panel shell.
+- [ ] 5.2 Add parent-sensitive regressions proving browser-sync/local configuration, MessageStore, and Runtime bootstrap failure currently leaves no Shadow UI, while the repair mounts exactly one shell, reaches a finite degraded state, and fences late old results.
+- [ ] 5.3 Mount the bootstrap-independent Shadow UI/shell before asynchronous preparation; ignite each application Domain and side effect only after its own prerequisite is ready, with no duplicate root/store or panel visual redesign.
+- [ ] 5.4 Present one visible, accessible unavailable state and Retry action for the current failed bootstrap generation; recover the same shell in place on success and return to retryable unavailable without infinite loading on failure.
+- [ ] 5.5 Prove one fresh shell/generation after reload or genuine replacement, current-generation-only hydration, keyboard/focus accessibility, and no stale bootstrap result or Retry terminal mutates the current shell.
+
+## 6. Review And Release
+
+- [ ] 6.1 Obtain fresh independent Review for terminal ownership, post-commit success boundary, prerequisite cleanup, persistence-tail recovery, shell continuity/recovery, stale-generation fencing, lifecycle preservation, and minimum-code scope.
+- [ ] 6.2 Keep the single `fix/settle-connection-completion` Draft PR updated to each reviewed exact by verified normal fast-forward only; stop on remote drift and do not merge.
+- [ ] 6.3 Run nonblocking exact-bound Chrome MV3 and Firefox MV2 behavior observation for shell continuity on storage-preparation and Runtime startup failure, in-place retry, connected-visible-user and zero-user failure signatures, ordinary refresh, return during grace, post-grace rejoin, and cleanup; report unexecuted cases as UNVERIFIED.
+- [ ] 6.4 After all required source/review/CI steps finish, request Owner authorization for final merge. No earlier step requires another Owner checkpoint.
