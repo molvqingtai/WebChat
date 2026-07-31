@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { Remesh } from 'remesh'
 import {
   APP_STATUS_STORAGE_KEY,
   CONFIG_STORE_VERSION,
@@ -87,13 +88,14 @@ const loadLocalPreparationRealm = async (origin: string, localStorage: Storage) 
 }
 
 describe('origin-local configuration preparation', () => {
-  it('preserves host keys and applies baseline, same-version, and mismatch rules only to the WebChat namespace', async () => {
+  it('preserves host keys and AppStatus while applying mismatch rules to version-managed local values', async () => {
     const localStorage = createTestLocalStorage()
     vi.stubGlobal('window', { localStorage })
     vi.stubGlobal('location', { origin: 'https://storage.test' })
     const { prepareLocalConfigurationStorage } = await import('./Storage')
     const statusKey = `${STORAGE_NAME}:${APP_STATUS_STORAGE_KEY}`
     const versionKey = `${STORAGE_NAME}:${CONFIG_STORE_VERSION_KEY}`
+    const versionManagedKey = `${STORAGE_NAME}:VERSION_MANAGED_SETTING`
     localStorage.setItem('HOST_PAGE_KEY', 'preserved')
     localStorage.setItem(statusKey, '{"open":true}')
 
@@ -106,10 +108,51 @@ describe('origin-local configuration preparation', () => {
     expect(localStorage.getItem(statusKey)).toBe('{"open":false}')
 
     localStorage.setItem(versionKey, '7')
+    localStorage.setItem(versionManagedKey, 'old-generation')
     await prepareLocalConfigurationStorage()
-    expect(localStorage.getItem(statusKey)).toBeNull()
+    expect(localStorage.getItem(statusKey)).toBe('{"open":false}')
+    expect(localStorage.getItem(versionManagedKey)).toBeNull()
     expect(localStorage.getItem(versionKey)).toBe('1')
     expect(localStorage.getItem('HOST_PAGE_KEY')).toBe('preserved')
+  })
+
+  it('keeps hydrated AppStatus through a real mismatch and restores it in a second shell store', async () => {
+    const localStorage = createTestLocalStorage()
+    vi.stubGlobal('window', { localStorage })
+    vi.stubGlobal('location', { origin: 'https://status-mismatch.test' })
+    vi.stubGlobal('addEventListener', vi.fn())
+    vi.stubGlobal('removeEventListener', vi.fn())
+    vi.resetModules()
+    const [{ default: AppStatusDomain }, { LocalStorageImpl, prepareLocalConfigurationStorage }] = await Promise.all([
+      import('@/domain/AppStatus'),
+      import('./Storage')
+    ])
+    const statusKey = `${STORAGE_NAME}:${APP_STATUS_STORAGE_KEY}`
+    const versionKey = `${STORAGE_NAME}:${CONFIG_STORE_VERSION_KEY}`
+    const persistedStatus = { open: true, unread: 3, position: { x: 84, y: 36 } }
+    localStorage.setItem(statusKey, JSON.stringify(persistedStatus))
+    localStorage.setItem(versionKey, String(CONFIG_STORE_VERSION + 1))
+
+    const firstStore = Remesh.store({ externs: [LocalStorageImpl] })
+    const firstStatus = firstStore.getDomain(AppStatusDomain())
+    firstStore.igniteDomain(AppStatusDomain())
+    await vi.waitFor(() => expect(firstStore.query(firstStatus.query.StatusLoadIsFinishedQuery())).toBe(true))
+    expect(firstStore.query(firstStatus.query.OpenQuery())).toBe(true)
+
+    await prepareLocalConfigurationStorage()
+    firstStore.discard()
+
+    const secondStore = Remesh.store({ externs: [LocalStorageImpl] })
+    const secondStatus = secondStore.getDomain(AppStatusDomain())
+    secondStore.igniteDomain(AppStatusDomain())
+    await vi.waitFor(() => expect(secondStore.query(secondStatus.query.StatusLoadIsFinishedQuery())).toBe(true))
+
+    expect(secondStore.query(secondStatus.query.OpenQuery())).toBe(true)
+    expect(secondStore.query(secondStatus.query.UnreadQuery())).toBe(3)
+    expect(secondStore.query(secondStatus.query.PositionQuery())).toEqual({ x: 84, y: 36 })
+    expect(JSON.parse(localStorage.getItem(statusKey)!)).toEqual(persistedStatus)
+    expect(localStorage.getItem(versionKey)).toBe(String(CONFIG_STORE_VERSION))
+    secondStore.discard()
   })
 
   it('serializes independent local-adapter realms before preserving target-generation writes', async () => {
