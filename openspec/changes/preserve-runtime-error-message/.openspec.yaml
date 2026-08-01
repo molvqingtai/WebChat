@@ -1,0 +1,4 @@
+schema: spec-driven
+created: 2026-08-01
+goal: Preserve Runtime failure messages across the extension transport boundary
+  while keeping Error construction in the content ChatRoom.
