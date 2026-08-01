@@ -33,6 +33,17 @@ import { ReadinessExtern, type Readiness } from '@/domain/externs/Readiness'
 import { BrowserSyncStorageExtern, type Storage, type StorageValue } from '@/domain/externs/Storage'
 import type { Database } from '@/domain/externs/Database'
 
+const CONTENT_LAYER = 2147483647
+// WXT's important Shadow reset otherwise overrides the geometry applied by its overlay primitive.
+const CONTENT_HOST_CSS = `:host {
+  display: block !important;
+  position: relative !important;
+  width: 0 !important;
+  height: 0 !important;
+  overflow: visible !important;
+  z-index: ${CONTENT_LAYER} !important;
+}`
+
 /**
  * Firefox content scripts cannot assimilate page-realm Web Locks Promises
  * (<https://bugzilla.mozilla.org/show_bug.cgi?id=1873028>), so Firefox runs preparation directly and relies
@@ -165,7 +176,9 @@ export default defineContentScript({
 
     const ui = await createShadowRootUi(ctx, {
       name: __NAME__,
-      position: 'inline',
+      position: 'overlay',
+      zIndex: CONTENT_LAYER,
+      css: CONTENT_HOST_CSS,
       anchor: 'body',
       append: 'last',
       mode: 'open',

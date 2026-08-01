@@ -10,6 +10,9 @@ interface ContentOwner {
 }
 
 interface ShadowRootOptions {
+  position: string
+  zIndex?: number
+  isolateEvents?: string[]
   onMount: (container: HTMLElement) => ContentOwner
   onRemove: (owner: ContentOwner | undefined) => void
 }
@@ -162,6 +165,14 @@ describe('content composition root', () => {
   it('mounts the prop-free normal shell with the current required Domain scope before activation', async () => {
     await startContent()
 
+    expect(fixture.createShadowRootUi).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        position: 'overlay',
+        zIndex: 2147483647,
+        isolateEvents: ['keyup', 'keydown', 'keypress']
+      })
+    )
     expect(document.querySelector('[data-testid="application-shell"]')).not.toBeNull()
     expect(fixture.createStore).toHaveBeenCalledOnce()
     expect(fixture.startInitializationLifecycle).toHaveBeenCalledOnce()

@@ -103,8 +103,8 @@ const App = () => {
           />
         </AppMain>
         <AppButton />
-        <MediaPreview ref={mediaPreviewRef} shellOpen={appOpenStatus} />
         <DanmakuContainer ref={danmakuContainerRef} />
+        <MediaPreview ref={mediaPreviewRef} shellOpen={appOpenStatus} />
       </MediaPreviewContext.Provider>
     </div>
   )

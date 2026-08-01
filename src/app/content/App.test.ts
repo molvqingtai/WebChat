@@ -34,8 +34,8 @@ describe('content component hierarchy', () => {
       '<Toaster',
       '</AppMain>',
       '<AppButton',
-      '<MediaPreview',
-      '<DanmakuContainer'
+      '<DanmakuContainer',
+      '<MediaPreview'
     ])
     expect(app.match(/<MediaPreview\b/g)).toHaveLength(1)
     expect(app).toContain('<MediaPreviewContext.Provider')
