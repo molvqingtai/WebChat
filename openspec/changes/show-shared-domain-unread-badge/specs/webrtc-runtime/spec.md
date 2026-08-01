@@ -6,7 +6,9 @@ Each WebChat domain SHALL own one shared AppButton status containing `open`, pos
 
 The shared position SHALL consist of a horizontal anchor, the AppButton center's distance from that selected viewport edge, and the launcher bottom edge's distance from the viewport bottom. A center left of the viewport midpoint SHALL use a left-bottom anchor with a left distance. A center at or right of the midpoint SHALL use a right-bottom anchor with a right distance. The bottom distance SHALL apply in both halves.
 
-Each tab SHALL reproject the shared edge-relative coordinates against its own current viewport. It SHALL derive bounds from that viewport and the AppButton geometry so the launcher remains fully visible. If a saved coordinate lies beyond a viewport's visible range, only that tab's rendered projection SHALL be bounded; the shared coordinate SHALL remain unchanged. Resizing SHALL perform no shared-state mutation or persistence write, and a later larger viewport SHALL project from the unchanged shared coordinate.
+The launcher SHALL be `44x44px`. In a viewport that can satisfy the fixed margins, its center SHALL remain at least `50px` from the selected left or right viewport edge, leaving at least `28px` between the launcher's outer edge and that viewport edge, and its bottom edge SHALL remain at least `22px` above the viewport bottom. The left-bottom and right-bottom bounds SHALL be symmetric.
+
+Each tab SHALL reproject the shared edge-relative coordinates against its own current viewport. It SHALL derive bounds from that viewport and the AppButton geometry so the launcher remains fully visible with the fixed margins. If a viewport can contain the launcher but is too small to satisfy a fixed margin, only that tab's rendered projection SHALL use the nearest fully visible bound with the largest feasible margin; the shared coordinate SHALL remain unchanged. Resizing SHALL perform no shared-state mutation or persistence write, and a later larger viewport SHALL restore the fixed margins from the unchanged shared coordinate.
 
 Dragging SHALL begin from the existing hand control, follow the latest pointer position once per animation frame, prevent text selection, retain the grab cursor, remain within the derived bounds, and end on mouse release. When the AppButton center crosses the viewport midpoint, the horizontal anchor SHALL change and its edge distance SHALL be converted from the same rendered center in that frame. The button SHALL remain under the pointer without a visual jump, snap, rebound, easing, delayed settle, or release-behavior change.
 
@@ -32,19 +34,19 @@ The visible AppButton indicator SHALL be count-free and SHALL NOT resize the but
 
 - **GIVEN** an AppButton center is left of the viewport midpoint
 - **WHEN** its position is projected or dragged within the left half
-- **THEN** its shared horizontal coordinate SHALL be the distance from the left viewport edge, its vertical coordinate SHALL be the distance from the bottom edge, and resizing SHALL reproject those unchanged coordinates without a persistence write
+- **THEN** its shared horizontal coordinate SHALL be the distance from the left viewport edge, its vertical coordinate SHALL be the distance from the bottom edge, its center SHALL remain at least `50px` from the left edge, its outer edge SHALL retain at least `28px`, its bottom edge SHALL retain at least `22px`, and resizing SHALL reproject those unchanged coordinates without a persistence write
 
 #### Scenario: Right-half position uses the right-bottom anchor
 
 - **GIVEN** an AppButton center is at or right of the viewport midpoint
 - **WHEN** its position is projected or dragged within the right half
-- **THEN** its shared horizontal coordinate SHALL be the distance from the right viewport edge, its vertical coordinate SHALL be the distance from the bottom edge, and resizing SHALL reproject those unchanged coordinates without a persistence write
+- **THEN** its shared horizontal coordinate SHALL be the distance from the right viewport edge, its vertical coordinate SHALL be the distance from the bottom edge, its center SHALL remain at least `50px` from the right edge, its outer edge SHALL retain at least `28px`, its bottom edge SHALL retain at least `22px`, and resizing SHALL reproject those unchanged coordinates without a persistence write
 
 #### Scenario: A smaller viewport bounds only the rendered projection
 
 - **GIVEN** a shared edge-relative position that lies beyond a smaller tab viewport's fully visible range
 - **WHEN** that tab projects the AppButton after resize
-- **THEN** the launcher SHALL remain fully visible at the nearest derived bound, the shared position SHALL NOT be rewritten, and a later larger viewport SHALL project the original shared coordinate again
+- **THEN** the launcher SHALL remain fully visible at the nearest derived bound with the largest feasible local margin, the shared position SHALL NOT be rewritten, and a later larger viewport SHALL project the original shared coordinate and fixed margins again
 
 #### Scenario: Crossing the midpoint is visually continuous
 

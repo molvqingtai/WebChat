@@ -10,7 +10,7 @@ See `proposal.md` for the product motivation and `specs/webrtc-runtime/spec.md` 
 
 - Preserve one AppStatus business owner and one same-domain status containing `open`, position, and unread attention.
 - Synchronize expand, collapse, position, unread mark, and unread clear across every same-domain tab while isolating other domains.
-- Define one edge-relative position that projects from the left-bottom or right-bottom anchor, remains visible through viewport-derived bounds, and never writes merely because a viewport resized.
+- Define one edge-relative position that projects from the left-bottom or right-bottom anchor, preserves the launcher's fixed edge margins through viewport-derived bounds, and never writes merely because a viewport resized.
 - Make open, position, and unread writes field-scoped so no update can clobber another shared fact.
 - Preserve the current drag start, pointer following, bounds, cursor, selection suppression, release behavior, and continuous midpoint crossing.
 - Mark a collapsed domain unread on first-delivered remote text, keep an expanded domain read, and project one count-free badge from `!open && unread`.
@@ -37,7 +37,9 @@ Each write is field-scoped. A position update preserves the latest open and unre
 
 The shared position consists of a horizontal anchor, the AppButton center's distance from that selected edge, and the launcher bottom edge's distance from the viewport bottom. A center left of the viewport midpoint uses the left-bottom anchor and a left distance; a center at or right of the midpoint uses the right-bottom anchor and a right distance. The bottom distance is used in both halves.
 
-Each tab derives its rendered position from those coordinates and its own current viewport. Bounds are derived from the current viewport and AppButton geometry so the launcher remains fully visible. When a saved coordinate lies beyond a smaller viewport's visible range, only the rendered projection is bounded; the shared coordinate remains unchanged. A later larger viewport therefore projects the same saved coordinate again. Resize observes the new viewport and performs no persistence write.
+The launcher is `44x44px`. In either horizontal half, its center remains at least `50px` from the selected left or right viewport edge, leaving `28px` between the launcher's outer edge and that viewport edge. Its bottom edge remains at least `22px` above the viewport bottom. The left-bottom and right-bottom bounds are symmetric.
+
+Each tab derives its rendered position from those coordinates and its own current viewport. Bounds are derived from the current viewport and AppButton geometry so the launcher remains fully visible with those margins. If a viewport can contain the launcher but is too small to satisfy a fixed margin, only that tab uses the nearest fully visible bound with the largest feasible margin; the shared coordinate remains unchanged. A later larger viewport therefore restores the exact `50px` horizontal-center and `22px` bottom-edge minima from the unchanged coordinate. Resize observes the new viewport and performs no persistence write.
 
 ### 3. Preserve continuous drag behavior across the midpoint
 
@@ -61,7 +63,7 @@ The AppButton owns the only unread presentation. When `!open && unread`, every s
 
 ### 7. Verify shared status and local projection together
 
-Deterministic controls model tabs A, B, and C on domain A and tab D on domain B. They first drag a domain-A AppButton in both viewport halves and require A/B/C to share the edge-relative position while D remains unchanged. Controls resize narrow and wide viewports without a shared write, prove bounded projection and restoration, cross the midpoint without a visual discontinuity, and preserve the current drag event/animation behavior.
+Deterministic controls model tabs A, B, and C on domain A and tab D on domain B. They first drag a domain-A AppButton to both bottom corners and require A/B/C to share the edge-relative position while D remains unchanged. Both anchors preserve the `50px` center distance (`28px` outer-edge margin) and `22px` bottom margin. Controls resize narrow and wide viewports without a shared write, prove bounded projection and restoration, cross the midpoint without a visual discontinuity, and preserve the current drag event/animation behavior.
 
 The same controls start A/B/C collapsed, force each possible same-domain insertion winner, admit a remote text once, and require badges on A/B/C only. Opening through C must expand and clear all three without affecting D; delivery while expanded must remain read; collapsing through A and admitting a later text must restore all three badges. They also cover field-write isolation, repeated eligible text, self/history/duplicate exclusions, browser focus and active/highlighted tabs, disabled and mention-only notification settings, delayed hydration, and the exact indicator structure and motion classes.
 
