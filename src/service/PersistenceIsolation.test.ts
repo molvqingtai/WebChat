@@ -2,7 +2,9 @@ import 'fake-indexeddb/auto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { openDB } from 'idb'
 import {
-  APP_STATUS_STORAGE_KEY,
+  APP_OPEN_STORAGE_KEY,
+  APP_POSITION_STORAGE_KEY,
+  APP_UNREAD_STORAGE_KEY,
   CONFIG_STORE_VERSION,
   CONFIG_STORE_VERSION_KEY,
   STORAGE_NAME
@@ -30,6 +32,10 @@ let fixtureId = 0
 const databaseNames = new Set<string>()
 const nextOrigin = (label: string) => `https://${label}-${fixtureId++}.test`
 const localKey = (key: string) => `${STORAGE_NAME}:${key}`
+const statusFieldKeys = [APP_OPEN_STORAGE_KEY, APP_POSITION_STORAGE_KEY, APP_UNREAD_STORAGE_KEY]
+const writeStatusFields = (storage: Storage, value: string) =>
+  statusFieldKeys.forEach((key) => storage.setItem(localKey(key), value))
+const readStatusFields = (storage: Storage) => statusFieldKeys.map((key) => storage.getItem(localKey(key)))
 
 const createBrowserArea = (initial: Record<string, unknown>) => {
   const values = { ...initial }
@@ -122,7 +128,7 @@ describe('physical persistence isolation', () => {
     const origin = nextOrigin('message-family')
     const localStorage = createTestLocalStorage()
     const prepareLocal = await loadLocalPreparation(origin, localStorage)
-    localStorage.setItem(localKey(APP_STATUS_STORAGE_KEY), 'local-configuration')
+    writeStatusFields(localStorage, 'local-configuration')
     await prepareLocal()
     const sync = createBrowserArea({ user: 'sync-configuration' })
     await prepareBrowserSync(sync)
@@ -151,7 +157,11 @@ describe('physical persistence isolation', () => {
     const deletedNames = deletion.mock.calls.map(([name]) => name)
     deletion.mockRestore()
 
-    expect(localStorage.getItem(localKey(APP_STATUS_STORAGE_KEY))).toBe('local-configuration')
+    expect(readStatusFields(localStorage)).toEqual([
+      'local-configuration',
+      'local-configuration',
+      'local-configuration'
+    ])
     expect(localStorage.getItem(localKey(CONFIG_STORE_VERSION_KEY))).toBe(String(CONFIG_STORE_VERSION))
     expect(sync.values).toEqual({ user: 'sync-configuration', [CONFIG_STORE_VERSION_KEY]: CONFIG_STORE_VERSION })
     expect(deletedNames).toEqual([STORAGE_NAME])
@@ -169,33 +179,33 @@ describe('physical persistence isolation', () => {
     const prepareOther = await loadLocalPreparation(otherOrigin, otherStorage)
     currentStorage.setItem('CURRENT_HOST_KEY', 'preserved')
     currentStorage.setItem(localKey(CONFIG_STORE_VERSION_KEY), '2')
-    currentStorage.setItem(localKey(APP_STATUS_STORAGE_KEY), 'current-old')
+    writeStatusFields(currentStorage, 'current-old')
     currentStorage.setItem(localKey('VERSION_MANAGED_SETTING'), 'current-versioned-old')
     otherStorage.setItem('OTHER_HOST_KEY', 'preserved')
     otherStorage.setItem(localKey(CONFIG_STORE_VERSION_KEY), '7')
-    otherStorage.setItem(localKey(APP_STATUS_STORAGE_KEY), 'other-old')
+    writeStatusFields(otherStorage, 'other-old')
     otherStorage.setItem(localKey('VERSION_MANAGED_SETTING'), 'other-versioned-old')
     await seedTargetMessage('canonical-message')
 
     await prepareCurrent()
 
-    expect(currentStorage.getItem(localKey(APP_STATUS_STORAGE_KEY))).toBe('current-old')
+    expect(readStatusFields(currentStorage)).toEqual(['current-old', 'current-old', 'current-old'])
     expect(currentStorage.getItem(localKey('VERSION_MANAGED_SETTING'))).toBeNull()
     expect(currentStorage.getItem(localKey(CONFIG_STORE_VERSION_KEY))).toBe(String(CONFIG_STORE_VERSION))
     expect(currentStorage.getItem('CURRENT_HOST_KEY')).toBe('preserved')
-    expect(otherStorage.getItem(localKey(APP_STATUS_STORAGE_KEY))).toBe('other-old')
+    expect(readStatusFields(otherStorage)).toEqual(['other-old', 'other-old', 'other-old'])
     expect(otherStorage.getItem(localKey('VERSION_MANAGED_SETTING'))).toBe('other-versioned-old')
     expect(otherStorage.getItem(localKey(CONFIG_STORE_VERSION_KEY))).toBe('7')
     await expect(readTargetMessage()).resolves.toBe('canonical-message')
 
-    currentStorage.setItem(localKey(APP_STATUS_STORAGE_KEY), 'current-new')
+    writeStatusFields(currentStorage, 'current-new')
     await prepareOther()
 
-    expect(otherStorage.getItem(localKey(APP_STATUS_STORAGE_KEY))).toBe('other-old')
+    expect(readStatusFields(otherStorage)).toEqual(['other-old', 'other-old', 'other-old'])
     expect(otherStorage.getItem(localKey('VERSION_MANAGED_SETTING'))).toBeNull()
     expect(otherStorage.getItem(localKey(CONFIG_STORE_VERSION_KEY))).toBe(String(CONFIG_STORE_VERSION))
     expect(otherStorage.getItem('OTHER_HOST_KEY')).toBe('preserved')
-    expect(currentStorage.getItem(localKey(APP_STATUS_STORAGE_KEY))).toBe('current-new')
+    expect(readStatusFields(currentStorage)).toEqual(['current-new', 'current-new', 'current-new'])
     await expect(readTargetMessage()).resolves.toBe('canonical-message')
   })
 
@@ -203,7 +213,7 @@ describe('physical persistence isolation', () => {
     const origin = nextOrigin('sync-family')
     const localStorage = createTestLocalStorage()
     const prepareLocal = await loadLocalPreparation(origin, localStorage)
-    localStorage.setItem(localKey(APP_STATUS_STORAGE_KEY), 'local-current')
+    writeStatusFields(localStorage, 'local-current')
     await prepareLocal()
     await seedTargetMessage('canonical-current')
     const sync = createBrowserArea({ [CONFIG_STORE_VERSION_KEY]: 2, user: 'sync-old' })
@@ -217,7 +227,7 @@ describe('physical persistence isolation', () => {
 
     expect(sync.values).toEqual({ [CONFIG_STORE_VERSION_KEY]: CONFIG_STORE_VERSION })
     expect(sync.clear).toHaveBeenCalledTimes(1)
-    expect(localStorage.getItem(localKey(APP_STATUS_STORAGE_KEY))).toBe('local-current')
+    expect(readStatusFields(localStorage)).toEqual(['local-current', 'local-current', 'local-current'])
     await expect(readTargetMessage()).resolves.toBe('canonical-current')
     expect(browserLocal.values).toEqual({ sentinel: 'browser-local' })
     expect(browserSession.values).toEqual({ sentinel: 'browser-session' })

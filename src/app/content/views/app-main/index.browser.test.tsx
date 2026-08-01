@@ -50,7 +50,6 @@ vi.mock('@/domain/MessageList', () => ({
 }))
 vi.mock('@/domain/Danmaku', () => ({
   default: () => ({
-    query: { IsEnabledQuery: () => 'danmaku-enabled' },
     command: { MountCommand: () => 'mount-danmaku', UnmountCommand: () => 'unmount-danmaku' }
   })
 }))
@@ -67,6 +66,7 @@ vi.mock('@/hooks/useResizable', () => ({ default: () => ({ size: 400, setRef: ()
 vi.mock('@/hooks/useWindowResize', () => ({ default: () => ({ width: 1200, height: 800 }) }))
 vi.mock('@/utils', () => ({
   checkDarkMode: () => false,
+  clamp: (value: number, min: number, max: number) => Math.min(max, Math.max(min, value)),
   cn: (...values: unknown[]) => values.filter((value) => typeof value === 'string').join(' ')
 }))
 

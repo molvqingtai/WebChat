@@ -2,7 +2,9 @@ import { createStorage } from 'unstorage'
 import localStorageDriver from 'unstorage/drivers/localstorage'
 import { LocalStorageExtern, BrowserSyncStorageExtern } from '@/domain/externs/Storage'
 import {
-  APP_STATUS_STORAGE_KEY,
+  APP_OPEN_STORAGE_KEY,
+  APP_POSITION_STORAGE_KEY,
+  APP_UNREAD_STORAGE_KEY,
   CONFIG_STORE_VERSION,
   CONFIG_STORE_VERSION_KEY,
   STORAGE_NAME
@@ -10,7 +12,6 @@ import {
 import webExtensionDriver from '@/utils/webExtensionDriver'
 import { withPreparationLock, type PreparationLockCoordinator } from '@/utils/withPreparationLock'
 import type { Storage } from '@/domain/externs/Storage'
-import { EVENT } from '@/constants/event'
 
 export interface ConfigurationVersionStorage {
   readVersion(): Promise<{ readonly exists: boolean; readonly value: unknown }>
@@ -53,7 +54,7 @@ export const prepareConfigurationStorage = (
  * @see https://github.com/unjs/unstorage/issues/277
  */
 const localStorage = createStorage({
-  driver: localStorageDriver({ base: `${STORAGE_NAME}:` })
+  driver: localStorageDriver({ base: `${STORAGE_NAME}:`, window: globalThis.window })
 })
 
 const browserSyncStorage = createStorage({
@@ -62,7 +63,13 @@ const browserSyncStorage = createStorage({
 
 const clearVersionManagedLocalConfiguration = async () => {
   const keys = await localStorage.getKeys()
-  await Promise.all(keys.filter((key) => key !== APP_STATUS_STORAGE_KEY).map((key) => localStorage.removeItem(key)))
+  await Promise.all(
+    keys
+      .filter(
+        (key) => key !== APP_OPEN_STORAGE_KEY && key !== APP_POSITION_STORAGE_KEY && key !== APP_UNREAD_STORAGE_KEY
+      )
+      .map((key) => localStorage.removeItem(key))
+  )
 }
 
 export const prepareLocalConfigurationStorage = (coordinator?: PreparationLockCoordinator): Promise<void> =>
@@ -85,20 +92,7 @@ export const prepareLocalConfigurationStorage = (coordinator?: PreparationLockCo
 export const LocalStorageImpl = LocalStorageExtern.impl({
   get: localStorage.getItem,
   set: localStorage.setItem,
-  watch: async (callback) => {
-    const unwatch = await localStorage.watch(callback)
-
-    /**
-     * The storage event does not fire in the same browsing context, so
-     * DanmakuMessage clicks provide the local synchronization signal.
-     * @see https://developer.mozilla.org/en-US/docs/Web/API/Window/storage_event
-     */
-    addEventListener(EVENT.APP_OPEN, callback)
-    return async () => {
-      removeEventListener(EVENT.APP_OPEN, callback)
-      return unwatch()
-    }
-  }
+  watch: localStorage.watch as Storage['watch']
 })
 
 export const BrowserSyncStorageImpl = BrowserSyncStorageExtern.impl({
