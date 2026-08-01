@@ -30,8 +30,8 @@
 
 ## 4. Delivery Gates
 
-- [ ] 4.1 Pass focused regressions, the complete source test suite, typecheck, lint, format, Chrome/Firefox production builds, strict OpenSpec validation, OpenSpec Doctor, diff, identity, and clean-worktree gates on one exact.
-- [ ] 4.2 Obtain fresh architecture-first Review of the complete requirement-branch diff and close every finding before publication.
-- [ ] 4.3 Publish the reviewed exact through the single requirement branch/PR and require exact-bound CI to pass.
-- [ ] 4.4 Keep QA, QC, and UX absent unless the Owner explicitly requests one; record any performed or unavailable browser behavior verification truthfully without making it a source/CI blocker.
-- [ ] 4.5 After explicit Owner acceptance, update final OpenSpec/task truth and complete the conditional Ready/merge closeout on the same requirement branch/PR.
+- [x] 4.1 Pass focused regressions, the complete source test suite, typecheck, lint, format, Chrome/Firefox production builds, strict OpenSpec validation, OpenSpec Doctor, diff, identity, and clean-worktree gates on one exact.
+- [x] 4.2 Obtain fresh architecture-first Review of the complete requirement-branch diff and close every finding before publication.
+- [x] 4.3 Publish the reviewed exact through the single requirement branch/PR and require exact-bound CI to pass.
+- [x] 4.4 Keep QA, QC, and UX absent unless the Owner explicitly requests one; record any performed or unavailable browser behavior verification truthfully without making it a source/CI blocker.
+- [x] 4.5 Record explicit Owner acceptance and update final OpenSpec/task truth; keep Ready/merge conditional on the closeout exact's identity and CI.
