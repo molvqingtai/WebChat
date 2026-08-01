@@ -133,7 +133,8 @@ describe('initialization lifecycle ownership', () => {
       id: INITIALIZATION_TOAST_ID,
       dismissible: false
     })
-    expect(fixture.toast.cancel).toHaveBeenCalledWith(INITIALIZATION_TOAST_ID)
+    // The same-ID error descriptor directly replaces the loading descriptor; no cancel may race it away.
+    expect(fixture.toast.cancel).not.toHaveBeenCalled()
     expect(fixture.toast.error).toHaveBeenCalledWith('WebChat unavailable', { id: INITIALIZATION_TOAST_ID })
     expect(fixture.activateApplicationDependencies).not.toHaveBeenCalled()
     stop()
