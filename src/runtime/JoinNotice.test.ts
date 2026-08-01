@@ -285,7 +285,7 @@ interface ApplicationStack {
   adapter: RuntimeChatRoom
   store: ReturnType<typeof Remesh.store>
   sessionEvents: RuntimeSessionEvent[]
-  errors: Error[]
+  errors: string[]
   join(): Promise<void>
   rejoin(): Promise<void>
   reload(): void
@@ -326,18 +326,13 @@ const createStack = async (
   const database = createMemoryMessageDatabase(`join-notice-${databaseId++}`)
   const messageStore = createMessageStore(database)
   const sessionEvents: RuntimeSessionEvent[] = []
-  const errors: Error[] = []
+  const errors: string[] = []
   const observedServer: RuntimeServer = {
     ...server,
     onSessionEvent: (payload, listener) =>
       server.onSessionEvent(payload, async (event) => {
         sessionEvents.push(event)
         await listener(event)
-      }),
-    onError: (payload, listener) =>
-      server.onError(payload, async (message) => {
-        errors.push(new Error(message))
-        await listener(message)
       })
   }
   let snapshot: RuntimeSnapshot = initialSnapshot
@@ -352,6 +347,7 @@ const createStack = async (
       return () => {}
     }
   })
+  adapter.onError((error) => errors.push(error.message))
   const storage: Storage = {
     get: async <Value extends StorageValue>() => userInfo(user) as Value,
     set: async () => {},
@@ -704,7 +700,7 @@ describe('application reconnect and durable retirement controls', () => {
     expect(activeLease).toMatchObject({ userId: 'retirement-user-b', status: 'active' })
 
     await b.server.leaveChatRoom({ domain: DOMAIN })
-    await vi.waitFor(() => expect(b.errors.map((error) => error.message)).toContain('retirement write rejected'))
+    await vi.waitFor(() => expect(b.errors).toContain('retirement write rejected'))
 
     const failedSnapshot = await b.server.getSnapshot()
     expect((await durable.load(DOMAIN))?.local).toEqual(activeLease)
@@ -830,7 +826,7 @@ describe('application reconnect and durable retirement controls', () => {
     network.rejectNextSessionEnd('end-peer-b')
 
     await b.server.leaveChatRoom({ domain: DOMAIN })
-    await vi.waitFor(() => expect(b.errors.map((error) => error.message)).toContain('session end send rejected'))
+    await vi.waitFor(() => expect(b.errors).toContain('session end send rejected'))
 
     const chatRoomId = getChatRoomId(DOMAIN)
     const pendingEnd = await durable.load(DOMAIN)
@@ -887,7 +883,7 @@ describe('application reconnect and durable retirement controls', () => {
     network.rejectNextSessionEnd('pending-end-original')
 
     await original.server.leaveChatRoom({ domain: DOMAIN })
-    await vi.waitFor(() => expect(original.errors.map((error) => error.message)).toContain('session end send rejected'))
+    await vi.waitFor(() => expect(original.errors).toContain('session end send rejected'))
     expect((await sharedPresence.load(DOMAIN))?.pendingEnd).toMatchObject({
       presenceId: originalSession.presenceId,
       userId: 'pending-end-user'
@@ -1028,7 +1024,7 @@ describe('application reconnect and durable retirement controls', () => {
     }
     network.rejectNextSessionEnd('retry-inflight-original')
     await original.server.leaveChatRoom({ domain: DOMAIN })
-    await vi.waitFor(() => expect(original.errors.map((error) => error.message)).toContain('session end send rejected'))
+    await vi.waitFor(() => expect(original.errors).toContain('session end send rejected'))
     expect((await sharedPresence.load(DOMAIN))?.pendingEnd?.presenceId).toBe(originalSession.presenceId)
 
     const held = network.holdNextSessionEnd('retry-inflight-original')
@@ -1104,17 +1100,13 @@ describe('application reconnect and durable retirement controls', () => {
     network.rejectNextSessionEnd('retry-transition-releasing')
 
     await releasing.server.leaveChatRoom({ domain: DOMAIN })
-    await vi.waitFor(() =>
-      expect(releasing.errors.map((error) => error.message)).toContain('session end send rejected')
-    )
+    await vi.waitFor(() => expect(releasing.errors).toContain('session end send rejected'))
     const pending = await durable.load(DOMAIN)
     expect(pending?.pendingEnd).toMatchObject({ userId: 'retry-transition-user' })
     rejectRetryTransition = true
 
     await releasing.server.leaveChatRoom({ domain: DOMAIN })
-    await vi.waitFor(() =>
-      expect(releasing.errors.map((error) => error.message)).toContain('retry transition rejected')
-    )
+    await vi.waitFor(() => expect(releasing.errors).toContain('retry transition rejected'))
     expect(await durable.load(DOMAIN)).toEqual(pending)
     expect(network.isJoined('retry-transition-releasing', getChatRoomId(DOMAIN))).toBe(true)
     expect(network.isJoined('retry-transition-releasing', getWorldRoomId())).toBe(true)
@@ -1173,9 +1165,7 @@ describe('application reconnect and durable retirement controls', () => {
     })
 
     await releasing.server.leaveChatRoom({ domain: DOMAIN })
-    await vi.waitFor(() =>
-      expect(releasing.errors.map((error) => error.message)).toContain('final end cleanup rejected')
-    )
+    await vi.waitFor(() => expect(releasing.errors).toContain('final end cleanup rejected'))
     await vi.waitFor(async () =>
       expect((await noticeUsers(observer, NOTICE_TYPE.LEAVE)).filter((id) => id === 'cleanup-user')).toHaveLength(1)
     )
@@ -1234,7 +1224,7 @@ describe('application reconnect and durable retirement controls', () => {
     const originalSession = network.lastSession('settlement-crash-original') as { presenceId: string }
 
     await original.server.leaveChatRoom({ domain: DOMAIN })
-    await vi.waitFor(() => expect(original.errors.map((error) => error.message)).toContain('settled marker rejected'))
+    await vi.waitFor(() => expect(original.errors).toContain('settled marker rejected'))
     await vi.waitFor(async () =>
       expect(
         (await noticeUsers(observer, NOTICE_TYPE.LEAVE)).filter((id) => id === 'settlement-crash-user')
@@ -1310,9 +1300,7 @@ describe('application reconnect and durable retirement controls', () => {
     const originalSession = network.lastSession('cleanup-crash-original') as { presenceId: string }
 
     await original.server.leaveChatRoom({ domain: DOMAIN })
-    await vi.waitFor(() =>
-      expect(original.errors.map((error) => error.message)).toContain('final end cleanup rejected')
-    )
+    await vi.waitFor(() => expect(original.errors).toContain('final end cleanup rejected'))
     await vi.waitFor(async () =>
       expect((await noticeUsers(observer, NOTICE_TYPE.LEAVE)).filter((id) => id === 'cleanup-crash-user')).toHaveLength(
         1
