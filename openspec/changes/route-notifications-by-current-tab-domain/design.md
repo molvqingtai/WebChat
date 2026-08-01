@@ -15,7 +15,7 @@ See `proposal.md` for the product motivation and `specs/webrtc-runtime/spec.md` 
 
 **Non-Goals:**
 
-- Adding notification settings, UI copy, permissions, public APIs, state owners, retries, fallbacks, caches, or dependencies.
+- Adding notification settings, UI copy, permissions, public APIs, state owners, retries, caches, or dependencies.
 - Changing message delivery, persistence, history, projection, unread, barrage, Runtime, protocol, or peer behavior.
 - Changing notification title/body/icon, notification-click behavior, or any explicit user-initiated tab focus behavior after a notification exists.
 - Adding alternate notification implementations or browser-specific business policy.
