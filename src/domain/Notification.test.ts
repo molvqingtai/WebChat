@@ -28,14 +28,16 @@ const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
 let databaseId = 0
 
 const createMessage = ({
+  id = 'message-1',
   author = REMOTE,
   mentionSelf = false
 }: {
+  id?: string
   author?: typeof REMOTE
   mentionSelf?: boolean
 } = {}): ProjectedTextMessage => ({
   type: 'text',
-  id: 'message-1',
+  id,
   hlc: { timestamp: 1, counter: 0 },
   userId: author.id,
   body: mentionSelf ? '@Local hello' : 'hello',
@@ -45,7 +47,7 @@ const createMessage = ({
   reactions: { likes: [], hates: [] }
 })
 
-const createFixture = (user: UserInfo) => {
+const createFixture = (user: UserInfo, userInfoBeforeNotification = false) => {
   const push = vi.fn(async () => 'notification-1')
   const storage: Storage = {
     get: async <T extends StorageValue>() => user as T,
@@ -94,8 +96,13 @@ const createFixture = (user: UserInfo) => {
   const notification = store.getDomain(notificationAction)
   const room = store.getDomain(chatRoomAction)
   const userInfo = store.getDomain(userInfoAction)
-  store.igniteDomain(notificationAction)
-  store.send(userInfo.command.UpdateUserInfoCommand(user))
+  if (userInfoBeforeNotification) {
+    store.send(userInfo.command.UpdateUserInfoCommand(user))
+    store.igniteDomain(notificationAction)
+  } else {
+    store.igniteDomain(notificationAction)
+    store.send(userInfo.command.UpdateUserInfoCommand(user))
+  }
 
   return {
     push,
@@ -123,6 +130,13 @@ afterEach(async () => {
 })
 
 describe('NotificationDomain message eligibility', () => {
+  it('exposes no state or dispatch surface', () => {
+    const fixture = createFixture(SELF)
+    fixtures.push(fixture)
+
+    expect(Object.keys(fixture.notification)).toEqual([])
+  })
+
   it.each([
     {
       name: 'disabled notifications',
@@ -157,9 +171,6 @@ describe('NotificationDomain message eligibility', () => {
   ])('applies $name before the browser service', async ({ user, message, expected }) => {
     const fixture = createFixture(user)
     fixtures.push(fixture)
-    await vi.waitFor(() =>
-      expect(fixture.store.query(fixture.notification.query.IsEnabledQuery())).toBe(user.notificationEnabled)
-    )
 
     fixture.emitMessage(message)
     await settle()
@@ -175,11 +186,31 @@ describe('NotificationDomain message eligibility', () => {
   it('does not notify from the local-send projection path', async () => {
     const fixture = createFixture(SELF)
     fixtures.push(fixture)
-    await vi.waitFor(() => expect(fixture.store.query(fixture.notification.query.IsEnabledQuery())).toBe(true))
 
     fixture.store.send(fixture.room.command.SendTextMessageCommand('local message'))
     await settle()
 
     expect(fixture.push).not.toHaveBeenCalled()
+  })
+
+  it('reads canonical settings and contains a rejected dispatch before a later eligible message', async () => {
+    const failure = new Error('notification unavailable')
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const fixture = createFixture(SELF, true)
+    fixtures.push(fixture)
+    fixture.push.mockRejectedValueOnce(failure).mockResolvedValueOnce('notification-2')
+    const first = createMessage({ id: 'message-1' })
+    const second = createMessage({ id: 'message-2' })
+
+    fixture.emitMessage(first)
+    await vi.waitFor(() => expect(fixture.push).toHaveBeenCalledTimes(1))
+    await settle()
+    fixture.emitMessage(second)
+    await vi.waitFor(() => expect(fixture.push).toHaveBeenCalledTimes(2))
+
+    expect(fixture.push).toHaveBeenNthCalledWith(1, expect.objectContaining({ id: first.id }))
+    expect(fixture.push).toHaveBeenNthCalledWith(2, expect.objectContaining({ id: second.id }))
+    expect(warning).toHaveBeenCalledOnce()
+    expect(warning).toHaveBeenCalledWith('[WebChat] Notification push failed:', failure)
   })
 })
