@@ -14,7 +14,7 @@
 - [x] 2.2 Prove opening through C expands and clears A/B/C together, expanded delivery remains read, collapsing through A collapses all three, a later text restores all three badges, and D remains unchanged.
 - [x] 2.3 Cover self-authored text, history application, duplicate delivery, repeated eligible text, browser focus, active/highlighted tabs, disabled notifications, and both notification-type settings.
 - [x] 2.4 Cover delayed hydration and field-scoped open, position, and unread writes so they cannot overwrite another current field or violate `open => !unread`.
-- [ ] 2.5 Cover left-half and right-half projection, symmetric fixed edge margins at both bottom corners, exact-midpoint ownership, same-domain synchronization, cross-domain isolation, and different viewport sizes.
+- [x] 2.5 Cover left-half and right-half projection, symmetric fixed edge margins at both bottom corners, exact-midpoint ownership, same-domain synchronization, cross-domain isolation, and different viewport sizes.
 - [x] 2.6 Prove resize performs no shared write, a smaller viewport bounds only the rendered position, and a larger viewport restores projection from the unchanged shared coordinates.
 - [x] 2.7 Prove midpoint crossing retains the rendered center and current animation-frame pointer following, drag bounds, cursor, selection suppression, and mouse-release behavior without snap, rebound, or easing.
 - [x] 2.8 Cover the AppButton indicator's exact visibility, structure, tokens, animation, and count-free layout through the fixed Vitest, happy-dom, Testing Library, and Vitest Browser Mode stack selected by responsibility.
@@ -25,7 +25,7 @@
 - [x] 3.2 Set domain attention at the first-delivered remote-text boundary only while the shared domain is collapsed.
 - [x] 3.3 Synchronize expand/collapse across the current domain, clear unread on open, enforce `open => !unread`, and project badge visibility without enumerating browser tabs/windows.
 - [x] 3.4 Persist open, position, and boolean unread attention through field-scoped updates within one shared status, with hydration adopting rather than rewriting current field values.
-- [ ] 3.5 Project the shared position from the selected bottom edge, preserve the symmetric fixed edge margins, convert anchors continuously at the midpoint, and derive local visibility bounds without writing on resize.
+- [x] 3.5 Project the shared position from the selected bottom edge, preserve the symmetric fixed edge margins, convert anchors continuously at the midpoint, and derive local visibility bounds without writing on resize.
 - [x] 3.6 Reuse the existing hand-control drag interaction, AppButton indicator, and same-domain synchronization boundary without adding a Domain, count, setting, API, permission, dependency, Runtime/protocol change, or browser-specific branch.
 
 ## 4. Delivery Gates

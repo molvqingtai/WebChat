@@ -2,6 +2,8 @@ import type { AppButtonPosition } from '@/domain/AppStatus'
 import { clamp } from '@/utils'
 
 export const APP_BUTTON_SIZE = 44
+const APP_BUTTON_HORIZONTAL_CENTER_MARGIN = 50
+const APP_BUTTON_BOTTOM_MARGIN = 22
 
 export interface ViewportSize {
   width: number
@@ -16,13 +18,14 @@ export interface AppButtonPoint {
 }
 
 export const getAppButtonDragBounds = ({ width, height }: ViewportSize) => {
-  const horizontalInset = Math.min(APP_BUTTON_SIZE / 2, width / 2)
+  const horizontalInset = Math.min(APP_BUTTON_HORIZONTAL_CENTER_MARGIN, width / 2)
   const minimumBottomEdge = Math.min(APP_BUTTON_SIZE, height)
+  const maximumBottomEdge = Math.max(minimumBottomEdge, height - APP_BUTTON_BOTTOM_MARGIN)
   return {
     minX: horizontalInset,
     maxX: width - horizontalInset,
     minY: minimumBottomEdge,
-    maxY: height
+    maxY: maximumBottomEdge
   }
 }
 

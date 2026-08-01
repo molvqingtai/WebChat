@@ -159,7 +159,7 @@ describe('AppMain panel ownership', () => {
     const view = render(content())
 
     const panel = document.querySelector<HTMLElement>('[data-webchat-panel]')!
-    expect(panel.style.left).toBe('22px')
+    expect(panel.style.left).toBe('50px')
     expect(panel.style.bottom).toBe('calc(100vh - 44px + 22px)')
     expect(fixture.resizeDirection).toBe('right')
     expect(fixture.animateX).toBe('0')
