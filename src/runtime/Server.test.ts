@@ -2976,7 +2976,7 @@ describe('RuntimeServer Artico per-target isolation', () => {
     await settle()
     const laterBefore = articoMessagesTo(worldRoom, 'later-ready-peer').length
     const errors: string[] = []
-    await server.onError({ pageId: 'page-a' }, (error) => errors.push(error.message))
+    await server.onError({ pageId: 'page-a' }, (message) => errors.push(message))
     worldRoom.loseReadiness('closing-peer')
 
     await server.detachPage({ domain: OTHER_DOMAIN, pageId: 'page-b' })
@@ -3007,7 +3007,7 @@ describe('RuntimeServer Artico per-target isolation', () => {
     await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
     await settle()
     const errors: string[] = []
-    await server.onError({ pageId: 'page-a' }, (error) => errors.push(error.message))
+    await server.onError({ pageId: 'page-a' }, (message) => errors.push(message))
     runtimeArticoFixture.nextJoins.set(worldRoomId, {
       peers: ['closing-peer', 'later-ready-peer'],
       closing: ['closing-peer']

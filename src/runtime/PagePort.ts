@@ -13,7 +13,7 @@ export class PagePort implements PagePortContract {
   private readonly inbound = new Map<string, (event: InboundEvent) => void | Promise<void>>()
   private readonly sessionEvents = new Map<string, (event: RuntimeSessionEvent) => void | Promise<void>>()
   private readonly worldPresences = new Map<string, (event: WorldPresenceEvent) => void | Promise<void>>()
-  private readonly runtimeErrors = new Map<string, (error: Error) => void | Promise<void>>()
+  private readonly runtimeErrors = new Map<string, (message: string) => void | Promise<void>>()
   private readonly historyProviders = new Map<
     string,
     { domain: string; callback: (event: HistorySupplyEvent) => void }
@@ -42,7 +42,7 @@ export class PagePort implements PagePortContract {
     this.worldPresences.set(pageId, callback)
   }
 
-  onError(pageId: string, callback: (error: Error) => void | Promise<void>) {
+  onError(pageId: string, callback: (message: string) => void | Promise<void>) {
     this.runtimeErrors.set(pageId, callback)
   }
 
@@ -114,7 +114,7 @@ export class PagePort implements PagePortContract {
   }
 
   emitError(pageIds: string[], error: Error) {
-    return this.emit(this.runtimeErrors, pageIds, error)
+    return this.emit(this.runtimeErrors, pageIds, error.message)
   }
 
   supplyHistory(pageId: string, request: HistorySupplyRequest): Promise<HistorySupplyResult | null> {

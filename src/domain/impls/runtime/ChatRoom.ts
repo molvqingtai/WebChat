@@ -519,8 +519,8 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
         if (isCurrent() && event.domain === dependencies.pageDomain) this.emitSessionEvent(event)
       })
     attachment.registrations.error = () =>
-      dependencies.server.onError({ pageId: dependencies.pageId }, (error) => {
-        if (isCurrent()) this.emit('error', error)
+      dependencies.server.onError({ pageId: dependencies.pageId }, (message) => {
+        if (isCurrent()) this.emit('error', new Error(message))
       })
     attachment.registrations.history = () =>
       dependencies.server.provideHistory(

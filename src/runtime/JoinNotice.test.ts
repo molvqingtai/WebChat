@@ -335,9 +335,9 @@ const createStack = async (
         await listener(event)
       }),
     onError: (payload, listener) =>
-      server.onError(payload, async (error) => {
-        errors.push(error)
-        await listener(error)
+      server.onError(payload, async (message) => {
+        errors.push(new Error(message))
+        await listener(message)
       })
   }
   let snapshot: RuntimeSnapshot = initialSnapshot
