@@ -3,6 +3,27 @@ import type { ProjectedTextMessage } from '@/domain/Message'
 import { browser } from '#imports'
 import type { MessageTab } from '@/service/adapter/runtime'
 
+const getOrigin = (url?: string) => {
+  if (!url) return null
+  try {
+    const origin = new URL(url).origin
+    return origin === 'null' ? null : origin
+  } catch {
+    return null
+  }
+}
+
+const getCurrentTabOrigin = async () => {
+  try {
+    const currentWindow = await browser.windows.getLastFocused({ populate: true })
+    if (!currentWindow.focused) return null
+    const currentTab = currentWindow.tabs?.find((tab) => tab.active && tab.highlighted)
+    return getOrigin(currentTab?.url)
+  } catch {
+    return null
+  }
+}
+
 export class Notification implements NotificationExternType {
   historyNotificationTabs = new Map<string, MessageTab>()
   constructor() {
@@ -36,14 +57,10 @@ export class Notification implements NotificationExternType {
   }
   async push(message: ProjectedTextMessage & { meta?: { tab?: MessageTab } }) {
     const messageTab = message.meta?.tab
-    const tabs = await browser.tabs.query({ active: true })
-    const hasActiveSameSiteTab =
-      messageTab?.url &&
-      tabs.some((tab) => {
-        return tab.url && new URL(messageTab.url!).origin === new URL(tab.url).origin
-      })
+    const messageOrigin = getOrigin(messageTab?.url)
+    const currentTabOrigin = await getCurrentTabOrigin()
 
-    if (hasActiveSameSiteTab) return
+    if (messageOrigin !== null && messageOrigin === currentTabOrigin) return
 
     const id = await browser.notifications.create({
       type: 'basic',
