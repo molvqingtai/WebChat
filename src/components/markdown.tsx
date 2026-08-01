@@ -1,9 +1,10 @@
-import { type FC } from 'react'
+import { type ComponentProps, type FC, useContext, useRef } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
 import { cn, safeUrl } from '@/utils'
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area'
+import { MediaPreviewContext } from '@/components/media-preview'
 
 export interface MarkdownProps {
   children?: string
@@ -17,9 +18,55 @@ export interface MarkdownProps {
  */
 const urlTransform = (value: string) => safeUrl(value)
 
+interface MessageImageProps extends Omit<ComponentProps<'img'>, 'src'> {
+  src?: string
+}
+
+const MessageImage: FC<MessageImageProps> = ({ src, alt = '', className, ...props }) => {
+  const openPreview = useContext(MediaPreviewContext)
+  const buttonRef = useRef<HTMLButtonElement>(null)
+  const imageRef = useRef<HTMLImageElement>(null)
+
+  if (!src) return null
+  const label = alt.trim() ? `Preview ${alt}` : 'Preview image'
+
+  return (
+    <button
+      ref={buttonRef}
+      type="button"
+      aria-label={label}
+      title={label}
+      className="peer img-gap not-prose my-2 block cursor-zoom-in border-0 bg-transparent p-0"
+      onClick={() => {
+        const activator = buttonRef.current
+        const transitionElement = imageRef.current
+        if (activator && transitionElement) openPreview?.({ src, alt, activator, transitionElement })
+      }}
+    >
+      <img
+        ref={imageRef}
+        src={src}
+        alt={alt}
+        className={cn('block rounded', className)}
+        style={{
+          maxInlineSize: '70cqi',
+          maxBlockSize: '70cqi',
+          inlineSize: 'auto',
+          blockSize: 'auto',
+          objectFit: 'contain'
+        }}
+        {...props}
+      />
+    </button>
+  )
+}
+
 const Markdown: FC<MarkdownProps> = ({ children = '', className }) => {
   return (
-    <div className={cn(className, 'prose prose-sm prose-slate wrap-break-word dark:text-slate-50')}>
+    <div
+      className={cn(className, 'prose prose-sm prose-slate wrap-break-word dark:text-slate-50')}
+      style={{ containerType: 'inline-size' }}
+    >
       <ReactMarkdown
         urlTransform={urlTransform}
         components={{
@@ -35,15 +82,15 @@ const Markdown: FC<MarkdownProps> = ({ children = '', className }) => {
           h4: ({ className, ...props }) => (
             <h4 className={cn('mb-2 mt-0 font-semibold dark:text-slate-50', className)} {...props} />
           ),
-          img: ({ className, alt, ...props }) => (
-            <img className={cn('peer img-gap not-prose my-2 max-w-[70%] rounded', className)} alt={alt} {...props} />
+          img: ({ node: _node, className, alt, src, ...props }) => (
+            <MessageImage className={className} alt={alt} src={src} {...props} />
           ),
           strong: ({ className, ...props }) => <strong className={cn('dark:text-slate-50', className)} {...props} />,
-          a: ({ className, href, ...props }) => {
+          a: ({ node: _node, className, href, children, ...props }) => {
             // Check if link is an image URL
             const isImage = href && /\.(jpg|jpeg|png|gif|webp|svg|bmp|ico)$/i.test(href)
             return isImage ? (
-              <img src={href} className={cn('peer img-gap not-prose my-2 max-w-[70%] rounded', className)} />
+              <MessageImage src={href} alt={typeof children === 'string' ? children : ''} className={className} />
             ) : (
               <a
                 className={cn('text-blue-500', className)}
@@ -51,7 +98,9 @@ const Markdown: FC<MarkdownProps> = ({ children = '', className }) => {
                 target={href}
                 rel="noopener noreferrer"
                 {...props}
-              />
+              >
+                {children}
+              </a>
             )
           },
           br: ({ className, ...props }) => <br className={cn('peer-[.img-gap]:hidden', className)} {...props} />,

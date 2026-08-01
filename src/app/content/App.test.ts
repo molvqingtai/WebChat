@@ -34,8 +34,11 @@ describe('content component hierarchy', () => {
       '<Toaster',
       '</AppMain>',
       '<AppButton',
+      '<MediaPreview',
       '<DanmakuContainer'
     ])
+    expect(app.match(/<MediaPreview\b/g)).toHaveLength(1)
+    expect(app).toContain('<MediaPreviewContext.Provider')
     expect(app.match(/<Toaster\b/g)).toHaveLength(1)
     expect(app).toContain('richColors')
     expect(app).toContain('theme={themeMode}')

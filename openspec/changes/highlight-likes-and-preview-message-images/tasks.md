@@ -9,26 +9,26 @@
 
 ## 2. Regression Coverage
 
-- [ ] 2.1 Cover positive aggregate red, zero aggregate gray, current-user add/remove semantics, removal while another like remains, and unchanged hate presentation.
-- [ ] 2.2 Cover both Markdown image forms through one shared renderer with the same message-content query owner, equal `70cqi` maximums, automatic dimensions, complete containment, and sanitized source and alternative text.
-- [ ] 2.3 Add structural controls excluding JavaScript measurement, `ResizeObserver`, measured-size state, square placeholders, duplicate image policies, and a second sizing owner.
-- [ ] 2.4 Cover preview ancestry, one-owner composition, centered `24px` fit, natural-size non-upscale, relative layer ordering, neutral `18%` backdrop, and a still-operable shell.
-- [ ] 2.5 Cover pointer, touch, keyboard, wheel/trackpad, and pinch activation; icon names and tooltips; fixed zoom steps and limits; focal zoom; axis-specific pan bounds; drag-release suppression; and reset.
-- [ ] 2.6 Cover backdrop, close-control, Escape, and shell-collapse settlement; replacement without stacking; transform cleanup; focus restoration; and preview-local event handling without host scroll lock.
-- [ ] 2.7 Cover supported View Transition settlement plus reduced-motion, missing-API, synchronous-failure, and rejected-transition immediate fallbacks without duplicate state or stale identities.
+- [x] 2.1 Cover positive aggregate red, zero aggregate gray, current-user add/remove semantics, removal while another like remains, and unchanged hate presentation.
+- [x] 2.2 Cover both Markdown image forms through one shared renderer with the same message-content query owner, equal `70cqi` maximums, automatic dimensions, complete containment, and sanitized source and alternative text.
+- [x] 2.3 Add structural controls excluding JavaScript measurement, `ResizeObserver`, measured-size state, square placeholders, duplicate image policies, and a second sizing owner.
+- [x] 2.4 Cover preview ancestry, one-owner composition, centered `24px` fit, natural-size non-upscale, relative layer ordering, neutral `18%` backdrop, and a still-operable shell.
+- [x] 2.5 Cover pointer, touch, keyboard, wheel/trackpad, and pinch activation; icon names and tooltips; fixed zoom steps and limits; focal zoom; axis-specific pan bounds; drag-release suppression; and reset.
+- [x] 2.6 Cover backdrop, close-control, Escape, and shell-collapse settlement; replacement without stacking; transform cleanup; focus restoration; and preview-local event handling without host scroll lock.
+- [x] 2.7 Cover supported View Transition settlement plus reduced-motion, missing-API, synchronous-failure, and rejected-transition immediate fallbacks without duplicate state or stale identities.
 
 ## 3. Minimum Implementation
 
-- [ ] 3.1 Derive like emphasis directly from the existing active-like aggregate while preserving current-user membership as the independent pressed/toggle truth and leaving hate behavior unchanged.
-- [ ] 3.2 Consolidate both Markdown image paths into one accessible image control and establish the message-content inline-size query container with equal `70cqi` maximums on both image axes.
-- [ ] 3.3 Keep image dimensions automatic and contained without JavaScript measurement, `ResizeObserver`, measured-size state, crop, distortion, forced expansion, or a square placeholder.
-- [ ] 3.4 Add one `MediaPreview` component/state owner beside Danmaku in the existing App root, exposing only the preview-open action to rendered message images.
-- [ ] 3.5 Implement the confirmed layer, backdrop, fit, close, replacement, focus, zoom, focal transform, bounded pan, gesture cleanup, and shell-collapse behavior without a portal, Domain, Extern, persistence, dependency, or host-document mutation.
-- [ ] 3.6 Apply request-local View Transition identity only when supported and motion is allowed, with the direct state operation authoritative for every fallback path.
+- [x] 3.1 Derive like emphasis directly from the existing active-like aggregate while preserving current-user membership as the independent pressed/toggle truth and leaving hate behavior unchanged.
+- [x] 3.2 Consolidate both Markdown image paths into one accessible image control and establish the message-content inline-size query container with equal `70cqi` maximums on both image axes.
+- [x] 3.3 Keep image dimensions automatic and contained without JavaScript measurement, `ResizeObserver`, measured-size state, crop, distortion, forced expansion, or a square placeholder.
+- [x] 3.4 Add one `MediaPreview` component/state owner beside Danmaku in the existing App root, exposing only the preview-open action to rendered message images.
+- [x] 3.5 Implement the confirmed layer, backdrop, fit, close, replacement, focus, zoom, focal transform, bounded pan, gesture cleanup, and shell-collapse behavior without a portal, Domain, Extern, persistence, dependency, or host-document mutation.
+- [x] 3.6 Apply request-local View Transition identity only when supported and motion is allowed, with the direct state operation authoritative for every fallback path.
 
 ## 4. Delivery Gates
 
-- [ ] 4.1 Pass focused regressions, the complete source test suite, typecheck, lint, format, Chrome/Firefox production builds, strict OpenSpec validation, OpenSpec Doctor, diff, identity, and clean-worktree gates on one exact.
+- [x] 4.1 Pass focused regressions, the complete source test suite, typecheck, lint, format, Chrome/Firefox production builds, strict OpenSpec validation, OpenSpec Doctor, diff, identity, and clean-worktree gates on one exact.
 - [ ] 4.2 Obtain fresh architecture-first Review of the complete requirement-branch diff and close every finding before publication.
 - [ ] 4.3 Publish the reviewed exact through the single `feat/like-color-and-image-preview` branch and one Draft PR, then require exact-bound CI to pass.
 - [ ] 4.4 Keep QA, QC, and UX absent unless the Owner explicitly requests one; record any performed or unavailable browser behavior verification truthfully without making it a source/CI blocker.

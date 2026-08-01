@@ -13,6 +13,7 @@ export const LikeButtonIcon: FC<LikeButtonIconProps> = ({ children }) => childre
 export interface LikeButtonProps {
   count: number
   checked: boolean
+  emphasized: boolean
   onClick?: (e: MouseEvent<HTMLButtonElement>) => void
   onChange?: (checked: boolean, count: number) => void
   children: ReactElement<LikeButtonIconProps>
@@ -20,6 +21,7 @@ export interface LikeButtonProps {
 
 const LikeButton: FC<LikeButtonProps> & { Icon: FC<LikeButtonIconProps> } = ({
   checked,
+  emphasized,
   count,
   onClick,
   onChange,
@@ -33,10 +35,11 @@ const LikeButton: FC<LikeButtonProps> & { Icon: FC<LikeButtonIconProps> } = ({
   return (
     <Button
       onClick={handleClick}
+      aria-pressed={checked}
       variant="secondary"
       className={cn(
         'grid items-center overflow-hidden rounded-full leading-none transition-all select-none dark:bg-slate-600',
-        checked ? 'text-orange-500' : 'text-slate-500 dark:text-slate-100',
+        emphasized ? 'text-orange-500' : 'text-slate-500 dark:text-slate-100',
         count ? 'grid-cols-[auto_1fr] gap-x-1' : 'grid-cols-[auto_0fr] gap-x-0'
       )}
       size="xs"

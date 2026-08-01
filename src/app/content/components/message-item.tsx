@@ -19,6 +19,7 @@ export interface MessageItemProps {
 }
 
 const MessageItem: FC<MessageItemProps> = memo((props) => {
+  const hasActiveLikes = props.data.reactions.likes.length > 0
   const handleLikeChange = (checked: boolean) => {
     props.onLikeChange?.(checked)
   }
@@ -72,6 +73,7 @@ const MessageItem: FC<MessageItemProps> = memo((props) => {
           <div className="grid grid-flow-col justify-end gap-x-2 leading-none dark:text-slate-600">
             <LikeButton
               checked={props.like}
+              emphasized={hasActiveLikes}
               onChange={(checked) => handleLikeChange(checked)}
               count={props.data.reactions.likes.length}
             >
@@ -81,6 +83,7 @@ const MessageItem: FC<MessageItemProps> = memo((props) => {
             </LikeButton>
             <LikeButton
               checked={props.hate}
+              emphasized={props.hate}
               onChange={(checked) => handleHateChange(checked)}
               count={props.data.reactions.hates.length}
             >
