@@ -5,7 +5,7 @@
 - [x] 1.1 Preserve the existing notification-enabled switch as authoritative and preserve `All message` / `Only @self` eligibility.
 - [x] 1.2 Define the focused browser window's currently viewed highlighted tab as the sole tab-domain comparison input.
 - [x] 1.3 Define exact same-domain suppression, different-or-unavailable-domain notification, exactly-once creation, and zero tab/window mutation.
-- [x] 1.4 Preserve self/history/duplicate exclusion, notification-click behavior, and request-local failure isolation without changing protocol, persistence, UI, permissions, or public APIs.
+- [x] 1.4 Preserve self/history/duplicate exclusion and request-local failure isolation while keeping notification-click handling outside eligibility, protocol, persistence, UI, permissions, and public APIs.
 
 ## 2. Regression Coverage
 
@@ -17,7 +17,7 @@
 
 - [x] 3.1 Resolve only the focused window's currently viewed highlighted tab for each eligible request and compare its existing WebChat domain identity with the message domain.
 - [x] 3.2 Create exactly one notification when equality is not established and create none when the current domains are equal, without adding state, caches, owners, retries, or browser-specific business branches.
-- [x] 3.3 Keep eligibility read-only with respect to tabs/windows and preserve the separate user-initiated notification-click behavior.
+- [x] 3.3 Keep eligibility read-only with respect to tabs/windows and keep user-initiated notification-click handling outside eligibility.
 - [x] 3.4 Add deterministic regressions for every scenario in the delta specification at the existing Domain/service/provider boundaries.
 
 ## 4. Delivery Gates
