@@ -1,6 +1,5 @@
 import { Remesh } from 'remesh'
 import { NotificationExtern } from './externs/Notification'
-import type { ProjectedTextMessage } from '@/domain/Message'
 import ChatRoomDomain from '@/domain/ChatRoom'
 import UserInfoDomain from './UserInfo'
 import { map } from 'rxjs'
@@ -12,89 +11,24 @@ const NotificationDomain = Remesh.domain({
     const userInfoDomain = domain.getDomain(UserInfoDomain())
     const chatRoomDomain = domain.getDomain(ChatRoomDomain())
 
-    const NotificationEnabledState = domain.state<boolean>({
-      name: 'Notification.EnabledState',
-      default: false
-    })
-
-    const IsEnabledQuery = domain.query({
-      name: 'Notification.IsOpenQuery',
-      impl: ({ get }) => {
-        return get(NotificationEnabledState())
-      }
-    })
-
-    const EnableCommand = domain.command({
-      name: 'Notification.EnableCommand',
-      impl: () => {
-        return NotificationEnabledState().new(true)
-      }
-    })
-
-    const DisableCommand = domain.command({
-      name: 'Notification.DisableCommand',
-      impl: () => {
-        return NotificationEnabledState().new(false)
-      }
-    })
-
-    const PushCommand = domain.command({
-      name: 'Notification.PushCommand',
-      impl: (_, message: ProjectedTextMessage) => {
-        void notificationExtern.push(message).catch((error) => {
-          console.warn('[WebChat] Notification push failed:', error)
-        })
-        return [PushEvent(message)]
-      }
-    })
-
-    const PushEvent = domain.event<ProjectedTextMessage>({
-      name: 'Notification.PushEvent'
-    })
-
-    const ClearEvent = domain.event<string>({
-      name: 'Notification.ClearEvent'
-    })
-
-    domain.effect({
-      name: 'Notification.OnUserInfoEffect',
-      impl: ({ fromEvent }) => {
-        const onUserInfo$ = fromEvent(userInfoDomain.event.UpdateUserInfoEvent)
-        return onUserInfo$.pipe(
-          map((userInfo) => {
-            return userInfo?.notificationEnabled ? EnableCommand() : DisableCommand()
-          })
-        )
-      }
-    })
-
     domain.effect({
       name: 'Notification.OnRoomMessageEffect',
       impl: ({ fromEvent, get }) => {
         // The ChatRoom callback runs only in the tab whose atomic insert won.
         const onMessage$ = fromEvent(chatRoomDomain.event.OnTextMessageEvent).pipe(
           map((message) => {
-            const notificationEnabled = get(IsEnabledQuery())
-
-            if (!notificationEnabled) {
-              return null
-            }
-
             const userInfo = get(userInfoDomain.query.UserInfoQuery())
-            if (message.author.id === userInfo?.id) {
+            if (!userInfo?.notificationEnabled || message.author.id === userInfo.id) {
               return null
             }
 
-            if (userInfo?.notificationType === 'all') {
-              return PushCommand(message)
+            if (userInfo.notificationType === 'at' && !message.mentions.some((user) => user.id === userInfo.id)) {
+              return null
             }
 
-            if (userInfo?.notificationType === 'at') {
-              const hasAtSelf = message.mentions.find((user) => user.id === userInfo?.id)
-              if (hasAtSelf) {
-                return PushCommand(message)
-              }
-            }
+            void notificationExtern.push(message).catch((error) => {
+              console.warn('[WebChat] Notification push failed:', error)
+            })
             return null
           })
         )
@@ -103,20 +37,7 @@ const NotificationDomain = Remesh.domain({
       }
     })
 
-    return {
-      query: {
-        IsEnabledQuery
-      },
-      command: {
-        EnableCommand,
-        DisableCommand,
-        PushCommand
-      },
-      event: {
-        PushEvent,
-        ClearEvent
-      }
-    }
+    return {}
   }
 })
 

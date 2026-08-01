@@ -106,10 +106,14 @@ Page-owned storage is split by purpose:
 - Canonical records use atomic first-value-wins persistence. Durable event status is monotonic `pending -> sent`; received peer events use `received`. System notices and record metadata remain local-only.
 - The Runtime may buffer unacknowledged deliveries, but it does not own or copy durable history. A page acknowledges only after its origin store settles the record.
 
-Key storage keys in `src/constants/config.ts`:
+Key storage keys in `src/constants/storage.ts`:
 
 - `USER_INFO_STORAGE_KEY` - User profile (browser sync storage)
-- `APP_STATUS_STORAGE_KEY` - App UI state (local storage)
+- `APP_OPEN_STORAGE_KEY = WEB_CHAT_APP_STATUS:OPEN` - Shared open state (local storage)
+- `APP_POSITION_STORAGE_KEY = WEB_CHAT_APP_STATUS:POSITION` - Shared launcher position (local storage)
+- `APP_UNREAD_STORAGE_KEY = WEB_CHAT_APP_STATUS:UNREAD` - Shared boolean unread attention (local storage)
+
+`AppStatusDomain` owns one aggregate `{ open, position, unread }` business truth. Each field persists through its own field-scoped key so an update cannot overwrite either unaddressed field; unread is attention, not a count.
 
 ### History Synchronization
 

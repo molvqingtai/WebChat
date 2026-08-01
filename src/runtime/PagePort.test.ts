@@ -53,6 +53,19 @@ describe('PagePort session-event lifecycle', () => {
   })
 })
 
+describe('PagePort Runtime error delivery', () => {
+  it('keeps the error message intact across the Chrome JSON transport boundary', async () => {
+    const port = new PagePort()
+    const received: unknown[] = []
+    port.onError('page-a', (error) => {
+      received.push(JSON.parse(JSON.stringify(error)))
+    })
+
+    expect(await port.emitError(['page-a'], new Error('Runtime transport disconnected'))).toEqual([])
+    expect(received).toEqual(['Runtime transport disconnected'])
+  })
+})
+
 describe('PagePort history request/response', () => {
   it('settles one supply id exactly once through the explicit response RPC', async () => {
     const port = new PagePort()

@@ -30,13 +30,13 @@ const App = () => {
   const userInfoDomain = useRemeshDomain(UserInfoDomain())
   const messageListDomain = useRemeshDomain(MessageListDomain())
   const danmakuDomain = useRemeshDomain(DanmakuDomain())
-  const danmakuIsEnabled = useRemeshQuery(danmakuDomain.query.IsEnabledQuery())
   const userInfoSetFinished = useRemeshQuery(userInfoDomain.query.UserInfoSetIsFinishedQuery())
   const messageListLoadFinished = useRemeshQuery(messageListDomain.query.LoadIsFinishedQuery())
   const userInfoLoadFinished = useRemeshQuery(userInfoDomain.query.UserInfoLoadIsFinishedQuery())
   const chatRoomJoinIsFinished = useRemeshQuery(chatRoomDomain.query.JoinIsFinishedQuery())
   const worldRoomJoinIsFinished = useRemeshQuery(worldRoomDomain.query.JoinIsFinishedQuery())
   const userInfo = useRemeshQuery(userInfoDomain.query.UserInfoQuery())
+  const danmakuIsEnabled = userInfo?.danmakuEnabled ?? false
   const danmakuContainerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -52,11 +52,18 @@ const App = () => {
   }, [initializationReady, chatRoomJoinIsFinished, worldRoomJoinIsFinished, send, worldRoomDomain.command])
 
   useEffect(() => {
-    if (danmakuIsEnabled) send(danmakuDomain.command.MountCommand(danmakuContainerRef.current!))
+    if (danmakuIsEnabled) {
+      send(
+        danmakuDomain.command.MountCommand({
+          container: danmakuContainerRef.current!,
+          onOpen: () => send(appStatusDomain.command.UpdateOpenCommand(true))
+        })
+      )
+    }
     return () => {
       if (danmakuIsEnabled) send(danmakuDomain.command.UnmountCommand())
     }
-  }, [danmakuIsEnabled, send, danmakuDomain.command])
+  }, [danmakuIsEnabled, send, appStatusDomain.command, danmakuDomain.command])
 
   const notUserInfo = userInfoLoadFinished && !userInfoSetFinished
   const themeMode =

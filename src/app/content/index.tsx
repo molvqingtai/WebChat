@@ -25,6 +25,7 @@ import NotificationDomain from '@/domain/Notification'
 import AppFeedbackDomain from '@/domain/AppFeedback'
 import { createElement } from '@/utils'
 import { requestBrowserSyncStoragePreparation } from '@/service/StoragePreparation'
+import { createDirectPreparationCoordinator, createWebLocksPreparationCoordinator } from '@/utils/withPreparationLock'
 import { MessageDatabaseExtern, type MessageDatabaseSchema } from '@/domain/MessageStore'
 import { ChatRoomExtern, type ChatRoom } from '@/domain/externs/ChatRoom'
 import { WorldRoomExtern, type WorldRoom } from '@/domain/externs/WorldRoom'
@@ -32,10 +33,19 @@ import { ReadinessExtern, type Readiness } from '@/domain/externs/Readiness'
 import { BrowserSyncStorageExtern, type Storage, type StorageValue } from '@/domain/externs/Storage'
 import type { Database } from '@/domain/externs/Database'
 
+/**
+ * Firefox content scripts cannot assimilate page-realm Web Locks Promises
+ * (<https://bugzilla.mozilla.org/show_bug.cgi?id=1873028>), so Firefox runs preparation directly and relies
+ * on versioned idempotent writes for cross-tab convergence; Chrome keeps Web Locks arbitration.
+ */
+const preparationLockCoordinator = import.meta.env.FIREFOX
+  ? createDirectPreparationCoordinator()
+  : createWebLocksPreparationCoordinator()
+
 const initializationDependencies: InitializationDependencies = {
   prepareBrowserSyncStorage: requestBrowserSyncStoragePreparation,
-  prepareLocalStorage: prepareLocalConfigurationStorage,
-  prepareMessageDatabase: prepareIndexedDBMessageDatabase,
+  prepareLocalStorage: () => prepareLocalConfigurationStorage(preparationLockCoordinator),
+  prepareMessageDatabase: () => prepareIndexedDBMessageDatabase(preparationLockCoordinator),
   initializeRuntime: initClient,
   detachRuntime: detachClient
 }

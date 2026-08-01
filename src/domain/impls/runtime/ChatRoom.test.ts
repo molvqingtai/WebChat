@@ -111,6 +111,7 @@ interface ServerFixture {
   server: RuntimeServer
   emitInbound: (event: InboundEvent) => Promise<void>
   emitSession: (event: RuntimeSessionEvent) => Promise<void>
+  emitError: (message: string) => Promise<void>
   emitHistory: (event: HistorySupplyEvent) => void
   resolvedHistory: { supplyId: string; ids: string[]; done: boolean }[]
   sent: ChatMessage[]
@@ -121,6 +122,7 @@ interface ServerFixture {
 const serverFixture = (): ServerFixture => {
   let inbound: ((event: InboundEvent) => void | Promise<void>) | undefined
   let session: ((event: RuntimeSessionEvent) => void | Promise<void>) | undefined
+  let runtimeError: ((message: string) => void | Promise<void>) | undefined
   let history: ((event: HistorySupplyEvent) => void) | undefined
   let leaves = 0
   let reconnects = 0
@@ -180,7 +182,9 @@ const serverFixture = (): ServerFixture => {
       session = listener
     },
     onWorldPresence: async () => {},
-    onError: async () => {},
+    onError: async (_payload, listener) => {
+      runtimeError = listener
+    },
     provideHistory: async (_payload, listener) => {
       history = listener
     },
@@ -196,6 +200,9 @@ const serverFixture = (): ServerFixture => {
     },
     emitSession: async (event) => {
       await session?.(event)
+    },
+    emitError: async (message) => {
+      await runtimeError?.(message)
     },
     emitHistory: (event) => history?.(event),
     resolvedHistory,
@@ -283,6 +290,17 @@ beforeEach(() => vi.useFakeTimers())
 afterEach(() => vi.useRealTimers())
 
 describe('Runtime-backed ChatRoom application port', () => {
+  it('reconstructs a transport-safe Runtime error message for domain listeners', async () => {
+    const { room, emitError } = await setup()
+    const errors: Error[] = []
+    room.onError((error) => errors.push(error))
+    await settle()
+
+    await emitError('Runtime transport disconnected')
+
+    expect(errors).toEqual([new Error('Runtime transport disconnected')])
+  })
+
   it('publishes initialization as one session snapshot without a synthetic join fact', async () => {
     const { room } = await setup()
     const snapshots: Array<readonly ChatSession[]> = []

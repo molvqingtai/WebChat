@@ -5,6 +5,14 @@ export interface PreparationLock {
   checkpoint(): void
 }
 
+/**
+ * Cross-context mutual exclusion for persistence preparation. Acquiring returns the release callback; the
+ * implementation decides whether arbitration is local (Web Locks) or delegated (background-mediated).
+ */
+export interface PreparationLockCoordinator {
+  acquire(identity: string): Promise<() => void>
+}
+
 interface PreparationCompletion {
   readonly promise: Promise<void>
   readonly resolve: () => void
@@ -58,9 +66,48 @@ const settleGeneration = (identity: string, generation: PreparationGeneration, o
   else generation.completion.reject(outcome.error)
 }
 
+/**
+ * Web Locks arbitration. Firefox content scripts cannot assimilate the page-realm lock Promise
+ * (`Permission denied to access property "then"`), so those contexts delegate arbitration to the
+ * background-mediated coordinator instead.
+ */
+export const createWebLocksPreparationCoordinator = (
+  lockManager?: Pick<LockManager, 'request'>
+): PreparationLockCoordinator => ({
+  acquire: (identity) =>
+    new Promise<() => void>((resolve, reject) => {
+      const locks = lockManager ?? (typeof navigator === 'undefined' ? undefined : navigator.locks)
+      if (!locks) {
+        console.error('[WebChat] Persistence preparation coordination unavailable')
+        reject(new Error('Persistence preparation coordination unavailable'))
+        return
+      }
+      let release!: () => void
+      const gate = new Promise<void>((grantRelease) => {
+        release = grantRelease
+      })
+      void locks
+        .request(`webchat-persistence:${identity}`, () => {
+          resolve(() => release())
+          return gate
+        })
+        .then(undefined, reject)
+    })
+})
+
+/**
+ * No cross-context arbitration: preparation runs directly and relies on versioned idempotent writes for
+ * cross-tab convergence. Used by Firefox content scripts where Web Locks cannot cross the Xray boundary
+ * (<https://bugzilla.mozilla.org/show_bug.cgi?id=1873028>).
+ */
+export const createDirectPreparationCoordinator = (): PreparationLockCoordinator => ({
+  acquire: () => Promise.resolve(() => {})
+})
+
 export const withPreparationLock = (
   identity: string,
-  prepare: (lock: PreparationLock) => Promise<void>
+  prepare: (lock: PreparationLock) => Promise<void>,
+  coordinator: PreparationLockCoordinator = createWebLocksPreparationCoordinator()
 ): Promise<void> => {
   const current = preparations.get(identity)
   const completion = current?.completion ?? createCompletion()
@@ -75,25 +122,23 @@ export const withPreparationLock = (
   const lock: PreparationLock = {
     signal,
     read: (operation) => raceWithSignal(operation, signal),
-    // Once a write starts, retain the physical Web Lock until that write settles.
+    // Once a write starts, retain the physical lock until that write settles.
     write: async (operation) => {
       signal.throwIfAborted()
       return operation()
     },
     checkpoint: () => signal.throwIfAborted()
   }
-  const preparation = Promise.resolve().then(() => {
+  const preparation = Promise.resolve().then(async () => {
     signal.throwIfAborted()
-    const locks = typeof navigator === 'undefined' ? undefined : navigator.locks
-    if (!locks) {
-      console.error('[WebChat] Persistence preparation coordination unavailable')
-      throw new Error('Persistence preparation coordination unavailable')
-    }
-    return locks.request(`webchat-persistence:${identity}`, async () => {
+    const release = await coordinator.acquire(identity)
+    try {
       signal.throwIfAborted()
       await prepare(lock)
       signal.throwIfAborted()
-    })
+    } finally {
+      release()
+    }
   })
   void preparation.then(
     () => settleGeneration(identity, generation, { status: 'resolved' }),

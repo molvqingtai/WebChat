@@ -1,7 +1,12 @@
 import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-const fixture = vi.hoisted(() => ({ ready: false, send: vi.fn() }))
+const fixture = vi.hoisted(() => ({
+  ready: false,
+  danmakuEnabled: false,
+  onDanmakuClick: null as null | (() => void),
+  send: vi.fn()
+}))
 
 vi.mock('remesh-react', () => ({
   useRemeshDomain: (domain: unknown) => domain,
@@ -13,14 +18,17 @@ vi.mock('remesh-react', () => ({
       case 'user-load-finished':
         return true
       case 'user-info':
-        return null
+        return { danmakuEnabled: fixture.danmakuEnabled, themeMode: 'system' }
       default:
         return false
     }
   }
 }))
 vi.mock('@/domain/AppStatus', () => ({
-  default: () => ({ query: { ReadyQuery: () => 'initialization-ready' } })
+  default: () => ({
+    query: { ReadyQuery: () => 'initialization-ready' },
+    command: { UpdateOpenCommand: (open: boolean) => `update-open-${open}` }
+  })
 }))
 vi.mock('@/domain/ChatRoom', () => ({
   default: () => ({
@@ -48,8 +56,13 @@ vi.mock('@/domain/MessageList', () => ({
 }))
 vi.mock('@/domain/Danmaku', () => ({
   default: () => ({
-    query: { IsEnabledQuery: () => 'danmaku-enabled' },
-    command: { MountCommand: () => 'mount-danmaku', UnmountCommand: () => 'unmount-danmaku' }
+    command: {
+      MountCommand: ({ onOpen }: { container: HTMLElement; onOpen: () => void }) => {
+        fixture.onDanmakuClick = onOpen
+        return 'mount-danmaku'
+      },
+      UnmountCommand: () => 'unmount-danmaku'
+    }
   })
 }))
 vi.mock('@/app/content/views/header', () => ({ default: () => <header data-testid="header" /> }))
@@ -75,9 +88,11 @@ vi.mock('@/utils', () => ({
 import App from '@/app/content/App'
 
 afterEach(() => {
-  fixture.ready = false
-  fixture.send.mockClear()
   cleanup()
+  fixture.ready = false
+  fixture.danmakuEnabled = false
+  fixture.onDanmakuClick = null
+  fixture.send.mockClear()
 })
 
 describe('normal App composition', () => {
@@ -105,5 +120,16 @@ describe('normal App composition', () => {
     expect(screen.getByTestId('app-button')).toBe(appButton)
     expect(screen.getByTestId('toaster')).toBe(toaster)
     expect(screen.getByTestId('danmaku')).toBe(danmaku)
+  })
+
+  it('routes a Danmaku click directly to the existing AppStatus open command', () => {
+    fixture.danmakuEnabled = true
+    render(<App />)
+    expect(fixture.onDanmakuClick).toEqual(expect.any(Function))
+    fixture.send.mockClear()
+
+    fixture.onDanmakuClick!()
+
+    expect(fixture.send).toHaveBeenCalledExactlyOnceWith('update-open-true')
   })
 })

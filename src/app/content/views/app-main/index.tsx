@@ -5,6 +5,7 @@ import AppStatusDomain from '@/domain/AppStatus'
 import { useRemeshDomain, useRemeshQuery } from 'remesh-react'
 import { cn } from '@/utils'
 import useWindowResize from '@/hooks/useWindowResize'
+import { projectAppButtonPosition } from '@/app/content/views/app-button/position'
 
 export interface AppMainProps {
   children?: ReactNode
@@ -14,15 +15,11 @@ export interface AppMainProps {
 const AppMain: FC<AppMainProps> = ({ children, className }) => {
   const appStatusDomain = useRemeshDomain(AppStatusDomain())
   const appOpenStatus = useRemeshQuery(appStatusDomain.query.OpenQuery())
-  const { x, y } = useRemeshQuery(appStatusDomain.query.PositionQuery())
+  const position = useRemeshQuery(appStatusDomain.query.PositionQuery())
   const { width, height } = useWindowResize()
 
-  // Position x,y is offset from bottom-right corner
-  // Convert to absolute position from left for comparison
-  const absoluteX = width - x
-  const absoluteY = height - y
-
-  const isOnRightSide = absoluteX >= width / 2 + 50
+  const { x: absoluteX, y: absoluteY } = projectAppButtonPosition(position, { width, height })
+  const isOnRightSide = absoluteX >= width / 2
 
   const { size, setRef } = useResizable({
     initSize: Math.max(375, width / 6),
