@@ -197,7 +197,9 @@ describe('replaceable application boundaries', () => {
     expect(storageConstants).toContain("export const APP_STATUS_STORAGE_KEY = 'WEB_CHAT_APP_STATUS'")
     expect(storageConstants).toContain("export const USER_INFO_STORAGE_KEY = 'WEB_CHAT_USER_INFO'")
     expect(indexedDB.match(/createMessageDatabaseDefinition\(STORAGE_NAME, MESSAGE_STORE_VERSION\)/g)).toHaveLength(2)
-    expect(indexedDB).toContain('withPreparationLock(`message:${STORAGE_NAME}`')
+    expect(indexedDB).toMatch(/withPreparationLock\(\s*`message:\$\{STORAGE_NAME\}`/)
+    expect(indexedDB).toContain('MESSAGE_STORE_DELETION_BLOCKED_TIMEOUT_MS')
+    expect(indexedDB).toContain("reject(new Error('Message store deletion blocked'))")
     expect(indexedDB).toContain('database.name === STORAGE_NAME')
     expect(indexedDB).toContain('const deleteMessageDatabase = (): Promise<void> =>')
     expect(indexedDB).toContain('indexedDB.deleteDatabase(STORAGE_NAME)')
@@ -223,8 +225,13 @@ describe('replaceable application boundaries', () => {
     }
 
     expect(content).toContain('prepareBrowserSyncStorage: requestBrowserSyncStoragePreparation')
-    expect(content).toContain('prepareLocalStorage: prepareLocalConfigurationStorage')
-    expect(content).toContain('prepareMessageDatabase: prepareIndexedDBMessageDatabase')
+    expect(content).toContain(
+      'const preparationLockCoordinator = import.meta.env.FIREFOX\n  ? createDirectPreparationCoordinator()\n  : createWebLocksPreparationCoordinator()'
+    )
+    expect(content).toContain('prepareLocalStorage: () => prepareLocalConfigurationStorage(preparationLockCoordinator)')
+    expect(content).toContain(
+      'prepareMessageDatabase: () => prepareIndexedDBMessageDatabase(preparationLockCoordinator)'
+    )
     expect(content).toContain('initializeRuntime: initClient')
     expect(content).toContain('startInitializationLifecycle({')
     expect(content).toContain('dependencies: initializationDependencies')

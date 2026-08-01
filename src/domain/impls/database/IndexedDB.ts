@@ -21,7 +21,7 @@ import {
   type StoreDefinition,
   type ValidatedQuery
 } from './Definition'
-import { withPreparationLock } from '@/utils/withPreparationLock'
+import { withPreparationLock, type PreparationLockCoordinator } from '@/utils/withPreparationLock'
 
 type StoreName<Schema> = keyof Schema & string
 
@@ -543,37 +543,76 @@ export const createIndexedDBDatabase = <Schema extends DatabaseSchema<Schema>>(
   definition: DatabaseDefinition<Schema>
 ): Database<Schema> => new IndexedDBDatabase(definition)
 
+/**
+ * A cross-tab deletion contender can hold the old store open indefinitely (Firefox preparation runs without
+ * cross-tab locking); bound the blocked window so migration fails visibly instead of hanging forever.
+ */
+const MESSAGE_STORE_DELETION_BLOCKED_TIMEOUT_MS = 5000
+
 const deleteMessageDatabase = (): Promise<void> =>
   new Promise((resolve, reject) => {
     const request = indexedDB.deleteDatabase(STORAGE_NAME)
-    request.addEventListener('blocked', () => console.warn('[WebChat] Message store reset is blocked'), { once: true })
-    request.addEventListener('success', () => resolve(), { once: true })
-    request.addEventListener('error', () => reject(new Error('Message store deletion failed')), { once: true })
+    let blockedTimer: ReturnType<typeof globalThis.setTimeout> | null = null
+    const clearBlockedTimer = () => {
+      if (blockedTimer === null) return
+      globalThis.clearTimeout(blockedTimer)
+      blockedTimer = null
+    }
+    request.addEventListener(
+      'blocked',
+      () => {
+        console.warn('[WebChat] Message store reset is blocked')
+        blockedTimer ??= globalThis.setTimeout(() => {
+          reject(new Error('Message store deletion blocked'))
+        }, MESSAGE_STORE_DELETION_BLOCKED_TIMEOUT_MS)
+      },
+      { once: true }
+    )
+    request.addEventListener(
+      'success',
+      () => {
+        clearBlockedTimer()
+        resolve()
+      },
+      { once: true }
+    )
+    request.addEventListener(
+      'error',
+      () => {
+        clearBlockedTimer()
+        reject(new Error('Message store deletion failed'))
+      },
+      { once: true }
+    )
   })
 
-export const prepareIndexedDBMessageDatabase = (): Promise<void> => {
+export const prepareIndexedDBMessageDatabase = (coordinator?: PreparationLockCoordinator): Promise<void> => {
   const definition = createMessageDatabaseDefinition(STORAGE_NAME, MESSAGE_STORE_VERSION)
 
-  return withPreparationLock(`message:${STORAGE_NAME}`, async (lock) => {
-    try {
-      const databases = await lock.read(indexedDB.databases())
-      const existing = databases.find((database) => database.name === STORAGE_NAME)
-      if (existing && existing.version !== MESSAGE_STORE_VERSION) {
-        await lock.write(async () => {
-          await deleteMessageDatabase()
-        })
-        lock.checkpoint()
-      }
+  return withPreparationLock(
+    `message:${STORAGE_NAME}`,
+    async (lock) => {
+      try {
+        const databases = await lock.read(indexedDB.databases())
+        const existing = databases.find((database) => database.name === STORAGE_NAME)
+        if (existing && existing.version !== MESSAGE_STORE_VERSION) {
+          await lock.write(async () => {
+            await deleteMessageDatabase()
+          })
+          lock.checkpoint()
+        }
 
-      const database = await lock.write(() => openDatabase(definition))
-      database.close()
-      lock.checkpoint()
-    } catch (error) {
-      if (lock.signal.aborted) throw error
-      console.error('[WebChat] Message store preparation failed')
-      throw new Error('Message store preparation failed')
-    }
-  })
+        const database = await lock.write(() => openDatabase(definition))
+        database.close()
+        lock.checkpoint()
+      } catch (error) {
+        if (lock.signal.aborted) throw error
+        console.error('[WebChat] Message store preparation failed')
+        throw new Error('Message store preparation failed')
+      }
+    },
+    coordinator
+  )
 }
 
 export const createIndexedDBMessageDatabase = (): Database<MessageDatabaseSchema> =>
