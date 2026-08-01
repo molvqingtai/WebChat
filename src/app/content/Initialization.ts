@@ -121,9 +121,11 @@ export const startInitializationLifecycle = ({
         if (!active || signal.aborted || generation !== attemptGeneration) return
         detachRuntime()
         console.error('[WebChat] Initialization unavailable:', error)
+        // No cancel first: sonner defers a same-ID dismiss publish to the next animation frame, which
+        // would land after the error create and immediately remove the fresh error toast. The same-ID
+        // error descriptor directly replaces the loading descriptor (successor replacement).
         store.send([
           appStatus.command.MarkUnavailableCommand(),
-          toast.command.CancelCommand(INITIALIZATION_TOAST_ID),
           toast.command.ErrorCommand({ id: INITIALIZATION_TOAST_ID, message: 'WebChat unavailable' })
         ])
       })
