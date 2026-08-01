@@ -49,7 +49,7 @@ The shared presentation SHALL preserve the sanitized rendered source and alterna
 - **WHEN** WebChat renders both messages
 - **THEN** both images SHALL use the same query-container owner, equal axis maximums, automatic dimensions, containment, activation, alternative-text, and sanitized-source behavior without runtime measurement state
 
-### Requirement: One centered preview remains behind the WebChat shell
+### Requirement: One centered preview keeps its backdrop behind and body above the WebChat shell
 
 Activating a valid rendered message image by pointer, touch, Enter, or Space SHALL open exactly one centered preview within the existing WebChat application root. The preview SHALL fit the complete source image inside a rectangle that remains at least `24px` from every viewport edge. Its initial `1x` state SHALL mean this fitted baseline and SHALL NOT enlarge a source image beyond its natural dimensions.
 

@@ -12,10 +12,10 @@
 - [x] 2.1 Cover positive aggregate red, zero aggregate gray, current-user add/remove semantics, removal while another like remains, and unchanged hate presentation.
 - [x] 2.2 Cover both Markdown image forms through one shared renderer with the same message-content query owner, equal `70cqi` maximums, automatic dimensions, complete containment, and sanitized source and alternative text.
 - [x] 2.3 Add structural controls excluding JavaScript measurement, `ResizeObserver`, measured-size state, square placeholders, duplicate image policies, and a second sizing owner.
-- [x] 2.4 Cover preview ancestry, one-owner composition, centered `24px` fit, natural-size non-upscale, the real host/backdrop/shell/preview-body order, neutral `18%` backdrop, preview-body overlap, and uncovered shell operability.
-- [x] 2.5 Cover production-boundary pointer, touch, keyboard, wheel/trackpad, and pinch activation; editable-shell isolation; icon names and tooltips; fixed zoom steps and limits; focal zoom; axis-specific pan bounds; resize reclamping; drag-release suppression; and reset.
-- [x] 2.6 Cover backdrop, close-control, production-boundary Escape, and shell-collapse settlement; replacement without stacking; transform cleanup; focus restoration; and preview-local event handling without host scroll lock.
-- [x] 2.7 Cover document View Transition, accepted root/shell crossfade and pre-existing host-named participants, temporary image identity, delayed overlapping settlement in both orders, reduced-motion and every unavailable/failure path, identical final visuals, and host name/style/business-state preservation without duplicate state or stale markers.
+- [ ] 2.4 Cover preview ancestry, one-owner composition, centered `24px` fit, natural-size non-upscale, the real host/backdrop/shell/preview-body order, neutral `18%` backdrop, preview-body overlap, and uncovered shell operability.
+- [ ] 2.5 Cover production-boundary pointer, touch, keyboard, wheel/trackpad, and pinch activation; editable-shell isolation; icon names and tooltips; fixed zoom steps and limits; focal zoom; axis-specific pan bounds; resize reclamping; drag-release suppression; and reset.
+- [ ] 2.6 Cover backdrop, close-control, production-boundary Escape, and shell-collapse settlement; replacement without stacking; transform cleanup; focus restoration; and preview-local event handling without host scroll lock.
+- [ ] 2.7 Cover document View Transition, accepted root/shell crossfade and pre-existing host-named participants, temporary image identity, delayed overlapping settlement in both orders, reduced-motion and every unavailable/failure path, identical final visuals, and host name/style/business-state preservation without duplicate state or stale markers.
 
 ## 3. Minimum Implementation
 
@@ -23,12 +23,12 @@
 - [x] 3.2 Consolidate both Markdown image paths into one accessible image control and establish the message-content inline-size query container with equal `70cqi` maximums on both image axes.
 - [x] 3.3 Keep image dimensions automatic and contained without JavaScript measurement, `ResizeObserver`, measured-size state, crop, distortion, forced expansion, or a square placeholder.
 - [x] 3.4 Add one `MediaPreview` component/state owner beside Danmaku in the existing App root, exposing only the preview-open action to rendered message images.
-- [x] 3.5 Implement the confirmed extension-owned stacking context and split backdrop/shell/preview-body order, fit, close, replacement, focus, preview-subtree keyboard ownership, zoom, focal transform, pre-paint bounded pan, gesture cleanup, and shell-collapse behavior without a portal, Domain, Extern, persistence, dependency, or host business-state mutation.
-- [x] 3.6 Use one document View Transition and one generation-scoped temporary image-identity owner; clean before supersession, fence older settlement, accept the browser root crossfade, and preserve direct reduced-motion/unavailable/failure settlement without host-element styling, another state owner, or delayed cleanup.
+- [ ] 3.5 Implement the confirmed extension-owned stacking context and split backdrop/shell/preview-body order, fit, close, replacement, focus, preview-subtree keyboard ownership, zoom, focal transform, pre-paint bounded pan, gesture cleanup, and shell-collapse behavior without a portal, Domain, Extern, persistence, dependency, or host business-state mutation.
+- [ ] 3.6 Use one document View Transition and one generation-scoped temporary image-identity owner; clean before supersession, fence older settlement, accept the browser root crossfade, and preserve direct reduced-motion/unavailable/failure settlement without host-element styling, another state owner, or delayed cleanup.
 
 ## 4. Delivery Gates
 
-- [x] 4.1 Pass focused regressions, the complete source test suite, typecheck, lint, format, Chrome/Firefox production builds, strict OpenSpec validation, OpenSpec Doctor, diff, identity, and clean-worktree gates on one replacement exact.
+- [ ] 4.1 Pass focused regressions, the complete source test suite, typecheck, lint, format, Chrome/Firefox production builds, strict OpenSpec validation, OpenSpec Doctor, diff, identity, and clean-worktree gates on one replacement exact.
 - [ ] 4.2 Obtain fresh architecture-first Review of the complete requirement-branch diff and close every finding before publication.
 - [ ] 4.3 Publish the reviewed exact through the single `feat/like-color-and-image-preview` branch and one Draft PR, then require exact-bound CI to pass.
 - [ ] 4.4 Keep QA, QC, and UX absent unless the Owner explicitly requests one; record any performed or unavailable browser behavior verification truthfully without making it a source/CI blocker.
