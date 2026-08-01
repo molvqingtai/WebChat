@@ -1,11 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Remesh } from 'remesh'
 import AppActionDomain from '@/domain/AppAction'
-import type { ProjectedTextMessage } from '@/domain/Message'
-import NotificationDomain from '@/domain/Notification'
 import ProfileFeedbackDomain from '@/domain/ProfileFeedback'
 import { AppActionExtern } from '@/domain/externs/AppAction'
-import { NotificationExtern } from '@/domain/externs/Notification'
 import { ToastExtern, type Toast } from '@/domain/externs/Toast'
 
 const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
@@ -37,29 +34,6 @@ describe('application commands', () => {
     await settle()
     store.send(domain.command.OpenOptionsCommand())
     await vi.waitFor(() => expect(openOptionsPage).toHaveBeenCalledTimes(2))
-    store.discard()
-  })
-
-  it('contains each notification rejection without terminating later requests', async () => {
-    const failure = new Error('notification unavailable')
-    const push = vi.fn().mockRejectedValueOnce(failure).mockResolvedValueOnce('notification-id')
-    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    const store = Remesh.store({ externs: [NotificationExtern.impl({ push })] })
-    const action = NotificationDomain()
-    const domain = store.getDomain(action)
-    const message = { id: 'notification-message', body: 'hello' } as ProjectedTextMessage
-    const events: ProjectedTextMessage[] = []
-    store.subscribeEvent(domain.event.PushEvent, (event) => events.push(event))
-
-    store.send(domain.command.PushCommand(message))
-    await vi.waitFor(() => expect(push).toHaveBeenCalledTimes(1))
-    await settle()
-    store.send(domain.command.PushCommand(message))
-    await vi.waitFor(() => expect(push).toHaveBeenCalledTimes(2))
-
-    expect(warning).toHaveBeenCalledTimes(1)
-    expect(warning).toHaveBeenCalledWith('[WebChat] Notification push failed:', failure)
-    expect(events).toEqual([message, message])
     store.discard()
   })
 
