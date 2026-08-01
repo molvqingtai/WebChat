@@ -1,4 +1,4 @@
 schema: spec-driven
 created: 2026-08-01
-goal: Show one shared-domain unread attention badge on each collapsed AppButton
-  and clear it when one same-domain tab is expanded.
+goal: Share each WebChat domain's AppButton position and unread attention while
+  keeping every tab's expanded or collapsed state independent.
