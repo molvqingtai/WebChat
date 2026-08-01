@@ -65,20 +65,15 @@ describe('reconnect action availability', () => {
     expect(value.match(/<RefreshCwIcon/g)).toHaveLength(1)
   })
 
-  it('does not persist automatic default position before shell status hydration', () => {
+  it('reprojects resize locally and persists only user drag coordinates', () => {
     const value = source()
-    const resizeEffect = value.slice(value.indexOf('useWindowResize(() => {'), value.indexOf('const {\n    x,'))
 
-    expect(value).toContain(
-      'const statusLoadIsFinished = useRemeshQuery(appStatusDomain.query.StatusLoadIsFinishedQuery())'
-    )
-    expect(resizeEffect.indexOf('if (!statusLoadIsFinished) return')).toBeGreaterThan(-1)
-    expect(resizeEffect.indexOf('if (!statusLoadIsFinished) return')).toBeLessThan(
-      resizeEffect.indexOf('send(appStatusDomain.command.UpdatePositionCommand')
-    )
-    expect(value).toContain('const positionPersistenceStarted = useRef(false)')
-    expect(value).toMatch(
-      /useEffect\(\(\) => \{\s*if \(!statusLoadIsFinished\) return\s*if \(!positionPersistenceStarted\.current\) \{[\s\S]*?return\s*\}\s*send\(appStatusDomain\.command\.UpdatePositionCommand\(\{ x, y \}\)\)/
-    )
+    expect(value).toContain('const windowSize = useWindowResize()')
+    expect(value).toContain('const projectedPosition = projectAppButtonPosition(appPosition, windowSize)')
+    expect(value).toContain('const dragBounds = getAppButtonDragBounds(windowSize)')
+    expect(value).toContain('captureAppButtonPosition(position, windowSize)')
+    expect(value).toContain('onChange: handlePositionChange')
+    expect(value).not.toContain('positionPersistenceStarted')
+    expect(value).not.toContain('useWindowResize(() =>')
   })
 })

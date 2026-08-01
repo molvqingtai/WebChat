@@ -1,24 +1,30 @@
 import { Remesh } from 'remesh'
 import { map } from 'rxjs'
 import StatusModule from './modules/Status'
-import { APP_STATUS_STORAGE_KEY } from '@/constants/storage'
+import { APP_OPEN_STORAGE_KEY, APP_POSITION_STORAGE_KEY, APP_UNREAD_STORAGE_KEY } from '@/constants/storage'
 import { LocalStorageExtern } from '@/domain/externs/Storage'
 import StorageEffect from '@/domain/modules/StorageEffect'
 import ChatRoomDomain from '@/domain/ChatRoom'
 import UserInfoDomain from '@/domain/UserInfo'
 
+export interface AppButtonPosition {
+  /** Negative values are left-edge distances; non-negative values are right-edge distances. */
+  x: number
+  /** Distance from the viewport bottom to the launcher bottom edge. */
+  y: number
+}
+
 export interface AppStatus {
   open: boolean
-  unread: number
-  position: { x: number; y: number }
+  unread: boolean
+  position: AppButtonPosition
 }
 
 type InitializationPhase = 'connecting' | 'unavailable' | 'ready'
 
-// Position is stored as offset from bottom-right corner
-const defaultStatusState: AppStatus = {
+const defaultStatus: AppStatus = {
   open: false,
-  unread: 0,
+  unread: false,
   position: { x: 50, y: 22 }
 }
 
@@ -27,25 +33,24 @@ const AppStatusDomain = Remesh.domain({
   impl: (domain) => {
     const chatRoomDomain = domain.getDomain(ChatRoomDomain())
     const userInfoDomain = domain.getDomain(UserInfoDomain())
-    const LoadStatus = StatusModule(domain, {
-      name: 'AppStatus.LoadStatusModule'
-    })
+    const LoadOpen = StatusModule(domain, { name: 'AppStatus.OpenLoadStatusModule' })
+    const LoadPosition = StatusModule(domain, { name: 'AppStatus.PositionLoadStatusModule' })
+    const LoadUnread = StatusModule(domain, { name: 'AppStatus.UnreadLoadStatusModule' })
 
     const StatusLoadIsFinishedQuery = domain.query({
       name: 'AppStatus.StatusLoadIsFinishedQuery',
-      impl: ({ get }) => get(LoadStatus.query.IsFinishedQuery())
+      impl: ({ get }) =>
+        get(LoadOpen.query.IsFinishedQuery()) &&
+        get(LoadPosition.query.IsFinishedQuery()) &&
+        get(LoadUnread.query.IsFinishedQuery())
     })
 
-    const StatusState = domain.state<AppStatus>({
-      name: 'AppStatus.StatusState',
-      default: defaultStatusState
-    })
-
-    const OpenWasUpdatedState = domain.state({
-      name: 'AppStatus.OpenWasUpdatedState',
-      default: false
-    })
-
+    const OpenState = domain.state({ name: 'AppStatus.OpenState', default: defaultStatus.open })
+    const PositionState = domain.state({ name: 'AppStatus.PositionState', default: defaultStatus.position })
+    const UnreadState = domain.state({ name: 'AppStatus.UnreadState', default: defaultStatus.unread })
+    const OpenWasUpdatedState = domain.state({ name: 'AppStatus.OpenWasUpdatedState', default: false })
+    const PositionWasUpdatedState = domain.state({ name: 'AppStatus.PositionWasUpdatedState', default: false })
+    const UnreadWasUpdatedState = domain.state({ name: 'AppStatus.UnreadWasUpdatedState', default: false })
     const PhaseState = domain.state<InitializationPhase>({
       name: 'AppStatus.PhaseState',
       default: 'connecting'
@@ -53,17 +58,17 @@ const AppStatusDomain = Remesh.domain({
 
     const OpenQuery = domain.query({
       name: 'AppStatus.IsOpenQuery',
-      impl: ({ get }) => get(StatusState()).open
+      impl: ({ get }) => get(OpenState())
     })
 
     const PositionQuery = domain.query({
       name: 'AppStatus.PositionQuery',
-      impl: ({ get }) => get(StatusState()).position
+      impl: ({ get }) => get(PositionState())
     })
 
     const HasUnreadQuery = domain.query({
       name: 'AppStatus.HasUnreadQuery',
-      impl: ({ get }) => get(StatusState()).unread > 0
+      impl: ({ get }) => !get(OpenState()) && get(UnreadState())
     })
 
     const PhaseQuery = domain.query({
@@ -76,48 +81,106 @@ const AppStatusDomain = Remesh.domain({
       impl: ({ get }) => get(PhaseQuery()) === 'ready'
     })
 
-    const SyncToStorageEvent = domain.event({
-      name: 'AppStatus.SyncToStorageEvent',
-      impl: ({ get }) => get(StatusState())
+    const SyncOpenToStorageEvent = domain.event({
+      name: 'AppStatus.SyncOpenToStorageEvent',
+      impl: ({ get }) => get(OpenState())
     })
 
-    const UpdateStatusCommand = domain.command({
-      name: 'AppStatus.UpdateStatusCommand',
-      impl: (_, value: AppStatus) => [StatusState().new(value), SyncToStorageEvent()]
+    const SyncPositionToStorageEvent = domain.event({
+      name: 'AppStatus.SyncPositionToStorageEvent',
+      impl: ({ get }) => get(PositionState())
+    })
+
+    const SyncUnreadToStorageEvent = domain.event({
+      name: 'AppStatus.SyncUnreadToStorageEvent',
+      impl: ({ get }) => get(UnreadState())
+    })
+
+    const UpdateUnreadCommand = domain.command({
+      name: 'AppStatus.UpdateUnreadCommand',
+      impl: ({ get }, value: boolean) => {
+        if ((value && get(OpenState())) || get(UnreadState()) === value) return null
+        return [UnreadWasUpdatedState().new(true), UnreadState().new(value), SyncUnreadToStorageEvent()]
+      }
     })
 
     const UpdateOpenCommand = domain.command({
       name: 'AppStatus.UpdateOpenCommand',
       impl: ({ get }, value: boolean) => {
-        const status = get(StatusState())
-        return [
-          OpenWasUpdatedState().new(true),
-          UpdateStatusCommand({
-            ...status,
-            unread: value ? 0 : status.unread,
-            open: value
-          })
-        ]
+        if (get(OpenState()) === value) return OpenWasUpdatedState().new(true)
+        return value
+          ? [
+              OpenWasUpdatedState().new(true),
+              UnreadWasUpdatedState().new(true),
+              OpenState().new(true),
+              UnreadState().new(false),
+              SyncOpenToStorageEvent(),
+              SyncUnreadToStorageEvent()
+            ]
+          : [OpenWasUpdatedState().new(true), OpenState().new(false), SyncOpenToStorageEvent()]
       }
-    })
-
-    const UpdateUnreadCommand = domain.command({
-      name: 'AppStatus.UpdateUnreadCommand',
-      impl: ({ get }, value: number) => UpdateStatusCommand({ ...get(StatusState()), unread: value })
     })
 
     const UpdatePositionCommand = domain.command({
       name: 'AppStatus.UpdatePositionCommand',
-      impl: ({ get }, value: { x: number; y: number }) =>
-        UpdateStatusCommand({ ...get(StatusState()), position: value })
+      impl: ({ get }, value: AppButtonPosition) => {
+        const current = get(PositionState())
+        if (current.x === value.x && current.y === value.y) return null
+        return [PositionWasUpdatedState().new(true), PositionState().new(value), SyncPositionToStorageEvent()]
+      }
     })
 
-    const HydrateStatusCommand = domain.command({
-      name: 'AppStatus.HydrateStatusCommand',
-      impl: ({ get }, value: AppStatus) => {
-        const current = get(StatusState())
-        const next = get(OpenWasUpdatedState()) ? { ...value, open: current.open, unread: current.unread } : value
-        return [UpdateStatusCommand(next), LoadStatus.command.SetFinishedCommand()]
+    const HydrateOpenCommand = domain.command({
+      name: 'AppStatus.HydrateOpenCommand',
+      impl: ({ get }, value: boolean) => [
+        ...(get(OpenWasUpdatedState()) ? [] : [OpenState().new(value), ...(value ? [UnreadState().new(false)] : [])]),
+        LoadOpen.command.SetFinishedCommand()
+      ]
+    })
+
+    const SynchronizeOpenCommand = domain.command({
+      name: 'AppStatus.SynchronizeOpenCommand',
+      impl: ({ get }, value: boolean) => {
+        const clearUnread = value && get(UnreadState())
+        return [
+          OpenWasUpdatedState().new(true),
+          OpenState().new(value),
+          ...(value ? [UnreadWasUpdatedState().new(true), UnreadState().new(false)] : []),
+          ...(clearUnread ? [SyncUnreadToStorageEvent()] : [])
+        ]
+      }
+    })
+
+    const HydratePositionCommand = domain.command({
+      name: 'AppStatus.HydratePositionCommand',
+      impl: ({ get }, value: AppButtonPosition) => [
+        ...(get(PositionWasUpdatedState()) ? [] : [PositionState().new(value)]),
+        LoadPosition.command.SetFinishedCommand()
+      ]
+    })
+
+    const SynchronizePositionCommand = domain.command({
+      name: 'AppStatus.SynchronizePositionCommand',
+      impl: (_, value: AppButtonPosition) => [PositionWasUpdatedState().new(true), PositionState().new(value)]
+    })
+
+    const HydrateUnreadCommand = domain.command({
+      name: 'AppStatus.HydrateUnreadCommand',
+      impl: ({ get }, value: boolean) => [
+        ...(get(UnreadWasUpdatedState()) ? [] : [UnreadState().new(get(OpenState()) ? false : value)]),
+        LoadUnread.command.SetFinishedCommand()
+      ]
+    })
+
+    const SynchronizeUnreadCommand = domain.command({
+      name: 'AppStatus.SynchronizeUnreadCommand',
+      impl: ({ get }, value: boolean) => {
+        const open = get(OpenState())
+        return [
+          UnreadWasUpdatedState().new(true),
+          UnreadState().new(open ? false : value),
+          ...(open && value ? [SyncUnreadToStorageEvent()] : [])
+        ]
       }
     })
 
@@ -139,16 +202,20 @@ const AppStatusDomain = Remesh.domain({
       impl: ({ get }) => (get(PhaseQuery()) === 'connecting' ? PhaseState().new('unavailable') : null)
     })
 
-    const storageEffect = new StorageEffect({
-      domain,
-      extern: LocalStorageExtern,
-      key: APP_STATUS_STORAGE_KEY
-    })
+    new StorageEffect({ domain, extern: LocalStorageExtern, key: APP_OPEN_STORAGE_KEY })
+      .set(SyncOpenToStorageEvent)
+      .get<boolean>((value) => HydrateOpenCommand(value ?? defaultStatus.open))
+      .watch<boolean>((value) => SynchronizeOpenCommand(value ?? defaultStatus.open))
 
-    storageEffect
-      .set(SyncToStorageEvent)
-      .get<AppStatus>((value) => HydrateStatusCommand(value ?? defaultStatusState))
-      .watch<AppStatus>((value) => UpdateStatusCommand(value ?? defaultStatusState))
+    new StorageEffect({ domain, extern: LocalStorageExtern, key: APP_POSITION_STORAGE_KEY })
+      .set(SyncPositionToStorageEvent)
+      .get<AppButtonPosition>((value) => HydratePositionCommand(value ?? defaultStatus.position))
+      .watch<AppButtonPosition>((value) => SynchronizePositionCommand(value ?? defaultStatus.position))
+
+    new StorageEffect({ domain, extern: LocalStorageExtern, key: APP_UNREAD_STORAGE_KEY })
+      .set(SyncUnreadToStorageEvent)
+      .get<boolean>((value) => HydrateUnreadCommand(value ?? defaultStatus.unread))
+      .watch<boolean>((value) => SynchronizeUnreadCommand(value ?? defaultStatus.unread))
 
     domain.effect({
       name: 'AppStatus.OnTextMessageEffect',
@@ -156,8 +223,7 @@ const AppStatusDomain = Remesh.domain({
         fromEvent(chatRoomDomain.event.OnTextMessageEvent).pipe(
           map((message) => {
             const selfId = get(userInfoDomain.query.UserInfoQuery())?.id
-            if (get(OpenQuery()) || message.author.id === selfId) return null
-            return UpdateUnreadCommand(get(StatusState()).unread + 1)
+            return get(OpenState()) || message.author.id === selfId ? null : UpdateUnreadCommand(true)
           })
         )
     })

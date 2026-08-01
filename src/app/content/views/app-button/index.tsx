@@ -1,13 +1,4 @@
-import {
-  type FC,
-  useState,
-  type MouseEvent,
-  type MouseEventHandler,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef
-} from 'react'
+import { type FC, useState, type MouseEvent, type MouseEventHandler, useCallback, useMemo } from 'react'
 import { SettingsIcon, MoonIcon, SunIcon, HandIcon, RefreshCwIcon } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 
@@ -29,6 +20,11 @@ import useDraggable from '@/hooks/useDraggable'
 import useWindowResize from '@/hooks/useWindowResize'
 import AppActionDomain from '@/domain/AppAction'
 import ChatRoomDomain from '@/domain/ChatRoom'
+import {
+  captureAppButtonPosition,
+  getAppButtonDragBounds,
+  projectAppButtonPosition
+} from '@/app/content/views/app-button/position'
 
 export const getReconnectLabel = ({
   userConfigured,
@@ -228,39 +224,28 @@ const AppButton: FC = () => {
   const appOpenStatus = useRemeshQuery(appStatusDomain.query.OpenQuery())
   const hasUnreadQuery = useRemeshQuery(appStatusDomain.query.HasUnreadQuery())
   const appPosition = useRemeshQuery(appStatusDomain.query.PositionQuery())
-  const statusLoadIsFinished = useRemeshQuery(appStatusDomain.query.StatusLoadIsFinishedQuery())
-  const positionPersistenceStarted = useRef(false)
   const [menuOpen, setMenuOpen] = useState(false)
 
-  // Get current window size to recalculate position on resize
-  const windowSize = useWindowResize(() => {
-    // Reset to default position when window resizes
-    if (!statusLoadIsFinished) return
-    send(appStatusDomain.command.UpdatePositionCommand({ x: 50, y: 22 }))
-  })
+  const windowSize = useWindowResize()
+  const projectedPosition = projectAppButtonPosition(appPosition, windowSize)
+  const dragBounds = getAppButtonDragBounds(windowSize)
+  const handlePositionChange = useCallback(
+    (position: { x: number; y: number }) => {
+      send(appStatusDomain.command.UpdatePositionCommand(captureAppButtonPosition(position, windowSize)))
+    },
+    [appStatusDomain.command, send, windowSize]
+  )
 
   const {
     x,
     y,
     setRef: appButtonRef
   } = useDraggable({
-    initX: appPosition.x,
-    initY: appPosition.y,
-    minX: 50,
-    maxX: windowSize.width - 50,
-    maxY: windowSize.height - 22,
-    minY: 750,
-    reverse: true
+    initX: projectedPosition.x,
+    initY: projectedPosition.y,
+    ...dragBounds,
+    onChange: handlePositionChange
   })
-
-  useEffect(() => {
-    if (!statusLoadIsFinished) return
-    if (!positionPersistenceStarted.current) {
-      positionPersistenceStarted.current = true
-      return
-    }
-    send(appStatusDomain.command.UpdatePositionCommand({ x, y }))
-  }, [x, y, send, appStatusDomain.command, statusLoadIsFinished])
 
   const { setRef: appMenuRef } = useTriggerAway(['click'], () => setMenuOpen(false))
 
@@ -280,9 +265,9 @@ const AppButton: FC = () => {
       ref={appMenuRef}
       className="z-infinity fixed grid w-min justify-center gap-y-3 select-none"
       style={{
-        right: `${x}px`,
-        bottom: `${y}px`,
-        transform: 'translateX(50%)'
+        left: `${x}px`,
+        bottom: `${windowSize.height - y}px`,
+        transform: 'translateX(-50%)'
       }}
     >
       <AppButtonMenu open={menuOpen} appButtonRef={appButtonRef} />

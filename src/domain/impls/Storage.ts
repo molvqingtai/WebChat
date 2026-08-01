@@ -2,7 +2,9 @@ import { createStorage } from 'unstorage'
 import localStorageDriver from 'unstorage/drivers/localstorage'
 import { LocalStorageExtern, BrowserSyncStorageExtern } from '@/domain/externs/Storage'
 import {
-  APP_STATUS_STORAGE_KEY,
+  APP_OPEN_STORAGE_KEY,
+  APP_POSITION_STORAGE_KEY,
+  APP_UNREAD_STORAGE_KEY,
   CONFIG_STORE_VERSION,
   CONFIG_STORE_VERSION_KEY,
   STORAGE_NAME
@@ -53,7 +55,7 @@ export const prepareConfigurationStorage = (
  * @see https://github.com/unjs/unstorage/issues/277
  */
 const localStorage = createStorage({
-  driver: localStorageDriver({ base: `${STORAGE_NAME}:` })
+  driver: localStorageDriver({ base: `${STORAGE_NAME}:`, window: globalThis.window })
 })
 
 const browserSyncStorage = createStorage({
@@ -62,7 +64,13 @@ const browserSyncStorage = createStorage({
 
 const clearVersionManagedLocalConfiguration = async () => {
   const keys = await localStorage.getKeys()
-  await Promise.all(keys.filter((key) => key !== APP_STATUS_STORAGE_KEY).map((key) => localStorage.removeItem(key)))
+  await Promise.all(
+    keys
+      .filter(
+        (key) => key !== APP_OPEN_STORAGE_KEY && key !== APP_POSITION_STORAGE_KEY && key !== APP_UNREAD_STORAGE_KEY
+      )
+      .map((key) => localStorage.removeItem(key))
+  )
 }
 
 export const prepareLocalConfigurationStorage = (coordinator?: PreparationLockCoordinator): Promise<void> =>

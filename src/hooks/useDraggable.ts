@@ -1,113 +1,82 @@
 import { clamp, isInRange } from '@/utils'
 import { startTransition, useCallback, useEffect, useRef, useState } from 'react'
 
-export interface DargOptions {
+export interface DragOptions {
   initX: number
   initY: number
   maxX: number
   minX: number
   maxY: number
   minY: number
-  reverse?: boolean // If true, position is calculated from bottom-right corner
+  onChange?: (position: { x: number; y: number }) => void
 }
 
-const useDraggable = (options: DargOptions) => {
-  const { initX, initY, maxX = 0, minX = 0, maxY = 0, minY = 0, reverse = false } = options
-
+const useDraggable = ({ initX, initY, maxX, minX, maxY, minY, onChange }: DragOptions) => {
   const mousePosition = useRef({ x: 0, y: 0 })
-
-  // Convert to internal coordinates if reverse mode
-  const toInternal = (x: number, y: number) => {
-    if (!reverse) return { x, y }
-    return {
-      x: window.innerWidth - x,
-      y: window.innerHeight - y
-    }
-  }
-
-  // Convert from internal coordinates if reverse mode
-  const fromInternal = (x: number, y: number) => {
-    if (!reverse) return { x, y }
-    return {
-      x: window.innerWidth - x,
-      y: window.innerHeight - y
-    }
-  }
-
-  const internalInit = toInternal(initX, initY)
-  const positionRef = useRef({ x: clamp(internalInit.x, minX, maxX), y: clamp(internalInit.y, minY, maxY) })
-  const [position, setPosition] = useState(() => fromInternal(positionRef.current.x, positionRef.current.y))
+  const initialPosition = { x: clamp(initX, minX, maxX), y: clamp(initY, minY, maxY) }
+  const positionRef = useRef(initialPosition)
+  const [position, setPosition] = useState(initialPosition)
+  const onChangeRef = useRef(onChange)
+  onChangeRef.current = onChange
 
   useEffect(() => {
-    const internal = toInternal(initX, initY)
-    const newPosition = { x: clamp(internal.x, minX, maxX), y: clamp(internal.y, minY, maxY) }
-    if (JSON.stringify(newPosition) !== JSON.stringify(positionRef.current)) {
-      startTransition(() => {
-        positionRef.current = newPosition
-        setPosition(fromInternal(newPosition.x, newPosition.y))
-      })
-    }
-  }, [initX, initY, maxX, minX, maxY, minY, reverse])
+    const next = { x: clamp(initX, minX, maxX), y: clamp(initY, minY, maxY) }
+    if (next.x === positionRef.current.x && next.y === positionRef.current.y) return
+    startTransition(() => {
+      positionRef.current = next
+      setPosition(next)
+    })
+  }, [initX, initY, maxX, minX, maxY, minY])
 
   const isMove = useRef(false)
   const rafRef = useRef<number | null>(null)
   const latestMousePosition = useRef({ x: 0, y: 0 })
 
   const handleMove = useCallback(
-    (e: MouseEvent) => {
-      if (isMove.current) {
-        const { clientX, clientY } = e
-        latestMousePosition.current = { x: clientX, y: clientY }
+    (event: MouseEvent) => {
+      if (!isMove.current) return
+      latestMousePosition.current = { x: event.clientX, y: event.clientY }
+      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current)
 
-        // Cancel previous frame to ensure only one update per frame
-        rafRef.current && cancelAnimationFrame(rafRef.current)
+      rafRef.current = requestAnimationFrame(() => {
+        rafRef.current = null
+        const previous = positionRef.current
+        const delta = {
+          x: previous.x + latestMousePosition.current.x - mousePosition.current.x,
+          y: previous.y + latestMousePosition.current.y - mousePosition.current.y
+        }
 
-        rafRef.current = requestAnimationFrame(() => {
-          const prev = positionRef.current
-          const delta = {
-            x: prev.x + latestMousePosition.current.x - mousePosition.current.x,
-            y: prev.y + latestMousePosition.current.y - mousePosition.current.y
-          }
+        if (isInRange(delta.x, minX, maxX)) mousePosition.current.x = latestMousePosition.current.x
+        if (isInRange(delta.y, minY, maxY)) mousePosition.current.y = latestMousePosition.current.y
 
-          const hasChanged = delta.x !== prev.x || delta.y !== prev.y
-
-          if (isInRange(delta.x, minX, maxX)) {
-            mousePosition.current.x = latestMousePosition.current.x
-          }
-          if (isInRange(delta.y, minY, maxY)) {
-            mousePosition.current.y = latestMousePosition.current.y
-          }
-          if (hasChanged) {
-            const x = clamp(delta.x, minX, maxX)
-            const y = clamp(delta.y, minY, maxY)
-            startTransition(() => {
-              positionRef.current = { x, y }
-              setPosition(fromInternal(x, y))
-            })
-          }
+        const next = { x: clamp(delta.x, minX, maxX), y: clamp(delta.y, minY, maxY) }
+        if (next.x === previous.x && next.y === previous.y) return
+        startTransition(() => {
+          positionRef.current = next
+          setPosition(next)
         })
-      }
+        onChangeRef.current?.(next)
+      })
     },
-    [minX, maxX, minY, maxY, reverse]
+    [minX, maxX, minY, maxY]
   )
 
   const handleEnd = useCallback(() => {
     isMove.current = false
     document.documentElement.style.cursor = ''
     document.documentElement.style.userSelect = ''
-    rafRef.current && cancelAnimationFrame(rafRef.current)
+    if (rafRef.current !== null) cancelAnimationFrame(rafRef.current)
+    rafRef.current = null
   }, [])
 
-  const handleStart = useCallback((e: MouseEvent) => {
-    const { clientX, clientY } = e
-    mousePosition.current = { x: clientX, y: clientY }
+  const handleStart = useCallback((event: MouseEvent) => {
+    mousePosition.current = { x: event.clientX, y: event.clientY }
     isMove.current = true
     document.documentElement.style.userSelect = 'none'
     document.documentElement.style.cursor = 'grab'
   }, [])
 
   const handleRef = useRef<HTMLElement | null>(null)
-
   const setRef = useCallback(
     (node: HTMLElement | null) => {
       if (handleRef.current) {
