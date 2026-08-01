@@ -17,7 +17,7 @@ See `proposal.md` for the product motivation and `specs/webrtc-runtime/spec.md` 
 
 - Adding notification settings, UI copy, permissions, public APIs, state owners, retries, caches, or dependencies.
 - Changing message delivery, persistence, history, projection, unread, barrage, Runtime, protocol, or peer behavior.
-- Changing notification title/body/icon, notification-click behavior, or any explicit user-initiated tab focus behavior after a notification exists.
+- Changing notification title/body/icon or using a later user-initiated click as an input to message eligibility.
 - Adding alternate notification implementations or browser-specific business policy.
 
 ## Decisions
@@ -40,7 +40,7 @@ The message context and current tab are reduced through the existing WebChat dom
 
 ### 4. Keep eligibility read-only with respect to tabs
 
-The request-time attention lookup is read-only. Neither the equal-domain suppression path nor the different-domain creation path updates tabs or windows. The existing click listeners remain separate and may preserve their current user-initiated behavior only after a notification has been created and the user interacts with it.
+The request-time attention lookup is read-only. Neither the equal-domain suppression path nor the different-domain creation path updates tabs or windows. Notification click handling remains a separate user-initiated request after a notification has been created and does not feed back into message eligibility.
 
 ### 5. Bind verification to observable boundaries
 

@@ -6,7 +6,7 @@ For each first-delivered remote text, the existing notification-enabled setting 
 
 For an admitted text, WebChat SHALL compare the text's WebChat domain with the WebChat domain of the single tab the user is currently viewing: the current highlighted tab in the focused browser window at evaluation time. Exact domain equality SHALL suppress the browser notification. Different domains, no focused browser window, no current highlighted tab, or no valid comparable current-tab domain SHALL create exactly one browser notification. A highlighted tab in another unfocused window SHALL NOT count as the tab the user is currently viewing.
 
-The highlighted tab SHALL be comparison input only. Evaluating, suppressing, or creating a notification SHALL NOT activate, highlight, focus, create, close, reload, navigate, or otherwise mutate a tab or window. Existing tab behavior initiated by the user's later interaction with a created notification SHALL remain unchanged.
+The highlighted tab SHALL be comparison input only. Evaluating, suppressing, or creating a notification SHALL NOT activate, highlight, focus, create, close, reload, navigate, or otherwise mutate a tab or window. A user's later interaction with a created notification SHALL be handled as a separate request and SHALL NOT alter this eligibility decision.
 
 Self-authored messages, history application, and duplicate delivery SHALL create no browser notification. A browser-notification failure SHALL remain request-local, SHALL NOT affect message persistence or presentation, and SHALL NOT prevent a later eligible message from creating its notification.
 

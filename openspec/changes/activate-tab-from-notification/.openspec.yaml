@@ -1,0 +1,4 @@
+schema: spec-driven
+created: 2026-08-02
+goal: Activate one existing matching WebChat tab when the user clicks a browser
+  notification, without creating a tab or tracking custom ordering state.

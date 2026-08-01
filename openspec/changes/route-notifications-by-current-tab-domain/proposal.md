@@ -9,7 +9,7 @@ Qualified remote messages need attention only when the user is not already viewi
 - Suppress the browser notification only when those domains are equal. When they differ, or no valid currently viewed tab domain exists, create exactly one browser notification.
 - Treat the highlighted tab only as comparison input. Notification eligibility does not activate, highlight, focus, create, reload, or otherwise mutate any tab or window.
 - Preserve zero notifications for self-authored messages, history application, duplicate delivery, a disabled notification switch, and non-matching messages under `Only @self`.
-- Preserve request-local notification failure isolation, later healthy notification delivery, and the existing user-initiated notification click behavior.
+- Preserve request-local notification failure isolation and later healthy notification delivery while keeping user-initiated notification clicks outside message eligibility evaluation.
 
 ## Capabilities
 
@@ -26,4 +26,4 @@ None.
 - Affected behavior: browser notification eligibility for delivered remote text in Chrome MV3 and Firefox MV2.
 - Affected implementation: the existing Notification domain/service boundary and its focused-window/current-tab lookup.
 - Affected verification: deterministic controls for the settings gates, current highlighted tab domain comparison, exactly-once notification creation, zero tab mutation, and request-local failure recovery.
-- Unchanged: peer protocol, Runtime networking, message persistence, message projection, public APIs, permissions, Options UI, notification content, notification-click behavior, dependencies, and stored data.
+- Unchanged: peer protocol, Runtime networking, message persistence, message projection, public APIs, permissions, Options UI, notification content, dependencies, and stored data.
