@@ -23,6 +23,7 @@ See `proposal.md` for motivation and `specs/webrtc-runtime/spec.md` for the comp
 - Adding another Domain, Extern, application root, portal root, event bus, persistence key, dependency, permission, public API, or host-page style owner.
 - Adding any media type other than the currently confirmed rendered message image.
 - Adding image upload, source rewriting, alternate fetching, crop, rotation, download, carousel, annotation, square placeholders, runtime measurement, `ResizeObserver`, or persistent preview state.
+- Calling `document.startViewTransition`, assigning `viewTransitionName`, participating in a host transition, styling a host transition pseudo-tree, or adding an experimental/scoped transition API branch.
 - Changing the WebChat shell, AppButton, Danmaku, notification, unread, Runtime, or page-scroll behavior.
 
 ## Decisions
@@ -69,15 +70,15 @@ Backdrop click without a drag, the close icon, Escape, and synchronized shell co
 
 The shell stays operable above the preview. Its ordinary message and control behavior remains independent except that collapsing the shell also closes its current preview.
 
-### 8. Treat View Transition as progressive motion
+### 8. Keep preview motion inside the existing WebChat surface
 
-When `document.startViewTransition` exists and reduced motion is not requested, the activating image and preview image receive one request-local shared transition identity for open or close. The identity is removed after settlement so multiple message images never retain conflicting transition names.
+When reduced motion is not requested, `MediaPreview` animates its own backdrop and current preview image for open and close within the existing WebChat Shadow/App surface. The activating inline image remains only the trigger and focus-restoration target; it receives no transition identity or temporary style. The shell, AppButton, and Danmaku retain their local layer order above the preview throughout the effect.
 
-Reduced motion, missing API, synchronous failure, or rejected transition takes the same state operation directly. Motion never owns preview state and cannot delay close cleanup or focus restoration.
+Preview state remains authoritative while local motion is in progress. Replacement, close, or another open settles the latest source and state exactly once without leaving another preview, temporary identity, or presentation owner. Reduced motion takes the same state operation without animation. No motion path calls a document-wide transition, joins an active host transition, captures a host element, mutates host transition styles, or delays close cleanup or focus restoration.
 
 ### 9. Verify behavior through current UI boundaries
 
-Focused component controls cover positive and zero aggregate likes, current-user add/remove behavior, and unchanged hates. Shared renderer controls cover both Markdown syntaxes, the message-content query owner, equal `70cqi` maximums, automatic aspect-preserving dimensions, sanitized source/alt preservation, keyboard activation, and the absence of runtime measurement state. `MediaPreview` controls cover composition ancestry, one owner, relative layers, `24px` fit, no implicit upscale, replacement, every close path, focus, zoom inputs, focal math, pan bounds, drag suppression, reset, resize, event cleanup, View Transition, reduced motion, and unsupported/rejected transition fallback.
+Focused component controls cover positive and zero aggregate likes, current-user add/remove behavior, and unchanged hates. Shared renderer controls cover both Markdown syntaxes, the message-content query owner, equal `70cqi` maximums, automatic aspect-preserving dimensions, sanitized source/alt preservation, keyboard activation, and the absence of runtime measurement state. `MediaPreview` controls cover composition ancestry, one owner, relative layers, `24px` fit, no implicit upscale, replacement, every close path, focus, zoom inputs, focal math, pan bounds, drag suppression, reset, resize, event cleanup, local motion, interruption, reduced motion, and host-transition isolation.
 
 Browser-mode coverage verifies rendered geometry, input behavior, focus, and computed layer order. Structural controls exclude a second root/portal, Domain/Extern/persistence/dependency, duplicated image policy, and host `body` mutation.
 
@@ -87,5 +88,5 @@ Browser-mode coverage verifies rendered geometry, input behavior, focus, and com
 - [The WebChat shell can overlap the centered preview] -> This is the confirmed layer result; the shell remains usable and can replace or close the preview without moving its viewport-centered image.
 - [Zoom gestures can leak into the host page] -> Consume only active preview wheel/pointer/touch gestures with non-passive handling where required, and never install a body scroll lock.
 - [A pan release can look like a backdrop click] -> Track drag intent under pointer capture and suppress only that settlement click.
-- [Several thumbnails need shared-element motion] -> Assign a request-local identity only to the current activator and preview, then remove it after transition settlement.
-- [View Transition support differs by browser] -> The direct state operation is authoritative and covers unsupported, reduced-motion, synchronous-failure, and rejected-transition paths.
+- [Local motion can be interrupted by replacement or close] -> The latest preview state is authoritative, and the sole component cancels or supersedes only its own presentation effect without retaining another owner or marker.
+- [A host page can run an unrelated transition] -> WebChat never joins or controls it; preview motion remains inside the extension-owned surface and preserves the local layer order.

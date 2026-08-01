@@ -116,20 +116,26 @@ Preview drag SHALL use pointer capture or equivalent local ownership so releasin
 - **WHEN** the preview consumes a zoom or pan gesture
 - **THEN** only that preview interaction SHALL be intercepted and WebChat SHALL NOT write scroll-lock, overflow, touch-action, or other preview state to the host document or `body`
 
-### Requirement: Preview motion has an immediate accessibility fallback
+### Requirement: Preview motion remains inside WebChat ownership
 
-Opening and closing a message image preview SHALL use one shared-element View Transition when the API is available and the user has not requested reduced motion. Only the activating image and the current preview image SHALL participate in that transition.
+When the user has not requested reduced motion, opening and closing a message image preview SHALL use a local transition limited to the `MediaPreview`-owned backdrop and current preview image inside the existing WebChat Shadow/App surface. The activating inline image SHALL remain only the trigger and focus-restoration target. It SHALL NOT receive a temporary transition identity or style.
 
-When View Transition is unavailable, rejects, or the user requests reduced motion, the same open or close state change SHALL complete immediately without an animation, duplicate preview, stale transition name, delayed focus restoration, or failed interaction.
+Motion SHALL NOT call `document.startViewTransition`, assign `viewTransitionName`, capture the document root or a host element, participate in or skip an active host transition, style a host transition pseudo-tree, or create another preview state owner. Replacement, close, and another open SHALL leave the latest preview source and state settled exactly once without a duplicate preview or stale presentation marker. When reduced motion is requested, the same open or close state change SHALL complete without animation. Motion SHALL NOT delay close cleanup or focus restoration.
 
-#### Scenario: Supported motion uses one shared transition
+#### Scenario: Motion stays local to MediaPreview
 
-- **GIVEN** View Transition is available and reduced motion is not requested
+- **GIVEN** reduced motion is not requested and a host page has its own named element or active transition
 - **WHEN** the user opens or closes a message image
-- **THEN** the activating image and the one preview image SHALL form one shared transition while all preview state changes settle exactly once
+- **THEN** only the `MediaPreview` backdrop and current preview image SHALL animate inside the WebChat-owned surface, the shell layer SHALL remain above them, and the host transition and host element SHALL remain untouched
 
-#### Scenario: Reduced motion and unsupported APIs complete immediately
+#### Scenario: Interrupted local motion keeps only the latest state
 
-- **GIVEN** reduced motion is requested or View Transition is unavailable or rejects
+- **GIVEN** local preview motion is in progress
+- **WHEN** another image replaces the source or the preview closes
+- **THEN** the latest source or closed state SHALL settle exactly once with no duplicate preview, temporary identity, stale presentation marker, delayed cleanup, or host-transition effect
+
+#### Scenario: Reduced motion completes without animation
+
+- **GIVEN** reduced motion is requested
 - **WHEN** the user opens or closes a message image
-- **THEN** the preview SHALL reach the same final open or closed state immediately with no duplicate owner, stale transition marker, or blocked focus restoration
+- **THEN** the preview SHALL reach the same final open or closed state without animation, duplicate ownership, delayed cleanup, or blocked focus restoration
