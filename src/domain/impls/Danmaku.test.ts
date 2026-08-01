@@ -1,6 +1,5 @@
 import type { ReactElement } from 'react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { EVENT } from '@/constants/event'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const fixture = vi.hoisted(() => ({
   options: null as null | { plugin: { $createNode: (manager: { node?: Element; data: unknown }) => void } },
@@ -31,8 +30,9 @@ vi.mock('react-dom/client', () => ({
 
 import { Danmaku } from './Danmaku'
 
-const renderMessage = () => {
-  new Danmaku()
+const renderMessage = (onOpen: () => void) => {
+  const danmaku = new Danmaku()
+  danmaku.mount(document.createElement('div'), onOpen)
   fixture.options!.plugin.$createNode({ node: document.createElement('div'), data: {} })
   return fixture.rendered!
 }
@@ -41,15 +41,19 @@ beforeEach(() => {
   fixture.rendered = null
 })
 
-describe('Danmaku AppStatus opening', () => {
-  it('emits one synchronous user open intent without owning the AppStatus transition', async () => {
-    const onOpen = vi.fn()
-    addEventListener(EVENT.APP_OPEN, onOpen, { once: true })
+afterEach(() => {
+  vi.restoreAllMocks()
+})
 
-    const result = renderMessage().props.onClick()
-    if (result instanceof Promise) await result
+describe('Danmaku AppStatus opening', () => {
+  it('routes one synchronous click through its private mount callback', () => {
+    const onOpen = vi.fn()
+    const dispatchEvent = vi.spyOn(window, 'dispatchEvent')
+
+    const result = renderMessage(onOpen).props.onClick()
 
     expect(result).toBeUndefined()
     expect(onOpen).toHaveBeenCalledOnce()
+    expect(dispatchEvent).not.toHaveBeenCalled()
   })
 })

@@ -1,7 +1,6 @@
 import { Remesh } from 'remesh'
-import { fromEvent, map } from 'rxjs'
+import { map } from 'rxjs'
 import { APP_OPEN_STORAGE_KEY, APP_POSITION_STORAGE_KEY, APP_UNREAD_STORAGE_KEY } from '@/constants/storage'
-import { EVENT } from '@/constants/event'
 import { LocalStorageExtern } from '@/domain/externs/Storage'
 import StorageEffect from '@/domain/modules/StorageEffect'
 import ChatRoomDomain from '@/domain/ChatRoom'
@@ -260,11 +259,6 @@ const AppStatusDomain = Remesh.domain({
       .set(SyncUnreadToStorageEvent)
       .get<boolean>((value) => HydrateUnreadCommand(value ?? defaultStatus.unread))
       .watch<boolean>((value) => SynchronizeUnreadCommand(value ?? defaultStatus.unread))
-
-    domain.effect({
-      name: 'AppStatus.OnOpenIntentEffect',
-      impl: () => fromEvent(window, EVENT.APP_OPEN).pipe(map(() => UpdateOpenCommand(true)))
-    })
 
     domain.effect({
       name: 'AppStatus.OnTextMessageEffect',

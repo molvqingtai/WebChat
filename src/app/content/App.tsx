@@ -52,11 +52,18 @@ const App = () => {
   }, [initializationReady, chatRoomJoinIsFinished, worldRoomJoinIsFinished, send, worldRoomDomain.command])
 
   useEffect(() => {
-    if (danmakuIsEnabled) send(danmakuDomain.command.MountCommand(danmakuContainerRef.current!))
+    if (danmakuIsEnabled) {
+      send(
+        danmakuDomain.command.MountCommand({
+          container: danmakuContainerRef.current!,
+          onOpen: () => send(appStatusDomain.command.UpdateOpenCommand(true))
+        })
+      )
+    }
     return () => {
       if (danmakuIsEnabled) send(danmakuDomain.command.UnmountCommand())
     }
-  }, [danmakuIsEnabled, send, danmakuDomain.command])
+  }, [danmakuIsEnabled, send, appStatusDomain.command, danmakuDomain.command])
 
   const notUserInfo = userInfoLoadFinished && !userInfoSetFinished
   const themeMode =
