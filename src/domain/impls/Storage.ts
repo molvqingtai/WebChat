@@ -12,7 +12,6 @@ import {
 import webExtensionDriver from '@/utils/webExtensionDriver'
 import { withPreparationLock, type PreparationLockCoordinator } from '@/utils/withPreparationLock'
 import type { Storage } from '@/domain/externs/Storage'
-import { EVENT } from '@/constants/event'
 
 export interface ConfigurationVersionStorage {
   readVersion(): Promise<{ readonly exists: boolean; readonly value: unknown }>
@@ -93,20 +92,7 @@ export const prepareLocalConfigurationStorage = (coordinator?: PreparationLockCo
 export const LocalStorageImpl = LocalStorageExtern.impl({
   get: localStorage.getItem,
   set: localStorage.setItem,
-  watch: async (callback) => {
-    const unwatch = await localStorage.watch(callback)
-
-    /**
-     * The storage event does not fire in the same browsing context, so
-     * DanmakuMessage clicks provide the local synchronization signal.
-     * @see https://developer.mozilla.org/en-US/docs/Web/API/Window/storage_event
-     */
-    addEventListener(EVENT.APP_OPEN, callback)
-    return async () => {
-      removeEventListener(EVENT.APP_OPEN, callback)
-      return unwatch()
-    }
-  }
+  watch: localStorage.watch as Storage['watch']
 })
 
 export const BrowserSyncStorageImpl = BrowserSyncStorageExtern.impl({

@@ -11,6 +11,7 @@ import { MESSAGE_TYPE, REACTION_TYPE, type ChatMessage } from '@/protocol/ChatRo
 import type { ChatSession } from '@/protocol/Session'
 import UserInfoDomain, { type UserInfo } from '@/domain/UserInfo'
 import { MESSAGE_RECORD_TYPE, type TextMessageRecord } from '@/domain/Message'
+import { EVENT } from '@/constants/event'
 
 const SELF: UserInfo = {
   id: 'local-user',
@@ -330,6 +331,31 @@ describe('AppStatus shared domain status', () => {
     expect(domainA.writes).toEqual([{ tabId: 'B', key: APP_POSITION_STORAGE_KEY, value: { x: -180, y: 46 } }])
     expect(statusOf(tabs.C)).toEqual({ open: true, unread: false, position: { x: -180, y: 46 } })
     expect(statusOf(tabs.D)).toEqual({ open: false, unread: false, position: { x: -70, y: 30 } })
+  })
+
+  it('owns the Danmaku open intent and persists the open plus read transition', async () => {
+    const shared = createSharedStatusStorage({ open: false, unread: true, position: { x: 50, y: 22 } })
+    const fixture = createFixture({ storage: shared.createTab('A') })
+    await prepareDelivery(fixture)
+    shared.clearWrites()
+
+    dispatchEvent(new CustomEvent(EVENT.APP_OPEN))
+
+    await vi.waitFor(() => expect(statusOf(fixture)).toEqual({ open: true, unread: false, position: { x: 50, y: 22 } }))
+    expect(shared.writes).toEqual(
+      expect.arrayContaining([
+        { tabId: 'A', key: APP_OPEN_STORAGE_KEY, value: true },
+        { tabId: 'A', key: APP_UNREAD_STORAGE_KEY, value: false }
+      ])
+    )
+    expect(shared.writes).toHaveLength(2)
+
+    shared.clearWrites()
+    dispatchEvent(new CustomEvent(EVENT.APP_OPEN))
+    await settle()
+
+    expect(statusOf(fixture)).toEqual({ open: true, unread: false, position: { x: 50, y: 22 } })
+    expect(shared.writes).toEqual([])
   })
 
   it.each(['A', 'B', 'C'] as const)(
