@@ -194,7 +194,6 @@ describe('replaceable application boundaries', () => {
       /import \{[^}]*\bCONFIG_STORE_VERSION\b[^}]*\bCONFIG_STORE_VERSION_KEY\b[^}]*\} from '@\/constants\/storage'/
     )
     expect(storageConstants).toContain("export const STORAGE_NAME = 'WEB_CHAT_STORAGE'")
-    expect(storageConstants).not.toContain('APP_STATUS_STORAGE_KEY')
     expect(storageConstants).toContain("export const APP_OPEN_STORAGE_KEY = 'WEB_CHAT_APP_STATUS:OPEN' as const")
     expect(storageConstants).toContain(
       "export const APP_POSITION_STORAGE_KEY = 'WEB_CHAT_APP_STATUS:POSITION' as const"

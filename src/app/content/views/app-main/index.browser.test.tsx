@@ -50,7 +50,6 @@ vi.mock('@/domain/MessageList', () => ({
 }))
 vi.mock('@/domain/Danmaku', () => ({
   default: () => ({
-    query: { IsEnabledQuery: () => 'danmaku-enabled' },
     command: { MountCommand: () => 'mount-danmaku', UnmountCommand: () => 'unmount-danmaku' }
   })
 }))

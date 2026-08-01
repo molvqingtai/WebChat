@@ -18,9 +18,7 @@ vi.mock('remesh-react', () => ({
       case 'user-load-finished':
         return true
       case 'user-info':
-        return null
-      case 'danmaku-enabled':
-        return fixture.danmakuEnabled
+        return { danmakuEnabled: fixture.danmakuEnabled, themeMode: 'system' }
       default:
         return false
     }
@@ -58,7 +56,6 @@ vi.mock('@/domain/MessageList', () => ({
 }))
 vi.mock('@/domain/Danmaku', () => ({
   default: () => ({
-    query: { IsEnabledQuery: () => 'danmaku-enabled' },
     command: {
       MountCommand: ({ onOpen }: { container: HTMLElement; onOpen: () => void }) => {
         fixture.onDanmakuClick = onOpen

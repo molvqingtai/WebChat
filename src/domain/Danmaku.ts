@@ -11,11 +11,6 @@ const DanmakuDomain = Remesh.domain({
     const userInfoDomain = domain.getDomain(UserInfoDomain())
     const chatRoomDomain = domain.getDomain(ChatRoomDomain())
 
-    const IsEnabledQuery = domain.query({
-      name: 'Danmaku.IsEnabledQuery',
-      impl: ({ get }) => get(userInfoDomain.query.UserInfoQuery())?.danmakuEnabled ?? false
-    })
-
     const MountCommand = domain.command({
       name: 'Danmaku.MountCommand',
       impl: (_, { container, onOpen }: { container: HTMLElement; onOpen: () => void }) => {
@@ -40,7 +35,7 @@ const DanmakuDomain = Remesh.domain({
 
         const onMessage$ = merge(sendTextMessage$, onTextMessage$).pipe(
           map((message) => {
-            const danmakuEnabled = get(IsEnabledQuery())
+            const danmakuEnabled = get(userInfoDomain.query.UserInfoQuery())?.danmakuEnabled ?? false
             if (danmakuEnabled) danmakuExtern.push(message)
             return null
           })
@@ -50,9 +45,6 @@ const DanmakuDomain = Remesh.domain({
     })
 
     return {
-      query: {
-        IsEnabledQuery
-      },
       command: {
         MountCommand,
         UnmountCommand
