@@ -1,8 +1,8 @@
 ## ADDED Requirements
 
-### Requirement: AppButton status is shared by domain and projected per tab
+### Requirement: AppButton status is synchronized by domain
 
-Each WebChat domain SHALL own one shared AppButton status containing its position and unread-attention truth. Every same-domain tab SHALL observe the same position and unread values, while tabs from another domain SHALL remain isolated. Expanded or collapsed shell state SHALL belong to each physical tab independently. The same physical tab SHALL retain its own shell state across reload without adopting a same-domain sibling tab's shell state.
+Each WebChat domain SHALL own one shared AppButton status containing `open`, position, and unread attention. Every same-domain tab SHALL observe the same values, while tabs from another domain SHALL remain isolated. A tab that hydrates SHALL adopt the current shared status without writing hydration back into persistence. The shared status SHALL always satisfy `open => !unread`.
 
 The shared position SHALL consist of a horizontal anchor, the AppButton center's distance from that selected viewport edge, and the launcher bottom edge's distance from the viewport bottom. A center left of the viewport midpoint SHALL use a left-bottom anchor with a left distance. A center at or right of the midpoint SHALL use a right-bottom anchor with a right distance. The bottom distance SHALL apply in both halves.
 
@@ -12,21 +12,21 @@ Dragging SHALL begin from the existing hand control, follow the latest pointer p
 
 After initialization, only a user drag SHALL change the shared position. Same-domain tabs SHALL observe that field update.
 
-Position and unread updates SHALL be field-scoped within the shared status. A position write SHALL preserve the latest unread value, and an unread mark or clear SHALL preserve the latest position. A tab-local shell write SHALL persist neither shared field, and a shared write SHALL NOT toggle any tab's shell state.
+Updates SHALL be field-scoped within the shared status. A position write SHALL preserve the latest open and unread values. An unread mark SHALL preserve open and position. A collapse SHALL preserve position and unread. Opening SHALL intentionally set `open` and clear unread together while preserving position. Delayed hydration and unrelated field updates SHALL NOT overwrite current values in other fields.
 
-Each first-delivered remote text SHALL mark its WebChat domain as having unread attention exactly once, regardless of which same-domain tab wins atomic durable insertion and regardless of whether that winning tab is expanded. Self-authored text, history application, duplicate delivery, reactions, and system notices SHALL NOT mark unread attention. Browser-notification enabled and type settings SHALL NOT participate in unread eligibility.
+Each first-delivered remote text SHALL mark its WebChat domain as having unread attention exactly once when the shared domain is collapsed, regardless of which same-domain tab wins atomic durable insertion. A remote text delivered while the shared domain is expanded SHALL NOT mark unread. Self-authored text, history application, duplicate delivery, reactions, and system notices SHALL NOT mark unread attention. Browser-window focus, active/highlighted tab, and browser-notification enabled/type settings SHALL NOT participate in unread eligibility or clearing. Highlighted-tab comparison SHALL remain exclusive to browser-notification eligibility.
 
-A tab SHALL show the AppButton unread indicator if and only if its own panel is collapsed and its domain has unread attention. An already expanded tab SHALL show no indicator and SHALL NOT clear domain attention merely by remaining expanded, hydrating, becoming focused, or observing synchronization.
+A user-driven transition from collapsed to expanded SHALL set every same-domain tab to expanded and clear the domain's unread attention as one update. A user-driven transition from expanded to collapsed SHALL set every same-domain tab to collapsed and SHALL NOT create unread attention. Focus, hydration, and synchronization alone SHALL perform neither transition. A later first-delivered remote text while collapsed SHALL mark the domain unread again. Toggling one domain SHALL NOT affect another domain.
 
-A user-driven transition from collapsed to expanded SHALL mark that WebChat domain read and clear its unread attention from every same-domain tab. Collapsing a tab SHALL NOT clear attention. Clearing one domain SHALL NOT affect another domain. A later first-delivered remote text SHALL mark its domain unread again. Delayed hydration and unrelated shell or position updates SHALL NOT overwrite a newer domain unread mark or clear.
+A same-domain AppButton SHALL show the unread indicator if and only if the shared status satisfies `!open && unread`. Every same-domain tab SHALL therefore show the same indicator visibility, and every expanded same-domain tab SHALL show none.
 
 The visible AppButton indicator SHALL be count-free and SHALL NOT resize the button. It SHALL occupy the top-right `size-5` container at `-top-1 -right-1`, with a full-size fully rounded orange-400 ping at 75% opacity and a fully rounded orange-500 `size-3` center. Its presence SHALL enter and exit through a 0.1-second opacity transition.
 
-#### Scenario: Same-domain tabs share position but not open state
+#### Scenario: Same-domain tabs synchronize the complete status
 
-- **GIVEN** tabs A, B, and C belong to domain A, tab D belongs to domain B, and their panels have independent expanded or collapsed states
-- **WHEN** the user drags the AppButton in tab A to a new position
-- **THEN** A, B, and C SHALL observe the same shared position in their own viewports, D SHALL remain unchanged, and no panel's expanded or collapsed state SHALL change
+- **GIVEN** tabs A, B, and C belong to domain A and tab D belongs to domain B
+- **WHEN** open, position, or unread changes through any domain-A tab
+- **THEN** A, B, and C SHALL observe the same complete AppButton status in their own viewports and D SHALL remain unchanged
 
 #### Scenario: Left-half position uses the left-bottom anchor
 
@@ -54,50 +54,50 @@ The visible AppButton indicator SHALL be count-free and SHALL NOT resize the but
 
 #### Scenario: Shared field updates cannot clobber each other
 
-- **GIVEN** same-domain tabs observe a position and unread value
-- **WHEN** position and unread updates occur from different tabs or after delayed hydration
-- **THEN** each update SHALL change only its addressed field, the latest value of the other shared field SHALL remain authoritative, and no tab's expanded or collapsed state SHALL change
+- **GIVEN** same-domain tabs observe current open, position, and unread values
+- **WHEN** field updates occur from different tabs or one tab completes delayed hydration
+- **THEN** each update SHALL preserve every unaddressed current field, opening SHALL clear unread while preserving position, and the result SHALL satisfy `open => !unread`
 
-#### Scenario: Expanded insertion winner does not consume sibling attention
+#### Scenario: Collapsed delivery marks every same-domain AppButton
 
-- **GIVEN** tab A is expanded, tabs B and C are collapsed on domain A, and tab D belongs to domain B
-- **WHEN** a remote domain-A text is first-delivered and tab A wins atomic durable insertion
-- **THEN** B and C SHALL each show the flashing AppButton indicator, A SHALL show none, D SHALL remain unchanged, and no tab's expanded/collapsed state SHALL change
+- **GIVEN** tabs A, B, and C are collapsed on domain A and tab D belongs to domain B
+- **WHEN** a remote domain-A text is first-delivered and A, B, or C wins atomic durable insertion
+- **THEN** A, B, and C SHALL each show the flashing AppButton indicator, D SHALL remain unchanged, and no domain's open state SHALL change
 
-#### Scenario: Any same-domain insertion winner produces the same projection
+#### Scenario: Expanded delivery remains read
 
-- **GIVEN** tab A is expanded and tabs B and C are collapsed on the same domain
-- **WHEN** one eligible remote text is first-delivered and A, B, or C wins atomic durable insertion
-- **THEN** the domain unread result SHALL be identical for every winner: only B and C SHALL show the indicator
+- **GIVEN** tabs A, B, and C are expanded on the same domain
+- **WHEN** a remote domain text is first-delivered
+- **THEN** the domain SHALL remain read and A, B, and C SHALL remain expanded without an indicator
 
-#### Scenario: Expanding one collapsed tab reads the domain
+#### Scenario: Opening one tab opens and reads the domain
 
-- **GIVEN** tabs B and C show unread indicators for domain A while tab A is already expanded
-- **WHEN** the user expands tab C
-- **THEN** domain A SHALL be marked read, B and C SHALL both show no indicator, A SHALL remain expanded without an indicator, and every other domain SHALL remain unchanged
+- **GIVEN** collapsed tabs A, B, and C show unread indicators for domain A
+- **WHEN** the user opens WebChat through tab C
+- **THEN** A, B, and C SHALL all become expanded, domain A SHALL be marked read, every indicator SHALL disappear, and every other domain SHALL remain unchanged
 
-#### Scenario: Existing expanded tab is not a surrogate read action
+#### Scenario: Collapse synchronizes and later delivery marks again
 
-- **GIVEN** tab A is already expanded while same-domain tabs B and C are collapsed
-- **WHEN** an eligible remote text marks domain A unread and tab A remains expanded
-- **THEN** A SHALL show no indicator, B and C SHALL keep their indicators, and focus, hydration, or synchronization in A SHALL NOT clear them
-
-#### Scenario: Later remote text marks attention again after reading
-
-- **GIVEN** a user expansion has cleared domain A unread attention
-- **WHEN** a later remote domain-A text is first-delivered
-- **THEN** every collapsed domain-A tab SHALL show one indicator again and expanded domain-A tabs SHALL show none
+- **GIVEN** tabs A, B, and C are expanded and read on domain A
+- **WHEN** the user collapses WebChat through tab A and a later remote domain-A text is first-delivered
+- **THEN** A, B, and C SHALL first collapse together and then each show one unread indicator
 
 #### Scenario: Non-delivery paths do not mark unread
 
 - **WHEN** a text is self-authored, applied from history, or a duplicate delivery, or the inbound value is a reaction or system notice
 - **THEN** no domain unread attention SHALL be added and no AppButton indicator SHALL appear because of that value
 
-#### Scenario: Notification settings do not gate unread attention
+#### Scenario: Notification settings do not gate collapsed unread attention
 
-- **GIVEN** browser notifications are disabled or configured as `Only @self`
+- **GIVEN** a domain is collapsed and browser notifications are disabled or configured as `Only @self`
 - **WHEN** a first-delivered remote text is otherwise ineligible for a browser notification
 - **THEN** every collapsed tab of that text's domain SHALL still show the unread indicator and other domains SHALL remain unchanged
+
+#### Scenario: Highlighted tab does not partition unread attention
+
+- **GIVEN** domain A is collapsed and any same-domain or other-domain tab is active or highlighted in the focused browser window
+- **WHEN** a remote domain-A text is first-delivered
+- **THEN** every domain-A AppButton SHALL show the same shared unread indicator, and browser focus or active/highlighted status SHALL NOT suppress, redirect, or clear it
 
 #### Scenario: Multiple texts retain one count-free indicator
 
@@ -107,9 +107,9 @@ The visible AppButton indicator SHALL be count-free and SHALL NOT resize the but
 
 #### Scenario: Unrelated status updates cannot clobber shared facts
 
-- **GIVEN** one same-domain tab has observed a newer position, unread mark, or read clear
-- **WHEN** another tab completes delayed hydration or writes its shell state or the other shared field
-- **THEN** each newer shared fact SHALL remain authoritative and no sibling tab's expanded/collapsed state SHALL change
+- **GIVEN** one same-domain tab has observed a newer open, position, unread mark, or read clear
+- **WHEN** another tab completes delayed hydration or writes another field
+- **THEN** each current shared fact SHALL remain authoritative and every same-domain tab SHALL retain the same complete status
 
 #### Scenario: Indicator uses the fixed visual result
 

@@ -1,4 +1,4 @@
 schema: spec-driven
 created: 2026-08-01
-goal: Share each WebChat domain's AppButton position and unread attention while
-  keeping every tab's expanded or collapsed state independent.
+goal: Synchronize open, position, and unread status across every same-domain
+  AppButton with edge-relative placement and one shared attention result.
