@@ -45,7 +45,9 @@ const [chromeHost, chromeContent, firefoxContent] = await Promise.all([
   Promise.all(firefoxContentEntries.map((entry) => readFile(join(firefoxRoot, entry), 'utf8')))
 ])
 assert(!chromeHost.includes('tabs.query'), 'Chrome Offscreen host must not contain tabs.query')
-assert(firefoxBackground.includes('tabs.query'), 'Firefox background provider must retain its tabs-capable route')
+for (const marker of ['this.tabs.get', 'this.tabs.sendMessage']) {
+  assert(firefoxBackground.includes(marker), `Firefox background provider must retain ${marker}`)
+}
 for (const relayMarker of ['Dropped Offscreen Runtime relay:', 'untrusted-source', 'target-mismatch']) {
   assert(
     !firefoxBackground.includes(relayMarker),
