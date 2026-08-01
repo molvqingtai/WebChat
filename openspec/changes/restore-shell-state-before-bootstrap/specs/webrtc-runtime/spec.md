@@ -6,7 +6,7 @@ After the content script obtains its configured DOM anchor, WebChat SHALL mount 
 
 Pending, rejected, timed-out, canceled, or unavailable application initialization SHALL NOT skip the shell-state read, clear the saved choice, overwrite it with the default, or prevent a new shell choice from being persisted. Initialization outcome MAY gate only the capabilities that depend on it. Restoring a saved expanded state SHALL NOT count as automatic opening; when no saved state exists, the existing default collapsed state SHALL remain authoritative.
 
-The mounted root and `App` SHALL own exactly one current hydration and persistence lifecycle. Retry, dependency recovery, and ready capability activation SHALL reuse that same `AppStatus` state and SHALL NOT create another storage read owner, persistence watcher, state mirror, root, or shell effect. Existing storage key, record shape, version, and the semantics of other stored status fields SHALL remain unchanged.
+`AppStatusDomain` SHALL own one current aggregate and its three field-scoped hydration and persistence effects within the mounted root. Retry, dependency recovery, and ready capability activation SHALL reuse that same `AppStatus` truth and SHALL NOT create another storage read owner, persistence watcher, state mirror, root, or shell effect. Open SHALL persist through `APP_OPEN_STORAGE_KEY = WEB_CHAT_APP_STATUS:OPEN`, position through `APP_POSITION_STORAGE_KEY = WEB_CHAT_APP_STATUS:POSITION`, and boolean unread attention through `APP_UNREAD_STORAGE_KEY = WEB_CHAT_APP_STATUS:UNREAD`.
 
 A user expansion or collapse accepted before hydration settles SHALL be newer than the pending stored snapshot. The accepted choice SHALL remain visible, SHALL be persisted through the shell-owned lifecycle, and SHALL NOT be overwritten by late hydration. A result from a superseded shell or document generation SHALL NOT mutate or repersist the current shell. Initialization readiness, failure, Retry, and late settlement SHALL never independently change expanded/collapsed state.
 
@@ -30,7 +30,7 @@ A user expansion or collapse accepted before hydration settles SHALL be newer th
 
 #### Scenario: Missing persisted state keeps the existing default
 
-- **GIVEN** no local shell-state record exists for the current page context
+- **GIVEN** no persisted open value exists for the current page context
 - **WHEN** shell hydration completes
 - **THEN** the existing default collapsed state SHALL remain in effect without changing initialization operation, feedback, or Refresh eligibility
 
@@ -54,9 +54,9 @@ A user expansion or collapse accepted before hydration settles SHALL be newer th
 
 ### Requirement: AppStatusDomain is the single app-status owner
 
-`AppStatusDomain` SHALL be the one Remesh owner for persisted `open`, `unread`, and `position`; non-persisted initialization phase `connecting | unavailable | ready`; the initialization Retry command and event; and incoming-message unread processing. Only `open`, `unread`, and `position` SHALL enter the AppStatus storage record.
+`AppStatusDomain` SHALL be the one Remesh owner for the aggregate `{ open, position, unread }` business truth; non-persisted initialization phase `connecting | unavailable | ready`; the initialization Retry command and event; and incoming-message unread processing. Open, position, and boolean unread attention SHALL persist independently through `APP_OPEN_STORAGE_KEY`, `APP_POSITION_STORAGE_KEY`, and `APP_UNREAD_STORAGE_KEY`. Each field-scoped write SHALL preserve both unaddressed current fields, while opening SHALL intentionally set open and clear unread together.
 
-The unread effect SHALL consume ChatRoom text-message events and current UserInfo through their Domain boundaries. It SHALL increment unread exactly once when the panel is closed and the author is not the current user. It SHALL not increment for an open panel or a self-authored message.
+The unread effect SHALL consume ChatRoom text-message events and current UserInfo through their Domain boundaries. It SHALL set boolean unread attention to true when the panel is closed and the author is not the current user. Additional eligible messages SHALL retain the same true attention state rather than form a count. It SHALL not mark attention for an open panel or a self-authored message.
 
 `AppStatusDomain` SHALL expose only queries, commands, and events used by production consumers. Hydration, persistence, and unread mutation actions plus storage synchronization events SHALL remain file-local, together with internal state defaults and effect identifiers. No module member SHALL be exported solely for tests. Regression controls for AppStatus SHALL drive the production public Domain and storage extern boundaries and assert public projections without importing internal actions or state.
 
@@ -84,12 +84,12 @@ The root `RemeshScope` SHALL mount exactly `NotificationDomain()` and `AppFeedba
 
 - **GIVEN** the panel is closed and `AppStatusDomain` observes an incoming text message
 - **WHEN** the author differs from the current user
-- **THEN** the same Domain SHALL increment its unread state exactly once and persist the updated AppStatus record through its one storage path
+- **THEN** the same Domain SHALL set its boolean unread attention to true through `APP_UNREAD_STORAGE_KEY`, preserve the current open and position fields, and expose one count-free attention result
 
 #### Scenario: Unread exclusions remain exact
 
 - **WHEN** the panel is open or the text author is the current user
-- **THEN** `AppStatusDomain` SHALL not increment unread
+- **THEN** `AppStatusDomain` SHALL not mark unread attention
 
 #### Scenario: Consumers share one status authority
 

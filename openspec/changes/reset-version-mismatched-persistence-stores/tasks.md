@@ -5,7 +5,7 @@
 - [x] 1.1 Move configurable `MESSAGE_STORE_VERSION = 2` into `src/constants/storage.ts` without advancing it for the initial reset lifecycle and without renaming any public persistence API.
 - [x] 1.2 Add configurable `CONFIG_STORE_VERSION = 1` and private `CONFIG_STORE_VERSION_KEY` in `src/constants/storage.ts`, with scoped completion records for the extension-wide sync configuration scope and each origin-local WebChat configuration scope.
 - [x] 1.3 Keep extension/package/wire versions outside both persistence decisions.
-- [x] 1.4 Keep `STORAGE_NAME`, `APP_STATUS_STORAGE_KEY`, and `USER_INFO_STORAGE_KEY` in `src/constants/storage.ts`; use exact direct `STORAGE_NAME` as the canonical IndexedDB name, while `${STORAGE_NAME}:` remains the separate localStorage configuration prefix.
+- [x] 1.4 Keep `STORAGE_NAME`, `APP_OPEN_STORAGE_KEY`, `APP_POSITION_STORAGE_KEY`, `APP_UNREAD_STORAGE_KEY`, and `USER_INFO_STORAGE_KEY` in `src/constants/storage.ts`; use exact direct `STORAGE_NAME` as the canonical IndexedDB name, while `${STORAGE_NAME}:` remains the separate localStorage configuration prefix.
 - [x] 1.5 Keep every non-target identity outside production persistence logic: no constant/construction, lookup, branch, open/read, migration/conversion/export/copy, clear/delete, error/retry, readiness, or completion path; encode no message or origin suffix in the target name.
 
 ## 2. Message Store Reset
@@ -18,7 +18,7 @@
 ## 3. Configuration Store Reset
 
 - [x] 3.1 Establish missing completion values without clearing pre-version data and preserve all configuration on strict target equality.
-- [x] 3.2 Clear the complete current-origin `${STORAGE_NAME}:` local namespace or extension-wide `browser.storage.sync` scope on any existing non-equal completion value, then record target completion before ordinary writes.
+- [x] 3.2 Clear version-managed values in the current-origin `${STORAGE_NAME}:` local namespace while preserving all three AppStatus field keys, or clear the extension-wide `browser.storage.sync` scope, on any existing non-equal completion value; then record target completion before ordinary writes.
 - [x] 3.3 Eagerly await the extension-wide check from `runtime.onInstalled`; recheck it from startup as an interruption fallback and lazily gate each origin-local scope during content injection.
 - [x] 3.4 Serialize concurrent checks per physical scope so already-current data is never cleared twice and a successful scope is not repeated because another scope failed.
 
@@ -31,8 +31,8 @@
 ## 5. Regression Matrix
 
 - [x] 5.1 Add deterministic message-store coverage for absence baseline, same-version preservation, adjacent/skipped/reverse mismatch, complete residue deletion, blocked/error paths, pre/post-delete interruption, retry, recreation, and concurrent no-double-reset behavior.
-- [x] 5.2 Add deterministic configuration coverage for missing-marker baseline with existing data, same-version preservation, adjacent/skipped/reverse/malformed mismatch, extension-sync and multi-origin local scopes, failure/retry, interruption, and concurrency.
-- [x] 5.3 Update cross-family and isolation sentinels proving message/config independence, other-origin laziness, host localStorage namespace isolation, generated non-target IndexedDB preservation, and browser-area preservation.
+- [x] 5.2 Add deterministic configuration coverage for missing-marker baseline with existing data, same-version preservation, adjacent/skipped/reverse/malformed mismatch, extension-sync and multi-origin local scopes, all three preserved AppStatus field keys, failure/retry, interruption, and concurrency.
+- [x] 5.3 Update cross-family and isolation sentinels proving message/config independence, AppStatus field preservation, other-origin laziness, host localStorage namespace isolation, generated non-target IndexedDB preservation, and browser-area preservation.
 - [x] 5.4 Add static/startup guards rejecting package-version ownership, broad startup clearing, public API widening, user-visible migration feedback, and application access before preparation.
 - [x] 5.5 Update deterministic exact-target-name regressions to direct `STORAGE_NAME` with no message/origin suffix for target absence, same version, mismatch, same-origin contenders, and separate origins sharing the name; use one generated unrelated database to prove the non-target boundary without enumerating alternate identities.
 

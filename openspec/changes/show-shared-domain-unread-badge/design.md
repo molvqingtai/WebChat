@@ -29,7 +29,7 @@ See `proposal.md` for the product motivation and `specs/webrtc-runtime/spec.md` 
 
 ### 1. Keep one owner and one synchronized status
 
-`AppStatusDomain` owns one same-domain record containing `open`, position, and unread attention. Tabs A, B, and C on the same domain therefore expand together, collapse together, share one position, and share one attention result. Tab D on another domain has a separate record. A tab that hydrates adopts the current domain record without writing hydration back into persistence. Initialization phase and Retry remain outside this persisted AppButton status.
+`AppStatusDomain` owns one same-domain aggregate business truth containing `open`, position, and boolean unread attention. Tabs A, B, and C on the same domain therefore expand together, collapse together, share one position, and share one attention result. Tab D on another domain has a separate aggregate. A tab that hydrates adopts the current field values without writing hydration back into persistence. Initialization phase and Retry remain outside this persisted AppButton status.
 
 Each write is field-scoped. A position update preserves the latest open and unread values; an unread mark preserves open and position; collapse preserves position and unread. Opening is the intentional combined domain update: it sets `open` and clears unread while preserving position. Delayed hydration and unrelated field updates cannot write stale copies of the other fields.
 

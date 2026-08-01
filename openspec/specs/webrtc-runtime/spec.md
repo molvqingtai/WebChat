@@ -642,11 +642,11 @@ The Runtime page contract SHALL use an explicit `{supplyId}` request/cancel even
 #### Scenario: History application has no UI side effects
 
 - **WHEN** a valid history response reaches an application/page Domain
-- **THEN** records SHALL be inserted-if-absent through the origin store without notifications, unread increments, or system notices caused solely by history application
+- **THEN** records SHALL be inserted-if-absent through the origin store without notifications, boolean unread-attention marks, or system notices caused solely by history application
 
 ### Requirement: Idempotent inbound delivery without locks
 
-The Runtime SHALL publish each inbound peer message to all pages of the domain as an event carrying the stable message ID. Each page SHALL persist the message through one atomic insert-if-absent transaction against the shared domain store. Only the page whose transaction first inserts the message SHALL trigger side effects such as notification or unread increments. The system SHALL NOT use locks for this coordination.
+The Runtime SHALL publish each inbound peer message to all pages of the domain as an event carrying the stable message ID. Each page SHALL persist the message through one atomic insert-if-absent transaction against the shared domain store. Only the page whose transaction first inserts the message SHALL trigger side effects such as notification or setting boolean unread attention. The system SHALL NOT use locks for this coordination.
 
 #### Scenario: Duplicate delivery across tabs
 

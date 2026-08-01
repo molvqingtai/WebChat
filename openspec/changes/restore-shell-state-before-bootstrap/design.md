@@ -15,7 +15,7 @@ WebChat mounts a local shell before browser-sync preparation, page-local configu
 
 **Non-Goals:**
 
-- Changing the persisted AppStatus key, record shape, or field semantics.
+- Changing the persisted AppStatus field-key identities or field semantics.
 - Changing initialization stage order, deadlines, cancellation, Runtime detach, or dependency activation.
 - Changing ChatRoom, WorldRoom, Runtime, protocol, public APIs, permissions, production dependencies, or visual design.
 - Adding another app-status store, initialization-status owner, Retry control, Toaster, success Toast, Provider, controller, or dependency-injection surface.
@@ -31,9 +31,9 @@ Inside themed `#app`, `AppMain` precedes `AppButton`, followed by `DanmakuContai
 
 ### 2. AppStatusDomain is the single app-status owner
 
-`AppStatusDomain` owns persisted `open`, `unread`, and `position` in the one AppStatus storage record. It also owns the non-persisted initialization phase, the Retry command/event, and the effect that increments unread for an incoming text message from another user while the panel is closed.
+`AppStatusDomain` owns one aggregate `{ open, position, unread }` business truth. It persists the fields independently through `APP_OPEN_STORAGE_KEY = WEB_CHAT_APP_STATUS:OPEN`, `APP_POSITION_STORAGE_KEY = WEB_CHAT_APP_STATUS:POSITION`, and `APP_UNREAD_STORAGE_KEY = WEB_CHAT_APP_STATUS:UNREAD`. It also owns the non-persisted initialization phase, the Retry command/event, and the effect that marks boolean unread attention for an incoming text message from another user while the panel is closed. Additional eligible messages retain the same attention result rather than forming a count.
 
-Initialization phase never enters the persisted record. `AppStatusDomain` exposes only the queries, commands, and events used by production consumers. Hydration, persistence, and unread mutation actions plus storage synchronization events remain file-local, as do internal state defaults and effect identifiers; no module member is exported solely for tests.
+Initialization phase never enters any of the three persisted fields. `AppStatusDomain` exposes only the queries, commands, and events used by production consumers. Hydration, persistence, and unread mutation actions plus storage synchronization events remain file-local, as do internal state defaults and effect identifiers; no module member is exported solely for tests.
 
 ### 3. Initialization.ts is lifecycle orchestration
 
@@ -71,13 +71,13 @@ Initialization and ready-context recovery each admit one current operation in th
 
 ### 9. Tests bind final ownership
 
-Regression controls verify the exact minimal root Domain list, one `AppStatusDomain` retained by `AppFeedbackDomain`, no duplicate root holder or additional app-status owner, plain `Initialization.ts` orchestration, production-only Domain exports, and direct App/AppButton/AppFeedback consumers. Through real storage and public projections, they also cover component ancestry, persisted expanded/collapsed/no-record state, pre-hydration interaction, incoming self/non-self/open/closed unread cases, initialization stage terminals, Retry contexts, single-flight behavior, and stale settlement.
+Regression controls verify the exact minimal root Domain list, one `AppStatusDomain` retained by `AppFeedbackDomain`, no duplicate root holder or additional app-status owner, plain `Initialization.ts` orchestration, production-only Domain exports, and direct App/AppButton/AppFeedback consumers. Through real storage and public projections, they also cover component ancestry, persisted expanded/collapsed/missing-field state, pre-hydration interaction, incoming self/non-self/open/closed unread cases, initialization stage terminals, Retry contexts, single-flight behavior, and stale settlement.
 
 The fixed stack is `vitest`, `happy-dom`, the applicable `@testing-library/*` and `@vitest/*` packages, `vitest-browser-react`, and `@vitest/browser-playwright`. Stable selectors may be literal `data-testid` attributes on production JSX. Tests do not add production dependency props, wrappers, dynamic selector injection, or runtime DOM rewriting.
 
 ## Risks / Trade-offs
 
-- [One Domain spans durable and transient status] -> Keep persistence attached only to the AppStatus record; initialization phase remains in-memory.
+- [One Domain spans durable and transient status] -> Keep persistence attached only to the three AppStatus field effects; initialization phase remains in-memory.
 - [Unread effect introduces ChatRoom/UserInfo dependencies] -> Keep the effect inside the Domain that owns unread and use the established nested Domain boundaries.
 - [Normal shell can render while dependencies are unavailable] -> Gate only the exact Runtime-dependent operation at its use site.
 - [One Refresh can dispatch the wrong operation at readiness] -> Use the single initialization phase as the exclusive context switch and fence attempt identity.

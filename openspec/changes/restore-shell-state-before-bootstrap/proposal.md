@@ -5,7 +5,7 @@ WebChat needs one normal shell whose local status and initialization status have
 ## What Changes
 
 - The content root is `StrictMode -> RemeshRoot(store) -> RemeshScope -> App`. The root Scope mounts exactly `NotificationDomain()` and `AppFeedbackDomain()`; `AppFeedbackDomain` owns its nested `AppStatusDomain` and `ToastDomain` dependencies.
-- `AppStatusDomain` is the single owner of persisted `open`, `unread`, and `position`; non-persisted initialization phase and Retry; and the incoming non-self text-message effect that increments unread while the panel is closed.
+- `AppStatusDomain` is the single owner of one aggregate `open`, `unread`, and `position` business truth; non-persisted initialization phase and Retry; and the incoming non-self text-message effect that marks boolean unread attention while the panel is closed.
 - `AppStatusDomain` exposes only production-consumed queries, commands, and events. Hydration, persistence, and unread mutation actions plus storage synchronization events remain file-local, and tests exercise real storage and public projections without test-only exports.
 - `Initialization.ts` performs only the bounded initialization lifecycle: ordered dependency preparation, deadline and cancellation, generation fencing, application dependency activation, Runtime detach, and matching Toast commands. It reads and updates `AppStatusDomain` without declaring another Domain.
 - `App`, `AppButton`, and `AppFeedbackDomain` consume `AppStatusDomain` directly. Readiness gates only the Runtime-dependent operation at its use site.
@@ -27,6 +27,6 @@ None.
 ## Impact
 
 - Affected source: `AppStatusDomain`, `Initialization.ts`, the content root Scope, `App`, `AppButton`, `AppFeedbackDomain`, and their focused tests.
-- Affected behavior: persisted shell state is available independently of initialization; initialization feedback uses the panel Toaster; Refresh changes context at readiness; incoming non-self messages increment unread only while the panel is closed.
-- Unchanged: storage key and record shape; initialization stage order and deadlines; Runtime/protocol/public APIs; ChatRoom and WorldRoom recovery scope; Toast copy and presentation; visual theme; browser permissions; production dependencies.
+- Affected behavior: persisted shell state is available independently of initialization; initialization feedback uses the panel Toaster; Refresh changes context at readiness; incoming non-self messages mark boolean unread attention only while the panel is closed.
+- Unchanged: the field-scoped open, position, and unread key identities and semantics; initialization stage order and deadlines; Runtime/protocol/public APIs; ChatRoom and WorldRoom recovery scope; Toast copy and presentation; visual theme; browser permissions; production dependencies.
 - QA, QC, and UX are outside this task unless the Owner explicitly requests a corresponding role.

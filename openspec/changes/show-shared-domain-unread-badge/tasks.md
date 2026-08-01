@@ -24,7 +24,7 @@
 - [x] 3.1 Keep `AppStatusDomain` as the sole business owner for one same-domain status containing `open`, position, and unread attention.
 - [x] 3.2 Set domain attention at the first-delivered remote-text boundary only while the shared domain is collapsed.
 - [x] 3.3 Synchronize expand/collapse across the current domain, clear unread on open, enforce `open => !unread`, and project badge visibility without enumerating browser tabs/windows.
-- [x] 3.4 Persist open, position, and unread through field-scoped updates within one shared status, with hydration adopting rather than rewriting the current record.
+- [x] 3.4 Persist open, position, and boolean unread attention through field-scoped updates within one shared status, with hydration adopting rather than rewriting current field values.
 - [x] 3.5 Project the shared position from the selected bottom edge, convert anchors continuously at the midpoint, and derive local visibility bounds without writing on resize.
 - [x] 3.6 Reuse the existing hand-control drag interaction, AppButton indicator, and same-domain synchronization boundary without adding a Domain, count, setting, API, permission, dependency, Runtime/protocol change, or browser-specific branch.
 
