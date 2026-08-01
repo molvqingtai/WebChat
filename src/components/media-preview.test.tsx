@@ -30,10 +30,13 @@ const Harness = ({ shellOpen = true }: { shellOpen?: boolean }) => {
   const openPreview = useCallback((request: MediaPreviewRequest) => previewRef.current?.open(request), [])
 
   return (
-    <MediaPreviewContext.Provider value={openPreview}>
-      <Markdown>{`![First](${firstSource})\n\n[Second](${secondSource})`}</Markdown>
-      <MediaPreview ref={previewRef} shellOpen={shellOpen} />
-    </MediaPreviewContext.Provider>
+    <div id="app">
+      <MediaPreviewContext.Provider value={openPreview}>
+        <Markdown>{`![First](${firstSource})\n\n[Second](${secondSource})`}</Markdown>
+        <input aria-label="Message draft" />
+        <MediaPreview ref={previewRef} shellOpen={shellOpen} />
+      </MediaPreviewContext.Provider>
+    </div>
   )
 }
 
@@ -239,6 +242,21 @@ describe('MediaPreview ownership and settlement', () => {
     if (trigger.isConnected) expect(document.activeElement).toBe(trigger)
   })
 
+  it('keeps editable zoom keys local but closes from an editable sibling on Escape', () => {
+    render(<Harness />)
+    openFirst()
+    const input = screen.getByRole('textbox', { name: 'Message draft' })
+    const image = previewImage('First')
+
+    input.focus()
+    fireEvent.keyDown(input, { key: '+' })
+    fireEvent.keyDown(input, { key: '0' })
+    expect(image.style.transform).toBe('translate3d(0px, 0px, 0) scale(1)')
+
+    fireEvent.keyDown(input, { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: 'Image preview' })).toBeNull()
+  })
+
   it('restores focus to a surviving activator when shell collapse closes the preview', async () => {
     const view = render(<DirectHarness />)
     const trigger = screen.getByRole('button', { name: 'Open external preview' })
@@ -347,6 +365,37 @@ describe('MediaPreview View Transition fallback', () => {
 
     expect(previewImage('First')).not.toBeNull()
     expect(image.style.viewTransitionName).toBe('')
+  })
+
+  it.each(['open first', 'close first'])('fences applied-open and close settlement when %s settles', async (order) => {
+    const transitions: Array<{ operation: () => void; finished: ReturnType<typeof deferred> }> = []
+    Object.defineProperty(document, 'startViewTransition', {
+      configurable: true,
+      value: (operation: () => void) => {
+        const finished = deferred()
+        transitions.push({ operation, finished })
+        return { finished: finished.promise }
+      }
+    })
+    render(<Harness />)
+
+    const trigger = screen.getByRole('button', { name: 'Preview First' })
+    const triggerImage = trigger.querySelector('img')!
+    trigger.focus()
+    openFirst()
+    transitions[0]!.operation()
+    fireEvent.click(screen.getByRole('button', { name: 'Close preview' }))
+    transitions[1]!.operation()
+
+    const [first, second] = order === 'open first' ? transitions : [...transitions].reverse()
+    first!.finished.resolve()
+    await act(async () => Promise.resolve())
+    second!.finished.resolve()
+    await act(async () => Promise.resolve())
+
+    expect(screen.queryByRole('dialog', { name: 'Image preview' })).toBeNull()
+    expect(triggerImage.style.viewTransitionName).toBe('')
+    expect(document.activeElement).toBe(trigger)
   })
 
   it('uses supported transitions for open and close and removes each request-local identity', async () => {

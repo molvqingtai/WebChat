@@ -45,6 +45,28 @@ describe('message image rendering', () => {
     expect(screen.queryByRole('button')).toBeNull()
   })
 
+  it('preserves formatted image-link text in the inline image and preview request', () => {
+    const openPreview = vi.fn()
+    render(
+      <MediaPreviewContext.Provider value={openPreview}>
+        <Markdown>{'[**Diagram**](https://example.com/diagram.webp)'}</Markdown>
+      </MediaPreviewContext.Provider>
+    )
+
+    const trigger = screen.getByRole('button', { name: 'Preview Diagram' })
+    expect(screen.getByRole('img', { name: 'Diagram' })).not.toBeNull()
+
+    fireEvent.click(trigger)
+    expect(openPreview).toHaveBeenCalledWith(
+      expect.objectContaining({
+        src: 'https://example.com/diagram.webp',
+        alt: 'Diagram',
+        activator: trigger,
+        transitionElement: trigger.querySelector('img')
+      })
+    )
+  })
+
   it('activates the same sanitized preview request by pointer, touch, Enter, and Space', async () => {
     const openPreview = vi.fn()
     const user = userEvent.setup()

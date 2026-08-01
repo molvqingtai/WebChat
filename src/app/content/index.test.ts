@@ -169,7 +169,6 @@ describe('content composition root', () => {
       expect.anything(),
       expect.objectContaining({
         position: 'overlay',
-        zIndex: 2147483647,
         isolateEvents: ['keyup', 'keydown', 'keypress']
       })
     )

@@ -8,14 +8,11 @@ import {
   useMemo,
   useRef,
   useState,
-  type KeyboardEvent as ReactKeyboardEvent,
-  type PointerEvent as ReactPointerEvent,
-  type WheelEvent as ReactWheelEvent
+  type PointerEvent as ReactPointerEvent
 } from 'react'
 import { flushSync } from 'react-dom'
 import { MinusIcon, RotateCcwIcon, PlusIcon, XIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import useWindowResize from '@/hooks/useWindowResize'
 import {
   MEDIA_PREVIEW_MARGIN,
   MEDIA_PREVIEW_MAX_ZOOM,
@@ -59,6 +56,7 @@ interface PreviewState {
   current: CurrentPreview | null
   naturalSize: MediaPreviewSize | null
   transform: MediaPreviewTransform
+  viewport: MediaPreviewSize
 }
 
 type PointerState = MediaPreviewPoint
@@ -97,17 +95,21 @@ const pointerMidpoint = (first: MediaPreviewPoint, second: MediaPreviewPoint): M
   x: (first.x + second.x) / 2,
   y: (first.y + second.y) / 2
 })
+const isEditableTarget = (target: EventTarget | null) =>
+  target instanceof Element &&
+  target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])') !== null
 
 const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ shellOpen }, ref) => {
-  const viewport = useWindowResize()
-  const [state, setState] = useState<PreviewState>({
+  const [state, setState] = useState<PreviewState>(() => ({
     current: null,
     naturalSize: null,
-    transform: initialTransform
-  })
+    transform: initialTransform,
+    viewport: { width: window.innerWidth, height: window.innerHeight }
+  }))
   const stateRef = useRef(state)
   const operationRef = useRef(0)
   const transitionIdentityRef = useRef<TransitionIdentity | null>(null)
+  const backdropRef = useRef<HTMLButtonElement>(null)
   const overlayRef = useRef<HTMLDialogElement>(null)
   const imageRef = useRef<HTMLImageElement>(null)
   const pointersRef = useRef(new Map<number, PointerState>())
@@ -117,8 +119,8 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
   const suppressionTimerRef = useRef<number | null>(null)
 
   const fit = useMemo(
-    () => (state.naturalSize ? getMediaPreviewFit(state.naturalSize, viewport) : null),
-    [state.naturalSize, viewport]
+    () => (state.naturalSize ? getMediaPreviewFit(state.naturalSize, state.viewport) : null),
+    [state.naturalSize, state.viewport]
   )
   const renderedTransform = useMemo(
     () => (fit ? clampMediaPreviewTransform(state.transform, fit) : state.transform),
@@ -218,11 +220,13 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
 
       const applyOpen = (synchronous: boolean) => {
         if (operationRef.current !== requestId) return
+        const viewport = stateRef.current.viewport
         commitState(
           {
             current: { ...request, requestId },
             naturalSize: null,
-            transform: initialTransform
+            transform: initialTransform,
+            viewport
           },
           synchronous
         )
@@ -279,7 +283,10 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
 
     const applyClose = (synchronous: boolean) => {
       if (operationRef.current !== requestId) return
-      commitState({ current: null, naturalSize: null, transform: initialTransform }, synchronous)
+      commitState(
+        { current: null, naturalSize: null, transform: initialTransform, viewport: stateRef.current.viewport },
+        synchronous
+      )
       if (closing.activator.isConnected) closing.activator.focus({ preventScroll: true })
     }
 
@@ -332,10 +339,29 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
     queueMicrotask(close)
   }, [close, shellOpen])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!previewOpen) return
     overlayRef.current?.focus({ preventScroll: true })
   }, [currentRequestId, previewOpen])
+
+  useLayoutEffect(() => {
+    const handleResize = () => {
+      const currentState = stateRef.current
+      const viewport = { width: window.innerWidth, height: window.innerHeight }
+      if (currentState.viewport.width === viewport.width && currentState.viewport.height === viewport.height) return
+      const nextFit = currentState.naturalSize ? getMediaPreviewFit(currentState.naturalSize, viewport) : null
+      commitState(
+        {
+          ...currentState,
+          viewport,
+          transform: nextFit ? clampMediaPreviewTransform(currentState.transform, nextFit) : currentState.transform
+        },
+        true
+      )
+    }
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [commitState])
 
   useLayoutEffect(() => {
     if (fit) commitTransform(renderedTransform)
@@ -357,42 +383,61 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
 
   const resetTransform = useCallback(() => commitTransform(initialTransform), [commitTransform])
 
-  const handleKeyDown = (event: ReactKeyboardEvent<HTMLDialogElement>) => {
-    if (event.key === 'Escape') {
-      event.preventDefault()
-      event.stopPropagation()
-      close()
-      return
+  useLayoutEffect(() => {
+    if (!previewOpen) return
+    const owner = overlayRef.current?.getRootNode()
+    if (!owner) return
+    const handleKeyDown = (nativeEvent: Event) => {
+      const event = nativeEvent as KeyboardEvent
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        event.stopPropagation()
+        close()
+        return
+      }
+      if (isEditableTarget(event.target)) return
+      if (event.key === '+' || event.key === '=') {
+        event.preventDefault()
+        event.stopPropagation()
+        changeZoom(stateRef.current.transform.zoom + ZOOM_STEP)
+        return
+      }
+      if (event.key === '-') {
+        event.preventDefault()
+        event.stopPropagation()
+        changeZoom(stateRef.current.transform.zoom - ZOOM_STEP)
+        return
+      }
+      if (event.key === '0') {
+        event.preventDefault()
+        event.stopPropagation()
+        resetTransform()
+      }
     }
-    if (event.key === '+' || event.key === '=') {
-      event.preventDefault()
-      event.stopPropagation()
-      changeZoom(stateRef.current.transform.zoom + ZOOM_STEP)
-      return
-    }
-    if (event.key === '-') {
-      event.preventDefault()
-      event.stopPropagation()
-      changeZoom(stateRef.current.transform.zoom - ZOOM_STEP)
-      return
-    }
-    if (event.key === '0') {
-      event.preventDefault()
-      event.stopPropagation()
-      resetTransform()
-    }
-  }
+    owner.addEventListener('keydown', handleKeyDown, { capture: true })
+    return () => owner.removeEventListener('keydown', handleKeyDown, { capture: true })
+  }, [changeZoom, close, previewOpen, resetTransform])
 
-  const handleWheel = (event: ReactWheelEvent<HTMLDialogElement>) => {
-    event.preventDefault()
-    event.stopPropagation()
-    const focalPoint = { x: event.clientX - viewport.width / 2, y: event.clientY - viewport.height / 2 }
-    changeZoom(stateRef.current.transform.zoom - event.deltaY * 0.0025, focalPoint)
-  }
+  useLayoutEffect(() => {
+    if (!previewOpen) return
+    const surfaces = [backdropRef.current, overlayRef.current].filter((surface) => surface !== null)
+    const handleWheel = (nativeEvent: Event) => {
+      const event = nativeEvent as WheelEvent
+      event.preventDefault()
+      event.stopPropagation()
+      const viewport = stateRef.current.viewport
+      const focalPoint = { x: event.clientX - viewport.width / 2, y: event.clientY - viewport.height / 2 }
+      changeZoom(stateRef.current.transform.zoom - event.deltaY * 0.0025, focalPoint)
+    }
+    for (const surface of surfaces) surface.addEventListener('wheel', handleWheel, { passive: false })
+    return () => {
+      for (const surface of surfaces) surface.removeEventListener('wheel', handleWheel)
+    }
+  }, [changeZoom, previewOpen])
 
   const relativePoint = (point: MediaPreviewPoint): MediaPreviewPoint => ({
-    x: point.x - viewport.width / 2,
-    y: point.y - viewport.height / 2
+    x: point.x - stateRef.current.viewport.width / 2,
+    y: point.y - stateRef.current.viewport.height / 2
   })
 
   const beginPinch = () => {
@@ -525,8 +570,8 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
   const imageStyle = {
     inlineSize: fit ? `${fit.width}px` : 'auto',
     blockSize: fit ? `${fit.height}px` : 'auto',
-    maxInlineSize: `calc(100vw - ${MEDIA_PREVIEW_MARGIN * 2}px)`,
-    maxBlockSize: `calc(100vh - ${MEDIA_PREVIEW_MARGIN * 2}px)`,
+    maxInlineSize: `${Math.max(0, state.viewport.width - MEDIA_PREVIEW_MARGIN * 2)}px`,
+    maxBlockSize: `${Math.max(0, state.viewport.height - MEDIA_PREVIEW_MARGIN * 2)}px`,
     objectFit: 'contain' as const,
     transform: `translate3d(${renderedTransform.x}px, ${renderedTransform.y}px, 0) scale(${renderedTransform.zoom})`,
     transformOrigin: 'center',
@@ -536,6 +581,7 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
   return (
     <>
       <button
+        ref={backdropRef}
         type="button"
         aria-hidden="true"
         tabIndex={-1}
@@ -551,8 +597,6 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
         tabIndex={-1}
         className="pointer-events-none fixed inset-0 m-0 flex h-auto max-h-none w-auto max-w-none touch-none items-center justify-center overflow-hidden border-0 bg-transparent p-0 outline-none"
         style={{ zIndex: PREVIEW_BODY_LAYER }}
-        onKeyDown={handleKeyDown}
-        onWheel={handleWheel}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={finishPointer}

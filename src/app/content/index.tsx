@@ -177,7 +177,6 @@ export default defineContentScript({
     const ui = await createShadowRootUi(ctx, {
       name: __NAME__,
       position: 'overlay',
-      zIndex: CONTENT_LAYER,
       css: CONTENT_HOST_CSS,
       anchor: 'body',
       append: 'last',

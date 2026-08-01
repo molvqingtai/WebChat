@@ -1,4 +1,4 @@
-import { type ComponentProps, type FC, useContext, useRef } from 'react'
+import { Children, isValidElement, type ComponentProps, type FC, type ReactNode, useContext, useRef } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
@@ -21,6 +21,14 @@ const urlTransform = (value: string) => safeUrl(value)
 interface MessageImageProps extends Omit<ComponentProps<'img'>, 'src'> {
   src?: string
 }
+
+const textContent = (children: ReactNode): string =>
+  Children.toArray(children)
+    .map((child) => {
+      if (typeof child === 'string' || typeof child === 'number') return String(child)
+      return isValidElement<{ children?: ReactNode }>(child) ? textContent(child.props.children) : ''
+    })
+    .join('')
 
 const MessageImage: FC<MessageImageProps> = ({ src, alt = '', className, ...props }) => {
   const openPreview = useContext(MediaPreviewContext)
@@ -90,7 +98,7 @@ const Markdown: FC<MarkdownProps> = ({ children = '', className }) => {
             // Check if link is an image URL
             const isImage = href && /\.(jpg|jpeg|png|gif|webp|svg|bmp|ico)$/i.test(href)
             return isImage ? (
-              <MessageImage src={href} alt={typeof children === 'string' ? children : ''} className={className} />
+              <MessageImage src={href} alt={textContent(children)} className={className} />
             ) : (
               <a
                 className={cn('text-blue-500', className)}
