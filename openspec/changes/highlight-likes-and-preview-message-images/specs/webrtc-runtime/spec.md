@@ -53,7 +53,7 @@ The shared presentation SHALL preserve the sanitized rendered source and alterna
 
 Activating a valid rendered message image by pointer, touch, Enter, or Space SHALL open exactly one centered preview within the existing WebChat application root. The preview SHALL fit the complete source image inside a rectangle that remains at least `24px` from every viewport edge. Its initial `1x` state SHALL mean this fitted baseline and SHALL NOT enlarge a source image beyond its natural dimensions.
 
-The fixed preview layer SHALL remain above the host page and below the WebChat shell, AppButton, and Danmaku. Its backdrop SHALL use a neutral dark color at `18%` opacity. The WebChat shell SHALL remain visible and operable above the preview layer; the preview SHALL NOT create a second application root, a document-level portal, or host-document style ownership.
+The WebChat application surface SHALL establish one stacking context above host-page content. The preview backdrop SHALL use a neutral dark color at `18%` opacity and remain below the WebChat shell, AppButton, and Danmaku. The preview body, image, and controls SHALL remain above those WebChat surfaces. The shell SHALL remain visible and operable above the backdrop wherever the preview body does not cover it. The preview SHALL NOT create a second application root or a document-level portal.
 
 Only one preview SHALL exist. Activating another message image while it is open SHALL replace the current source in that same preview and reset its transform. Clicking the backdrop without a preceding preview drag, activating the close control, pressing Escape, or collapsing the WebChat shell SHALL close the preview. Closing SHALL restore keyboard focus to the activating image when that element still exists.
 
@@ -62,16 +62,16 @@ Only one preview SHALL exist. Activating another message image while it is open 
 - **WHEN** the user activates a valid rendered message image
 - **THEN** one preview SHALL show the complete image centered within `24px` of every viewport edge at fitted `1x`, without forcing a naturally smaller image larger
 
-#### Scenario: Shell stays above and usable
+#### Scenario: Backdrop stays behind the shell and preview body stays above it
 
 - **GIVEN** a message image preview is open
 - **WHEN** the preview and WebChat shell occupy overlapping viewport space
-- **THEN** the shell, AppButton, and Danmaku SHALL remain above the preview layer, the shell SHALL remain operable, and the neutral backdrop SHALL remain below them at `18%` opacity
+- **THEN** the `18%` neutral backdrop SHALL remain below the shell, AppButton, and Danmaku; the preview body SHALL remain above them; and uncovered shell areas SHALL remain visible and operable
 
 #### Scenario: Another image replaces rather than stacks
 
 - **GIVEN** one message image is open and has a non-default zoom or pan
-- **WHEN** the user activates another rendered message image through the still-operable shell
+- **WHEN** the user activates another rendered message image through an uncovered, operable shell area
 - **THEN** the one existing preview SHALL show the new image centered at fitted `1x` with zero pan and SHALL create no second preview or backdrop
 
 #### Scenario: Every close path clears and restores focus
@@ -116,26 +116,28 @@ Preview drag SHALL use pointer capture or equivalent local ownership so releasin
 - **WHEN** the preview consumes a zoom or pan gesture
 - **THEN** only that preview interaction SHALL be intercepted and WebChat SHALL NOT write scroll-lock, overflow, touch-action, or other preview state to the host document or `body`
 
-### Requirement: Preview motion remains inside WebChat ownership
+### Requirement: Preview motion uses one document View Transition
 
-When the user has not requested reduced motion, opening and closing a message image preview SHALL use a local transition limited to the `MediaPreview`-owned backdrop and current preview image inside the existing WebChat Shadow/App surface. The activating inline image SHALL remain only the trigger and focus-restoration target. It SHALL NOT receive a temporary transition identity or style.
+When `document.startViewTransition` is available and the user has not requested reduced motion, opening and closing a message image preview SHALL perform the state operation inside one document View Transition. The activating image and current preview image SHALL use one generation-scoped temporary shared identity. The browser-managed document-root snapshot and brief whole-page crossfade, including the shell, SHALL be part of that transition, while the preview transition remains above ordinary shell stacking. A pre-existing host-defined named participant MAY also participate under browser ownership.
 
-Motion SHALL NOT call `document.startViewTransition`, assign `viewTransitionName`, capture the document root or a host element, participate in or skip an active host transition, style a host transition pseudo-tree, or create another preview state owner. Replacement, close, and another open SHALL leave the latest preview source and state settled exactly once without a duplicate preview or stale presentation marker. When reduced motion is requested, the same open or close state change SHALL complete without animation. Motion SHALL NOT delay close cleanup or focus restoration.
+WebChat SHALL NOT assign a transition name or style to a host-page element, style the document transition pseudo-tree, mutate host-page business state, or create another preview state owner. The sole preview owner SHALL restore its active temporary identity before a replacement, close, or another open supersedes it, and settlement from an older generation SHALL NOT overwrite the current owner. The latest preview source or closed state SHALL settle exactly once without a duplicate preview or stale marker.
 
-#### Scenario: Motion stays local to MediaPreview
+When reduced motion is requested, the API is missing, the transition throws, rejects, or is skipped, or another document transition prevents execution, the same open or close state change SHALL complete immediately without animation. Motion SHALL NOT delay close cleanup or focus restoration. Final page layout, colors, layer order, and business state SHALL be identical on animated and immediate paths.
 
-- **GIVEN** reduced motion is not requested and a host page has its own named element or active transition
+#### Scenario: Supported motion includes the accepted root crossfade
+
+- **GIVEN** document View Transition is available and reduced motion is not requested
 - **WHEN** the user opens or closes a message image
-- **THEN** only the `MediaPreview` backdrop and current preview image SHALL animate inside the WebChat-owned surface, the shell layer SHALL remain above them, and the host transition and host element SHALL remain untouched
+- **THEN** the activating image and current preview image SHALL share one temporary transition identity, the browser MAY crossfade the document root and shell or include a pre-existing host-defined named participant, the preview transition SHALL remain above ordinary shell stacking, and WebChat SHALL assign no host name or style and change no host business state
 
-#### Scenario: Interrupted local motion keeps only the latest state
+#### Scenario: Overlapping transitions leave no stale identity
 
-- **GIVEN** local preview motion is in progress
-- **WHEN** another image replaces the source or the preview closes
-- **THEN** the latest source or closed state SHALL settle exactly once with no duplicate preview, temporary identity, stale presentation marker, delayed cleanup, or host-transition effect
+- **GIVEN** an open or close transition has not settled
+- **WHEN** another open, replacement, or close supersedes it and the transitions settle in either order
+- **THEN** the latest source or closed state SHALL settle exactly once, every temporary image identity SHALL be restored, and no older generation SHALL overwrite the current owner
 
-#### Scenario: Reduced motion completes without animation
+#### Scenario: Immediate paths preserve the same final visual state
 
-- **GIVEN** reduced motion is requested
+- **GIVEN** reduced motion is requested or document View Transition is missing, throws, rejects, is skipped, or cannot run beside another document transition
 - **WHEN** the user opens or closes a message image
-- **THEN** the preview SHALL reach the same final open or closed state without animation, duplicate ownership, delayed cleanup, or blocked focus restoration
+- **THEN** the preview SHALL reach the same final open or closed state immediately with identical final layout, colors, and layer order and with no duplicate owner, stale identity, delayed cleanup, blocked focus restoration, or host business-state mutation

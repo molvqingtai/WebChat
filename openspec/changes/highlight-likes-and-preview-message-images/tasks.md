@@ -2,20 +2,20 @@
 
 - [x] 1.1 Define any positive active-like aggregate as the existing red like-heart and count presentation while keeping current-user membership as the add-or-remove input.
 - [x] 1.2 Define one message-content inline-size query owner and equal `70cqi` maximum inline and block sizes for both rendered Markdown image forms, with automatic aspect-preserving dimensions and no runtime measurement state.
-- [x] 1.3 Define one centered `MediaPreview` owner in the existing App root, above the host page and below the shell, AppButton, and Danmaku, with a neutral `18%` backdrop and a `24px` viewport fit margin.
+- [x] 1.3 Define one centered `MediaPreview` owner in the existing App root, with an `18%` backdrop below the shell/AppButton/Danmaku, a preview body above them, and a `24px` viewport fit margin.
 - [x] 1.4 Define fitted `1x` through `4x` zoom, fixed `0.25x` controls, focal wheel/trackpad/pinch zoom, bounded drag pan, and reset on close or source replacement.
-- [x] 1.5 Define backdrop/control/Escape/shell-collapse close, focus restoration, one-image replacement, preview-local open/close motion, host-transition isolation, and immediate reduced-motion settlement.
-- [x] 1.6 Exclude hate, reaction, protocol, persistence, host-scroll, upload, download, carousel, speculative media, second-root, second-owner, runtime image measurement, document-wide View Transition, transition-name, host-transition, and experimental transition-API changes.
+- [x] 1.5 Define backdrop/control/Escape/shell-collapse close, focus restoration, one-image replacement, document View Transition with accepted whole-page crossfade, overlap cleanup, and immediate reduced-motion/failure settlement.
+- [x] 1.6 Exclude hate, reaction, protocol, persistence, host-scroll, upload, download, carousel, speculative media, second-root, second-owner, runtime image measurement, host-element transition naming/styling, host business-state mutation, and experimental transition-API changes.
 
 ## 2. Regression Coverage
 
 - [x] 2.1 Cover positive aggregate red, zero aggregate gray, current-user add/remove semantics, removal while another like remains, and unchanged hate presentation.
 - [x] 2.2 Cover both Markdown image forms through one shared renderer with the same message-content query owner, equal `70cqi` maximums, automatic dimensions, complete containment, and sanitized source and alternative text.
 - [x] 2.3 Add structural controls excluding JavaScript measurement, `ResizeObserver`, measured-size state, square placeholders, duplicate image policies, and a second sizing owner.
-- [ ] 2.4 Cover preview ancestry, one-owner composition, centered `24px` fit, natural-size non-upscale, real host-below-preview and shell/AppButton/Danmaku-above-preview ordering, neutral `18%` backdrop, and a still-operable shell.
+- [ ] 2.4 Cover preview ancestry, one-owner composition, centered `24px` fit, natural-size non-upscale, the real host/backdrop/shell/preview-body order, neutral `18%` backdrop, preview-body overlap, and uncovered shell operability.
 - [ ] 2.5 Cover production-boundary pointer, touch, keyboard, wheel/trackpad, and pinch activation; editable-shell isolation; icon names and tooltips; fixed zoom steps and limits; focal zoom; axis-specific pan bounds; resize reclamping; drag-release suppression; and reset.
 - [ ] 2.6 Cover backdrop, close-control, production-boundary Escape, and shell-collapse settlement; replacement without stacking; transform cleanup; focus restoration; and preview-local event handling without host scroll lock.
-- [ ] 2.7 Cover preview-local open/close motion, interruption by replacement or close, reduced-motion settlement, stable layer ordering, and isolation from host named elements and active host transitions without duplicate state or stale presentation markers.
+- [ ] 2.7 Cover document View Transition, accepted root/shell crossfade and pre-existing host-named participants, temporary image identity, delayed overlapping settlement in both orders, reduced-motion and every unavailable/failure path, identical final visuals, and host name/style/business-state preservation without duplicate state or stale markers.
 
 ## 3. Minimum Implementation
 
@@ -23,8 +23,8 @@
 - [x] 3.2 Consolidate both Markdown image paths into one accessible image control and establish the message-content inline-size query container with equal `70cqi` maximums on both image axes.
 - [x] 3.3 Keep image dimensions automatic and contained without JavaScript measurement, `ResizeObserver`, measured-size state, crop, distortion, forced expansion, or a square placeholder.
 - [x] 3.4 Add one `MediaPreview` component/state owner beside Danmaku in the existing App root, exposing only the preview-open action to rendered message images.
-- [ ] 3.5 Implement the confirmed extension-owned stacking context, local layer order, backdrop, fit, close, replacement, focus, preview-subtree keyboard ownership, zoom, focal transform, pre-paint bounded pan, gesture cleanup, and shell-collapse behavior without a portal, Domain, Extern, persistence, dependency, or host-document mutation.
-- [ ] 3.6 Keep open/close motion inside the sole `MediaPreview` owner, limited to its backdrop and current preview image, with the latest state authoritative and no document-wide transition, transition name, host participation, experimental API branch, or delayed cleanup.
+- [ ] 3.5 Implement the confirmed extension-owned stacking context and split backdrop/shell/preview-body order, fit, close, replacement, focus, preview-subtree keyboard ownership, zoom, focal transform, pre-paint bounded pan, gesture cleanup, and shell-collapse behavior without a portal, Domain, Extern, persistence, dependency, or host business-state mutation.
+- [ ] 3.6 Use one document View Transition and one generation-scoped temporary image-identity owner; clean before supersession, fence older settlement, accept the browser root crossfade, and preserve direct reduced-motion/unavailable/failure settlement without host-element styling, another state owner, or delayed cleanup.
 
 ## 4. Delivery Gates
 
