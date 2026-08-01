@@ -332,6 +332,62 @@ describe('IndexedDB Message database version ownership', () => {
     expect(diagnostics).toContainEqual(['[WebChat] Persistence preparation coordination unavailable'])
   })
 
+  it('fails a blocked deletion visibly after the bounded window instead of hanging', async () => {
+    const name = STORAGE_NAME
+    names.add(name)
+    const blocker = await openDB(name, 1, {
+      upgrade(database) {
+        database.createObjectStore('legacy')
+      }
+    })
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const timers: Array<{ callback: () => void; ms?: number }> = []
+    const nativeSetTimeout = globalThis.setTimeout
+    vi.stubGlobal(
+      'setTimeout',
+      vi.fn((callback: () => void, ms?: number, ...args: unknown[]) => {
+        timers.push({ callback, ms })
+        return nativeSetTimeout(callback, ms, ...args)
+      })
+    )
+
+    let settled = false
+    const preparation = prepareIndexedDBMessageDatabase().then(
+      () => {
+        settled = true
+      },
+      () => {
+        settled = true
+      }
+    )
+    await vi.waitFor(() => expect(warning).toHaveBeenCalledTimes(1))
+    expect(settled).toBe(false)
+
+    // Force the bounded blocked window to expire while the contender still holds the old store open.
+    const blockedTimer = timers.find(({ ms }) => ms === 5000)
+    expect(blockedTimer).toBeDefined()
+    blockedTimer!.callback()
+
+    await expect(preparation).resolves.toBeUndefined()
+    expect(settled).toBe(true)
+    expect(diagnostic).toHaveBeenCalledWith('[WebChat] Message store preparation failed')
+    vi.stubGlobal('setTimeout', nativeSetTimeout)
+
+    blocker.close()
+    const unchanged = await openDB(name)
+    expect(unchanged.version).toBe(1)
+    unchanged.close()
+
+    // The visible failure is retryable: once the contender releases, preparation converges.
+    await prepareIndexedDBMessageDatabase()
+    const rebuilt = await openDB(name)
+    expect(rebuilt.version).toBe(MESSAGE_STORE_VERSION)
+    rebuilt.close()
+    warning.mockRestore()
+    diagnostic.mockRestore()
+  })
+
   it('keeps a blocked delete non-ready and completes the same request after release', async () => {
     const name = STORAGE_NAME
     names.add(name)
