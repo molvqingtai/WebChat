@@ -1,0 +1,4 @@
+schema: spec-driven
+created: 2026-08-02
+goal: Unify active-like presentation and give every message image one bounded,
+  zoomable preview in the existing WebChat application root.
