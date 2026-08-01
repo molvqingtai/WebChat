@@ -1,3 +1,20 @@
+# [2.2.0](https://github.com/molvqingtai/WebChat/compare/v2.1.1...v2.2.0) (2026-08-01)
+
+### Bug Fixes
+
+- **app-button:** restore minimum edge margins ([36d4cb3](https://github.com/molvqingtai/WebChat/commit/36d4cb3d33bb6835cb44217e41b8efc8c87738ba))
+- **app-status:** centralize launcher state and projection ([1c90b79](https://github.com/molvqingtai/WebChat/commit/1c90b7931a19aecdc3edb1c17fe87584d3a63240))
+- **app-status:** sync shared launcher state ([b40259e](https://github.com/molvqingtai/WebChat/commit/b40259e3dd36695bc746e0a6fa03f56926efea0e))
+- **content:** replace initialization loading toast with its error successor ([71ff3d0](https://github.com/molvqingtai/WebChat/commit/71ff3d04ee4acf015363bc5c67a5a23f5413d708))
+- **content:** run Firefox persistence preparation without Web Locks ([5d6aff7](https://github.com/molvqingtai/WebChat/commit/5d6aff72c96b11a23272956aee9755db108edc26))
+- **danmaku:** route app opening through private callback ([19c1d43](https://github.com/molvqingtai/WebChat/commit/19c1d43eb5c5b0c9c821d9367c17eef242432c5d))
+- **notification:** use focused current tab domain ([bc06286](https://github.com/molvqingtai/WebChat/commit/bc0628657367d73b9c5b4fd2dc5ebf0c59e46709))
+- **runtime:** preserve error messages across extension transport ([6ef8d74](https://github.com/molvqingtai/WebChat/commit/6ef8d740b0e096b7558cff366f7418278b9851d3))
+
+### Features
+
+- **notification:** activate matching tab on click ([4ae6bf5](https://github.com/molvqingtai/WebChat/commit/4ae6bf55cb51927fa72645231ef961bd1e437d51))
+
 ## [2.1.1](https://github.com/molvqingtai/WebChat/compare/v2.1.0...v2.1.1) (2026-07-31)
 
 ### Bug Fixes
