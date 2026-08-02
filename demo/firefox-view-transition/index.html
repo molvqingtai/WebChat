@@ -1,0 +1,414 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>View Transition compatibility demo</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          sans-serif;
+        background: #101820;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background: #101820;
+      }
+
+      body::before {
+        position: fixed;
+        inset: 0;
+        content: "";
+        background:
+          linear-gradient(90deg, rgb(255 255 255 / 4%) 1px, transparent 1px) 0 0 / 64px 64px,
+          linear-gradient(rgb(255 255 255 / 4%) 1px, transparent 1px) 0 0 / 64px 64px;
+      }
+
+      .controls {
+        position: fixed;
+        top: 20px;
+        left: 24px;
+        z-index: 20;
+        width: 340px;
+        padding: 14px;
+        border: 1px solid #5d6b78;
+        border-radius: 6px;
+        background: #18242e;
+        box-shadow: 0 18px 45px rgb(0 0 0 / 30%);
+        color: #e9f0f6;
+      }
+
+      .controls h1 {
+        margin: 0 0 12px;
+        font-size: 16px;
+        font-weight: 700;
+        letter-spacing: 0;
+      }
+
+      .case-tabs,
+      .commands {
+        display: grid;
+        gap: 8px;
+      }
+
+      .case-tabs {
+        grid-template-columns: 1fr 1fr;
+        margin-bottom: 10px;
+      }
+
+      .commands {
+        grid-template-columns: repeat(3, 1fr);
+      }
+
+      button {
+        min-height: 36px;
+        border: 1px solid #6d7c89;
+        border-radius: 4px;
+        background: #22313d;
+        color: #e9f0f6;
+        font: inherit;
+        font-size: 13px;
+        cursor: pointer;
+      }
+
+      button:hover:not(:disabled) {
+        border-color: #a6b5c2;
+        background: #2b3c49;
+      }
+
+      button:focus-visible {
+        outline: 2px solid #ff2d7d;
+        outline-offset: 2px;
+      }
+
+      button[aria-pressed="true"] {
+        border-color: #ff2d7d;
+        background: #ff2d7d;
+        color: #101820;
+        font-weight: 700;
+      }
+
+      button:disabled {
+        cursor: default;
+        opacity: 0.42;
+      }
+
+      #status {
+        display: block;
+        min-height: 58px;
+        margin-top: 12px;
+        color: #b9c6d1;
+        font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+        white-space: pre-wrap;
+      }
+
+      .case-root[hidden],
+      vt-shadow[hidden] {
+        display: none;
+      }
+
+      .participant,
+      vt-shadow::part(vt-part) {
+        view-transition-name: var(--task601-vt-name, none);
+      }
+
+      .participant {
+        position: fixed;
+        display: grid;
+        place-items: center;
+        overflow: hidden;
+        border: 0;
+        background: #ff2d7d;
+        color: #101820;
+        font: 700 28px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+
+      .participant[hidden] {
+        display: none;
+      }
+
+      .participant[data-position="source"] {
+        top: 132px;
+        left: calc(100vw - 369px);
+        width: 212px;
+        height: 212px;
+      }
+
+      .participant[data-position="destination"] {
+        top: 61.5px;
+        left: calc(50vw - 280px);
+        width: 560px;
+        height: 560px;
+      }
+
+      .participant::before,
+      .participant::after {
+        position: absolute;
+        content: "";
+        background: #101820;
+      }
+
+      .participant::before {
+        inset: 0 calc(50% - 5px);
+      }
+
+      .participant::after {
+        inset: calc(50% - 5px) 0;
+      }
+
+      .participant > span {
+        position: relative;
+        z-index: 1;
+        display: grid;
+        width: 38%;
+        aspect-ratio: 1;
+        place-items: center;
+        border: 6px solid #101820;
+        background: #f7f4ed;
+      }
+
+      ::view-transition-group(task601-light),
+      ::view-transition-group(task601-shadow) {
+        animation-duration: 250ms;
+        animation-timing-function: ease;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        ::view-transition-group(task601-light),
+        ::view-transition-group(task601-shadow) {
+          animation-duration: 250ms;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <section class="controls" aria-label="Demo controls">
+      <h1>View Transition compatibility demo</h1>
+      <div class="case-tabs" role="group" aria-label="Test case">
+        <button id="case-light" type="button" aria-pressed="true">A Light DOM</button>
+        <button id="case-shadow" type="button" aria-pressed="false">B Shadow ::part</button>
+      </div>
+      <div class="commands" role="group" aria-label="Transition controls">
+        <button id="open" type="button">Open</button>
+        <button id="close" type="button">Close</button>
+        <button id="reset" type="button">Reset</button>
+      </div>
+      <output id="status" aria-live="polite"></output>
+    </section>
+
+    <main id="light-root" class="case-root">
+      <div class="participant" data-task601-participant data-position="source"><span>S</span></div>
+      <div class="participant" data-task601-participant data-position="destination" hidden>
+        <span>D</span>
+      </div>
+    </main>
+    <vt-shadow id="shadow-root" hidden></vt-shadow>
+
+    <script>
+      const participantMarkup = `
+        <style>
+          :host { position: fixed; inset: 0; pointer-events: none; }
+          * { box-sizing: border-box; }
+          .participant {
+            position: fixed;
+            display: grid;
+            place-items: center;
+            overflow: hidden;
+            border: 0;
+            background: #ff2d7d;
+            color: #101820;
+            font: 700 28px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+            pointer-events: auto;
+          }
+          .participant[hidden] { display: none; }
+          .participant[data-position="source"] {
+            top: 132px;
+            left: calc(100vw - 369px);
+            width: 212px;
+            height: 212px;
+          }
+          .participant[data-position="destination"] {
+            top: 61.5px;
+            left: calc(50vw - 280px);
+            width: 560px;
+            height: 560px;
+          }
+          .participant::before,
+          .participant::after {
+            position: absolute;
+            content: "";
+            background: #101820;
+          }
+          .participant::before { inset: 0 calc(50% - 5px); }
+          .participant::after { inset: calc(50% - 5px) 0; }
+          .participant > span {
+            position: relative;
+            z-index: 1;
+            display: grid;
+            width: 38%;
+            aspect-ratio: 1;
+            place-items: center;
+            border: 6px solid #101820;
+            background: #f7f4ed;
+          }
+        </style>
+        <div class="participant" part="vt-part" data-task601-participant data-position="source">
+          <span>S</span>
+        </div>
+        <div class="participant" part="vt-part" data-task601-participant data-position="destination" hidden>
+          <span>D</span>
+        </div>
+      `
+
+      customElements.define(
+        "vt-shadow",
+        class extends HTMLElement {
+          constructor() {
+            super()
+            this.attachShadow({ mode: "open" }).innerHTML = participantMarkup
+          }
+        }
+      )
+
+      const roots = {
+        light: document.querySelector("#light-root"),
+        shadow: document.querySelector("#shadow-root")
+      }
+      const cases = {
+        light: {
+          label: "A Light DOM",
+          name: "task601-light",
+          owner: roots.light,
+          state: "source",
+          sequence: 0
+        },
+        shadow: {
+          label: "B Shadow ::part",
+          name: "task601-shadow",
+          owner: roots.shadow.shadowRoot,
+          state: "source",
+          sequence: 0
+        }
+      }
+      const buttons = {
+        light: document.querySelector("#case-light"),
+        shadow: document.querySelector("#case-shadow"),
+        open: document.querySelector("#open"),
+        close: document.querySelector("#close"),
+        reset: document.querySelector("#reset")
+      }
+      const status = document.querySelector("#status")
+      let activeKey = "light"
+      let busy = false
+      let lastDuration = null
+
+      const elements = (testCase) => ({
+        source: testCase.owner.querySelector('[data-position="source"]'),
+        destination: testCase.owner.querySelector('[data-position="destination"]')
+      })
+
+      const assignName = (element, name) => {
+        if (name) element.style.setProperty("--task601-vt-name", name)
+        else element.style.removeProperty("--task601-vt-name")
+      }
+
+      const renderCase = (testCase) => {
+        const { source, destination } = elements(testCase)
+        const sourceVisible = testCase.state === "source"
+        assignName(source, null)
+        assignName(destination, null)
+        source.hidden = !sourceVisible
+        destination.hidden = sourceVisible
+        assignName(sourceVisible ? source : destination, testCase.name)
+      }
+
+      const updateControls = () => {
+        const testCase = cases[activeKey]
+        buttons.light.setAttribute("aria-pressed", String(activeKey === "light"))
+        buttons.shadow.setAttribute("aria-pressed", String(activeKey === "shadow"))
+        buttons.light.disabled = busy
+        buttons.shadow.disabled = busy
+        buttons.open.disabled = busy || testCase.state === "destination"
+        buttons.close.disabled = busy || testCase.state === "source"
+        buttons.reset.disabled = busy
+        const support = typeof document.startViewTransition === "function" ? "available" : "unavailable"
+        status.value = `${testCase.label}\nstate=${testCase.state} sequence=${testCase.sequence}\n` +
+          `geometry=212x212 -> 560x560 duration=250ms\n` +
+          `ViewTransition=${support}${lastDuration === null ? "" : ` last=${lastDuration.toFixed(1)}ms`}`
+      }
+
+      const activate = (key) => {
+        if (busy || key === activeKey) return
+        const previous = cases[activeKey]
+        const previousElements = elements(previous)
+        assignName(previousElements.source, null)
+        assignName(previousElements.destination, null)
+        roots[activeKey].hidden = true
+        activeKey = key
+        roots[activeKey].hidden = false
+        renderCase(cases[activeKey])
+        lastDuration = null
+        updateControls()
+      }
+
+      const setState = (testCase, next) => {
+        testCase.state = next
+        renderCase(testCase)
+      }
+
+      const transitionTo = async (next) => {
+        const testCase = cases[activeKey]
+        if (busy || testCase.state === next) return
+        if (typeof document.startViewTransition !== "function") {
+          setState(testCase, next)
+          updateControls()
+          return
+        }
+        busy = true
+        testCase.sequence += 1
+        lastDuration = null
+        updateControls()
+        const startedAt = performance.now()
+        const transition = document.startViewTransition(() => setState(testCase, next))
+        try {
+          await transition.finished
+        } finally {
+          lastDuration = performance.now() - startedAt
+          busy = false
+          updateControls()
+        }
+      }
+
+      const reset = () => {
+        if (busy) return
+        const testCase = cases[activeKey]
+        setState(testCase, "source")
+        testCase.sequence = 0
+        lastDuration = null
+        updateControls()
+      }
+
+      buttons.light.addEventListener("click", () => activate("light"))
+      buttons.shadow.addEventListener("click", () => activate("shadow"))
+      buttons.open.addEventListener("click", () => transitionTo("destination"))
+      buttons.close.addEventListener("click", () => transitionTo("source"))
+      buttons.reset.addEventListener("click", reset)
+
+      renderCase(cases.light)
+      renderCase(cases.shadow)
+      assignName(elements(cases.shadow).source, null)
+      assignName(elements(cases.shadow).destination, null)
+      updateControls()
+    </script>
+  </body>
+</html>
