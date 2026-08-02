@@ -209,11 +209,9 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
   const transferTransitionIdentity = useCallback(
     (generation: number, element: HTMLElement) => {
       const identity = transitionIdentityRef.current
-      if (!identity || identity.generation !== generation) return false
-      if (identity.element === element) return true
-      const { name } = identity
-      claimTransitionIdentity(generation, name, element)
-      return true
+      if (!identity || identity.generation !== generation) return
+      if (identity.element === element) return
+      claimTransitionIdentity(generation, identity.name, element)
     },
     [claimTransitionIdentity]
   )
