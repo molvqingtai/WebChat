@@ -1,4 +1,4 @@
-import type { ChangeEvent, KeyboardEvent, ClipboardEvent } from 'react'
+import type { InputEventHandler, KeyboardEvent, ClipboardEvent } from 'react'
 import { useMemo, useRef, useState, type FC } from 'react'
 import { CornerDownLeftIcon } from 'lucide-react'
 import { useRemeshDomain, useRemeshQuery, useRemeshSend } from 'remesh-react'
@@ -6,7 +6,8 @@ import MessageInput from '../../components/message-input'
 import EmojiButton from '../../components/emoji-button'
 import { Button } from '@/components/ui/button'
 import MessageInputDomain from '@/domain/MessageInput'
-import { MESSAGE_MAX_LENGTH, WEB_RTC_MAX_MESSAGE_SIZE } from '@/constants/config'
+import { MESSAGE_IMAGE_TARGET_SIZE, MESSAGE_MAX_LENGTH } from '@/constants/config'
+import { MAX_CHAT_EVENT_BYTES } from '@/protocol/Limits'
 import ChatRoomDomain from '@/domain/ChatRoom'
 import useCursorPosition from '@/hooks/useCursorPosition'
 import useShareRef from '@/hooks/useShareRef'
@@ -18,13 +19,14 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import type { VirtuosoHandle } from 'react-virtuoso'
 import { Virtuoso } from 'react-virtuoso'
 import UserInfoDomain from '@/domain/UserInfo'
-import { blobToBase64, cn, getRootNode, getTextByteSize, getTextSimilarity } from '@/utils'
+import { blobToBase64, cn, getTextByteSize, getTextSimilarity } from '@/utils'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { AvatarImage } from '@radix-ui/react-avatar'
 import ToastDomain from '@/domain/Toast'
 import ImageButton from '../../components/image-button'
 import { nanoid } from 'nanoid'
 import imgcap from 'imgcap'
+import useRoot from '@/hooks/useRoot'
 
 const Footer: FC = () => {
   const send = useRemeshSend()
@@ -60,7 +62,7 @@ const Footer: FC = () => {
 
   const updateAtUserAtRecord = useMemo(
     () => (message: string, start: number, end: number, offset: number, atUserId?: string) => {
-      const positions: [number, number] = [start, end]
+      const ranges: [number, number] = [start, end]
 
       // If the editing position is before the end position of @user, update the editing position.
       // "@user" => "E@user"
@@ -76,7 +78,7 @@ const Footer: FC = () => {
 
       // Insert a new @user record
       if (atUserId) {
-        atUserRecord.current.set(atUserId, atUserRecord.current.get(atUserId)?.add(positions) ?? new Set([positions]))
+        atUserRecord.current.set(atUserId, atUserRecord.current.get(atUserId)?.add(ranges) ?? new Set([ranges]))
       }
 
       // After moving, check if the @user in the message matches the saved position record. If not, it means the @user has been edited, so delete that record.
@@ -137,23 +139,20 @@ const Footer: FC = () => {
     }
     const transformedMessage = await transformMessage(message)
     const mentions = [...atUserRecord.current]
-      .map(([userId, positions]) => {
+      .map(([userId, ranges]) => {
         const user = userList.find((user) => user.id === userId)
-        return (user ? { ...user, positions: [...positions] } : undefined)!
+        return (user ? { ...user, ranges: [...ranges] } : undefined)!
       })
       .filter(Boolean)
 
     const newMessage = { body: transformedMessage, mentions }
     const byteSize = getTextByteSize(JSON.stringify(newMessage))
 
-    if (byteSize > WEB_RTC_MAX_MESSAGE_SIZE) {
-      return send(toastDomain.command.WarningCommand('Message size cannot exceed 256KiB.'))
+    if (byteSize > MAX_CHAT_EVENT_BYTES) {
+      return send(toastDomain.command.WarningCommand('Message size cannot exceed 48KiB.'))
     }
 
-    send([
-      chatRoomDomain.command.SendTextMessageCommand({ body: transformedMessage, mentions }),
-      messageInputDomain.command.ClearCommand()
-    ])
+    send(chatRoomDomain.command.SendTextMessageCommand({ body: transformedMessage, mentions }))
   }
 
   const handleSend = useThrottle(handleSendMessage, 1000)
@@ -201,11 +200,11 @@ const Footer: FC = () => {
     }
   }
 
-  const handleInput = (e: ChangeEvent<HTMLTextAreaElement>) => {
-    const currentMessage = e.target.value
+  const handleInput: InputEventHandler<HTMLTextAreaElement> = (e) => {
+    const target = e.target as HTMLTextAreaElement
+    const currentMessage = target.value
 
     if (autoCompleteListShow) {
-      const target = e.target as HTMLTextAreaElement
       if (target.value) {
         const atIndex = target.value.lastIndexOf('@', selectionEnd - 1)
         if (atIndex !== -1) {
@@ -267,8 +266,8 @@ const Footer: FC = () => {
       setInputLoading(true)
 
       const blob = await imgcap(file, {
-        targetSize: 30 * 1024,
-        outputType: file.size > 30 * 1024 ? 'image/webp' : undefined
+        targetSize: MESSAGE_IMAGE_TARGET_SIZE,
+        outputType: file.size > MESSAGE_IMAGE_TARGET_SIZE ? 'image/webp' : undefined
       })
 
       const base64 = await blobToBase64(blob)
@@ -323,15 +322,15 @@ const Footer: FC = () => {
     })
   }
 
-  const root = getRootNode()
+  const root = useRoot()
 
   return (
-    <div className="relative grid gap-y-2 rounded-b-xl px-4 pb-4 pt-2 before:pointer-events-none before:absolute before:inset-x-4 before:-top-2 before:h-2 before:bg-gradient-to-t before:from-slate-50 before:from-30%  before:to-transparent dark:bg-slate-900 dark:before:from-slate-900">
+    <div className="relative grid gap-y-2 rounded-b-xl px-4 pt-2 pb-4 before:pointer-events-none before:absolute before:inset-x-4 before:-top-2 before:h-2 before:bg-gradient-to-t before:from-slate-50 before:from-30% before:to-transparent dark:bg-slate-900 dark:before:from-slate-900">
       <Presence present={autoCompleteListShow}>
         <Portal
           container={root}
           ref={shareAutoCompleteListRef}
-          className="fixed z-infinity w-36 -translate-y-full overflow-hidden rounded-lg border bg-popover text-popover-foreground shadow-md duration-300 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95"
+          className="z-infinity bg-popover text-popover-foreground data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 fixed w-36 -translate-y-full overflow-hidden rounded-lg border shadow-md duration-300"
           style={{ left: `min(${x}px, 100vw - 160px)`, top: `${y}px` }}
         >
           <ScrollArea className="max-h-[204px] min-h-9 p-1" ref={setScrollParentRef}>
@@ -342,12 +341,13 @@ const Footer: FC = () => {
               context={{ currentItemIndex: selectedUserIndex }}
               customScrollParent={scrollParentRef!}
               itemContent={(index, user) => (
-                <div
+                <button
+                  type="button"
                   key={user.id}
                   onClick={() => handleInjectAtSyntax(user.name)}
                   onMouseEnter={() => setSelectedUserIndex(index)}
                   className={cn(
-                    'flex cursor-pointer select-none items-center gap-x-2 rounded-md px-2 py-1.5 outline-none',
+                    'flex w-full cursor-pointer select-none items-center gap-x-2 rounded-md px-2 py-1.5 text-left outline-none',
                     {
                       'bg-accent text-accent-foreground': index === selectedUserIndex
                     }
@@ -358,7 +358,7 @@ const Footer: FC = () => {
                     <AvatarFallback>{user.name.at(0)}</AvatarFallback>
                   </Avatar>
                   <div className="flex-1 truncate text-xs text-slate-500 dark:text-slate-50">{user.name}</div>
-                </div>
+                </button>
               )}
             ></Virtuoso>
           </ScrollArea>

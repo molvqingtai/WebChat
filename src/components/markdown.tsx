@@ -19,7 +19,7 @@ const urlTransform = (value: string) => safeUrl(value)
 
 const Markdown: FC<MarkdownProps> = ({ children = '', className }) => {
   return (
-    <div className={cn(className, 'prose prose-sm prose-slate break-words dark:text-slate-50')}>
+    <div className={cn(className, 'prose prose-sm prose-slate wrap-break-word dark:text-slate-50')}>
       <ReactMarkdown
         urlTransform={urlTransform}
         components={{
@@ -36,24 +36,25 @@ const Markdown: FC<MarkdownProps> = ({ children = '', className }) => {
             <h4 className={cn('mb-2 mt-0 font-semibold dark:text-slate-50', className)} {...props} />
           ),
           img: ({ className, alt, ...props }) => (
-            <img className={cn('my-2 max-w-[100%] rounded', className)} alt={alt} {...props} />
+            <img className={cn('peer img-gap not-prose my-2 max-w-[70%] rounded', className)} alt={alt} {...props} />
           ),
           strong: ({ className, ...props }) => <strong className={cn('dark:text-slate-50', className)} {...props} />,
           a: ({ className, href, ...props }) => {
             // Check if link is an image URL
             const isImage = href && /\.(jpg|jpeg|png|gif|webp|svg|bmp|ico)$/i.test(href)
             return isImage ? (
-              <img src={href} alt="" className={cn('my-2 max-w-[100%] rounded', className)} />
+              <img src={href} className={cn('peer img-gap not-prose my-2 max-w-[70%] rounded', className)} />
             ) : (
               <a
                 className={cn('text-blue-500', className)}
                 href={href}
-                target="_blank"
+                target={href}
                 rel="noopener noreferrer"
                 {...props}
               />
             )
           },
+          br: ({ className, ...props }) => <br className={cn('peer-[.img-gap]:hidden', className)} {...props} />,
           ul: ({ className, ...props }) => {
             Reflect.deleteProperty(props, 'ordered')
             return <ul className={cn('text-sm [&:not([depth="0"])]:my-0 ', className)} {...props} />
@@ -74,7 +75,7 @@ const Markdown: FC<MarkdownProps> = ({ children = '', className }) => {
             return (
               <th
                 className={cn(
-                  'border px-3 py-2 text-left font-bold [&[align=center]]:text-center [&[align=right]]:text-right',
+                  'border px-3 py-2 text-left font-bold [[align=center]]:text-center [[align=right]]:text-right',
                   className
                 )}
                 {...props}
@@ -85,7 +86,7 @@ const Markdown: FC<MarkdownProps> = ({ children = '', className }) => {
             return (
               <td
                 className={cn(
-                  'border px-3 py-2 text-left [&[align=center]]:text-center [&[align=right]]:text-right',
+                  'border px-3 py-2 text-left [[align=center]]:text-center [[align=right]]:text-right',
                   className
                 )}
                 {...props}

@@ -41,6 +41,12 @@ export default {
       }
     ],
     [
+      '@semantic-release/exec',
+      {
+        prepareCmd: 'pnpm exec oxfmt --write CHANGELOG.md'
+      }
+    ],
+    [
       '@semantic-release/github',
       {
         assets: [

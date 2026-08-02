@@ -1,155 +1,132 @@
 import { Remesh } from 'remesh'
-import { map, merge, of, EMPTY, mergeMap, fromEventPattern, bufferTime, filter } from 'rxjs'
-import type { MessageUser, MentionedUser } from './MessageList'
-import { ChatRoomExtern } from '@/domain/externs/ChatRoom'
-import MessageListDomain from '@/domain/MessageList'
-import UserInfoDomain from '@/domain/UserInfo'
-import HLCClockDomain from '@/domain/HLCClock'
-import { desert, getTextByteSize, upsert, compareHLC, sendEvent } from '@/utils'
-import { nanoid } from 'nanoid'
-import StatusModule from '@/domain/modules/Status'
-import { SYNC_HISTORY_MAX_DAYS, WEB_RTC_MAX_MESSAGE_SIZE } from '@/constants/config'
-import hash from 'hash-it'
+import { concatMap, filter, fromEventPattern, map, mergeMap, timer } from 'rxjs'
 import {
-  validateNetworkMessage,
-  type NetworkMessage,
-  type TextMessage,
-  type ReactionMessage,
-  type PeerSyncMessage,
-  type HistorySyncMessage,
-  MESSAGE_TYPE,
-  REACTION_TYPE,
-  PROMPT_TYPE
-} from '@/protocol/Message'
+  ChatRoomExtern,
+  type JoinRoomCommand as JoinRoomInput,
+  type SendReactionCommand as SendReactionInput
+} from '@/domain/externs/ChatRoom'
+import MessageListDomain from '@/domain/MessageList'
+import MessageInputDomain from '@/domain/MessageInput'
+import ReadinessDomain from '@/domain/Readiness'
+import UserInfoDomain from '@/domain/UserInfo'
+import StatusModule from '@/domain/modules/Status'
+import { MESSAGE_TYPE, REACTION_TYPE, type ChatMessage, type MentionedUser } from '@/protocol/ChatRoom'
+import type { ChatSession } from '@/protocol/Session'
+import { MESSAGE_RECORD_TYPE, NOTICE_TYPE, type SystemNoticeRecord, type TextMessageRecord } from '@/domain/Message'
+import { projectTextRecord } from '@/domain/MessageProjection'
+import { getSiteMeta, stringToHex } from '@/utils'
 
-export type RoomUser = MessageUser & { peerIds: string[]; joinedAt: number }
+const noticeRecord = (type: 'join' | 'leave', session: ChatSession): SystemNoticeRecord => {
+  const occurredAt = Date.now()
+  const id = `notice:${stringToHex(`${type}:${session.sessionId}`)}`
+  return {
+    type: MESSAGE_RECORD_TYPE.SYSTEM_NOTICE,
+    id,
+    notice: {
+      id,
+      hlc: { timestamp: occurredAt, counter: 0 },
+      type,
+      body: `"${session.user.name}" ${type === NOTICE_TYPE.JOIN ? 'joined' : 'left'} the chat`
+    },
+    user: session.user,
+    receivedAt: occurredAt
+  }
+}
+
+const uniqueUsers = (sessions: readonly ChatSession[]) => {
+  const users = new Map(sessions.map((session) => [session.user.id, session.user]))
+  return [...users.values()]
+}
+
+type ReconnectRequest = {
+  id: number
+  intervalSettled: boolean
+  outcome: { error?: Error } | null
+}
+
+const RECONNECT_FEEDBACK_MINIMUM_MS = 300
+
+type ReconnectOperation = {
+  id: number
+  input: JoinRoomInput
+  mode: 'retry' | 'reconnect'
+}
+
+type ConnectionOperation = {
+  id: number
+  input: JoinRoomInput
+  mode: 'join' | 'automatic'
+}
+
+const normalizeError = (error: unknown) => (error instanceof Error ? error : new Error(String(error)))
+const isOperationCancelled = (error: unknown) => error instanceof DOMException && error.name === 'AbortError'
 
 const ChatRoomDomain = Remesh.domain({
   name: 'ChatRoomDomain',
   impl: (domain) => {
+    const chatRoom = domain.getExtern(ChatRoomExtern)
     const messageListDomain = domain.getDomain(MessageListDomain())
+    const messageInputDomain = domain.getDomain(MessageInputDomain())
+    const readinessDomain = domain.getDomain(ReadinessDomain())
     const userInfoDomain = domain.getDomain(UserInfoDomain())
-    const hlcClockDomain = domain.getDomain(HLCClockDomain())
-    const chatRoomExtern = domain.getExtern(ChatRoomExtern)
+    const JoinStatus = StatusModule(domain, { name: 'Room.JoinStatusModule' })
 
-    const PeerIdState = domain.state<string>({
-      name: 'Room.PeerIdState',
-      default: chatRoomExtern.peerId
+    const SessionsState = domain.state<readonly ChatSession[]>({ name: 'Room.SessionsState', default: [] })
+    const JoinInputState = domain.state<JoinRoomInput | null>({ name: 'Room.JoinInputState', default: null })
+    const ConnectionSequenceState = domain.state({ name: 'Room.ConnectionSequenceState', default: 0 })
+    const ReconnectSequenceState = domain.state({ name: 'Room.ReconnectSequenceState', default: 0 })
+    const ConnectionRequestState = domain.state<{ id: number } | null>({
+      name: 'Room.ConnectionRequestState',
+      default: null
     })
-
-    const PeerIdQuery = domain.query({
-      name: 'Room.PeerIdQuery',
-      impl: ({ get }) => {
-        return get(PeerIdState())
-      }
-    })
-
-    const JoinStatusModule = StatusModule(domain, {
-      name: 'Room.JoinStatusModule'
-    })
-
-    const UserListState = domain.state<RoomUser[]>({
-      name: 'Room.UserListState',
-      default: []
+    const ReconnectRequestState = domain.state<ReconnectRequest | null>({
+      name: 'Room.ReconnectRequestState',
+      default: null
     })
 
     const UserListQuery = domain.query({
       name: 'Room.UserListQuery',
-      impl: ({ get }) => {
-        return get(UserListState())
-      }
+      impl: ({ get }) => uniqueUsers(get(SessionsState()))
+    })
+    const JoinIsFinishedQuery = JoinStatus.query.IsFinishedQuery
+    const ReconnectRequestQuery = domain.query({
+      name: 'Room.ReconnectRequestQuery',
+      impl: ({ get }) => get(ReconnectRequestState())
+    })
+    const ReconnectIsLoadingQuery = domain.query({
+      name: 'Room.ReconnectIsLoadingQuery',
+      impl: ({ get }) => get(ReconnectRequestQuery()) !== null
+    })
+    const ConnectionOperationIsLoadingQuery = domain.query({
+      name: 'Room.ConnectionOperationIsLoadingQuery',
+      impl: ({ get }) => get(ConnectionRequestState()) !== null
+    })
+    const ConnectionIsLoadingQuery = domain.query({
+      name: 'Room.ConnectionIsLoadingQuery',
+      impl: ({ get }) =>
+        get(ConnectionOperationIsLoadingQuery()) ||
+        get(ReconnectIsLoadingQuery()) ||
+        get(readinessDomain.query.StateQuery()) === 'connecting'
+    })
+    const ReconnectAvailableQuery = domain.query({
+      name: 'Room.ReconnectAvailableQuery',
+      impl: ({ get }) => get(userInfoDomain.query.UserInfoQuery()) !== null && !get(ConnectionIsLoadingQuery())
     })
 
-    const SelfUserQuery = domain.query({
-      name: 'Room.SelfUserQuery',
-      impl: ({ get }) => {
-        return get(UserListQuery()).find((user) => user.peerIds.includes(chatRoomExtern.peerId))!
-      }
+    const ApplySessionsCommand = domain.command({
+      name: 'Room.ApplySessionsCommand',
+      impl: (_, sessions: readonly ChatSession[]) => SessionsState().new(sessions)
     })
 
-    const LastMessageHLCQuery = domain.query({
-      name: 'Room.LastMessageHLCQuery',
-      impl: ({ get }) => {
-        const messages = get(messageListDomain.query.ListQuery()).filter(
-          (message) => message.type === MESSAGE_TYPE.TEXT
-        )
-
-        if (!messages.length) {
-          return { timestamp: 0, counter: 0 }
-        }
-
-        return messages.reduce((latest, msg) => (compareHLC(msg.hlc, latest.hlc) > 0 ? msg : latest)).hlc
-      }
-    })
-
-    /**
-     * Get all peerIds from UserList except self.
-     * Used for sending messages to all connected peers.
-     */
-    const PeerListQuery = domain.query({
-      name: 'Room.PeerListQuery',
-      impl: ({ get }) => {
-        return get(UserListQuery())
-          .flatMap((user) => user.peerIds)
-          .filter((peerId) => peerId !== get(PeerIdQuery()))
-      }
-    })
-
-    const JoinIsFinishedQuery = JoinStatusModule.query.IsFinishedQuery
-
-    /**
-     * Handle join/leave message deduplication
-     * If the previous message is a join/leave message from the same user,
-     * delete it and create a new one to avoid message spam
-     */
-    const HandleJoinLeaveMessageCommand = domain.command({
-      name: 'Room.HandleJoinLeaveMessageCommand',
-      impl: ({ get }, payload: { id: string; name: string; avatar: string; messageType: 'join' | 'leave' }) => {
-        const { id, name, avatar, messageType } = payload
-        const now = Date.now()
-        const currentHLC = get(hlcClockDomain.query.CurrentHLCQuery())
-        const newHLC = sendEvent(currentHLC)
-        const messageBody = messageType === 'join' ? `"${name}" joined the chat` : `"${name}" left the chat`
-
-        // Find user's most recent join/leave message
-        const messageList = get(messageListDomain.query.ListQuery())
-        const userPromptMessages = messageList
-          .filter((msg) => msg.type === MESSAGE_TYPE.SYSTEM_PROMPT && msg.sender.id === id)
-          .toSorted((a, b) => compareHLC(b.hlc, a.hlc))
-
-        const lastMessage = userPromptMessages[0]
-
-        // If the previous message is from the same user, delete it
-        if (lastMessage) {
-          return [
-            hlcClockDomain.command.SendEventCommand(),
-            messageListDomain.command.DeleteItemCommand(lastMessage.id),
-            messageListDomain.command.CreateItemCommand({
-              type: MESSAGE_TYPE.SYSTEM_PROMPT,
-              id: nanoid(),
-              hlc: newHLC,
-              sentAt: now,
-              receivedAt: now,
-              sender: { id, name, avatar },
-              body: messageBody,
-              promptType: messageType === 'join' ? PROMPT_TYPE.JOIN : PROMPT_TYPE.LEAVE
-            })
-          ]
-        }
-
-        // Create new message (first message from this user)
+    const ConnectionRequestedEvent = domain.event<ConnectionOperation>({ name: 'Room.ConnectionRequestedEvent' })
+    const StartConnectionCommand = domain.command({
+      name: 'Room.StartConnectionCommand',
+      impl: ({ get }, operation: Omit<ConnectionOperation, 'id'>) => {
+        const id = get(ConnectionSequenceState()) + 1
         return [
-          hlcClockDomain.command.SendEventCommand(),
-          messageListDomain.command.CreateItemCommand({
-            type: MESSAGE_TYPE.SYSTEM_PROMPT,
-            id: nanoid(),
-            hlc: newHLC,
-            sentAt: now,
-            receivedAt: now,
-            sender: { id, name, avatar },
-            body: messageBody,
-            promptType: messageType === 'join' ? PROMPT_TYPE.JOIN : PROMPT_TYPE.LEAVE
-          })
+          ConnectionSequenceState().new(id),
+          ConnectionRequestState().new({ id }),
+          ConnectionRequestedEvent({ id, ...operation })
         ]
       }
     })
@@ -157,637 +134,370 @@ const ChatRoomDomain = Remesh.domain({
     const JoinRoomCommand = domain.command({
       name: 'Room.JoinRoomCommand',
       impl: ({ get }) => {
-        const { id, name, avatar } = get(userInfoDomain.query.UserInfoQuery())!
+        if (!get(JoinStatus.query.IsInitialQuery())) return null
+        const user = get(userInfoDomain.query.UserInfoQuery())
+        if (!user) return OnErrorEvent(new Error('User identity is unavailable'))
         return [
-          UpdateUserListCommand({
-            type: 'create',
-            user: { peerId: chatRoomExtern.peerId, joinedAt: Date.now(), id, name, avatar }
-          }),
-          HandleJoinLeaveMessageCommand({ id, name, avatar, messageType: PROMPT_TYPE.JOIN }),
-          JoinStatusModule.command.SetFinishedCommand(),
-          JoinRoomEvent(chatRoomExtern.roomId),
-          SelfJoinRoomEvent(chatRoomExtern.roomId)
+          JoinStatus.command.SetLoadingCommand(),
+          StartConnectionCommand({ input: { user, site: getSiteMeta() }, mode: 'join' })
         ]
       }
     })
 
-    JoinRoomCommand.after(() => {
-      chatRoomExtern.joinRoom()
-      return null
+    const SendTextRequestedEvent = domain.event<{ body: string; mentions: MentionedUser[] }>({
+      name: 'Room.SendTextRequestedEvent'
     })
-
-    const LeaveRoomCommand = domain.command({
-      name: 'Room.LeaveRoomCommand',
-      impl: ({ get }) => {
-        const { id, name, avatar } = get(userInfoDomain.query.UserInfoQuery())!
-        return [
-          HandleJoinLeaveMessageCommand({ id, name, avatar, messageType: PROMPT_TYPE.LEAVE }),
-          UpdateUserListCommand({
-            type: 'delete',
-            user: { peerId: chatRoomExtern.peerId, joinedAt: Date.now(), id, name, avatar }
-          }),
-          JoinStatusModule.command.SetInitialCommand(),
-          LeaveRoomEvent(chatRoomExtern.roomId),
-          SelfLeaveRoomEvent(chatRoomExtern.roomId)
-        ]
-      }
-    })
-
-    LeaveRoomCommand.after(() => {
-      chatRoomExtern.leaveRoom()
-      return null
-    })
-
     const SendTextMessageCommand = domain.command({
       name: 'Room.SendTextMessageCommand',
-      impl: ({ get }, message: string | { body: string; mentions: MentionedUser[] }) => {
-        const self = get(SelfUserQuery())
-        const now = Date.now()
-        const currentHLC = get(hlcClockDomain.query.CurrentHLCQuery())
-        const newHLC = sendEvent(currentHLC)
-
-        const textMessage: TextMessage = {
-          type: MESSAGE_TYPE.TEXT,
-          id: nanoid(),
-          hlc: newHLC,
-          sentAt: now,
-          receivedAt: now,
-          sender: {
-            id: self.id,
-            name: self.name,
-            avatar: self.avatar
-          },
-          body: typeof message === 'string' ? message : message.body,
-          mentions: typeof message === 'string' ? [] : message.mentions,
-          reactions: {
-            likes: [],
-            hates: []
-          }
-        }
-
-        /**
-         * Why specify peerIds:
-         * According to artico source code, room.send() without target will send to all calls (including connecting peers).
-         * If a peer's DataChannel is not ready, it will throw "Connection is not established yet" error and interrupt the forEach loop.
-         * UserList only contains peers that have sent SyncUser message, which means their DataChannel is already established.
-         * So we only send to peers in UserList to avoid errors.
-         *
-         * @see https://github.com/matallui/artico/blob/8a4f1a185be9355f893120e9492151f1785e59fa/packages/client/src/room.ts#L114 Room.send() implementation
-         * @see hhttps://github.com/matallui/artico/blob/8a4f1a185be9355f893120e9492151f1785e59fa/packages/peer/src/peer.ts#L281 Peer.send() throws error when not ready
-         */
-        const peerIds = get(PeerListQuery())
-
-        // Only send to network if there are other peers, but always save to local
-        peerIds.length && chatRoomExtern.sendMessage(textMessage, peerIds)
-
-        return [
-          hlcClockDomain.command.SendEventCommand(),
-          messageListDomain.command.CreateItemCommand(textMessage),
-          SendTextMessageEvent(textMessage)
-        ]
-      }
+      impl: (_, message: string | { body: string; mentions: MentionedUser[] }) =>
+        SendTextRequestedEvent(typeof message === 'string' ? { body: message, mentions: [] } : message)
     })
 
+    const SendReactionRequestedEvent = domain.event<{ messageId: string; reaction: 'like' | 'hate' }>({
+      name: 'Room.SendReactionRequestedEvent'
+    })
     const SendReactionCommand = domain.command({
       name: 'Room.SendReactionCommand',
-      impl: ({ get }, payload: { messageId: string; reaction: 'like' | 'hate' }) => {
-        const { messageId, reaction } = payload
-        const self = get(SelfUserQuery())
-        const now = Date.now()
-        const currentHLC = get(hlcClockDomain.query.CurrentHLCQuery())
-        const newHLC = sendEvent(currentHLC)
-        const localMessage = get(messageListDomain.query.ItemQuery(messageId)) as TextMessage
+      impl: (_, payload: { messageId: string; reaction: 'like' | 'hate' }) => SendReactionRequestedEvent(payload)
+    })
 
-        const reactionMessage: ReactionMessage = {
-          type: MESSAGE_TYPE.REACTION,
-          id: nanoid(),
-          hlc: newHLC,
-          sentAt: now,
-          receivedAt: now,
-          sender: {
-            id: self.id,
-            name: self.name,
-            avatar: self.avatar
-          },
-          targetId: messageId,
-          reaction: reaction === REACTION_TYPE.LIKE ? REACTION_TYPE.LIKE : REACTION_TYPE.HATE
-        }
+    const ReconnectRequestedEvent = domain.event<ReconnectOperation>({ name: 'Room.ReconnectRequestedEvent' })
+    const ReconnectStartedEvent = domain.event<number>({ name: 'Room.ReconnectStartedEvent' })
+    const ReconnectFinishedEvent = domain.event<{ id: number; error?: Error }>({
+      name: 'Room.ReconnectFinishedEvent'
+    })
 
-        const senderInfo = { id: self.id, name: self.name, avatar: self.avatar }
-        const updatedMessage: TextMessage = {
-          ...localMessage,
-          reactions: {
-            likes:
-              reaction === REACTION_TYPE.LIKE
-                ? desert(localMessage.reactions.likes, senderInfo, 'id')
-                : localMessage.reactions.likes,
-            hates:
-              reaction === REACTION_TYPE.HATE
-                ? desert(localMessage.reactions.hates, senderInfo, 'id')
-                : localMessage.reactions.hates
-          }
-        }
+    const settleReconnectRequest = (request: ReconnectRequest) => {
+      if (!request.intervalSettled || request.outcome === null) {
+        return ReconnectRequestState().new(request)
+      }
+      return [ReconnectRequestState().new(null), ReconnectFinishedEvent({ id: request.id, ...request.outcome })]
+    }
 
-        /**
-         * Get all peerIds from UserList except self.
-         * @see SendTextMessageCommand for detailed explanation.
-         */
-        const peerIds = get(PeerListQuery())
-
-        // Only send to network if there are other peers, but always save to local
-        peerIds.length && chatRoomExtern.sendMessage(reactionMessage, peerIds)
-
+    const ReconnectCommand = domain.command({
+      name: 'Room.ReconnectCommand',
+      impl: ({ get }) => {
+        if (!get(ReconnectAvailableQuery())) return null
+        const joined = get(JoinIsFinishedQuery())
+        const user = get(userInfoDomain.query.UserInfoQuery())!
+        const input = joined ? get(JoinInputState())! : { user, site: getSiteMeta() }
+        const id = get(ReconnectSequenceState()) + 1
         return [
-          hlcClockDomain.command.SendEventCommand(),
-          messageListDomain.command.UpdateItemCommand(updatedMessage),
-          SendReactionMessageEvent(reactionMessage)
+          ReconnectSequenceState().new(id),
+          ReconnectRequestState().new({
+            id,
+            intervalSettled: false,
+            outcome: null
+          }),
+          ...(joined ? [] : [JoinStatus.command.SetLoadingCommand()]),
+          ReconnectRequestedEvent({ id, input, mode: joined ? 'reconnect' : 'retry' }),
+          ReconnectStartedEvent(id)
         ]
       }
     })
 
-    const SendSyncUserMessageCommand = domain.command({
-      name: 'Room.SendSyncUserMessageCommand',
-      impl: ({ get }, peerId: string) => {
-        const self = get(SelfUserQuery())
-        const now = Date.now()
-        const currentHLC = get(hlcClockDomain.query.CurrentHLCQuery())
-        const newHLC = sendEvent(currentHLC)
-        const lastMessageHLC = get(LastMessageHLCQuery())
-
-        const syncUserMessage: PeerSyncMessage = {
-          type: MESSAGE_TYPE.PEER_SYNC,
-          id: nanoid(),
-          hlc: newHLC,
-          sentAt: now,
-          receivedAt: now,
-          sender: {
-            id: self.id,
-            name: self.name,
-            avatar: self.avatar
-          },
-          peerId: chatRoomExtern.peerId,
-          joinedAt: self.joinedAt,
-          lastMessageHLC
-        }
-
-        chatRoomExtern.sendMessage(syncUserMessage, peerId)
-        return [hlcClockDomain.command.SendEventCommand(), SendSyncUserMessageEvent(syncUserMessage)]
+    const SettleReconnectIntervalCommand = domain.command({
+      name: 'Room.SettleReconnectIntervalCommand',
+      impl: ({ get }, id: number) => {
+        const request = get(ReconnectRequestQuery())
+        if (request?.id !== id || request.intervalSettled) return null
+        return settleReconnectRequest({ ...request, intervalSettled: true })
       }
     })
 
-    /**
-     * The maximum sync message is the historical records within 30 days, using the last message as the basis for judgment.
-     * The number of synced messages may not be all messages within 30 days; if new messages are generated before syncing, they will not be synced.
-     * Users A, B, C, D, and E: A and B are online, while C, D, and E are offline.
-     * 1. A and B chat, generating two messages: messageA and messageB.
-     * 2. A and B go offline.
-     * 3. C and D come online, generating two messages: messageC and messageD.
-     * 4. A and B come online, and C and D will push two messages, messageC and messageD, to A and B. However, A and B will not push messageA and messageB to C and D because C and D's latest message timestamps are earlier than A and B's.
-     * 5. E comes online, and A, B, C, and D will all push messages messageA, messageB, messageC, and messageD to E.
-     *
-     * Final results:
-     * A and B see 4 messages: messageC, messageD, messageA, and messageB.
-     * C and D see 2 messages: messageA and messageB.
-     * E sees 4 messages: messageA, messageB, messageC, and messageD.
-     *
-     * As shown above, C and D did not sync messages that were earlier than their own.
-     * On one hand, if we want to fully sync 30 days of messages, we must diff the timestamps of messages within 30 days and then insert them. The current implementation only does incremental additions, and messages will accumulate over time.
-     * For now, let's keep it this way and see if it's necessary to fully sync the data within 30 days later.
-     */
-    const SendSyncHistoryMessageCommand = domain.command({
-      name: 'Room.SendSyncHistoryMessageCommand',
-      impl: (
-        { get },
-        { peerId, lastMessageHLC }: { peerId: string; lastMessageHLC: { timestamp: number; counter: number } }
-      ) => {
-        const self = get(SelfUserQuery())
-        const now = Date.now()
-
-        const historyMessages = get(messageListDomain.query.ListQuery()).filter((message) => {
-          return (
-            message.type === MESSAGE_TYPE.TEXT &&
-            compareHLC(message.hlc, lastMessageHLC) > 0 &&
-            message.hlc.timestamp >= Date.now() - SYNC_HISTORY_MAX_DAYS * 24 * 60 * 60 * 1000
-          )
-        }) as TextMessage[]
-
-        /**
-         * Message chunking to ensure that each message does not exceed WEB_RTC_MAX_MESSAGE_SIZE
-         * If the message itself exceeds the size limit, skip syncing that message directly.
-         */
-        const pushHistoryMessageList = historyMessages.reduce<HistorySyncMessage[]>((acc, cur) => {
-          const currentHLC = get(hlcClockDomain.query.CurrentHLCQuery())
-          const newHLC = sendEvent(currentHLC)
-
-          const pushHistoryMessage: HistorySyncMessage = {
-            type: MESSAGE_TYPE.HISTORY_SYNC,
-            id: nanoid(),
-            hlc: newHLC,
-            sentAt: now,
-            receivedAt: now,
-            sender: {
-              id: self.id,
-              name: self.name,
-              avatar: self.avatar
-            },
-            messages: [cur]
-          }
-          const pushHistoryMessageByteSize = getTextByteSize(JSON.stringify(pushHistoryMessage))
-
-          if (pushHistoryMessageByteSize < WEB_RTC_MAX_MESSAGE_SIZE) {
-            if (acc.length) {
-              const mergedSize = getTextByteSize(JSON.stringify(acc[acc.length - 1])) + pushHistoryMessageByteSize
-              if (mergedSize < WEB_RTC_MAX_MESSAGE_SIZE) {
-                acc[acc.length - 1].messages.push(cur)
-              } else {
-                acc.push(pushHistoryMessage)
-              }
-            } else {
-              acc.push(pushHistoryMessage)
-            }
-          }
-          return acc
-        }, [])
-
-        return pushHistoryMessageList.map((message) => {
-          chatRoomExtern.sendMessage(message, peerId)
-          return [hlcClockDomain.command.SendEventCommand(), SendSyncHistoryMessageEvent(message)]
-        })
-      }
-    })
-
-    const UpdateUserListCommand = domain.command({
-      name: 'Room.UpdateUserListCommand',
-      impl: ({ get }, action: { type: 'create' | 'delete'; user: Omit<RoomUser, 'peerIds'> & { peerId: string } }) => {
-        const userList = get(UserListState())
-        const existUser = userList.find((user) => user.id === action.user.id)
-        if (action.type === 'create') {
-          return [
-            UserListState().new(
-              upsert(
-                userList,
-                { ...action.user, peerIds: [...new Set(existUser?.peerIds || []), action.user.peerId] },
-                'id'
-              )
-            )
-          ]
-        } else {
-          return [
-            UserListState().new(
-              upsert(
-                userList,
-                {
-                  ...action.user,
-                  peerIds: existUser?.peerIds?.filter((peerId) => peerId !== action.user.peerId) || []
-                },
-                'id'
-              ).filter((user) => user.peerIds.length)
-            )
-          ]
-        }
-      }
-    })
-
-    const SendSyncHistoryMessageEvent = domain.event<HistorySyncMessage>({
-      name: 'Room.SendSyncHistoryMessageEvent'
-    })
-
-    const SendSyncUserMessageEvent = domain.event<PeerSyncMessage>({
-      name: 'Room.SendSyncUserMessageEvent'
-    })
-
-    const SendTextMessageEvent = domain.event<TextMessage>({
+    const SendTextMessageEvent = domain.event<ReturnType<typeof projectTextRecord>>({
       name: 'Room.SendTextMessageEvent'
     })
-
-    const SendReactionMessageEvent = domain.event<ReactionMessage>({
-      name: 'Room.SendReactionMessageEvent'
-    })
-
-    const JoinRoomEvent = domain.event<string>({
-      name: 'Room.JoinRoomEvent'
-    })
-
-    const LeaveRoomEvent = domain.event<string>({
-      name: 'Room.LeaveRoomEvent'
-    })
-
-    const OnMessageEvent = domain.event<NetworkMessage>({
-      name: 'Room.OnMessageEvent'
-    })
-
-    const OnTextMessageEvent = domain.event<TextMessage>({
+    const OnTextMessageEvent = domain.event<ReturnType<typeof projectTextRecord>>({
       name: 'Room.OnTextMessageEvent'
     })
+    const SelfJoinRoomEvent = domain.event({ name: 'Room.SelfJoinRoomEvent' })
+    const OnErrorEvent = domain.event<Error>({ name: 'Room.OnErrorEvent' })
 
-    const OnSyncUserMessageEvent = domain.event<PeerSyncMessage>({
-      name: 'Room.OnSyncUserMessageEvent'
+    const CompleteReconnectOperationCommand = domain.command({
+      name: 'Room.CompleteReconnectOperationCommand',
+      impl: ({ get }, result: { id: number; error?: Error }) => {
+        const request = get(ReconnectRequestQuery())
+        if (request?.id !== result.id || request.outcome !== null) return null
+        return settleReconnectRequest({ ...request, outcome: result.error ? { error: result.error } : {} })
+      }
     })
 
-    const OnSyncHistoryMessageEvent = domain.event<HistorySyncMessage>({
-      name: 'Room.OnSyncHistoryMessageEvent'
+    const RetainJoinInputCommand = domain.command({
+      name: 'Room.RetainJoinInputCommand',
+      impl: (_, input: JoinRoomInput) => JoinInputState().new(input)
     })
 
-    const OnSyncMessageEvent = domain.event<HistorySyncMessage[]>({
-      name: 'Room.OnSyncMessageEvent'
+    const FailJoinCommand = domain.command({
+      name: 'Room.FailJoinCommand',
+      impl: () => JoinStatus.command.SetInitialCommand()
     })
 
-    const OnReactionMessageEvent = domain.event<ReactionMessage>({
-      name: 'Room.OnReactionMessageEvent'
+    const CompleteJoinCommand = domain.command({
+      name: 'Room.CompleteJoinCommand',
+      impl: (_, input: JoinRoomInput) => [
+        RetainJoinInputCommand(input),
+        messageListDomain.command.ReloadCommand(),
+        JoinStatus.command.SetFinishedCommand(),
+        SelfJoinRoomEvent()
+      ]
     })
 
-    const OnJoinRoomEvent = domain.event<string>({
-      name: 'Room.OnJoinRoomEvent'
+    const CompleteRetryOperationCommand = domain.command({
+      name: 'Room.CompleteRetryOperationCommand',
+      impl: ({ get }, result: { id: number; input: JoinRoomInput; error?: Error; cancelled?: boolean }) => {
+        const request = get(ReconnectRequestQuery())
+        if (request?.id !== result.id || request.outcome !== null) return null
+        return [
+          result.cancelled
+            ? JoinStatus.command.SetInitialCommand()
+            : result.error
+              ? FailJoinCommand()
+              : CompleteJoinCommand(result.input),
+          CompleteReconnectOperationCommand({ id: result.id, error: result.error })
+        ]
+      }
     })
 
-    const SelfJoinRoomEvent = domain.event<string>({
-      name: 'Room.SelfJoinRoomEvent'
+    const CompleteConnectionOperationCommand = domain.command({
+      name: 'Room.CompleteConnectionOperationCommand',
+      impl: (
+        { get },
+        result: ConnectionOperation & {
+          error?: Error
+          cancelled?: boolean
+        }
+      ) => {
+        if (get(ConnectionRequestState())?.id !== result.id) return null
+        const finished = ConnectionRequestState().new(null)
+        if (result.cancelled) {
+          return result.mode === 'join' ? [JoinStatus.command.SetInitialCommand(), finished] : finished
+        }
+        if (result.error) {
+          return result.mode === 'join'
+            ? [FailJoinCommand(), finished, ReconnectFinishedEvent({ id: result.id, error: result.error })]
+            : [finished, ReconnectFinishedEvent({ id: result.id, error: result.error })]
+        }
+        return [
+          result.mode === 'join' ? CompleteJoinCommand(result.input) : RetainJoinInputCommand(result.input),
+          finished
+        ]
+      }
     })
 
-    const OnLeaveRoomEvent = domain.event<string>({
-      name: 'Room.OnLeaveRoomEvent'
+    const ApplyLiveMessageCommand = domain.command({
+      name: 'Room.ApplyLiveMessageCommand',
+      impl: ({ get }, message: ChatMessage) => {
+        const reload = messageListDomain.command.ReloadCommand()
+        if (message.type !== MESSAGE_TYPE.TEXT) return reload
+        const user = get(SessionsState()).find((session) => session.user.id === message.userId)?.user
+        if (!user) return reload
+        const record: TextMessageRecord = {
+          type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE,
+          id: message.id,
+          message,
+          user,
+          receivedAt: Date.now()
+        }
+        return [reload, OnTextMessageEvent(projectTextRecord(record))]
+      }
     })
 
-    const SelfLeaveRoomEvent = domain.event<string>({
-      name: 'Room.SelfLeaveRoomEvent'
-    })
-
-    const OnErrorEvent = domain.event<Error>({
-      name: 'Room.OnErrorEvent'
+    const PersistNoticeCommand = domain.command({
+      name: 'Room.PersistNoticeCommand',
+      impl: (_, payload: { type: 'join' | 'leave'; session: ChatSession }) =>
+        messageListDomain.command.PersistRecordCommand(noticeRecord(payload.type, payload.session))
     })
 
     domain.effect({
-      name: 'Room.OnJoinRoomEffect',
-      impl: () => {
-        const onJoinRoom$ = fromEventPattern<string>(chatRoomExtern.onJoinRoom).pipe(
-          mergeMap((peerId) => {
-            // console.log('onJoinRoom', peerId)
-            if (chatRoomExtern.peerId === peerId) {
-              return [OnJoinRoomEvent(peerId)]
-            } else {
-              return [SendSyncUserMessageCommand(peerId), OnJoinRoomEvent(peerId)]
+      name: 'Room.ConnectionEffect',
+      impl: ({ fromEvent }) =>
+        fromEvent(ConnectionRequestedEvent).pipe(
+          mergeMap(async (operation) => {
+            try {
+              await chatRoom.joinRoom(operation.input)
+              return CompleteConnectionOperationCommand(operation)
+            } catch (error) {
+              return CompleteConnectionOperationCommand({
+                ...operation,
+                ...(isOperationCancelled(error) ? { cancelled: true } : { error: normalizeError(error) })
+              })
             }
           })
         )
-        return onJoinRoom$
-      }
+    })
+
+    domain.effect({
+      name: 'Room.HostRecoveryEffect',
+      impl: ({ fromEvent, get }) =>
+        fromEvent(readinessDomain.event.StateChangedEvent).pipe(
+          filter((state) => state === 'ready'),
+          map(() => {
+            const input = get(JoinInputState())
+            if (!input || !get(JoinIsFinishedQuery())) return null
+            return StartConnectionCommand({ input, mode: 'automatic' })
+          })
+        )
+    })
+
+    domain.effect({
+      name: 'Room.RefreshIdentityEffect',
+      impl: ({ fromEvent, get }) =>
+        fromEvent(userInfoDomain.event.UpdateUserInfoEvent).pipe(
+          filter((user): user is NonNullable<typeof user> => Boolean(user) && get(JoinIsFinishedQuery())),
+          map((user) => StartConnectionCommand({ input: { user, site: getSiteMeta() }, mode: 'automatic' }))
+        )
+    })
+
+    domain.effect({
+      name: 'Room.SendTextEffect',
+      impl: ({ fromEvent, get }) =>
+        fromEvent(SendTextRequestedEvent).pipe(
+          concatMap(async (command) => {
+            const user = get(userInfoDomain.query.UserInfoQuery())
+            if (!user) return OnErrorEvent(new Error('User identity is unavailable'))
+            try {
+              const message = await chatRoom.sendMessage({ type: 'text', ...command })
+              if (message.type !== MESSAGE_TYPE.TEXT || message.userId !== user.id) {
+                throw new Error('ChatRoom returned an invalid local text message')
+              }
+              const record: TextMessageRecord = {
+                type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE,
+                id: message.id,
+                message,
+                user,
+                receivedAt: Date.now()
+              }
+              return [messageInputDomain.command.ClearCommand(), SendTextMessageEvent(projectTextRecord(record))]
+            } catch (error) {
+              return OnErrorEvent(error as Error)
+            }
+          })
+        )
+    })
+
+    domain.effect({
+      name: 'Room.SendReactionEffect',
+      impl: ({ fromEvent, get }) =>
+        fromEvent(SendReactionRequestedEvent).pipe(
+          concatMap(async ({ messageId, reaction }) => {
+            try {
+              const message = get(messageListDomain.query.ItemQuery(messageId))
+              const selfId = get(userInfoDomain.query.UserInfoQuery())?.id
+              if (!message || message.type !== MESSAGE_TYPE.TEXT || !selfId) return null
+              const users = reaction === REACTION_TYPE.LIKE ? message.reactions.likes : message.reactions.hates
+              const command: SendReactionInput = {
+                type: 'reaction',
+                targetId: messageId,
+                reaction,
+                active: !users.some((user) => user.id === selfId)
+              }
+              await chatRoom.sendMessage(command)
+              return null
+            } catch (error) {
+              return OnErrorEvent(error as Error)
+            }
+          })
+        )
+    })
+
+    domain.effect({
+      name: 'Room.ReconnectEffect',
+      impl: ({ fromEvent }) =>
+        fromEvent(ReconnectRequestedEvent).pipe(
+          concatMap(async ({ id, input, mode }) => {
+            try {
+              if (mode === 'reconnect') await chatRoom.leaveRoom()
+              await chatRoom.joinRoom(input)
+              return mode === 'retry'
+                ? CompleteRetryOperationCommand({ id, input })
+                : CompleteReconnectOperationCommand({ id })
+            } catch (error) {
+              if (isOperationCancelled(error)) {
+                return mode === 'retry'
+                  ? CompleteRetryOperationCommand({ id, input, cancelled: true })
+                  : CompleteReconnectOperationCommand({ id })
+              }
+              const normalizedError = normalizeError(error)
+              return mode === 'retry'
+                ? CompleteRetryOperationCommand({ id, input, error: normalizedError })
+                : CompleteReconnectOperationCommand({ id, error: normalizedError })
+            }
+          })
+        )
+    })
+
+    domain.effect({
+      name: 'Room.ReconnectIntervalEffect',
+      impl: ({ fromEvent }) =>
+        fromEvent(ReconnectStartedEvent).pipe(
+          mergeMap((id) => timer(RECONNECT_FEEDBACK_MINIMUM_MS).pipe(map(() => SettleReconnectIntervalCommand(id))))
+        )
     })
 
     domain.effect({
       name: 'Room.OnMessageEffect',
-      impl: () => {
-        const onMessage$ = fromEventPattern<NetworkMessage>(chatRoomExtern.onMessage).pipe(
-          mergeMap((message) => {
-            // Filter out messages that do not conform to the format
-            if (!validateNetworkMessage(message)) {
-              console.warn('Invalid message format', message)
-              return EMPTY
-            }
-
-            const messageEvent$ = of(OnMessageEvent(message))
-
-            // Emit specific message type events
-            const specificEvent$ = (() => {
-              switch (message.type) {
-                case MESSAGE_TYPE.TEXT:
-                  return of(OnTextMessageEvent(message))
-                case MESSAGE_TYPE.PEER_SYNC:
-                  return of(OnSyncUserMessageEvent(message))
-                case MESSAGE_TYPE.HISTORY_SYNC:
-                  return of(OnSyncHistoryMessageEvent(message))
-                case MESSAGE_TYPE.REACTION:
-                  return of(OnReactionMessageEvent(message))
-                default:
-                  console.warn('Unsupported message type', message)
-                  return EMPTY
-              }
-            })()
-
-            return merge(messageEvent$, specificEvent$)
-          })
+      impl: () =>
+        fromEventPattern<ChatMessage>(chatRoom.onMessage.bind(chatRoom), (_handler, dispose) => dispose()).pipe(
+          map(ApplyLiveMessageCommand)
         )
-        return onMessage$
-      }
     })
 
     domain.effect({
-      name: 'Room.OnTextMessageEffect',
-      impl: ({ fromEvent }) => {
-        return fromEvent(OnTextMessageEvent).pipe(
-          map((message) => {
-            // Update local HLC based on received message
-            const receivedMessage: TextMessage = {
-              ...message,
-              receivedAt: Date.now()
-            }
-            return [
-              hlcClockDomain.command.ReceiveEventCommand(message.hlc),
-              messageListDomain.command.CreateItemCommand(receivedMessage)
-            ]
-          })
-        )
-      }
+      name: 'Room.OnSessionsEffect',
+      impl: () =>
+        fromEventPattern<readonly ChatSession[]>(chatRoom.onSessions.bind(chatRoom), (_handler, dispose) =>
+          dispose()
+        ).pipe(map(ApplySessionsCommand))
     })
 
     domain.effect({
-      name: 'Room.OnSyncUserMessageEffect',
-      impl: ({ get, fromEvent }) => {
-        return fromEvent(OnSyncUserMessageEvent).pipe(
-          mergeMap((message) => {
-            const selfUser = get(SelfUserQuery())
-
-            // If a new user joins after the current user has entered the room, a join log message needs to be created.
-            const existUser = get(UserListQuery()).find((user) => user.id === message.sender.id)
-            const isNewJoinUser = !existUser && message.joinedAt > selfUser.joinedAt
-
-            const lastMessageHLC = get(LastMessageHLCQuery())
-            const needSyncHistory = compareHLC(lastMessageHLC, message.lastMessageHLC) > 0
-
-            const userForList = {
-              ...message.sender,
-              peerId: message.peerId,
-              joinedAt: message.joinedAt
-            }
-
-            return of(
-              hlcClockDomain.command.ReceiveEventCommand(message.hlc),
-              UpdateUserListCommand({ type: 'create', user: userForList }),
-              isNewJoinUser
-                ? HandleJoinLeaveMessageCommand({
-                    id: message.sender.id,
-                    name: message.sender.name,
-                    avatar: message.sender.avatar,
-                    messageType: PROMPT_TYPE.JOIN
-                  })
-                : null,
-              needSyncHistory
-                ? SendSyncHistoryMessageCommand({
-                    peerId: message.peerId,
-                    lastMessageHLC: message.lastMessageHLC
-                  })
-                : null
-            )
-          })
+      name: 'Room.OnJoinEffect',
+      impl: () =>
+        fromEventPattern<ChatSession>(chatRoom.onJoinRoom.bind(chatRoom), (_handler, dispose) => dispose()).pipe(
+          map((session) => PersistNoticeCommand({ type: 'join', session }))
         )
-      }
     })
 
     domain.effect({
-      name: 'Room.OnSyncHistoryMessageEffect',
-      impl: ({ get, fromEvent }) => {
-        return fromEvent(OnSyncHistoryMessageEvent).pipe(
-          bufferTime(300), // Collect messages within 300ms time window
-          filter((messages) => messages.length > 0),
-          mergeMap((syncMessages) => {
-            // Merge all messages from multiple sync events
-            const allMessages = syncMessages.flatMap((syncMsg) => syncMsg.messages)
-
-            // Deduplicate messages by id, keep the latest one
-            const uniqueMessages = [
-              ...allMessages.reduce((map, msg) => map.set(msg.id, msg), new Map<string, TextMessage>()).values()
-            ]
-
-            // Filter out messages that haven't changed
-            const changedMessages = uniqueMessages.filter((message) => {
-              const hasMessage = get(messageListDomain.query.HasItemQuery(message.id))
-              if (!hasMessage) {
-                return true
-              } else {
-                return hash(message) !== hash(get(messageListDomain.query.ItemQuery(message.id)))
-              }
-            })
-
-            // Update HLC for each received history message
-            const maxHLC = uniqueMessages.reduce((max, msg) => (compareHLC(msg.hlc, max) > 0 ? msg.hlc : max), {
-              timestamp: 0,
-              counter: 0
-            })
-
-            // Return batched upsert commands and single OnSyncMessageEvent for all sync messages
-            return changedMessages.length
-              ? of(
-                  hlcClockDomain.command.ReceiveEventCommand(maxHLC),
-                  ...changedMessages.map((message) => messageListDomain.command.UpsertItemCommand(message)),
-                  OnSyncMessageEvent(syncMessages)
-                )
-              : EMPTY
-          })
+      name: 'Room.OnLeaveEffect',
+      impl: () =>
+        fromEventPattern<ChatSession>(chatRoom.onLeaveRoom.bind(chatRoom), (_handler, dispose) => dispose()).pipe(
+          map((session) => PersistNoticeCommand({ type: 'leave', session }))
         )
-      }
-    })
-
-    domain.effect({
-      name: 'Room.OnReactionMessageEffect',
-      impl: ({ get, fromEvent }) => {
-        return fromEvent(OnReactionMessageEvent).pipe(
-          mergeMap((message) => {
-            if (!get(messageListDomain.query.HasItemQuery(message.targetId))) {
-              return EMPTY
-            }
-            const targetMessage = get(messageListDomain.query.ItemQuery(message.targetId)) as TextMessage
-
-            const updatedMessage: TextMessage = {
-              ...targetMessage,
-              receivedAt: Date.now(),
-              reactions: {
-                likes:
-                  message.reaction === REACTION_TYPE.LIKE
-                    ? desert(targetMessage.reactions.likes, message.sender, 'id')
-                    : targetMessage.reactions.likes,
-                hates:
-                  message.reaction === REACTION_TYPE.HATE
-                    ? desert(targetMessage.reactions.hates, message.sender, 'id')
-                    : targetMessage.reactions.hates
-              }
-            }
-
-            return of(
-              hlcClockDomain.command.ReceiveEventCommand(message.hlc),
-              messageListDomain.command.UpdateItemCommand(updatedMessage)
-            )
-          })
-        )
-      }
-    })
-
-    domain.effect({
-      name: 'Room.OnLeaveRoomEffect',
-      impl: ({ get }) => {
-        const onLeaveRoom$ = fromEventPattern<string>(chatRoomExtern.onLeaveRoom).pipe(
-          map((peerId) => {
-            if (get(JoinStatusModule.query.IsInitialQuery())) {
-              return null
-            }
-            // console.log('onLeaveRoom', peerId)
-
-            const existUser = get(UserListQuery()).find((user) => user.peerIds.includes(peerId))
-
-            if (existUser) {
-              return [
-                UpdateUserListCommand({ type: 'delete', user: { ...existUser, peerId } }),
-                existUser.peerIds.length === 1
-                  ? HandleJoinLeaveMessageCommand({
-                      id: existUser.id,
-                      name: existUser.name,
-                      avatar: existUser.avatar,
-                      messageType: PROMPT_TYPE.LEAVE
-                    })
-                  : null,
-                OnLeaveRoomEvent(peerId)
-              ]
-            } else {
-              return [OnLeaveRoomEvent(peerId)]
-            }
-          })
-        )
-        return onLeaveRoom$
-      }
     })
 
     domain.effect({
       name: 'Room.OnErrorEffect',
-      impl: () => {
-        const onRoomError$ = fromEventPattern<Error>(chatRoomExtern.onError).pipe(
-          map((error) => {
-            console.error(error)
-            return OnErrorEvent(error)
-          })
+      impl: () =>
+        fromEventPattern<Error>(chatRoom.onError.bind(chatRoom), (_handler, dispose) => dispose()).pipe(
+          map(OnErrorEvent)
         )
-        return onRoomError$
-      }
     })
 
     return {
       query: {
-        PeerIdQuery,
         UserListQuery,
-        PeerListQuery,
         JoinIsFinishedQuery,
-        LastMessageHLCQuery
+        ReconnectRequestQuery,
+        ReconnectIsLoadingQuery,
+        ConnectionOperationIsLoadingQuery,
+        ConnectionIsLoadingQuery,
+        ReconnectAvailableQuery
       },
       command: {
         JoinRoomCommand,
-        LeaveRoomCommand,
         SendTextMessageCommand,
         SendReactionCommand,
-        SendSyncUserMessageCommand,
-        SendSyncHistoryMessageCommand
+        ReconnectCommand,
+        SettleReconnectIntervalCommand
       },
       event: {
         SendTextMessageEvent,
-        SendReactionMessageEvent,
-        SendSyncUserMessageEvent,
-        SendSyncHistoryMessageEvent,
-        JoinRoomEvent,
-        SelfJoinRoomEvent,
-        LeaveRoomEvent,
-        SelfLeaveRoomEvent,
-        OnMessageEvent,
         OnTextMessageEvent,
-        OnReactionMessageEvent,
-        OnSyncMessageEvent,
-        OnJoinRoomEvent,
-        OnLeaveRoomEvent,
+        SelfJoinRoomEvent,
+        ReconnectStartedEvent,
+        ReconnectFinishedEvent,
         OnErrorEvent
       }
     }

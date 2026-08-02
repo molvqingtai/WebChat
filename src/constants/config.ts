@@ -183,16 +183,9 @@ export const BREAKPOINTS = {
 } as const
 
 export const MESSAGE_MAX_LENGTH = 500 as const
+/** Compression target only; the expanded canonical event remains the hard send boundary. */
+export const MESSAGE_IMAGE_TARGET_SIZE = 30 * 1024
 
-export const STORAGE_NAME = `WEB_CHAT_STORAGE` as const
-
-export const USER_INFO_STORAGE_KEY = 'WEB_CHAT_USER_INFO' as const
-
-export const MESSAGE_LIST_STORAGE_KEY = 'WEB_CHAT_MESSAGE_LIST' as const
-
-export const APP_STATUS_STORAGE_KEY = 'WEB_CHAT_APP_STATUS' as const
-
-export const VERSION_STORAGE_KEY = 'WEB_CHAT_VERSION' as const
 /**
  * In chrome storage.sync, each key-value pair supports a maximum storage of 8kb
  * Image is encoded as base64, and the size is increased by about 33%.
@@ -200,12 +193,34 @@ export const VERSION_STORAGE_KEY = 'WEB_CHAT_VERSION' as const
  */
 export const MAX_AVATAR_SIZE = 5120 as const
 
-export const SYNC_HISTORY_MAX_DAYS = 90 as const
+export const HISTORY_WINDOW_DAYS = 180 as const
+
+/** Per-source async decode admission; overflow drops only that source's new frame. */
+export const MAX_DECODE_QUEUE_FRAMES = 8
+export const MAX_DECODE_QUEUE_BYTES = 256 * 1024
+
+/** Per-domain volatile delivery retained only until a page confirms durable settlement. */
+export const MAX_INBOUND_BUFFER_EVENTS = 512
+export const MAX_INBOUND_BUFFER_BYTES = 8 * 1024 * 1024
+
+/** One history session budget, separate from each response's public wire limits. */
+export const MAX_HISTORY_SESSION_BYTES = 8 * 1024 * 1024
+export const MAX_HISTORY_SESSION_MESSAGES = 10000
+export const HISTORY_REQUEST_TIMEOUT_MS = 10000
+
+/** Global provider admission bounds started jobs, dormant successors, and queued metadata together. */
+export const MAX_PROVIDER_SUPPLY_CONCURRENCY = 4
+export const MAX_PROVIDER_SUPPLY_QUEUE_JOBS = 32
+export const MAX_PROVIDER_SUPPLY_QUEUE_BYTES = 8 * 1024
+export const MAX_CONFLICTS_PER_RECORD = 4
+export const MAX_STORED_CONFLICTS = 1000
+
+export const CHAT_ROOM_NAMESPACE_V3 = 'WEB_CHAT_CHAT_ROOM_V3' as const
+export const WORLD_ROOM_ID_V3 = 'WEB_CHAT_WORLD_ROOM_V3' as const
 
 /**
- * https://lgrahl.de/articles/demystifying-webrtc-dc-size-limit.html
- * Message max size is 256KiB; if the message is too large, it will cause the connection to drop.
+ * Unified grace window after the last page of a domain disconnects.
+ * ChatRoom connection, Runtime domain state, un-ACK buffer, and WorldRoom
+ * presence are retained together and released together when it expires.
  */
-export const WEB_RTC_MAX_MESSAGE_SIZE = 262144 as const
-
-export const WORLD_ROOM_ID = 'WEB_CHAT_WORLD_ROOM' as const
+export const RUNTIME_DOMAIN_GRACE_MS = 5000 as const

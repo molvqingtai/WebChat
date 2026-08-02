@@ -5,6 +5,7 @@ import AppStatusDomain from '@/domain/AppStatus'
 import { useRemeshDomain, useRemeshQuery } from 'remesh-react'
 import { cn } from '@/utils'
 import useWindowResize from '@/hooks/useWindowResize'
+import { projectAppButtonPosition } from '@/app/content/views/app-button/position'
 
 export interface AppMainProps {
   children?: ReactNode
@@ -14,16 +15,11 @@ export interface AppMainProps {
 const AppMain: FC<AppMainProps> = ({ children, className }) => {
   const appStatusDomain = useRemeshDomain(AppStatusDomain())
   const appOpenStatus = useRemeshQuery(appStatusDomain.query.OpenQuery())
-  const { x, y } = useRemeshQuery(appStatusDomain.query.PositionQuery())
-
+  const position = useRemeshQuery(appStatusDomain.query.PositionQuery())
   const { width, height } = useWindowResize()
 
-  // Position x,y is offset from bottom-right corner
-  // Convert to absolute position from left for comparison
-  const absoluteX = width - x
-  const absoluteY = height - y
-
-  const isOnRightSide = absoluteX >= width / 2 + 50
+  const { x: absoluteX, y: absoluteY } = projectAppButtonPosition(position, { width, height })
+  const isOnRightSide = absoluteX >= width / 2
 
   const { size, setRef } = useResizable({
     initSize: Math.max(375, width / 6),
@@ -41,6 +37,7 @@ const AppMain: FC<AppMainProps> = ({ children, className }) => {
     <AnimatePresence>
       {appOpenStatus && (
         <motion.div
+          data-webchat-panel
           initial={{ opacity: 0, y: 10, x: isOnRightSide ? '-100%' : '0' }}
           animate={{ opacity: 1, y: 0, x: isOnRightSide ? '-100%' : '0' }}
           exit={{ opacity: 0, y: 10 }}
@@ -53,7 +50,7 @@ const AppMain: FC<AppMainProps> = ({ children, className }) => {
             bottom: `calc(100vh - ${absoluteY}px + 22px)`
           }}
           className={cn(
-            `fixed inset-y-10 right-10 z-infinity mb-0 mt-auto box-border grid max-h-[min(calc(100vh_-60px),_1000px)] min-h-[375px] grid-flow-col grid-rows-[auto_1fr_auto] rounded-xl bg-slate-50 dark:bg-slate-950 font-sans shadow-2xl`,
+            'z-infinity fixed inset-y-10 right-10 mt-auto mb-0 box-border grid max-h-[min(calc(100vh_-60px),_1000px)] min-h-[375px] grid-flow-col grid-rows-[auto_1fr_auto] rounded-xl bg-slate-50 font-sans shadow-2xl dark:bg-slate-950',
             className,
             { 'transition-transform': isAnimationComplete }
           )}

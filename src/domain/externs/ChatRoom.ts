@@ -1,42 +1,51 @@
 import { Remesh } from 'remesh'
-import type { ChatRoomMessage } from '@/protocol'
+import type { Unsubscribe } from '@/domain/Subscription'
+import type { ChatMessage, ChatSession, ChatSite, ChatUser, MentionedUser } from '@/protocol'
+
+export interface JoinRoomCommand {
+  user: ChatUser
+  site: ChatSite
+}
+
+export interface SendTextCommand {
+  type: 'text'
+  body: string
+  mentions: MentionedUser[]
+}
+
+export interface SendReactionCommand {
+  type: 'reaction'
+  targetId: string
+  reaction: 'like' | 'hate'
+  active: boolean
+}
+
+export type SendMessageCommand = SendTextCommand | SendReactionCommand
 
 export interface ChatRoom {
-  readonly peerId: string
-  readonly roomId: string
-  joinRoom: () => ChatRoom
-  sendMessage: (message: ChatRoomMessage, id?: string | string[]) => ChatRoom
-  onMessage: (callback: (message: ChatRoomMessage) => void) => ChatRoom
-  leaveRoom: () => ChatRoom
-  onJoinRoom: (callback: (id: string) => void) => ChatRoom
-  onLeaveRoom: (callback: (id: string) => void) => ChatRoom
-  onError: (callback: (error: Error) => void) => ChatRoom
+  joinRoom(command: JoinRoomCommand): Promise<void>
+  leaveRoom(): Promise<void>
+  sendMessage(command: SendMessageCommand): Promise<ChatMessage>
+  onMessage(listener: (message: ChatMessage) => void): Unsubscribe
+  onJoinRoom(listener: (session: ChatSession) => void): Unsubscribe
+  onLeaveRoom(listener: (session: ChatSession) => void): Unsubscribe
+  onSessions(listener: (sessions: readonly ChatSession[]) => void): Unsubscribe
+  onError(listener: (error: Error) => void): Unsubscribe
+}
+
+const notImplemented = (name: string) => () => {
+  throw new Error(`"${name}" not implemented.`)
 }
 
 export const ChatRoomExtern = Remesh.extern<ChatRoom>({
   default: {
-    peerId: '',
-    roomId: '',
-    joinRoom: () => {
-      throw new Error('"joinRoom" not implemented.')
-    },
-    sendMessage: () => {
-      throw new Error('"sendMessage" not implemented.')
-    },
-    onMessage: () => {
-      throw new Error('"onMessage" not implemented.')
-    },
-    leaveRoom: () => {
-      throw new Error('"leaveRoom" not implemented.')
-    },
-    onJoinRoom: () => {
-      throw new Error('"onJoinRoom" not implemented.')
-    },
-    onLeaveRoom: () => {
-      throw new Error('"onLeaveRoom" not implemented.')
-    },
-    onError: () => {
-      throw new Error('"onError" not implemented.')
-    }
+    joinRoom: notImplemented('joinRoom'),
+    leaveRoom: notImplemented('leaveRoom'),
+    sendMessage: notImplemented('sendMessage'),
+    onMessage: notImplemented('onMessage'),
+    onJoinRoom: notImplemented('onJoinRoom'),
+    onLeaveRoom: notImplemented('onLeaveRoom'),
+    onSessions: notImplemented('onSessions'),
+    onError: notImplemented('onError')
   }
 })

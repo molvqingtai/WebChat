@@ -1,4 +1,10 @@
-import { type RemeshEvent, type RemeshAction, type RemeshDomainContext, type RemeshExtern } from 'remesh'
+import {
+  type RemeshEvent,
+  type RemeshAction,
+  type RemeshDomainContext,
+  type RemeshExtern,
+  type RemeshSubscribeOnlyEvent
+} from 'remesh'
 import { from, map, Observable, switchMap } from 'rxjs'
 
 import type { Storage, StorageValue } from '@/domain/externs/Storage'
@@ -30,7 +36,7 @@ export default class StorageEffect {
     return this
   }
 
-  set<T extends StorageValue, U extends RemeshEvent<any, T>>(event: U) {
+  set<T extends StorageValue, U extends RemeshEvent<any, T> | RemeshSubscribeOnlyEvent<any, T>>(event: U) {
     this.domain.effect({
       name: 'FormStateToStorageEffect',
       impl: ({ fromEvent }) => {

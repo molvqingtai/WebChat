@@ -14,7 +14,7 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Label } from '@/components/ui/label'
 import { RefreshCcwIcon } from 'lucide-react'
 import { MAX_AVATAR_SIZE } from '@/constants/config'
-import { ToastImpl } from '@/domain/impls/Toast'
+import ProfileFeedbackDomain from '@/domain/ProfileFeedback'
 import { BlurFade } from '@/components/magicui/blur-fade'
 import { Checkbox } from '@/components/ui/checkbox'
 import Link from '@/components/link'
@@ -56,8 +56,7 @@ const formSchema = v.object({
 })
 const ProfileForm: FC = () => {
   const send = useRemeshSend()
-  const toast = ToastImpl.value
-
+  const feedbackDomain = useRemeshDomain(ProfileFeedbackDomain())
   const userInfoDomain = useRemeshDomain(UserInfoDomain())
   const userInfo = useRemeshQuery(userInfoDomain.query.UserInfoQuery())
 
@@ -68,20 +67,20 @@ const ProfileForm: FC = () => {
 
   // Update defaultValues
   useEffect(() => {
-    userInfo && form.reset(userInfo)
+    if (userInfo) form.reset(userInfo)
   }, [userInfo, form])
 
   const handleSubmit = (userInfo: UserInfo) => {
     send(userInfoDomain.command.UpdateUserInfoCommand(userInfo))
-    toast.success('Saved successfully!')
+    send(feedbackDomain.command.SuccessCommand('Saved successfully!'))
   }
 
   const handleWarning = (error: Error) => {
-    toast.warning(error.message)
+    send(feedbackDomain.command.WarningCommand(error.message))
   }
 
   const handleError = (error: Error) => {
-    toast.error(error.message)
+    send(feedbackDomain.command.ErrorCommand(error.message))
   }
 
   const handleRefreshAvatar = async () => {
@@ -162,7 +161,7 @@ const ProfileForm: FC = () => {
               </FormControl>
               <FormDescription>
                 Enabling this option will display scrolling messages on the website.
-                <Link className="ml-2 text-primary" href="https://en.wikipedia.org/wiki/Danmaku_subtitling">
+                <Link className="text-primary ml-2" href="https://en.wikipedia.org/wiki/Danmaku_subtitling">
                   Wikipedia
                 </Link>
               </FormDescription>

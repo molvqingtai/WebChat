@@ -8,15 +8,26 @@ import 'sonner/dist/styles.css'
 import '@/assets/styles/tailwind.css'
 
 import { ToastImpl } from '@/domain/impls/Toast'
+import { requestBrowserSyncStoragePreparation } from '@/service/StoragePreparation'
 
-const store = Remesh.store({
-  externs: [BrowserSyncStorageImpl, ToastImpl]
-})
+const main = async () => {
+  try {
+    await requestBrowserSyncStoragePreparation()
+  } catch {
+    return
+  }
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <RemeshRoot store={store}>
-      <App />
-    </RemeshRoot>
-  </React.StrictMode>
-)
+  const store = Remesh.store({
+    externs: [BrowserSyncStorageImpl, ToastImpl]
+  })
+
+  ReactDOM.createRoot(document.getElementById('root')!).render(
+    <React.StrictMode>
+      <RemeshRoot store={store}>
+        <App />
+      </RemeshRoot>
+    </React.StrictMode>
+  )
+}
+
+void main()

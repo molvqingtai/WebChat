@@ -1,33 +1,26 @@
 import { DanmakuExtern } from '@/domain/externs/Danmaku'
 
-import type { ChatRoomTextMessage } from '@/protocol'
+import type { ProjectedTextMessage } from '@/domain/Message'
 import { createElement } from 'react'
 import DanmakuMessage from '@/app/content/components/danmaku-message'
 import { createRoot } from 'react-dom/client'
 import type { Manager } from 'danmu'
 import { create } from 'danmu'
-import { LocalStorageImpl } from './Storage'
-import type { AppStatus } from '../AppStatus'
-import { APP_STATUS_STORAGE_KEY } from '@/constants/config'
-import { EVENT } from '@/constants/event'
 
 export class Danmaku {
   private container?: Element
-  private manager?: Manager<ChatRoomTextMessage>
+  private onOpen?: () => void
+  private manager?: Manager<ProjectedTextMessage>
   constructor() {
-    this.manager = create<ChatRoomTextMessage>({
+    this.manager = create<ProjectedTextMessage>({
       durationRange: [7000, 10000],
       plugin: {
-        $createNode(manager) {
+        $createNode: (manager) => {
           if (!manager.node) return
           createRoot(manager.node).render(
             createElement(DanmakuMessage, {
               data: manager.data,
-              onClick: async () => {
-                const appStatus = await LocalStorageImpl.value.get<AppStatus>(APP_STATUS_STORAGE_KEY)
-                LocalStorageImpl.value.set<AppStatus>(APP_STATUS_STORAGE_KEY, { ...appStatus!, open: true, unread: 0 })
-                dispatchEvent(new CustomEvent(EVENT.APP_OPEN))
-              },
+              onClick: () => this.onOpen?.(),
               onMouseEnter: () => manager.pause(),
               onMouseLeave: () => manager.resume()
             })
@@ -37,8 +30,9 @@ export class Danmaku {
     })
   }
 
-  mount(container: HTMLElement) {
+  mount(container: HTMLElement, onOpen: () => void) {
     this.container = container
+    this.onOpen = onOpen
     this.manager!.mount(container)
     this.manager!.startPlaying()
   }
@@ -48,27 +42,15 @@ export class Danmaku {
       throw new Error('Danmaku not mounted')
     }
     this.manager!.unmount()
+    this.container = undefined
+    this.onOpen = undefined
   }
 
-  push(message: ChatRoomTextMessage) {
+  push(message: ProjectedTextMessage) {
     if (!this.container) {
       throw new Error('Danmaku not mounted')
     }
     this.manager!.push(message)
-  }
-
-  unshift(message: ChatRoomTextMessage) {
-    if (!this.container) {
-      throw new Error('Danmaku not mounted')
-    }
-    this.manager!.unshift(message)
-  }
-
-  clear() {
-    if (!this.container) {
-      throw new Error('Danmaku not mounted')
-    }
-    this.manager!.clear()
   }
 }
 

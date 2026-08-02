@@ -1,5 +1,5 @@
-import type { CompositionEvent, ClipboardEvent, Ref } from 'react'
-import { type ChangeEvent, type KeyboardEvent } from 'react'
+import type { CompositionEvent, ClipboardEvent, InputEventHandler, Ref } from 'react'
+import { type KeyboardEvent } from 'react'
 
 import { cn } from '@/utils'
 import { Textarea } from '@/components/ui/textarea'
@@ -14,7 +14,7 @@ export interface MessageInputProps {
   autoFocus?: boolean
   disabled?: boolean
   loading?: boolean
-  onInput?: (e: ChangeEvent<HTMLTextAreaElement>) => void
+  onInput?: InputEventHandler<HTMLTextAreaElement>
   onPaste?: (e: ClipboardEvent<HTMLTextAreaElement>) => void
   onKeyDown?: (e: KeyboardEvent<HTMLTextAreaElement>) => void
   onCompositionStart?: (e: CompositionEvent<HTMLTextAreaElement>) => void
@@ -42,7 +42,7 @@ const MessageInput = ({
 }: MessageInputProps & { ref?: Ref<HTMLTextAreaElement | null> }) => {
   return (
     <div className={cn('relative', className)}>
-      <ScrollArea className="box-border max-h-28 w-full rounded-md border transition-[color,box-shadow] shadow-xs border-input bg-background 2xl:max-h-40 dark:bg-input/30 has-focus-visible:ring-[3px] has-focus-visible:border-ring has-focus-visible:ring-ring/50 has-aria-invalid:ring-destructive/20 dark:has-aria-invalid:ring-destructive/40 has-aria-invalid:border-destructive">
+      <ScrollArea className="border-input bg-background dark:bg-input/30 has-focus-visible:border-ring has-focus-visible:ring-ring/50 has-aria-invalid:ring-destructive/20 dark:has-aria-invalid:ring-destructive/40 has-aria-invalid:border-destructive box-border max-h-28 w-full rounded-md border shadow-xs transition-[color,box-shadow] has-focus-visible:ring-[3px] 2xl:max-h-40">
         <Textarea
           ref={ref}
           onPaste={onPaste}

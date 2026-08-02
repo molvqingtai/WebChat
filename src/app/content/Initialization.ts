@@ -1,0 +1,144 @@
+import type { RemeshStore } from 'remesh'
+import AppStatusDomain from '@/domain/AppStatus'
+import ToastDomain from '@/domain/Toast'
+
+const CONTENT_INITIALIZATION_TIMEOUT_MS = 16000
+
+const INITIALIZATION_TOAST_ID = 'webchat-initialization'
+
+export interface InitializationDependencies {
+  prepareBrowserSyncStorage: () => Promise<void>
+  prepareLocalStorage: () => Promise<void>
+  prepareMessageDatabase: () => Promise<void>
+  initializeRuntime: () => Promise<unknown | null>
+  detachRuntime: () => void
+}
+
+const withDeadline = <Value>(task: Promise<Value>, signal: AbortSignal, timeoutMs: number): Promise<Value> =>
+  new Promise<Value>((resolve, reject) => {
+    let settled = false
+    const finish = (callback: () => void) => {
+      if (settled) return
+      settled = true
+      globalThis.clearTimeout(timeout)
+      signal.removeEventListener('abort', onAbort)
+      callback()
+    }
+    const onAbort = () =>
+      finish(() => reject(signal.reason ?? new DOMException('Initialization aborted', 'AbortError')))
+    const timeout = globalThis.setTimeout(
+      () => finish(() => reject(new Error('WebChat initialization timed out'))),
+      timeoutMs
+    )
+    signal.addEventListener('abort', onAbort, { once: true })
+    task.then(
+      (value) => finish(() => resolve(value)),
+      (error) => finish(() => reject(error))
+    )
+    if (signal.aborted) onAbort()
+  })
+
+const runInitializationAttempt = async (
+  dependencies: InitializationDependencies,
+  signal: AbortSignal,
+  onRuntimeStarted: () => void = () => {},
+  timeoutMs = CONTENT_INITIALIZATION_TIMEOUT_MS
+) => {
+  const deadline = Date.now() + timeoutMs
+
+  const run = <Value>(task: () => Promise<Value>) => {
+    signal.throwIfAborted()
+    const remaining = deadline - Date.now()
+    if (remaining <= 0) return Promise.reject(new Error('WebChat initialization timed out'))
+    return withDeadline(task(), signal, remaining)
+  }
+
+  await run(dependencies.prepareBrowserSyncStorage)
+  await run(dependencies.prepareLocalStorage)
+  await run(dependencies.prepareMessageDatabase)
+  const runtime = await run(() => {
+    onRuntimeStarted()
+    return dependencies.initializeRuntime()
+  })
+  if (!runtime) throw new Error('Shared runtime unavailable')
+}
+
+interface InitializationLifecycleOptions {
+  store: RemeshStore
+  dependencies: InitializationDependencies
+  activateApplicationDependencies: () => void
+  timeoutMs?: number
+}
+
+export const startInitializationLifecycle = ({
+  store,
+  dependencies,
+  activateApplicationDependencies,
+  timeoutMs = CONTENT_INITIALIZATION_TIMEOUT_MS
+}: InitializationLifecycleOptions) => {
+  const appStatus = store.getDomain(AppStatusDomain())
+  const toast = store.getDomain(ToastDomain())
+  let active = true
+  let generation = 0
+  let controller: AbortController | null = null
+  let runtimeStarted = false
+
+  const detachRuntime = () => {
+    if (!runtimeStarted) return
+    runtimeStarted = false
+    dependencies.detachRuntime()
+  }
+
+  const startAttempt = () => {
+    const attemptGeneration = ++generation
+    controller?.abort(new DOMException('Initialization superseded', 'AbortError'))
+    controller = new AbortController()
+    const signal = controller.signal
+
+    store.send(
+      toast.command.LoadingCommand({
+        id: INITIALIZATION_TOAST_ID,
+        message: 'Preparing WebChat',
+        dismissible: false
+      })
+    )
+
+    void runInitializationAttempt(
+      dependencies,
+      signal,
+      () => {
+        runtimeStarted = true
+      },
+      timeoutMs
+    )
+      .then(() => {
+        if (!active || signal.aborted || generation !== attemptGeneration) return
+        activateApplicationDependencies()
+        if (!active || signal.aborted || generation !== attemptGeneration) return
+        store.send([appStatus.command.MarkReadyCommand(), toast.command.CancelCommand(INITIALIZATION_TOAST_ID)])
+      })
+      .catch((error) => {
+        if (!active || signal.aborted || generation !== attemptGeneration) return
+        detachRuntime()
+        console.error('[WebChat] Initialization unavailable:', error)
+        // No cancel first: sonner defers a same-ID dismiss publish to the next animation frame, which
+        // would land after the error create and immediately remove the fresh error toast. The same-ID
+        // error descriptor directly replaces the loading descriptor (successor replacement).
+        store.send([
+          appStatus.command.MarkUnavailableCommand(),
+          toast.command.ErrorCommand({ id: INITIALIZATION_TOAST_ID, message: 'WebChat unavailable' })
+        ])
+      })
+  }
+
+  const retrySubscription = store.subscribeEvent(appStatus.event.RetryRequestedEvent, startAttempt)
+  startAttempt()
+
+  return () => {
+    active = false
+    generation += 1
+    controller?.abort(new DOMException('Initialization unmounted', 'AbortError'))
+    detachRuntime()
+    retrySubscription.unsubscribe()
+  }
+}

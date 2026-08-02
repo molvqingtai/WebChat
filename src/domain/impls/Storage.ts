@@ -1,69 +1,102 @@
 import { createStorage } from 'unstorage'
-import indexedDbDriver from 'unstorage/drivers/indexedb'
 import localStorageDriver from 'unstorage/drivers/localstorage'
-import { LocalStorageExtern, IndexDBStorageExtern, BrowserSyncStorageExtern } from '@/domain/externs/Storage'
-import { STORAGE_NAME } from '@/constants/config'
+import { LocalStorageExtern, BrowserSyncStorageExtern } from '@/domain/externs/Storage'
+import {
+  APP_OPEN_STORAGE_KEY,
+  APP_POSITION_STORAGE_KEY,
+  APP_UNREAD_STORAGE_KEY,
+  CONFIG_STORE_VERSION,
+  CONFIG_STORE_VERSION_KEY,
+  STORAGE_NAME
+} from '@/constants/storage'
 import webExtensionDriver from '@/utils/webExtensionDriver'
-
+import { withPreparationLock, type PreparationLockCoordinator } from '@/utils/withPreparationLock'
 import type { Storage } from '@/domain/externs/Storage'
-import { EVENT } from '@/constants/event'
+
+export interface ConfigurationVersionStorage {
+  readVersion(): Promise<{ readonly exists: boolean; readonly value: unknown }>
+  writeVersion(version: number): Promise<void>
+  clear(): Promise<void>
+}
+
+export const prepareConfigurationStorage = (
+  identity: string,
+  storage: ConfigurationVersionStorage,
+  coordinator?: PreparationLockCoordinator
+): Promise<void> =>
+  withPreparationLock(
+    `configuration:${identity}`,
+    async (lock) => {
+      try {
+        const stored = await lock.read(storage.readVersion())
+        if (!stored.exists) {
+          await lock.write(() => storage.writeVersion(CONFIG_STORE_VERSION))
+          lock.checkpoint()
+          return
+        }
+        if (stored.value === CONFIG_STORE_VERSION) return
+
+        await lock.write(() => storage.clear())
+        lock.checkpoint()
+        await lock.write(() => storage.writeVersion(CONFIG_STORE_VERSION))
+        lock.checkpoint()
+      } catch (error) {
+        if (lock.signal.aborted) throw error
+        console.error('[WebChat] Configuration store preparation failed')
+        throw new Error('Configuration store preparation failed')
+      }
+    },
+    coordinator
+  )
 
 /**
  * Waiting to be resolved
  * @see https://github.com/unjs/unstorage/issues/277
- * */
-
-export const localStorage = createStorage({
-  driver: localStorageDriver({ base: `${STORAGE_NAME}:` })
+ */
+const localStorage = createStorage({
+  driver: localStorageDriver({ base: `${STORAGE_NAME}:`, window: globalThis.window })
 })
 
-export const indexDBStorage = createStorage({
-  driver: indexedDbDriver({ dbName: __NAME__, storeName: __NAME__, base: `${STORAGE_NAME}:` })
-})
-
-export const browserSyncStorage = createStorage({
+const browserSyncStorage = createStorage({
   driver: webExtensionDriver({ storageArea: 'sync' })
 })
 
+const clearVersionManagedLocalConfiguration = async () => {
+  const keys = await localStorage.getKeys()
+  await Promise.all(
+    keys
+      .filter(
+        (key) => key !== APP_OPEN_STORAGE_KEY && key !== APP_POSITION_STORAGE_KEY && key !== APP_UNREAD_STORAGE_KEY
+      )
+      .map((key) => localStorage.removeItem(key))
+  )
+}
+
+export const prepareLocalConfigurationStorage = (coordinator?: PreparationLockCoordinator): Promise<void> =>
+  prepareConfigurationStorage(
+    `origin-local:${globalThis.location?.origin ?? 'headless'}`,
+    {
+      async readVersion() {
+        const exists = await localStorage.hasItem(CONFIG_STORE_VERSION_KEY)
+        return {
+          exists,
+          value: exists ? await localStorage.getItem(CONFIG_STORE_VERSION_KEY) : undefined
+        }
+      },
+      writeVersion: (version) => localStorage.setItem(CONFIG_STORE_VERSION_KEY, version),
+      clear: clearVersionManagedLocalConfiguration
+    },
+    coordinator
+  )
+
 export const LocalStorageImpl = LocalStorageExtern.impl({
-  name: STORAGE_NAME,
   get: localStorage.getItem,
   set: localStorage.setItem,
-  remove: localStorage.removeItem,
-  clear: localStorage.clear,
-  watch: async (callback) => {
-    const unwatch = await localStorage.watch(callback)
-
-    /**
-     * Because the storage event cannot be triggered in the same browsing context
-     * it is necessary to listen for click events from DanmukuMessage.
-     * @see https://developer.mozilla.org/en-US/docs/Web/API/Window/storage_event
-     */
-    addEventListener(EVENT.APP_OPEN, callback)
-    return async () => {
-      removeEventListener(EVENT.APP_OPEN, callback)
-      return unwatch()
-    }
-  },
-  unwatch: localStorage.unwatch
-})
-
-export const IndexDBStorageImpl = IndexDBStorageExtern.impl({
-  name: STORAGE_NAME,
-  get: indexDBStorage.getItem,
-  set: indexDBStorage.setItem,
-  remove: indexDBStorage.removeItem,
-  clear: indexDBStorage.clear,
-  watch: indexDBStorage.watch as Storage['watch'],
-  unwatch: indexDBStorage.unwatch
+  watch: localStorage.watch as Storage['watch']
 })
 
 export const BrowserSyncStorageImpl = BrowserSyncStorageExtern.impl({
-  name: STORAGE_NAME,
   get: browserSyncStorage.getItem,
   set: browserSyncStorage.setItem,
-  remove: browserSyncStorage.removeItem,
-  clear: browserSyncStorage.clear,
-  watch: browserSyncStorage.watch as Storage['watch'],
-  unwatch: browserSyncStorage.unwatch
+  watch: browserSyncStorage.watch as Storage['watch']
 })

@@ -1,0 +1,15 @@
+export const STORAGE_NAME = 'WEB_CHAT_STORAGE' as const
+
+export const MESSAGE_STORE_VERSION = 2
+
+export const APP_OPEN_STORAGE_KEY = 'WEB_CHAT_APP_STATUS:OPEN' as const
+
+export const APP_POSITION_STORAGE_KEY = 'WEB_CHAT_APP_STATUS:POSITION' as const
+
+export const APP_UNREAD_STORAGE_KEY = 'WEB_CHAT_APP_STATUS:UNREAD' as const
+
+export const USER_INFO_STORAGE_KEY = 'WEB_CHAT_USER_INFO' as const
+
+export const CONFIG_STORE_VERSION = 1
+
+export const CONFIG_STORE_VERSION_KEY = 'WEB_CHAT_CONFIG_STORE_VERSION' as const

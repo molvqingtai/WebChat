@@ -1,11 +1,9 @@
 import { Remesh } from 'remesh'
-import type { ChatRoomTextMessage } from '@/protocol'
+import type { ProjectedTextMessage } from '@/domain/Message'
 
 export interface Danmaku {
-  push: (message: ChatRoomTextMessage) => void
-  unshift: (message: ChatRoomTextMessage) => void
-  clear: () => void
-  mount: (root: HTMLElement) => void
+  push: (message: ProjectedTextMessage) => void
+  mount: (root: HTMLElement, onOpen: () => void) => void
   unmount: () => void
 }
 
@@ -17,14 +15,8 @@ export const DanmakuExtern = Remesh.extern<Danmaku>({
     unmount() {
       throw new Error('"unmount" not implemented.')
     },
-    clear: () => {
-      throw new Error('"clear" not implemented.')
-    },
     push: () => {
       throw new Error('"push" not implemented.')
-    },
-    unshift: () => {
-      throw new Error('"unshift" not implemented.')
     }
   }
 })

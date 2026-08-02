@@ -1,191 +1,250 @@
 import { Remesh } from 'remesh'
-import { ListModule } from 'remesh/modules/list'
-import { IndexDBStorageExtern } from '@/domain/externs/Storage'
-import StorageEffect from '@/domain/modules/StorageEffect'
+import { catchError, defer, fromEventPattern, map, merge, mergeMap, of } from 'rxjs'
+import { MessageDatabaseExtern, createMessageStore, type MessageStore } from '@/domain/MessageStore'
 import StatusModule from './modules/Status'
-import { MESSAGE_LIST_STORAGE_KEY } from '@/constants/config'
-import type { LocalMessage } from '@/protocol/Message'
+import { MESSAGE_RECORD_TYPE, type MessageRecord, type SystemNoticeRecord } from '@/domain/Message'
+import { projectRecords } from '@/domain/MessageProjection'
+import { stringToHex } from '@/utils'
 
-// Re-export types
-export type {
-  LocalMessage as Message,
-  TextMessage,
-  SystemPromptMessage,
-  MentionedUser,
-  MessageUser
-} from '@/protocol/Message'
+const noticeAtSlot = (record: SystemNoticeRecord, slot: number): SystemNoticeRecord => {
+  if (slot === 0) return record
+  const id = `notice:${stringToHex(`${record.id}:${slot}`)}`
+  return { ...record, id, notice: { ...record.notice, id } }
+}
+
+const isEquivalentNotice = (record: MessageRecord, expected: SystemNoticeRecord): boolean =>
+  record.type === MESSAGE_RECORD_TYPE.SYSTEM_NOTICE &&
+  record.notice.type === expected.notice.type &&
+  record.notice.body === expected.notice.body &&
+  record.user.id === expected.user.id &&
+  record.user.name === expected.user.name &&
+  record.user.avatar === expected.user.avatar
+
+const persistNotice = async (messageStore: MessageStore, record: SystemNoticeRecord) => {
+  for (let slot = 0; ; slot += 1) {
+    const candidate = noticeAtSlot(record, slot)
+    const result = await messageStore.insert(candidate)
+    if (result.inserted || isEquivalentNotice(result.existing, candidate)) return
+  }
+}
+
+const toError = (error: unknown) => (error instanceof Error ? error : new Error(String(error)))
+
+interface CanonicalQueryRequest {
+  sequence: number
+  finishLoad: boolean
+  reloadOnFailure: boolean
+}
+
+export type { DisplayMessage as Message, ProjectedTextMessage, SystemNoticeMessage } from '@/domain/Message'
+export type { MentionedUser } from '@/protocol/ChatRoom'
+export type { ChatUser } from '@/protocol/Session'
 
 const MessageListDomain = Remesh.domain({
   name: 'MessageListDomain',
   impl: (domain) => {
-    const storageEffect = new StorageEffect({
-      domain,
-      extern: IndexDBStorageExtern,
-      key: MESSAGE_LIST_STORAGE_KEY
+    const messageStore = createMessageStore(domain.getExtern(MessageDatabaseExtern))
+    const LoadStatus = StatusModule(domain, { name: 'Message.ListLoadStatusModule' })
+
+    const RecordsState = domain.state<readonly MessageRecord[]>({
+      name: 'MessageList.RecordsState',
+      default: []
     })
 
-    const MessageListModule = ListModule<LocalMessage>(domain, {
-      name: 'MessageListModule',
-      key: (message) => message.id
+    const PreviewRecordsState = domain.state<readonly MessageRecord[]>({
+      name: 'MessageList.PreviewRecordsState',
+      default: []
     })
 
-    const LoadStatusModule = StatusModule(domain, {
-      name: 'Message.ListLoadStatusModule'
+    const CanonicalSequenceState = domain.state<number>({
+      name: 'MessageList.CanonicalSequenceState',
+      default: 0
     })
 
-    const ListQuery = MessageListModule.query.ItemListQuery
+    const RecordListQuery = domain.query({
+      name: 'MessageList.RecordListQuery',
+      impl: ({ get }) => get(RecordsState())
+    })
 
-    const ItemQuery = MessageListModule.query.ItemQuery
+    const ListQuery = domain.query({
+      name: 'MessageList.ListQuery',
+      impl: ({ get }) => projectRecords([...get(RecordsState()), ...get(PreviewRecordsState())])
+    })
 
-    const HasItemQuery = MessageListModule.query.HasItemByKeyQuery
+    const ItemQuery = domain.query({
+      name: 'MessageList.ItemQuery',
+      impl: ({ get }, id: string) => get(ListQuery()).find((message) => message.id === id) ?? null
+    })
 
-    const LoadIsFinishedQuery = LoadStatusModule.query.IsFinishedQuery
+    const HasItemQuery = domain.query({
+      name: 'MessageList.HasItemQuery',
+      impl: ({ get }, id: string) => get(RecordsState()).some((record) => record.id === id)
+    })
+
+    const LoadIsFinishedQuery = LoadStatus.query.IsFinishedQuery
 
     const ChangeListEvent = domain.event({
       name: 'MessageList.ChangeListEvent',
-      impl: ({ get }) => {
-        return get(ListQuery())
+      impl: ({ get }) => get(ListQuery())
+    })
+
+    const ApplyRecordCommand = domain.command({
+      name: 'MessageList.ApplyRecordCommand',
+      impl: ({ get }, record: MessageRecord) => {
+        const records = get(PreviewRecordsState())
+        const next = records.some((existing) => existing.id === record.id)
+          ? records.map((existing) => (existing.id === record.id ? record : existing))
+          : [...records, record]
+        return [PreviewRecordsState().new(next), ChangeListEvent()]
       }
     })
 
-    const CreateItemEvent = domain.event<LocalMessage>({
-      name: 'MessageList.CreateItemEvent'
+    const PersistRecordRequestedEvent = domain.event<MessageRecord>({
+      name: 'MessageList.PersistRecordRequestedEvent'
     })
 
-    const CreateItemCommand = domain.command({
-      name: 'MessageList.CreateItemCommand',
-      impl: (_, message: LocalMessage) => {
-        return [
-          MessageListModule.command.AddItemCommand(message),
-          CreateItemEvent(message),
-          ChangeListEvent(),
-          SyncToStorageEvent()
-        ]
-      }
+    const PersistRecordCommand = domain.command({
+      name: 'MessageList.PersistRecordCommand',
+      impl: (_, record: MessageRecord) => PersistRecordRequestedEvent(record)
     })
 
-    const UpdateItemEvent = domain.event<LocalMessage>({
-      name: 'MessageList.UpdateItemEvent'
-    })
-
-    const UpdateItemCommand = domain.command({
-      name: 'MessageList.UpdateItemCommand',
-      impl: (_, message: LocalMessage) => {
-        return [
-          MessageListModule.command.UpdateItemCommand(message),
-          UpdateItemEvent(message),
-          ChangeListEvent(),
-          SyncToStorageEvent()
-        ]
-      }
-    })
-
-    const DeleteItemEvent = domain.event<string>({
-      name: 'MessageList.DeleteItemEvent'
-    })
-
-    const DeleteItemCommand = domain.command({
-      name: 'MessageList.DeleteItemCommand',
-      impl: (_, id: string) => {
-        return [
-          MessageListModule.command.DeleteItemCommand(id),
-          DeleteItemEvent(id),
-          ChangeListEvent(),
-          SyncToStorageEvent()
-        ]
-      }
-    })
-
-    const UpsertItemCommand = domain.command({
-      name: 'MessageList.UpsertItemCommand',
-      impl: (_, message: LocalMessage) => {
-        return [
-          MessageListModule.command.UpsertItemCommand(message),
-          UpsertItemEvent(message),
-          ChangeListEvent(),
-          SyncToStorageEvent()
-        ]
-      }
-    })
-
-    const UpsertItemEvent = domain.event<LocalMessage>({
-      name: 'MessageList.UpsertItemEvent'
-    })
-
-    const ResetListCommand = domain.command({
-      name: 'MessageList.ResetListCommand',
-      impl: (_, messages: LocalMessage[]) => {
-        return [
-          MessageListModule.command.SetListCommand(messages),
-          ResetListEvent(messages),
-          ChangeListEvent(),
-          SyncToStorageEvent()
-        ]
-      }
-    })
-
-    const ResetListEvent = domain.event<LocalMessage[]>({
-      name: 'MessageList.ResetListEvent'
-    })
-
-    const ClearListEvent = domain.event({
-      name: 'MessageList.ClearListEvent'
-    })
-
-    const ClearListCommand = domain.command({
-      name: 'MessageList.ClearListCommand',
-      impl: () => {
-        return [MessageListModule.command.DeleteAllCommand(), ClearListEvent(), ChangeListEvent(), SyncToStorageEvent()]
-      }
-    })
-
-    const SyncToStorageEvent = domain.event({
-      name: 'MessageList.SyncToStorageEvent',
-      impl: ({ get }) => {
-        return get(ListQuery())
-      }
-    })
-
-    const SyncToStateEvent = domain.event<LocalMessage[]>({
+    const SyncToStateEvent = domain.event<readonly MessageRecord[]>({
       name: 'MessageList.SyncToStateEvent'
+    })
+
+    const LoadFailedEvent = domain.event<Error>({
+      name: 'MessageList.LoadFailedEvent'
     })
 
     const SyncToStateCommand = domain.command({
       name: 'MessageList.SyncToStateCommand',
-      impl: (_, messages: LocalMessage[]) => {
-        return [MessageListModule.command.SetListCommand(messages), SyncToStateEvent(messages)]
+      impl: (_, records: readonly MessageRecord[]) => [
+        RecordsState().new(records),
+        SyncToStateEvent(records),
+        ChangeListEvent()
+      ]
+    })
+
+    const ReloadRequestedEvent = domain.event({ name: 'MessageList.ReloadRequestedEvent' })
+    const ReloadCommand = domain.command({
+      name: 'MessageList.ReloadCommand',
+      impl: () => [PreviewRecordsState().new([]), ChangeListEvent(), ReloadRequestedEvent()]
+    })
+
+    const CanonicalQueryRequestedEvent = domain.event<CanonicalQueryRequest>({
+      name: 'MessageList.CanonicalQueryRequestedEvent'
+    })
+
+    const RequestCanonicalQueryCommand = domain.command({
+      name: 'MessageList.RequestCanonicalQueryCommand',
+      impl: ({ get }, request: Omit<CanonicalQueryRequest, 'sequence'>) => {
+        const sequence = get(CanonicalSequenceState()) + 1
+        return [CanonicalSequenceState().new(sequence), CanonicalQueryRequestedEvent({ ...request, sequence })]
       }
     })
 
-    storageEffect
-      .set(SyncToStorageEvent)
-      .get<LocalMessage[]>((value) => [SyncToStateCommand(value ?? []), LoadStatusModule.command.SetFinishedCommand()])
+    const CompleteCanonicalQueryCommand = domain.command({
+      name: 'MessageList.CompleteCanonicalQueryCommand',
+      impl: ({ get }, payload: { request: CanonicalQueryRequest; records: readonly MessageRecord[] }) => {
+        const finishLoad = payload.request.finishLoad ? [LoadStatus.command.SetFinishedCommand()] : []
+        return payload.request.sequence === get(CanonicalSequenceState())
+          ? [SyncToStateCommand(payload.records), ...finishLoad]
+          : finishLoad
+      }
+    })
+
+    const FailCanonicalQueryCommand = domain.command({
+      name: 'MessageList.FailCanonicalQueryCommand',
+      impl: ({ get }, payload: { request: CanonicalQueryRequest; error: unknown }) => {
+        const finishLoad = payload.request.finishLoad ? [LoadStatus.command.SetFinishedCommand()] : []
+        if (payload.request.sequence !== get(CanonicalSequenceState()) && !payload.request.reloadOnFailure) {
+          return finishLoad
+        }
+        return [
+          ...finishLoad,
+          LoadFailedEvent(toError(payload.error)),
+          ...(payload.request.reloadOnFailure ? [ReloadCommand()] : [])
+        ]
+      }
+    })
+
+    const ClearRequestedEvent = domain.event({ name: 'MessageList.ClearRequestedEvent' })
+    const ClearListCommand = domain.command({
+      name: 'MessageList.ClearListCommand',
+      impl: () => ClearRequestedEvent()
+    })
+
+    domain.effect({
+      name: 'MessageList.CanonicalQueryEffect',
+      impl: ({ fromEvent }) =>
+        fromEvent(CanonicalQueryRequestedEvent).pipe(
+          mergeMap((request) =>
+            defer(() => messageStore.query()).pipe(
+              map((records) => CompleteCanonicalQueryCommand({ request, records })),
+              catchError((error) => [FailCanonicalQueryCommand({ request, error })])
+            )
+          )
+        )
+    })
+
+    domain.effect({
+      name: 'MessageList.ReloadEffect',
+      impl: ({ fromEvent }) =>
+        merge(
+          of(undefined),
+          fromEventPattern(
+            (handler) => messageStore.watch(handler),
+            (_handler, unwatch) => unwatch()
+          ),
+          fromEvent(ReloadRequestedEvent)
+        ).pipe(map(() => RequestCanonicalQueryCommand({ finishLoad: true, reloadOnFailure: false })))
+    })
+
+    domain.effect({
+      name: 'MessageList.PersistRecordEffect',
+      impl: ({ fromEvent }) =>
+        fromEvent(PersistRecordRequestedEvent).pipe(
+          mergeMap((record) =>
+            defer(async () => {
+              if (record.type === MESSAGE_RECORD_TYPE.SYSTEM_NOTICE) await persistNotice(messageStore, record)
+              else await messageStore.insert(record)
+              return RequestCanonicalQueryCommand({ finishLoad: false, reloadOnFailure: true })
+            }).pipe(catchError((error) => [LoadFailedEvent(toError(error)), ReloadCommand()]))
+          )
+        )
+    })
+
+    domain.effect({
+      name: 'MessageList.ClearEffect',
+      impl: ({ fromEvent }) =>
+        fromEvent(ClearRequestedEvent).pipe(
+          mergeMap(() =>
+            defer(() => messageStore.clear()).pipe(
+              map(() => RequestCanonicalQueryCommand({ finishLoad: false, reloadOnFailure: true })),
+              catchError((error) => [LoadFailedEvent(toError(error)), ReloadCommand()])
+            )
+          )
+        )
+    })
 
     return {
       query: {
         HasItemQuery,
         ItemQuery,
         ListQuery,
+        RecordListQuery,
         LoadIsFinishedQuery
       },
       command: {
-        CreateItemCommand,
-        UpdateItemCommand,
-        DeleteItemCommand,
-        UpsertItemCommand,
-        ClearListCommand,
-        ResetListCommand
+        ApplyRecordCommand,
+        PersistRecordCommand,
+        ReloadCommand,
+        ClearListCommand
       },
       event: {
         ChangeListEvent,
-        CreateItemEvent,
-        UpdateItemEvent,
-        DeleteItemEvent,
-        UpsertItemEvent,
-        ClearListEvent,
-        ResetListEvent,
         SyncToStateEvent,
-        SyncToStorageEvent
+        LoadFailedEvent
       }
     }
   }
