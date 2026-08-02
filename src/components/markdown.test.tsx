@@ -136,13 +136,20 @@ describe('message image rendering', () => {
     expect.soft(preview).not.toContain('operationRef.current !== requestId || !shellOpenRef.current')
   })
 
-  it('transfers transition identity by composing its release and claim owners', () => {
+  it('delegates transition identity restoration and capture to the claim owner', () => {
     const preview = source('./media-preview.tsx')
     const transfer = preview.match(/const transferTransitionIdentity[\s\S]*?\n\n  const open/)?.[0]
 
     expect(transfer).toBeDefined()
-    expect.soft(transfer).toContain('releaseTransitionIdentity(generation)')
-    expect.soft(transfer).toContain('claimTransitionIdentity(generation, name, element)')
-    expect.soft(transfer).not.toMatch(/previousValue|previousPriority|getPropertyValue|setProperty|removeProperty/)
+    expect.soft(transfer).toContain('if (!identity || identity.generation !== generation) return false')
+    expect.soft(transfer).toContain('if (identity.element === element) return true')
+    expect.soft(transfer).toContain('const { name } = identity')
+    expect.soft(transfer?.match(/\bclaimTransitionIdentity\(generation, name, element\)/g)).toHaveLength(1)
+    expect.soft(transfer).not.toMatch(/\breleaseTransitionIdentity\b/)
+    expect
+      .soft(transfer)
+      .not.toMatch(
+        /previousValue|previousPriority|\.style\b|getPropertyValue|getPropertyPriority|setProperty|removeProperty/
+      )
   })
 })

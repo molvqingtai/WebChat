@@ -212,11 +212,10 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
       if (!identity || identity.generation !== generation) return false
       if (identity.element === element) return true
       const { name } = identity
-      releaseTransitionIdentity(generation)
       claimTransitionIdentity(generation, name, element)
       return true
     },
-    [claimTransitionIdentity, releaseTransitionIdentity]
+    [claimTransitionIdentity]
   )
 
   const open = useCallback(
