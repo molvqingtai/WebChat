@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { MediaPreviewContext } from './media-preview'
+import { MEDIA_PREVIEW_TRANSITION_PART, MediaPreviewContext } from './media-preview'
 import { Markdown } from './markdown'
 
 afterEach(cleanup)
@@ -34,6 +34,7 @@ describe('message image rendering', () => {
       expect(image.style.inlineSize).toBe('auto')
       expect(image.style.blockSize).toBe('auto')
       expect(image.style.objectFit).toBe('contain')
+      expect(image.getAttribute('part')).toBe(MEDIA_PREVIEW_TRANSITION_PART)
       expect(image.closest('button')).not.toBeNull()
     }
   })
@@ -122,5 +123,8 @@ describe('message image rendering', () => {
     expect(preview).not.toMatch(
       /createPortal|createRoot|ReactDOM|document\.body|ResizeObserver|localStorage|sessionStorage|indexedDB|\bRemesh\b|\bDomain\b|\bExtern\b/
     )
+    expect(preview).not.toMatch(/matchMedia\?\.|(?:set|has|release)PointerCapture\?\./)
+    expect(preview).toContain("startViewTransition?: Document['startViewTransition']")
+    expect(preview).not.toMatch(/(?:ready|updateCallbackDone)\?\./)
   })
 })

@@ -32,6 +32,7 @@ import { WorldRoomExtern, type WorldRoom } from '@/domain/externs/WorldRoom'
 import { ReadinessExtern, type Readiness } from '@/domain/externs/Readiness'
 import { BrowserSyncStorageExtern, type Storage, type StorageValue } from '@/domain/externs/Storage'
 import type { Database } from '@/domain/externs/Database'
+import { MEDIA_PREVIEW_TRANSITION_NAME_PROPERTY, MEDIA_PREVIEW_TRANSITION_PART } from '@/components/media-preview'
 
 const CONTENT_LAYER = 2147483647
 // WXT's important Shadow reset otherwise overrides the geometry applied by its overlay primitive.
@@ -43,6 +44,16 @@ const CONTENT_HOST_CSS = `:host {
   overflow: visible !important;
   z-index: ${CONTENT_LAYER} !important;
 }`
+
+const installMediaPreviewTransitionStyle = (host: HTMLElement) => {
+  const style = document.createElement('style')
+  style.dataset.webchatMediaPreviewTransition = ''
+  style.textContent = `${host.localName}::part(${MEDIA_PREVIEW_TRANSITION_PART}) {
+  view-transition-name: var(${MEDIA_PREVIEW_TRANSITION_NAME_PROPERTY}, none);
+}`
+  document.head.append(style)
+  return style
+}
 
 /**
  * Firefox content scripts cannot assimilate page-realm Web Locks Promises
@@ -174,6 +185,7 @@ export default defineContentScript({
   async main(ctx) {
     window.addEventListener('beforeunload', detachClient, { once: true })
 
+    let mediaPreviewTransitionStyle: HTMLStyleElement | null = null
     const ui = await createShadowRootUi(ctx, {
       name: __NAME__,
       position: 'overlay',
@@ -207,8 +219,17 @@ export default defineContentScript({
         content?.stopInitialization()
         content?.root.unmount()
         content?.store.discard()
+        mediaPreviewTransitionStyle?.remove()
+        mediaPreviewTransitionStyle = null
       }
     })
-    ui.mount()
+    mediaPreviewTransitionStyle = installMediaPreviewTransitionStyle(ui.shadowHost)
+    try {
+      ui.mount()
+    } catch (error) {
+      mediaPreviewTransitionStyle.remove()
+      mediaPreviewTransitionStyle = null
+      throw error
+    }
   }
 })

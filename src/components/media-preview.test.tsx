@@ -8,7 +8,13 @@ import {
   getMediaPreviewPanBounds,
   zoomMediaPreviewAtPoint
 } from './media-preview-geometry'
-import MediaPreview, { MediaPreviewContext, type MediaPreviewHandle, type MediaPreviewRequest } from './media-preview'
+import MediaPreview, {
+  MEDIA_PREVIEW_TRANSITION_NAME_PROPERTY,
+  MEDIA_PREVIEW_TRANSITION_PART,
+  MediaPreviewContext,
+  type MediaPreviewHandle,
+  type MediaPreviewRequest
+} from './media-preview'
 
 const firstSource = 'https://example.com/first.png'
 const secondSource = 'https://example.com/second.webp'
@@ -73,14 +79,29 @@ const previewImage = (name: string) =>
   within(screen.getByRole('dialog', { name: 'Image preview' })).getByRole('img', { name })
 const previewBackdrop = () => document.querySelector<HTMLButtonElement>('button[aria-hidden="true"]')!
 const previewTransform = (name: string) => previewImage(name).style.transform
+const transitionName = (element: HTMLElement) => element.style.getPropertyValue(MEDIA_PREVIEW_TRANSITION_NAME_PROPERTY)
 
 const deferred = () => {
   let resolve!: () => void
-  const promise = new Promise<void>((settle) => {
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<void>((settle, fail) => {
     resolve = settle
+    reject = fail
   })
-  return { promise, resolve }
+  return { promise, resolve, reject }
 }
+
+const viewTransition = (
+  finished: Promise<void> = Promise.resolve(),
+  updateCallbackDone: Promise<void> = Promise.resolve(),
+  ready: Promise<void> = Promise.resolve()
+): ViewTransition => ({
+  finished,
+  ready,
+  types: new Set<string>() as ViewTransitionTypeSet,
+  updateCallbackDone,
+  skipTransition: vi.fn()
+})
 
 beforeEach(() => {
   Object.defineProperty(window, 'matchMedia', { configurable: true, value: matchMedia(false) })
@@ -308,6 +329,75 @@ describe('MediaPreview ownership and settlement', () => {
 })
 
 describe('MediaPreview View Transition fallback', () => {
+  it('does not apply a delayed open update callback after the shell collapses', async () => {
+    const transitions: Array<{
+      operation: () => void
+      ready: ReturnType<typeof deferred>
+      updateCallbackDone: ReturnType<typeof deferred>
+      finished: ReturnType<typeof deferred>
+    }> = []
+    Object.defineProperty(document, 'startViewTransition', {
+      configurable: true,
+      value: (operation: () => void) => {
+        const ready = deferred()
+        const updateCallbackDone = deferred()
+        const finished = deferred()
+        transitions.push({ operation, ready, updateCallbackDone, finished })
+        return viewTransition(finished.promise, updateCallbackDone.promise, ready.promise)
+      }
+    })
+    const view = render(<Harness />)
+
+    const triggerImage = screen.getByRole('button', { name: 'Preview First' }).querySelector('img')!
+    openFirst()
+    view.rerender(<Harness shellOpen={false} />)
+    transitions[0]!.operation()
+    transitions[0]!.ready.resolve()
+    transitions[0]!.updateCallbackDone.resolve()
+    transitions[0]!.finished.resolve()
+    await act(async () => Promise.resolve())
+
+    expect(screen.queryByRole('dialog', { name: 'Image preview' })).toBeNull()
+    expect(transitionName(triggerImage)).toBe('')
+    openFirst()
+    expect(transitions).toHaveLength(1)
+    expect(screen.queryByRole('dialog', { name: 'Image preview' })).toBeNull()
+  })
+
+  it('releases a collapsed pending identity and fences its fallback from a superseding reopen', async () => {
+    const transitions: Array<{ operation: () => void; finished: ReturnType<typeof deferred> }> = []
+    Object.defineProperty(document, 'startViewTransition', {
+      configurable: true,
+      value: (operation: () => void) => {
+        const finished = deferred()
+        transitions.push({ operation, finished })
+        return viewTransition(finished.promise)
+      }
+    })
+    const view = render(<Harness />)
+
+    const first = screen.getByRole('button', { name: 'Preview First' }).querySelector('img')!
+    openFirst()
+    view.rerender(<Harness shellOpen={false} />)
+    expect.soft(transitionName(first)).toBe('')
+
+    view.rerender(<Harness shellOpen />)
+    const secondButton = screen.getByRole('button', { name: 'Preview Second' })
+    const second = secondButton.querySelector('img')!
+    fireEvent.click(secondButton)
+    transitions[1]!.operation()
+    expect(previewImage('Second')).not.toBeNull()
+
+    transitions[0]!.finished.resolve()
+    await act(async () => Promise.resolve())
+    expect(transitionName(previewImage('Second'))).toMatch(/^webchat-media-preview-/)
+
+    transitions[1]!.finished.resolve()
+    await act(async () => Promise.resolve())
+    expect(transitionName(second)).toBe('')
+    expect(transitionName(previewImage('Second'))).toBe('')
+  })
+
   it('cleans a superseded activator identity before a different image transition starts', async () => {
     const transitions: Array<{ operation: () => void; finished: ReturnType<typeof deferred> }> = []
     Object.defineProperty(document, 'startViewTransition', {
@@ -315,7 +405,7 @@ describe('MediaPreview View Transition fallback', () => {
       value: (operation: () => void) => {
         const finished = deferred()
         transitions.push({ operation, finished })
-        return { finished: finished.promise }
+        return viewTransition(finished.promise)
       }
     })
     render(<Harness />)
@@ -326,8 +416,8 @@ describe('MediaPreview View Transition fallback', () => {
     openFirst()
     fireEvent.click(secondButton)
 
-    expect(first.style.viewTransitionName).toBe('')
-    expect(second.style.viewTransitionName).toMatch(/^webchat-media-preview-/)
+    expect(transitionName(first)).toBe('')
+    expect(transitionName(second)).toMatch(/^webchat-media-preview-/)
 
     transitions[1].operation()
     transitions[1].finished.resolve()
@@ -336,8 +426,8 @@ describe('MediaPreview View Transition fallback', () => {
     await act(async () => Promise.resolve())
 
     expect(previewImage('Second')).not.toBeNull()
-    expect(first.style.viewTransitionName).toBe('')
-    expect(second.style.viewTransitionName).toBe('')
+    expect(transitionName(first)).toBe('')
+    expect(transitionName(second)).toBe('')
   })
 
   it('does not restore a stale identity when the same activator reopens before settlement', async () => {
@@ -347,13 +437,14 @@ describe('MediaPreview View Transition fallback', () => {
       value: (operation: () => void) => {
         const finished = deferred()
         transitions.push({ operation, finished })
-        return { finished: finished.promise }
+        return viewTransition(finished.promise)
       }
     })
     render(<Harness />)
 
     const trigger = screen.getByRole('button', { name: 'Preview First' })
     const image = trigger.querySelector('img')!
+    image.style.setProperty(MEDIA_PREVIEW_TRANSITION_NAME_PROPERTY, 'host-owned-source', 'important')
     openFirst()
     fireEvent.click(trigger)
 
@@ -364,7 +455,8 @@ describe('MediaPreview View Transition fallback', () => {
     await act(async () => Promise.resolve())
 
     expect(previewImage('First')).not.toBeNull()
-    expect(image.style.viewTransitionName).toBe('')
+    expect(transitionName(image)).toBe('host-owned-source')
+    expect(image.style.getPropertyPriority(MEDIA_PREVIEW_TRANSITION_NAME_PROPERTY)).toBe('important')
   })
 
   it.each(['open first', 'close first'])('fences applied-open and close settlement when %s settles', async (order) => {
@@ -374,7 +466,7 @@ describe('MediaPreview View Transition fallback', () => {
       value: (operation: () => void) => {
         const finished = deferred()
         transitions.push({ operation, finished })
-        return { finished: finished.promise }
+        return viewTransition(finished.promise)
       }
     })
     render(<Harness />)
@@ -394,7 +486,7 @@ describe('MediaPreview View Transition fallback', () => {
     await act(async () => Promise.resolve())
 
     expect(screen.queryByRole('dialog', { name: 'Image preview' })).toBeNull()
-    expect(triggerImage.style.viewTransitionName).toBe('')
+    expect(transitionName(triggerImage)).toBe('')
     expect(document.activeElement).toBe(trigger)
   })
 
@@ -405,7 +497,7 @@ describe('MediaPreview View Transition fallback', () => {
     let snapshotChecks = 0
     const namedElements = () =>
       [...document.querySelectorAll<HTMLElement>('*')].filter((element) =>
-        (element.style.viewTransitionName ?? '').includes('webchat-media-preview')
+        transitionName(element).includes('webchat-media-preview')
       )
     let transitionCalls = 0
     const startViewTransition = (operation: () => void) => {
@@ -415,7 +507,7 @@ describe('MediaPreview View Transition fallback', () => {
       operation()
       expect(namedElements()).toHaveLength(1)
       snapshotChecks += 1
-      return { finished: Promise.resolve() }
+      return viewTransition()
     }
     Object.defineProperty(document, 'startViewTransition', { configurable: true, value: startViewTransition })
     render(<Harness />)
@@ -427,15 +519,17 @@ describe('MediaPreview View Transition fallback', () => {
     await act(async () => Promise.resolve())
 
     const triggerImage = trigger.querySelector('img')!
-    expect(triggerImage.style.viewTransitionName ?? '').not.toContain('webchat-media-preview')
-    expect(previewImage('First').style.viewTransitionName).not.toContain('webchat-media-preview')
+    expect(transitionName(triggerImage)).not.toContain('webchat-media-preview')
+    expect(transitionName(previewImage('First'))).not.toContain('webchat-media-preview')
+    expect(previewImage('First').getAttribute('part')).toBe(MEDIA_PREVIEW_TRANSITION_PART)
+    expect(previewImage('First').style.getPropertyValue('view-transition-name')).toBe('')
 
     fireEvent.click(screen.getByRole('button', { name: 'Close preview' }))
     expect(transitionCalls).toBe(2)
     await act(async () => Promise.resolve())
 
     expect(screen.queryByRole('dialog', { name: 'Image preview' })).toBeNull()
-    expect(triggerImage.style.viewTransitionName ?? '').not.toContain('webchat-media-preview')
+    expect(transitionName(triggerImage)).not.toContain('webchat-media-preview')
     expect(document.activeElement).toBe(trigger)
     expect(snapshotChecks).toBe(4)
     expect(hostParticipant.style.viewTransitionName).toBe('host-owned')
@@ -450,7 +544,7 @@ describe('MediaPreview View Transition fallback', () => {
     const rejected = Promise.reject(new Error('rejected'))
     Object.defineProperty(document, 'startViewTransition', {
       configurable: true,
-      value: vi.fn(() => ({ updateCallbackDone: rejected, finished: rejected }))
+      value: vi.fn(() => viewTransition(rejected, rejected))
     })
 
     fireEvent.click(screen.getByRole('button', { name: 'Close preview' }))
@@ -465,10 +559,10 @@ describe('MediaPreview View Transition fallback', () => {
     async (mode) => {
       const startViewTransition = vi.fn((operation: () => void) => {
         if (mode === 'synchronous failure') throw new Error('unsupported')
-        if (mode === 'rejected transition') return { finished: Promise.reject(new Error('rejected')) }
-        if (mode === 'skipped transition') return { finished: Promise.resolve() }
+        if (mode === 'rejected transition') return viewTransition(Promise.reject(new Error('rejected')))
+        if (mode === 'skipped transition') return viewTransition()
         operation()
-        return { finished: Promise.resolve() }
+        return viewTransition()
       })
       if (mode === 'reduced motion') {
         Object.defineProperty(window, 'matchMedia', { configurable: true, value: matchMedia(true) })

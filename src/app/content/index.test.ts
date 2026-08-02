@@ -11,7 +11,6 @@ interface ContentOwner {
 
 interface ShadowRootOptions {
   position: string
-  zIndex?: number
   isolateEvents?: string[]
   onMount: (container: HTMLElement) => ContentOwner
   onRemove: (owner: ContentOwner | undefined) => void
@@ -26,6 +25,7 @@ const fixture = vi.hoisted(() => ({
   stopInitialization: vi.fn(),
   initializationOptions: [] as Array<Record<string, unknown>>,
   owners: [] as ContentOwner[],
+  removeUis: [] as Array<() => void>,
   appProps: [] as Array<Record<string, unknown>>,
   requestBrowserSyncStoragePreparation: vi.fn(),
   prepareLocalConfigurationStorage: vi.fn(),
@@ -124,6 +124,7 @@ beforeEach(() => {
   vi.stubGlobal('__NAME__', 'WEB-CHAT')
   fixture.initializationOptions.length = 0
   fixture.owners.length = 0
+  fixture.removeUis.length = 0
   fixture.appProps.length = 0
   fixture.createStore.mockImplementation(() => ({ discard: fixture.discard }))
   fixture.createIndexedDBMessageDatabase.mockReturnValue(fixture.database)
@@ -137,19 +138,24 @@ beforeEach(() => {
   })
   fixture.createShadowRootUi.mockImplementation(async (_context: unknown, options: ShadowRootOptions) => {
     const container = document.createElement('div')
+    const shadowHost = document.createElement('web-chat-unit')
     document.body.append(container)
+    const remove = () => options.onRemove(fixture.owners.shift())
+    fixture.removeUis.push(remove)
     return {
+      shadowHost,
       mount: () => {
         fixture.mount()
         fixture.owners.push(options.onMount(container))
       },
-      remove: () => options.onRemove(fixture.owners.shift())
+      remove
     }
   })
 })
 
 afterEach(async () => {
   await act(async () => {
+    fixture.removeUis.splice(0).forEach((remove) => remove())
     fixture.owners.splice(0).forEach((owner) => {
       owner.stopInitialization()
       owner.root.unmount()
@@ -182,6 +188,24 @@ describe('content composition root', () => {
     expect(fixture.createChatRoomImpl).not.toHaveBeenCalled()
     expect(fixture.createWorldRoomImpl).not.toHaveBeenCalled()
     expect(fixture.createReadinessImpl).not.toHaveBeenCalled()
+  })
+
+  it('owns one document-scope part bridge per Shadow UI and removes it during UI cleanup', async () => {
+    await startContent()
+
+    const styles = document.head.querySelectorAll<HTMLStyleElement>('[data-webchat-media-preview-transition]')
+    expect(styles).toHaveLength(1)
+    expect(styles[0]!.textContent).toBe(
+      'web-chat-unit::part(webchat-media-preview-transition) {\n' +
+        '  view-transition-name: var(--webchat-media-preview-transition-name, none);\n' +
+        '}'
+    )
+
+    await act(async () => {
+      fixture.removeUis.shift()?.()
+    })
+
+    expect(styles[0]!.isConnected).toBe(false)
   })
 
   it('constructs each deferred application dependency exactly once only when initialization activates it', async () => {

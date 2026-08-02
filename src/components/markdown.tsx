@@ -4,7 +4,7 @@ import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
 import { cn, safeUrl } from '@/utils'
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area'
-import { MediaPreviewContext } from '@/components/media-preview'
+import { MEDIA_PREVIEW_TRANSITION_PART, MediaPreviewContext } from '@/components/media-preview'
 
 export interface MarkdownProps {
   children?: string
@@ -55,6 +55,7 @@ const MessageImage: FC<MessageImageProps> = ({ src, alt = '', className, ...prop
         ref={imageRef}
         src={src}
         alt={alt}
+        part={MEDIA_PREVIEW_TRANSITION_PART}
         className={cn('block rounded', className)}
         style={{
           maxInlineSize: '70cqi',

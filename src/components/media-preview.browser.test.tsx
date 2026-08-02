@@ -10,10 +10,6 @@ interface MountedShadowUi {
   remove: () => void
 }
 
-interface NativeViewTransition {
-  finished: Promise<unknown>
-}
-
 const fixture = vi.hoisted(() => ({
   ui: null as MountedShadowUi | null,
   send: vi.fn(),
@@ -23,10 +19,13 @@ const fixture = vi.hoisted(() => ({
   onInvalidated: vi.fn(),
   setRef: vi.fn(),
   hostClicks: 0,
-  viewTransitions: [] as NativeViewTransition[],
+  viewTransitions: [] as ViewTransition[],
   markdown:
     '![Wide](data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22120%22%20height%3D%2260%22%3E%3Crect%20width%3D%22120%22%20height%3D%2260%22%20fill%3D%22red%22%2F%3E%3C%2Fsvg%3E)\n\n![Large](data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%221200%22%20height%3D%221200%22%3E%3Crect%20width%3D%221200%22%20height%3D%221200%22%20fill%3D%22green%22%2F%3E%3C%2Fsvg%3E)'
 }))
+
+const MEDIA_PREVIEW_TRANSITION_NAME_PROPERTY = '--webchat-media-preview-transition-name'
+const MEDIA_PREVIEW_TRANSITION_PART = 'webchat-media-preview-transition'
 
 vi.mock('#imports', async () => {
   const { createShadowRootUi } = await import('wxt/utils/content-script-ui/shadow-root')
@@ -256,7 +255,18 @@ const physicalTouch = async (type: 'touchStart' | 'touchMove' | 'touchEnd', poin
 }
 
 const settleNativeViewTransitions = async () => {
-  await Promise.all(fixture.viewTransitions.map((transition) => transition.finished.catch(() => {})))
+  await Promise.all(fixture.viewTransitions.map((transition) => transition.finished))
+}
+
+const activeViewTransitionPseudos = (root: Document | ShadowRoot) =>
+  root.getAnimations().flatMap((animation) => {
+    const effect = animation.effect as KeyframeEffect | null
+    const pseudoElement = effect?.pseudoElement
+    return pseudoElement ? [pseudoElement] : []
+  })
+
+const recordHostDocumentClick = () => {
+  fixture.hostClicks += 1
 }
 
 const startContent = async () => {
@@ -265,10 +275,8 @@ const startContent = async () => {
   hostile.ariaLabel = 'Host page overlay'
   hostile.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:rgb(255 0 0);border:0;padding:0;'
   hostile.style.viewTransitionName = 'host-owned'
-  hostile.addEventListener('click', () => {
-    fixture.hostClicks += 1
-  })
   document.body.append(hostile)
+  document.addEventListener('click', recordHostDocumentClick)
 
   if (typeof content.main !== 'function') throw new Error('Content main is unavailable')
   await content.main({ options: {}, onInvalidated: fixture.onInvalidated } as never)
@@ -309,6 +317,7 @@ afterEach(() => {
   document.documentElement.removeAttribute('style')
   window.scrollTo(0, 0)
   window.removeEventListener('beforeunload', fixture.detachClient)
+  document.removeEventListener('click', recordHostDocumentClick)
   Reflect.deleteProperty(document, 'startViewTransition')
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
@@ -319,9 +328,9 @@ describe('MediaPreview production browser boundary', () => {
     expect(document.startViewTransition).toBeTypeOf('function')
     const hostile = await startContent()
     await page.getByRole('button', { name: 'Preview Large' }).click()
-    await vi.waitFor(() => expect(previewImage()?.complete && previewImage()!.naturalWidth > 0).toBe(true))
-    await settleNativeViewTransitions()
-    expect(fixture.viewTransitions).toHaveLength(1)
+    await vi.waitFor(() => expect(fixture.viewTransitions).toHaveLength(1))
+    const openingTransition = fixture.viewTransitions[0]!
+    await openingTransition.ready
 
     const { shadow, shadowHost } = currentUi()
     const dialog = previewDialog()!
@@ -330,6 +339,23 @@ describe('MediaPreview production browser boundary', () => {
     const panel = shadow.querySelector<HTMLElement>('[data-webchat-panel]')!
     const launcher = shadow.querySelector<HTMLButtonElement>('button[aria-label="Close WebChat"]')!
     const danmaku = shadow.querySelector<HTMLElement>('.pointer-events-none')!
+
+    const previewTransitionName = image.style.getPropertyValue(MEDIA_PREVIEW_TRANSITION_NAME_PROPERTY)
+    expect(previewTransitionName).toMatch(/^webchat-media-preview-/)
+    expect(image.getAttribute('part')).toBe(MEDIA_PREVIEW_TRANSITION_PART)
+    expect(image.style.viewTransitionName).toBe('')
+    expect(getComputedStyle(image).viewTransitionName).toBe(previewTransitionName)
+    const transitionStyle = document.head.querySelector<HTMLStyleElement>('[data-webchat-media-preview-transition]')
+    expect(transitionStyle?.textContent).toContain(`${shadowHost.localName}::part(${MEDIA_PREVIEW_TRANSITION_PART})`)
+    const documentPseudos = activeViewTransitionPseudos(document)
+    const shadowPseudos = activeViewTransitionPseudos(shadow)
+    expect(documentPseudos.some((pseudo) => pseudo.includes('view-transition') && pseudo.includes('root'))).toBe(true)
+    expect(
+      documentPseudos.some((pseudo) => pseudo.includes(previewTransitionName)),
+      JSON.stringify({ previewTransitionName, documentPseudos, shadowPseudos })
+    ).toBe(true)
+    expect(shadowPseudos.some((pseudo) => pseudo.includes(previewTransitionName))).toBe(false)
+    await openingTransition.finished
 
     expect(getComputedStyle(shadowHost).position).toBe('relative')
     expect(Number.parseInt(getComputedStyle(shadowHost).zIndex, 10)).toBe(2147483647)
@@ -358,11 +384,43 @@ describe('MediaPreview production browser boundary', () => {
     ).elementFromPoint((overlapLeft + overlapRight) / 2, (overlapTop + overlapBottom) / 2)
     expect(shadowAtOverlap).toBe(image)
 
+    fixture.hostClicks = 0
     await page.elementLocator(backdrop).click({ position: { x: 8, y: 8 } })
     await vi.waitFor(() => expect(previewDialog()).toBeNull())
     await settleNativeViewTransitions()
     expect(fixture.hostClicks).toBe(0)
     expect(hostile.style.viewTransitionName).toBe('host-owned')
+  })
+
+  it('contains composed preview clicks while preserving an outside host control click', async () => {
+    const hostile = await startContent()
+    const trigger = await page.getByRole('button', { name: 'Preview Large' }).findElement()
+    await page.elementLocator(trigger).click()
+    await vi.waitFor(() => expect(previewImage()?.complete && previewImage()!.naturalWidth > 0).toBe(true))
+    await settleNativeViewTransitions()
+    fixture.hostClicks = 0
+
+    await page.elementLocator(previewImage()!).click()
+    await page.getByRole('button', { name: 'Zoom in' }).click()
+    await page.getByRole('button', { name: 'Zoom out' }).click()
+    await page.getByRole('button', { name: 'Zoom in' }).click()
+    await page.getByRole('button', { name: 'Reset zoom' }).click()
+    await page.getByRole('button', { name: 'Close preview' }).click()
+    await vi.waitFor(() => expect(previewDialog()).toBeNull())
+    await settleNativeViewTransitions()
+    expect(fixture.hostClicks).toBe(0)
+
+    await page.elementLocator(trigger).click()
+    await vi.waitFor(() => expect(previewImage()).not.toBeNull())
+    await settleNativeViewTransitions()
+    fixture.hostClicks = 0
+    await page.elementLocator(previewBackdrop()!).click({ position: { x: 8, y: 8 } })
+    await vi.waitFor(() => expect(previewDialog()).toBeNull())
+    await settleNativeViewTransitions()
+    expect(fixture.hostClicks).toBe(0)
+
+    hostile.click()
+    expect(fixture.hostClicks).toBe(1)
   })
 
   it('owns preview keys inside the isolated Shadow subtree without consuming editable shell input', async () => {

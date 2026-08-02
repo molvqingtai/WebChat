@@ -30,6 +30,8 @@ import {
 const ZOOM_STEP = 0.25
 const PREVIEW_BACKDROP_LAYER = 2147483646
 const PREVIEW_BODY_LAYER = 2147483647
+export const MEDIA_PREVIEW_TRANSITION_PART = 'webchat-media-preview-transition'
+export const MEDIA_PREVIEW_TRANSITION_NAME_PROPERTY = '--webchat-media-preview-transition-name'
 
 export interface MediaPreviewRequest {
   src: string
@@ -78,15 +80,12 @@ interface TransitionIdentity {
   generation: number
   name: string
   element: HTMLElement
-  previousName: string
+  previousValue: string
+  previousPriority: string
 }
 
-type TransitionDocument = Document & {
-  startViewTransition?: (operation: () => void) => {
-    ready?: Promise<unknown>
-    updateCallbackDone?: Promise<unknown>
-    finished: Promise<unknown>
-  }
+type TransitionDocument = Omit<Document, 'startViewTransition'> & {
+  startViewTransition?: Document['startViewTransition']
 }
 
 const pointerDistance = (first: MediaPreviewPoint, second: MediaPreviewPoint) =>
@@ -107,6 +106,8 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
     viewport: { width: window.innerWidth, height: window.innerHeight }
   }))
   const stateRef = useRef(state)
+  const shellOpenRef = useRef(shellOpen)
+  shellOpenRef.current = shellOpen
   const operationRef = useRef(0)
   const transitionIdentityRef = useRef<TransitionIdentity | null>(null)
   const backdropRef = useRef<HTMLButtonElement>(null)
@@ -145,7 +146,7 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
     const overlay = overlayRef.current
     if (overlay) {
       for (const pointerId of pointersRef.current.keys()) {
-        if (overlay.hasPointerCapture?.(pointerId)) overlay.releasePointerCapture(pointerId)
+        if (overlay.hasPointerCapture(pointerId)) overlay.releasePointerCapture(pointerId)
       }
     }
     pointersRef.current.clear()
@@ -177,23 +178,32 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
     [commitState]
   )
 
-  const reducedMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+  const reducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
   const releaseTransitionIdentity = useCallback((generation?: number) => {
     const identity = transitionIdentityRef.current
     if (!identity || (generation !== undefined && identity.generation !== generation)) return
     transitionIdentityRef.current = null
-    if (identity.element.style.viewTransitionName === identity.name) {
-      identity.element.style.viewTransitionName = identity.previousName
+    if (identity.element.style.getPropertyValue(MEDIA_PREVIEW_TRANSITION_NAME_PROPERTY) === identity.name) {
+      if (identity.previousValue) {
+        identity.element.style.setProperty(
+          MEDIA_PREVIEW_TRANSITION_NAME_PROPERTY,
+          identity.previousValue,
+          identity.previousPriority
+        )
+      } else {
+        identity.element.style.removeProperty(MEDIA_PREVIEW_TRANSITION_NAME_PROPERTY)
+      }
     }
   }, [])
 
   const claimTransitionIdentity = useCallback(
     (generation: number, name: string, element: HTMLElement) => {
       releaseTransitionIdentity()
-      const previousName = element.style.viewTransitionName ?? ''
-      element.style.viewTransitionName = name
-      transitionIdentityRef.current = { generation, name, element, previousName }
+      const previousValue = element.style.getPropertyValue(MEDIA_PREVIEW_TRANSITION_NAME_PROPERTY)
+      const previousPriority = element.style.getPropertyPriority(MEDIA_PREVIEW_TRANSITION_NAME_PROPERTY)
+      element.style.setProperty(MEDIA_PREVIEW_TRANSITION_NAME_PROPERTY, name)
+      transitionIdentityRef.current = { generation, name, element, previousValue, previousPriority }
     },
     [releaseTransitionIdentity]
   )
@@ -202,24 +212,33 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
     const identity = transitionIdentityRef.current
     if (!identity || identity.generation !== generation) return false
     if (identity.element === element) return true
-    if (identity.element.style.viewTransitionName === identity.name) {
-      identity.element.style.viewTransitionName = identity.previousName
+    if (identity.element.style.getPropertyValue(MEDIA_PREVIEW_TRANSITION_NAME_PROPERTY) === identity.name) {
+      if (identity.previousValue) {
+        identity.element.style.setProperty(
+          MEDIA_PREVIEW_TRANSITION_NAME_PROPERTY,
+          identity.previousValue,
+          identity.previousPriority
+        )
+      } else {
+        identity.element.style.removeProperty(MEDIA_PREVIEW_TRANSITION_NAME_PROPERTY)
+      }
     }
-    const previousName = element.style.viewTransitionName ?? ''
-    element.style.viewTransitionName = identity.name
-    transitionIdentityRef.current = { ...identity, element, previousName }
+    const previousValue = element.style.getPropertyValue(MEDIA_PREVIEW_TRANSITION_NAME_PROPERTY)
+    const previousPriority = element.style.getPropertyPriority(MEDIA_PREVIEW_TRANSITION_NAME_PROPERTY)
+    element.style.setProperty(MEDIA_PREVIEW_TRANSITION_NAME_PROPERTY, identity.name)
+    transitionIdentityRef.current = { ...identity, element, previousValue, previousPriority }
     return true
   }, [])
 
   const open = useCallback(
     (request: MediaPreviewRequest) => {
-      if (!request.src) return
+      if (!request.src || !shellOpenRef.current) return
       const requestId = ++operationRef.current
       releaseTransitionIdentity()
       clearGestures()
 
       const applyOpen = (synchronous: boolean) => {
-        if (operationRef.current !== requestId) return
+        if (operationRef.current !== requestId || !shellOpenRef.current) return
         const viewport = stateRef.current.viewport
         commitState(
           {
@@ -262,9 +281,9 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
           if (image) transferTransitionIdentity(requestId, image)
           else releaseTransitionIdentity(requestId)
         })
-        void transition.ready?.catch(() => {})
-        void transition.updateCallbackDone?.catch(finish)
-        void Promise.resolve(transition.finished).then(finish, finish)
+        void transition.ready.catch(finish)
+        void transition.updateCallbackDone.catch(finish)
+        void transition.finished.then(finish, finish)
       } catch {
         finish()
       }
@@ -323,9 +342,9 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
         transferTransitionIdentity(requestId, closing.transitionElement)
         applyClose(true)
       })
-      void transition.ready?.catch(() => {})
-      void transition.updateCallbackDone?.catch(finish)
-      void Promise.resolve(transition.finished).then(finish, finish)
+      void transition.ready.catch(finish)
+      void transition.updateCallbackDone.catch(finish)
+      void transition.finished.then(finish, finish)
     } catch {
       finish()
     }
@@ -334,10 +353,13 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
   const currentRequestId = state.current?.requestId
   const previewOpen = state.current !== null
 
-  useEffect(() => {
-    if (shellOpen || !stateRef.current.current) return
-    queueMicrotask(close)
-  }, [close, shellOpen])
+  useLayoutEffect(() => {
+    if (shellOpen) return
+    ++operationRef.current
+    releaseTransitionIdentity()
+    clearGestures()
+    if (stateRef.current.current) queueMicrotask(close)
+  }, [clearGestures, close, releaseTransitionIdentity, shellOpen])
 
   useLayoutEffect(() => {
     if (!previewOpen) return
@@ -435,6 +457,20 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
     }
   }, [changeZoom, previewOpen])
 
+  useLayoutEffect(() => {
+    if (!previewOpen) return
+    const backdrop = backdropRef.current
+    const overlay = overlayRef.current
+    const owner = overlay?.getRootNode()
+    if (!backdrop || !overlay || !owner) return
+    const handleClick = (event: Event) => {
+      const path = event.composedPath()
+      if (path.includes(backdrop) || path.includes(overlay)) event.stopPropagation()
+    }
+    owner.addEventListener('click', handleClick)
+    return () => owner.removeEventListener('click', handleClick)
+  }, [previewOpen])
+
   const relativePoint = (point: MediaPreviewPoint): MediaPreviewPoint => ({
     x: point.x - stateRef.current.viewport.width / 2,
     y: point.y - stateRef.current.viewport.height / 2
@@ -462,7 +498,7 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
       clearSuppressionTimer()
       suppressBackdropClickRef.current = false
     }
-    event.currentTarget.setPointerCapture?.(event.pointerId)
+    event.currentTarget.setPointerCapture(event.pointerId)
     pointersRef.current.set(event.pointerId, {
       x: event.clientX,
       y: event.clientY
@@ -533,7 +569,7 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
     event.preventDefault()
     event.stopPropagation()
     pointersRef.current.delete(event.pointerId)
-    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId)
     }
     pinchGestureRef.current = null
@@ -563,6 +599,7 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
       return
     }
     close()
+    event.stopPropagation()
   }
 
   if (!state.current) return null
@@ -574,8 +611,7 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
     maxBlockSize: `${Math.max(0, state.viewport.height - MEDIA_PREVIEW_MARGIN * 2)}px`,
     objectFit: 'contain' as const,
     transform: `translate3d(${renderedTransform.x}px, ${renderedTransform.y}px, 0) scale(${renderedTransform.zoom})`,
-    transformOrigin: 'center',
-    viewTransitionName: 'none'
+    transformOrigin: 'center'
   }
 
   return (
@@ -658,6 +694,7 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
           key={state.current.requestId}
           src={state.current.src}
           alt={state.current.alt}
+          part={MEDIA_PREVIEW_TRANSITION_PART}
           draggable={false}
           className="pointer-events-auto block max-h-none max-w-none select-none"
           style={imageStyle}
