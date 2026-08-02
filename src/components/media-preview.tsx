@@ -106,8 +106,6 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
     viewport: { width: window.innerWidth, height: window.innerHeight }
   }))
   const stateRef = useRef(state)
-  const shellOpenRef = useRef(shellOpen)
-  shellOpenRef.current = shellOpen
   const operationRef = useRef(0)
   const transitionIdentityRef = useRef<TransitionIdentity | null>(null)
   const backdropRef = useRef<HTMLButtonElement>(null)
@@ -208,37 +206,28 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
     [releaseTransitionIdentity]
   )
 
-  const transferTransitionIdentity = useCallback((generation: number, element: HTMLElement) => {
-    const identity = transitionIdentityRef.current
-    if (!identity || identity.generation !== generation) return false
-    if (identity.element === element) return true
-    if (identity.element.style.getPropertyValue(MEDIA_PREVIEW_TRANSITION_NAME_PROPERTY) === identity.name) {
-      if (identity.previousValue) {
-        identity.element.style.setProperty(
-          MEDIA_PREVIEW_TRANSITION_NAME_PROPERTY,
-          identity.previousValue,
-          identity.previousPriority
-        )
-      } else {
-        identity.element.style.removeProperty(MEDIA_PREVIEW_TRANSITION_NAME_PROPERTY)
-      }
-    }
-    const previousValue = element.style.getPropertyValue(MEDIA_PREVIEW_TRANSITION_NAME_PROPERTY)
-    const previousPriority = element.style.getPropertyPriority(MEDIA_PREVIEW_TRANSITION_NAME_PROPERTY)
-    element.style.setProperty(MEDIA_PREVIEW_TRANSITION_NAME_PROPERTY, identity.name)
-    transitionIdentityRef.current = { ...identity, element, previousValue, previousPriority }
-    return true
-  }, [])
+  const transferTransitionIdentity = useCallback(
+    (generation: number, element: HTMLElement) => {
+      const identity = transitionIdentityRef.current
+      if (!identity || identity.generation !== generation) return false
+      if (identity.element === element) return true
+      const { name } = identity
+      releaseTransitionIdentity(generation)
+      claimTransitionIdentity(generation, name, element)
+      return true
+    },
+    [claimTransitionIdentity, releaseTransitionIdentity]
+  )
 
   const open = useCallback(
     (request: MediaPreviewRequest) => {
-      if (!request.src || !shellOpenRef.current) return
+      if (!request.src || !shellOpen) return
       const requestId = ++operationRef.current
       releaseTransitionIdentity()
       clearGestures()
 
       const applyOpen = (synchronous: boolean) => {
-        if (operationRef.current !== requestId || !shellOpenRef.current) return
+        if (operationRef.current !== requestId) return
         const viewport = stateRef.current.viewport
         commitState(
           {
@@ -288,7 +277,14 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
         finish()
       }
     },
-    [claimTransitionIdentity, clearGestures, commitState, releaseTransitionIdentity, transferTransitionIdentity]
+    [
+      claimTransitionIdentity,
+      clearGestures,
+      commitState,
+      releaseTransitionIdentity,
+      shellOpen,
+      transferTransitionIdentity
+    ]
   )
 
   useImperativeHandle(ref, () => ({ open }), [open])

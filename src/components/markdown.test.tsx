@@ -127,4 +127,22 @@ describe('message image rendering', () => {
     expect(preview).toContain("startViewTransition?: Document['startViewTransition']")
     expect(preview).not.toMatch(/(?:ready|updateCallbackDone)\?\./)
   })
+
+  it('uses the committed shell prop without a copied lifecycle truth', () => {
+    const preview = source('./media-preview.tsx')
+
+    expect.soft(preview).not.toMatch(/\bshellOpenRef\b/)
+    expect.soft(preview).toContain('if (!request.src || !shellOpen) return')
+    expect.soft(preview).not.toContain('operationRef.current !== requestId || !shellOpenRef.current')
+  })
+
+  it('transfers transition identity by composing its release and claim owners', () => {
+    const preview = source('./media-preview.tsx')
+    const transfer = preview.match(/const transferTransitionIdentity[\s\S]*?\n\n  const open/)?.[0]
+
+    expect(transfer).toBeDefined()
+    expect.soft(transfer).toContain('releaseTransitionIdentity(generation)')
+    expect.soft(transfer).toContain('claimTransitionIdentity(generation, name, element)')
+    expect.soft(transfer).not.toMatch(/previousValue|previousPriority|getPropertyValue|setProperty|removeProperty/)
+  })
 })
