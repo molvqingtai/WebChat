@@ -9,7 +9,7 @@ The content application already reports a page connection prerequisite deadline 
 - Use one exact, concise message that fits the existing Toast surface.
 - Preserve the current timeout trigger, failure settlement, retry/recovery, and connection truth.
 - Preserve the current generic Toast owner and every presentation behavior except text.
-- Verify the visible behavior without binding tests to implementation spelling or file structure.
+- Change only the existing message copy without adding tests; mechanically sync an existing literal expectation only when required by the direct replacement.
 
 **Non-Goals:**
 
@@ -32,15 +32,15 @@ The same generic Toast path SHALL present the message with its current identity,
 
 The current prerequisite deadline SHALL trigger the same failure at the same point. The existing request and connection owners SHALL settle exactly as before. Retry eligibility, recovery, Runtime readiness, pending state, and connection state SHALL NOT change because of this message.
 
-### 4. Verification observes the rendered outcome
+### 4. Source and test scope stays minimal
 
-Coverage SHALL drive the existing timeout path and assert one visible Toast with exact text `Connection timed out`. Controls SHALL prove that no additional feedback is added and that settlement/retry/connection behavior remains unchanged. Tests SHALL NOT read production source or freeze helper names, file paths, internal tokens, or JSX text through regex, parser, AST, or snapshot seams.
+Implementation SHALL directly replace only the existing timeout message. It MAY mechanically update an existing exact-string expectation made stale by that direct replacement. It SHALL NOT add a test case, test branch, fixture, seam, helper, compatibility path, or production mapping introduced to preserve an old expectation. Existing delivery gates remain applicable without adding coverage.
 
 ## Risks / Trade-offs
 
 - [The message omits which prerequisite failed] -> That detail is not actionable user copy; existing internal diagnostics retain technical ownership.
 - [A broad copy replacement could affect unrelated timeouts] -> Bind the change only to the existing page connection prerequisite timeout path.
-- [A test could overfit implementation text] -> Assert the real rendered Toast and operation behavior instead of source files.
+- [A copy-only change could expand into regression machinery] -> Add no coverage; limit any test diff to a stale literal expectation and rely on the existing delivery gates.
 
 ## Open Questions
 

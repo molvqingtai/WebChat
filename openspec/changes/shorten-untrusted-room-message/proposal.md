@@ -8,6 +8,7 @@ An untrusted-room rejection needs a concise diagnostic that identifies the failu
 - Keep every room identifier, origin, encoded value, suffix, and fingerprint out of the Error message.
 - Allow room identity only as separately structured internal debug metadata when an existing diagnostic boundary needs it.
 - Preserve trusted-room validation, provider targeting, operation settlement, retry behavior, Runtime state, and all existing UI behavior.
+- Change only the existing copy; add no tests for this message reduction, and mechanically sync an existing literal expectation only when the direct replacement makes it stale.
 
 ## Capabilities
 
@@ -22,5 +23,5 @@ None.
 ## Impact
 
 - Affected behavior: the diagnostic message produced when an outbound Runtime send has no current trusted room.
-- Affected implementation: the existing trusted-room rejection boundary and behavior-level regression coverage.
+- Affected implementation: only the existing trusted-room rejection copy; any test diff is limited to mechanically synchronizing an existing literal expectation.
 - Outside this change: room identity, membership, validation timing, transport, wire payloads, provider calls, retries, persistence, connection state, UI surfaces, dependencies, permissions, schema, and browser-specific behavior.
