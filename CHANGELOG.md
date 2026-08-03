@@ -1,3 +1,15 @@
+# [2.3.0](https://github.com/molvqingtai/WebChat/compare/v2.2.0...v2.3.0) (2026-08-03)
+
+### Bug Fixes
+
+- **app-button:** preserve expanded shell top inset ([34ab956](https://github.com/molvqingtai/WebChat/commit/34ab956cfda7008c8e33fac2b7328c8a1386ecf9))
+- **content:** unify shell and launcher geometry ([e3d0bc3](https://github.com/molvqingtai/WebChat/commit/e3d0bc32456e8e9e1417bb21a1b679bcfc54f0b6))
+- **runtime:** shorten error messages ([231e330](https://github.com/molvqingtai/WebChat/commit/231e330c1ae640fd2d9bdaaba527270cd5b74ab6))
+
+### Features
+
+- **content:** highlight reactions and preview message images ([e8d8ae4](https://github.com/molvqingtai/WebChat/commit/e8d8ae426cff805400d1d6787406f2a1fae70558))
+
 # [2.2.0](https://github.com/molvqingtai/WebChat/compare/v2.1.1...v2.2.0) (2026-08-01)
 
 ### Bug Fixes
