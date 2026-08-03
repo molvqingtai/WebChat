@@ -36,6 +36,12 @@ export const cloneValue = <Value>(value: Value): Value => {
   return structuredClone(value)
 }
 
+export const cloneStoredValue = <Value>(value: Value): Value => {
+  const clone = structuredClone(value)
+  assertCanonicalValue(clone)
+  return clone
+}
+
 const assertPlainValue = (value: unknown, seen: Set<object>): void => {
   if (value === null || typeof value === 'boolean' || typeof value === 'string') return
   if (typeof value === 'number') {

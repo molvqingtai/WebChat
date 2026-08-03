@@ -1,4 +1,5 @@
 import 'fake-indexeddb/auto'
+import { runInNewContext } from 'node:vm'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Database } from '@/domain/externs/Database'
 import { createMessageDatabaseDefinition, type MessageDatabaseSchema } from '@/domain/MessageStore'
@@ -74,6 +75,78 @@ afterEach(async () => {
     )
   )
   names.clear()
+  vi.unstubAllGlobals()
+})
+
+describe('IndexedDB output realm boundary', () => {
+  it('normalizes foreign-realm duplicate winners, gets, and scans', async () => {
+    const name = `database-foreign-realm-${databaseId++}`
+    const definition = portableDefinition(name)
+    const database = createIndexedDBDatabase(definition)
+    const foreignValue = runInNewContext('({ group: "foreign" })') as { group: string }
+    const nativeStructuredClone = globalThis.structuredClone.bind(globalThis)
+    let passThroughForeignValue = false
+
+    names.add(name)
+    vi.stubGlobal('structuredClone', ((value: unknown, options?: StructuredSerializeOptions) => {
+      if (value === foreignValue && passThroughForeignValue) {
+        passThroughForeignValue = false
+        return value
+      }
+      return nativeStructuredClone(value, options)
+    }) as typeof structuredClone)
+
+    await database.read(['items'], (transaction) => transaction.count('items'))
+    const physical = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(name)
+      request.addEventListener('success', () => resolve(request.result), { once: true })
+      request.addEventListener('error', () => reject(request.error), { once: true })
+    })
+    passThroughForeignValue = true
+    await new Promise<void>((resolve, reject) => {
+      const transaction = physical.transaction('items', 'readwrite')
+      transaction.objectStore('items').put(foreignValue, 'same')
+      transaction.addEventListener('complete', () => resolve(), { once: true })
+      transaction.addEventListener('error', () => reject(transaction.error), { once: true })
+    })
+    physical.close()
+
+    expect(Object.getPrototypeOf(foreignValue)).not.toBe(Object.prototype)
+
+    passThroughForeignValue = true
+    const duplicateOperation = database.write(['items'], (transaction) =>
+      transaction.insert('items', 'same', { group: 'challenger' })
+    )
+    const duplicate = await new Promise<Awaited<typeof duplicateOperation>>((resolve, reject) => {
+      const timeout = globalThis.setTimeout(
+        () => reject(new Error('Foreign-realm duplicate conflict did not settle')),
+        250
+      )
+      duplicateOperation.then(
+        (result) => {
+          globalThis.clearTimeout(timeout)
+          resolve(result)
+        },
+        (error) => {
+          globalThis.clearTimeout(timeout)
+          reject(error)
+        }
+      )
+    })
+    expect(duplicate).toEqual({ inserted: false, existing: foreignValue })
+    if (!duplicate.inserted) expect(Object.getPrototypeOf(duplicate.existing)).toBe(Object.prototype)
+
+    passThroughForeignValue = true
+    const value = await database.read(['items'], (transaction) => transaction.get('items', 'same'))
+    expect(value).toEqual(foreignValue)
+    expect(Object.getPrototypeOf(value)).toBe(Object.prototype)
+
+    passThroughForeignValue = true
+    const items = await database.read(['items'], (transaction) => transaction.scan('items'))
+    expect(items).toEqual([{ key: 'same', value: foreignValue }])
+    expect(Object.getPrototypeOf(items[0]?.value)).toBe(Object.prototype)
+    await database.close()
+  })
 })
 
 describe.each(backends)('$name Database contract', (backend) => {

@@ -4,7 +4,7 @@ import LikeButton from './like-button'
 import FormatDate from './format-date'
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar'
 
-import { Markdown } from '@/components/markdown'
+import { Markdown } from './markdown'
 import { type ProjectedTextMessage } from '@/domain/MessageList'
 import { cn } from '@/utils'
 
@@ -13,19 +13,12 @@ export interface MessageItemProps {
   index?: number
   like: boolean
   hate: boolean
-  onLikeChange?: (checked: boolean) => void
-  onHateChange?: (checked: boolean) => void
+  onToggleLike?: () => void
+  onToggleHate?: () => void
   className?: string
 }
 
 const MessageItem: FC<MessageItemProps> = memo((props) => {
-  const handleLikeChange = (checked: boolean) => {
-    props.onLikeChange?.(checked)
-  }
-  const handleHateChange = (checked: boolean) => {
-    props.onHateChange?.(checked)
-  }
-
   let content = props.data.body
 
   // Check if mentions exist
@@ -70,23 +63,11 @@ const MessageItem: FC<MessageItemProps> = memo((props) => {
             <Markdown>{content}</Markdown>
           </div>
           <div className="grid grid-flow-col justify-end gap-x-2 leading-none dark:text-slate-600">
-            <LikeButton
-              checked={props.like}
-              onChange={(checked) => handleLikeChange(checked)}
-              count={props.data.reactions.likes.length}
-            >
-              <LikeButton.Icon>
-                <HeartIcon size={14}></HeartIcon>
-              </LikeButton.Icon>
+            <LikeButton checked={props.like} onToggle={props.onToggleLike} count={props.data.reactions.likes.length}>
+              <HeartIcon size={14}></HeartIcon>
             </LikeButton>
-            <LikeButton
-              checked={props.hate}
-              onChange={(checked) => handleHateChange(checked)}
-              count={props.data.reactions.hates.length}
-            >
-              <LikeButton.Icon>
-                <FrownIcon size={14}></FrownIcon>
-              </LikeButton.Icon>
+            <LikeButton checked={props.hate} onToggle={props.onToggleHate} count={props.data.reactions.hates.length}>
+              <FrownIcon size={14}></FrownIcon>
             </LikeButton>
           </div>
         </div>
