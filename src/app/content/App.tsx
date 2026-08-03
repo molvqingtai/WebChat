@@ -1,5 +1,5 @@
 import '@webcomponents/custom-elements'
-import { useEffect, useRef } from 'react'
+import { type CSSProperties, useCallback, useEffect, useRef } from 'react'
 import { useRemeshDomain, useRemeshQuery, useRemeshSend } from 'remesh-react'
 import { Toaster } from 'sonner'
 import Header from '@/app/content/views/header'
@@ -16,6 +16,9 @@ import WorldRoomDomain from '@/domain/WorldRoom'
 import DanmakuDomain from '@/domain/Danmaku'
 import AppStatusDomain from '@/domain/AppStatus'
 import { checkDarkMode, cn } from '@/utils'
+import useWindowResize from '@/hooks/useWindowResize'
+import useDraggable from '@/hooks/useDraggable'
+import { captureAppButtonPosition, getAppGeometry } from '@/app/content/views/app-button/position'
 
 if (import.meta.env.FIREFOX) {
   window.requestAnimationFrame = window.requestAnimationFrame.bind(window)
@@ -25,6 +28,22 @@ const App = () => {
   const send = useRemeshSend()
   const appStatusDomain = useRemeshDomain(AppStatusDomain())
   const initializationReady = useRemeshQuery(appStatusDomain.query.ReadyQuery())
+  const appOpen = useRemeshQuery(appStatusDomain.query.OpenQuery())
+  const appPosition = useRemeshQuery(appStatusDomain.query.PositionQuery())
+  const viewport = useWindowResize()
+  const geometry = getAppGeometry(appPosition, viewport, appOpen)
+  const handlePositionChange = useCallback(
+    (position: { x: number; y: number }) => {
+      send(appStatusDomain.command.UpdatePositionCommand(captureAppButtonPosition(position, viewport, appOpen)))
+    },
+    [appOpen, appStatusDomain.command, send, viewport]
+  )
+  const { setRef: appButtonRef } = useDraggable({
+    x: geometry.point.x,
+    y: geometry.point.y,
+    ...geometry.bounds,
+    onChange: handlePositionChange
+  })
   const chatRoomDomain = useRemeshDomain(ChatRoomDomain())
   const worldRoomDomain = useRemeshDomain(WorldRoomDomain())
   const userInfoDomain = useRemeshDomain(UserInfoDomain())
@@ -74,8 +93,8 @@ const App = () => {
       : (userInfo?.themeMode ?? (checkDarkMode() ? 'dark' : 'light'))
 
   return (
-    <div id="app" className={cn('contents', themeMode)}>
-      <AppMain>
+    <div id="app" className={cn('contents', themeMode)} style={geometry.style as CSSProperties}>
+      <AppMain open={appOpen} geometry={geometry.shell}>
         <Header />
         <Main />
         <Footer />
@@ -93,7 +112,7 @@ const App = () => {
           position="top-center"
         />
       </AppMain>
-      <AppButton />
+      <AppButton open={appOpen} launcherSize={geometry.launcher.size} appButtonRef={appButtonRef} />
       <DanmakuContainer ref={danmakuContainerRef} />
     </div>
   )

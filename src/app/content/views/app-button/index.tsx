@@ -1,4 +1,12 @@
-import { type FC, useState, type MouseEvent, type MouseEventHandler, useCallback, useMemo } from 'react'
+import {
+  type FC,
+  useState,
+  type MouseEvent,
+  type MouseEventHandler,
+  type RefCallback,
+  useCallback,
+  useMemo
+} from 'react'
 import { SettingsIcon, MoonIcon, SunIcon, HandIcon, RefreshCwIcon } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 
@@ -16,15 +24,8 @@ import LogoIcon5 from '@/assets/images/logo-5.svg'
 import LogoIcon6 from '@/assets/images/logo-6.svg'
 import AppStatusDomain from '@/domain/AppStatus'
 import { getDay } from 'date-fns'
-import useDraggable from '@/hooks/useDraggable'
-import useWindowResize from '@/hooks/useWindowResize'
 import AppActionDomain from '@/domain/AppAction'
 import ChatRoomDomain from '@/domain/ChatRoom'
-import {
-  captureAppButtonPosition,
-  getAppButtonDragBounds,
-  projectAppButtonPosition
-} from '@/app/content/views/app-button/position'
 
 export const getReconnectLabel = ({
   userConfigured,
@@ -46,11 +47,18 @@ export const getReconnectLabel = ({
 export interface AppLauncherButtonProps {
   hasUnread?: boolean
   label: string
+  size: number
   onClick: MouseEventHandler<HTMLButtonElement>
   onContextMenu?: MouseEventHandler<HTMLButtonElement>
 }
 
-export const AppLauncherButton: FC<AppLauncherButtonProps> = ({ hasUnread = false, label, onClick, onContextMenu }) => {
+export const AppLauncherButton: FC<AppLauncherButtonProps> = ({
+  hasUnread = false,
+  label,
+  size,
+  onClick,
+  onContextMenu
+}) => {
   const DayLogo = [LogoIcon0, LogoIcon1, LogoIcon2, LogoIcon3, LogoIcon4, LogoIcon5, LogoIcon6][getDay(Date())]
   const content = useMemo(
     () => (
@@ -85,7 +93,8 @@ export const AppLauncherButton: FC<AppLauncherButtonProps> = ({ hasUnread = fals
       onContextMenu={onContextMenu}
       aria-label={label}
       title={label}
-      className="relative z-20 size-11 rounded-full text-xs shadow-lg shadow-slate-500/50 after:absolute after:-inset-0.5 after:z-10 after:animate-[shimmer_2s_linear_infinite] after:rounded-full after:bg-[conic-gradient(from_var(--shimmer-angle),theme(colors.slate.500)_0%,theme(colors.white)_10%,theme(colors.slate.500)_20%)] has-[>svg]:p-0"
+      style={{ width: `${size}px`, height: `${size}px` }}
+      className="relative z-20 rounded-full text-xs shadow-lg shadow-slate-500/50 after:absolute after:-inset-0.5 after:z-10 after:animate-[shimmer_2s_linear_infinite] after:rounded-full after:bg-[conic-gradient(from_var(--shimmer-angle),theme(colors.slate.500)_0%,theme(colors.white)_10%,theme(colors.slate.500)_20%)] has-[>svg]:p-0"
     >
       {content}
     </Button>
@@ -94,7 +103,7 @@ export const AppLauncherButton: FC<AppLauncherButtonProps> = ({ hasUnread = fals
 
 interface AppButtonMenuProps {
   open: boolean
-  appButtonRef: ReturnType<typeof useDraggable>['setRef']
+  appButtonRef: RefCallback<HTMLElement>
 }
 
 const AppButtonMenu: FC<AppButtonMenuProps> = ({ open, appButtonRef }) => {
@@ -218,34 +227,17 @@ const AppButtonMenu: FC<AppButtonMenuProps> = ({ open, appButtonRef }) => {
   )
 }
 
-const AppButton: FC = () => {
+interface AppButtonProps {
+  open: boolean
+  launcherSize: number
+  appButtonRef: RefCallback<HTMLElement>
+}
+
+const AppButton: FC<AppButtonProps> = ({ open, launcherSize, appButtonRef }) => {
   const send = useRemeshSend()
   const appStatusDomain = useRemeshDomain(AppStatusDomain())
-  const appOpenStatus = useRemeshQuery(appStatusDomain.query.OpenQuery())
   const hasUnreadQuery = useRemeshQuery(appStatusDomain.query.HasUnreadQuery())
-  const appPosition = useRemeshQuery(appStatusDomain.query.PositionQuery())
   const [menuOpen, setMenuOpen] = useState(false)
-
-  const windowSize = useWindowResize()
-  const projectedPosition = projectAppButtonPosition(appPosition, windowSize, appOpenStatus)
-  const dragBounds = getAppButtonDragBounds(windowSize, appOpenStatus)
-  const handlePositionChange = useCallback(
-    (position: { x: number; y: number }) => {
-      send(appStatusDomain.command.UpdatePositionCommand(captureAppButtonPosition(position, windowSize, appOpenStatus)))
-    },
-    [appOpenStatus, appStatusDomain.command, send, windowSize]
-  )
-
-  const {
-    x,
-    y,
-    setRef: appButtonRef
-  } = useDraggable({
-    initX: projectedPosition.x,
-    initY: projectedPosition.y,
-    ...dragBounds,
-    onChange: handlePositionChange
-  })
 
   const { setRef: appMenuRef } = useTriggerAway(['click'], () => setMenuOpen(false))
 
@@ -255,18 +247,18 @@ const AppButton: FC = () => {
   }
 
   const handleToggleApp = () => {
-    send(appStatusDomain.command.UpdateOpenCommand(!appOpenStatus))
+    send(appStatusDomain.command.UpdateOpenCommand(!open))
   }
 
-  const action = appOpenStatus ? 'Close WebChat' : 'Open WebChat'
+  const action = open ? 'Close WebChat' : 'Open WebChat'
 
   return (
     <div
       ref={appMenuRef}
       className="z-infinity fixed grid w-min justify-center gap-y-3 select-none"
       style={{
-        left: `${x}px`,
-        bottom: `${windowSize.height - y}px`,
+        left: 'var(--webchat-launcher-left)',
+        bottom: 'var(--webchat-launcher-bottom)',
         transform: 'translateX(-50%)'
       }}
     >
@@ -276,6 +268,7 @@ const AppButton: FC = () => {
         onContextMenu={handleToggleMenu}
         hasUnread={hasUnreadQuery}
         label={action}
+        size={launcherSize}
       />
     </div>
   )

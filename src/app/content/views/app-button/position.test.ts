@@ -1,17 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import {
-  APP_BUTTON_SIZE,
   captureAppButtonPosition,
+  getAppGeometry,
   getAppButtonDragBounds,
   projectAppButtonPosition
 } from '@/app/content/views/app-button/position'
 
 describe('AppButton edge-relative position', () => {
   const viewport = { width: 1000, height: 800 }
-  const shellMinimumHeight = 375
-  const shellTopInset = 40
-
-  const getShellTop = (launcherBottomEdge: number) => launcherBottomEdge - APP_BUTTON_SIZE / 2 - shellMinimumHeight
 
   it('captures and projects the launcher center from the selected bottom edge', () => {
     expect(captureAppButtonPosition({ x: 200, y: 700 }, viewport, false)).toEqual({ x: -200, y: 100 })
@@ -66,10 +62,22 @@ describe('AppButton edge-relative position', () => {
     { side: 'left', position: { x: -200, y: 756 }, expectedX: 200 },
     { side: 'right', position: { x: 200, y: 756 }, expectedX: 800 }
   ])('keeps the expanded shell top inset at the $side anchor', (expected) => {
-    const projected = projectAppButtonPosition(expected.position, viewport, true)
+    const geometry = getAppGeometry(expected.position, viewport, true)
 
-    expect(projected).toEqual({ x: expected.expectedX, y: 437 })
-    expect(getShellTop(projected.y)).toBe(shellTopInset)
+    expect(geometry.point).toEqual({ x: expected.expectedX, y: 437 })
+    expect(
+      geometry.point.y -
+        Number.parseFloat(geometry.style['--webchat-shell-bottom-offset']) -
+        Number.parseFloat(geometry.style['--webchat-shell-height'])
+    ).toBe(40)
+    expect(geometry.launcher.size).toBe(44)
+    expect(geometry.style).toEqual({
+      '--webchat-launcher-left': `${expected.expectedX}px`,
+      '--webchat-launcher-bottom': '363px',
+      '--webchat-shell-bottom-offset': '22px',
+      '--webchat-shell-height': '375px',
+      '--webchat-shell-translate-x': expected.side === 'left' ? '0%' : '-100%'
+    })
     expect(expected.position).toEqual({ x: expected.side === 'left' ? -200 : 200, y: 756 })
   })
 
@@ -96,20 +104,34 @@ describe('AppButton edge-relative position', () => {
     expect(getAppButtonDragBounds(shortViewport, true)).toEqual(launcherBounds)
     expect(projectAppButtonPosition(shared, shortViewport, false)).toEqual({ x: 180, y: 58 })
     expect(projectAppButtonPosition(shared, shortViewport, true)).toEqual({ x: 180, y: 58 })
+    expect(getAppGeometry(shared, shortViewport, true).style['--webchat-shell-height']).toBe('375px')
+    expect(getAppGeometry(shared, shortViewport, true).style['--webchat-shell-bottom-offset']).toBe('22px')
     expect(shared).toEqual({ x: -180, y: 400 })
+  })
+
+  it.each([
+    { width: 1000, minimumWidth: 375, maximumWidth: 375 },
+    { width: 3000, minimumWidth: 500, maximumWidth: 750 },
+    { width: 4500, minimumWidth: 750, maximumWidth: 750 }
+  ])('derives the real resizer range at viewport width $width', ({ width, minimumWidth, maximumWidth }) => {
+    const shell = getAppGeometry({ x: -200, y: 100 }, { width, height: 800 }, true).shell
+
+    expect(shell.minimumWidth).toBe(minimumWidth)
+    expect(shell.maximumWidth).toBe(maximumWidth)
   })
 
   it('derives stable bounds from the launcher geometry and current viewport', () => {
     const bounds = getAppButtonDragBounds(viewport, false)
+    const launcherSize = getAppGeometry({ x: 50, y: 22 }, viewport, false).launcher.size
     expect(bounds).toEqual({ minX: 50, maxX: 950, minY: 44, maxY: 778 })
-    expect(bounds.minX - APP_BUTTON_SIZE / 2).toBe(28)
-    expect(viewport.width - bounds.maxX - APP_BUTTON_SIZE / 2).toBe(28)
+    expect(bounds.minX - launcherSize / 2).toBe(28)
+    expect(viewport.width - bounds.maxX - launcherSize / 2).toBe(28)
     expect(viewport.height - bounds.maxY).toBe(22)
 
     const constrained = getAppButtonDragBounds({ width: 80, height: 50 }, false)
     expect(constrained).toEqual({ minX: 40, maxX: 40, minY: 44, maxY: 44 })
-    expect(constrained.minX - APP_BUTTON_SIZE / 2).toBe(18)
-    expect(80 - constrained.maxX - APP_BUTTON_SIZE / 2).toBe(18)
+    expect(constrained.minX - launcherSize / 2).toBe(18)
+    expect(80 - constrained.maxX - launcherSize / 2).toBe(18)
     expect(50 - constrained.maxY).toBe(6)
     expect(projectAppButtonPosition({ x: 0, y: 0 }, { width: 80, height: 50 }, false)).toEqual({ x: 40, y: 44 })
     expect(getAppButtonDragBounds({ width: 30, height: 20 }, false)).toEqual({

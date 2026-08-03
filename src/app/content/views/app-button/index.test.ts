@@ -67,15 +67,18 @@ describe('reconnect action availability', () => {
 
   it('reprojects resize locally and persists only user drag coordinates', () => {
     const value = source()
+    const app = readFileSync(path.resolve(process.cwd(), 'src/app/content/App.tsx'), 'utf8')
 
-    expect(value).toContain('const windowSize = useWindowResize()')
-    expect(value).toContain(
-      'const projectedPosition = projectAppButtonPosition(appPosition, windowSize, appOpenStatus)'
-    )
-    expect(value).toContain('const dragBounds = getAppButtonDragBounds(windowSize, appOpenStatus)')
-    expect(value).toContain('captureAppButtonPosition(position, windowSize, appOpenStatus)')
-    expect(value).toContain('onChange: handlePositionChange')
+    expect(app).toContain('const viewport = useWindowResize()')
+    expect(app).toContain('const geometry = getAppGeometry(appPosition, viewport, appOpen)')
+    expect(app).toContain('captureAppButtonPosition(position, viewport, appOpen)')
+    expect(app).toContain('x: geometry.point.x')
+    expect(app).toContain('y: geometry.point.y')
+    expect(app).toContain('...geometry.bounds')
+    expect(app).toContain('onChange: handlePositionChange')
+    expect(app).toContain('<AppMain open={appOpen} geometry={geometry.shell}>')
+    expect(app).toContain('launcherSize={geometry.launcher.size}')
+    expect(value).not.toContain('useWindowResize')
     expect(value).not.toContain('positionPersistenceStarted')
-    expect(value).not.toContain('useWindowResize(() =>')
   })
 })

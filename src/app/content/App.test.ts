@@ -26,14 +26,14 @@ describe('content component hierarchy', () => {
     expect(app).toMatch(/(?:function App\(\)|const App = \(\) =>)/)
     ordered(app, [
       '<div id="app"',
-      '<AppMain>',
+      '<AppMain open={appOpen} geometry={geometry.shell}>',
       '<Header />',
       '<Main />',
       '<Footer />',
       '<Setup',
       '<Toaster',
       '</AppMain>',
-      '<AppButton',
+      '<AppButton open={appOpen}',
       '<DanmakuContainer'
     ])
     expect(app.match(/<Toaster\b/g)).toHaveLength(1)
@@ -44,8 +44,25 @@ describe('content component hierarchy', () => {
     expect(app).toContain('position="top-center"')
     expect(app).toContain("toast: 'dark:bg-slate-950 border dark:border-slate-600'")
 
-    ordered(appMain, ['<AnimatePresence>', 'appOpenStatus &&', '<motion.div', '{memoizedChildren}', 'ref={setRef}'])
+    ordered(appMain, ['<AnimatePresence>', 'open &&', '<motion.div', '{memoizedChildren}', 'ref={setRef}'])
     expect(appMain).toContain('data-webchat-panel')
+  })
+
+  it('keeps shell and launcher dimensions in the geometry owner', () => {
+    const app = source('./App.tsx')
+    const appMain = source('./views/app-main/index.tsx')
+    const appButton = source('./views/app-button/index.tsx')
+    const geometry = source('./views/app-button/position.ts')
+
+    expect(geometry).toContain('const APP_BUTTON_SIZE = 44')
+    expect(geometry).toContain('const APP_BUTTON_RADIUS = APP_BUTTON_SIZE / 2')
+    expect(geometry).toContain('const APP_SHELL_TOP_INSET = 40')
+    expect(geometry).toContain('const APP_SHELL_MINIMUM_SIZE = 375')
+    expect(app).toContain('style={geometry.style as CSSProperties}')
+    expect(appMain).toContain("height: 'var(--webchat-shell-height)'")
+    expect(appMain).toContain("x: 'var(--webchat-shell-translate-x)'")
+    expect(appMain).not.toMatch(/inset-y-10|min-h-\[375px\]|\+ 22px/)
+    expect(appButton).not.toContain('size-11')
   })
 
   it('uses the existing application status domain directly in every required consumer', () => {

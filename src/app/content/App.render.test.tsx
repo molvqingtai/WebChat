@@ -15,6 +15,10 @@ vi.mock('remesh-react', () => ({
     switch (query) {
       case 'initialization-ready':
         return fixture.ready
+      case 'app-open':
+        return false
+      case 'app-position':
+        return { x: 50, y: 22 }
       case 'user-load-finished':
         return true
       case 'user-info':
@@ -26,8 +30,15 @@ vi.mock('remesh-react', () => ({
 }))
 vi.mock('@/domain/AppStatus', () => ({
   default: () => ({
-    query: { ReadyQuery: () => 'initialization-ready' },
-    command: { UpdateOpenCommand: (open: boolean) => `update-open-${open}` }
+    query: {
+      ReadyQuery: () => 'initialization-ready',
+      OpenQuery: () => 'app-open',
+      PositionQuery: () => 'app-position'
+    },
+    command: {
+      UpdateOpenCommand: (open: boolean) => `update-open-${open}`,
+      UpdatePositionCommand: () => 'update-position'
+    }
   })
 }))
 vi.mock('@/domain/ChatRoom', () => ({
@@ -82,6 +93,8 @@ vi.mock('@/app/content/components/danmaku-container', async () => {
 vi.mock('sonner', () => ({ Toaster: () => <div data-testid="toaster" /> }))
 vi.mock('@/utils', () => ({
   checkDarkMode: () => false,
+  clamp: (value: number, minimum: number, maximum: number) => Math.min(maximum, Math.max(minimum, value)),
+  isInRange: (value: number, minimum: number, maximum: number) => value >= minimum && value <= maximum,
   cn: (...values: unknown[]) => values.filter(Boolean).join(' ')
 }))
 
