@@ -1,4 +1,4 @@
-import { page } from 'vitest/browser'
+import { page, userEvent } from 'vitest/browser'
 import { cleanup, render } from 'vitest-browser-react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { toast } from 'sonner'
@@ -161,13 +161,64 @@ import App from '@/app/content/App'
 
 const getLauncher = () => document.querySelector<HTMLButtonElement>('button[aria-label$="WebChat"]')!
 const getLauncherPositioner = () => getLauncher().closest<HTMLElement>('div.fixed')!
+const getLayoutOwner = () => getLauncherPositioner().parentElement!
 const getPanel = () => document.querySelector<HTMLElement>('[data-webchat-panel]')
+const getHandControl = () => document.querySelector<HTMLButtonElement>('button.cursor-grab')!
+const openHandControl = async () => {
+  await userEvent.click(getLauncher(), { button: 'right' })
+  expect(getHandControl()).not.toBeNull()
+}
+const getLauncherPoint = () => {
+  const launcher = getLauncher().getBoundingClientRect()
+  return {
+    x: launcher.left + launcher.width / 2,
+    y: window.innerHeight - Number.parseFloat(getComputedStyle(getLauncherPositioner()).bottom)
+  }
+}
 const getLauncherToShellOffset = () => {
   const panel = getPanel()!
   return (
     Number.parseFloat(getComputedStyle(panel).bottom) -
     Number.parseFloat(getComputedStyle(getLauncherPositioner()).bottom)
   )
+}
+
+const dragHandToPoint = async (point: { x: number; y: number }) => {
+  const hand = getHandControl()
+  const handRect = hand.getBoundingClientRect()
+  const current = getLauncherPoint()
+  const target = document.documentElement.getBoundingClientRect()
+  const moveStyles: Array<{ cursor: string; userSelect: string }> = []
+  const releaseStyles: Array<{ cursor: string; userSelect: string }> = []
+  const recordMove = () => {
+    moveStyles.push({
+      cursor: document.documentElement.style.cursor,
+      userSelect: document.documentElement.style.userSelect
+    })
+  }
+  const recordRelease = () => {
+    releaseStyles.push({
+      cursor: document.documentElement.style.cursor,
+      userSelect: document.documentElement.style.userSelect
+    })
+  }
+
+  document.addEventListener('mousemove', recordMove)
+  document.addEventListener('mouseup', recordRelease)
+  try {
+    await userEvent.dragAndDrop(hand, document.documentElement, {
+      sourcePosition: { x: handRect.width / 2, y: handRect.height / 2 },
+      targetPosition: {
+        x: handRect.left + handRect.width / 2 + point.x - current.x - target.left,
+        y: handRect.top + handRect.height / 2 + point.y - current.y - target.top
+      }
+    })
+  } finally {
+    document.removeEventListener('mousemove', recordMove)
+    document.removeEventListener('mouseup', recordRelease)
+  }
+
+  return { moveStyles, releaseStyles }
 }
 
 beforeEach(async () => {
@@ -242,11 +293,7 @@ describe('App browser ancestry', () => {
     getLauncher().click()
     fixture.synchronizePosition({ x: 200, y: 100 })
 
-    await vi.waitFor(() =>
-      expect(document.querySelector<HTMLElement>('#app')!.style.getPropertyValue('--webchat-shell-translate-x')).toBe(
-        '-100%'
-      )
-    )
+    await vi.waitFor(() => expect(getLayoutOwner().style.getPropertyValue('--webchat-shell-translate-x')).toBe('-100%'))
     const launcher = getLauncher().getBoundingClientRect()
     const exitingPanel = getPanel()
     expect(exitingPanel).not.toBeNull()
@@ -283,5 +330,63 @@ describe('App browser ancestry', () => {
 
     expect(fixture.positionWrites).toEqual([])
     expect(fixture.state.position).toEqual({ x: -180, y: 400 })
+  })
+
+  it('persists a bounded Hand drag while shell and launcher cross the midpoint atomically', async () => {
+    fixture.reset({ position: { x: -200, y: 100 } })
+    await page.viewport(1000, 800)
+    await render(<App />)
+    await vi.waitFor(() => expect(Number.parseFloat(getComputedStyle(getPanel()!).opacity)).toBeCloseTo(1, 3))
+
+    await openHandControl()
+
+    const interaction = await dragHandToPoint({ x: 0, y: 0 })
+    expect(fixture.positionWrites.at(-1)).toEqual({ x: -50, y: 363 })
+    expect(getLauncherPoint()).toEqual({ x: 50, y: 437 })
+    expect(getPanel()!.getBoundingClientRect().left).toBeCloseTo(50, 1)
+    expect(getPanel()!.getBoundingClientRect().top).toBeCloseTo(40, 1)
+    expect(getPanel()!.getBoundingClientRect().width).toBe(375)
+    expect(interaction.moveStyles).toContainEqual({ cursor: 'grab', userSelect: 'none' })
+    expect(interaction.releaseStyles.at(-1)).toEqual({ cursor: '', userSelect: '' })
+    expect(document.documentElement.style.cursor).toBe('')
+    expect(document.documentElement.style.userSelect).toBe('')
+
+    await openHandControl()
+    await dragHandToPoint({ x: 499, y: 0 })
+    const leftPoint = getLauncherPoint()
+    expect(leftPoint.x).toBeGreaterThanOrEqual(497)
+    expect(leftPoint.x).toBeLessThan(500)
+    expect(fixture.positionWrites.at(-1)).toEqual({ x: -leftPoint.x, y: 363 })
+
+    const writesBeforeMidpoint = fixture.positionWrites.length
+    await openHandControl()
+    await dragHandToPoint({ x: 502, y: 0 })
+    const rightPoint = getLauncherPoint()
+    expect(fixture.positionWrites.length).toBeGreaterThan(writesBeforeMidpoint)
+    expect(rightPoint.x).toBeGreaterThanOrEqual(500)
+    expect(rightPoint.x).toBeLessThanOrEqual(503)
+    expect(rightPoint.x - leftPoint.x).toBeLessThanOrEqual(5)
+    expect(fixture.positionWrites.at(-1)).toEqual({ x: 1000 - rightPoint.x, y: 363 })
+    expect(getPanel()!.getBoundingClientRect().right).toBeCloseTo(rightPoint.x, 1)
+    expect(getPanel()!.getBoundingClientRect().top).toBeCloseTo(40, 1)
+
+    await openHandControl()
+    await dragHandToPoint({ x: 1000, y: 0 })
+    expect(fixture.positionWrites.at(-1)).toEqual({ x: 50, y: 363 })
+    expect(getLauncherPoint()).toEqual({ x: 950, y: 437 })
+    expect(getPanel()!.getBoundingClientRect().right).toBeCloseTo(950, 1)
+
+    const writesAfterDrag = fixture.positionWrites.length
+    await page.viewport(3000, 800)
+    await vi.waitFor(() => expect(getPanel()!.getBoundingClientRect().width).toBe(500))
+    expect(getPanel()!.getBoundingClientRect().right).toBeCloseTo(2950, 1)
+    expect(getPanel()!.getBoundingClientRect().top).toBeCloseTo(40, 1)
+
+    await page.viewport(4500, 800)
+    await vi.waitFor(() => expect(getPanel()!.getBoundingClientRect().width).toBe(750))
+    expect(getPanel()!.getBoundingClientRect().right).toBeCloseTo(4450, 1)
+    expect(getPanel()!.getBoundingClientRect().top).toBeCloseTo(40, 1)
+    expect(fixture.positionWrites).toHaveLength(writesAfterDrag)
+    expect(fixture.state.position).toEqual({ x: 50, y: 363 })
   })
 })

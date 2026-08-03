@@ -15,10 +15,6 @@ vi.mock('remesh-react', () => ({
     switch (query) {
       case 'initialization-ready':
         return fixture.ready
-      case 'app-open':
-        return false
-      case 'app-position':
-        return { x: 50, y: 22 }
       case 'user-load-finished':
         return true
       case 'user-info':
@@ -31,13 +27,10 @@ vi.mock('remesh-react', () => ({
 vi.mock('@/domain/AppStatus', () => ({
   default: () => ({
     query: {
-      ReadyQuery: () => 'initialization-ready',
-      OpenQuery: () => 'app-open',
-      PositionQuery: () => 'app-position'
+      ReadyQuery: () => 'initialization-ready'
     },
     command: {
-      UpdateOpenCommand: (open: boolean) => `update-open-${open}`,
-      UpdatePositionCommand: () => 'update-position'
+      UpdateOpenCommand: (open: boolean) => `update-open-${open}`
     }
   })
 }))
@@ -80,11 +73,13 @@ vi.mock('@/app/content/views/header', () => ({ default: () => <header data-testi
 vi.mock('@/app/content/views/main', () => ({ default: () => <main data-testid="main" /> }))
 vi.mock('@/app/content/views/footer', () => ({ default: () => <footer data-testid="footer" /> }))
 vi.mock('@/app/content/views/setup', () => ({ default: () => <aside data-testid="setup" /> }))
-vi.mock('@/app/content/views/app-main', () => ({
-  default: ({ children }: { children?: React.ReactNode }) => <section data-testid="app-main">{children}</section>
-}))
-vi.mock('@/app/content/views/app-button', () => ({
-  default: () => <button aria-label="Open WebChat" data-testid="app-button" />
+vi.mock('@/app/content/views/app-layout', () => ({
+  default: ({ children }: { children?: React.ReactNode }) => (
+    <>
+      <section data-testid="app-main">{children}</section>
+      <button aria-label="Open WebChat" data-testid="app-button" />
+    </>
+  )
 }))
 vi.mock('@/app/content/components/danmaku-container', async () => {
   const React = await import('react')

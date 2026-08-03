@@ -2,7 +2,7 @@ import { type ReactNode, type FC, useState, useMemo } from 'react'
 import useResizable from '@/hooks/useResizable'
 import { motion, AnimatePresence } from 'framer-motion'
 import { cn } from '@/utils'
-import type { AppGeometry } from '@/app/content/views/app-button/position'
+import type { AppGeometry } from '@/app/content/views/app-layout/geometry'
 
 export interface AppMainProps {
   children?: ReactNode

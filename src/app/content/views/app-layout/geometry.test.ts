@@ -4,7 +4,7 @@ import {
   getAppGeometry,
   getAppButtonDragBounds,
   projectAppButtonPosition
-} from '@/app/content/views/app-button/position'
+} from '@/app/content/views/app-layout/geometry'
 
 describe('AppButton edge-relative position', () => {
   const viewport = { width: 1000, height: 800 }

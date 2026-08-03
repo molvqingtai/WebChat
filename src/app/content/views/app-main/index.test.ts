@@ -54,7 +54,7 @@ vi.mock('framer-motion', async () => {
 })
 
 import AppMain from '.'
-import { getAppGeometry } from '@/app/content/views/app-button/position'
+import { getAppGeometry } from '@/app/content/views/app-layout/geometry'
 
 afterEach(() => {
   fixture.open = false

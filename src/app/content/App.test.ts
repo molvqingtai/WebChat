@@ -1,7 +1,8 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
-const source = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8')
+const file = (path: string) => new URL(path, import.meta.url)
+const source = (path: string) => readFileSync(file(path), 'utf8')
 
 const ordered = (value: string, needles: string[]) => {
   let cursor = -1
@@ -19,21 +20,21 @@ describe('content component hierarchy', () => {
     ordered(entry, ['<StrictMode>', '<RemeshRoot store={store}>', '<RemeshScope', '<App />'])
   })
 
-  it('renders the App and AppMain composition', () => {
+  it('renders the App and common layout composition', () => {
     const app = source('./App.tsx')
+    const appLayout = source('./views/app-layout/index.tsx')
     const appMain = source('./views/app-main/index.tsx')
 
     expect(app).toMatch(/(?:function App\(\)|const App = \(\) =>)/)
     ordered(app, [
       '<div id="app"',
-      '<AppMain open={appOpen} geometry={geometry.shell}>',
+      '<AppLayout>',
       '<Header />',
       '<Main />',
       '<Footer />',
       '<Setup',
       '<Toaster',
-      '</AppMain>',
-      '<AppButton open={appOpen}',
+      '</AppLayout>',
       '<DanmakuContainer'
     ])
     expect(app.match(/<Toaster\b/g)).toHaveLength(1)
@@ -44,34 +45,61 @@ describe('content component hierarchy', () => {
     expect(app).toContain('position="top-center"')
     expect(app).toContain("toast: 'dark:bg-slate-950 border dark:border-slate-600'")
 
+    ordered(appLayout, [
+      '<div className="contents"',
+      '<AppMain open={appOpen} geometry={geometry.shell}>',
+      '{children}',
+      '</AppMain>',
+      '<AppButton open={appOpen}'
+    ])
     ordered(appMain, ['<AnimatePresence>', 'open &&', '<motion.div', '{memoizedChildren}', 'ref={setRef}'])
     expect(appMain).toContain('data-webchat-panel')
   })
 
   it('keeps shell and launcher dimensions in the geometry owner', () => {
-    const app = source('./App.tsx')
+    const appLayout = source('./views/app-layout/index.tsx')
     const appMain = source('./views/app-main/index.tsx')
     const appButton = source('./views/app-button/index.tsx')
-    const geometry = source('./views/app-button/position.ts')
+    const geometry = source('./views/app-layout/geometry.ts')
 
     expect(geometry).toContain('const APP_BUTTON_SIZE = 44')
     expect(geometry).toContain('const APP_BUTTON_RADIUS = APP_BUTTON_SIZE / 2')
     expect(geometry).toContain('const APP_SHELL_TOP_INSET = 40')
     expect(geometry).toContain('const APP_SHELL_MINIMUM_SIZE = 375')
-    expect(app).toContain('style={geometry.style as CSSProperties}')
+    expect(appLayout).toContain('style={geometry.style as CSSProperties}')
     expect(appMain).toContain("height: 'var(--webchat-shell-height)'")
     expect(appMain).toContain("x: 'var(--webchat-shell-translate-x)'")
     expect(appMain).not.toMatch(/inset-y-10|min-h-\[375px\]|\+ 22px/)
     expect(appButton).not.toContain('size-11')
   })
 
+  it('keeps the high-frequency layout lifecycle below the business App root', () => {
+    const app = source('./App.tsx')
+    const layoutPath = file('./views/app-layout/index.tsx')
+    const geometryPath = file('./views/app-layout/geometry.ts')
+    const privateGeometryPath = file('./views/app-button/position.ts')
+
+    expect(existsSync(layoutPath)).toBe(true)
+    expect(existsSync(geometryPath)).toBe(true)
+    expect(existsSync(privateGeometryPath)).toBe(false)
+
+    const layout = readFileSync(layoutPath, 'utf8')
+    expect(app).toContain('<AppLayout>')
+    expect(app).not.toMatch(/useWindowResize|useDraggable|getAppGeometry|<AppMain|<AppButton/)
+    for (const dependency of ['useWindowResize', 'useDraggable', 'getAppGeometry', '<AppMain', '<AppButton']) {
+      expect(layout).toContain(dependency)
+    }
+  })
+
   it('uses the existing application status domain directly in every required consumer', () => {
     const app = source('./App.tsx')
+    const appLayout = source('./views/app-layout/index.tsx')
     const appButton = source('./views/app-button/index.tsx')
     const feedback = source('../../domain/AppFeedback.ts')
     const initialization = source('./Initialization.ts')
 
     expect(app).toContain('useRemeshDomain(AppStatusDomain())')
+    expect(appLayout).toContain('useRemeshDomain(AppStatusDomain())')
     expect(appButton).toContain('useRemeshDomain(AppStatusDomain())')
     expect(feedback).toContain('domain.getDomain(AppStatusDomain())')
     expect(initialization).toContain('store.getDomain(AppStatusDomain())')
