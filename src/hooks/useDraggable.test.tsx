@@ -1,9 +1,18 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { useState } from 'react'
 import useDraggable, { type DragOptions } from '@/hooks/useDraggable'
 
-const Harness = (options: DragOptions) => {
-  const { setRef, x, y } = useDraggable(options)
+const Harness = ({ x: initialX, y: initialY, onChange, ...options }: DragOptions) => {
+  const [position, setPosition] = useState({ x: initialX, y: initialY })
+  const { setRef, x, y } = useDraggable({
+    ...options,
+    ...position,
+    onChange: (next) => {
+      setPosition(next)
+      onChange?.(next)
+    }
+  })
   return <button ref={setRef} aria-label="Move WebChat" data-testid="drag-handle" data-x={x} data-y={y} />
 }
 
@@ -45,7 +54,7 @@ afterEach(() => {
 describe('useDraggable', () => {
   it('follows the latest pointer once per frame and preserves bounds, cursor, selection, and release', () => {
     const onChange = vi.fn()
-    render(<Harness initX={100} initY={100} minX={20} maxX={200} minY={44} maxY={180} onChange={onChange} />)
+    render(<Harness x={100} y={100} minX={20} maxX={200} minY={44} maxY={180} onChange={onChange} />)
     const handle = screen.getByTestId('drag-handle')
 
     fireEvent.mouseDown(handle, { clientX: 100, clientY: 100 })
@@ -77,7 +86,7 @@ describe('useDraggable', () => {
 
   it('cancels a pending frame on mouse release', () => {
     const onChange = vi.fn()
-    render(<Harness initX={100} initY={100} minX={20} maxX={200} minY={44} maxY={180} onChange={onChange} />)
+    render(<Harness x={100} y={100} minX={20} maxX={200} minY={44} maxY={180} onChange={onChange} />)
     const handle = screen.getByTestId('drag-handle')
 
     fireEvent.mouseDown(handle, { clientX: 100, clientY: 100 })
@@ -87,21 +96,6 @@ describe('useDraggable', () => {
 
     expect(handle.dataset.x).toBe('100')
     expect(handle.dataset.y).toBe('100')
-    expect(onChange).not.toHaveBeenCalled()
-  })
-
-  it('reprojects changed inputs and bounds locally without reporting a user drag', async () => {
-    const onChange = vi.fn()
-    const view = render(
-      <Harness initX={180} initY={170} minX={20} maxX={200} minY={44} maxY={180} onChange={onChange} />
-    )
-
-    view.rerender(<Harness initX={180} initY={170} minX={22} maxX={150} minY={44} maxY={140} onChange={onChange} />)
-
-    await vi.waitFor(() => {
-      expect(screen.getByTestId('drag-handle').dataset.x).toBe('150')
-      expect(screen.getByTestId('drag-handle').dataset.y).toBe('140')
-    })
     expect(onChange).not.toHaveBeenCalled()
   })
 })

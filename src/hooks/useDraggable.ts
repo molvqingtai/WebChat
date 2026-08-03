@@ -1,9 +1,9 @@
 import { clamp, isInRange } from '@/utils'
-import { startTransition, useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useRef } from 'react'
 
 export interface DragOptions {
-  initX: number
-  initY: number
+  x: number
+  y: number
   maxX: number
   minX: number
   maxY: number
@@ -11,22 +11,13 @@ export interface DragOptions {
   onChange?: (position: { x: number; y: number }) => void
 }
 
-const useDraggable = ({ initX, initY, maxX, minX, maxY, minY, onChange }: DragOptions) => {
+const useDraggable = ({ x, y, maxX, minX, maxY, minY, onChange }: DragOptions) => {
   const mousePosition = useRef({ x: 0, y: 0 })
-  const initialPosition = { x: clamp(initX, minX, maxX), y: clamp(initY, minY, maxY) }
-  const positionRef = useRef(initialPosition)
-  const [position, setPosition] = useState(initialPosition)
+  const position = { x: clamp(x, minX, maxX), y: clamp(y, minY, maxY) }
+  const positionRef = useRef(position)
+  positionRef.current = position
   const onChangeRef = useRef(onChange)
   onChangeRef.current = onChange
-
-  useEffect(() => {
-    const next = { x: clamp(initX, minX, maxX), y: clamp(initY, minY, maxY) }
-    if (next.x === positionRef.current.x && next.y === positionRef.current.y) return
-    startTransition(() => {
-      positionRef.current = next
-      setPosition(next)
-    })
-  }, [initX, initY, maxX, minX, maxY, minY])
 
   const isMove = useRef(false)
   const rafRef = useRef<number | null>(null)
@@ -51,10 +42,7 @@ const useDraggable = ({ initX, initY, maxX, minX, maxY, minY, onChange }: DragOp
 
         const next = { x: clamp(delta.x, minX, maxX), y: clamp(delta.y, minY, maxY) }
         if (next.x === previous.x && next.y === previous.y) return
-        startTransition(() => {
-          positionRef.current = next
-          setPosition(next)
-        })
+        positionRef.current = next
         onChangeRef.current?.(next)
       })
     },

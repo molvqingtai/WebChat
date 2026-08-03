@@ -38,14 +38,6 @@ const Main: FC = () => {
     [_messageList, userInfo?.id]
   )
 
-  const handleLikeChange = (messageId: string) => {
-    send(chatRoomDomain.command.SendReactionCommand({ messageId, reaction: 'like' }))
-  }
-
-  const handleHateChange = (messageId: string) => {
-    send(chatRoomDomain.command.SendReactionCommand({ messageId, reaction: 'hate' }))
-  }
-
   return (
     <MessageList>
       {messageList.map((message, index) => {
@@ -57,8 +49,12 @@ const Main: FC = () => {
               data={message}
               like={message.like}
               hate={message.hate}
-              onLikeChange={() => handleLikeChange(message.id)}
-              onHateChange={() => handleHateChange(message.id)}
+              onToggleLike={() =>
+                send(chatRoomDomain.command.SendReactionCommand({ messageId: message.id, reaction: 'like' }))
+              }
+              onToggleHate={() =>
+                send(chatRoomDomain.command.SendReactionCommand({ messageId: message.id, reaction: 'hate' }))
+              }
               className="animate-in fade-in-0 duration-300"
             />
           )

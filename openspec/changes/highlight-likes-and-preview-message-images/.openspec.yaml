@@ -1,0 +1,4 @@
+schema: spec-driven
+created: 2026-08-02
+goal: Unify positive reaction presentation and give every message image one stable,
+  bounded, zoomable preview path in the existing WebChat application root.

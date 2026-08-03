@@ -13,6 +13,7 @@ import { MESSAGE_STORE_VERSION, STORAGE_NAME } from '@/constants/storage'
 import { createMessageDatabaseDefinition, type MessageDatabaseSchema } from '@/domain/MessageStore'
 import {
   assertDatabaseKey,
+  cloneStoredValue,
   cloneValue,
   validateQuery,
   validateScope,
@@ -225,7 +226,7 @@ class IndexedDBTransaction<
         assertDatabaseKey(key, definition.key)
         const value = await requestResult(store.get(key))
         this.signal?.throwIfAborted()
-        return value === undefined ? undefined : cloneValue(value as Schema[Store]['value'])
+        return value === undefined ? undefined : cloneStoredValue(value as Schema[Store]['value'])
       })()
     )
   }
@@ -260,7 +261,7 @@ class IndexedDBTransaction<
               const key = query.index ? cursor.primaryKey : cursor.key
               items.push({
                 key: key as Schema[Store]['key'],
-                value: cloneValue(cursor.value as Schema[Store]['value'])
+                value: cloneStoredValue(cursor.value as Schema[Store]['value'])
               })
               cursor.continue()
             } catch (error) {
@@ -322,7 +323,7 @@ class IndexedDBTransaction<
                   reject(new Error(`Database insert conflicted without an existing value: ${String(key)}`))
                   return
                 }
-                resolve({ inserted: false, existing: cloneValue(existing as Schema[Store]['value']) })
+                resolve({ inserted: false, existing: cloneStoredValue(existing as Schema[Store]['value']) })
               }, reject)
             },
             { once: true }

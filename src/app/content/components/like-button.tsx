@@ -1,42 +1,24 @@
-import type { ReactNode } from 'react'
-import { type MouseEvent, type FC, type ReactElement } from 'react'
+import { type FC, type ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/utils'
 import NumberFlow from '@number-flow/react'
 
-export interface LikeButtonIconProps {
-  children: ReactNode
-}
-
-export const LikeButtonIcon: FC<LikeButtonIconProps> = ({ children }) => children
-
 export interface LikeButtonProps {
   count: number
   checked: boolean
-  onClick?: (e: MouseEvent<HTMLButtonElement>) => void
-  onChange?: (checked: boolean, count: number) => void
-  children: ReactElement<LikeButtonIconProps>
+  onToggle?: () => void
+  children: ReactNode
 }
 
-const LikeButton: FC<LikeButtonProps> & { Icon: FC<LikeButtonIconProps> } = ({
-  checked,
-  count,
-  onClick,
-  onChange,
-  children
-}) => {
-  const handleClick = (e: MouseEvent<HTMLButtonElement>) => {
-    onClick?.(e)
-    onChange?.(!checked, checked ? count - 1 : count + 1)
-  }
-
+const LikeButton: FC<LikeButtonProps> = ({ checked, count, onToggle, children }) => {
   return (
     <Button
-      onClick={handleClick}
+      onClick={() => onToggle?.()}
+      aria-pressed={checked}
       variant="secondary"
       className={cn(
         'grid items-center overflow-hidden rounded-full leading-none transition-all select-none dark:bg-slate-600',
-        checked ? 'text-orange-500' : 'text-slate-500 dark:text-slate-100',
+        count > 0 ? 'text-orange-500' : 'text-slate-500 dark:text-slate-100',
         count ? 'grid-cols-[auto_1fr] gap-x-1' : 'grid-cols-[auto_0fr] gap-x-0'
       )}
       size="xs"
@@ -50,8 +32,6 @@ const LikeButton: FC<LikeButtonProps> & { Icon: FC<LikeButtonIconProps> } = ({
     </Button>
   )
 }
-
-LikeButton.Icon = LikeButtonIcon
 
 LikeButton.displayName = 'LikeButton'
 

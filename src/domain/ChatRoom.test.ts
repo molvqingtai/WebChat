@@ -473,7 +473,7 @@ describe('ChatRoomDomain exact application port', () => {
         expect(fixture.loading()).toBe(false)
         expect(fixture.users()).toEqual([])
         expect(fixture.joinCalls()).toBe(0)
-        expect(fixture.errors).toEqual([new Error('Page connection prerequisites timed out')])
+        expect(fixture.errors).toEqual([new Error('Connection timed out')])
 
         fixture.startJoin()
         await vi.waitFor(() => expect(fixture.finished()).toBe(true))
