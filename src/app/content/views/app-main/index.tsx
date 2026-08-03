@@ -27,11 +27,12 @@ const AppMain: FC<AppMainProps> = ({ children, className, open, geometry }) => {
       {open && (
         <motion.div
           data-webchat-panel
-          initial={{ opacity: 0, y: 10, x: 'var(--webchat-shell-translate-x)' }}
-          animate={{ opacity: 1, y: 0, x: 'var(--webchat-shell-translate-x)' }}
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: 10 }}
           transition={{ duration: 0.3, ease: 'linear' }}
           style={{
+            translate: 'var(--webchat-shell-translate-x)',
             width: `${size}px`,
             left: 'var(--webchat-launcher-left)',
             bottom: 'calc(var(--webchat-launcher-bottom) + var(--webchat-shell-bottom-offset))',
@@ -40,7 +41,7 @@ const AppMain: FC<AppMainProps> = ({ children, className, open, geometry }) => {
           className={cn(
             'z-infinity fixed box-border grid grid-flow-col grid-rows-[auto_1fr_auto] rounded-xl bg-slate-50 font-sans shadow-2xl dark:bg-slate-950',
             className,
-            'transition-transform duration-300 ease-linear'
+            'transition-[translate] duration-300 ease-linear'
           )}
         >
           {memoizedChildren}

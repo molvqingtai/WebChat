@@ -9,7 +9,8 @@ const fixture = vi.hoisted(() => ({
   resizeDirection: null as 'left' | 'right' | null,
   resizeRange: null as null | { initial: number; minimum: number; maximum: number },
   initialX: null as string | number | null,
-  animateX: null as string | number | null
+  animateX: null as string | number | null,
+  cssTranslate: null as string | null
 }))
 
 vi.mock('@/hooks/useResizable', () => ({
@@ -41,12 +42,11 @@ vi.mock('framer-motion', async () => {
         animate,
         exit: _exit,
         transition: _transition,
-        onAnimationEnd: _onAnimationEnd,
-        onAnimationStart: _onAnimationStart,
         ...props
       }: { children?: React.ReactNode } & Record<string, unknown>) => {
         fixture.initialX = (initial as { x?: string | number } | undefined)?.x ?? null
         fixture.animateX = (animate as { x?: string | number } | undefined)?.x ?? null
+        fixture.cssTranslate = (props.style as { translate?: string } | undefined)?.translate ?? null
         return React.createElement('div', props, children)
       }
     }
@@ -64,6 +64,7 @@ afterEach(() => {
   fixture.resizeRange = null
   fixture.initialX = null
   fixture.animateX = null
+  fixture.cssTranslate = null
   cleanup()
 })
 
@@ -140,8 +141,9 @@ describe('AppMain panel ownership', () => {
     const panel = document.querySelector<HTMLElement>('[data-webchat-panel]')!
     const resizeHandle = panel.lastElementChild!
     expect(panel.style.left).toBe('var(--webchat-launcher-left)')
-    expect(fixture.initialX).toBe('var(--webchat-shell-translate-x)')
-    expect(fixture.animateX).toBe('var(--webchat-shell-translate-x)')
+    expect(fixture.cssTranslate).toBe('var(--webchat-shell-translate-x)')
+    expect(fixture.initialX).toBeNull()
+    expect(fixture.animateX).toBeNull()
     expect(fixture.resizeDirection).toBe(expected.direction)
     expect(fixture.resizeRange).toEqual({ initial: 375, minimum: 375, maximum: 375 })
     expect(resizeHandle.className).toContain(expected.handleClass)
