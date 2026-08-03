@@ -70,7 +70,7 @@ Activating a valid rendered message image by pointer, touch, Enter, or Space SHA
 
 The WebChat application surface SHALL establish one stacking context above host-page content. The preview backdrop SHALL use a neutral dark color at `18%` opacity and remain below the WebChat shell, AppButton, and Danmaku. The preview body, image, and controls SHALL remain above those WebChat surfaces. The icon toolbar SHALL render below the preview image rather than above or over it. The shell SHALL remain visible and operable above the backdrop wherever the preview body does not cover it. The preview SHALL NOT create a second application root or a document-level portal.
 
-Only one preview SHALL exist. Activating its current message-inline image again SHALL close that preview with a close animation. If the current image is still opening, re-activation SHALL supersede the opening and begin the close animation from the current rendered state without waiting for opening to finish. Clicking the enlarged preview image itself SHALL NOT close it and SHALL remain available to preview zoom and pan gestures.
+Only one preview SHALL exist. Activating its current message-inline image again SHALL close that preview with a close animation. If the current image is still opening, re-activation SHALL immediately skip the remainder of that opening's visual animation, wait only for the opening state update to commit, and then start one independent complete close animation. It SHALL NOT wait for the opening animation to finish, reverse the opening animation, statically clear the preview, or create more than one close intent during the handoff. Clicking the enlarged preview image itself SHALL NOT close it and SHALL remain available to preview zoom and pan gestures.
 
 Activating a different message-inline image while one is opening or open SHALL clear the previous image immediately without a close animation or focus restoration, select the new source and activating element, reset zoom, pan, and gesture state, and perform the new image's complete opening animation. The new image SHALL NOT inherit the previous image's transform, appear as a static in-place source replacement, overlap a second preview, or be cleared by stale settlement from the previous transition. Clicking the backdrop without a preceding preview drag, activating the close control, pressing Escape, or collapsing the WebChat shell SHALL close the current preview. Ordinary close SHALL restore keyboard focus to the current activating image when that element still exists.
 
@@ -101,7 +101,7 @@ Activating a different message-inline image while one is opening or open SHALL c
 
 - **GIVEN** one message image is still performing its opening animation
 - **WHEN** the user activates that same message-inline image again
-- **THEN** the opening SHALL be superseded immediately by one close animation from the current rendered state, after which the preview SHALL clear without a duplicate preview, stale temporary identity, or delayed transform and gesture cleanup
+- **THEN** the remainder of the opening's visual animation SHALL stop immediately, only its state update SHALL finish, and one independent complete close animation SHALL then run without waiting for the opening animation, reversing it, duplicating the close intent, leaving a stale temporary identity, or delaying transform and gesture cleanup
 
 #### Scenario: A different image receives a complete fresh opening
 
@@ -161,9 +161,9 @@ Preview drag SHALL use pointer capture or equivalent local ownership so releasin
 
 When `document.startViewTransition` is available and the user has not requested reduced motion, the accepted opening and closing of a message image preview SHALL perform the state operation inside one document View Transition. The activating image and current preview image SHALL use one generation-scoped temporary shared identity. The browser-managed document-root snapshot and brief whole-page crossfade, including the shell, SHALL be part of that transition, while the preview transition remains above ordinary shell stacking. A pre-existing host-defined named participant MAY also participate under browser ownership.
 
-WebChat SHALL NOT assign a transition name or style to a host-page element, style the document transition pseudo-tree, mutate host-page business state, or create another preview state owner. The sole preview owner SHALL restore an active temporary identity when its generation settles, closes, or is superseded. Same-image activation during opening SHALL supersede that opening generation and start one close generation from the current rendered state. Different-image activation SHALL clear the previous generation without a close transition and then start one fresh opening generation whose temporary identity belongs only to the new inline image and preview destination. Stale settlement SHALL NOT alter the current source, activator, transform, focus target, or identity.
+WebChat SHALL NOT assign a transition name or style to a host-page element, style the document transition pseudo-tree, mutate host-page business state, or create another preview state owner. The sole preview owner SHALL restore an active temporary identity when its generation settles, closes, or is superseded. Same-image activation during opening SHALL call `skipTransition()` once on that opening transition, wait only for its `updateCallbackDone`, and then allocate one new generation for one independent complete close transition. The intentional skip SHALL NOT be treated as an unavailable/failure fallback, and WebChat SHALL NOT use Web Animations reversal, cancellation, or finishing as the close. Different-image activation SHALL clear the previous generation without a close transition and then start one fresh opening generation whose temporary identity belongs only to the new inline image and preview destination. Stale settlement SHALL NOT alter the current source, activator, transform, focus target, or identity.
 
-When reduced motion is requested, the API is missing, the transition throws, rejects, or is skipped, or another document transition prevents execution, the same open or close state change SHALL complete immediately without animation. Motion SHALL NOT delay close cleanup or focus restoration. Final page layout, colors, layer order, and business state SHALL be identical on animated and immediate paths.
+Outside the intentional same-image opening handoff, when reduced motion is requested, the API is missing, the transition throws, rejects, is skipped, or another document transition prevents execution, the same open or close state change SHALL complete immediately without animation. Motion SHALL NOT delay close cleanup or focus restoration. Final page layout, colors, layer order, and business state SHALL be identical on animated and immediate paths.
 
 #### Scenario: Supported motion includes the accepted root crossfade
 
@@ -173,7 +173,7 @@ When reduced motion is requested, the API is missing, the transition throws, rej
 
 #### Scenario: Immediate paths preserve the same final visual state
 
-- **GIVEN** reduced motion is requested or document View Transition is missing, throws, rejects, is skipped, or cannot run beside another document transition
+- **GIVEN** reduced motion is requested or, outside the intentional same-image opening handoff, document View Transition is missing, throws, rejects, is skipped, or cannot run beside another document transition
 - **WHEN** the user opens or closes a message image
 - **THEN** the preview SHALL reach the same final open or closed state immediately with identical final layout, colors, and layer order and with no duplicate owner, stale identity, delayed cleanup, blocked focus restoration, or host business-state mutation
 
@@ -182,3 +182,13 @@ When reduced motion is requested, the API is missing, the transition throws, rej
 - **GIVEN** image A is opening or open with an active temporary transition identity
 - **WHEN** the user activates message-inline image B
 - **THEN** A's identity SHALL be restored and A SHALL clear without close motion before one fresh opening generation gives B and its preview destination the only WebChat-owned temporary identity, while stale A settlement SHALL have no effect on B
+
+### Requirement: Shell cross-edge movement uses settled linear timing
+
+When the AppButton position changes horizontal sides, the exact viewport midpoint SHALL remain the trigger line for the shell's cross-edge offset change. The shell SHALL interpolate between its established `0` and `-100%` endpoints over exactly `300ms` with a `linear` timing function. This timing SHALL NOT change either endpoint, the midpoint trigger, edge-relative position, drag continuity, bounds, shell sizing, anchor selection, persistence, or shared/local position ownership.
+
+#### Scenario: Crossing the viewport midpoint settles at the opposite endpoint
+
+- **GIVEN** the AppButton is positioned on one horizontal side of the viewport
+- **WHEN** its position crosses the exact viewport midpoint to the other side
+- **THEN** the shell SHALL move from its current `0` or `-100%` offset to the opposite endpoint over `300ms linear` and settle exactly at that endpoint without changing the position model

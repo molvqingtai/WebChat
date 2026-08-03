@@ -2,7 +2,7 @@
 
 The message projection already exposes the current user's membership separately from the complete aggregate for both likes and hates. The shared `LikeButton` currently uses only current-user membership for each control's color, so either reaction contributed solely by other users retains the default gray presentation.
 
-The shared Markdown renderer currently has two image branches: Markdown image syntax and image-valued links. Both use `max-width:70%`, neither has a height bound, and their duplicated element construction can diverge. The current App mounts AppMain, AppButton, and Danmaku inside one Shadow-root React tree. No image-preview owner exists.
+The shared Markdown renderer currently has two image branches: Markdown image syntax and image-valued links. Both use `max-width:70%`, neither has a height bound, and their duplicated element construction can diverge. The current App mounts AppMain, AppButton, and Danmaku inside one Shadow-root React tree. No image-preview owner exists. The shell already switches its horizontal offset between `0` and `-100%` at the exact viewport midpoint; this change defines that cross-edge movement as `300ms linear`.
 
 See `proposal.md` for motivation and `specs/webrtc-runtime/spec.md` for the complete observable contract.
 
@@ -17,6 +17,7 @@ See `proposal.md` for motivation and `specs/webrtc-runtime/spec.md` for the comp
 - Keep exactly one local `MediaPreview` component/state owner inside the existing App root and at the Danmaku component level.
 - Provide deterministic fit, toolbar order, image selection and replacement, zoom, pan, layer, close, focus, and motion behavior without host-page ownership.
 - Keep interaction controls keyboard-, pointer-, touch-, and reduced-motion-accessible.
+- Keep the shell's current cross-edge trigger and endpoints while settling that movement over `300ms linear`.
 
 **Non-Goals:**
 
@@ -25,7 +26,7 @@ See `proposal.md` for motivation and `specs/webrtc-runtime/spec.md` for the comp
 - Adding any media type other than the currently confirmed rendered message image.
 - Adding image upload, alternate network fetching, crop, rotation, download, carousel, annotation, square placeholders, runtime measurement, `ResizeObserver`, or persistent preview state.
 - Mutating host-page business state, assigning transition names or styles to host elements, styling the document transition pseudo-tree, or adding an experimental/scoped transition API branch.
-- Changing the WebChat shell, AppButton, Danmaku, notification, unread, Runtime, or page-scroll behavior.
+- Changing shell geometry, midpoint selection, offset endpoints, position ownership, AppButton behavior, Danmaku, notification, unread, Runtime, or page-scroll behavior beyond the confirmed shell transition duration and timing function.
 
 ## Decisions
 
@@ -69,7 +70,7 @@ The owner records whether a pointer sequence became a drag. Release settles pan 
 
 ### 7. Keep image selection, close, replacement, and focus settlement in one owner
 
-The owner resolves every message-inline image activation synchronously against its current activating element. From closed state, it records that image and its activating element and begins one opening. Re-activating that same inline element closes the preview through the ordinary animated close path. If it is still opening, that activation supersedes the opening and begins one close animation from the current rendered state rather than clearing immediately or waiting for opening to finish. Clicking the enlarged preview image itself is not a close action; its pointer and touch input remains available to preview gestures.
+The owner resolves every message-inline image activation synchronously against its current activating element. From closed state, it records that image and its activating element and begins one opening. Re-activating that same inline element closes the preview through the ordinary animated close path. If it is still opening, that activation records one close intent, immediately skips the opening's remaining visual animation, waits only for the opening state update to commit, and then begins one independent complete close animation. It does not wait for the opening animation to finish, reverse that animation, or clear the preview statically. Repeated same-image activations during this handoff are idempotent. Clicking the enlarged preview image itself is not a close action; its pointer and touch input remains available to preview gestures.
 
 Activating a different inline image while one is opening or open immediately clears the previous image without close motion or focus restoration, restores that image's temporary transition identity, and then records the new image and activating element. The new selection starts at its own fitted `1x`, zero translation, and empty gesture state and performs its complete opening animation. It never inherits transform or interaction state from the previous image and never appears through a static in-place source replacement.
 
@@ -81,15 +82,19 @@ The shell stays operable above the backdrop in every area the preview body does 
 
 When `document.startViewTransition` is available and reduced motion is not requested, `MediaPreview` performs an opening or ordinary close state operation inside one document View Transition. The activating image and current preview image share one generation-scoped temporary identity, while the browser also captures and briefly crossfades the document root. A pre-existing host-defined named participant remains browser-owned and may also participate. That document participation is visual only: WebChat assigns no name or style to a host element and changes no host business state.
 
-The sole preview owner keeps one active temporary-identity record and restores the original identity when that generation settles, is cleared, or is superseded. Same-image activation during opening supersedes the opening generation and starts one close generation from the current rendered state, so close motion still occurs without waiting for opening to finish. Different-image activation clears the previous generation immediately without close motion, then starts one fresh opening generation using only the new inline image and preview destination. The new image therefore receives its complete opening animation, while stale settlement from the previous generation cannot clear, replace, or restore focus over the new current image.
+The sole preview owner keeps one active temporary-identity record and restores the original identity when that generation settles, is cleared, or is superseded. Same-image activation during opening calls `skipTransition()` once on that opening transition, waits only for its `updateCallbackDone` so the open DOM is committed, and then allocates one new closing generation and starts one independent complete close transition. The intentional skip is not an unavailable/failure fallback, and the owner does not use Web Animations `reverse()`, `cancel()`, or `finish()` as a close. Different-image activation clears the previous generation immediately without close motion, then starts one fresh opening generation using only the new inline image and preview destination. The new image therefore receives its complete opening animation, while stale settlement from the previous generation cannot clear, replace, restore focus, or release the new generation's identity.
 
-Preview state remains authoritative, and each current generation settles exactly once without another preview or stale marker. Reduced motion, a missing API, a synchronous failure, a rejected or skipped transition, or another document transition that prevents execution takes the same state operation immediately. Motion never delays close cleanup, replacement, or focus restoration.
+Preview state remains authoritative, and each current generation settles exactly once without another preview or stale marker. Outside the intentional same-image opening handoff, reduced motion, a missing API, a synchronous failure, a rejected or externally skipped transition, or another document transition that prevents execution takes the same state operation immediately. Motion never delays close cleanup, replacement, or focus restoration.
 
-### 9. Verify behavior through current UI boundaries
+### 9. Settle shell cross-edge movement without changing its geometry owner
+
+The existing shell cross-edge transition keeps the exact viewport midpoint as its trigger and the two established horizontal offsets, `0` and `-100%`, as its endpoints. Only its interpolation changes: each accepted cross-edge offset change lasts exactly `300ms` and uses a `linear` timing function. The edge-relative position, drag continuity, bounds, shell size, anchor selection, persistence, and shared/local ownership remain unchanged.
+
+### 10. Verify behavior through current UI boundaries
 
 Focused component controls cover positive and zero aggregates for both likes and hates, type-local color independence, and current-user add/remove behavior for each control. Shared renderer controls cover both Markdown syntaxes, the message-content query owner, equal `70cqi` maximums, automatic aspect-preserving dimensions, one Blob URL per image lifecycle, inline/preview URL identity, one-time revocation, sanitized source/alt preservation, keyboard activation, and the absence of runtime measurement state. `MediaPreview` controls cover composition ancestry, one owner, the split backdrop/body layers, toolbar placement below the image, `24px` fit, no implicit upscale, same-image animated close during opening and open, different-image replacement with no old-image close motion and one full new opening, current-activator focus, reset on switch, enlarged-image gesture ownership, every other close path, zoom inputs, focal math, pan bounds, drag suppression, resize, event cleanup, document View Transition, whole-page crossfade, superseded-generation cleanup, reduced motion, failure fallback, and host-state preservation.
 
-Browser-mode coverage verifies rendered geometry, input behavior, focus, and computed layer order. Structural controls exclude a second root/portal, Domain/Extern/persistence/dependency, duplicated image policy, and host `body` mutation.
+Browser-mode coverage verifies rendered geometry, input behavior, focus, and computed layer order. Structural controls exclude a second root/portal, Domain/Extern/persistence/dependency, duplicated image policy, and host `body` mutation. The shell's settled timing change adds no new dedicated test.
 
 ## Risks / Trade-offs
 
@@ -98,5 +103,5 @@ Browser-mode coverage verifies rendered geometry, input behavior, focus, and com
 - [Zoom gestures can leak into the host page] -> Consume only active preview wheel/pointer/touch gestures with non-passive handling where required, and never install a body scroll lock.
 - [A pan release can look like a backdrop click] -> Track drag intent under pointer capture and suppress only that settlement click.
 - [Document View Transition crossfades the page root] -> The brief whole-page and shell crossfade is accepted for open and close; final layout, color, layer, and business state remain unchanged.
-- [Rapid image activations can overlap transition settlement] -> The sole owner resolves each inline-image activation synchronously, clears any superseded generation and identity before selecting the next image, and fences stale settlement so only the current source, activator, transform, and transition can win.
+- [Rapid image activations can overlap transition settlement] -> The sole owner makes one same-image close intent idempotent, skips only the unfinished opening's visual animation, waits for its state update, and fences every generation so only the current source, activator, transform, and transition can win.
 - [Another document transition can prevent execution] -> The unavailable, skipped, rejected, or blocked path applies the admitted preview state directly.
