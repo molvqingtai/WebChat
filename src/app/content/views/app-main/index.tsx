@@ -1,4 +1,4 @@
-import { type ReactNode, type FC, useState, useMemo } from 'react'
+import { type ReactNode, type FC, useMemo } from 'react'
 import useResizable from '@/hooks/useResizable'
 import { motion, AnimatePresence } from 'framer-motion'
 import { cn } from '@/utils'
@@ -19,8 +19,6 @@ const AppMain: FC<AppMainProps> = ({ children, className, open, geometry }) => {
     direction: geometry.isOnRightSide ? 'left' : 'right'
   })
 
-  const [isAnimationComplete, setIsAnimationComplete] = useState(false)
-
   // Memoize children to prevent unnecessary re-renders when position changes
   const memoizedChildren = useMemo(() => children, [children])
 
@@ -33,8 +31,6 @@ const AppMain: FC<AppMainProps> = ({ children, className, open, geometry }) => {
           animate={{ opacity: 1, y: 0, x: 'var(--webchat-shell-translate-x)' }}
           exit={{ opacity: 0, y: 10 }}
           transition={{ duration: 0.3, ease: 'linear' }}
-          onAnimationEnd={() => setIsAnimationComplete(true)}
-          onAnimationStart={() => setIsAnimationComplete(false)}
           style={{
             width: `${size}px`,
             left: 'var(--webchat-launcher-left)',
@@ -44,7 +40,7 @@ const AppMain: FC<AppMainProps> = ({ children, className, open, geometry }) => {
           className={cn(
             'z-infinity fixed box-border grid grid-flow-col grid-rows-[auto_1fr_auto] rounded-xl bg-slate-50 font-sans shadow-2xl dark:bg-slate-950',
             className,
-            { 'transition-transform duration-300 ease-linear': isAnimationComplete }
+            'transition-transform duration-300 ease-linear'
           )}
         >
           {memoizedChildren}

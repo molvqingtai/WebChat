@@ -290,6 +290,7 @@ describe('App browser ancestry', () => {
 
     await vi.waitFor(() => expect(getPanel()?.getBoundingClientRect().left).toBeCloseTo(200, 1))
     await vi.waitFor(() => expect(Number.parseFloat(getComputedStyle(getPanel()!).opacity)).toBeCloseTo(1, 3))
+    getPanel()!.style.transitionDuration = '0s'
     getLauncher().click()
     fixture.synchronizePosition({ x: 200, y: 100 })
 
@@ -337,6 +338,7 @@ describe('App browser ancestry', () => {
     await page.viewport(1000, 800)
     await render(<App />)
     await vi.waitFor(() => expect(Number.parseFloat(getComputedStyle(getPanel()!).opacity)).toBeCloseTo(1, 3))
+    getPanel()!.style.transitionDuration = '0s'
 
     await openHandControl()
 
