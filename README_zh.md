@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://github.com/molvqingtai/WebChat/blob/master/public/logo.png" width="200px"/>
+  <img src="https://github.com/molvqingtai/WebChat/blob/master/public/logo.png" width="200" alt="WebChat logo" />
 </p>
 
 [English](./README.md) | 简体中文
@@ -8,64 +8,57 @@
 
 [![持续集成](https://github.com/molvqingtai/WebChat/actions/workflows/ci.yml/badge.svg)](https://github.com/molvqingtai/WebChat/actions) [![GitHub 许可证](https://img.shields.io/github/license/molvqingtai/WebChat)](https://github.com/molvqingtai/WebChat/blob/master/LICENSE) [![Chrome 网上应用店版本](https://img.shields.io/chrome-web-store/v/cpaedhbidlpnbdfegakhiamfpndhjpgf)](https://chromewebstore.google.com/detail/webchat/cpaedhbidlpnbdfegakhiamfpndhjpgf) [![GitHub 发布](https://img.shields.io/github/v/release/molvqingtai/WebChat)](https://github.com/molvqingtai/WebChat/releases) [![询问 DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/molvqingtai/WebChat)
 
-> 在任何网站上与任何人聊天
+> 在任何网站上与任何人聊天。
 
-这是一个匿名聊天浏览器扩展，去中心化且无服务器，利用 WebRTC 进行端到端加密通信。它优先考虑隐私，所有数据都存储在本地。
+WebChat 是一个去中心化的浏览器扩展，让你能与访问同一网站的人匿名聊天。它使用 WebRTC 进行端到端加密的点对点通信，因此没有中心化的聊天服务器，你的数据始终保留在自己的设备上。
 
-其目的是为任何网站添加聊天室功能，让你再也不感到孤单。
+将任意网站变成一个共享聊天室，并与已经身处其中的人们建立连接。
 
-### 安装
+## 安装
 
-**从插件商店安装**
+<p align="center">
+  <a href="https://chromewebstore.google.com/detail/webchat/cpaedhbidlpnbdfegakhiamfpndhjpgf"><img src="https://img.shields.io/badge/Chrome-4285F4?style=for-the-badge&amp;logo=googlechrome&amp;logoColor=white" alt="Google Chrome" /></a>
+  <a href="https://microsoftedge.microsoft.com/addons/detail/mmfdplbomjjlgdffecapcpgjmhfhmiob"><img src="https://img.shields.io/badge/Edge-0078D7?style=for-the-badge&amp;logo=microsoftedge&amp;logoColor=white" alt="Microsoft Edge" /></a>
+  <a href="https://addons.mozilla.org/firefox/addon/webchat/"><img src="https://img.shields.io/badge/Firefox-FF7139?style=for-the-badge&amp;logo=firefoxbrowser&amp;logoColor=white" alt="Mozilla Firefox" /></a>
+</p>
 
-- [Chrome](https://chromewebstore.google.com/detail/webchat/cpaedhbidlpnbdfegakhiamfpndhjpgf)
-- [Edge](https://microsoftedge.microsoft.com/addons/detail/mmfdplbomjjlgdffecapcpgjmhfhmiob)
-- [Firefox](https://addons.mozilla.org/firefox/addon/webchat/)
+<p align="center">
+  <a href="https://chromewebstore.google.com/detail/webchat/cpaedhbidlpnbdfegakhiamfpndhjpgf">Chrome 网上应用店</a>
+  &nbsp;&middot;&nbsp;
+  <a href="https://microsoftedge.microsoft.com/addons/detail/mmfdplbomjjlgdffecapcpgjmhfhmiob">Microsoft Edge 扩展</a>
+  &nbsp;&middot;&nbsp;
+  <a href="https://addons.mozilla.org/firefox/addon/webchat/">Firefox 扩展</a>
+</p>
 
-**手动安装**
+## 使用方法
 
-1. 前往 GitHub 仓库（[发布页面](https://github.com/molvqingtai/WebChat/releases)）
-2. 点击“Assets”按钮，选择“web-chat-\*.zip”
-3. 将 ZIP 文件解压到你电脑上的一个文件夹
-4. 在浏览器中打开扩展管理页面（通常是 chrome://extensions/）
-   - 启用“开发者模式”
-   - 点击“加载已解压的扩展程序”，选择你刚解压的文件夹
+安装 WebChat 后，每个网站的右下角都会出现一个幽灵图标。点击它即可加入该网站的聊天室，与其他访客聊天。
 
-### 使用方法
-
-安装扩展后，你会在任何网站的右下角看到一个幽灵图标。点击它，你就能和同一网站上的其他人愉快地聊天了！
-
-### 视频
+## 演示
 
 https://github.com/user-attachments/assets/e7ac9b8e-1b6c-43fb-8469-7a0a2c09d450
 
-### 社区
+## 社区
 
-加入我们的 Discord 社区，讨论 WebChat 并与其他用户联系：
+加入 [WebChat Discord 社区](https://discord.com/channels/1398133810398367805/1398137562043908248)，分享反馈、提出问题，并结识其他用户。
 
-[Discord](https://discord.com/channels/1398133810398367805/1398137562043908248)
+## 构建基础
 
-### 站在巨人的肩膀上
+WebChat 建立在以下优秀的开源项目之上：
 
-除了去中心化聊天的好主意之外，它还利用了一些了不起的技术。
+- **[Remesh](https://github.com/remesh-js/remesh)** 提供了受 DDD 启发的状态模型，使应用逻辑独立于 React UI。
+- **[shadcn/ui](https://ui.shadcn.com/)** 提供了可访问、可定制的 UI 基础组件。
+- **[WXT](https://wxt.dev/)** 提供了跨浏览器扩展框架与构建工具。
+- **[Comctx](https://github.com/molvqingtai/comctx)** 提供了扩展各 JavaScript 上下文之间的 RPC 通信能力。
+- **[Artico](https://github.com/matallui/artico)** 提供了灵活的点对点通信 WebRTC 基础。
+- **[ugly-avatar](https://github.com/txstc55/ugly-avatar)** 生成了 WebChat 独具特色的随机头像。
 
-- **[remesh](https://github.com/remesh-js/remesh)**：一个 JavaScript 框架，实现了 DDD 原则，真正分离了 UI 和逻辑，由于独立于 UI，因此可以轻松实现 UI 部分，例如用 Vue 重写。
+## 赞助商
 
-- **[shadcn/ui](https://ui.shadcn.com/)**：一个漂亮的 UI 库，也是无安装概念的先驱，在自定义样式方面提供了无与伦比的便利。
+WebChat 是一个由贡献者与赞助商共同维系的开源项目。
 
-- **[wxt](https://wxt.dev/)**：这是我用过构建浏览器扩展最好的框架，没有之一。
+<a href="https://dartnode.com" title="由 DartNode 提供支持 - 面向开源的免费 VPS"><img src="https://dartnode.com/branding/DN-Open-Source-sm.png" width="500" alt="由 DartNode 提供支持" /></a>
 
-- ~~**[trystero](https://github.com/dmotz/trystero)**：实现去中心化通信的核心依赖，可连接到 IPFS、torrent、Nostr 等去中心化网络。~~
-- **[Artico](https://github.com/matallui/artico)**：一套灵活的库，帮助你创建自己的基于 WebRTC 的解决方案。
+## 许可证
 
-- **[ugly-avatar](https://github.com/txstc55/ugly-avatar)**：用它来创建令人惊艳的随机头像。
-
-### 赞助商
-
-WebChat 是一个开源项目，其持续发展完全依靠这些出色支持者的支持才得以实现。
-
-[![由 DartNode 提供支持](https://dartnode.com/branding/DN-Open-Source-sm.png)](https://dartnode.com "由 DartNode 提供支持 - 面向开源的免费 VPS")
-
-### 许可证
-
-本项目基于 MIT 许可证开源 - 详情请参阅 [LICENSE](./LICENSE) 文件。
+WebChat 基于 [MIT 许可证](./LICENSE) 开放使用。
