@@ -10,9 +10,11 @@ The launcher SHALL be `44x44px`. In a viewport that can satisfy the fixed margin
 
 Each tab SHALL reproject the shared edge-relative coordinates against its own current viewport. It SHALL derive bounds from that viewport and the AppButton geometry so the launcher remains fully visible with the fixed margins. If a viewport can contain the launcher but is too small to satisfy a fixed margin, only that tab's rendered projection SHALL use the nearest fully visible bound with the largest feasible margin; the shared coordinate SHALL remain unchanged. Resizing SHALL perform no shared-state mutation or persistence write, and a later larger viewport SHALL restore the fixed margins from the unchanged shared coordinate.
 
-While WebChat is expanded, the same local geometry projection SHALL add a vertical bound that keeps the shell's top edge at least `40px` below the viewport top. The bound SHALL apply at both horizontal anchors and every shell width allowed by the existing resizer. Upward dragging SHALL stop at the nearest point before the shell would violate that inset, and the shell SHALL NOT render above the viewport top. The collapsed launcher's existing vertical range, the shell's supported size range and launcher relationship, and the launcher's horizontal and bottom margins SHALL remain unchanged.
+While WebChat is expanded in a viewport at least `459px` high, the same local geometry projection SHALL add a vertical bound that keeps the shell's top edge at least `40px` below the viewport top. The bound SHALL apply at both horizontal anchors and every shell width allowed by the existing resizer. Upward dragging SHALL stop at the nearest point before the shell would violate that inset, and the shell SHALL NOT render above the viewport top. The shell SHALL retain its `375px` minimum height and its bottom edge SHALL remain `22px` above the launcher bottom edge. The collapsed launcher's vertical range and the launcher's horizontal and bottom margins SHALL remain unchanged.
 
-If a shared coordinate captured while collapsed or in another viewport would place the expanded shell above its top bound, opening, reopening, same-domain open synchronization, and viewport resize SHALL use the nearest shell-safe local projection. Those automatic projections SHALL NOT mutate or persist the shared position. A later compatible local layout SHALL project the unchanged shared coordinate again unless a user drag has written a new bounded position.
+In a viewport below `459px`, the shell SHALL retain its `375px` minimum height and `22px` launcher relationship, and the launcher SHALL retain its viewport-derived bounds and margin fallback. The layout SHALL NOT shrink the shell or add a separate top-inset adaptation, and the `40px` shell top inset SHALL NOT be required at that height.
+
+If a shared coordinate captured while collapsed or in another viewport would place the expanded shell above its top bound in a viewport at least `459px` high, opening, reopening, same-domain open synchronization, and viewport resize SHALL use the nearest shell-safe local projection. Those automatic projections SHALL NOT mutate or persist the shared position. A shorter viewport SHALL use the launcher projection without a position write, and crossing back to at least `459px` SHALL restore the shell-safe local projection from the unchanged shared coordinate unless a user drag has written a new bounded position.
 
 Dragging SHALL begin from the existing hand control, follow the latest pointer position once per animation frame, prevent text selection, retain the grab cursor, remain within the derived bounds, and end on mouse release. When the AppButton center crosses the viewport midpoint, the horizontal anchor SHALL change and its edge distance SHALL be converted from the same rendered center in that frame. The button SHALL remain under the pointer without a visual jump, snap, rebound, easing, delayed settle, or release-behavior change.
 
@@ -54,21 +56,27 @@ The visible AppButton indicator SHALL be count-free and SHALL NOT resize the but
 
 #### Scenario: Upward drag preserves the expanded-shell top inset
 
-- **GIVEN** WebChat is expanded at either horizontal anchor and at any shell width allowed by the existing resizer
+- **GIVEN** WebChat is expanded in a viewport at least `459px` high, at either horizontal anchor and at any shell width allowed by the existing resizer
 - **WHEN** the user drags the AppButton upward beyond the shell-safe range
 - **THEN** the rendered AppButton SHALL stop at the nearest local bound, the shell top SHALL remain at least `40px` below the viewport top and SHALL NOT overflow above it, and the existing horizontal, bottom, pointer-following, and release behavior SHALL remain unchanged
 
 #### Scenario: Opening locally bounds a shell-unsafe shared point
 
-- **GIVEN** the shared position was captured while collapsed or in another viewport and would place an expanded shell above its top bound in this tab
+- **GIVEN** this viewport is at least `459px` high and the shared position was captured while collapsed or in another viewport and would place an expanded shell above its top bound in this tab
 - **WHEN** WebChat opens, reopens, or becomes open through same-domain synchronization
 - **THEN** this tab SHALL use the nearest shell-safe local projection with at least `40px` above the shell, SHALL NOT mutate or persist the shared position, and SHALL preserve that position for a later compatible local layout
 
 #### Scenario: Resize locally preserves the expanded-shell top inset
 
-- **GIVEN** WebChat is expanded and the viewport changes so the current local projection would violate the shell's top bound
+- **GIVEN** WebChat is expanded and the viewport changes to at least `459px` high so the current local projection would violate the shell's top bound
 - **WHEN** the tab reprojects the shared position
 - **THEN** it SHALL keep the shell at least `40px` below the viewport top without a shared mutation or persistence write, at either horizontal anchor and every supported shell width
+
+#### Scenario: A short viewport preserves the fixed shell geometry
+
+- **GIVEN** WebChat is expanded in a viewport below `459px` high
+- **WHEN** the shell opens, the AppButton is dragged, or the viewport is resized within that range
+- **THEN** the shell SHALL retain its `375px` minimum height and `22px` launcher relationship, the launcher SHALL retain its viewport-derived bounds and margin fallback, no shell-height or top-inset adaptation SHALL be added, and no automatic position write SHALL occur
 
 #### Scenario: Crossing the midpoint is visually continuous
 

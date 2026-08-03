@@ -1,6 +1,6 @@
 ## Why
 
-Every same-domain surface represents the same WebChat AppButton and needs one consistent open state, placement, and unread-attention truth. Edge-relative placement must remain meaningful across different window sizes, the expanded shell must not cross the viewport top when it is dragged upward, and collapsed surfaces need one shared visible signal for eligible remote text.
+Every same-domain surface represents the same WebChat AppButton and needs one consistent open state, placement, and unread-attention truth. Edge-relative placement must remain meaningful across different window sizes, the expanded shell must not cross the viewport top when the viewport can contain its fixed geometry, and collapsed surfaces need one shared visible signal for eligible remote text.
 
 ## What Changes
 
@@ -9,7 +9,8 @@ Every same-domain surface represents the same WebChat AppButton and needs one co
 - Mark unread only when a first-delivered remote text reaches a collapsed domain. An expanded domain is already presenting the conversation and remains read.
 - Represent position from the bottom-left edge while the AppButton is in the left half of the viewport and from the bottom-right edge while it is in the right half. Crossing the midpoint changes the anchor without moving the rendered button away from the pointer.
 - Reproject the saved edge-relative position against each viewport while preserving the `44x44px` launcher's fixed bounds: its center stays at least `50px` from either horizontal edge (`28px` outer-edge margin) and its bottom edge stays at least `22px` above the viewport bottom whenever the viewport can satisfy those margins. A smaller viewport uses only its nearest fully visible local bound; resizing leaves the shared position unchanged and performs no persistence write.
-- While WebChat is expanded, apply one additional local vertical bound so upward dragging, opening or reopening, and viewport resizing keep the shell's top edge at least `40px` below the viewport top. The result applies at either horizontal anchor and every supported shell width without rewriting the shared position merely because local projection changed.
+- While WebChat is expanded in a viewport at least `459px` high, apply one additional local vertical bound so upward dragging, opening or reopening, and viewport resizing keep the shell's top edge at least `40px` below the viewport top. The result applies at either horizontal anchor and every supported shell width without rewriting the shared position merely because local projection changed.
+- Below `459px`, retain the `375px` shell minimum height, its `22px` launcher relationship, and the launcher's viewport bounds without shrinking the shell or adding a top-inset adaptation.
 - Preserve the current hand-control drag interaction: continuous animation-frame pointer following, bounded movement, selection suppression, and grab cursor, with no snap, rebound, easing, or release-behavior change.
 - Preserve zero unread attention for self-authored text, history application, and duplicate delivery. Browser-window focus, active/highlighted tab, and browser-notification enabled/type settings do not participate in unread eligibility or clearing.
 - Keep the AppButton indicator count-free: a top-right orange ping with an opaque orange center and a short opacity presence transition.
