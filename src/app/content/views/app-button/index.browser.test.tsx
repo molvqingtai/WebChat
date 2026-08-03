@@ -11,7 +11,7 @@ const hasClasses = (element: Element, classes: string[]) =>
 
 describe('AppButton unread indicator', () => {
   it('renders the exact count-free orange ping and 0.1-second presence transition only while unread', async () => {
-    const view = await render(<AppLauncherButton hasUnread label="Open WebChat" onClick={() => {}} />)
+    const view = await render(<AppLauncherButton hasUnread label="Open WebChat" size={44} onClick={() => {}} />)
     const ping = document.querySelector<HTMLElement>('span.bg-orange-400')!
     const center = document.querySelector<HTMLElement>('span.bg-orange-500')!
     const indicator = ping.parentElement!
@@ -23,7 +23,9 @@ describe('AppButton unread indicator', () => {
     ).toBe(true)
     expect(hasClasses(center, ['relative', 'inline-flex', 'size-3', 'rounded-full'])).toBe(true)
     expect(indicator.textContent).toBe('')
-    expect(button.classList.contains('size-11')).toBe(true)
+    expect(button.style.width).toBe('44px')
+    expect(button.style.height).toBe('44px')
+    expect(button.classList.contains('size-11')).toBe(false)
 
     await vi.waitFor(() => {
       const durations = indicator
@@ -33,7 +35,7 @@ describe('AppButton unread indicator', () => {
       expect(durations).toContain(100)
     })
 
-    await view.rerender(<AppLauncherButton hasUnread={false} label="Open WebChat" onClick={() => {}} />)
+    await view.rerender(<AppLauncherButton hasUnread={false} label="Open WebChat" size={44} onClick={() => {}} />)
     expect(indicator.isConnected).toBe(true)
     await vi.waitFor(() => expect(indicator.isConnected).toBe(false))
     expect(document.querySelector('span.bg-orange-400')).toBeNull()

@@ -6,8 +6,7 @@ import Header from '@/app/content/views/header'
 import Footer from '@/app/content/views/footer'
 import Main from '@/app/content/views/main'
 import Setup from '@/app/content/views/setup'
-import AppButton from '@/app/content/views/app-button'
-import AppMain from '@/app/content/views/app-main'
+import AppLayout from '@/app/content/views/app-layout'
 import DanmakuContainer from '@/app/content/components/danmaku-container'
 import ChatRoomDomain from '@/domain/ChatRoom'
 import UserInfoDomain from '@/domain/UserInfo'
@@ -75,7 +74,7 @@ const App = () => {
 
   return (
     <div id="app" className={cn('contents', themeMode)}>
-      <AppMain>
+      <AppLayout>
         <Header />
         <Main />
         <Footer />
@@ -92,8 +91,7 @@ const App = () => {
           }}
           position="top-center"
         />
-      </AppMain>
-      <AppButton />
+      </AppLayout>
       <DanmakuContainer ref={danmakuContainerRef} />
     </div>
   )

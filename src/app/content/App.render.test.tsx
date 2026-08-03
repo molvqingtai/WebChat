@@ -26,8 +26,12 @@ vi.mock('remesh-react', () => ({
 }))
 vi.mock('@/domain/AppStatus', () => ({
   default: () => ({
-    query: { ReadyQuery: () => 'initialization-ready' },
-    command: { UpdateOpenCommand: (open: boolean) => `update-open-${open}` }
+    query: {
+      ReadyQuery: () => 'initialization-ready'
+    },
+    command: {
+      UpdateOpenCommand: (open: boolean) => `update-open-${open}`
+    }
   })
 }))
 vi.mock('@/domain/ChatRoom', () => ({
@@ -69,11 +73,13 @@ vi.mock('@/app/content/views/header', () => ({ default: () => <header data-testi
 vi.mock('@/app/content/views/main', () => ({ default: () => <main data-testid="main" /> }))
 vi.mock('@/app/content/views/footer', () => ({ default: () => <footer data-testid="footer" /> }))
 vi.mock('@/app/content/views/setup', () => ({ default: () => <aside data-testid="setup" /> }))
-vi.mock('@/app/content/views/app-main', () => ({
-  default: ({ children }: { children?: React.ReactNode }) => <section data-testid="app-main">{children}</section>
-}))
-vi.mock('@/app/content/views/app-button', () => ({
-  default: () => <button aria-label="Open WebChat" data-testid="app-button" />
+vi.mock('@/app/content/views/app-layout', () => ({
+  default: ({ children }: { children?: React.ReactNode }) => (
+    <>
+      <section data-testid="app-main">{children}</section>
+      <button aria-label="Open WebChat" data-testid="app-button" />
+    </>
+  )
 }))
 vi.mock('@/app/content/components/danmaku-container', async () => {
   const React = await import('react')
@@ -82,6 +88,8 @@ vi.mock('@/app/content/components/danmaku-container', async () => {
 vi.mock('sonner', () => ({ Toaster: () => <div data-testid="toaster" /> }))
 vi.mock('@/utils', () => ({
   checkDarkMode: () => false,
+  clamp: (value: number, minimum: number, maximum: number) => Math.min(maximum, Math.max(minimum, value)),
+  isInRange: (value: number, minimum: number, maximum: number) => value >= minimum && value <= maximum,
   cn: (...values: unknown[]) => values.filter(Boolean).join(' ')
 }))
 
