@@ -2,6 +2,8 @@
   <img src="https://github.com/molvqingtai/WebChat/blob/master/public/logo.png" width="200" alt="WebChat logo" />
 </p>
 
+English | [简体中文](./README_zh.md)
+
 # WebChat
 
 [![CI](https://github.com/molvqingtai/WebChat/actions/workflows/ci.yml/badge.svg)](https://github.com/molvqingtai/WebChat/actions) [![GitHub License](https://img.shields.io/github/license/molvqingtai/WebChat)](https://github.com/molvqingtai/WebChat/blob/master/LICENSE) [![Chrome Web Store Version](https://img.shields.io/chrome-web-store/v/cpaedhbidlpnbdfegakhiamfpndhjpgf)](https://chromewebstore.google.com/detail/webchat/cpaedhbidlpnbdfegakhiamfpndhjpgf) [![GitHub Release](https://img.shields.io/github/v/release/molvqingtai/WebChat)](https://github.com/molvqingtai/WebChat/releases) [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/molvqingtai/WebChat)
@@ -59,4 +61,4 @@ WebChat is an open-source project sustained by its contributors and sponsors.
 
 ## License
 
-WebChat is available under the [MIT License](https://github.com/molvqingtai/WebChat/blob/master/LICENSE).
+WebChat is available under the [MIT License](./LICENSE).
