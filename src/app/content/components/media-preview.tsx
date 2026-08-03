@@ -83,6 +83,16 @@ interface TransitionIdentity {
   previousPriority: string
 }
 
+type PreviewPhase = 'closed' | 'opening' | 'opening-close-pending' | 'open' | 'closing'
+type TransitionIntent = 'close' | 'replace' | null
+
+interface ActivePreviewTransition {
+  generation: number
+  kind: 'opening' | 'closing'
+  transition: ViewTransition
+  intent: TransitionIntent
+}
+
 type TransitionDocument = Omit<Document, 'startViewTransition'> & {
   startViewTransition?: Document['startViewTransition']
 }
@@ -106,7 +116,9 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
   }))
   const stateRef = useRef(state)
   const operationRef = useRef(0)
-  const openAdmittedRef = useRef(false)
+  const selectedPreviewRef = useRef<CurrentPreview | null>(null)
+  const phaseRef = useRef<PreviewPhase>('closed')
+  const activeTransitionRef = useRef<ActivePreviewTransition | null>(null)
   const transitionIdentityRef = useRef<TransitionIdentity | null>(null)
   const backdropRef = useRef<HTMLButtonElement>(null)
   const overlayRef = useRef<HTMLDialogElement>(null)
@@ -218,43 +230,51 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
     [claimTransitionIdentity]
   )
 
-  const open = useCallback(
-    (request: MediaPreviewRequest) => {
-      if (!request.src || !shellOpen || openAdmittedRef.current) return
-      openAdmittedRef.current = true
+  const startClose = useCallback(
+    (closing: CurrentPreview) => {
+      if (selectedPreviewRef.current?.requestId !== closing.requestId) return
+      phaseRef.current = 'closing'
       const requestId = ++operationRef.current
       releaseTransitionIdentity()
       clearGestures()
 
-      const applyOpen = (synchronous: boolean) => {
-        if (operationRef.current !== requestId) return
-        const viewport = stateRef.current.viewport
+      const applyClose = (synchronous: boolean) => {
+        if (operationRef.current !== requestId || selectedPreviewRef.current?.requestId !== closing.requestId) {
+          return
+        }
+        selectedPreviewRef.current = null
+        phaseRef.current = 'closed'
         commitState(
-          {
-            current: { ...request, requestId },
-            naturalSize: null,
-            transform: initialTransform,
-            viewport
-          },
+          { current: null, naturalSize: null, transform: initialTransform, viewport: stateRef.current.viewport },
           synchronous
         )
+        if (closing.activator.isConnected) closing.activator.focus({ preventScroll: true })
       }
 
       const transitionDocument = document as TransitionDocument
       if (!transitionDocument.startViewTransition || reducedMotion()) {
-        applyOpen(false)
+        applyClose(false)
         return
       }
 
+      const image = imageRef.current
+      if (!image) {
+        applyClose(false)
+        return
+      }
       const transitionName = `webchat-media-preview-${requestId}`
-      claimTransitionIdentity(requestId, transitionName, request.transitionElement)
+      claimTransitionIdentity(requestId, transitionName, image)
       let applied = false
-      const settle = () => releaseTransitionIdentity(requestId)
+      let active: ActivePreviewTransition | null = null
+      const settle = () => {
+        if (activeTransitionRef.current === active) activeTransitionRef.current = null
+        releaseTransitionIdentity(requestId)
+      }
       const fallback = () => {
         if (applied) return
         applied = true
         releaseTransitionIdentity(requestId)
-        applyOpen(false)
+        applyClose(false)
       }
       const finish = () => {
         fallback()
@@ -265,11 +285,11 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
         const transition = transitionDocument.startViewTransition(() => {
           if (operationRef.current !== requestId || applied) return
           applied = true
-          applyOpen(true)
-          const image = imageRef.current
-          if (image) transferTransitionIdentity(requestId, image)
-          else releaseTransitionIdentity(requestId)
+          transferTransitionIdentity(requestId, closing.transitionElement)
+          applyClose(true)
         })
+        active = { generation: requestId, kind: 'closing', transition, intent: null }
+        activeTransitionRef.current = active
         void transition.ready.catch(finish)
         void transition.updateCallbackDone.catch(finish)
         void transition.finished.then(finish, finish)
@@ -277,87 +297,159 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
         finish()
       }
     },
-    [
-      claimTransitionIdentity,
-      clearGestures,
-      commitState,
-      releaseTransitionIdentity,
-      shellOpen,
-      transferTransitionIdentity
-    ]
+    [claimTransitionIdentity, clearGestures, commitState, releaseTransitionIdentity, transferTransitionIdentity]
+  )
+
+  const close = useCallback(() => {
+    const closing = selectedPreviewRef.current
+    if (!closing || phaseRef.current === 'closing' || phaseRef.current === 'opening-close-pending') return
+    const active = activeTransitionRef.current
+    if (phaseRef.current === 'opening' && active?.kind === 'opening' && active.generation === closing.requestId) {
+      if (active.intent === 'close') return
+      active.intent = 'close'
+      phaseRef.current = 'opening-close-pending'
+      active.transition.skipTransition()
+      const beginClose = () => {
+        if (
+          active.intent === 'close' &&
+          selectedPreviewRef.current?.requestId === closing.requestId &&
+          phaseRef.current === 'opening-close-pending'
+        ) {
+          startClose(closing)
+        }
+      }
+      void active.transition.updateCallbackDone.then(beginClose, beginClose)
+      return
+    }
+    startClose(closing)
+  }, [startClose])
+
+  const startOpen = useCallback(
+    (request: MediaPreviewRequest) => {
+      const requestId = ++operationRef.current
+      const current = { ...request, requestId }
+      selectedPreviewRef.current = current
+      phaseRef.current = 'opening'
+      releaseTransitionIdentity()
+      clearGestures()
+
+      const applyOpen = (synchronous: boolean) => {
+        if (operationRef.current !== requestId || selectedPreviewRef.current?.requestId !== requestId) return
+        const viewport = stateRef.current.viewport
+        commitState(
+          {
+            current,
+            naturalSize: null,
+            transform: initialTransform,
+            viewport
+          },
+          synchronous
+        )
+      }
+      const markOpen = () => {
+        if (
+          operationRef.current === requestId &&
+          selectedPreviewRef.current?.requestId === requestId &&
+          phaseRef.current === 'opening'
+        ) {
+          phaseRef.current = 'open'
+        }
+      }
+
+      const transitionDocument = document as TransitionDocument
+      if (!transitionDocument.startViewTransition || reducedMotion()) {
+        applyOpen(false)
+        markOpen()
+        return
+      }
+
+      const transitionName = `webchat-media-preview-${requestId}`
+      claimTransitionIdentity(requestId, transitionName, request.transitionElement)
+      let applied = false
+      let active: ActivePreviewTransition | null = null
+      const fallback = () => {
+        if (active && active.intent !== null) return
+        if (!applied) {
+          applied = true
+          releaseTransitionIdentity(requestId)
+          applyOpen(false)
+        }
+        markOpen()
+      }
+      const settle = () => {
+        if (activeTransitionRef.current === active) activeTransitionRef.current = null
+        releaseTransitionIdentity(requestId)
+        if (!active || active.intent === null) markOpen()
+      }
+      const finish = () => {
+        fallback()
+        settle()
+      }
+
+      try {
+        const transition = transitionDocument.startViewTransition(() => {
+          if (operationRef.current !== requestId || selectedPreviewRef.current?.requestId !== requestId || applied) {
+            return
+          }
+          applied = true
+          applyOpen(true)
+          const image = imageRef.current
+          if (image) transferTransitionIdentity(requestId, image)
+          else releaseTransitionIdentity(requestId)
+        })
+        active = { generation: requestId, kind: 'opening', transition, intent: null }
+        activeTransitionRef.current = active
+        void transition.ready.catch(finish)
+        void transition.updateCallbackDone.catch(finish)
+        void transition.finished.then(finish, finish)
+      } catch {
+        finish()
+      }
+    },
+    [claimTransitionIdentity, clearGestures, commitState, releaseTransitionIdentity, transferTransitionIdentity]
+  )
+
+  const open = useCallback(
+    (request: MediaPreviewRequest) => {
+      if (!request.src || !shellOpen || phaseRef.current === 'closing') return
+      const current = selectedPreviewRef.current
+      if (current?.activator === request.activator) {
+        close()
+        return
+      }
+      if (current) {
+        const active = activeTransitionRef.current
+        if (active?.kind === 'opening' && active.generation === current.requestId) {
+          const shouldSkip = active.intent === null
+          active.intent = 'replace'
+          if (shouldSkip) active.transition.skipTransition()
+        }
+        releaseTransitionIdentity()
+        clearGestures()
+        if (stateRef.current.current) {
+          commitState(
+            { current: null, naturalSize: null, transform: initialTransform, viewport: stateRef.current.viewport },
+            true
+          )
+        }
+        selectedPreviewRef.current = null
+        phaseRef.current = 'closed'
+      }
+      startOpen(request)
+    },
+    [clearGestures, close, commitState, releaseTransitionIdentity, shellOpen, startOpen]
   )
 
   useImperativeHandle(ref, () => ({ open }), [open])
-
-  const close = useCallback(() => {
-    const closing = stateRef.current.current
-    if (!closing) return
-    const requestId = ++operationRef.current
-    releaseTransitionIdentity()
-    clearGestures()
-
-    const applyClose = (synchronous: boolean) => {
-      if (operationRef.current !== requestId) return
-      commitState(
-        { current: null, naturalSize: null, transform: initialTransform, viewport: stateRef.current.viewport },
-        synchronous
-      )
-      openAdmittedRef.current = false
-      if (closing.activator.isConnected) closing.activator.focus({ preventScroll: true })
-    }
-
-    const transitionDocument = document as TransitionDocument
-    if (!transitionDocument.startViewTransition || reducedMotion()) {
-      applyClose(false)
-      return
-    }
-
-    const image = imageRef.current
-    if (!image) {
-      applyClose(false)
-      return
-    }
-    const transitionName = `webchat-media-preview-${requestId}`
-    claimTransitionIdentity(requestId, transitionName, image)
-    let applied = false
-    const settle = () => releaseTransitionIdentity(requestId)
-    const fallback = () => {
-      if (applied) return
-      applied = true
-      releaseTransitionIdentity(requestId)
-      applyClose(false)
-    }
-    const finish = () => {
-      fallback()
-      settle()
-    }
-
-    try {
-      const transition = transitionDocument.startViewTransition(() => {
-        if (operationRef.current !== requestId || applied) return
-        applied = true
-        transferTransitionIdentity(requestId, closing.transitionElement)
-        applyClose(true)
-      })
-      void transition.ready.catch(finish)
-      void transition.updateCallbackDone.catch(finish)
-      void transition.finished.then(finish, finish)
-    } catch {
-      finish()
-    }
-  }, [claimTransitionIdentity, clearGestures, commitState, releaseTransitionIdentity, transferTransitionIdentity])
 
   const currentRequestId = state.current?.requestId
   const previewOpen = state.current !== null
 
   useLayoutEffect(() => {
     if (shellOpen) return
-    ++operationRef.current
-    releaseTransitionIdentity()
-    clearGestures()
-    if (stateRef.current.current) queueMicrotask(close)
-    else openAdmittedRef.current = false
-  }, [clearGestures, close, releaseTransitionIdentity, shellOpen])
+    if (selectedPreviewRef.current) queueMicrotask(close)
+    else phaseRef.current = 'closed'
+  }, [close, shellOpen])
 
   useLayoutEffect(() => {
     if (!previewOpen) return

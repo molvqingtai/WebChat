@@ -44,7 +44,7 @@ const AppMain: FC<AppMainProps> = ({ children, className, open, geometry }) => {
           className={cn(
             'z-infinity fixed box-border grid grid-flow-col grid-rows-[auto_1fr_auto] rounded-xl bg-slate-50 font-sans shadow-2xl dark:bg-slate-950',
             className,
-            { 'transition-transform': isAnimationComplete }
+            { 'transition-transform duration-300 ease-linear': isAnimationComplete }
           )}
         >
           {memoizedChildren}

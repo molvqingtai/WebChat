@@ -158,9 +158,10 @@ describe('MediaPreview geometry', () => {
 })
 
 describe('MediaPreview ownership and settlement', () => {
-  it('keeps the admitted source, activator, transform, and gesture when another image is activated', () => {
+  it('switches to a new image with reset state and restores focus to its activator', () => {
     render(<Harness />)
     const firstTrigger = screen.getByRole('button', { name: 'Preview First' })
+    const secondTrigger = screen.getByRole('button', { name: 'Preview Second' })
     firstTrigger.focus()
     openFirst()
 
@@ -181,23 +182,20 @@ describe('MediaPreview ownership and settlement', () => {
     const dialog = screen.getByRole('dialog', { name: 'Image preview' })
     fireEvent.pointerDown(dialog, { pointerId: 1, pointerType: 'mouse', button: 0, clientX: 400, clientY: 300 })
     fireEvent.pointerMove(dialog, { pointerId: 1, pointerType: 'mouse', clientX: 450, clientY: 300 })
-    const transformBeforeRepeatedOpen = previewTransform('First')
+    expect(previewTransform('First')).not.toBe('translate3d(0px, 0px, 0) scale(1)')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Preview Second' }))
+    fireEvent.click(secondTrigger)
     expect(screen.getAllByRole('dialog', { name: 'Image preview' })).toHaveLength(1)
-    expect(previewImage('First')).toBe(firstImage)
-    expect(within(dialog).queryByRole('img', { name: 'Second' })).toBeNull()
-    expect(previewTransform('First')).toBe(transformBeforeRepeatedOpen)
+    const replacementDialog = screen.getByRole('dialog', { name: 'Image preview' })
+    expect(within(replacementDialog).queryByRole('img', { name: 'First' })).toBeNull()
+    expect(previewTransform('Second')).toBe('translate3d(0px, 0px, 0) scale(1)')
 
     fireEvent.pointerMove(dialog, { pointerId: 1, pointerType: 'mouse', clientX: 500, clientY: 300 })
-    expect(previewTransform('First')).not.toBe(transformBeforeRepeatedOpen)
+    expect(previewTransform('Second')).toBe('translate3d(0px, 0px, 0) scale(1)')
     fireEvent.pointerUp(dialog, { pointerId: 1, pointerType: 'mouse', clientX: 500, clientY: 300 })
 
     fireEvent.click(screen.getByRole('button', { name: 'Close preview' }))
-    expect(document.activeElement).toBe(firstTrigger)
-
-    fireEvent.click(screen.getByRole('button', { name: 'Preview Second' }))
-    expect(previewImage('Second')).not.toBeNull()
+    expect(document.activeElement).toBe(secondTrigger)
   })
 
   it('renders the named icon toolbar after the preview image', () => {
@@ -409,7 +407,7 @@ describe('MediaPreview ownership and settlement', () => {
 })
 
 describe('MediaPreview View Transition fallback', () => {
-  it('does not apply a delayed open update callback after the shell collapses', async () => {
+  it('closes a delayed opening after shell collapse commits its update', async () => {
     const transitions: Array<{
       operation: () => void
       ready: ReturnType<typeof deferred>
@@ -431,61 +429,93 @@ describe('MediaPreview View Transition fallback', () => {
     const triggerImage = screen.getByRole('button', { name: 'Preview First' }).querySelector('img')!
     openFirst()
     view.rerender(<Harness shellOpen={false} />)
-    transitions[0]!.operation()
-    transitions[0]!.ready.resolve()
+    await act(async () => Promise.resolve())
+
+    act(() => transitions[0]!.operation())
     transitions[0]!.updateCallbackDone.resolve()
+    await act(async () => Promise.resolve())
+    expect(transitions).toHaveLength(2)
+
+    act(() => transitions[1]!.operation())
+    transitions[0]!.ready.resolve()
     transitions[0]!.finished.resolve()
+    transitions[1]!.ready.resolve()
+    transitions[1]!.updateCallbackDone.resolve()
+    transitions[1]!.finished.resolve()
     await act(async () => Promise.resolve())
 
     expect(screen.queryByRole('dialog', { name: 'Image preview' })).toBeNull()
     expect(transitionName(triggerImage)).toBe('')
     openFirst()
-    expect(transitions).toHaveLength(1)
+    expect(transitions).toHaveLength(2)
     expect(screen.queryByRole('dialog', { name: 'Image preview' })).toBeNull()
   })
 
-  it('admits a new transition only after shell collapse closes the pending opening', async () => {
-    const transitions: Array<{ operation: () => void; finished: ReturnType<typeof deferred> }> = []
+  it('fences collapsed opening and close settlement from the next image', async () => {
+    const transitions: Array<{
+      operation: () => void
+      updateCallbackDone: ReturnType<typeof deferred>
+      finished: ReturnType<typeof deferred>
+    }> = []
     Object.defineProperty(document, 'startViewTransition', {
       configurable: true,
       value: (operation: () => void) => {
+        const updateCallbackDone = deferred()
         const finished = deferred()
-        transitions.push({ operation, finished })
-        return viewTransition(finished.promise)
+        transitions.push({ operation, updateCallbackDone, finished })
+        return viewTransition(finished.promise, updateCallbackDone.promise)
       }
     })
     const view = render(<Harness />)
 
     const first = screen.getByRole('button', { name: 'Preview First' }).querySelector('img')!
     openFirst()
+    const openingIdentity = transitionName(first)
     view.rerender(<Harness shellOpen={false} />)
-    expect.soft(transitionName(first)).toBe('')
+    await act(async () => Promise.resolve())
+    expect(transitionName(first)).toBe(openingIdentity)
+
+    act(() => transitions[0]!.operation())
+    transitions[0]!.updateCallbackDone.resolve()
+    await act(async () => Promise.resolve())
+    expect(transitions).toHaveLength(2)
+    act(() => transitions[1]!.operation())
+    expect(screen.queryByRole('dialog', { name: 'Image preview' })).toBeNull()
 
     view.rerender(<Harness shellOpen />)
     const secondButton = screen.getByRole('button', { name: 'Preview Second' })
     const second = secondButton.querySelector('img')!
     fireEvent.click(secondButton)
-    transitions[1]!.operation()
+    expect(transitions).toHaveLength(3)
+    act(() => transitions[2]!.operation())
     expect(previewImage('Second')).not.toBeNull()
 
     transitions[0]!.finished.resolve()
+    transitions[1]!.updateCallbackDone.resolve()
+    transitions[1]!.finished.resolve()
     await act(async () => Promise.resolve())
     expect(transitionName(previewImage('Second'))).toMatch(/^webchat-media-preview-/)
 
-    transitions[1]!.finished.resolve()
+    transitions[2]!.updateCallbackDone.resolve()
+    transitions[2]!.finished.resolve()
     await act(async () => Promise.resolve())
     expect(transitionName(second)).toBe('')
     expect(transitionName(previewImage('Second'))).toBe('')
   })
 
-  it('reserves opening synchronously so later activations cannot restart or replace its transition', async () => {
-    const transitions: Array<{ operation: () => void; finished: ReturnType<typeof deferred> }> = []
+  it('supersedes an opening image without close motion and gives the next image one complete opening', async () => {
+    const transitions: Array<{
+      operation: () => void
+      finished: ReturnType<typeof deferred>
+      transition: ViewTransition
+    }> = []
     Object.defineProperty(document, 'startViewTransition', {
       configurable: true,
       value: (operation: () => void) => {
         const finished = deferred()
-        transitions.push({ operation, finished })
-        return viewTransition(finished.promise)
+        const transition = viewTransition(finished.promise)
+        transitions.push({ operation, finished, transition })
+        return transition
       }
     })
     render(<Harness />)
@@ -497,30 +527,47 @@ describe('MediaPreview View Transition fallback', () => {
     const openingIdentity = transitionName(first)
     fireEvent.click(secondButton)
 
-    expect(transitions).toHaveLength(1)
+    expect(transitions).toHaveLength(2)
+    expect(transitions[0]!.transition.skipTransition).toHaveBeenCalledOnce()
     expect(openingIdentity).toMatch(/^webchat-media-preview-/)
-    expect(transitionName(first)).toBe(openingIdentity)
-    expect(transitionName(second)).toBe('')
+    expect(transitionName(first)).toBe('')
+    expect(transitionName(second)).toMatch(/^webchat-media-preview-/)
 
-    transitions[0].operation()
-    expect(previewImage('First')).not.toBeNull()
-    expect(
-      within(screen.getByRole('dialog', { name: 'Image preview' })).queryByRole('img', { name: 'Second' })
-    ).toBeNull()
-    transitions[0].finished.resolve()
+    act(() => {
+      transitions[0]!.operation()
+      transitions[1]!.operation()
+    })
+    expect(previewImage('Second')).not.toBeNull()
+    expect(previewTransform('Second')).toBe('translate3d(0px, 0px, 0) scale(1)')
+
+    transitions[0]!.finished.resolve()
     await act(async () => Promise.resolve())
     expect(transitionName(first)).toBe('')
+    expect(transitionName(previewImage('Second'))).toMatch(/^webchat-media-preview-/)
+
+    transitions[1]!.finished.resolve()
+    await act(async () => Promise.resolve())
     expect(transitionName(second)).toBe('')
+    expect(transitionName(previewImage('Second'))).toBe('')
   })
 
-  it('treats repeated activation of the opening source as the same complete no-op', async () => {
-    const transitions: Array<{ operation: () => void; finished: ReturnType<typeof deferred> }> = []
+  it('skips one opening visual and starts a complete close as soon as its update is done', async () => {
+    const transitions: Array<{
+      operation: () => void
+      ready: ReturnType<typeof deferred>
+      updateCallbackDone: ReturnType<typeof deferred>
+      finished: ReturnType<typeof deferred>
+      transition: ViewTransition
+    }> = []
     Object.defineProperty(document, 'startViewTransition', {
       configurable: true,
       value: (operation: () => void) => {
+        const ready = deferred()
+        const updateCallbackDone = deferred()
         const finished = deferred()
-        transitions.push({ operation, finished })
-        return viewTransition(finished.promise)
+        const transition = viewTransition(finished.promise, updateCallbackDone.promise, ready.promise)
+        transitions.push({ operation, ready, updateCallbackDone, finished, transition })
+        return transition
       }
     })
     render(<Harness />)
@@ -531,13 +578,34 @@ describe('MediaPreview View Transition fallback', () => {
     openFirst()
     const openingIdentity = transitionName(image)
     fireEvent.click(trigger)
+    transitions[0]!.ready.reject(new Error('opening skipped'))
+    await act(async () => Promise.resolve())
+    fireEvent.click(trigger)
 
     expect(transitions).toHaveLength(1)
-    expect(transitionName(image)).toBe(openingIdentity)
-    transitions[0].finished.resolve()
-    await act(async () => Promise.resolve())
-
+    expect(transitions[0]!.transition.skipTransition).toHaveBeenCalledOnce()
+    expect(openingIdentity).toMatch(/^webchat-media-preview-/)
+    expect(transitionName(image)).toBe('host-owned-source')
+    act(() => transitions[0]!.operation())
     expect(previewImage('First')).not.toBeNull()
+
+    transitions[0]!.updateCallbackDone.resolve()
+    await act(async () => Promise.resolve())
+    expect(transitions).toHaveLength(2)
+
+    act(() => transitions[1]!.operation())
+    expect(screen.queryByRole('dialog', { name: 'Image preview' })).toBeNull()
+    expect(document.activeElement).toBe(trigger)
+    const closingIdentity = transitionName(image)
+    expect(closingIdentity).toMatch(/^webchat-media-preview-/)
+
+    transitions[0]!.finished.resolve()
+    await act(async () => Promise.resolve())
+    expect(transitionName(image)).toBe(closingIdentity)
+
+    transitions[1]!.updateCallbackDone.resolve()
+    transitions[1]!.finished.resolve()
+    await act(async () => Promise.resolve())
     expect(transitionName(image)).toBe('host-owned-source')
     expect(image.style.getPropertyPriority(MEDIA_PREVIEW_TRANSITION_NAME_PROPERTY)).toBe('important')
   })
@@ -560,6 +628,7 @@ describe('MediaPreview View Transition fallback', () => {
     openFirst()
     transitions[0]!.operation()
     fireEvent.click(screen.getByRole('button', { name: 'Close preview' }))
+    await act(async () => Promise.resolve())
     transitions[1]!.operation()
 
     const [first, second] = order === 'open first' ? transitions : [...transitions].reverse()
@@ -607,7 +676,7 @@ describe('MediaPreview View Transition fallback', () => {
     expect(previewImage('First').getAttribute('part')).toBe(MEDIA_PREVIEW_TRANSITION_PART)
     expect(previewImage('First').style.getPropertyValue('view-transition-name')).toBe('')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Close preview' }))
+    fireEvent.click(trigger)
     expect(transitionCalls).toBe(2)
     await act(async () => Promise.resolve())
 
