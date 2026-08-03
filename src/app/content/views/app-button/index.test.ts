@@ -69,9 +69,11 @@ describe('reconnect action availability', () => {
     const value = source()
 
     expect(value).toContain('const windowSize = useWindowResize()')
-    expect(value).toContain('const projectedPosition = projectAppButtonPosition(appPosition, windowSize)')
-    expect(value).toContain('const dragBounds = getAppButtonDragBounds(windowSize)')
-    expect(value).toContain('captureAppButtonPosition(position, windowSize)')
+    expect(value).toContain(
+      'const projectedPosition = projectAppButtonPosition(appPosition, windowSize, appOpenStatus)'
+    )
+    expect(value).toContain('const dragBounds = getAppButtonDragBounds(windowSize, appOpenStatus)')
+    expect(value).toContain('captureAppButtonPosition(position, windowSize, appOpenStatus)')
     expect(value).toContain('onChange: handlePositionChange')
     expect(value).not.toContain('positionPersistenceStarted')
     expect(value).not.toContain('useWindowResize(() =>')

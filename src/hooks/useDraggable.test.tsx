@@ -90,6 +90,20 @@ describe('useDraggable', () => {
     expect(onChange).not.toHaveBeenCalled()
   })
 
+  it('stops an upward drag at the expanded shell bound and reports that bounded point', () => {
+    const onChange = vi.fn()
+    render(<Harness initX={200} initY={700} minX={50} maxX={950} minY={437} maxY={778} onChange={onChange} />)
+    const handle = screen.getByTestId('drag-handle')
+
+    fireEvent.mouseDown(handle, { clientX: 200, clientY: 700 })
+    fireEvent.mouseMove(document, { clientX: 200, clientY: 100 })
+    flushAnimationFrame()
+
+    expect(handle.dataset.x).toBe('200')
+    expect(handle.dataset.y).toBe('437')
+    expect(onChange).toHaveBeenLastCalledWith({ x: 200, y: 437 })
+  })
+
   it('reprojects changed inputs and bounds locally without reporting a user drag', async () => {
     const onChange = vi.fn()
     const view = render(

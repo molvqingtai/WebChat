@@ -18,7 +18,7 @@ const AppMain: FC<AppMainProps> = ({ children, className }) => {
   const position = useRemeshQuery(appStatusDomain.query.PositionQuery())
   const { width, height } = useWindowResize()
 
-  const { x: absoluteX, y: absoluteY } = projectAppButtonPosition(position, { width, height })
+  const { x: absoluteX, y: absoluteY } = projectAppButtonPosition(position, { width, height }, true)
   const isOnRightSide = absoluteX >= width / 2
 
   const { size, setRef } = useResizable({

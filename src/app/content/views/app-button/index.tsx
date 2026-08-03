@@ -227,13 +227,13 @@ const AppButton: FC = () => {
   const [menuOpen, setMenuOpen] = useState(false)
 
   const windowSize = useWindowResize()
-  const projectedPosition = projectAppButtonPosition(appPosition, windowSize)
-  const dragBounds = getAppButtonDragBounds(windowSize)
+  const projectedPosition = projectAppButtonPosition(appPosition, windowSize, appOpenStatus)
+  const dragBounds = getAppButtonDragBounds(windowSize, appOpenStatus)
   const handlePositionChange = useCallback(
     (position: { x: number; y: number }) => {
-      send(appStatusDomain.command.UpdatePositionCommand(captureAppButtonPosition(position, windowSize)))
+      send(appStatusDomain.command.UpdatePositionCommand(captureAppButtonPosition(position, windowSize, appOpenStatus)))
     },
-    [appStatusDomain.command, send, windowSize]
+    [appOpenStatus, appStatusDomain.command, send, windowSize]
   )
 
   const {

@@ -6,6 +6,7 @@ const fixture = vi.hoisted(() => ({
   open: false,
   position: { x: 50, y: 22 },
   viewport: { width: 1200, height: 800 },
+  panelSize: 400,
   resizeDirection: null as 'left' | 'right' | null,
   initialX: null as string | number | null,
   animateX: null as string | number | null
@@ -26,7 +27,7 @@ vi.mock('remesh-react', () => ({
 vi.mock('@/hooks/useResizable', () => ({
   default: ({ direction }: { direction: 'left' | 'right' }) => {
     fixture.resizeDirection = direction
-    return { size: 400, setRef: () => {} }
+    return { size: fixture.panelSize, setRef: () => {} }
   }
 }))
 vi.mock('@/hooks/useWindowResize', () => ({ default: () => fixture.viewport }))
@@ -60,6 +61,7 @@ afterEach(() => {
   fixture.open = false
   fixture.position = { x: 50, y: 22 }
   fixture.viewport = { width: 1200, height: 800 }
+  fixture.panelSize = 400
   fixture.resizeDirection = null
   fixture.initialX = null
   fixture.animateX = null
@@ -152,15 +154,46 @@ describe('AppMain panel ownership', () => {
     expect(resizeHandle.className).toContain(expected.handleClass)
   })
 
+  it.each([
+    { side: 'left', position: { x: -200, y: 756 }, expectedLeft: '200px' },
+    { side: 'right', position: { x: 200, y: 756 }, expectedLeft: '800px' }
+  ])('keeps the expanded shell at its top inset on the $side for every supported width', (expected) => {
+    fixture.open = true
+    fixture.viewport = { width: 1000, height: 800 }
+    fixture.position = expected.position
+    const view = render(content())
+    const panel = document.querySelector<HTMLElement>('[data-webchat-panel]')!
+
+    for (const panelSize of [375, 500, 750]) {
+      fixture.panelSize = panelSize
+      view.rerender(content())
+
+      expect(panel.style.width).toBe(`${panelSize}px`)
+      expect(panel.style.left).toBe(expected.expectedLeft)
+      expect(panel.style.bottom).toBe('calc(100vh - 437px + 22px)')
+      expect(panel.className).toContain('inset-y-10')
+      expect(panel.className).toContain('min-h-[375px]')
+    }
+  })
+
   it('reprojects a bounded shared coordinate on resize and derives the panel side from the rendered point', () => {
     fixture.open = true
-    fixture.position = { x: 500, y: 500 }
-    fixture.viewport = { width: 400, height: 250 }
+    fixture.position = { x: 500, y: 400 }
+    fixture.viewport = { width: 400, height: 458 }
     const view = render(content())
 
     const panel = document.querySelector<HTMLElement>('[data-webchat-panel]')!
     expect(panel.style.left).toBe('50px')
-    expect(panel.style.bottom).toBe('calc(100vh - 44px + 22px)')
+    expect(panel.style.bottom).toBe('calc(100vh - 58px + 22px)')
+    expect(panel.className).toContain('min-h-[375px]')
+    expect(fixture.resizeDirection).toBe('right')
+    expect(fixture.animateX).toBe('0')
+
+    fixture.viewport = { width: 400, height: 459 }
+    view.rerender(content())
+
+    expect(panel.style.left).toBe('50px')
+    expect(panel.style.bottom).toBe('calc(100vh - 437px + 22px)')
     expect(fixture.resizeDirection).toBe('right')
     expect(fixture.animateX).toBe('0')
 
@@ -168,9 +201,9 @@ describe('AppMain panel ownership', () => {
     view.rerender(content())
 
     expect(panel.style.left).toBe('700px')
-    expect(panel.style.bottom).toBe('calc(100vh - 400px + 22px)')
+    expect(panel.style.bottom).toBe('calc(100vh - 500px + 22px)')
     expect(fixture.resizeDirection).toBe('left')
     expect(fixture.animateX).toBe('-100%')
-    expect(fixture.position).toEqual({ x: 500, y: 500 })
+    expect(fixture.position).toEqual({ x: 500, y: 400 })
   })
 })
