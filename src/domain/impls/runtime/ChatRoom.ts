@@ -218,7 +218,7 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
     }
     this.attachment = attachment
     const timeout = globalThis.setTimeout(() => {
-      controller.abort(new Error('Page connection prerequisites timed out'))
+      controller.abort(new Error('Connection timed out'))
     }, PAGE_CONNECTION_ATTEMPT_TIMEOUT_MS)
     attachment.task = this.attachRuntime(attachment)
       .then(() => {
