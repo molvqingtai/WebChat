@@ -70,7 +70,9 @@ Activating a valid rendered message image by pointer, touch, Enter, or Space SHA
 
 The WebChat application surface SHALL establish one stacking context above host-page content. The preview backdrop SHALL use a neutral dark color at `18%` opacity and remain below the WebChat shell, AppButton, and Danmaku. The preview body, image, and controls SHALL remain above those WebChat surfaces. The icon toolbar SHALL render below the preview image rather than above or over it. The shell SHALL remain visible and operable above the backdrop wherever the preview body does not cover it. The preview SHALL NOT create a second application root or a document-level portal.
 
-Only one preview SHALL exist. WebChat SHALL accept an image-open request only while no preview is opening or open. Every later image-open request while the accepted preview is opening or open SHALL be a no-op: it SHALL NOT replace the source or activator, restart the transition, or reset zoom, pan, or gesture state. Clicking the backdrop without a preceding preview drag, activating the close control, pressing Escape, or collapsing the WebChat shell SHALL close the preview. Closing SHALL restore keyboard focus to the activating image when that element still exists.
+Only one preview SHALL exist. Activating its current message-inline image again SHALL close that preview with a close animation. If the current image is still opening, re-activation SHALL supersede the opening and begin the close animation from the current rendered state without waiting for opening to finish. Clicking the enlarged preview image itself SHALL NOT close it and SHALL remain available to preview zoom and pan gestures.
+
+Activating a different message-inline image while one is opening or open SHALL clear the previous image immediately without a close animation or focus restoration, select the new source and activating element, reset zoom, pan, and gesture state, and perform the new image's complete opening animation. The new image SHALL NOT inherit the previous image's transform, appear as a static in-place source replacement, overlap a second preview, or be cleared by stale settlement from the previous transition. Clicking the backdrop without a preceding preview drag, activating the close control, pressing Escape, or collapsing the WebChat shell SHALL close the current preview. Ordinary close SHALL restore keyboard focus to the current activating image when that element still exists.
 
 #### Scenario: Preview opens centered within viewport margins
 
@@ -89,17 +91,29 @@ Only one preview SHALL exist. WebChat SHALL accept an image-open request only wh
 - **WHEN** WebChat lays out the preview image and icon controls
 - **THEN** the toolbar SHALL appear below the preview image without overlaying it
 
-#### Scenario: Another image-open request is a no-op
+#### Scenario: Re-activating the current inline image closes its preview
 
-- **GIVEN** one message image is open and has a non-default zoom or pan
-- **WHEN** the user activates another rendered message image through an uncovered, operable shell area
-- **THEN** the existing preview SHALL keep its original source, activator, zoom, and pan without restarting a transition or creating another preview or backdrop
+- **GIVEN** one message image preview is open
+- **WHEN** the user activates that same message-inline image again through an uncovered, operable shell area
+- **THEN** the preview SHALL use its ordinary close behavior, clear its transform and gesture state, and restore focus to that same surviving inline image
 
-#### Scenario: Repeated activation during opening is a no-op
+#### Scenario: Same-image activation during opening plays close motion
 
-- **GIVEN** one accepted image-open request is waiting for its destination to become ready or its transition to settle
-- **WHEN** the user activates any rendered message image again
-- **THEN** the accepted opening SHALL continue unchanged without replacing its source or activator, restarting its transition, or resetting any preview state
+- **GIVEN** one message image is still performing its opening animation
+- **WHEN** the user activates that same message-inline image again
+- **THEN** the opening SHALL be superseded immediately by one close animation from the current rendered state, after which the preview SHALL clear without a duplicate preview, stale temporary identity, or delayed transform and gesture cleanup
+
+#### Scenario: A different image receives a complete fresh opening
+
+- **GIVEN** image A is opening or open with any zoom, pan, or in-progress gesture state
+- **WHEN** the user activates message-inline image B
+- **THEN** A SHALL clear immediately without a close animation or focus restoration, B SHALL become the sole current source and activator at its own centered fitted `1x` and zero pan, and B SHALL perform its complete opening animation rather than appear as a static source replacement
+
+#### Scenario: Enlarged-image activation remains a preview gesture
+
+- **GIVEN** one message image preview is open
+- **WHEN** the user clicks or taps the enlarged preview image itself without activating its message-inline image
+- **THEN** that activation SHALL NOT close the preview, and the preview image SHALL remain available to its bounded zoom and pan gesture behavior
 
 #### Scenario: Every close path clears and restores focus
 
@@ -147,7 +161,7 @@ Preview drag SHALL use pointer capture or equivalent local ownership so releasin
 
 When `document.startViewTransition` is available and the user has not requested reduced motion, the accepted opening and closing of a message image preview SHALL perform the state operation inside one document View Transition. The activating image and current preview image SHALL use one generation-scoped temporary shared identity. The browser-managed document-root snapshot and brief whole-page crossfade, including the shell, SHALL be part of that transition, while the preview transition remains above ordinary shell stacking. A pre-existing host-defined named participant MAY also participate under browser ownership.
 
-WebChat SHALL NOT assign a transition name or style to a host-page element, style the document transition pseudo-tree, mutate host-page business state, or create another preview state owner. The sole preview owner SHALL restore its active temporary identity when the operation settles or closes. A later image-open request SHALL NOT supersede that identity or operation. The accepted preview source or closed state SHALL settle exactly once without a duplicate preview or stale marker.
+WebChat SHALL NOT assign a transition name or style to a host-page element, style the document transition pseudo-tree, mutate host-page business state, or create another preview state owner. The sole preview owner SHALL restore an active temporary identity when its generation settles, closes, or is superseded. Same-image activation during opening SHALL supersede that opening generation and start one close generation from the current rendered state. Different-image activation SHALL clear the previous generation without a close transition and then start one fresh opening generation whose temporary identity belongs only to the new inline image and preview destination. Stale settlement SHALL NOT alter the current source, activator, transform, focus target, or identity.
 
 When reduced motion is requested, the API is missing, the transition throws, rejects, or is skipped, or another document transition prevents execution, the same open or close state change SHALL complete immediately without animation. Motion SHALL NOT delay close cleanup or focus restoration. Final page layout, colors, layer order, and business state SHALL be identical on animated and immediate paths.
 
@@ -162,3 +176,9 @@ When reduced motion is requested, the API is missing, the transition throws, rej
 - **GIVEN** reduced motion is requested or document View Transition is missing, throws, rejects, is skipped, or cannot run beside another document transition
 - **WHEN** the user opens or closes a message image
 - **THEN** the preview SHALL reach the same final open or closed state immediately with identical final layout, colors, and layer order and with no duplicate owner, stale identity, delayed cleanup, blocked focus restoration, or host business-state mutation
+
+#### Scenario: Image replacement skips old close motion and opens the new image
+
+- **GIVEN** image A is opening or open with an active temporary transition identity
+- **WHEN** the user activates message-inline image B
+- **THEN** A's identity SHALL be restored and A SHALL clear without close motion before one fresh opening generation gives B and its preview destination the only WebChat-owned temporary identity, while stale A settlement SHALL have no effect on B
