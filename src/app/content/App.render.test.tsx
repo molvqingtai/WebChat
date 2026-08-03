@@ -27,7 +27,8 @@ vi.mock('remesh-react', () => ({
 vi.mock('@/domain/AppStatus', () => ({
   default: () => ({
     query: {
-      ReadyQuery: () => 'initialization-ready'
+      ReadyQuery: () => 'initialization-ready',
+      OpenQuery: () => 'app-open'
     },
     command: {
       UpdateOpenCommand: (open: boolean) => `update-open-${open}`

@@ -1,5 +1,5 @@
 import '@webcomponents/custom-elements'
-import { useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { useRemeshDomain, useRemeshQuery, useRemeshSend } from 'remesh-react'
 import { Toaster } from 'sonner'
 import Header from '@/app/content/views/header'
@@ -8,6 +8,11 @@ import Main from '@/app/content/views/main'
 import Setup from '@/app/content/views/setup'
 import AppLayout from '@/app/content/views/app-layout'
 import DanmakuContainer from '@/app/content/components/danmaku-container'
+import MediaPreview, {
+  MediaPreviewContext,
+  type MediaPreviewHandle,
+  type MediaPreviewRequest
+} from '@/app/content/components/media-preview'
 import ChatRoomDomain from '@/domain/ChatRoom'
 import UserInfoDomain from '@/domain/UserInfo'
 import MessageListDomain from '@/domain/MessageList'
@@ -24,6 +29,7 @@ const App = () => {
   const send = useRemeshSend()
   const appStatusDomain = useRemeshDomain(AppStatusDomain())
   const initializationReady = useRemeshQuery(appStatusDomain.query.ReadyQuery())
+  const appOpenStatus = useRemeshQuery(appStatusDomain.query.OpenQuery())
   const chatRoomDomain = useRemeshDomain(ChatRoomDomain())
   const worldRoomDomain = useRemeshDomain(WorldRoomDomain())
   const userInfoDomain = useRemeshDomain(UserInfoDomain())
@@ -37,6 +43,8 @@ const App = () => {
   const userInfo = useRemeshQuery(userInfoDomain.query.UserInfoQuery())
   const danmakuIsEnabled = userInfo?.danmakuEnabled ?? false
   const danmakuContainerRef = useRef<HTMLDivElement>(null)
+  const mediaPreviewRef = useRef<MediaPreviewHandle>(null)
+  const openMediaPreview = useCallback((request: MediaPreviewRequest) => mediaPreviewRef.current?.open(request), [])
 
   useEffect(() => {
     if (initializationReady && messageListLoadFinished && userInfoSetFinished) {
@@ -74,25 +82,28 @@ const App = () => {
 
   return (
     <div id="app" className={cn('contents', themeMode)}>
-      <AppLayout>
-        <Header />
-        <Main />
-        <Footer />
-        {notUserInfo && <Setup />}
-        <Toaster
-          richColors
-          theme={themeMode}
-          offset="70px"
-          visibleToasts={1}
-          toastOptions={{
-            classNames: {
-              toast: 'dark:bg-slate-950 border dark:border-slate-600'
-            }
-          }}
-          position="top-center"
-        />
-      </AppLayout>
-      <DanmakuContainer ref={danmakuContainerRef} />
+      <MediaPreviewContext.Provider value={openMediaPreview}>
+        <AppLayout>
+          <Header />
+          <Main />
+          <Footer />
+          {notUserInfo && <Setup />}
+          <Toaster
+            richColors
+            theme={themeMode}
+            offset="70px"
+            visibleToasts={1}
+            toastOptions={{
+              classNames: {
+                toast: 'dark:bg-slate-950 border dark:border-slate-600'
+              }
+            }}
+            position="top-center"
+          />
+        </AppLayout>
+        <DanmakuContainer ref={danmakuContainerRef} />
+        <MediaPreview ref={mediaPreviewRef} shellOpen={appOpenStatus} />
+      </MediaPreviewContext.Provider>
     </div>
   )
 }
