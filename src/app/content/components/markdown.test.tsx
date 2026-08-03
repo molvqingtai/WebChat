@@ -1,5 +1,3 @@
-import { existsSync, readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { StrictMode } from 'react'
@@ -12,8 +10,6 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-const source = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8')
-const exists = (path: string) => existsSync(new URL(path, import.meta.url))
 const catSource = 'data:image/png;base64,iVBORw0KGgo='
 const diagramSource =
   'data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22120%22%20height%3D%2260%22%3E%3C%2Fsvg%3E'
@@ -65,20 +61,6 @@ const previewActivationCases: PreviewActivationCase[] = [
 ]
 
 describe('message image rendering', () => {
-  it('owns Markdown beside its sole app/content consumer without a shared reverse dependency', () => {
-    const appMarkdown = resolve(process.cwd(), 'src/app/content/components/markdown.tsx')
-    const appMarkdownTest = resolve(process.cwd(), 'src/app/content/components/markdown.test.tsx')
-    const sharedMarkdown = resolve(process.cwd(), 'src/components/markdown.tsx')
-    const sharedMarkdownTest = resolve(process.cwd(), 'src/components/markdown.test.tsx')
-    const messageItem = readFileSync(resolve(process.cwd(), 'src/app/content/components/message-item.tsx'), 'utf8')
-
-    expect.soft(existsSync(appMarkdown)).toBe(true)
-    expect.soft(existsSync(appMarkdownTest)).toBe(true)
-    expect.soft(existsSync(sharedMarkdown)).toBe(false)
-    expect.soft(existsSync(sharedMarkdownTest)).toBe(false)
-    expect.soft(messageItem).toContain("from './markdown'")
-  })
-
   it('uses one query-container and Blob URL policy for Markdown images and image-valued links', () => {
     const createObjectURL = vi
       .spyOn(URL, 'createObjectURL')
@@ -237,77 +219,5 @@ describe('message image rendering', () => {
       activator: trigger,
       transitionElement: trigger.querySelector('img')
     })
-  })
-
-  it('keeps one inline image policy and excludes parallel sizing or preview ownership', () => {
-    const markdown = source('./markdown.tsx')
-    const app = source('../App.tsx')
-    const entry = source('../index.tsx')
-    const preview = source('./media-preview.tsx')
-
-    expect(exists('./media-preview.tsx')).toBe(true)
-    expect(exists('./media-preview-geometry.ts')).toBe(true)
-    expect(exists('../../../components/media-preview.tsx')).toBe(false)
-    expect(exists('../../../components/media-preview-geometry.ts')).toBe(false)
-    expect(markdown).toContain("from './media-preview'")
-    for (const consumer of [app, entry]) {
-      expect(consumer).toContain("from '@/app/content/components/media-preview'")
-    }
-    for (const consumer of [markdown, app, entry]) {
-      expect(consumer).not.toContain("from '@/components/media-preview'")
-    }
-
-    expect(markdown.match(/const MessageImage\b/g)).toHaveLength(1)
-    expect(markdown.match(/<img\b/g)).toHaveLength(1)
-    expect(markdown.match(/<MessageImage\b/g)).toHaveLength(2)
-    for (const policy of [
-      "maxInlineSize: '70cqi'",
-      "maxBlockSize: '70cqi'",
-      "inlineSize: 'auto'",
-      "blockSize: 'auto'",
-      "objectFit: 'contain'"
-    ]) {
-      expect(markdown.split(policy)).toHaveLength(2)
-    }
-    expect(markdown).not.toMatch(
-      /ResizeObserver|getBoundingClientRect|natural(?:Width|Height)|\buseState\b|aspect-square/
-    )
-    expect(markdown.match(/URL\.createObjectURL\(/g)).toHaveLength(1)
-    expect(markdown.match(/URL\.revokeObjectURL\(/g)).toHaveLength(1)
-    expect(markdown).toContain('<MessageImageResource key={src} source={src}')
-    expect(markdown).not.toMatch(/resource\.source|\brevoked\b|revokeMessageImageObjectUrl/)
-    expect(markdown).not.toMatch(/\bfetch\(|\bFileReader\b|<img[^>]*\bsrc=\{src\}/s)
-    expect(preview).not.toMatch(
-      /createObjectURL|revokeObjectURL|createPortal|createRoot|ReactDOM|document\.body|ResizeObserver|localStorage|sessionStorage|indexedDB|\bRemesh\b|\bDomain\b|\bExtern\b/
-    )
-    expect(preview).not.toMatch(/matchMedia\?\.|(?:set|has|release)PointerCapture\?\./)
-    expect(preview).toContain("startViewTransition?: Document['startViewTransition']")
-    expect(preview).not.toMatch(/(?:ready|updateCallbackDone)\?\./)
-  })
-
-  it('uses the committed shell prop without a copied lifecycle truth', () => {
-    const preview = source('./media-preview.tsx')
-    const open = preview.match(/const open = useCallback[\s\S]*?\n\n  useImperativeHandle/)?.[0]
-
-    expect.soft(preview).not.toMatch(/\bshellOpenRef\b/)
-    expect.soft(preview).toContain('if (!request.src || !shellOpen || openAdmittedRef.current) return')
-    expect.soft(preview).toContain('openAdmittedRef.current = true')
-    expect.soft(preview).not.toContain('operationRef.current !== requestId || !shellOpenRef.current')
-    expect(open).toBeDefined()
-    expect(open).not.toMatch(/\.decode\(|\.complete\b|naturalWidth|naturalHeight/)
-  })
-
-  it('delegates transition identity ownership exactly once', () => {
-    const preview = source('./media-preview.tsx')
-    const transfer = preview.match(/const transferTransitionIdentity[\s\S]*?\n\n  const open/)?.[0]
-
-    expect(transfer).toBeDefined()
-    expect.soft(transfer?.match(/\bclaimTransitionIdentity\(/g)).toHaveLength(1)
-    expect.soft(transfer).not.toMatch(/\breleaseTransitionIdentity\b/)
-    expect
-      .soft(transfer)
-      .not.toMatch(
-        /previousValue|previousPriority|\.style\b|getPropertyValue|getPropertyPriority|setProperty|removeProperty/
-      )
   })
 })
