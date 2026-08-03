@@ -231,7 +231,13 @@ const WireDomain = Remesh.domain({
     const SendMessageCommand = domain.command({
       name: 'Wire.SendMessageCommand',
       impl: ({ get }, request: WireSendRequest) => {
-        if (!get(TrustedRoomsState()).includes(request.roomId) || !parseMessage(request.roomId, request.message)) {
+        if (!get(TrustedRoomsState()).includes(request.roomId)) {
+          return MessageSendFailedEvent({
+            requestId: request.requestId,
+            error: new Error('Untrusted room message')
+          })
+        }
+        if (!parseMessage(request.roomId, request.message)) {
           return MessageSendFailedEvent({
             requestId: request.requestId,
             error: new Error(`Invalid message for trusted room "${request.roomId}"`)
