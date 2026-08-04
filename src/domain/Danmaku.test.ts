@@ -34,8 +34,11 @@ const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
 let databaseId = 0
 
 const createFixture = (danmakuEnabled: boolean) => {
-  const user = { ...USER_INFO, danmakuEnabled }
+  let user = { ...USER_INFO, danmakuEnabled }
+  let documentIsVisible = true
   const push = vi.fn()
+  const mount = vi.fn()
+  const unmount = vi.fn()
   const storage: Storage = {
     get: async <T extends StorageValue>() => user as T,
     set: async () => {},
@@ -62,7 +65,7 @@ const createFixture = (danmakuEnabled: boolean) => {
   const database = createMemoryMessageDatabase(`danmaku-domain-${databaseId++}`)
   const store = Remesh.store({
     externs: [
-      DanmakuExtern.impl({ push, mount: vi.fn(), unmount: vi.fn() }),
+      DanmakuExtern.impl({ push, mount, unmount }),
       BrowserSyncStorageExtern.impl(storage),
       ChatRoomExtern.impl(chatRoom),
       ReadinessExtern.impl({ onState: () => () => {} }),
@@ -78,14 +81,24 @@ const createFixture = (danmakuEnabled: boolean) => {
   return {
     danmaku,
     push,
+    mountExtern: mount,
+    unmountExtern: unmount,
     mount: () =>
       store.send(
         danmaku.command.MountCommand({
           container: document.createElement('div'),
-          onOpen: () => {}
+          onOpen: () => {},
+          documentIsVisible: () => documentIsVisible
         })
       ),
     unmount: () => store.send(danmaku.command.UnmountCommand()),
+    setDocumentIsVisible: (isVisible: boolean) => {
+      documentIsVisible = isVisible
+    },
+    setDanmakuEnabled: (enabled: boolean) => {
+      user = { ...user, danmakuEnabled: enabled }
+      store.send(userInfo.command.UpdateUserInfoCommand(user))
+    },
     emitMessage: (id: string) => {
       sessionListeners.forEach((listener) => listener([{ sessionId: 'remote-session', user: REMOTE }]))
       messageListeners.forEach((listener) => listener({ ...MESSAGE, id }))
@@ -158,6 +171,61 @@ describe('DanmakuDomain consumer surface', () => {
     expect(hiddenDocument.push).not.toHaveBeenCalled()
     expect(visibleDocument.push).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ id: 'shared-message', userId: MESSAGE.userId, author: REMOTE })
+    )
+  })
+
+  it('rejects a delivery after visibility becomes ineligible but before passive lifecycle sync', async () => {
+    const fixture = createFixture(true)
+    fixtures.push(fixture)
+    fixture.mount()
+    fixture.mountExtern.mockClear()
+
+    fixture.setDocumentIsVisible(false)
+    fixture.emitMessage('hidden-before-effect')
+    await settle()
+
+    expect(fixture.unmountExtern).toHaveBeenCalledOnce()
+    expect(fixture.push).not.toHaveBeenCalled()
+  })
+
+  it('admits a delivery after visibility becomes eligible but before passive lifecycle sync', async () => {
+    const fixture = createFixture(true)
+    fixtures.push(fixture)
+    fixture.setDocumentIsVisible(false)
+    fixture.mount()
+
+    expect(fixture.mountExtern).not.toHaveBeenCalled()
+
+    fixture.setDocumentIsVisible(true)
+    fixture.emitMessage('visible-before-effect')
+    await settle()
+
+    expect(fixture.mountExtern).toHaveBeenCalledOnce()
+    expect(fixture.push).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ id: 'visible-before-effect', userId: MESSAGE.userId, author: REMOTE })
+    )
+  })
+
+  it('reconciles setting changes synchronously through the same delivery eligibility', async () => {
+    const fixture = createFixture(true)
+    fixtures.push(fixture)
+    fixture.mount()
+    fixture.mountExtern.mockClear()
+
+    fixture.setDanmakuEnabled(false)
+    expect(fixture.unmountExtern).toHaveBeenCalledOnce()
+
+    fixture.emitMessage('disabled-before-effect')
+    await settle()
+    expect(fixture.push).not.toHaveBeenCalled()
+
+    fixture.setDanmakuEnabled(true)
+    expect(fixture.mountExtern).toHaveBeenCalledOnce()
+
+    fixture.emitMessage('enabled-before-effect')
+    await settle()
+    expect(fixture.push).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ id: 'enabled-before-effect', userId: MESSAGE.userId, author: REMOTE })
     )
   })
 })

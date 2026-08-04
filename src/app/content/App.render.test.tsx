@@ -65,9 +65,16 @@ vi.mock('@/domain/MessageList', () => ({
 vi.mock('@/domain/Danmaku', () => ({
   default: () => ({
     command: {
-      MountCommand: ({ onOpen }: { container: HTMLElement; onOpen: () => void }) => {
+      MountCommand: ({
+        onOpen,
+        documentIsVisible
+      }: {
+        container: HTMLElement
+        onOpen: () => void
+        documentIsVisible: () => boolean
+      }) => {
         fixture.onDanmakuClick = onOpen
-        return 'mount-danmaku'
+        return `sync-danmaku-${documentIsVisible?.() === false ? 'hidden' : 'visible'}`
       },
       UnmountCommand: () => 'unmount-danmaku'
     }
@@ -156,36 +163,21 @@ describe('normal App composition', () => {
     expect(fixture.send).toHaveBeenCalledExactlyOnceWith('update-open-true')
   })
 
-  it('mounts Danmaku only while both the setting and local document visibility allow it', () => {
+  it('synchronously reports local document visibility through one persistent Danmaku binding', () => {
     fixture.danmakuEnabled = true
     fixture.visibilityState = 'hidden'
     const view = render(<App />)
 
-    expect(fixture.send).not.toHaveBeenCalledWith('mount-danmaku')
+    expect(fixture.send).toHaveBeenCalledExactlyOnceWith('sync-danmaku-hidden')
 
     setDocumentVisibility('visible')
-    expect(fixture.send).toHaveBeenCalledExactlyOnceWith('mount-danmaku')
+    expect(fixture.send).toHaveBeenNthCalledWith(2, 'sync-danmaku-visible')
 
     setDocumentVisibility('hidden')
-    expect(fixture.send).toHaveBeenNthCalledWith(2, 'unmount-danmaku')
+    expect(fixture.send).toHaveBeenNthCalledWith(3, 'sync-danmaku-hidden')
 
-    setDocumentVisibility('hidden')
-    expect(fixture.send).toHaveBeenCalledTimes(2)
-
-    setDocumentVisibility('visible')
-    expect(fixture.send).toHaveBeenNthCalledWith(3, 'mount-danmaku')
-
-    fixture.danmakuEnabled = false
-    view.rerender(<App />)
+    view.unmount()
     expect(fixture.send).toHaveBeenNthCalledWith(4, 'unmount-danmaku')
-
-    setDocumentVisibility('hidden')
-    setDocumentVisibility('visible')
-    expect(fixture.send).toHaveBeenCalledTimes(4)
-
-    fixture.danmakuEnabled = true
-    view.rerender(<App />)
-    expect(fixture.send).toHaveBeenNthCalledWith(5, 'mount-danmaku')
   })
 
   it('removes each document visibility subscription when its App is disposed', () => {
