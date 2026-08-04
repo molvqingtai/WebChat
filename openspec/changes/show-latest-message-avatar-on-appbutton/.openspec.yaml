@@ -1,0 +1,4 @@
+schema: spec-driven
+created: 2026-08-04
+goal: Show the latest eligible remote author's avatar on each same-domain AppButton
+  for the exact expanded or collapsed lifetime.
