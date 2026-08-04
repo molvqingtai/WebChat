@@ -9,7 +9,7 @@ The AppButton should identify the person who just sent a message without making 
 - While the shared shell is collapsed, replace the daily logo with the latest unread author's avatar until the shell expands and clears unread.
 - Let every newer eligible delivery replace the current avatar immediately. It starts its own expanded `1,000ms` lifetime or becomes the collapsed persistent unread avatar; it never waits for an earlier author's lifetime.
 - Allow the inner logo/avatar replacement to use one launcher-scoped same-document View Transition. That animation cannot queue delivery, extend the one-second lifetime, capture another launcher surface, or block the immediate state update; reduced-motion, unavailable, or rejected transition paths update directly.
-- Synchronize the selected author and any live expanded deadline across same-domain AppButtons while isolating other domains. Hydration cannot restore an expired or already-read avatar.
+- Share the selected author and any live expanded deadline across same-domain AppButtons while isolating other domains. A synchronizing surface applies the latest accepted state immediately; a paused or delayed surface may briefly retain its last observation, but must converge when synchronization resumes without restarting an expired or already-read avatar.
 - Keep the existing count-free unread badge, launcher geometry, drag/menu/open interactions, daily logo, notification policy, message delivery, and browser behavior unchanged outside this avatar projection.
 
 ## Capabilities
@@ -24,7 +24,7 @@ None.
 
 ## Impact
 
-- Affected behavior: the AppButton's inner visual while receiving first-delivered remote text, including bursts from the same or different authors, same-domain synchronization, collapse, reopen, hydration, and expiry.
+- Affected behavior: the AppButton's inner visual while receiving first-delivered remote text, including bursts from the same or different authors, same-domain convergence, collapse, reopen, hydration, and expiry.
 - Affected implementation: the existing AppStatus owner, its same-domain synchronization and persistence boundary, and the existing AppButton renderer.
-- Affected verification: eligible delivery, exact `1,000ms` expiry, immediate replacement, stale-expiry fencing, collapsed persistence, reopen clearing, same-domain isolation, avatar fallback, scoped View Transition behavior, and unchanged badge/launcher interactions.
+- Affected verification: eligible delivery, exact `1,000ms` expiry, immediate replacement on an observing surface, stale-expiry fencing, collapsed persistence, reopen clearing, resumed same-domain convergence, cross-domain isolation, avatar fallback, scoped View Transition behavior, and unchanged badge/launcher interactions.
 - Unchanged: message content, history, ordering, durable insertion, notification eligibility or presentation, barrage, Runtime networking, protocol, public APIs, permissions, dependencies, and cross-domain isolation.
