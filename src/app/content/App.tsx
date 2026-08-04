@@ -1,5 +1,5 @@
 import '@webcomponents/custom-elements'
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react'
 import { useRemeshDomain, useRemeshQuery, useRemeshSend } from 'remesh-react'
 import { Toaster } from 'sonner'
 import Header from '@/app/content/views/header'
@@ -25,6 +25,14 @@ if (import.meta.env.FIREFOX) {
   window.requestAnimationFrame = window.requestAnimationFrame.bind(window)
 }
 
+const subscribeToDocumentVisibility = (onStoreChange: () => void) => {
+  document.addEventListener('visibilitychange', onStoreChange)
+  return () => document.removeEventListener('visibilitychange', onStoreChange)
+}
+
+const getDocumentIsVisible = () => document.visibilityState === 'visible'
+const getServerDocumentIsVisible = () => false
+
 const App = () => {
   const send = useRemeshSend()
   const appStatusDomain = useRemeshDomain(AppStatusDomain())
@@ -42,6 +50,12 @@ const App = () => {
   const worldRoomJoinIsFinished = useRemeshQuery(worldRoomDomain.query.JoinIsFinishedQuery())
   const userInfo = useRemeshQuery(userInfoDomain.query.UserInfoQuery())
   const danmakuIsEnabled = userInfo?.danmakuEnabled ?? false
+  const documentIsVisible = useSyncExternalStore(
+    subscribeToDocumentVisibility,
+    getDocumentIsVisible,
+    getServerDocumentIsVisible
+  )
+  const danmakuIsEligible = danmakuIsEnabled && documentIsVisible
   const danmakuContainerRef = useRef<HTMLDivElement>(null)
   const mediaPreviewRef = useRef<MediaPreviewHandle>(null)
   const openMediaPreview = useCallback((request: MediaPreviewRequest) => mediaPreviewRef.current?.open(request), [])
@@ -59,7 +73,7 @@ const App = () => {
   }, [initializationReady, chatRoomJoinIsFinished, worldRoomJoinIsFinished, send, worldRoomDomain.command])
 
   useEffect(() => {
-    if (danmakuIsEnabled) {
+    if (danmakuIsEligible) {
       send(
         danmakuDomain.command.MountCommand({
           container: danmakuContainerRef.current!,
@@ -68,9 +82,9 @@ const App = () => {
       )
     }
     return () => {
-      if (danmakuIsEnabled) send(danmakuDomain.command.UnmountCommand())
+      if (danmakuIsEligible) send(danmakuDomain.command.UnmountCommand())
     }
-  }, [danmakuIsEnabled, send, appStatusDomain.command, danmakuDomain.command])
+  }, [danmakuIsEligible, send, appStatusDomain.command, danmakuDomain.command])
 
   const notUserInfo = userInfoLoadFinished && !userInfoSetFinished
   const themeMode =

@@ -78,9 +78,17 @@ const createFixture = (danmakuEnabled: boolean) => {
   return {
     danmaku,
     push,
-    emitMessage: () => {
+    mount: () =>
+      store.send(
+        danmaku.command.MountCommand({
+          container: document.createElement('div'),
+          onOpen: () => {}
+        })
+      ),
+    unmount: () => store.send(danmaku.command.UnmountCommand()),
+    emitMessage: (id: string) => {
       sessionListeners.forEach((listener) => listener([{ sessionId: 'remote-session', user: REMOTE }]))
-      messageListeners.forEach((listener) => listener(MESSAGE))
+      messageListeners.forEach((listener) => listener({ ...MESSAGE, id }))
     },
     dispose: async () => {
       store.discard()
@@ -105,21 +113,51 @@ describe('DanmakuDomain consumer surface', () => {
     expect(Object.keys(fixture.danmaku.command).sort()).toEqual(['MountCommand', 'UnmountCommand'])
   })
 
-  it.each([
-    { name: 'enabled', danmakuEnabled: true, expected: 1 },
-    { name: 'disabled', danmakuEnabled: false, expected: 0 }
-  ])('pushes an incoming message when Danmaku is $name', async ({ danmakuEnabled, expected }) => {
-    const fixture = createFixture(danmakuEnabled)
+  it('admits only messages delivered during a mounted presentation lifetime', async () => {
+    const fixture = createFixture(true)
     fixtures.push(fixture)
 
-    fixture.emitMessage()
+    fixture.emitMessage('before-mount')
+    await settle()
+    expect(fixture.push).not.toHaveBeenCalled()
+
+    fixture.mount()
+    fixture.emitMessage('while-mounted')
+    await settle()
+    expect(fixture.push).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ id: 'while-mounted', userId: MESSAGE.userId, author: REMOTE })
+    )
+
+    fixture.unmount()
+    fixture.emitMessage('while-unmounted')
+    await settle()
+    expect(fixture.push).toHaveBeenCalledTimes(1)
+
+    fixture.mount()
+    await settle()
+    expect(fixture.push).toHaveBeenCalledTimes(1)
+
+    fixture.emitMessage('after-remount')
+    await settle()
+    expect(fixture.push).toHaveBeenCalledTimes(2)
+    expect(fixture.push).toHaveBeenLastCalledWith(
+      expect.objectContaining({ id: 'after-remount', userId: MESSAGE.userId, author: REMOTE })
+    )
+  })
+
+  it('keeps same-domain document presentation lifetimes independent', async () => {
+    const hiddenDocument = createFixture(true)
+    const visibleDocument = createFixture(true)
+    fixtures.push(hiddenDocument, visibleDocument)
+    visibleDocument.mount()
+
+    hiddenDocument.emitMessage('shared-message')
+    visibleDocument.emitMessage('shared-message')
     await settle()
 
-    expect(fixture.push).toHaveBeenCalledTimes(expected)
-    if (expected === 1) {
-      expect(fixture.push).toHaveBeenCalledWith(
-        expect.objectContaining({ id: MESSAGE.id, userId: MESSAGE.userId, author: REMOTE })
-      )
-    }
+    expect(hiddenDocument.push).not.toHaveBeenCalled()
+    expect(visibleDocument.push).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ id: 'shared-message', userId: MESSAGE.userId, author: REMOTE })
+    )
   })
 })
