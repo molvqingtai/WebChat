@@ -151,10 +151,7 @@ const AppStatusDomain = Remesh.domain({
       impl: ({ get }) => get(StatusState()).position
     })
 
-    const SyncUnreadToStorageEvent = domain.event({
-      name: 'AppStatus.SyncUnreadToStorageEvent',
-      impl: ({ get }) => get(StatusState()).unread
-    })
+    const SyncUnreadToStorageEvent = domain.event<boolean>({ name: 'AppStatus.SyncUnreadToStorageEvent' })
 
     const SyncMessageAuthorToStorageEvent = domain.event({
       name: 'AppStatus.SyncMessageAuthorToStorageEvent',
@@ -208,7 +205,7 @@ const AppStatusDomain = Remesh.domain({
           HydrationState().new({ ...hydration, updated }),
           StatusState().new(nextStatus),
           SyncOpenToStorageEvent(),
-          ...(value ? [SyncUnreadToStorageEvent()] : []),
+          ...(value ? [SyncUnreadToStorageEvent(false)] : []),
           SyncMessageAuthorToStorageEvent(),
           MessageAuthorDeadlineChangedEvent(messageAuthor)
         ]
@@ -252,10 +249,10 @@ const AppStatusDomain = Remesh.domain({
         return [
           HydrationState().new({
             ...hydration,
-            updated: hydration.updated | STATUS_FIELD.OPEN | STATUS_FIELD.UNREAD | STATUS_FIELD.MESSAGE_AUTHOR
+            updated: hydration.updated | STATUS_FIELD.UNREAD | STATUS_FIELD.MESSAGE_AUTHOR
           }),
-          StatusState().new({ ...status, open, unread, messageAuthor }),
-          ...(unread !== status.unread ? [SyncUnreadToStorageEvent()] : []),
+          StatusState().new({ ...status, unread: status.open ? false : unread, messageAuthor }),
+          SyncUnreadToStorageEvent(unread),
           SyncMessageAuthorToStorageEvent(),
           MessageAuthorDeadlineChangedEvent(messageAuthor)
         ]
@@ -327,7 +324,7 @@ const AppStatusDomain = Remesh.domain({
             unread: value ? false : status.unread,
             messageAuthor
           }),
-          ...(clearUnread ? [SyncUnreadToStorageEvent()] : []),
+          ...(clearUnread ? [SyncUnreadToStorageEvent(false)] : []),
           ...(clearAuthor ? [SyncMessageAuthorToStorageEvent(), MessageAuthorDeadlineChangedEvent(messageAuthor)] : [])
         ]
       }
@@ -393,7 +390,7 @@ const AppStatusDomain = Remesh.domain({
             updated: hydration.updated | STATUS_FIELD.UNREAD | (clearAuthor ? STATUS_FIELD.MESSAGE_AUTHOR : 0)
           }),
           StatusState().new({ ...status, unread, messageAuthor }),
-          ...(status.open && value ? [SyncUnreadToStorageEvent()] : []),
+          ...(status.open && value ? [SyncUnreadToStorageEvent(false)] : []),
           ...(clearAuthor ? [SyncMessageAuthorToStorageEvent(), MessageAuthorDeadlineChangedEvent(messageAuthor)] : [])
         ]
       }

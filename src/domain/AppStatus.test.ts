@@ -153,6 +153,7 @@ const createSharedStatusStorage = (
   ])
   const watchers = new Map<string, Set<() => unknown>>()
   const pausedTabs = new Set<string>()
+  const heldReads = new Map<string, Map<StatusStorageKey, { capture: () => void; wait: Promise<void> }>>()
   const writes: Array<{ tabId: string; key: StatusStorageKey; value: StorageValue }> = []
 
   return {
@@ -167,12 +168,30 @@ const createSharedStatusStorage = (
       pausedTabs.delete(tabId)
       watchers.get(tabId)?.forEach((callback) => callback())
     },
+    holdNextRead: (tabId: string, key: StatusStorageKey) => {
+      const captured = deferred<void>()
+      const release = deferred<void>()
+      const tabReads = heldReads.get(tabId) ?? new Map()
+      tabReads.set(key, { capture: () => captured.resolve(), wait: release.promise })
+      heldReads.set(tabId, tabReads)
+      return { captured: captured.promise, release: () => release.resolve() }
+    },
     value: <Value extends StorageValue>(key: StatusStorageKey) => values.get(key) as Value,
     createTab(tabId: string): Storage {
       const tabWatchers = new Set<() => unknown>()
       watchers.set(tabId, tabWatchers)
       return {
-        get: async <Value extends StorageValue>(key: string) => (values.get(key as StatusStorageKey) as Value) ?? null,
+        get: async <Value extends StorageValue>(key: string) => {
+          const statusKey = key as StatusStorageKey
+          const value = values.get(statusKey) as Value | undefined
+          const hold = heldReads.get(tabId)?.get(statusKey)
+          if (hold) {
+            heldReads.get(tabId)?.delete(statusKey)
+            hold.capture()
+            await hold.wait
+          }
+          return value ?? null
+        },
         set: async <Value extends StorageValue>(key: string, value: Value) => {
           const statusKey = key as StatusStorageKey
           if (!values.has(statusKey) || Object.is(values.get(statusKey), value)) return
@@ -631,6 +650,8 @@ describe('AppStatus shared domain status', () => {
       })
       expect(domainA.value<boolean>(APP_UNREAD_STORAGE_KEY)).toBe(false)
     })
+    expect(statusOf(tabs.B)).toEqual({ open: false, unread: false, position: { x: 50, y: 22 } })
+    expect(authorOf(tabs.B)).toBeNull()
 
     domainA.resume('B')
     await vi.waitFor(() => {
@@ -660,6 +681,97 @@ describe('AppStatus shared domain status', () => {
       expect([authorOf(tabs.A), authorOf(tabs.B), authorOf(tabs.C)]).toEqual([null, null, null])
       expect(domainA.value<AppButtonAuthorStatus>(APP_MESSAGE_AUTHOR_STORAGE_KEY).author).toBeNull()
     })
+  })
+
+  it('converges a delayed earlier delivery after synchronization resumes', async () => {
+    const domainA = createSharedStatusStorage({ open: false, unread: false, position: { x: 50, y: 22 } })
+    const tabs = {
+      A: createFixture({ storage: domainA.createTab('A') }),
+      B: createFixture({ storage: domainA.createTab('B') }),
+      C: createFixture({ storage: domainA.createTab('C') })
+    }
+    await prepareDelivery(...Object.values(tabs))
+
+    domainA.pause('B')
+    const authorRead = domainA.holdNextRead('B', APP_MESSAGE_AUTHOR_STORAGE_KEY)
+    tabs.B.emitMessage(textMessage('beta-before-open', BETA.id))
+    await authorRead.captured
+
+    tabs.C.store.send(tabs.C.domain.command.UpdateOpenCommand(true))
+    await vi.waitFor(() => {
+      expect([statusOf(tabs.A), statusOf(tabs.C)].every((status) => status.open && !status.unread)).toBe(true)
+      expect([authorOf(tabs.A), authorOf(tabs.C)]).toEqual([null, null])
+    })
+
+    authorRead.release()
+    await vi.waitFor(() => {
+      expect(statusOf(tabs.B)).toEqual({ open: false, unread: true, position: { x: 50, y: 22 } })
+      expect(authorOf(tabs.B)).toEqual(BETA)
+    })
+    await vi.waitFor(() => {
+      expect(domainA.value<boolean>(APP_OPEN_STORAGE_KEY)).toBe(true)
+      expect(domainA.value<boolean>(APP_UNREAD_STORAGE_KEY)).toBe(false)
+      expect(domainA.value<AppButtonAuthorStatus>(APP_MESSAGE_AUTHOR_STORAGE_KEY).author).toBeNull()
+    })
+
+    domainA.clearWrites()
+    domainA.resume('B')
+    await vi.waitFor(() => {
+      expect(
+        [statusOf(tabs.A), statusOf(tabs.B), statusOf(tabs.C)].every((status) => status.open && !status.unread)
+      ).toBe(true)
+      expect([authorOf(tabs.A), authorOf(tabs.B), authorOf(tabs.C)]).toEqual([null, null, null])
+    })
+    await settle()
+
+    expect(domainA.value<boolean>(APP_OPEN_STORAGE_KEY)).toBe(true)
+    expect(domainA.value<boolean>(APP_UNREAD_STORAGE_KEY)).toBe(false)
+    expect(domainA.value<AppButtonAuthorStatus>(APP_MESSAGE_AUTHOR_STORAGE_KEY).author).toBeNull()
+    expect(
+      domainA.writes.some(
+        ({ tabId, key, value }) =>
+          tabId === 'B' &&
+          ((key === APP_UNREAD_STORAGE_KEY && value === true) ||
+            (key === APP_MESSAGE_AUTHOR_STORAGE_KEY && (value as AppButtonAuthorStatus).author?.id === BETA.id))
+      )
+    ).toBe(false)
+  })
+
+  it('clears an expanded author whose synchronization resumes after its absolute deadline', async () => {
+    vi.useFakeTimers()
+    const domainA = createSharedStatusStorage({ open: true, unread: false, position: { x: 50, y: 22 } })
+    const tabs = {
+      A: createFixture({ storage: domainA.createTab('A') }),
+      B: createFixture({ storage: domainA.createTab('B') }),
+      C: createFixture({ storage: domainA.createTab('C') })
+    }
+    await prepareDelivery(...Object.values(tabs))
+
+    const authorRead = domainA.holdNextRead('B', APP_MESSAGE_AUTHOR_STORAGE_KEY)
+    tabs.A.emitMessage(textMessage('alpha-delayed-sync', ALPHA.id))
+    await authorRead.captured
+    domainA.pause('B')
+    expect(authorOf(tabs.B)).toBeNull()
+
+    await vi.advanceTimersByTimeAsync(1_000)
+    await vi.waitFor(() => {
+      expect([authorOf(tabs.A), authorOf(tabs.C)]).toEqual([null, null])
+      expect(domainA.value<AppButtonAuthorStatus>(APP_MESSAGE_AUTHOR_STORAGE_KEY).author).toBeNull()
+    })
+
+    domainA.clearWrites()
+    authorRead.release()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(authorOf(tabs.B)).toBeNull()
+    expect(domainA.value<AppButtonAuthorStatus>(APP_MESSAGE_AUTHOR_STORAGE_KEY).author).toBeNull()
+    expect(
+      domainA.writes.some(
+        ({ tabId, key, value }) =>
+          tabId === 'B' &&
+          key === APP_MESSAGE_AUTHOR_STORAGE_KEY &&
+          (value as AppButtonAuthorStatus).author?.id === ALPHA.id
+      )
+    ).toBe(false)
   })
 
   it('accepts a later delivery from a paused collapsed tab after another tab opens and collapses', async () => {
