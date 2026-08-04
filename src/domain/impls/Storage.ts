@@ -4,6 +4,7 @@ import { LocalStorageExtern, BrowserSyncStorageExtern } from '@/domain/externs/S
 import {
   APP_OPEN_STORAGE_KEY,
   APP_POSITION_STORAGE_KEY,
+  APP_MESSAGE_AUTHOR_STORAGE_KEY,
   APP_UNREAD_STORAGE_KEY,
   CONFIG_STORE_VERSION,
   CONFIG_STORE_VERSION_KEY,
@@ -66,7 +67,11 @@ const clearVersionManagedLocalConfiguration = async () => {
   await Promise.all(
     keys
       .filter(
-        (key) => key !== APP_OPEN_STORAGE_KEY && key !== APP_POSITION_STORAGE_KEY && key !== APP_UNREAD_STORAGE_KEY
+        (key) =>
+          key !== APP_OPEN_STORAGE_KEY &&
+          key !== APP_POSITION_STORAGE_KEY &&
+          key !== APP_UNREAD_STORAGE_KEY &&
+          key !== APP_MESSAGE_AUTHOR_STORAGE_KEY
       )
       .map((key) => localStorage.removeItem(key))
   )

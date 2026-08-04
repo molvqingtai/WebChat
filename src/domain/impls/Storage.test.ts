@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  APP_MESSAGE_AUTHOR_STORAGE_KEY,
   APP_OPEN_STORAGE_KEY,
   APP_POSITION_STORAGE_KEY,
   APP_UNREAD_STORAGE_KEY,
@@ -94,26 +95,39 @@ describe('origin-local configuration preparation', () => {
     vi.stubGlobal('window', { localStorage })
     vi.stubGlobal('location', { origin: 'https://storage.test' })
     const { prepareLocalConfigurationStorage } = await import('./Storage')
-    const statusKeys = [APP_OPEN_STORAGE_KEY, APP_POSITION_STORAGE_KEY, APP_UNREAD_STORAGE_KEY].map(
-      (key) => `${STORAGE_NAME}:${key}`
-    )
+    const statusKeys = [
+      APP_OPEN_STORAGE_KEY,
+      APP_POSITION_STORAGE_KEY,
+      APP_UNREAD_STORAGE_KEY,
+      APP_MESSAGE_AUTHOR_STORAGE_KEY
+    ].map((key) => `${STORAGE_NAME}:${key}`)
     const versionKey = `${STORAGE_NAME}:${CONFIG_STORE_VERSION_KEY}`
     const versionManagedKey = `${STORAGE_NAME}:VERSION_MANAGED_SETTING`
     localStorage.setItem('HOST_PAGE_KEY', 'preserved')
     statusKeys.forEach((key, index) => localStorage.setItem(key, `status-${index}`))
 
     await prepareLocalConfigurationStorage()
-    expect(statusKeys.map((key) => localStorage.getItem(key))).toEqual(['status-0', 'status-1', 'status-2'])
+    expect(statusKeys.map((key) => localStorage.getItem(key))).toEqual(['status-0', 'status-1', 'status-2', 'status-3'])
     expect(localStorage.getItem(versionKey)).toBe('1')
 
     statusKeys.forEach((key, index) => localStorage.setItem(key, `current-${index}`))
     await prepareLocalConfigurationStorage()
-    expect(statusKeys.map((key) => localStorage.getItem(key))).toEqual(['current-0', 'current-1', 'current-2'])
+    expect(statusKeys.map((key) => localStorage.getItem(key))).toEqual([
+      'current-0',
+      'current-1',
+      'current-2',
+      'current-3'
+    ])
 
     localStorage.setItem(versionKey, '7')
     localStorage.setItem(versionManagedKey, 'old-generation')
     await prepareLocalConfigurationStorage()
-    expect(statusKeys.map((key) => localStorage.getItem(key))).toEqual(['current-0', 'current-1', 'current-2'])
+    expect(statusKeys.map((key) => localStorage.getItem(key))).toEqual([
+      'current-0',
+      'current-1',
+      'current-2',
+      'current-3'
+    ])
     expect(localStorage.getItem(versionManagedKey)).toBeNull()
     expect(localStorage.getItem(versionKey)).toBe('1')
     expect(localStorage.getItem('HOST_PAGE_KEY')).toBe('preserved')
@@ -150,11 +164,18 @@ describe('origin-local configuration preparation', () => {
     const openKey = `${STORAGE_NAME}:${APP_OPEN_STORAGE_KEY}`
     const positionKey = `${STORAGE_NAME}:${APP_POSITION_STORAGE_KEY}`
     const unreadKey = `${STORAGE_NAME}:${APP_UNREAD_STORAGE_KEY}`
+    const messageAuthorKey = `${STORAGE_NAME}:${APP_MESSAGE_AUTHOR_STORAGE_KEY}`
     const versionKey = `${STORAGE_NAME}:${CONFIG_STORE_VERSION_KEY}`
-    const persistedStatus = { open: true, unread: false, position: { x: -84, y: 36 } }
+    const persistedStatus = {
+      open: true,
+      unread: false,
+      position: { x: -84, y: 36 },
+      messageAuthor: { revision: 0, messageId: null, author: null, deadline: null }
+    }
     localStorage.setItem(openKey, JSON.stringify(persistedStatus.open))
     localStorage.setItem(positionKey, JSON.stringify(persistedStatus.position))
     localStorage.setItem(unreadKey, JSON.stringify(persistedStatus.unread))
+    localStorage.setItem(messageAuthorKey, JSON.stringify(persistedStatus.messageAuthor))
     localStorage.setItem(versionKey, String(CONFIG_STORE_VERSION + 1))
 
     const browserStorage = BrowserSyncStorageExtern.impl({
@@ -203,6 +224,7 @@ describe('origin-local configuration preparation', () => {
     expect(JSON.parse(localStorage.getItem(openKey)!)).toBe(persistedStatus.open)
     expect(JSON.parse(localStorage.getItem(positionKey)!)).toEqual(persistedStatus.position)
     expect(JSON.parse(localStorage.getItem(unreadKey)!)).toBe(persistedStatus.unread)
+    expect(JSON.parse(localStorage.getItem(messageAuthorKey)!)).toEqual(persistedStatus.messageAuthor)
     expect(localStorage.getItem(versionKey)).toBe(String(CONFIG_STORE_VERSION))
     secondStore.discard()
   })
@@ -216,9 +238,12 @@ describe('origin-local configuration preparation', () => {
     const localStorage = createTestLocalStorage()
     const firstRealm = await loadLocalPreparationRealm(origin, localStorage)
     const secondRealm = await loadLocalPreparationRealm(origin, localStorage)
-    const statusKeys = [APP_OPEN_STORAGE_KEY, APP_POSITION_STORAGE_KEY, APP_UNREAD_STORAGE_KEY].map(
-      (key) => `${STORAGE_NAME}:${key}`
-    )
+    const statusKeys = [
+      APP_OPEN_STORAGE_KEY,
+      APP_POSITION_STORAGE_KEY,
+      APP_UNREAD_STORAGE_KEY,
+      APP_MESSAGE_AUTHOR_STORAGE_KEY
+    ].map((key) => `${STORAGE_NAME}:${key}`)
     const versionKey = `${STORAGE_NAME}:${CONFIG_STORE_VERSION_KEY}`
     statusKeys.forEach((key) => localStorage.setItem(key, 'old-generation'))
     localStorage.setItem(versionKey, '7')
@@ -231,6 +256,7 @@ describe('origin-local configuration preparation', () => {
     await second
 
     expect(statusKeys.map((key) => localStorage.getItem(key))).toEqual([
+      'new-generation',
       'new-generation',
       'new-generation',
       'new-generation'

@@ -74,6 +74,8 @@ vi.mock('remesh-react', async () => {
           return true
         case 'app-position':
           return { x: 50, y: 22 }
+        case 'app-message-author':
+          return null
         case 'app-phase':
           return 'ready'
         case 'user-info':
@@ -91,7 +93,8 @@ vi.mock('@/domain/AppStatus', () => ({
       OpenQuery: () => 'app-open',
       PositionQuery: () => 'app-position',
       PhaseQuery: () => 'app-phase',
-      HasUnreadQuery: () => 'app-unread'
+      HasUnreadQuery: () => 'app-unread',
+      AppButtonAuthorQuery: () => 'app-message-author'
     },
     command: {
       UpdateOpenCommand: (open: boolean) => `update-open-${open}`,

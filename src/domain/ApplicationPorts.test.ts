@@ -199,6 +199,9 @@ describe('replaceable application boundaries', () => {
       "export const APP_POSITION_STORAGE_KEY = 'WEB_CHAT_APP_STATUS:POSITION' as const"
     )
     expect(storageConstants).toContain("export const APP_UNREAD_STORAGE_KEY = 'WEB_CHAT_APP_STATUS:UNREAD' as const")
+    expect(storageConstants).toContain(
+      "export const APP_MESSAGE_AUTHOR_STORAGE_KEY = 'WEB_CHAT_APP_STATUS:MESSAGE_AUTHOR' as const"
+    )
     expect(storageConstants).toContain("export const USER_INFO_STORAGE_KEY = 'WEB_CHAT_USER_INFO'")
     expect(indexedDB.match(/createMessageDatabaseDefinition\(STORAGE_NAME, MESSAGE_STORE_VERSION\)/g)).toHaveLength(2)
     expect(indexedDB).toMatch(/withPreparationLock\(\s*`message:\$\{STORAGE_NAME\}`/)
@@ -215,6 +218,7 @@ describe('replaceable application boundaries', () => {
       'APP_OPEN_STORAGE_KEY',
       'APP_POSITION_STORAGE_KEY',
       'APP_UNREAD_STORAGE_KEY',
+      'APP_MESSAGE_AUTHOR_STORAGE_KEY',
       'USER_INFO_STORAGE_KEY',
       'CONFIG_STORE_VERSION',
       'CONFIG_STORE_VERSION_KEY'

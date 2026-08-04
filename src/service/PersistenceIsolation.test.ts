@@ -2,6 +2,7 @@ import 'fake-indexeddb/auto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { openDB } from 'idb'
 import {
+  APP_MESSAGE_AUTHOR_STORAGE_KEY,
   APP_OPEN_STORAGE_KEY,
   APP_POSITION_STORAGE_KEY,
   APP_UNREAD_STORAGE_KEY,
@@ -32,7 +33,12 @@ let fixtureId = 0
 const databaseNames = new Set<string>()
 const nextOrigin = (label: string) => `https://${label}-${fixtureId++}.test`
 const localKey = (key: string) => `${STORAGE_NAME}:${key}`
-const statusFieldKeys = [APP_OPEN_STORAGE_KEY, APP_POSITION_STORAGE_KEY, APP_UNREAD_STORAGE_KEY]
+const statusFieldKeys = [
+  APP_OPEN_STORAGE_KEY,
+  APP_POSITION_STORAGE_KEY,
+  APP_UNREAD_STORAGE_KEY,
+  APP_MESSAGE_AUTHOR_STORAGE_KEY
+]
 const writeStatusFields = (storage: Storage, value: string) =>
   statusFieldKeys.forEach((key) => storage.setItem(localKey(key), value))
 const readStatusFields = (storage: Storage) => statusFieldKeys.map((key) => storage.getItem(localKey(key)))
@@ -160,6 +166,7 @@ describe('physical persistence isolation', () => {
     expect(readStatusFields(localStorage)).toEqual([
       'local-configuration',
       'local-configuration',
+      'local-configuration',
       'local-configuration'
     ])
     expect(localStorage.getItem(localKey(CONFIG_STORE_VERSION_KEY))).toBe(String(CONFIG_STORE_VERSION))
@@ -189,11 +196,11 @@ describe('physical persistence isolation', () => {
 
     await prepareCurrent()
 
-    expect(readStatusFields(currentStorage)).toEqual(['current-old', 'current-old', 'current-old'])
+    expect(readStatusFields(currentStorage)).toEqual(['current-old', 'current-old', 'current-old', 'current-old'])
     expect(currentStorage.getItem(localKey('VERSION_MANAGED_SETTING'))).toBeNull()
     expect(currentStorage.getItem(localKey(CONFIG_STORE_VERSION_KEY))).toBe(String(CONFIG_STORE_VERSION))
     expect(currentStorage.getItem('CURRENT_HOST_KEY')).toBe('preserved')
-    expect(readStatusFields(otherStorage)).toEqual(['other-old', 'other-old', 'other-old'])
+    expect(readStatusFields(otherStorage)).toEqual(['other-old', 'other-old', 'other-old', 'other-old'])
     expect(otherStorage.getItem(localKey('VERSION_MANAGED_SETTING'))).toBe('other-versioned-old')
     expect(otherStorage.getItem(localKey(CONFIG_STORE_VERSION_KEY))).toBe('7')
     await expect(readTargetMessage()).resolves.toBe('canonical-message')
@@ -201,11 +208,11 @@ describe('physical persistence isolation', () => {
     writeStatusFields(currentStorage, 'current-new')
     await prepareOther()
 
-    expect(readStatusFields(otherStorage)).toEqual(['other-old', 'other-old', 'other-old'])
+    expect(readStatusFields(otherStorage)).toEqual(['other-old', 'other-old', 'other-old', 'other-old'])
     expect(otherStorage.getItem(localKey('VERSION_MANAGED_SETTING'))).toBeNull()
     expect(otherStorage.getItem(localKey(CONFIG_STORE_VERSION_KEY))).toBe(String(CONFIG_STORE_VERSION))
     expect(otherStorage.getItem('OTHER_HOST_KEY')).toBe('preserved')
-    expect(readStatusFields(currentStorage)).toEqual(['current-new', 'current-new', 'current-new'])
+    expect(readStatusFields(currentStorage)).toEqual(['current-new', 'current-new', 'current-new', 'current-new'])
     await expect(readTargetMessage()).resolves.toBe('canonical-message')
   })
 
@@ -227,7 +234,7 @@ describe('physical persistence isolation', () => {
 
     expect(sync.values).toEqual({ [CONFIG_STORE_VERSION_KEY]: CONFIG_STORE_VERSION })
     expect(sync.clear).toHaveBeenCalledTimes(1)
-    expect(readStatusFields(localStorage)).toEqual(['local-current', 'local-current', 'local-current'])
+    expect(readStatusFields(localStorage)).toEqual(['local-current', 'local-current', 'local-current', 'local-current'])
     await expect(readTargetMessage()).resolves.toBe('canonical-current')
     expect(browserLocal.values).toEqual({ sentinel: 'browser-local' })
     expect(browserSession.values).toEqual({ sentinel: 'browser-session' })
