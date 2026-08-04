@@ -7,12 +7,12 @@
 **Goals:**
 
 - Make every synchronizing same-domain AppButton project the latest accepted eligible remote author while leaving other domains unchanged.
-- Show that author for exactly `1,000ms` after the latest eligible expanded delivery.
+- Keep that author as the current expanded identity until exactly `1,000ms` after the latest eligible delivery, then start fading to the daily logo.
 - Keep the latest collapsed unread author visible until the shell expands.
-- Replace an earlier author immediately on every newer eligible delivery, including repeated messages from the same author, and restart the expanded lifetime from that delivery.
+- Select the current author and begin its fade immediately on every newer eligible delivery, including repeated messages from the same author, and restart the expanded lifetime from that delivery.
 - Make a paused or delayed same-domain surface converge to the latest accepted state when synchronization resumes, without extending a transient lifetime or leaving an older author as the settled result.
 - Prevent an older timeout from clearing a newer author after the current state is observed.
-- Permit one launcher-local View Transition for inner icon replacement without making animation availability part of the state machine.
+- Fade every visible inner logo/avatar identity change with the existing Motion runtime without making animation progress part of the state machine.
 - Preserve the current daily logo as the no-attention result and the current unread badge as an independent collapsed unread marker.
 
 **Non-Goals:**
@@ -21,7 +21,7 @@
 - Changing message eligibility, delivery, ordering, history, duplicate handling, reactions, system notices, or message durable storage.
 - Changing AppButton size, position, border, shimmer, unread badge, menu, drag, open/collapse interaction, label, or shell geometry.
 - Queuing one-second author presentations or guaranteeing one second for an author that a newer delivery supersedes.
-- Adding an animation queue, a second document-transition owner, a new motion duration/easing contract, or any dependency on native View Transition availability.
+- Adding an animation queue, document-wide transition owner, custom duration/easing product setting, or another animation dependency.
 - Guaranteeing instantaneous agreement with a paused or delayed same-domain surface, or adding another persistence owner or synchronization queue for that surface.
 
 ## Decisions
@@ -34,13 +34,13 @@ The delivery's complete author identity is the presentation input. The avatar im
 
 ### 2. Let accepted delivery order choose the lifetime
 
-An eligible delivery accepted while the shared domain is expanded selects its author immediately on an observing surface and sets one shared deadline exactly `1,000ms` after that delivery. At the deadline, the daily logo returns unless a newer eligible delivery owns the projection. A repeated delivery from the same author refreshes the deadline even though the rendered avatar does not visibly change.
+An eligible delivery accepted while the shared domain is expanded selects its author immediately on an observing surface and sets one shared deadline exactly `1,000ms` after that delivery. At the deadline, author ownership clears and the fade to the daily logo begins unless a newer eligible delivery owns the projection. A repeated delivery from the same author refreshes the deadline even though the rendered avatar does not visibly change.
 
-An eligible delivery accepted while the shared domain is collapsed selects its author immediately on an observing surface as the persistent unread author. It has no one-second expiry and remains until the shared shell expands. Expanding clears unread and this persistent author together, so every synchronizing same-domain AppButton returns to the daily logo. Collapsing without a new unread delivery shows the daily logo and cannot preserve or create unread identity; if an expanded transient author is still visible, collapse clears it rather than converting an already-read message into persistent attention.
+An eligible delivery accepted while the shared domain is collapsed selects its author immediately on an observing surface as the persistent unread author. It has no one-second expiry and remains until the shared shell expands. Expanding clears unread and this persistent author together, so every synchronizing same-domain AppButton starts fading to the daily logo. Collapsing without a new unread delivery uses the daily logo and cannot preserve or create unread identity; if an expanded transient author is still current, collapse clears it and starts the fade rather than converting an already-read message into persistent attention.
 
 ### 3. The newest eligible delivery always supersedes
 
-Each eligible delivery accepted into the shared status becomes the sole current generation. A newer author replaces the visible avatar immediately on an observing surface, without waiting for the outgoing one-second lifetime or an exit animation. A newer delivery from the same author still becomes a new generation. In an expanded shell, the newest generation receives a fresh exact `1,000ms` deadline; in a collapsed shell, it becomes the persistent unread author.
+Each eligible delivery accepted into the shared status becomes the sole current generation immediately. When that changes the rendered identity, its Motion fade begins without waiting for the outgoing one-second lifetime or an exit animation. A newer delivery from the same author still becomes a new generation but does not need another fade when the rendered identity is unchanged. In an expanded shell, the newest generation receives a fresh exact `1,000ms` deadline; in a collapsed shell, it becomes the persistent unread author.
 
 Expiry, open/clear, hydration, and synchronization effects preserve accepted order. An older timeout cannot clear a newer avatar after that state is observed. When an open/clear and a delivery occur close together, their accepted order is authoritative: opening clears all earlier collapsed attention, while a later expanded delivery starts a new transient projection. A paused surface may temporarily render its older observation, but that observation cannot remain or become the settled same-domain result after current synchronization arrives.
 
@@ -58,13 +58,17 @@ With no selected author, `AppButton` renders its current day-specific logo. With
 
 The existing orange unread badge remains visible whenever the collapsed status satisfies `!open && unread`, including while the persistent author avatar is visible. It remains absent while expanded, including during a transient avatar. Restoring the daily logo adds no count, text, layout shift, queued animation, or alternate launcher state.
 
-The inner logo/avatar replacement may run through one launcher-local same-document View Transition. The state update begins in the transition callback without waiting for any previous animation. A newer delivery, clear, collapse, or expiry supersedes an active icon transition rather than queueing behind it, and its own author/deadline remains authoritative. The transition identity is scoped only to the AppButton's inner logo/avatar; it cannot capture the button, unread badge, shell, menu, Danmaku, MediaPreview, or host page. Reduced-motion preference, missing native support, start rejection, callback failure, or transition failure produces the same immediate final DOM and state with no animation and no extended lifetime.
+Every normal-motion change between distinct rendered identities uses the project's existing Motion runtime to fade opacity: daily logo to author avatar, one author avatar to another, and author avatar back to the daily logo. The outgoing identity starts fading out while the current identity starts fading in from the same state update; no normal-motion identity change is an instantaneous replacement.
+
+A newer delivery, clear, collapse, or expiry starts its current fade immediately and supersedes an active fade rather than queueing behind it. Animation progress cannot own, delay, restart, or extend author order, unread truth, or the exact expanded deadline. Expiry clears author ownership and starts the fade to the daily logo exactly at the deadline; opening or collapsing starts the corresponding fade when its state change is accepted. Stale animation settlement cannot restore an older identity.
+
+Motion is scoped only to the AppButton's inner daily-logo/avatar content. It cannot animate or capture the button, unread badge, shell, menu, Danmaku, MediaPreview, or host page. Reduced-motion preference settles the current inner identity directly with the same final DOM and state, no queue, and no lifetime extension.
 
 ### 6. Verify the state machine at the public boundaries
 
-Deterministic controls use same-domain tabs A, B, and C plus another-domain tab D. They cover an expanded delivery at `0ms`, exact retention before `1,000ms`, restoration at `1,000ms`, and a newer delivery before expiry whose author and deadline cannot be cleared by the older timeout. They repeat the burst with the same author, switch between different authors, collapse during a transient, admit multiple collapsed deliveries, reopen, and hydrate both before and after expiry.
+Deterministic controls use same-domain tabs A, B, and C plus another-domain tab D. They cover an expanded delivery at `0ms`, exact author ownership before `1,000ms`, the fade to daily logo beginning at `1,000ms`, and a newer delivery before expiry whose author and deadline cannot be cleared by the older timeout. They repeat the burst with the same author, switch between different authors, collapse during a transient, admit multiple collapsed deliveries, reopen, and hydrate both before and after expiry.
 
-Presentation controls require the author image and name-initial fallback inside the unchanged launcher, the unchanged daily logo when clear, and coexistence with the existing collapsed unread badge. If the implementation uses View Transition, controls also prove inner-icon-only capture, immediate supersession, reduced-motion/no-support/rejection/failure settlement, and no effect on the author deadline. Eligibility controls preserve the current self/history/duplicate/reaction/system exclusions and notification-setting independence.
+Presentation controls require the author image and name-initial fallback inside the unchanged launcher, the unchanged daily logo when clear, and coexistence with the existing collapsed unread badge. They prove Motion opacity fades for daily logo to author, author to a different author, and author to daily logo; latest-state fade supersession without waiting; inner-content-only scope; reduced-motion direct settlement; and no effect on the author deadline. Eligibility controls preserve the current self/history/duplicate/reaction/system exclusions and notification-setting independence.
 
 ## Risks / Trade-offs
 
@@ -73,4 +77,4 @@ Presentation controls require the author image and name-initial fallback inside 
 - [A collapsed avatar outlives a document] -> The same-domain status preserves it until the explicit open/read transition.
 - [The shell collapses during an expanded transient] -> The transient clears because that already-visible delivery is not unread; only a later collapsed delivery can create persistent identity.
 - [An avatar image is empty or fails] -> The existing author name-initial fallback preserves a recognizable, bounded launcher result.
-- [A native icon transition is active when the next state arrives] -> The next state supersedes the animation immediately; the transition never owns author order or lifetime.
+- [An inner identity fade is active when the next state arrives] -> The next state starts fading immediately and supersedes the prior presentation; animation never owns author order or lifetime.

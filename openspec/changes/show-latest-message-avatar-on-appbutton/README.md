@@ -1,3 +1,3 @@
 # show-latest-message-avatar-on-appbutton
 
-Show the latest eligible remote author's avatar on the AppButton, briefly while expanded and until reading while collapsed.
+Fade the AppButton's daily logo to the latest eligible remote author's avatar, briefly while expanded and until reading while collapsed.
