@@ -41,7 +41,6 @@ export class Danmaku {
     if (!this.container) {
       throw new Error('Danmaku not mounted')
     }
-    this.manager!.clear()
     this.manager!.unmount()
     this.container = undefined
     this.onOpen = undefined

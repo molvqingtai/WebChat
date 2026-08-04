@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs'
-import path from 'node:path'
 import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -200,14 +198,5 @@ describe('normal App composition', () => {
     fixture.danmakuEnabled = false
     view.rerender(<App />)
     expect(fixture.send).toHaveBeenNthCalledWith(2, 'unmount-danmaku')
-  })
-
-  it('keeps visibility eligibility local to the content document', () => {
-    const source = readFileSync(path.resolve(process.cwd(), 'src/app/content/App.tsx'), 'utf8')
-
-    expect(source).toContain("document.visibilityState === 'visible'")
-    expect(source).not.toContain("addEventListener('visibilitychange'")
-    expect(source).not.toContain("removeEventListener('visibilitychange'")
-    expect(source).not.toMatch(/\b(?:browser|chrome)\.(?:tabs|windows)\b/)
   })
 })

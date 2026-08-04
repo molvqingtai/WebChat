@@ -4,25 +4,30 @@ import ChatRoomDomain from '@/domain/ChatRoom'
 import UserInfoDomain from '@/domain/UserInfo'
 import { map, merge } from 'rxjs'
 
-interface DanmakuBinding {
-  container: HTMLElement
-  onOpen: () => void
-  documentIsVisible: () => boolean
-}
-
 const DanmakuDomain = Remesh.domain({
   name: 'DanmakuDomain',
   impl: (domain) => {
     const danmakuExtern = domain.getExtern(DanmakuExtern)
     const chatRoomDomain = domain.getDomain(ChatRoomDomain())
     const userInfoDomain = domain.getDomain(UserInfoDomain())
-    let danmakuBinding: DanmakuBinding | null = null
+    let documentIsVisible: (() => boolean) | null = null
 
     const MountCommand = domain.command({
       name: 'Danmaku.MountCommand',
-      impl: (_, binding: DanmakuBinding) => {
-        danmakuBinding = binding
-        danmakuExtern.mount(binding.container, binding.onOpen)
+      impl: (
+        _,
+        {
+          container,
+          onOpen,
+          documentIsVisible: getDocumentIsVisible
+        }: {
+          container: HTMLElement
+          onOpen: () => void
+          documentIsVisible: () => boolean
+        }
+      ) => {
+        documentIsVisible = getDocumentIsVisible
+        danmakuExtern.mount(container, onOpen)
         return null
       }
     })
@@ -30,7 +35,7 @@ const DanmakuDomain = Remesh.domain({
     const UnmountCommand = domain.command({
       name: 'Danmaku.UnmountCommand',
       impl: () => {
-        danmakuBinding = null
+        documentIsVisible = null
         danmakuExtern.unmount()
         return null
       }
@@ -45,7 +50,7 @@ const DanmakuDomain = Remesh.domain({
         const onMessage$ = merge(sendTextMessage$, onTextMessage$).pipe(
           map((message) => {
             const danmakuEnabled = get(userInfoDomain.query.UserInfoQuery())?.danmakuEnabled ?? false
-            if (danmakuEnabled && danmakuBinding?.documentIsVisible()) danmakuExtern.push(message)
+            if (danmakuEnabled && documentIsVisible?.()) danmakuExtern.push(message)
             return null
           })
         )

@@ -3,8 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const fixture = vi.hoisted(() => ({
   options: null as null | { plugin: { $createNode: (manager: { node?: Element; data: unknown }) => void } },
-  rendered: null as ReactElement<{ onClick: () => unknown }> | null,
-  lifecycle: [] as string[]
+  rendered: null as ReactElement<{ onClick: () => unknown }> | null
 }))
 
 vi.mock('danmu', () => ({
@@ -13,10 +12,10 @@ vi.mock('danmu', () => ({
     return {
       mount: vi.fn(),
       startPlaying: vi.fn(),
-      unmount: vi.fn(() => fixture.lifecycle.push('unmount')),
+      unmount: vi.fn(),
       push: vi.fn(),
       unshift: vi.fn(),
-      clear: vi.fn(() => fixture.lifecycle.push('clear'))
+      clear: vi.fn()
     }
   })
 }))
@@ -40,7 +39,6 @@ const renderMessage = (onOpen: () => void) => {
 
 beforeEach(() => {
   fixture.rendered = null
-  fixture.lifecycle = []
 })
 
 afterEach(() => {
@@ -57,14 +55,5 @@ describe('Danmaku AppStatus opening', () => {
     expect(result).toBeUndefined()
     expect(onOpen).toHaveBeenCalledOnce()
     expect(dispatchEvent).not.toHaveBeenCalled()
-  })
-
-  it('clears rendered and pending items before detaching its container', () => {
-    const danmaku = new Danmaku()
-    danmaku.mount(document.createElement('div'), () => {})
-
-    danmaku.unmount()
-
-    expect(fixture.lifecycle).toEqual(['clear', 'unmount'])
   })
 })

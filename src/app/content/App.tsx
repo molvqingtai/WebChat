@@ -25,8 +25,6 @@ if (import.meta.env.FIREFOX) {
   window.requestAnimationFrame = window.requestAnimationFrame.bind(window)
 }
 
-const getDocumentIsVisible = () => document.visibilityState === 'visible'
-
 const App = () => {
   const send = useRemeshSend()
   const appStatusDomain = useRemeshDomain(AppStatusDomain())
@@ -66,7 +64,7 @@ const App = () => {
         danmakuDomain.command.MountCommand({
           container: danmakuContainerRef.current!,
           onOpen: () => send(appStatusDomain.command.UpdateOpenCommand(true)),
-          documentIsVisible: getDocumentIsVisible
+          documentIsVisible: () => document.visibilityState === 'visible'
         })
       )
     }
