@@ -10,23 +10,10 @@ const DanmakuDomain = Remesh.domain({
     const danmakuExtern = domain.getExtern(DanmakuExtern)
     const chatRoomDomain = domain.getDomain(ChatRoomDomain())
     const userInfoDomain = domain.getDomain(UserInfoDomain())
-    let documentIsVisible: (() => boolean) | null = null
 
     const MountCommand = domain.command({
       name: 'Danmaku.MountCommand',
-      impl: (
-        _,
-        {
-          container,
-          onOpen,
-          documentIsVisible: getDocumentIsVisible
-        }: {
-          container: HTMLElement
-          onOpen: () => void
-          documentIsVisible: () => boolean
-        }
-      ) => {
-        documentIsVisible = getDocumentIsVisible
+      impl: (_, { container, onOpen }: { container: HTMLElement; onOpen: () => void }) => {
         danmakuExtern.mount(container, onOpen)
         return null
       }
@@ -35,7 +22,6 @@ const DanmakuDomain = Remesh.domain({
     const UnmountCommand = domain.command({
       name: 'Danmaku.UnmountCommand',
       impl: () => {
-        documentIsVisible = null
         danmakuExtern.unmount()
         return null
       }
@@ -50,7 +36,7 @@ const DanmakuDomain = Remesh.domain({
         const onMessage$ = merge(sendTextMessage$, onTextMessage$).pipe(
           map((message) => {
             const danmakuEnabled = get(userInfoDomain.query.UserInfoQuery())?.danmakuEnabled ?? false
-            if (danmakuEnabled && documentIsVisible?.()) danmakuExtern.push(message)
+            if (danmakuEnabled && document.visibilityState === 'visible') danmakuExtern.push(message)
             return null
           })
         )

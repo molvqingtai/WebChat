@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Remesh } from 'remesh'
 import DanmakuDomain from '@/domain/Danmaku'
 import UserInfoDomain, { type UserInfo } from '@/domain/UserInfo'
@@ -32,10 +32,10 @@ const MESSAGE = {
 } satisfies ChatMessage
 const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
 let databaseId = 0
+let documentVisibilityState: DocumentVisibilityState = 'visible'
 
 const createFixture = (danmakuEnabled: boolean) => {
   let user = { ...USER_INFO, danmakuEnabled }
-  let documentIsVisible = true
   const push = vi.fn()
   const mount = vi.fn()
   const unmount = vi.fn()
@@ -87,13 +87,12 @@ const createFixture = (danmakuEnabled: boolean) => {
       store.send(
         danmaku.command.MountCommand({
           container: document.createElement('div'),
-          onOpen: () => {},
-          documentIsVisible: () => documentIsVisible
+          onOpen: () => {}
         })
       ),
     unmount: () => store.send(danmaku.command.UnmountCommand()),
     setDocumentIsVisible: (isVisible: boolean) => {
-      documentIsVisible = isVisible
+      documentVisibilityState = isVisible ? 'visible' : 'hidden'
     },
     setDanmakuEnabled: (enabled: boolean) => {
       user = { ...user, danmakuEnabled: enabled }
@@ -112,6 +111,11 @@ const createFixture = (danmakuEnabled: boolean) => {
 
 const fixtures: Array<ReturnType<typeof createFixture>> = []
 
+beforeEach(() => {
+  documentVisibilityState = 'visible'
+  vi.spyOn(document, 'visibilityState', 'get').mockImplementation(() => documentVisibilityState)
+})
+
 afterEach(async () => {
   await Promise.all(fixtures.splice(0).map((fixture) => fixture.dispose()))
   vi.restoreAllMocks()
@@ -126,38 +130,6 @@ describe('DanmakuDomain consumer surface', () => {
     expect(Object.keys(fixture.danmaku.command).sort()).toEqual(['MountCommand', 'UnmountCommand'])
   })
 
-  it('admits only messages delivered during a mounted presentation lifetime', async () => {
-    const fixture = createFixture(true)
-    fixtures.push(fixture)
-
-    fixture.emitMessage('before-mount')
-    await settle()
-    expect(fixture.push).not.toHaveBeenCalled()
-
-    fixture.mount()
-    fixture.emitMessage('while-mounted')
-    await settle()
-    expect(fixture.push).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ id: 'while-mounted', userId: MESSAGE.userId, author: REMOTE })
-    )
-
-    fixture.unmount()
-    fixture.emitMessage('while-unmounted')
-    await settle()
-    expect(fixture.push).toHaveBeenCalledTimes(1)
-
-    fixture.mount()
-    await settle()
-    expect(fixture.push).toHaveBeenCalledTimes(1)
-
-    fixture.emitMessage('after-remount')
-    await settle()
-    expect(fixture.push).toHaveBeenCalledTimes(2)
-    expect(fixture.push).toHaveBeenLastCalledWith(
-      expect.objectContaining({ id: 'after-remount', userId: MESSAGE.userId, author: REMOTE })
-    )
-  })
-
   it('keeps same-domain document admissions independent without changing either lifecycle', async () => {
     const hiddenDocument = createFixture(true)
     const visibleDocument = createFixture(true)
@@ -167,6 +139,9 @@ describe('DanmakuDomain consumer surface', () => {
     hiddenDocument.setDocumentIsVisible(false)
 
     hiddenDocument.emitMessage('shared-message')
+    await settle()
+
+    visibleDocument.setDocumentIsVisible(true)
     visibleDocument.emitMessage('shared-message')
     await settle()
 

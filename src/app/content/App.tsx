@@ -63,8 +63,7 @@ const App = () => {
       send(
         danmakuDomain.command.MountCommand({
           container: danmakuContainerRef.current!,
-          onOpen: () => send(appStatusDomain.command.UpdateOpenCommand(true)),
-          documentIsVisible: () => document.visibilityState === 'visible'
+          onOpen: () => send(appStatusDomain.command.UpdateOpenCommand(true))
         })
       )
     }

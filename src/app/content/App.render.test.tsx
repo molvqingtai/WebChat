@@ -1,11 +1,10 @@
 import { cleanup, render, screen } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const fixture = vi.hoisted(() => ({
   ready: false,
   danmakuEnabled: false,
-  visibilityState: 'visible' as DocumentVisibilityState,
-  documentIsVisible: null as null | (() => boolean),
+  danmakuMountKeys: [] as string[],
   onDanmakuClick: null as null | (() => void),
   send: vi.fn()
 }))
@@ -64,16 +63,9 @@ vi.mock('@/domain/MessageList', () => ({
 vi.mock('@/domain/Danmaku', () => ({
   default: () => ({
     command: {
-      MountCommand: ({
-        onOpen,
-        documentIsVisible
-      }: {
-        container: HTMLElement
-        onOpen: () => void
-        documentIsVisible: () => boolean
-      }) => {
-        fixture.onDanmakuClick = onOpen
-        fixture.documentIsVisible = documentIsVisible
+      MountCommand: (binding: { container: HTMLElement; onOpen: () => void }) => {
+        fixture.onDanmakuClick = binding.onOpen
+        fixture.danmakuMountKeys = Object.keys(binding).sort()
         return 'mount-danmaku'
       },
       UnmountCommand: () => 'unmount-danmaku'
@@ -106,16 +98,11 @@ vi.mock('@/utils', () => ({
 
 import App from '@/app/content/App'
 
-beforeEach(() => {
-  vi.spyOn(document, 'visibilityState', 'get').mockImplementation(() => fixture.visibilityState)
-})
-
 afterEach(() => {
   cleanup()
   fixture.ready = false
   fixture.danmakuEnabled = false
-  fixture.visibilityState = 'visible'
-  fixture.documentIsVisible = null
+  fixture.danmakuMountKeys = []
   fixture.onDanmakuClick = null
   fixture.send.mockClear()
   vi.restoreAllMocks()
@@ -159,21 +146,18 @@ describe('normal App composition', () => {
     expect(fixture.send).toHaveBeenCalledExactlyOnceWith('update-open-true')
   })
 
-  it('reads local visibility through the binding without making visibility a lifecycle owner', () => {
+  it('keeps the Danmaku mount interface visibility-free', () => {
     const addEventListener = vi.spyOn(document, 'addEventListener')
     const removeEventListener = vi.spyOn(document, 'removeEventListener')
     fixture.danmakuEnabled = true
-    fixture.visibilityState = 'hidden'
     const view = render(<App />)
 
     expect(fixture.send).toHaveBeenCalledExactlyOnceWith('mount-danmaku')
-    expect(fixture.documentIsVisible?.()).toBe(false)
+    expect(fixture.danmakuMountKeys).toEqual(['container', 'onOpen'])
     expect(addEventListener).not.toHaveBeenCalledWith('visibilitychange', expect.any(Function))
 
-    fixture.visibilityState = 'visible'
     document.dispatchEvent(new Event('visibilitychange'))
 
-    expect(fixture.documentIsVisible?.()).toBe(true)
     expect(fixture.send).toHaveBeenCalledTimes(1)
 
     view.unmount()
@@ -189,9 +173,7 @@ describe('normal App composition', () => {
     view.rerender(<App />)
     expect(fixture.send).toHaveBeenCalledExactlyOnceWith('mount-danmaku')
 
-    fixture.visibilityState = 'hidden'
     document.dispatchEvent(new Event('visibilitychange'))
-    fixture.visibilityState = 'visible'
     document.dispatchEvent(new Event('visibilitychange'))
     expect(fixture.send).toHaveBeenCalledTimes(1)
 
