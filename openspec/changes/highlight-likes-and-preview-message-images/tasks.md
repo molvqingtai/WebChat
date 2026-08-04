@@ -32,7 +32,7 @@
 ## 4. Delivery Gates
 
 - [x] 4.1 Pass focused regressions, the complete source test suite, typecheck, lint, format, Chrome/Firefox production builds, strict OpenSpec validation, OpenSpec Doctor, diff, identity, and clean-worktree gates on one exact.
-- [ ] 4.2 Obtain fresh architecture-first Review of the complete requirement-branch diff and close every finding before publication.
-- [ ] 4.3 Publish the reviewed exact through the single `fix/media-preview-opening-shell-transition` branch and Draft PR #100, then require exact-bound CI to pass.
-- [ ] 4.4 Keep QA, QC, and UX absent unless the Owner explicitly requests one; record any performed or unavailable browser behavior verification truthfully without making it a source/CI blocker.
-- [ ] 4.5 Publish the pushed final branch and exact in the parent channel, update final OpenSpec/task truth, and keep Ready/merge conditional on the closeout exact's identity and CI under the Owner's same-PR merge authorization.
+- [x] 4.2 Obtain fresh architecture-first Review of the complete requirement-branch diff and close every finding before publication.
+- [x] 4.3 Publish the reviewed exact through the single `fix/media-preview-opening-shell-transition` branch and Draft PR #100, then require exact-bound CI to pass.
+- [x] 4.4 Keep QA, QC, and UX absent unless the Owner explicitly requests one; record any performed or unavailable browser behavior verification truthfully without making it a source/CI blocker.
+- [x] 4.5 Publish the pushed final branch and exact in the parent channel, update final OpenSpec/task truth, and keep Ready/merge conditional on the closeout exact's identity and CI under the Owner's same-PR merge authorization.
