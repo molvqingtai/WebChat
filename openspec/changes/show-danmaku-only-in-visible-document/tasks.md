@@ -14,12 +14,12 @@
 - [x] 2.3 Prove deliveries observed while non-visible create no push, queue, deferred work, or later replay, while one later visible delivery is admitted once.
 - [x] 2.4 Prove the existing setting remains the sole manager activation boundary across every visibility state and setting transition.
 - [x] 2.5 Prove same-domain tab A hidden and tab B visible produce no new Danmaku in A and the normal one in B without changing shared message, open, unread, or notification truth.
-- [x] 2.6 Add structural controls excluding a visibility listener/state/lifecycle owner, browser tab/window APIs, background coordination, persistence, protocol, permissions, new UI, and additional dependencies.
+- [x] 2.6 Add structural controls excluding an App/mount-injected or Domain-retained visibility value/getter, visibility listener/state/lifecycle owner, browser tab/window APIs, background coordination, persistence, protocol, permissions, new UI, and additional dependencies.
 
 ## 3. Minimum Implementation
 
 - [x] 3.1 Keep the existing Danmaku Domain/Extern and setting-driven manager lifecycle as the sole Danmaku behavior boundary.
-- [x] 3.2 Read exact `document.visibilityState` directly when each otherwise-eligible live delivery reaches the existing push boundary.
+- [x] 3.2 Read exact `document.visibilityState` synchronously inside the Danmaku Domain when each otherwise-eligible live delivery reaches the existing push boundary; keep the App and mount/unmount command interface visibility-free.
 - [x] 3.3 Perform no manager or item lifecycle action when document visibility changes.
 - [x] 3.4 Drop hidden deliveries and admit only later new visible deliveries without history lookup, buffering, replay, timer, listener, or cross-tab state.
 - [x] 3.5 Preserve every unaffected product/runtime boundary listed in the delta specification.

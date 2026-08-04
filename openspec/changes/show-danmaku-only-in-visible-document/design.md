@@ -1,6 +1,6 @@
 ## Context
 
-Each content document owns one local Danmaku surface through the existing Danmaku Domain/Extern boundary. The existing profile setting owns whether that manager exists. Exact `document.visibilityState` is needed only when a new otherwise-eligible live delivery reaches the existing push boundary; it is not manager lifecycle state.
+Each content document owns one local Danmaku surface through the existing Danmaku Domain/Extern boundary. The existing profile setting owns whether that manager exists. The Danmaku Domain runs in that content document and can read exact `document.visibilityState` itself when a new otherwise-eligible live delivery reaches its existing push boundary; visibility is not manager lifecycle state or App-provided mount state.
 
 See `proposal.md` for the product motivation and `specs/webrtc-runtime/spec.md` for the observable contract.
 
@@ -13,13 +13,13 @@ See `proposal.md` for the product motivation and `specs/webrtc-runtime/spec.md` 
 - Let visibility changes leave every already accepted rendered or pending item untouched by WebChat.
 - Drop live deliveries observed while non-visible and allow only later new deliveries after visibility returns.
 - Let two same-domain documents independently project their own visibility while preserving every shared Chat, AppStatus, unread, and notification fact.
-- Read current document visibility directly at admission without adding a listener, state copy, lifecycle effect, or persistent fact.
+- Read current document visibility directly inside the Danmaku Domain at admission without adding an App/mount parameter, retained getter, listener, state copy, lifecycle effect, or persistent fact.
 
 **Non-Goals:**
 
 - Changing the existing Danmaku setting, its Options UI, default, persistence, or eligible message classes.
 - Using browser-window focus, tab active/highlighted status, background tab APIs, tab enumeration, or cross-tab synchronization to decide Danmaku visibility.
-- Adding a visibility listener, state owner, manager lifecycle branch, Domain, Extern, coordinator, persistence key, protocol message, permission, background service, queue, replay path, timer, or dependency.
+- Passing or retaining a visibility value/getter through the App, mount/unmount commands, or Domain state; adding a visibility listener, state owner, manager lifecycle branch, Domain, Extern, coordinator, persistence key, protocol message, permission, background service, queue, replay path, timer, or dependency.
 - Changing message receipt, history/list projection, panel state, unread attention, notifications, Runtime, peer protocol, or cross-domain behavior.
 - Promising how the browser or existing Danmaku library advances time while a document is hidden; WebChat only refrains from clearing, restarting, or otherwise changing accepted items because visibility changed.
 
@@ -31,7 +31,7 @@ The existing live-message projection evaluates one predicate for each otherwise-
 
 `danmakuEnabled && document.visibilityState === 'visible'`.
 
-Strict equality means every other browser visibility state rejects that new push. Browser-window focus and browser tab metadata do not participate. The predicate is read synchronously at the existing push boundary and is not stored, observed, persisted, synchronized, sent through Runtime, or copied into an independent owner. The existing Danmaku Domain/Extern remains the only Danmaku behavior boundary.
+Strict equality means every other browser visibility state rejects that new push. Browser-window focus and browser tab metadata do not participate. The Danmaku Domain reads the predicate synchronously from its own content document at the existing push boundary. The App does not provide a visibility value or getter through mount, and the Domain does not retain one for later use. The predicate is not stored, observed, persisted, synchronized, sent through Runtime, or copied into an independent owner. The existing Danmaku Domain/Extern remains the only Danmaku behavior boundary.
 
 ### 2. Keep visibility out of manager lifecycle
 
@@ -61,7 +61,7 @@ This local decision does not modify the domain's shared message, AppStatus, open
 
 Deterministic controls cover visible and non-visible admission, `visible -> hidden -> visible` around an already accepted item, setting on and off, delivery before/during/after a non-visible interval, and two same-domain documents with opposite visibility. They require zero visibility-driven manager or item lifecycle actions, zero hidden pushes, zero replay, and one later visible push.
 
-Structural controls keep the existing Danmaku Domain/Extern and setting-driven manager lifecycle as the sole behavior boundary and exclude a visibility listener/state/lifecycle owner, browser tab/window APIs, background coordination, persistence, protocol, permissions, new UI, and additional dependencies.
+Structural controls keep the existing Danmaku Domain/Extern and setting-driven manager lifecycle as the sole behavior boundary and exclude an App/mount-injected visibility value or getter, retained visibility state, visibility listener/state/lifecycle owner, browser tab/window APIs, background coordination, persistence, protocol, permissions, new UI, and additional dependencies.
 
 ## Risks / Trade-offs
 

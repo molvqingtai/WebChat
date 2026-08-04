@@ -4,7 +4,7 @@
 
 Each WebChat content document SHALL call its existing Danmaku push behavior for an otherwise-eligible new live message only when the existing Danmaku configuration is enabled and exact `document.visibilityState === 'visible'` at that delivery. Every other document visibility state SHALL reject that new Danmaku push.
 
-The configuration SHALL remain authoritative: document visibility SHALL NOT enable Danmaku while the setting is off. Visibility SHALL be read directly at the existing local push boundary without a visibility listener, state copy, lifecycle effect, browser-window focus, browser tab active/highlighted state, tab/window enumeration, a background query, cross-tab coordination, persistence, protocol traffic, or an additional shared state owner.
+The configuration SHALL remain authoritative: document visibility SHALL NOT enable Danmaku while the setting is off. The existing Danmaku Domain SHALL synchronously read visibility from its own content document at the local push boundary. The App and mount/unmount commands SHALL NOT supply a visibility value or getter, and the Domain SHALL NOT retain one. This admission read SHALL add no visibility listener, state copy, lifecycle effect, browser-window focus, browser tab active/highlighted state, tab/window enumeration, background query, cross-tab coordination, persistence, protocol traffic, or additional shared state owner.
 
 #### Scenario: Visible configured document presents a new eligible delivery
 
