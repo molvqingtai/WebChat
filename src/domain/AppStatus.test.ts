@@ -636,6 +636,46 @@ describe('AppStatus shared domain status', () => {
     ).toBe(true)
   })
 
+  it('accepts a later delivery from a paused collapsed tab after another tab opens and collapses', async () => {
+    const domainA = createSharedStatusStorage({ open: false, unread: false, position: { x: 50, y: 22 } })
+    const tabs = {
+      A: createFixture({ storage: domainA.createTab('A') }),
+      B: createFixture({ storage: domainA.createTab('B') }),
+      C: createFixture({ storage: domainA.createTab('C') })
+    }
+    await prepareDelivery(...Object.values(tabs))
+    vi.useFakeTimers()
+
+    domainA.pause('B')
+    tabs.A.store.send(tabs.A.domain.command.UpdateOpenCommand(true))
+    await vi.waitFor(() => expect(statusOf(tabs.C).open).toBe(true))
+    tabs.A.store.send(tabs.A.domain.command.UpdateOpenCommand(false))
+    await vi.waitFor(() => expect(statusOf(tabs.C).open).toBe(false))
+    expect(statusOf(tabs.B).open).toBe(false)
+
+    tabs.B.emitMessage(textMessage('beta-after-read-cycle', BETA.id))
+    await vi.waitFor(() => {
+      expect([authorOf(tabs.A), authorOf(tabs.B), authorOf(tabs.C)]).toEqual([BETA, BETA, BETA])
+      expect(domainA.value<AppButtonAuthorStatus>(APP_MESSAGE_AUTHOR_STORAGE_KEY)).toMatchObject({
+        messageId: 'beta-after-read-cycle',
+        author: BETA,
+        deadline: null
+      })
+    })
+
+    domainA.resume('B')
+    await vi.waitFor(() => expect([authorOf(tabs.A), authorOf(tabs.B), authorOf(tabs.C)]).toEqual([BETA, BETA, BETA]))
+
+    tabs.C.store.send(tabs.C.domain.command.UpdateOpenCommand(true))
+    await vi.waitFor(() => {
+      expect(
+        [statusOf(tabs.A), statusOf(tabs.B), statusOf(tabs.C)].every((status) => status.open && !status.unread)
+      ).toBe(true)
+      expect([authorOf(tabs.A), authorOf(tabs.B), authorOf(tabs.C)]).toEqual([null, null, null])
+      expect(domainA.value<AppButtonAuthorStatus>(APP_MESSAGE_AUTHOR_STORAGE_KEY).author).toBeNull()
+    })
+  })
+
   it('ignores self text, history, duplicate insertion, reactions, and system notices', async () => {
     const shared = createSharedStatusStorage({ open: false, unread: false, position: { x: 50, y: 22 } })
     const fixture = createFixture({ storage: shared.createTab('A') })

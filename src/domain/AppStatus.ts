@@ -59,8 +59,12 @@ const STATUS_FIELD = {
   ALL: 0b1111
 } as const
 
+// Absolute monotonic time is comparable across documents; equal stamps follow shared-storage write order.
+const nextMessageAuthorRevision = (current: AppButtonAuthorStatus) =>
+  Math.max(current.revision, performance.timeOrigin + performance.now())
+
 const clearMessageAuthor = (current: AppButtonAuthorStatus): AppButtonAuthorStatus => ({
-  revision: current.revision + 1,
+  revision: nextMessageAuthorRevision(current),
   messageId: null,
   author: null,
   deadline: null
@@ -230,7 +234,7 @@ const AppStatusDomain = Remesh.domain({
         const status = get(StatusState())
         const now = Date.now()
         const messageAuthor: AppButtonAuthorStatus = {
-          revision: status.messageAuthor.revision + 1,
+          revision: nextMessageAuthorRevision(status.messageAuthor),
           messageId: message.id,
           author: message.author,
           deadline: status.open ? now + APP_BUTTON_AUTHOR_LIFETIME_MS : null
