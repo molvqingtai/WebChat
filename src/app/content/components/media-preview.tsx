@@ -424,20 +424,10 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
           active.intent = 'replace'
           if (shouldSkip) active.transition.skipTransition()
         }
-        releaseTransitionIdentity()
-        clearGestures()
-        if (stateRef.current.current) {
-          commitState(
-            { current: null, naturalSize: null, transform: initialTransform, viewport: stateRef.current.viewport },
-            true
-          )
-        }
-        selectedPreviewRef.current = null
-        phaseRef.current = 'closed'
       }
       startOpen(request)
     },
-    [clearGestures, close, commitState, releaseTransitionIdentity, shellOpen, startOpen]
+    [close, shellOpen, startOpen]
   )
 
   useImperativeHandle(ref, () => ({ open }), [open])

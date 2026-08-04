@@ -415,6 +415,10 @@ describe('MediaPreview production browser boundary', () => {
     await vi.waitFor(() => expect(previewImage()?.complete && previewImage()!.naturalWidth > 0).toBe(true))
     await settleNativeViewTransitions()
     await page.getByRole('button', { name: 'Zoom in' }).click()
+    const dialog = previewDialog()!
+    const backdrop = previewBackdrop()!
+    const previewBody = previewInteractionArea()
+    const toolbar = previewToolbar()!
 
     const transitionCount = fixture.viewTransitions.length
     await page.elementLocator(secondTrigger).click()
@@ -422,6 +426,10 @@ describe('MediaPreview production browser boundary', () => {
     const replacementTransition = fixture.viewTransitions.at(-1)!
     await replacementTransition.ready
 
+    expect(previewDialog()).toBe(dialog)
+    expect(previewBackdrop()).toBe(backdrop)
+    expect(previewInteractionArea()).toBe(previewBody)
+    expect(previewToolbar()).toBe(toolbar)
     expect(previewImage()!.alt).toBe('Large')
     expect(previewImage()!.src).toBe(secondTrigger.querySelector('img')!.src)
     expect(previewImage()!.style.transform).toBe('translate3d(0px, 0px, 0px) scale(1)')

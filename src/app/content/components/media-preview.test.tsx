@@ -158,7 +158,7 @@ describe('MediaPreview geometry', () => {
 })
 
 describe('MediaPreview ownership and settlement', () => {
-  it('switches to a new image with reset state and restores focus to its activator', () => {
+  it('switches only the image while preserving the preview surface, reset state, and activator focus', () => {
     render(<Harness />)
     const firstTrigger = screen.getByRole('button', { name: 'Preview First' })
     const secondTrigger = screen.getByRole('button', { name: 'Preview Second' })
@@ -167,6 +167,7 @@ describe('MediaPreview ownership and settlement', () => {
 
     expect(screen.getAllByRole('dialog', { name: 'Image preview' })).toHaveLength(1)
     const firstImage = previewImage('First')
+    const previewBody = firstImage.parentElement
     Object.defineProperties(firstImage, {
       naturalWidth: { configurable: true, value: 2000 },
       naturalHeight: { configurable: true, value: 1000 }
@@ -180,6 +181,8 @@ describe('MediaPreview ownership and settlement', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }))
     fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }))
     const dialog = screen.getByRole('dialog', { name: 'Image preview' })
+    const backdrop = previewBackdrop()
+    const toolbar = within(dialog).getByRole('toolbar', { name: 'Image preview controls' })
     fireEvent.pointerDown(dialog, { pointerId: 1, pointerType: 'mouse', button: 0, clientX: 400, clientY: 300 })
     fireEvent.pointerMove(dialog, { pointerId: 1, pointerType: 'mouse', clientX: 450, clientY: 300 })
     expect(previewTransform('First')).not.toBe('translate3d(0px, 0px, 0) scale(1)')
@@ -187,7 +190,12 @@ describe('MediaPreview ownership and settlement', () => {
     fireEvent.click(secondTrigger)
     expect(screen.getAllByRole('dialog', { name: 'Image preview' })).toHaveLength(1)
     const replacementDialog = screen.getByRole('dialog', { name: 'Image preview' })
+    expect(replacementDialog).toBe(dialog)
+    expect(previewBackdrop()).toBe(backdrop)
+    expect(within(replacementDialog).getByRole('toolbar', { name: 'Image preview controls' })).toBe(toolbar)
     expect(within(replacementDialog).queryByRole('img', { name: 'First' })).toBeNull()
+    expect(previewImage('Second')).not.toBe(firstImage)
+    expect(previewImage('Second').parentElement).toBe(previewBody)
     expect(previewTransform('Second')).toBe('translate3d(0px, 0px, 0) scale(1)')
 
     fireEvent.pointerMove(dialog, { pointerId: 1, pointerType: 'mouse', clientX: 500, clientY: 300 })
