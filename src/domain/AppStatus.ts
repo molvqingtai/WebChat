@@ -1,5 +1,5 @@
 import { Remesh } from 'remesh'
-import { EMPTY, map, switchMap, timer } from 'rxjs'
+import { EMPTY, filter, map, switchMap, timer } from 'rxjs'
 import {
   APP_MESSAGE_AUTHOR_STORAGE_KEY,
   APP_OPEN_STORAGE_KEY,
@@ -83,6 +83,7 @@ const AppStatusDomain = Remesh.domain({
   impl: (domain) => {
     const chatRoomDomain = domain.getDomain(ChatRoomDomain())
     const userInfoDomain = domain.getDomain(UserInfoDomain())
+    const statusStorage = domain.getExtern(LocalStorageExtern)
     const StatusState = domain.state<AppStatus>({ name: 'AppStatus.StatusState', default: defaultStatus })
     const HydrationState = domain.state({
       name: 'AppStatus.HydrationState',
@@ -230,23 +231,30 @@ const AppStatusDomain = Remesh.domain({
 
     const SelectMessageAuthorCommand = domain.command({
       name: 'AppStatus.SelectMessageAuthorCommand',
-      impl: ({ get }, message: { id: string; author: ChatUser }) => {
+      impl: (
+        { get },
+        {
+          message,
+          open,
+          revision
+        }: { message: { id: string; author: ChatUser; receivedAt: number }; open: boolean; revision: number }
+      ) => {
         const status = get(StatusState())
-        const now = Date.now()
+        if (revision < status.messageAuthor.revision) return null
         const messageAuthor: AppButtonAuthorStatus = {
-          revision: nextMessageAuthorRevision(status.messageAuthor),
+          revision,
           messageId: message.id,
           author: message.author,
-          deadline: status.open ? now + APP_BUTTON_AUTHOR_LIFETIME_MS : null
+          deadline: open ? message.receivedAt + APP_BUTTON_AUTHOR_LIFETIME_MS : null
         }
-        const unread = status.open ? false : true
+        const unread = !open
         const hydration = get(HydrationState())
         return [
           HydrationState().new({
             ...hydration,
-            updated: hydration.updated | STATUS_FIELD.MESSAGE_AUTHOR | (status.open ? 0 : STATUS_FIELD.UNREAD)
+            updated: hydration.updated | STATUS_FIELD.OPEN | STATUS_FIELD.UNREAD | STATUS_FIELD.MESSAGE_AUTHOR
           }),
-          StatusState().new({ ...status, unread, messageAuthor }),
+          StatusState().new({ ...status, open, unread, messageAuthor }),
           ...(unread !== status.unread ? [SyncUnreadToStorageEvent()] : []),
           SyncMessageAuthorToStorageEvent(),
           MessageAuthorDeadlineChangedEvent(messageAuthor)
@@ -473,9 +481,14 @@ const AppStatusDomain = Remesh.domain({
       name: 'AppStatus.OnTextMessageEffect',
       impl: ({ fromEvent, get }) =>
         fromEvent(chatRoomDomain.event.OnTextMessageEvent).pipe(
-          map((message) => {
-            const selfId = get(userInfoDomain.query.UserInfoQuery())?.id
-            return message.author.id === selfId ? null : SelectMessageAuthorCommand(message)
+          filter((message) => message.author.id !== get(userInfoDomain.query.UserInfoQuery())?.id),
+          switchMap(async (message) => {
+            const status = get(StatusState())
+            const revision = nextMessageAuthorRevision(status.messageAuthor)
+            const open = (await statusStorage.get<boolean>(APP_OPEN_STORAGE_KEY)) ?? status.open
+            const storedAuthor = await statusStorage.get<AppButtonAuthorStatus>(APP_MESSAGE_AUTHOR_STORAGE_KEY)
+            if (storedAuthor && storedAuthor.revision > revision) return null
+            return SelectMessageAuthorCommand({ message, open, revision })
           })
         )
     })

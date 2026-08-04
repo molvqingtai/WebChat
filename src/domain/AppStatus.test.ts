@@ -416,17 +416,20 @@ describe('AppStatus shared domain status', () => {
     vi.useFakeTimers()
 
     fixture.emitMessage(textMessage('alpha-1', ALPHA.id))
+    await vi.advanceTimersByTimeAsync(0)
     expect(authorOf(fixture)).toEqual(ALPHA)
     expect(statusOf(fixture).unread).toBe(false)
 
     await vi.advanceTimersByTimeAsync(600)
     fixture.emitMessage(textMessage('beta-1', BETA.id))
+    await vi.advanceTimersByTimeAsync(0)
     expect(authorOf(fixture)).toEqual(BETA)
 
     await vi.advanceTimersByTimeAsync(400)
     expect(authorOf(fixture)).toEqual(BETA)
     await vi.advanceTimersByTimeAsync(500)
     fixture.emitMessage(textMessage('beta-2', BETA.id))
+    await vi.advanceTimersByTimeAsync(0)
 
     await vi.advanceTimersByTimeAsync(100)
     expect(authorOf(fixture)).toEqual(BETA)
@@ -454,6 +457,7 @@ describe('AppStatus shared domain status', () => {
     expect(authorOf(fixture)).toBeNull()
 
     fixture.emitMessage(textMessage('alpha-expanded', ALPHA.id))
+    await vi.advanceTimersByTimeAsync(0)
     expect(authorOf(fixture)).toEqual(ALPHA)
     await vi.advanceTimersByTimeAsync(300)
     fixture.store.send(fixture.domain.command.UpdateOpenCommand(false))
@@ -601,7 +605,7 @@ describe('AppStatus shared domain status', () => {
     expect(statusOf(tabs.D)).toEqual({ open: false, unread: true, position: { x: 50, y: 22 } })
   })
 
-  it('repairs a stale collapsed tab unread mark after another tab has opened the domain', async () => {
+  it('classifies delivery lifetime by the accepted shared open order', async () => {
     const domainA = createSharedStatusStorage({ open: false, unread: false, position: { x: 50, y: 22 } })
     const tabs = {
       A: createFixture({ storage: domainA.createTab('A') }),
@@ -609,31 +613,53 @@ describe('AppStatus shared domain status', () => {
       C: createFixture({ storage: domainA.createTab('C') })
     }
     await prepareDelivery(...Object.values(tabs))
+    vi.useFakeTimers()
 
     domainA.pause('B')
     tabs.C.store.send(tabs.C.domain.command.UpdateOpenCommand(true))
     await vi.waitFor(() => expect(statusOf(tabs.A).open).toBe(true))
     expect(statusOf(tabs.B).open).toBe(false)
 
-    domainA.clearWrites()
-    tabs.B.emitMessage(textMessage('stale-collapsed-delivery', OTHER.id))
-    await vi.waitFor(() =>
-      expect(domainA.writes.some(({ tabId, value }) => tabId === 'B' && value === true)).toBe(true)
-    )
+    const deliveryAt = Date.now()
+    tabs.B.emitMessage(textMessage('alpha-after-open', ALPHA.id))
     await vi.waitFor(() => {
+      expect([authorOf(tabs.A), authorOf(tabs.C)]).toEqual([ALPHA, ALPHA])
+      expect(domainA.value<AppButtonAuthorStatus>(APP_MESSAGE_AUTHOR_STORAGE_KEY)).toMatchObject({
+        messageId: 'alpha-after-open',
+        author: ALPHA,
+        deadline: deliveryAt + 1_000
+      })
       expect(domainA.value<boolean>(APP_UNREAD_STORAGE_KEY)).toBe(false)
-      expect(domainA.writes.some(({ tabId, value }) => tabId !== 'B' && value === false)).toBe(true)
     })
 
-    const unreadWrites = domainA.writes.filter(({ key }) => key === APP_UNREAD_STORAGE_KEY)
-    expect(unreadWrites.some(({ tabId, value }) => tabId === 'B' && value === true)).toBe(true)
-    expect(unreadWrites.some(({ tabId, value }) => tabId !== 'B' && value === false)).toBe(true)
-
     domainA.resume('B')
-    await vi.waitFor(() => expect(statusOf(tabs.B)).toMatchObject({ open: true, unread: false }))
-    expect(
-      [statusOf(tabs.A), statusOf(tabs.B), statusOf(tabs.C)].every((status) => status.open && !status.unread)
-    ).toBe(true)
+    await vi.waitFor(() => {
+      expect(
+        [statusOf(tabs.A), statusOf(tabs.B), statusOf(tabs.C)].every((status) => status.open && !status.unread)
+      ).toBe(true)
+      expect([authorOf(tabs.A), authorOf(tabs.B), authorOf(tabs.C)]).toEqual([ALPHA, ALPHA, ALPHA])
+    })
+
+    const deadline = domainA.value<AppButtonAuthorStatus>(APP_MESSAGE_AUTHOR_STORAGE_KEY).deadline!
+    const remaining = deadline - Date.now()
+    await vi.advanceTimersByTimeAsync(remaining - 1)
+    expect([authorOf(tabs.A), authorOf(tabs.B), authorOf(tabs.C)]).toEqual([ALPHA, ALPHA, ALPHA])
+    await vi.advanceTimersByTimeAsync(1)
+    expect([authorOf(tabs.A), authorOf(tabs.B), authorOf(tabs.C)]).toEqual([null, null, null])
+
+    tabs.A.store.send(tabs.A.domain.command.UpdateOpenCommand(false))
+    await vi.waitFor(() => expect(statusOf(tabs.C).open).toBe(false))
+    tabs.B.emitMessage(textMessage('beta-before-open', BETA.id))
+    await vi.waitFor(() => expect([authorOf(tabs.A), authorOf(tabs.B), authorOf(tabs.C)]).toEqual([BETA, BETA, BETA]))
+
+    tabs.C.store.send(tabs.C.domain.command.UpdateOpenCommand(true))
+    await vi.waitFor(() => {
+      expect(
+        [statusOf(tabs.A), statusOf(tabs.B), statusOf(tabs.C)].every((status) => status.open && !status.unread)
+      ).toBe(true)
+      expect([authorOf(tabs.A), authorOf(tabs.B), authorOf(tabs.C)]).toEqual([null, null, null])
+      expect(domainA.value<AppButtonAuthorStatus>(APP_MESSAGE_AUTHOR_STORAGE_KEY).author).toBeNull()
+    })
   })
 
   it('accepts a later delivery from a paused collapsed tab after another tab opens and collapses', async () => {
