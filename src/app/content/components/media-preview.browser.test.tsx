@@ -407,7 +407,7 @@ describe('MediaPreview production browser boundary', () => {
     expect(hostile.style.viewTransitionName).toBe('host-owned')
   })
 
-  it('keeps one open preview unchanged when another message image is activated', async () => {
+  it('replaces an open image without old close motion and gives the new image a complete opening', async () => {
     await startContent()
     const firstTrigger = await page.getByRole('button', { name: 'Preview Wide' }).findElement()
     const secondTrigger = await page.getByRole('button', { name: 'Preview Large' }).findElement()
@@ -415,17 +415,31 @@ describe('MediaPreview production browser boundary', () => {
     await vi.waitFor(() => expect(previewImage()?.complete && previewImage()!.naturalWidth > 0).toBe(true))
     await settleNativeViewTransitions()
     await page.getByRole('button', { name: 'Zoom in' }).click()
+    const dialog = previewDialog()!
+    const backdrop = previewBackdrop()!
+    const previewBody = previewInteractionArea()
+    const toolbar = previewToolbar()!
 
-    const source = previewImage()!.src
-    const transform = previewImage()!.style.transform
     const transitionCount = fixture.viewTransitions.length
     await page.elementLocator(secondTrigger).click()
-    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+    await vi.waitFor(() => expect(fixture.viewTransitions).toHaveLength(transitionCount + 1))
+    const replacementTransition = fixture.viewTransitions.at(-1)!
+    await replacementTransition.ready
 
-    expect(previewImage()!.alt).toBe('Wide')
-    expect(previewImage()!.src).toBe(source)
-    expect(previewImage()!.style.transform).toBe(transform)
-    expect(fixture.viewTransitions).toHaveLength(transitionCount)
+    expect(previewDialog()).toBe(dialog)
+    expect(previewBackdrop()).toBe(backdrop)
+    expect(previewInteractionArea()).toBe(previewBody)
+    expect(previewToolbar()).toBe(toolbar)
+    expect(previewImage()!.alt).toBe('Large')
+    expect(previewImage()!.src).toBe(secondTrigger.querySelector('img')!.src)
+    expect(previewImage()!.style.transform).toBe('translate3d(0px, 0px, 0px) scale(1)')
+    const replacementIdentity = previewImage()!.style.getPropertyValue(MEDIA_PREVIEW_TRANSITION_NAME_PROPERTY)
+    expect(activeViewTransitionPseudos(document).some((pseudo) => pseudo.includes(replacementIdentity))).toBe(true)
+
+    await replacementTransition.finished
+    await page.getByRole('button', { name: 'Close preview' }).click()
+    await vi.waitFor(() => expect(previewDialog()).toBeNull())
+    expect(currentUi().shadow.activeElement).toBe(secondTrigger)
   })
 
   it('clips a zoomed and vertically panned image above the independent toolbar band', async () => {
