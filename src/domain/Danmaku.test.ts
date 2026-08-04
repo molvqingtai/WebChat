@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Remesh } from 'remesh'
 import DanmakuDomain from '@/domain/Danmaku'
 import UserInfoDomain, { type UserInfo } from '@/domain/UserInfo'
@@ -32,10 +32,13 @@ const MESSAGE = {
 } satisfies ChatMessage
 const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
 let databaseId = 0
+let documentVisibilityState: DocumentVisibilityState = 'visible'
 
 const createFixture = (danmakuEnabled: boolean) => {
-  const user = { ...USER_INFO, danmakuEnabled }
+  let user = { ...USER_INFO, danmakuEnabled }
   const push = vi.fn()
+  const mount = vi.fn()
+  const unmount = vi.fn()
   const storage: Storage = {
     get: async <T extends StorageValue>() => user as T,
     set: async () => {},
@@ -62,7 +65,7 @@ const createFixture = (danmakuEnabled: boolean) => {
   const database = createMemoryMessageDatabase(`danmaku-domain-${databaseId++}`)
   const store = Remesh.store({
     externs: [
-      DanmakuExtern.impl({ push, mount: vi.fn(), unmount: vi.fn() }),
+      DanmakuExtern.impl({ push, mount, unmount }),
       BrowserSyncStorageExtern.impl(storage),
       ChatRoomExtern.impl(chatRoom),
       ReadinessExtern.impl({ onState: () => () => {} }),
@@ -78,9 +81,26 @@ const createFixture = (danmakuEnabled: boolean) => {
   return {
     danmaku,
     push,
-    emitMessage: () => {
+    mountExtern: mount,
+    unmountExtern: unmount,
+    mount: () =>
+      store.send(
+        danmaku.command.MountCommand({
+          container: document.createElement('div'),
+          onOpen: () => {}
+        })
+      ),
+    unmount: () => store.send(danmaku.command.UnmountCommand()),
+    setDocumentIsVisible: (isVisible: boolean) => {
+      documentVisibilityState = isVisible ? 'visible' : 'hidden'
+    },
+    setDanmakuEnabled: (enabled: boolean) => {
+      user = { ...user, danmakuEnabled: enabled }
+      store.send(userInfo.command.UpdateUserInfoCommand(user))
+    },
+    emitMessage: (id: string) => {
       sessionListeners.forEach((listener) => listener([{ sessionId: 'remote-session', user: REMOTE }]))
-      messageListeners.forEach((listener) => listener(MESSAGE))
+      messageListeners.forEach((listener) => listener({ ...MESSAGE, id }))
     },
     dispose: async () => {
       store.discard()
@@ -90,6 +110,11 @@ const createFixture = (danmakuEnabled: boolean) => {
 }
 
 const fixtures: Array<ReturnType<typeof createFixture>> = []
+
+beforeEach(() => {
+  documentVisibilityState = 'visible'
+  vi.spyOn(document, 'visibilityState', 'get').mockImplementation(() => documentVisibilityState)
+})
 
 afterEach(async () => {
   await Promise.all(fixtures.splice(0).map((fixture) => fixture.dispose()))
@@ -105,21 +130,80 @@ describe('DanmakuDomain consumer surface', () => {
     expect(Object.keys(fixture.danmaku.command).sort()).toEqual(['MountCommand', 'UnmountCommand'])
   })
 
-  it.each([
-    { name: 'enabled', danmakuEnabled: true, expected: 1 },
-    { name: 'disabled', danmakuEnabled: false, expected: 0 }
-  ])('pushes an incoming message when Danmaku is $name', async ({ danmakuEnabled, expected }) => {
-    const fixture = createFixture(danmakuEnabled)
-    fixtures.push(fixture)
+  it('keeps same-domain document admissions independent without changing either lifecycle', async () => {
+    const hiddenDocument = createFixture(true)
+    const visibleDocument = createFixture(true)
+    fixtures.push(hiddenDocument, visibleDocument)
+    hiddenDocument.mount()
+    visibleDocument.mount()
+    hiddenDocument.setDocumentIsVisible(false)
 
-    fixture.emitMessage()
+    hiddenDocument.emitMessage('shared-message')
     await settle()
 
-    expect(fixture.push).toHaveBeenCalledTimes(expected)
-    if (expected === 1) {
-      expect(fixture.push).toHaveBeenCalledWith(
-        expect.objectContaining({ id: MESSAGE.id, userId: MESSAGE.userId, author: REMOTE })
-      )
-    }
+    visibleDocument.setDocumentIsVisible(true)
+    visibleDocument.emitMessage('shared-message')
+    await settle()
+
+    expect(hiddenDocument.push).not.toHaveBeenCalled()
+    expect(visibleDocument.push).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ id: 'shared-message', userId: MESSAGE.userId, author: REMOTE })
+    )
+    expect(hiddenDocument.mountExtern).toHaveBeenCalledOnce()
+    expect(hiddenDocument.unmountExtern).not.toHaveBeenCalled()
+    expect(visibleDocument.mountExtern).toHaveBeenCalledOnce()
+    expect(visibleDocument.unmountExtern).not.toHaveBeenCalled()
+  })
+
+  it('gates only new admissions while preserving the mounted lifetime across visibility changes', async () => {
+    const fixture = createFixture(true)
+    fixtures.push(fixture)
+    fixture.mount()
+
+    fixture.emitMessage('visible-before-switch')
+    await settle()
+    expect(fixture.push).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ id: 'visible-before-switch', userId: MESSAGE.userId, author: REMOTE })
+    )
+
+    fixture.setDocumentIsVisible(false)
+    fixture.emitMessage('hidden-delivery')
+    await settle()
+
+    fixture.setDocumentIsVisible(true)
+    expect(fixture.push).toHaveBeenCalledTimes(1)
+    fixture.emitMessage('visible-after-switch')
+    await settle()
+
+    expect(fixture.mountExtern).toHaveBeenCalledOnce()
+    expect(fixture.unmountExtern).not.toHaveBeenCalled()
+    expect(fixture.push).toHaveBeenCalledTimes(2)
+    expect(fixture.push).toHaveBeenLastCalledWith(
+      expect.objectContaining({ id: 'visible-after-switch', userId: MESSAGE.userId, author: REMOTE })
+    )
+  })
+
+  it('keeps setting eligibility at admission without creating a second lifecycle owner', async () => {
+    const fixture = createFixture(true)
+    fixtures.push(fixture)
+    fixture.mount()
+
+    fixture.setDanmakuEnabled(false)
+    expect(fixture.mountExtern).toHaveBeenCalledOnce()
+    expect(fixture.unmountExtern).not.toHaveBeenCalled()
+
+    fixture.emitMessage('disabled-delivery')
+    await settle()
+    expect(fixture.push).not.toHaveBeenCalled()
+
+    fixture.setDanmakuEnabled(true)
+    expect(fixture.mountExtern).toHaveBeenCalledOnce()
+    expect(fixture.unmountExtern).not.toHaveBeenCalled()
+
+    fixture.emitMessage('enabled-delivery')
+    await settle()
+    expect(fixture.push).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ id: 'enabled-delivery', userId: MESSAGE.userId, author: REMOTE })
+    )
   })
 })
