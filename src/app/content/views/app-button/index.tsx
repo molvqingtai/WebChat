@@ -3,6 +3,7 @@ import {
   useState,
   type MouseEvent,
   type MouseEventHandler,
+  type ReactNode,
   type RefCallback,
   useCallback,
   useMemo
@@ -55,6 +56,22 @@ export interface AppLauncherButtonProps {
   onContextMenu?: MouseEventHandler<HTMLButtonElement>
 }
 
+const MotionLauncherIdentity: FC<{ children: ReactNode; identityKey: string }> = ({ children, identityKey }) => (
+  <AnimatePresence initial={false} mode="sync">
+    <motion.div
+      key={identityKey}
+      data-slot="app-launcher-identity"
+      className="absolute inset-0 z-20"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.1 }}
+    >
+      {children}
+    </motion.div>
+  </AnimatePresence>
+)
+
 export const AppLauncherButton: FC<AppLauncherButtonProps> = ({
   author = null,
   hasUnread = false,
@@ -95,25 +112,13 @@ export const AppLauncherButton: FC<AppLauncherButtonProps> = ({
           )}
         </AnimatePresence>
 
-        <AnimatePresence initial={false} mode="sync">
-          {reduceMotion ? (
-            <div key={identityKey} data-slot="app-launcher-identity" className="absolute inset-0 z-20">
-              {identity}
-            </div>
-          ) : (
-            <motion.div
-              key={identityKey}
-              data-slot="app-launcher-identity"
-              className="absolute inset-0 z-20"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.1 }}
-            >
-              {identity}
-            </motion.div>
-          )}
-        </AnimatePresence>
+        {reduceMotion ? (
+          <div key={identityKey} data-slot="app-launcher-identity" className="absolute inset-0 z-20">
+            {identity}
+          </div>
+        ) : (
+          <MotionLauncherIdentity identityKey={identityKey}>{identity}</MotionLauncherIdentity>
+        )}
       </>
     )
   }, [author, hasUnread, DayLogo, reduceMotion])
