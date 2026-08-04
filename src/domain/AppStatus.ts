@@ -1,10 +1,16 @@
 import { Remesh } from 'remesh'
-import { map } from 'rxjs'
-import { APP_OPEN_STORAGE_KEY, APP_POSITION_STORAGE_KEY, APP_UNREAD_STORAGE_KEY } from '@/constants/storage'
+import { EMPTY, map, switchMap, timer } from 'rxjs'
+import {
+  APP_MESSAGE_AUTHOR_STORAGE_KEY,
+  APP_OPEN_STORAGE_KEY,
+  APP_POSITION_STORAGE_KEY,
+  APP_UNREAD_STORAGE_KEY
+} from '@/constants/storage'
 import { LocalStorageExtern } from '@/domain/externs/Storage'
 import StorageEffect from '@/domain/modules/StorageEffect'
 import ChatRoomDomain from '@/domain/ChatRoom'
 import UserInfoDomain from '@/domain/UserInfo'
+import type { ChatUser } from '@/protocol/Session'
 
 export interface AppButtonPosition {
   /** Negative values are left-edge distances; non-negative values are right-edge distances. */
@@ -13,26 +19,60 @@ export interface AppButtonPosition {
   y: number
 }
 
+export interface AppButtonAuthorStatus {
+  revision: number
+  messageId: string | null
+  author: ChatUser | null
+  deadline: number | null
+}
+
 export interface AppStatus {
   open: boolean
   unread: boolean
   position: AppButtonPosition
+  messageAuthor: AppButtonAuthorStatus
 }
 
 type InitializationPhase = 'connecting' | 'unavailable' | 'ready'
 
+const APP_BUTTON_AUTHOR_LIFETIME_MS = 1_000
+
+const defaultMessageAuthor: AppButtonAuthorStatus = {
+  revision: 0,
+  messageId: null,
+  author: null,
+  deadline: null
+}
+
 const defaultStatus: AppStatus = {
   open: false,
   unread: false,
-  position: { x: 50, y: 22 }
+  position: { x: 50, y: 22 },
+  messageAuthor: defaultMessageAuthor
 }
 
 const STATUS_FIELD = {
-  OPEN: 0b001,
-  POSITION: 0b010,
-  UNREAD: 0b100,
-  ALL: 0b111
+  OPEN: 0b0001,
+  POSITION: 0b0010,
+  UNREAD: 0b0100,
+  MESSAGE_AUTHOR: 0b1000,
+  ALL: 0b1111
 } as const
+
+const clearMessageAuthor = (current: AppButtonAuthorStatus): AppButtonAuthorStatus => ({
+  revision: current.revision + 1,
+  messageId: null,
+  author: null,
+  deadline: null
+})
+
+const sameMessageAuthor = (left: AppButtonAuthorStatus, right: AppButtonAuthorStatus) =>
+  left.revision === right.revision &&
+  left.messageId === right.messageId &&
+  left.deadline === right.deadline &&
+  left.author?.id === right.author?.id &&
+  left.author?.name === right.author?.name &&
+  left.author?.avatar === right.author?.avatar
 
 const AppStatusDomain = Remesh.domain({
   name: 'AppStatusDomain',
@@ -72,6 +112,20 @@ const AppStatusDomain = Remesh.domain({
       }
     })
 
+    const AppButtonAuthorQuery = domain.query({
+      name: 'AppStatus.AppButtonAuthorQuery',
+      impl: ({ get }) => {
+        if (get(HydrationState()).loaded !== STATUS_FIELD.ALL) return null
+        const status = get(StatusState())
+        const selection = status.messageAuthor
+        if (!selection.author) return null
+        if (status.open) {
+          return selection.deadline !== null && selection.deadline > Date.now() ? selection.author : null
+        }
+        return status.unread && selection.deadline === null ? selection.author : null
+      }
+    })
+
     const PhaseQuery = domain.query({
       name: 'AppStatus.PhaseQuery',
       impl: ({ get }) => get(PhaseState())
@@ -97,16 +151,34 @@ const AppStatusDomain = Remesh.domain({
       impl: ({ get }) => get(StatusState()).unread
     })
 
-    const UpdateUnreadCommand = domain.command({
-      name: 'AppStatus.UpdateUnreadCommand',
-      impl: ({ get }, value: boolean) => {
+    const SyncMessageAuthorToStorageEvent = domain.event({
+      name: 'AppStatus.SyncMessageAuthorToStorageEvent',
+      impl: ({ get }) => get(StatusState()).messageAuthor
+    })
+
+    const MessageAuthorDeadlineChangedEvent = domain.event<AppButtonAuthorStatus>({
+      name: 'AppStatus.MessageAuthorDeadlineChangedEvent'
+    })
+
+    const ReconcileHydratedStatusCommand = domain.command({
+      name: 'AppStatus.ReconcileHydratedStatusCommand',
+      impl: ({ get }) => {
+        if (get(HydrationState()).loaded !== STATUS_FIELD.ALL) return null
         const status = get(StatusState())
-        if ((value && status.open) || status.unread === value) return null
+        const selection = status.messageAuthor
+        const valid = status.open
+          ? selection.author !== null && selection.deadline !== null && selection.deadline > Date.now()
+          : status.unread && selection.author !== null && selection.deadline === null
+        if (valid || (selection.author === null && selection.deadline === null)) {
+          return MessageAuthorDeadlineChangedEvent(selection)
+        }
+        const cleared = clearMessageAuthor(selection)
         const hydration = get(HydrationState())
         return [
-          HydrationState().new({ ...hydration, updated: hydration.updated | STATUS_FIELD.UNREAD }),
-          StatusState().new({ ...status, unread: value }),
-          SyncUnreadToStorageEvent()
+          HydrationState().new({ ...hydration, updated: hydration.updated | STATUS_FIELD.MESSAGE_AUTHOR }),
+          StatusState().new({ ...status, messageAuthor: cleared }),
+          SyncMessageAuthorToStorageEvent(),
+          MessageAuthorDeadlineChangedEvent(cleared)
         ]
       }
     })
@@ -116,17 +188,25 @@ const AppStatusDomain = Remesh.domain({
       impl: ({ get }, value: boolean) => {
         const status = get(StatusState())
         const hydration = get(HydrationState())
-        const updated = hydration.updated | STATUS_FIELD.OPEN | (value ? STATUS_FIELD.UNREAD : 0)
-        if (status.open === value) return HydrationState().new({ ...hydration, updated })
-        const nextStatus = value ? { ...status, open: true, unread: false } : { ...status, open: false }
-        return value
-          ? [
-              HydrationState().new({ ...hydration, updated }),
-              StatusState().new(nextStatus),
-              SyncOpenToStorageEvent(),
-              SyncUnreadToStorageEvent()
-            ]
-          : [HydrationState().new({ ...hydration, updated }), StatusState().new(nextStatus), SyncOpenToStorageEvent()]
+        const changed = status.open !== value
+        const updated =
+          hydration.updated |
+          STATUS_FIELD.OPEN |
+          (value ? STATUS_FIELD.UNREAD : 0) |
+          (changed ? STATUS_FIELD.MESSAGE_AUTHOR : 0)
+        if (!changed) return HydrationState().new({ ...hydration, updated })
+        const messageAuthor = clearMessageAuthor(status.messageAuthor)
+        const nextStatus = value
+          ? { ...status, open: true, unread: false, messageAuthor }
+          : { ...status, open: false, messageAuthor }
+        return [
+          HydrationState().new({ ...hydration, updated }),
+          StatusState().new(nextStatus),
+          SyncOpenToStorageEvent(),
+          ...(value ? [SyncUnreadToStorageEvent()] : []),
+          SyncMessageAuthorToStorageEvent(),
+          MessageAuthorDeadlineChangedEvent(messageAuthor)
+        ]
       }
     })
 
@@ -144,17 +224,68 @@ const AppStatusDomain = Remesh.domain({
       }
     })
 
+    const SelectMessageAuthorCommand = domain.command({
+      name: 'AppStatus.SelectMessageAuthorCommand',
+      impl: ({ get }, message: { id: string; author: ChatUser }) => {
+        const status = get(StatusState())
+        const now = Date.now()
+        const messageAuthor: AppButtonAuthorStatus = {
+          revision: status.messageAuthor.revision + 1,
+          messageId: message.id,
+          author: message.author,
+          deadline: status.open ? now + APP_BUTTON_AUTHOR_LIFETIME_MS : null
+        }
+        const unread = status.open ? false : true
+        const hydration = get(HydrationState())
+        return [
+          HydrationState().new({
+            ...hydration,
+            updated: hydration.updated | STATUS_FIELD.MESSAGE_AUTHOR | (status.open ? 0 : STATUS_FIELD.UNREAD)
+          }),
+          StatusState().new({ ...status, unread, messageAuthor }),
+          ...(unread !== status.unread ? [SyncUnreadToStorageEvent()] : []),
+          SyncMessageAuthorToStorageEvent(),
+          MessageAuthorDeadlineChangedEvent(messageAuthor)
+        ]
+      }
+    })
+
+    const ExpireMessageAuthorCommand = domain.command({
+      name: 'AppStatus.ExpireMessageAuthorCommand',
+      impl: ({ get }, expired: Pick<AppButtonAuthorStatus, 'revision' | 'messageId' | 'deadline'>) => {
+        const status = get(StatusState())
+        const current = status.messageAuthor
+        if (
+          current.revision !== expired.revision ||
+          current.messageId !== expired.messageId ||
+          current.deadline !== expired.deadline
+        ) {
+          return null
+        }
+        const cleared = clearMessageAuthor(current)
+        const hydration = get(HydrationState())
+        return [
+          HydrationState().new({ ...hydration, updated: hydration.updated | STATUS_FIELD.MESSAGE_AUTHOR }),
+          StatusState().new({ ...status, messageAuthor: cleared }),
+          SyncMessageAuthorToStorageEvent(),
+          MessageAuthorDeadlineChangedEvent(cleared)
+        ]
+      }
+    })
+
     const HydrateOpenCommand = domain.command({
       name: 'AppStatus.HydrateOpenCommand',
       impl: ({ get }, value: boolean) => {
         const status = get(StatusState())
         const hydration = get(HydrationState())
         const apply = (hydration.updated & STATUS_FIELD.OPEN) === 0
+        const nextHydration = { ...hydration, loaded: hydration.loaded | STATUS_FIELD.OPEN }
         return [
           ...(apply
             ? [StatusState().new(value ? { ...status, open: true, unread: false } : { ...status, open: false })]
             : []),
-          HydrationState().new({ ...hydration, loaded: hydration.loaded | STATUS_FIELD.OPEN })
+          HydrationState().new(nextHydration),
+          ...(nextHydration.loaded === STATUS_FIELD.ALL ? [ReconcileHydratedStatusCommand()] : [])
         ]
       }
     })
@@ -165,13 +296,27 @@ const AppStatusDomain = Remesh.domain({
         const status = get(StatusState())
         const hydration = get(HydrationState())
         const clearUnread = value && status.unread
+        const clearAuthor =
+          status.messageAuthor.author !== null &&
+          (value ? status.messageAuthor.deadline === null : status.messageAuthor.deadline !== null)
+        const messageAuthor = clearAuthor ? clearMessageAuthor(status.messageAuthor) : status.messageAuthor
         return [
           HydrationState().new({
             ...hydration,
-            updated: hydration.updated | STATUS_FIELD.OPEN | (value ? STATUS_FIELD.UNREAD : 0)
+            updated:
+              hydration.updated |
+              STATUS_FIELD.OPEN |
+              (value ? STATUS_FIELD.UNREAD : 0) |
+              (clearAuthor ? STATUS_FIELD.MESSAGE_AUTHOR : 0)
           }),
-          StatusState().new(value ? { ...status, open: true, unread: false } : { ...status, open: false }),
-          ...(clearUnread ? [SyncUnreadToStorageEvent()] : [])
+          StatusState().new({
+            ...status,
+            open: value,
+            unread: value ? false : status.unread,
+            messageAuthor
+          }),
+          ...(clearUnread ? [SyncUnreadToStorageEvent()] : []),
+          ...(clearAuthor ? [SyncMessageAuthorToStorageEvent(), MessageAuthorDeadlineChangedEvent(messageAuthor)] : [])
         ]
       }
     })
@@ -182,9 +327,11 @@ const AppStatusDomain = Remesh.domain({
         const status = get(StatusState())
         const hydration = get(HydrationState())
         const apply = (hydration.updated & STATUS_FIELD.POSITION) === 0
+        const nextHydration = { ...hydration, loaded: hydration.loaded | STATUS_FIELD.POSITION }
         return [
           ...(apply ? [StatusState().new({ ...status, position: value })] : []),
-          HydrationState().new({ ...hydration, loaded: hydration.loaded | STATUS_FIELD.POSITION })
+          HydrationState().new(nextHydration),
+          ...(nextHydration.loaded === STATUS_FIELD.ALL ? [ReconcileHydratedStatusCommand()] : [])
         ]
       }
     })
@@ -207,9 +354,11 @@ const AppStatusDomain = Remesh.domain({
         const status = get(StatusState())
         const hydration = get(HydrationState())
         const apply = (hydration.updated & STATUS_FIELD.UNREAD) === 0
+        const nextHydration = { ...hydration, loaded: hydration.loaded | STATUS_FIELD.UNREAD }
         return [
           ...(apply ? [StatusState().new({ ...status, unread: status.open ? false : value })] : []),
-          HydrationState().new({ ...hydration, loaded: hydration.loaded | STATUS_FIELD.UNREAD })
+          HydrationState().new(nextHydration),
+          ...(nextHydration.loaded === STATUS_FIELD.ALL ? [ReconcileHydratedStatusCommand()] : [])
         ]
       }
     })
@@ -219,10 +368,61 @@ const AppStatusDomain = Remesh.domain({
       impl: ({ get }, value: boolean) => {
         const status = get(StatusState())
         const hydration = get(HydrationState())
+        const unread = status.open ? false : value
+        const clearAuthor =
+          status.unread !== unread &&
+          !unread &&
+          status.messageAuthor.author !== null &&
+          status.messageAuthor.deadline === null
+        const messageAuthor = clearAuthor ? clearMessageAuthor(status.messageAuthor) : status.messageAuthor
         return [
-          HydrationState().new({ ...hydration, updated: hydration.updated | STATUS_FIELD.UNREAD }),
-          StatusState().new({ ...status, unread: status.open ? false : value }),
-          ...(status.open && value ? [SyncUnreadToStorageEvent()] : [])
+          HydrationState().new({
+            ...hydration,
+            updated: hydration.updated | STATUS_FIELD.UNREAD | (clearAuthor ? STATUS_FIELD.MESSAGE_AUTHOR : 0)
+          }),
+          StatusState().new({ ...status, unread, messageAuthor }),
+          ...(status.open && value ? [SyncUnreadToStorageEvent()] : []),
+          ...(clearAuthor ? [SyncMessageAuthorToStorageEvent(), MessageAuthorDeadlineChangedEvent(messageAuthor)] : [])
+        ]
+      }
+    })
+
+    const HydrateMessageAuthorCommand = domain.command({
+      name: 'AppStatus.HydrateMessageAuthorCommand',
+      impl: ({ get }, value: AppButtonAuthorStatus) => {
+        const status = get(StatusState())
+        const hydration = get(HydrationState())
+        const apply = (hydration.updated & STATUS_FIELD.MESSAGE_AUTHOR) === 0
+        const nextHydration = { ...hydration, loaded: hydration.loaded | STATUS_FIELD.MESSAGE_AUTHOR }
+        return [
+          ...(apply ? [StatusState().new({ ...status, messageAuthor: value })] : []),
+          HydrationState().new(nextHydration),
+          ...(nextHydration.loaded === STATUS_FIELD.ALL ? [ReconcileHydratedStatusCommand()] : [])
+        ]
+      }
+    })
+
+    const SynchronizeMessageAuthorCommand = domain.command({
+      name: 'AppStatus.SynchronizeMessageAuthorCommand',
+      impl: ({ get }, value: AppButtonAuthorStatus) => {
+        const status = get(StatusState())
+        const hydration = get(HydrationState())
+        if (value.revision < status.messageAuthor.revision) {
+          return [
+            HydrationState().new({ ...hydration, updated: hydration.updated | STATUS_FIELD.MESSAGE_AUTHOR }),
+            SyncMessageAuthorToStorageEvent()
+          ]
+        }
+        if (sameMessageAuthor(value, status.messageAuthor)) {
+          return HydrationState().new({ ...hydration, updated: hydration.updated | STATUS_FIELD.MESSAGE_AUTHOR })
+        }
+        const expired = value.author !== null && value.deadline !== null && value.deadline <= Date.now()
+        const messageAuthor = expired ? clearMessageAuthor(value) : value
+        return [
+          HydrationState().new({ ...hydration, updated: hydration.updated | STATUS_FIELD.MESSAGE_AUTHOR }),
+          StatusState().new({ ...status, messageAuthor }),
+          ...(expired ? [SyncMessageAuthorToStorageEvent()] : []),
+          MessageAuthorDeadlineChangedEvent(messageAuthor)
         ]
       }
     })
@@ -260,14 +460,39 @@ const AppStatusDomain = Remesh.domain({
       .get<boolean>((value) => HydrateUnreadCommand(value ?? defaultStatus.unread))
       .watch<boolean>((value) => SynchronizeUnreadCommand(value ?? defaultStatus.unread))
 
+    new StorageEffect({ domain, extern: LocalStorageExtern, key: APP_MESSAGE_AUTHOR_STORAGE_KEY })
+      .set(SyncMessageAuthorToStorageEvent)
+      .get<AppButtonAuthorStatus>((value) => HydrateMessageAuthorCommand(value ?? defaultMessageAuthor))
+      .watch<AppButtonAuthorStatus>((value) => SynchronizeMessageAuthorCommand(value ?? defaultMessageAuthor))
+
     domain.effect({
       name: 'AppStatus.OnTextMessageEffect',
       impl: ({ fromEvent, get }) =>
         fromEvent(chatRoomDomain.event.OnTextMessageEvent).pipe(
           map((message) => {
             const selfId = get(userInfoDomain.query.UserInfoQuery())?.id
-            return get(StatusState()).open || message.author.id === selfId ? null : UpdateUnreadCommand(true)
+            return message.author.id === selfId ? null : SelectMessageAuthorCommand(message)
           })
+        )
+    })
+
+    domain.effect({
+      name: 'AppStatus.MessageAuthorDeadlineEffect',
+      impl: ({ fromEvent }) =>
+        fromEvent(MessageAuthorDeadlineChangedEvent).pipe(
+          switchMap((selection) =>
+            selection.author === null || selection.deadline === null
+              ? EMPTY
+              : timer(Math.max(0, selection.deadline - Date.now())).pipe(
+                  map(() =>
+                    ExpireMessageAuthorCommand({
+                      revision: selection.revision,
+                      messageId: selection.messageId,
+                      deadline: selection.deadline
+                    })
+                  )
+                )
+          )
         )
     })
 
@@ -275,6 +500,7 @@ const AppStatusDomain = Remesh.domain({
       query: {
         OpenQuery,
         HasUnreadQuery,
+        AppButtonAuthorQuery,
         PositionQuery,
         StatusLoadIsFinishedQuery,
         PhaseQuery,

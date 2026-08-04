@@ -12,6 +12,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 
 import { useRemeshDomain, useRemeshQuery, useRemeshSend } from 'remesh-react'
 import { Button } from '@/components/ui/button'
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import UserInfoDomain from '@/domain/UserInfo'
 import useTriggerAway from '@/hooks/useTriggerAway'
 import { checkDarkMode, cn } from '@/utils'
@@ -26,6 +27,7 @@ import AppStatusDomain from '@/domain/AppStatus'
 import { getDay } from 'date-fns'
 import AppActionDomain from '@/domain/AppAction'
 import ChatRoomDomain from '@/domain/ChatRoom'
+import type { ChatUser } from '@/protocol/Session'
 
 export const getReconnectLabel = ({
   userConfigured,
@@ -45,6 +47,7 @@ export const getReconnectLabel = ({
 }
 
 export interface AppLauncherButtonProps {
+  author?: ChatUser | null
   hasUnread?: boolean
   label: string
   size: number
@@ -53,6 +56,7 @@ export interface AppLauncherButtonProps {
 }
 
 export const AppLauncherButton: FC<AppLauncherButtonProps> = ({
+  author = null,
   hasUnread = false,
   label,
   size,
@@ -80,10 +84,17 @@ export const AppLauncherButton: FC<AppLauncherButtonProps> = ({
           )}
         </AnimatePresence>
 
-        <DayLogo className="relative z-20 size-full max-h-full max-w-full overflow-hidden"></DayLogo>
+        {author ? (
+          <Avatar className="absolute inset-0 z-20 size-full">
+            <AvatarImage src={author.avatar} className="size-full" alt="avatar" />
+            <AvatarFallback>{author.name.at(0)}</AvatarFallback>
+          </Avatar>
+        ) : (
+          <DayLogo className="relative z-20 size-full max-h-full max-w-full overflow-hidden"></DayLogo>
+        )}
       </>
     ),
-    [hasUnread, DayLogo]
+    [author, hasUnread, DayLogo]
   )
 
   return (
@@ -237,6 +248,7 @@ const AppButton: FC<AppButtonProps> = ({ open, launcherSize, appButtonRef }) => 
   const send = useRemeshSend()
   const appStatusDomain = useRemeshDomain(AppStatusDomain())
   const hasUnreadQuery = useRemeshQuery(appStatusDomain.query.HasUnreadQuery())
+  const messageAuthor = useRemeshQuery(appStatusDomain.query.AppButtonAuthorQuery())
   const [menuOpen, setMenuOpen] = useState(false)
 
   const { setRef: appMenuRef } = useTriggerAway(['click'], () => setMenuOpen(false))
@@ -264,6 +276,7 @@ const AppButton: FC<AppButtonProps> = ({ open, launcherSize, appButtonRef }) => 
     >
       <AppButtonMenu open={menuOpen} appButtonRef={appButtonRef} />
       <AppLauncherButton
+        author={messageAuthor}
         onClick={handleToggleApp}
         onContextMenu={handleToggleMenu}
         hasUnread={hasUnreadQuery}

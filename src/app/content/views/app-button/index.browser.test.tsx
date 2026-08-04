@@ -10,6 +10,38 @@ const hasClasses = (element: Element, classes: string[]) =>
   classes.every((className) => element.classList.contains(className))
 
 describe('AppButton unread indicator', () => {
+  it('replaces only the daily logo with the selected author avatar and name fallback', async () => {
+    const avatarSource = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=='
+    const author = { id: 'remote-user', name: 'Remote', avatar: avatarSource }
+    const view = await render(
+      <AppLauncherButton author={author} hasUnread label="Open WebChat" size={44} onClick={() => {}} />
+    )
+
+    const button = document.querySelector('button')!
+    const avatar = button.querySelector('[data-slot="avatar"]')!
+    expect(avatar).not.toBeNull()
+    await vi.waitFor(() => expect(avatar.querySelector('img')?.getAttribute('src')).toBe(avatarSource))
+    expect(button.querySelector('svg')).toBeNull()
+    expect(button.querySelector('span.bg-orange-400')).not.toBeNull()
+    expect(button.style.width).toBe('44px')
+    expect(button.style.height).toBe('44px')
+
+    await view.rerender(
+      <AppLauncherButton
+        author={{ ...author, avatar: '' }}
+        hasUnread
+        label="Open WebChat"
+        size={44}
+        onClick={() => {}}
+      />
+    )
+    await vi.waitFor(() => expect(button.querySelector('[data-slot="avatar"]')?.textContent).toBe('R'))
+
+    await view.rerender(<AppLauncherButton label="Open WebChat" size={44} onClick={() => {}} />)
+    expect(button.querySelector('[data-slot="avatar"]')).toBeNull()
+    expect(button.querySelector('svg')).not.toBeNull()
+  })
+
   it('renders the exact count-free orange ping and 0.1-second presence transition only while unread', async () => {
     const view = await render(<AppLauncherButton hasUnread label="Open WebChat" size={44} onClick={() => {}} />)
     const ping = document.querySelector<HTMLElement>('span.bg-orange-400')!

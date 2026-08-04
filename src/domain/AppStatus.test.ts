@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Remesh, type RemeshStore } from 'remesh'
-import AppStatusDomain, { type AppButtonPosition, type AppStatus } from '@/domain/AppStatus'
-import { APP_OPEN_STORAGE_KEY, APP_POSITION_STORAGE_KEY, APP_UNREAD_STORAGE_KEY } from '@/constants/storage'
+import AppStatusDomain, { type AppButtonAuthorStatus, type AppButtonPosition, type AppStatus } from '@/domain/AppStatus'
+import {
+  APP_MESSAGE_AUTHOR_STORAGE_KEY,
+  APP_OPEN_STORAGE_KEY,
+  APP_POSITION_STORAGE_KEY,
+  APP_UNREAD_STORAGE_KEY
+} from '@/constants/storage'
 import { BrowserSyncStorageExtern, LocalStorageExtern, type Storage, type StorageValue } from '@/domain/externs/Storage'
 import { ChatRoomExtern, type ChatRoom } from '@/domain/externs/ChatRoom'
 import { ReadinessExtern } from '@/domain/externs/Readiness'
@@ -24,6 +29,15 @@ const SELF: UserInfo = {
 }
 
 const OTHER = { id: 'remote-user', name: 'Remote', avatar: '' }
+const ALPHA = { id: 'alpha-user', name: 'Alpha', avatar: 'https://example.com/alpha.png' }
+const BETA = { id: 'beta-user', name: 'Beta', avatar: 'https://example.com/beta.png' }
+
+const EMPTY_MESSAGE_AUTHOR: AppButtonAuthorStatus = {
+  revision: 0,
+  messageId: null,
+  author: null,
+  deadline: null
+}
 
 const deferred = <Value>() => {
   let resolve!: (value: Value) => void
@@ -122,13 +136,20 @@ const createFixture = ({
   }
 }
 
-type StatusStorageKey = typeof APP_OPEN_STORAGE_KEY | typeof APP_POSITION_STORAGE_KEY | typeof APP_UNREAD_STORAGE_KEY
+type StatusStorageKey =
+  | typeof APP_OPEN_STORAGE_KEY
+  | typeof APP_POSITION_STORAGE_KEY
+  | typeof APP_UNREAD_STORAGE_KEY
+  | typeof APP_MESSAGE_AUTHOR_STORAGE_KEY
 
-const createSharedStatusStorage = (initial: AppStatus) => {
+const createSharedStatusStorage = (
+  initial: Omit<AppStatus, 'messageAuthor'> & { messageAuthor?: AppButtonAuthorStatus }
+) => {
   const values = new Map<StatusStorageKey, StorageValue>([
     [APP_OPEN_STORAGE_KEY, initial.open],
     [APP_POSITION_STORAGE_KEY, initial.position],
-    [APP_UNREAD_STORAGE_KEY, initial.unread]
+    [APP_UNREAD_STORAGE_KEY, initial.unread],
+    [APP_MESSAGE_AUTHOR_STORAGE_KEY, initial.messageAuthor ?? EMPTY_MESSAGE_AUTHOR]
   ])
   const watchers = new Map<string, Set<() => unknown>>()
   const pausedTabs = new Set<string>()
@@ -137,6 +158,10 @@ const createSharedStatusStorage = (initial: AppStatus) => {
   return {
     writes,
     clearWrites: () => writes.splice(0),
+    synchronize: <Value extends StorageValue>(key: StatusStorageKey, value: Value) => {
+      values.set(key, value)
+      watchers.forEach((callbacks) => callbacks.forEach((callback) => callback()))
+    },
     pause: (tabId: string) => pausedTabs.add(tabId),
     resume: (tabId: string) => {
       pausedTabs.delete(tabId)
@@ -216,7 +241,9 @@ const prepareDelivery = async (...fixtures: Fixture[]) => {
   fixtures.forEach((fixture) => {
     fixture.emitSessions([
       { sessionId: 'local-session', user: SELF },
-      { sessionId: 'remote-session', user: OTHER }
+      { sessionId: 'remote-session', user: OTHER },
+      { sessionId: 'alpha-session', user: ALPHA },
+      { sessionId: 'beta-session', user: BETA }
     ])
   })
 }
@@ -227,9 +254,12 @@ const statusOf = (fixture: Fixture) => ({
   position: fixture.store.query(fixture.domain.query.PositionQuery())
 })
 
+const authorOf = (fixture: Fixture) => fixture.store.query(fixture.domain.query.AppButtonAuthorQuery())
+
 afterEach(() => {
   activeStores.forEach((store) => store.discard())
   activeStores.clear()
+  vi.useRealTimers()
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
 })
@@ -239,7 +269,15 @@ describe('AppStatus shared domain status', () => {
     const fixture = createFixture()
 
     expect(Object.keys(fixture.domain.query).sort()).toEqual(
-      ['HasUnreadQuery', 'OpenQuery', 'PhaseQuery', 'PositionQuery', 'ReadyQuery', 'StatusLoadIsFinishedQuery'].sort()
+      [
+        'AppButtonAuthorQuery',
+        'HasUnreadQuery',
+        'OpenQuery',
+        'PhaseQuery',
+        'PositionQuery',
+        'ReadyQuery',
+        'StatusLoadIsFinishedQuery'
+      ].sort()
     )
     expect(Object.keys(fixture.domain.command).sort()).toEqual(
       [
@@ -253,15 +291,15 @@ describe('AppStatus shared domain status', () => {
     expect(Object.keys(fixture.domain.event)).toEqual(['RetryRequestedEvent'])
   })
 
-  it('hydrates the three shared fields without writing them back', async () => {
+  it('hydrates the four shared fields without writing them back', async () => {
     const shared = createSharedStatusStorage({ open: true, unread: false, position: { x: -84, y: 36 } })
     const fixture = createFixture({ storage: shared.createTab('A') })
 
     await vi.waitFor(() => expect(fixture.store.query(fixture.domain.query.StatusLoadIsFinishedQuery())).toBe(true))
 
     expect(statusOf(fixture)).toEqual({ open: true, unread: false, position: { x: -84, y: 36 } })
-    expect(fixture.get).toHaveBeenCalledTimes(3)
-    expect(fixture.watch).toHaveBeenCalledTimes(3)
+    expect(fixture.get).toHaveBeenCalledTimes(4)
+    expect(fixture.watch).toHaveBeenCalledTimes(4)
     expect(shared.writes).toEqual([])
   })
 
@@ -269,12 +307,14 @@ describe('AppStatus shared domain status', () => {
     const openRead = deferred<boolean | null>()
     const positionRead = deferred<AppButtonPosition | null>()
     const unreadRead = deferred<boolean | null>()
+    const messageAuthorRead = deferred<AppButtonAuthorStatus | null>()
     const writes: Array<{ key: string; value: StorageValue }> = []
     const storage: Storage = {
       get: <Value extends StorageValue>(key: string) => {
         if (key === APP_OPEN_STORAGE_KEY) return openRead.promise as Promise<Value | null>
         if (key === APP_POSITION_STORAGE_KEY) return positionRead.promise as Promise<Value | null>
-        return unreadRead.promise as Promise<Value | null>
+        if (key === APP_UNREAD_STORAGE_KEY) return unreadRead.promise as Promise<Value | null>
+        return messageAuthorRead.promise as Promise<Value | null>
       },
       set: async (key, value) => {
         writes.push({ key, value })
@@ -283,13 +323,19 @@ describe('AppStatus shared domain status', () => {
     }
     const fixture = createFixture({ storage })
 
-    await vi.waitFor(() => expect(fixture.get).toHaveBeenCalledTimes(3))
+    await vi.waitFor(() => expect(fixture.get).toHaveBeenCalledTimes(4))
     fixture.store.send(fixture.domain.command.UpdatePositionCommand({ x: -220, y: 48 }))
     fixture.store.send(fixture.domain.command.UpdateOpenCommand(true))
-    await vi.waitFor(() => expect(writes).toHaveLength(3))
+    await vi.waitFor(() => expect(writes).toHaveLength(4))
 
     positionRead.resolve({ x: 90, y: 20 })
     unreadRead.resolve(true)
+    messageAuthorRead.resolve({
+      revision: 7,
+      messageId: 'stored-author',
+      author: OTHER,
+      deadline: null
+    })
     openRead.resolve(false)
     await vi.waitFor(() => expect(fixture.store.query(fixture.domain.query.StatusLoadIsFinishedQuery())).toBe(true))
     await settle()
@@ -299,10 +345,14 @@ describe('AppStatus shared domain status', () => {
       expect.arrayContaining([
         { key: APP_POSITION_STORAGE_KEY, value: { x: -220, y: 48 } },
         { key: APP_OPEN_STORAGE_KEY, value: true },
-        { key: APP_UNREAD_STORAGE_KEY, value: false }
+        { key: APP_UNREAD_STORAGE_KEY, value: false },
+        {
+          key: APP_MESSAGE_AUTHOR_STORAGE_KEY,
+          value: expect.objectContaining({ author: null, deadline: null })
+        }
       ])
     )
-    expect(writes).toHaveLength(3)
+    expect(writes).toHaveLength(4)
   })
 
   it('writes only the addressed fields and synchronizes position without clobbering status', async () => {
@@ -320,7 +370,7 @@ describe('AppStatus shared domain status', () => {
     tabs.C.store.send(tabs.C.domain.command.UpdateOpenCommand(true))
     await vi.waitFor(() => expect(statusOf(tabs.A)).toMatchObject({ open: true, unread: false }))
     expect(domainA.writes.map(({ key }) => key).toSorted()).toEqual(
-      [APP_OPEN_STORAGE_KEY, APP_UNREAD_STORAGE_KEY].toSorted()
+      [APP_MESSAGE_AUTHOR_STORAGE_KEY, APP_OPEN_STORAGE_KEY, APP_UNREAD_STORAGE_KEY].toSorted()
     )
     expect(domainA.value(APP_POSITION_STORAGE_KEY)).toEqual({ x: 64, y: 24 })
 
@@ -354,8 +404,157 @@ describe('AppStatus shared domain status', () => {
         { open: false, unread: true, position: { x: 50, y: 22 } }
       ])
       expect(statusOf(tabs.D)).toEqual({ open: false, unread: false, position: { x: 50, y: 22 } })
+      expect([authorOf(tabs.A), authorOf(tabs.B), authorOf(tabs.C)]).toEqual([OTHER, OTHER, OTHER])
+      expect(authorOf(tabs.D)).toBeNull()
     }
   )
+
+  it('keeps only the newest expanded author through exact superseding one-second lifetimes', async () => {
+    const shared = createSharedStatusStorage({ open: true, unread: false, position: { x: 50, y: 22 } })
+    const fixture = createFixture({ storage: shared.createTab('A') })
+    await prepareDelivery(fixture)
+    vi.useFakeTimers()
+
+    fixture.emitMessage(textMessage('alpha-1', ALPHA.id))
+    expect(authorOf(fixture)).toEqual(ALPHA)
+    expect(statusOf(fixture).unread).toBe(false)
+
+    await vi.advanceTimersByTimeAsync(600)
+    fixture.emitMessage(textMessage('beta-1', BETA.id))
+    expect(authorOf(fixture)).toEqual(BETA)
+
+    await vi.advanceTimersByTimeAsync(400)
+    expect(authorOf(fixture)).toEqual(BETA)
+    await vi.advanceTimersByTimeAsync(500)
+    fixture.emitMessage(textMessage('beta-2', BETA.id))
+
+    await vi.advanceTimersByTimeAsync(100)
+    expect(authorOf(fixture)).toEqual(BETA)
+    await vi.advanceTimersByTimeAsync(899)
+    expect(authorOf(fixture)).toEqual(BETA)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(authorOf(fixture)).toBeNull()
+    expect(statusOf(fixture).unread).toBe(false)
+  })
+
+  it('persists the latest collapsed author until opening and clears an expanded transient on collapse', async () => {
+    const shared = createSharedStatusStorage({ open: false, unread: false, position: { x: 50, y: 22 } })
+    const fixture = createFixture({ storage: shared.createTab('A') })
+    await prepareDelivery(fixture)
+    vi.useFakeTimers()
+
+    fixture.emitMessage(textMessage('alpha-collapsed', ALPHA.id))
+    fixture.emitMessage(textMessage('beta-collapsed', BETA.id))
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(statusOf(fixture).unread).toBe(true)
+    expect(authorOf(fixture)).toEqual(BETA)
+
+    fixture.store.send(fixture.domain.command.UpdateOpenCommand(true))
+    expect(statusOf(fixture)).toMatchObject({ open: true, unread: false })
+    expect(authorOf(fixture)).toBeNull()
+
+    fixture.emitMessage(textMessage('alpha-expanded', ALPHA.id))
+    expect(authorOf(fixture)).toEqual(ALPHA)
+    await vi.advanceTimersByTimeAsync(300)
+    fixture.store.send(fixture.domain.command.UpdateOpenCommand(false))
+    expect(statusOf(fixture)).toMatchObject({ open: false, unread: false })
+    expect(authorOf(fixture)).toBeNull()
+
+    fixture.emitMessage(textMessage('beta-after-collapse', BETA.id))
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(authorOf(fixture)).toEqual(BETA)
+    expect(statusOf(fixture).unread).toBe(true)
+  })
+
+  it('repairs an older synchronized generation without replacing the current author', async () => {
+    const shared = createSharedStatusStorage({ open: false, unread: false, position: { x: 50, y: 22 } })
+    const fixture = createFixture({ storage: shared.createTab('A') })
+    await prepareDelivery(fixture)
+
+    fixture.emitMessage(textMessage('alpha-current', ALPHA.id))
+    await vi.waitFor(() => expect(authorOf(fixture)).toEqual(ALPHA))
+    fixture.store.send(fixture.domain.command.UpdatePositionCommand({ x: -120, y: 38 }))
+    expect(authorOf(fixture)).toEqual(ALPHA)
+
+    shared.synchronize(APP_MESSAGE_AUTHOR_STORAGE_KEY, {
+      revision: 0,
+      messageId: 'beta-older',
+      author: BETA,
+      deadline: null
+    })
+
+    await vi.waitFor(() =>
+      expect(shared.value<AppButtonAuthorStatus>(APP_MESSAGE_AUTHOR_STORAGE_KEY).author).toEqual(ALPHA)
+    )
+    expect(authorOf(fixture)).toEqual(ALPHA)
+    expect(statusOf(fixture).position).toEqual({ x: -120, y: 38 })
+  })
+
+  it('hydrates only a current author and schedules the remaining expanded lifetime', async () => {
+    vi.useFakeTimers()
+    const deadline = Date.now() + 1_000
+    const shared = createSharedStatusStorage({
+      open: true,
+      unread: false,
+      position: { x: 50, y: 22 },
+      messageAuthor: {
+        revision: 4,
+        messageId: 'alpha-live',
+        author: ALPHA,
+        deadline
+      }
+    })
+    const fixture = createFixture({ storage: shared.createTab('A') })
+
+    await vi.waitFor(() => expect(fixture.store.query(fixture.domain.query.StatusLoadIsFinishedQuery())).toBe(true))
+    expect(authorOf(fixture)).toEqual(ALPHA)
+    const remaining = deadline - Date.now()
+    await vi.advanceTimersByTimeAsync(remaining - 1)
+    expect(authorOf(fixture)).toEqual(ALPHA)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(authorOf(fixture)).toBeNull()
+
+    const expired = createSharedStatusStorage({
+      open: true,
+      unread: false,
+      position: { x: 50, y: 22 },
+      messageAuthor: {
+        revision: 8,
+        messageId: 'expired',
+        author: BETA,
+        deadline: Date.now() - 1_000
+      }
+    })
+    const expiredFixture = createFixture({ storage: expired.createTab('expired') })
+    await vi.waitFor(() =>
+      expect(expiredFixture.store.query(expiredFixture.domain.query.StatusLoadIsFinishedQuery())).toBe(true)
+    )
+    expect(authorOf(expiredFixture)).toBeNull()
+    await vi.waitFor(() =>
+      expect(expired.value<AppButtonAuthorStatus>(APP_MESSAGE_AUTHOR_STORAGE_KEY).author).toBeNull()
+    )
+
+    const collapsed = createSharedStatusStorage({
+      open: false,
+      unread: true,
+      position: { x: 50, y: 22 },
+      messageAuthor: {
+        revision: 11,
+        messageId: 'beta-unread',
+        author: BETA,
+        deadline: null
+      }
+    })
+    const collapsedFixture = createFixture({ storage: collapsed.createTab('collapsed') })
+    await vi.waitFor(() =>
+      expect(collapsedFixture.store.query(collapsedFixture.domain.query.StatusLoadIsFinishedQuery())).toBe(true)
+    )
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(authorOf(collapsedFixture)).toEqual(BETA)
+    collapsedFixture.store.send(collapsedFixture.domain.command.UpdateOpenCommand(true))
+    expect(authorOf(collapsedFixture)).toBeNull()
+    expect(statusOf(collapsedFixture).unread).toBe(false)
+  })
 
   it('opens and reads the domain, keeps expanded delivery read, then synchronizes collapse and later unread', async () => {
     const domainA = createSharedStatusStorage({ open: false, unread: false, position: { x: 50, y: 22 } })
@@ -381,8 +580,8 @@ describe('AppStatus shared domain status', () => {
 
     domainA.clearWrites()
     tabs.A.emitMessage(textMessage('expanded-delivery', OTHER.id))
-    await settle()
-    expect(domainA.writes).toEqual([])
+    await vi.waitFor(() => expect(authorOf(tabs.C)).toEqual(OTHER))
+    expect(domainA.writes.map(({ key }) => key)).toEqual([APP_MESSAGE_AUTHOR_STORAGE_KEY])
     expect(
       [statusOf(tabs.A), statusOf(tabs.B), statusOf(tabs.C)].every((status) => status.open && !status.unread)
     ).toBe(true)
@@ -392,6 +591,7 @@ describe('AppStatus shared domain status', () => {
     expect(
       [statusOf(tabs.A), statusOf(tabs.B), statusOf(tabs.C)].every((status) => !status.open && !status.unread)
     ).toBe(true)
+    expect([authorOf(tabs.A), authorOf(tabs.B), authorOf(tabs.C)]).toEqual([null, null, null])
 
     tabs.C.emitMessage(textMessage('domain-a-later', OTHER.id))
     await vi.waitFor(() => expect(statusOf(tabs.A).unread).toBe(true))
@@ -425,9 +625,9 @@ describe('AppStatus shared domain status', () => {
       expect(domainA.writes.some(({ tabId, value }) => tabId !== 'B' && value === false)).toBe(true)
     })
 
-    expect(domainA.writes.map(({ key }) => key).every((key) => key === APP_UNREAD_STORAGE_KEY)).toBe(true)
-    expect(domainA.writes.some(({ tabId, value }) => tabId === 'B' && value === true)).toBe(true)
-    expect(domainA.writes.some(({ tabId, value }) => tabId !== 'B' && value === false)).toBe(true)
+    const unreadWrites = domainA.writes.filter(({ key }) => key === APP_UNREAD_STORAGE_KEY)
+    expect(unreadWrites.some(({ tabId, value }) => tabId === 'B' && value === true)).toBe(true)
+    expect(unreadWrites.some(({ tabId, value }) => tabId !== 'B' && value === false)).toBe(true)
 
     domainA.resume('B')
     await vi.waitFor(() => expect(statusOf(tabs.B)).toMatchObject({ open: true, unread: false }))
@@ -452,11 +652,13 @@ describe('AppStatus shared domain status', () => {
     await settle()
 
     expect(statusOf(fixture).unread).toBe(false)
+    expect(authorOf(fixture)).toBeNull()
     expect(shared.writes.filter(({ key }) => key === APP_UNREAD_STORAGE_KEY)).toEqual([])
 
     fixture.emitMessage(textMessage('remote-1', OTHER.id))
     fixture.emitMessage(textMessage('remote-2', OTHER.id))
     await vi.waitFor(() => expect(statusOf(fixture).unread).toBe(true))
+    expect(authorOf(fixture)).toEqual(OTHER)
     expect(shared.writes.filter(({ key }) => key === APP_UNREAD_STORAGE_KEY)).toEqual([
       { tabId: 'A', key: APP_UNREAD_STORAGE_KEY, value: true }
     ])
@@ -481,6 +683,7 @@ describe('AppStatus shared domain status', () => {
 
       fixture.emitMessage(textMessage('remote', OTHER.id))
       await vi.waitFor(() => expect(statusOf(fixture).unread).toBe(true))
+      expect(authorOf(fixture)).toEqual(OTHER)
 
       expect(hasFocus).not.toHaveBeenCalled()
       expect(tabsQuery).not.toHaveBeenCalled()
@@ -492,25 +695,28 @@ describe('AppStatus shared domain status', () => {
     const reads = {
       open: deferred<boolean | null>(),
       position: deferred<AppButtonPosition | null>(),
-      unread: deferred<boolean | null>()
+      unread: deferred<boolean | null>(),
+      messageAuthor: deferred<AppButtonAuthorStatus | null>()
     }
     const storage: Storage = {
       get: <Value extends StorageValue>(key: string) => {
         if (key === APP_OPEN_STORAGE_KEY) return reads.open.promise as Promise<Value | null>
         if (key === APP_POSITION_STORAGE_KEY) return reads.position.promise as Promise<Value | null>
-        return reads.unread.promise as Promise<Value | null>
+        if (key === APP_UNREAD_STORAGE_KEY) return reads.unread.promise as Promise<Value | null>
+        return reads.messageAuthor.promise as Promise<Value | null>
       },
       set: async () => {},
       watch: async () => async () => {}
     }
     const fixture = createFixture({ storage })
-    await vi.waitFor(() => expect(fixture.get).toHaveBeenCalledTimes(3))
+    await vi.waitFor(() => expect(fixture.get).toHaveBeenCalledTimes(4))
 
     fixture.store.discard()
     activeStores.delete(fixture.store)
     reads.open.resolve(true)
     reads.position.resolve({ x: -90, y: 44 })
     reads.unread.resolve(false)
+    reads.messageAuthor.resolve(EMPTY_MESSAGE_AUTHOR)
     await settle()
 
     expect(fixture.set).not.toHaveBeenCalled()
