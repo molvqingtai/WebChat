@@ -74,7 +74,7 @@ vi.mock('@/domain/Danmaku', () => ({
         documentIsVisible: () => boolean
       }) => {
         fixture.onDanmakuClick = onOpen
-        return `sync-danmaku-${documentIsVisible?.() === false ? 'hidden' : 'visible'}`
+        return `sync-danmaku-${documentIsVisible() === false ? 'hidden' : 'visible'}`
       },
       UnmountCommand: () => 'unmount-danmaku'
     }
