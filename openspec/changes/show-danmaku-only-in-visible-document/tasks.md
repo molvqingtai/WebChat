@@ -1,35 +1,32 @@
 ## 1. Product Authority
 
-- [x] 1.1 Define local Danmaku eligibility as the existing configuration being enabled and exact `document.visibilityState === 'visible'`.
-- [x] 1.2 Define every non-visible document state as Danmaku-disabled and require immediate clearing of all current local Danmaku.
+- [x] 1.1 Define each new Danmaku push as eligible only when the existing configuration is enabled and exact `document.visibilityState === 'visible'` at admission time.
+- [x] 1.2 Keep the existing setting and content lifecycle as the only manager lifecycle owner; visibility changes perform no mount, unmount, clear, pause, resume, or restart action.
 - [x] 1.3 Define otherwise-eligible live deliveries observed while non-visible as dropped for Danmaku with no queue or replay.
-- [x] 1.4 Define return to visibility as permitting only later new eligible deliveries while the existing setting remains authoritative.
+- [x] 1.4 Preserve every already accepted item under the existing Danmaku runtime across visibility changes and admit only later new deliveries after visibility returns.
 - [x] 1.5 Define same-domain documents as independently governed by their own local visibility without background tab/window state or cross-tab coordination.
 - [x] 1.6 Preserve message/history, panel/open, unread, notification, setting UI/persistence, Runtime, protocol, permissions, dependencies, and public APIs.
 
 ## 2. Regression Coverage
 
-- [x] 2.1 Prove initial visible plus setting-on admits one otherwise-eligible live delivery, while initial non-visible admits none.
-- [x] 2.2 Prove `visible -> hidden` immediately clears every rendered and pending Danmaku item and repeated non-visible events remain idempotent.
-- [x] 2.3 Prove deliveries observed while non-visible create no push, queue, deferred work, or later replay.
-- [x] 2.4 Prove `hidden -> visible` leaves the surface empty until one later new eligible delivery arrives.
-- [x] 2.5 Prove the setting remains authoritative across every visibility state and setting transition.
-- [x] 2.6 Prove same-domain tab A hidden and tab B visible produce no Danmaku in A and the normal one in B, without changing shared message, open, unread, or notification truth.
-- [x] 2.7 Prove content remount and disposal leave one visibility listener, one Danmaku manager lifecycle, and no stale clear or push authority.
-- [x] 2.8 Add structural controls excluding browser tab/window APIs, background coordination, persistence, protocol, permissions, new UI, and additional dependencies.
+- [ ] 2.1 Prove setting-on plus visible admits one otherwise-eligible live delivery, while non-visible admits none.
+- [ ] 2.2 Prove `visible -> hidden -> visible` does not mount, unmount, clear, pause, resume, restart, or duplicate the manager or any already accepted item.
+- [ ] 2.3 Prove deliveries observed while non-visible create no push, queue, deferred work, or later replay, while one later visible delivery is admitted once.
+- [ ] 2.4 Prove the existing setting remains the sole manager activation boundary across every visibility state and setting transition.
+- [ ] 2.5 Prove same-domain tab A hidden and tab B visible produce no new Danmaku in A and the normal one in B without changing shared message, open, unread, or notification truth.
+- [ ] 2.6 Add structural controls excluding a visibility listener/state/lifecycle owner, browser tab/window APIs, background coordination, persistence, protocol, permissions, new UI, and additional dependencies.
 
 ## 3. Minimum Implementation
 
-- [x] 3.1 Keep the existing Danmaku Domain/Extern as the sole Danmaku behavior boundary and derive one ephemeral local eligibility value from the setting and document visibility.
-- [x] 3.2 Read the initial visibility, observe `visibilitychange`, and clean up the local listener with the content document lifecycle.
-- [x] 3.3 Use the same eligibility result for manager activation/clearing and every otherwise-eligible live-message push.
-- [x] 3.4 Clear rendered and pending Danmaku immediately when eligibility becomes false and prevent old items from resuming or reappearing.
-- [x] 3.5 Admit only later new deliveries after eligibility becomes true, without history lookup, buffering, replay, timer, or cross-tab state.
-- [x] 3.6 Preserve the existing Danmaku setting and every unaffected product/runtime boundary listed in the delta specification.
+- [ ] 3.1 Keep the existing Danmaku Domain/Extern and setting-driven manager lifecycle as the sole Danmaku behavior boundary.
+- [ ] 3.2 Read exact `document.visibilityState` directly when each otherwise-eligible live delivery reaches the existing push boundary.
+- [ ] 3.3 Perform no manager or item lifecycle action when document visibility changes.
+- [ ] 3.4 Drop hidden deliveries and admit only later new visible deliveries without history lookup, buffering, replay, timer, listener, or cross-tab state.
+- [ ] 3.5 Preserve every unaffected product/runtime boundary listed in the delta specification.
 
 ## 4. Delivery Gates
 
-- [x] 4.1 Pass focused regressions, the complete source test suite, typecheck, lint, format, Chrome/Firefox production builds, strict OpenSpec validation, OpenSpec Doctor, diff, identity, and clean-worktree gates on one exact.
+- [ ] 4.1 Pass focused regressions, the complete source test suite, typecheck, lint, format, Chrome/Firefox production builds, strict OpenSpec validation, OpenSpec Doctor, diff, identity, and clean-worktree gates on one exact.
 - [ ] 4.2 Obtain fresh architecture-first Review of the complete requirement-branch diff and close every finding before publication.
 - [ ] 4.3 Publish the reviewed exact through one independent requirement branch/Draft PR based on `develop`, without mixing AppButton PR #103 or another requirement.
 - [ ] 4.4 Keep QA, QC, and UX absent unless the Owner explicitly requests one; record any performed or unavailable browser behavior verification truthfully without making it a source/CI blocker.

@@ -1,6 +1,6 @@
 ## Context
 
-Each content document owns one local Danmaku surface through the existing Danmaku Domain/Extern boundary. The existing profile setting determines whether the user permits Danmaku. The browser document supplies the only additional local fact: exact `document.visibilityState`. These two facts form one presentation eligibility value for that document.
+Each content document owns one local Danmaku surface through the existing Danmaku Domain/Extern boundary. The existing profile setting owns whether that manager exists. Exact `document.visibilityState` is needed only when a new otherwise-eligible live delivery reaches the existing push boundary; it is not manager lifecycle state.
 
 See `proposal.md` for the product motivation and `specs/webrtc-runtime/spec.md` for the observable contract.
 
@@ -8,65 +8,65 @@ See `proposal.md` for the product motivation and `specs/webrtc-runtime/spec.md` 
 
 **Goals:**
 
-- Define one local Danmaku eligibility result as `danmakuEnabled && document.visibilityState === 'visible'`.
-- Use that same result for the existing Danmaku presentation lifecycle and every live-message push so mounted state and admission cannot disagree.
-- Clear all current local Danmaku immediately when eligibility becomes false.
-- Drop live deliveries observed while eligibility is false and allow only later new deliveries after eligibility becomes true.
+- Admit each new Danmaku only when the existing setting is enabled and exact `document.visibilityState === 'visible'` at that delivery.
+- Keep the existing setting and content lifecycle as the only manager lifecycle owner.
+- Let visibility changes leave every already accepted rendered or pending item untouched by WebChat.
+- Drop live deliveries observed while non-visible and allow only later new deliveries after visibility returns.
 - Let two same-domain documents independently project their own visibility while preserving every shared Chat, AppStatus, unread, and notification fact.
-- Observe and clean up the document visibility lifecycle without adding shared or persistent state.
+- Read current document visibility directly at admission without adding a listener, state copy, lifecycle effect, or persistent fact.
 
 **Non-Goals:**
 
 - Changing the existing Danmaku setting, its Options UI, default, persistence, or eligible message classes.
 - Using browser-window focus, tab active/highlighted status, background tab APIs, tab enumeration, or cross-tab synchronization to decide Danmaku visibility.
-- Adding a Domain, Extern, coordinator, persistence key, protocol message, permission, background service, queue, replay path, timer, or dependency.
+- Adding a visibility listener, state owner, manager lifecycle branch, Domain, Extern, coordinator, persistence key, protocol message, permission, background service, queue, replay path, timer, or dependency.
 - Changing message receipt, history/list projection, panel state, unread attention, notifications, Runtime, peer protocol, or cross-domain behavior.
-- Pausing or resuming cleared Danmaku items across a visibility transition.
+- Promising how the browser or existing Danmaku library advances time while a document is hidden; WebChat only refrains from clearing, restarting, or otherwise changing accepted items because visibility changed.
 
 ## Decisions
 
-### 1. Use one exact document-local eligibility formula
+### 1. Evaluate one exact document-local admission formula
 
-The existing Danmaku application boundary owns one derived boolean for the local content document:
+The existing live-message projection evaluates one predicate for each otherwise-eligible delivery:
 
 `danmakuEnabled && document.visibilityState === 'visible'`.
 
-Strict equality means every other browser visibility state is non-visible. Browser-window focus and browser tab metadata do not participate. The value is ephemeral presentation state: it is not persisted, synchronized, sent through Runtime, or copied into an independent owner. The existing Danmaku Domain/Extern remains the only Danmaku behavior boundary.
+Strict equality means every other browser visibility state rejects that new push. Browser-window focus and browser tab metadata do not participate. The predicate is read synchronously at the existing push boundary and is not stored, observed, persisted, synchronized, sent through Runtime, or copied into an independent owner. The existing Danmaku Domain/Extern remains the only Danmaku behavior boundary.
 
-### 2. Drive lifecycle and message admission from the same result
+### 2. Keep visibility out of manager lifecycle
 
-The same derived eligibility controls both the local Danmaku surface lifecycle and every otherwise-eligible live-text push. When it is true, the existing Danmaku manager may present new eligible deliveries. When it is false, the manager presents nothing and the message path performs no Danmaku push.
+The existing setting and content application lifecycle continue to control the local Danmaku manager. While that setting is enabled, the manager remains under the same owner regardless of document visibility. A visibility transition dispatches no Danmaku command and performs no mount, unmount, clear, pause, resume, restart, or manager replacement.
 
-This single gate prevents a non-visible document from having an unmounted surface while its message effect still tries to push, and prevents a mounted surface from accepting messages under a different visibility truth. The setting remains authoritative: visibility cannot enable Danmaku when the setting is off.
+Visibility participates only when the existing live-message effect decides whether to call `push`. The setting remains authoritative: visibility cannot enable Danmaku when the setting is off. Because visibility owns no lifecycle, there is no observer/state synchronization window between a visibility event and message admission.
 
-### 3. Clear immediately when the document is not visible
+### 3. Preserve already accepted Danmaku
 
-The content document reads its initial visibility and observes its own `visibilitychange` lifecycle. A transition from eligible to ineligible clears all rendered and pending local Danmaku items in the same accepted transition. No item may remain on screen, finish its prior motion, pause for later, or reappear after the document becomes visible.
+Once a visible configured document has accepted an item through the existing manager, document visibility does not revoke that acceptance. Switching away and immediately back must not make WebChat clear, replace, restart, or duplicate the rendered or pending item.
 
-Repeated non-visible observations are idempotent. The visibility listener and Danmaku resources are disposed with the content document so remounting cannot duplicate listeners, managers, clears, or pushes.
+The existing Danmaku runtime remains responsible for its normal item timeline. If an item naturally completes while hidden, WebChat does not reconstruct it on return. If it remains current, WebChat does not remove it merely because visibility changed. Setting changes and content disposal retain their existing lifecycle behavior.
 
 ### 4. Never queue or replay hidden deliveries
 
-Eligibility is evaluated when an otherwise-eligible live delivery reaches the Danmaku projection. If the local document is non-visible at that point, the delivery produces no Danmaku item and creates no deferred work. Returning to visible does not inspect Chat history, resubmit a dropped projection, or resume an old item. Only a later new eligible delivery may appear.
+Eligibility is evaluated when an otherwise-eligible live delivery reaches the Danmaku projection. If the local document is non-visible at that point, the delivery produces no Danmaku item and creates no deferred work. Returning to visible does not inspect Chat history or resubmit a dropped projection. Only a later new eligible delivery may be pushed.
 
-A delivery accepted while visible is still removed if the document becomes non-visible before its visual lifetime finishes. A delivery observed while non-visible remains absent even when the document becomes visible afterward.
+A delivery accepted while visible retains its existing manager lifecycle even if the document becomes non-visible afterward. A different delivery observed while non-visible remains absent even when the document becomes visible afterward.
 
 ### 5. Keep same-domain documents locally independent
 
-For two same-domain tabs A and B, A's `document.visibilityState` controls only A's Danmaku surface and B's state controls only B's. If A is non-visible and B is visible while the same eligible live message reaches both, A shows nothing and B may show the message. Making A visible later does not replay that message.
+For two same-domain tabs A and B, A's `document.visibilityState` controls only whether A admits that new Danmaku, and B's state controls only whether B admits it. If A is non-visible and B is visible while the same eligible live message reaches both, A shows nothing and B may show the message. Making A visible later does not replay that message.
 
 This local decision does not modify the domain's shared message, AppStatus, open, unread, notification, or persistence truth. It therefore needs no background tab lookup, active-tab arbitration, cross-tab winner, or shared visibility owner.
 
-### 6. Verify visibility, setting, and delivery as one matrix
+### 6. Verify admission without lifecycle effects
 
-Deterministic controls cover initial visible and non-visible documents, `visible -> hidden -> visible`, repeated visibility events, setting on and off, delivery before/during/after a non-visible interval, and two same-domain documents with opposite visibility. They require immediate clear, zero hidden pushes, zero replay, one later visible push, and complete listener/resource cleanup.
+Deterministic controls cover visible and non-visible admission, `visible -> hidden -> visible` around an already accepted item, setting on and off, delivery before/during/after a non-visible interval, and two same-domain documents with opposite visibility. They require zero visibility-driven manager or item lifecycle actions, zero hidden pushes, zero replay, and one later visible push.
 
-Structural controls keep the existing Danmaku Domain/Extern as the sole behavior boundary and exclude browser tab/window APIs, background coordination, persistence, protocol, permissions, new UI, and additional dependencies.
+Structural controls keep the existing Danmaku Domain/Extern and setting-driven manager lifecycle as the sole behavior boundary and exclude a visibility listener/state/lifecycle owner, browser tab/window APIs, background coordination, persistence, protocol, permissions, new UI, and additional dependencies.
 
 ## Risks / Trade-offs
 
-- [A document becomes non-visible while Danmaku is moving] -> The current surface is cleared immediately; visual completion and resume do not outlive eligibility.
+- [A document becomes non-visible while Danmaku is moving] -> WebChat performs no lifecycle action, so switching back does not clear or restart the accepted item; its normal library/browser timeline remains unchanged.
 - [A live message arrives during a non-visible interval] -> Its Danmaku projection is dropped without a queue; the Chat message itself remains governed by the unchanged message path.
-- [The document becomes visible before an asynchronously pending cleared item would render] -> The cleared item has no retained presentation authority and cannot appear; only a later new delivery qualifies.
+- [The document becomes visible after hidden deliveries] -> Those deliveries have no retained presentation authority and cannot appear; only a later new delivery qualifies.
 - [Several same-domain tabs receive the same message] -> Each document applies its own local visibility, so only locally visible surfaces present Danmaku without cross-tab arbitration.
-- [Visibility events repeat or the content application remounts] -> Idempotent lifecycle handling and cleanup prevent duplicate listeners, managers, clears, and pushes.
+- [Visibility changes rapidly] -> No listener or lifecycle action exists to churn the manager; each new delivery reads the current document state once.
