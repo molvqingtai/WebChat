@@ -1,3 +1,24 @@
+# [2.4.0](https://github.com/molvqingtai/WebChat/compare/v2.3.0...v2.4.0) (2026-08-04)
+
+### Bug Fixes
+
+- **app-button:** settle reduced-motion identity directly ([60e4fe9](https://github.com/molvqingtai/WebChat/commit/60e4fe9458952dd56db27d970704249999badba8))
+- **app-status:** order author updates across tabs ([da63af8](https://github.com/molvqingtai/WebChat/commit/da63af882a5e0752e535da520f625fc9eb718b81))
+- **app-status:** preserve open ownership during delivery ([f5e7237](https://github.com/molvqingtai/WebChat/commit/f5e72375563e995d1ac3c67d6768248c156a363f))
+- **app-status:** use shared open order for deliveries ([659308b](https://github.com/molvqingtai/WebChat/commit/659308ba958557a6e8bf440146781e0e184b2391))
+- **content:** animate shell edge changes during opening ([72a45a3](https://github.com/molvqingtai/WebChat/commit/72a45a32746d879f95899dbe60c02974bff3585f))
+- **content:** keep preview mounted during image switches ([d69f9ed](https://github.com/molvqingtai/WebChat/commit/d69f9edc920104eb673138a88ed4163189060bc8))
+- **content:** separate shell translate ownership ([446c153](https://github.com/molvqingtai/WebChat/commit/446c153b38cb35e77847da2c2400ed04e7c1bd59))
+- **danmaku:** gate pushes by document visibility ([286ffca](https://github.com/molvqingtai/WebChat/commit/286ffca85868f4e6ad0998fdb30ecfba2596d45b))
+- **danmaku:** limit presentation to visible documents ([d078fa4](https://github.com/molvqingtai/WebChat/commit/d078fa4a9c4ae175d2e8d0784d344f80c8b99145))
+- **danmaku:** synchronize visibility eligibility ([fb50b58](https://github.com/molvqingtai/WebChat/commit/fb50b58d65dec5613647226d2a6228c7e55c195b))
+
+### Features
+
+- **app-button:** fade launcher identity changes ([4e7352c](https://github.com/molvqingtai/WebChat/commit/4e7352c8901e4c8edf31308d59b51f1e2f55759f))
+- **content:** toggle and replace image previews ([82823dd](https://github.com/molvqingtai/WebChat/commit/82823dd52422ce7427feeb6c331bdd42306e9ff3))
+- **ui:** show latest message author in launcher ([36d6924](https://github.com/molvqingtai/WebChat/commit/36d6924f25caa48ffffd64c01d821fe35e1e3698))
+
 # [2.3.0](https://github.com/molvqingtai/WebChat/compare/v2.2.0...v2.3.0) (2026-08-03)
 
 ### Bug Fixes
