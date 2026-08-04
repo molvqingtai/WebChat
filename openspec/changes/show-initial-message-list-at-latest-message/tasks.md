@@ -8,11 +8,11 @@
 ## 2. Implementation
 
 - [ ] 2.1 Retain one callback-ref-backed viewport handle in the existing MessageList/ScrollArea composition and gate Virtuoso on that handle plus `messageListLoadFinished`, without another readiness or scroll-position fact.
-- [ ] 2.2 First-mount Virtuoso with the complete canonical records, non-null `customScrollParent`, and last-item/end-aligned initial location while leaving the existing ScrollArea shell visible and unchanged.
+- [ ] 2.2 First-mount Virtuoso with the complete canonical records, non-null `customScrollParent`, and last-item/end-aligned initial location while leaving the existing ScrollArea shell visible and unchanged; for a complete history that fits within the actual viewport, use native `alignToBottom` plus one static declarative minimum used block-size equal to the actual viewport height so the latest message sits at the viewport bottom.
 - [ ] 2.3 Use the live follow callback's `isAtBottom` input directly: smooth-follow when true and perform no follow action when false.
 - [ ] 2.4 Keep the mounted list identity stable across record updates; let only actual viewport resource destruction or replacement re-enter the mount boundary, and let empty history accept its first message through normal append behavior.
 - [ ] 2.5 Add focused component and Browser Mode regressions for both readiness gates, first-frame end alignment without initial scrolling, bottom and non-bottom appends, empty and short histories, variable-height/grouped rows, and stable post-mount identity.
-- [ ] 2.6 Add structural controls excluding extra initialization/bottom state, positioning effects, timers, animation frames, imperative scroll commands, CSS hiding, data-driven remount keys, new UI, and dependency changes.
+- [ ] 2.6 Add structural controls excluding extra initialization/bottom state, positioning effects, timers, animation frames, imperative scroll commands, CSS hiding, observers, runtime height correction loops, data-driven remount keys, new UI, and dependency changes.
 
 ## 3. Verification and Delivery
 
