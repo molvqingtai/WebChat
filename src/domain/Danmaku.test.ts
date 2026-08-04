@@ -158,11 +158,13 @@ describe('DanmakuDomain consumer surface', () => {
     )
   })
 
-  it('keeps same-domain document presentation lifetimes independent', async () => {
+  it('keeps same-domain document admissions independent without changing either lifecycle', async () => {
     const hiddenDocument = createFixture(true)
     const visibleDocument = createFixture(true)
     fixtures.push(hiddenDocument, visibleDocument)
+    hiddenDocument.mount()
     visibleDocument.mount()
+    hiddenDocument.setDocumentIsVisible(false)
 
     hiddenDocument.emitMessage('shared-message')
     visibleDocument.emitMessage('shared-message')
@@ -172,60 +174,61 @@ describe('DanmakuDomain consumer surface', () => {
     expect(visibleDocument.push).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ id: 'shared-message', userId: MESSAGE.userId, author: REMOTE })
     )
+    expect(hiddenDocument.mountExtern).toHaveBeenCalledOnce()
+    expect(hiddenDocument.unmountExtern).not.toHaveBeenCalled()
+    expect(visibleDocument.mountExtern).toHaveBeenCalledOnce()
+    expect(visibleDocument.unmountExtern).not.toHaveBeenCalled()
   })
 
-  it('rejects a delivery after visibility becomes ineligible but before passive lifecycle sync', async () => {
+  it('gates only new admissions while preserving the mounted lifetime across visibility changes', async () => {
     const fixture = createFixture(true)
     fixtures.push(fixture)
     fixture.mount()
-    fixture.mountExtern.mockClear()
+
+    fixture.emitMessage('visible-before-switch')
+    await settle()
+    expect(fixture.push).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ id: 'visible-before-switch', userId: MESSAGE.userId, author: REMOTE })
+    )
 
     fixture.setDocumentIsVisible(false)
-    fixture.emitMessage('hidden-before-effect')
+    fixture.emitMessage('hidden-delivery')
     await settle()
 
-    expect(fixture.unmountExtern).toHaveBeenCalledOnce()
-    expect(fixture.push).not.toHaveBeenCalled()
-  })
-
-  it('admits a delivery after visibility becomes eligible but before passive lifecycle sync', async () => {
-    const fixture = createFixture(true)
-    fixtures.push(fixture)
-    fixture.setDocumentIsVisible(false)
-    fixture.mount()
-
-    expect(fixture.mountExtern).not.toHaveBeenCalled()
-
     fixture.setDocumentIsVisible(true)
-    fixture.emitMessage('visible-before-effect')
+    expect(fixture.push).toHaveBeenCalledTimes(1)
+    fixture.emitMessage('visible-after-switch')
     await settle()
 
     expect(fixture.mountExtern).toHaveBeenCalledOnce()
-    expect(fixture.push).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ id: 'visible-before-effect', userId: MESSAGE.userId, author: REMOTE })
+    expect(fixture.unmountExtern).not.toHaveBeenCalled()
+    expect(fixture.push).toHaveBeenCalledTimes(2)
+    expect(fixture.push).toHaveBeenLastCalledWith(
+      expect.objectContaining({ id: 'visible-after-switch', userId: MESSAGE.userId, author: REMOTE })
     )
   })
 
-  it('reconciles setting changes synchronously through the same delivery eligibility', async () => {
+  it('keeps setting eligibility at admission without creating a second lifecycle owner', async () => {
     const fixture = createFixture(true)
     fixtures.push(fixture)
     fixture.mount()
-    fixture.mountExtern.mockClear()
 
     fixture.setDanmakuEnabled(false)
-    expect(fixture.unmountExtern).toHaveBeenCalledOnce()
+    expect(fixture.mountExtern).toHaveBeenCalledOnce()
+    expect(fixture.unmountExtern).not.toHaveBeenCalled()
 
-    fixture.emitMessage('disabled-before-effect')
+    fixture.emitMessage('disabled-delivery')
     await settle()
     expect(fixture.push).not.toHaveBeenCalled()
 
     fixture.setDanmakuEnabled(true)
     expect(fixture.mountExtern).toHaveBeenCalledOnce()
+    expect(fixture.unmountExtern).not.toHaveBeenCalled()
 
-    fixture.emitMessage('enabled-before-effect')
+    fixture.emitMessage('enabled-delivery')
     await settle()
     expect(fixture.push).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ id: 'enabled-before-effect', userId: MESSAGE.userId, author: REMOTE })
+      expect.objectContaining({ id: 'enabled-delivery', userId: MESSAGE.userId, author: REMOTE })
     )
   })
 })

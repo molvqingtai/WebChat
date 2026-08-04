@@ -43,6 +43,7 @@ const App = () => {
   const chatRoomJoinIsFinished = useRemeshQuery(chatRoomDomain.query.JoinIsFinishedQuery())
   const worldRoomJoinIsFinished = useRemeshQuery(worldRoomDomain.query.JoinIsFinishedQuery())
   const userInfo = useRemeshQuery(userInfoDomain.query.UserInfoQuery())
+  const danmakuIsEnabled = userInfo?.danmakuEnabled ?? false
   const danmakuContainerRef = useRef<HTMLDivElement>(null)
   const mediaPreviewRef = useRef<MediaPreviewHandle>(null)
   const openMediaPreview = useCallback((request: MediaPreviewRequest) => mediaPreviewRef.current?.open(request), [])
@@ -60,22 +61,19 @@ const App = () => {
   }, [initializationReady, chatRoomJoinIsFinished, worldRoomJoinIsFinished, send, worldRoomDomain.command])
 
   useEffect(() => {
-    const binding = {
-      container: danmakuContainerRef.current!,
-      onOpen: () => send(appStatusDomain.command.UpdateOpenCommand(true)),
-      documentIsVisible: getDocumentIsVisible
+    if (danmakuIsEnabled) {
+      send(
+        danmakuDomain.command.MountCommand({
+          container: danmakuContainerRef.current!,
+          onOpen: () => send(appStatusDomain.command.UpdateOpenCommand(true)),
+          documentIsVisible: getDocumentIsVisible
+        })
+      )
     }
-    const syncDanmaku = () => {
-      send(danmakuDomain.command.MountCommand(binding))
-    }
-
-    syncDanmaku()
-    document.addEventListener('visibilitychange', syncDanmaku)
     return () => {
-      document.removeEventListener('visibilitychange', syncDanmaku)
-      send(danmakuDomain.command.UnmountCommand())
+      if (danmakuIsEnabled) send(danmakuDomain.command.UnmountCommand())
     }
-  }, [send, appStatusDomain.command, danmakuDomain.command])
+  }, [danmakuIsEnabled, send, appStatusDomain.command, danmakuDomain.command])
 
   const notUserInfo = userInfoLoadFinished && !userInfoSetFinished
   const themeMode =

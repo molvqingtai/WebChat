@@ -1,12 +1,13 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
-import { act, cleanup, render, screen } from '@testing-library/react'
+import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const fixture = vi.hoisted(() => ({
   ready: false,
   danmakuEnabled: false,
   visibilityState: 'visible' as DocumentVisibilityState,
+  documentIsVisible: null as null | (() => boolean),
   onDanmakuClick: null as null | (() => void),
   send: vi.fn()
 }))
@@ -74,7 +75,8 @@ vi.mock('@/domain/Danmaku', () => ({
         documentIsVisible: () => boolean
       }) => {
         fixture.onDanmakuClick = onOpen
-        return `sync-danmaku-${documentIsVisible() === false ? 'hidden' : 'visible'}`
+        fixture.documentIsVisible = documentIsVisible
+        return 'mount-danmaku'
       },
       UnmountCommand: () => 'unmount-danmaku'
     }
@@ -115,15 +117,11 @@ afterEach(() => {
   fixture.ready = false
   fixture.danmakuEnabled = false
   fixture.visibilityState = 'visible'
+  fixture.documentIsVisible = null
   fixture.onDanmakuClick = null
   fixture.send.mockClear()
   vi.restoreAllMocks()
 })
-
-const setDocumentVisibility = (visibilityState: DocumentVisibilityState) => {
-  fixture.visibilityState = visibilityState
-  act(() => document.dispatchEvent(new Event('visibilitychange')))
-}
 
 describe('normal App composition', () => {
   it('keeps one business tree and Toaster before and after initialization readiness', () => {
@@ -163,45 +161,53 @@ describe('normal App composition', () => {
     expect(fixture.send).toHaveBeenCalledExactlyOnceWith('update-open-true')
   })
 
-  it('synchronously reports local document visibility through one persistent Danmaku binding', () => {
+  it('reads local visibility through the binding without making visibility a lifecycle owner', () => {
+    const addEventListener = vi.spyOn(document, 'addEventListener')
+    const removeEventListener = vi.spyOn(document, 'removeEventListener')
     fixture.danmakuEnabled = true
     fixture.visibilityState = 'hidden'
     const view = render(<App />)
 
-    expect(fixture.send).toHaveBeenCalledExactlyOnceWith('sync-danmaku-hidden')
+    expect(fixture.send).toHaveBeenCalledExactlyOnceWith('mount-danmaku')
+    expect(fixture.documentIsVisible?.()).toBe(false)
+    expect(addEventListener).not.toHaveBeenCalledWith('visibilitychange', expect.any(Function))
 
-    setDocumentVisibility('visible')
-    expect(fixture.send).toHaveBeenNthCalledWith(2, 'sync-danmaku-visible')
+    fixture.visibilityState = 'visible'
+    document.dispatchEvent(new Event('visibilitychange'))
 
-    setDocumentVisibility('hidden')
-    expect(fixture.send).toHaveBeenNthCalledWith(3, 'sync-danmaku-hidden')
+    expect(fixture.documentIsVisible?.()).toBe(true)
+    expect(fixture.send).toHaveBeenCalledTimes(1)
 
     view.unmount()
-    expect(fixture.send).toHaveBeenNthCalledWith(4, 'unmount-danmaku')
+    expect(fixture.send).toHaveBeenNthCalledWith(2, 'unmount-danmaku')
+    expect(removeEventListener).not.toHaveBeenCalledWith('visibilitychange', expect.any(Function))
   })
 
-  it('removes each document visibility subscription when its App is disposed', () => {
-    const addEventListener = vi.spyOn(document, 'addEventListener')
-    const removeEventListener = vi.spyOn(document, 'removeEventListener')
+  it('keeps the existing setting as the sole manager lifecycle owner', () => {
+    const view = render(<App />)
+    expect(fixture.send).not.toHaveBeenCalled()
 
-    const first = render(<App />)
-    const firstListener = addEventListener.mock.calls.find(([type]) => type === 'visibilitychange')?.[1]
-    expect(firstListener).toEqual(expect.any(Function))
-    first.unmount()
-    expect(removeEventListener).toHaveBeenCalledWith('visibilitychange', firstListener)
+    fixture.danmakuEnabled = true
+    view.rerender(<App />)
+    expect(fixture.send).toHaveBeenCalledExactlyOnceWith('mount-danmaku')
 
-    const second = render(<App />)
-    const visibilityListeners = addEventListener.mock.calls.filter(([type]) => type === 'visibilitychange')
-    const secondListener = visibilityListeners.at(-1)?.[1]
-    expect(secondListener).toEqual(expect.any(Function))
-    second.unmount()
-    expect(removeEventListener).toHaveBeenCalledWith('visibilitychange', secondListener)
+    fixture.visibilityState = 'hidden'
+    document.dispatchEvent(new Event('visibilitychange'))
+    fixture.visibilityState = 'visible'
+    document.dispatchEvent(new Event('visibilitychange'))
+    expect(fixture.send).toHaveBeenCalledTimes(1)
+
+    fixture.danmakuEnabled = false
+    view.rerender(<App />)
+    expect(fixture.send).toHaveBeenNthCalledWith(2, 'unmount-danmaku')
   })
 
   it('keeps visibility eligibility local to the content document', () => {
     const source = readFileSync(path.resolve(process.cwd(), 'src/app/content/App.tsx'), 'utf8')
 
     expect(source).toContain("document.visibilityState === 'visible'")
+    expect(source).not.toContain("addEventListener('visibilitychange'")
+    expect(source).not.toContain("removeEventListener('visibilitychange'")
     expect(source).not.toMatch(/\b(?:browser|chrome)\.(?:tabs|windows)\b/)
   })
 })
