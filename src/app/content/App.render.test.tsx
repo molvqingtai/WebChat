@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 const fixture = vi.hoisted(() => ({
   ready: false,
   danmakuEnabled: false,
+  danmakuMountKeys: [] as string[],
   onDanmakuClick: null as null | (() => void),
   send: vi.fn()
 }))
@@ -62,8 +63,9 @@ vi.mock('@/domain/MessageList', () => ({
 vi.mock('@/domain/Danmaku', () => ({
   default: () => ({
     command: {
-      MountCommand: ({ onOpen }: { container: HTMLElement; onOpen: () => void }) => {
-        fixture.onDanmakuClick = onOpen
+      MountCommand: (binding: { container: HTMLElement; onOpen: () => void }) => {
+        fixture.onDanmakuClick = binding.onOpen
+        fixture.danmakuMountKeys = Object.keys(binding).sort()
         return 'mount-danmaku'
       },
       UnmountCommand: () => 'unmount-danmaku'
@@ -100,8 +102,10 @@ afterEach(() => {
   cleanup()
   fixture.ready = false
   fixture.danmakuEnabled = false
+  fixture.danmakuMountKeys = []
   fixture.onDanmakuClick = null
   fixture.send.mockClear()
+  vi.restoreAllMocks()
 })
 
 describe('normal App composition', () => {
@@ -140,5 +144,41 @@ describe('normal App composition', () => {
     fixture.onDanmakuClick!()
 
     expect(fixture.send).toHaveBeenCalledExactlyOnceWith('update-open-true')
+  })
+
+  it('keeps the Danmaku mount interface visibility-free', () => {
+    const addEventListener = vi.spyOn(document, 'addEventListener')
+    const removeEventListener = vi.spyOn(document, 'removeEventListener')
+    fixture.danmakuEnabled = true
+    const view = render(<App />)
+
+    expect(fixture.send).toHaveBeenCalledExactlyOnceWith('mount-danmaku')
+    expect(fixture.danmakuMountKeys).toEqual(['container', 'onOpen'])
+    expect(addEventListener).not.toHaveBeenCalledWith('visibilitychange', expect.any(Function))
+
+    document.dispatchEvent(new Event('visibilitychange'))
+
+    expect(fixture.send).toHaveBeenCalledTimes(1)
+
+    view.unmount()
+    expect(fixture.send).toHaveBeenNthCalledWith(2, 'unmount-danmaku')
+    expect(removeEventListener).not.toHaveBeenCalledWith('visibilitychange', expect.any(Function))
+  })
+
+  it('keeps the existing setting as the sole manager lifecycle owner', () => {
+    const view = render(<App />)
+    expect(fixture.send).not.toHaveBeenCalled()
+
+    fixture.danmakuEnabled = true
+    view.rerender(<App />)
+    expect(fixture.send).toHaveBeenCalledExactlyOnceWith('mount-danmaku')
+
+    document.dispatchEvent(new Event('visibilitychange'))
+    document.dispatchEvent(new Event('visibilitychange'))
+    expect(fixture.send).toHaveBeenCalledTimes(1)
+
+    fixture.danmakuEnabled = false
+    view.rerender(<App />)
+    expect(fixture.send).toHaveBeenNthCalledWith(2, 'unmount-danmaku')
   })
 })

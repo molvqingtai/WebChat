@@ -64,6 +64,8 @@ vi.mock('remesh-react', async () => {
           return state.open
         case 'app-position':
           return state.position
+        case 'app-message-author':
+          return null
         case 'initialization-ready':
           return state.ready
         case 'app-phase':
@@ -84,6 +86,7 @@ vi.mock('@/domain/AppStatus', () => ({
       OpenQuery: () => 'app-open',
       PositionQuery: () => 'app-position',
       HasUnreadQuery: () => 'app-unread',
+      AppButtonAuthorQuery: () => 'app-message-author',
       PhaseQuery: () => 'app-phase',
       ReadyQuery: () => 'initialization-ready'
     },
@@ -143,6 +146,7 @@ vi.mock('date-fns', () => ({ getDay: () => 0 }))
 vi.mock('@/assets/images/logo-0.svg', () => ({ default: () => <svg aria-hidden="true" /> }))
 vi.mock('@/utils', () => ({
   checkDarkMode: () => false,
+  safeUrl: (value: string) => value,
   clamp: (value: number, minimum: number, maximum: number) => Math.min(maximum, Math.max(minimum, value)),
   isInRange: (value: number, minimum: number, maximum: number) => value >= minimum && value <= maximum,
   cn: (...values: Array<string | Record<string, boolean> | undefined>) =>
@@ -290,6 +294,7 @@ describe('App browser ancestry', () => {
 
     await vi.waitFor(() => expect(getPanel()?.getBoundingClientRect().left).toBeCloseTo(200, 1))
     await vi.waitFor(() => expect(Number.parseFloat(getComputedStyle(getPanel()!).opacity)).toBeCloseTo(1, 3))
+    getPanel()!.style.transitionDuration = '0s'
     getLauncher().click()
     fixture.synchronizePosition({ x: 200, y: 100 })
 
@@ -337,6 +342,7 @@ describe('App browser ancestry', () => {
     await page.viewport(1000, 800)
     await render(<App />)
     await vi.waitFor(() => expect(Number.parseFloat(getComputedStyle(getPanel()!).opacity)).toBeCloseTo(1, 3))
+    getPanel()!.style.transitionDuration = '0s'
 
     await openHandControl()
 

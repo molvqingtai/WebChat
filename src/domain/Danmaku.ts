@@ -1,15 +1,15 @@
 import { Remesh } from 'remesh'
 import { DanmakuExtern } from './externs/Danmaku'
 import ChatRoomDomain from '@/domain/ChatRoom'
-import UserInfoDomain from './UserInfo'
+import UserInfoDomain from '@/domain/UserInfo'
 import { map, merge } from 'rxjs'
 
 const DanmakuDomain = Remesh.domain({
   name: 'DanmakuDomain',
   impl: (domain) => {
     const danmakuExtern = domain.getExtern(DanmakuExtern)
-    const userInfoDomain = domain.getDomain(UserInfoDomain())
     const chatRoomDomain = domain.getDomain(ChatRoomDomain())
+    const userInfoDomain = domain.getDomain(UserInfoDomain())
 
     const MountCommand = domain.command({
       name: 'Danmaku.MountCommand',
@@ -36,7 +36,7 @@ const DanmakuDomain = Remesh.domain({
         const onMessage$ = merge(sendTextMessage$, onTextMessage$).pipe(
           map((message) => {
             const danmakuEnabled = get(userInfoDomain.query.UserInfoQuery())?.danmakuEnabled ?? false
-            if (danmakuEnabled) danmakuExtern.push(message)
+            if (danmakuEnabled && document.visibilityState === 'visible') danmakuExtern.push(message)
             return null
           })
         )

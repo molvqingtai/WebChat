@@ -2,9 +2,14 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Remesh } from 'remesh'
 import { RemeshRoot, RemeshScope, useRemeshDomain, useRemeshQuery, useRemeshSend } from 'remesh-react'
-import AppStatusDomain, { type AppStatus } from '@/domain/AppStatus'
+import AppStatusDomain, { type AppButtonAuthorStatus, type AppStatus } from '@/domain/AppStatus'
 import { startInitializationLifecycle, type InitializationDependencies } from '@/app/content/Initialization'
-import { APP_OPEN_STORAGE_KEY, APP_POSITION_STORAGE_KEY, APP_UNREAD_STORAGE_KEY } from '@/constants/storage'
+import {
+  APP_MESSAGE_AUTHOR_STORAGE_KEY,
+  APP_OPEN_STORAGE_KEY,
+  APP_POSITION_STORAGE_KEY,
+  APP_UNREAD_STORAGE_KEY
+} from '@/constants/storage'
 import { LocalStorageExtern, BrowserSyncStorageExtern, type Storage } from '@/domain/externs/Storage'
 import { ToastExtern } from '@/domain/externs/Toast'
 import { ChatRoomExtern } from '@/domain/externs/ChatRoom'
@@ -23,6 +28,13 @@ const deferred = <Value,>() => {
   return { promise, resolve, reject }
 }
 
+const EMPTY_MESSAGE_AUTHOR: AppButtonAuthorStatus = {
+  revision: 0,
+  messageId: null,
+  author: null,
+  deadline: null
+}
+
 const createStorage = (read: Promise<AppStatus | null>) => {
   const get = vi.fn(async (key: string) => {
     const status = await read
@@ -30,6 +42,7 @@ const createStorage = (read: Promise<AppStatus | null>) => {
     if (key === APP_OPEN_STORAGE_KEY) return status.open
     if (key === APP_POSITION_STORAGE_KEY) return status.position
     if (key === APP_UNREAD_STORAGE_KEY) return status.unread
+    if (key === APP_MESSAGE_AUTHOR_STORAGE_KEY) return status.messageAuthor
     return null
   })
   const set = vi.fn(async () => {})
@@ -153,7 +166,12 @@ describe('shell status and initialization independence', () => {
     await vi.waitFor(() => expect(dependencies[stage]).toHaveBeenCalledOnce())
     expect(shell().dataset.phase).toBe('connecting')
 
-    statusRead.resolve({ open: true, unread: false, position: { x: 72, y: 31 } })
+    statusRead.resolve({
+      open: true,
+      unread: false,
+      position: { x: 72, y: 31 },
+      messageAuthor: EMPTY_MESSAGE_AUTHOR
+    })
     await vi.waitFor(() => expect(shell().dataset.loaded).toBe('true'))
     expect(shell().dataset.open).toBe('true')
     expect(rendered.activateApplicationDependencies).not.toHaveBeenCalled()
@@ -173,11 +191,16 @@ describe('shell status and initialization independence', () => {
     vi.mocked(dependencies.prepareBrowserSyncStorage).mockReturnValueOnce(stageWork.promise)
     renderStatus(storage.storage, dependencies)
 
-    await vi.waitFor(() => expect(storage.get).toHaveBeenCalledTimes(3))
+    await vi.waitFor(() => expect(storage.get).toHaveBeenCalledTimes(4))
     fireEvent.click(screen.getByTestId('launcher'))
     expect(shell().dataset.open).toBe('true')
 
-    statusRead.resolve({ open: false, unread: true, position: { x: 61, y: 28 } })
+    statusRead.resolve({
+      open: false,
+      unread: true,
+      position: { x: 61, y: 28 },
+      messageAuthor: EMPTY_MESSAGE_AUTHOR
+    })
     await vi.waitFor(() => expect(shell().dataset.loaded).toBe('true'))
     expect(shell().dataset.open).toBe('true')
 
@@ -188,7 +211,14 @@ describe('shell status and initialization independence', () => {
 
   it('reuses one status read and watcher across failure, Retry, and ready activation', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
-    const storage = createStorage(Promise.resolve({ open: true, unread: false, position: { x: 70, y: 30 } }))
+    const storage = createStorage(
+      Promise.resolve({
+        open: true,
+        unread: false,
+        position: { x: 70, y: 30 },
+        messageAuthor: EMPTY_MESSAGE_AUTHOR
+      })
+    )
     const dependencies = createDependencies()
     vi.mocked(dependencies.prepareBrowserSyncStorage)
       .mockRejectedValueOnce(new Error('initial failure'))
@@ -203,8 +233,8 @@ describe('shell status and initialization independence', () => {
     await screen.findByTestId('application')
 
     expect(shell()).toBe(originalShell)
-    expect(storage.get).toHaveBeenCalledTimes(3)
-    expect(storage.watch).toHaveBeenCalledTimes(3)
+    expect(storage.get).toHaveBeenCalledTimes(4)
+    expect(storage.watch).toHaveBeenCalledTimes(4)
     expect(rendered.activateApplicationDependencies).toHaveBeenCalledOnce()
   })
 })
