@@ -8,7 +8,7 @@ import {
   useMemo
 } from 'react'
 import { SettingsIcon, MoonIcon, SunIcon, HandIcon, RefreshCwIcon } from 'lucide-react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
 
 import { useRemeshDomain, useRemeshQuery, useRemeshSend } from 'remesh-react'
 import { Button } from '@/components/ui/button'
@@ -64,8 +64,19 @@ export const AppLauncherButton: FC<AppLauncherButtonProps> = ({
   onContextMenu
 }) => {
   const DayLogo = [LogoIcon0, LogoIcon1, LogoIcon2, LogoIcon3, LogoIcon4, LogoIcon5, LogoIcon6][getDay(Date())]
-  const content = useMemo(
-    () => (
+  const reduceMotion = useReducedMotion()
+  const content = useMemo(() => {
+    const identityKey = author ? `author:${author.id}` : 'daily-logo'
+    const identity = author ? (
+      <Avatar className="absolute inset-0 z-20 size-full">
+        <AvatarImage src={author.avatar} className="size-full" alt="avatar" />
+        <AvatarFallback>{author.name.at(0)}</AvatarFallback>
+      </Avatar>
+    ) : (
+      <DayLogo className="relative z-20 size-full max-h-full max-w-full overflow-hidden"></DayLogo>
+    )
+
+    return (
       <>
         <AnimatePresence>
           {hasUnread && (
@@ -84,18 +95,28 @@ export const AppLauncherButton: FC<AppLauncherButtonProps> = ({
           )}
         </AnimatePresence>
 
-        {author ? (
-          <Avatar className="absolute inset-0 z-20 size-full">
-            <AvatarImage src={author.avatar} className="size-full" alt="avatar" />
-            <AvatarFallback>{author.name.at(0)}</AvatarFallback>
-          </Avatar>
-        ) : (
-          <DayLogo className="relative z-20 size-full max-h-full max-w-full overflow-hidden"></DayLogo>
-        )}
+        <AnimatePresence initial={false} mode="sync">
+          {reduceMotion ? (
+            <div key={identityKey} data-slot="app-launcher-identity" className="absolute inset-0 z-20">
+              {identity}
+            </div>
+          ) : (
+            <motion.div
+              key={identityKey}
+              data-slot="app-launcher-identity"
+              className="absolute inset-0 z-20"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.1 }}
+            >
+              {identity}
+            </motion.div>
+          )}
+        </AnimatePresence>
       </>
-    ),
-    [author, hasUnread, DayLogo]
-  )
+    )
+  }, [author, hasUnread, DayLogo, reduceMotion])
 
   return (
     <Button
