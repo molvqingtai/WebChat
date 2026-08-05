@@ -211,14 +211,14 @@ describe('application feedback ownership', () => {
     expect(fixture.toast.success).not.toHaveBeenCalled()
   })
 
-  it('replaces connection loading with the fixed terminal error and does not later dismiss it', async () => {
+  it('replaces connection loading with the original terminal error and does not later dismiss it', async () => {
     const fixture = createFixture()
     markReady(fixture)
     vi.mocked(fixture.chat.joinRoom).mockRejectedValueOnce(new Error('provider detail'))
 
     fixture.store.send(fixture.room.command.JoinRoomCommand())
     await vi.waitFor(() =>
-      expect(fixture.toast.error).toHaveBeenCalledWith('Connection failed', { id: RUNTIME_TOAST_ID })
+      expect(fixture.toast.error).toHaveBeenCalledWith('provider detail', { id: RUNTIME_TOAST_ID })
     )
 
     expect(fixture.toast.loading).toHaveBeenCalledWith('Connected to the chat.', {
@@ -230,7 +230,8 @@ describe('application feedback ownership', () => {
 
     const errorCount = fixture.toast.error.mock.calls.length
     fixture.emitReadiness('unavailable')
-    await vi.waitFor(() => expect(fixture.toast.error).toHaveBeenCalledTimes(errorCount + 1))
+    await flushMicrotasks()
+    expect(fixture.toast.error).toHaveBeenCalledTimes(errorCount)
     expect(fixture.toast.cancel).not.toHaveBeenCalled()
 
     fixture.emitReadiness('ready')

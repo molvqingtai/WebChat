@@ -420,9 +420,9 @@ const noticeUsers = async (stack: ApplicationStack, type: NoticeType = NOTICE_TY
   (await stack.notices()).filter((notice) => notice.notice.type === type).map((notice) => notice.user.id)
 
 const completeInterruptedRelease = async (stack: ApplicationStack, user: ChatUser) => {
-  await expect(stack.server.joinChatRoom({ domain: DOMAIN, user, site: SITE })).rejects.toThrow(
-    'Runtime completed an interrupted presence release'
-  )
+  const snapshot = await stack.server.joinChatRoom({ domain: DOMAIN, user, site: SITE })
+  expect(snapshot?.domains.find(({ domain }) => domain === DOMAIN)?.localSession?.user.id).toBe(user.id)
+  return snapshot
 }
 
 const expectFinalReleaseFence = async (
@@ -431,11 +431,10 @@ const expectFinalReleaseFence = async (
   peerId: string,
   retainedMessage: ChatMessage
 ) => {
-  const error = 'Runtime presence is completing its final release'
   const textCount = network.messageCount(peerId, MESSAGE_TYPE.TEXT)
   await expect(
     stack.server.allocateTextMessage({ domain: DOMAIN, body: 'blocked during final release', mentions: [] })
-  ).rejects.toThrow(error)
+  ).rejects.toMatchObject({ name: 'AbortError' })
   await expect(
     stack.server.allocateReactionMessage({
       domain: DOMAIN,
@@ -443,8 +442,10 @@ const expectFinalReleaseFence = async (
       reaction: 'like',
       active: true
     })
-  ).rejects.toThrow(error)
-  await expect(stack.server.sendChatMessage({ domain: DOMAIN, event: retainedMessage })).rejects.toThrow(error)
+  ).rejects.toMatchObject({ name: 'AbortError' })
+  await expect(stack.server.sendChatMessage({ domain: DOMAIN, event: retainedMessage })).rejects.toMatchObject({
+    name: 'AbortError'
+  })
   expect(network.messageCount(peerId, MESSAGE_TYPE.TEXT)).toBe(textCount)
 }
 
@@ -900,26 +901,23 @@ describe('application reconnect and durable retirement controls', () => {
     )
     const replacementUser = { id: 'pending-end-user', name: 'Pending End', avatar: '' }
     await completeInterruptedRelease(replacement, replacementUser)
-    const recoverySession = network.lastSession('pending-end-replacement') as {
+    const returnedSession = network.lastSession('pending-end-replacement') as {
       presenceId: string
       sessionId: string
     }
-    expect(recoverySession.presenceId).toBe(originalSession.presenceId)
-    expect(recoverySession.sessionId).not.toBe(originalSession.sessionId)
+    expect(returnedSession.presenceId).not.toBe(originalSession.presenceId)
+    expect(returnedSession.sessionId).not.toBe(originalSession.sessionId)
     await vi.waitFor(async () =>
       expect((await noticeUsers(observer, NOTICE_TYPE.LEAVE)).filter((id) => id === 'pending-end-user')).toHaveLength(1)
     )
     const settled = await sharedPresence.load(DOMAIN)
-    expect(settled?.local).toBeUndefined()
+    expect(settled?.local?.presenceId).toBe(returnedSession.presenceId)
     expect(settled?.inflightEnd).toBeUndefined()
     expect(settled?.pendingEnd).toBeUndefined()
     expect(settled?.settledEnd).toBeUndefined()
-    expect(network.isJoined('pending-end-replacement', getChatRoomId(DOMAIN))).toBe(false)
-    expect(network.isJoined('pending-end-replacement', getWorldRoomId())).toBe(false)
+    expect(network.isJoined('pending-end-replacement', getChatRoomId(DOMAIN))).toBe(true)
+    expect(network.isJoined('pending-end-replacement', getWorldRoomId())).toBe(true)
 
-    await replacement.join()
-    const returnedSession = network.lastSession('pending-end-replacement') as { presenceId: string }
-    expect(returnedSession.presenceId).not.toBe(originalSession.presenceId)
     await vi.waitFor(async () =>
       expect((await noticeUsers(observer)).filter((id) => id === 'pending-end-user')).toHaveLength(2)
     )
@@ -974,26 +972,23 @@ describe('application reconnect and durable retirement controls', () => {
     )
     const replacementUser = { id: 'first-inflight-user', name: 'First Inflight', avatar: '' }
     await completeInterruptedRelease(replacement, replacementUser)
-    const recoverySession = network.lastSession('first-inflight-replacement') as {
+    const returnedSession = network.lastSession('first-inflight-replacement') as {
       presenceId: string
       sessionId: string
     }
-    expect(recoverySession.presenceId).toBe(originalSession.presenceId)
-    expect(recoverySession.sessionId).not.toBe(originalSession.sessionId)
+    expect(returnedSession.presenceId).not.toBe(originalSession.presenceId)
+    expect(returnedSession.sessionId).not.toBe(originalSession.sessionId)
     await vi.waitFor(async () =>
       expect(
         (await noticeUsers(observer, NOTICE_TYPE.LEAVE)).filter((id) => id === 'first-inflight-user')
       ).toHaveLength(1)
     )
     const settled = await sharedPresence.load(DOMAIN)
-    expect(settled?.local).toBeUndefined()
+    expect(settled?.local?.presenceId).toBe(returnedSession.presenceId)
     expect(settled?.inflightEnd).toBeUndefined()
     expect(settled?.pendingEnd).toBeUndefined()
     expect(settled?.settledEnd).toBeUndefined()
 
-    await replacement.join()
-    const returnedSession = network.lastSession('first-inflight-replacement') as { presenceId: string }
-    expect(returnedSession.presenceId).not.toBe(originalSession.presenceId)
     await vi.waitFor(async () =>
       expect((await noticeUsers(observer)).filter((id) => id === 'first-inflight-user')).toHaveLength(2)
     )
@@ -1045,26 +1040,23 @@ describe('application reconnect and durable retirement controls', () => {
     )
     const replacementUser = { id: 'retry-inflight-user', name: 'Retry Inflight', avatar: '' }
     await completeInterruptedRelease(replacement, replacementUser)
-    const recoverySession = network.lastSession('retry-inflight-replacement') as {
+    const returnedSession = network.lastSession('retry-inflight-replacement') as {
       presenceId: string
       sessionId: string
     }
-    expect(recoverySession.presenceId).toBe(originalSession.presenceId)
-    expect(recoverySession.sessionId).not.toBe(originalSession.sessionId)
+    expect(returnedSession.presenceId).not.toBe(originalSession.presenceId)
+    expect(returnedSession.sessionId).not.toBe(originalSession.sessionId)
     await vi.waitFor(async () =>
       expect(
         (await noticeUsers(observer, NOTICE_TYPE.LEAVE)).filter((id) => id === 'retry-inflight-user')
       ).toHaveLength(1)
     )
     const settled = await sharedPresence.load(DOMAIN)
-    expect(settled?.local).toBeUndefined()
+    expect(settled?.local?.presenceId).toBe(returnedSession.presenceId)
     expect(settled?.inflightEnd).toBeUndefined()
     expect(settled?.pendingEnd).toBeUndefined()
     expect(settled?.settledEnd).toBeUndefined()
 
-    await replacement.join()
-    const returnedSession = network.lastSession('retry-inflight-replacement') as { presenceId: string }
-    expect(returnedSession.presenceId).not.toBe(originalSession.presenceId)
     await vi.waitFor(async () =>
       expect((await noticeUsers(observer)).filter((id) => id === 'retry-inflight-user')).toHaveLength(2)
     )
@@ -1252,7 +1244,7 @@ describe('application reconnect and durable retirement controls', () => {
       (await noticeUsers(observer, NOTICE_TYPE.LEAVE)).filter((id) => id === 'settlement-crash-user')
     ).toHaveLength(1)
     const cleaned = await durable.load(DOMAIN)
-    expect(cleaned?.local).toBeUndefined()
+    expect(cleaned?.local?.presenceId).not.toBe(originalSession.presenceId)
     expect(cleaned?.inflightEnd).toBeUndefined()
     expect(cleaned?.pendingEnd).toBeUndefined()
     expect(cleaned?.settledEnd).toBeUndefined()
@@ -1336,15 +1328,15 @@ describe('application reconnect and durable retirement controls', () => {
       name: 'Cleanup Crash',
       avatar: ''
     })
-    expect(network.messageCount('cleanup-crash-replacement', MESSAGE_TYPE.SESSION)).toBe(0)
+    expect(network.messageCount('cleanup-crash-replacement', MESSAGE_TYPE.SESSION)).toBeGreaterThan(0)
     expect(network.messageCount('cleanup-crash-replacement', MESSAGE_TYPE.SESSION_END)).toBe(0)
-    expect(network.isJoined('cleanup-crash-replacement', getChatRoomId(DOMAIN))).toBe(false)
-    expect(network.isJoined('cleanup-crash-replacement', getWorldRoomId())).toBe(false)
+    expect(network.isJoined('cleanup-crash-replacement', getChatRoomId(DOMAIN))).toBe(true)
+    expect(network.isJoined('cleanup-crash-replacement', getWorldRoomId())).toBe(true)
     const observerDomain = (await observer.server.getSnapshot()).domains.find((item) => item.domain === DOMAIN)
-    expect(observerDomain?.sessions.some((session) => session.user.id === 'cleanup-crash-user')).toBe(false)
+    expect(observerDomain?.sessions.some((session) => session.user.id === 'cleanup-crash-user')).toBe(true)
     expect((await noticeUsers(observer, NOTICE_TYPE.LEAVE)).filter((id) => id === 'cleanup-crash-user')).toHaveLength(1)
     const cleaned = await durable.load(DOMAIN)
-    expect(cleaned?.local).toBeUndefined()
+    expect(cleaned?.local?.presenceId).not.toBe(originalSession.presenceId)
     expect(cleaned?.inflightEnd).toBeUndefined()
     expect(cleaned?.pendingEnd).toBeUndefined()
     expect(cleaned?.settledEnd).toBeUndefined()

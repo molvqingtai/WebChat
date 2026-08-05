@@ -6,6 +6,12 @@ import type { RoomTransport } from '@/runtime/RoomTransport'
 /** One recoverable Artico peer per Runtime host with a stable host-lifetime peer id. */
 export const createArticoRoomTransport = (): RoomTransport => {
   const peerId = nanoid()
+  /**
+   * The signaling server rejects a peer id that its previous session still holds. That occupation is a
+   * transient stale-session window: the client closes right after this error and the close→restart path
+   * takes over the same id once the server releases it, so forwarding it would surface a self-healing state.
+   */
+  const isSignalingStaleSession = (error: Error) => error.message === 'id-taken'
   const desiredRooms = new Set<string>()
   const rooms = new Map<string, Room>()
   const readyPeers = new Map<string, Set<string>>()
@@ -85,7 +91,8 @@ export const createArticoRoomTransport = (): RoomTransport => {
       desiredRooms.forEach(joinNow)
     })
     nextPeer.on('error', (error) => {
-      if (peer === nextPeer) errorListeners.forEach((listener) => listener(error))
+      if (peer !== nextPeer || isSignalingStaleSession(error)) return
+      errorListeners.forEach((listener) => listener(error))
     })
     nextPeer.on('close', () => {
       if (disposed || peer !== nextPeer || restartTimer || desiredRooms.size === 0) return

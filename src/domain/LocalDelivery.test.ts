@@ -120,7 +120,12 @@ const createPage = (database: Database<MessageDatabaseSchema>, nextId: () => str
   const store = Remesh.store({
     externs: [
       ChatRoomExtern.impl(chat),
-      ReadinessExtern.impl({ onState: () => () => {} }),
+      ReadinessExtern.impl({
+        onState: (listener) => {
+          listener('ready')
+          return () => {}
+        }
+      }),
       MessageDatabaseExtern.impl(database),
       BrowserSyncStorageExtern.impl(storage)
     ]

@@ -195,6 +195,39 @@ describe('ArticoRoomTransport per-target isolation', () => {
     transport.dispose()
   })
 
+  it('absorbs a signaling stale-session conflict and recovers through the restart path', async () => {
+    vi.useFakeTimers()
+    const transport = createArticoRoomTransport()
+    const errors: Error[] = []
+    transport.onError((error) => errors.push(error))
+    const stalePeer = fixture.peers[0]
+
+    await transport.join('chat-v3')
+    stalePeer.emit('error', new Error('id-taken'))
+
+    expect(errors).toEqual([])
+
+    stalePeer.emit('close')
+    await vi.advanceTimersByTimeAsync(1000)
+
+    expect(fixture.peers).toHaveLength(2)
+    expect(errors).toEqual([])
+    transport.dispose()
+  })
+
+  it('still forwards a genuine signaling error', async () => {
+    const transport = createArticoRoomTransport()
+    const errors: Error[] = []
+    transport.onError((error) => errors.push(error))
+    const currentPeer = fixture.peers[0]
+
+    await transport.join('chat-v3')
+    currentPeer.emit('error', new Error('connect-error'))
+
+    expect(errors.map((error) => error.message)).toEqual(['connect-error'])
+    transport.dispose()
+  })
+
   it('cancels a queued restart when the final desired room leaves', async () => {
     vi.useFakeTimers()
     const transport = createArticoRoomTransport()

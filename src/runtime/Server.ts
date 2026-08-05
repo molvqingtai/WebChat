@@ -29,7 +29,6 @@ export interface ServerConfig {
 }
 
 const defaultClock: Clock = { now: () => Date.now() }
-const INTERRUPTED_RELEASE_COMPLETED = 'Runtime completed an interrupted presence release; join again to re-enter'
 const serverDisposers = new WeakMap<RuntimeServer, () => void>()
 
 export const disposeServer = (server: RuntimeServer) => serverDisposers.get(server)?.()
@@ -219,7 +218,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
 
   const assertLivePresence = (domain: string) => {
     if (store.query(sessionDomain.query.FinalizingPresenceQuery(domain))) {
-      throw new Error('Runtime presence is completing its final release')
+      throw new DOMException('Runtime presence is completing its final release', 'AbortError')
     }
   }
 
@@ -234,21 +233,26 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     },
     getSnapshot: async () => snapshot(),
     joinChatRoom: async (payload) => {
-      const presenceState = await acquirePresence(payload.domain, payload.user.id)
-      if (presenceState === 'settled') throw new Error(INTERRUPTED_RELEASE_COMPLETED)
-      if (presenceState === 'active' || !store.query(sessionDomain.query.DomainQuery(payload.domain))) {
+      let presenceState = await acquirePresence(payload.domain, payload.user.id)
+      if (presenceState === 'settled') {
+        presenceState = await acquirePresence(payload.domain, payload.user.id)
+      }
+      const connect = async () => {
+        if (presenceState !== 'active' && store.query(sessionDomain.query.DomainQuery(payload.domain))) return true
         const operationId = nanoid()
-        const committed = await runConnectionOperation(
+        return runConnectionOperation(
           operationId,
           connectionDomain.command.JoinDomainCommand({ operationId, ...payload }),
           () => true,
           () => false
         )
-        if (!committed) return null
       }
+      if (!(await connect())) return null
       if (presenceState === 'finalizing') {
         await completeInterruptedRelease(payload.domain)
-        throw new Error(INTERRUPTED_RELEASE_COMPLETED)
+        presenceState = await acquirePresence(payload.domain, payload.user.id)
+        if (presenceState === 'settled') presenceState = await acquirePresence(payload.domain, payload.user.id)
+        if (!(await connect())) return null
       }
       return snapshot()
     },

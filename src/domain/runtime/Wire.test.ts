@@ -105,9 +105,11 @@ const trustRoom = async (runtime: ReturnType<typeof fixture>) => {
   await joined
 }
 
-const invalidateRoom = (runtime: ReturnType<typeof fixture>, transition: 'leave' | 'close') => {
-  if (transition === 'leave') {
-    runtime.store.send(runtime.wire.command.LeaveRoomCommand(ROOM))
+const invalidateRoom = (runtime: ReturnType<typeof fixture>, transition: 'leave' | 'reconnect' | 'close') => {
+  if (transition !== 'close') {
+    runtime.store.send(
+      runtime.wire.command.LeaveRoomCommand({ roomId: ROOM, preservePending: transition === 'reconnect' })
+    )
   } else {
     runtime.close(ROOM)
   }
@@ -168,6 +170,41 @@ describe('WireDomain anti-corruption boundary', () => {
     first.resolve('first')
     await vi.waitFor(() => expect(sent).toEqual(['first', 'second']))
     expect(runtime.sent.map(({ payload }) => payload)).toEqual(['first', 'second'])
+  })
+
+  it('holds a send requested while reconnect trust is absent and completes it after rejoin', async () => {
+    const runtime = fixture()
+    await trustRoom(runtime)
+    runtime.store.send(runtime.wire.command.LeaveRoomCommand({ roomId: ROOM, preservePending: true }))
+    const sent = runtime.event(runtime.wire.event.MessageSentEvent)
+
+    runtime.store.send(runtime.wire.command.SendMessageCommand({ requestId: 'reconnect-send', roomId: ROOM, message }))
+    await Promise.resolve()
+    expect(runtime.sent).toEqual([])
+
+    await trustRoom(runtime)
+    await expect(sent).resolves.toEqual({ requestId: 'reconnect-send' })
+    expect(runtime.sent).toEqual([{ roomId: ROOM, payload: JSON.stringify(message), to: undefined }])
+  })
+
+  it('does not restart an active send when the same trusted room is joined again', async () => {
+    const pending = deferred<void>()
+    const payloads: string[] = []
+    const runtime = fixture()
+    runtime.setSend(async (_roomId, payload) => {
+      payloads.push(payload)
+      await pending.promise
+    })
+    await trustRoom(runtime)
+    const sent = runtime.event(runtime.wire.event.MessageSentEvent)
+    runtime.store.send(runtime.wire.command.SendMessageCommand({ requestId: 'active-send', roomId: ROOM, message }))
+    await vi.waitFor(() => expect(payloads).toEqual([JSON.stringify(message)]))
+
+    await trustRoom(runtime)
+    expect(payloads).toEqual([JSON.stringify(message)])
+
+    pending.resolve()
+    await expect(sent).resolves.toEqual({ requestId: 'active-send' })
   })
 
   it('accepts a later frame from the same source after its prior decode queue drains', async () => {
@@ -283,7 +320,7 @@ describe('WireDomain anti-corruption boundary', () => {
     expect(runtime.store.query(runtime.wire.query.DecodeQueuesQuery())).toEqual([])
   })
 
-  it.each(['leave', 'close'] as const)(
+  it.each(['leave', 'reconnect', 'close'] as const)(
     'drops delayed decode admitted before %s and accepts no stale fact after rejoin',
     async (transition) => {
       const decoded = deferred<unknown>()
@@ -311,8 +348,8 @@ describe('WireDomain anti-corruption boundary', () => {
     }
   )
 
-  it.each(['leave', 'close'] as const)(
-    'drops delayed encode admitted before %s without sending into the replacement room',
+  it.each(['leave', 'reconnect', 'close'] as const)(
+    'settles delayed encode across %s according to pending-send ownership',
     async (transition) => {
       const staleEncode = deferred<string>()
       const runtime = fixture({
@@ -341,14 +378,20 @@ describe('WireDomain anti-corruption boundary', () => {
       staleEncode.resolve(JSON.stringify(stale))
 
       await vi.waitFor(() => expect(sent).toContain('current-send'))
-      expect(runtime.sent.map(({ payload }) => payload)).toEqual([JSON.stringify(current)])
-      expect(sent).not.toContain('stale-send')
-      expect(failed).toContain('stale-send')
+      if (transition === 'leave') {
+        expect(runtime.sent.map(({ payload }) => payload)).toEqual([JSON.stringify(current)])
+        expect(sent).not.toContain('stale-send')
+        expect(failed).toEqual(['stale-send'])
+      } else {
+        expect(runtime.sent.map(({ payload }) => payload)).toEqual([JSON.stringify(stale), JSON.stringify(current)])
+        expect(sent).toEqual(['stale-send', 'current-send'])
+        expect(failed).toEqual([])
+      }
     }
   )
 
-  it.each(['leave', 'close'] as const)(
-    'fences provider completion admitted before %s without blocking the replacement queue',
+  it.each(['leave', 'reconnect', 'close'] as const)(
+    'settles provider completion across %s without blocking the replacement queue',
     async (transition) => {
       const staleProvider = deferred<void>()
       const providerPayloads: string[] = []
@@ -375,13 +418,18 @@ describe('WireDomain anti-corruption boundary', () => {
         runtime.wire.command.SendMessageCommand({ requestId: 'current-provider', roomId: ROOM, message: current })
       )
 
-      await vi.waitFor(() => expect(sent).toContain('current-provider'))
       staleProvider.resolve()
       await staleProvider.promise
-      await Promise.resolve()
-      expect(providerPayloads).toEqual([JSON.stringify(stale), JSON.stringify(current)])
-      expect(sent).not.toContain('stale-provider')
-      expect(failed).toContain('stale-provider')
+      await vi.waitFor(() => expect(sent).toContain('current-provider'))
+      if (transition === 'leave') {
+        expect(providerPayloads).toEqual([JSON.stringify(stale), JSON.stringify(current)])
+        expect(sent).not.toContain('stale-provider')
+        expect(failed).toEqual(['stale-provider'])
+      } else {
+        expect(providerPayloads).toEqual([JSON.stringify(stale), JSON.stringify(stale), JSON.stringify(current)])
+        expect(sent).toEqual(['stale-provider', 'current-provider'])
+        expect(failed).toEqual([])
+      }
     }
   )
 
@@ -391,7 +439,7 @@ describe('WireDomain anti-corruption boundary', () => {
     runtime.setJoin(() => pending.promise)
     const failed = runtime.event(runtime.wire.event.RoomsJoinFailedEvent)
     runtime.store.send(runtime.wire.command.JoinRoomsCommand({ requestId: 'late-join', roomIds: [ROOM] }))
-    runtime.store.send(runtime.wire.command.LeaveRoomCommand(ROOM))
+    runtime.store.send(runtime.wire.command.LeaveRoomCommand({ roomId: ROOM, preservePending: false }))
     pending.resolve()
 
     await expect(failed).resolves.toMatchObject({ requestId: 'late-join', error: new Error('Room join superseded') })

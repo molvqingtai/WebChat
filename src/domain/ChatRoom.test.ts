@@ -986,6 +986,67 @@ describe('ChatRoomDomain exact application port', () => {
     fixture.store.discard()
   })
 
+  it('holds text and reaction operations until Runtime readiness returns without publishing an error', async () => {
+    const fixture = createFixture()
+    await join(fixture)
+    const errors: Error[] = []
+    fixture.store.subscribeEvent(fixture.room.event.OnErrorEvent, (error) => errors.push(error))
+
+    fixture.emitReadiness('connecting')
+    fixture.store.send(fixture.room.command.SendTextMessageCommand('held text'))
+    await Promise.resolve()
+    expect(fixture.chat.sendMessage).not.toHaveBeenCalled()
+
+    fixture.emitReadiness('unavailable')
+    await Promise.resolve()
+    expect(fixture.chat.sendMessage).not.toHaveBeenCalled()
+
+    fixture.emitReadiness('ready')
+    await vi.waitFor(() =>
+      expect(fixture.chat.sendMessage).toHaveBeenCalledWith({ type: 'text', body: 'held text', mentions: [] })
+    )
+    await vi.waitFor(() => expect(fixture.store.query(fixture.list.query.ItemQuery('local-message'))).not.toBeNull())
+    vi.mocked(fixture.chat.sendMessage).mockClear()
+
+    fixture.emitReadiness('connecting')
+    fixture.store.send(fixture.room.command.SendReactionCommand({ messageId: 'local-message', reaction: 'like' }))
+    await Promise.resolve()
+    expect(fixture.chat.sendMessage).not.toHaveBeenCalled()
+
+    fixture.emitReadiness('ready')
+    await vi.waitFor(() =>
+      expect(fixture.chat.sendMessage).toHaveBeenCalledWith({
+        type: 'reaction',
+        targetId: 'local-message',
+        reaction: 'like',
+        active: true
+      })
+    )
+    expect(errors).toEqual([])
+    fixture.store.discard()
+  })
+
+  it('holds a send behind an in-progress page connection and completes it after the join', async () => {
+    const fixture = createFixture()
+    const joining = deferred()
+    vi.mocked(fixture.chat.joinRoom).mockReturnValueOnce(joining.promise)
+    fixture.store.send(fixture.room.command.JoinRoomCommand())
+
+    fixture.store.send(fixture.room.command.SendTextMessageCommand('during page recovery'))
+    await Promise.resolve()
+    expect(fixture.chat.sendMessage).not.toHaveBeenCalled()
+
+    joining.resolve()
+    await vi.waitFor(() =>
+      expect(fixture.chat.sendMessage).toHaveBeenCalledWith({
+        type: 'text',
+        body: 'during page recovery',
+        mentions: []
+      })
+    )
+    fixture.store.discard()
+  })
+
   it('starts the operation immediately and settles only its matching request interval', async () => {
     const reconnect = deferred()
     const fixture = createFixture()
@@ -1110,6 +1171,24 @@ describe('ChatRoomDomain exact application port', () => {
     expect(projected).toEqual([])
     expect(fixture.store.query(fixture.input.query.MessageQuery())).toBe('hello')
     await expect(fixture.records()).resolves.toEqual([])
+    fixture.store.discard()
+  })
+
+  it('completes a send cancelled by final release without publishing a room error', async () => {
+    const fixture = createFixture()
+    const errors: Error[] = []
+    fixture.store.subscribeEvent(fixture.room.event.OnErrorEvent, (error) => errors.push(error))
+    vi.mocked(fixture.chat.sendMessage).mockRejectedValueOnce(
+      new DOMException('Runtime presence is completing its final release', 'AbortError')
+    )
+    fixture.store.send(fixture.input.command.InputCommand('held by teardown'))
+
+    fixture.store.send(fixture.room.command.SendTextMessageCommand('held by teardown'))
+
+    await vi.waitFor(() => expect(fixture.chat.sendMessage).toHaveBeenCalledOnce())
+    await Promise.resolve()
+    expect(errors).toEqual([])
+    expect(fixture.store.query(fixture.input.query.MessageQuery())).toBe('held by teardown')
     fixture.store.discard()
   })
 

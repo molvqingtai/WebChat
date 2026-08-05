@@ -30,20 +30,25 @@ const AppFeedbackDomain = Remesh.domain({
     })
     const PublishRuntimeFeedbackCommand = domain.command({
       name: 'AppFeedback.PublishRuntimeFeedbackCommand',
-      impl: (_, state: Exclude<ReadinessState, 'ready'>) =>
-        state === 'connecting'
-          ? [
-              RuntimeToastTypeState().new('loading'),
-              toastDomain.command.LoadingCommand({
-                id: RUNTIME_TOAST_ID,
-                message: 'Connected to the chat.',
-                dismissible: false
-              })
-            ]
-          : [
-              RuntimeToastTypeState().new('error'),
-              toastDomain.command.ErrorCommand({ id: RUNTIME_TOAST_ID, message: 'Connection failed' })
-            ]
+      impl: ({ get }, input: { state: Exclude<ReadinessState, 'ready'>; message?: string }) =>
+        input.state === 'unavailable' && input.message === undefined && get(RuntimeToastTypeState()) === 'error'
+          ? null
+          : input.state === 'connecting'
+            ? [
+                RuntimeToastTypeState().new('loading'),
+                toastDomain.command.LoadingCommand({
+                  id: RUNTIME_TOAST_ID,
+                  message: 'Connected to the chat.',
+                  dismissible: false
+                })
+              ]
+            : [
+                RuntimeToastTypeState().new('error'),
+                toastDomain.command.ErrorCommand({
+                  id: RUNTIME_TOAST_ID,
+                  message: input.message ?? 'Connection failed'
+                })
+              ]
     })
     const DismissRuntimeLoadingCommand = domain.command({
       name: 'AppFeedback.DismissRuntimeLoadingCommand',
@@ -53,7 +58,11 @@ const AppFeedbackDomain = Remesh.domain({
           : null
     })
     const runtimeFeedbackCommand = (state: ReadinessState | null) =>
-      state === null ? null : state === 'ready' ? DismissRuntimeLoadingCommand() : PublishRuntimeFeedbackCommand(state)
+      state === null
+        ? null
+        : state === 'ready'
+          ? DismissRuntimeLoadingCommand()
+          : PublishRuntimeFeedbackCommand({ state })
 
     domain.effect({
       name: 'AppFeedback.OnRuntimeFeedbackEffect',
@@ -65,7 +74,9 @@ const AppFeedbackDomain = Remesh.domain({
       impl: ({ fromEvent, get }) =>
         fromEvent(chatRoomDomain.event.ReconnectFinishedEvent).pipe(
           map(({ error }) =>
-            error && get(RuntimeFeedbackQuery()) === 'ready' ? PublishRuntimeFeedbackCommand('unavailable') : null
+            error && get(RuntimeFeedbackQuery()) === 'ready'
+              ? PublishRuntimeFeedbackCommand({ state: 'unavailable', message: error.message })
+              : null
           )
         )
     })

@@ -1,5 +1,5 @@
 import { Remesh } from 'remesh'
-import { concatMap, filter, fromEventPattern, map, mergeMap, timer } from 'rxjs'
+import { concatMap, filter, fromEventPattern, map, mergeMap, startWith, take, timer } from 'rxjs'
 import {
   ChatRoomExtern,
   type JoinRoomCommand as JoinRoomInput,
@@ -107,6 +107,13 @@ const ChatRoomDomain = Remesh.domain({
         get(ConnectionOperationIsLoadingQuery()) ||
         get(ReconnectIsLoadingQuery()) ||
         get(readinessDomain.query.StateQuery()) === 'connecting'
+    })
+    const SendIsReadyQuery = domain.query({
+      name: 'Room.SendIsReadyQuery',
+      impl: ({ get }) =>
+        get(readinessDomain.query.StateQuery()) === 'ready' &&
+        !get(ConnectionOperationIsLoadingQuery()) &&
+        !get(ReconnectIsLoadingQuery())
     })
     const ReconnectAvailableQuery = domain.query({
       name: 'Room.ReconnectAvailableQuery',
@@ -351,53 +358,67 @@ const ChatRoomDomain = Remesh.domain({
 
     domain.effect({
       name: 'Room.SendTextEffect',
-      impl: ({ fromEvent, get }) =>
+      impl: ({ fromEvent, fromQuery, get }) =>
         fromEvent(SendTextRequestedEvent).pipe(
-          concatMap(async (command) => {
-            const user = get(userInfoDomain.query.UserInfoQuery())
-            if (!user) return OnErrorEvent(new Error('User identity is unavailable'))
-            try {
-              const message = await chatRoom.sendMessage({ type: 'text', ...command })
-              if (message.type !== MESSAGE_TYPE.TEXT || message.userId !== user.id) {
-                throw new Error('ChatRoom returned an invalid local text message')
-              }
-              const record: TextMessageRecord = {
-                type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE,
-                id: message.id,
-                message,
-                user,
-                receivedAt: Date.now()
-              }
-              return [messageInputDomain.command.ClearCommand(), SendTextMessageEvent(projectTextRecord(record))]
-            } catch (error) {
-              return OnErrorEvent(error as Error)
-            }
-          })
+          concatMap((command) =>
+            fromQuery(SendIsReadyQuery()).pipe(
+              startWith(get(SendIsReadyQuery())),
+              filter(Boolean),
+              take(1),
+              concatMap(async () => {
+                const user = get(userInfoDomain.query.UserInfoQuery())
+                if (!user) return OnErrorEvent(new Error('User identity is unavailable'))
+                try {
+                  const message = await chatRoom.sendMessage({ type: 'text', ...command })
+                  if (message.type !== MESSAGE_TYPE.TEXT || message.userId !== user.id) {
+                    throw new Error('ChatRoom returned an invalid local text message')
+                  }
+                  const record: TextMessageRecord = {
+                    type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE,
+                    id: message.id,
+                    message,
+                    user,
+                    receivedAt: Date.now()
+                  }
+                  return [messageInputDomain.command.ClearCommand(), SendTextMessageEvent(projectTextRecord(record))]
+                } catch (error) {
+                  return isOperationCancelled(error) ? null : OnErrorEvent(error as Error)
+                }
+              })
+            )
+          )
         )
     })
 
     domain.effect({
       name: 'Room.SendReactionEffect',
-      impl: ({ fromEvent, get }) =>
+      impl: ({ fromEvent, fromQuery, get }) =>
         fromEvent(SendReactionRequestedEvent).pipe(
-          concatMap(async ({ messageId, reaction }) => {
-            try {
-              const message = get(messageListDomain.query.ItemQuery(messageId))
-              const selfId = get(userInfoDomain.query.UserInfoQuery())?.id
-              if (!message || message.type !== MESSAGE_TYPE.TEXT || !selfId) return null
-              const users = reaction === REACTION_TYPE.LIKE ? message.reactions.likes : message.reactions.hates
-              const command: SendReactionInput = {
-                type: 'reaction',
-                targetId: messageId,
-                reaction,
-                active: !users.some((user) => user.id === selfId)
-              }
-              await chatRoom.sendMessage(command)
-              return null
-            } catch (error) {
-              return OnErrorEvent(error as Error)
-            }
-          })
+          concatMap(({ messageId, reaction }) =>
+            fromQuery(SendIsReadyQuery()).pipe(
+              startWith(get(SendIsReadyQuery())),
+              filter(Boolean),
+              take(1),
+              concatMap(async () => {
+                try {
+                  const message = get(messageListDomain.query.ItemQuery(messageId))
+                  const selfId = get(userInfoDomain.query.UserInfoQuery())?.id
+                  if (!message || message.type !== MESSAGE_TYPE.TEXT || !selfId) return null
+                  const users = reaction === REACTION_TYPE.LIKE ? message.reactions.likes : message.reactions.hates
+                  const command: SendReactionInput = {
+                    type: 'reaction',
+                    targetId: messageId,
+                    reaction,
+                    active: !users.some((user) => user.id === selfId)
+                  }
+                  await chatRoom.sendMessage(command)
+                  return null
+                } catch (error) {
+                  return isOperationCancelled(error) ? null : OnErrorEvent(error as Error)
+                }
+              })
+            )
+          )
         )
     })
 

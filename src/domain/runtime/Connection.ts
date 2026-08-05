@@ -282,7 +282,9 @@ const ConnectionDomain = Remesh.domain({
             user: prepared.runtime.user,
             site: prepared.runtime.site
           }),
-          ...(attempt.mode === 'reconnect' ? [wireDomain.command.LeaveRoomCommand(payload.roomId)] : []),
+          ...(attempt.mode === 'reconnect'
+            ? [wireDomain.command.LeaveRoomCommand({ roomId: payload.roomId, preservePending: true })]
+            : []),
           wireDomain.command.JoinRoomsCommand({
             requestId,
             roomIds: [payload.roomId, getWorldRoomId()]
@@ -363,10 +365,10 @@ const ConnectionDomain = Remesh.domain({
           sessionDomain.command.AbortPreparedCommand(attempt.attemptId),
           worldDomain.command.AbortStagedCommand(attempt.attemptId),
           ...(attempt.roomId && (attempt.mode !== 'join' || !committed.some((item) => item.domain === attempt.domain))
-            ? [wireDomain.command.LeaveRoomCommand(attempt.roomId)]
+            ? [wireDomain.command.LeaveRoomCommand({ roomId: attempt.roomId, preservePending: false })]
             : []),
           ...(committed.length === 0 && !hasOtherAttempt
-            ? [wireDomain.command.LeaveRoomCommand(getWorldRoomId())]
+            ? [wireDomain.command.LeaveRoomCommand({ roomId: getWorldRoomId(), preservePending: false })]
             : []),
           ...(attempt.mode === 'reconnect' ? [lifecycleDomain.command.FinishReconnectCommand(attempt.domain)] : []),
           ...(attempt.operationId
@@ -472,7 +474,7 @@ const ConnectionDomain = Remesh.domain({
         return [
           WorldRecoveryAttemptState().new(null),
           worldDomain.command.AbortRecoveryCommand(payload.requestId),
-          wireDomain.command.LeaveRoomCommand(getWorldRoomId()),
+          wireDomain.command.LeaveRoomCommand({ roomId: getWorldRoomId(), preservePending: false }),
           ErrorEvent(payload.error)
         ]
       }
@@ -501,9 +503,11 @@ const ConnectionDomain = Remesh.domain({
         return [
           historyDomain.command.ReleaseDomainCommand(payload.domain),
           sessionDomain.command.ReleaseDomainCommand(payload.domain),
-          ...(payload.roomId ? [wireDomain.command.LeaveRoomCommand(payload.roomId)] : []),
+          ...(payload.roomId
+            ? [wireDomain.command.LeaveRoomCommand({ roomId: payload.roomId, preservePending: false })]
+            : []),
           ...(remainingDomains.length === 0 && remainingAttempts.length === 0
-            ? [wireDomain.command.LeaveRoomCommand(getWorldRoomId())]
+            ? [wireDomain.command.LeaveRoomCommand({ roomId: getWorldRoomId(), preservePending: false })]
             : []),
           ConnectionLeftEvent({ domain: payload.domain })
         ]
