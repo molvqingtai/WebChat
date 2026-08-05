@@ -16,8 +16,8 @@
 
 ## 3. Verification and Delivery
 
-- [ ] 3.1 Freeze one clean implementation exact as the sole child of this PM authority exact and pass the focused/full Vitest, TypeScript, format, lint, strict OpenSpec/status/doctor, React Doctor, dual production-build, scope, identity, and current-only gates required by the repository.
-- [ ] 3.2 Obtain a fresh architecture-first Reviewer verdict on the same exact, including the complete mount/scroll owner graph, stable viewport/list identity, native initial positioning, bottom-aware live following, and every protected boundary.
-- [ ] 3.3 Publish the reviewed exact through one independent requirement branch and Draft PR based on `develop`, collect fresh CI, release the branch from every agent worktree, and hand the directly checkout-able branch plus immutable exact to `@molvqingtai` for desktop product acceptance.
-- [ ] 3.4 Keep QA, QC, and UX absent unless the Owner explicitly requests one; record any performed or unavailable browser behavior verification truthfully without making it a source or CI blocker.
-- [ ] 3.5 After Owner acceptance, let PM immediately close final OpenSpec/task truth; then complete final identity and CI gates and only the merge authorized by that acceptance.
+- [x] 3.1 Freeze one clean implementation exact as the sole child of this PM authority exact and pass the focused/full Vitest, TypeScript, format, lint, strict OpenSpec/status/doctor, React Doctor, dual production-build, scope, identity, and current-only gates required by the repository.
+- [x] 3.2 Obtain a fresh architecture-first Reviewer verdict on the same exact, including the complete mount/scroll owner graph, stable viewport/list identity, native initial positioning, bottom-aware live following, and every protected boundary.
+- [x] 3.3 Publish the reviewed exact through one independent requirement branch and Draft PR based on `develop`, collect fresh CI, release the branch from every agent worktree, and hand the directly checkout-able branch plus immutable exact to `@molvqingtai` for desktop product acceptance.
+- [x] 3.4 Keep QA, QC, and UX absent unless the Owner explicitly requests one; record any performed or unavailable browser behavior verification truthfully without making it a source or CI blocker.
+- [x] 3.5 After Owner acceptance, let PM immediately close final OpenSpec/task truth; then complete final identity and CI gates and only the merge authorized by that acceptance.
