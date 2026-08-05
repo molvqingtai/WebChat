@@ -1,7 +1,8 @@
-import { createElement, type ReactElement } from 'react'
+import { createElement, useEffect, type ReactElement, type Ref } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
+import { act, cleanup, render } from '@testing-library/react'
 import type { VirtuosoProps } from 'react-virtuoso'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MESSAGE_RECORD_TYPE, NOTICE_TYPE, type DisplayMessage, type SystemNoticeMessage } from '@/domain/Message'
 import MessageList from './message-list'
 import NoticeGroup from './notice-group'
@@ -9,21 +10,57 @@ import { groupAdjacentNotices, messageRowKey, type GroupedMessage } from './noti
 import NoticeItem from './notice-item'
 
 interface VirtuosoCall {
+  alignToBottom?: boolean
+  customScrollParent?: HTMLElement
+  data: readonly ReactElement[]
+  followOutput?: VirtuosoProps<ReactElement, unknown>['followOutput']
+  initialTopMostItemIndex?: VirtuosoProps<ReactElement, unknown>['initialTopMostItemIndex']
   keys: (string | number | bigint)[]
 }
 
 const virtuosoCalls = vi.hoisted(() => [] as VirtuosoCall[])
+const virtuosoLifecycle = vi.hoisted(() => ({ mounts: 0, unmounts: 0 }))
+const scrollAreaRefControl = vi.hoisted(() => ({ manual: false, ref: null as Ref<HTMLDivElement> | null }))
+
+vi.mock('@/components/ui/scroll-area', async () => {
+  const React = await import('react')
+  return {
+    ScrollArea: ({ children, ref }: { children?: ReactElement; ref?: React.Ref<HTMLDivElement> }) => {
+      scrollAreaRefControl.ref = ref ?? null
+      return React.createElement(
+        'div',
+        { 'data-testid': 'scroll-area' },
+        React.createElement('div', { ref: scrollAreaRefControl.manual ? undefined : ref }, children)
+      )
+    }
+  }
+})
 
 vi.mock('react-virtuoso', async () => {
   const React = await import('react')
   return {
-    Virtuoso: ({ data = [], computeItemKey, itemContent }: VirtuosoProps<ReactElement, unknown>) => {
+    Virtuoso: (props: VirtuosoProps<ReactElement, unknown>) => {
+      const {
+        alignToBottom,
+        customScrollParent,
+        data = [],
+        followOutput,
+        initialTopMostItemIndex,
+        computeItemKey,
+        itemContent
+      } = props
       if (!computeItemKey || !itemContent) throw new TypeError('Virtuoso list callbacks are required')
       const keys = data.map((item, index) => computeItemKey(index, item, undefined))
-      virtuosoCalls.push({ keys })
+      virtuosoCalls.push({ alignToBottom, customScrollParent, data, followOutput, initialTopMostItemIndex, keys })
+      useEffect(() => {
+        virtuosoLifecycle.mounts += 1
+        return () => {
+          virtuosoLifecycle.unmounts += 1
+        }
+      }, [])
       return React.createElement(
         'div',
-        null,
+        { 'data-testid': 'virtuoso' },
         data.map((item, index) =>
           React.createElement(React.Fragment, { key: keys[index] }, itemContent(index, item, undefined))
         )
@@ -72,7 +109,7 @@ const row = (message: GroupedMessage<DisplayMessage>, index: number, length: num
 
 const renderRows = (messages: readonly DisplayMessage[]) => {
   const grouped = groupAdjacentNotices(messages)
-  renderToStaticMarkup(
+  render(
     createElement(
       MessageList,
       null,
@@ -84,9 +121,86 @@ const renderRows = (messages: readonly DisplayMessage[]) => {
 
 beforeEach(() => {
   virtuosoCalls.length = 0
+  virtuosoLifecycle.mounts = 0
+  virtuosoLifecycle.unmounts = 0
+  scrollAreaRefControl.manual = false
+  scrollAreaRefControl.ref = null
 })
 
+afterEach(cleanup)
+
 describe('MessageList Virtuoso integration', () => {
+  it('waits for non-null content and the real viewport before the first Virtuoso render', () => {
+    const message = text('initial', 1)
+    const view = render(createElement(MessageList, null, null))
+
+    expect(virtuosoCalls).toHaveLength(0)
+    expect(view.getByTestId('scroll-area')).not.toBeNull()
+
+    view.rerender(createElement(MessageList, null, [row(message, 0, 1)]))
+
+    expect(virtuosoCalls).toHaveLength(1)
+    expect(virtuosoCalls[0]?.customScrollParent).toBeInstanceOf(HTMLElement)
+    expect(virtuosoCalls[0]?.data).toHaveLength(1)
+    expect(virtuosoCalls[0]?.initialTopMostItemIndex).toEqual({ index: 'LAST', align: 'end' })
+    expect(virtuosoCalls[0]?.alignToBottom).toBeUndefined()
+    expect(virtuosoLifecycle.mounts).toBe(1)
+  })
+
+  it('keeps one mounted list for empty history and later record updates', () => {
+    const view = render(createElement(MessageList, null, []))
+    const mountedList = view.getByTestId('virtuoso')
+
+    expect(virtuosoLifecycle.mounts).toBe(1)
+    expect(virtuosoCalls.at(-1)?.data).toHaveLength(0)
+
+    const message = text('later', 1)
+    view.rerender(createElement(MessageList, null, [row(message, 0, 1)]))
+
+    expect(view.getByTestId('virtuoso')).toBe(mountedList)
+    expect(virtuosoLifecycle).toEqual({ mounts: 1, unmounts: 0 })
+    expect(virtuosoCalls.at(-1)?.data).toHaveLength(1)
+  })
+
+  it('waits for a viewport and remounts only when that viewport resource is replaced', () => {
+    scrollAreaRefControl.manual = true
+    const message = text('initial', 1)
+    const view = render(createElement(MessageList, null, [row(message, 0, 1)]))
+
+    expect(virtuosoCalls).toHaveLength(0)
+    expect(view.queryByTestId('virtuoso')).toBeNull()
+    expect(typeof scrollAreaRefControl.ref).toBe('function')
+
+    const setViewport = scrollAreaRefControl.ref as (node: HTMLDivElement | null) => void
+    const firstViewport = document.createElement('div')
+    act(() => setViewport(firstViewport))
+
+    expect(view.getByTestId('virtuoso')).not.toBeNull()
+    expect(virtuosoCalls.at(-1)?.customScrollParent).toBe(firstViewport)
+    expect(virtuosoLifecycle).toEqual({ mounts: 1, unmounts: 0 })
+
+    act(() => setViewport(null))
+
+    expect(view.queryByTestId('virtuoso')).toBeNull()
+    expect(virtuosoLifecycle).toEqual({ mounts: 1, unmounts: 1 })
+
+    const replacementViewport = document.createElement('div')
+    act(() => setViewport(replacementViewport))
+
+    expect(view.getByTestId('virtuoso')).not.toBeNull()
+    expect(virtuosoCalls.at(-1)?.customScrollParent).toBe(replacementViewport)
+    expect(virtuosoLifecycle).toEqual({ mounts: 2, unmounts: 1 })
+  })
+
+  it('smooth-follows only when Virtuoso reports that the list was already at the bottom', () => {
+    renderRows([text('message', 1)])
+
+    const followOutput = virtuosoCalls.at(-1)?.followOutput
+    expect(typeof followOutput).toBe('function')
+    expect((followOutput as (isAtBottom: boolean) => false | 'smooth')(true)).toBe('smooth')
+    expect((followOutput as (isAtBottom: boolean) => false | 'smooth')(false)).toBe(false)
+  })
+
   it('keys text, singleton notice, and grouped notice rows from their stable projected identities', () => {
     expect(
       renderRows([notice('singleton', 1), text('separator', 2), notice('group-first', 3), notice('group-latest', 4)])
@@ -139,7 +253,7 @@ describe('MessageList Virtuoso integration', () => {
   })
 
   it('fails explicitly rather than substituting an array index for a missing row key', () => {
-    expect(() => renderToStaticMarkup(createElement(MessageList, null, [createElement('div')]))).toThrow(
+    expect(() => render(createElement(MessageList, null, [createElement('div')]))).toThrow(
       'MessageList items require a stable key'
     )
   })

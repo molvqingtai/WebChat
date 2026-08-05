@@ -7,12 +7,12 @@
 
 ## 2. Implementation
 
-- [ ] 2.1 Consume `messageListLoadFinished` only at the business composition layer, rendering `null` while loading and the complete records once ready; keep the presentational list UI free of any readiness prop, gate Virtuoso on non-null content plus the non-null callback-ref viewport handle, and add no other readiness or scroll-position fact.
-- [ ] 2.2 First-mount Virtuoso with the complete canonical records, non-null `customScrollParent`, and last-item/end-aligned initial location while leaving the existing ScrollArea shell visible and unchanged; a complete history that fits within the actual viewport presents at its natural position with no `alignToBottom`, block-size declaration, or settlement scroll.
-- [ ] 2.3 Use the live follow callback's `isAtBottom` input directly: smooth-follow when true and perform no follow action when false.
-- [ ] 2.4 Keep the mounted list identity stable across record updates; let only actual viewport resource destruction or replacement re-enter the mount boundary, and let empty history accept its first message through normal append behavior.
-- [ ] 2.5 Add focused component and Browser Mode regressions for both readiness gates, first-frame end alignment without initial scrolling, bottom and non-bottom appends, empty and short histories, variable-height/grouped rows, and stable post-mount identity.
-- [ ] 2.6 Add structural controls excluding extra initialization/bottom state, positioning effects, timers, animation frames, imperative scroll commands, CSS hiding, observers, runtime height correction loops, data-driven remount keys, new UI, and dependency changes.
+- [x] 2.1 Consume `messageListLoadFinished` only at the business composition layer, rendering `null` while loading and the complete records once ready; keep the presentational list UI free of any readiness prop, gate Virtuoso on non-null content plus the non-null callback-ref viewport handle, and add no other readiness or scroll-position fact.
+- [x] 2.2 First-mount Virtuoso with the complete canonical records, non-null `customScrollParent`, and last-item/end-aligned initial location while leaving the existing ScrollArea shell visible and unchanged; a complete history that fits within the actual viewport presents at its natural position with no `alignToBottom`, block-size declaration, or settlement scroll.
+- [x] 2.3 Use the live follow callback's `isAtBottom` input directly: smooth-follow when true and perform no follow action when false.
+- [x] 2.4 Keep the mounted list identity stable across record updates; let only actual viewport resource destruction or replacement re-enter the mount boundary, and let empty history accept its first message through normal append behavior.
+- [x] 2.5 Add focused component and Browser Mode regressions for both readiness gates, first-frame end alignment without initial scrolling, bottom and non-bottom appends, empty and short histories, variable-height/grouped rows, and stable post-mount identity.
+- [x] 2.6 Add structural controls excluding extra initialization/bottom state, positioning effects, timers, animation frames, imperative scroll commands, CSS hiding, observers, runtime height correction loops, data-driven remount keys, new UI, and dependency changes.
 
 ## 3. Verification and Delivery
 
