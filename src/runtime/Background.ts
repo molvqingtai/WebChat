@@ -14,6 +14,7 @@ import { HostOwner } from '@/runtime/HostOwner'
 import { startHost } from '@/runtime/host'
 import { createBrowserPresenceStore, presenceStoreNamespace } from '@/runtime/PresenceStore'
 import poll from '@/utils/poll'
+import { runtimeErrorName, runtimeLifecycleLog } from '@/runtime/Debug'
 
 const OFFSCREEN_URL = '/offscreen.html'
 const HEARTBEAT_TIMEOUT_MS = 5000
@@ -110,7 +111,25 @@ const coordinator = new Coordinator({
 })
 
 export const ensureHost = () => coordinator.ensureHost()
-export const registerPage = (lease: Parameters<typeof coordinator.registerPage>[0]) => coordinator.registerPage(lease)
+export const registerPage = async (lease: Parameters<typeof coordinator.registerPage>[0]) => {
+  runtimeLifecycleLog('background.register.start', {
+    pageId: lease.pageId,
+    tabId: lease.tab?.id ?? null
+  })
+  try {
+    const registration = await coordinator.registerPage(lease)
+    runtimeLifecycleLog('background.register.response', {
+      pageId: lease.pageId,
+      generation: registration.generation,
+      hostId: registration.snapshot.hostId,
+      hostPhase: registration.snapshot.hostPhase
+    })
+    return registration
+  } catch (error) {
+    runtimeLifecycleLog('background.register.error', { pageId: lease.pageId, ...runtimeErrorName(error) })
+    throw error
+  }
+}
 export const restore = () => coordinator.restore()
 
 export const watchTabs = () => {

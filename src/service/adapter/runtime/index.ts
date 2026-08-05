@@ -5,6 +5,7 @@ import { relayOffscreenProviderMessages } from '@/service/adapter/runtime/Relay'
 import type { MessageMeta } from '@/service/adapter/runtime/Provider'
 import { TabsProviderAdapter, type TabsApi } from '@/service/adapter/runtime/Tabs'
 import { canonicalNavigationUrl } from '@/service/adapter/runtime/Navigation'
+import { runtimeErrorName, runtimeLifecycleLog } from '@/runtime/Debug'
 
 export type { MessageMeta, MessageTab } from '@/service/adapter/runtime/Provider'
 export type { RelayRejection } from '@/service/adapter/runtime/Relay'
@@ -25,9 +26,25 @@ export class InjectAdapter extends InjectAdapterBase<MessageMeta> {
   }
 
   sendMessage: SendMessage<MessageMeta> = (message) => {
-    this.runtime.sendMessage(this.runtime.id, {
-      ...message,
-      meta: { tab: { url: canonicalNavigationUrl(document.location.href) ?? document.location.href } }
-    })
+    const registerPage = message.type === 'apply' && message.path.at(-1) === 'registerPage'
+    if (registerPage) runtimeLifecycleLog('transport.content.send', { rpcId: message.id })
+    try {
+      const delivery = this.runtime.sendMessage(this.runtime.id, {
+        ...message,
+        meta: { tab: { url: canonicalNavigationUrl(document.location.href) ?? document.location.href } }
+      })
+      if (registerPage) {
+        void Promise.resolve(delivery).then(
+          () => runtimeLifecycleLog('transport.content.send.settled', { rpcId: message.id }),
+          (error) =>
+            runtimeLifecycleLog('transport.content.send.error', { rpcId: message.id, ...runtimeErrorName(error) })
+        )
+      }
+    } catch (error) {
+      if (registerPage) {
+        runtimeLifecycleLog('transport.content.send.error', { rpcId: message.id, ...runtimeErrorName(error) })
+      }
+      throw error
+    }
   }
 }

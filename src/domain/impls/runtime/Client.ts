@@ -5,6 +5,7 @@ import { InjectAdapter } from '@/service/adapter/runtime'
 import type { RuntimeCoordinator, RuntimeServer, RuntimeSnapshot } from '@/runtime/Contract'
 import { COORDINATOR_NAMESPACE, RUNTIME_NAMESPACE_PREFIX } from '@/runtime/Contract'
 import { ClientLease } from '@/runtime/ClientLease'
+import { runtimeLifecycleLog } from '@/runtime/Debug'
 
 const HEARTBEAT_TIMEOUT_MS = 5000
 
@@ -25,10 +26,16 @@ const [, injectServer] = defineProxy(() => ({}) as RuntimeServer, {
 
 export const pageId = nanoid()
 export const pageDomain = document.location.origin
+runtimeLifecycleLog('content.generation.start', { pageId })
 export const coordinator = injectCoordinator(new InjectAdapter())
 export const server = injectServer(new InjectAdapter())
 
-const client = new ClientLease({ coordinator, pageId, domain: pageDomain })
+const client = new ClientLease({
+  coordinator,
+  pageId,
+  domain: pageDomain,
+  debug: (event, details) => runtimeLifecycleLog(`content.lease.${event}`, { pageId, ...details })
+})
 
 export const whenReady = (callback: () => void) => client.whenReady(callback)
 export const whenHostPhase = (callback: Parameters<typeof client.whenHostPhase>[0]) => client.whenHostPhase(callback)

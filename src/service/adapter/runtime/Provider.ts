@@ -1,5 +1,6 @@
 import type { Adapter, OnMessage, SendMessage } from 'comctx'
 import { isComctxMessage, MessageListenerRegistry, type MessageApi } from '@/service/adapter/runtime/Core'
+import { runtimeLifecycleLog } from '@/runtime/Debug'
 
 export interface MessageTab {
   id?: number
@@ -24,6 +25,17 @@ export const createProviderOnMessage = (
       if (!isComctxMessage<MessageMeta>(rawMessage)) return
       const message = rawMessage
       const tab = sender.tab ? { id: sender.tab.id, url: sender.tab.url } : undefined
+      if (message.type === 'apply' && message.path.at(-1) === 'registerPage') {
+        const lease = message.args?.[0]
+        runtimeLifecycleLog('transport.provider.receive', {
+          rpcId: message.id,
+          pageId:
+            typeof lease === 'object' && lease !== null && 'pageId' in lease && typeof lease.pageId === 'string'
+              ? lease.pageId
+              : null,
+          tabId: tab?.id ?? null
+        })
+      }
       // Transport sender metadata replaces payload tab claims at the provider trust boundary.
       callback({
         ...message,

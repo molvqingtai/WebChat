@@ -5,6 +5,7 @@ import ChatRoomDomain from '@/domain/ChatRoom'
 import ReadinessDomain from '@/domain/Readiness'
 import ToastDomain from '@/domain/Toast'
 import type { ReadinessState } from '@/domain/externs/Readiness'
+import { runtimeLifecycleLog } from '@/runtime/Debug'
 
 const RUNTIME_TOAST_ID = 'webchat-runtime-readiness'
 
@@ -57,12 +58,14 @@ const AppFeedbackDomain = Remesh.domain({
           ? [RuntimeToastTypeState().new(null), toastDomain.command.CancelCommand(RUNTIME_TOAST_ID)]
           : null
     })
-    const runtimeFeedbackCommand = (state: ReadinessState | null) =>
-      state === null
+    const runtimeFeedbackCommand = (state: ReadinessState | null) => {
+      runtimeLifecycleLog('content.feedback.state', { state })
+      return state === null
         ? null
         : state === 'ready'
           ? DismissRuntimeLoadingCommand()
           : PublishRuntimeFeedbackCommand({ state })
+    }
 
     domain.effect({
       name: 'AppFeedback.OnRuntimeFeedbackEffect',

@@ -36,6 +36,7 @@ import {
   MEDIA_PREVIEW_TRANSITION_NAME_PROPERTY,
   MEDIA_PREVIEW_TRANSITION_PART
 } from '@/app/content/components/media-preview'
+import { runtimeLifecycleLog } from '@/runtime/Debug'
 
 const CONTENT_LAYER = 2147483647
 // WXT's important Shadow reset otherwise overrides the geometry applied by its overlay primitive.
@@ -186,6 +187,7 @@ export default defineContentScript({
   matches: ['https://*/*'],
   excludeMatches: ['*://localhost/*', '*://127.0.0.1/*', '*://*.csdn.net/*', '*://*.csdn.com/*'],
   async main(ctx) {
+    runtimeLifecycleLog('content.main.start')
     window.addEventListener('beforeunload', detachClient, { once: true })
 
     let mediaPreviewTransitionStyle: HTMLStyleElement | null = null
@@ -198,6 +200,7 @@ export default defineContentScript({
       mode: 'open',
       isolateEvents: ['keyup', 'keydown', 'keypress'],
       onMount: (container) => {
+        runtimeLifecycleLog('content.ui.mount')
         const app = createElement('<div id="root"></div>')
         container.append(app)
         const root = createRoot(app)
@@ -219,6 +222,7 @@ export default defineContentScript({
         return { root, store, stopInitialization }
       },
       onRemove: (content) => {
+        runtimeLifecycleLog('content.ui.remove')
         content?.stopInitialization()
         content?.root.unmount()
         content?.store.discard()
@@ -229,6 +233,7 @@ export default defineContentScript({
     mediaPreviewTransitionStyle = installMediaPreviewTransitionStyle(ui.shadowHost)
     try {
       ui.mount()
+      runtimeLifecycleLog('content.ui.mounted')
     } catch (error) {
       mediaPreviewTransitionStyle.remove()
       mediaPreviewTransitionStyle = null

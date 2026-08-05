@@ -4,6 +4,7 @@ import { BackgroundInjectAdapter } from '@/service/adapter/runtime/Core'
 import { ProviderAdapter, type MessageMeta } from '@/service/adapter/runtime/Provider'
 import { relayOffscreenProviderMessages } from '@/service/adapter/runtime/Relay'
 import { TabsProviderAdapter } from '@/service/adapter/runtime/Tabs'
+import { InjectAdapter } from '@/service/adapter/runtime'
 
 const createMessaging = () => {
   const listeners = new Set<(...args: unknown[]) => unknown>()
@@ -37,6 +38,74 @@ const providerMessage = (id: string, overrides: Partial<Message<MessageMeta>> = 
 const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
 
 describe('Runtime browser adapters', () => {
+  it('correlates registerPage transport lifecycle without logging its payload', async () => {
+    const { runtime, listeners, sendMessage } = createMessaging()
+    sendMessage.mockResolvedValue(undefined)
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {})
+    const adapter = new InjectAdapter(runtime)
+    const received = vi.fn()
+    adapter.onMessage(received)
+    const request = providerMessage('register-lifecycle', {
+      sender: { type: 'injector' },
+      path: ['registerPage'],
+      args: [{ pageId: 'page-a', privatePayload: 'must-not-be-logged' }],
+      meta: {}
+    })
+    const response = { ...request, sender: { type: 'provider' as const }, data: { privateResult: true } }
+
+    adapter.sendMessage(request, [])
+    await Promise.resolve()
+    listeners.forEach((listener) => listener(response))
+
+    const lifecycle = debug.mock.calls
+      .filter(([marker]) => marker === '[WebChat][RuntimeLifecycle]')
+      .map(([, value]) => JSON.parse(String(value)) as Record<string, unknown>)
+    expect(lifecycle.map(({ event, rpcId }) => ({ event, rpcId }))).toEqual([
+      { event: 'transport.content.send', rpcId: 'register-lifecycle' },
+      { event: 'transport.content.send.settled', rpcId: 'register-lifecycle' },
+      { event: 'transport.content.response', rpcId: 'register-lifecycle' }
+    ])
+    expect(JSON.stringify(lifecycle)).not.toContain('must-not-be-logged')
+    expect(JSON.stringify(lifecycle)).not.toContain('privateResult')
+    expect(received).toHaveBeenCalledWith(response)
+    debug.mockRestore()
+  })
+
+  it('logs a rejected registerPage delivery without changing adapter settlement', async () => {
+    const { runtime, sendMessage } = createMessaging()
+    sendMessage.mockRejectedValueOnce(new Error('Extension context invalidated.'))
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {})
+    const adapter = new InjectAdapter(runtime)
+    const request = providerMessage('register-rejected', {
+      sender: { type: 'injector' },
+      path: ['registerPage'],
+      args: [{ pageId: 'page-a' }],
+      meta: {}
+    })
+
+    expect(() => adapter.sendMessage(request, [])).not.toThrow()
+    await Promise.resolve()
+
+    const lifecycle = debug.mock.calls
+      .filter(([marker]) => marker === '[WebChat][RuntimeLifecycle]')
+      .map(([, value]) => JSON.parse(String(value)) as Record<string, unknown>)
+    expect(lifecycle.map(({ event, rpcId, name, message }) => ({ event, rpcId, name, message }))).toEqual([
+      {
+        event: 'transport.content.send',
+        rpcId: 'register-rejected',
+        name: undefined,
+        message: undefined
+      },
+      {
+        event: 'transport.content.send.error',
+        rpcId: 'register-rejected',
+        name: 'Error',
+        message: 'Extension context invalidated.'
+      }
+    ])
+    debug.mockRestore()
+  })
+
   it('keeps the Offscreen provider on runtime messaging without a tabs capability', () => {
     const { runtime, listeners, sendMessage } = createMessaging()
     const adapter = new ProviderAdapter(runtime)

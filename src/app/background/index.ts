@@ -16,10 +16,12 @@ import {
 } from '@/runtime/Background'
 import { registerActionClick } from '@/app/background/ActionRegistration'
 import { registerBrowserSyncStoragePreparation } from '@/service/StoragePreparation'
+import { runtimeLifecycleLog } from '@/runtime/Debug'
 
 export default defineBackground({
   type: 'module',
   main() {
+    runtimeLifecycleLog('background.start', { extensionId: browser.runtime.id })
     registerBrowserSyncStoragePreparation()
 
     const [provideNotification] = defineNotificationProxy(() => new Notification(), browser.runtime.id)
