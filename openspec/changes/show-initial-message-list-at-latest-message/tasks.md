@@ -7,7 +7,7 @@
 
 ## 2. Implementation
 
-- [ ] 2.1 Retain one callback-ref-backed viewport handle in the existing MessageList/ScrollArea composition and gate Virtuoso on that handle plus `messageListLoadFinished`, without another readiness or scroll-position fact.
+- [ ] 2.1 Consume `messageListLoadFinished` only at the business composition layer, rendering `null` while loading and the complete records once ready; keep the presentational list UI free of any readiness prop, gate Virtuoso on non-null content plus the non-null callback-ref viewport handle, and add no other readiness or scroll-position fact.
 - [ ] 2.2 First-mount Virtuoso with the complete canonical records, non-null `customScrollParent`, and last-item/end-aligned initial location while leaving the existing ScrollArea shell visible and unchanged; a complete history that fits within the actual viewport presents at its natural position with no `alignToBottom`, block-size declaration, or settlement scroll.
 - [ ] 2.3 Use the live follow callback's `isAtBottom` input directly: smooth-follow when true and perform no follow action when false.
 - [ ] 2.4 Keep the mounted list identity stable across record updates; let only actual viewport resource destruction or replacement re-enter the mount boundary, and let empty history accept its first message through normal append behavior.

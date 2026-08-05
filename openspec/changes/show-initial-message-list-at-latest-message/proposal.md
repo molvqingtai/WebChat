@@ -5,6 +5,7 @@ A chat with stored history should open directly at its latest message. The initi
 ## What Changes
 
 - Keep the existing ScrollArea shell present, but mount the virtual message list only after canonical history loading is complete and the actual Radix viewport exists.
+- Keep the presentational message-list UI pure: the business composition layer renders `null` while loading and the complete records once ready, so the list mounts on content presence plus the real viewport without receiving any business readiness fact.
 - Give the first mount the complete canonical history and the real scroll parent so its first non-empty visible frame is already aligned at the latest message with no initial top-to-bottom scroll or live-follow animation.
 - Leave a complete history that fits within the actual viewport at its natural position with no forced end alignment, block-size declaration, or settlement scroll.
 - Treat initial positioning and later live appends as separate behaviors.

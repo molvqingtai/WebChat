@@ -25,9 +25,11 @@ The list therefore needs one stable mount boundary: history readiness and the re
 
 ### 1. Join the two existing prerequisites at one mount boundary
 
-The existing `messageListLoadFinished` value remains the sole history-ready fact. The existing MessageList/ScrollArea composition retains one callback-ref-backed `HTMLElement | null` handle for the current Radix viewport. The handle represents DOM resource identity; it is not a second loading or scroll-position truth.
+The existing `messageListLoadFinished` value remains the sole history-ready truth and is consumed only at the business composition layer. That layer renders `null` instead of records while loading and the complete records (an empty list when the history is empty) once ready. The presentational message-list UI stays pure: it receives no readiness prop or equivalent business fact, and mounts Virtuoso only when its content is non-null and the callback-ref viewport handle is non-null. `null` (loading) and an empty list (ready) are explicitly distinct values; readiness is never encoded through record truthiness.
 
-Virtuoso mounts only when history loading is finished and that handle is non-null. A plain mutable ref cannot act as the gate because ref assignment alone does not schedule the render that makes both prerequisites observable. No additional `initialized`, `firstLoad`, `hasPositioned`, or equivalent fact participates.
+The existing MessageList/ScrollArea composition retains one callback-ref-backed `HTMLElement | null` handle for the current Radix viewport. The handle represents DOM resource identity; it is not a second loading or scroll-position truth.
+
+A plain mutable ref cannot act as the gate because ref assignment alone does not schedule the render that makes both prerequisites observable. No additional `initialized`, `firstLoad`, `hasPositioned`, or equivalent fact participates.
 
 The ScrollArea shell and viewport remain under their existing owner while the list is gated. The absent list adds no visible loading surface and changes no shell geometry.
 

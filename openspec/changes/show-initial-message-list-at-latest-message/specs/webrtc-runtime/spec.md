@@ -4,6 +4,8 @@
 
 The existing ScrollArea shell SHALL remain present while the virtual message list waits for its two existing prerequisites: canonical `messageListLoadFinished` history readiness and a non-null handle for the actual Radix viewport. Virtuoso SHALL NOT mount while either prerequisite is unavailable. History readiness SHALL remain the sole loading fact, and one callback-ref-backed `HTMLElement | null` viewport handle SHALL remain the sole scroll-parent resource identity. WebChat SHALL NOT add another initialized, first-load, positioned, or equivalent readiness fact.
 
+The canonical history-readiness fact SHALL be consumed only at the business composition layer, which SHALL express it as the list's content: while loading it SHALL render `null` instead of records, and once ready it SHALL render the complete records (an empty list when the history is empty). The presentational message-list UI SHALL NOT receive, prop-drill, or otherwise consume that business readiness fact. It SHALL keep Virtuoso absent while its content is `null` and SHALL mount Virtuoso once when content (including an empty list) and the real viewport both exist. A `null` loading value and an empty ready list SHALL remain explicitly distinct values; readiness SHALL NOT be encoded through truthiness of the records themselves.
+
 When both prerequisites exist, Virtuoso SHALL mount once with the complete current canonical records, that non-null viewport as its real custom scroll parent, and a last-item/end-aligned initial location. The first non-empty message-list frame presented to the user SHALL already be aligned at the latest canonical message. It SHALL NOT first present the top of history, animate or sweep from top to bottom, or use live-follow smooth scrolling to settle initial history.
 
 A complete non-empty history that fits within the actual viewport SHALL simply present its records without any settlement scroll; WebChat SHALL NOT add alignment styling, minimum block-size declarations, or imperative scrolling to force short histories to the viewport bottom.
@@ -47,6 +49,12 @@ This behavior SHALL add no loading UI, placeholder, skeleton, status copy, initi
 - **GIVEN** Virtuoso is mounted against the current actual viewport
 - **WHEN** canonical records append, group, or otherwise reproject under their existing rules
 - **THEN** the list and scroll-parent identities SHALL remain stable and the update SHALL NOT re-enter initial positioning
+
+#### Scenario: Business layer alone owns the readiness gate
+
+- **GIVEN** canonical history is loading or ready
+- **WHEN** the business composition layer renders the MessageList composition
+- **THEN** it SHALL pass `null` while loading and the complete records once ready, the presentational list UI SHALL receive no readiness prop or equivalent business fact, and Virtuoso SHALL mount only when content is non-null and the real viewport exists
 
 #### Scenario: Actual viewport replacement owns remounting
 
