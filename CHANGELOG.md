@@ -1,3 +1,9 @@
+## [2.4.1](https://github.com/molvqingtai/WebChat/compare/v2.4.0...v2.4.1) (2026-08-05)
+
+### Bug Fixes
+
+- **message-list:** release initial no-scroll message list repair ([b543cb4](https://github.com/molvqingtai/WebChat/commit/b543cb4a6a2efc9dca86d36e9ffabdf07ffed228))
+
 # [2.4.0](https://github.com/molvqingtai/WebChat/compare/v2.3.0...v2.4.0) (2026-08-04)
 
 ### Bug Fixes
