@@ -807,7 +807,7 @@ describe('application reconnect and durable retirement controls', () => {
     expect((await noticeUsers(a, NOTICE_TYPE.LEAVE)).filter((id) => id === 'held-user-b')).toHaveLength(1)
   })
 
-  it('carries one text and reaction port operation through final release recovery', async () => {
+  it('carries one text and reaction port operation when a recovery join is overtaken by final release', async () => {
     const network = new DeterministicNetwork()
     const durable = createMemoryPresenceStore()
     let signalRetirementStarted = () => {}
@@ -818,8 +818,24 @@ describe('application reconnect and durable retirement controls', () => {
     const heldRetirement = new Promise<void>((resolve) => {
       releaseRetirement = resolve
     })
+    let holdRecoveryLoads = false
+    let recoveryLoads = 0
+    let signalSecondRecoveryLoad = () => {}
+    const secondRecoveryLoad = new Promise<void>((resolve) => {
+      signalSecondRecoveryLoad = resolve
+    })
+    let releaseSecondRecoveryLoad = () => {}
+    const heldSecondRecoveryLoad = new Promise<void>((resolve) => {
+      releaseSecondRecoveryLoad = resolve
+    })
     const heldPresenceStore: PresenceStore = {
-      load: (domain) => durable.load(domain),
+      load: async (domain) => {
+        if (holdRecoveryLoads && ++recoveryLoads === 2) {
+          signalSecondRecoveryLoad()
+          await heldSecondRecoveryLoad
+        }
+        return durable.load(domain)
+      },
       save: async (record) => {
         if (!record.local) {
           signalRetirementStarted()
@@ -843,9 +859,12 @@ describe('application reconnect and durable retirement controls', () => {
     const textCount = network.messageCount('operation-recovery-peer', MESSAGE_TYPE.TEXT)
     const reactionCount = network.messageCount('operation-recovery-peer', MESSAGE_TYPE.REACTION)
 
+    const recoveries = [
+      stack.server.joinChatRoom({ domain: DOMAIN, user, site: SITE }),
+      stack.server.joinChatRoom({ domain: DOMAIN, user, site: SITE })
+    ]
     await stack.server.leaveChatRoom({ domain: DOMAIN })
     await retirementStarted
-    const recovery = completeInterruptedRelease(stack, user)
     const textOutcome = stack.adapter.sendMessage({ type: 'text', body: 'held text', mentions: [] }).then(
       (message) => ({ ok: true as const, message }),
       (error) => ({ ok: false as const, error })
@@ -857,8 +876,9 @@ describe('application reconnect and durable retirement controls', () => {
         (error) => ({ ok: false as const, error })
       )
 
+    holdRecoveryLoads = true
     releaseRetirement()
-    await recovery
+    await secondRecoveryLoad
 
     await expect(textOutcome).resolves.toMatchObject({
       ok: true,
@@ -870,6 +890,118 @@ describe('application reconnect and durable retirement controls', () => {
     })
     expect(network.messageCount('operation-recovery-peer', MESSAGE_TYPE.TEXT)).toBe(textCount + 1)
     expect(network.messageCount('operation-recovery-peer', MESSAGE_TYPE.REACTION)).toBe(reactionCount + 1)
+    expect(stack.errors).toEqual([])
+    releaseSecondRecoveryLoad()
+    await Promise.all(recoveries)
+    expect(
+      (await stack.server.getSnapshot()).domains.find(({ domain }) => domain === DOMAIN)?.localSession?.user.id
+    ).toBe(user.id)
+  })
+
+  it('settles held operations after every concurrent recovery attempt fails', async () => {
+    const network = new DeterministicNetwork()
+    const durable = createMemoryPresenceStore()
+    const user = { id: 'failed-recovery-user', name: 'Failed Recovery', avatar: '' }
+    const original = await createStack(network, 'failed-recovery-original', user, { presenceStore: durable })
+    await original.join()
+    network.rejectNextSessionEnd('failed-recovery-original')
+    await original.server.leaveChatRoom({ domain: DOMAIN })
+    await vi.waitFor(() => expect(original.errors).toContain('session end send rejected'))
+    network.disconnectPeer('failed-recovery-original')
+    original.crash()
+
+    let signalRetryStarted = () => {}
+    const retryStarted = new Promise<void>((resolve) => {
+      signalRetryStarted = resolve
+    })
+    let rejectRetry = () => {}
+    const heldRetry = new Promise<void>((resolve) => {
+      rejectRetry = resolve
+    })
+    let replacementLoads = 0
+    let releaseReplacementLoads = () => {}
+    const bothReplacementLoads = new Promise<void>((resolve) => {
+      releaseReplacementLoads = resolve
+    })
+    const rejectingStore: PresenceStore = {
+      load: async (domain) => {
+        const record = await durable.load(domain)
+        replacementLoads += 1
+        if (replacementLoads === 2) releaseReplacementLoads()
+        await bothReplacementLoads
+        return record
+      },
+      save: async (record) => {
+        if (record.inflightEnd) {
+          signalRetryStarted()
+          await heldRetry
+          throw new Error('concurrent recovery rejected')
+        }
+        await durable.save(record)
+      }
+    }
+    const replacement = await createStack(network, 'failed-recovery-replacement', user, {
+      presenceStore: rejectingStore
+    })
+    let unsuccessfulRecoveries = 0
+    const recoveries = [
+      replacement.server.joinChatRoom({ domain: DOMAIN, user, site: SITE }),
+      replacement.server.joinChatRoom({ domain: DOMAIN, user, site: SITE })
+    ].map((recovery) =>
+      recovery.then(
+        (snapshot) => {
+          if (snapshot === null) unsuccessfulRecoveries += 1
+          return snapshot
+        },
+        (error) => {
+          unsuccessfulRecoveries += 1
+          throw error
+        }
+      )
+    )
+    await retryStarted
+    const text = replacement.server.allocateTextMessage({ domain: DOMAIN, body: 'held until failure', mentions: [] })
+
+    rejectRetry()
+
+    await expect(Promise.all(recoveries)).rejects.toThrow('concurrent recovery rejected')
+    await expect(text).rejects.toMatchObject({ name: 'AbortError' })
+    expect(unsuccessfulRecoveries).toBe(2)
+  })
+
+  it('settles a held operation when the server is disposed during recovery', async () => {
+    const network = new DeterministicNetwork()
+    const durable = createMemoryPresenceStore()
+    let signalRetirementStarted = () => {}
+    const retirementStarted = new Promise<void>((resolve) => {
+      signalRetirementStarted = resolve
+    })
+    let releaseRetirement = () => {}
+    const heldRetirement = new Promise<void>((resolve) => {
+      releaseRetirement = resolve
+    })
+    const heldPresenceStore: PresenceStore = {
+      load: (domain) => durable.load(domain),
+      save: async (record) => {
+        if (!record.local) {
+          signalRetirementStarted()
+          await heldRetirement
+        }
+        await durable.save(record)
+      }
+    }
+    const user = { id: 'disposed-recovery-user', name: 'Disposed Recovery', avatar: '' }
+    const stack = await createStack(network, 'disposed-recovery-peer', user, { presenceStore: heldPresenceStore })
+    await stack.join()
+    void completeInterruptedRelease(stack, user).catch(() => {})
+    await stack.server.leaveChatRoom({ domain: DOMAIN })
+    await retirementStarted
+    const text = stack.server.allocateTextMessage({ domain: DOMAIN, body: 'held until dispose', mentions: [] })
+
+    stack.crash()
+
+    await expect(text).rejects.toMatchObject({ name: 'AbortError' })
+    releaseRetirement()
   })
 
   it('does not physically depart until a rejected SESSION_END is retried and settled', async () => {

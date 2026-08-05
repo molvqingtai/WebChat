@@ -141,7 +141,10 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   }
 
   const snapshot = (): RuntimeSnapshot => store.query(connectionDomain.query.SnapshotQuery())
-  const acquirePresence = async (domain: string, userId: string): Promise<'active' | 'finalizing' | 'settled'> => {
+  const acquirePresence = async (
+    domain: string,
+    userId: string
+  ): Promise<'active' | 'acquired' | 'finalizing' | 'settled'> => {
     if (store.query(sessionDomain.query.DomainQuery(domain))) {
       return store.query(sessionDomain.query.FinalizingPresenceQuery(domain)) ? 'finalizing' : 'active'
     }
@@ -178,7 +181,19 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     }
     await presenceStore.save(record)
     store.send(sessionDomain.command.HydratePresenceCommand(record))
-    return 'active'
+    return 'acquired'
+  }
+  const acquireCurrentPresence = async (
+    domain: string,
+    userId: string
+  ): Promise<'active' | 'acquired' | 'finalizing'> => {
+    while (!disposed) {
+      const acquired = await acquirePresence(domain, userId)
+      if (store.query(sessionDomain.query.FinalizingPresenceQuery(domain))) return 'finalizing'
+      if (store.query(sessionDomain.query.DomainQuery(domain))) return 'active'
+      if (acquired === 'acquired') return 'acquired'
+    }
+    throw operationCancelled()
   }
   const pageBridges = [
     store.subscribeEvent(sessionDomain.event.RuntimeSessionChangedEvent, (event) => {
@@ -285,13 +300,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
           : null
       let recovered = false
       try {
-        let presenceState = await acquirePresence(payload.domain, payload.user.id)
-        if (presenceState === 'settled') {
-          presenceState = await acquirePresence(payload.domain, payload.user.id)
-        }
-        if (presenceState === 'finalizing' && !recovery) recovery = beginPresenceRecovery(payload.domain)
-        const connect = async () => {
-          if (presenceState !== 'active' && store.query(sessionDomain.query.DomainQuery(payload.domain))) return true
+        const connect = () => {
           const operationId = nanoid()
           return runConnectionOperation(
             operationId,
@@ -300,15 +309,29 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
             () => false
           )
         }
-        if (!(await connect())) return null
-        if (presenceState === 'finalizing') {
-          await completeInterruptedRelease(payload.domain)
-          presenceState = await acquirePresence(payload.domain, payload.user.id)
-          if (presenceState === 'settled') presenceState = await acquirePresence(payload.domain, payload.user.id)
+        while (true) {
+          const presenceState = await acquireCurrentPresence(payload.domain, payload.user.id)
+          if (presenceState === 'finalizing') {
+            if (!recovery) recovery = beginPresenceRecovery(payload.domain)
+            if (!store.query(sessionDomain.query.DomainQuery(payload.domain))) {
+              if (!(await connect())) return null
+              continue
+            }
+            await completeInterruptedRelease(payload.domain)
+            continue
+          }
+          if (store.query(sessionDomain.query.FinalizingPresenceQuery(payload.domain))) {
+            if (!recovery) recovery = beginPresenceRecovery(payload.domain)
+            await completeInterruptedRelease(payload.domain)
+            continue
+          }
+          if (presenceState === 'active' && !store.query(sessionDomain.query.DomainQuery(payload.domain))) {
+            continue
+          }
           if (!(await connect())) return null
+          recovered = true
+          return snapshot()
         }
-        recovered = true
-        return snapshot()
       } finally {
         if (recovery) finishPresenceRecovery(payload.domain, recovery, recovered)
       }
