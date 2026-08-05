@@ -293,11 +293,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     },
     getSnapshot: async () => snapshot(),
     joinChatRoom: async (payload) => {
-      let recovery =
-        store.query(sessionDomain.query.FinalizingPresenceQuery(payload.domain)) ||
-        presenceRecoveries.has(payload.domain)
-          ? beginPresenceRecovery(payload.domain)
-          : null
+      const recovery = beginPresenceRecovery(payload.domain)
       let recovered = false
       try {
         const connect = () => {
@@ -312,7 +308,6 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
         while (true) {
           const presenceState = await acquireCurrentPresence(payload.domain, payload.user.id)
           if (presenceState === 'finalizing') {
-            if (!recovery) recovery = beginPresenceRecovery(payload.domain)
             if (!store.query(sessionDomain.query.DomainQuery(payload.domain))) {
               if (!(await connect())) return null
               continue
@@ -321,7 +316,6 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
             continue
           }
           if (store.query(sessionDomain.query.FinalizingPresenceQuery(payload.domain))) {
-            if (!recovery) recovery = beginPresenceRecovery(payload.domain)
             await completeInterruptedRelease(payload.domain)
             continue
           }
@@ -333,7 +327,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
           return snapshot()
         }
       } finally {
-        if (recovery) finishPresenceRecovery(payload.domain, recovery, recovered)
+        finishPresenceRecovery(payload.domain, recovery, recovered)
       }
     },
     leaveChatRoom: async ({ domain }) => {

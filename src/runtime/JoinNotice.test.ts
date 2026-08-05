@@ -311,7 +311,12 @@ const createStack = async (
   network: DeterministicNetwork,
   peerId: string,
   user: ChatUser,
-  options: { presenceStore?: PresenceStore; now?: number } = {}
+  options: {
+    presenceStore?: PresenceStore
+    now?: number
+    onAllocateText?: () => void
+    onAllocateReaction?: () => void
+  } = {}
 ): Promise<ApplicationStack> => {
   const now = options.now ?? NOW + stacks.length
   const clock: Clock = { now: () => now }
@@ -329,6 +334,14 @@ const createStack = async (
   const errors: string[] = []
   const observedServer: RuntimeServer = {
     ...server,
+    allocateTextMessage: (payload) => {
+      options.onAllocateText?.()
+      return server.allocateTextMessage(payload)
+    },
+    allocateReactionMessage: (payload) => {
+      options.onAllocateReaction?.()
+      return server.allocateReactionMessage(payload)
+    },
     onSessionEvent: (payload, listener) =>
       server.onSessionEvent(payload, async (event) => {
         sessionEvents.push(event)
@@ -807,7 +820,7 @@ describe('application reconnect and durable retirement controls', () => {
     expect((await noticeUsers(a, NOTICE_TYPE.LEAVE)).filter((id) => id === 'held-user-b')).toHaveLength(1)
   })
 
-  it('carries one text and reaction port operation when a recovery join is overtaken by final release', async () => {
+  it('carries one text and reaction port operation when recovery and final release start in the same turn', async () => {
     const network = new DeterministicNetwork()
     const durable = createMemoryPresenceStore()
     let signalRetirementStarted = () => {}
@@ -845,26 +858,39 @@ describe('application reconnect and durable retirement controls', () => {
       }
     }
     const user = { id: 'operation-recovery-user', name: 'Operation Recovery', avatar: '' }
+    let textAllocations = 0
+    let reactionAllocations = 0
     const observer = await createStack(network, 'operation-recovery-observer', {
       id: 'operation-recovery-observer-user',
       name: 'Observer',
       avatar: ''
     })
     const stack = await createStack(network, 'operation-recovery-peer', user, {
-      presenceStore: heldPresenceStore
+      presenceStore: heldPresenceStore,
+      onAllocateText: () => {
+        textAllocations += 1
+      },
+      onAllocateReaction: () => {
+        reactionAllocations += 1
+      }
     })
     await observer.join()
     await stack.join()
     const target = await stack.adapter.sendMessage({ type: 'text', body: 'reaction target', mentions: [] })
+    textAllocations = 0
     const textCount = network.messageCount('operation-recovery-peer', MESSAGE_TYPE.TEXT)
     const reactionCount = network.messageCount('operation-recovery-peer', MESSAGE_TYPE.REACTION)
 
     const recoveries = [
       stack.server.joinChatRoom({ domain: DOMAIN, user, site: SITE }),
       stack.server.joinChatRoom({ domain: DOMAIN, user, site: SITE })
-    ]
-    await stack.server.leaveChatRoom({ domain: DOMAIN })
-    await retirementStarted
+    ].map((recovery) =>
+      recovery.then(
+        (snapshot) => ({ ok: true as const, snapshot }),
+        (error) => ({ ok: false as const, error })
+      )
+    )
+    const release = stack.server.leaveChatRoom({ domain: DOMAIN })
     const textOutcome = stack.adapter.sendMessage({ type: 'text', body: 'held text', mentions: [] }).then(
       (message) => ({ ok: true as const, message }),
       (error) => ({ ok: false as const, error })
@@ -876,6 +902,8 @@ describe('application reconnect and durable retirement controls', () => {
         (error) => ({ ok: false as const, error })
       )
 
+    await release
+    await retirementStarted
     holdRecoveryLoads = true
     releaseRetirement()
     await secondRecoveryLoad
@@ -890,9 +918,11 @@ describe('application reconnect and durable retirement controls', () => {
     })
     expect(network.messageCount('operation-recovery-peer', MESSAGE_TYPE.TEXT)).toBe(textCount + 1)
     expect(network.messageCount('operation-recovery-peer', MESSAGE_TYPE.REACTION)).toBe(reactionCount + 1)
+    expect(textAllocations).toBe(1)
+    expect(reactionAllocations).toBe(1)
     expect(stack.errors).toEqual([])
     releaseSecondRecoveryLoad()
-    await Promise.all(recoveries)
+    expect((await Promise.all(recoveries)).every(({ ok }) => ok)).toBe(true)
     expect(
       (await stack.server.getSnapshot()).domains.find(({ domain }) => domain === DOMAIN)?.localSession?.user.id
     ).toBe(user.id)
