@@ -1,11 +1,12 @@
 ## Why
 
-Refreshing the page, updating the extension, restarting the background worker, reconnecting across generations, or racing a room teardown can currently surface internal errors as user-visible error toasts (presence final-release rejections, untrusted-room rejections, signaling `id-taken`). These are transient states that the recovery flow should absorb. An error toast is justified only when a failure is genuinely unrecoverable, and then it shows the underlying error's original text.
+Refreshing the page, updating the extension, restarting the background worker, reconnecting across generations, or racing a room teardown can currently surface internal errors as user-visible error toasts (presence final-release rejections, untrusted-room rejections, signaling `id-taken`). Those failures are transient only while a code-owned recovery path can still reach success. Conversely, a browser-native failure such as `Extension context invalidated.` permanently disconnects the affected content generation from the extension Runtime; treating it as transient leaves that generation retrying forever and hides the actual failure. Recoverable interruptions must remain silent, while native failures that code cannot recover must surface once with their original text.
 
 ## What Changes
 
-- Define the transient recovery scenarios: page refresh or reopen, extension update or manual background restart, reconnect generation takeover (including signaling peer-ID occupation), and room teardown/final-release races. Operations in these windows are carried by recovery — held until ready or completed through recovery — and produce no user-visible error.
-- Define the single failure scenario: a genuinely unrecoverable failure such as WebRTC being truly unable to connect. Its error toast presents the underlying error's original text verbatim, with no copy normalization or rewriting.
+- Define recoverability by outcome: page refresh or reopen, a successful extension/background handoff, reconnect generation takeover (including signaling peer-ID occupation), and room teardown/final-release races remain silent only while the owning recovery flow can still settle successfully.
+- Define terminal native failure behavior: when a browser-native error proves that the owning generation has no code-owned recovery path, that generation stops its futile retry/loading cycle and presents exactly one error toast with the native error's original text. A later loading update from that failed generation cannot replace the terminal error.
+- Classify `Extension context invalidated.` as terminal for the affected old content generation because that generation's Runtime endpoint is permanently invalid.
 - Keep the existing error pass-through presentation; the change removes the erroneous production of errors in transient flows, not the display of genuine errors.
 
 ## Capabilities
@@ -16,10 +17,10 @@ None.
 
 ### Modified Capabilities
 
-- `webrtc-runtime`: Recovery absorbs transient states without surfacing errors; only unrecoverable failures produce error toasts with the original error text.
+- `webrtc-runtime`: Recovery absorbs only recoverable transient states without surfacing errors; terminal native and other unrecoverable failures produce one error toast with the original error text.
 
 ## Impact
 
-- Affected behavior: user-visible outcome of sending, reacting, and connecting during page refresh, extension/background restart, reconnect generation, and room teardown windows; the error toast shown on genuine connection failure.
-- Affected verification: each transient scenario completes without any error toast and the operation eventually succeeds; the failure scenario produces one toast carrying the original error text.
-- Unchanged: message delivery semantics for established connections, canonical message data and ordering, room trust rules themselves, Runtime networking protocols, permissions, dependencies, and browser-specific product behavior.
+- Affected behavior: user-visible outcome of sending, reacting, and connecting during page refresh, extension/background restart, reconnect generation, and room teardown windows; terminal behavior after a native Runtime endpoint failure; the error toast shown on genuine connection failure.
+- Affected verification: each recoverable transient scenario completes without any error toast and the operation eventually succeeds; `Extension context invalidated.` and every other proven terminal failure produce one toast carrying the original error text, stop the failed generation's retry loop, and cannot be overwritten by loading feedback.
+- Unchanged: message delivery semantics for established connections, canonical message data and ordering, room trust rules themselves, Runtime networking protocols, permissions, dependencies, and all other browser-specific product behavior.

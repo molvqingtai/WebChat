@@ -1,3 +1,3 @@
 # absorb-transient-recovery-without-error-toasts
 
-Make the connection recovery flow absorb every transient without surfacing an error, so error toasts appear only when a failure is genuinely unrecoverable, shown as the underlying error's original text.
+Make connection recovery absorb only interruptions that can still settle successfully. Proven terminal native and other unrecoverable failures stop their failed recovery owner and appear once as an error toast with the underlying error's original text.
