@@ -49,17 +49,15 @@ After the stable first mount, Virtuoso's live follow callback uses the `isAtBott
 
 Initial history application is not a live append. Later text, notice, and grouped-row updates retain their existing canonical projection and use the same bottom-aware decision without message-type exceptions.
 
-### 5. Align short histories natively within the actual viewport
+### 5. Leave short histories without forced alignment
 
-A complete non-empty history that fits within the actual viewport still ends at the latest message. Virtuoso's native `alignToBottom` provides that end alignment on the same mounted list. Because the real scroll parent in this composition can be shorter than the actual viewport, the MessageList composition may declare one static minimum used block-size equal to the actual viewport height for the list, giving the native alignment the full viewport height to consume.
-
-This is a static declarative geometry declaration inside the existing composition. It adds no node, owner, observer, DOM measurement read, runtime height computation, correction loop, wrapper, key, or shared ScrollArea change, and it leaves the overflow case to the same last-item/end-aligned initial location.
+A complete non-empty history that fits within the actual viewport simply presents its records from their natural position. No `alignToBottom`, minimum block-size declaration, or settlement scroll forces such a history to the viewport bottom; the requirement is only that initialization presents its first frame without scrolling.
 
 ### 6. Verify the real composition boundary
 
 Deterministic component controls prove that Virtuoso is absent while either prerequisite is missing, mounts once with complete records and the real viewport when both exist, and remains mounted as records update. Browser Mode controls use the real Radix ScrollArea and Virtuoso composition to prove a first non-empty frame already at the end with no live-follow smooth decision or visible top-to-bottom motion.
 
-The same controls cover empty and short histories (with the short history's latest row at the viewport bottom), overflowing variable-height and grouped rows, one later append at the bottom, and one later append while reading above the bottom. Structural controls exclude extra readiness/position state, positioning effects, timers, animation-frame workarounds, imperative scrolling, CSS visibility gates, observers, runtime height correction loops, data-driven remount keys, and dependency changes.
+The same controls cover empty and short histories (presented without forced end alignment or settlement scroll), overflowing variable-height and grouped rows, one later append at the bottom, and one later append while reading above the bottom. Structural controls exclude extra readiness/position state, positioning effects, timers, animation-frame workarounds, imperative scrolling, CSS visibility gates, observers, runtime height correction loops, data-driven remount keys, and dependency changes.
 
 ## Risks / Trade-offs
 

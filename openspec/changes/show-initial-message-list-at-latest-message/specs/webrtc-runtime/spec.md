@@ -6,7 +6,7 @@ The existing ScrollArea shell SHALL remain present while the virtual message lis
 
 When both prerequisites exist, Virtuoso SHALL mount once with the complete current canonical records, that non-null viewport as its real custom scroll parent, and a last-item/end-aligned initial location. The first non-empty message-list frame presented to the user SHALL already be aligned at the latest canonical message. It SHALL NOT first present the top of history, animate or sweep from top to bottom, or use live-follow smooth scrolling to settle initial history.
 
-When the complete non-empty history fits within the actual viewport, Virtuoso SHALL use its native `alignToBottom` behavior for that end alignment, and the existing MessageList composition MAY declare one static minimum used block-size equal to the actual viewport height for the list so the latest message aligns to the viewport bottom. That declaration SHALL be static and declarative within the existing composition: it SHALL NOT add an observer, DOM measurement read, runtime height computation, correction loop, wrapper node, or shared ScrollArea change.
+A complete non-empty history that fits within the actual viewport SHALL simply present its records without any settlement scroll; WebChat SHALL NOT add alignment styling, minimum block-size declarations, or imperative scrolling to force short histories to the viewport bottom.
 
 Canonical record updates SHALL NOT change the mounted Virtuoso key or otherwise remount it. Only actual destruction or replacement of the Radix viewport resource MAY remove the list and re-enter the same two-prerequisite mount boundary. An empty canonical history SHALL mount normally after both prerequisites exist and SHALL accept its first later message through the normal append behavior.
 
@@ -30,11 +30,11 @@ This behavior SHALL add no loading UI, placeholder, skeleton, status copy, initi
 - **WHEN** Virtuoso first mounts
 - **THEN** it SHALL receive the complete records and non-null real scroll parent, its first non-empty presented frame SHALL already be end-aligned at the latest canonical message, and no initial live-follow smooth decision or visible top-to-bottom motion SHALL occur
 
-#### Scenario: Short history is end-aligned without a settlement scroll
+#### Scenario: Short history presents without a settlement scroll
 
 - **GIVEN** a complete non-empty canonical history fits within the actual Radix viewport
 - **WHEN** Virtuoso first mounts
-- **THEN** the latest message SHALL already be presented at the viewport bottom through the native `alignToBottom` behavior and the static minimum used block-size, and initialization SHALL issue no automatic or imperative settlement scroll
+- **THEN** the records SHALL present without end-alignment styling or block-size declarations, and initialization SHALL issue no automatic or imperative settlement scroll
 
 #### Scenario: Empty history mounts once and accepts its first message
 
