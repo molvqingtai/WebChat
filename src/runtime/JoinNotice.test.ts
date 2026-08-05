@@ -12,7 +12,7 @@ import { MessageDatabaseExtern, createMessageStore } from '@/domain/MessageStore
 import { MESSAGE_RECORD_TYPE, NOTICE_TYPE, type NoticeType, type SystemNoticeRecord } from '@/domain/Message'
 import type { Clock } from '@/domain/runtime/externs/Clock'
 import type { PresenceStore } from '@/domain/runtime/externs/PresenceStore'
-import { MESSAGE_TYPE, type ChatMessage, type ChatUser, type WireCodec } from '@/protocol'
+import { MESSAGE_TYPE, REACTION_TYPE, type ChatMessage, type ChatUser, type WireCodec } from '@/protocol'
 import { createMemoryPresenceStore } from '@/runtime/PresenceStore'
 import { createServer, disposeServer, getChatRoomId, getWorldRoomId } from '@/runtime/Server'
 import type { RuntimeServer, RuntimeSessionEvent, RuntimeSnapshot } from '@/runtime/Contract'
@@ -805,6 +805,71 @@ describe('application reconnect and durable retirement controls', () => {
 
     expect((await durable.load(DOMAIN))?.local).toBeUndefined()
     expect((await noticeUsers(a, NOTICE_TYPE.LEAVE)).filter((id) => id === 'held-user-b')).toHaveLength(1)
+  })
+
+  it('carries one text and reaction port operation through final release recovery', async () => {
+    const network = new DeterministicNetwork()
+    const durable = createMemoryPresenceStore()
+    let signalRetirementStarted = () => {}
+    const retirementStarted = new Promise<void>((resolve) => {
+      signalRetirementStarted = resolve
+    })
+    let releaseRetirement = () => {}
+    const heldRetirement = new Promise<void>((resolve) => {
+      releaseRetirement = resolve
+    })
+    const heldPresenceStore: PresenceStore = {
+      load: (domain) => durable.load(domain),
+      save: async (record) => {
+        if (!record.local) {
+          signalRetirementStarted()
+          await heldRetirement
+        }
+        await durable.save(record)
+      }
+    }
+    const user = { id: 'operation-recovery-user', name: 'Operation Recovery', avatar: '' }
+    const observer = await createStack(network, 'operation-recovery-observer', {
+      id: 'operation-recovery-observer-user',
+      name: 'Observer',
+      avatar: ''
+    })
+    const stack = await createStack(network, 'operation-recovery-peer', user, {
+      presenceStore: heldPresenceStore
+    })
+    await observer.join()
+    await stack.join()
+    const target = await stack.adapter.sendMessage({ type: 'text', body: 'reaction target', mentions: [] })
+    const textCount = network.messageCount('operation-recovery-peer', MESSAGE_TYPE.TEXT)
+    const reactionCount = network.messageCount('operation-recovery-peer', MESSAGE_TYPE.REACTION)
+
+    await stack.server.leaveChatRoom({ domain: DOMAIN })
+    await retirementStarted
+    const recovery = completeInterruptedRelease(stack, user)
+    const textOutcome = stack.adapter.sendMessage({ type: 'text', body: 'held text', mentions: [] }).then(
+      (message) => ({ ok: true as const, message }),
+      (error) => ({ ok: false as const, error })
+    )
+    const reactionOutcome = stack.adapter
+      .sendMessage({ type: 'reaction', targetId: target.id, reaction: REACTION_TYPE.LIKE, active: true })
+      .then(
+        (message) => ({ ok: true as const, message }),
+        (error) => ({ ok: false as const, error })
+      )
+
+    releaseRetirement()
+    await recovery
+
+    await expect(textOutcome).resolves.toMatchObject({
+      ok: true,
+      message: { type: MESSAGE_TYPE.TEXT, body: 'held text' }
+    })
+    await expect(reactionOutcome).resolves.toMatchObject({
+      ok: true,
+      message: { type: MESSAGE_TYPE.REACTION, targetId: target.id, reaction: REACTION_TYPE.LIKE }
+    })
+    expect(network.messageCount('operation-recovery-peer', MESSAGE_TYPE.TEXT)).toBe(textCount + 1)
+    expect(network.messageCount('operation-recovery-peer', MESSAGE_TYPE.REACTION)).toBe(reactionCount + 1)
   })
 
   it('does not physically depart until a rejected SESSION_END is retried and settled', async () => {

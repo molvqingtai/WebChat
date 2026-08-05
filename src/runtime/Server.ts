@@ -89,6 +89,57 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   const connectionDomain = store.getDomain(connectionAction)
   store.send(lifecycleDomain.command.HostReadyCommand())
 
+  interface PresenceRecovery {
+    attempts: number
+    promise: Promise<void>
+    resolve: () => void
+  }
+
+  const presenceRecoveries = new Map<string, PresenceRecovery>()
+  let disposed = false
+
+  const beginPresenceRecovery = (domain: string) => {
+    const current = presenceRecoveries.get(domain)
+    if (current) {
+      current.attempts += 1
+      return current
+    }
+    let resolve = () => {}
+    const promise = new Promise<void>((onResolve) => {
+      resolve = onResolve
+    })
+    const recovery = { attempts: 1, promise, resolve }
+    presenceRecoveries.set(domain, recovery)
+    return recovery
+  }
+
+  const finishPresenceRecovery = (domain: string, recovery: PresenceRecovery, succeeded: boolean) => {
+    if (presenceRecoveries.get(domain) !== recovery) return
+    recovery.attempts -= 1
+    if (!succeeded && recovery.attempts > 0) return
+    presenceRecoveries.delete(domain)
+    recovery.resolve()
+  }
+
+  const operationCancelled = () => new DOMException('Runtime presence is completing its final release', 'AbortError')
+
+  const waitForLivePresence = async (domain: string) => {
+    if (disposed) throw operationCancelled()
+    const recovery = presenceRecoveries.get(domain)
+    if (!recovery) {
+      if (store.query(sessionDomain.query.FinalizingPresenceQuery(domain))) throw operationCancelled()
+      return
+    }
+    await recovery.promise
+    if (
+      disposed ||
+      store.query(sessionDomain.query.FinalizingPresenceQuery(domain)) ||
+      !store.query(sessionDomain.query.DomainQuery(domain))
+    ) {
+      throw operationCancelled()
+    }
+  }
+
   const snapshot = (): RuntimeSnapshot => store.query(connectionDomain.query.SnapshotQuery())
   const acquirePresence = async (domain: string, userId: string): Promise<'active' | 'finalizing' | 'settled'> => {
     if (store.query(sessionDomain.query.DomainQuery(domain))) {
@@ -216,12 +267,6 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       store.send(connectionDomain.command.LeaveDomainCommand(domain))
     })
 
-  const assertLivePresence = (domain: string) => {
-    if (store.query(sessionDomain.query.FinalizingPresenceQuery(domain))) {
-      throw new DOMException('Runtime presence is completing its final release', 'AbortError')
-    }
-  }
-
   const server: RuntimeServer = {
     attachPage: async (payload) => {
       store.send(lifecycleDomain.command.AttachPageCommand(payload))
@@ -233,34 +278,46 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     },
     getSnapshot: async () => snapshot(),
     joinChatRoom: async (payload) => {
-      let presenceState = await acquirePresence(payload.domain, payload.user.id)
-      if (presenceState === 'settled') {
-        presenceState = await acquirePresence(payload.domain, payload.user.id)
-      }
-      const connect = async () => {
-        if (presenceState !== 'active' && store.query(sessionDomain.query.DomainQuery(payload.domain))) return true
-        const operationId = nanoid()
-        return runConnectionOperation(
-          operationId,
-          connectionDomain.command.JoinDomainCommand({ operationId, ...payload }),
-          () => true,
-          () => false
-        )
-      }
-      if (!(await connect())) return null
-      if (presenceState === 'finalizing') {
-        await completeInterruptedRelease(payload.domain)
-        presenceState = await acquirePresence(payload.domain, payload.user.id)
-        if (presenceState === 'settled') presenceState = await acquirePresence(payload.domain, payload.user.id)
+      let recovery =
+        store.query(sessionDomain.query.FinalizingPresenceQuery(payload.domain)) ||
+        presenceRecoveries.has(payload.domain)
+          ? beginPresenceRecovery(payload.domain)
+          : null
+      let recovered = false
+      try {
+        let presenceState = await acquirePresence(payload.domain, payload.user.id)
+        if (presenceState === 'settled') {
+          presenceState = await acquirePresence(payload.domain, payload.user.id)
+        }
+        if (presenceState === 'finalizing' && !recovery) recovery = beginPresenceRecovery(payload.domain)
+        const connect = async () => {
+          if (presenceState !== 'active' && store.query(sessionDomain.query.DomainQuery(payload.domain))) return true
+          const operationId = nanoid()
+          return runConnectionOperation(
+            operationId,
+            connectionDomain.command.JoinDomainCommand({ operationId, ...payload }),
+            () => true,
+            () => false
+          )
+        }
         if (!(await connect())) return null
+        if (presenceState === 'finalizing') {
+          await completeInterruptedRelease(payload.domain)
+          presenceState = await acquirePresence(payload.domain, payload.user.id)
+          if (presenceState === 'settled') presenceState = await acquirePresence(payload.domain, payload.user.id)
+          if (!(await connect())) return null
+        }
+        recovered = true
+        return snapshot()
+      } finally {
+        if (recovery) finishPresenceRecovery(payload.domain, recovery, recovered)
       }
-      return snapshot()
     },
     leaveChatRoom: async ({ domain }) => {
       store.send(connectionDomain.command.LeaveDomainCommand(domain))
     },
     allocateTextMessage: async (payload) => {
-      assertLivePresence(payload.domain)
+      await waitForLivePresence(payload.domain)
       const operationId = nanoid()
       return runSessionOperation(
         operationId,
@@ -272,7 +329,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       )
     },
     allocateReactionMessage: async (payload) => {
-      assertLivePresence(payload.domain)
+      await waitForLivePresence(payload.domain)
       const operationId = nanoid()
       return runSessionOperation(
         operationId,
@@ -284,7 +341,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       )
     },
     sendChatMessage: async (payload) => {
-      assertLivePresence(payload.domain)
+      await waitForLivePresence(payload.domain)
       const operationId = nanoid()
       await runSessionOperation(
         operationId,
@@ -317,6 +374,9 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   }
 
   serverDisposers.set(server, () => {
+    disposed = true
+    presenceRecoveries.forEach((recovery) => recovery.resolve())
+    presenceRecoveries.clear()
     pageBridges.forEach((subscription) => subscription.unsubscribe())
     try {
       store.discard()
