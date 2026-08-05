@@ -5,7 +5,7 @@ import { ReadinessExtern, type ReadinessState } from '@/domain/externs/Readiness
 
 const createFixture = (initial: ReadinessState) => {
   let current = initial
-  const listeners = new Set<(state: ReadinessState) => void>()
+  const listeners = new Set<(state: ReadinessState, terminalError?: string) => void>()
   const store = Remesh.store({
     externs: [
       ReadinessExtern.impl({
@@ -31,9 +31,9 @@ const createFixture = (initial: ReadinessState) => {
     domain,
     transitions,
     observedStates,
-    emit: (state: ReadinessState) => {
+    emit: (state: ReadinessState, terminalError?: string) => {
       current = state
-      listeners.forEach((listener) => listener(state))
+      listeners.forEach((listener) => listener(state, terminalError))
     },
     discard: () => {
       querySubscription.unsubscribe()
@@ -77,6 +77,19 @@ it('updates and emits exactly once for each actual readiness transition', () => 
   expect(fixture.store.query(fixture.domain.query.StateQuery())).toBe('connecting')
   expect(fixture.transitions).toEqual(['ready', 'unavailable', 'connecting'])
   expect(fixture.observedStates).toEqual(['ready', 'unavailable', 'connecting'])
+
+  fixture.discard()
+})
+
+it('retains terminal error text without inventing another readiness transition', () => {
+  const fixture = createFixture('unavailable')
+
+  fixture.emit('unavailable', 'Extension context invalidated.')
+  fixture.emit('unavailable', 'Extension context invalidated.')
+
+  expect(fixture.store.query(fixture.domain.query.StateQuery())).toBe('unavailable')
+  expect(fixture.store.query(fixture.domain.query.TerminalErrorQuery())).toBe('Extension context invalidated.')
+  expect(fixture.transitions).toEqual(['unavailable'])
 
   fixture.discard()
 })

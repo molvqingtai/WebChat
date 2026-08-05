@@ -137,6 +137,55 @@ describe('ClientLease generation ownership', () => {
     client.detach()
   })
 
+  it('terminates an invalidated content generation without retrying its native failure', async () => {
+    const domain = 'https://example.test'
+    const pageId = 'page-a'
+    const healthySnapshot: RuntimeSnapshot = {
+      ...snapshot,
+      domains: [
+        {
+          domain,
+          phase: 'active',
+          pageIds: [pageId],
+          chatRoomJoined: true,
+          sessions: []
+        }
+      ]
+    }
+    const nativeError = new Error('Extension context invalidated.')
+    const registerPage = vi
+      .fn<RuntimeCoordinator['registerPage']>()
+      .mockResolvedValueOnce(registration(healthySnapshot))
+      .mockRejectedValue(nativeError)
+    const logError = vi.fn()
+    const phases: HostPhase[] = []
+    const terminalErrors: string[] = []
+    const client = new ClientLease({
+      coordinator: coordinatorWith(registerPage),
+      pageId,
+      domain,
+      startupRetryIntervalMs: 10,
+      watchdogIntervalMs: 1000,
+      logError
+    })
+    client.whenHostPhase((phase, terminalError) => {
+      phases.push(phase)
+      if (terminalError) terminalErrors.push(terminalError)
+    })
+    await client.init()
+    phases.length = 0
+
+    await vi.advanceTimersByTimeAsync(1000)
+    await vi.waitFor(() => expect(logError).toHaveBeenCalledWith(nativeError))
+    await vi.advanceTimersByTimeAsync(30000)
+
+    expect(registerPage).toHaveBeenCalledTimes(2)
+    expect(logError).toHaveBeenCalledOnce()
+    expect(phases).toEqual(['unavailable'])
+    expect(terminalErrors).toEqual([nativeError.message])
+    client.detach()
+  })
+
   it('single-flights overlapping checks and does not resurrect a detached lease', async () => {
     const pending = deferred<RuntimePageRegistration>()
     const registerPage = vi

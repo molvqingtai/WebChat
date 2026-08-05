@@ -51,7 +51,7 @@ const createFixture = () => {
     loading: vi.fn(() => RUNTIME_TOAST_ID),
     cancel: vi.fn((id) => id)
   } satisfies Toast
-  const readinessListeners = new Set<(state: ReadinessState) => void>()
+  const readinessListeners = new Set<(state: ReadinessState, terminalError?: string) => void>()
   const chat: ChatRoom = {
     joinRoom: vi.fn(async () => {}),
     leaveRoom: vi.fn(async () => {}),
@@ -112,7 +112,8 @@ const createFixture = () => {
     room,
     chat,
     toast,
-    emitReadiness: (state: ReadinessState) => readinessListeners.forEach((listener) => listener(state))
+    emitReadiness: (state: ReadinessState, terminalError?: string) =>
+      readinessListeners.forEach((listener) => listener(state, terminalError))
   }
 }
 
@@ -236,6 +237,40 @@ describe('application feedback ownership', () => {
 
     fixture.emitReadiness('ready')
     await flushMicrotasks()
+    expect(fixture.toast.cancel).not.toHaveBeenCalled()
+
+    fixture.emitReadiness('connecting')
+    await flushMicrotasks()
+    expect(fixture.toast.loading).toHaveBeenCalledTimes(1)
+    expect(fixture.toast.error).toHaveBeenCalledTimes(errorCount)
+  })
+
+  it('shows one native terminal Runtime error and does not replace it with later loading', async () => {
+    const fixture = createFixture()
+    const joining = deferred()
+    vi.mocked(fixture.chat.joinRoom).mockReturnValueOnce(joining.promise)
+    markReady(fixture)
+    fixture.store.send(fixture.room.command.JoinRoomCommand())
+    await vi.waitFor(() =>
+      expect(fixture.toast.loading).toHaveBeenCalledWith('Connected to the chat.', {
+        id: RUNTIME_TOAST_ID,
+        dismissible: false
+      })
+    )
+
+    fixture.emitReadiness('unavailable', 'Extension context invalidated.')
+    await vi.waitFor(() =>
+      expect(fixture.toast.error).toHaveBeenCalledWith('Extension context invalidated.', {
+        id: RUNTIME_TOAST_ID
+      })
+    )
+
+    fixture.emitReadiness('unavailable', 'Extension context invalidated.')
+    fixture.emitReadiness('connecting')
+    await flushMicrotasks()
+
+    expect(fixture.toast.error).toHaveBeenCalledOnce()
+    expect(fixture.toast.loading).toHaveBeenCalledOnce()
     expect(fixture.toast.cancel).not.toHaveBeenCalled()
   })
 })

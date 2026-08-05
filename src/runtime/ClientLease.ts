@@ -1,6 +1,7 @@
 import type { HostPhase, RuntimeCoordinator, RuntimePageRegistration, RuntimeSnapshot } from '@/runtime/Contract'
 
 export const CLIENT_LEASE_RPC_TIMEOUT_MS = 5000
+const EXTENSION_CONTEXT_INVALIDATED = 'Extension context invalidated.'
 
 export interface ClientLeaseOptions {
   coordinator: RuntimeCoordinator
@@ -50,6 +51,11 @@ const withDeadline = <T>(task: Promise<T>, milliseconds: number, signal: AbortSi
     if (signal.aborted) onAbort()
   })
 
+const terminalRuntimeErrorMessage = (error: unknown) => {
+  if (typeof error !== 'object' || error === null || !('message' in error)) return null
+  return error.message === EXTENSION_CONTEXT_INVALIDATED ? EXTENSION_CONTEXT_INVALIDATED : null
+}
+
 export class ClientLease {
   private snapshotValue: RuntimeSnapshot | null = null
   private coordinatorGeneration = 0
@@ -59,8 +65,9 @@ export class ClientLease {
   private recovering: { lifecycle: AbortController; deadline: number; task: Promise<void> } | null = null
   private checking: { deadline: number; task: Promise<void> } | null = null
   private readonly readyCallbacks = new Set<() => void>()
-  private readonly hostPhaseCallbacks = new Set<(phase: HostPhase) => void>()
+  private readonly hostPhaseCallbacks = new Set<(phase: HostPhase, terminalError?: string) => void>()
   private hostPhase: HostPhase = 'none'
+  private terminal = false
   private readonly startupTimeoutMs
   private readonly startupRetryIntervalMs
   private readonly watchdogIntervalMs
@@ -79,7 +86,7 @@ export class ClientLease {
     return () => this.readyCallbacks.delete(callback)
   }
 
-  whenHostPhase(callback: (phase: HostPhase) => void) {
+  whenHostPhase(callback: (phase: HostPhase, terminalError?: string) => void) {
     this.hostPhaseCallbacks.add(callback)
     callback(this.hostPhase)
     return () => this.hostPhaseCallbacks.delete(callback)
@@ -93,11 +100,24 @@ export class ClientLease {
     return this.lifecycle === lifecycle && !lifecycle.signal.aborted
   }
 
-  private setHostPhase(phase: HostPhase) {
-    if (this.hostPhase === phase) return
+  private setHostPhase(phase: HostPhase, terminalError?: string) {
+    if (this.hostPhase === phase && terminalError === undefined) return
     this.hostPhase = phase
     if (this.snapshotValue) this.snapshotValue = { ...this.snapshotValue, hostPhase: phase }
-    this.hostPhaseCallbacks.forEach((callback) => callback(phase))
+    this.hostPhaseCallbacks.forEach((callback) => callback(phase, terminalError))
+  }
+
+  private settleTerminal(lifecycle: AbortController, error: unknown, message: string) {
+    if (!this.isCurrent(lifecycle) || this.terminal) return false
+    this.terminal = true
+    this.ready = false
+    if (this.watchdog) {
+      globalThis.clearInterval(this.watchdog)
+      this.watchdog = null
+    }
+    this.setHostPhase('unavailable', message)
+    this.logError(error)
+    return true
   }
 
   private async registerWithinBudget(lifecycle: AbortController, deadline: number): Promise<RuntimePageRegistration> {
@@ -118,6 +138,7 @@ export class ClientLease {
         return result
       } catch (error) {
         lifecycle.signal.throwIfAborted()
+        if (terminalRuntimeErrorMessage(error)) throw error
         lastError = error
         if (Date.now() + this.startupRetryIntervalMs > deadline) throw error
         await wait(this.startupRetryIntervalMs, lifecycle.signal)
@@ -137,7 +158,7 @@ export class ClientLease {
   }
 
   private recover(lifecycle: AbortController, deadline: number) {
-    if (!this.isCurrent(lifecycle)) return Promise.resolve()
+    if (!this.isCurrent(lifecycle) || this.terminal) return Promise.resolve()
     if (this.recovering?.lifecycle === lifecycle && Date.now() < this.recovering.deadline) {
       return this.recovering.task
     }
@@ -147,6 +168,11 @@ export class ClientLease {
       .then(() => {})
       .catch((error) => {
         if (!this.isCurrent(lifecycle) || this.recovering !== recovery) return
+        const terminalMessage = terminalRuntimeErrorMessage(error)
+        if (terminalMessage) {
+          this.settleTerminal(lifecycle, error, terminalMessage)
+          return
+        }
         this.setHostPhase('unavailable')
         this.logError(error)
       })
@@ -182,14 +208,21 @@ export class ClientLease {
       }
       this.snapshotValue = registration.snapshot
       this.setHostPhase(registration.snapshot.hostPhase)
-    } catch {
-      if (!this.isCurrent(lifecycle) || this.checking !== check || Date.now() >= check.deadline) return
+    } catch (error) {
+      if (!this.isCurrent(lifecycle) || this.checking !== check) return
+      const terminalMessage = terminalRuntimeErrorMessage(error)
+      if (terminalMessage) {
+        this.settleTerminal(lifecycle, error, terminalMessage)
+        return
+      }
+      if (Date.now() >= check.deadline) return
       this.ready = false
       await this.recover(lifecycle, check.deadline)
     }
   }
 
   checkNow() {
+    if (this.terminal) return Promise.resolve()
     const now = Date.now()
     if (this.checking && now < this.checking.deadline) return this.checking.task
     if (this.recovering && now >= this.recovering.deadline) this.recovering = null
@@ -203,7 +236,7 @@ export class ClientLease {
   }
 
   private startWatchdog(lifecycle: AbortController) {
-    if (this.watchdog || !this.isCurrent(lifecycle)) return
+    if (this.watchdog || !this.isCurrent(lifecycle) || this.terminal) return
     this.watchdog = globalThis.setInterval(() => {
       if (this.isCurrent(lifecycle)) void this.checkNow()
     }, this.watchdogIntervalMs)
@@ -218,6 +251,7 @@ export class ClientLease {
     const lifecycle = new AbortController()
     this.lifecycle = lifecycle
     this.ready = false
+    this.terminal = false
     this.setHostPhase('connecting')
     try {
       const snapshot = await this.attach(lifecycle)
@@ -237,6 +271,7 @@ export class ClientLease {
     this.recovering = null
     this.checking = null
     this.ready = false
+    this.terminal = false
     this.setHostPhase('none')
     if (this.watchdog) {
       globalThis.clearInterval(this.watchdog)
