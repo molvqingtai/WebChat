@@ -4,7 +4,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Virtuoso } from 'react-virtuoso'
 
 export interface MessageListProps {
-  children?: ReactElement[]
+  children?: ReactElement[] | null
 }
 
 const itemKey = (_: number, item: ReactElement) => {
@@ -17,18 +17,20 @@ const MessageList: FC<MessageListProps> = ({ children }) => {
 
   return (
     <ScrollArea ref={setScrollParentRef} className="dark:bg-slate-900">
-      <Virtuoso
-        defaultItemHeight={108}
-        increaseViewportBy={200}
-        overscan={200}
-        followOutput={(isAtBottom: boolean) => (isAtBottom ? 'smooth' : 'auto')}
-        initialTopMostItemIndex={{ index: 'LAST', align: 'end' }}
-        data={children}
-        customScrollParent={scrollParentRef!}
-        computeItemKey={itemKey}
-        skipAnimationFrameInResizeObserver
-        itemContent={(_, item) => item}
-      />
+      {children !== null && children !== undefined && scrollParentRef ? (
+        <Virtuoso
+          defaultItemHeight={108}
+          increaseViewportBy={200}
+          overscan={200}
+          followOutput={(isAtBottom: boolean) => (isAtBottom ? 'smooth' : false)}
+          initialTopMostItemIndex={{ index: 'LAST', align: 'end' }}
+          data={children}
+          customScrollParent={scrollParentRef}
+          computeItemKey={itemKey}
+          skipAnimationFrameInResizeObserver
+          itemContent={(_, item) => item}
+        />
+      ) : null}
     </ScrollArea>
   )
 }
