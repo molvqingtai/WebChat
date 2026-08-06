@@ -72,7 +72,7 @@ const createFixture = (options: { delayRecordWatch?: boolean; user?: UserInfo | 
     watch: async () => async () => {}
   }
   const readinessListeners = new Set<(state: 'connecting' | 'ready' | 'unavailable') => void>()
-  const lifecycleTokens = new Map<number, ConnectionLifecycleResult>()
+  let lifecycleResult: ConnectionLifecycleResult = 'active'
   let lifecycleSeq = 0
   const listeners = {
     message: new Set<(message: ChatMessage) => void>(),
@@ -132,22 +132,16 @@ const createFixture = (options: { delayRecordWatch?: boolean; user?: UserInfo | 
     onError: (listener) => subscribe(listeners.error, listener)
   }
 
+  const sendLifecycleLocal = createSendLifecycle()
   const store = Remesh.store({
     externs: [
       ChatRoomExtern.impl(chat),
       ConnectionLifecycleExtern.impl({
-        beginAttempt: () => {
-          const token = ++lifecycleSeq
-          lifecycleTokens.set(token, 'active')
-          return token
-        },
-        getAttemptResult: (token) => {
-          const result = lifecycleTokens.get(token) ?? 'active'
-          if (result !== 'active') lifecycleTokens.delete(token)
-          return result
-        }
+        mint: () => ++lifecycleSeq,
+        bindTask: () => {},
+        getTaskResult: () => lifecycleResult
       }),
-      SendLifecycleExtern.impl(createSendLifecycle()),
+      SendLifecycleExtern.impl(sendLifecycleLocal),
       ReadinessExtern.impl({
         onState: (listener) => {
           readinessListeners.add(listener)
@@ -192,8 +186,9 @@ const createFixture = (options: { delayRecordWatch?: boolean; user?: UserInfo | 
     emitReadiness: (state: 'connecting' | 'ready' | 'unavailable') =>
       readinessListeners.forEach((listener) => listener(state)),
     setLifecycleResult: (result: ConnectionLifecycleResult) => {
-      if (lifecycleSeq > 0) lifecycleTokens.set(lifecycleSeq, result)
-    }
+      lifecycleResult = result
+    },
+    cancelActiveSends: () => sendLifecycleLocal.cancelActiveSends()
   }
 }
 
@@ -346,7 +341,8 @@ const createPendingConnectionFixture = (stage: PendingConnectionStage) => {
     }
   })
   const lifecycleBundle = createConnectionLifecycle()
-  adapter.bindConnectionTokenAcquirer(lifecycleBundle.tokenAcquirer)
+  adapter.bindConnectionResultReporter(lifecycleBundle.report)
+  adapter.bindStandaloneInvocation(lifecycleBundle.value.mint, lifecycleBundle.value.bindTask)
   const storage: Storage = {
     get: async <T extends StorageValue>() => SELF as T,
     set: async () => {},
@@ -868,7 +864,8 @@ describe('ChatRoomDomain exact application port', () => {
     }
     vi.stubGlobal('document', { location: { origin: domain }, title: '', querySelector: () => null })
     const lifecycleBundle = createConnectionLifecycle()
-    adapter.bindConnectionTokenAcquirer(lifecycleBundle.tokenAcquirer)
+    adapter.bindConnectionResultReporter(lifecycleBundle.report)
+    adapter.bindStandaloneInvocation(lifecycleBundle.value.mint, lifecycleBundle.value.bindTask)
     const store = Remesh.store({
       externs: [
         ChatRoomExtern.impl(adapter),
@@ -1225,10 +1222,10 @@ describe('ChatRoomDomain exact application port', () => {
     fixture.store.send(fixture.room.command.SendTextMessageCommand('held by teardown'))
     await vi.waitFor(() => expect(fixture.chat.sendMessage).toHaveBeenCalledOnce())
 
-    // Final release in progress: the local session is gone, so the still-active send token is cancelled
-    // (a per-send structural owner). The in-flight send then rejects but its own token is already
-    // cancelled, so it is silent — never derived from the caught error's content or a remote-leave event.
-    fixture.emitSessions([])
+    // Final release in progress: the Content/lease teardown owner cancels the still-active send token.
+    // The in-flight send then rejects but its own token is already cancelled, so it is silent — never
+    // derived from the caught error's content or a remote-leave/session event.
+    fixture.cancelActiveSends()
     rejectSend(new DOMException('Runtime presence is completing its final release', 'AbortError'))
     await Promise.resolve()
 

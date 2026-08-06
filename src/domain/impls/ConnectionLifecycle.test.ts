@@ -1,29 +1,36 @@
 import { describe, expect, it } from 'vitest'
 import { createConnectionLifecycle } from '@/domain/impls/ConnectionLifecycle'
 
-describe('ConnectionLifecycle per-attempt token isolation', () => {
-  it('keeps each attempt result owned by its own exact token across overlapping operations', () => {
-    const { value, tokenAcquirer } = createConnectionLifecycle()
+describe('ConnectionLifecycle exact task-identity correlation', () => {
+  it('binds a minted token to an exact task and reports its result one-shot', () => {
+    const { value, report } = createConnectionLifecycle()
 
-    // Two overlapping connection invocations each reserve and own a distinct token.
-    const tokenA = value.beginAttempt()
-    const tokenB = value.beginAttempt()
+    const token = value.mint()
+    const task = Promise.resolve() as Promise<void>
+    value.bindTask(task, token)
+    report(token, 'cancelled')
 
-    // The adapter reports outcomes for each attempt by its own acquired token.
-    tokenAcquirer.acquire() // consumes a reserved token for attempt A
-    tokenAcquirer.report(tokenA, 'cancelled')
-    tokenAcquirer.acquire() // B
-    tokenAcquirer.report(tokenB, 'failed')
-
-    // A superseded/cancelled attempt must not corrupt its successor's real failure and vice-versa.
-    expect(value.getAttemptResult(tokenA)).toBe('cancelled')
-    expect(value.getAttemptResult(tokenB)).toBe('failed')
+    expect(value.getTaskResult(task)).toBe('cancelled')
+    // One-shot: reading again yields the default (terminal state released).
+    expect(value.getTaskResult(task)).toBe('active')
   })
 
-  it('reports a per-token result that the owning invocation alone can read', () => {
-    const { value, tokenAcquirer } = createConnectionLifecycle()
-    const token = value.beginAttempt()
-    tokenAcquirer.report(token, 'cancelled')
-    expect(value.getAttemptResult(token)).toBe('cancelled')
+  it('keeps each task’s result owned by its own exact token across overlapping invocations', () => {
+    const { value, report } = createConnectionLifecycle()
+
+    const tokenA = value.mint()
+    const taskA = Promise.resolve() as Promise<void>
+    value.bindTask(taskA, tokenA)
+    // Overlapping invocation B mints its own token and task.
+    const tokenB = value.mint()
+    const taskB = Promise.resolve() as Promise<void>
+    value.bindTask(taskB, tokenB)
+
+    report(tokenA, 'cancelled')
+    report(tokenB, 'failed')
+
+    // A superseded/cancelled attempt must not corrupt its successor's real failure and vice-versa.
+    expect(value.getTaskResult(taskA)).toBe('cancelled')
+    expect(value.getTaskResult(taskB)).toBe('failed')
   })
 })

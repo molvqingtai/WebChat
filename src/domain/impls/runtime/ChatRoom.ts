@@ -2,7 +2,7 @@ import EventHub from '@resreq/event-hub'
 import { isInvalidMessageRecordError, type InsertMessageResult, type MessageStore } from '@/domain/MessageStore'
 import type { ChatRoom as ChatRoomPort, JoinRoomCommand, SendMessageCommand } from '@/domain/externs/ChatRoom'
 import type { ConnectionLifecycleResult } from '@/domain/externs/ConnectionLifecycle'
-import type { RuntimeChatRoomTokenAcquirer } from '@/domain/impls/ConnectionLifecycle'
+import type { ConnectionResultReporter } from '@/domain/impls/ConnectionLifecycle'
 import type { Unsubscribe } from '@/domain/Subscription'
 import {
   MESSAGE_RECORD_TYPE,
@@ -177,7 +177,10 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
   private readonly seenErrorEventIds = new Set<string>()
   private readyGeneration = 0
   private connectionSequence = 0
-  private tokenAcquirer: RuntimeChatRoomTokenAcquirer | null = null
+  private connectionTokenSequence = 0
+  private reportResult: ((token: number, result: ConnectionLifecycleResult) => void) | null = null
+  private standaloneMint: (() => number) | null = null
+  private standaloneBind: ((task: Promise<void>, token: number) => void) | null = null
   private attachment: RuntimeAttachment | null = null
   private activeConnection: PageConnectionAttempt | null = null
   private disposed = false
@@ -189,18 +192,23 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
       this.readyGeneration += 1
       // Runtime generation replacement supersedes the old connection attempt; that is a structural
       // cancellation fact for that attempt.
-      if (this.activeConnection) this.acquireResultToken(this.activeConnection.resultToken, 'cancelled')
+      if (this.activeConnection) this.reportResult?.(this.activeConnection.resultToken, 'cancelled')
       this.activeConnection?.controller.abort(abortError('Runtime host generation replaced'))
       this.startAttachment(null)
     })
   }
 
-  bindConnectionTokenAcquirer(acquirer: RuntimeChatRoomTokenAcquirer) {
-    this.tokenAcquirer = acquirer
+  bindConnectionResultReporter(reporter: ConnectionResultReporter) {
+    this.reportResult = reporter
   }
 
-  private acquireResultToken(token: number | undefined, result: ConnectionLifecycleResult) {
-    if (token !== undefined && result !== 'active') this.tokenAcquirer?.report(token, result)
+  bindStandaloneInvocation(mint: () => number, bind: (task: Promise<void>, token: number) => void) {
+    this.standaloneMint = mint
+    this.standaloneBind = bind
+  }
+
+  private recordResult(token: number, result: ConnectionLifecycleResult) {
+    if (result !== 'active') this.reportResult?.(token, result)
   }
 
   private isAttachmentCurrent(attachment: RuntimeAttachment) {
@@ -254,9 +262,8 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
     return attachment
   }
 
-  private beginConnectionAttempt() {
+  private beginConnectionAttempt(resultToken: number) {
     if (this.disposed) throw abortError('Runtime page detached')
-    const resultToken = this.tokenAcquirer?.acquire() ?? -1
     if (this.activeConnection) {
       // This attempt supersedes the in-flight one; that superseded attempt records its own cancellation
       // when its owning invocation settles. This new attempt owns its own result token.
@@ -571,12 +578,20 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
     assertCurrent()
   }
 
-  async joinRoom(command: JoinRoomCommand): Promise<void> {
-    const attempt = this.beginConnectionAttempt()
+  joinRoom(command: JoinRoomCommand): Promise<void> {
+    // Return the exact inner task (not an async wrapper) so task-identity binding survives.
+    const token = this.standaloneMint ? this.standaloneMint() : ++this.connectionTokenSequence
+    const task = this.joinRoomWithToken(token, command)
+    this.standaloneBind?.(task, token)
+    return task
+  }
+
+  async joinRoomWithToken(resultToken: number, command: JoinRoomCommand): Promise<void> {
+    const attempt = this.beginConnectionAttempt(resultToken)
     try {
       const attachment = await this.currentAttachment(attempt)
       if (!this.isConnectionCurrent(attempt, attachment)) {
-        this.acquireResultToken(attempt.resultToken, 'cancelled')
+        this.recordResult(attempt.resultToken, 'cancelled')
         throw abortError('Page connection attempt superseded')
       }
       const snapshot = await raceWithSignal(
@@ -587,7 +602,7 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
         attempt.controller.signal
       )
       if (!snapshot) {
-        this.acquireResultToken(attempt.resultToken, 'cancelled')
+        this.recordResult(attempt.resultToken, 'cancelled')
         throw abortError('ChatRoom operation cancelled')
       }
       attempt.controller.signal.throwIfAborted()
@@ -596,7 +611,7 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
         snapshot.hostId !== attempt.hostId ||
         this.dependencies.getSnapshot().hostId !== attempt.hostId
       ) {
-        this.acquireResultToken(attempt.resultToken, 'cancelled')
+        this.recordResult(attempt.resultToken, 'cancelled')
         throw abortError('Page connection attempt superseded')
       }
       const domainSnapshot = snapshot.domains.find((item) => item.domain === this.dependencies.pageDomain)
@@ -616,25 +631,32 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
       }
       attempt.controller.signal.throwIfAborted()
       if (!this.isConnectionCurrent(attempt, attachment)) {
-        this.acquireResultToken(attempt.resultToken, 'cancelled')
+        this.recordResult(attempt.resultToken, 'cancelled')
         throw abortError('Page connection attempt superseded')
       }
-      this.acquireResultToken(attempt.resultToken, 'succeeded')
+      this.recordResult(attempt.resultToken, 'succeeded')
       this.finishConnectionAttempt(attempt)
     } catch (error) {
-      this.acquireResultToken(attempt.resultToken, 'failed')
+      this.recordResult(attempt.resultToken, 'failed')
       this.finishConnectionAttempt(attempt, error)
       throw error
     }
   }
 
   // Application reconnect retains the public leave/join composition; Lifecycle owns final release.
-  async leaveRoom(): Promise<void> {
-    const attempt = this.beginConnectionAttempt()
+  leaveRoom(): Promise<void> {
+    const token = this.standaloneMint ? this.standaloneMint() : ++this.connectionTokenSequence
+    const task = this.leaveRoomWithToken(token)
+    this.standaloneBind?.(task, token)
+    return task
+  }
+
+  async leaveRoomWithToken(resultToken: number): Promise<void> {
+    const attempt = this.beginConnectionAttempt(resultToken)
     try {
       const attachment = await this.currentAttachment(attempt)
       if (!this.isConnectionCurrent(attempt, attachment)) {
-        this.acquireResultToken(attempt.resultToken, 'cancelled')
+        this.recordResult(attempt.resultToken, 'cancelled')
         throw abortError('Page connection attempt superseded')
       }
       const result = await raceWithSignal(
@@ -642,18 +664,18 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
         attempt.controller.signal
       )
       if (result === null) {
-        this.acquireResultToken(attempt.resultToken, 'cancelled')
+        this.recordResult(attempt.resultToken, 'cancelled')
         throw abortError('ChatRoom operation cancelled')
       }
       attempt.controller.signal.throwIfAborted()
       if (!this.isConnectionCurrent(attempt, attachment)) {
-        this.acquireResultToken(attempt.resultToken, 'cancelled')
+        this.recordResult(attempt.resultToken, 'cancelled')
         throw abortError('Page connection attempt superseded')
       }
-      this.acquireResultToken(attempt.resultToken, 'succeeded')
+      this.recordResult(attempt.resultToken, 'succeeded')
       this.finishConnectionAttempt(attempt)
     } catch (error) {
-      this.acquireResultToken(attempt.resultToken, 'failed')
+      this.recordResult(attempt.resultToken, 'failed')
       this.finishConnectionAttempt(attempt, error)
       throw error
     }

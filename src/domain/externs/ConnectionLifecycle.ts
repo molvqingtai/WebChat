@@ -1,22 +1,24 @@
 import { Remesh } from 'remesh'
 
-/** The exact, per-attempt structural outcome of one connection lifecycle operation. */
+/** The exact, per-attempt structural outcome of one connection lifecycle invocation. */
 export type ConnectionLifecycleResult = 'active' | 'succeeded' | 'cancelled' | 'failed'
 
 /**
- * A per-attempt connection lifecycle channel. Each connection/reconnect invocation reserves an exact
- * token (`beginAttempt`) before it runs; only that invocation reports and reads that token's result
- * (`active -> succeeded | cancelled | failed`). It never reflects a global "current attempt", and
- * overlapping connection/reconnect operations each own their own token.
+ * A single public-port invocation task whose exact result the application domain may read once. The
+ * composition facade mints an exact token before any await, passes it explicitly into the Runtime-backed
+ * adapter, and binds this task object to that token. The domain waits on the public port task and reads
+ * only this exact task's result. It is one-shot (consumed on read) so no terminal state is retained.
  */
 export interface ConnectionLifecycle {
-  beginAttempt: () => number
-  getAttemptResult: (token: number) => ConnectionLifecycleResult
+  mint: () => number
+  bindTask: (task: Promise<void>, token: number) => void
+  getTaskResult: (task: Promise<void>) => ConnectionLifecycleResult
 }
 
 export const ConnectionLifecycleExtern = Remesh.extern<ConnectionLifecycle>({
   default: {
-    beginAttempt: () => 0,
-    getAttemptResult: () => 'active'
+    mint: () => 0,
+    bindTask: () => {},
+    getTaskResult: () => 'active'
   }
 })
