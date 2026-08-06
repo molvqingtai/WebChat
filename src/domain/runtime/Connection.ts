@@ -764,7 +764,8 @@ const ConnectionDomain = Remesh.domain({
     })
     domain.effect({
       name: 'Connection.SessionErrorEffect',
-      impl: ({ fromEvent }) => fromEvent(sessionDomain.event.ErrorEvent).pipe(map((error) => ErrorEvent({ error })))
+      impl: ({ fromEvent }) =>
+        fromEvent(sessionDomain.event.ErrorEvent).pipe(map(({ error, domain }) => ErrorEvent({ error, domain })))
     })
     domain.effect({
       name: 'Connection.WorldErrorEffect',

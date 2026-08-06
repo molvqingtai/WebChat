@@ -9,9 +9,14 @@ export const createArticoRoomTransport = (): RoomTransport => {
   /**
    * The signaling server rejects a peer id that its previous session still holds. That occupation is a
    * transient stale-session window: the client closes right after this error and the close→restart path
-   * takes over the same id once the server releases it, so forwarding it would surface a self-healing state.
+   * takes over the same id once the server releases it, so surfacing it would announce a self-healing
+   * state. This is the single provider-boundary translation point: it converts the foreign Artico error
+   * once into a typed kind, and every decision branches on that kind, never on an error's message,
+   * name, or constructor.
    */
-  const isSignalingStaleSession = (error: Error) => error.message === 'id-taken'
+  type PeerErrorKind = 'signal-stale-session' | 'other'
+  const classifyPeerError = (error: unknown): PeerErrorKind =>
+    error instanceof Error && error.message === 'id-taken' ? 'signal-stale-session' : 'other'
   const desiredRooms = new Set<string>()
   const rooms = new Map<string, Room>()
   const readyPeers = new Map<string, Set<string>>()
@@ -91,7 +96,7 @@ export const createArticoRoomTransport = (): RoomTransport => {
       desiredRooms.forEach(joinNow)
     })
     nextPeer.on('error', (error) => {
-      if (peer !== nextPeer || isSignalingStaleSession(error)) return
+      if (peer !== nextPeer || classifyPeerError(error) === 'signal-stale-session') return
       errorListeners.forEach((listener) => listener(error))
     })
     nextPeer.on('close', () => {

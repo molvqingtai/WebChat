@@ -10,6 +10,7 @@ import MessageInputDomain from '@/domain/MessageInput'
 import ReadinessDomain from '@/domain/Readiness'
 import UserInfoDomain from '@/domain/UserInfo'
 import StatusModule from '@/domain/modules/Status'
+import { isCancelledOutcome } from '@/runtime/Contract'
 import { MESSAGE_TYPE, REACTION_TYPE, type ChatMessage, type MentionedUser } from '@/protocol/ChatRoom'
 import type { ChatSession } from '@/protocol/Session'
 import { MESSAGE_RECORD_TYPE, NOTICE_TYPE, type SystemNoticeRecord, type TextMessageRecord } from '@/domain/Message'
@@ -59,7 +60,7 @@ type ConnectionOperation = {
 }
 
 const normalizeError = (error: unknown) => (error instanceof Error ? error : new Error(String(error)))
-const isOperationCancelled = (error: unknown) => error instanceof DOMException && error.name === 'AbortError'
+const isOperationCancelled = isCancelledOutcome
 
 const ChatRoomDomain = Remesh.domain({
   name: 'ChatRoomDomain',

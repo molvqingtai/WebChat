@@ -78,6 +78,11 @@ interface DepartedBinding {
 interface PendingChatSend {
   operationId: string
   requestId: string
+  domain: string
+  roomId: string
+  message: ChatMessage
+  /** Frozen distinct per-target send requests still awaiting their single provider call. */
+  pendingTargets: string[]
 }
 
 type PendingReleasePhase =
@@ -120,6 +125,12 @@ export interface SessionOperationSucceeded {
 export interface SessionOperationFailed {
   operationId: string
   error: Error
+}
+
+/** A domain-scoped Runtime failure; host/world-scoped failures omit the domain. */
+export interface SessionFailure {
+  error: Error
+  domain?: string
 }
 
 const getChatRoomId = (domain: string): string => stringToHex(`${CHAT_ROOM_NAMESPACE_V3}:${domain}`)
@@ -209,6 +220,7 @@ const publishedTarget = (prepared: { publishRequestId?: string }, requestId: str
   requestId.slice(`${prepared.publishRequestId}:`.length)
 const catchUpRequestId = (attemptId: string, sourcePeerId: string) => `session:catch-up:${attemptId}:${sourcePeerId}`
 const chatRequestId = (operationId: string) => `session:chat:${operationId}`
+const chatTargetRequestId = (requestId: string, target: string) => `${requestId}:${target}`
 const endRequestId = (presenceId: string) => `session:end:${presenceId}`
 const finalEndIdentity = ({ presenceId, userId, joinedAt }: PendingRelease): PendingPresenceEnd => ({
   presenceId,
@@ -354,7 +366,7 @@ const SessionDomain = Remesh.domain({
       name: 'Session.OperationSucceededEvent'
     })
     const OperationFailedEvent = domain.event<SessionOperationFailed>({ name: 'Session.OperationFailedEvent' })
-    const ErrorEvent = domain.event<Error>({ name: 'Session.ErrorEvent' })
+    const ErrorEvent = domain.event<SessionFailure>({ name: 'Session.ErrorEvent' })
 
     const HydratePresenceCommand = domain.command({
       name: 'Session.HydratePresenceCommand',
@@ -556,7 +568,7 @@ const SessionDomain = Remesh.domain({
         }
         // A genuine target failure is surfaced once and never retried; remaining targets still run.
         return [
-          ErrorEvent(payload.error),
+          ErrorEvent({ error: payload.error, domain: prepared.runtime.domain }),
           ...advancePreparedPublish(get, prepared, publishedTarget(prepared, payload.requestId))
         ]
       }
@@ -804,7 +816,7 @@ const SessionDomain = Remesh.domain({
         return [
           PendingReleasesState().new(removeBy(pending, (item) => item.requestId === payload.release.requestId)),
           DomainReleaseFailedEvent({ domain: payload.release.domain, error: payload.error }),
-          ErrorEvent(payload.error)
+          ErrorEvent({ error: payload.error, domain: payload.release.domain })
         ]
       }
     })
@@ -852,7 +864,7 @@ const SessionDomain = Remesh.domain({
           return [
             presenceAction,
             DomainReleaseFailedEvent({ domain: current.domain, error: transition.error }),
-            ErrorEvent(transition.error)
+            ErrorEvent({ error: transition.error, domain: current.domain })
           ]
         }
         if (transition.type === 'settle') {
@@ -884,7 +896,7 @@ const SessionDomain = Remesh.domain({
               replaceBy(pending, (item) => item.requestId === current.requestId, withReleasePhase(current, 'pending'))
             ),
             DomainReleaseFailedEvent({ domain: current.domain, error: payload.error }),
-            ErrorEvent(payload.error)
+            ErrorEvent({ error: payload.error, domain: current.domain })
           ]
         }
         if (payload.transition.type === 'settle' && current.phase === 'settling') {
@@ -897,7 +909,7 @@ const SessionDomain = Remesh.domain({
               )
             ),
             DomainReleaseFailedEvent({ domain: current.domain, error: payload.error }),
-            ErrorEvent(payload.error)
+            ErrorEvent({ error: payload.error, domain: current.domain })
           ]
         }
         if (payload.transition.type === 'cleanup' && current.phase === 'cleaning') {
@@ -910,11 +922,14 @@ const SessionDomain = Remesh.domain({
               )
             ),
             DomainReleaseFailedEvent({ domain: current.domain, error: payload.error }),
-            ErrorEvent(payload.error)
+            ErrorEvent({ error: payload.error, domain: current.domain })
           ]
         }
         const error = payload.transition.type === 'failure' ? payload.transition.error : payload.error
-        return [DomainReleaseFailedEvent({ domain: current.domain, error }), ErrorEvent(error)]
+        return [
+          DomainReleaseFailedEvent({ domain: current.domain, error }),
+          ErrorEvent({ error, domain: current.domain })
+        ]
       }
     })
 
@@ -1109,49 +1124,93 @@ const SessionDomain = Remesh.domain({
           })
         }
         const requestId = chatRequestId(payload.operationId)
+        const targets = [...new Set(runtime.sessions.map((session) => session.sourcePeerId))]
+        const pending: PendingChatSend = {
+          operationId: payload.operationId,
+          requestId,
+          domain: payload.domain,
+          roomId: runtime.roomId,
+          message: event,
+          pendingTargets: targets
+        }
         return [
           HlcState().new(adopted),
           PendingChatSendsState().new([
-            ...get(PendingChatSendsState()),
-            { operationId: payload.operationId, requestId }
+            ...get(PendingChatSendsState()).filter((item) => item.operationId !== payload.operationId),
+            pending
           ]),
-          wireDomain.command.SendMessageCommand({
-            requestId,
-            roomId: runtime.roomId,
-            ...(runtime.sessions.length > 0
-              ? { targetPeerIds: runtime.sessions.map((session) => session.sourcePeerId) }
-              : {}),
-            message: event
-          })
+          ...(targets.length > 0
+            ? [sendChatTarget(pending)]
+            : [OperationSucceededEvent({ operationId: payload.operationId })])
         ]
       }
     })
 
+    const sendChatTarget = (pending: PendingChatSend) =>
+      wireDomain.command.SendMessageCommand({
+        requestId: chatTargetRequestId(pending.requestId, pending.pendingTargets[0]),
+        roomId: pending.roomId,
+        targetPeerIds: [pending.pendingTargets[0]],
+        message: pending.message
+      })
+
     const CompleteChatSendCommand = domain.command({
       name: 'Session.CompleteChatSendCommand',
       impl: ({ get }, requestId: string) => {
-        const pending = get(PendingChatSendsState())
-        const current = pending.find((item) => item.requestId === requestId)
-        return current
-          ? [
-              PendingChatSendsState().new(removeBy(pending, (item) => item.requestId === requestId)),
-              OperationSucceededEvent({ operationId: current.operationId })
-            ]
-          : null
+        const state = get(PendingChatSendsState())
+        const pending = state.find((item) =>
+          item.pendingTargets.some((target) => chatTargetRequestId(item.requestId, target) === requestId)
+        )
+        if (!pending) return null
+        const remaining = pending.pendingTargets.filter(
+          (target) => chatTargetRequestId(pending.requestId, target) !== requestId
+        )
+        const next = { ...pending, pendingTargets: remaining }
+        if (remaining.length > 0) {
+          return [
+            PendingChatSendsState().new(replaceBy(state, (item) => item.operationId === pending.operationId, next)),
+            sendChatTarget(next)
+          ]
+        }
+        return [
+          PendingChatSendsState().new(removeBy(state, (item) => item.operationId === pending.operationId)),
+          OperationSucceededEvent({ operationId: pending.operationId })
+        ]
       }
     })
 
     const FailChatSendCommand = domain.command({
       name: 'Session.FailChatSendCommand',
-      impl: ({ get }, payload: { requestId: string; error: Error }) => {
-        const pending = get(PendingChatSendsState())
-        const current = pending.find((item) => item.requestId === payload.requestId)
-        return current
-          ? [
-              PendingChatSendsState().new(removeBy(pending, (item) => item.requestId === payload.requestId)),
-              OperationFailedEvent({ operationId: current.operationId, error: payload.error })
-            ]
-          : null
+      impl: ({ get }, payload: { requestId: string; error: Error; stage?: WireFailureStage }) => {
+        const state = get(PendingChatSendsState())
+        const pending = state.find((item) =>
+          item.pendingTargets.some((target) => chatTargetRequestId(item.requestId, target) === payload.requestId)
+        )
+        if (!pending) return null
+        // Owner loss cancels the remaining targets quietly without failing the local send.
+        if (payload.stage === 'cancelled') {
+          return [
+            PendingChatSendsState().new(removeBy(state, (item) => item.operationId === pending.operationId)),
+            OperationSucceededEvent({ operationId: pending.operationId })
+          ]
+        }
+        const remaining = pending.pendingTargets.filter(
+          (target) => chatTargetRequestId(pending.requestId, target) !== payload.requestId
+        )
+        const next = { ...pending, pendingTargets: remaining }
+        const failure = ErrorEvent({ error: payload.error, domain: pending.domain })
+        if (remaining.length > 0) {
+          return [
+            failure,
+            PendingChatSendsState().new(replaceBy(state, (item) => item.operationId === pending.operationId, next)),
+            sendChatTarget(next)
+          ]
+        }
+        return [
+          failure,
+          PendingChatSendsState().new(removeBy(state, (item) => item.operationId === pending.operationId)),
+          OperationSucceededEvent({ operationId: pending.operationId })
+        ]
       }
     })
 
@@ -1550,7 +1609,7 @@ const SessionDomain = Remesh.domain({
                 ? CompletePresenceRetirementCommand(request)
                 : CompletePresenceTransitionCommand(request)
             } catch (error) {
-              if (!request.transition) return ErrorEvent(error as Error)
+              if (!request.transition) return ErrorEvent({ error: error as Error })
               return request.transition.type === 'retire'
                 ? FailPresenceRetirementCommand({ release: request.transition.release, error: error as Error })
                 : FailPresenceTransitionCommand({ transition: request.transition, error: error as Error })
@@ -1599,7 +1658,7 @@ const SessionDomain = Remesh.domain({
       impl: ({ fromEvent }) =>
         fromEvent(wireDomain.event.MessageSendFailedEvent).pipe(
           filter(({ requestId }) => requestId.startsWith('session:peer:') || requestId.startsWith('session:catch-up:')),
-          map(({ error }) => ErrorEvent(error))
+          map(({ error }) => ErrorEvent({ error }))
         )
     })
     domain.effect({

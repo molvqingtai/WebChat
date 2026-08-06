@@ -187,6 +187,36 @@ const WireDomain = Remesh.domain({
       }
     })
 
+    /**
+     * A provider call that already started must settle its target once. It pops the head and emits the
+     * result even if the room generation changed meanwhile; it is never re-sent into a new generation.
+     */
+    const CompleteProviderSendCommand = domain.command({
+      name: 'Wire.CompleteProviderSendCommand',
+      impl: ({ get }, payload: { request: QueuedSendRequest; error?: Error }) => {
+        const { request } = payload
+        const queues = get(SendQueuesState())
+        const current = queues.find((item) => item.roomId === request.roomId)
+        if (current?.requests[0]?.sequence !== request.sequence) return null
+        const requests = current.requests.slice(1)
+        const nextQueues =
+          requests.length === 0
+            ? queues.filter((item) => item.roomId !== request.roomId)
+            : replaceBy(queues, (item) => item.roomId === request.roomId, {
+                roomId: request.roomId,
+                requestCount: requests.length,
+                suspended: false,
+                requests
+              })
+        const result = payload.error
+          ? MessageSendFailedEvent({ requestId: request.requestId, error: payload.error, stage: 'provider' })
+          : MessageSentEvent({ requestId: request.requestId })
+        return requests.length === 0
+          ? [SendQueuesState().new(nextQueues), result]
+          : [SendQueuesState().new(nextQueues), result, SendRequestedEvent(requests[0])]
+      }
+    })
+
     const CompleteJoinRoomsCommand = domain.command({
       name: 'Wire.CompleteJoinRoomsCommand',
       impl: ({ get }, payload: { requestId: string; rooms: { roomId: string; generation: number }[] }) => {
@@ -317,9 +347,10 @@ const WireDomain = Remesh.domain({
         const isCurrent =
           get(TrustedRoomsState()).includes(request.roomId) &&
           generationFor(get(RoomGenerationsState()), request.roomId) === request.generation
+        // Work that never reached the provider (encode still pending when the room changed, or a
+        // preflight encode failure) is held at the suspended head and moves to the next join
+        // generation instead of being re-sent as a duplicate.
         if (!isCurrent) {
-          // The room's trust is being re-established across a reconnect generation: hold the request at
-          // the head without a failure and let the next join resume the queue in the new generation.
           const held = replaceBy(queues, (item) => item.roomId === request.roomId, {
             ...current,
             suspended: true,
@@ -541,9 +572,9 @@ const WireDomain = Remesh.domain({
           mergeMap(async ({ request, rawPayload }) => {
             try {
               await transport.send(request.roomId, rawPayload, request.targetPeerIds)
-              return CompleteSendCommand({ request })
+              return CompleteProviderSendCommand({ request })
             } catch (error) {
-              return CompleteSendCommand({ request, error: error as Error })
+              return CompleteProviderSendCommand({ request, error: error as Error })
             }
           })
         )

@@ -56,7 +56,7 @@ const settle = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 const errorToast = () => {
   const toasts = [...document.querySelectorAll<HTMLElement>('[data-sonner-toast]')].filter((toast) =>
-    toast.textContent?.includes('WebChat unavailable')
+    toast.textContent?.includes('Permission denied to access property "then"')
   )
   return toasts.length > 0 ? toasts : null
 }

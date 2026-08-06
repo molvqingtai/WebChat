@@ -20,6 +20,10 @@ import { BrowserSyncStorageExtern, type Storage, type StorageValue } from '@/dom
 import { WorldRoomExtern } from '@/domain/externs/WorldRoom'
 import { MESSAGE_TYPE, type ChatMessage, type ChatSession } from '@/protocol'
 import type { RuntimeServer, RuntimeSessionEvent, RuntimeSnapshot } from '@/runtime/Contract'
+import { CANCELLED_KIND } from '@/runtime/Contract'
+
+/** Producer-tagged cancellation outcome matching the real Runtime boundary. */
+const cancelled = (message: string) => Object.assign(new DOMException(message, 'AbortError'), { kind: CANCELLED_KIND })
 import { stringToHex } from '@/utils'
 
 const SELF: UserInfo = {
@@ -296,7 +300,7 @@ const createPendingConnectionFixture = (stage: PendingConnectionStage) => {
           const onAbort = () => {
             replayWriteAborted = true
             options?.signal?.removeEventListener('abort', onAbort)
-            reject(options?.signal?.reason ?? new DOMException('Replay write aborted', 'AbortError'))
+            reject(options?.signal?.reason ?? cancelled('Replay write aborted'))
           }
           options?.signal?.addEventListener('abort', onAbort, { once: true })
           release.promise.then(() => {
@@ -569,7 +573,7 @@ describe('ChatRoomDomain exact application port', () => {
     await new Promise((resolve) => globalThis.setTimeout(resolve, 0))
     expect(fixture.store.query(fixture.room.query.ConnectionOperationIsLoadingQuery())).toBe(true)
 
-    hostRecovery.reject(new DOMException('Runtime operation superseded', 'AbortError'))
+    hostRecovery.reject(cancelled('Runtime operation superseded'))
     await vi.waitFor(() => expect(fixture.store.query(fixture.room.query.ConnectionIsLoadingQuery())).toBe(false))
     expect(connectionErrors).toEqual([])
     expect(roomErrors).toEqual([])
@@ -1179,7 +1183,7 @@ describe('ChatRoomDomain exact application port', () => {
     const errors: Error[] = []
     fixture.store.subscribeEvent(fixture.room.event.OnErrorEvent, (error) => errors.push(error))
     vi.mocked(fixture.chat.sendMessage).mockRejectedValueOnce(
-      new DOMException('Runtime presence is completing its final release', 'AbortError')
+      cancelled('Runtime presence is completing its final release')
     )
     fixture.store.send(fixture.input.command.InputCommand('held by teardown'))
 

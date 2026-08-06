@@ -57,7 +57,8 @@ describe('content Runtime rejection ownership', () => {
       await wait(0)
 
       expect(unhandled).toEqual([])
-      expect(logError).not.toHaveBeenCalled()
+      expect(logError).toHaveBeenCalledOnce()
+      expect(logError).toHaveBeenCalledWith(nativeError)
       expect(phases).toEqual(['none', 'connecting', 'unavailable'])
       const replayed = vi.fn()
       client.whenHostPhase(replayed)

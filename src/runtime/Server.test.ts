@@ -1793,28 +1793,34 @@ describe('RuntimeServer trusted delivery', () => {
 })
 
 describe('RuntimeServer send reliability', () => {
-  it('submits a broadcast to the transport even when no peer session is bound', async () => {
+  it('settles a send with no session target locally without a wire send', async () => {
     const { fake, server, roomId } = await setup()
     const record = await server.allocateTextMessage({ domain: DOMAIN, body: 'outbound', mentions: [] })
 
     await server.sendChatMessage({ domain: DOMAIN, event: record.message })
 
-    expect(fake.messages(roomId)).toContainEqual(record.message)
-    expect(fake.sent.find((item) => item.roomId === roomId)?.to).toBeUndefined()
+    // No current session peer means no distinct target, so the local send settles with zero wire sends.
+    expect(fake.messages(roomId)).toHaveLength(0)
   })
 
-  it('allocates id/HLC centrally and propagates transport acceptance or failure', async () => {
+  it('allocates id/HLC centrally and surfaces a per-target failure without rejecting the send', async () => {
     const { fake, server, roomId } = await setup()
     fake.receive(roomId, 'peer-a', session())
     await settle()
+    const failures: string[] = []
+    await server.onError({ pageId: 'page-a' }, (event) => failures.push(event.message))
     const record = await server.allocateTextMessage({ domain: DOMAIN, body: 'outbound', mentions: [] })
 
     await server.sendChatMessage({ domain: DOMAIN, event: record.message })
     await settle()
     expect(fake.messages(roomId).some((message) => message.type === MESSAGE_TYPE.TEXT)).toBe(true)
+    expect(failures).toEqual([])
 
     fake.failSend(new Error('partial send'))
-    await expect(server.sendChatMessage({ domain: DOMAIN, event: record.message })).rejects.toThrow('partial send')
+    // A provider target throw surfaces once and never retries; the local send still settles.
+    await server.sendChatMessage({ domain: DOMAIN, event: record.message })
+    await settle()
+    expect(failures).toEqual(['partial send'])
     const next = await server.allocateTextMessage({ domain: DOMAIN, body: 'next', mentions: [] })
     expect(next.message.hlc).toEqual({ timestamp: NOW, counter: 1 })
   })

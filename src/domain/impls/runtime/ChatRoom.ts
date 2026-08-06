@@ -1,4 +1,5 @@
 import EventHub from '@resreq/event-hub'
+import { CANCELLED_KIND } from '@/runtime/Contract'
 import { isInvalidMessageRecordError, type InsertMessageResult, type MessageStore } from '@/domain/MessageStore'
 import type { ChatRoom as ChatRoomPort, JoinRoomCommand, SendMessageCommand } from '@/domain/externs/ChatRoom'
 import type { Unsubscribe } from '@/domain/Subscription'
@@ -59,7 +60,12 @@ interface PageConnectionAttempt {
 
 const PAGE_CONNECTION_ATTEMPT_TIMEOUT_MS = 10000
 
-const abortError = (message: string) => new DOMException(message, 'AbortError')
+const abortError = (message: string): DOMException => {
+  const error = new DOMException(message, 'AbortError')
+  // Producer-assigned structural cancellation outcome; decision junctions branch on this kind.
+  Object.assign(error, { kind: CANCELLED_KIND })
+  return error
+}
 
 const raceWithSignal = <Value>(task: Promise<Value>, signal: AbortSignal): Promise<Value> =>
   new Promise<Value>((resolve, reject) => {
@@ -170,6 +176,8 @@ const projectHistory = (
 export class ChatRoom extends EventHub implements ChatRoomPort {
   private readonly disposeReady: Unsubscribe
   private readonly pendingSelfJoinGenerations = new Set<string>()
+  /** Dedups transport repeats of one failure event for the whole live content generation (never evicts). */
+  private readonly seenErrorEventIds = new Set<string>()
   private readyGeneration = 0
   private connectionSequence = 0
   private attachment: RuntimeAttachment | null = null
@@ -368,7 +376,6 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
     const invalidInbound = new Set<number>()
     const retryTimers = new Set<ReturnType<typeof globalThis.setTimeout>>()
     const activeHistorySupplies = new Map<string, AbortController>()
-    const seenErrorEventIds = new Set<string>()
     const cleanup = () => {
       for (const timer of retryTimers) globalThis.clearTimeout(timer)
       retryTimers.clear()
@@ -522,11 +529,11 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
     attachment.registrations.error = () =>
       dependencies.server.onError({ pageId: dependencies.pageId }, (event) => {
         if (!isCurrent()) return
-        // One failure event is displayed once per live attachment; transport duplicates are dropped,
-        // while every later distinct failure carries its own eventId and therefore a fresh toast.
-        if (seenErrorEventIds.has(event.eventId)) return
-        if (seenErrorEventIds.size >= 256) seenErrorEventIds.delete(seenErrorEventIds.values().next().value!)
-        seenErrorEventIds.add(event.eventId)
+        // One failure event is displayed once per live content generation; transport repeats are
+        // dropped, while every later distinct failure carries its own eventId and therefore a
+        // fresh toast. The identity never expires so a late transport repeat cannot reappear.
+        if (this.seenErrorEventIds.has(event.eventId)) return
+        this.seenErrorEventIds.add(event.eventId)
         this.emit('error', new Error(event.message))
       })
     attachment.registrations.history = () =>

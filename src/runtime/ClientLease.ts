@@ -251,6 +251,9 @@ export class ClientLease {
     } catch (error) {
       if (lifecycle.signal.aborted) return null
       this.setHostPhase('unavailable')
+      // A genuine initial control-plane failure is a distinct real failure surfaced with its
+      // original message, exactly once, on the current page.
+      this.emitFailure(error)
       throw error
     }
   }

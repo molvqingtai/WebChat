@@ -2,7 +2,7 @@ import { Remesh } from 'remesh'
 import { catchError, defer, filter, map, mergeMap, Observable } from 'rxjs'
 import DeliveryDomain from '@/domain/runtime/Delivery'
 import SessionDomain, { observeHlc, type SessionDomainState } from '@/domain/runtime/Session'
-import WireDomain, { type WireMessageEvent } from '@/domain/runtime/Wire'
+import WireDomain, { type WireFailureStage, type WireMessageEvent } from '@/domain/runtime/Wire'
 import { ClockExtern } from '@/domain/runtime/externs/Clock'
 import { PagePortExtern } from '@/domain/runtime/externs/PagePort'
 import {
@@ -17,7 +17,6 @@ import {
 import {
   MAX_HISTORY_RESPONSE_MESSAGES,
   MESSAGE_TYPE,
-  WireCodecError,
   isChatRoomMessageSemanticallyValid,
   isMessageWithinLimit,
   isUserWithinLimit,
@@ -809,7 +808,7 @@ const HistoryDomain = Remesh.domain({
 
     const FailWireSendCommand = domain.command({
       name: 'History.FailWireSendCommand',
-      impl: ({ get }, payload: { requestId: string; error: Error }) => {
+      impl: ({ get }, payload: { requestId: string; error: Error; stage?: WireFailureStage }) => {
         const pending = get(PendingWireSendsState())
         const current = pending.find((item) => item.requestId === payload.requestId)
         if (!current) return null
@@ -817,7 +816,10 @@ const HistoryDomain = Remesh.domain({
         if (current.kind === 'request') {
           return [clear, ErrorEvent(payload.error), FinishCurrentRequestedEvent(current)]
         }
-        if (payload.error instanceof WireCodecError && current.records.length > 0) {
+        // A preflight failure means the oversized history frame never reached the provider: drop the
+        // offending record and advance. Branches on the producer-set structured stage, never on the
+        // error's constructor.
+        if (payload.stage === 'preflight' && current.records.length > 0) {
           return [clear, QueueProviderResponseCommand({ ...current, records: current.records.slice(0, -1) })]
         }
         return [clear, ErrorEvent(payload.error), AbortProviderSupplyCommand(current)]
