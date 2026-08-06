@@ -235,6 +235,16 @@ describe('content composition root', () => {
     expect(sendLifecycleInstance.cancelActiveSends).toHaveBeenCalled()
   })
 
+  it('cancels this page generation sent lifecycle on beforeunload lease teardown', async () => {
+    await startContent()
+    const sendLifecycleInstance = fixture.createSendLifecycle.mock.results[0]?.value
+    if (!sendLifecycleInstance) throw new Error('SendLifecycle was never created')
+
+    window.dispatchEvent(new window.Event('beforeunload'))
+
+    expect(sendLifecycleInstance.cancelActiveSends).toHaveBeenCalled()
+  })
+
   it('constructs each deferred application dependency exactly once only when initialization activates it', async () => {
     await startContent()
     const activate = fixture.initializationOptions[0]?.activateApplicationDependencies

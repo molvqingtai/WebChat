@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Database, ReadTransaction, WriteTransaction } from '@/domain/externs/Database'
 import { ChatRoom } from '@/domain/impls/runtime/ChatRoom'
+import { createConnectionLifecycle } from '@/domain/impls/ConnectionLifecycle'
 import { createMemoryMessageDatabase } from '@/domain/impls/database/Memory'
 import { createMessageStore, type MessageDatabaseSchema } from '@/domain/MessageStore'
 import {
@@ -975,5 +976,42 @@ describe('Runtime-backed ChatRoom application port', () => {
       firstRoom.dispose()
       await database.close()
     }
+  })
+
+  it('reports a superseded attempt token cancelled before aborting it (real Runtime adapter)', async () => {
+    const heldJoin = new Promise<RuntimeSnapshot>(() => {})
+    const database = createMemoryMessageDatabase(`supersede-${databaseId++}`)
+    const messageStore = createMessageStore(database)
+    const server: RuntimeServer = {
+      ...serverFixture().server,
+      joinChatRoom: async () => heldJoin
+    }
+    const lifecycle = createConnectionLifecycle()
+    const room = new ChatRoom({
+      server,
+      messageStore,
+      pageDomain: DOMAIN,
+      pageId: 'page-1',
+      getSnapshot: () => domainSnapshot(),
+      whenReady: (listener) => {
+        listener()
+        return () => {}
+      }
+    })
+    room.bindConnectionResultReporter(lifecycle.report)
+    room.bindStandaloneInvocation(lifecycle.value.mint, lifecycle.value.bindTask)
+
+    // First join holds its provider call; a second join supersedes it by beginConnectionAttempt, which
+    // must report the predecessor token cancelled BEFORE aborting it (first-terminal-wins).
+    const first = room.joinRoom({ user: USER, site: SITE })
+    first.catch(() => {})
+    await settle()
+    const second = room.joinRoom({ user: USER, site: SITE })
+    second.catch(() => {})
+    await settle()
+
+    expect(lifecycle.value.getTaskResult(first)).toBe('cancelled')
+    room.dispose()
+    await database.close()
   })
 })

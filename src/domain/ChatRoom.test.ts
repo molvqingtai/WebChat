@@ -1313,6 +1313,37 @@ describe('ChatRoomDomain exact application port', () => {
     fixture.store.discard()
   })
 
+  it('still projects a pending local send that succeeds during manual reconnect', async () => {
+    const fixture = createFixture()
+    await join(fixture)
+    const projected: string[] = []
+    fixture.store.subscribeEvent(fixture.room.event.SendTextMessageEvent, (message) => projected.push(message.id))
+    let resolveSend!: (message: ChatMessage) => void
+    const heldSend = new Promise<ChatMessage>((resolve) => {
+      resolveSend = resolve
+    })
+    vi.mocked(fixture.chat.sendMessage).mockReturnValueOnce(
+      heldSend as never as ReturnType<typeof fixture.chat.sendMessage>
+    )
+    fixture.store.send(fixture.input.command.InputCommand('reconnect success'))
+    fixture.store.send(fixture.room.command.SendTextMessageCommand('reconnect success'))
+    await vi.waitFor(() => expect(fixture.chat.sendMessage).toHaveBeenCalledOnce())
+
+    // Manual reconnect must not silently drop a successful local result: the late success still projects.
+    fixture.store.send(fixture.room.command.ReconnectCommand())
+    resolveSend({
+      type: MESSAGE_TYPE.TEXT,
+      id: 'local-success-message',
+      hlc: { timestamp: 5, counter: 0 },
+      userId: SELF.id,
+      body: 'reconnect success',
+      mentions: []
+    })
+
+    await vi.waitFor(() => expect(projected).toEqual(['local-success-message']))
+    fixture.store.discard()
+  })
+
   it('routes port errors without exposing Runtime details', async () => {
     const fixture = createFixture()
     const errors: Error[] = []
