@@ -273,7 +273,9 @@ export class ClientLease {
       return snapshot
     } catch (error) {
       if (lifecycle.signal.aborted) return null
-      this.setHostPhase('unavailable')
+      const terminalMessage = terminalRuntimeErrorMessage(error)
+      if (terminalMessage) this.settleTerminal(lifecycle, error, terminalMessage)
+      else if (!this.isTerminal()) this.setHostPhase('unavailable')
       throw error
     }
   }

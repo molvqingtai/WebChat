@@ -8,6 +8,73 @@ import type { MessageApi } from '@/service/adapter/runtime/Core'
 const wait = (milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds))
 
 describe('content Runtime rejection ownership', () => {
+  it('preserves the first registration terminal truth after init rejects', async () => {
+    const nativeError = new Error('Extension context invalidated.')
+    const listeners = new Set<(...args: unknown[]) => unknown>()
+    const runtime: MessageApi = {
+      id: 'test-extension',
+      sendMessage: vi.fn((_extensionId: unknown, payload: unknown) => {
+        const message = payload as Message
+        if (message.type === 'apply') return Promise.reject(nativeError)
+        const response: Message = {
+          ...message,
+          type: 'pong',
+          sender: { type: 'provider' }
+        }
+        queueMicrotask(() => listeners.forEach((listener) => listener(response)))
+        return Promise.resolve()
+      }),
+      onMessage: {
+        addListener: (listener) => listeners.add(listener),
+        removeListener: (listener) => listeners.delete(listener)
+      }
+    }
+    const unhandled: unknown[] = []
+    const onUnhandled = (event: PromiseRejectionEvent) => {
+      event.preventDefault()
+      unhandled.push(event.reason)
+    }
+    window.addEventListener('unhandledrejection', onUnhandled)
+    const [, injectCoordinator] = defineProxy(() => ({}) as RuntimeCoordinator, {
+      namespace: 'content-initial-rejection-ownership',
+      heartbeatInterval: 5,
+      heartbeatTimeout: 30
+    })
+    const coordinator = injectCoordinator(new InjectAdapter(runtime))
+    const logError = vi.fn()
+    const phases: Array<{ phase: HostPhase; terminalError?: string }> = []
+    const client = new ClientLease({
+      coordinator,
+      pageId: 'page-a',
+      domain: 'https://example.test',
+      logError
+    })
+    const releaseRejectionOwner = ownInjectRejections((error) => client.observeTransportRejection(error))
+    const releasePhase = client.whenHostPhase((phase, terminalError) => phases.push({ phase, terminalError }))
+
+    try {
+      await expect(client.init()).rejects.toBe(nativeError)
+      await wait(0)
+
+      expect(unhandled).toEqual([])
+      expect(logError).toHaveBeenCalledOnce()
+      expect(logError).toHaveBeenCalledWith(nativeError)
+      expect(phases).toEqual([
+        { phase: 'none', terminalError: undefined },
+        { phase: 'connecting', terminalError: undefined },
+        { phase: 'unavailable', terminalError: nativeError.message }
+      ])
+      const replayed = vi.fn()
+      client.whenHostPhase(replayed)
+      expect(replayed).toHaveBeenCalledWith('unavailable', nativeError.message)
+    } finally {
+      releasePhase()
+      client.detach()
+      releaseRejectionOwner()
+      window.removeEventListener('unhandledrejection', onUnhandled)
+    }
+  })
+
   it('does not expose ignored heartbeat send failures as unhandled rejections', async () => {
     const nativeError = new Error('Extension context invalidated.')
     const listeners = new Set<(...args: unknown[]) => unknown>()
