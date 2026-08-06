@@ -10,6 +10,8 @@ import { BrowserSyncStorageExtern, LocalStorageExtern, type Storage, type Storag
 import { ToastExtern, type Toast } from '@/domain/externs/Toast'
 import { WorldRoomExtern } from '@/domain/externs/WorldRoom'
 import { createMemoryMessageDatabase } from '@/domain/impls/database/Memory'
+import { SendLifecycleExtern } from '@/domain/externs/SendLifecycle'
+import { createSendLifecycle } from '@/domain/impls/SendLifecycle'
 import { MessageDatabaseExtern } from '@/domain/MessageStore'
 import { ClientLease } from '@/runtime/ClientLease'
 import type { RuntimeCoordinator, RuntimeSnapshot } from '@/runtime/Contract'
@@ -74,6 +76,7 @@ const createFixture = (readiness?: Readiness) => {
   const store = Remesh.store({
     externs: [
       ChatRoomExtern.impl(chat),
+      SendLifecycleExtern.impl(createSendLifecycle()),
       ReadinessExtern.impl(
         readiness ?? {
           onState: (listener) => {

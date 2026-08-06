@@ -7,16 +7,11 @@ import type { RoomTransport } from '@/runtime/RoomTransport'
 export const createArticoRoomTransport = (): RoomTransport => {
   const peerId = nanoid()
   /**
-   * The signaling server rejects a peer id that its previous session still holds. That occupation is a
-   * transient stale-session window: the client closes right after this error and the close→restart path
-   * takes over the same id once the server releases it, so surfacing it would announce a self-healing
-   * state. This is the single provider-boundary translation point: it converts the foreign Artico error
-   * once into a typed kind, and every decision branches on that kind, never on an error's message,
-   * name, or constructor.
+   * Peer identity is stable for the whole physical Runtime/host lifetime; retry, a fresh structural
+   * attempt, or a same-host restart never rotates it. Native peer-signaling errors are surfaced as-is;
+   * no provider error's message/name/code is ever read to classify lifecycle. A peer id conflict
+   * therefore surfaces as a real error; the close→restart path (below) still retries normally.
    */
-  type PeerErrorKind = 'signal-stale-session' | 'other'
-  const classifyPeerError = (error: unknown): PeerErrorKind =>
-    error instanceof Error && error.message === 'id-taken' ? 'signal-stale-session' : 'other'
   const desiredRooms = new Set<string>()
   const rooms = new Map<string, Room>()
   const readyPeers = new Map<string, Set<string>>()
@@ -98,7 +93,9 @@ export const createArticoRoomTransport = (): RoomTransport => {
       desiredRooms.forEach(joinNow)
     })
     nextPeer.on('error', (error) => {
-      if (peer !== nextPeer || classifyPeerError(error) === 'signal-stale-session') return
+      // Errors are never classified by message/name/code; they surface as real peer failures while
+      // the physical restart path below is the only structural self-healing mechanism.
+      if (peer !== nextPeer) return
       errorListeners.forEach((listener) => listener(error))
     })
     nextPeer.on('close', () => {

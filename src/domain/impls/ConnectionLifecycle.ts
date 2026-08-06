@@ -1,26 +1,25 @@
-import type { ConnectionLifecycle } from '@/domain/externs/ConnectionLifecycle'
+import type { ConnectionLifecycle, ConnectionLifecycleResult } from '@/domain/externs/ConnectionLifecycle'
 
 /**
- * The Runtime-boundary epoch facts a Runtime-backed ChatRoom exposes: a monotonic counter that advances
- * whenever the Runtime supersedes or releases a connection hierarchy, plus a change subscription. These
- * are read by the ChatRoom domain to classify a completion as a structural cancellation (never from a
- * thrown error's content).
+ * The exact per-attempt outcome facts a Runtime-backed ChatRoom exposes: the outcome of the most recently
+ * settled connection attempt, plus a change subscription. The ChatRoom domain reads this per-attempt result
+ * to classify a completion as a structural cancellation vs a real failure (never from a thrown error's content).
  */
-export interface RuntimeChatRoomEpochSource {
-  getLifecycleEpoch: () => number
-  onLifecycleEpochChange: (callback: (epoch: number) => void) => () => void
+export interface RuntimeChatRoomResultSource {
+  getAttemptResult: () => ConnectionLifecycleResult
+  onAttemptResultChange: (callback: (result: ConnectionLifecycleResult) => void) => () => void
 }
 
-export const createConnectionLifecycleImpl = (source: RuntimeChatRoomEpochSource): ConnectionLifecycle => {
-  let epoch = source.getLifecycleEpoch()
-  source.onLifecycleEpochChange((next) => {
-    epoch = next
+export const createConnectionLifecycleImpl = (source: RuntimeChatRoomResultSource): ConnectionLifecycle => {
+  let result = source.getAttemptResult()
+  source.onAttemptResultChange((next) => {
+    result = next
   })
   return {
-    getEpoch: () => epoch,
-    onEpochChange: (callback) => {
-      callback(epoch)
-      return source.onLifecycleEpochChange(callback)
+    getResult: () => result,
+    onResultChange: (callback) => {
+      callback(result)
+      return source.onAttemptResultChange(callback)
     }
   }
 }

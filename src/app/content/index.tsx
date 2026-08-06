@@ -17,6 +17,7 @@ import { createChatRoomImpl } from '@/domain/impls/ChatRoom'
 import { createWorldRoomImpl } from '@/domain/impls/WorldRoom'
 import { createReadinessImpl } from '@/domain/impls/Readiness'
 import { createConnectionLifecycleImpl } from '@/domain/impls/ConnectionLifecycle'
+import { createSendLifecycle } from '@/domain/impls/SendLifecycle'
 import { AppActionImpl } from '@/domain/impls/AppAction'
 // Remove import after merging: https://github.com/emilkowalski/sonner/pull/508
 import 'sonner/dist/styles.css'
@@ -32,7 +33,12 @@ import { MessageDatabaseExtern, type MessageDatabaseSchema } from '@/domain/Mess
 import { ChatRoomExtern, type ChatRoom } from '@/domain/externs/ChatRoom'
 import { WorldRoomExtern, type WorldRoom } from '@/domain/externs/WorldRoom'
 import { ReadinessExtern, type Readiness } from '@/domain/externs/Readiness'
-import { ConnectionLifecycleExtern, type ConnectionLifecycle } from '@/domain/externs/ConnectionLifecycle'
+import {
+  ConnectionLifecycleExtern,
+  type ConnectionLifecycle,
+  type ConnectionLifecycleResult
+} from '@/domain/externs/ConnectionLifecycle'
+import { SendLifecycleExtern } from '@/domain/externs/SendLifecycle'
 import { BrowserSyncStorageExtern, type Storage, type StorageValue } from '@/domain/externs/Storage'
 import type { Database } from '@/domain/externs/Database'
 import {
@@ -151,15 +157,15 @@ const createContentStore = () => {
   const deferredReadiness: Readiness = {
     onState: (listener) => subscribeDeferred(readiness, (value) => value.onState(listener))
   }
-  let currentLifecycleEpoch = 0
+  let currentLifecycleResult: ConnectionLifecycleResult = 'active'
   const deferredConnectionLifecycle: ConnectionLifecycle = {
-    getEpoch: () => currentLifecycleEpoch,
-    onEpochChange: (listener) =>
+    getResult: () => currentLifecycleResult,
+    onResultChange: (listener) =>
       subscribeDeferred(connectionLifecycle, (value) => {
-        currentLifecycleEpoch = value.getEpoch()
-        return value.onEpochChange((epoch) => {
-          currentLifecycleEpoch = epoch
-          listener(epoch)
+        currentLifecycleResult = value.getResult()
+        return value.onResultChange((result) => {
+          currentLifecycleResult = result
+          listener(result)
         })
       })
   }
@@ -173,6 +179,7 @@ const createContentStore = () => {
       WorldRoomExtern.impl(deferredWorldRoom),
       ReadinessExtern.impl(deferredReadiness),
       ConnectionLifecycleExtern.impl(deferredConnectionLifecycle),
+      SendLifecycleExtern.impl(createSendLifecycle()),
       AppActionImpl,
       ToastImpl,
       DanmakuImpl,

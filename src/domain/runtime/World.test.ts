@@ -276,9 +276,9 @@ describe('WorldDomain single per-target publication iterator', () => {
     fixture.store.discard()
   })
 
-  it('completes a live release when its publication preflight fails without a page binding', async () => {
-    let failNext = false
-    const fixture = createFixture({ failNextEncode: () => failNext })
+  it('keeps a live release publication step on preflight failure and completes on a later success', async () => {
+    let failEncode = false
+    const fixture = createFixture({ failNextEncode: () => failEncode })
     await fixture.joinWorldRoom()
     fixture.emitRemotePresence('peer-1', 'https://one.example')
     await settleAll()
@@ -299,15 +299,24 @@ describe('WorldDomain single per-target publication iterator', () => {
     await settleAll()
     fixture.store.send(fixture.world.command.CommitStagedCommand('attempt-b'))
 
-    // The release removes b's contribution and publishes the latest full presence (`a`) through the
-    // sole iterator. Force that release publication's encode (preflight) to fail once: no provider
-    // send occurs, yet the release continuation must still conclude rather than hang forever.
-    failNext = true
+    // The release removes b's contribution and publishes the latest full presence (`a`). Its
+    // publication preflight (encode) fails once: the step must be kept, surfaced, and retried at a
+    // bounded cadence — never concluded prematurely with the latest presence unpublished.
+    vi.useFakeTimers()
+    failEncode = true
     fixture.store.send(fixture.world.command.ReleaseDomainCommand('https://b.example'))
     await settleAll()
+    expect(released).toEqual([])
+    const attemptsBefore = fixture.attempts.length
 
+    failEncode = false
+    await vi.advanceTimersByTimeAsync(1500)
+    await settleAll()
+    expect(fixture.attempts.length).toBeGreaterThan(attemptsBefore)
+    fixture.attempts[fixture.attempts.length - 1].settle.resolve()
+    await settleAll()
     expect(released).toEqual(['https://b.example'])
-    expect(fixture.attempts).toHaveLength(2)
+    vi.useRealTimers()
     fixture.store.discard()
   })
 

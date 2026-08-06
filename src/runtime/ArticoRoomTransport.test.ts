@@ -198,23 +198,24 @@ describe('ArticoRoomTransport per-target isolation', () => {
     transport.dispose()
   })
 
-  it('absorbs a signaling stale-session conflict and recovers through the restart path', async () => {
+  it('surfaces a peer id-conflict error without message classification and still recovers on close', async () => {
     vi.useFakeTimers()
     const transport = createArticoRoomTransport()
     const errors: Error[] = []
     transport.onError((error) => errors.push(error))
-    const stalePeer = fixture.peers[0]
+    const currentPeer = fixture.peers[0]
 
     await transport.join('chat-v3')
-    stalePeer.emit('error', new Error('id-taken'))
+    // No provider error message is classified; a peer id-conflict surfaces as a real error, and the
+    // structural close→restart path still retries with the same stable identity.
+    currentPeer.emit('error', new Error('id-taken'))
 
-    expect(errors).toEqual([])
+    expect(errors.map((error) => error.message)).toEqual(['id-taken'])
 
-    stalePeer.emit('close')
+    currentPeer.emit('close')
     await vi.advanceTimersByTimeAsync(1000)
 
     expect(fixture.peers).toHaveLength(2)
-    expect(errors).toEqual([])
     transport.dispose()
   })
 

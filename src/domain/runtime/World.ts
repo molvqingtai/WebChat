@@ -1,5 +1,5 @@
 import { Remesh } from 'remesh'
-import { filter, map } from 'rxjs'
+import { concatMap, filter, map } from 'rxjs'
 import WireDomain, { type WireFailureStage, type WireMessageEvent } from '@/domain/runtime/Wire'
 import { RoomTransportExtern } from '@/domain/runtime/externs/RoomTransport'
 import { WORLD_ROOM_ID_V3 } from '@/constants/config'
@@ -59,6 +59,9 @@ const presenceFor = (registrations: WorldDomainRegistration[], sessionId: string
 
 const publicationRequestId = (sequence: number) => `world:publication:${sequence}`
 const publicationTargetRequestId = (requestId: string, target: string) => `${requestId}:${target}`
+// A release publication step that cannot reach the provider (preflight / encode, zero sends) retries
+// the un-attempted step at a bounded cadence while the release owner and Runtime generation are current.
+const WORLD_RELEASE_STEP_RETRY_MS = 1500
 
 const WorldDomain = Remesh.domain({
   name: 'WorldDomain',
@@ -149,6 +152,11 @@ const WorldDomain = Remesh.domain({
       name: 'World.RecoveryPublishFailedEvent'
     })
     const ErrorEvent = domain.event<Error>({ name: 'World.ErrorEvent' })
+    // A live release publication whose preflight step could not reach the provider re-issues that
+    // un-attempted step at a bounded cadence. It is never a per-target re-send of an attempted target.
+    const PublicationStepRetryRequestedEvent = domain.event<{ requestId: string }>({
+      name: 'World.PublicationStepRetryRequestedEvent'
+    })
 
     const settlePublication = (
       get: Parameters<Parameters<typeof domain.command>[0]['impl']>[0]['get'],
@@ -306,18 +314,14 @@ const WorldDomain = Remesh.domain({
         if (payload.stage === 'cancelled' || !get(wireDomain.query.IsRoomTrustedQuery(worldRoomId))) {
           return [FullPublicationState().new(null)]
         }
-        // A preflight failure performed zero provider sends: it either fails the owning staged/recovery
-        // attempt, or, for a pure live-release continuation, concludes the release (diagnostic + release
-        // the continuation) so a domain close and any waiting rejoin are never left pending.
+        // A preflight failure performed zero provider sends. For a live-release continuation it keeps
+        // the same publication step and re-issues the current un-attempted target at a bounded cadence
+        // (never a per-target re-send of an attempted target, never a premature DomainReleasedEvent).
         if (payload.stage === 'preflight') {
-          const released = get(LiveReleaseContinuationsState())
           if (!publication.stagedAttemptId && !publication.recoveryRequestId) {
-            return [
-              FullPublicationState().new(null),
-              LiveReleaseContinuationsState().new([]),
-              ErrorEvent(payload.error),
-              ...released.map((runtimeDomain) => DomainReleasedEvent(runtimeDomain))
-            ]
+            const released = get(LiveReleaseContinuationsState())
+            if (released.length === 0) return [FullPublicationState().new(null), ErrorEvent(payload.error)]
+            return [ErrorEvent(payload.error), PublicationStepRetryRequestedEvent({ requestId: publication.requestId })]
           }
           return [
             FullPublicationState().new(null),
@@ -342,6 +346,31 @@ const WorldDomain = Remesh.domain({
           return [FullPublicationState().new(advanced), failure, ...sendNextPublicationTarget(advanced)]
         }
         return [failure, ...settlePublication(get, advanced)]
+      }
+    })
+
+    const RetryPublicationStepCommand = domain.command({
+      name: 'World.RetryPublicationStepCommand',
+      impl: ({ get }, requestId: string) => {
+        const publication = get(FullPublicationState())
+        const target = publication?.activeTarget
+        const live = get(LiveReleaseContinuationsState()).length > 0
+        if (
+          !publication ||
+          publication.requestId !== requestId ||
+          !target ||
+          !live ||
+          !get(wireDomain.query.IsRoomTrustedQuery(worldRoomId))
+        ) {
+          return null
+        }
+        // Re-issue only the current un-attempted target (never a target already attempted).
+        return wireDomain.command.SendMessageCommand({
+          requestId: publicationTargetRequestId(requestId, target),
+          roomId: worldRoomId,
+          targetPeerIds: [target],
+          message: publication.presence
+        })
       }
     })
 
@@ -670,6 +699,19 @@ const WorldDomain = Remesh.domain({
       impl: ({ fromEvent }) =>
         fromEvent(wireDomain.event.MessageSendFailedEvent).pipe(
           map((payload) => [FailFullPublicationCommand(payload), FailPresenceSendCommand(payload)])
+        )
+    })
+    domain.effect({
+      name: 'World.PublicationStepRetryEffect',
+      impl: ({ fromEvent }) =>
+        fromEvent(PublicationStepRetryRequestedEvent).pipe(
+          concatMap(
+            ({ requestId }) =>
+              new globalThis.Promise<string>((resolve) =>
+                globalThis.setTimeout(() => resolve(requestId), WORLD_RELEASE_STEP_RETRY_MS)
+              )
+          ),
+          map(RetryPublicationStepCommand)
         )
     })
     domain.effect({

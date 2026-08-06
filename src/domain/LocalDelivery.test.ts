@@ -8,6 +8,8 @@ import { ChatRoomExtern, type ChatRoom } from '@/domain/externs/ChatRoom'
 import { ReadinessExtern } from '@/domain/externs/Readiness'
 import type { Database } from '@/domain/externs/Database'
 import { createIndexedDBDatabase } from '@/domain/impls/database/IndexedDB'
+import { SendLifecycleExtern } from '@/domain/externs/SendLifecycle'
+import { createSendLifecycle } from '@/domain/impls/SendLifecycle'
 import { createMemoryMessageDatabase } from '@/domain/impls/database/Memory'
 import {
   MessageDatabaseExtern,
@@ -120,6 +122,7 @@ const createPage = (database: Database<MessageDatabaseSchema>, nextId: () => str
   const store = Remesh.store({
     externs: [
       ChatRoomExtern.impl(chat),
+      SendLifecycleExtern.impl(createSendLifecycle()),
       ReadinessExtern.impl({
         onState: (listener) => {
           listener('ready')

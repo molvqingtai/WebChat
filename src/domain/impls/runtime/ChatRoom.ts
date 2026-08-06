@@ -1,6 +1,7 @@
 import EventHub from '@resreq/event-hub'
 import { isInvalidMessageRecordError, type InsertMessageResult, type MessageStore } from '@/domain/MessageStore'
 import type { ChatRoom as ChatRoomPort, JoinRoomCommand, SendMessageCommand } from '@/domain/externs/ChatRoom'
+import type { ConnectionLifecycleResult } from '@/domain/externs/ConnectionLifecycle'
 import type { Unsubscribe } from '@/domain/Subscription'
 import {
   MESSAGE_RECORD_TYPE,
@@ -174,8 +175,8 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
   private readonly seenErrorEventIds = new Set<string>()
   private readyGeneration = 0
   private connectionSequence = 0
-  private lifecycleEpoch = 0
-  private readonly epochCallbacks = new Set<(epoch: number) => void>()
+  private attemptResult: ConnectionLifecycleResult = 'active'
+  private readonly resultCallbacks = new Set<(result: ConnectionLifecycleResult) => void>()
   private attachment: RuntimeAttachment | null = null
   private activeConnection: PageConnectionAttempt | null = null
   private disposed = false
@@ -185,29 +186,29 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
     this.disposeReady = dependencies.whenReady(() => {
       if (this.disposed) return
       this.readyGeneration += 1
-      // Runtime generation replacement supersedes the old connection hierarchy; that is a structural
-      // release/supersession lifecycle fact, surfaced to the domain as an epoch advance.
-      this.bumpLifecycleEpoch()
+      // Runtime generation replacement supersedes the old connection attempt; that is a structural
+      // cancellation fact for that attempt.
+      this.setAttemptResult('cancelled')
       this.activeConnection?.controller.abort(abortError('Runtime host generation replaced'))
       this.startAttachment(null)
     })
   }
 
-  /** Lifecycle epoch facts are structural; they never enter an Error and are never read from one. */
-  private bumpLifecycleEpoch() {
-    this.lifecycleEpoch += 1
-    this.epochCallbacks.forEach((callback) => callback(this.lifecycleEpoch))
+  /** Attempt results are per-attempt structural facts; they never enter an Error and are never read from one. */
+  private setAttemptResult(result: ConnectionLifecycleResult) {
+    this.attemptResult = result
+    this.resultCallbacks.forEach((callback) => callback(result))
   }
 
-  getLifecycleEpoch() {
-    return this.lifecycleEpoch
+  getAttemptResult() {
+    return this.attemptResult
   }
 
-  onLifecycleEpochChange(callback: (epoch: number) => void) {
-    this.epochCallbacks.add(callback)
-    callback(this.lifecycleEpoch)
+  onAttemptResultChange(callback: (result: ConnectionLifecycleResult) => void) {
+    this.resultCallbacks.add(callback)
+    callback(this.attemptResult)
     return () => {
-      this.epochCallbacks.delete(callback)
+      this.resultCallbacks.delete(callback)
     }
   }
 
@@ -264,10 +265,10 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
 
   private beginConnectionAttempt() {
     if (this.disposed) throw abortError('Runtime page detached')
+    this.setAttemptResult('active')
     if (this.activeConnection) {
-      // A new connection attempt supersedes the in-flight one; advance the lifecycle epoch so the
-      // superseded attempt is a structural cancellation fact, not an error-content one.
-      this.bumpLifecycleEpoch()
+      // This attempt supersedes the in-flight one; that superseded attempt is cancelled structurally
+      // (its own settle path records the outcome it earned). This attempt's result stays `active`.
       this.activeConnection.controller.abort(abortError('Page connection attempt superseded'))
     }
     const controller = new AbortController()
@@ -582,7 +583,10 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
     const attempt = this.beginConnectionAttempt()
     try {
       const attachment = await this.currentAttachment(attempt)
-      if (!this.isConnectionCurrent(attempt, attachment)) throw abortError('Page connection attempt superseded')
+      if (!this.isConnectionCurrent(attempt, attachment)) {
+        this.setAttemptResult('cancelled')
+        throw abortError('Page connection attempt superseded')
+      }
       const snapshot = await raceWithSignal(
         this.dependencies.server.joinChatRoom({
           domain: this.dependencies.pageDomain,
@@ -590,13 +594,17 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
         }),
         attempt.controller.signal
       )
-      if (!snapshot) throw abortError('ChatRoom operation cancelled')
+      if (!snapshot) {
+        this.setAttemptResult('cancelled')
+        throw abortError('ChatRoom operation cancelled')
+      }
       attempt.controller.signal.throwIfAborted()
       if (
         !this.isConnectionCurrent(attempt, attachment) ||
         snapshot.hostId !== attempt.hostId ||
         this.dependencies.getSnapshot().hostId !== attempt.hostId
       ) {
+        this.setAttemptResult('cancelled')
         throw abortError('Page connection attempt superseded')
       }
       const domainSnapshot = snapshot.domains.find((item) => item.domain === this.dependencies.pageDomain)
@@ -615,9 +623,14 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
         }
       }
       attempt.controller.signal.throwIfAborted()
-      if (!this.isConnectionCurrent(attempt, attachment)) throw abortError('Page connection attempt superseded')
+      if (!this.isConnectionCurrent(attempt, attachment)) {
+        this.setAttemptResult('cancelled')
+        throw abortError('Page connection attempt superseded')
+      }
+      this.setAttemptResult('succeeded')
       this.finishConnectionAttempt(attempt)
     } catch (error) {
+      if (this.attemptResult === 'active') this.setAttemptResult('failed')
       this.finishConnectionAttempt(attempt, error)
       throw error
     }
@@ -628,16 +641,27 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
     const attempt = this.beginConnectionAttempt()
     try {
       const attachment = await this.currentAttachment(attempt)
-      if (!this.isConnectionCurrent(attempt, attachment)) throw abortError('Page connection attempt superseded')
+      if (!this.isConnectionCurrent(attempt, attachment)) {
+        this.setAttemptResult('cancelled')
+        throw abortError('Page connection attempt superseded')
+      }
       const result = await raceWithSignal(
         this.dependencies.server.reconnectDomain({ domain: this.dependencies.pageDomain }),
         attempt.controller.signal
       )
-      if (result === null) throw abortError('ChatRoom operation cancelled')
+      if (result === null) {
+        this.setAttemptResult('cancelled')
+        throw abortError('ChatRoom operation cancelled')
+      }
       attempt.controller.signal.throwIfAborted()
-      if (!this.isConnectionCurrent(attempt, attachment)) throw abortError('Page connection attempt superseded')
+      if (!this.isConnectionCurrent(attempt, attachment)) {
+        this.setAttemptResult('cancelled')
+        throw abortError('Page connection attempt superseded')
+      }
+      this.setAttemptResult('succeeded')
       this.finishConnectionAttempt(attempt)
     } catch (error) {
+      if (this.attemptResult === 'active') this.setAttemptResult('failed')
       this.finishConnectionAttempt(attempt, error)
       throw error
     }

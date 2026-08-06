@@ -1,19 +1,23 @@
 import { Remesh } from 'remesh'
 
+/** The exact, per-attempt structural outcome of a connection lifecycle operation. */
+export type ConnectionLifecycleResult = 'active' | 'succeeded' | 'cancelled' | 'failed'
+
 export interface ConnectionLifecycle {
   /**
-   * A monotonic lifecycle epoch maintained at the Runtime boundary. It advances whenever the Runtime
-   * supersedes or releases a connection attempt (host generation replace, attempt supersession, or a
-   * cancellation reaching the Runtime). The domain reads whether an epoch it captured is still current
-   * to classify a completion as a structural cancellation; it never inspects a thrown error's content.
+   * The exact outcome of the most recently settled connection attempt, owned by that attempt. A
+   * `cancelled` outcome is the producer-recognized structural result (host replacement, supersession,
+   * or a Runtime cancellation); `failed` is a genuine failure; `succeeded` completed normally. The
+   * domain reads this per-attempt result to classify a completion; it never inspects a thrown error's
+   * name/message/type/code/value.
    */
-  getEpoch: () => number
-  onEpochChange: (callback: (epoch: number) => void) => () => void
+  getResult: () => ConnectionLifecycleResult
+  onResultChange: (callback: (result: ConnectionLifecycleResult) => void) => () => void
 }
 
 export const ConnectionLifecycleExtern = Remesh.extern<ConnectionLifecycle>({
   default: {
-    getEpoch: () => 0,
-    onEpochChange: () => () => {}
+    getResult: () => 'active',
+    onResultChange: () => () => {}
   }
 })
