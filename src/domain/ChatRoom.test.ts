@@ -690,12 +690,12 @@ describe('ChatRoomDomain exact application port', () => {
     leaveDeferred.resolve()
     await vi.waitFor(() => expect(fixture.chat.joinRoom).toHaveBeenCalledTimes(2))
 
-    // Reject the reconnect join; the ReconnectEffect must consume each started leave/join task exactly
-    // once (before any request-staleness/drop branch), so no terminal result leaks.
+    // Reject the reconnect join; the ReconnectEffect consumes each started leave/join task in its catch
+    // (leave settles successfully, join rejects) so neither terminal result leaks.
     joinDeferred.reject(new Error('reconnect join failed'))
     await Promise.resolve()
 
-    // The leave task was consumed when it settled (via CompletePresenceEnd/leave success); the join here.
+    // Both started reconnect tasks are consumed exactly once (leave in the catch after the join rejection).
     expect(fixture.consumedLifecycleTasks.filter((task) => task === leaveTask)).toHaveLength(1)
     expect(fixture.consumedLifecycleTasks.filter((task) => task === joinTask)).toHaveLength(1)
     fixture.store.discard()

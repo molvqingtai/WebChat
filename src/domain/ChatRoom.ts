@@ -454,7 +454,7 @@ const ChatRoomDomain = Remesh.domain({
 
     domain.effect({
       name: 'Room.ReconnectEffect',
-      impl: ({ fromEvent, get }) =>
+      impl: ({ fromEvent }) =>
         fromEvent(ReconnectRequestedEvent).pipe(
           concatMap(async ({ id, input, mode }) => {
             let leaveTask: Promise<void> | undefined
@@ -474,13 +474,15 @@ const ChatRoomDomain = Remesh.domain({
                 ? CompleteRetryOperationCommand({ id, input })
                 : CompleteReconnectOperationCommand({ id })
             } catch (error) {
-              // Consume each started task's result exactly once (releases terminal state) before any
-              // request-staleness branching, so no superseded reconnect leaks its results.
+              // Consume each started task's result exactly once (releases terminal state) before deciding,
+              // so a reconnect's leave/join results are never leaked. A reconnect request is single-lived
+              // (ReconnectCommand is gated while one is in flight), so there is no reachable
+              // request-staleness branch to short-circuit here; cancellation is solely by the exact leave/
+              // join task's own token. Late/dropped completions are fenced by CompleteReconnectOperation
+              // Command's own request-id gate.
               const leaveResult = leaveTask ? lifecycle.getTaskResult(leaveTask) === 'cancelled' : false
               const joinResult = joinTask ? lifecycle.getTaskResult(joinTask) === 'cancelled' : false
-              // Cancellation is a supersession (this reconnect is no longer the current live request) or
-              // that exact leave/join public-port task's own token is `cancelled`.
-              const cancelled = get(ReconnectRequestQuery())?.id !== id || leaveResult || joinResult
+              const cancelled = leaveResult || joinResult
               if (cancelled) {
                 return mode === 'retry'
                   ? CompleteRetryOperationCommand({ id, input, cancelled: true })
