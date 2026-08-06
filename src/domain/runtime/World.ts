@@ -1,5 +1,5 @@
 import { Remesh } from 'remesh'
-import { concatMap, filter, map } from 'rxjs'
+import { filter, map } from 'rxjs'
 import WireDomain, { type WireFailureStage, type WireMessageEvent } from '@/domain/runtime/Wire'
 import { RoomTransportExtern } from '@/domain/runtime/externs/RoomTransport'
 import { WORLD_ROOM_ID_V3 } from '@/constants/config'
@@ -35,7 +35,6 @@ interface FullPublication {
   targets: string[]
   pendingTargets: string[]
   activeTarget?: string
-  retryAttempt: number
 }
 
 interface PendingPresenceSend {
@@ -60,8 +59,6 @@ const presenceFor = (registrations: WorldDomainRegistration[], sessionId: string
 
 const publicationRequestId = (sequence: number) => `world:publication:${sequence}`
 const publicationTargetRequestId = (requestId: string, target: string) => `${requestId}:${target}`
-const WORLD_STEP_RETRY_INTERVAL_MS = 0
-const WORLD_STEP_RETRY_LIMIT = 1
 
 const WorldDomain = Remesh.domain({
   name: 'WorldDomain',
@@ -152,9 +149,6 @@ const WorldDomain = Remesh.domain({
       name: 'World.RecoveryPublishFailedEvent'
     })
     const ErrorEvent = domain.event<Error>({ name: 'World.ErrorEvent' })
-    const PublicationRetryRequestedEvent = domain.event<{ requestId: string }>({
-      name: 'World.PublicationRetryRequestedEvent'
-    })
 
     const settlePublication = (
       get: Parameters<Parameters<typeof domain.command>[0]['impl']>[0]['get'],
@@ -193,7 +187,7 @@ const WorldDomain = Remesh.domain({
       const next = publication.pendingTargets[0]
       if (!next) return []
       return [
-        FullPublicationState().new({ ...publication, activeTarget: next, retryAttempt: 0 }),
+        FullPublicationState().new({ ...publication, activeTarget: next }),
         wireDomain.command.SendMessageCommand({
           requestId: publicationTargetRequestId(publication.requestId, next),
           roomId: worldRoomId,
@@ -231,8 +225,7 @@ const WorldDomain = Remesh.domain({
           stagedAttemptId,
           recoveryRequestId,
           targets,
-          pendingTargets: targets,
-          retryAttempt: 0
+          pendingTargets: targets
         }
         return [PublicationSequenceState().new(sequence), ...sendNextPublicationTarget(publication)]
       }
@@ -290,7 +283,6 @@ const WorldDomain = Remesh.domain({
         const advanced: FullPublication = {
           ...publication,
           activeTarget: undefined,
-          retryAttempt: 0,
           pendingTargets: publication.pendingTargets.filter((item) => item !== target)
         }
         // Settlement requires only that every frozen target was attempted, never acceptance or ACK.
@@ -314,8 +306,19 @@ const WorldDomain = Remesh.domain({
         if (payload.stage === 'cancelled' || !get(wireDomain.query.IsRoomTrustedQuery(worldRoomId))) {
           return [FullPublicationState().new(null)]
         }
-        // A preflight failure performed zero provider sends and fails the owning attempt.
+        // A preflight failure performed zero provider sends: it either fails the owning staged/recovery
+        // attempt, or, for a pure live-release continuation, concludes the release (diagnostic + release
+        // the continuation) so a domain close and any waiting rejoin are never left pending.
         if (payload.stage === 'preflight') {
+          const released = get(LiveReleaseContinuationsState())
+          if (!publication.stagedAttemptId && !publication.recoveryRequestId) {
+            return [
+              FullPublicationState().new(null),
+              LiveReleaseContinuationsState().new([]),
+              ErrorEvent(payload.error),
+              ...released.map((runtimeDomain) => DomainReleasedEvent(runtimeDomain))
+            ]
+          }
           return [
             FullPublicationState().new(null),
             ...(publication.stagedAttemptId
@@ -327,16 +330,11 @@ const WorldDomain = Remesh.domain({
           ]
         }
         if (publication.activeTarget !== target) return null
-        if (get(LiveReleaseContinuationsState()).length > 0 && publication.retryAttempt < WORLD_STEP_RETRY_LIMIT) {
-          return [
-            FullPublicationState().new({ ...publication, retryAttempt: publication.retryAttempt + 1 }),
-            PublicationRetryRequestedEvent({ requestId: publication.requestId })
-          ]
-        }
+        // A provider throw is surfaced once and never re-sends the same target (even under a live
+        // release continuation); the iterator advances to the remaining targets or settles.
         const advanced: FullPublication = {
           ...publication,
           activeTarget: undefined,
-          retryAttempt: 0,
           pendingTargets: publication.pendingTargets.filter((item) => item !== target)
         }
         const failure = ErrorEvent(payload.error)
@@ -344,22 +342,6 @@ const WorldDomain = Remesh.domain({
           return [FullPublicationState().new(advanced), failure, ...sendNextPublicationTarget(advanced)]
         }
         return [failure, ...settlePublication(get, advanced)]
-      }
-    })
-
-    const RetryPublicationTargetCommand = domain.command({
-      name: 'World.RetryPublicationTargetCommand',
-      impl: ({ get }, requestId: string) => {
-        const publication = get(FullPublicationState())
-        const target = publication?.activeTarget
-        return publication && publication.requestId === requestId && target
-          ? wireDomain.command.SendMessageCommand({
-              requestId: publicationTargetRequestId(publication.requestId, target),
-              roomId: worldRoomId,
-              targetPeerIds: [target],
-              message: publication.presence
-            })
-          : null
       }
     })
 
@@ -699,19 +681,6 @@ const WorldDomain = Remesh.domain({
               requestId.startsWith('world:catch-up:') || requestId.startsWith('world:recovery-catch-up:')
           ),
           map(({ error }) => ErrorEvent(error))
-        )
-    })
-    domain.effect({
-      name: 'World.CurrentStepRetryEffect',
-      impl: ({ fromEvent }) =>
-        fromEvent(PublicationRetryRequestedEvent).pipe(
-          concatMap(
-            ({ requestId }) =>
-              new globalThis.Promise<string>((resolve) =>
-                globalThis.setTimeout(() => resolve(requestId), WORLD_STEP_RETRY_INTERVAL_MS)
-              )
-          ),
-          map(RetryPublicationTargetCommand)
         )
     })
 

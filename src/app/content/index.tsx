@@ -16,6 +16,7 @@ import { ToastImpl } from '@/domain/impls/Toast'
 import { createChatRoomImpl } from '@/domain/impls/ChatRoom'
 import { createWorldRoomImpl } from '@/domain/impls/WorldRoom'
 import { createReadinessImpl } from '@/domain/impls/Readiness'
+import { createConnectionLifecycleImpl } from '@/domain/impls/ConnectionLifecycle'
 import { AppActionImpl } from '@/domain/impls/AppAction'
 // Remove import after merging: https://github.com/emilkowalski/sonner/pull/508
 import 'sonner/dist/styles.css'
@@ -31,6 +32,7 @@ import { MessageDatabaseExtern, type MessageDatabaseSchema } from '@/domain/Mess
 import { ChatRoomExtern, type ChatRoom } from '@/domain/externs/ChatRoom'
 import { WorldRoomExtern, type WorldRoom } from '@/domain/externs/WorldRoom'
 import { ReadinessExtern, type Readiness } from '@/domain/externs/Readiness'
+import { ConnectionLifecycleExtern, type ConnectionLifecycle } from '@/domain/externs/ConnectionLifecycle'
 import { BrowserSyncStorageExtern, type Storage, type StorageValue } from '@/domain/externs/Storage'
 import type { Database } from '@/domain/externs/Database'
 import {
@@ -117,6 +119,7 @@ const createContentStore = () => {
   const chatRoom = createDeferredValue<ChatRoom>()
   const worldRoom = createDeferredValue<WorldRoom>()
   const readiness = createDeferredValue<Readiness>()
+  const connectionLifecycle = createDeferredValue<ConnectionLifecycle>()
 
   const deferredBrowserSyncStorage: Storage = {
     get: async <Value extends StorageValue>(key: string) => (await browserSyncStorage.get()).get<Value>(key),
@@ -148,6 +151,18 @@ const createContentStore = () => {
   const deferredReadiness: Readiness = {
     onState: (listener) => subscribeDeferred(readiness, (value) => value.onState(listener))
   }
+  let currentLifecycleEpoch = 0
+  const deferredConnectionLifecycle: ConnectionLifecycle = {
+    getEpoch: () => currentLifecycleEpoch,
+    onEpochChange: (listener) =>
+      subscribeDeferred(connectionLifecycle, (value) => {
+        currentLifecycleEpoch = value.getEpoch()
+        return value.onEpochChange((epoch) => {
+          currentLifecycleEpoch = epoch
+          listener(epoch)
+        })
+      })
+  }
 
   const store = Remesh.store({
     externs: [
@@ -157,6 +172,7 @@ const createContentStore = () => {
       ChatRoomExtern.impl(deferredChatRoom),
       WorldRoomExtern.impl(deferredWorldRoom),
       ReadinessExtern.impl(deferredReadiness),
+      ConnectionLifecycleExtern.impl(deferredConnectionLifecycle),
       AppActionImpl,
       ToastImpl,
       DanmakuImpl,
@@ -176,6 +192,7 @@ const createContentStore = () => {
     chatRoom.resolve(ChatRoomImpl.value)
     worldRoom.resolve(WorldRoomImpl.value)
     readiness.resolve(ReadinessImpl.value)
+    connectionLifecycle.resolve(createConnectionLifecycleImpl(ChatRoomImpl.epochSource))
   }
 
   // Every distinct real control-plane failure surfaces as a fresh original-message toast while the

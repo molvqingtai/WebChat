@@ -130,7 +130,10 @@ beforeEach(() => {
   fixture.appProps.length = 0
   fixture.createStore.mockImplementation(() => ({ discard: fixture.discard }))
   fixture.createIndexedDBMessageDatabase.mockReturnValue(fixture.database)
-  fixture.createChatRoomImpl.mockReturnValue({ value: fixture.chat })
+  fixture.createChatRoomImpl.mockReturnValue({
+    value: fixture.chat,
+    epochSource: { getLifecycleEpoch: () => 0, onLifecycleEpochChange: () => () => {} }
+  })
   fixture.createWorldRoomImpl.mockReturnValue({ value: fixture.world })
   fixture.createReadinessImpl.mockReturnValue({ value: fixture.readiness })
   fixture.createElement.mockImplementation(() => {

@@ -16,11 +16,6 @@ const deferred = <T>() => {
   return { promise, resolve, reject }
 }
 
-const codec: WireCodec = {
-  encode: async (value) => JSON.stringify(value),
-  decode: async (payload) => JSON.parse(payload)
-}
-
 const user = { id: 'user-1', name: 'User', avatar: '' }
 
 interface SendAttempt {
@@ -29,9 +24,16 @@ interface SendAttempt {
   settle: ReturnType<typeof deferred<void>>
 }
 
-const createFixture = () => {
+const createFixture = (options?: { failNextEncode?: () => boolean }) => {
   const attempts: SendAttempt[] = []
   const joinedPeers: string[] = []
+  const codec: WireCodec = {
+    encode: async (value) => {
+      if (options?.failNextEncode?.()) throw new Error('encode refused')
+      return JSON.stringify(value)
+    },
+    decode: async (payload) => JSON.parse(payload)
+  }
   let messageListener: ((roomId: string, sourcePeerId: string, rawPayload: string) => void) | null = null
   const transport: RoomTransport = {
     peerId: 'local-peer',
@@ -232,6 +234,80 @@ describe('WorldDomain single per-target publication iterator', () => {
 
     fixture.attempts[2].settle.resolve()
     await vi.waitFor(() => expect(released).toEqual(['https://b.example']))
+    fixture.store.discard()
+  })
+
+  it('does not re-attempt a release-current target that threw; it surfaces once and completes the release', async () => {
+    const fixture = createFixture()
+    await fixture.joinWorldRoom()
+    fixture.emitRemotePresence('peer-1', 'https://one.example')
+    await settleAll()
+    const released: string[] = []
+    const errors: Error[] = []
+    fixture.store.subscribeEvent(fixture.world.event.DomainReleasedEvent, (runtimeDomain) =>
+      released.push(runtimeDomain)
+    )
+    fixture.store.subscribeEvent(fixture.world.event.ErrorEvent, (error) => errors.push(error))
+
+    stage(fixture, 'attempt-a', 'https://a.example')
+    await vi.waitFor(() => expect(fixture.attempts).toHaveLength(1))
+    fixture.attempts[0].settle.resolve()
+    await settleAll()
+    fixture.store.send(fixture.world.command.CommitStagedCommand('attempt-a'))
+
+    stage(fixture, 'attempt-b', 'https://b.example')
+    await vi.waitFor(() => expect(fixture.attempts).toHaveLength(2))
+    fixture.attempts[1].settle.resolve()
+    await settleAll()
+    fixture.store.send(fixture.world.command.CommitStagedCommand('attempt-b'))
+
+    // Release b: the publication continuation sends to the single remaining target `a` and that
+    // provider call throws. The target is attempted exactly once: it is surfaced, not re-sent, and
+    // the release continuation still completes so the domain close finishes.
+    fixture.store.send(fixture.world.command.ReleaseDomainCommand('https://b.example'))
+    await vi.waitFor(() => expect(fixture.attempts).toHaveLength(3))
+    const before = fixture.attempts.length
+    fixture.attempts[2].settle.reject(new Error('a exploded on release'))
+    await settleAll()
+
+    expect(errors.map((error) => error.message)).toEqual(['a exploded on release'])
+    expect(released).toEqual(['https://b.example'])
+    expect(fixture.attempts).toHaveLength(before)
+    fixture.store.discard()
+  })
+
+  it('completes a live release when its publication preflight fails without a page binding', async () => {
+    let failNext = false
+    const fixture = createFixture({ failNextEncode: () => failNext })
+    await fixture.joinWorldRoom()
+    fixture.emitRemotePresence('peer-1', 'https://one.example')
+    await settleAll()
+    const released: string[] = []
+    fixture.store.subscribeEvent(fixture.world.event.DomainReleasedEvent, (runtimeDomain) =>
+      released.push(runtimeDomain)
+    )
+
+    stage(fixture, 'attempt-a', 'https://a.example')
+    await vi.waitFor(() => expect(fixture.attempts).toHaveLength(1))
+    fixture.attempts[0].settle.resolve()
+    await settleAll()
+    fixture.store.send(fixture.world.command.CommitStagedCommand('attempt-a'))
+
+    stage(fixture, 'attempt-b', 'https://b.example')
+    await vi.waitFor(() => expect(fixture.attempts).toHaveLength(2))
+    fixture.attempts[1].settle.resolve()
+    await settleAll()
+    fixture.store.send(fixture.world.command.CommitStagedCommand('attempt-b'))
+
+    // The release removes b's contribution and publishes the latest full presence (`a`) through the
+    // sole iterator. Force that release publication's encode (preflight) to fail once: no provider
+    // send occurs, yet the release continuation must still conclude rather than hang forever.
+    failNext = true
+    fixture.store.send(fixture.world.command.ReleaseDomainCommand('https://b.example'))
+    await settleAll()
+
+    expect(released).toEqual(['https://b.example'])
+    expect(fixture.attempts).toHaveLength(2)
     fixture.store.discard()
   })
 

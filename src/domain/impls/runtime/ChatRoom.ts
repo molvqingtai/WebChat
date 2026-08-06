@@ -1,5 +1,4 @@
 import EventHub from '@resreq/event-hub'
-import { CANCELLED_KIND } from '@/runtime/Contract'
 import { isInvalidMessageRecordError, type InsertMessageResult, type MessageStore } from '@/domain/MessageStore'
 import type { ChatRoom as ChatRoomPort, JoinRoomCommand, SendMessageCommand } from '@/domain/externs/ChatRoom'
 import type { Unsubscribe } from '@/domain/Subscription'
@@ -60,12 +59,7 @@ interface PageConnectionAttempt {
 
 const PAGE_CONNECTION_ATTEMPT_TIMEOUT_MS = 10000
 
-const abortError = (message: string): DOMException => {
-  const error = new DOMException(message, 'AbortError')
-  // Producer-assigned structural cancellation outcome; decision junctions branch on this kind.
-  Object.assign(error, { kind: CANCELLED_KIND })
-  return error
-}
+const abortError = (message: string): DOMException => new DOMException(message, 'AbortError')
 
 const raceWithSignal = <Value>(task: Promise<Value>, signal: AbortSignal): Promise<Value> =>
   new Promise<Value>((resolve, reject) => {
@@ -180,6 +174,8 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
   private readonly seenErrorEventIds = new Set<string>()
   private readyGeneration = 0
   private connectionSequence = 0
+  private lifecycleEpoch = 0
+  private readonly epochCallbacks = new Set<(epoch: number) => void>()
   private attachment: RuntimeAttachment | null = null
   private activeConnection: PageConnectionAttempt | null = null
   private disposed = false
@@ -189,9 +185,30 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
     this.disposeReady = dependencies.whenReady(() => {
       if (this.disposed) return
       this.readyGeneration += 1
+      // Runtime generation replacement supersedes the old connection hierarchy; that is a structural
+      // release/supersession lifecycle fact, surfaced to the domain as an epoch advance.
+      this.bumpLifecycleEpoch()
       this.activeConnection?.controller.abort(abortError('Runtime host generation replaced'))
       this.startAttachment(null)
     })
+  }
+
+  /** Lifecycle epoch facts are structural; they never enter an Error and are never read from one. */
+  private bumpLifecycleEpoch() {
+    this.lifecycleEpoch += 1
+    this.epochCallbacks.forEach((callback) => callback(this.lifecycleEpoch))
+  }
+
+  getLifecycleEpoch() {
+    return this.lifecycleEpoch
+  }
+
+  onLifecycleEpochChange(callback: (epoch: number) => void) {
+    this.epochCallbacks.add(callback)
+    callback(this.lifecycleEpoch)
+    return () => {
+      this.epochCallbacks.delete(callback)
+    }
   }
 
   private isAttachmentCurrent(attachment: RuntimeAttachment) {
@@ -247,7 +264,12 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
 
   private beginConnectionAttempt() {
     if (this.disposed) throw abortError('Runtime page detached')
-    this.activeConnection?.controller.abort(abortError('Page connection attempt superseded'))
+    if (this.activeConnection) {
+      // A new connection attempt supersedes the in-flight one; advance the lifecycle epoch so the
+      // superseded attempt is a structural cancellation fact, not an error-content one.
+      this.bumpLifecycleEpoch()
+      this.activeConnection.controller.abort(abortError('Page connection attempt superseded'))
+    }
     const controller = new AbortController()
     const attempt: PageConnectionAttempt = {
       id: ++this.connectionSequence,

@@ -81,9 +81,11 @@ export const createArticoRoomTransport = (): RoomTransport => {
       pendingJoins.delete(roomId)
     } catch (error) {
       const joinError = error as Error
+      // A synchronous provider join throw is delivered scoped to the owning attempt via the join
+      // rejection only. It must not also fire the room-less global error (which would surface as a
+      // duplicate cross-domain Toast).
       pendingJoins.get(roomId)?.reject(joinError)
       pendingJoins.delete(roomId)
-      errorListeners.forEach((listener) => listener(joinError))
     }
   }
 

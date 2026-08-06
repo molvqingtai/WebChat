@@ -6,6 +6,8 @@ import MessageListDomain from '@/domain/MessageList'
 import UserInfoDomain, { type UserInfo } from '@/domain/UserInfo'
 import { ChatRoomExtern, type ChatRoom } from '@/domain/externs/ChatRoom'
 import { ReadinessExtern } from '@/domain/externs/Readiness'
+import { ConnectionLifecycleExtern } from '@/domain/externs/ConnectionLifecycle'
+import { createConnectionLifecycleImpl } from '@/domain/impls/ConnectionLifecycle'
 import { createMemoryMessageDatabase } from '@/domain/impls/database/Memory'
 import { ChatRoom as RuntimeChatRoom } from '@/domain/impls/runtime/ChatRoom'
 import { MessageDatabaseExtern, createMessageStore } from '@/domain/MessageStore'
@@ -20,10 +22,6 @@ import { BrowserSyncStorageExtern, type Storage, type StorageValue } from '@/dom
 import { WorldRoomExtern } from '@/domain/externs/WorldRoom'
 import { MESSAGE_TYPE, type ChatMessage, type ChatSession } from '@/protocol'
 import type { RuntimeServer, RuntimeSessionEvent, RuntimeSnapshot } from '@/runtime/Contract'
-import { CANCELLED_KIND } from '@/runtime/Contract'
-
-/** Producer-tagged cancellation outcome matching the real Runtime boundary. */
-const cancelled = (message: string) => Object.assign(new DOMException(message, 'AbortError'), { kind: CANCELLED_KIND })
 import { stringToHex } from '@/utils'
 
 const SELF: UserInfo = {
@@ -72,6 +70,9 @@ const createFixture = (options: { delayRecordWatch?: boolean; user?: UserInfo | 
     watch: async () => async () => {}
   }
   const readinessListeners = new Set<(state: 'connecting' | 'ready' | 'unavailable') => void>()
+  let lifecycleEpoch = 0
+  const lifecycleListeners = new Set<(epoch: number) => void>()
+  const notifyLifecycle = () => lifecycleListeners.forEach((listener) => listener(lifecycleEpoch))
   const listeners = {
     message: new Set<(message: ChatMessage) => void>(),
     join: new Set<(session: ChatSession) => void>(),
@@ -133,6 +134,14 @@ const createFixture = (options: { delayRecordWatch?: boolean; user?: UserInfo | 
   const store = Remesh.store({
     externs: [
       ChatRoomExtern.impl(chat),
+      ConnectionLifecycleExtern.impl({
+        getEpoch: () => lifecycleEpoch,
+        onEpochChange: (listener) => {
+          lifecycleListeners.add(listener)
+          listener(lifecycleEpoch)
+          return () => lifecycleListeners.delete(listener)
+        }
+      }),
       ReadinessExtern.impl({
         onState: (listener) => {
           readinessListeners.add(listener)
@@ -175,7 +184,11 @@ const createFixture = (options: { delayRecordWatch?: boolean; user?: UserInfo | 
     emitSessions: (sessions: readonly ChatSession[]) => listeners.sessions.forEach((listener) => listener(sessions)),
     emitError: (error: Error) => listeners.error.forEach((listener) => listener(error)),
     emitReadiness: (state: 'connecting' | 'ready' | 'unavailable') =>
-      readinessListeners.forEach((listener) => listener(state))
+      readinessListeners.forEach((listener) => listener(state)),
+    bumpLifecycle: () => {
+      lifecycleEpoch += 1
+      notifyLifecycle()
+    }
   }
 }
 
@@ -300,7 +313,7 @@ const createPendingConnectionFixture = (stage: PendingConnectionStage) => {
           const onAbort = () => {
             replayWriteAborted = true
             options?.signal?.removeEventListener('abort', onAbort)
-            reject(options?.signal?.reason ?? cancelled('Replay write aborted'))
+            reject(options?.signal?.reason ?? new DOMException('Replay write aborted', 'AbortError'))
           }
           options?.signal?.addEventListener('abort', onAbort, { once: true })
           release.promise.then(() => {
@@ -335,6 +348,7 @@ const createPendingConnectionFixture = (stage: PendingConnectionStage) => {
   const store = Remesh.store({
     externs: [
       ChatRoomExtern.impl(adapter),
+      ConnectionLifecycleExtern.impl(createConnectionLifecycleImpl(adapter)),
       ReadinessExtern.impl({
         onState: (listener) => {
           listener('ready')
@@ -573,7 +587,10 @@ describe('ChatRoomDomain exact application port', () => {
     await new Promise((resolve) => globalThis.setTimeout(resolve, 0))
     expect(fixture.store.query(fixture.room.query.ConnectionOperationIsLoadingQuery())).toBe(true)
 
-    hostRecovery.reject(cancelled('Runtime operation superseded'))
+    // The automatic host-recovery attempt is superseded: the Runtime advances its lifecycle epoch
+    // (a structural release/supersession fact), then the in-flight attempt completes as a cancellation.
+    fixture.bumpLifecycle()
+    hostRecovery.reject(new DOMException('Runtime operation superseded', 'AbortError'))
     await vi.waitFor(() => expect(fixture.store.query(fixture.room.query.ConnectionIsLoadingQuery())).toBe(false))
     expect(connectionErrors).toEqual([])
     expect(roomErrors).toEqual([])
@@ -1182,15 +1199,24 @@ describe('ChatRoomDomain exact application port', () => {
     const fixture = createFixture()
     const errors: Error[] = []
     fixture.store.subscribeEvent(fixture.room.event.OnErrorEvent, (error) => errors.push(error))
-    vi.mocked(fixture.chat.sendMessage).mockRejectedValueOnce(
-      cancelled('Runtime presence is completing its final release')
+    let rejectSend!: (reason?: unknown) => void
+    const rejectedSend = new Promise<never>((_, reject) => {
+      rejectSend = reject
+    })
+    vi.mocked(fixture.chat.sendMessage).mockReturnValueOnce(
+      rejectedSend as never as ReturnType<typeof fixture.chat.sendMessage>
     )
     fixture.store.send(fixture.input.command.InputCommand('held by teardown'))
 
     fixture.store.send(fixture.room.command.SendTextMessageCommand('held by teardown'))
-
     await vi.waitFor(() => expect(fixture.chat.sendMessage).toHaveBeenCalledOnce())
+
+    // Final release in progress: the domain is no longer send-ready (release lifecycle fact), so the
+    // in-flight send becoming a cancellation is a structural fact, not derived from any error content.
+    fixture.emitReadiness('connecting')
+    rejectSend(new DOMException('Runtime presence is completing its final release', 'AbortError'))
     await Promise.resolve()
+
     expect(errors).toEqual([])
     expect(fixture.store.query(fixture.input.query.MessageQuery())).toBe('held by teardown')
     fixture.store.discard()

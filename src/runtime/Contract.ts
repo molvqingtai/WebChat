@@ -11,19 +11,6 @@ import type {
 
 export type HostPhase = 'none' | 'connecting' | 'ready' | 'unavailable'
 
-/**
- * Producer-assigned structural outcome discriminant carried on failures.
- * Decision junctions branch on these typed kinds, never on an error's name,
- * message, or constructor identity.
- */
-export const CANCELLED_KIND = 'cancelled' as const
-
-export const isCancelledOutcome = (error: unknown): boolean =>
-  typeof error === 'object' &&
-  error !== null &&
-  'kind' in error &&
-  (error as { kind?: unknown }).kind === CANCELLED_KIND
-
 export interface RuntimeSession {
   sourcePeerId: string
   sessionId: string

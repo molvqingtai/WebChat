@@ -280,9 +280,7 @@ const WireDomain = Remesh.domain({
           ...(payload.preservePending
             ? [
                 SendQueuesState().new(
-                  sendQueues.map((item) =>
-                    item.roomId === roomId ? { ...item, suspended: true } : item
-                  )
+                  sendQueues.map((item) => (item.roomId === roomId ? { ...item, suspended: true } : item))
                 )
               ]
             : [SendQueuesState().new(sendQueues.filter((item) => item.roomId !== roomId))]),
@@ -521,9 +519,7 @@ const WireDomain = Remesh.domain({
             ? [SendQueuesState().new(sendQueues.filter((item) => item.roomId !== roomId))]
             : [
                 SendQueuesState().new(
-                  sendQueues.map((item) =>
-                    item.roomId === roomId ? { ...item, suspended: true } : item
-                  )
+                  sendQueues.map((item) => (item.roomId === roomId ? { ...item, suspended: true } : item))
                 )
               ]),
           DecodeQueuesState().new(get(DecodeQueuesState()).filter((item) => item.frames[0]?.roomId !== roomId)),

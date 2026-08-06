@@ -10,7 +10,7 @@ import MessageInputDomain from '@/domain/MessageInput'
 import ReadinessDomain from '@/domain/Readiness'
 import UserInfoDomain from '@/domain/UserInfo'
 import StatusModule from '@/domain/modules/Status'
-import { isCancelledOutcome } from '@/runtime/Contract'
+import { ConnectionLifecycleExtern } from '@/domain/externs/ConnectionLifecycle'
 import { MESSAGE_TYPE, REACTION_TYPE, type ChatMessage, type MentionedUser } from '@/protocol/ChatRoom'
 import type { ChatSession } from '@/protocol/Session'
 import { MESSAGE_RECORD_TYPE, NOTICE_TYPE, type SystemNoticeRecord, type TextMessageRecord } from '@/domain/Message'
@@ -55,17 +55,18 @@ type ReconnectOperation = {
 
 type ConnectionOperation = {
   id: number
+  epoch: number
   input: JoinRoomInput
   mode: 'join' | 'automatic'
 }
 
 const normalizeError = (error: unknown) => (error instanceof Error ? error : new Error(String(error)))
-const isOperationCancelled = isCancelledOutcome
 
 const ChatRoomDomain = Remesh.domain({
   name: 'ChatRoomDomain',
   impl: (domain) => {
     const chatRoom = domain.getExtern(ChatRoomExtern)
+    const lifecycle = domain.getExtern(ConnectionLifecycleExtern)
     const messageListDomain = domain.getDomain(MessageListDomain())
     const messageInputDomain = domain.getDomain(MessageInputDomain())
     const readinessDomain = domain.getDomain(ReadinessDomain())
@@ -75,6 +76,7 @@ const ChatRoomDomain = Remesh.domain({
     const SessionsState = domain.state<readonly ChatSession[]>({ name: 'Room.SessionsState', default: [] })
     const JoinInputState = domain.state<JoinRoomInput | null>({ name: 'Room.JoinInputState', default: null })
     const ConnectionSequenceState = domain.state({ name: 'Room.ConnectionSequenceState', default: 0 })
+    const ConnectionEpochState = domain.state({ name: 'Room.ConnectionEpochState', default: 0 })
     const ReconnectSequenceState = domain.state({ name: 'Room.ReconnectSequenceState', default: 0 })
     const ConnectionRequestState = domain.state<{ id: number } | null>({
       name: 'Room.ConnectionRequestState',
@@ -127,14 +129,18 @@ const ChatRoomDomain = Remesh.domain({
     })
 
     const ConnectionRequestedEvent = domain.event<ConnectionOperation>({ name: 'Room.ConnectionRequestedEvent' })
+    const SetConnectionEpochCommand = domain.command({
+      name: 'Room.SetConnectionEpochCommand',
+      impl: (_, epoch: number) => ConnectionEpochState().new(epoch)
+    })
     const StartConnectionCommand = domain.command({
       name: 'Room.StartConnectionCommand',
-      impl: ({ get }, operation: Omit<ConnectionOperation, 'id'>) => {
+      impl: ({ get }, operation: Omit<ConnectionOperation, 'id' | 'epoch'>) => {
         const id = get(ConnectionSequenceState()) + 1
         return [
           ConnectionSequenceState().new(id),
           ConnectionRequestState().new({ id }),
-          ConnectionRequestedEvent({ id, ...operation })
+          ConnectionRequestedEvent({ epoch: get(ConnectionEpochState()), id, ...operation })
         ]
       }
     })
@@ -324,20 +330,35 @@ const ChatRoomDomain = Remesh.domain({
 
     domain.effect({
       name: 'Room.ConnectionEffect',
-      impl: ({ fromEvent }) =>
+      impl: ({ fromEvent, get }) =>
         fromEvent(ConnectionRequestedEvent).pipe(
           mergeMap(async (operation) => {
             try {
               await chatRoom.joinRoom(operation.input)
               return CompleteConnectionOperationCommand(operation)
             } catch (error) {
+              // A completion is silent cancellation only when the host/release lifecycle fact
+              // changed in flight (supersession or releasing). It is never derived from the caught
+              // error's content.
               return CompleteConnectionOperationCommand({
                 ...operation,
-                ...(isOperationCancelled(error) ? { cancelled: true } : { error: normalizeError(error) })
+                ...(get(ConnectionEpochState()) !== operation.epoch ||
+                get(ConnectionRequestState())?.id !== operation.id
+                  ? { cancelled: true }
+                  : { error: normalizeError(error) })
               })
             }
           })
         )
+    })
+
+    domain.effect({
+      name: 'Room.ConnectionEpochBumpEffect',
+      impl: () =>
+        fromEventPattern<number>(
+          (handler) => lifecycle.onEpochChange((epoch) => handler(epoch)),
+          (_handler, dispose) => dispose()
+        ).pipe(map((epoch) => SetConnectionEpochCommand(epoch)))
     })
 
     domain.effect({
@@ -388,7 +409,9 @@ const ChatRoomDomain = Remesh.domain({
                   }
                   return [messageInputDomain.command.ClearCommand(), SendTextMessageEvent(projectTextRecord(record))]
                 } catch (error) {
-                  return isOperationCancelled(error) ? null : OnErrorEvent(error as Error)
+                  // A send is silent cancellation only when the release lifecycle fact changed (the
+                  // domain is no longer send-ready / releasing) by result time; otherwise real failure.
+                  return get(SendIsReadyQuery()) ? OnErrorEvent(normalizeError(error)) : null
                 }
               })
             )
@@ -420,7 +443,9 @@ const ChatRoomDomain = Remesh.domain({
                   await chatRoom.sendMessage(command)
                   return null
                 } catch (error) {
-                  return isOperationCancelled(error) ? null : OnErrorEvent(error as Error)
+                  // A send is silent cancellation only when the release lifecycle fact changed (the
+                  // domain is no longer send-ready / releasing) by result time; otherwise real failure.
+                  return get(SendIsReadyQuery()) ? OnErrorEvent(normalizeError(error)) : null
                 }
               })
             )
@@ -430,9 +455,10 @@ const ChatRoomDomain = Remesh.domain({
 
     domain.effect({
       name: 'Room.ReconnectEffect',
-      impl: ({ fromEvent }) =>
+      impl: ({ fromEvent, get }) =>
         fromEvent(ReconnectRequestedEvent).pipe(
           concatMap(async ({ id, input, mode }) => {
+            const epoch = get(ConnectionEpochState())
             try {
               if (mode === 'reconnect') await chatRoom.leaveRoom()
               await chatRoom.joinRoom(input)
@@ -440,7 +466,10 @@ const ChatRoomDomain = Remesh.domain({
                 ? CompleteRetryOperationCommand({ id, input })
                 : CompleteReconnectOperationCommand({ id })
             } catch (error) {
-              if (isOperationCancelled(error)) {
+              // Cancellation is a release/supersession lifecycle fact (the epoch moved or this reconnect
+              // is no longer the current live request), never derived from the caught error's content.
+              const cancelled = get(ConnectionEpochState()) !== epoch || get(ReconnectRequestQuery())?.id !== id
+              if (cancelled) {
                 return mode === 'retry'
                   ? CompleteRetryOperationCommand({ id, input, cancelled: true })
                   : CompleteReconnectOperationCommand({ id })

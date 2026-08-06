@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const fixture = vi.hoisted(() => ({
   peerStates: [] as ('ready' | 'connecting' | 'disconnected')[],
   peers: [] as { state: 'ready' | 'connecting' | 'disconnected'; emit(event: string, ...args: unknown[]): void }[],
+  joinShouldThrow: undefined as (() => Error) | undefined,
   room: null as null | {
     open(peerId: string): void
     loseReadiness(peerId: string): void
@@ -67,6 +68,7 @@ vi.mock('@rtco/client', () => {
     }
 
     join() {
+      if (fixture.joinShouldThrow) throw fixture.joinShouldThrow()
       const room = new FakeRoom()
       fixture.room = room
       return room
@@ -84,6 +86,7 @@ beforeEach(() => {
   fixture.peerStates.length = 0
   fixture.peers.length = 0
   fixture.room = null
+  fixture.joinShouldThrow = undefined
 })
 afterEach(() => vi.useRealTimers())
 
@@ -225,6 +228,22 @@ describe('ArticoRoomTransport per-target isolation', () => {
     currentPeer.emit('error', new Error('connect-error'))
 
     expect(errors.map((error) => error.message)).toEqual(['connect-error'])
+    transport.dispose()
+  })
+
+  it('rejects a throwing join scoped to its attempt without a duplicate global onError', async () => {
+    const transport = createArticoRoomTransport()
+    const errors: Error[] = []
+    transport.onError((error) => errors.push(error))
+    fixture.joinShouldThrow = () => new Error('provider join refused')
+
+    const joining = transport.join('chat-v3')
+
+    await expect(joining).rejects.toThrow('provider join refused')
+    // The join rejection is delivered scoped to the owning attempt. It must not also fan out as a
+    // room-less global error (which would surface as a duplicate cross-domain toast).
+    expect(errors).toEqual([])
+    fixture.joinShouldThrow = undefined
     transport.dispose()
   })
 
