@@ -206,7 +206,12 @@ const serverFixture = (): ServerFixture => {
     },
     emitError: async (message) => {
       errorSequence += 1
-      await runtimeError?.({ eventId: `test-error-${errorSequence}`, message })
+      await runtimeError?.({
+        eventId: `test-error-${errorSequence}`,
+        message,
+        subsystem: 'connection',
+        operation: 'lifecycle'
+      })
     },
     emitErrorEvent: async (event) => {
       await runtimeError?.(event)
@@ -314,9 +319,24 @@ describe('Runtime-backed ChatRoom application port', () => {
     room.onError((error) => errors.push(error))
     await settle()
 
-    await emitErrorEvent({ eventId: 'event-a', message: 'Runtime transport disconnected' })
-    await emitErrorEvent({ eventId: 'event-a', message: 'Runtime transport disconnected' })
-    await emitErrorEvent({ eventId: 'event-b', message: 'Runtime transport disconnected' })
+    await emitErrorEvent({
+      eventId: 'event-a',
+      message: 'Runtime transport disconnected',
+      subsystem: 'connection',
+      operation: 'lifecycle'
+    })
+    await emitErrorEvent({
+      eventId: 'event-a',
+      message: 'Runtime transport disconnected',
+      subsystem: 'connection',
+      operation: 'lifecycle'
+    })
+    await emitErrorEvent({
+      eventId: 'event-b',
+      message: 'Runtime transport disconnected',
+      subsystem: 'connection',
+      operation: 'lifecycle'
+    })
 
     expect(errors).toEqual([new Error('Runtime transport disconnected'), new Error('Runtime transport disconnected')])
   })

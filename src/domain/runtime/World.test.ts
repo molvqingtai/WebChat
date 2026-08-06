@@ -203,6 +203,38 @@ describe('WorldDomain single per-target publication iterator', () => {
     fixture.store.discard()
   })
 
+  it('does not complete a domain release until its latest World continuation settles', async () => {
+    const fixture = createFixture()
+    await fixture.joinWorldRoom()
+    fixture.emitRemotePresence('peer-1', 'https://one.example')
+    await settleAll()
+    const released: string[] = []
+    fixture.store.subscribeEvent(fixture.world.event.DomainReleasedEvent, (runtimeDomain) =>
+      released.push(runtimeDomain)
+    )
+
+    stage(fixture, 'attempt-a', 'https://a.example')
+    await vi.waitFor(() => expect(fixture.attempts).toHaveLength(1))
+    fixture.attempts[0].settle.resolve()
+    await settleAll()
+    fixture.store.send(fixture.world.command.CommitStagedCommand('attempt-a'))
+
+    stage(fixture, 'attempt-b', 'https://b.example')
+    await vi.waitFor(() => expect(fixture.attempts).toHaveLength(2))
+    fixture.attempts[1].settle.resolve()
+    await settleAll()
+    fixture.store.send(fixture.world.command.CommitStagedCommand('attempt-b'))
+
+    fixture.store.send(fixture.world.command.ReleaseDomainCommand('https://b.example'))
+    await vi.waitFor(() => expect(fixture.attempts).toHaveLength(3))
+    expect(fixture.attempts[2].message.sites.map((site) => site.origin)).toEqual(['https://a.example'])
+    expect(released).toEqual([])
+
+    fixture.attempts[2].settle.resolve()
+    await vi.waitFor(() => expect(released).toEqual(['https://b.example']))
+    fixture.store.discard()
+  })
+
   it('cancels the iterator quietly when the World Room owner is lost mid-iteration', async () => {
     const fixture = createFixture()
     await fixture.joinWorldRoom()

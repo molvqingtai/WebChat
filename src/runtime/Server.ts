@@ -15,6 +15,7 @@ import type { RoomTransport } from '@/runtime/RoomTransport'
 import type { ReactionMessageRecord, TextMessageRecord } from '@/domain/Message'
 import { NativeWireCodec, type WireCodec } from '@/protocol'
 import type { RuntimeServer, RuntimeSnapshot } from '@/runtime/Contract'
+import { CANCELLED_KIND } from '@/runtime/Contract'
 import { MAX_HISTORY_SESSION_BYTES, MAX_HISTORY_SESSION_MESSAGES } from '@/constants/config'
 import { PagePort, createPagePortImpl } from '@/runtime/PagePort'
 import { createBoundedPresenceStore, createMemoryPresenceStore } from '@/runtime/PresenceStore'
@@ -121,7 +122,12 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     recovery.resolve()
   }
 
-  const operationCancelled = () => new DOMException('Runtime presence is completing its final release', 'AbortError')
+  const operationCancelled = () => {
+    const error = new DOMException('Runtime presence is completing its final release', 'AbortError')
+    // Producer-assigned structured cancellation outcome so consumers classify it consistently.
+    Object.assign(error, { kind: CANCELLED_KIND })
+    return error
+  }
 
   const waitForLivePresence = async (domain: string) => {
     if (disposed) throw operationCancelled()
@@ -201,7 +207,13 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
         console.error('[WebChat] Runtime failure without a current affected page:', error)
         return
       }
-      void pagePort.emitError(pageIds, { eventId: nanoid(), message: error.message })
+      void pagePort.emitError(pageIds, {
+        eventId: nanoid(),
+        message: error.message,
+        subsystem: 'connection',
+        operation: 'lifecycle',
+        scope: domain
+      })
     })
   ]
 

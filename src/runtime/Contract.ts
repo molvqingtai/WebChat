@@ -133,6 +133,12 @@ export type HistorySupplyEvent =
 export interface RuntimeErrorEvent {
   eventId: string
   message: string
+  /** Runtime boundary that produced this presentation event. */
+  subsystem: 'connection'
+  /** The current operation at that boundary; this never participates in control flow. */
+  operation: 'lifecycle' | 'send' | 'history'
+  /** Exact failure scope carried to the content so presentation is never cross-domain. */
+  scope?: string
 }
 
 export interface RuntimeServer {

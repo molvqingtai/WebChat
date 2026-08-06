@@ -747,16 +747,21 @@ const ConnectionDomain = Remesh.domain({
       impl: ({ fromEvent }) => fromEvent(lifecycleDomain.event.DomainReleasedEvent).pipe(map(ReleaseDomainCommand))
     })
     domain.effect({
-      name: 'Connection.DurableRetirementEffect',
+      name: 'Connection.ChatLeavePublishedEffect',
       impl: ({ fromEvent }) =>
-        fromEvent(sessionDomain.event.DomainRetiredEvent).pipe(
-          map(({ domain: retiredDomain }) => worldDomain.command.ReleaseDomainCommand(retiredDomain))
+        fromEvent(sessionDomain.event.ChatLeavePublishedEvent).pipe(
+          map(({ domain: releasedDomain }) => worldDomain.command.ReleaseDomainCommand(releasedDomain))
         )
+    })
+    domain.effect({
+      name: 'Connection.WorldReleaseCompletedEffect',
+      impl: ({ fromEvent }) =>
+        fromEvent(worldDomain.event.DomainReleasedEvent).pipe(map(sessionDomain.command.CompleteReleaseCommand))
     })
     domain.effect({
       name: 'Connection.FinalizeReleaseEffect',
       impl: ({ fromEvent }) =>
-        fromEvent(sessionDomain.event.DomainEndPublishedEvent).pipe(map(FinalizeReleaseDomainCommand))
+        fromEvent(sessionDomain.event.ReleaseCompletedEvent).pipe(map(FinalizeReleaseDomainCommand))
     })
     domain.effect({
       name: 'Connection.ErrorEffect',
@@ -773,7 +778,8 @@ const ConnectionDomain = Remesh.domain({
     })
     domain.effect({
       name: 'Connection.HistoryErrorEffect',
-      impl: ({ fromEvent }) => fromEvent(historyDomain.event.ErrorEvent).pipe(map(({ error, domain }) => ErrorEvent({ error, domain })))
+      impl: ({ fromEvent }) =>
+        fromEvent(historyDomain.event.ErrorEvent).pipe(map(({ error, domain }) => ErrorEvent({ error, domain })))
     })
     domain.effect({
       name: 'Connection.DomainRecoveryRetryEffect',
