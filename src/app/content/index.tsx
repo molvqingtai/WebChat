@@ -9,7 +9,7 @@ import App from './App'
 import { startInitializationLifecycle, type InitializationDependencies } from './Initialization'
 import { LocalStorageImpl, BrowserSyncStorageImpl, prepareLocalConfigurationStorage } from '@/domain/impls/Storage'
 import { createIndexedDBMessageDatabase, prepareIndexedDBMessageDatabase } from '@/domain/impls/database/IndexedDB'
-import { detachClient, initClient, whenHostPhase } from '@/domain/impls/runtime/Client'
+import { detachClient, initClient, whenFailure, whenHostPhase } from '@/domain/impls/runtime/Client'
 import { DanmakuImpl } from '@/domain/impls/Danmaku'
 import { NotificationImpl } from '@/domain/impls/Notification'
 import { ToastImpl } from '@/domain/impls/Toast'
@@ -23,6 +23,7 @@ import '@/assets/styles/tailwind.css'
 import '@/assets/styles/overlay.css'
 import NotificationDomain from '@/domain/Notification'
 import AppFeedbackDomain from '@/domain/AppFeedback'
+import ToastDomain from '@/domain/Toast'
 import { createElement } from '@/utils'
 import { requestBrowserSyncStoragePreparation } from '@/service/StoragePreparation'
 import { createDirectPreparationCoordinator, createWebLocksPreparationCoordinator } from '@/utils/withPreparationLock'
@@ -176,6 +177,12 @@ const createContentStore = () => {
     worldRoom.resolve(WorldRoomImpl.value)
     readiness.resolve(ReadinessImpl.value)
   }
+
+  // Every distinct real control-plane failure surfaces as a fresh original-message toast while the
+  // lease keeps its bounded polling; detach ends the lifecycle and therefore further failures.
+  whenFailure((error) => {
+    store.send(store.getDomain(ToastDomain()).command.ErrorCommand(error.message))
+  })
 
   return { store, activateApplicationDependencies }
 }

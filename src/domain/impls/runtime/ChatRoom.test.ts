@@ -15,6 +15,7 @@ import { stringToHex } from '@/utils'
 import type {
   HistorySupplyEvent,
   InboundEvent,
+  RuntimeErrorEvent,
   RuntimeServer,
   RuntimeSessionEvent,
   RuntimeSnapshot
@@ -112,6 +113,7 @@ interface ServerFixture {
   emitInbound: (event: InboundEvent) => Promise<void>
   emitSession: (event: RuntimeSessionEvent) => Promise<void>
   emitError: (message: string) => Promise<void>
+  emitErrorEvent: (event: RuntimeErrorEvent) => Promise<void>
   emitHistory: (event: HistorySupplyEvent) => void
   resolvedHistory: { supplyId: string; ids: string[]; done: boolean }[]
   sent: ChatMessage[]
@@ -122,10 +124,11 @@ interface ServerFixture {
 const serverFixture = (): ServerFixture => {
   let inbound: ((event: InboundEvent) => void | Promise<void>) | undefined
   let session: ((event: RuntimeSessionEvent) => void | Promise<void>) | undefined
-  let runtimeError: ((message: string) => void | Promise<void>) | undefined
+  let runtimeError: ((event: RuntimeErrorEvent) => void | Promise<void>) | undefined
   let history: ((event: HistorySupplyEvent) => void) | undefined
   let leaves = 0
   let reconnects = 0
+  let errorSequence = 0
   const resolvedHistory: ServerFixture['resolvedHistory'] = []
   const sent: ChatMessage[] = []
   const server: RuntimeServer = {
@@ -202,7 +205,11 @@ const serverFixture = (): ServerFixture => {
       await session?.(event)
     },
     emitError: async (message) => {
-      await runtimeError?.(message)
+      errorSequence += 1
+      await runtimeError?.({ eventId: `test-error-${errorSequence}`, message })
+    },
+    emitErrorEvent: async (event) => {
+      await runtimeError?.(event)
     },
     emitHistory: (event) => history?.(event),
     resolvedHistory,
@@ -299,6 +306,19 @@ describe('Runtime-backed ChatRoom application port', () => {
     await emitError('Runtime transport disconnected')
 
     expect(errors).toEqual([new Error('Runtime transport disconnected')])
+  })
+
+  it('deduplicates transport repeats of one failure event while fresh failures stay visible', async () => {
+    const { room, emitErrorEvent } = await setup()
+    const errors: Error[] = []
+    room.onError((error) => errors.push(error))
+    await settle()
+
+    await emitErrorEvent({ eventId: 'event-a', message: 'Runtime transport disconnected' })
+    await emitErrorEvent({ eventId: 'event-a', message: 'Runtime transport disconnected' })
+    await emitErrorEvent({ eventId: 'event-b', message: 'Runtime transport disconnected' })
+
+    expect(errors).toEqual([new Error('Runtime transport disconnected'), new Error('Runtime transport disconnected')])
   })
 
   it('publishes initialization as one session snapshot without a synthetic join fact', async () => {

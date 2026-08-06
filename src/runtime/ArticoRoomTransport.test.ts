@@ -106,7 +106,7 @@ describe('ArticoRoomTransport per-target isolation', () => {
     ])
   })
 
-  it('contains an untargeted ready-to-closing miss and continues later peers exactly once', async () => {
+  it('contains an untargeted ready-to-closing miss, attempts later peers exactly once, and surfaces the failure', async () => {
     const transport = createArticoRoomTransport()
     await transport.join('room-a')
     fixture.room!.open('closing-peer')
@@ -114,7 +114,7 @@ describe('ArticoRoomTransport per-target isolation', () => {
     fixture.room!.open('ready-a')
     fixture.room!.loseReadiness('closing-peer')
 
-    await expect(transport.send('room-a', 'presence')).resolves.toBeUndefined()
+    await expect(transport.send('room-a', 'presence')).rejects.toThrow('Connection is not established yet.')
 
     expect(fixture.room!.attempts).toEqual([
       { peerId: 'closing-peer', payload: 'presence' },
@@ -137,7 +137,7 @@ describe('ArticoRoomTransport per-target isolation', () => {
 
     await expect(
       transport.send('room-a', 'targeted', ['ready-b', 'closing-peer', 'ready-a', 'ready-b'])
-    ).resolves.toBeUndefined()
+    ).rejects.toThrow('Connection is not established yet.')
 
     expect(fixture.room!.attempts).toEqual([
       { peerId: 'ready-b', payload: 'targeted' },

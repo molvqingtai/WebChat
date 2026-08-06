@@ -61,8 +61,10 @@ describe('PagePort Runtime error delivery', () => {
       received.push(JSON.parse(JSON.stringify(error)))
     })
 
-    expect(await port.emitError(['page-a'], new Error('Runtime transport disconnected'))).toEqual([])
-    expect(received).toEqual(['Runtime transport disconnected'])
+    expect(await port.emitError(['page-a'], { eventId: 'event-1', message: 'Runtime transport disconnected' })).toEqual(
+      []
+    )
+    expect(received).toEqual([{ eventId: 'event-1', message: 'Runtime transport disconnected' }])
   })
 })
 

@@ -53,7 +53,7 @@ const createFixture = (readiness?: Readiness) => {
     loading: vi.fn(() => RUNTIME_TOAST_ID),
     cancel: vi.fn((id) => id)
   } satisfies Toast
-  const readinessListeners = new Set<(state: ReadinessState, terminalError?: string) => void>()
+  const readinessListeners = new Set<(state: ReadinessState) => void>()
   const chat: ChatRoom = {
     joinRoom: vi.fn(async () => {}),
     leaveRoom: vi.fn(async () => {}),
@@ -116,8 +116,7 @@ const createFixture = (readiness?: Readiness) => {
     room,
     chat,
     toast,
-    emitReadiness: (state: ReadinessState, terminalError?: string) =>
-      readinessListeners.forEach((listener) => listener(state, terminalError))
+    emitReadiness: (state: ReadinessState) => readinessListeners.forEach((listener) => listener(state))
   }
 }
 
@@ -143,7 +142,7 @@ afterEach(() => {
 })
 
 describe('application feedback ownership', () => {
-  it('publishes no Runtime Toast before initialization is ready and never dismisses a later error on ready', async () => {
+  it('publishes no Runtime Toast before initialization is ready and keeps bounded recovery on the loading owner', async () => {
     const fixture = createFixture()
 
     fixture.emitReadiness('unavailable')
@@ -154,14 +153,17 @@ describe('application feedback ownership', () => {
 
     markReady(fixture)
     await vi.waitFor(() =>
-      expect(fixture.toast.error).toHaveBeenCalledWith('Connection failed', { id: RUNTIME_TOAST_ID })
+      expect(fixture.toast.loading).toHaveBeenCalledWith('Connected to the chat.', {
+        id: RUNTIME_TOAST_ID,
+        dismissible: false
+      })
     )
-    expect(fixture.toast.loading).not.toHaveBeenCalled()
+    expect(fixture.toast.error).not.toHaveBeenCalled()
 
     fixture.emitReadiness('ready')
-    await flushMicrotasks()
-    expect(fixture.toast.cancel).not.toHaveBeenCalled()
+    await vi.waitFor(() => expect(fixture.toast.cancel).toHaveBeenCalledWith(RUNTIME_TOAST_ID))
     expect(fixture.toast.success).not.toHaveBeenCalled()
+    expect(fixture.toast.error).not.toHaveBeenCalled()
   })
 
   it('uses the stable loading owner and success cancels only that loading without a success Toast', async () => {
@@ -216,40 +218,24 @@ describe('application feedback ownership', () => {
     expect(fixture.toast.success).not.toHaveBeenCalled()
   })
 
-  it('replaces connection loading with the original terminal error and does not later dismiss it', async () => {
+  it('surfaces a failed join only through the original-message error path', async () => {
     const fixture = createFixture()
     markReady(fixture)
     vi.mocked(fixture.chat.joinRoom).mockRejectedValueOnce(new Error('provider detail'))
 
     fixture.store.send(fixture.room.command.JoinRoomCommand())
-    await vi.waitFor(() =>
-      expect(fixture.toast.error).toHaveBeenCalledWith('provider detail', { id: RUNTIME_TOAST_ID })
-    )
+    await vi.waitFor(() => expect(fixture.toast.error).toHaveBeenCalledWith('provider detail'))
 
     expect(fixture.toast.loading).toHaveBeenCalledWith('Connected to the chat.', {
       id: RUNTIME_TOAST_ID,
       dismissible: false
     })
-    expect(fixture.toast.cancel).not.toHaveBeenCalled()
+    await vi.waitFor(() => expect(fixture.toast.cancel).toHaveBeenCalledWith(RUNTIME_TOAST_ID))
+    expect(fixture.toast.error).toHaveBeenCalledTimes(1)
     expect(fixture.toast.success).not.toHaveBeenCalled()
-
-    const errorCount = fixture.toast.error.mock.calls.length
-    fixture.emitReadiness('unavailable')
-    await flushMicrotasks()
-    expect(fixture.toast.error).toHaveBeenCalledTimes(errorCount)
-    expect(fixture.toast.cancel).not.toHaveBeenCalled()
-
-    fixture.emitReadiness('ready')
-    await flushMicrotasks()
-    expect(fixture.toast.cancel).not.toHaveBeenCalled()
-
-    fixture.emitReadiness('connecting')
-    await flushMicrotasks()
-    expect(fixture.toast.loading).toHaveBeenCalledTimes(1)
-    expect(fixture.toast.error).toHaveBeenCalledTimes(errorCount)
   })
 
-  it('shows one native terminal Runtime error and does not replace it with later loading', async () => {
+  it('keeps unavailable readiness on the bounded recovery loading without an error Toast', async () => {
     const fixture = createFixture()
     const joining = deferred()
     vi.mocked(fixture.chat.joinRoom).mockReturnValueOnce(joining.promise)
@@ -262,19 +248,13 @@ describe('application feedback ownership', () => {
       })
     )
 
-    fixture.emitReadiness('unavailable', 'Extension context invalidated.')
-    await vi.waitFor(() =>
-      expect(fixture.toast.error).toHaveBeenCalledWith('Extension context invalidated.', {
-        id: RUNTIME_TOAST_ID
-      })
-    )
-
-    fixture.emitReadiness('unavailable', 'Extension context invalidated.')
+    fixture.emitReadiness('unavailable')
+    fixture.emitReadiness('unavailable')
     fixture.emitReadiness('connecting')
     await flushMicrotasks()
 
-    expect(fixture.toast.error).toHaveBeenCalledOnce()
-    expect(fixture.toast.loading).toHaveBeenCalledOnce()
+    expect(fixture.toast.loading).toHaveBeenCalledTimes(1)
+    expect(fixture.toast.error).not.toHaveBeenCalled()
     expect(fixture.toast.cancel).not.toHaveBeenCalled()
   })
 
@@ -312,9 +292,7 @@ describe('application feedback ownership', () => {
     await lease.init()
     const fixture = createFixture({
       onState: (callback) =>
-        lease.whenHostPhase((phase, terminalError) =>
-          callback(phase === 'ready' || phase === 'unavailable' ? phase : 'connecting', terminalError)
-        )
+        lease.whenHostPhase((phase) => callback(phase === 'ready' || phase === 'unavailable' ? phase : 'connecting'))
     })
     const sending = deferred()
     vi.mocked(fixture.chat.sendMessage).mockReturnValueOnce(sending.promise as never)
@@ -330,11 +308,9 @@ describe('application feedback ownership', () => {
     sending.reject(nativeError)
     await flushMicrotasks()
 
-    expect(registerPage).toHaveBeenCalledTimes(2)
+    expect(registerPage.mock.calls.length).toBeGreaterThanOrEqual(2)
     expect(fixture.toast.error).toHaveBeenCalledOnce()
-    expect(fixture.toast.error).toHaveBeenCalledWith('Extension context invalidated.', {
-      id: RUNTIME_TOAST_ID
-    })
+    expect(fixture.toast.error).toHaveBeenCalledWith('Extension context invalidated.')
     lease.detach()
   })
 })

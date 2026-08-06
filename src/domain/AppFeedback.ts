@@ -15,74 +15,46 @@ const AppFeedbackDomain = Remesh.domain({
     const chatRoomDomain = domain.getDomain(ChatRoomDomain())
     const readinessDomain = domain.getDomain(ReadinessDomain())
     const toastDomain = domain.getDomain(ToastDomain())
-    const RuntimeToastTypeState = domain.state<'loading' | 'error' | null>({
-      name: 'AppFeedback.RuntimeToastTypeState',
-      default: null
+    const RuntimeLoadingState = domain.state<boolean>({
+      name: 'AppFeedback.RuntimeLoadingState',
+      default: false
     })
     const RuntimeFeedbackQuery = domain.query({
       name: 'AppFeedback.RuntimeFeedbackQuery',
-      impl: ({ get }): { state: ReadinessState; message?: string } | null => {
+      impl: ({ get }): ReadinessState | null => {
         if (!get(appStatusDomain.query.ReadyQuery())) return null
-        const message = get(readinessDomain.query.TerminalErrorQuery())
-        const state = message
-          ? 'unavailable'
-          : get(chatRoomDomain.query.ConnectionIsLoadingQuery())
-            ? 'connecting'
-            : get(readinessDomain.query.StateQuery())
-        return { state, message }
+        return get(chatRoomDomain.query.ConnectionIsLoadingQuery())
+          ? 'connecting'
+          : get(readinessDomain.query.StateQuery())
       }
     })
-    const PublishRuntimeFeedbackCommand = domain.command({
-      name: 'AppFeedback.PublishRuntimeFeedbackCommand',
-      impl: ({ get }, input: { state: Exclude<ReadinessState, 'ready'>; message?: string }) =>
-        input.message === undefined && get(RuntimeToastTypeState()) === 'error'
+    const PublishRuntimeLoadingCommand = domain.command({
+      name: 'AppFeedback.PublishRuntimeLoadingCommand',
+      impl: ({ get }) =>
+        get(RuntimeLoadingState())
           ? null
-          : input.state === 'connecting'
-            ? [
-                RuntimeToastTypeState().new('loading'),
-                toastDomain.command.LoadingCommand({
-                  id: RUNTIME_TOAST_ID,
-                  message: 'Connected to the chat.',
-                  dismissible: false
-                })
-              ]
-            : [
-                RuntimeToastTypeState().new('error'),
-                toastDomain.command.ErrorCommand({
-                  id: RUNTIME_TOAST_ID,
-                  message: input.message ?? 'Connection failed'
-                })
-              ]
+          : [
+              RuntimeLoadingState().new(true),
+              toastDomain.command.LoadingCommand({
+                id: RUNTIME_TOAST_ID,
+                message: 'Connected to the chat.',
+                dismissible: false
+              })
+            ]
     })
     const DismissRuntimeLoadingCommand = domain.command({
       name: 'AppFeedback.DismissRuntimeLoadingCommand',
       impl: ({ get }) =>
-        get(RuntimeToastTypeState()) === 'loading'
-          ? [RuntimeToastTypeState().new(null), toastDomain.command.CancelCommand(RUNTIME_TOAST_ID)]
+        get(RuntimeLoadingState())
+          ? [RuntimeLoadingState().new(false), toastDomain.command.CancelCommand(RUNTIME_TOAST_ID)]
           : null
     })
-    const runtimeFeedbackCommand = (feedback: { state: ReadinessState; message?: string } | null) =>
-      feedback === null
-        ? null
-        : feedback.state === 'ready'
-          ? DismissRuntimeLoadingCommand()
-          : PublishRuntimeFeedbackCommand({ state: feedback.state, message: feedback.message })
+    const runtimeFeedbackCommand = (feedback: ReadinessState | null) =>
+      feedback === null ? null : feedback === 'ready' ? DismissRuntimeLoadingCommand() : PublishRuntimeLoadingCommand()
 
     domain.effect({
       name: 'AppFeedback.OnRuntimeFeedbackEffect',
       impl: ({ fromQuery }) => fromQuery(RuntimeFeedbackQuery()).pipe(map(runtimeFeedbackCommand))
-    })
-
-    domain.effect({
-      name: 'AppFeedback.OnConnectionFinishedEffect',
-      impl: ({ fromEvent, get }) =>
-        fromEvent(chatRoomDomain.event.ReconnectFinishedEvent).pipe(
-          map(({ error }) =>
-            error && get(RuntimeFeedbackQuery())?.state === 'ready'
-              ? PublishRuntimeFeedbackCommand({ state: 'unavailable', message: error.message })
-              : null
-          )
-        )
     })
 
     return {}

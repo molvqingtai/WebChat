@@ -3,6 +3,7 @@ import type {
   HistorySupplyRequest,
   HistorySupplyResult,
   InboundEvent,
+  RuntimeErrorEvent,
   RuntimeSessionEvent,
   WorldPresenceEvent
 } from '@/runtime/Contract'
@@ -13,7 +14,7 @@ export interface PagePort {
   emitInbound: (pageIds: string[], event: InboundEvent) => Promise<string[]>
   emitSessionEvent: (pageIds: string[], event: RuntimeSessionEvent) => Promise<string[]>
   emitWorldPresence: (pageIds: string[], event: WorldPresenceEvent) => Promise<string[]>
-  emitError: (pageIds: string[], error: Error) => Promise<string[]>
+  emitError: (pageIds: string[], event: RuntimeErrorEvent) => Promise<string[]>
   supplyHistory: (pageId: string, request: HistorySupplyRequest) => Promise<HistorySupplyResult | null>
   cancelHistorySupply: (supplyId: string) => Promise<void>
 }

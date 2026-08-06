@@ -8,7 +8,7 @@ import type { MessageApi } from '@/service/adapter/runtime/Core'
 const wait = (milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds))
 
 describe('content Runtime rejection ownership', () => {
-  it('preserves the first registration terminal truth after init rejects', async () => {
+  it('settles the first registration failure as unavailable without terminal classification', async () => {
     const nativeError = new Error('Extension context invalidated.')
     const listeners = new Set<(...args: unknown[]) => unknown>()
     const runtime: MessageApi = {
@@ -42,7 +42,7 @@ describe('content Runtime rejection ownership', () => {
     })
     const coordinator = injectCoordinator(new InjectAdapter(runtime))
     const logError = vi.fn()
-    const phases: Array<{ phase: HostPhase; terminalError?: string }> = []
+    const phases: HostPhase[] = []
     const client = new ClientLease({
       coordinator,
       pageId: 'page-a',
@@ -50,23 +50,18 @@ describe('content Runtime rejection ownership', () => {
       logError
     })
     const releaseRejectionOwner = ownInjectRejections((error) => client.observeTransportRejection(error))
-    const releasePhase = client.whenHostPhase((phase, terminalError) => phases.push({ phase, terminalError }))
+    const releasePhase = client.whenHostPhase((phase) => phases.push(phase))
 
     try {
       await expect(client.init()).rejects.toBe(nativeError)
       await wait(0)
 
       expect(unhandled).toEqual([])
-      expect(logError).toHaveBeenCalledOnce()
-      expect(logError).toHaveBeenCalledWith(nativeError)
-      expect(phases).toEqual([
-        { phase: 'none', terminalError: undefined },
-        { phase: 'connecting', terminalError: undefined },
-        { phase: 'unavailable', terminalError: nativeError.message }
-      ])
+      expect(logError).not.toHaveBeenCalled()
+      expect(phases).toEqual(['none', 'connecting', 'unavailable'])
       const replayed = vi.fn()
       client.whenHostPhase(replayed)
-      expect(replayed).toHaveBeenCalledWith('unavailable', nativeError.message)
+      expect(replayed).toHaveBeenCalledWith('unavailable')
     } finally {
       releasePhase()
       client.detach()
@@ -126,16 +121,18 @@ describe('content Runtime rejection ownership', () => {
     })
     const coordinator = injectCoordinator(new InjectAdapter(runtime))
     const logError = vi.fn()
-    const phases: Array<{ phase: HostPhase; terminalError?: string }> = []
+    const phases: HostPhase[] = []
     const client = new ClientLease({
       coordinator,
       pageId: 'page-a',
       domain: 'https://example.test',
+      startupTimeoutMs: 200,
+      startupRetryIntervalMs: 20,
       watchdogIntervalMs: 60000,
       logError
     })
     const releaseRejectionOwner = ownInjectRejections((error) => client.observeTransportRejection(error))
-    client.whenHostPhase((phase, terminalError) => phases.push({ phase, terminalError }))
+    client.whenHostPhase((phase) => phases.push(phase))
 
     try {
       await expect(client.init()).resolves.toEqual(snapshot)
@@ -147,8 +144,10 @@ describe('content Runtime rejection ownership', () => {
 
       expect(unhandled).toEqual([])
       expect(logError).toHaveBeenCalledOnce()
-      expect(logError).toHaveBeenCalledWith(nativeError)
-      expect(phases).toEqual([{ phase: 'unavailable', terminalError: nativeError.message }])
+      expect((logError.mock.calls[0][0] as Error).message).toMatch(
+        /Extension context invalidated\.|Runtime control-plane request timed out/
+      )
+      expect(phases).toEqual(['connecting', 'unavailable'])
 
       await expect(coordinator.registerPage({ domain: 'https://example.test', pageId: 'page-a' })).rejects.toThrow(
         'Provider unavailable: heartbeat check timeout 30ms.'
@@ -157,10 +156,10 @@ describe('content Runtime rejection ownership', () => {
 
       expect(unhandled).toEqual([])
       expect(logError).toHaveBeenCalledOnce()
-      expect(phases).toHaveLength(1)
+      expect(phases).toHaveLength(2)
       const replayed = vi.fn()
       client.whenHostPhase(replayed)
-      expect(replayed).toHaveBeenCalledWith('unavailable', nativeError.message)
+      expect(replayed).toHaveBeenCalledWith('unavailable')
     } finally {
       client.detach()
       releaseRejectionOwner()

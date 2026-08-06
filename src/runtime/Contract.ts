@@ -11,13 +11,6 @@ import type {
 
 export type HostPhase = 'none' | 'connecting' | 'ready' | 'unavailable'
 
-export const EXTENSION_CONTEXT_INVALIDATED = 'Extension context invalidated.' as const
-
-export const terminalRuntimeErrorMessage = (error: unknown) => {
-  if (typeof error !== 'object' || error === null || !('message' in error)) return null
-  return error.message === EXTENSION_CONTEXT_INVALIDATED ? EXTENSION_CONTEXT_INVALIDATED : null
-}
-
 export interface RuntimeSession {
   sourcePeerId: string
   sessionId: string
@@ -124,6 +117,11 @@ export type HistorySupplyEvent =
   | { type: 'request'; request: HistorySupplyRequest }
   | { type: 'cancel'; supplyId: string }
 
+export interface RuntimeErrorEvent {
+  eventId: string
+  message: string
+}
+
 export interface RuntimeServer {
   attachPage: (payload: { domain: string; pageId: string }) => Promise<RuntimeSnapshot>
   detachPage: (payload: { domain: string; pageId: string }) => Promise<void>
@@ -151,7 +149,7 @@ export interface RuntimeServer {
     callback: (event: RuntimeSessionEvent) => void | Promise<void>
   ) => Promise<void>
   onWorldPresence: (payload: { pageId: string }, callback: (event: WorldPresenceEvent) => void) => Promise<void>
-  onError: (payload: { pageId: string }, callback: (message: string) => void) => Promise<void>
+  onError: (payload: { pageId: string }, callback: (event: RuntimeErrorEvent) => void) => Promise<void>
   provideHistory: (
     payload: { domain: string; pageId: string },
     callback: (event: HistorySupplyEvent) => void

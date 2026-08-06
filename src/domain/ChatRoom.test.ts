@@ -578,7 +578,7 @@ describe('ChatRoomDomain exact application port', () => {
     vi.mocked(fixture.chat.joinRoom).mockRejectedValueOnce(refreshError)
     fixture.store.send(fixture.user.command.UpdateUserInfoCommand({ ...SELF, name: 'Latest' }))
     await vi.waitFor(() => expect(connectionErrors).toEqual([refreshError]))
-    expect(roomErrors).toEqual([])
+    expect(roomErrors).toEqual([refreshError])
     expect(fixture.store.query(fixture.room.query.ConnectionIsLoadingQuery())).toBe(false)
     fixture.store.discard()
   })
@@ -654,7 +654,7 @@ describe('ChatRoomDomain exact application port', () => {
     expect(fixture.chat.joinRoom).toHaveBeenCalledTimes(2)
     expect(fixture.chat.leaveRoom).not.toHaveBeenCalled()
     expect(connectionErrors).toEqual([new Error('initial join failed')])
-    expect(roomErrors).toEqual([])
+    expect(roomErrors).toEqual([new Error('initial join failed'), new Error('retry transport reset')])
 
     fixture.store.send(fixture.room.command.SettleReconnectIntervalCommand(request.id))
     await vi.waitFor(() => expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toBeNull())

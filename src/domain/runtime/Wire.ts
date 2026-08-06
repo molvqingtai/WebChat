@@ -21,9 +21,12 @@ export interface WireJoinResult {
   roomIds: string[]
 }
 
+export type WireFailureStage = 'preflight' | 'provider' | 'cancelled'
+
 export interface WireFailure {
   requestId: string
   error: Error
+  stage?: WireFailureStage
 }
 
 export interface WireSendRequest {
@@ -247,7 +250,8 @@ const WireDomain = Remesh.domain({
           ...invalidated.map((request) =>
             MessageSendFailedEvent({
               requestId: request.requestId,
-              error: new DOMException('Room operation cancelled', 'AbortError')
+              error: new DOMException('Room operation cancelled', 'AbortError'),
+              stage: 'cancelled'
             })
           ),
           LeaveRoomRequestedEvent(roomId)
@@ -266,13 +270,15 @@ const WireDomain = Remesh.domain({
         ) {
           return MessageSendFailedEvent({
             requestId: request.requestId,
-            error: new Error('Untrusted room message')
+            error: new Error('Untrusted room message'),
+            stage: 'preflight'
           })
         }
         if (!parseMessage(request.roomId, request.message)) {
           return MessageSendFailedEvent({
             requestId: request.requestId,
-            error: new Error(`Invalid message for trusted room "${request.roomId}"`)
+            error: new Error(`Invalid message for trusted room "${request.roomId}"`),
+            stage: 'preflight'
           })
         }
         const sequence = get(QueueSequenceState()) + 1
@@ -302,7 +308,7 @@ const WireDomain = Remesh.domain({
 
     const CompleteSendCommand = domain.command({
       name: 'Wire.CompleteSendCommand',
-      impl: ({ get }, payload: { request: QueuedSendRequest; error?: Error }) => {
+      impl: ({ get }, payload: { request: QueuedSendRequest; error?: Error; stage?: WireFailureStage }) => {
         const { request } = payload
         const queues = get(SendQueuesState())
         const current = queues.find((item) => item.roomId === request.roomId)
@@ -331,7 +337,11 @@ const WireDomain = Remesh.domain({
                 requests
               })
         const result = payload.error
-          ? MessageSendFailedEvent({ requestId: request.requestId, error: payload.error })
+          ? MessageSendFailedEvent({
+              requestId: request.requestId,
+              error: payload.error,
+              stage: payload.stage ?? 'provider'
+            })
           : MessageSentEvent({ requestId: request.requestId })
         return requests[0]
           ? [SendQueuesState().new(nextQueues), result, SendRequestedEvent(requests[0])]
@@ -347,7 +357,8 @@ const WireDomain = Remesh.domain({
         if (payload.error || payload.rawPayload === undefined) {
           return CompleteSendCommand({
             request: payload.request,
-            error: payload.error ?? new Error('Wire encode did not produce a payload')
+            error: payload.error ?? new Error('Wire encode did not produce a payload'),
+            stage: 'preflight'
           })
         }
         if (
@@ -466,7 +477,8 @@ const WireDomain = Remesh.domain({
           ...worldRequests.map((request) =>
             MessageSendFailedEvent({
               requestId: request.requestId,
-              error: new Error('Room generation superseded')
+              error: new Error('Room generation superseded'),
+              stage: 'cancelled'
             })
           ),
           RoomClosedEvent({ roomId })

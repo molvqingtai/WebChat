@@ -151,15 +151,21 @@ export const createArticoRoomTransport = (): RoomTransport => {
      * @see https://github.com/matallui/artico/blob/8a4f1a185be9355f893120e9492151f1785e59fa/packages/client/src/room.ts#L114
      * @see https://github.com/matallui/artico/blob/8a4f1a185be9355f893120e9492151f1785e59fa/packages/peer/src/peer.ts#L281
      */
+    peers: (roomId) => [...(readyPeers.get(roomId) ?? [])],
     send: async (roomId, payload, to) => {
       const room = rooms.get(roomId)
       if (!room) throw new Error(`Room "${roomId}" not joined`)
       const targets = new Set(typeof to === 'string' ? [to] : (to ?? readyPeers.get(roomId) ?? []))
+      let firstError: Error | null = null
       targets.forEach((target) => {
         try {
           room.send(payload, target)
-        } catch {}
+        } catch (error) {
+          // Every target is attempted exactly once; the first genuine throw surfaces after the rest ran.
+          firstError ??= error as Error
+        }
       })
+      if (firstError) throw firstError
     },
     onMessage: (callback) => {
       messageListeners.add(callback)

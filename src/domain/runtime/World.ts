@@ -1,6 +1,7 @@
 import { Remesh } from 'remesh'
 import { filter, map } from 'rxjs'
-import WireDomain, { type WireMessageEvent } from '@/domain/runtime/Wire'
+import WireDomain, { type WireFailureStage, type WireMessageEvent } from '@/domain/runtime/Wire'
+import { RoomTransportExtern } from '@/domain/runtime/externs/RoomTransport'
 import { WORLD_ROOM_ID_V3 } from '@/constants/config'
 import { type ChatSite, type ChatUser, type WorldRoomMessage } from '@/protocol'
 import type { WorldPresenceEvent, WorldPresenceRecord } from '@/runtime/Contract'
@@ -30,6 +31,9 @@ interface FullPublication {
   presence: WorldRoomMessage
   stagedAttemptId: string | null
   recoveryRequestId: string | null
+  /** Frozen distinct targets; each is sent at most once and never retried. */
+  targets: string[]
+  pendingTargets: string[]
 }
 
 interface PendingPresenceSend {
@@ -53,11 +57,13 @@ const presenceFor = (registrations: WorldDomainRegistration[], sessionId: string
 }
 
 const publicationRequestId = (sequence: number) => `world:publication:${sequence}`
+const publicationTargetRequestId = (requestId: string, target: string) => `${requestId}:${target}`
 
 const WorldDomain = Remesh.domain({
   name: 'WorldDomain',
   impl: (domain, options: WorldOptions) => {
     const wireDomain = domain.getDomain(WireDomain())
+    const transport = domain.getExtern(RoomTransportExtern)
 
     const RegistrationsState = domain.state<WorldDomainRegistration[]>({
       name: 'World.RegistrationsState',
@@ -137,32 +143,77 @@ const WorldDomain = Remesh.domain({
     })
     const ErrorEvent = domain.event<Error>({ name: 'World.ErrorEvent' })
 
+    const settlePublication = (
+      get: Parameters<Parameters<typeof domain.command>[0]['impl']>[0]['get'],
+      publication: Pick<FullPublication, 'presence' | 'stagedAttemptId' | 'recoveryRequestId'>
+    ) => {
+      const staged = get(StagedRegistrationsState()).find((item) => item.publicationPending)
+      const recovery = get(RecoveryState())
+      return [
+        FullPublicationState().new(null),
+        ...(staged ? [StagedPublishedEvent({ attemptId: staged.attemptId, presence: publication.presence })] : []),
+        ...(recovery?.publicationPending
+          ? [RecoveryPublishedEvent({ requestId: recovery.requestId, presence: publication.presence })]
+          : []),
+        ...(!staged && !recovery?.publicationPending && get(JoinedState())
+          ? [
+              PresenceChangedEvent({
+                sourcePeerId: get(wireDomain.query.PeerIdQuery()),
+                presence: {
+                  sourcePeerId: get(wireDomain.query.PeerIdQuery()),
+                  presence: publication.presence
+                }
+              })
+            ]
+          : [])
+      ]
+    }
+
+    const sendNextPublicationTarget = (publication: FullPublication) => {
+      const next = publication.pendingTargets[0]
+      if (!next) return []
+      return [
+        FullPublicationState().new({ ...publication, pendingTargets: publication.pendingTargets.slice(1) }),
+        wireDomain.command.SendMessageCommand({
+          requestId: publicationTargetRequestId(publication.requestId, next),
+          roomId: worldRoomId,
+          targetPeerIds: [next],
+          message: publication.presence
+        })
+      ]
+    }
+
     const EnsureFullPublicationCommand = domain.command({
       name: 'World.EnsureFullPublicationCommand',
       impl: ({ get }) => {
-        if (get(FullPublicationState())) return null
+        const currentRevision = get(PublicationRevisionState())
+        const existing = get(FullPublicationState())
+        // A newer revision supersedes a running iterator: stop the old one, keep the Room and
+        // the original continuation, and restart on the latest revision through the same owner.
+        if (existing && existing.revision === currentRevision) return null
         const presence = get(PublicationPresenceQuery())
-        if (!presence) return null
-        const sequence = get(PublicationSequenceState()) + 1
-        if (!Number.isSafeInteger(sequence)) return ErrorEvent(new Error('World publication sequence exhausted'))
+        if (!presence) return existing ? [FullPublicationState().new(null)] : null
         const staged = get(StagedRegistrationsState()).find((item) => item.publicationPending)
         const recovery = get(RecoveryState())
+        const stagedAttemptId = staged?.attemptId ?? null
+        const recoveryRequestId = recovery?.publicationPending ? recovery.requestId : null
+        // Freeze the current physical Room membership as this revision's distinct targets.
+        const targets = [...new Set(transport.peers(worldRoomId))]
+        if (targets.length === 0) {
+          return [...settlePublication(get, { presence, stagedAttemptId, recoveryRequestId })]
+        }
+        const sequence = get(PublicationSequenceState()) + 1
+        if (!Number.isSafeInteger(sequence)) return ErrorEvent(new Error('World publication sequence exhausted'))
         const publication: FullPublication = {
           requestId: publicationRequestId(sequence),
-          revision: get(PublicationRevisionState()),
+          revision: currentRevision,
           presence,
-          stagedAttemptId: staged?.attemptId ?? null,
-          recoveryRequestId: recovery?.publicationPending ? recovery.requestId : null
+          stagedAttemptId,
+          recoveryRequestId,
+          targets,
+          pendingTargets: targets
         }
-        return [
-          PublicationSequenceState().new(sequence),
-          FullPublicationState().new(publication),
-          wireDomain.command.SendMessageCommand({
-            requestId: publication.requestId,
-            roomId: worldRoomId,
-            message: publication.presence
-          })
-        ]
+        return [PublicationSequenceState().new(sequence), ...sendNextPublicationTarget(publication)]
       }
     })
 
@@ -209,67 +260,57 @@ const WorldDomain = Remesh.domain({
       name: 'World.CompleteFullPublicationCommand',
       impl: ({ get }, requestId: string) => {
         const publication = get(FullPublicationState())
-        if (!publication || publication.requestId !== requestId) return null
-        if (publication.revision !== get(PublicationRevisionState())) {
-          return [FullPublicationState().new(null), EnsureFullPublicationCommand()]
+        if (!publication) return null
+        const target = publication.targets.find(
+          (item) => publicationTargetRequestId(publication.requestId, item) === requestId
+        )
+        if (!target) return null
+        const advanced: FullPublication = {
+          ...publication,
+          pendingTargets: publication.pendingTargets.filter((item) => item !== target)
         }
-        const staged = get(StagedRegistrationsState()).find((item) => item.publicationPending)
-        const recovery = get(RecoveryState())
-        return [
-          FullPublicationState().new(null),
-          ...(staged ? [StagedPublishedEvent({ attemptId: staged.attemptId, presence: publication.presence })] : []),
-          ...(recovery?.publicationPending
-            ? [RecoveryPublishedEvent({ requestId: recovery.requestId, presence: publication.presence })]
-            : []),
-          ...(!staged && !recovery?.publicationPending && get(JoinedState())
-            ? [
-                PresenceChangedEvent({
-                  sourcePeerId: get(wireDomain.query.PeerIdQuery()),
-                  presence: {
-                    sourcePeerId: get(wireDomain.query.PeerIdQuery()),
-                    presence: publication.presence
-                  }
-                })
-              ]
-            : [])
-        ]
+        // Settlement requires only that every frozen target was attempted, never acceptance or ACK.
+        if (advanced.pendingTargets.length > 0) {
+          return [FullPublicationState().new(advanced), ...sendNextPublicationTarget(advanced)]
+        }
+        return settlePublication(get, advanced)
       }
     })
 
     const FailFullPublicationCommand = domain.command({
       name: 'World.FailFullPublicationCommand',
-      impl: ({ get }, payload: { requestId: string; error: Error }) => {
+      impl: ({ get }, payload: { requestId: string; error: Error; stage?: WireFailureStage }) => {
         const publication = get(FullPublicationState())
-        if (!publication || publication.requestId !== payload.requestId) return null
-        const applicableStage = publication.stagedAttemptId
-          ? get(StagedRegistrationsState()).find(
-              (item) => item.attemptId === publication.stagedAttemptId && item.publicationPending
-            )
-          : undefined
-        const recovery = get(RecoveryState())
-        const applicableRecovery =
-          publication.recoveryRequestId &&
-          recovery?.requestId === publication.recoveryRequestId &&
-          recovery.publicationPending
-            ? recovery
-            : undefined
-        const ownerless = publication.stagedAttemptId === null && publication.recoveryRequestId === null
-        if (
-          (!applicableStage && !applicableRecovery && !ownerless) ||
-          (ownerless && publication.revision !== get(PublicationRevisionState()))
-        ) {
-          return [FullPublicationState().new(null), EnsureFullPublicationCommand()]
+        if (!publication) return null
+        const target = publication.targets.find(
+          (item) => publicationTargetRequestId(publication.requestId, item) === payload.requestId
+        )
+        if (!target) return null
+        // Runtime/Room/World-owner loss invalidates the queue; that cancels the iterator quietly.
+        if (payload.stage === 'cancelled' || !get(wireDomain.query.IsRoomTrustedQuery(worldRoomId))) {
+          return [FullPublicationState().new(null)]
         }
-        return [
-          FullPublicationState().new(null),
-          ...(applicableStage
-            ? [StagedPublishFailedEvent({ attemptId: applicableStage.attemptId, error: payload.error })]
-            : []),
-          ...(applicableRecovery
-            ? [RecoveryPublishFailedEvent({ requestId: applicableRecovery.requestId, error: payload.error })]
-            : []),
-          ...(ownerless ? [ErrorEvent(payload.error)] : [])
-        ]
+        // A preflight failure performed zero provider sends and fails the owning attempt.
+        if (payload.stage === 'preflight') {
+          return [
+            FullPublicationState().new(null),
+            ...(publication.stagedAttemptId
+              ? [StagedPublishFailedEvent({ attemptId: publication.stagedAttemptId, error: payload.error })]
+              : []),
+            ...(publication.recoveryRequestId
+              ? [RecoveryPublishFailedEvent({ requestId: publication.recoveryRequestId, error: payload.error })]
+              : [])
+          ]
+        }
+        const advanced: FullPublication = {
+          ...publication,
+          pendingTargets: publication.pendingTargets.filter((item) => item !== target)
+        }
+        const failure = ErrorEvent(payload.error)
+        if (advanced.pendingTargets.length > 0) {
+          return [FullPublicationState().new(advanced), failure, ...sendNextPublicationTarget(advanced)]
+        }
+        return [failure, ...settlePublication(get, advanced)]
       }
     })
 
@@ -408,7 +449,9 @@ const WorldDomain = Remesh.domain({
           RegistrationsState().new(next),
           StagedRegistrationsState().new(remainingStages),
           ...(publicationChanged ? [PublicationRevisionState().new(revision)] : []),
-          ...(next.length === 0 ? [JoinedState().new(false), PresencesState().new([])] : []),
+          ...(next.length === 0 && remainingStages.length === 0
+            ? [JoinedState().new(false), PresencesState().new([])]
+            : []),
           ...(next.length === 0 && remainingStages.length === 0 ? [RecoveryState().new(null)] : []),
           ...(nextStage && !activeAfter ? [PublishStagedCommand(nextStage.attemptId)] : []),
           ...(publicationChanged ? [EnsureFullPublicationCommand()] : []),
@@ -437,6 +480,21 @@ const WorldDomain = Remesh.domain({
           PresencesState().new(replaceBy(presences, (item) => item.sourcePeerId === payload.sourcePeerId, record)),
           ...(get(JoinedState()) && get(RegistrationsState()).length > 0
             ? [PresenceChangedEvent({ sourcePeerId: payload.sourcePeerId, presence: record })]
+            : []),
+          // A presence from a peer outside the current Room generation still earns one targeted reply;
+          // current Room peers are already covered by the iterator or join catch-up.
+          ...(current === undefined &&
+          !transport.peers(worldRoomId).includes(payload.sourcePeerId) &&
+          get(JoinedState()) &&
+          get(RegistrationsState()).length > 0 &&
+          !get(StagedRegistrationsState()).some((item) => item.publicationPending) &&
+          !get(RecoveryState())?.publicationPending
+            ? [
+                PublishCurrentCommand({
+                  requestId: `world:discovered:${payload.sourcePeerId}`,
+                  targetPeerIds: [payload.sourcePeerId]
+                })
+              ]
             : [])
         ]
       }
@@ -564,14 +622,6 @@ const WorldDomain = Remesh.domain({
           filter((event) => 'sites' in event.message),
           map(ApplyPresenceCommand)
         )
-    })
-    domain.effect({
-      name: 'World.PeerJoinEffect',
-      impl: ({ fromEvent }) => fromEvent(wireDomain.event.PeerJoinedEvent).pipe(map(PeerJoinedCommand))
-    })
-    domain.effect({
-      name: 'World.PeerLeaveEffect',
-      impl: ({ fromEvent }) => fromEvent(wireDomain.event.PeerLeftEvent).pipe(map(PeerLeftCommand))
     })
     domain.effect({
       name: 'World.SendSuccessEffect',

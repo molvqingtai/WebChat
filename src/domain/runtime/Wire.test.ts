@@ -42,6 +42,7 @@ const fixture = (
     peerId: 'local-peer',
     join: (roomId) => join(roomId),
     leave: vi.fn(),
+    peers: () => [],
     send: (roomId, payload, to) => send(roomId, payload, to),
     onMessage: (callback) => {
       onMessage = callback

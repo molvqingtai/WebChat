@@ -1,17 +1,6 @@
-import {
-  terminalRuntimeErrorMessage,
-  type HostPhase,
-  type RuntimeCoordinator,
-  type RuntimePageRegistration,
-  type RuntimeSnapshot
-} from '@/runtime/Contract'
+import type { HostPhase, RuntimeCoordinator, RuntimePageRegistration, RuntimeSnapshot } from '@/runtime/Contract'
 
 export const CLIENT_LEASE_RPC_TIMEOUT_MS = 5000
-
-interface ClientLeaseHostStatus {
-  phase: HostPhase
-  terminalError?: string
-}
 
 export interface ClientLeaseOptions {
   coordinator: RuntimeCoordinator
@@ -70,8 +59,9 @@ export class ClientLease {
   private recovering: { lifecycle: AbortController; deadline: number; task: Promise<void> } | null = null
   private checking: { deadline: number; task: Promise<void> } | null = null
   private readonly readyCallbacks = new Set<() => void>()
-  private readonly hostPhaseCallbacks = new Set<(phase: HostPhase, terminalError?: string) => void>()
-  private hostStatus: ClientLeaseHostStatus = { phase: 'none' }
+  private readonly hostPhaseCallbacks = new Set<(phase: HostPhase) => void>()
+  private readonly failureCallbacks = new Set<(error: Error) => void>()
+  private hostPhase: HostPhase = 'none'
   private readonly startupTimeoutMs
   private readonly startupRetryIntervalMs
   private readonly watchdogIntervalMs
@@ -90,10 +80,16 @@ export class ClientLease {
     return () => this.readyCallbacks.delete(callback)
   }
 
-  whenHostPhase(callback: (phase: HostPhase, terminalError?: string) => void) {
+  whenHostPhase(callback: (phase: HostPhase) => void) {
     this.hostPhaseCallbacks.add(callback)
-    callback(this.hostStatus.phase, this.hostStatus.terminalError)
+    callback(this.hostPhase)
     return () => this.hostPhaseCallbacks.delete(callback)
+  }
+
+  /** Every distinct real control-plane failure is surfaced once here; polling never stops on failure. */
+  whenFailure(callback: (error: Error) => void) {
+    this.failureCallbacks.add(callback)
+    return () => this.failureCallbacks.delete(callback)
   }
 
   private lease() {
@@ -104,34 +100,22 @@ export class ClientLease {
     return this.lifecycle === lifecycle && !lifecycle.signal.aborted
   }
 
-  private setHostPhase(phase: HostPhase, terminalError?: string) {
-    if (this.hostStatus.phase === phase && this.hostStatus.terminalError === terminalError) return
-    this.hostStatus = terminalError === undefined ? { phase } : { phase, terminalError }
+  private setHostPhase(phase: HostPhase) {
+    if (this.hostPhase === phase) return
+    this.hostPhase = phase
     if (this.snapshotValue) this.snapshotValue = { ...this.snapshotValue, hostPhase: phase }
-    this.hostPhaseCallbacks.forEach((callback) => callback(phase, terminalError))
+    this.hostPhaseCallbacks.forEach((callback) => callback(phase))
   }
 
-  private isTerminal() {
-    return this.hostStatus.terminalError !== undefined
+  private emitFailure(error: unknown) {
+    const failure = error instanceof Error ? error : new Error(String(error))
+    this.logError(failure)
+    this.failureCallbacks.forEach((callback) => callback(failure))
   }
 
-  observeTransportRejection(error: unknown) {
-    const lifecycle = this.lifecycle
-    const terminalMessage = terminalRuntimeErrorMessage(error)
-    if (!lifecycle || !terminalMessage) return false
-    return this.settleTerminal(lifecycle, error, terminalMessage)
-  }
-
-  private settleTerminal(lifecycle: AbortController, error: unknown, message: string) {
-    if (!this.isCurrent(lifecycle) || this.isTerminal()) return false
-    this.ready = false
-    if (this.watchdog) {
-      globalThis.clearInterval(this.watchdog)
-      this.watchdog = null
-    }
-    this.setHostPhase('unavailable', message)
-    this.logError(error)
-    return true
+  /** Callback delivery rejections are diagnostic only; error content never controls the lease lifecycle. */
+  observeTransportRejection(_error: unknown) {
+    return false
   }
 
   private async registerWithinBudget(lifecycle: AbortController, deadline: number): Promise<RuntimePageRegistration> {
@@ -152,7 +136,6 @@ export class ClientLease {
         return result
       } catch (error) {
         lifecycle.signal.throwIfAborted()
-        if (terminalRuntimeErrorMessage(error)) throw error
         lastError = error
         if (Date.now() + this.startupRetryIntervalMs > deadline) throw error
         await wait(this.startupRetryIntervalMs, lifecycle.signal)
@@ -172,7 +155,7 @@ export class ClientLease {
   }
 
   private recover(lifecycle: AbortController, deadline: number) {
-    if (!this.isCurrent(lifecycle) || this.isTerminal()) return Promise.resolve()
+    if (!this.isCurrent(lifecycle)) return Promise.resolve()
     if (this.recovering?.lifecycle === lifecycle && Date.now() < this.recovering.deadline) {
       return this.recovering.task
     }
@@ -182,13 +165,8 @@ export class ClientLease {
       .then(() => {})
       .catch((error) => {
         if (!this.isCurrent(lifecycle) || this.recovering !== recovery) return
-        const terminalMessage = terminalRuntimeErrorMessage(error)
-        if (terminalMessage) {
-          this.settleTerminal(lifecycle, error, terminalMessage)
-          return
-        }
         this.setHostPhase('unavailable')
-        this.logError(error)
+        this.emitFailure(error)
       })
     recovery.task = task
     this.recovering = recovery
@@ -224,19 +202,18 @@ export class ClientLease {
       this.setHostPhase(registration.snapshot.hostPhase)
     } catch (error) {
       if (!this.isCurrent(lifecycle) || this.checking !== check) return
-      const terminalMessage = terminalRuntimeErrorMessage(error)
-      if (terminalMessage) {
-        this.settleTerminal(lifecycle, error, terminalMessage)
+      if (Date.now() >= check.deadline) {
+        this.ready = false
+        this.setHostPhase('unavailable')
+        this.emitFailure(error)
         return
       }
-      if (Date.now() >= check.deadline) return
       this.ready = false
       await this.recover(lifecycle, check.deadline)
     }
   }
 
   checkNow() {
-    if (this.isTerminal()) return Promise.resolve()
     const now = Date.now()
     if (this.checking && now < this.checking.deadline) return this.checking.task
     if (this.recovering && now >= this.recovering.deadline) this.recovering = null
@@ -250,7 +227,7 @@ export class ClientLease {
   }
 
   private startWatchdog(lifecycle: AbortController) {
-    if (this.watchdog || !this.isCurrent(lifecycle) || this.isTerminal()) return
+    if (this.watchdog || !this.isCurrent(lifecycle)) return
     this.watchdog = globalThis.setInterval(() => {
       if (this.isCurrent(lifecycle)) void this.checkNow()
     }, this.watchdogIntervalMs)
@@ -273,9 +250,7 @@ export class ClientLease {
       return snapshot
     } catch (error) {
       if (lifecycle.signal.aborted) return null
-      const terminalMessage = terminalRuntimeErrorMessage(error)
-      if (terminalMessage) this.settleTerminal(lifecycle, error, terminalMessage)
-      else if (!this.isTerminal()) this.setHostPhase('unavailable')
+      this.setHostPhase('unavailable')
       throw error
     }
   }

@@ -1,8 +1,9 @@
 import { Remesh } from 'remesh'
 import { concatMap, filter, map } from 'rxjs'
 import DeliveryDomain from '@/domain/runtime/Delivery'
-import WireDomain, { type WireMessageEvent } from '@/domain/runtime/Wire'
+import WireDomain, { type WireFailureStage, type WireMessageEvent } from '@/domain/runtime/Wire'
 import { ClockExtern } from '@/domain/runtime/externs/Clock'
+import { RoomTransportExtern } from '@/domain/runtime/externs/RoomTransport'
 import { IdentityExtern } from '@/domain/runtime/externs/Identity'
 import {
   MAX_PRESENCE_OBSERVATIONS,
@@ -58,6 +59,8 @@ interface PreparedSession {
   isNewPresence: boolean
   isFinalizingPresence: boolean
   publishRequestId?: string
+  /** Frozen distinct publication targets still awaiting their single send. */
+  publishPendingTargets: string[]
   missedPeerIds: string[]
   baselinePeerIds: string[]
 }
@@ -201,6 +204,9 @@ const makeRecord = (message: ChatMessage, user: ChatUser, receivedAt: number): C
 }
 
 const initialRequestId = (attemptId: string) => `session:initial:${attemptId}`
+const publishTargetRequestId = (requestId: string, target: string) => `${requestId}:${target}`
+const publishedTarget = (prepared: { publishRequestId?: string }, requestId: string) =>
+  requestId.slice(`${prepared.publishRequestId}:`.length)
 const catchUpRequestId = (attemptId: string, sourcePeerId: string) => `session:catch-up:${attemptId}:${sourcePeerId}`
 const chatRequestId = (operationId: string) => `session:chat:${operationId}`
 const endRequestId = (presenceId: string) => `session:end:${presenceId}`
@@ -230,6 +236,7 @@ const SessionDomain = Remesh.domain({
   name: 'SessionDomain',
   impl: (domain) => {
     const clock = domain.getExtern(ClockExtern)
+    const roomTransport = domain.getExtern(RoomTransportExtern)
     const identity = domain.getExtern(IdentityExtern)
     const presenceStore = domain.getExtern(PresenceStoreExtern)
     const wireDomain = domain.getDomain(WireDomain())
@@ -431,6 +438,7 @@ const SessionDomain = Remesh.domain({
           observers: priorPrepared?.observers ?? presence?.observers ?? [],
           isNewPresence: !current && local.status === 'pending',
           isFinalizingPresence,
+          publishPendingTargets: [],
           missedPeerIds: [],
           baselinePeerIds: []
         }
@@ -451,41 +459,106 @@ const SessionDomain = Remesh.domain({
           return PreparedPublishFailedEvent({ attemptId, error: new Error('Prepared session disappeared') })
         }
         const requestId = initialRequestId(attemptId)
+        const message = {
+          type: MESSAGE_TYPE.SESSION,
+          sessionId: prepared.runtime.sessionId,
+          presenceId: prepared.runtime.presenceId,
+          joinedAt: prepared.runtime.joinedAt,
+          user: prepared.runtime.user
+        } as const
+        // Freeze the current physical Room membership as this publication's distinct targets.
+        const targets = [...new Set(roomTransport.peers(prepared.runtime.roomId))]
+        const pending = {
+          ...prepared,
+          publishRequestId: requestId,
+          publishPendingTargets: targets
+        }
+        const first = targets[0]
         return [
           PreparedSessionsState().new(
-            replaceBy(get(PreparedSessionsState()), (item) => item.attemptId === attemptId, {
-              ...prepared,
-              publishRequestId: requestId
-            })
+            replaceBy(get(PreparedSessionsState()), (item) => item.attemptId === attemptId, pending)
           ),
-          wireDomain.command.SendMessageCommand({
-            requestId,
-            roomId: prepared.runtime.roomId,
-            message: {
-              type: MESSAGE_TYPE.SESSION,
-              sessionId: prepared.runtime.sessionId,
-              presenceId: prepared.runtime.presenceId,
-              joinedAt: prepared.runtime.joinedAt,
-              user: prepared.runtime.user
-            }
-          })
+          ...(first
+            ? [
+                wireDomain.command.SendMessageCommand({
+                  requestId: publishTargetRequestId(requestId, first),
+                  roomId: prepared.runtime.roomId,
+                  targetPeerIds: [first],
+                  message
+                })
+              ]
+            : [PreparedPublishedEvent({ attemptId })])
         ]
       }
     })
 
+    const advancePreparedPublish = (
+      get: Parameters<Parameters<typeof domain.command>[0]['impl']>[0]['get'],
+      prepared: PreparedSession,
+      settled: string
+    ) => {
+      const remaining = prepared.publishPendingTargets.filter((item) => item !== settled)
+      const advanced = { ...prepared, publishPendingTargets: remaining }
+      const next = remaining[0]
+      return [
+        PreparedSessionsState().new(
+          replaceBy(get(PreparedSessionsState()), (item) => item.attemptId === prepared.attemptId, advanced)
+        ),
+        ...(next
+          ? [
+              wireDomain.command.SendMessageCommand({
+                requestId: publishTargetRequestId(prepared.publishRequestId!, next),
+                roomId: prepared.runtime.roomId,
+                targetPeerIds: [next],
+                message: {
+                  type: MESSAGE_TYPE.SESSION,
+                  sessionId: prepared.runtime.sessionId,
+                  presenceId: prepared.runtime.presenceId,
+                  joinedAt: prepared.runtime.joinedAt,
+                  user: prepared.runtime.user
+                }
+              })
+            ]
+          : [PreparedPublishedEvent({ attemptId: prepared.attemptId })])
+      ]
+    }
+
     const CompletePreparedPublishCommand = domain.command({
       name: 'Session.CompletePreparedPublishCommand',
       impl: ({ get }, requestId: string) => {
-        const prepared = get(PreparedSessionsState()).find((item) => item.publishRequestId === requestId)
-        return prepared ? PreparedPublishedEvent({ attemptId: prepared.attemptId }) : null
+        const prepared = get(PreparedSessionsState()).find(
+          (item) =>
+            item.publishRequestId !== undefined &&
+            item.publishPendingTargets.some(
+              (target) => publishTargetRequestId(item.publishRequestId!, target) === requestId
+            )
+        )
+        return prepared ? advancePreparedPublish(get, prepared, publishedTarget(prepared, requestId)) : null
       }
     })
 
     const FailPreparedPublishCommand = domain.command({
       name: 'Session.FailPreparedPublishCommand',
-      impl: ({ get }, payload: { requestId: string; error: Error }) => {
-        const prepared = get(PreparedSessionsState()).find((item) => item.publishRequestId === payload.requestId)
-        return prepared ? PreparedPublishFailedEvent({ attemptId: prepared.attemptId, error: payload.error }) : null
+      impl: ({ get }, payload: { requestId: string; error: Error; stage?: WireFailureStage }) => {
+        const prepared = get(PreparedSessionsState()).find(
+          (item) =>
+            item.publishRequestId !== undefined &&
+            item.publishPendingTargets.some(
+              (target) => publishTargetRequestId(item.publishRequestId!, target) === payload.requestId
+            )
+        )
+        if (!prepared) return null
+        // Owner loss (leave/supersede invalidates the queue) cancels the publish quietly.
+        if (payload.stage === 'cancelled') return null
+        // A preflight failure performed zero provider sends and fails the attempt.
+        if (payload.stage === 'preflight') {
+          return PreparedPublishFailedEvent({ attemptId: prepared.attemptId, error: payload.error })
+        }
+        // A genuine target failure is surfaced once and never retried; remaining targets still run.
+        return [
+          ErrorEvent(payload.error),
+          ...advancePreparedPublish(get, prepared, publishedTarget(prepared, payload.requestId))
+        ]
       }
     })
 

@@ -368,6 +368,7 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
     const invalidInbound = new Set<number>()
     const retryTimers = new Set<ReturnType<typeof globalThis.setTimeout>>()
     const activeHistorySupplies = new Map<string, AbortController>()
+    const seenErrorEventIds = new Set<string>()
     const cleanup = () => {
       for (const timer of retryTimers) globalThis.clearTimeout(timer)
       retryTimers.clear()
@@ -519,8 +520,14 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
         if (isCurrent() && event.domain === dependencies.pageDomain) this.emitSessionEvent(event)
       })
     attachment.registrations.error = () =>
-      dependencies.server.onError({ pageId: dependencies.pageId }, (message) => {
-        if (isCurrent()) this.emit('error', new Error(message))
+      dependencies.server.onError({ pageId: dependencies.pageId }, (event) => {
+        if (!isCurrent()) return
+        // One failure event is displayed once per live attachment; transport duplicates are dropped,
+        // while every later distinct failure carries its own eventId and therefore a fresh toast.
+        if (seenErrorEventIds.has(event.eventId)) return
+        if (seenErrorEventIds.size >= 256) seenErrorEventIds.delete(seenErrorEventIds.values().next().value!)
+        seenErrorEventIds.add(event.eventId)
+        this.emit('error', new Error(event.message))
       })
     attachment.registrations.history = () =>
       dependencies.server.provideHistory(

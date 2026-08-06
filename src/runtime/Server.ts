@@ -208,9 +208,16 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
         .flatMap((lease) => lease.pageIds)
       void pagePort.emitWorldPresence(pageIds, event)
     }),
-    store.subscribeEvent(connectionDomain.event.ErrorEvent, (error) => {
-      const pageIds = store.query(lifecycleDomain.query.DomainLeasesQuery()).flatMap((lease) => lease.pageIds)
-      void pagePort.emitError(pageIds, error)
+    store.subscribeEvent(connectionDomain.event.ErrorEvent, ({ error, domain }) => {
+      const leases = store.query(lifecycleDomain.query.DomainLeasesQuery())
+      const pageIds = domain
+        ? (leases.find((lease) => lease.domain === domain)?.pageIds ?? [])
+        : leases.flatMap((lease) => lease.pageIds)
+      if (pageIds.length === 0) {
+        console.error('[WebChat] Runtime failure without a current affected page:', error)
+        return
+      }
+      void pagePort.emitError(pageIds, { eventId: nanoid(), message: error.message })
     })
   ]
 

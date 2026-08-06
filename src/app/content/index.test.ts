@@ -34,6 +34,7 @@ const fixture = vi.hoisted(() => ({
   initClient: vi.fn(),
   detachClient: vi.fn(),
   whenHostPhase: vi.fn(),
+  whenFailure: vi.fn(),
   createChatRoomImpl: vi.fn(),
   createWorldRoomImpl: vi.fn(),
   createReadinessImpl: vi.fn(),
@@ -96,7 +97,8 @@ vi.mock('@/domain/impls/database/IndexedDB', () => ({
 vi.mock('@/domain/impls/runtime/Client', () => ({
   detachClient: fixture.detachClient,
   initClient: fixture.initClient,
-  whenHostPhase: fixture.whenHostPhase
+  whenHostPhase: fixture.whenHostPhase,
+  whenFailure: fixture.whenFailure
 }))
 vi.mock('@/domain/impls/ChatRoom', () => ({ createChatRoomImpl: fixture.createChatRoomImpl }))
 vi.mock('@/domain/impls/WorldRoom', () => ({ createWorldRoomImpl: fixture.createWorldRoomImpl }))

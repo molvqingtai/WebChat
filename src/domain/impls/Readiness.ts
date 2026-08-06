@@ -6,9 +6,7 @@ const readinessState = (phase: HostPhase): ReadinessState => {
   return 'connecting'
 }
 
-export const createReadinessImpl = (
-  onHostPhase: (callback: (phase: HostPhase, terminalError?: string) => void) => () => void
-) =>
+export const createReadinessImpl = (onHostPhase: (callback: (phase: HostPhase) => void) => () => void) =>
   ReadinessExtern.impl({
-    onState: (callback) => onHostPhase((phase, terminalError) => callback(readinessState(phase), terminalError))
+    onState: (callback) => onHostPhase((phase) => callback(readinessState(phase)))
   })

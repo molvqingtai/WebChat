@@ -1,9 +1,8 @@
 import { Remesh } from 'remesh'
-import { filter, map, merge } from 'rxjs'
+import { map, merge } from 'rxjs'
 import ChatRoomDomain from '@/domain/ChatRoom'
 import WorldRoomDomain from '@/domain/WorldRoom'
 import { ToastExtern, type ToastOptions } from '@/domain/externs/Toast'
-import { terminalRuntimeErrorMessage } from '@/runtime/Contract'
 
 type ToastMessage = string | ({ message: string } & ToastOptions)
 
@@ -62,7 +61,6 @@ const ToastDomain = Remesh.domain({
       name: 'Toast.OnRoomErrorEffect',
       impl: ({ fromEvent }) =>
         merge(fromEvent(chatRoomDomain.event.OnErrorEvent), fromEvent(worldRoomDomain.event.OnErrorEvent)).pipe(
-          filter((error) => terminalRuntimeErrorMessage(error) === null),
           map((error) => ErrorCommand(error.message))
         )
     })

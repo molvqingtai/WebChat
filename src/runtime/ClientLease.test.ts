@@ -137,7 +137,7 @@ describe('ClientLease generation ownership', () => {
     client.detach()
   })
 
-  it('terminates an invalidated content generation without retrying its native failure', async () => {
+  it('keeps bounded polling after a permanent control-plane failure and surfaces every failure with its original message', async () => {
     const domain = 'https://example.test'
     const pageId = 'page-a'
     const healthySnapshot: RuntimeSnapshot = {
@@ -159,38 +159,85 @@ describe('ClientLease generation ownership', () => {
       .mockRejectedValue(nativeError)
     const logError = vi.fn()
     const phases: HostPhase[] = []
-    const terminalErrors: string[] = []
+    const failures: string[] = []
     const client = new ClientLease({
       coordinator: coordinatorWith(registerPage),
       pageId,
       domain,
+      startupTimeoutMs: 1000,
       startupRetryIntervalMs: 10,
-      watchdogIntervalMs: 1000,
+      watchdogIntervalMs: 3000,
       logError
     })
-    client.whenHostPhase((phase, terminalError) => {
-      phases.push(phase)
-      if (terminalError) terminalErrors.push(terminalError)
-    })
+    client.whenHostPhase((phase) => phases.push(phase))
+    client.whenFailure((error) => failures.push(error.message))
     await client.init()
     phases.length = 0
 
-    await vi.advanceTimersByTimeAsync(1000)
-    await vi.waitFor(() => expect(logError).toHaveBeenCalledWith(nativeError))
-    await vi.advanceTimersByTimeAsync(30000)
+    await vi.advanceTimersByTimeAsync(5000)
+    await vi.waitFor(() => expect(failures).toEqual([nativeError.message]))
+    expect(phases).toContain('unavailable')
 
-    expect(registerPage).toHaveBeenCalledTimes(2)
-    expect(logError).toHaveBeenCalledOnce()
-    expect(phases).toEqual(['unavailable'])
-    expect(terminalErrors).toEqual([nativeError.message])
+    await vi.advanceTimersByTimeAsync(3000)
+    await vi.waitFor(() => expect(failures).toEqual([nativeError.message, nativeError.message]))
 
-    const replayed: Array<{ phase: HostPhase; terminalError?: string }> = []
-    client.whenHostPhase((phase, terminalError) => replayed.push({ phase, terminalError }))
-    expect(replayed).toEqual([{ phase: 'unavailable', terminalError: nativeError.message }])
+    // Error text never controls lifecycle: the same message must not stop polling.
+    await vi.advanceTimersByTimeAsync(3000)
+    await vi.waitFor(() => expect(failures.length).toBeGreaterThanOrEqual(3))
+
+    const replayed: HostPhase[] = []
+    client.whenHostPhase((phase) => replayed.push(phase))
+    expect(replayed).toEqual(['unavailable'])
     client.detach()
   })
 
-  it('ignores nonterminal transport rejections without changing the healthy lease', async () => {
+  it('recovers ready from continued polling once the control plane answers again', async () => {
+    const domain = 'https://example.test'
+    const pageId = 'page-a'
+    const healthySnapshot: RuntimeSnapshot = {
+      ...snapshot,
+      domains: [
+        {
+          domain,
+          phase: 'active',
+          pageIds: [pageId],
+          chatRoomJoined: true,
+          sessions: []
+        }
+      ]
+    }
+    const nativeError = new Error('Extension context invalidated.')
+    let failUntil = 0
+    const registerPage = vi.fn<RuntimeCoordinator['registerPage']>(async () => {
+      if (Date.now() < failUntil) throw nativeError
+      return registration(healthySnapshot)
+    })
+    const phases: HostPhase[] = []
+    const failures: string[] = []
+    const client = new ClientLease({
+      coordinator: coordinatorWith(registerPage),
+      pageId,
+      domain,
+      startupTimeoutMs: 1000,
+      startupRetryIntervalMs: 10,
+      watchdogIntervalMs: 3000
+    })
+    client.whenHostPhase((phase) => phases.push(phase))
+    client.whenFailure((error) => failures.push(error.message))
+    await client.init()
+    phases.length = 0
+    failUntil = Date.now() + 6500
+
+    await vi.advanceTimersByTimeAsync(5000)
+    await vi.waitFor(() => expect(failures.length).toBeGreaterThanOrEqual(1))
+    await vi.advanceTimersByTimeAsync(3000)
+    await vi.waitFor(() => expect(phases.at(-1)).toBe('ready'))
+
+    expect(client.snapshot().hostPhase).toBe('ready')
+    client.detach()
+  })
+
+  it('treats every transport rejection as diagnostic without changing the healthy lease', async () => {
     const coordinator = coordinatorWith(vi.fn(async () => registration()))
     const logError = vi.fn()
     const phases: HostPhase[] = []
@@ -206,9 +253,9 @@ describe('ClientLease generation ownership', () => {
     phases.length = 0
 
     expect(client.observeTransportRejection(new Error('Unknown transport failure'))).toBe(false)
+    expect(client.observeTransportRejection(new Error('Extension context invalidated.'))).toBe(false)
 
     expect(phases).toEqual([])
-    expect(logError).not.toHaveBeenCalled()
     expect(client.snapshot()).toEqual(snapshot)
     client.detach()
   })
@@ -375,8 +422,9 @@ describe('ClientLease generation ownership', () => {
     await client.checkNow()
 
     expect(registerPage).toHaveBeenCalledTimes(4)
-    expect(phases).toEqual(['connecting', 'ready'])
-    expect(logError).not.toHaveBeenCalled()
+    expect(phases).toEqual(['unavailable', 'connecting', 'ready'])
+    expect(logError).toHaveBeenCalledOnce()
+    expect(logError).toHaveBeenCalledWith(expect.objectContaining({ message: 'suspended probe failed' }))
     expect(client.snapshot()).toMatchObject({ hostId: 'host-b', hostPhase: 'ready' })
     client.detach()
   })

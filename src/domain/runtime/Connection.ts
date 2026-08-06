@@ -1,5 +1,5 @@
 import { Remesh } from 'remesh'
-import { map, mergeMap, Observable } from 'rxjs'
+import { filter, map, mergeMap, Observable } from 'rxjs'
 import HistoryDomain from '@/domain/runtime/History'
 import LifecycleDomain from '@/domain/runtime/Lifecycle'
 import SessionDomain, { type SessionPreparationMode } from '@/domain/runtime/Session'
@@ -53,7 +53,14 @@ export interface ConnectionOperationCancelled {
   supersedingOperationId: string
 }
 
+/** A genuine Runtime failure routed only to current pages inside its exact scope. */
+export interface RuntimeFailure {
+  error: Error
+  domain?: string
+}
+
 const PHYSICAL_ROOM_JOIN_TIMEOUT_MS = 10000
+export const ROOM_RECOVERY_RETRY_INTERVAL_MS = 5000
 const replaceBy = <T>(items: T[], predicate: (item: T) => boolean, next: T): T[] =>
   items.some(predicate) ? items.map((item) => (predicate(item) ? next : item)) : [...items, next]
 const worldJoinRequestId = (requestId: string) => `connection:world:${requestId}`
@@ -149,7 +156,10 @@ const ConnectionDomain = Remesh.domain({
     const WorldRecoveryTimeoutArmedEvent = domain.event<{ requestId: string; joinRequestId: string }>({
       name: 'Connection.WorldRecoveryTimeoutArmedEvent'
     })
-    const ErrorEvent = domain.event<Error>({ name: 'Connection.ErrorEvent' })
+    const ErrorEvent = domain.event<RuntimeFailure>({ name: 'Connection.ErrorEvent' })
+    const WorldRecoveryAbortedEvent = domain.event<{ requestId: string; generation: number; hostGeneration: number }>({
+      name: 'Connection.WorldRecoveryAbortedEvent'
+    })
 
     const startAttempt = (
       get: Parameters<Parameters<typeof domain.command>[0]['impl']>[0]['get'],
@@ -172,7 +182,7 @@ const ConnectionDomain = Remesh.domain({
               operationId: payload.operationId,
               error: new Error('Domain join generation exhausted')
             })
-          : ErrorEvent(new Error('Domain join generation exhausted'))
+          : ErrorEvent({ error: new Error('Domain join generation exhausted'), domain: payload.domain })
       }
       const attempt: JoinAttempt = {
         attemptId: payload.attemptId,
@@ -373,7 +383,7 @@ const ConnectionDomain = Remesh.domain({
           ...(attempt.mode === 'reconnect' ? [lifecycleDomain.command.FinishReconnectCommand(attempt.domain)] : []),
           ...(attempt.operationId
             ? [OperationFailedEvent({ operationId: attempt.operationId, error: payload.error })]
-            : [ErrorEvent(payload.error)]),
+            : [ErrorEvent({ error: payload.error, domain: attempt.domain })]),
           AttemptFailedEvent({ ...attempt, error: payload.error })
         ]
       }
@@ -418,25 +428,7 @@ const ConnectionDomain = Remesh.domain({
       impl: ({ get }, payload: { roomId: string }) => {
         if (payload.roomId === getWorldRoomId()) {
           if (get(sessionDomain.query.DomainsQuery()).length === 0) return null
-          const generation = get(WorldRecoveryGenerationState()) + 1
-          if (!Number.isSafeInteger(generation)) return ErrorEvent(new Error('World recovery generation exhausted'))
-          const requestId = `world-recovery:${generation}`
-          const recovery: WorldRecoveryAttempt = {
-            requestId,
-            generation,
-            hostGeneration: get(lifecycleDomain.query.HostGenerationQuery()),
-            joinRequestId: worldJoinRequestId(requestId)
-          }
-          return [
-            WorldRecoveryGenerationState().new(generation),
-            WorldRecoveryAttemptState().new(recovery),
-            worldDomain.command.BeginRecoveryCommand(requestId),
-            wireDomain.command.JoinRoomsCommand({
-              requestId: recovery.joinRequestId,
-              roomIds: [getWorldRoomId()]
-            }),
-            WorldRecoveryTimeoutArmedEvent({ requestId, joinRequestId: recovery.joinRequestId })
-          ]
+          return [...startWorldRecovery(get)]
         }
         const runtimeDomain = get(sessionDomain.query.RoomDomainQuery(payload.roomId))
         if (!runtimeDomain || !get(lifecycleDomain.query.DomainLeaseQuery(runtimeDomain))) return null
@@ -447,6 +439,57 @@ const ConnectionDomain = Remesh.domain({
           mode: 'recover',
           domain: runtimeDomain
         })
+      }
+    })
+
+    const startWorldRecovery = (get: Parameters<Parameters<typeof domain.command>[0]['impl']>[0]['get']) => {
+      const generation = get(WorldRecoveryGenerationState()) + 1
+      if (!Number.isSafeInteger(generation)) {
+        return [ErrorEvent({ error: new Error('World recovery generation exhausted') })]
+      }
+      const requestId = `world-recovery:${generation}`
+      const recovery: WorldRecoveryAttempt = {
+        requestId,
+        generation,
+        hostGeneration: get(lifecycleDomain.query.HostGenerationQuery()),
+        joinRequestId: worldJoinRequestId(requestId)
+      }
+      return [
+        WorldRecoveryGenerationState().new(generation),
+        WorldRecoveryAttemptState().new(recovery),
+        worldDomain.command.BeginRecoveryCommand(requestId),
+        wireDomain.command.JoinRoomsCommand({
+          requestId: recovery.joinRequestId,
+          roomIds: [getWorldRoomId()]
+        }),
+        WorldRecoveryTimeoutArmedEvent({ requestId, joinRequestId: recovery.joinRequestId })
+      ]
+    }
+
+    const RetryDomainRecoveryCommand = domain.command({
+      name: 'Connection.RetryDomainRecoveryCommand',
+      impl: ({ get }, payload: { domain: string; generation: number; hostGeneration: number }) => {
+        if (get(lifecycleDomain.query.HostGenerationQuery()) !== payload.hostGeneration) return null
+        if (!get(lifecycleDomain.query.DomainLeaseQuery(payload.domain))) return null
+        if (get(AttemptsState()).some((item) => item.domain === payload.domain)) return null
+        const current = get(GenerationsState()).find((item) => item.domain === payload.domain)?.generation ?? 0
+        if (current !== payload.generation) return null
+        return startAttempt(get, {
+          attemptId: `recovery:${payload.domain}:${payload.generation + 1}`,
+          mode: 'recover',
+          domain: payload.domain
+        })
+      }
+    })
+
+    const RetryWorldRecoveryCommand = domain.command({
+      name: 'Connection.RetryWorldRecoveryCommand',
+      impl: ({ get }, payload: { generation: number; hostGeneration: number }) => {
+        if (get(lifecycleDomain.query.HostGenerationQuery()) !== payload.hostGeneration) return null
+        if (get(WorldRecoveryGenerationState()) !== payload.generation) return null
+        if (get(WorldRecoveryAttemptState())) return null
+        if (get(sessionDomain.query.DomainsQuery()).length === 0) return null
+        return [...startWorldRecovery(get)]
       }
     })
 
@@ -475,7 +518,12 @@ const ConnectionDomain = Remesh.domain({
           WorldRecoveryAttemptState().new(null),
           worldDomain.command.AbortRecoveryCommand(payload.requestId),
           wireDomain.command.LeaveRoomCommand({ roomId: getWorldRoomId(), preservePending: false }),
-          ErrorEvent(payload.error)
+          ErrorEvent({ error: payload.error }),
+          WorldRecoveryAbortedEvent({
+            requestId: recovery.requestId,
+            generation: recovery.generation,
+            hostGeneration: recovery.hostGeneration
+          })
         ]
       }
     })
@@ -544,7 +592,7 @@ const ConnectionDomain = Remesh.domain({
                   })
                 )
               ]
-            : [ErrorEvent(new Error('Domain join generation exhausted'))]),
+            : [ErrorEvent({ error: new Error('Domain join generation exhausted'), domain: releasedDomain })]),
           ...(attempt
             ? [
                 sessionDomain.command.AbortPreparedCommand(attempt.attemptId),
@@ -712,19 +760,62 @@ const ConnectionDomain = Remesh.domain({
     })
     domain.effect({
       name: 'Connection.ErrorEffect',
-      impl: ({ fromEvent }) => fromEvent(wireDomain.event.ErrorEvent).pipe(map(ErrorEvent))
+      impl: ({ fromEvent }) => fromEvent(wireDomain.event.ErrorEvent).pipe(map((error) => ErrorEvent({ error })))
     })
     domain.effect({
       name: 'Connection.SessionErrorEffect',
-      impl: ({ fromEvent }) => fromEvent(sessionDomain.event.ErrorEvent).pipe(map(ErrorEvent))
+      impl: ({ fromEvent }) => fromEvent(sessionDomain.event.ErrorEvent).pipe(map((error) => ErrorEvent({ error })))
     })
     domain.effect({
       name: 'Connection.WorldErrorEffect',
-      impl: ({ fromEvent }) => fromEvent(worldDomain.event.ErrorEvent).pipe(map(ErrorEvent))
+      impl: ({ fromEvent }) => fromEvent(worldDomain.event.ErrorEvent).pipe(map((error) => ErrorEvent({ error })))
     })
     domain.effect({
       name: 'Connection.HistoryErrorEffect',
-      impl: ({ fromEvent }) => fromEvent(historyDomain.event.ErrorEvent).pipe(map(ErrorEvent))
+      impl: ({ fromEvent }) => fromEvent(historyDomain.event.ErrorEvent).pipe(map((error) => ErrorEvent({ error })))
+    })
+    domain.effect({
+      name: 'Connection.DomainRecoveryRetryEffect',
+      impl: ({ fromEvent }) =>
+        fromEvent(AttemptFailedEvent).pipe(
+          filter((attempt) => !attempt.operationId),
+          mergeMap(
+            (attempt) =>
+              new Observable<typeof attempt>((observer) => {
+                const timerId = globalThis.setTimeout(() => {
+                  observer.next(attempt)
+                  observer.complete()
+                }, ROOM_RECOVERY_RETRY_INTERVAL_MS)
+                return () => globalThis.clearTimeout(timerId)
+              })
+          ),
+          map((attempt) =>
+            RetryDomainRecoveryCommand({
+              domain: attempt.domain,
+              generation: attempt.generation,
+              hostGeneration: attempt.hostGeneration
+            })
+          )
+        )
+    })
+    domain.effect({
+      name: 'Connection.WorldRecoveryRetryEffect',
+      impl: ({ fromEvent }) =>
+        fromEvent(WorldRecoveryAbortedEvent).pipe(
+          mergeMap(
+            (payload) =>
+              new Observable<typeof payload>((observer) => {
+                const timerId = globalThis.setTimeout(() => {
+                  observer.next(payload)
+                  observer.complete()
+                }, ROOM_RECOVERY_RETRY_INTERVAL_MS)
+                return () => globalThis.clearTimeout(timerId)
+              })
+          ),
+          map((payload) =>
+            RetryWorldRecoveryCommand({ generation: payload.generation, hostGeneration: payload.hostGeneration })
+          )
+        )
     })
 
     return {

@@ -155,7 +155,8 @@ vi.mock('@/domain/impls/database/IndexedDB', () => ({
 vi.mock('@/domain/impls/runtime/Client', () => ({
   detachClient: fixture.detachClient,
   initClient: vi.fn(),
-  whenHostPhase: vi.fn()
+  whenHostPhase: vi.fn(),
+  whenFailure: vi.fn()
 }))
 vi.mock('@/domain/impls/ChatRoom', () => ({ createChatRoomImpl: vi.fn() }))
 vi.mock('@/domain/impls/WorldRoom', () => ({ createWorldRoomImpl: vi.fn() }))
