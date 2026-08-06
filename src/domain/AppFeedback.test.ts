@@ -5,12 +5,14 @@ import AppFeedbackDomain from '@/domain/AppFeedback'
 import ChatRoomDomain from '@/domain/ChatRoom'
 import UserInfoDomain, { type UserInfo } from '@/domain/UserInfo'
 import { ChatRoomExtern, type ChatRoom } from '@/domain/externs/ChatRoom'
-import { ReadinessExtern, type ReadinessState } from '@/domain/externs/Readiness'
+import { ReadinessExtern, type Readiness, type ReadinessState } from '@/domain/externs/Readiness'
 import { BrowserSyncStorageExtern, LocalStorageExtern, type Storage, type StorageValue } from '@/domain/externs/Storage'
 import { ToastExtern, type Toast } from '@/domain/externs/Toast'
 import { WorldRoomExtern } from '@/domain/externs/WorldRoom'
 import { createMemoryMessageDatabase } from '@/domain/impls/database/Memory'
 import { MessageDatabaseExtern } from '@/domain/MessageStore'
+import { ClientLease } from '@/runtime/ClientLease'
+import type { RuntimeCoordinator, RuntimeSnapshot } from '@/runtime/Contract'
 
 const RUNTIME_TOAST_ID = 'webchat-runtime-readiness'
 
@@ -42,7 +44,7 @@ const flushMicrotasks = async () => {
 let databaseId = 0
 const activeStores = new Set<RemeshStore>()
 
-const createFixture = () => {
+const createFixture = (readiness?: Readiness) => {
   const toast = {
     success: vi.fn(() => 'success'),
     error: vi.fn(() => RUNTIME_TOAST_ID),
@@ -72,13 +74,15 @@ const createFixture = () => {
   const store = Remesh.store({
     externs: [
       ChatRoomExtern.impl(chat),
-      ReadinessExtern.impl({
-        onState: (listener) => {
-          readinessListeners.add(listener)
-          listener('ready')
-          return () => readinessListeners.delete(listener)
+      ReadinessExtern.impl(
+        readiness ?? {
+          onState: (listener) => {
+            readinessListeners.add(listener)
+            listener('ready')
+            return () => readinessListeners.delete(listener)
+          }
         }
-      }),
+      ),
       LocalStorageExtern.impl({
         get: async () => null,
         set: async () => {},
@@ -272,5 +276,65 @@ describe('application feedback ownership', () => {
     expect(fixture.toast.error).toHaveBeenCalledOnce()
     expect(fixture.toast.loading).toHaveBeenCalledOnce()
     expect(fixture.toast.cancel).not.toHaveBeenCalled()
+  })
+
+  it('lets the lease watchdog own the only visible native error while an in-flight send rejects', async () => {
+    vi.useFakeTimers()
+    const domain = 'https://example.test'
+    const pageId = 'page-a'
+    const nativeError = new Error('Extension context invalidated.')
+    const snapshot: RuntimeSnapshot = {
+      hostId: 'host-a',
+      hostPhase: 'ready',
+      peerId: 'peer-a',
+      domains: [
+        {
+          domain,
+          phase: 'active',
+          pageIds: [pageId],
+          chatRoomJoined: true,
+          sessions: []
+        }
+      ],
+      world: { joined: true, peerId: 'peer-a', presences: [] }
+    }
+    const registerPage = vi
+      .fn<RuntimeCoordinator['registerPage']>()
+      .mockResolvedValueOnce({ phase: 'ready', generation: 1, snapshot })
+      .mockRejectedValue(nativeError)
+    const lease = new ClientLease({
+      coordinator: { ensureHost: vi.fn(), registerPage },
+      pageId,
+      domain,
+      watchdogIntervalMs: 1000,
+      logError: vi.fn()
+    })
+    await lease.init()
+    const fixture = createFixture({
+      onState: (callback) =>
+        lease.whenHostPhase((phase, terminalError) =>
+          callback(phase === 'ready' || phase === 'unavailable' ? phase : 'connecting', terminalError)
+        )
+    })
+    const sending = deferred()
+    vi.mocked(fixture.chat.sendMessage).mockReturnValueOnce(sending.promise as never)
+    markReady(fixture)
+    await join(fixture)
+    clearToastCalls(fixture.toast)
+
+    fixture.store.send(fixture.room.command.SendTextMessageCommand('held text'))
+    await flushMicrotasks()
+    expect(fixture.chat.sendMessage).toHaveBeenCalledOnce()
+
+    vi.advanceTimersByTime(1000)
+    sending.reject(nativeError)
+    await flushMicrotasks()
+
+    expect(registerPage).toHaveBeenCalledTimes(2)
+    expect(fixture.toast.error).toHaveBeenCalledOnce()
+    expect(fixture.toast.error).toHaveBeenCalledWith('Extension context invalidated.', {
+      id: RUNTIME_TOAST_ID
+    })
+    lease.detach()
   })
 })

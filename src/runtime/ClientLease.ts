@@ -1,7 +1,17 @@
-import type { HostPhase, RuntimeCoordinator, RuntimePageRegistration, RuntimeSnapshot } from '@/runtime/Contract'
+import {
+  terminalRuntimeErrorMessage,
+  type HostPhase,
+  type RuntimeCoordinator,
+  type RuntimePageRegistration,
+  type RuntimeSnapshot
+} from '@/runtime/Contract'
 
 export const CLIENT_LEASE_RPC_TIMEOUT_MS = 5000
-const EXTENSION_CONTEXT_INVALIDATED = 'Extension context invalidated.'
+
+interface ClientLeaseHostStatus {
+  phase: HostPhase
+  terminalError?: string
+}
 
 export interface ClientLeaseOptions {
   coordinator: RuntimeCoordinator
@@ -51,11 +61,6 @@ const withDeadline = <T>(task: Promise<T>, milliseconds: number, signal: AbortSi
     if (signal.aborted) onAbort()
   })
 
-const terminalRuntimeErrorMessage = (error: unknown) => {
-  if (typeof error !== 'object' || error === null || !('message' in error)) return null
-  return error.message === EXTENSION_CONTEXT_INVALIDATED ? EXTENSION_CONTEXT_INVALIDATED : null
-}
-
 export class ClientLease {
   private snapshotValue: RuntimeSnapshot | null = null
   private coordinatorGeneration = 0
@@ -66,8 +71,7 @@ export class ClientLease {
   private checking: { deadline: number; task: Promise<void> } | null = null
   private readonly readyCallbacks = new Set<() => void>()
   private readonly hostPhaseCallbacks = new Set<(phase: HostPhase, terminalError?: string) => void>()
-  private hostPhase: HostPhase = 'none'
-  private terminal = false
+  private hostStatus: ClientLeaseHostStatus = { phase: 'none' }
   private readonly startupTimeoutMs
   private readonly startupRetryIntervalMs
   private readonly watchdogIntervalMs
@@ -88,7 +92,7 @@ export class ClientLease {
 
   whenHostPhase(callback: (phase: HostPhase, terminalError?: string) => void) {
     this.hostPhaseCallbacks.add(callback)
-    callback(this.hostPhase)
+    callback(this.hostStatus.phase, this.hostStatus.terminalError)
     return () => this.hostPhaseCallbacks.delete(callback)
   }
 
@@ -101,15 +105,18 @@ export class ClientLease {
   }
 
   private setHostPhase(phase: HostPhase, terminalError?: string) {
-    if (this.hostPhase === phase && terminalError === undefined) return
-    this.hostPhase = phase
+    if (this.hostStatus.phase === phase && this.hostStatus.terminalError === terminalError) return
+    this.hostStatus = terminalError === undefined ? { phase } : { phase, terminalError }
     if (this.snapshotValue) this.snapshotValue = { ...this.snapshotValue, hostPhase: phase }
     this.hostPhaseCallbacks.forEach((callback) => callback(phase, terminalError))
   }
 
+  private isTerminal() {
+    return this.hostStatus.terminalError !== undefined
+  }
+
   private settleTerminal(lifecycle: AbortController, error: unknown, message: string) {
-    if (!this.isCurrent(lifecycle) || this.terminal) return false
-    this.terminal = true
+    if (!this.isCurrent(lifecycle) || this.isTerminal()) return false
     this.ready = false
     if (this.watchdog) {
       globalThis.clearInterval(this.watchdog)
@@ -158,7 +165,7 @@ export class ClientLease {
   }
 
   private recover(lifecycle: AbortController, deadline: number) {
-    if (!this.isCurrent(lifecycle) || this.terminal) return Promise.resolve()
+    if (!this.isCurrent(lifecycle) || this.isTerminal()) return Promise.resolve()
     if (this.recovering?.lifecycle === lifecycle && Date.now() < this.recovering.deadline) {
       return this.recovering.task
     }
@@ -222,7 +229,7 @@ export class ClientLease {
   }
 
   checkNow() {
-    if (this.terminal) return Promise.resolve()
+    if (this.isTerminal()) return Promise.resolve()
     const now = Date.now()
     if (this.checking && now < this.checking.deadline) return this.checking.task
     if (this.recovering && now >= this.recovering.deadline) this.recovering = null
@@ -236,7 +243,7 @@ export class ClientLease {
   }
 
   private startWatchdog(lifecycle: AbortController) {
-    if (this.watchdog || !this.isCurrent(lifecycle) || this.terminal) return
+    if (this.watchdog || !this.isCurrent(lifecycle) || this.isTerminal()) return
     this.watchdog = globalThis.setInterval(() => {
       if (this.isCurrent(lifecycle)) void this.checkNow()
     }, this.watchdogIntervalMs)
@@ -251,7 +258,6 @@ export class ClientLease {
     const lifecycle = new AbortController()
     this.lifecycle = lifecycle
     this.ready = false
-    this.terminal = false
     this.setHostPhase('connecting')
     try {
       const snapshot = await this.attach(lifecycle)
@@ -271,7 +277,6 @@ export class ClientLease {
     this.recovering = null
     this.checking = null
     this.ready = false
-    this.terminal = false
     this.setHostPhase('none')
     if (this.watchdog) {
       globalThis.clearInterval(this.watchdog)

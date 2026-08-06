@@ -24,8 +24,8 @@ export class InjectAdapter extends InjectAdapterBase<MessageMeta> {
     super(runtime)
   }
 
-  sendMessage: SendMessage<MessageMeta> = (message) => {
-    this.runtime.sendMessage(this.runtime.id, {
+  sendMessage: SendMessage<MessageMeta> = async (message) => {
+    await this.runtime.sendMessage(this.runtime.id, {
       ...message,
       meta: { tab: { url: canonicalNavigationUrl(document.location.href) ?? document.location.href } }
     })

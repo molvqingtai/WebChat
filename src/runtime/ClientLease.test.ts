@@ -183,6 +183,10 @@ describe('ClientLease generation ownership', () => {
     expect(logError).toHaveBeenCalledOnce()
     expect(phases).toEqual(['unavailable'])
     expect(terminalErrors).toEqual([nativeError.message])
+
+    const replayed: Array<{ phase: HostPhase; terminalError?: string }> = []
+    client.whenHostPhase((phase, terminalError) => replayed.push({ phase, terminalError }))
+    expect(replayed).toEqual([{ phase: 'unavailable', terminalError: nativeError.message }])
     client.detach()
   })
 

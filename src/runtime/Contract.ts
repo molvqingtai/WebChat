@@ -11,6 +11,13 @@ import type {
 
 export type HostPhase = 'none' | 'connecting' | 'ready' | 'unavailable'
 
+export const EXTENSION_CONTEXT_INVALIDATED = 'Extension context invalidated.' as const
+
+export const terminalRuntimeErrorMessage = (error: unknown) => {
+  if (typeof error !== 'object' || error === null || !('message' in error)) return null
+  return error.message === EXTENSION_CONTEXT_INVALIDATED ? EXTENSION_CONTEXT_INVALIDATED : null
+}
+
 export interface RuntimeSession {
   sourcePeerId: string
   sessionId: string
