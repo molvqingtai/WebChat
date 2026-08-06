@@ -643,28 +643,61 @@ describe('ChatRoomDomain exact application port', () => {
     fixture.store.discard()
   })
 
-  it('consumes the exact result of a stale rejected connection task before staleness branching', async () => {
+  it('consumes the exact result of a genuinely stale rejected connection task exactly once before staleness branching', async () => {
     const fixture = createFixture()
-    await join(fixture)
+    await join(fixture) // joinRoom call 1 (baseline)
     const staleOp = deferred()
     const newerOp = deferred()
     const staleTask = staleOp.promise as unknown as Promise<void>
     const newerTask = newerOp.promise as unknown as Promise<void>
     fixture.bindLifecycleTask(staleTask, 'cancelled')
+    fixture.bindLifecycleTask(newerTask, 'cancelled')
     vi.mocked(fixture.chat.joinRoom)
-      .mockReturnValueOnce(staleTask as never)
-      .mockReturnValueOnce(newerTask as never)
+      .mockReturnValueOnce(staleTask as never) // call 2 (older op)
+      .mockReturnValueOnce(newerTask as never) // call 3 (newer op, supersedes)
 
-    // Start two connection operations; the second supersedes the first, so the first becomes stale.
+    // First held connection (call 2).
     fixture.store.send(fixture.user.command.UpdateUserInfoCommand({ ...SELF, name: 'One' }))
     await vi.waitFor(() => expect(fixture.chat.joinRoom).toHaveBeenCalledTimes(2))
+    // A genuinely newer connection (call 3) supersedes it, making the first stale by request id.
+    fixture.store.send(fixture.user.command.UpdateUserInfoCommand({ ...SELF, name: 'Two' }))
+    await vi.waitFor(() => expect(fixture.chat.joinRoom).toHaveBeenCalledTimes(3))
 
-    // The stale op rejects; its exact result must still be consumed once before request-staleness
-    // branching (a stale-first short circuit would skip getTaskResult and leak the terminal state).
+    // The stale op rejects; its exact result must still be consumed exactly once before the request
+    // staleness branch (a stale-first short circuit would skip getTaskResult and leak terminal state).
     staleOp.reject(new DOMException('Runtime operation superseded', 'AbortError'))
     await Promise.resolve()
 
-    expect(fixture.consumedLifecycleTasks).toContain(staleTask)
+    expect(fixture.consumedLifecycleTasks.filter((task) => task === staleTask)).toHaveLength(1)
+    fixture.store.discard()
+  })
+
+  it('consumes the exact leave and join task results of a failing reconnect before branching', async () => {
+    const fixture = createFixture()
+    await join(fixture) // joinRoom call 1 (baseline)
+    const leaveDeferred = deferred()
+    const joinDeferred = deferred()
+    const leaveTask = leaveDeferred.promise as unknown as Promise<void>
+    const joinTask = joinDeferred.promise as unknown as Promise<void>
+    fixture.bindLifecycleTask(leaveTask, 'failed')
+    fixture.bindLifecycleTask(joinTask, 'failed')
+    vi.mocked(fixture.chat.leaveRoom).mockReturnValueOnce(leaveTask as never)
+    vi.mocked(fixture.chat.joinRoom).mockReturnValueOnce(joinTask as never)
+
+    fixture.store.send(fixture.room.command.ReconnectCommand())
+    await vi.waitFor(() => expect(fixture.chat.leaveRoom).toHaveBeenCalledTimes(1))
+    // Let the leave settle so the reconnect proceeds to its joinRoom invocation.
+    leaveDeferred.resolve()
+    await vi.waitFor(() => expect(fixture.chat.joinRoom).toHaveBeenCalledTimes(2))
+
+    // Reject the reconnect join; the ReconnectEffect must consume each started leave/join task exactly
+    // once (before any request-staleness/drop branch), so no terminal result leaks.
+    joinDeferred.reject(new Error('reconnect join failed'))
+    await Promise.resolve()
+
+    // The leave task was consumed when it settled (via CompletePresenceEnd/leave success); the join here.
+    expect(fixture.consumedLifecycleTasks.filter((task) => task === leaveTask)).toHaveLength(1)
+    expect(fixture.consumedLifecycleTasks.filter((task) => task === joinTask)).toHaveLength(1)
     fixture.store.discard()
   })
 
