@@ -33,4 +33,17 @@ describe('ConnectionLifecycle exact task-identity correlation', () => {
     expect(value.getTaskResult(taskA)).toBe('cancelled')
     expect(value.getTaskResult(taskB)).toBe('failed')
   })
+
+  it('consumes (releases) a terminal result even when the caller would otherwise branch on staleness', () => {
+    const { value, report } = createConnectionLifecycle()
+    const token = value.mint()
+    const task = Promise.resolve() as Promise<void>
+    value.bindTask(task, token)
+    report(token, 'succeeded')
+
+    // A stale caller branch (e.g. request id no longer current) must still not leave the terminal result
+    // behind: consume it exactly once, and a second read yields the default (no leak).
+    expect(value.getTaskResult(task)).toBe('succeeded')
+    expect(value.getTaskResult(task)).toBe('active')
+  })
 })

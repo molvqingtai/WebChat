@@ -38,6 +38,12 @@ const fixture = vi.hoisted(() => ({
   createChatRoomImpl: vi.fn(),
   createWorldRoomImpl: vi.fn(),
   createReadinessImpl: vi.fn(),
+  createSendLifecycle: vi.fn(() => ({
+    beginSend: vi.fn(),
+    getSendResult: vi.fn(),
+    settleSend: vi.fn(),
+    cancelActiveSends: vi.fn()
+  })),
   createElement: vi.fn(),
   scope: vi.fn(),
   actions: {
@@ -103,6 +109,7 @@ vi.mock('@/domain/impls/runtime/Client', () => ({
 vi.mock('@/domain/impls/ChatRoom', () => ({ createChatRoomImpl: fixture.createChatRoomImpl }))
 vi.mock('@/domain/impls/WorldRoom', () => ({ createWorldRoomImpl: fixture.createWorldRoomImpl }))
 vi.mock('@/domain/impls/Readiness', () => ({ createReadinessImpl: fixture.createReadinessImpl }))
+vi.mock('@/domain/impls/SendLifecycle', () => ({ createSendLifecycle: fixture.createSendLifecycle }))
 vi.mock('@/domain/impls/Danmaku', () => ({ DanmakuImpl: {} }))
 vi.mock('@/domain/impls/Notification', () => ({ NotificationImpl: {} }))
 vi.mock('@/domain/impls/Toast', () => ({ ToastImpl: {} }))
@@ -214,6 +221,18 @@ describe('content composition root', () => {
     })
 
     expect(styles[0]!.isConnected).toBe(false)
+  })
+
+  it('cancels active sends on Content onRemove teardown', async () => {
+    await startContent()
+    const sendLifecycleInstance = fixture.createSendLifecycle.mock.results[0]?.value
+    if (!sendLifecycleInstance) throw new Error('SendLifecycle was never created')
+
+    await act(async () => {
+      fixture.removeUis.shift()?.()
+    })
+
+    expect(sendLifecycleInstance.cancelActiveSends).toHaveBeenCalled()
   })
 
   it('constructs each deferred application dependency exactly once only when initialization activates it', async () => {

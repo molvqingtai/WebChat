@@ -1286,6 +1286,33 @@ describe('ChatRoomDomain exact application port', () => {
     fixture.store.discard()
   })
 
+  it('does not cancel a pending real send on manual reconnect, so its later failure still Toasts', async () => {
+    const fixture = createFixture()
+    await join(fixture)
+    const errors: Error[] = []
+    fixture.store.subscribeEvent(fixture.room.event.OnErrorEvent, (error) => errors.push(error))
+    const providerError = new Error('provider transport failed')
+    let rejectSend!: (reason?: unknown) => void
+    const rejectedSend = new Promise<never>((_, reject) => {
+      rejectSend = reject
+    })
+    vi.mocked(fixture.chat.sendMessage).mockReturnValueOnce(
+      rejectedSend as never as ReturnType<typeof fixture.chat.sendMessage>
+    )
+    fixture.store.send(fixture.input.command.InputCommand('reconnect held'))
+
+    fixture.store.send(fixture.room.command.SendTextMessageCommand('reconnect held'))
+    await vi.waitFor(() => expect(fixture.chat.sendMessage).toHaveBeenCalledOnce())
+
+    // Manual reconnect leaves and rejoins; it must NOT bulk-cancel the pending send (which would
+    // suppress a genuine failure). The send token stays active, so its real failure surfaces.
+    fixture.store.send(fixture.room.command.ReconnectCommand())
+    rejectSend(providerError)
+
+    await vi.waitFor(() => expect(errors).toEqual([providerError]))
+    fixture.store.discard()
+  })
+
   it('routes port errors without exposing Runtime details', async () => {
     const fixture = createFixture()
     const errors: Error[] = []
