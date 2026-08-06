@@ -74,6 +74,27 @@ const createFixture = (options: { delayRecordWatch?: boolean; user?: UserInfo | 
   const readinessListeners = new Set<(state: 'connecting' | 'ready' | 'unavailable') => void>()
   let lifecycleResult: ConnectionLifecycleResult = 'active'
   let lifecycleSeq = 0
+  const lifecycleByTask = new WeakMap<Promise<void>, number>()
+  const lifecycleResults = new Map<number, ConnectionLifecycleResult>()
+  const consumedLifecycleTasks: unknown[] = []
+  const lifecycle = {
+    mint: () => {
+      const token = ++lifecycleSeq
+      lifecycleResults.set(token, 'active')
+      return token
+    },
+    bindTask: (task: Promise<void>, token: number) => {
+      lifecycleByTask.set(task, token)
+    },
+    getTaskResult: (task: Promise<void>) => {
+      const token = lifecycleByTask.get(task)
+      consumedLifecycleTasks.push(task)
+      if (token === undefined) return lifecycleResult
+      const result = lifecycleResults.get(token) ?? lifecycleResult
+      if (result !== 'active') lifecycleResults.delete(token)
+      return result
+    }
+  }
   const listeners = {
     message: new Set<(message: ChatMessage) => void>(),
     join: new Set<(session: ChatSession) => void>(),
@@ -137,9 +158,9 @@ const createFixture = (options: { delayRecordWatch?: boolean; user?: UserInfo | 
     externs: [
       ChatRoomExtern.impl(chat),
       ConnectionLifecycleExtern.impl({
-        mint: () => ++lifecycleSeq,
-        bindTask: () => {},
-        getTaskResult: () => lifecycleResult
+        mint: lifecycle.mint,
+        bindTask: lifecycle.bindTask,
+        getTaskResult: lifecycle.getTaskResult
       }),
       SendLifecycleExtern.impl(sendLifecycleLocal),
       ReadinessExtern.impl({
@@ -188,6 +209,17 @@ const createFixture = (options: { delayRecordWatch?: boolean; user?: UserInfo | 
     setLifecycleResult: (result: ConnectionLifecycleResult) => {
       lifecycleResult = result
     },
+    setTaskResult: (task: Promise<void>, result: ConnectionLifecycleResult) => {
+      const token = lifecycleByTask.get(task)
+      if (token !== undefined) lifecycleResults.set(token, result)
+    },
+    bindLifecycleTask: (task: Promise<void>, result: ConnectionLifecycleResult) => {
+      const token = ++lifecycleSeq
+      lifecycleResults.set(token, result)
+      lifecycleByTask.set(task, token)
+      return token
+    },
+    consumedLifecycleTasks,
     cancelActiveSends: () => sendLifecycleLocal.cancelActiveSends()
   }
 }
@@ -608,6 +640,31 @@ describe('ChatRoomDomain exact application port', () => {
     await vi.waitFor(() => expect(connectionErrors).toEqual([refreshError]))
     expect(roomErrors).toEqual([refreshError])
     expect(fixture.store.query(fixture.room.query.ConnectionIsLoadingQuery())).toBe(false)
+    fixture.store.discard()
+  })
+
+  it('consumes the exact result of a stale rejected connection task before staleness branching', async () => {
+    const fixture = createFixture()
+    await join(fixture)
+    const staleOp = deferred()
+    const newerOp = deferred()
+    const staleTask = staleOp.promise as unknown as Promise<void>
+    const newerTask = newerOp.promise as unknown as Promise<void>
+    fixture.bindLifecycleTask(staleTask, 'cancelled')
+    vi.mocked(fixture.chat.joinRoom)
+      .mockReturnValueOnce(staleTask as never)
+      .mockReturnValueOnce(newerTask as never)
+
+    // Start two connection operations; the second supersedes the first, so the first becomes stale.
+    fixture.store.send(fixture.user.command.UpdateUserInfoCommand({ ...SELF, name: 'One' }))
+    await vi.waitFor(() => expect(fixture.chat.joinRoom).toHaveBeenCalledTimes(2))
+
+    // The stale op rejects; its exact result must still be consumed once before request-staleness
+    // branching (a stale-first short circuit would skip getTaskResult and leak the terminal state).
+    staleOp.reject(new DOMException('Runtime operation superseded', 'AbortError'))
+    await Promise.resolve()
+
+    expect(fixture.consumedLifecycleTasks).toContain(staleTask)
     fixture.store.discard()
   })
 
