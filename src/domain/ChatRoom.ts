@@ -336,14 +336,16 @@ const ChatRoomDomain = Remesh.domain({
               lifecycle.getTaskResult(task)
               return CompleteConnectionOperationCommand(operation)
             } catch (error) {
+              // Consume the exact task's result once (releases its terminal state) before any
+              // request-staleness branching, so a superseded operation never leaks its result.
+              const result = lifecycle.getTaskResult(task)
               // A completion is silent cancellation only when it is no longer the current live request
               // (superseded) or that exact public-port task's own token is `cancelled`. It is never
-              // classified from the caught error's content or any global/current attempt state.
+              // classified from the caught error's content.
+              const cancelled = get(ConnectionRequestState())?.id !== operation.id || result === 'cancelled'
               return CompleteConnectionOperationCommand({
                 ...operation,
-                ...(get(ConnectionRequestState())?.id !== operation.id || lifecycle.getTaskResult(task) === 'cancelled'
-                  ? { cancelled: true }
-                  : { error: normalizeError(error) })
+                ...(cancelled ? { cancelled: true } : { error: normalizeError(error) })
               })
             }
           })
@@ -459,9 +461,6 @@ const ChatRoomDomain = Remesh.domain({
             let joinTask: Promise<void> | undefined
             try {
               if (mode === 'reconnect') {
-                // Entering the reconnect leave phase structurally cancels this live page's still-active
-                // sends (a page-owned send-cancellation owner), before the public-port leave invocation.
-                sendLifecycle.cancelActiveSends()
                 // Leave is its own public-port invocation with its own exact token.
                 leaveTask = chatRoom.leaveRoom()
                 await leaveTask
@@ -475,13 +474,13 @@ const ChatRoomDomain = Remesh.domain({
                 ? CompleteRetryOperationCommand({ id, input })
                 : CompleteReconnectOperationCommand({ id })
             } catch (error) {
+              // Consume each started task's result exactly once (releases terminal state) before any
+              // request-staleness branching, so no superseded reconnect leaks its results.
+              const leaveResult = leaveTask ? lifecycle.getTaskResult(leaveTask) === 'cancelled' : false
+              const joinResult = joinTask ? lifecycle.getTaskResult(joinTask) === 'cancelled' : false
               // Cancellation is a supersession (this reconnect is no longer the current live request) or
-              // that exact leave/join public-port task's own token is `cancelled`. It is never derived
-              // from the caught error's content or any global/current attempt state.
-              const cancelled =
-                get(ReconnectRequestQuery())?.id !== id ||
-                (leaveTask ? lifecycle.getTaskResult(leaveTask) === 'cancelled' : false) ||
-                (joinTask ? lifecycle.getTaskResult(joinTask) === 'cancelled' : false)
+              // that exact leave/join public-port task's own token is `cancelled`.
+              const cancelled = get(ReconnectRequestQuery())?.id !== id || leaveResult || joinResult
               if (cancelled) {
                 return mode === 'retry'
                   ? CompleteRetryOperationCommand({ id, input, cancelled: true })

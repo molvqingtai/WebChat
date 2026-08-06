@@ -265,8 +265,9 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
   private beginConnectionAttempt(resultToken: number) {
     if (this.disposed) throw abortError('Runtime page detached')
     if (this.activeConnection) {
-      // This attempt supersedes the in-flight one; that superseded attempt records its own cancellation
-      // when its owning invocation settles. This new attempt owns its own result token.
+      // This attempt supersedes the in-flight one: report its own token `cancelled` BEFORE aborting it,
+      // so that first-terminal-wins keeps the structural cancellation rather than a later generic `failed`.
+      this.recordResult(this.activeConnection.resultToken, 'cancelled')
       this.activeConnection.controller.abort(abortError('Page connection attempt superseded'))
     }
     const controller = new AbortController()
