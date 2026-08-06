@@ -9,7 +9,6 @@ import {
   MAX_PRESENCE_OBSERVATIONS,
   PresenceStoreExtern,
   type ObservedPresence,
-  type PendingPresenceEnd,
   type PresenceDomainRecord
 } from '@/domain/runtime/externs/PresenceStore'
 import { CHAT_ROOM_NAMESPACE_V3 } from '@/constants/config'
@@ -57,7 +56,6 @@ interface PreparedSession {
   runtime: SessionDomainState
   observers: ObservedPresence[]
   isNewPresence: boolean
-  isFinalizingPresence: boolean
   publishRequestId?: string
   /** Frozen distinct publication targets still awaiting their single send. */
   publishPendingTargets: string[]
@@ -85,16 +83,6 @@ interface PendingChatSend {
   pendingTargets: string[]
 }
 
-type PendingReleasePhase =
-  | 'retiring'
-  | 'retrying'
-  | 'publishing'
-  | 'pending'
-  | 'settling'
-  | 'settlement-failed'
-  | 'cleaning'
-  | 'cleanup-failed'
-
 interface PendingRelease {
   domain: string
   roomId: string
@@ -102,19 +90,7 @@ interface PendingRelease {
   userId: string
   joinedAt: number
   requestId: string
-  phase: PendingReleasePhase
-}
-
-type PresencePersistTransition =
-  | { type: 'retire'; release: PendingRelease }
-  | { type: 'retry'; release: PendingRelease }
-  | { type: 'failure'; release: PendingRelease; error: Error }
-  | { type: 'settle'; release: PendingRelease }
-  | { type: 'cleanup'; release: PendingRelease }
-
-interface PresencePersistRequest {
-  record: PresenceDomainRecord
-  transition?: PresencePersistTransition
+  phase: 'publishing'
 }
 
 export interface SessionOperationSucceeded {
@@ -222,24 +198,10 @@ const catchUpRequestId = (attemptId: string, sourcePeerId: string) => `session:c
 const chatRequestId = (operationId: string) => `session:chat:${operationId}`
 const chatTargetRequestId = (requestId: string, target: string) => `${requestId}:${target}`
 const endRequestId = (presenceId: string) => `session:end:${presenceId}`
-const finalEndIdentity = ({ presenceId, userId, joinedAt }: PendingRelease): PendingPresenceEnd => ({
-  presenceId,
-  userId,
-  joinedAt
-})
-const withoutFinalEnd = ({
-  inflightEnd: _inflightEnd,
-  pendingEnd: _pendingEnd,
-  settledEnd: _settledEnd,
-  ...record
-}: PresenceDomainRecord) => record
-const retainedLocalLifecycle = (record: PresenceDomainRecord | undefined) => ({
-  ...(record?.local ? { local: record.local } : {}),
-  ...(record?.inflightEnd ? { inflightEnd: record.inflightEnd } : {}),
-  ...(record?.pendingEnd ? { pendingEnd: record.pendingEnd } : {}),
-  ...(record?.settledEnd ? { settledEnd: record.settledEnd } : {})
-})
-const withReleasePhase = (release: PendingRelease, phase: PendingReleasePhase): PendingRelease => ({
+const RELEASE_END_RETRY_INTERVAL_MS = 5000
+const retainedLocalLifecycle = (record: PresenceDomainRecord | undefined) =>
+  record?.local ? { local: record.local } : {}
+const withReleasePhase = (release: PendingRelease, phase: 'publishing'): PendingRelease => ({
   ...release,
   phase
 })
@@ -306,13 +268,7 @@ const SessionDomain = Remesh.domain({
     // Message authority ends as soon as release starts or a durable finalization marker is restored.
     const FinalizingPresenceQuery = domain.query({
       name: 'Session.FinalizingPresenceQuery',
-      impl: ({ get }, runtimeDomain: string) => {
-        if (get(ReleasingDomainQuery(runtimeDomain))) return true
-        const presence = get(PresenceDomainsState()).find((item) => item.domain === runtimeDomain)
-        return Boolean(
-          presence && !presence.local && (presence.inflightEnd || presence.pendingEnd || presence.settledEnd)
-        )
-      }
+      impl: ({ get }, runtimeDomain: string) => get(ReleasingDomainQuery(runtimeDomain))
     })
     const RoomDomainQuery = domain.query({
       name: 'Session.RoomDomainQuery',
@@ -344,13 +300,16 @@ const SessionDomain = Remesh.domain({
     }>({ name: 'Session.DomainCommittedEvent' })
     const DomainRetiredEvent = domain.event<{ domain: string }>({ name: 'Session.DomainRetiredEvent' })
     const DomainReleasedEvent = domain.event<string>({ name: 'Session.DomainReleasedEvent' })
-    const DomainEndPublishedEvent = domain.event<{ domain: string; roomId?: string; error?: Error }>({
+    const DomainEndPublishedEvent = domain.event<{ domain: string; roomId?: string }>({
       name: 'Session.DomainEndPublishedEvent'
     })
     const DomainReleaseFailedEvent = domain.event<{ domain: string; error: Error }>({
       name: 'Session.DomainReleaseFailedEvent'
     })
-    const PersistPresenceRequestedEvent = domain.event<PresencePersistRequest>({
+    const ReleaseEndRetryRequestedEvent = domain.event<{ requestId: string }>({
+      name: 'Session.ReleaseEndRetryRequestedEvent'
+    })
+    const PersistPresenceRequestedEvent = domain.event<{ record: PresenceDomainRecord }>({
       name: 'Session.PersistPresenceRequestedEvent'
     })
     const RuntimeSessionChangedEvent = domain.event<RuntimeSessionEvent>({
@@ -417,8 +376,6 @@ const SessionDomain = Remesh.domain({
         }
 
         const presence = get(PresenceDomainsState()).find((item) => item.domain === payload.domain)
-        const pendingFinalEnd = presence?.pendingEnd ?? presence?.inflightEnd
-        const isFinalizingPresence = !current && !presence?.local && Boolean(pendingFinalEnd)
         const local = current
           ? {
               presenceId: current.presenceId,
@@ -426,7 +383,7 @@ const SessionDomain = Remesh.domain({
               joinedAt: current.joinedAt,
               status: 'active' as const
             }
-          : (presence?.local ?? (pendingFinalEnd ? { ...pendingFinalEnd, status: 'active' as const } : undefined))
+          : (presence?.local ?? undefined)
         if (!local || local.userId !== user.id) {
           return PreparationFailedEvent({
             attemptId: payload.attemptId,
@@ -449,7 +406,6 @@ const SessionDomain = Remesh.domain({
           runtime,
           observers: priorPrepared?.observers ?? presence?.observers ?? [],
           isNewPresence: !current && local.status === 'pending',
-          isFinalizingPresence,
           publishPendingTargets: [],
           missedPeerIds: [],
           baselinePeerIds: []
@@ -604,27 +560,15 @@ const SessionDomain = Remesh.domain({
               (candidate) => candidate.user.id === session.user.id && candidate.joinedAt > prepared.runtime.joinedAt
             ) === index
         )
-        const finalizingIdentity = priorPresence?.pendingEnd ??
-          priorPresence?.inflightEnd ?? {
-            presenceId: prepared.runtime.presenceId,
-            userId: prepared.runtime.user.id,
-            joinedAt: prepared.runtime.joinedAt
-          }
         const presence: PresenceDomainRecord = {
           domain: prepared.runtime.domain,
           lastJoinedAt: Math.max(priorPresence?.lastJoinedAt ?? 0, prepared.runtime.joinedAt),
-          ...(prepared.isFinalizingPresence
-            ? priorPresence?.pendingEnd
-              ? { pendingEnd: finalizingIdentity }
-              : { inflightEnd: finalizingIdentity }
-            : {
-                local: {
-                  presenceId: prepared.runtime.presenceId,
-                  userId: prepared.runtime.user.id,
-                  joinedAt: prepared.runtime.joinedAt,
-                  status: 'active' as const
-                }
-              }),
+          local: {
+            presenceId: prepared.runtime.presenceId,
+            userId: prepared.runtime.user.id,
+            joinedAt: prepared.runtime.joinedAt,
+            status: 'active' as const
+          },
           observers: prepared.observers
         }
         const baselines = get(PendingBaselinePeersState())
@@ -650,23 +594,19 @@ const SessionDomain = Remesh.domain({
             replaceBy(presenceDomains, (item) => item.domain === prepared.runtime.domain, presence)
           ),
           PersistPresenceRequestedEvent({ record: presence }),
-          ...(prepared.isFinalizingPresence
-            ? []
-            : [
-                RuntimeSessionChangedEvent({
-                  type: 'snapshot',
-                  domain: prepared.runtime.domain,
-                  snapshot: snapshot(prepared.runtime),
-                  // Only a newly allocated logical presence owns a local self-notice.
-                  provenance: prepared.isNewPresence
-                    ? 'join'
-                    : prepared.mode === 'reconnect'
-                      ? 'reconnect'
-                      : prepared.mode === 'recover'
-                        ? 'recovery'
-                        : 'refresh'
-                })
-              ]),
+          RuntimeSessionChangedEvent({
+            type: 'snapshot',
+            domain: prepared.runtime.domain,
+            snapshot: snapshot(prepared.runtime),
+            // Only a newly allocated logical presence owns a local self-notice.
+            provenance: prepared.isNewPresence
+              ? 'join'
+              : prepared.mode === 'reconnect'
+                ? 'reconnect'
+                : prepared.mode === 'recover'
+                  ? 'recovery'
+                  : 'refresh'
+          }),
           ...laterJoins.map((session) =>
             RuntimeSessionChangedEvent({
               type: 'join',
@@ -723,49 +663,15 @@ const SessionDomain = Remesh.domain({
     const BeginReleaseDomainCommand = domain.command({
       name: 'Session.BeginReleaseDomainCommand',
       impl: ({ get }, runtimeDomain: string) => {
-        const pending = get(PendingReleasesState())
-        const existing = pending.find((item) => item.domain === runtimeDomain)
-        if (existing) {
-          const presence = get(PresenceDomainsState()).find((item) => item.domain === runtimeDomain)
-          if (!presence || presence.local) return null
-          if (existing.phase === 'settlement-failed') {
-            const settling = withReleasePhase(existing, 'settling')
-            return [
-              PendingReleasesState().new(replaceBy(pending, (item) => item.requestId === existing.requestId, settling)),
-              PersistPresenceRequestedEvent({
-                record: { ...withoutFinalEnd(presence), settledEnd: finalEndIdentity(settling) },
-                transition: { type: 'settle', release: settling }
-              })
-            ]
-          }
-          if (existing.phase === 'cleanup-failed') {
-            const cleaning = withReleasePhase(existing, 'cleaning')
-            return [
-              PendingReleasesState().new(replaceBy(pending, (item) => item.requestId === existing.requestId, cleaning)),
-              PersistPresenceRequestedEvent({
-                record: withoutFinalEnd(presence),
-                transition: { type: 'cleanup', release: cleaning }
-              })
-            ]
-          }
-          if (existing.phase !== 'pending') return null
-          const retainedIdentity = presence.pendingEnd ?? presence.inflightEnd
-          if (retainedIdentity?.presenceId !== existing.presenceId) return null
-          const retrying = withReleasePhase(existing, 'retrying')
-          return [
-            PendingReleasesState().new(replaceBy(pending, (item) => item.requestId === existing.requestId, retrying)),
-            PersistPresenceRequestedEvent({
-              record: { ...withoutFinalEnd(presence), inflightEnd: retainedIdentity },
-              transition: { type: 'retry', release: retrying }
-            })
-          ]
-        }
+        // A single live in-memory release owner: Chat leave (SESSION_END) -> contribution remove
+        // (world.ReleaseDomain publishes latest Presence via the sole iterator) -> Connection settles close.
+        // No durable owner/outcome/journal; on host replacement the next current event reconciles.
+        if (get(ReleasingDomainQuery(runtimeDomain))) return null
         const runtime = get(DomainsState()).find((item) => item.domain === runtimeDomain)
         const prepared = get(PreparedSessionsState()).find((item) => item.runtime.domain === runtimeDomain)
         const current = runtime ?? prepared?.runtime
         if (!current) return DomainEndPublishedEvent({ domain: runtimeDomain })
-        const presenceDomains = get(PresenceDomainsState())
-        const presence = presenceDomains.find((item) => item.domain === runtimeDomain)
+        const presence = get(PresenceDomainsState()).find((item) => item.domain === runtimeDomain)
         const release: PendingRelease = {
           domain: runtimeDomain,
           roomId: current.roomId,
@@ -773,51 +679,31 @@ const SessionDomain = Remesh.domain({
           userId: current.user.id,
           joinedAt: current.joinedAt,
           requestId: endRequestId(current.presenceId),
-          phase: 'retiring'
-        }
-        const retired: PresenceDomainRecord = {
-          domain: runtimeDomain,
-          lastJoinedAt: Math.max(presence?.lastJoinedAt ?? 0, current.joinedAt),
-          inflightEnd: finalEndIdentity(release),
-          observers: prepared?.observers ?? presence?.observers ?? []
+          phase: 'publishing'
         }
         return [
-          PendingReleasesState().new([...pending, release]),
-          PersistPresenceRequestedEvent({ record: retired, transition: { type: 'retire', release } })
-        ]
-      }
-    })
-
-    const CompletePresenceRetirementCommand = domain.command({
-      name: 'Session.CompletePresenceRetirementCommand',
-      impl: ({ get }, request: PresencePersistRequest) => {
-        const transition = request.transition
-        if (transition?.type !== 'retire') return null
-        const pending = get(PendingReleasesState())
-        const current = pending.find((item) => item.requestId === transition.release.requestId)
-        if (current?.phase !== 'retiring') return null
-        const publishing = withReleasePhase(current, 'publishing')
-        return [
-          PendingReleasesState().new(replaceBy(pending, (item) => item.requestId === current.requestId, publishing)),
-          PresenceDomainsState().new(
-            replaceBy(get(PresenceDomainsState()), (item) => item.domain === current.domain, request.record)
+          PendingReleasesState().new([...get(PendingReleasesState()), release]),
+          // Contribution remove: drop the logical domain now.
+          DomainsState().new(removeBy(get(DomainsState()), (item) => item.domain === runtimeDomain)),
+          PreparedSessionsState().new(
+            removeBy(get(PreparedSessionsState()), (item) => item.runtime.domain === runtimeDomain)
           ),
-          DomainRetiredEvent({ domain: current.domain }),
-          PublishPresenceEndCommand(publishing)
+          PresenceDomainsState().new(removeBy(get(PresenceDomainsState()), (item) => item.domain === runtimeDomain)),
+          // Clear the durable local lease so a later host replacement does not resurrect this generation.
+          PersistPresenceRequestedEvent({
+            record: { domain: runtimeDomain, lastJoinedAt: presence?.lastJoinedAt ?? 0, observers: [] }
+          }),
+          DomainRetiredEvent({ domain: runtimeDomain }),
+          PublishPresenceEndCommand(release)
         ]
       }
     })
 
-    const FailPresenceRetirementCommand = domain.command({
-      name: 'Session.FailPresenceRetirementCommand',
-      impl: ({ get }, payload: { release: PendingRelease; error: Error }) => {
-        const pending = get(PendingReleasesState())
-        if (!pending.some((item) => item.requestId === payload.release.requestId)) return null
-        return [
-          PendingReleasesState().new(removeBy(pending, (item) => item.requestId === payload.release.requestId)),
-          DomainReleaseFailedEvent({ domain: payload.release.domain, error: payload.error }),
-          ErrorEvent({ error: payload.error, domain: payload.release.domain })
-        ]
+    const RetryReleaseEndCommand = domain.command({
+      name: 'Session.RetryReleaseEndCommand',
+      impl: ({ get }, requestId: string) => {
+        const current = get(PendingReleasesState()).find((item) => item.requestId === requestId)
+        return current && current.phase === 'publishing' ? PublishPresenceEndCommand(current) : null
       }
     })
 
@@ -826,109 +712,10 @@ const SessionDomain = Remesh.domain({
       impl: ({ get }, requestId: string) => {
         const pending = get(PendingReleasesState())
         const current = pending.find((item) => item.requestId === requestId)
-        const presence = get(PresenceDomainsState()).find((item) => item.domain === current?.domain)
-        if (current?.phase !== 'publishing' || !presence || presence.local) return null
-        const settling = withReleasePhase(current, 'settling')
+        if (!current || current.phase !== 'publishing') return null
         return [
-          PendingReleasesState().new(replaceBy(pending, (item) => item.requestId === current.requestId, settling)),
-          PersistPresenceRequestedEvent({
-            record: { ...withoutFinalEnd(presence), settledEnd: finalEndIdentity(settling) },
-            transition: { type: 'settle', release: settling }
-          })
-        ]
-      }
-    })
-
-    const CompletePresenceTransitionCommand = domain.command({
-      name: 'Session.CompletePresenceTransitionCommand',
-      impl: ({ get }, request: PresencePersistRequest) => {
-        const transition = request.transition
-        if (!transition || transition.type === 'retire') return null
-        const pending = get(PendingReleasesState())
-        const current = pending.find((item) => item.requestId === transition.release.requestId)
-        if (!current) return null
-        const presenceAction = PresenceDomainsState().new(
-          replaceBy(get(PresenceDomainsState()), (item) => item.domain === current.domain, request.record)
-        )
-        if (transition.type === 'retry') {
-          if (current.phase !== 'retrying') return null
-          const publishing = withReleasePhase(current, 'publishing')
-          return [
-            PendingReleasesState().new(replaceBy(pending, (item) => item.requestId === current.requestId, publishing)),
-            presenceAction,
-            PublishPresenceEndCommand(publishing)
-          ]
-        }
-        if (transition.type === 'failure') {
-          if (current.phase !== 'pending') return null
-          return [
-            presenceAction,
-            DomainReleaseFailedEvent({ domain: current.domain, error: transition.error }),
-            ErrorEvent({ error: transition.error, domain: current.domain })
-          ]
-        }
-        if (transition.type === 'settle') {
-          if (current.phase !== 'settling') return null
-          const cleaning = withReleasePhase(current, 'cleaning')
-          return [
-            PendingReleasesState().new(replaceBy(pending, (item) => item.requestId === current.requestId, cleaning)),
-            presenceAction,
-            PersistPresenceRequestedEvent({
-              record: withoutFinalEnd(request.record),
-              transition: { type: 'cleanup', release: cleaning }
-            })
-          ]
-        }
-        if (current.phase !== 'cleaning') return null
-        return [presenceAction, DomainEndPublishedEvent({ domain: current.domain, roomId: current.roomId })]
-      }
-    })
-
-    const FailPresenceTransitionCommand = domain.command({
-      name: 'Session.FailPresenceTransitionCommand',
-      impl: ({ get }, payload: { transition: PresencePersistTransition; error: Error }) => {
-        const pending = get(PendingReleasesState())
-        const current = pending.find((item) => item.requestId === payload.transition.release.requestId)
-        if (!current) return null
-        if (payload.transition.type === 'retry' && current.phase === 'retrying') {
-          return [
-            PendingReleasesState().new(
-              replaceBy(pending, (item) => item.requestId === current.requestId, withReleasePhase(current, 'pending'))
-            ),
-            DomainReleaseFailedEvent({ domain: current.domain, error: payload.error }),
-            ErrorEvent({ error: payload.error, domain: current.domain })
-          ]
-        }
-        if (payload.transition.type === 'settle' && current.phase === 'settling') {
-          return [
-            PendingReleasesState().new(
-              replaceBy(
-                pending,
-                (item) => item.requestId === current.requestId,
-                withReleasePhase(current, 'settlement-failed')
-              )
-            ),
-            DomainReleaseFailedEvent({ domain: current.domain, error: payload.error }),
-            ErrorEvent({ error: payload.error, domain: current.domain })
-          ]
-        }
-        if (payload.transition.type === 'cleanup' && current.phase === 'cleaning') {
-          return [
-            PendingReleasesState().new(
-              replaceBy(
-                pending,
-                (item) => item.requestId === current.requestId,
-                withReleasePhase(current, 'cleanup-failed')
-              )
-            ),
-            DomainReleaseFailedEvent({ domain: current.domain, error: payload.error }),
-            ErrorEvent({ error: payload.error, domain: current.domain })
-          ]
-        }
-        const error = payload.transition.type === 'failure' ? payload.transition.error : payload.error
-        return [
-          DomainReleaseFailedEvent({ domain: current.domain, error }),
-          ErrorEvent({ error, domain: current.domain })
+          PendingReleasesState().new(removeBy(pending, (item) => item.requestId === requestId)),
+          DomainEndPublishedEvent({ domain: current.domain, roomId: current.roomId })
         ]
       }
     })
@@ -938,19 +725,13 @@ const SessionDomain = Remesh.domain({
       impl: ({ get }, payload: { requestId: string; error: Error }) => {
         const pending = get(PendingReleasesState())
         const current = pending.find((item) => item.requestId === payload.requestId)
-        const presence = get(PresenceDomainsState()).find((item) => item.domain === current?.domain)
-        if (current?.phase !== 'publishing' || !presence || presence.local) return null
-        const failed = withReleasePhase(current, 'pending')
-        const record: PresenceDomainRecord = {
-          ...withoutFinalEnd(presence),
-          pendingEnd: finalEndIdentity(current)
-        }
+        if (!current || current.phase !== 'publishing') return null
+        // The Chat-leave END step failed: surface it once and retry only this step boundedly.
+        const retrying = withReleasePhase(current, 'publishing')
         return [
-          PendingReleasesState().new(replaceBy(pending, (item) => item.requestId === current.requestId, failed)),
-          PersistPresenceRequestedEvent({
-            record,
-            transition: { type: 'failure', release: failed, error: payload.error }
-          })
+          PendingReleasesState().new(replaceBy(pending, (item) => item.requestId === current.requestId, retrying)),
+          ErrorEvent({ error: payload.error, domain: current.domain }),
+          ReleaseEndRetryRequestedEvent({ requestId: current.requestId })
         ]
       }
     })
@@ -1605,16 +1386,24 @@ const SessionDomain = Remesh.domain({
           concatMap(async (request) => {
             try {
               await presenceStore.save(request.record)
-              return request.transition?.type === 'retire'
-                ? CompletePresenceRetirementCommand(request)
-                : CompletePresenceTransitionCommand(request)
+              return null
             } catch (error) {
-              if (!request.transition) return ErrorEvent({ error: error as Error })
-              return request.transition.type === 'retire'
-                ? FailPresenceRetirementCommand({ release: request.transition.release, error: error as Error })
-                : FailPresenceTransitionCommand({ transition: request.transition, error: error as Error })
+              return ErrorEvent({ error: error as Error })
             }
           })
+        )
+    })
+    domain.effect({
+      name: 'Session.ReleaseEndRetryEffect',
+      impl: ({ fromEvent }) =>
+        fromEvent(ReleaseEndRetryRequestedEvent).pipe(
+          concatMap(
+            ({ requestId }) =>
+              new globalThis.Promise<{ requestId: string }>((resolve) =>
+                globalThis.setTimeout(() => resolve({ requestId }), RELEASE_END_RETRY_INTERVAL_MS)
+              )
+          ),
+          map(({ requestId }) => RetryReleaseEndCommand(requestId))
         )
     })
     domain.effect({

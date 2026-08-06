@@ -12,7 +12,7 @@ import { MessageDatabaseExtern, createMessageStore } from '@/domain/MessageStore
 import { MESSAGE_RECORD_TYPE, NOTICE_TYPE, type NoticeType, type SystemNoticeRecord } from '@/domain/Message'
 import type { Clock } from '@/domain/runtime/externs/Clock'
 import type { PresenceStore } from '@/domain/runtime/externs/PresenceStore'
-import { MESSAGE_TYPE, REACTION_TYPE, type ChatMessage, type ChatUser, type WireCodec } from '@/protocol'
+import { MESSAGE_TYPE, type ChatUser, type WireCodec } from '@/protocol'
 import { createMemoryPresenceStore } from '@/runtime/PresenceStore'
 import { createServer, disposeServer, getChatRoomId, getWorldRoomId } from '@/runtime/Server'
 import type { RuntimeServer, RuntimeSessionEvent, RuntimeSnapshot } from '@/runtime/Contract'
@@ -439,36 +439,6 @@ const createStack = async (
 const noticeUsers = async (stack: ApplicationStack, type: NoticeType = NOTICE_TYPE.JOIN) =>
   (await stack.notices()).filter((notice) => notice.notice.type === type).map((notice) => notice.user.id)
 
-const completeInterruptedRelease = async (stack: ApplicationStack, user: ChatUser) => {
-  const snapshot = await stack.server.joinChatRoom({ domain: DOMAIN, user, site: SITE })
-  expect(snapshot?.domains.find(({ domain }) => domain === DOMAIN)?.localSession?.user.id).toBe(user.id)
-  return snapshot
-}
-
-const expectFinalReleaseFence = async (
-  stack: ApplicationStack,
-  network: DeterministicNetwork,
-  peerId: string,
-  retainedMessage: ChatMessage
-) => {
-  const textCount = network.messageCount(peerId, MESSAGE_TYPE.TEXT)
-  await expect(
-    stack.server.allocateTextMessage({ domain: DOMAIN, body: 'blocked during final release', mentions: [] })
-  ).rejects.toMatchObject({ name: 'AbortError' })
-  await expect(
-    stack.server.allocateReactionMessage({
-      domain: DOMAIN,
-      targetId: retainedMessage.id,
-      reaction: 'like',
-      active: true
-    })
-  ).rejects.toMatchObject({ name: 'AbortError' })
-  await expect(stack.server.sendChatMessage({ domain: DOMAIN, event: retainedMessage })).rejects.toMatchObject({
-    name: 'AbortError'
-  })
-  expect(network.messageCount(peerId, MESSAGE_TYPE.TEXT)).toBe(textCount)
-}
-
 beforeEach(() => {
   vi.stubGlobal('document', {
     location: { origin: DOMAIN },
@@ -657,7 +627,7 @@ describe('join notice observation baseline', () => {
   })
 })
 
-describe('application reconnect and durable retirement controls', () => {
+describe('single live release owner', () => {
   it('keeps the application reconnect composition inside one logical generation', async () => {
     const network = new DeterministicNetwork()
     const a = await createStack(network, 'reconnect-peer-a', { id: 'reconnect-user-a', name: 'A', avatar: '' })
@@ -685,904 +655,82 @@ describe('application reconnect and durable retirement controls', () => {
     expect(await noticeUsers(a, NOTICE_TYPE.LEAVE)).toEqual([])
   })
 
-  it('retains active durable and physical presence after a rejected retirement, then retries in strict order', async () => {
+  it('releases through one live owner: Chat leave, contribution remove, then close', async () => {
     const network = new DeterministicNetwork()
     const durable = createMemoryPresenceStore()
-    let rejectRetirement = true
-    let retirementAttempts = 0
-    let cleanupWrites = 0
-    const rejectingPresenceStore: PresenceStore = {
-      load: (domain) => durable.load(domain),
-      save: async (record) => {
-        const chatRoomId = getChatRoomId(DOMAIN)
-        const hasUnsettledFinalEnd = Boolean(record.inflightEnd || record.pendingEnd)
-        const endSettled = network.lifecycle().includes(`session-end-settled:retirement-peer-b:${chatRoomId}`)
-        if (!record.local && (hasUnsettledFinalEnd || !endSettled)) {
-          retirementAttempts += 1
-          if (rejectRetirement) throw new Error('retirement write rejected')
-          await durable.save(record)
-          network.recordLifecycle(`durable-retired:retirement-peer-b:${chatRoomId}`)
-          return
-        }
-        if (!record.local && endSettled && !hasUnsettledFinalEnd && !record.settledEnd) cleanupWrites += 1
-        await durable.save(record)
-      }
-    }
-    const a = await createStack(network, 'retirement-peer-a', { id: 'retirement-user-a', name: 'A', avatar: '' })
+    const a = await createStack(network, 'live-release-peer-a', { id: 'release-user-a', name: 'A', avatar: '' })
     const b = await createStack(
       network,
-      'retirement-peer-b',
-      { id: 'retirement-user-b', name: 'B', avatar: '' },
-      { presenceStore: rejectingPresenceStore }
+      'live-release-peer-b',
+      { id: 'release-user-b', name: 'B', avatar: '' },
+      { presenceStore: durable }
     )
     await a.join()
     await b.join()
-    const activeLease = (await durable.load(DOMAIN))?.local
-    expect(activeLease).toMatchObject({ userId: 'retirement-user-b', status: 'active' })
+    await vi.waitFor(async () => expect((await noticeUsers(a)).filter((id) => id === 'release-user-b')).toHaveLength(1))
 
-    await b.server.leaveChatRoom({ domain: DOMAIN })
-    await vi.waitFor(() => expect(b.errors).toContain('retirement write rejected'))
-
-    const failedSnapshot = await b.server.getSnapshot()
-    expect((await durable.load(DOMAIN))?.local).toEqual(activeLease)
-    expect(failedSnapshot.domains.find(({ domain }) => domain === DOMAIN)?.chatRoomJoined).toBe(true)
-    expect(failedSnapshot.world.joined).toBe(true)
-    expect(network.isJoined('retirement-peer-b', getChatRoomId(DOMAIN))).toBe(true)
-    expect(network.isJoined('retirement-peer-b', getWorldRoomId())).toBe(true)
-    expect(network.lifecycle().filter((event) => event.includes('retirement-peer-b'))).toEqual([])
-    expect(await noticeUsers(a, NOTICE_TYPE.LEAVE)).toEqual([])
-
-    const textCount = network.messageCount('retirement-peer-b', MESSAGE_TYPE.TEXT)
-    const activeMessage = await b.server.allocateTextMessage({
-      domain: DOMAIN,
-      body: 'active after rejected retirement',
-      mentions: []
-    })
-    await b.server.allocateReactionMessage({
-      domain: DOMAIN,
-      targetId: activeMessage.message.id,
-      reaction: 'like',
-      active: true
-    })
-    await b.server.sendChatMessage({ domain: DOMAIN, event: activeMessage.message })
-    expect(network.messageCount('retirement-peer-b', MESSAGE_TYPE.TEXT)).toBe(textCount + 1)
-
-    rejectRetirement = false
     await b.server.leaveChatRoom({ domain: DOMAIN })
     await vi.waitFor(async () =>
-      expect((await noticeUsers(a, NOTICE_TYPE.LEAVE)).filter((id) => id === 'retirement-user-b')).toHaveLength(1)
+      expect((await noticeUsers(a, NOTICE_TYPE.LEAVE)).filter((id) => id === 'release-user-b')).toHaveLength(1)
     )
 
     const chatRoomId = getChatRoomId(DOMAIN)
-    const settled = await durable.load(DOMAIN)
-    expect(settled?.local).toBeUndefined()
-    expect(settled?.inflightEnd).toBeUndefined()
-    expect(settled?.pendingEnd).toBeUndefined()
-    expect(settled?.settledEnd).toBeUndefined()
-    expect(retirementAttempts).toBe(2)
-    expect(cleanupWrites).toBe(1)
-    expect(
-      network
-        .lifecycle()
-        .filter(
-          (event) =>
-            event === `durable-retired:retirement-peer-b:${chatRoomId}` ||
-            event === `session-end-settled:retirement-peer-b:${chatRoomId}` ||
-            event === `physical-leave:retirement-peer-b:${chatRoomId}`
-        )
-    ).toEqual([
-      `durable-retired:retirement-peer-b:${chatRoomId}`,
-      `session-end-settled:retirement-peer-b:${chatRoomId}`,
-      `physical-leave:retirement-peer-b:${chatRoomId}`
-    ])
-    expect(network.isJoined('retirement-peer-b', chatRoomId)).toBe(false)
-    expect(network.isJoined('retirement-peer-b', getWorldRoomId())).toBe(false)
+    // The durable local lease is cleared on final release; there is no durable end journal.
+    await vi.waitFor(async () => expect((await durable.load(DOMAIN))?.local).toBeUndefined())
+    await vi.waitFor(() => expect(network.isJoined('live-release-peer-b', chatRoomId)).toBe(false))
+    await vi.waitFor(() => expect(network.isJoined('live-release-peer-b', getWorldRoomId())).toBe(false))
+    expect(network.lifecycle().filter((event) => event.includes('live-release-peer-b'))).toContain(
+      `physical-leave:live-release-peer-b:${chatRoomId}`
+    )
   })
 
-  it('does not let an inbound presence update queued during release resurrect a retired lease', async () => {
+  it('rejoins immediately in the current live model after a release settles', async () => {
     const network = new DeterministicNetwork()
-    const durable = createMemoryPresenceStore()
-    let signalRetirementStarted = () => {}
-    const retirementStarted = new Promise<void>((resolve) => {
-      signalRetirementStarted = resolve
-    })
-    let releaseRetirement = () => {}
-    const heldRetirement = new Promise<void>((resolve) => {
-      releaseRetirement = resolve
-    })
-    const heldPresenceStore: PresenceStore = {
-      load: (domain) => durable.load(domain),
-      save: async (record) => {
-        if (!record.local) {
-          signalRetirementStarted()
-          await heldRetirement
-        }
-        await durable.save(record)
-      }
-    }
-    const a = await createStack(network, 'held-peer-a', { id: 'held-user-a', name: 'A', avatar: '' })
-    const b = await createStack(
-      network,
-      'held-peer-b',
-      { id: 'held-user-b', name: 'B', avatar: '' },
-      { presenceStore: heldPresenceStore }
-    )
+    const a = await createStack(network, 'fence-peer-a', { id: 'fence-user-a', name: 'A', avatar: '' })
+    const b = await createStack(network, 'fence-peer-b', { id: 'fence-user-b', name: 'B', avatar: '' })
     await a.join()
     await b.join()
-    const retainedMessage = await b.server.allocateTextMessage({
-      domain: DOMAIN,
-      body: 'held across retirement persistence',
-      mentions: []
-    })
-
-    await b.server.leaveChatRoom({ domain: DOMAIN })
-    await retirementStarted
-    await expectFinalReleaseFence(b, network, 'held-peer-b', retainedMessage.message)
-    const c = await createStack(network, 'held-peer-c', { id: 'held-user-c', name: 'C', avatar: '' })
-    await c.join()
-    releaseRetirement()
-    await vi.waitFor(() => expect(network.isJoined('held-peer-b', getChatRoomId(DOMAIN))).toBe(false))
-
-    expect((await durable.load(DOMAIN))?.local).toBeUndefined()
-    expect((await noticeUsers(a, NOTICE_TYPE.LEAVE)).filter((id) => id === 'held-user-b')).toHaveLength(1)
-  })
-
-  it('carries one text and reaction port operation when recovery and final release start in the same turn', async () => {
-    const network = new DeterministicNetwork()
-    const durable = createMemoryPresenceStore()
-    let signalRetirementStarted = () => {}
-    const retirementStarted = new Promise<void>((resolve) => {
-      signalRetirementStarted = resolve
-    })
-    let releaseRetirement = () => {}
-    const heldRetirement = new Promise<void>((resolve) => {
-      releaseRetirement = resolve
-    })
-    let holdRecoveryLoads = false
-    let recoveryLoads = 0
-    let signalSecondRecoveryLoad = () => {}
-    const secondRecoveryLoad = new Promise<void>((resolve) => {
-      signalSecondRecoveryLoad = resolve
-    })
-    let releaseSecondRecoveryLoad = () => {}
-    const heldSecondRecoveryLoad = new Promise<void>((resolve) => {
-      releaseSecondRecoveryLoad = resolve
-    })
-    const heldPresenceStore: PresenceStore = {
-      load: async (domain) => {
-        if (holdRecoveryLoads && ++recoveryLoads === 2) {
-          signalSecondRecoveryLoad()
-          await heldSecondRecoveryLoad
-        }
-        return durable.load(domain)
-      },
-      save: async (record) => {
-        if (!record.local) {
-          signalRetirementStarted()
-          await heldRetirement
-        }
-        await durable.save(record)
-      }
-    }
-    const user = { id: 'operation-recovery-user', name: 'Operation Recovery', avatar: '' }
-    let textAllocations = 0
-    let reactionAllocations = 0
-    const observer = await createStack(network, 'operation-recovery-observer', {
-      id: 'operation-recovery-observer-user',
-      name: 'Observer',
-      avatar: ''
-    })
-    const stack = await createStack(network, 'operation-recovery-peer', user, {
-      presenceStore: heldPresenceStore,
-      onAllocateText: () => {
-        textAllocations += 1
-      },
-      onAllocateReaction: () => {
-        reactionAllocations += 1
-      }
-    })
-    await observer.join()
-    await stack.join()
-    const target = await stack.adapter.sendMessage({ type: 'text', body: 'reaction target', mentions: [] })
-    textAllocations = 0
-    const textCount = network.messageCount('operation-recovery-peer', MESSAGE_TYPE.TEXT)
-    const reactionCount = network.messageCount('operation-recovery-peer', MESSAGE_TYPE.REACTION)
-
-    const recoveries = [
-      stack.server.joinChatRoom({ domain: DOMAIN, user, site: SITE }),
-      stack.server.joinChatRoom({ domain: DOMAIN, user, site: SITE })
-    ].map((recovery) =>
-      recovery.then(
-        (snapshot) => ({ ok: true as const, snapshot }),
-        (error) => ({ ok: false as const, error })
-      )
-    )
-    const release = stack.server.leaveChatRoom({ domain: DOMAIN })
-    const textOutcome = stack.adapter.sendMessage({ type: 'text', body: 'held text', mentions: [] }).then(
-      (message) => ({ ok: true as const, message }),
-      (error) => ({ ok: false as const, error })
-    )
-    const reactionOutcome = stack.adapter
-      .sendMessage({ type: 'reaction', targetId: target.id, reaction: REACTION_TYPE.LIKE, active: true })
-      .then(
-        (message) => ({ ok: true as const, message }),
-        (error) => ({ ok: false as const, error })
-      )
-
-    await release
-    await retirementStarted
-    holdRecoveryLoads = true
-    releaseRetirement()
-    await secondRecoveryLoad
-
-    await expect(textOutcome).resolves.toMatchObject({
-      ok: true,
-      message: { type: MESSAGE_TYPE.TEXT, body: 'held text' }
-    })
-    await expect(reactionOutcome).resolves.toMatchObject({
-      ok: true,
-      message: { type: MESSAGE_TYPE.REACTION, targetId: target.id, reaction: REACTION_TYPE.LIKE }
-    })
-    expect(network.messageCount('operation-recovery-peer', MESSAGE_TYPE.TEXT)).toBe(textCount + 1)
-    expect(network.messageCount('operation-recovery-peer', MESSAGE_TYPE.REACTION)).toBe(reactionCount + 1)
-    expect(textAllocations).toBe(1)
-    expect(reactionAllocations).toBe(1)
-    expect(stack.errors).toEqual([])
-    releaseSecondRecoveryLoad()
-    expect((await Promise.all(recoveries)).every(({ ok }) => ok)).toBe(true)
-    expect(
-      (await stack.server.getSnapshot()).domains.find(({ domain }) => domain === DOMAIN)?.localSession?.user.id
-    ).toBe(user.id)
-  })
-
-  it('settles held operations after every concurrent recovery attempt fails', async () => {
-    const network = new DeterministicNetwork()
-    const durable = createMemoryPresenceStore()
-    const user = { id: 'failed-recovery-user', name: 'Failed Recovery', avatar: '' }
-    const original = await createStack(network, 'failed-recovery-original', user, { presenceStore: durable })
-    await original.join()
-    network.rejectNextSessionEnd('failed-recovery-original')
-    await original.server.leaveChatRoom({ domain: DOMAIN })
-    await vi.waitFor(() => expect(original.errors).toContain('session end send rejected'))
-    network.disconnectPeer('failed-recovery-original')
-    original.crash()
-
-    let signalRetryStarted = () => {}
-    const retryStarted = new Promise<void>((resolve) => {
-      signalRetryStarted = resolve
-    })
-    let rejectRetry = () => {}
-    const heldRetry = new Promise<void>((resolve) => {
-      rejectRetry = resolve
-    })
-    let replacementLoads = 0
-    let releaseReplacementLoads = () => {}
-    const bothReplacementLoads = new Promise<void>((resolve) => {
-      releaseReplacementLoads = resolve
-    })
-    const rejectingStore: PresenceStore = {
-      load: async (domain) => {
-        const record = await durable.load(domain)
-        replacementLoads += 1
-        if (replacementLoads === 2) releaseReplacementLoads()
-        await bothReplacementLoads
-        return record
-      },
-      save: async (record) => {
-        if (record.inflightEnd) {
-          signalRetryStarted()
-          await heldRetry
-          throw new Error('concurrent recovery rejected')
-        }
-        await durable.save(record)
-      }
-    }
-    const replacement = await createStack(network, 'failed-recovery-replacement', user, {
-      presenceStore: rejectingStore
-    })
-    let unsuccessfulRecoveries = 0
-    const recoveries = [
-      replacement.server.joinChatRoom({ domain: DOMAIN, user, site: SITE }),
-      replacement.server.joinChatRoom({ domain: DOMAIN, user, site: SITE })
-    ].map((recovery) =>
-      recovery.then(
-        (snapshot) => {
-          if (snapshot === null) unsuccessfulRecoveries += 1
-          return snapshot
-        },
-        (error) => {
-          unsuccessfulRecoveries += 1
-          throw error
-        }
-      )
-    )
-    await retryStarted
-    const text = replacement.server.allocateTextMessage({ domain: DOMAIN, body: 'held until failure', mentions: [] })
-
-    rejectRetry()
-
-    await expect(Promise.all(recoveries)).rejects.toThrow('concurrent recovery rejected')
-    await expect(text).rejects.toMatchObject({ name: 'AbortError' })
-    expect(unsuccessfulRecoveries).toBe(2)
-  })
-
-  it('settles a held operation when the server is disposed during recovery', async () => {
-    const network = new DeterministicNetwork()
-    const durable = createMemoryPresenceStore()
-    let signalRetirementStarted = () => {}
-    const retirementStarted = new Promise<void>((resolve) => {
-      signalRetirementStarted = resolve
-    })
-    let releaseRetirement = () => {}
-    const heldRetirement = new Promise<void>((resolve) => {
-      releaseRetirement = resolve
-    })
-    const heldPresenceStore: PresenceStore = {
-      load: (domain) => durable.load(domain),
-      save: async (record) => {
-        if (!record.local) {
-          signalRetirementStarted()
-          await heldRetirement
-        }
-        await durable.save(record)
-      }
-    }
-    const user = { id: 'disposed-recovery-user', name: 'Disposed Recovery', avatar: '' }
-    const stack = await createStack(network, 'disposed-recovery-peer', user, { presenceStore: heldPresenceStore })
-    await stack.join()
-    void completeInterruptedRelease(stack, user).catch(() => {})
-    await stack.server.leaveChatRoom({ domain: DOMAIN })
-    await retirementStarted
-    const text = stack.server.allocateTextMessage({ domain: DOMAIN, body: 'held until dispose', mentions: [] })
-
-    stack.crash()
-
-    await expect(text).rejects.toMatchObject({ name: 'AbortError' })
-    releaseRetirement()
-  })
-
-  it('does not physically depart until a rejected SESSION_END is retried and settled', async () => {
-    const network = new DeterministicNetwork()
-    const durable = createMemoryPresenceStore()
-    const a = await createStack(network, 'end-peer-a', { id: 'end-user-a', name: 'A', avatar: '' })
-    const b = await createStack(
-      network,
-      'end-peer-b',
-      { id: 'end-user-b', name: 'B', avatar: '' },
-      { presenceStore: durable }
-    )
-    await a.join()
-    await b.join()
-    const retainedMessage = await b.server.allocateTextMessage({
-      domain: DOMAIN,
-      body: 'held across a rejected end',
-      mentions: []
-    })
-    network.rejectNextSessionEnd('end-peer-b')
-
-    await b.server.leaveChatRoom({ domain: DOMAIN })
-    await vi.waitFor(() => expect(b.errors).toContain('session end send rejected'))
-
-    const chatRoomId = getChatRoomId(DOMAIN)
-    const pendingEnd = await durable.load(DOMAIN)
-    expect(pendingEnd?.local).toBeUndefined()
-    expect(pendingEnd?.pendingEnd).toMatchObject({ userId: 'end-user-b' })
-    expect(network.isJoined('end-peer-b', chatRoomId)).toBe(true)
-    expect(network.isJoined('end-peer-b', getWorldRoomId())).toBe(true)
-    expect(await noticeUsers(a, NOTICE_TYPE.LEAVE)).toEqual([])
-    expect(network.lifecycle().filter((event) => event.includes('end-peer-b'))).toEqual([
-      `session-end-rejected:end-peer-b:${chatRoomId}`
-    ])
-    await expectFinalReleaseFence(b, network, 'end-peer-b', retainedMessage.message)
 
     await b.server.leaveChatRoom({ domain: DOMAIN })
     await vi.waitFor(async () =>
-      expect((await noticeUsers(a, NOTICE_TYPE.LEAVE)).filter((id) => id === 'end-user-b')).toHaveLength(1)
+      expect((await noticeUsers(a, NOTICE_TYPE.LEAVE)).filter((id) => id === 'fence-user-b')).toHaveLength(1)
     )
-
-    expect(network.lifecycle().filter((event) => event.includes('end-peer-b'))).toEqual([
-      `session-end-rejected:end-peer-b:${chatRoomId}`,
-      `session-end-settled:end-peer-b:${chatRoomId}`,
-      `physical-leave:end-peer-b:${chatRoomId}`,
-      `physical-leave:end-peer-b:${getWorldRoomId()}`
-    ])
-    const settled = await durable.load(DOMAIN)
-    expect(settled?.inflightEnd).toBeUndefined()
-    expect(settled?.pendingEnd).toBeUndefined()
-    expect(settled?.settledEnd).toBeUndefined()
-  })
-
-  it('completes a rejected final end across host replacement without orphaning the generation', async () => {
-    const network = new DeterministicNetwork()
-    const sharedPresence = createMemoryPresenceStore()
-    const observer = await createStack(network, 'pending-end-observer', {
-      id: 'pending-end-observer-user',
-      name: 'Observer',
-      avatar: ''
-    })
-    const original = await createStack(
-      network,
-      'pending-end-original',
-      { id: 'pending-end-user', name: 'Pending End', avatar: '' },
-      { presenceStore: sharedPresence }
-    )
-    await observer.join()
-    await original.join()
-    await vi.waitFor(async () =>
-      expect((await noticeUsers(observer)).filter((id) => id === 'pending-end-user')).toHaveLength(1)
-    )
-    const originalSession = network.lastSession('pending-end-original') as {
-      presenceId: string
-      sessionId: string
-    }
-    network.rejectNextSessionEnd('pending-end-original')
-
-    await original.server.leaveChatRoom({ domain: DOMAIN })
-    await vi.waitFor(() => expect(original.errors).toContain('session end send rejected'))
-    expect((await sharedPresence.load(DOMAIN))?.pendingEnd).toMatchObject({
-      presenceId: originalSession.presenceId,
-      userId: 'pending-end-user'
-    })
-    expect(await noticeUsers(observer, NOTICE_TYPE.LEAVE)).toEqual([])
-
-    network.disconnectPeer('pending-end-original')
-    original.crash()
-    const replacement = await createStack(
-      network,
-      'pending-end-replacement',
-      { id: 'pending-end-user', name: 'Pending End', avatar: '' },
-      { presenceStore: sharedPresence }
-    )
-    const replacementUser = { id: 'pending-end-user', name: 'Pending End', avatar: '' }
-    await completeInterruptedRelease(replacement, replacementUser)
-    const returnedSession = network.lastSession('pending-end-replacement') as {
-      presenceId: string
-      sessionId: string
-    }
-    expect(returnedSession.presenceId).not.toBe(originalSession.presenceId)
-    expect(returnedSession.sessionId).not.toBe(originalSession.sessionId)
-    await vi.waitFor(async () =>
-      expect((await noticeUsers(observer, NOTICE_TYPE.LEAVE)).filter((id) => id === 'pending-end-user')).toHaveLength(1)
-    )
-    const settled = await sharedPresence.load(DOMAIN)
-    expect(settled?.local?.presenceId).toBe(returnedSession.presenceId)
-    expect(settled?.inflightEnd).toBeUndefined()
-    expect(settled?.pendingEnd).toBeUndefined()
-    expect(settled?.settledEnd).toBeUndefined()
-    expect(network.isJoined('pending-end-replacement', getChatRoomId(DOMAIN))).toBe(true)
-    expect(network.isJoined('pending-end-replacement', getWorldRoomId())).toBe(true)
-
-    await vi.waitFor(async () =>
-      expect((await noticeUsers(observer)).filter((id) => id === 'pending-end-user')).toHaveLength(2)
-    )
-  })
-
-  it('continues the same final-end transaction when the first attempt is unsettled', async () => {
-    const network = new DeterministicNetwork()
-    const sharedPresence = createMemoryPresenceStore()
-    const observer = await createStack(network, 'first-inflight-observer', {
-      id: 'first-inflight-observer-user',
-      name: 'Observer',
-      avatar: ''
-    })
-    const original = await createStack(
-      network,
-      'first-inflight-original',
-      { id: 'first-inflight-user', name: 'First Inflight', avatar: '' },
-      { presenceStore: sharedPresence }
-    )
-    await observer.join()
-    await original.join()
-    await vi.waitFor(async () =>
-      expect((await noticeUsers(observer)).filter((id) => id === 'first-inflight-user')).toHaveLength(1)
-    )
-    const originalSession = network.lastSession('first-inflight-original') as {
-      presenceId: string
-      sessionId: string
-    }
-    const retainedMessage = await original.server.allocateTextMessage({
+    // A rejoin after release creates a fresh presence generation in the current live model.
+    await b.server.joinChatRoom({
       domain: DOMAIN,
-      body: 'held across an unsettled end',
-      mentions: []
+      user: { id: 'fence-user-b', name: 'B', avatar: '' },
+      site: SITE
     })
-    const held = network.holdNextSessionEnd('first-inflight-original')
-
-    await original.server.leaveChatRoom({ domain: DOMAIN })
-    await held.started
-    expect((await sharedPresence.load(DOMAIN))?.inflightEnd).toMatchObject({
-      presenceId: originalSession.presenceId,
-      userId: 'first-inflight-user'
-    })
-    expect(await noticeUsers(observer, NOTICE_TYPE.LEAVE)).toEqual([])
-    await expectFinalReleaseFence(original, network, 'first-inflight-original', retainedMessage.message)
-
-    network.disconnectPeer('first-inflight-original')
-    original.crash()
-    const replacement = await createStack(
-      network,
-      'first-inflight-replacement',
-      { id: 'first-inflight-user', name: 'First Inflight', avatar: '' },
-      { presenceStore: sharedPresence }
-    )
-    const replacementUser = { id: 'first-inflight-user', name: 'First Inflight', avatar: '' }
-    await completeInterruptedRelease(replacement, replacementUser)
-    const returnedSession = network.lastSession('first-inflight-replacement') as {
-      presenceId: string
-      sessionId: string
-    }
-    expect(returnedSession.presenceId).not.toBe(originalSession.presenceId)
-    expect(returnedSession.sessionId).not.toBe(originalSession.sessionId)
     await vi.waitFor(async () =>
-      expect(
-        (await noticeUsers(observer, NOTICE_TYPE.LEAVE)).filter((id) => id === 'first-inflight-user')
-      ).toHaveLength(1)
+      expect((await noticeUsers(a)).filter((id) => id === 'fence-user-b').length).toBeGreaterThanOrEqual(2)
     )
-    const settled = await sharedPresence.load(DOMAIN)
-    expect(settled?.local?.presenceId).toBe(returnedSession.presenceId)
-    expect(settled?.inflightEnd).toBeUndefined()
-    expect(settled?.pendingEnd).toBeUndefined()
-    expect(settled?.settledEnd).toBeUndefined()
-
-    await vi.waitFor(async () =>
-      expect((await noticeUsers(observer)).filter((id) => id === 'first-inflight-user')).toHaveLength(2)
-    )
+    expect(network.isJoined('fence-peer-b', getChatRoomId(DOMAIN))).toBe(true)
   })
 
-  it('continues the same final-end transaction when the retry is unsettled', async () => {
-    const network = new DeterministicNetwork()
-    const sharedPresence = createMemoryPresenceStore()
-    const observer = await createStack(network, 'retry-inflight-observer', {
-      id: 'retry-inflight-observer-user',
-      name: 'Observer',
-      avatar: ''
-    })
-    const original = await createStack(
-      network,
-      'retry-inflight-original',
-      { id: 'retry-inflight-user', name: 'Retry Inflight', avatar: '' },
-      { presenceStore: sharedPresence }
-    )
-    await observer.join()
-    await original.join()
-    await vi.waitFor(async () =>
-      expect((await noticeUsers(observer)).filter((id) => id === 'retry-inflight-user')).toHaveLength(1)
-    )
-    const originalSession = network.lastSession('retry-inflight-original') as {
-      presenceId: string
-      sessionId: string
-    }
-    network.rejectNextSessionEnd('retry-inflight-original')
-    await original.server.leaveChatRoom({ domain: DOMAIN })
-    await vi.waitFor(() => expect(original.errors).toContain('session end send rejected'))
-    expect((await sharedPresence.load(DOMAIN))?.pendingEnd?.presenceId).toBe(originalSession.presenceId)
+  it('retries the Chat-leave END step boundedly and surfaces the failure once per attempt', async () => {
+    vi.useFakeTimers()
+    try {
+      const network = new DeterministicNetwork()
+      const a = await createStack(network, 'end-retry-peer-a', { id: 'end-retry-user-a', name: 'A', avatar: '' })
+      const b = await createStack(network, 'end-retry-peer-b', { id: 'end-retry-user-b', name: 'B', avatar: '' })
+      await a.join()
+      await b.join()
+      network.rejectNextSessionEnd('end-retry-peer-b')
 
-    const held = network.holdNextSessionEnd('retry-inflight-original')
-    await original.server.leaveChatRoom({ domain: DOMAIN })
-    await held.started
-    const retrying = await sharedPresence.load(DOMAIN)
-    expect(retrying?.local).toBeUndefined()
-    expect(retrying?.pendingEnd).toBeUndefined()
-    expect(retrying?.inflightEnd?.presenceId).toBe(originalSession.presenceId)
+      await b.server.leaveChatRoom({ domain: DOMAIN })
+      await vi.advanceTimersByTimeAsync(0)
+      await vi.waitFor(() => expect(b.errors).toContain('session end send rejected'))
+      expect(network.isJoined('end-retry-peer-b', getChatRoomId(DOMAIN))).toBe(true)
 
-    network.disconnectPeer('retry-inflight-original')
-    original.crash()
-    const replacement = await createStack(
-      network,
-      'retry-inflight-replacement',
-      { id: 'retry-inflight-user', name: 'Retry Inflight', avatar: '' },
-      { presenceStore: sharedPresence }
-    )
-    const replacementUser = { id: 'retry-inflight-user', name: 'Retry Inflight', avatar: '' }
-    await completeInterruptedRelease(replacement, replacementUser)
-    const returnedSession = network.lastSession('retry-inflight-replacement') as {
-      presenceId: string
-      sessionId: string
-    }
-    expect(returnedSession.presenceId).not.toBe(originalSession.presenceId)
-    expect(returnedSession.sessionId).not.toBe(originalSession.sessionId)
-    await vi.waitFor(async () =>
-      expect(
-        (await noticeUsers(observer, NOTICE_TYPE.LEAVE)).filter((id) => id === 'retry-inflight-user')
-      ).toHaveLength(1)
-    )
-    const settled = await sharedPresence.load(DOMAIN)
-    expect(settled?.local?.presenceId).toBe(returnedSession.presenceId)
-    expect(settled?.inflightEnd).toBeUndefined()
-    expect(settled?.pendingEnd).toBeUndefined()
-    expect(settled?.settledEnd).toBeUndefined()
-
-    await vi.waitFor(async () =>
-      expect((await noticeUsers(observer)).filter((id) => id === 'retry-inflight-user')).toHaveLength(2)
-    )
-  })
-
-  it('retains the pending generation when the retry transition rejects', async () => {
-    const network = new DeterministicNetwork()
-    const durable = createMemoryPresenceStore()
-    let rejectRetryTransition = false
-    const retryRejectingStore: PresenceStore = {
-      load: (domain) => durable.load(domain),
-      save: async (record) => {
-        if (record.inflightEnd && rejectRetryTransition) {
-          rejectRetryTransition = false
-          throw new Error('retry transition rejected')
-        }
-        await durable.save(record)
-      }
-    }
-    const observer = await createStack(network, 'retry-transition-observer', {
-      id: 'retry-transition-observer-user',
-      name: 'Observer',
-      avatar: ''
-    })
-    const releasing = await createStack(
-      network,
-      'retry-transition-releasing',
-      { id: 'retry-transition-user', name: 'Retry Transition', avatar: '' },
-      { presenceStore: retryRejectingStore }
-    )
-    await observer.join()
-    await releasing.join()
-    network.rejectNextSessionEnd('retry-transition-releasing')
-
-    await releasing.server.leaveChatRoom({ domain: DOMAIN })
-    await vi.waitFor(() => expect(releasing.errors).toContain('session end send rejected'))
-    const pending = await durable.load(DOMAIN)
-    expect(pending?.pendingEnd).toMatchObject({ userId: 'retry-transition-user' })
-    rejectRetryTransition = true
-
-    await releasing.server.leaveChatRoom({ domain: DOMAIN })
-    await vi.waitFor(() => expect(releasing.errors).toContain('retry transition rejected'))
-    expect(await durable.load(DOMAIN)).toEqual(pending)
-    expect(network.isJoined('retry-transition-releasing', getChatRoomId(DOMAIN))).toBe(true)
-    expect(network.isJoined('retry-transition-releasing', getWorldRoomId())).toBe(true)
-    expect(await noticeUsers(observer, NOTICE_TYPE.LEAVE)).toEqual([])
-    expect(network.lifecycle().filter((event) => event.includes('retry-transition-releasing'))).toEqual([
-      `session-end-rejected:retry-transition-releasing:${getChatRoomId(DOMAIN)}`
-    ])
-
-    await releasing.server.leaveChatRoom({ domain: DOMAIN })
-    await vi.waitFor(async () =>
-      expect(
-        (await noticeUsers(observer, NOTICE_TYPE.LEAVE)).filter((id) => id === 'retry-transition-user')
-      ).toHaveLength(1)
-    )
-    const settled = await durable.load(DOMAIN)
-    expect(settled?.local).toBeUndefined()
-    expect(settled?.inflightEnd).toBeUndefined()
-    expect(settled?.pendingEnd).toBeUndefined()
-    expect(settled?.settledEnd).toBeUndefined()
-  })
-
-  it('retries durable cleanup before physically departing after the final end settles', async () => {
-    const network = new DeterministicNetwork()
-    const durable = createMemoryPresenceStore()
-    let rejectCleanup = true
-    const cleanupRejectingStore: PresenceStore = {
-      load: (domain) => durable.load(domain),
-      save: async (record) => {
-        if (!record.local && !record.inflightEnd && !record.pendingEnd && !record.settledEnd && rejectCleanup) {
-          rejectCleanup = false
-          throw new Error('final end cleanup rejected')
-        }
-        await durable.save(record)
-      }
-    }
-    const observer = await createStack(network, 'cleanup-observer', {
-      id: 'cleanup-observer-user',
-      name: 'Observer',
-      avatar: ''
-    })
-    const releasing = await createStack(
-      network,
-      'cleanup-releasing',
-      { id: 'cleanup-user', name: 'Cleanup', avatar: '' },
-      { presenceStore: cleanupRejectingStore }
-    )
-    await observer.join()
-    await releasing.join()
-    await vi.waitFor(async () =>
-      expect((await noticeUsers(observer)).filter((id) => id === 'cleanup-user')).toHaveLength(1)
-    )
-    const retainedMessage = await releasing.server.allocateTextMessage({
-      domain: DOMAIN,
-      body: 'held across cleanup failure',
-      mentions: []
-    })
-
-    await releasing.server.leaveChatRoom({ domain: DOMAIN })
-    await vi.waitFor(() => expect(releasing.errors).toContain('final end cleanup rejected'))
-    await vi.waitFor(async () =>
-      expect((await noticeUsers(observer, NOTICE_TYPE.LEAVE)).filter((id) => id === 'cleanup-user')).toHaveLength(1)
-    )
-    const retained = await durable.load(DOMAIN)
-    expect(retained?.local).toBeUndefined()
-    expect(retained?.inflightEnd).toBeUndefined()
-    expect(retained?.pendingEnd).toBeUndefined()
-    expect(retained?.settledEnd).toMatchObject({ userId: 'cleanup-user' })
-    expect(network.isJoined('cleanup-releasing', getChatRoomId(DOMAIN))).toBe(true)
-    expect(network.isJoined('cleanup-releasing', getWorldRoomId())).toBe(true)
-    expect(
-      network.lifecycle().filter((event) => event.startsWith('session-end-settled:cleanup-releasing'))
-    ).toHaveLength(1)
-    await expectFinalReleaseFence(releasing, network, 'cleanup-releasing', retainedMessage.message)
-
-    await releasing.server.leaveChatRoom({ domain: DOMAIN })
-    await vi.waitFor(() => expect(network.isJoined('cleanup-releasing', getChatRoomId(DOMAIN))).toBe(false))
-    expect((await noticeUsers(observer, NOTICE_TYPE.LEAVE)).filter((id) => id === 'cleanup-user')).toHaveLength(1)
-    expect(
-      network.lifecycle().filter((event) => event.startsWith('session-end-settled:cleanup-releasing'))
-    ).toHaveLength(1)
-    const settled = await durable.load(DOMAIN)
-    expect(settled?.local).toBeUndefined()
-    expect(settled?.inflightEnd).toBeUndefined()
-    expect(settled?.pendingEnd).toBeUndefined()
-    expect(settled?.settledEnd).toBeUndefined()
-  })
-
-  it('safely retries an already-accepted end when the settled marker write rejects', async () => {
-    const network = new DeterministicNetwork()
-    const durable = createMemoryPresenceStore()
-    let rejectSettledMarker = true
-    const settlementRejectingStore: PresenceStore = {
-      load: (domain) => durable.load(domain),
-      save: async (record) => {
-        if (record.settledEnd && rejectSettledMarker) {
-          rejectSettledMarker = false
-          throw new Error('settled marker rejected')
-        }
-        await durable.save(record)
-      }
-    }
-    const observer = await createStack(network, 'settlement-crash-observer', {
-      id: 'settlement-crash-observer-user',
-      name: 'Observer',
-      avatar: ''
-    })
-    const original = await createStack(
-      network,
-      'settlement-crash-original',
-      { id: 'settlement-crash-user', name: 'Settlement Crash', avatar: '' },
-      { presenceStore: settlementRejectingStore }
-    )
-    await observer.join()
-    await original.join()
-    const originalSession = network.lastSession('settlement-crash-original') as { presenceId: string }
-
-    await original.server.leaveChatRoom({ domain: DOMAIN })
-    await vi.waitFor(() => expect(original.errors).toContain('settled marker rejected'))
-    await vi.waitFor(async () =>
-      expect(
-        (await noticeUsers(observer, NOTICE_TYPE.LEAVE)).filter((id) => id === 'settlement-crash-user')
-      ).toHaveLength(1)
-    )
-    expect((await durable.load(DOMAIN))?.inflightEnd?.presenceId).toBe(originalSession.presenceId)
-    expect(network.isJoined('settlement-crash-original', getChatRoomId(DOMAIN))).toBe(true)
-
-    network.disconnectPeer('settlement-crash-original')
-    original.crash()
-    const replacement = await createStack(
-      network,
-      'settlement-crash-replacement',
-      { id: 'settlement-crash-user', name: 'Settlement Crash', avatar: '' },
-      { presenceStore: durable }
-    )
-    await completeInterruptedRelease(replacement, {
-      id: 'settlement-crash-user',
-      name: 'Settlement Crash',
-      avatar: ''
-    })
-    expect(network.messageCount('settlement-crash-replacement', MESSAGE_TYPE.SESSION)).toBeGreaterThan(0)
-    expect(network.messageCount('settlement-crash-replacement', MESSAGE_TYPE.SESSION_END)).toBe(1)
-    expect(
-      (await noticeUsers(observer, NOTICE_TYPE.LEAVE)).filter((id) => id === 'settlement-crash-user')
-    ).toHaveLength(1)
-    const cleaned = await durable.load(DOMAIN)
-    expect(cleaned?.local?.presenceId).not.toBe(originalSession.presenceId)
-    expect(cleaned?.inflightEnd).toBeUndefined()
-    expect(cleaned?.pendingEnd).toBeUndefined()
-    expect(cleaned?.settledEnd).toBeUndefined()
-    expect(await noticeUsers(replacement)).toEqual([])
-
-    await replacement.join()
-    const returnedSession = network.lastSession('settlement-crash-replacement') as { presenceId: string }
-    expect(returnedSession.presenceId).not.toBe(originalSession.presenceId)
-    await vi.waitFor(async () =>
-      expect((await noticeUsers(observer)).filter((id) => id === 'settlement-crash-user')).toHaveLength(2)
-    )
-    expect(await noticeUsers(replacement)).toEqual(['settlement-crash-user'])
-  })
-
-  it('recovers settled cleanup ownership without resurrecting the ended generation', async () => {
-    const network = new DeterministicNetwork()
-    const durable = createMemoryPresenceStore()
-    let rejectCleanup = true
-    const cleanupRejectingStore: PresenceStore = {
-      load: (domain) => durable.load(domain),
-      save: async (record) => {
-        if (!record.local && !record.inflightEnd && !record.pendingEnd && !record.settledEnd && rejectCleanup) {
-          rejectCleanup = false
-          throw new Error('final end cleanup rejected')
-        }
-        await durable.save(record)
-      }
-    }
-    const observer = await createStack(network, 'cleanup-crash-observer', {
-      id: 'cleanup-crash-observer-user',
-      name: 'Observer',
-      avatar: ''
-    })
-    const original = await createStack(
-      network,
-      'cleanup-crash-original',
-      { id: 'cleanup-crash-user', name: 'Cleanup Crash', avatar: '' },
-      { presenceStore: cleanupRejectingStore }
-    )
-    await observer.join()
-    await original.join()
-    await vi.waitFor(async () =>
-      expect((await noticeUsers(observer)).filter((id) => id === 'cleanup-crash-user')).toHaveLength(1)
-    )
-    const originalSession = network.lastSession('cleanup-crash-original') as { presenceId: string }
-
-    await original.server.leaveChatRoom({ domain: DOMAIN })
-    await vi.waitFor(() => expect(original.errors).toContain('final end cleanup rejected'))
-    await vi.waitFor(async () =>
-      expect((await noticeUsers(observer, NOTICE_TYPE.LEAVE)).filter((id) => id === 'cleanup-crash-user')).toHaveLength(
-        1
+      // The single owner retries only the failed END step at a bounded cadence; on success it settles.
+      await vi.advanceTimersByTimeAsync(5000)
+      await vi.advanceTimersByTimeAsync(0)
+      await vi.waitFor(() => expect(network.isJoined('end-retry-peer-b', getChatRoomId(DOMAIN))).toBe(false))
+      await vi.waitFor(async () =>
+        expect((await noticeUsers(a, NOTICE_TYPE.LEAVE)).filter((id) => id === 'end-retry-user-b')).toHaveLength(1)
       )
-    )
-    expect((await durable.load(DOMAIN))?.settledEnd?.presenceId).toBe(originalSession.presenceId)
-
-    network.disconnectPeer('cleanup-crash-original')
-    original.crash()
-    const otherUser = await createStack(
-      network,
-      'cleanup-crash-other-user',
-      { id: 'cleanup-other-user', name: 'Other', avatar: '' },
-      { presenceStore: durable }
-    )
-    await expect(
-      otherUser.server.joinChatRoom({
-        domain: DOMAIN,
-        user: { id: 'cleanup-other-user', name: 'Other', avatar: '' },
-        site: SITE
-      })
-    ).rejects.toThrow('Runtime pending presence belongs to another user')
-    expect((await durable.load(DOMAIN))?.settledEnd?.presenceId).toBe(originalSession.presenceId)
-
-    const replacement = await createStack(
-      network,
-      'cleanup-crash-replacement',
-      { id: 'cleanup-crash-user', name: 'Cleanup Crash', avatar: '' },
-      { presenceStore: durable }
-    )
-    await completeInterruptedRelease(replacement, {
-      id: 'cleanup-crash-user',
-      name: 'Cleanup Crash',
-      avatar: ''
-    })
-    expect(network.messageCount('cleanup-crash-replacement', MESSAGE_TYPE.SESSION)).toBeGreaterThan(0)
-    expect(network.messageCount('cleanup-crash-replacement', MESSAGE_TYPE.SESSION_END)).toBe(0)
-    expect(network.isJoined('cleanup-crash-replacement', getChatRoomId(DOMAIN))).toBe(true)
-    expect(network.isJoined('cleanup-crash-replacement', getWorldRoomId())).toBe(true)
-    const observerDomain = (await observer.server.getSnapshot()).domains.find((item) => item.domain === DOMAIN)
-    expect(observerDomain?.sessions.some((session) => session.user.id === 'cleanup-crash-user')).toBe(true)
-    expect((await noticeUsers(observer, NOTICE_TYPE.LEAVE)).filter((id) => id === 'cleanup-crash-user')).toHaveLength(1)
-    const cleaned = await durable.load(DOMAIN)
-    expect(cleaned?.local?.presenceId).not.toBe(originalSession.presenceId)
-    expect(cleaned?.inflightEnd).toBeUndefined()
-    expect(cleaned?.pendingEnd).toBeUndefined()
-    expect(cleaned?.settledEnd).toBeUndefined()
-    expect(await noticeUsers(replacement)).toEqual([])
-
-    await replacement.join()
-    const returnedSession = network.lastSession('cleanup-crash-replacement') as { presenceId: string }
-    expect(returnedSession.presenceId).not.toBe(originalSession.presenceId)
-    await vi.waitFor(async () =>
-      expect((await noticeUsers(observer)).filter((id) => id === 'cleanup-crash-user')).toHaveLength(2)
-    )
-    expect((await noticeUsers(observer, NOTICE_TYPE.LEAVE)).filter((id) => id === 'cleanup-crash-user')).toHaveLength(1)
-    expect(await noticeUsers(replacement)).toEqual(['cleanup-crash-user'])
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

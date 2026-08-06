@@ -24,8 +24,7 @@ import type {
 import { HISTORY_WINDOW_DAYS, RUNTIME_DOMAIN_GRACE_MS } from '@/constants/config'
 import { createArticoRoomTransport } from '@/runtime/ArticoRoomTransport'
 import { PagePort } from '@/runtime/PagePort'
-import type { PresenceStore } from '@/domain/runtime/externs/PresenceStore'
-import { createBrowserPresenceStore, createMemoryPresenceStore } from '@/runtime/PresenceStore'
+import { createBrowserPresenceStore } from '@/runtime/PresenceStore'
 
 const NOW = 1_800_000_000_000
 const PHYSICAL_ROOM_JOIN_TIMEOUT_MS = 10000
@@ -641,55 +640,6 @@ describe('RuntimeServer lifecycle', () => {
     } finally {
       releaseActive.resolve()
       await join
-      disposeServer(server)
-    }
-  })
-
-  it('drains final release past a timed-out active Presence write and fences its late completion', async () => {
-    const durable = createMemoryPresenceStore()
-    const activeStarted = deferred<void>()
-    const releaseActive = deferred<void>()
-    let heldActive = false
-    const presenceStore: PresenceStore = {
-      load: (domain) => durable.load(domain),
-      save: async (record) => {
-        if (record.local?.status === 'active' && !heldActive) {
-          heldActive = true
-          activeStarted.resolve()
-          await releaseActive.promise
-        }
-        await durable.save(record)
-      }
-    }
-    const clock = new FakeClock()
-    const fake = createFakeTransport()
-    const server = createServer({ transport: fake.transport, clock, codec: jsonCodec, presenceStore })
-    await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
-    const join = server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
-    await activeStarted.promise
-    await join
-
-    try {
-      await server.detachPage({ domain: DOMAIN, pageId: 'page-a' })
-      clock.advance(RUNTIME_DOMAIN_GRACE_MS + 1)
-      await settle()
-      clock.advance(5001)
-      await settle()
-
-      await vi.waitFor(async () => expect((await server.getSnapshot()).domains).toEqual([]))
-      expect(fake.joined.size).toBe(0)
-
-      releaseActive.resolve()
-      await vi.waitFor(async () => {
-        const stored = await durable.load(DOMAIN)
-        expect(stored?.local).toBeUndefined()
-        expect(stored?.inflightEnd).toBeUndefined()
-        expect(stored?.pendingEnd).toBeUndefined()
-        expect(stored?.settledEnd).toBeUndefined()
-      })
-    } finally {
-      releaseActive.resolve()
-      await settle()
       disposeServer(server)
     }
   })

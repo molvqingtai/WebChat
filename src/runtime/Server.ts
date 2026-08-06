@@ -141,29 +141,13 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   }
 
   const snapshot = (): RuntimeSnapshot => store.query(connectionDomain.query.SnapshotQuery())
-  const acquirePresence = async (
-    domain: string,
-    userId: string
-  ): Promise<'active' | 'acquired' | 'finalizing' | 'settled'> => {
+  const acquirePresence = async (domain: string, userId: string): Promise<'active' | 'acquired' | 'finalizing'> => {
     if (store.query(sessionDomain.query.DomainQuery(domain))) {
       return store.query(sessionDomain.query.FinalizingPresenceQuery(domain)) ? 'finalizing' : 'active'
     }
+    // No durable end journal: a rejoin always acquires the durable local lease or a fresh one and
+    // hydrates the current generation. An in-memory release fenced the domain only for this generation.
     const stored = (await presenceStore.load(domain)) ?? { domain, lastJoinedAt: 0, observers: [] }
-    const unsettledEnd = stored.pendingEnd ?? stored.inflightEnd
-    const finalEnd = stored.settledEnd ?? unsettledEnd
-    if (finalEnd && finalEnd.userId !== userId) {
-      throw new Error('Runtime pending presence belongs to another user')
-    }
-    if (stored.settledEnd) {
-      const { inflightEnd: _inflightEnd, pendingEnd: _pendingEnd, settledEnd: _settledEnd, ...record } = stored
-      await presenceStore.save(record)
-      store.send(sessionDomain.command.HydratePresenceCommand(record))
-      return 'settled'
-    }
-    if (unsettledEnd) {
-      store.send(sessionDomain.command.HydratePresenceCommand(stored))
-      return 'finalizing'
-    }
     const local =
       stored.local?.userId === userId
         ? stored.local
