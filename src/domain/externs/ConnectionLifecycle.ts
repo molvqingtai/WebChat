@@ -1,23 +1,22 @@
 import { Remesh } from 'remesh'
 
-/** The exact, per-attempt structural outcome of a connection lifecycle operation. */
+/** The exact, per-attempt structural outcome of one connection lifecycle operation. */
 export type ConnectionLifecycleResult = 'active' | 'succeeded' | 'cancelled' | 'failed'
 
+/**
+ * A per-attempt connection lifecycle channel. Each connection/reconnect invocation reserves an exact
+ * token (`beginAttempt`) before it runs; only that invocation reports and reads that token's result
+ * (`active -> succeeded | cancelled | failed`). It never reflects a global "current attempt", and
+ * overlapping connection/reconnect operations each own their own token.
+ */
 export interface ConnectionLifecycle {
-  /**
-   * The exact outcome of the most recently settled connection attempt, owned by that attempt. A
-   * `cancelled` outcome is the producer-recognized structural result (host replacement, supersession,
-   * or a Runtime cancellation); `failed` is a genuine failure; `succeeded` completed normally. The
-   * domain reads this per-attempt result to classify a completion; it never inspects a thrown error's
-   * name/message/type/code/value.
-   */
-  getResult: () => ConnectionLifecycleResult
-  onResultChange: (callback: (result: ConnectionLifecycleResult) => void) => () => void
+  beginAttempt: () => number
+  getAttemptResult: (token: number) => ConnectionLifecycleResult
 }
 
 export const ConnectionLifecycleExtern = Remesh.extern<ConnectionLifecycle>({
   default: {
-    getResult: () => 'active',
-    onResultChange: () => () => {}
+    beginAttempt: () => 0,
+    getAttemptResult: () => 'active'
   }
 })

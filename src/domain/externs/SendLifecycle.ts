@@ -14,7 +14,6 @@ export interface SendLifecycle {
   getSendResult: (token: number) => SendResult
   settleSend: (token: number, result: SendResult) => void
   cancelActiveSends: () => void
-  onSendSettled: (callback: (payload: { token: number; result: SendResult }) => void) => () => void
 }
 
 export const SendLifecycleExtern = Remesh.extern<SendLifecycle>({
@@ -24,7 +23,6 @@ export const SendLifecycleExtern = Remesh.extern<SendLifecycle>({
     },
     getSendResult: () => 'active',
     settleSend: () => {},
-    cancelActiveSends: () => {},
-    onSendSettled: () => () => {}
+    cancelActiveSends: () => {}
   }
 })

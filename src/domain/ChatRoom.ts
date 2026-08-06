@@ -1,5 +1,5 @@
 import { Remesh } from 'remesh'
-import { concatMap, filter, fromEventPattern, map, mergeMap, startWith, take, tap, timer } from 'rxjs'
+import { concatMap, filter, fromEventPattern, map, mergeMap, startWith, take, timer } from 'rxjs'
 import {
   ChatRoomExtern,
   type JoinRoomCommand as JoinRoomInput,
@@ -125,7 +125,14 @@ const ChatRoomDomain = Remesh.domain({
 
     const ApplySessionsCommand = domain.command({
       name: 'Room.ApplySessionsCommand',
-      impl: (_, sessions: readonly ChatSession[]) => SessionsState().new(sessions)
+      impl: ({ get }, sessions: readonly ChatSession[]) => {
+        // When the local user's own session is gone, this domain's chat has ended (final release);
+        // cancel still-active local send tokens. A remote peer's leave keeps the local session and
+        // must NOT cancel any local send.
+        const selfId = get(userInfoDomain.query.UserInfoQuery())?.id
+        if (selfId && !sessions.some((session) => session.user.id === selfId)) sendLifecycle.cancelActiveSends()
+        return SessionsState().new(sessions)
+      }
     })
 
     const ConnectionRequestedEvent = domain.event<ConnectionOperation>({ name: 'Room.ConnectionRequestedEvent' })
@@ -329,16 +336,18 @@ const ChatRoomDomain = Remesh.domain({
       impl: ({ fromEvent, get }) =>
         fromEvent(ConnectionRequestedEvent).pipe(
           mergeMap(async (operation) => {
+            const attemptToken = lifecycle.beginAttempt()
             try {
               await chatRoom.joinRoom(operation.input)
               return CompleteConnectionOperationCommand(operation)
             } catch (error) {
               // A completion is silent cancellation only when it is no longer the current live request
-              // (superseded) or the host recorded that exact attempt as a structural cancellation. It
-              // is never classified from the caught error's content.
+              // (superseded) or that exact attempt's own token is `cancelled`. It is never classified
+              // from the caught error's content or any global/current attempt state.
               return CompleteConnectionOperationCommand({
                 ...operation,
-                ...(get(ConnectionRequestState())?.id !== operation.id || lifecycle.getResult() === 'cancelled'
+                ...(get(ConnectionRequestState())?.id !== operation.id ||
+                lifecycle.getAttemptResult(attemptToken) === 'cancelled'
                   ? { cancelled: true }
                   : { error: normalizeError(error) })
               })
@@ -452,17 +461,22 @@ const ChatRoomDomain = Remesh.domain({
       impl: ({ fromEvent, get }) =>
         fromEvent(ReconnectRequestedEvent).pipe(
           concatMap(async ({ id, input, mode }) => {
+            let attemptToken = -1
             try {
               if (mode === 'reconnect') await chatRoom.leaveRoom()
+              // The reconnect completes through its final joinRoom attempt; bind that exact attempt's
+              // token so cancellation/supersession of this reconnect is classified per its own outcome.
+              attemptToken = lifecycle.beginAttempt()
               await chatRoom.joinRoom(input)
               return mode === 'retry'
                 ? CompleteRetryOperationCommand({ id, input })
                 : CompleteReconnectOperationCommand({ id })
             } catch (error) {
               // Cancellation is a supersession (this reconnect is no longer the current live request) or
-              // the host recorded that exact attempt as a structural cancellation. It is never derived
-              // from the caught error's content.
-              const cancelled = get(ReconnectRequestQuery())?.id !== id || lifecycle.getResult() === 'cancelled'
+              // that exact join attempt's own token is `cancelled`. It is never derived from the caught
+              // error's content or any global/current attempt state.
+              const cancelled =
+                get(ReconnectRequestQuery())?.id !== id || lifecycle.getAttemptResult(attemptToken) === 'cancelled'
               if (cancelled) {
                 return mode === 'retry'
                   ? CompleteRetryOperationCommand({ id, input, cancelled: true })
@@ -513,7 +527,6 @@ const ChatRoomDomain = Remesh.domain({
       name: 'Room.OnLeaveEffect',
       impl: () =>
         fromEventPattern<ChatSession>(chatRoom.onLeaveRoom.bind(chatRoom), (_handler, dispose) => dispose()).pipe(
-          tap(() => sendLifecycle.cancelActiveSends()),
           map((session) => PersistNoticeCommand({ type: 'leave', session }))
         )
     })

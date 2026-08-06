@@ -8,7 +8,7 @@ import { ChatRoomExtern, type ChatRoom } from '@/domain/externs/ChatRoom'
 import { ReadinessExtern } from '@/domain/externs/Readiness'
 import { ConnectionLifecycleExtern, type ConnectionLifecycleResult } from '@/domain/externs/ConnectionLifecycle'
 import { SendLifecycleExtern } from '@/domain/externs/SendLifecycle'
-import { createConnectionLifecycleImpl } from '@/domain/impls/ConnectionLifecycle'
+import { createConnectionLifecycle } from '@/domain/impls/ConnectionLifecycle'
 import { createSendLifecycle } from '@/domain/impls/SendLifecycle'
 import { createMemoryMessageDatabase } from '@/domain/impls/database/Memory'
 import { ChatRoom as RuntimeChatRoom } from '@/domain/impls/runtime/ChatRoom'
@@ -72,9 +72,8 @@ const createFixture = (options: { delayRecordWatch?: boolean; user?: UserInfo | 
     watch: async () => async () => {}
   }
   const readinessListeners = new Set<(state: 'connecting' | 'ready' | 'unavailable') => void>()
-  let lifecycleResult: ConnectionLifecycleResult = 'active'
-  const lifecycleListeners = new Set<(result: ConnectionLifecycleResult) => void>()
-  const notifyLifecycle = () => lifecycleListeners.forEach((listener) => listener(lifecycleResult))
+  const lifecycleTokens = new Map<number, ConnectionLifecycleResult>()
+  let lifecycleSeq = 0
   const listeners = {
     message: new Set<(message: ChatMessage) => void>(),
     join: new Set<(session: ChatSession) => void>(),
@@ -87,11 +86,7 @@ const createFixture = (options: { delayRecordWatch?: boolean; user?: UserInfo | 
     return () => listeners.delete(listener)
   }
   const chat: ChatRoom = {
-    joinRoom: vi.fn(async () => {
-      // Mirror the adapter: each new connection attempt begins as `active`, so a prior attempt's
-      // outcome never leaks onto this operation's classification.
-      lifecycleResult = 'active'
-    }),
+    joinRoom: vi.fn(async () => {}),
     leaveRoom: vi.fn(async () => {}),
     sendMessage: vi.fn(async (command) => {
       if (command.type === 'reaction') {
@@ -141,11 +136,15 @@ const createFixture = (options: { delayRecordWatch?: boolean; user?: UserInfo | 
     externs: [
       ChatRoomExtern.impl(chat),
       ConnectionLifecycleExtern.impl({
-        getResult: () => lifecycleResult,
-        onResultChange: (listener) => {
-          lifecycleListeners.add(listener)
-          listener(lifecycleResult)
-          return () => lifecycleListeners.delete(listener)
+        beginAttempt: () => {
+          const token = ++lifecycleSeq
+          lifecycleTokens.set(token, 'active')
+          return token
+        },
+        getAttemptResult: (token) => {
+          const result = lifecycleTokens.get(token) ?? 'active'
+          if (result !== 'active') lifecycleTokens.delete(token)
+          return result
         }
       }),
       SendLifecycleExtern.impl(createSendLifecycle()),
@@ -193,8 +192,7 @@ const createFixture = (options: { delayRecordWatch?: boolean; user?: UserInfo | 
     emitReadiness: (state: 'connecting' | 'ready' | 'unavailable') =>
       readinessListeners.forEach((listener) => listener(state)),
     setLifecycleResult: (result: ConnectionLifecycleResult) => {
-      lifecycleResult = result
-      notifyLifecycle()
+      if (lifecycleSeq > 0) lifecycleTokens.set(lifecycleSeq, result)
     }
   }
 }
@@ -347,6 +345,8 @@ const createPendingConnectionFixture = (stage: PendingConnectionStage) => {
       }
     }
   })
+  const lifecycleBundle = createConnectionLifecycle()
+  adapter.bindConnectionTokenAcquirer(lifecycleBundle.tokenAcquirer)
   const storage: Storage = {
     get: async <T extends StorageValue>() => SELF as T,
     set: async () => {},
@@ -355,7 +355,7 @@ const createPendingConnectionFixture = (stage: PendingConnectionStage) => {
   const store = Remesh.store({
     externs: [
       ChatRoomExtern.impl(adapter),
-      ConnectionLifecycleExtern.impl(createConnectionLifecycleImpl(adapter)),
+      ConnectionLifecycleExtern.impl(lifecycleBundle.value),
       SendLifecycleExtern.impl(createSendLifecycle()),
       ReadinessExtern.impl({
         onState: (listener) => {
@@ -867,9 +867,12 @@ describe('ChatRoomDomain exact application port', () => {
       watch: async () => async () => {}
     }
     vi.stubGlobal('document', { location: { origin: domain }, title: '', querySelector: () => null })
+    const lifecycleBundle = createConnectionLifecycle()
+    adapter.bindConnectionTokenAcquirer(lifecycleBundle.tokenAcquirer)
     const store = Remesh.store({
       externs: [
         ChatRoomExtern.impl(adapter),
+        ConnectionLifecycleExtern.impl(lifecycleBundle.value),
         ReadinessExtern.impl({ onState: () => () => {} }),
         MessageDatabaseExtern.impl(database),
         BrowserSyncStorageExtern.impl(storage)
@@ -1222,10 +1225,10 @@ describe('ChatRoomDomain exact application port', () => {
     fixture.store.send(fixture.room.command.SendTextMessageCommand('held by teardown'))
     await vi.waitFor(() => expect(fixture.chat.sendMessage).toHaveBeenCalledOnce())
 
-    // Final release in progress: the domain session leaves, which cancels the still-active send token
+    // Final release in progress: the local session is gone, so the still-active send token is cancelled
     // (a per-send structural owner). The in-flight send then rejects but its own token is already
-    // cancelled, so it is silent — never derived from the caught error's content or global readiness.
-    fixture.emitLeave(SELF_SESSION)
+    // cancelled, so it is silent — never derived from the caught error's content or a remote-leave event.
+    fixture.emitSessions([])
     rejectSend(new DOMException('Runtime presence is completing its final release', 'AbortError'))
     await Promise.resolve()
 
@@ -1254,6 +1257,32 @@ describe('ChatRoomDomain exact application port', () => {
     // Unrelated connection/reconnect loading must not hide a real provider failure: each send owns an
     // exact token, so only a cancelled token is silent; this genuine error settles its token `failed`.
     fixture.emitReadiness('connecting')
+    rejectSend(providerError)
+
+    await vi.waitFor(() => expect(errors).toEqual([providerError]))
+    fixture.store.discard()
+  })
+
+  it('does not let a remote peer leave cancel a pending local send that then really fails', async () => {
+    const fixture = createFixture()
+    const errors: Error[] = []
+    fixture.store.subscribeEvent(fixture.room.event.OnErrorEvent, (error) => errors.push(error))
+    let rejectSend!: (reason?: unknown) => void
+    const providerError = new Error('provider transport failed')
+    const rejectedSend = new Promise<never>((_, reject) => {
+      rejectSend = reject
+    })
+    vi.mocked(fixture.chat.sendMessage).mockReturnValueOnce(
+      rejectedSend as never as ReturnType<typeof fixture.chat.sendMessage>
+    )
+    fixture.store.send(fixture.input.command.InputCommand('remote leaves'))
+
+    fixture.store.send(fixture.room.command.SendTextMessageCommand('remote leaves'))
+    await vi.waitFor(() => expect(fixture.chat.sendMessage).toHaveBeenCalledOnce())
+
+    // A remote user's departure keeps the local session present and must NOT cancel this local send;
+    // its token cannot settle `cancelled`, so the genuine provider failure must surface.
+    fixture.emitSessions([SELF_SESSION])
     rejectSend(providerError)
 
     await vi.waitFor(() => expect(errors).toEqual([providerError]))

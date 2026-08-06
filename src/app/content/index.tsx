@@ -16,7 +16,7 @@ import { ToastImpl } from '@/domain/impls/Toast'
 import { createChatRoomImpl } from '@/domain/impls/ChatRoom'
 import { createWorldRoomImpl } from '@/domain/impls/WorldRoom'
 import { createReadinessImpl } from '@/domain/impls/Readiness'
-import { createConnectionLifecycleImpl } from '@/domain/impls/ConnectionLifecycle'
+import { createConnectionLifecycle } from '@/domain/impls/ConnectionLifecycle'
 import { createSendLifecycle } from '@/domain/impls/SendLifecycle'
 import { AppActionImpl } from '@/domain/impls/AppAction'
 // Remove import after merging: https://github.com/emilkowalski/sonner/pull/508
@@ -33,11 +33,7 @@ import { MessageDatabaseExtern, type MessageDatabaseSchema } from '@/domain/Mess
 import { ChatRoomExtern, type ChatRoom } from '@/domain/externs/ChatRoom'
 import { WorldRoomExtern, type WorldRoom } from '@/domain/externs/WorldRoom'
 import { ReadinessExtern, type Readiness } from '@/domain/externs/Readiness'
-import {
-  ConnectionLifecycleExtern,
-  type ConnectionLifecycle,
-  type ConnectionLifecycleResult
-} from '@/domain/externs/ConnectionLifecycle'
+import { ConnectionLifecycleExtern, type ConnectionLifecycle } from '@/domain/externs/ConnectionLifecycle'
 import { SendLifecycleExtern } from '@/domain/externs/SendLifecycle'
 import { BrowserSyncStorageExtern, type Storage, type StorageValue } from '@/domain/externs/Storage'
 import type { Database } from '@/domain/externs/Database'
@@ -157,17 +153,15 @@ const createContentStore = () => {
   const deferredReadiness: Readiness = {
     onState: (listener) => subscribeDeferred(readiness, (value) => value.onState(listener))
   }
-  let currentLifecycleResult: ConnectionLifecycleResult = 'active'
+  let currentConnectionLifecycle: ConnectionLifecycle | null = null
   const deferredConnectionLifecycle: ConnectionLifecycle = {
-    getResult: () => currentLifecycleResult,
-    onResultChange: (listener) =>
-      subscribeDeferred(connectionLifecycle, (value) => {
-        currentLifecycleResult = value.getResult()
-        return value.onResultChange((result) => {
-          currentLifecycleResult = result
-          listener(result)
-        })
-      })
+    beginAttempt: () =>
+      currentConnectionLifecycle
+        ? currentConnectionLifecycle.beginAttempt()
+        : (() => {
+            throw new Error('ConnectionLifecycle not ready')
+          })(),
+    getAttemptResult: (token) => currentConnectionLifecycle?.getAttemptResult(token) ?? 'active'
   }
 
   const store = Remesh.store({
@@ -193,13 +187,16 @@ const createContentStore = () => {
     const ChatRoomImpl = createChatRoomImpl(database)
     const WorldRoomImpl = createWorldRoomImpl()
     const ReadinessImpl = createReadinessImpl(whenHostPhase)
+    const lifecycleBundle = createConnectionLifecycle()
+    ChatRoomImpl.epochSource.bindConnectionTokenAcquirer(lifecycleBundle.tokenAcquirer)
 
     browserSyncStorage.resolve(BrowserSyncStorageImpl.value)
     messageDatabase.resolve(database)
     chatRoom.resolve(ChatRoomImpl.value)
     worldRoom.resolve(WorldRoomImpl.value)
     readiness.resolve(ReadinessImpl.value)
-    connectionLifecycle.resolve(createConnectionLifecycleImpl(ChatRoomImpl.epochSource))
+    currentConnectionLifecycle = lifecycleBundle.value
+    connectionLifecycle.resolve(lifecycleBundle.value)
   }
 
   // Every distinct real control-plane failure surfaces as a fresh original-message toast while the

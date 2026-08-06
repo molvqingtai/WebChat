@@ -132,7 +132,7 @@ beforeEach(() => {
   fixture.createIndexedDBMessageDatabase.mockReturnValue(fixture.database)
   fixture.createChatRoomImpl.mockReturnValue({
     value: fixture.chat,
-    epochSource: { getAttemptResult: () => 'active' as const, onAttemptResultChange: () => () => {} }
+    epochSource: { bindConnectionTokenAcquirer: () => {} }
   })
   fixture.createWorldRoomImpl.mockReturnValue({ value: fixture.world })
   fixture.createReadinessImpl.mockReturnValue({ value: fixture.readiness })
