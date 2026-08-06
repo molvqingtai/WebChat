@@ -115,6 +115,13 @@ export class ClientLease {
     return this.hostStatus.terminalError !== undefined
   }
 
+  observeTransportRejection(error: unknown) {
+    const lifecycle = this.lifecycle
+    const terminalMessage = terminalRuntimeErrorMessage(error)
+    if (!lifecycle || !terminalMessage) return false
+    return this.settleTerminal(lifecycle, error, terminalMessage)
+  }
+
   private settleTerminal(lifecycle: AbortController, error: unknown, message: string) {
     if (!this.isCurrent(lifecycle) || this.isTerminal()) return false
     this.ready = false

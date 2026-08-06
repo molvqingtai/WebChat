@@ -1,7 +1,7 @@
 import { browser } from '#imports'
 import { defineProxy } from 'comctx'
 import { nanoid } from 'nanoid'
-import { InjectAdapter } from '@/service/adapter/runtime'
+import { InjectAdapter, ownInjectRejections } from '@/service/adapter/runtime'
 import type { RuntimeCoordinator, RuntimeServer, RuntimeSnapshot } from '@/runtime/Contract'
 import { COORDINATOR_NAMESPACE, RUNTIME_NAMESPACE_PREFIX } from '@/runtime/Contract'
 import { ClientLease } from '@/runtime/ClientLease'
@@ -29,6 +29,7 @@ export const coordinator = injectCoordinator(new InjectAdapter())
 export const server = injectServer(new InjectAdapter())
 
 const client = new ClientLease({ coordinator, pageId, domain: pageDomain })
+ownInjectRejections((error) => client.observeTransportRejection(error))
 
 export const whenReady = (callback: () => void) => client.whenReady(callback)
 export const whenHostPhase = (callback: Parameters<typeof client.whenHostPhase>[0]) => client.whenHostPhase(callback)

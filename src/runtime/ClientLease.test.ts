@@ -190,6 +190,29 @@ describe('ClientLease generation ownership', () => {
     client.detach()
   })
 
+  it('ignores nonterminal transport rejections without changing the healthy lease', async () => {
+    const coordinator = coordinatorWith(vi.fn(async () => registration()))
+    const logError = vi.fn()
+    const phases: HostPhase[] = []
+    const client = new ClientLease({
+      coordinator,
+      pageId: 'page-a',
+      domain: 'https://example.test',
+      watchdogIntervalMs: 60000,
+      logError
+    })
+    client.whenHostPhase((phase) => phases.push(phase))
+    await client.init()
+    phases.length = 0
+
+    expect(client.observeTransportRejection(new Error('Unknown transport failure'))).toBe(false)
+
+    expect(phases).toEqual([])
+    expect(logError).not.toHaveBeenCalled()
+    expect(client.snapshot()).toEqual(snapshot)
+    client.detach()
+  })
+
   it('single-flights overlapping checks and does not resurrect a detached lease', async () => {
     const pending = deferred<RuntimePageRegistration>()
     const registerPage = vi

@@ -12,6 +12,15 @@ export { relayOffscreenProviderMessages }
 
 const defaultRuntime = browser.runtime as unknown as MessageApi
 const defaultTabs = browser.tabs as unknown as TabsApi
+let injectRejectionOwner: ((error: unknown) => void) | null = null
+
+export const ownInjectRejections = (owner: (error: unknown) => void) => {
+  if (injectRejectionOwner) throw new Error('Content Runtime rejection owner is already registered')
+  injectRejectionOwner = owner
+  return () => {
+    if (injectRejectionOwner === owner) injectRejectionOwner = null
+  }
+}
 
 export class ProvideAdapter extends TabsProviderAdapter {
   constructor(runtime: MessageApi = defaultRuntime, tabs: TabsApi = defaultTabs) {
@@ -24,10 +33,13 @@ export class InjectAdapter extends InjectAdapterBase<MessageMeta> {
     super(runtime)
   }
 
-  sendMessage: SendMessage<MessageMeta> = async (message) => {
-    await this.runtime.sendMessage(this.runtime.id, {
+  sendMessage: SendMessage<MessageMeta> = (message) => {
+    const sending = this.runtime.sendMessage(this.runtime.id, {
       ...message,
       meta: { tab: { url: canonicalNavigationUrl(document.location.href) ?? document.location.href } }
     })
+    const owner = injectRejectionOwner
+    if (owner) void Promise.resolve(sending).catch(owner)
+    return sending as ReturnType<SendMessage<MessageMeta>>
   }
 }
