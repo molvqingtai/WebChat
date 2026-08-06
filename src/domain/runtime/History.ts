@@ -195,7 +195,7 @@ const HistoryDomain = Remesh.domain({
     const HistoryTimeoutArmedEvent = domain.event<HistorySyncKey>({ name: 'History.TimeoutArmedEvent' })
     const ProviderTimeoutArmedEvent = domain.event<HistorySyncKey>({ name: 'History.ProviderTimeoutArmedEvent' })
     const DeadPagesEvent = domain.event<string[]>({ name: 'History.DeadPagesEvent' })
-    const ErrorEvent = domain.event<Error>({ name: 'History.ErrorEvent' })
+    const ErrorEvent = domain.event<{ error: Error; domain?: string }>({ name: 'History.ErrorEvent' })
     const StartRequestedEvent = domain.event<{ domain: string; sourcePeerId: string }>({
       name: 'History.StartRequestedEvent'
     })
@@ -814,7 +814,7 @@ const HistoryDomain = Remesh.domain({
         if (!current) return null
         const clear = PendingWireSendsState().new(removeBy(pending, (item) => item.requestId === payload.requestId))
         if (current.kind === 'request') {
-          return [clear, ErrorEvent(payload.error), FinishCurrentRequestedEvent(current)]
+          return [clear, ErrorEvent({ error: payload.error, domain: current.domain }), FinishCurrentRequestedEvent(current)]
         }
         // A preflight failure means the oversized history frame never reached the provider: drop the
         // offending record and advance. Branches on the producer-set structured stage, never on the
@@ -822,7 +822,7 @@ const HistoryDomain = Remesh.domain({
         if (payload.stage === 'preflight' && current.records.length > 0) {
           return [clear, QueueProviderResponseCommand({ ...current, records: current.records.slice(0, -1) })]
         }
-        return [clear, ErrorEvent(payload.error), AbortProviderSupplyCommand(current)]
+        return [clear, ErrorEvent({ error: payload.error, domain: current.domain }), AbortProviderSupplyCommand(current)]
       }
     })
 

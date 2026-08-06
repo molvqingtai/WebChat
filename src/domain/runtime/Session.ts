@@ -81,6 +81,8 @@ interface PendingChatSend {
   message: ChatMessage
   /** Frozen distinct per-target send requests still awaiting their single provider call. */
   pendingTargets: string[]
+  /** Count of targets whose provider call accepted; drives settled success/failure semantics. */
+  accepted: number
 }
 
 interface PendingRelease {
@@ -198,6 +200,20 @@ const catchUpRequestId = (attemptId: string, sourcePeerId: string) => `session:c
 const chatRequestId = (operationId: string) => `session:chat:${operationId}`
 const chatTargetRequestId = (requestId: string, target: string) => `${requestId}:${target}`
 const endRequestId = (presenceId: string) => `session:end:${presenceId}`
+/** Extracts the exact domain from identity/catch-up send request ids, when structurally present. */
+const backgroundSendDomain = (requestId: string): string | undefined => {
+  if (requestId.startsWith('session:peer:')) {
+    const rest = requestId.slice('session:peer:'.length)
+    const colon = rest.lastIndexOf(':')
+    return colon > 0 ? rest.slice(0, colon) : rest
+  }
+  if (requestId.startsWith('session:catch-up:')) {
+    const rest = requestId.slice('session:catch-up:'.length)
+    const parts = rest.split(':')
+    return parts[0] === 'recovery' && parts[1] ? parts[1] : undefined
+  }
+  return undefined
+}
 const RELEASE_END_RETRY_INTERVAL_MS = 5000
 const retainedLocalLifecycle = (record: PresenceDomainRecord | undefined) =>
   record?.local ? { local: record.local } : {}
@@ -912,7 +928,8 @@ const SessionDomain = Remesh.domain({
           domain: payload.domain,
           roomId: runtime.roomId,
           message: event,
-          pendingTargets: targets
+          pendingTargets: targets,
+          accepted: 0
         }
         return [
           HlcState().new(adopted),
@@ -946,7 +963,7 @@ const SessionDomain = Remesh.domain({
         const remaining = pending.pendingTargets.filter(
           (target) => chatTargetRequestId(pending.requestId, target) !== requestId
         )
-        const next = { ...pending, pendingTargets: remaining }
+        const next = { ...pending, pendingTargets: remaining, accepted: pending.accepted + 1 }
         if (remaining.length > 0) {
           return [
             PendingChatSendsState().new(replaceBy(state, (item) => item.operationId === pending.operationId, next)),
@@ -968,13 +985,16 @@ const SessionDomain = Remesh.domain({
           item.pendingTargets.some((target) => chatTargetRequestId(item.requestId, target) === payload.requestId)
         )
         if (!pending) return null
-        // Owner loss cancels the remaining targets quietly without failing the local send.
-        if (payload.stage === 'cancelled') {
-          return [
-            PendingChatSendsState().new(removeBy(state, (item) => item.operationId === pending.operationId)),
-            OperationSucceededEvent({ operationId: pending.operationId })
-          ]
+        const settle = (accepted: number) => {
+          const clear = [PendingChatSendsState().new(removeBy(state, (item) => item.operationId === pending.operationId))]
+          // A send settles as success only when at least one target accepted; a wholly-failed or
+          // explicit-single-target send rejects so a real send failure is never recorded as success.
+          return accepted > 0
+            ? [...clear, OperationSucceededEvent({ operationId: pending.operationId })]
+            : [...clear, OperationFailedEvent({ operationId: pending.operationId, error: payload.error })]
         }
+        // Owner loss cancels the remaining targets; success only if some target had already accepted.
+        if (payload.stage === 'cancelled') return settle(pending.accepted)
         const remaining = pending.pendingTargets.filter(
           (target) => chatTargetRequestId(pending.requestId, target) !== payload.requestId
         )
@@ -987,11 +1007,7 @@ const SessionDomain = Remesh.domain({
             sendChatTarget(next)
           ]
         }
-        return [
-          failure,
-          PendingChatSendsState().new(removeBy(state, (item) => item.operationId === pending.operationId)),
-          OperationSucceededEvent({ operationId: pending.operationId })
-        ]
+        return [failure, ...settle(pending.accepted)]
       }
     })
 
@@ -1388,7 +1404,7 @@ const SessionDomain = Remesh.domain({
               await presenceStore.save(request.record)
               return null
             } catch (error) {
-              return ErrorEvent({ error: error as Error })
+              return ErrorEvent({ error: error as Error, domain: request.record.domain })
             }
           })
         )
@@ -1447,7 +1463,7 @@ const SessionDomain = Remesh.domain({
       impl: ({ fromEvent }) =>
         fromEvent(wireDomain.event.MessageSendFailedEvent).pipe(
           filter(({ requestId }) => requestId.startsWith('session:peer:') || requestId.startsWith('session:catch-up:')),
-          map(({ error }) => ErrorEvent({ error }))
+          map(({ requestId, error }) => ErrorEvent({ error, domain: backgroundSendDomain(requestId) }))
         )
     })
     domain.effect({

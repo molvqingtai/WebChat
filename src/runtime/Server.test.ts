@@ -1753,7 +1753,7 @@ describe('RuntimeServer send reliability', () => {
     expect(fake.messages(roomId)).toHaveLength(0)
   })
 
-  it('allocates id/HLC centrally and surfaces a per-target failure without rejecting the send', async () => {
+  it('allocates id/HLC centrally and rejects an explicit single-target throw once surfaced', async () => {
     const { fake, server, roomId } = await setup()
     fake.receive(roomId, 'peer-a', session())
     await settle()
@@ -1767,8 +1767,8 @@ describe('RuntimeServer send reliability', () => {
     expect(failures).toEqual([])
 
     fake.failSend(new Error('partial send'))
-    // A provider target throw surfaces once and never retries; the local send still settles.
-    await server.sendChatMessage({ domain: DOMAIN, event: record.message })
+    // The single session target throw is a real failure: surfaced once and the send rejects.
+    await expect(server.sendChatMessage({ domain: DOMAIN, event: record.message })).rejects.toThrow('partial send')
     await settle()
     expect(failures).toEqual(['partial send'])
     const next = await server.allocateTextMessage({ domain: DOMAIN, body: 'next', mentions: [] })

@@ -773,7 +773,7 @@ const ConnectionDomain = Remesh.domain({
     })
     domain.effect({
       name: 'Connection.HistoryErrorEffect',
-      impl: ({ fromEvent }) => fromEvent(historyDomain.event.ErrorEvent).pipe(map((error) => ErrorEvent({ error })))
+      impl: ({ fromEvent }) => fromEvent(historyDomain.event.ErrorEvent).pipe(map(({ error, domain }) => ErrorEvent({ error, domain })))
     })
     domain.effect({
       name: 'Connection.DomainRecoveryRetryEffect',

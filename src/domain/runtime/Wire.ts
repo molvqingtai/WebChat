@@ -77,6 +77,8 @@ interface SendQueue {
   roomId: string
   requestCount: number
   suspended: boolean
+  /** True while the head request's provider call has already started and must settle, never re-send. */
+  headInvoked: boolean
   requests: QueuedSendRequest[]
 }
 
@@ -206,6 +208,7 @@ const WireDomain = Remesh.domain({
                 roomId: request.roomId,
                 requestCount: requests.length,
                 suspended: false,
+                headInvoked: false,
                 requests
               })
         const result = payload.error
@@ -233,13 +236,18 @@ const WireDomain = Remesh.domain({
         const resumed = roomIds.flatMap((roomId) => {
           if (roomId === worldRoomId) return []
           const queue = sendQueues.find((item) => item.roomId === roomId)
-          return queue?.suspended && queue.requests[0] ? [{ roomId, queue, head: queue.requests[0] }] : []
+          // Only work never given to the provider may move into the next join generation; an already
+          // invoked head settles its own result and is never re-sent here.
+          return queue?.suspended && !queue.headInvoked && queue.requests[0]
+            ? [{ roomId, queue, head: queue.requests[0] }]
+            : []
         })
         const nextQueues = resumed.reduce(
           (queues, { roomId, queue }) =>
             replaceBy(queues, (item) => item.roomId === roomId, {
               ...queue,
               suspended: false,
+              headInvoked: false,
               requests: queue.requests.map((request) => ({ ...request, generation: current(roomId) }))
             }),
           sendQueues
@@ -272,7 +280,9 @@ const WireDomain = Remesh.domain({
           ...(payload.preservePending
             ? [
                 SendQueuesState().new(
-                  sendQueues.map((item) => (item.roomId === roomId ? { ...item, suspended: true } : item))
+                  sendQueues.map((item) =>
+                    item.roomId === roomId ? { ...item, suspended: true } : item
+                  )
                 )
               ]
             : [SendQueuesState().new(sendQueues.filter((item) => item.roomId !== roomId))]),
@@ -325,6 +335,7 @@ const WireDomain = Remesh.domain({
             roomId: request.roomId,
             requestCount: requests.length,
             suspended: current?.suspended ?? !trusted,
+            headInvoked: false,
             requests
           })
         )
@@ -365,6 +376,7 @@ const WireDomain = Remesh.domain({
                 roomId: request.roomId,
                 requestCount: requests.length,
                 suspended: false,
+                headInvoked: false,
                 requests
               })
         const result = payload.error
@@ -398,7 +410,15 @@ const WireDomain = Remesh.domain({
         ) {
           return CompleteSendCommand({ request: payload.request })
         }
-        return ProviderSendRequestedEvent({ request: payload.request, rawPayload: payload.rawPayload })
+        // Mark the head as handed to the provider so a later generation switch never re-sends it.
+        const invokedQueues = replaceBy(get(SendQueuesState()), (item) => item.roomId === payload.request.roomId, {
+          ...current,
+          headInvoked: true
+        })
+        return [
+          SendQueuesState().new(invokedQueues),
+          ProviderSendRequestedEvent({ request: payload.request, rawPayload: payload.rawPayload })
+        ]
       }
     })
 
@@ -501,7 +521,9 @@ const WireDomain = Remesh.domain({
             ? [SendQueuesState().new(sendQueues.filter((item) => item.roomId !== roomId))]
             : [
                 SendQueuesState().new(
-                  sendQueues.map((item) => (item.roomId === roomId ? { ...item, suspended: true } : item))
+                  sendQueues.map((item) =>
+                    item.roomId === roomId ? { ...item, suspended: true } : item
+                  )
                 )
               ]),
           DecodeQueuesState().new(get(DecodeQueuesState()).filter((item) => item.frames[0]?.roomId !== roomId)),

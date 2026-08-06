@@ -427,7 +427,7 @@ describe('WireDomain anti-corruption boundary', () => {
         expect(sent).not.toContain('stale-provider')
         expect(failed).toEqual(['stale-provider'])
       } else {
-        expect(providerPayloads).toEqual([JSON.stringify(stale), JSON.stringify(stale), JSON.stringify(current)])
+        expect(providerPayloads).toEqual([JSON.stringify(stale), JSON.stringify(current)])
         expect(sent).toEqual(['stale-provider', 'current-provider'])
         expect(failed).toEqual([])
       }
