@@ -1,3 +1,3 @@
 # absorb-transient-recovery-without-error-toasts
 
-Make connection recovery absorb only interruptions that can still settle successfully. Proven terminal native and other unrecoverable failures stop their failed recovery owner and appear once as an error toast with the underlying error's original text.
+Keep WebChat connection recovery structural, generation-scoped, and owned by the live Runtime. Every distinct real local failure creates a fresh toast with its original message on every current affected page; cancellation, stale work, and remote no-result outcomes remain quiet. Full extension reload leaves the old document non-ready and boundedly polling until that document ends, without automatic refresh or injection.

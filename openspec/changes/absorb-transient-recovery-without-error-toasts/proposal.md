@@ -1,13 +1,20 @@
 ## Why
 
-Refreshing the page, updating the extension, restarting the background worker, reconnecting across generations, or racing a room teardown can currently surface internal errors as user-visible error toasts (presence final-release rejections, untrusted-room rejections, signaling `id-taken`). Those failures are transient only while a code-owned recovery path can still reach success. Conversely, a browser-native failure such as `Extension context invalidated.` permanently disconnects the affected content generation from the extension Runtime; treating it as transient leaves that generation retrying forever and hides the actual failure. Recoverable interruptions must remain silent, while native failures that code cannot recover must surface once with their original text.
+Connection lifecycle and error presentation answer different questions. Current generation, Room, revision, page, and continuation facts decide whether work retries, becomes ready, settles, or is canceled. Every distinct real local failure still matters to users on every current affected page and must retain its original message. Conflating those concerns either hides failures or lets presentation state control connection work.
+
+The browser also has two different restart boundaries. Normal Chrome and Edge MV3 Background idle/restart preserves the Offscreen Runtime and Rooms, while a full extension reload permanently separates an old Content document from the new extension generation. The product must preserve the former and expose the latter through bounded, visible polling without automatic refresh or injection.
 
 ## What Changes
 
-- Define recoverability by outcome: page refresh or reopen, a successful extension/background handoff, reconnect generation takeover (including signaling peer-ID occupation), and room teardown/final-release races remain silent only while the owning recovery flow can still settle successfully.
-- Define terminal native failure behavior: when a browser-native error proves that the owning generation has no code-owned recovery path, that generation stops its futile retry/loading cycle and presents exactly one error toast with the native error's original text. A later loading update from that failed generation cannot replace the terminal error.
-- Classify `Extension context invalidated.` as terminal for the affected old content generation because that generation's Runtime endpoint is permanently invalid.
-- Keep the existing error pass-through presentation; the change removes the erroneous production of errors in transient flows, not the display of genuine errors.
+- Make connection recovery depend only on current structural lifecycle facts, never error content.
+- Keep lifecycle owner, retry, iterator, error delivery, Room-attempt handle, and cleanup step state inside the current live generation; do not add durable lifecycle state.
+- Preserve Chrome and Edge Offscreen Runtime work across normal MV3 Background idle/restart and keep Firefox on its persistent Background Runtime.
+- Keep an old document non-ready after full extension reload and continue ordinary bounded polling until refresh, navigation, close, or supersession.
+- Give each Chat and World attempt ownership only of an optional handle it created but has not committed.
+- Route every Presence publication through one World iterator; preserve the Room, attempted results, and ready or release continuation when only the revision is superseded.
+- Treat an exact live domain-release continuation as World demand so last-page release publishes Presence and completes without a page binding.
+- Treat `room.send()` return as local acceptance, never retry a target that throws, and keep remote non-delivery or missing History as no-result.
+- Create a fresh original-message toast for every distinct real local failure on every current affected page; do not suppress, merge, update, throttle, normalize, or rewrite it.
 
 ## Capabilities
 
@@ -17,10 +24,11 @@ None.
 
 ### Modified Capabilities
 
-- `webrtc-runtime`: Recovery absorbs only recoverable transient states without surfacing errors; terminal native and other unrecoverable failures produce one error toast with the original error text.
+- `webrtc-runtime`: Connection ownership, browser restart behavior, Room recovery, Presence publication, domain release, send settlement, and error delivery follow current-generation structural state with transparent original-message failures.
 
 ## Impact
 
-- Affected behavior: user-visible outcome of sending, reacting, and connecting during page refresh, extension/background restart, reconnect generation, and room teardown windows; terminal behavior after a native Runtime endpoint failure; the error toast shown on genuine connection failure.
-- Affected verification: each recoverable transient scenario completes without any error toast and the operation eventually succeeds; `Extension context invalidated.` and every other proven terminal failure produce one toast carrying the original error text, stop the failed generation's retry loop, and cannot be overwritten by loading feedback.
-- Unchanged: message delivery semantics for established connections, canonical message data and ordering, room trust rules themselves, Runtime networking protocols, permissions, dependencies, and all other browser-specific product behavior.
+- Affected behavior: Content binding and readiness, Chrome and Edge MV3 wake, Firefox persistent Runtime, full extension reload, Chat and World recovery, Presence revisions, domain and host release, target sends, History response windows, and error toasts.
+- Affected implementation: Background bootstrap, physical Runtime coordination, page leases and callbacks, Room-attempt cleanup, the World target iterator, live release steps, send settlement, and current-route error delivery.
+- Affected verification: worker wake, full reload, Runtime replacement, page supersession, Room failure and cleanup, revision supersession, last-page release, target failure, History no-result, original-message toast fan-out, and zero durable lifecycle state.
+- Unchanged: canonical message data and ordering, Room trust rules, Runtime networking protocols, permissions, manifest behavior, dependencies, and remote delivery guarantees.
