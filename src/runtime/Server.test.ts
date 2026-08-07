@@ -16,6 +16,8 @@ import { MESSAGE_RECORD_TYPE, type TextMessageRecord } from '@/domain/Message'
 import { ChatRoom } from '@/domain/impls/runtime/ChatRoom'
 import { createMessageStore } from '@/domain/MessageStore'
 import { createMemoryMessageDatabase } from '@/domain/impls/database/Memory'
+import type { Database, ReadTransaction, WriteTransaction } from '@/domain/externs/Database'
+import type { MessageDatabaseSchema } from '@/domain/MessageStore'
 import type {
   HistorySupplyRequest,
   HistorySupplyResult,
@@ -487,6 +489,46 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
 
 const settle = async () => {
   await vi.advanceTimersByTimeAsync(0)
+}
+
+/** Wraps a memory Database so a test can physically hold page store writes open. */
+class ControlledDatabase implements Database<MessageDatabaseSchema> {
+  beforeWrite: (() => void | Promise<void>) | null = null
+
+  constructor(private readonly inner: Database<MessageDatabaseSchema>) {}
+
+  read<
+    const Stores extends readonly [keyof MessageDatabaseSchema & string, ...(keyof MessageDatabaseSchema & string)[]],
+    Result
+  >(
+    stores: Stores,
+    operation: (transaction: ReadTransaction<MessageDatabaseSchema, Stores[number]>) => Promise<Result>,
+    signal?: AbortSignal
+  ): Promise<Result> {
+    return this.inner.read(stores, operation, signal)
+  }
+
+  async write<
+    const Stores extends readonly [keyof MessageDatabaseSchema & string, ...(keyof MessageDatabaseSchema & string)[]],
+    Result
+  >(
+    stores: Stores,
+    operation: (transaction: WriteTransaction<MessageDatabaseSchema, Stores[number]>) => Promise<Result>,
+    signal?: AbortSignal
+  ): Promise<Result> {
+    await this.beforeWrite?.()
+    return this.inner.write(stores, operation, signal)
+  }
+
+  watch<
+    const Stores extends readonly [keyof MessageDatabaseSchema & string, ...(keyof MessageDatabaseSchema & string)[]]
+  >(stores: Stores, listener: () => void) {
+    return this.inner.watch(stores, listener)
+  }
+
+  close() {
+    return this.inner.close()
+  }
 }
 
 /** Injects one current remote World peer so publication iterators have a distinct live target. */
@@ -2417,9 +2459,10 @@ describe('RuntimeServer history', () => {
   it('publishes the real history-sync receipt Toast per nonempty batch and stays silent for empty or rejected responses', async () => {
     const { fake, server, roomId } = await setup()
     const database = createMemoryMessageDatabase('server-history-sync')
+    const controlled = new ControlledDatabase(database)
     const room = new ChatRoom({
       server,
-      messageStore: createMessageStore(database),
+      messageStore: createMessageStore(controlled),
       pageDomain: DOMAIN,
       pageId: 'page-a',
       getSnapshot: () => ({
@@ -2438,15 +2481,35 @@ describe('RuntimeServer history', () => {
     room.onHistorySync(() => historySyncs.push(historySyncs.length))
     await settle()
 
-    // A real remote session arrival starts the requester history sync over the wire.
+    // A real remote session arrival starts the requester history sync over the wire. Between request
+    // start and the first response there must be zero receipt signals.
     fake.receive(roomId, 'peer-a', session())
     await settle()
     const initial = fake.messages(roomId).find((message) => message.type === MESSAGE_TYPE.HISTORY_REQUEST)
     const syncId = (initial as { syncId: string }).syncId
     expect(syncId).toBeTruthy()
+    expect(historySyncs).toEqual([])
 
-    // A first nonempty batch (done:false) flows through the real producer-to-page boundary and
-    // publishes exactly one receipt Toast before insertion settles.
+    // A malformed (non-recent-first) response arrives while this requester is still active: it is
+    // rejected before the application/page boundary, so it must not publish. The requester stays
+    // current (proven by the valid batch that follows using the same sync id).
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_RESPONSE,
+      syncId,
+      users: [REMOTE_USER],
+      messages: [text('newer-first', REMOTE_USER.id, NOW), text('older-second', REMOTE_USER.id, NOW + 1)],
+      done: true
+    })
+    await settle()
+    expect(historySyncs).toEqual([])
+
+    // Hold the page's real store write: the first nonempty batch must publish its receipt signal
+    // through the real producer-to-page boundary BEFORE insertion settles.
+    const release = { write: null as null | (() => void) }
+    controlled.beforeWrite = () =>
+      new Promise<void>((resolve) => {
+        release.write = () => resolve()
+      })
     fake.receive(roomId, 'peer-a', {
       type: MESSAGE_TYPE.HISTORY_RESPONSE,
       syncId,
@@ -2457,7 +2520,14 @@ describe('RuntimeServer history', () => {
     await settle()
     expect(historySyncs).toEqual([0])
 
-    // A second successive batch with its own continuation cursor announces independently.
+    // Release once: only the first held write is unblocked; clear the gate so the batch's
+    // remaining events insert freely and every sequence ACKs. Durable ACK lets the Runtime
+    // continue to the next batch (done:true), which publishes independently.
+    release.write?.()
+    controlled.beforeWrite = null
+    await settle()
+    await settle()
+    await settle()
     fake.receive(roomId, 'peer-a', {
       type: MESSAGE_TYPE.HISTORY_RESPONSE,
       syncId,
@@ -2483,19 +2553,6 @@ describe('RuntimeServer history', () => {
     })
     await settle()
     expect(historySyncs).toEqual([0, 1])
-
-    // A response rejected before the application/page boundary (non-recent-first ordering) never
-    // reaches the page, so it cannot publish.
-    const beforeRejected = historySyncs.length
-    fake.receive(roomId, 'peer-b', {
-      type: MESSAGE_TYPE.HISTORY_RESPONSE,
-      syncId: peerBSyncId,
-      users: [REMOTE_USER],
-      messages: [text('newer-first', REMOTE_USER.id, NOW), text('older-second', REMOTE_USER.id, NOW + 1)],
-      done: true
-    })
-    await settle()
-    expect(historySyncs).toHaveLength(beforeRejected)
     room.dispose()
   })
 
