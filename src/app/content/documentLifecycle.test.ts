@@ -137,9 +137,8 @@ describe('Content document-lifecycle owner composed parent control', () => {
     })
     await lease.init()
     const detachSpy = vi.spyOn(lease, 'detach')
-    const fixture = createComposedFixture(lease)
-    // Spy the SAME SendLifecycle installed in the composed store so cancellation exact-once is observable.
-    const cancelSpy = vi.spyOn(fixture.sendLifecycle, 'cancelActiveSends')
+    // Install readiness instrumentation BEFORE the composed store ignites the AppFeedback/Readiness
+    // effect, so every real subscription/unsubscription is counted from the start.
     let readinessSubscriptions = 0
     let readinessUnsubscriptions = 0
     const originalReadiness = lease.whenHostPhase.bind(lease)
@@ -151,6 +150,9 @@ describe('Content document-lifecycle owner composed parent control', () => {
         return unsubscribe()
       }
     })
+    const fixture = createComposedFixture(lease)
+    // Spy the SAME SendLifecycle installed in the composed store so cancellation exact-once is observable.
+    const cancelSpy = vi.spyOn(fixture.sendLifecycle, 'cancelActiveSends')
     const owner = createDocumentLifecycleOwner()
     owner.bind({
       store: fixture.store,
@@ -207,13 +209,25 @@ describe('Content document-lifecycle owner composed parent control', () => {
     expect(fixture.toast.loading).not.toHaveBeenCalled()
     expect(fixture.toast.success).not.toHaveBeenCalled()
 
-    // Final production teardown: dispose removes listeners and invalidates any in-flight restore. No
-    // readiness subscription is left unpaired, and no late register or cleanup Toast appears.
-    owner.dispose()
+    // Final production teardown (faithful to index.tsx onRemove): a terminal exit silences feedback and
+    // detaches the lease exactly once through the owner, then dispose removes listeners and discard
+    // releases the store. Advance the watchdog boundary after teardown: no late register, no cleanup
+    // loading/success Toast, and readiness subscriptions balance exactly.
+    vi.useFakeTimers()
+    const terminal = new window.Event('pagehide')
+    Object.defineProperty(terminal, 'persisted', { value: false })
+    window.dispatchEvent(terminal)
     await flushMicrotasks()
-    expect(readinessUnsubscriptions).toBeGreaterThanOrEqual(readinessSubscriptions - 1)
+    expect(detachSpy).toHaveBeenCalledTimes(3)
+    expect(fixture.toast.loading).not.toHaveBeenCalled()
+    owner.dispose()
+    fixture.store.discard()
+    await vi.advanceTimersByTimeAsync(6000)
+    await flushMicrotasks()
+    expect(readinessUnsubscriptions).toBe(readinessSubscriptions)
     expect(attachCount()).toBe(initialAttaches + 2)
     expect(fixture.toast.loading).not.toHaveBeenCalled()
     expect(fixture.toast.success).not.toHaveBeenCalled()
+    vi.useRealTimers()
   })
 })
