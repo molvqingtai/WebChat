@@ -1,6 +1,6 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { Remesh, type RemeshStore } from 'remesh'
+import { Remesh } from 'remesh'
 import { RemeshRoot, RemeshScope } from 'remesh-react'
 // import { RemeshLogger } from 'remesh-logger'
 import { defineContentScript, createShadowRootUi } from '#imports'
@@ -26,6 +26,7 @@ import '@/assets/styles/tailwind.css'
 import '@/assets/styles/overlay.css'
 import NotificationDomain from '@/domain/Notification'
 import AppFeedbackDomain from '@/domain/AppFeedback'
+import { createDocumentLifecycleOwner } from './documentLifecycle'
 import ToastDomain from '@/domain/Toast'
 import { createElement } from '@/utils'
 import { requestBrowserSyncStoragePreparation } from '@/service/StoragePreparation'
@@ -35,7 +36,7 @@ import { ChatRoomExtern, type ChatRoom } from '@/domain/externs/ChatRoom'
 import { WorldRoomExtern, type WorldRoom } from '@/domain/externs/WorldRoom'
 import { ReadinessExtern, type Readiness } from '@/domain/externs/Readiness'
 import { ConnectionLifecycleExtern, type ConnectionLifecycle } from '@/domain/externs/ConnectionLifecycle'
-import { SendLifecycleExtern, type SendLifecycle } from '@/domain/externs/SendLifecycle'
+import { SendLifecycleExtern } from '@/domain/externs/SendLifecycle'
 import { BrowserSyncStorageExtern, type Storage, type StorageValue } from '@/domain/externs/Storage'
 import type { Database } from '@/domain/externs/Database'
 import {
@@ -227,108 +228,6 @@ const createContentStore = () => {
   return { store, activateApplicationDependencies, sendLifecycle: sendLifecycleInstance }
 }
 
-/**
- * The one Content composition document-lifecycle owner. It coordinates page-scoped Runtime feedback,
- * active sends, ClientLease ownership, and restoration for terminal exit, BFCache suspension, and
- * BFCache restoration. `beforeunload`/`pagehide`/`pageshow` feed this owner only; no Domain, component,
- * feedback adapter, or watchdog independently owns whether the document may attach or present state.
- *
- * Ordering per authority: on departure the owner first silences page feedback and removes the current
- * readiness presentation, then cancels page-owned work and releases the ClientLease exactly once, so
- * cleanup cannot create or update `webchat-runtime-readiness`. On persisted `pageshow` it starts exactly
- * one current attach/init and resumes feedback from the current Runtime snapshot. Terminal exits have no
- * restoration path. All transitions are idempotent.
- */
-const createDocumentLifecycleOwner = () => {
-  let documentState: 'active' | 'suspended' | 'ended' = 'active'
-  let restored = false
-  // A restore generation is invalidated by any later suspend/terminal-exit/dispose, so a late restore
-  // completion can never resume feedback or re-activate an ended/discarded document.
-  let restoreGeneration = 0
-  let deps: { store: RemeshStore; sendLifecycle: SendLifecycle } | null = null
-  const feedbackDomain = () => deps!.store.getDomain(AppFeedbackDomain())
-
-  const silenceFeedback = () => {
-    deps!.store.send(feedbackDomain().command.SilenceFeedbackCommand())
-  }
-  const cleanupOnce = () => {
-    deps!.sendLifecycle.cancelActiveSends()
-    detachClient()
-  }
-  const invalidateRestore = () => {
-    restoreGeneration += 1
-  }
-  const suspend = () => {
-    // A persisted hide may land while the document is active OR while a restore is in flight; only a
-    // terminal end blocks re-suspension. Suspending always invalidates any in-flight restore so a late
-    // completion can never activate or resume feedback on a suspended document.
-    if (!deps || documentState === 'ended') return
-    documentState = 'suspended'
-    restored = false
-    invalidateRestore()
-    silenceFeedback()
-    cleanupOnce()
-  }
-  const end = () => {
-    if (!deps || documentState === 'ended') return
-    documentState = 'ended'
-    invalidateRestore()
-    silenceFeedback()
-    cleanupOnce()
-  }
-  const restore = () => {
-    if (!deps || documentState !== 'suspended' || restored) return
-    restored = true
-    const generation = restoreGeneration
-    // The browser has already shown this document: it is visible now. Enter active immediately and start
-    // exactly one current attach/init. On completion (success or failure) feedback resumes aligned to the
-    // current Runtime truth, unless a later suspend/terminal-exit/dispose invalidated this generation.
-    documentState = 'active'
-    initClient().then(
-      () => {
-        if (restoreGeneration !== generation || documentState !== 'active') return
-        deps!.store.send(feedbackDomain().command.ResumeFeedbackCommand())
-      },
-      () => {
-        // A visible document never stays silently wedged: a failed re-attach still resumes feedback so
-        // the page presents the real current truth (e.g. unavailable) through the existing rules. The
-        // rejection is consumed; only a later suspend/end/dispose can suppress this completion.
-        if (restoreGeneration !== generation || documentState !== 'active') return
-        deps!.store.send(feedbackDomain().command.ResumeFeedbackCommand())
-      }
-    )
-  }
-  const onBeforeUnload = () => {
-    // Feedback becomes silent before any page-local readiness change; cleanup ownership stays with
-    // pagehide (which alone knows whether the document is suspended or terminal).
-    if (deps) silenceFeedback()
-  }
-  const onPageHide = (event: PageTransitionEvent) => {
-    if (event.persisted) suspend()
-    else end()
-  }
-  const onPageShow = (event: PageTransitionEvent) => {
-    if (event.persisted) restore()
-  }
-  window.addEventListener('beforeunload', onBeforeUnload)
-  window.addEventListener('pagehide', onPageHide)
-  window.addEventListener('pageshow', onPageShow)
-  return {
-    bind: (bound: { store: RemeshStore; sendLifecycle: SendLifecycle }) => {
-      deps = bound
-    },
-    dispose: () => {
-      window.removeEventListener('beforeunload', onBeforeUnload)
-      window.removeEventListener('pagehide', onPageHide)
-      window.removeEventListener('pageshow', onPageShow)
-      // Dispose is terminal for this document generation: any in-flight restore completion must not
-      // resume feedback on a discarded page.
-      invalidateRestore()
-      documentState = 'ended'
-    }
-  }
-}
-
 export default defineContentScript({
   cssInjectionMode: 'ui',
   runAt: 'document_idle',
@@ -353,7 +252,7 @@ export default defineContentScript({
         container.append(app)
         const root = createRoot(app)
         const { store, activateApplicationDependencies, sendLifecycle } = createContentStore()
-        documentLifecycle.bind({ store, sendLifecycle })
+        documentLifecycle.bind({ store, sendLifecycle, initLease: initClient, detachLease: detachClient })
         root.render(
           <StrictMode>
             <RemeshRoot store={store}>

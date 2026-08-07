@@ -282,6 +282,12 @@ describe('content composition root', () => {
     expect(sendLifecycleInstance.cancelActiveSends).toHaveBeenCalledTimes(1)
     expect(fixture.detachClient).toHaveBeenCalledTimes(1)
 
+    // A duplicate persisted hide while already suspended is a no-op (at most one release per cycle).
+    window.dispatchEvent(pagehide)
+    expect(fixture.silenceFeedback).toHaveBeenCalledTimes(1)
+    expect(sendLifecycleInstance.cancelActiveSends).toHaveBeenCalledTimes(1)
+    expect(fixture.detachClient).toHaveBeenCalledTimes(1)
+
     // Persisted pageshow restores exactly one current attach/init and resumes feedback.
     const pageshow = new window.Event('pageshow')
     Object.defineProperty(pageshow, 'persisted', { value: true })
