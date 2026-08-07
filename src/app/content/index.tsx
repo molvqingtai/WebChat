@@ -259,7 +259,10 @@ const createDocumentLifecycleOwner = () => {
     restoreGeneration += 1
   }
   const suspend = () => {
-    if (!deps || documentState !== 'active') return
+    // A persisted hide may land while the document is active OR while a restore is in flight; only a
+    // terminal end blocks re-suspension. Suspending always invalidates any in-flight restore so a late
+    // completion can never activate or resume feedback on a suspended document.
+    if (!deps || documentState === 'ended') return
     documentState = 'suspended'
     restored = false
     invalidateRestore()
@@ -277,18 +280,21 @@ const createDocumentLifecycleOwner = () => {
     if (!deps || documentState !== 'suspended' || restored) return
     restored = true
     const generation = restoreGeneration
-    // Exactly one current attach/init for the restored document. Feedback resumes only if this restore
-    // generation is still current (no later suspend/terminal exit/dispose invalidated it) and the
-    // document is still suspended; current ready then dismisses the stable slot without a success Toast.
+    // The browser has already shown this document: it is visible now. Enter active immediately and start
+    // exactly one current attach/init. On completion (success or failure) feedback resumes aligned to the
+    // current Runtime truth, unless a later suspend/terminal-exit/dispose invalidated this generation.
+    documentState = 'active'
     initClient().then(
       () => {
-        if (restoreGeneration !== generation || documentState !== 'suspended') return
-        documentState = 'active'
+        if (restoreGeneration !== generation || documentState !== 'active') return
         deps!.store.send(feedbackDomain().command.ResumeFeedbackCommand())
       },
       () => {
-        // Explicitly consume the rejection: a failed restore must not resume feedback or become an
-        // unhandled rejection; the page stays suspended and the watchdog/next cycle can re-attempt.
+        // A visible document never stays silently wedged: a failed re-attach still resumes feedback so
+        // the page presents the real current truth (e.g. unavailable) through the existing rules. The
+        // rejection is consumed; only a later suspend/end/dispose can suppress this completion.
+        if (restoreGeneration !== generation || documentState !== 'active') return
+        deps!.store.send(feedbackDomain().command.ResumeFeedbackCommand())
       }
     )
   }

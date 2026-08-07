@@ -336,7 +336,7 @@ describe('content composition root', () => {
     expect(fixture.resumeFeedback).not.toHaveBeenCalled()
   })
 
-  it('consumes a rejected restore without resuming feedback or leaking an unhandled rejection', async () => {
+  it('recovers a visible document on rejected restore by resuming feedback to real current truth', async () => {
     await startContent()
     fixture.initClient.mockRejectedValueOnce(new Error('restore failed'))
 
@@ -348,8 +348,43 @@ describe('content composition root', () => {
     window.dispatchEvent(pageshow)
     await Promise.resolve()
 
-    expect(fixture.resumeFeedback).not.toHaveBeenCalled()
+    // The browser showed this document: a failed re-attach must not wedge it silent; feedback resumes
+    // so the page presents the real current truth through the existing rules.
+    expect(fixture.resumeFeedback).toHaveBeenCalledTimes(1)
     expect(fixture.initClient).toHaveBeenCalledTimes(1)
+  })
+
+  it('invalidates an in-flight restore when a persisted hide lands during it', async () => {
+    await startContent()
+    const sendLifecycleInstance = fixture.createSendLifecycle.mock.results[0]?.value
+    if (!sendLifecycleInstance) throw new Error('SendLifecycle was never created')
+
+    // Hold the restore's initClient pending, then a persisted pagehide (second suspension) lands before
+    // it completes: the generation is invalidated and the lease is detached again, so the late init
+    // completion must NOT resume feedback on the re-suspended document.
+    let resolveInit!: () => void
+    fixture.initClient.mockReturnValueOnce(
+      new Promise<null>((resolve) => {
+        resolveInit = () => resolve(null)
+      })
+    )
+
+    const pagehide = new window.Event('pagehide')
+    Object.defineProperty(pagehide, 'persisted', { value: true })
+    window.dispatchEvent(pagehide)
+    const pageshow = new window.Event('pageshow')
+    Object.defineProperty(pageshow, 'persisted', { value: true })
+    window.dispatchEvent(pageshow)
+
+    const hideAgain = new window.Event('pagehide')
+    Object.defineProperty(hideAgain, 'persisted', { value: true })
+    window.dispatchEvent(hideAgain)
+    expect(sendLifecycleInstance.cancelActiveSends).toHaveBeenCalledTimes(2)
+    expect(fixture.detachClient).toHaveBeenCalledTimes(2)
+
+    resolveInit()
+    await Promise.resolve()
+    expect(fixture.resumeFeedback).not.toHaveBeenCalled()
   })
 
   it('constructs each deferred application dependency exactly once only when initialization activates it', async () => {
