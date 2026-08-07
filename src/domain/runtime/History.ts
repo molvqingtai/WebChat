@@ -360,15 +360,9 @@ const HistoryDomain = Remesh.domain({
         const jobs = get(ProviderSupplyJobsState())
         const active = get(ActiveSuppliesState())
         const waiting = get(WaitingSuppliesState())
-        const removedKeys = [
-          ...providers.filter((item) => item.sourcePeerId === payload.sourcePeerId && item.domain === payload.domain),
-          ...successors.filter((item) => item.sourcePeerId === payload.sourcePeerId && item.domain === payload.domain)
-        ].map((item) => ({
-          sourcePeerId: item.sourcePeerId,
-          domain: item.domain,
-          syncId: item.syncId,
-          syncToken: item.syncToken
-        }))
+        // Dormant successor and waiting projections are removed immediately. Started work (active
+        // supplies and their canonical jobs) stays counted until the physical supplier settles; the
+        // late-settlement path releases the slot and job accounting exactly once.
         const releasedActive = active.filter(
           (item) => item.sourcePeerId === payload.sourcePeerId && item.domain === payload.domain
         )
@@ -380,10 +374,12 @@ const HistoryDomain = Remesh.domain({
             successors.filter((item) => item.sourcePeerId !== payload.sourcePeerId || item.domain !== payload.domain)
           ),
           ProviderSupplyJobsState().new(
-            jobs.filter((item) => item.sourcePeerId !== payload.sourcePeerId || item.domain !== payload.domain)
-          ),
-          ActiveSuppliesState().new(
-            active.filter((item) => item.sourcePeerId !== payload.sourcePeerId || item.domain !== payload.domain)
+            jobs.filter(
+              (item) =>
+                item.sourcePeerId !== payload.sourcePeerId ||
+                item.domain !== payload.domain ||
+                !active.some((a) => matchesSync(a, item))
+            )
           ),
           WaitingSuppliesState().new(
             waiting.filter((item) => item.sourcePeerId !== payload.sourcePeerId || item.domain !== payload.domain)
@@ -500,10 +496,16 @@ const HistoryDomain = Remesh.domain({
         if (current && current.syncId !== payload.message.syncId) {
           if (successor && successor.syncId !== payload.message.syncId) return null
           const jobs = get(ProviderSupplyJobsState())
+          // Upsert-aware admission: an existing successor's cumulative bytes are subtracted before
+          // the incoming page's cumulative bytes are checked, and an update at exactly 32 entries
+          // is allowed (only a NEW identity is bounded by the 32-job cap).
+          const existingBytes = successor?.queueBytes ?? 0
+          const hasExisting = Boolean(successor)
           const admittedBytes = [...jobs, ...successors].reduce((total, item) => total + item.queueBytes, 0)
+          const nextCount = hasExisting ? jobs.length + successors.length : jobs.length + successors.length + 1
           if (
-            jobs.length + successors.length >= MAX_PROVIDER_SUPPLY_QUEUE_JOBS ||
-            queueBytes > MAX_PROVIDER_SUPPLY_QUEUE_BYTES - admittedBytes
+            nextCount > MAX_PROVIDER_SUPPLY_QUEUE_JOBS ||
+            queueBytes > MAX_PROVIDER_SUPPLY_QUEUE_BYTES - (admittedBytes - existingBytes)
           ) {
             return wireDomain.command.DropProtocolCommand({
               sourcePeerId: payload.sourcePeerId,
@@ -560,6 +562,8 @@ const HistoryDomain = Remesh.domain({
             inventory,
             inventoryCount,
             inventoryBytes,
+            // Canonical admission metadata accumulates with the inventory on every accepted page.
+            queueBytes: inventoryBytes,
             expectedRequestPage: expectedPage + 1,
             lastAppliedRequestPageFingerprint: JSON.stringify(payload.message),
             inventoryDone: base.inventoryDone || payload.message.done
@@ -609,10 +613,19 @@ const HistoryDomain = Remesh.domain({
           })
         }
         const jobs = get(ProviderSupplyJobsState())
+        // Upsert-aware admission: the existing provider job's cumulative bytes are subtracted before
+        // the incoming page's cumulative bytes are checked, and an update at exactly 32 entries is
+        // allowed (only a NEW identity is bounded by the 32-job cap).
+        const existingJob = jobs.find(
+          (item) => item.sourcePeerId === payload.sourcePeerId && item.domain === binding.domain
+        )
+        const existingBytes = existingJob?.queueBytes ?? 0
+        const hasExisting = Boolean(existingJob)
         const admittedBytes = [...jobs, ...successors].reduce((total, item) => total + item.queueBytes, 0)
+        const nextCount = hasExisting ? jobs.length + successors.length : jobs.length + successors.length + 1
         if (
-          jobs.length + successors.length >= MAX_PROVIDER_SUPPLY_QUEUE_JOBS ||
-          queueBytes > MAX_PROVIDER_SUPPLY_QUEUE_BYTES - admittedBytes
+          nextCount > MAX_PROVIDER_SUPPLY_QUEUE_JOBS ||
+          queueBytes > MAX_PROVIDER_SUPPLY_QUEUE_BYTES - (admittedBytes - existingBytes)
         ) {
           return wireDomain.command.DropProtocolCommand({
             sourcePeerId: payload.sourcePeerId,
@@ -1023,11 +1036,12 @@ const HistoryDomain = Remesh.domain({
         )
         if (!current || current.syncId !== payload.message.syncId) return null
         if (current.awaitingBatchId) {
-          // While a batch is pending: post-done input is rejected before enqueue; an identical
-          // replay of the accepted page or of any queued page is idempotent; a changed replay of
-          // any accepted or queued page cancels the attempt (discarding queued work); and valid
-          // continuous pages (N+1, N+2, ...) join the bounded serial queue in order.
-          if (current.responseDone) {
+          // While a batch is pending: post-done input is rejected before enqueue; a queued terminal
+          // page (done:true already queued) fences the attempt so any later page cancels
+          // immediately and discards queued work; an identical replay of the accepted page or of
+          // any queued page is idempotent; a changed replay cancels; and valid continuous pages
+          // (N+1, N+2, ...) join the bounded serial queue in order.
+          if (current.responseDone || current.pendingResponsePages.some((item) => item.done)) {
             return FinishRequestedEvent({ domain: binding.domain, sourcePeerId: payload.sourcePeerId })
           }
           const fingerprint = JSON.stringify(payload.message)
@@ -1248,9 +1262,6 @@ const HistoryDomain = Remesh.domain({
       name: 'History.RemovePeerCommand',
       impl: ({ get }, payload: { domain: string; sourcePeerId: string }) => {
         const requesters = get(RequesterAttemptsState())
-        const providers = get(ProviderAttemptsState())
-        const successors = get(ProviderSupplySuccessorsState())
-        const jobs = get(ProviderSupplyJobsState())
         const owners = get(FeedbackOwnersState())
         const removedRequesters = requesters.filter(
           (item) => item.sourcePeerId === payload.sourcePeerId && item.domain === payload.domain
@@ -1262,15 +1273,7 @@ const HistoryDomain = Remesh.domain({
           RequesterAttemptsState().new(
             requesters.filter((item) => item.sourcePeerId !== payload.sourcePeerId || item.domain !== payload.domain)
           ),
-          ProviderAttemptsState().new(
-            providers.filter((item) => item.sourcePeerId !== payload.sourcePeerId || item.domain !== payload.domain)
-          ),
-          ProviderSupplySuccessorsState().new(
-            successors.filter((item) => item.sourcePeerId !== payload.sourcePeerId || item.domain !== payload.domain)
-          ),
-          ProviderSupplyJobsState().new(
-            jobs.filter((item) => item.sourcePeerId !== payload.sourcePeerId || item.domain !== payload.domain)
-          ),
+          CleanupProviderSlotsCommand(payload),
           ...owners
             .filter((item) => item.sourcePeerId === payload.sourcePeerId && item.domain === payload.domain)
             .flatMap((item) => dismissFeedback(get, item) ?? [])

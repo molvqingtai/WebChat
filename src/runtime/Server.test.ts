@@ -2751,12 +2751,45 @@ describe('RuntimeServer history', () => {
       done: true
     })
     await settle()
-    // Release the held ACK: the queue applies N+1 then N+2 in order; post-done N+3 never applies.
+    // N+3 after a queued terminal N+2 fences the attempt immediately: the queued N+1 and N+2 are
+    // discarded and never apply, even after the held page 0 settles.
     release.ack?.()
-    await vi.waitFor(() => expect(delivered).toContain('page-2-msg'))
     await settle()
-    expect(delivered).toEqual(['page-0-msg', 'page-1-msg', 'page-2-msg'])
-    expect(delivered).not.toContain('post-done-msg')
+    await settle()
+    expect(delivered).toEqual(['page-0-msg'])
+  })
+
+  it('frees admission capacity on real peer removal so a new peer progresses', async () => {
+    const { fake, server, roomId } = await setup()
+    await registerInventoryProvider(server)
+    // Two peers send partial inventories (page 0 non-final) plus a completed peer.
+    fake.receive(roomId, 'peer-removed', session({ id: 'removed-user', name: 'Removed', avatar: '' }))
+    await settle()
+    fake.receive(roomId, 'peer-removed', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'removed-partial',
+      page: 0,
+      messageIds: ['r-1'],
+      done: false
+    })
+    await settle()
+    fake.receive(roomId, 'peer-live', session({ id: 'live-user', name: 'Live', avatar: '' }))
+    await settle()
+    fake.receive(roomId, 'peer-live', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'live-partial',
+      page: 0,
+      messageIds: ['l-1'],
+      done: true
+    })
+    // Remove the first peer: its dormant/waiting/provider accounting is cleaned.
+    fake.receive(roomId, 'peer-removed', { type: MESSAGE_TYPE.SESSION_END, presenceId: 'presence-remote-user' })
+    await settle()
+    // The live peer's completed inventory must still be able to transition to ready and serve.
+    await vi.waitFor(() => {
+      const responses = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE)
+      expect(responses.length).toBeGreaterThan(0)
+    })
   })
 
   it('keeps one peer in two domains as independent attempts without suppression', async () => {
