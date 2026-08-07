@@ -94,6 +94,8 @@ interface ProviderSupplyPayload extends HistoryAttemptKey {
   queueBytes: number
   /** True only after the complete inventory arrived; only ready attempts run the supplier. */
   ready: boolean
+  /** Live page-supply id recorded by the supplier effect so cleanup can cancel it. */
+  supplyId?: string
 }
 
 type ProviderSupplyJobState = ProviderSupplyPayload
@@ -357,14 +359,12 @@ const HistoryDomain = Remesh.domain({
       impl: ({ get }, payload: { domain: string; sourcePeerId: string }) => {
         const providers = get(ProviderAttemptsState())
         const successors = get(ProviderSupplySuccessorsState())
-        const jobs = get(ProviderSupplyJobsState())
-        const active = get(ActiveSuppliesState())
         const waiting = get(WaitingSuppliesState())
         // Dormant successors, waiting projections, and provider state are removed immediately.
         // Started active supplies and their canonical jobs stay in place (slot + accounting) until
-        // the physical supplier settles; the late-settlement path releases the slot exactly once.
-        // Cleanup never promotes a waiter while an old physical supplier is still running, so no
-        // double promotion, active > 4, or same-source overlap can occur.
+        // the physical supplier settles; the effect's provider-state check then releases the slot
+        // exactly once. A fresh same-source request is still routed as a dormant successor while an
+        // unsettled active entry for that source exists.
         return [
           ProviderAttemptsState().new(
             providers.filter((item) => item.sourcePeerId !== payload.sourcePeerId || item.domain !== payload.domain)
@@ -473,6 +473,12 @@ const HistoryDomain = Remesh.domain({
           (item) => item.sourcePeerId === payload.sourcePeerId && item.domain === binding.domain
         )
         const successors = get(ProviderSupplySuccessorsState())
+        // A replacement request must become one dormant successor while ANY unsettled same-source
+        // work exists (provider state OR an active supply entry), even after logical provider State
+        // was invalidated by cleanup; it may start only after the old physical settlement releases.
+        const unsettledActive = get(ActiveSuppliesState()).some(
+          (item) => item.sourcePeerId === payload.sourcePeerId && item.domain === binding.domain
+        )
         const successor = successors.find(
           (item) => item.sourcePeerId === payload.sourcePeerId && item.domain === binding.domain
         )
@@ -483,7 +489,10 @@ const HistoryDomain = Remesh.domain({
         // The successor applies the exact same request-page state machine as a current provider:
         // fingerprint replay idempotency, changed/gap/post-done cancellation, raw budgets,
         // inventoryDone, and a page-zero attempt timeout under its complete token.
-        if (current && current.syncId !== payload.message.syncId) {
+        const activeSync = get(ActiveSuppliesState()).find(
+          (item) => item.sourcePeerId === payload.sourcePeerId && item.domain === binding.domain
+        )?.syncId
+        if ((current || unsettledActive) && (current?.syncId ?? activeSync) !== payload.message.syncId) {
           if (successor && successor.syncId !== payload.message.syncId) return null
           const jobs = get(ProviderSupplyJobsState())
           // Upsert-aware admission: the successor's cumulative bytes are subtracted before the
@@ -696,6 +705,20 @@ const HistoryDomain = Remesh.domain({
       }
     })
 
+    const ScheduleProviderSupplyCommand = domain.command({
+      name: 'History.ScheduleProviderSupplyCommand',
+      impl: ({ get }, request: ProviderSupplyPayload) => {
+        const active = get(ActiveSuppliesState())
+        const waiting = get(WaitingSuppliesState())
+        if (active.some((item) => matchesSync(item, request))) return null
+        if (active.length >= MAX_PROVIDER_SUPPLY_CONCURRENCY) {
+          if (waiting.some((item) => matchesSync(item, request))) return null
+          return WaitingSuppliesState().new([...waiting, request])
+        }
+        return [ActiveSuppliesState().new([...active, request]), ProviderSupplyRequestedEvent(request)]
+      }
+    })
+
     const AdmitProviderSupplyCommand = domain.command({
       name: 'History.AdmitProviderSupplyCommand',
       impl: ({ get }, request: ProviderSupplyPayload) => {
@@ -797,44 +820,58 @@ const HistoryDomain = Remesh.domain({
             ...(hasSlotAccounting ? [ReleaseProviderSupplySlotCommand(key)] : [])
           ]
         }
-        const promotion =
-          successor && successor.syncId !== key.syncId && successor.inventoryDone
-            ? [
-                ProviderAttemptsState().new([
-                  ...removeBy(providers, (item) => matchesSync(item, key)),
-                  { ...successor }
-                ]),
-                ProviderSupplySuccessorsState().new(
-                  removeBy(
-                    get(ProviderSupplySuccessorsState()),
-                    (item) => item.sourcePeerId === key.sourcePeerId && item.domain === key.domain
-                  )
-                ),
-                ProviderTimeoutArmedEvent(successor),
-                AdmitProviderSupplyCommand({
-                  sourcePeerId: successor.sourcePeerId,
-                  domain: successor.domain,
-                  syncId: successor.syncId,
-                  syncToken: successor.syncToken,
-                  queueBytes: successor.inventoryBytes,
-                  ready: true
-                })
-              ]
-            : [
-                ProviderAttemptsState().new(removeBy(providers, (item) => matchesSync(item, key))),
-                ProviderSupplySuccessorsState().new(
-                  removeBy(
-                    get(ProviderSupplySuccessorsState()),
-                    (item) => item.sourcePeerId === key.sourcePeerId && item.domain === key.domain
-                  )
+        const successorJob: ProviderSupplyJobState = successor
+          ? {
+              sourcePeerId: successor.sourcePeerId,
+              domain: successor.domain,
+              syncId: successor.syncId,
+              syncToken: successor.syncToken,
+              queueBytes: successor.inventoryBytes,
+              ready: true
+            }
+          : (null as unknown as ProviderSupplyJobState)
+        const promotion = successor
+          ? [
+              // One atomic job-state transition: the old job is removed and the promoted successor's
+              // canonical job is installed in the same update, so the promoted active/waiting work
+              // always remains counted within the 32-job / 8KiB admission owner.
+              ProviderAttemptsState().new([...removeBy(providers, (item) => matchesSync(item, key)), { ...successor }]),
+              ProviderSupplySuccessorsState().new(
+                removeBy(
+                  get(ProviderSupplySuccessorsState()),
+                  (item) => item.sourcePeerId === key.sourcePeerId && item.domain === key.domain
                 )
-              ]
-        return [
-          ...promotion,
-          ProviderSupplyJobsState().new(removeBy(get(ProviderSupplyJobsState()), (item) => matchesSync(item, key))),
-          ...(dismissFeedback(get, key) ?? []),
-          ReleaseProviderSupplySlotCommand(key)
-        ]
+              ),
+              ProviderSupplyJobsState().new([
+                ...removeBy(get(ProviderSupplyJobsState()), (item) => matchesSync(item, key)),
+                successorJob
+              ]),
+              ProviderTimeoutArmedEvent(successor)
+            ]
+          : [
+              ProviderAttemptsState().new(removeBy(providers, (item) => matchesSync(item, key))),
+              ProviderSupplySuccessorsState().new(
+                removeBy(
+                  get(ProviderSupplySuccessorsState()),
+                  (item) => item.sourcePeerId === key.sourcePeerId && item.domain === key.domain
+                )
+              ),
+              ProviderSupplyJobsState().new(removeBy(get(ProviderSupplyJobsState()), (item) => matchesSync(item, key)))
+            ]
+        // The successor is scheduled (active or waiting) after its job is canonically installed.
+        const schedule = successor
+          ? [
+              ScheduleProviderSupplyCommand({
+                sourcePeerId: successor.sourcePeerId,
+                domain: successor.domain,
+                syncId: successor.syncId,
+                syncToken: successor.syncToken,
+                queueBytes: successor.inventoryBytes,
+                ready: true
+              })
+            ]
+          : []
+        return [...promotion, ...schedule, ...(dismissFeedback(get, key) ?? []), ReleaseProviderSupplySlotCommand(key)]
       }
     })
 

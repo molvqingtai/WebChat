@@ -2692,7 +2692,7 @@ describe('RuntimeServer history', () => {
     expect(ids).toEqual(['mp-2'])
   })
 
-  it('queues N+1 and N+2, dedupes identical queued replay, and rejects post-done input', async () => {
+  it('treats an identical queued-terminal replay as idempotent and still applies queued pages', async () => {
     const { fake, server, roomId } = await setup()
     await registerInventoryProvider(server)
     const delivered: string[] = []
@@ -2723,7 +2723,6 @@ describe('RuntimeServer history', () => {
       done: false
     })
     await vi.waitFor(() => expect(delivered).toContain('page-0-msg'))
-    // While page 0's ACK is held, send N+1, an identical replay of N+1, N+2, and post-done N+3.
     const page1 = {
       type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
       syncId,
@@ -2732,8 +2731,6 @@ describe('RuntimeServer history', () => {
       messages: [text('page-1-msg', REMOTE_USER.id, NOW - 20)],
       done: false
     }
-    fake.receive(roomId, 'peer-a', page1)
-    fake.receive(roomId, 'peer-a', page1) // identical queued replay: idempotent
     const page2 = {
       type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
       syncId,
@@ -2742,11 +2739,68 @@ describe('RuntimeServer history', () => {
       messages: [text('page-2-msg', REMOTE_USER.id, NOW - 30)],
       done: true
     }
+    fake.receive(roomId, 'peer-a', page1)
     fake.receive(roomId, 'peer-a', page2)
-    // An identical replay of the queued terminal N+2 is idempotent (not a cancel).
+    // Identical replay of the queued terminal N+2 is idempotent: the attempt must NOT cancel.
     fake.receive(roomId, 'peer-a', page2)
     await settle()
-    // A changed replay of the queued terminal page cancels immediately.
+    release.ack?.()
+    await vi.waitFor(() => expect(delivered).toContain('page-2-msg'))
+    await settle()
+    // The identical replay did not cancel: queued N+1 and N+2 applied in order.
+    expect(delivered).toEqual(['page-0-msg', 'page-1-msg', 'page-2-msg'])
+  })
+
+  it('cancels immediately on a changed queued-terminal replay and discards queued work', async () => {
+    const { fake, server, roomId } = await setup()
+    await registerInventoryProvider(server)
+    const delivered: string[] = []
+    const release = { ack: null as null | (() => void) }
+    const ackGate = new Promise<void>((resolve) => {
+      release.ack = resolve
+    })
+    let held = false
+    await server.onInbound({ pageId: 'page-a' }, async (event) => {
+      delivered.push(event.record.message.id)
+      if (event.record.message.id === 'page-0-msg' && !held) {
+        held = true
+        await ackGate
+      }
+      await server.ackInbound({ domain: event.domain, sequence: event.sequence, inserted: true })
+    })
+    fake.receive(roomId, 'peer-a', session())
+    await settle()
+    const requestMsg = fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST)
+    const syncId = (requestMsg as { syncId: string }).syncId
+
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
+      syncId,
+      page: 0,
+      users: [REMOTE_USER],
+      messages: [text('page-0-msg', REMOTE_USER.id, NOW - 10)],
+      done: false
+    })
+    await vi.waitFor(() => expect(delivered).toContain('page-0-msg'))
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
+      syncId,
+      page: 1,
+      users: [REMOTE_USER],
+      messages: [text('page-1-msg', REMOTE_USER.id, NOW - 20)],
+      done: false
+    })
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
+      syncId,
+      page: 2,
+      users: [REMOTE_USER],
+      messages: [text('page-2-msg', REMOTE_USER.id, NOW - 30)],
+      done: true
+    })
+    await settle()
+    // A changed replay of the queued terminal N+2 cancels the attempt immediately and discards the
+    // queued N+1 and N+2, even after the held page 0 settles.
     fake.receive(roomId, 'peer-a', {
       type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
       syncId,
@@ -2756,21 +2810,9 @@ describe('RuntimeServer history', () => {
       done: true
     })
     await settle()
-    // Post-terminal N+3 after the changed replay cancel is a no-op (attempt already cancelled).
-    fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
-      syncId,
-      page: 3,
-      users: [REMOTE_USER],
-      messages: [text('post-done-msg', REMOTE_USER.id, NOW - 40)],
-      done: true
-    })
-    await settle()
     release.ack?.()
     await settle()
     await settle()
-    // Only page 0 was ever applied: the changed terminal replay cancelled the attempt and discarded
-    // the queued N+1 and N+2.
     expect(delivered).toEqual(['page-0-msg'])
   })
 
@@ -2809,8 +2851,24 @@ describe('RuntimeServer history', () => {
 
   it('never promotes a waiter before the old active supplier physically settles', async () => {
     const { fake, server, roomId } = await setup()
-    await registerInventoryProvider(server)
-    // Five peers complete their inventories; only four can be active at once, the fifth waits.
+    // A held supplier: every supplyHistory call waits on a gate, so four completed peers genuinely
+    // occupy the four active slots and a fifth is queued as a waiter.
+    const releases: (() => void)[] = []
+    const pendingSupplies: Promise<void>[] = []
+    const heldSupplier = () => {
+      const gate = new Promise<void>((resolve) => {
+        releases.push(resolve)
+      })
+      pendingSupplies.push(gate)
+      return gate
+    }
+    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, async (request) => {
+      // Only the provider snapshot (mode: 'provider') is held; the requester's own inventory
+      // resolves immediately so the four active slots are exactly the provider pipeline.
+      if (request.mode === 'inventory') return { records: [], done: true }
+      await heldSupplier()
+      return { records: [], done: true }
+    })
     for (let peer = 0; peer < 5; peer += 1) {
       const peerId = `peer-${peer}`
       fake.receive(roomId, peerId, session({ id: `user-${peer}`, name: `User ${peer}`, avatar: '' }))
@@ -2824,20 +2882,62 @@ describe('RuntimeServer history', () => {
       })
       await settle()
     }
-    // Remove one peer: its active supplier must keep its slot until physical settlement, and a
-    // waiter must NOT be promoted early (no double promotion or active > 4).
+    // Exactly four suppliers are physically held (the fifth is a waiting projection, never started).
+    expect(releases.length).toBe(4)
+    // Remove peer-0: its active supplier keeps its slot until physical settlement; the waiting
+    // fifth peer must NOT be promoted early.
     fake.receive(roomId, 'peer-0', { type: MESSAGE_TYPE.SESSION_END, presenceId: 'presence-user-0' })
     await settle()
-    await settle()
-    // The removed peer's supplier settles and releases exactly one slot; a waiter may then run.
-    await vi.waitFor(() => {
-      const responses = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE)
-      expect(responses.length).toBeGreaterThan(0)
+    expect(releases.length).toBe(4)
+    // Release peer-0's held supply: it settles and exactly one waiter is promoted.
+    releases[0]?.()
+    await vi.waitFor(() => expect(releases.length).toBe(5))
+  })
+
+  it('allows updates at exactly 32 admitted jobs and rejects a new identity', async () => {
+    const { fake, server, roomId } = await setup()
+    // Hold every provider snapshot so all 32 admitted jobs stay live (never released).
+    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, async (request) => {
+      if (request.mode === 'inventory') return { records: [], done: true }
+      await new Promise<void>(() => {})
+      return { records: [], done: true }
     })
-    // No more than four peers ever produce response work concurrently (serial supplier pipeline).
-    expect(
-      fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE).length
-    ).toBeLessThanOrEqual(5)
+    // 32 peers complete partial inventories: exactly 32 admitted jobs (32-job cap).
+    for (let peer = 0; peer < 32; peer += 1) {
+      const peerId = `peer-${peer}`
+      fake.receive(roomId, peerId, session({ id: `sat-user-${peer}`, name: `Sat ${peer}`, avatar: '' }))
+      await settle()
+      fake.receive(roomId, peerId, {
+        type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+        syncId: `sat-${peer}`,
+        page: 0,
+        messageIds: [`s-${peer}`],
+        done: false
+      })
+      await settle()
+    }
+    // An update to an existing admitted job at exactly 32 must still be accepted (upsert, not new).
+    fake.receive(roomId, 'peer-0', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'sat-0',
+      page: 1,
+      messageIds: ['s-0-more'],
+      done: true
+    })
+    await settle()
+    // A NEW identity at exactly 32 jobs is rejected (no provider response from it).
+    fake.receive(roomId, 'peer-32', session({ id: 'sat-user-32', name: 'Sat 32', avatar: '' }))
+    await settle()
+    fake.receive(roomId, 'peer-32', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'sat-32',
+      page: 0,
+      messageIds: ['s-32'],
+      done: true
+    })
+    await settle()
+    // No response flow for peer-32 (its admission was rejected at the 32-job cap).
+    expect(fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE)).toHaveLength(0)
   })
 
   it('keeps one peer in two domains as independent attempts without suppression', async () => {
