@@ -21,11 +21,6 @@ const LocalPresenceLeaseSchema = v.strictObject({
   joinedAt: safeNonNegativeInteger,
   status: v.picklist(['pending', 'active'])
 })
-const PendingPresenceEndSchema = v.strictObject({
-  presenceId: boundedId,
-  userId: boundedId,
-  joinedAt: safeNonNegativeInteger
-})
 const ObservedPresenceSchema = v.strictObject({
   presenceId: boundedId,
   sessionId: boundedId,
@@ -33,21 +28,12 @@ const ObservedPresenceSchema = v.strictObject({
   joinedAt: safeNonNegativeInteger,
   status: v.picklist(['active', 'ended'])
 })
-const PresenceDomainRecordSchema = v.pipe(
-  v.strictObject({
-    domain: domainOrigin,
-    lastJoinedAt: safeNonNegativeInteger,
-    local: v.optional(LocalPresenceLeaseSchema),
-    inflightEnd: v.optional(PendingPresenceEndSchema),
-    pendingEnd: v.optional(PendingPresenceEndSchema),
-    settledEnd: v.optional(PendingPresenceEndSchema),
-    observers: v.pipe(v.array(ObservedPresenceSchema), v.maxLength(MAX_PRESENCE_OBSERVATIONS))
-  }),
-  v.check(
-    (record) => [record.local, record.inflightEnd, record.pendingEnd, record.settledEnd].filter(Boolean).length <= 1,
-    'Presence lease and final-end states are mutually exclusive'
-  )
-)
+const PresenceDomainRecordSchema = v.strictObject({
+  domain: domainOrigin,
+  lastJoinedAt: safeNonNegativeInteger,
+  local: v.optional(LocalPresenceLeaseSchema),
+  observers: v.pipe(v.array(ObservedPresenceSchema), v.maxLength(MAX_PRESENCE_OBSERVATIONS))
+})
 
 interface SessionStorage {
   get(key: string): Promise<Record<string, unknown>>
@@ -87,52 +73,26 @@ const withDeadline = <Value>(task: Promise<Value>, onTimeout?: () => void): Prom
     )
   })
 
-interface DomainPersistenceState {
-  revision: number
-  desired: PresenceDomainRecord | null
+interface TailState {
   tail: Promise<void>
 }
 
+/**
+ * Bounds every read/write with a deadline and serializes writes per domain. Absorbed into the
+ * underlying store; there is no durable owner/outcome/cleanup-journal or compare-and-swap recovery
+ * (round contract forbids it); the only durable presence state is the current `local` lease.
+ */
 export const createBoundedPresenceStore = (store: PresenceStore): PresenceStore => {
   const existing = boundedStores.get(store)
   if (existing) return existing
-  const states = new Map<string, DomainPersistenceState>()
-  const stateFor = (domain: string) => {
+  const states = new Map<string, TailState>()
+  const stateFor = (domain: string): TailState => {
     let state = states.get(domain)
     if (!state) {
-      state = { revision: 0, desired: null, tail: Promise.resolve() }
+      state = { tail: Promise.resolve() }
       states.set(domain, state)
     }
     return state
-  }
-
-  const persistPhysical = async (domain: string, record: PresenceDomainRecord, revision: number) => {
-    let timedOut = false
-    const physical = Promise.resolve().then(() => store.save(clone(record)))
-    void physical.then(
-      () => {
-        if (timedOut) restoreLatest(domain, revision)
-      },
-      () => {}
-    )
-    await withDeadline(physical, () => {
-      timedOut = true
-    })
-  }
-
-  function restoreLatest(domain: string, staleRevision: number) {
-    const state = stateFor(domain)
-    if (state.revision <= staleRevision || !state.desired) return
-    const revision = state.revision
-    const desired = clone(state.desired)
-    const restore = state.tail
-      .catch(() => {})
-      .then(async () => {
-        if (state.revision !== revision) return
-        await persistPhysical(domain, desired, revision)
-      })
-    state.tail = restore
-    void restore.catch(() => {})
   }
 
   const bounded: PresenceStore = {
@@ -142,12 +102,10 @@ export const createBoundedPresenceStore = (store: PresenceStore): PresenceStore 
     },
     save: async (record) => {
       const parsed = clone(parsePresenceRecord(record))
-      const state = stateFor(parsed.domain)
-      const revision = state.revision + 1
-      state.revision = revision
-      state.desired = parsed
-      const task = state.tail.catch(() => {}).then(() => persistPhysical(parsed.domain, parsed, revision))
-      state.tail = task
+      const task = stateFor(parsed.domain)
+        .tail.catch(() => {})
+        .then(() => withDeadline(Promise.resolve().then(() => store.save(clone(parsed)))))
+      stateFor(parsed.domain).tail = task
       await task
     }
   }

@@ -6,6 +6,12 @@ import type { RoomTransport } from '@/runtime/RoomTransport'
 /** One recoverable Artico peer per Runtime host with a stable host-lifetime peer id. */
 export const createArticoRoomTransport = (): RoomTransport => {
   const peerId = nanoid()
+  /**
+   * Peer identity is stable for the whole physical Runtime/host lifetime; retry, a fresh structural
+   * attempt, or a same-host restart never rotates it. Native peer-signaling errors are surfaced as-is;
+   * no provider error's message/name/code is ever read to classify lifecycle. A peer id conflict
+   * therefore surfaces as a real error; the close→restart path (below) still retries normally.
+   */
   const desiredRooms = new Set<string>()
   const rooms = new Map<string, Room>()
   const readyPeers = new Map<string, Set<string>>()
@@ -70,9 +76,11 @@ export const createArticoRoomTransport = (): RoomTransport => {
       pendingJoins.delete(roomId)
     } catch (error) {
       const joinError = error as Error
+      // A synchronous provider join throw is delivered scoped to the owning attempt via the join
+      // rejection only. It must not also fire the room-less global error (which would surface as a
+      // duplicate cross-domain Toast).
       pendingJoins.get(roomId)?.reject(joinError)
       pendingJoins.delete(roomId)
-      errorListeners.forEach((listener) => listener(joinError))
     }
   }
 
@@ -85,7 +93,10 @@ export const createArticoRoomTransport = (): RoomTransport => {
       desiredRooms.forEach(joinNow)
     })
     nextPeer.on('error', (error) => {
-      if (peer === nextPeer) errorListeners.forEach((listener) => listener(error))
+      // Errors are never classified by message/name/code; they surface as real peer failures while
+      // the physical restart path below is the only structural self-healing mechanism.
+      if (peer !== nextPeer) return
+      errorListeners.forEach((listener) => listener(error))
     })
     nextPeer.on('close', () => {
       if (disposed || peer !== nextPeer || restartTimer || desiredRooms.size === 0) return
@@ -144,15 +155,21 @@ export const createArticoRoomTransport = (): RoomTransport => {
      * @see https://github.com/matallui/artico/blob/8a4f1a185be9355f893120e9492151f1785e59fa/packages/client/src/room.ts#L114
      * @see https://github.com/matallui/artico/blob/8a4f1a185be9355f893120e9492151f1785e59fa/packages/peer/src/peer.ts#L281
      */
+    peers: (roomId) => [...(readyPeers.get(roomId) ?? [])],
     send: async (roomId, payload, to) => {
       const room = rooms.get(roomId)
       if (!room) throw new Error(`Room "${roomId}" not joined`)
       const targets = new Set(typeof to === 'string' ? [to] : (to ?? readyPeers.get(roomId) ?? []))
+      let firstError: Error | null = null
       targets.forEach((target) => {
         try {
           room.send(payload, target)
-        } catch {}
+        } catch (error) {
+          // Every target is attempted exactly once; the first genuine throw surfaces after the rest ran.
+          firstError ??= error as Error
+        }
       })
+      if (firstError) throw firstError
     },
     onMessage: (callback) => {
       messageListeners.add(callback)

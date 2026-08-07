@@ -9,13 +9,16 @@ import App from './App'
 import { startInitializationLifecycle, type InitializationDependencies } from './Initialization'
 import { LocalStorageImpl, BrowserSyncStorageImpl, prepareLocalConfigurationStorage } from '@/domain/impls/Storage'
 import { createIndexedDBMessageDatabase, prepareIndexedDBMessageDatabase } from '@/domain/impls/database/IndexedDB'
-import { detachClient, initClient, whenHostPhase } from '@/domain/impls/runtime/Client'
+import { detachClient, initClient, whenFailure, whenHostPhase } from '@/domain/impls/runtime/Client'
 import { DanmakuImpl } from '@/domain/impls/Danmaku'
 import { NotificationImpl } from '@/domain/impls/Notification'
 import { ToastImpl } from '@/domain/impls/Toast'
 import { createChatRoomImpl } from '@/domain/impls/ChatRoom'
+import type { ChatRoom as RuntimeChatRoom } from '@/domain/impls/runtime/ChatRoom'
 import { createWorldRoomImpl } from '@/domain/impls/WorldRoom'
 import { createReadinessImpl } from '@/domain/impls/Readiness'
+import { createConnectionLifecycle } from '@/domain/impls/ConnectionLifecycle'
+import { createSendLifecycle } from '@/domain/impls/SendLifecycle'
 import { AppActionImpl } from '@/domain/impls/AppAction'
 // Remove import after merging: https://github.com/emilkowalski/sonner/pull/508
 import 'sonner/dist/styles.css'
@@ -23,6 +26,7 @@ import '@/assets/styles/tailwind.css'
 import '@/assets/styles/overlay.css'
 import NotificationDomain from '@/domain/Notification'
 import AppFeedbackDomain from '@/domain/AppFeedback'
+import ToastDomain from '@/domain/Toast'
 import { createElement } from '@/utils'
 import { requestBrowserSyncStoragePreparation } from '@/service/StoragePreparation'
 import { createDirectPreparationCoordinator, createWebLocksPreparationCoordinator } from '@/utils/withPreparationLock'
@@ -30,6 +34,8 @@ import { MessageDatabaseExtern, type MessageDatabaseSchema } from '@/domain/Mess
 import { ChatRoomExtern, type ChatRoom } from '@/domain/externs/ChatRoom'
 import { WorldRoomExtern, type WorldRoom } from '@/domain/externs/WorldRoom'
 import { ReadinessExtern, type Readiness } from '@/domain/externs/Readiness'
+import { ConnectionLifecycleExtern, type ConnectionLifecycle } from '@/domain/externs/ConnectionLifecycle'
+import { SendLifecycleExtern } from '@/domain/externs/SendLifecycle'
 import { BrowserSyncStorageExtern, type Storage, type StorageValue } from '@/domain/externs/Storage'
 import type { Database } from '@/domain/externs/Database'
 import {
@@ -114,8 +120,10 @@ const createContentStore = () => {
   const browserSyncStorage = createDeferredValue<Storage>()
   const messageDatabase = createDeferredValue<Database<MessageDatabaseSchema>>()
   const chatRoom = createDeferredValue<ChatRoom>()
+  let realizedChatRoom: RuntimeChatRoom | null = null
   const worldRoom = createDeferredValue<WorldRoom>()
   const readiness = createDeferredValue<Readiness>()
+  const connectionLifecycle = createDeferredValue<ConnectionLifecycle>()
 
   const deferredBrowserSyncStorage: Storage = {
     get: async <Value extends StorageValue>(key: string) => (await browserSyncStorage.get()).get<Value>(key),
@@ -130,8 +138,22 @@ const createContentStore = () => {
     close: async () => (await messageDatabase.get()).close()
   }
   const deferredChatRoom: ChatRoom = {
-    joinRoom: async (command) => (await chatRoom.get()).joinRoom(command),
-    leaveRoom: async () => (await chatRoom.get()).leaveRoom(),
+    joinRoom: (command) => {
+      // Mint the exact invocation token synchronously (before any await), pass it explicitly into the
+      // realized adapter, and bind this public-port task to it so the domain reads only this result.
+      const token = deferredConnectionLifecycle.mint()
+      const room = realizedChatRoom ?? (chatRoom as unknown as RuntimeChatRoom)
+      const task = room.joinRoomWithToken(token, command)
+      deferredConnectionLifecycle.bindTask(task, token)
+      return task
+    },
+    leaveRoom: () => {
+      const token = deferredConnectionLifecycle.mint()
+      const room = realizedChatRoom ?? (chatRoom as unknown as RuntimeChatRoom)
+      const task = room.leaveRoomWithToken(token)
+      deferredConnectionLifecycle.bindTask(task, token)
+      return task
+    },
     sendMessage: async (command) => (await chatRoom.get()).sendMessage(command),
     onMessage: (listener) => subscribeDeferred(chatRoom, (room) => room.onMessage(listener)),
     onJoinRoom: (listener) => subscribeDeferred(chatRoom, (room) => room.onJoinRoom(listener)),
@@ -147,7 +169,19 @@ const createContentStore = () => {
   const deferredReadiness: Readiness = {
     onState: (listener) => subscribeDeferred(readiness, (value) => value.onState(listener))
   }
+  let currentConnectionLifecycle: ConnectionLifecycle | null = null
+  const deferredConnectionLifecycle: ConnectionLifecycle = {
+    mint: () =>
+      currentConnectionLifecycle
+        ? currentConnectionLifecycle.mint()
+        : (() => {
+            throw new Error('ConnectionLifecycle not ready')
+          })(),
+    bindTask: (task, token) => currentConnectionLifecycle?.bindTask(task, token),
+    getTaskResult: (task) => currentConnectionLifecycle?.getTaskResult(task) ?? 'active'
+  }
 
+  const sendLifecycleInstance = createSendLifecycle()
   const store = Remesh.store({
     externs: [
       LocalStorageImpl,
@@ -156,6 +190,8 @@ const createContentStore = () => {
       ChatRoomExtern.impl(deferredChatRoom),
       WorldRoomExtern.impl(deferredWorldRoom),
       ReadinessExtern.impl(deferredReadiness),
+      ConnectionLifecycleExtern.impl(deferredConnectionLifecycle),
+      SendLifecycleExtern.impl(sendLifecycleInstance),
       AppActionImpl,
       ToastImpl,
       DanmakuImpl,
@@ -169,15 +205,26 @@ const createContentStore = () => {
     const ChatRoomImpl = createChatRoomImpl(database)
     const WorldRoomImpl = createWorldRoomImpl()
     const ReadinessImpl = createReadinessImpl(whenHostPhase)
+    const lifecycleBundle = createConnectionLifecycle()
+    ChatRoomImpl.epochSource.bindConnectionResultReporter(lifecycleBundle.report)
 
     browserSyncStorage.resolve(BrowserSyncStorageImpl.value)
     messageDatabase.resolve(database)
     chatRoom.resolve(ChatRoomImpl.value)
+    realizedChatRoom = ChatRoomImpl.epochSource
     worldRoom.resolve(WorldRoomImpl.value)
     readiness.resolve(ReadinessImpl.value)
+    currentConnectionLifecycle = lifecycleBundle.value
+    connectionLifecycle.resolve(lifecycleBundle.value)
   }
 
-  return { store, activateApplicationDependencies }
+  // Every distinct real control-plane failure surfaces as a fresh original-message toast while the
+  // lease keeps its bounded polling; detach ends the lifecycle and therefore further failures.
+  whenFailure((error) => {
+    store.send(store.getDomain(ToastDomain()).command.ErrorCommand(error.message))
+  })
+
+  return { store, activateApplicationDependencies, sendLifecycle: sendLifecycleInstance }
 }
 
 export default defineContentScript({
@@ -201,7 +248,10 @@ export default defineContentScript({
         const app = createElement('<div id="root"></div>')
         container.append(app)
         const root = createRoot(app)
-        const { store, activateApplicationDependencies } = createContentStore()
+        const { store, activateApplicationDependencies, sendLifecycle } = createContentStore()
+        // Content/lease teardown-supersession owner: cancel this page generation's active sends
+        // synchronously before the lease/domain release proceeds on detach.
+        window.addEventListener('beforeunload', () => sendLifecycle.cancelActiveSends(), { once: true })
         root.render(
           <StrictMode>
             <RemeshRoot store={store}>
@@ -216,10 +266,11 @@ export default defineContentScript({
           dependencies: initializationDependencies,
           activateApplicationDependencies
         })
-        return { root, store, stopInitialization }
+        return { root, store, stopInitialization, sendLifecycle }
       },
       onRemove: (content) => {
         content?.stopInitialization()
+        content?.sendLifecycle.cancelActiveSends()
         content?.root.unmount()
         content?.store.discard()
         mediaPreviewTransitionStyle?.remove()

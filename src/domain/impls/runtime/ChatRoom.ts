@@ -1,6 +1,8 @@
 import EventHub from '@resreq/event-hub'
 import { isInvalidMessageRecordError, type InsertMessageResult, type MessageStore } from '@/domain/MessageStore'
 import type { ChatRoom as ChatRoomPort, JoinRoomCommand, SendMessageCommand } from '@/domain/externs/ChatRoom'
+import type { ConnectionLifecycleResult } from '@/domain/externs/ConnectionLifecycle'
+import type { ConnectionResultReporter } from '@/domain/impls/ConnectionLifecycle'
 import type { Unsubscribe } from '@/domain/Subscription'
 import {
   MESSAGE_RECORD_TYPE,
@@ -52,6 +54,7 @@ interface RuntimeAttachment {
 
 interface PageConnectionAttempt {
   id: number
+  resultToken: number
   hostId: string
   controller: AbortController
   timeout: ReturnType<typeof globalThis.setTimeout>
@@ -59,7 +62,7 @@ interface PageConnectionAttempt {
 
 const PAGE_CONNECTION_ATTEMPT_TIMEOUT_MS = 10000
 
-const abortError = (message: string) => new DOMException(message, 'AbortError')
+const abortError = (message: string): DOMException => new DOMException(message, 'AbortError')
 
 const raceWithSignal = <Value>(task: Promise<Value>, signal: AbortSignal): Promise<Value> =>
   new Promise<Value>((resolve, reject) => {
@@ -170,8 +173,14 @@ const projectHistory = (
 export class ChatRoom extends EventHub implements ChatRoomPort {
   private readonly disposeReady: Unsubscribe
   private readonly pendingSelfJoinGenerations = new Set<string>()
+  /** Dedups transport repeats of one failure event for the whole live content generation (never evicts). */
+  private readonly seenErrorEventIds = new Set<string>()
   private readyGeneration = 0
   private connectionSequence = 0
+  private connectionTokenSequence = 0
+  private reportResult: ((token: number, result: ConnectionLifecycleResult) => void) | null = null
+  private standaloneMint: (() => number) | null = null
+  private standaloneBind: ((task: Promise<void>, token: number) => void) | null = null
   private attachment: RuntimeAttachment | null = null
   private activeConnection: PageConnectionAttempt | null = null
   private disposed = false
@@ -181,9 +190,25 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
     this.disposeReady = dependencies.whenReady(() => {
       if (this.disposed) return
       this.readyGeneration += 1
+      // Runtime generation replacement supersedes the old connection attempt; that is a structural
+      // cancellation fact for that attempt.
+      if (this.activeConnection) this.reportResult?.(this.activeConnection.resultToken, 'cancelled')
       this.activeConnection?.controller.abort(abortError('Runtime host generation replaced'))
       this.startAttachment(null)
     })
+  }
+
+  bindConnectionResultReporter(reporter: ConnectionResultReporter) {
+    this.reportResult = reporter
+  }
+
+  bindStandaloneInvocation(mint: () => number, bind: (task: Promise<void>, token: number) => void) {
+    this.standaloneMint = mint
+    this.standaloneBind = bind
+  }
+
+  private recordResult(token: number, result: ConnectionLifecycleResult) {
+    if (result !== 'active') this.reportResult?.(token, result)
   }
 
   private isAttachmentCurrent(attachment: RuntimeAttachment) {
@@ -237,12 +262,18 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
     return attachment
   }
 
-  private beginConnectionAttempt() {
+  private beginConnectionAttempt(resultToken: number) {
     if (this.disposed) throw abortError('Runtime page detached')
-    this.activeConnection?.controller.abort(abortError('Page connection attempt superseded'))
+    if (this.activeConnection) {
+      // This attempt supersedes the in-flight one: report its own token `cancelled` BEFORE aborting it,
+      // so that first-terminal-wins keeps the structural cancellation rather than a later generic `failed`.
+      this.recordResult(this.activeConnection.resultToken, 'cancelled')
+      this.activeConnection.controller.abort(abortError('Page connection attempt superseded'))
+    }
     const controller = new AbortController()
     const attempt: PageConnectionAttempt = {
       id: ++this.connectionSequence,
+      resultToken,
       hostId: this.dependencies.getSnapshot().hostId,
       controller,
       timeout: globalThis.setTimeout(() => {
@@ -519,8 +550,14 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
         if (isCurrent() && event.domain === dependencies.pageDomain) this.emitSessionEvent(event)
       })
     attachment.registrations.error = () =>
-      dependencies.server.onError({ pageId: dependencies.pageId }, (message) => {
-        if (isCurrent()) this.emit('error', new Error(message))
+      dependencies.server.onError({ pageId: dependencies.pageId }, (event) => {
+        if (!isCurrent()) return
+        // One failure event is displayed once per live content generation; transport repeats are
+        // dropped, while every later distinct failure carries its own eventId and therefore a
+        // fresh toast. The identity never expires so a late transport repeat cannot reappear.
+        if (this.seenErrorEventIds.has(event.eventId)) return
+        this.seenErrorEventIds.add(event.eventId)
+        this.emit('error', new Error(event.message))
       })
     attachment.registrations.history = () =>
       dependencies.server.provideHistory(
@@ -542,11 +579,22 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
     assertCurrent()
   }
 
-  async joinRoom(command: JoinRoomCommand): Promise<void> {
-    const attempt = this.beginConnectionAttempt()
+  joinRoom(command: JoinRoomCommand): Promise<void> {
+    // Return the exact inner task (not an async wrapper) so task-identity binding survives.
+    const token = this.standaloneMint ? this.standaloneMint() : ++this.connectionTokenSequence
+    const task = this.joinRoomWithToken(token, command)
+    this.standaloneBind?.(task, token)
+    return task
+  }
+
+  async joinRoomWithToken(resultToken: number, command: JoinRoomCommand): Promise<void> {
+    const attempt = this.beginConnectionAttempt(resultToken)
     try {
       const attachment = await this.currentAttachment(attempt)
-      if (!this.isConnectionCurrent(attempt, attachment)) throw abortError('Page connection attempt superseded')
+      if (!this.isConnectionCurrent(attempt, attachment)) {
+        this.recordResult(attempt.resultToken, 'cancelled')
+        throw abortError('Page connection attempt superseded')
+      }
       const snapshot = await raceWithSignal(
         this.dependencies.server.joinChatRoom({
           domain: this.dependencies.pageDomain,
@@ -554,13 +602,17 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
         }),
         attempt.controller.signal
       )
-      if (!snapshot) throw abortError('ChatRoom operation cancelled')
+      if (!snapshot) {
+        this.recordResult(attempt.resultToken, 'cancelled')
+        throw abortError('ChatRoom operation cancelled')
+      }
       attempt.controller.signal.throwIfAborted()
       if (
         !this.isConnectionCurrent(attempt, attachment) ||
         snapshot.hostId !== attempt.hostId ||
         this.dependencies.getSnapshot().hostId !== attempt.hostId
       ) {
+        this.recordResult(attempt.resultToken, 'cancelled')
         throw abortError('Page connection attempt superseded')
       }
       const domainSnapshot = snapshot.domains.find((item) => item.domain === this.dependencies.pageDomain)
@@ -579,29 +631,52 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
         }
       }
       attempt.controller.signal.throwIfAborted()
-      if (!this.isConnectionCurrent(attempt, attachment)) throw abortError('Page connection attempt superseded')
+      if (!this.isConnectionCurrent(attempt, attachment)) {
+        this.recordResult(attempt.resultToken, 'cancelled')
+        throw abortError('Page connection attempt superseded')
+      }
+      this.recordResult(attempt.resultToken, 'succeeded')
       this.finishConnectionAttempt(attempt)
     } catch (error) {
+      this.recordResult(attempt.resultToken, 'failed')
       this.finishConnectionAttempt(attempt, error)
       throw error
     }
   }
 
   // Application reconnect retains the public leave/join composition; Lifecycle owns final release.
-  async leaveRoom(): Promise<void> {
-    const attempt = this.beginConnectionAttempt()
+  leaveRoom(): Promise<void> {
+    const token = this.standaloneMint ? this.standaloneMint() : ++this.connectionTokenSequence
+    const task = this.leaveRoomWithToken(token)
+    this.standaloneBind?.(task, token)
+    return task
+  }
+
+  async leaveRoomWithToken(resultToken: number): Promise<void> {
+    const attempt = this.beginConnectionAttempt(resultToken)
     try {
       const attachment = await this.currentAttachment(attempt)
-      if (!this.isConnectionCurrent(attempt, attachment)) throw abortError('Page connection attempt superseded')
+      if (!this.isConnectionCurrent(attempt, attachment)) {
+        this.recordResult(attempt.resultToken, 'cancelled')
+        throw abortError('Page connection attempt superseded')
+      }
       const result = await raceWithSignal(
         this.dependencies.server.reconnectDomain({ domain: this.dependencies.pageDomain }),
         attempt.controller.signal
       )
-      if (result === null) throw abortError('ChatRoom operation cancelled')
+      if (result === null) {
+        this.recordResult(attempt.resultToken, 'cancelled')
+        throw abortError('ChatRoom operation cancelled')
+      }
       attempt.controller.signal.throwIfAborted()
-      if (!this.isConnectionCurrent(attempt, attachment)) throw abortError('Page connection attempt superseded')
+      if (!this.isConnectionCurrent(attempt, attachment)) {
+        this.recordResult(attempt.resultToken, 'cancelled')
+        throw abortError('Page connection attempt superseded')
+      }
+      this.recordResult(attempt.resultToken, 'succeeded')
       this.finishConnectionAttempt(attempt)
     } catch (error) {
+      this.recordResult(attempt.resultToken, 'failed')
       this.finishConnectionAttempt(attempt, error)
       throw error
     }

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { Message } from 'comctx'
+import { InjectAdapter, ownInjectRejections } from '@/service/adapter/runtime'
 import { BackgroundInjectAdapter } from '@/service/adapter/runtime/Core'
 import { ProviderAdapter, type MessageMeta } from '@/service/adapter/runtime/Provider'
 import { relayOffscreenProviderMessages } from '@/service/adapter/runtime/Relay'
@@ -37,6 +38,26 @@ const providerMessage = (id: string, overrides: Partial<Message<MessageMeta>> = 
 const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
 
 describe('Runtime browser adapters', () => {
+  it('preserves the native Runtime rejection through the content InjectAdapter seam', async () => {
+    const { runtime, sendMessage } = createMessaging()
+    const nativeError = new Error('Extension context invalidated.')
+    const nativePromise = Promise.reject(nativeError)
+    sendMessage.mockReturnValueOnce(nativePromise)
+    const owner = vi.fn()
+    const releaseOwner = ownInjectRejections(owner)
+    const adapter = new InjectAdapter(runtime)
+
+    try {
+      const sending = adapter.sendMessage(providerMessage('native-rejection'), [])
+      expect(sending).toBe(nativePromise)
+      await expect(sending).rejects.toBe(nativeError)
+      expect(owner).toHaveBeenCalledOnce()
+      expect(owner).toHaveBeenCalledWith(nativeError)
+    } finally {
+      releaseOwner()
+    }
+  })
+
   it('keeps the Offscreen provider on runtime messaging without a tabs capability', () => {
     const { runtime, listeners, sendMessage } = createMessaging()
     const adapter = new ProviderAdapter(runtime)

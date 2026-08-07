@@ -60,6 +60,7 @@ export class ClientLease {
   private checking: { deadline: number; task: Promise<void> } | null = null
   private readonly readyCallbacks = new Set<() => void>()
   private readonly hostPhaseCallbacks = new Set<(phase: HostPhase) => void>()
+  private readonly failureCallbacks = new Set<(error: Error) => void>()
   private hostPhase: HostPhase = 'none'
   private readonly startupTimeoutMs
   private readonly startupRetryIntervalMs
@@ -85,6 +86,12 @@ export class ClientLease {
     return () => this.hostPhaseCallbacks.delete(callback)
   }
 
+  /** Every distinct real control-plane failure is surfaced once here; polling never stops on failure. */
+  whenFailure(callback: (error: Error) => void) {
+    this.failureCallbacks.add(callback)
+    return () => this.failureCallbacks.delete(callback)
+  }
+
   private lease() {
     return { domain: this.options.domain, pageId: this.options.pageId }
   }
@@ -98,6 +105,17 @@ export class ClientLease {
     this.hostPhase = phase
     if (this.snapshotValue) this.snapshotValue = { ...this.snapshotValue, hostPhase: phase }
     this.hostPhaseCallbacks.forEach((callback) => callback(phase))
+  }
+
+  private emitFailure(error: unknown) {
+    const failure = error instanceof Error ? error : new Error(String(error))
+    this.logError(failure)
+    this.failureCallbacks.forEach((callback) => callback(failure))
+  }
+
+  /** Callback delivery rejections are diagnostic only; error content never controls the lease lifecycle. */
+  observeTransportRejection(_error: unknown) {
+    return false
   }
 
   private async registerWithinBudget(lifecycle: AbortController, deadline: number): Promise<RuntimePageRegistration> {
@@ -148,7 +166,7 @@ export class ClientLease {
       .catch((error) => {
         if (!this.isCurrent(lifecycle) || this.recovering !== recovery) return
         this.setHostPhase('unavailable')
-        this.logError(error)
+        this.emitFailure(error)
       })
     recovery.task = task
     this.recovering = recovery
@@ -182,8 +200,14 @@ export class ClientLease {
       }
       this.snapshotValue = registration.snapshot
       this.setHostPhase(registration.snapshot.hostPhase)
-    } catch {
-      if (!this.isCurrent(lifecycle) || this.checking !== check || Date.now() >= check.deadline) return
+    } catch (error) {
+      if (!this.isCurrent(lifecycle) || this.checking !== check) return
+      if (Date.now() >= check.deadline) {
+        this.ready = false
+        this.setHostPhase('unavailable')
+        this.emitFailure(error)
+        return
+      }
       this.ready = false
       await this.recover(lifecycle, check.deadline)
     }
@@ -227,6 +251,9 @@ export class ClientLease {
     } catch (error) {
       if (lifecycle.signal.aborted) return null
       this.setHostPhase('unavailable')
+      // A genuine initial control-plane failure is a distinct real failure surfaced with its
+      // original message, exactly once, on the current page.
+      this.emitFailure(error)
       throw error
     }
   }

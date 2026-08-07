@@ -12,12 +12,6 @@ export interface LocalPresenceLease {
   status: 'pending' | 'active'
 }
 
-export interface PendingPresenceEnd {
-  presenceId: string
-  userId: string
-  joinedAt: number
-}
-
 export interface ObservedPresence {
   presenceId: string
   sessionId: string
@@ -30,9 +24,6 @@ export interface PresenceDomainRecord {
   domain: string
   lastJoinedAt: number
   local?: LocalPresenceLease
-  inflightEnd?: PendingPresenceEnd
-  pendingEnd?: PendingPresenceEnd
-  settledEnd?: PendingPresenceEnd
   observers: ObservedPresence[]
 }
 

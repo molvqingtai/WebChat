@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Database, ReadTransaction, WriteTransaction } from '@/domain/externs/Database'
 import { ChatRoom } from '@/domain/impls/runtime/ChatRoom'
+import { createConnectionLifecycle } from '@/domain/impls/ConnectionLifecycle'
 import { createMemoryMessageDatabase } from '@/domain/impls/database/Memory'
 import { createMessageStore, type MessageDatabaseSchema } from '@/domain/MessageStore'
 import {
@@ -15,6 +16,7 @@ import { stringToHex } from '@/utils'
 import type {
   HistorySupplyEvent,
   InboundEvent,
+  RuntimeErrorEvent,
   RuntimeServer,
   RuntimeSessionEvent,
   RuntimeSnapshot
@@ -112,6 +114,7 @@ interface ServerFixture {
   emitInbound: (event: InboundEvent) => Promise<void>
   emitSession: (event: RuntimeSessionEvent) => Promise<void>
   emitError: (message: string) => Promise<void>
+  emitErrorEvent: (event: RuntimeErrorEvent) => Promise<void>
   emitHistory: (event: HistorySupplyEvent) => void
   resolvedHistory: { supplyId: string; ids: string[]; done: boolean }[]
   sent: ChatMessage[]
@@ -122,10 +125,11 @@ interface ServerFixture {
 const serverFixture = (): ServerFixture => {
   let inbound: ((event: InboundEvent) => void | Promise<void>) | undefined
   let session: ((event: RuntimeSessionEvent) => void | Promise<void>) | undefined
-  let runtimeError: ((message: string) => void | Promise<void>) | undefined
+  let runtimeError: ((event: RuntimeErrorEvent) => void | Promise<void>) | undefined
   let history: ((event: HistorySupplyEvent) => void) | undefined
   let leaves = 0
   let reconnects = 0
+  let errorSequence = 0
   const resolvedHistory: ServerFixture['resolvedHistory'] = []
   const sent: ChatMessage[] = []
   const server: RuntimeServer = {
@@ -202,7 +206,16 @@ const serverFixture = (): ServerFixture => {
       await session?.(event)
     },
     emitError: async (message) => {
-      await runtimeError?.(message)
+      errorSequence += 1
+      await runtimeError?.({
+        eventId: `test-error-${errorSequence}`,
+        message,
+        subsystem: 'connection',
+        operation: 'lifecycle'
+      })
+    },
+    emitErrorEvent: async (event) => {
+      await runtimeError?.(event)
     },
     emitHistory: (event) => history?.(event),
     resolvedHistory,
@@ -299,6 +312,34 @@ describe('Runtime-backed ChatRoom application port', () => {
     await emitError('Runtime transport disconnected')
 
     expect(errors).toEqual([new Error('Runtime transport disconnected')])
+  })
+
+  it('deduplicates transport repeats of one failure event while fresh failures stay visible', async () => {
+    const { room, emitErrorEvent } = await setup()
+    const errors: Error[] = []
+    room.onError((error) => errors.push(error))
+    await settle()
+
+    await emitErrorEvent({
+      eventId: 'event-a',
+      message: 'Runtime transport disconnected',
+      subsystem: 'connection',
+      operation: 'lifecycle'
+    })
+    await emitErrorEvent({
+      eventId: 'event-a',
+      message: 'Runtime transport disconnected',
+      subsystem: 'connection',
+      operation: 'lifecycle'
+    })
+    await emitErrorEvent({
+      eventId: 'event-b',
+      message: 'Runtime transport disconnected',
+      subsystem: 'connection',
+      operation: 'lifecycle'
+    })
+
+    expect(errors).toEqual([new Error('Runtime transport disconnected'), new Error('Runtime transport disconnected')])
   })
 
   it('publishes initialization as one session snapshot without a synthetic join fact', async () => {
@@ -935,5 +976,42 @@ describe('Runtime-backed ChatRoom application port', () => {
       firstRoom.dispose()
       await database.close()
     }
+  })
+
+  it('reports a superseded attempt token cancelled before aborting it (real Runtime adapter)', async () => {
+    const heldJoin = new Promise<RuntimeSnapshot>(() => {})
+    const database = createMemoryMessageDatabase(`supersede-${databaseId++}`)
+    const messageStore = createMessageStore(database)
+    const server: RuntimeServer = {
+      ...serverFixture().server,
+      joinChatRoom: async () => heldJoin
+    }
+    const lifecycle = createConnectionLifecycle()
+    const room = new ChatRoom({
+      server,
+      messageStore,
+      pageDomain: DOMAIN,
+      pageId: 'page-1',
+      getSnapshot: () => domainSnapshot(),
+      whenReady: (listener) => {
+        listener()
+        return () => {}
+      }
+    })
+    room.bindConnectionResultReporter(lifecycle.report)
+    room.bindStandaloneInvocation(lifecycle.value.mint, lifecycle.value.bindTask)
+
+    // First join holds its provider call; a second join supersedes it by beginConnectionAttempt, which
+    // must report the predecessor token cancelled BEFORE aborting it (first-terminal-wins).
+    const first = room.joinRoom({ user: USER, site: SITE })
+    first.catch(() => {})
+    await settle()
+    const second = room.joinRoom({ user: USER, site: SITE })
+    second.catch(() => {})
+    await settle()
+
+    expect(lifecycle.value.getTaskResult(first)).toBe('cancelled')
+    room.dispose()
+    await database.close()
   })
 })

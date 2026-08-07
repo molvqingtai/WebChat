@@ -12,6 +12,8 @@ import { ChatRoomExtern, type ChatRoom } from '@/domain/externs/ChatRoom'
 import { ReadinessExtern } from '@/domain/externs/Readiness'
 import { createMessageStore, MessageDatabaseExtern } from '@/domain/MessageStore'
 import { createMemoryMessageDatabase } from '@/domain/impls/database/Memory'
+import { SendLifecycleExtern } from '@/domain/externs/SendLifecycle'
+import { createSendLifecycle } from '@/domain/impls/SendLifecycle'
 import { MESSAGE_TYPE, REACTION_TYPE, type ChatMessage } from '@/protocol/ChatRoom'
 import type { ChatSession } from '@/protocol/Session'
 import UserInfoDomain, { type UserInfo } from '@/domain/UserInfo'
@@ -109,6 +111,7 @@ const createFixture = ({
       LocalStorageExtern.impl(localStorage),
       BrowserSyncStorageExtern.impl(browserStorage),
       ChatRoomExtern.impl(chat),
+      SendLifecycleExtern.impl(createSendLifecycle()),
       ReadinessExtern.impl({ onState: () => () => {} }),
       MessageDatabaseExtern.impl(database)
     ]

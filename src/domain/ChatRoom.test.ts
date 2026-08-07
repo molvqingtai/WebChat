@@ -6,6 +6,10 @@ import MessageListDomain from '@/domain/MessageList'
 import UserInfoDomain, { type UserInfo } from '@/domain/UserInfo'
 import { ChatRoomExtern, type ChatRoom } from '@/domain/externs/ChatRoom'
 import { ReadinessExtern } from '@/domain/externs/Readiness'
+import { ConnectionLifecycleExtern, type ConnectionLifecycleResult } from '@/domain/externs/ConnectionLifecycle'
+import { SendLifecycleExtern } from '@/domain/externs/SendLifecycle'
+import { createConnectionLifecycle } from '@/domain/impls/ConnectionLifecycle'
+import { createSendLifecycle } from '@/domain/impls/SendLifecycle'
 import { createMemoryMessageDatabase } from '@/domain/impls/database/Memory'
 import { ChatRoom as RuntimeChatRoom } from '@/domain/impls/runtime/ChatRoom'
 import { MessageDatabaseExtern, createMessageStore } from '@/domain/MessageStore'
@@ -68,6 +72,29 @@ const createFixture = (options: { delayRecordWatch?: boolean; user?: UserInfo | 
     watch: async () => async () => {}
   }
   const readinessListeners = new Set<(state: 'connecting' | 'ready' | 'unavailable') => void>()
+  let lifecycleResult: ConnectionLifecycleResult = 'active'
+  let lifecycleSeq = 0
+  const lifecycleByTask = new WeakMap<Promise<void>, number>()
+  const lifecycleResults = new Map<number, ConnectionLifecycleResult>()
+  const consumedLifecycleTasks: unknown[] = []
+  const lifecycle = {
+    mint: () => {
+      const token = ++lifecycleSeq
+      lifecycleResults.set(token, 'active')
+      return token
+    },
+    bindTask: (task: Promise<void>, token: number) => {
+      lifecycleByTask.set(task, token)
+    },
+    getTaskResult: (task: Promise<void>) => {
+      const token = lifecycleByTask.get(task)
+      consumedLifecycleTasks.push(task)
+      if (token === undefined) return lifecycleResult
+      const result = lifecycleResults.get(token) ?? lifecycleResult
+      if (result !== 'active') lifecycleResults.delete(token)
+      return result
+    }
+  }
   const listeners = {
     message: new Set<(message: ChatMessage) => void>(),
     join: new Set<(session: ChatSession) => void>(),
@@ -126,9 +153,16 @@ const createFixture = (options: { delayRecordWatch?: boolean; user?: UserInfo | 
     onError: (listener) => subscribe(listeners.error, listener)
   }
 
+  const sendLifecycleLocal = createSendLifecycle()
   const store = Remesh.store({
     externs: [
       ChatRoomExtern.impl(chat),
+      ConnectionLifecycleExtern.impl({
+        mint: lifecycle.mint,
+        bindTask: lifecycle.bindTask,
+        getTaskResult: lifecycle.getTaskResult
+      }),
+      SendLifecycleExtern.impl(sendLifecycleLocal),
       ReadinessExtern.impl({
         onState: (listener) => {
           readinessListeners.add(listener)
@@ -171,7 +205,22 @@ const createFixture = (options: { delayRecordWatch?: boolean; user?: UserInfo | 
     emitSessions: (sessions: readonly ChatSession[]) => listeners.sessions.forEach((listener) => listener(sessions)),
     emitError: (error: Error) => listeners.error.forEach((listener) => listener(error)),
     emitReadiness: (state: 'connecting' | 'ready' | 'unavailable') =>
-      readinessListeners.forEach((listener) => listener(state))
+      readinessListeners.forEach((listener) => listener(state)),
+    setLifecycleResult: (result: ConnectionLifecycleResult) => {
+      lifecycleResult = result
+    },
+    setTaskResult: (task: Promise<void>, result: ConnectionLifecycleResult) => {
+      const token = lifecycleByTask.get(task)
+      if (token !== undefined) lifecycleResults.set(token, result)
+    },
+    bindLifecycleTask: (task: Promise<void>, result: ConnectionLifecycleResult) => {
+      const token = ++lifecycleSeq
+      lifecycleResults.set(token, result)
+      lifecycleByTask.set(task, token)
+      return token
+    },
+    consumedLifecycleTasks,
+    cancelActiveSends: () => sendLifecycleLocal.cancelActiveSends()
   }
 }
 
@@ -323,6 +372,9 @@ const createPendingConnectionFixture = (stage: PendingConnectionStage) => {
       }
     }
   })
+  const lifecycleBundle = createConnectionLifecycle()
+  adapter.bindConnectionResultReporter(lifecycleBundle.report)
+  adapter.bindStandaloneInvocation(lifecycleBundle.value.mint, lifecycleBundle.value.bindTask)
   const storage: Storage = {
     get: async <T extends StorageValue>() => SELF as T,
     set: async () => {},
@@ -331,6 +383,8 @@ const createPendingConnectionFixture = (stage: PendingConnectionStage) => {
   const store = Remesh.store({
     externs: [
       ChatRoomExtern.impl(adapter),
+      ConnectionLifecycleExtern.impl(lifecycleBundle.value),
+      SendLifecycleExtern.impl(createSendLifecycle()),
       ReadinessExtern.impl({
         onState: (listener) => {
           listener('ready')
@@ -569,6 +623,9 @@ describe('ChatRoomDomain exact application port', () => {
     await new Promise((resolve) => globalThis.setTimeout(resolve, 0))
     expect(fixture.store.query(fixture.room.query.ConnectionOperationIsLoadingQuery())).toBe(true)
 
+    // The automatic host-recovery attempt is superseded: the Runtime records that exact attempt as a
+    // structural cancellation, so its completion is silent (never classified from any caught error).
+    fixture.setLifecycleResult('cancelled')
     hostRecovery.reject(new DOMException('Runtime operation superseded', 'AbortError'))
     await vi.waitFor(() => expect(fixture.store.query(fixture.room.query.ConnectionIsLoadingQuery())).toBe(false))
     expect(connectionErrors).toEqual([])
@@ -576,10 +633,71 @@ describe('ChatRoomDomain exact application port', () => {
 
     const refreshError = new Error('Identity refresh failed')
     vi.mocked(fixture.chat.joinRoom).mockRejectedValueOnce(refreshError)
+    // A new attempt begins as `active` (the adapter's beginConnectionAttempt) and then genuinely fails:
+    // its completion must surface the real error, not inherit a prior attempt's cancelled result.
+    fixture.setLifecycleResult('active')
     fixture.store.send(fixture.user.command.UpdateUserInfoCommand({ ...SELF, name: 'Latest' }))
     await vi.waitFor(() => expect(connectionErrors).toEqual([refreshError]))
-    expect(roomErrors).toEqual([])
+    expect(roomErrors).toEqual([refreshError])
     expect(fixture.store.query(fixture.room.query.ConnectionIsLoadingQuery())).toBe(false)
+    fixture.store.discard()
+  })
+
+  it('consumes the exact result of a genuinely stale rejected connection task exactly once before staleness branching', async () => {
+    const fixture = createFixture()
+    await join(fixture) // joinRoom call 1 (baseline)
+    const staleOp = deferred()
+    const newerOp = deferred()
+    const staleTask = staleOp.promise as unknown as Promise<void>
+    const newerTask = newerOp.promise as unknown as Promise<void>
+    fixture.bindLifecycleTask(staleTask, 'cancelled')
+    fixture.bindLifecycleTask(newerTask, 'cancelled')
+    vi.mocked(fixture.chat.joinRoom)
+      .mockReturnValueOnce(staleTask as never) // call 2 (older op)
+      .mockReturnValueOnce(newerTask as never) // call 3 (newer op, supersedes)
+
+    // First held connection (call 2).
+    fixture.store.send(fixture.user.command.UpdateUserInfoCommand({ ...SELF, name: 'One' }))
+    await vi.waitFor(() => expect(fixture.chat.joinRoom).toHaveBeenCalledTimes(2))
+    // A genuinely newer connection (call 3) supersedes it, making the first stale by request id.
+    fixture.store.send(fixture.user.command.UpdateUserInfoCommand({ ...SELF, name: 'Two' }))
+    await vi.waitFor(() => expect(fixture.chat.joinRoom).toHaveBeenCalledTimes(3))
+
+    // The stale op rejects; its exact result must still be consumed exactly once before the request
+    // staleness branch (a stale-first short circuit would skip getTaskResult and leak terminal state).
+    staleOp.reject(new DOMException('Runtime operation superseded', 'AbortError'))
+    await Promise.resolve()
+
+    expect(fixture.consumedLifecycleTasks.filter((task) => task === staleTask)).toHaveLength(1)
+    fixture.store.discard()
+  })
+
+  it('consumes the exact leave and join task results of a failing reconnect before branching', async () => {
+    const fixture = createFixture()
+    await join(fixture) // joinRoom call 1 (baseline)
+    const leaveDeferred = deferred()
+    const joinDeferred = deferred()
+    const leaveTask = leaveDeferred.promise as unknown as Promise<void>
+    const joinTask = joinDeferred.promise as unknown as Promise<void>
+    fixture.bindLifecycleTask(leaveTask, 'failed')
+    fixture.bindLifecycleTask(joinTask, 'failed')
+    vi.mocked(fixture.chat.leaveRoom).mockReturnValueOnce(leaveTask as never)
+    vi.mocked(fixture.chat.joinRoom).mockReturnValueOnce(joinTask as never)
+
+    fixture.store.send(fixture.room.command.ReconnectCommand())
+    await vi.waitFor(() => expect(fixture.chat.leaveRoom).toHaveBeenCalledTimes(1))
+    // Let the leave settle so the reconnect proceeds to its joinRoom invocation.
+    leaveDeferred.resolve()
+    await vi.waitFor(() => expect(fixture.chat.joinRoom).toHaveBeenCalledTimes(2))
+
+    // Reject the reconnect join; the ReconnectEffect consumes each started leave/join task in its catch
+    // (leave settles successfully, join rejects) so neither terminal result leaks.
+    joinDeferred.reject(new Error('reconnect join failed'))
+    await Promise.resolve()
+
+    // Both started reconnect tasks are consumed exactly once (leave in the catch after the join rejection).
+    expect(fixture.consumedLifecycleTasks.filter((task) => task === leaveTask)).toHaveLength(1)
+    expect(fixture.consumedLifecycleTasks.filter((task) => task === joinTask)).toHaveLength(1)
     fixture.store.discard()
   })
 
@@ -654,7 +772,7 @@ describe('ChatRoomDomain exact application port', () => {
     expect(fixture.chat.joinRoom).toHaveBeenCalledTimes(2)
     expect(fixture.chat.leaveRoom).not.toHaveBeenCalled()
     expect(connectionErrors).toEqual([new Error('initial join failed')])
-    expect(roomErrors).toEqual([])
+    expect(roomErrors).toEqual([new Error('initial join failed'), new Error('retry transport reset')])
 
     fixture.store.send(fixture.room.command.SettleReconnectIntervalCommand(request.id))
     await vi.waitFor(() => expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toBeNull())
@@ -835,9 +953,13 @@ describe('ChatRoomDomain exact application port', () => {
       watch: async () => async () => {}
     }
     vi.stubGlobal('document', { location: { origin: domain }, title: '', querySelector: () => null })
+    const lifecycleBundle = createConnectionLifecycle()
+    adapter.bindConnectionResultReporter(lifecycleBundle.report)
+    adapter.bindStandaloneInvocation(lifecycleBundle.value.mint, lifecycleBundle.value.bindTask)
     const store = Remesh.store({
       externs: [
         ChatRoomExtern.impl(adapter),
+        ConnectionLifecycleExtern.impl(lifecycleBundle.value),
         ReadinessExtern.impl({ onState: () => () => {} }),
         MessageDatabaseExtern.impl(database),
         BrowserSyncStorageExtern.impl(storage)
@@ -986,6 +1108,67 @@ describe('ChatRoomDomain exact application port', () => {
     fixture.store.discard()
   })
 
+  it('holds text and reaction operations until Runtime readiness returns without publishing an error', async () => {
+    const fixture = createFixture()
+    await join(fixture)
+    const errors: Error[] = []
+    fixture.store.subscribeEvent(fixture.room.event.OnErrorEvent, (error) => errors.push(error))
+
+    fixture.emitReadiness('connecting')
+    fixture.store.send(fixture.room.command.SendTextMessageCommand('held text'))
+    await Promise.resolve()
+    expect(fixture.chat.sendMessage).not.toHaveBeenCalled()
+
+    fixture.emitReadiness('unavailable')
+    await Promise.resolve()
+    expect(fixture.chat.sendMessage).not.toHaveBeenCalled()
+
+    fixture.emitReadiness('ready')
+    await vi.waitFor(() =>
+      expect(fixture.chat.sendMessage).toHaveBeenCalledWith({ type: 'text', body: 'held text', mentions: [] })
+    )
+    await vi.waitFor(() => expect(fixture.store.query(fixture.list.query.ItemQuery('local-message'))).not.toBeNull())
+    vi.mocked(fixture.chat.sendMessage).mockClear()
+
+    fixture.emitReadiness('connecting')
+    fixture.store.send(fixture.room.command.SendReactionCommand({ messageId: 'local-message', reaction: 'like' }))
+    await Promise.resolve()
+    expect(fixture.chat.sendMessage).not.toHaveBeenCalled()
+
+    fixture.emitReadiness('ready')
+    await vi.waitFor(() =>
+      expect(fixture.chat.sendMessage).toHaveBeenCalledWith({
+        type: 'reaction',
+        targetId: 'local-message',
+        reaction: 'like',
+        active: true
+      })
+    )
+    expect(errors).toEqual([])
+    fixture.store.discard()
+  })
+
+  it('holds a send behind an in-progress page connection and completes it after the join', async () => {
+    const fixture = createFixture()
+    const joining = deferred()
+    vi.mocked(fixture.chat.joinRoom).mockReturnValueOnce(joining.promise)
+    fixture.store.send(fixture.room.command.JoinRoomCommand())
+
+    fixture.store.send(fixture.room.command.SendTextMessageCommand('during page recovery'))
+    await Promise.resolve()
+    expect(fixture.chat.sendMessage).not.toHaveBeenCalled()
+
+    joining.resolve()
+    await vi.waitFor(() =>
+      expect(fixture.chat.sendMessage).toHaveBeenCalledWith({
+        type: 'text',
+        body: 'during page recovery',
+        mentions: []
+      })
+    )
+    fixture.store.discard()
+  })
+
   it('starts the operation immediately and settles only its matching request interval', async () => {
     const reconnect = deferred()
     const fixture = createFixture()
@@ -1110,6 +1293,144 @@ describe('ChatRoomDomain exact application port', () => {
     expect(projected).toEqual([])
     expect(fixture.store.query(fixture.input.query.MessageQuery())).toBe('hello')
     await expect(fixture.records()).resolves.toEqual([])
+    fixture.store.discard()
+  })
+
+  it('completes a send cancelled by final release without publishing a room error', async () => {
+    const fixture = createFixture()
+    const errors: Error[] = []
+    fixture.store.subscribeEvent(fixture.room.event.OnErrorEvent, (error) => errors.push(error))
+    let rejectSend!: (reason?: unknown) => void
+    const rejectedSend = new Promise<never>((_, reject) => {
+      rejectSend = reject
+    })
+    vi.mocked(fixture.chat.sendMessage).mockReturnValueOnce(
+      rejectedSend as never as ReturnType<typeof fixture.chat.sendMessage>
+    )
+    fixture.store.send(fixture.input.command.InputCommand('held by teardown'))
+
+    fixture.store.send(fixture.room.command.SendTextMessageCommand('held by teardown'))
+    await vi.waitFor(() => expect(fixture.chat.sendMessage).toHaveBeenCalledOnce())
+
+    // Final release in progress: the Content/lease teardown owner cancels the still-active send token.
+    // The in-flight send then rejects but its own token is already cancelled, so it is silent — never
+    // derived from the caught error's content or a remote-leave/session event.
+    fixture.cancelActiveSends()
+    rejectSend(new DOMException('Runtime presence is completing its final release', 'AbortError'))
+    await Promise.resolve()
+
+    expect(errors).toEqual([])
+    expect(fixture.store.query(fixture.input.query.MessageQuery())).toBe('held by teardown')
+    fixture.store.discard()
+  })
+
+  it('surfaces a real provider send failure even while connection loading is present', async () => {
+    const fixture = createFixture()
+    const errors: Error[] = []
+    fixture.store.subscribeEvent(fixture.room.event.OnErrorEvent, (error) => errors.push(error))
+    let rejectSend!: (reason?: unknown) => void
+    const providerError = new Error('provider transport failed')
+    const rejectedSend = new Promise<never>((_, reject) => {
+      rejectSend = reject
+    })
+    vi.mocked(fixture.chat.sendMessage).mockReturnValueOnce(
+      rejectedSend as never as ReturnType<typeof fixture.chat.sendMessage>
+    )
+    fixture.store.send(fixture.input.command.InputCommand('provider fails'))
+
+    fixture.store.send(fixture.room.command.SendTextMessageCommand('provider fails'))
+    await vi.waitFor(() => expect(fixture.chat.sendMessage).toHaveBeenCalledOnce())
+
+    // Unrelated connection/reconnect loading must not hide a real provider failure: each send owns an
+    // exact token, so only a cancelled token is silent; this genuine error settles its token `failed`.
+    fixture.emitReadiness('connecting')
+    rejectSend(providerError)
+
+    await vi.waitFor(() => expect(errors).toEqual([providerError]))
+    fixture.store.discard()
+  })
+
+  it('does not let a remote peer leave cancel a pending local send that then really fails', async () => {
+    const fixture = createFixture()
+    const errors: Error[] = []
+    fixture.store.subscribeEvent(fixture.room.event.OnErrorEvent, (error) => errors.push(error))
+    let rejectSend!: (reason?: unknown) => void
+    const providerError = new Error('provider transport failed')
+    const rejectedSend = new Promise<never>((_, reject) => {
+      rejectSend = reject
+    })
+    vi.mocked(fixture.chat.sendMessage).mockReturnValueOnce(
+      rejectedSend as never as ReturnType<typeof fixture.chat.sendMessage>
+    )
+    fixture.store.send(fixture.input.command.InputCommand('remote leaves'))
+
+    fixture.store.send(fixture.room.command.SendTextMessageCommand('remote leaves'))
+    await vi.waitFor(() => expect(fixture.chat.sendMessage).toHaveBeenCalledOnce())
+
+    // A remote user's departure keeps the local session present and must NOT cancel this local send;
+    // its token cannot settle `cancelled`, so the genuine provider failure must surface.
+    fixture.emitSessions([SELF_SESSION])
+    rejectSend(providerError)
+
+    await vi.waitFor(() => expect(errors).toEqual([providerError]))
+    fixture.store.discard()
+  })
+
+  it('does not cancel a pending real send on manual reconnect, so its later failure still Toasts', async () => {
+    const fixture = createFixture()
+    await join(fixture)
+    const errors: Error[] = []
+    fixture.store.subscribeEvent(fixture.room.event.OnErrorEvent, (error) => errors.push(error))
+    const providerError = new Error('provider transport failed')
+    let rejectSend!: (reason?: unknown) => void
+    const rejectedSend = new Promise<never>((_, reject) => {
+      rejectSend = reject
+    })
+    vi.mocked(fixture.chat.sendMessage).mockReturnValueOnce(
+      rejectedSend as never as ReturnType<typeof fixture.chat.sendMessage>
+    )
+    fixture.store.send(fixture.input.command.InputCommand('reconnect held'))
+
+    fixture.store.send(fixture.room.command.SendTextMessageCommand('reconnect held'))
+    await vi.waitFor(() => expect(fixture.chat.sendMessage).toHaveBeenCalledOnce())
+
+    // Manual reconnect leaves and rejoins; it must NOT bulk-cancel the pending send (which would
+    // suppress a genuine failure). The send token stays active, so its real failure surfaces.
+    fixture.store.send(fixture.room.command.ReconnectCommand())
+    rejectSend(providerError)
+
+    await vi.waitFor(() => expect(errors).toEqual([providerError]))
+    fixture.store.discard()
+  })
+
+  it('still projects a pending local send that succeeds during manual reconnect', async () => {
+    const fixture = createFixture()
+    await join(fixture)
+    const projected: string[] = []
+    fixture.store.subscribeEvent(fixture.room.event.SendTextMessageEvent, (message) => projected.push(message.id))
+    let resolveSend!: (message: ChatMessage) => void
+    const heldSend = new Promise<ChatMessage>((resolve) => {
+      resolveSend = resolve
+    })
+    vi.mocked(fixture.chat.sendMessage).mockReturnValueOnce(
+      heldSend as never as ReturnType<typeof fixture.chat.sendMessage>
+    )
+    fixture.store.send(fixture.input.command.InputCommand('reconnect success'))
+    fixture.store.send(fixture.room.command.SendTextMessageCommand('reconnect success'))
+    await vi.waitFor(() => expect(fixture.chat.sendMessage).toHaveBeenCalledOnce())
+
+    // Manual reconnect must not silently drop a successful local result: the late success still projects.
+    fixture.store.send(fixture.room.command.ReconnectCommand())
+    resolveSend({
+      type: MESSAGE_TYPE.TEXT,
+      id: 'local-success-message',
+      hlc: { timestamp: 5, counter: 0 },
+      userId: SELF.id,
+      body: 'reconnect success',
+      mentions: []
+    })
+
+    await vi.waitFor(() => expect(projected).toEqual(['local-success-message']))
     fixture.store.discard()
   })
 
