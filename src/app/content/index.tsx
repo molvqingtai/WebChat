@@ -242,6 +242,9 @@ const createContentStore = () => {
 const createDocumentLifecycleOwner = () => {
   let documentState: 'active' | 'suspended' | 'ended' = 'active'
   let restored = false
+  // A restore generation is invalidated by any later suspend/terminal-exit/dispose, so a late restore
+  // completion can never resume feedback or re-activate an ended/discarded document.
+  let restoreGeneration = 0
   let deps: { store: RemeshStore; sendLifecycle: SendLifecycle } | null = null
   const feedbackDomain = () => deps!.store.getDomain(AppFeedbackDomain())
 
@@ -252,27 +255,42 @@ const createDocumentLifecycleOwner = () => {
     deps!.sendLifecycle.cancelActiveSends()
     detachClient()
   }
+  const invalidateRestore = () => {
+    restoreGeneration += 1
+  }
   const suspend = () => {
     if (!deps || documentState !== 'active') return
     documentState = 'suspended'
     restored = false
+    invalidateRestore()
     silenceFeedback()
     cleanupOnce()
   }
   const end = () => {
     if (!deps || documentState === 'ended') return
     documentState = 'ended'
+    invalidateRestore()
     silenceFeedback()
     cleanupOnce()
   }
   const restore = () => {
     if (!deps || documentState !== 'suspended' || restored) return
     restored = true
-    // Exactly one current attach/init for the restored document; feedback resumes from the resulting
-    // current snapshot (current ready dismisses the stable slot without a success Toast).
-    void initClient().finally(() => {
-      deps!.store.send(feedbackDomain().command.ResumeFeedbackCommand())
-    })
+    const generation = restoreGeneration
+    // Exactly one current attach/init for the restored document. Feedback resumes only if this restore
+    // generation is still current (no later suspend/terminal exit/dispose invalidated it) and the
+    // document is still suspended; current ready then dismisses the stable slot without a success Toast.
+    initClient().then(
+      () => {
+        if (restoreGeneration !== generation || documentState !== 'suspended') return
+        documentState = 'active'
+        deps!.store.send(feedbackDomain().command.ResumeFeedbackCommand())
+      },
+      () => {
+        // Explicitly consume the rejection: a failed restore must not resume feedback or become an
+        // unhandled rejection; the page stays suspended and the watchdog/next cycle can re-attempt.
+      }
+    )
   }
   const onBeforeUnload = () => {
     // Feedback becomes silent before any page-local readiness change; cleanup ownership stays with
@@ -297,6 +315,10 @@ const createDocumentLifecycleOwner = () => {
       window.removeEventListener('beforeunload', onBeforeUnload)
       window.removeEventListener('pagehide', onPageHide)
       window.removeEventListener('pageshow', onPageShow)
+      // Dispose is terminal for this document generation: any in-flight restore completion must not
+      // resume feedback on a discarded page.
+      invalidateRestore()
+      documentState = 'ended'
     }
   }
 }

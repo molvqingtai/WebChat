@@ -294,6 +294,62 @@ describe('content composition root', () => {
     window.dispatchEvent(pageshow)
     await Promise.resolve()
     expect(fixture.initClient).toHaveBeenCalledTimes(1)
+
+    // A second full Back/Forward cycle is honored: hide->show again detaches exactly once more and
+    // restores exactly once more (the document returns to active between cycles).
+    window.dispatchEvent(pagehide)
+    expect(sendLifecycleInstance.cancelActiveSends).toHaveBeenCalledTimes(2)
+    expect(fixture.detachClient).toHaveBeenCalledTimes(2)
+    window.dispatchEvent(pageshow)
+    await Promise.resolve()
+    expect(fixture.initClient).toHaveBeenCalledTimes(2)
+    expect(fixture.resumeFeedback).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not resume feedback when a terminal exit lands while restore is in flight', async () => {
+    await startContent()
+    const sendLifecycleInstance = fixture.createSendLifecycle.mock.results[0]?.value
+    if (!sendLifecycleInstance) throw new Error('SendLifecycle was never created')
+
+    // Hold the restore's initClient pending, then a non-persisted terminal pagehide lands before it
+    // completes: the late completion must NOT resume feedback on an ended document.
+    let resolveInit!: () => void
+    fixture.initClient.mockReturnValueOnce(
+      new Promise<null>((resolve) => {
+        resolveInit = () => resolve(null)
+      })
+    )
+
+    const pagehide = new window.Event('pagehide')
+    Object.defineProperty(pagehide, 'persisted', { value: true })
+    window.dispatchEvent(pagehide)
+    const pageshow = new window.Event('pageshow')
+    Object.defineProperty(pageshow, 'persisted', { value: true })
+    window.dispatchEvent(pageshow)
+
+    const terminal = new window.Event('pagehide')
+    Object.defineProperty(terminal, 'persisted', { value: false })
+    window.dispatchEvent(terminal)
+    resolveInit()
+    await Promise.resolve()
+
+    expect(fixture.resumeFeedback).not.toHaveBeenCalled()
+  })
+
+  it('consumes a rejected restore without resuming feedback or leaking an unhandled rejection', async () => {
+    await startContent()
+    fixture.initClient.mockRejectedValueOnce(new Error('restore failed'))
+
+    const pagehide = new window.Event('pagehide')
+    Object.defineProperty(pagehide, 'persisted', { value: true })
+    window.dispatchEvent(pagehide)
+    const pageshow = new window.Event('pageshow')
+    Object.defineProperty(pageshow, 'persisted', { value: true })
+    window.dispatchEvent(pageshow)
+    await Promise.resolve()
+
+    expect(fixture.resumeFeedback).not.toHaveBeenCalled()
+    expect(fixture.initClient).toHaveBeenCalledTimes(1)
   })
 
   it('constructs each deferred application dependency exactly once only when initialization activates it', async () => {
