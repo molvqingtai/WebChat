@@ -18,6 +18,7 @@ import {
   MAX_HISTORY_RESPONSE_MESSAGES,
   MESSAGE_TYPE,
   isChatRoomMessageSemanticallyValid,
+  isHistoryPageFrameWithinLimit,
   isMessageWithinLimit,
   isUserWithinLimit,
   type ChatMessage,
@@ -26,6 +27,7 @@ import {
   type HistoryMessagesRequest,
   type HistoryMessagesResponse
 } from '@/protocol'
+import { WireCodecError } from '@/protocol'
 import { WireCodecExtern } from '@/domain/runtime/externs/RoomTransport'
 import { compareEventPosition, type ChatMessageRecord } from '@/domain/Message'
 import type { HistorySupplyRequest, HistoryFeedbackEvent } from '@/runtime/Contract'
@@ -347,21 +349,30 @@ const HistoryDomain = Remesh.domain({
       }
     })
 
-    const ResetHistoryForSessionCommand = domain.command({
-      name: 'History.ResetHistoryForSessionCommand',
+    // Removes every provider-owned scheduling entry (active/waiting/dormant/job) for one
+    // domain+source and releases the matching active slots, so lifecycle cleanup never leaves a
+    // waiting placeholder or leaks a concurrency slot.
+    const CleanupProviderSlotsCommand = domain.command({
+      name: 'History.CleanupProviderSlotsCommand',
       impl: ({ get }, payload: { domain: string; sourcePeerId: string }) => {
-        const requesters = get(RequesterAttemptsState())
         const providers = get(ProviderAttemptsState())
         const successors = get(ProviderSupplySuccessorsState())
         const jobs = get(ProviderSupplyJobsState())
-        const owners = get(FeedbackOwnersState())
-        const dismissedOwners = owners.filter(
+        const active = get(ActiveSuppliesState())
+        const waiting = get(WaitingSuppliesState())
+        const removedKeys = [
+          ...providers.filter((item) => item.sourcePeerId === payload.sourcePeerId && item.domain === payload.domain),
+          ...successors.filter((item) => item.sourcePeerId === payload.sourcePeerId && item.domain === payload.domain)
+        ].map((item) => ({
+          sourcePeerId: item.sourcePeerId,
+          domain: item.domain,
+          syncId: item.syncId,
+          syncToken: item.syncToken
+        }))
+        const releasedActive = active.filter(
           (item) => item.sourcePeerId === payload.sourcePeerId && item.domain === payload.domain
         )
         return [
-          RequesterAttemptsState().new(
-            requesters.filter((item) => item.sourcePeerId !== payload.sourcePeerId || item.domain !== payload.domain)
-          ),
           ProviderAttemptsState().new(
             providers.filter((item) => item.sourcePeerId !== payload.sourcePeerId || item.domain !== payload.domain)
           ),
@@ -371,6 +382,30 @@ const HistoryDomain = Remesh.domain({
           ProviderSupplyJobsState().new(
             jobs.filter((item) => item.sourcePeerId !== payload.sourcePeerId || item.domain !== payload.domain)
           ),
+          ActiveSuppliesState().new(
+            active.filter((item) => item.sourcePeerId !== payload.sourcePeerId || item.domain !== payload.domain)
+          ),
+          WaitingSuppliesState().new(
+            waiting.filter((item) => item.sourcePeerId !== payload.sourcePeerId || item.domain !== payload.domain)
+          ),
+          ...releasedActive.map((key) => ReleaseProviderSupplySlotCommand(key))
+        ]
+      }
+    })
+
+    const ResetHistoryForSessionCommand = domain.command({
+      name: 'History.ResetHistoryForSessionCommand',
+      impl: ({ get }, payload: { domain: string; sourcePeerId: string }) => {
+        const requesters = get(RequesterAttemptsState())
+        const owners = get(FeedbackOwnersState())
+        const dismissedOwners = owners.filter(
+          (item) => item.sourcePeerId === payload.sourcePeerId && item.domain === payload.domain
+        )
+        return [
+          RequesterAttemptsState().new(
+            requesters.filter((item) => item.sourcePeerId !== payload.sourcePeerId || item.domain !== payload.domain)
+          ),
+          CleanupProviderSlotsCommand(payload),
           ...dismissedOwners.flatMap((item) => dismissFeedback(get, item) ?? []),
           StartRequestedEvent(payload)
         ]
@@ -499,24 +534,27 @@ const HistoryDomain = Remesh.domain({
           }
           const expectedPage = base.expectedRequestPage
           // Identical replay of the last applied page is idempotent; changed replay, gap,
-          // out-of-order, empty non-final, or post-done input cancels the successor attempt.
+          // out-of-order, empty non-final, post-done, or budget overflow cancels and removes the
+          // successor attempt under its complete token.
           if (payload.message.page === expectedPage - 1 && base.lastAppliedRequestPageFingerprint) {
             if (base.lastAppliedRequestPageFingerprint === JSON.stringify(payload.message)) {
               return [TokenState().new(allocated.next)]
             }
-            return null
+            return CancelSuccessorCommand(key)
           }
           if (
             payload.message.page !== expectedPage ||
             base.inventoryDone ||
             (payload.message.messageIds.length === 0 && !payload.message.done)
           ) {
-            return null
+            return CancelSuccessorCommand(key)
           }
           const inventory = new Set([...base.inventory, ...payload.message.messageIds])
           const inventoryCount = base.inventoryCount + payload.message.messageIds.length
           const inventoryBytes = base.inventoryBytes + queueBytes
-          if (inventoryCount > historySessionMessages || inventoryBytes > historySessionBytes) return null
+          if (inventoryCount > historySessionMessages || inventoryBytes > historySessionBytes) {
+            return CancelSuccessorCommand(key)
+          }
           const nextSuccessor: ProviderSupplySuccessorState = {
             ...base,
             inventory,
@@ -628,13 +666,15 @@ const HistoryDomain = Remesh.domain({
               next
             )
           ),
-          // The attempt timeout is armed from page zero, and the job is admitted from page zero so
-          // partial attempts count toward the 32-job/8KiB pool; the supplier request is issued only
-          // after the complete inventory arrives (done), but admission holds the attempt now.
-          ...(current
-            ? []
-            : [ProviderTimeoutArmedEvent(key), AdmitProviderSupplyCommand({ ...key, queueBytes, ready: false })]),
-          ...(payload.message.done && !current ? [AdmitProviderSupplyCommand({ ...key, queueBytes, ready: true })] : [])
+          // One canonical admission record is upserted on every accepted page: its cumulative
+          // metadata bytes are updated, and it transitions to ready exactly once on the final page.
+          // The attempt timeout is armed from page zero.
+          ...(current ? [] : [ProviderTimeoutArmedEvent(key)]),
+          AdmitProviderSupplyCommand({
+            ...key,
+            queueBytes: next.inventoryBytes,
+            ready: next.inventoryDone
+          })
         ]
       }
     })
@@ -642,28 +682,42 @@ const HistoryDomain = Remesh.domain({
     const AdmitProviderSupplyCommand = domain.command({
       name: 'History.AdmitProviderSupplyCommand',
       impl: ({ get }, request: ProviderSupplyPayload) => {
-        // One admission owner covers active + waiting + dormant jobs: never exceed 32 admitted
-        // requests or 8KiB of decoded metadata (four active are enforced by the active slot).
-        const active = get(ActiveSuppliesState())
-        const waiting = get(WaitingSuppliesState())
+        // One canonical admission owner per attempt: the job record is upserted (cumulative metadata
+        // bytes replaced) on every accepted page; active/waiting are scheduling projections of the
+        // same record, never separate admission-count owners. 32 jobs / 8KiB bound the pool.
         const jobs = get(ProviderSupplyJobsState())
-        const admitted = [...active, ...waiting, ...jobs]
+        const existing = jobs.find((item) => matchesSync(item, request))
+        const nextJobs = existing
+          ? replaceBy(jobs, (item) => matchesSync(item, request), { ...existing, ...request })
+          : [...jobs, { ...request }]
+        if (existing && !request.ready && existing.ready) {
+          // A ready attempt must never regress; only an accounting update is allowed.
+          return [ProviderSupplyJobsState().new(nextJobs)]
+        }
+        const admitted = nextJobs
         if (
-          admitted.length >= MAX_PROVIDER_SUPPLY_QUEUE_JOBS ||
-          admitted.reduce((total, item) => total + item.queueBytes, 0) + request.queueBytes >
-            MAX_PROVIDER_SUPPLY_QUEUE_BYTES
+          admitted.length > MAX_PROVIDER_SUPPLY_QUEUE_JOBS ||
+          admitted.reduce((total, item) => total + item.queueBytes, 0) > MAX_PROVIDER_SUPPLY_QUEUE_BYTES
         ) {
           return null
         }
-        const job = { ...request }
-        if (active.length >= MAX_PROVIDER_SUPPLY_CONCURRENCY || !request.ready) {
-          return [
-            ProviderSupplyJobsState().new([...jobs, job]),
-            ...(request.ready ? [WaitingSuppliesState().new([...waiting, request])] : [])
-          ]
+        if (!request.ready) {
+          return [ProviderSupplyJobsState().new(nextJobs)]
+        }
+        // Transition to ready: schedule the supplier when a slot is free, else queue the projection.
+        const active = get(ActiveSuppliesState())
+        const waiting = get(WaitingSuppliesState())
+        if (active.length >= MAX_PROVIDER_SUPPLY_CONCURRENCY) {
+          if (waiting.some((item) => matchesSync(item, request))) {
+            return [ProviderSupplyJobsState().new(nextJobs)]
+          }
+          return [ProviderSupplyJobsState().new(nextJobs), WaitingSuppliesState().new([...waiting, request])]
+        }
+        if (active.some((item) => matchesSync(item, request))) {
+          return [ProviderSupplyJobsState().new(nextJobs)]
         }
         return [
-          ProviderSupplyJobsState().new([...jobs, job]),
+          ProviderSupplyJobsState().new(nextJobs),
           ActiveSuppliesState().new([...active, request]),
           ProviderSupplyRequestedEvent(request)
         ]
@@ -681,6 +735,15 @@ const HistoryDomain = Remesh.domain({
           WaitingSuppliesState().new(next ? waiting.filter((item) => item !== next) : waiting),
           ...(next ? [ProviderSupplyRequestedEvent(next)] : [])
         ]
+      }
+    })
+
+    const CancelSuccessorCommand = domain.command({
+      name: 'History.CancelSuccessorCommand',
+      impl: ({ get }, key: HistoryAttemptKey) => {
+        const successors = get(ProviderSupplySuccessorsState())
+        if (!successors.some((item) => matchesSync(item, key))) return null
+        return ProviderSupplySuccessorsState().new(removeBy(successors, (item) => matchesSync(item, key)))
       }
     })
 
@@ -718,7 +781,7 @@ const HistoryDomain = Remesh.domain({
           ]
         }
         const promotion =
-          successor && successor.syncId !== key.syncId
+          successor && successor.syncId !== key.syncId && successor.inventoryDone
             ? [
                 ProviderAttemptsState().new([
                   ...removeBy(providers, (item) => matchesSync(item, key)),
@@ -736,7 +799,7 @@ const HistoryDomain = Remesh.domain({
                   domain: successor.domain,
                   syncId: successor.syncId,
                   syncToken: successor.syncToken,
-                  queueBytes: getTextByteSize(JSON.stringify({ syncId: successor.syncId })),
+                  queueBytes: successor.inventoryBytes,
                   ready: true
                 })
               ]
@@ -960,20 +1023,29 @@ const HistoryDomain = Remesh.domain({
         )
         if (!current || current.syncId !== payload.message.syncId) return null
         if (current.awaitingBatchId) {
-          // While a batch is pending: an identical replay of the accepted page is idempotent, a
-          // changed replay of the accepted page cancels the attempt (discarding queued work), an
-          // identical replay of a queued page is deduplicated, and valid continuous pages (N+1,
-          // N+2, ...) join the bounded serial queue in order.
+          // While a batch is pending: post-done input is rejected before enqueue; an identical
+          // replay of the accepted page or of any queued page is idempotent; a changed replay of
+          // any accepted or queued page cancels the attempt (discarding queued work); and valid
+          // continuous pages (N+1, N+2, ...) join the bounded serial queue in order.
+          if (current.responseDone) {
+            return FinishRequestedEvent({ domain: binding.domain, sourcePeerId: payload.sourcePeerId })
+          }
           const fingerprint = JSON.stringify(payload.message)
+          const queued = current.pendingResponsePages
+          // Search the bounded queue by page: identical queued replay is a no-op, changed queued
+          // replay cancels. This must run before the tail check so a genuine replay is not missed.
+          const queuedMatch = queued.find((item) => item.page === payload.message.page)
+          if (queuedMatch) {
+            return JSON.stringify(queuedMatch) === fingerprint
+              ? null
+              : FinishRequestedEvent({ domain: binding.domain, sourcePeerId: payload.sourcePeerId })
+          }
           if (payload.message.page === current.expectedResponsePage - 1) {
             return current.lastAppliedPageFingerprint === fingerprint
               ? null
               : FinishRequestedEvent({ domain: binding.domain, sourcePeerId: payload.sourcePeerId })
           }
           if (payload.message.page === current.queuedResponseTail) {
-            const queued = current.pendingResponsePages
-            const lastQueued = queued[queued.length - 1]
-            if (lastQueued && JSON.stringify(lastQueued) === fingerprint) return null
             if (queued.length >= MAX_PENDING_RESPONSE_PAGES) {
               return FinishRequestedEvent({ domain: binding.domain, sourcePeerId: payload.sourcePeerId })
             }
@@ -1212,15 +1284,18 @@ const HistoryDomain = Remesh.domain({
         const sourceIds = get(RequesterAttemptsState())
           .filter((item) => item.domain === runtimeDomain)
           .map((item) => ({ domain: runtimeDomain, sourcePeerId: item.sourcePeerId }))
+        const providerSources = get(ProviderAttemptsState())
+          .filter((item) => item.domain === runtimeDomain)
+          .map((item) => ({ domain: runtimeDomain, sourcePeerId: item.sourcePeerId }))
+        const successorSources = get(ProviderSupplySuccessorsState())
+          .filter((item) => item.domain === runtimeDomain)
+          .map((item) => ({ domain: runtimeDomain, sourcePeerId: item.sourcePeerId }))
+        const uniqueSources = [
+          ...new Map([...providerSources, ...successorSources].map((item) => [item.sourcePeerId, item])).values()
+        ]
         const owners = get(FeedbackOwnersState()).filter((item) => item.domain === runtimeDomain)
         return [
-          ProviderAttemptsState().new(removeBy(get(ProviderAttemptsState()), (item) => item.domain === runtimeDomain)),
-          ProviderSupplySuccessorsState().new(
-            removeBy(get(ProviderSupplySuccessorsState()), (item) => item.domain === runtimeDomain)
-          ),
-          ProviderSupplyJobsState().new(
-            removeBy(get(ProviderSupplyJobsState()), (item) => item.domain === runtimeDomain)
-          ),
+          ...uniqueSources.map((item) => CleanupProviderSlotsCommand(item)),
           ...owners.flatMap((item) => dismissFeedback(get, item) ?? []),
           ...sourceIds.map(FinishRequestedEvent)
         ]
@@ -1333,7 +1408,12 @@ const HistoryDomain = Remesh.domain({
                   messageIds,
                   done
                 }
-                await codec.encode(frame)
+                // A codec rejection closes the bucket; a frame that encodes to exactly 65,536 bytes
+                // also fails the strict History predicate (isHistoryPageFrameWithinLimit) and must not
+                // be treated as a fitting page.
+                const encoded = await codec.encode(frame)
+                if (!isHistoryPageFrameWithinLimit(encoded))
+                  throw new WireCodecError('History page reached the wire limit')
                 return frame
               }
               for (const id of inventoryIds) {

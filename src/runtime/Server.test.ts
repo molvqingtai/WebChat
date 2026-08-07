@@ -2383,9 +2383,11 @@ describe('RuntimeServer history', () => {
     // staying JSON-transport compatible so the fake can carry it. This proves the throw-closes-bucket
     // paging and the single-unpageable-ID cancel paths against a real codec-size boundary.
     const sizeLimited: WireCodec = {
+      // NativeWireCodec accepts a general frame of exactly 65,536 bytes; History requires strictly
+      // below. Throwing only above the cap makes the strict predicate the bucket-closing boundary.
       encode: async (value) => {
         const json = JSON.stringify(value)
-        if (new TextEncoder().encode(json).byteLength >= 64 * 1024) {
+        if (new TextEncoder().encode(json).byteLength > 64 * 1024) {
           throw new Error('Wire frame exceeds 65536 bytes')
         }
         return json
@@ -2544,9 +2546,11 @@ describe('RuntimeServer history', () => {
 
   it('cancels the attempt when a single opaque inventory id cannot form a valid page', async () => {
     const sizeLimited: WireCodec = {
+      // NativeWireCodec accepts a general frame of exactly 65,536 bytes; History requires strictly
+      // below. Throwing only above the cap makes the strict predicate the bucket-closing boundary.
       encode: async (value) => {
         const json = JSON.stringify(value)
-        if (new TextEncoder().encode(json).byteLength >= 64 * 1024) {
+        if (new TextEncoder().encode(json).byteLength > 64 * 1024) {
           throw new Error('Wire frame exceeds 65536 bytes')
         }
         return json
@@ -2647,6 +2651,112 @@ describe('RuntimeServer history', () => {
     await settle()
     // No provider response pages ever flow from partial attempts.
     expect(fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE)).toHaveLength(0)
+  })
+
+  it('transitions a partial provider inventory to ready on the final page and serves responses', async () => {
+    const { fake, server, roomId } = await setup()
+    const database = createMemoryMessageDatabase('history-multipage-provider-db')
+    const store = createMessageStore(database)
+    await store.insert(textRecord('mp-1', NOW))
+    await store.insert(textRecord('mp-2', NOW - 1))
+    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, async () => {
+      const records = await store.query({ type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE })
+      return { records: records as TextMessageRecord[], done: true }
+    })
+    fake.receive(roomId, 'peer-a', session())
+    await settle()
+    // A multi-page inventory: page 0 is partial, page 1 is final. The provider must transition the
+    // single page-zero admission to ready on the final page and then serve the missing records.
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'multi-page',
+      page: 0,
+      messageIds: ['mp-1'],
+      done: false
+    })
+    await settle()
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'multi-page',
+      page: 1,
+      messageIds: [],
+      done: true
+    })
+    await vi.waitFor(() => {
+      const responses = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE)
+      expect(responses.length).toBeGreaterThan(0)
+    })
+    const responses = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE)
+    const ids = responses.flatMap((m) => (m as { messages: { id: string }[] }).messages.map((x) => x.id))
+    // Only the record absent from the inventory is returned.
+    expect(ids).toEqual(['mp-2'])
+  })
+
+  it('queues N+1 and N+2, dedupes identical queued replay, and rejects post-done input', async () => {
+    const { fake, server, roomId } = await setup()
+    await registerInventoryProvider(server)
+    const delivered: string[] = []
+    const release = { ack: null as null | (() => void) }
+    const ackGate = new Promise<void>((resolve) => {
+      release.ack = resolve
+    })
+    let held = false
+    await server.onInbound({ pageId: 'page-a' }, async (event) => {
+      delivered.push(event.record.message.id)
+      if (event.record.message.id === 'page-0-msg' && !held) {
+        held = true
+        await ackGate
+      }
+      await server.ackInbound({ domain: event.domain, sequence: event.sequence, inserted: true })
+    })
+    fake.receive(roomId, 'peer-a', session())
+    await settle()
+    const requestMsg = fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST)
+    const syncId = (requestMsg as { syncId: string }).syncId
+
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
+      syncId,
+      page: 0,
+      users: [REMOTE_USER],
+      messages: [text('page-0-msg', REMOTE_USER.id, NOW - 10)],
+      done: false
+    })
+    await vi.waitFor(() => expect(delivered).toContain('page-0-msg'))
+    // While page 0's ACK is held, send N+1, an identical replay of N+1, N+2, and post-done N+3.
+    const page1 = {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
+      syncId,
+      page: 1,
+      users: [REMOTE_USER],
+      messages: [text('page-1-msg', REMOTE_USER.id, NOW - 20)],
+      done: false
+    }
+    fake.receive(roomId, 'peer-a', page1)
+    fake.receive(roomId, 'peer-a', page1) // identical queued replay: idempotent
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
+      syncId,
+      page: 2,
+      users: [REMOTE_USER],
+      messages: [text('page-2-msg', REMOTE_USER.id, NOW - 30)],
+      done: true
+    })
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
+      syncId,
+      page: 3,
+      users: [REMOTE_USER],
+      messages: [text('post-done-msg', REMOTE_USER.id, NOW - 40)],
+      done: true
+    })
+    await settle()
+    // Release the held ACK: the queue applies N+1 then N+2 in order; post-done N+3 never applies.
+    release.ack?.()
+    await vi.waitFor(() => expect(delivered).toContain('page-2-msg'))
+    await settle()
+    expect(delivered).toEqual(['page-0-msg', 'page-1-msg', 'page-2-msg'])
+    expect(delivered).not.toContain('post-done-msg')
   })
 
   it('keeps one peer in two domains as independent attempts without suppression', async () => {
