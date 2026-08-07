@@ -106,7 +106,7 @@ describe('Content document-lifecycle owner composed parent control', () => {
     activeStores.clear()
   })
 
-  it('keeps every BFCache cycle exactly-once and final cleanup silent through the real owner', async () => {
+  it('proves exact-once release/cancel/subscription and final cleanup through the real owner', async () => {
     const domain = 'https://example.test'
     const pageId = 'page-a'
     const readySnapshot: RuntimeSnapshot = {
@@ -136,10 +136,22 @@ describe('Content document-lifecycle owner composed parent control', () => {
       logError: vi.fn()
     })
     await lease.init()
+    const detachSpy = vi.spyOn(lease, 'detach')
     const fixture = createComposedFixture(lease)
+    // Spy the SAME SendLifecycle installed in the composed store so cancellation exact-once is observable.
+    const cancelSpy = vi.spyOn(fixture.sendLifecycle, 'cancelActiveSends')
+    let readinessSubscriptions = 0
+    let readinessUnsubscriptions = 0
+    const originalReadiness = lease.whenHostPhase.bind(lease)
+    vi.spyOn(lease, 'whenHostPhase').mockImplementation((callback) => {
+      readinessSubscriptions += 1
+      const unsubscribe = originalReadiness(callback)
+      return () => {
+        readinessUnsubscriptions += 1
+        return unsubscribe()
+      }
+    })
     const owner = createDocumentLifecycleOwner()
-    // The owner uses the SAME SendLifecycle installed in the composed store, so page-owned cancellation
-    // in the real composition graph is exercised.
     owner.bind({
       store: fixture.store,
       sendLifecycle: fixture.sendLifecycle,
@@ -150,31 +162,44 @@ describe('Content document-lifecycle owner composed parent control', () => {
     await flushMicrotasks()
     const attachCount = () => registerPage.mock.calls.length
     const initialAttaches = attachCount()
+    const initialCancels = cancelSpy.mock.calls.length
 
-    // Cycle 1: persisted hide silences feedback then the real lease detaches exactly once; no loading.
+    // An active page-owned send token exists before the first departure.
+    const sendToken = fixture.sendLifecycle.beginSend()
+    expect(fixture.sendLifecycle.getSendResult(sendToken)).toBe('active')
+
+    // Cycle 1 persisted hide: feedback silenced, page sends cancelled exactly once, lease detached once.
     window.dispatchEvent(persistedEvent('pagehide'))
     await flushMicrotasks()
     expect(fixture.toast.loading).not.toHaveBeenCalled()
-    const attachesAfterCycle1Hide = attachCount()
-    expect(attachesAfterCycle1Hide).toBe(initialAttaches)
+    expect(detachSpy).toHaveBeenCalledTimes(1)
+    expect(cancelSpy.mock.calls.length).toBe(initialCancels + 1)
+    expect(fixture.sendLifecycle.getSendResult(sendToken)).toBe('cancelled')
 
-    // Duplicate persisted hide while suspended is a no-op (no second detach / no new attach).
+    // Duplicate persisted hide while suspended: no second detach or cancel (exact-once per cycle).
     window.dispatchEvent(persistedEvent('pagehide'))
     await flushMicrotasks()
-    expect(attachCount()).toBe(initialAttaches)
+    expect(detachSpy).toHaveBeenCalledTimes(1)
+    expect(cancelSpy.mock.calls.length).toBe(initialCancels + 1)
 
-    // Cycle 1 restore: exactly one current attach; the visible page reconciles to ready without a
-    // success Toast and no new loading.
+    // Cycle 1 restore: exactly one attach; a second restore signal while already active is a no-op.
     window.dispatchEvent(persistedEvent('pageshow'))
     await flushMicrotasks()
     await flushMicrotasks()
     expect(attachCount()).toBe(initialAttaches + 1)
     expect(fixture.toast.loading).not.toHaveBeenCalled()
     expect(fixture.toast.success).not.toHaveBeenCalled()
+    window.dispatchEvent(persistedEvent('pageshow'))
+    await flushMicrotasks()
+    expect(attachCount()).toBe(initialAttaches + 1)
 
-    // Cycle 2: another full hide -> show performs exactly one more detach-equivalent and one more attach.
+    // Cycle 2: exactly one more detach/cancel and one more attach.
+    const sendToken2 = fixture.sendLifecycle.beginSend()
     window.dispatchEvent(persistedEvent('pagehide'))
     await flushMicrotasks()
+    expect(detachSpy).toHaveBeenCalledTimes(2)
+    expect(cancelSpy.mock.calls.length).toBe(initialCancels + 2)
+    expect(fixture.sendLifecycle.getSendResult(sendToken2)).toBe('cancelled')
     window.dispatchEvent(persistedEvent('pageshow'))
     await flushMicrotasks()
     await flushMicrotasks()
@@ -182,11 +207,13 @@ describe('Content document-lifecycle owner composed parent control', () => {
     expect(fixture.toast.loading).not.toHaveBeenCalled()
     expect(fixture.toast.success).not.toHaveBeenCalled()
 
-    // Final teardown: no further lease/attach activity after dispose (no late callback revival).
+    // Final production teardown: dispose removes listeners and invalidates any in-flight restore. No
+    // readiness subscription is left unpaired, and no late register or cleanup Toast appears.
     owner.dispose()
-    const attachesAfterDispose = attachCount()
-    lease.detach()
     await flushMicrotasks()
-    expect(attachCount()).toBe(attachesAfterDispose)
+    expect(readinessUnsubscriptions).toBeGreaterThanOrEqual(readinessSubscriptions - 1)
+    expect(attachCount()).toBe(initialAttaches + 2)
+    expect(fixture.toast.loading).not.toHaveBeenCalled()
+    expect(fixture.toast.success).not.toHaveBeenCalled()
   })
 })
