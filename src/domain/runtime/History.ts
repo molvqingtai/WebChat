@@ -1,19 +1,5 @@
 import { Remesh, type RemeshCommandOutput } from 'remesh'
-import {
-  catchError,
-  concatMap,
-  concatWith,
-  defer,
-  EMPTY,
-  filter,
-  from,
-  map,
-  mergeMap,
-  Observable,
-  of,
-  startWith,
-  takeWhile
-} from 'rxjs'
+import { catchError, defer, filter, from, map, mergeMap, Observable, of } from 'rxjs'
 import DeliveryDomain from '@/domain/runtime/Delivery'
 import SessionDomain, { observeHlc } from '@/domain/runtime/Session'
 import WireDomain, { type WireFailureStage, type WireMessageEvent } from '@/domain/runtime/Wire'
@@ -26,7 +12,8 @@ import {
   MAX_HISTORY_SESSION_MESSAGES,
   MAX_PROVIDER_SUPPLY_CONCURRENCY,
   MAX_PROVIDER_SUPPLY_QUEUE_BYTES,
-  MAX_PROVIDER_SUPPLY_QUEUE_JOBS
+  MAX_PROVIDER_SUPPLY_QUEUE_JOBS,
+  MAX_TERMINATED_SYNC_IDS_PER_SOURCE
 } from '@/constants/config'
 import {
   MAX_HISTORY_RESPONSE_MESSAGES,
@@ -111,6 +98,8 @@ interface ProviderSupplyPayload extends HistoryAttemptKey {
   /** Live page-supply id recorded by the supplier effect so cleanup can cancel it. */
   supplyId?: string
 }
+
+type HistoryDirection = 'provider' | 'requester'
 
 type ProviderSupplyJobState = ProviderSupplyPayload
 
@@ -215,14 +204,20 @@ const HistoryDomain = Remesh.domain({
       name: 'History.WaitingSuppliesState',
       default: []
     })
-    // Bounded current-session terminal fence: one syncId identifies one current-session
-    // synchronization, so a terminally cancelled identity (budget overflow) can never be
-    // resurrected at page zero; replacement work requires a fresh syncId. Entries are keyed by
-    // source+domain, capped per key, and cleared on session reset.
+    // Terminal synchronization fence: one syncId identifies one current-session, one-direction
+    // synchronization, so a terminally cancelled identity can never be resurrected at page zero;
+    // replacement work requires a fresh syncId. The identity is scoped by source + domain +
+    // DIRECTION (a provider-request fence never affects the opposite requester-response
+    // direction). The fence is resource-bounded: per key it retains only the most recent
+    // MAX_TERMINATED_SYNC_IDS_PER_SOURCE identities (oldest evicted), so a nonconforming peer
+    // cannot grow Runtime memory without limit; it is cleared when the peer is removed or the
+    // domain is released (the source-generation lifetime).
     const TerminatedSyncIdsState = domain.state<Map<string, Set<string>>>({
       name: 'History.TerminatedSyncIdsState',
       default: new Map()
     })
+    const fenceKeyFor = (payload: { sourcePeerId: string; domain: string; direction: HistoryDirection }) =>
+      `${payload.sourcePeerId}\u0000${payload.domain}\u0000${payload.direction}`
     const FeedbackOwnersState = domain.state<FeedbackOwnerState[]>({
       name: 'History.FeedbackOwnersState',
       default: []
@@ -411,14 +406,22 @@ const HistoryDomain = Remesh.domain({
 
     const FenceSyncIdCommand = domain.command({
       name: 'History.FenceSyncIdCommand',
-      impl: ({ get }, payload: { sourcePeerId: string; domain: string; syncId: string }) => {
+      impl: (
+        { get },
+        payload: { sourcePeerId: string; domain: string; direction: HistoryDirection; syncId: string }
+      ) => {
         const fences = get(TerminatedSyncIdsState())
-        const fenceKey = `${payload.sourcePeerId}\u0000${payload.domain}`
+        const fenceKey = fenceKeyFor(payload)
         const current = fences.get(fenceKey) ?? new Set<string>()
-        // One syncId identifies one current-session synchronization: terminal ids stay fenced for
-        // the whole source-generation lifetime (no LRU eviction can ever un-fence a terminal id).
+        // Set preserves insertion order: the most recent identities are retained and the oldest
+        // are evicted only when the per-key resource bound is exceeded.
         const next = new Set(current)
+        next.delete(payload.syncId)
         next.add(payload.syncId)
+        while (next.size > MAX_TERMINATED_SYNC_IDS_PER_SOURCE) {
+          const oldest = next.values().next().value as string
+          next.delete(oldest)
+        }
         const updated = new Map(fences)
         updated.set(fenceKey, next)
         return TerminatedSyncIdsState().new(updated)
@@ -430,7 +433,9 @@ const HistoryDomain = Remesh.domain({
       impl: ({ get }, payload: { sourcePeerId: string; domain: string }) => {
         const fences = get(TerminatedSyncIdsState())
         const updated = new Map(fences)
-        updated.delete(`${payload.sourcePeerId}\u0000${payload.domain}`)
+        for (const key of fences.keys()) {
+          if (key.startsWith(`${payload.sourcePeerId}\u0000${payload.domain}\u0000`)) updated.delete(key)
+        }
         return TerminatedSyncIdsState().new(updated)
       }
     })
@@ -461,6 +466,29 @@ const HistoryDomain = Remesh.domain({
           .filter((item) => item.sourcePeerId === payload.sourcePeerId && item.domain === payload.domain)
           .filter((item) => item.supplyId !== undefined)
           .map((item) => CancelActiveSupplyCommand({ key: item, supplyId: item.supplyId! }))
+        // Every provider identity discarded by cleanup is terminal for its syncId: partial,
+        // waiting, dormant-successor, and non-active job identities are fenced so a replayed
+        // page zero with the same id can never start a new synchronization.
+        const removedSyncIds = [
+          ...providers,
+          ...successors,
+          ...waiting,
+          ...jobs.filter((job) =>
+            job.sourcePeerId === payload.sourcePeerId && job.domain === payload.domain
+              ? !active.some((item) => matchesSync(item, job))
+              : false
+          )
+        ]
+          .filter((item) => item.sourcePeerId === payload.sourcePeerId && item.domain === payload.domain)
+          .map((item) => item.syncId)
+        const fences = [...new Set(removedSyncIds)].map((syncId) =>
+          FenceSyncIdCommand({
+            sourcePeerId: payload.sourcePeerId,
+            domain: payload.domain,
+            direction: 'provider',
+            syncId
+          })
+        )
         return [
           ProviderAttemptsState().new(
             providers.filter((item) => item.sourcePeerId !== payload.sourcePeerId || item.domain !== payload.domain)
@@ -472,7 +500,8 @@ const HistoryDomain = Remesh.domain({
             waiting.filter((item) => item.sourcePeerId !== payload.sourcePeerId || item.domain !== payload.domain)
           ),
           ProviderSupplyJobsState().new(retainedJobs),
-          ...cancelled
+          ...cancelled,
+          ...fences
         ]
       }
     })
@@ -563,10 +592,15 @@ const HistoryDomain = Remesh.domain({
           sessionDomain.query.BindingQuery({ roomId: payload.roomId, sourcePeerId: payload.sourcePeerId })
         )
         if (!binding) return null
-        // A terminally cancelled synchronization identity (budget overflow) stays fenced for the
-        // current session: every page of that syncId, including page zero, is inert; replacement
-        // work requires a fresh syncId.
-        const fenceKey = `${payload.sourcePeerId}\u0000${binding.domain}`
+        // A terminally cancelled provider synchronization identity stays fenced for the source
+        // generation: every page of that syncId, including page zero, is inert; replacement work
+        // requires a fresh syncId. The fence is direction-scoped so a provider-request identity
+        // never affects the opposite requester direction.
+        const fenceKey = fenceKeyFor({
+          sourcePeerId: payload.sourcePeerId,
+          domain: binding.domain,
+          direction: 'provider'
+        })
         if ((get(TerminatedSyncIdsState()).get(fenceKey) ?? new Set<string>()).has(payload.message.syncId)) {
           return wireDomain.command.DropProtocolCommand({
             sourcePeerId: payload.sourcePeerId,
@@ -929,7 +963,12 @@ const HistoryDomain = Remesh.domain({
         if (!successors.some((item) => matchesSync(item, key))) return null
         // Every terminal cancellation fences the syncId for the source-generation lifetime.
         return [
-          FenceSyncIdCommand({ sourcePeerId: key.sourcePeerId, domain: key.domain, syncId: key.syncId }),
+          FenceSyncIdCommand({
+            sourcePeerId: key.sourcePeerId,
+            domain: key.domain,
+            direction: 'provider',
+            syncId: key.syncId
+          }),
           ProviderSupplySuccessorsState().new(removeBy(successors, (item) => matchesSync(item, key)))
         ]
       }
@@ -953,10 +992,27 @@ const HistoryDomain = Remesh.domain({
           jobs.some((item) => matchesSync(item, key)) ||
           active.some((item) => matchesSync(item, key)) ||
           waiting.some((item) => matchesSync(item, key))
-        if (!current && !ownerActive && !successor && !hasSlotAccounting) return null
+        if (!current && !ownerActive && !successor && !hasSlotAccounting) {
+          // Invalid input that never created an admitted job is still terminal for its syncId:
+          // a page-one-first gap or invalid new successor must fence the identity so a later
+          // page zero with the same id cannot start a new synchronization.
+          return [
+            FenceSyncIdCommand({
+              sourcePeerId: key.sourcePeerId,
+              domain: key.domain,
+              direction: 'provider',
+              syncId: key.syncId
+            })
+          ]
+        }
         // Every terminal cancellation fences the synchronization identity for the whole
         // source-generation lifetime: a replayed page zero can never create a new local token.
-        const fence = FenceSyncIdCommand({ sourcePeerId: key.sourcePeerId, domain: key.domain, syncId: key.syncId })
+        const fence = FenceSyncIdCommand({
+          sourcePeerId: key.sourcePeerId,
+          domain: key.domain,
+          direction: 'provider',
+          syncId: key.syncId
+        })
         const liveActive = active.find((item) => matchesSync(item, key))
         if (!current) {
           // While the physical supply is still live (recorded supplyId not yet cleared by its
@@ -1306,10 +1362,13 @@ const HistoryDomain = Remesh.domain({
           sessionDomain.query.BindingQuery({ roomId: payload.roomId, sourcePeerId: payload.sourcePeerId })
         )
         if (!binding) return null
-        // A terminally cancelled synchronization identity (budget overflow) stays fenced for the
-        // current session: every page of that syncId, including page zero, is inert; replacement
-        // work requires a fresh syncId.
-        const fenceKey = `${payload.sourcePeerId}\u0000${binding.domain}`
+        // The requester direction has its own fence: a provider-request terminal identity with
+        // the same string can never drop this Runtime's independent outgoing synchronization.
+        const fenceKey = fenceKeyFor({
+          sourcePeerId: payload.sourcePeerId,
+          domain: binding.domain,
+          direction: 'requester'
+        })
         if ((get(TerminatedSyncIdsState()).get(fenceKey) ?? new Set<string>()).has(payload.message.syncId)) {
           return wireDomain.command.DropProtocolCommand({
             sourcePeerId: payload.sourcePeerId,

@@ -196,7 +196,6 @@ const serverFixture = (): ServerFixture => {
       resolvedHistory.push({ supplyId, ids: result.records.map((record) => record.message.id), done: result.done })
     },
     rejectHistorySupply: async () => {},
-    onDeadPages: async () => {},
     onHistoryFeedback: async () => {}
   }
   return {

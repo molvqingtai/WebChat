@@ -17,7 +17,6 @@ export class PagePort implements PagePortContract {
   private readonly worldPresences = new Map<string, (event: WorldPresenceEvent) => void | Promise<void>>()
   private readonly runtimeErrors = new Map<string, (event: RuntimeErrorEvent) => void | Promise<void>>()
   private readonly historyFeedbacks = new Map<string, (event: HistoryFeedbackEvent) => void | Promise<void>>()
-  private readonly deadPages = new Map<string, (pageIds: string[]) => void | Promise<void>>()
   private readonly historyProviders = new Map<
     string,
     { domain: string; callback: (event: HistorySupplyEvent) => void }
@@ -52,10 +51,6 @@ export class PagePort implements PagePortContract {
 
   onHistoryFeedback(pageId: string, callback: (event: HistoryFeedbackEvent) => void | Promise<void>) {
     this.historyFeedbacks.set(pageId, callback)
-  }
-
-  onDeadPages(pageId: string, callback: (pageIds: string[]) => void | Promise<void>) {
-    this.deadPages.set(pageId, callback)
   }
 
   provideHistory(pageId: string, domain: string, callback: (event: HistorySupplyEvent) => void) {
@@ -132,10 +127,6 @@ export class PagePort implements PagePortContract {
 
   emitHistoryFeedback(pageIds: string[], event: HistoryFeedbackEvent) {
     return this.emit(this.historyFeedbacks, pageIds, event)
-  }
-
-  emitDeadPages(pageIds: string[], payload: string[]) {
-    return this.emit(this.deadPages, pageIds, payload)
   }
 
   supplyHistory(pageId: string, request: HistorySupplyRequest): Promise<HistorySupplyResult | null> {
@@ -230,7 +221,6 @@ export class PagePort implements PagePortContract {
       ...this.worldPresences.keys(),
       ...this.runtimeErrors.keys(),
       ...this.historyFeedbacks.keys(),
-      ...this.deadPages.keys(),
       ...this.historyProviders.keys()
     ])
     pageIds.forEach((pageId) => this.removePage(pageId))

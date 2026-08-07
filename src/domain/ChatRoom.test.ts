@@ -327,7 +327,6 @@ const createPendingConnectionFixture = (stage: PendingConnectionStage) => {
     provideHistory: async () => {},
     resolveHistorySupply: async () => {},
     rejectHistorySupply: async () => {},
-    onDeadPages: async () => {},
     onHistoryFeedback: async () => {}
   }
   const database = createMemoryMessageDatabase(`pending-connection-${stage}-${databaseId++}`)

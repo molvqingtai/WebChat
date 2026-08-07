@@ -82,7 +82,6 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   store.igniteDomain(historyAction)
   store.igniteDomain(connectionAction)
 
-  const historyDomain = store.getDomain(historyAction)
   const lifecycleDomain = store.getDomain(lifecycleAction)
   const deliveryDomain = store.getDomain(deliveryAction)
   const sessionDomain = store.getDomain(sessionAction)
@@ -192,10 +191,6 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
         .filter((lease) => committed.has(lease.domain))
         .flatMap((lease) => lease.pageIds)
       void pagePort.emitWorldPresence(pageIds, event)
-    }),
-    store.subscribeEvent(historyDomain.event.DeadPagesEvent, (pageIds) => {
-      // Notify each dead page exactly once (the page itself is the only listener that can react).
-      void pagePort.emitDeadPages(pageIds, pageIds)
     }),
     store.subscribeEvent(connectionDomain.event.ErrorEvent, ({ error, domain }) => {
       const leases = store.query(lifecycleDomain.query.DomainLeasesQuery())
@@ -386,7 +381,6 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     onWorldPresence: async (payload, callback) => pagePort.onWorldPresence(payload.pageId, callback),
     onError: async (payload, callback) => pagePort.onError(payload.pageId, callback),
     onHistoryFeedback: async (payload, callback) => pagePort.onHistoryFeedback(payload.pageId, callback),
-    onDeadPages: async (payload, callback) => pagePort.onDeadPages(payload.pageId, callback),
     provideHistory: async (payload, callback) => pagePort.provideHistory(payload.pageId, payload.domain, callback),
     resolveHistorySupply: async (payload) =>
       pagePort.resolveHistorySupply(payload.pageId, payload.supplyId, payload.result),
