@@ -2,7 +2,7 @@ import type { RemeshStore } from 'remesh'
 import AppFeedbackDomain from '@/domain/AppFeedback'
 import type { SendLifecycle } from '@/domain/externs/SendLifecycle'
 
-export interface DocumentLifecycleDeps {
+interface DocumentLifecycleDeps {
   store: RemeshStore
   sendLifecycle: SendLifecycle
   /** Composition-provided lease operations supplied by the composition root (the owner only awaits completion). */
@@ -10,7 +10,7 @@ export interface DocumentLifecycleDeps {
   detachLease: () => void
 }
 
-export interface DocumentLifecycleOwner {
+interface DocumentLifecycleOwner {
   bind: (deps: DocumentLifecycleDeps) => void
   dispose: () => void
 }
@@ -29,7 +29,6 @@ export interface DocumentLifecycleOwner {
  */
 export const createDocumentLifecycleOwner = (): DocumentLifecycleOwner => {
   let documentState: 'active' | 'suspended' | 'ended' = 'active'
-  let restored = false
   // A restore generation is invalidated by any later suspend/terminal-exit/dispose, so a late restore
   // completion can never resume feedback or re-activate an ended/discarded document.
   let restoreGeneration = 0
@@ -52,7 +51,6 @@ export const createDocumentLifecycleOwner = (): DocumentLifecycleOwner => {
     // while already suspended must no-op (at most one release per cycle).
     if (!deps || documentState !== 'active') return
     documentState = 'suspended'
-    restored = false
     invalidateRestore()
     silenceFeedback()
     cleanupOnce()
@@ -65,8 +63,7 @@ export const createDocumentLifecycleOwner = (): DocumentLifecycleOwner => {
     cleanupOnce()
   }
   const restore = () => {
-    if (!deps || documentState !== 'suspended' || restored) return
-    restored = true
+    if (!deps || documentState !== 'suspended') return
     const generation = restoreGeneration
     // The browser has already shown this document: it is visible now. Enter active immediately and start
     // exactly one current attach/init. On completion (success or failure) feedback resumes aligned to the
