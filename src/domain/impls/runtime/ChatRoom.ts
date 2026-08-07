@@ -479,18 +479,10 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
       if (event.type === 'cancel') {
         const controller = activeHistorySupplies.get(event.supplyId)
         if (!controller) return
-        activeHistorySupplies.delete(event.supplyId)
-        const reason = abortError('History supply cancelled')
-        controller.abort(reason)
-        void dependencies.server
-          .rejectHistorySupply({
-            pageId: dependencies.pageId,
-            supplyId: event.supplyId,
-            reason: reason.message
-          })
-          .catch((error) => {
-            if (isCurrent()) this.emit('error', error as Error)
-          })
+        // The AbortSignal fires immediately, but the supply owner is kept until the physical
+        // query/projection chain has exited: only that chain settles the cancelled supplyId,
+        // exactly once, so Runtime cancellation never precedes the page's actual work stop.
+        controller.abort(abortError('History supply cancelled'))
         return
       }
       const { request } = event
@@ -514,7 +506,22 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
           )
         })
         .catch(async (error) => {
-          if (controller.signal.aborted || !isCurrent() || activeHistorySupplies.get(request.supplyId) !== controller) {
+          if (controller.signal.aborted) {
+            // Physical query/projection chain has exited on the cancellation: settle the
+            // cancelled supplyId exactly once (the pending PagePort entry is in failover mode,
+            // so this rejects the Runtime supplier promise and confirms settlement).
+            await dependencies.server
+              .rejectHistorySupply({
+                pageId: dependencies.pageId,
+                supplyId: request.supplyId,
+                reason: (error as Error).message || 'History supply cancelled'
+              })
+              .catch((settleError) => {
+                if (isCurrent()) this.emit('error', settleError as Error)
+              })
+            return
+          }
+          if (!isCurrent() || activeHistorySupplies.get(request.supplyId) !== controller) {
             return
           }
           await raceWithSignal(

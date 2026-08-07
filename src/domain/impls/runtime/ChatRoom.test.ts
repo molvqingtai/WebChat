@@ -819,7 +819,18 @@ describe('Runtime-backed ChatRoom application port', () => {
     try {
       await settle()
 
+      // The AbortSignal fires immediately, but the physical query is still held: Runtime
+      // cancellation must remain pending until the query/projection chain exits.
       expect(signal.aborted).toBe(true)
+      expect(fixture.server.rejectHistorySupply).not.toHaveBeenCalled()
+      expect(cancellationSettled).toBe(false)
+      expect(suppliedResult).toBe('pending')
+      expect(fixture.pagePort.pendingHistoryCountForTest()).toBe(1)
+
+      fixture.releaseQuery.resolve([])
+      await settle()
+      await settle()
+      // After physical exit the cancelled supply settles exactly once.
       expect(fixture.server.rejectHistorySupply).toHaveBeenCalledOnce()
       expect(fixture.server.rejectHistorySupply).toHaveBeenCalledWith({
         pageId: 'page-1',
@@ -829,10 +840,6 @@ describe('Runtime-backed ChatRoom application port', () => {
       expect(cancellationSettled).toBe(true)
       expect(suppliedResult).toEqual(new Error('History supplier timed out'))
       expect(fixture.pagePort.pendingHistoryCountForTest()).toBe(0)
-
-      fixture.releaseQuery.resolve([])
-      await settle()
-      expect(fixture.server.rejectHistorySupply).toHaveBeenCalledOnce()
       expect(fixture.server.resolveHistorySupply).not.toHaveBeenCalled()
     } finally {
       fixture.releaseQuery.resolve([])
@@ -870,14 +877,11 @@ describe('Runtime-backed ChatRoom application port', () => {
       })
       await settle()
 
+      // The AbortSignal fires immediately, but the old query is still physically running: no
+      // Runtime settlement and no release/promotion may happen before it exits.
       expect(oldSignal.aborted).toBe(true)
-      expect(fixture.server.rejectHistorySupply).toHaveBeenCalledOnce()
-      expect(fixture.server.rejectHistorySupply).toHaveBeenCalledWith({
-        pageId: 'page-1',
-        supplyId: oldRequest.supplyId,
-        reason: 'History supply cancelled'
-      })
-      expect(oldSupplyResult).toBeNull()
+      expect(fixture.server.rejectHistorySupply).not.toHaveBeenCalled()
+      expect(oldSupplyResult).toBe('pending')
 
       const newRequest = {
         supplyId: 'supply-new',
@@ -890,9 +894,18 @@ describe('Runtime-backed ChatRoom application port', () => {
       expect(replacementEvents).toEqual([{ type: 'request', request: newRequest }])
       fixture.releaseQuery.resolve([])
       await settle()
+      await settle()
 
-      expect(fixture.pagePort.pendingHistoryCountForTest()).toBe(1)
+      // After physical exit the old supply settles exactly once (replacement mode resolves null),
+      // while the new supply (owned by the replacement provider registration) stays pending.
       expect(fixture.server.rejectHistorySupply).toHaveBeenCalledOnce()
+      expect(fixture.server.rejectHistorySupply).toHaveBeenCalledWith({
+        pageId: 'page-1',
+        supplyId: oldRequest.supplyId,
+        reason: 'History supply cancelled'
+      })
+      expect(oldSupplyResult).toBeNull()
+      expect(fixture.pagePort.pendingHistoryCountForTest()).toBe(1)
       expect(fixture.server.resolveHistorySupply).not.toHaveBeenCalled()
 
       fixture.pagePort.removePage('page-1')

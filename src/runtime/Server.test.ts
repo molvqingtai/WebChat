@@ -2988,6 +2988,370 @@ describe('RuntimeServer history', () => {
     expect(started).toEqual(['old-a'])
   })
 
+  it('cancels the live second-page supply after a genuine first-page failure (per-attempt owner)', async () => {
+    const { fake, server, roomId } = await setup()
+    await server.attachPage({ domain: DOMAIN, pageId: 'page-b' })
+    // Page-a genuinely fails; page-b holds the provider snapshot until its AbortSignal fires.
+    const pageAStarted: string[] = []
+    const pageBHeld: string[] = []
+    const pageBCancelled: string[] = []
+    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, async (request) => {
+      if (request.mode === 'inventory') return { records: [], done: true }
+      pageAStarted.push(request.supplyId)
+      throw new Error('page-a broken')
+    })
+    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-b' }, (request, signal) => {
+      if (request.mode === 'inventory') return Promise.resolve({ records: [], done: true })
+      pageBHeld.push(request.supplyId)
+      return new Promise((resolve, reject) => {
+        signal.addEventListener('abort', () => {
+          pageBCancelled.push(request.supplyId)
+          setTimeout(() => reject(signal.reason ?? new Error('aborted')), 30)
+        })
+      })
+    })
+    fake.receive(roomId, 'peer-0', session({ id: 'user-0', name: 'User 0', avatar: '' }))
+    await settle()
+    fake.receive(roomId, 'peer-0', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'two-a',
+      page: 0,
+      messageIds: [],
+      done: true
+    })
+    // The selection loop fails page-a and moves to page-b with a NEW supplyId (:1).
+    await vi.waitFor(() => expect(pageAStarted.length).toBe(1))
+    await vi.waitFor(() => expect(pageBHeld.length).toBe(1))
+    expect(pageBHeld[0]).toMatch(/^supply:.*:1$/)
+    // Cleanup cancels the LIVE second-page supplyId (the recorded owner), not the stale first one.
+    fake.receive(roomId, 'peer-0', { type: MESSAGE_TYPE.SESSION_END, presenceId: 'presence-user-0' })
+    await vi.waitFor(() => expect(pageBCancelled).toEqual([pageBHeld[0]]))
+    // The old selection loop terminates: no further page is selected for the torn-down attempt.
+    await vi.waitFor(() => expect(pageBHeld.length).toBe(1))
+  })
+
+  it('never starts the next page of an old attempt after cleanup cancellation', async () => {
+    const { fake, server, roomId } = await setup()
+    await server.attachPage({ domain: DOMAIN, pageId: 'page-b' })
+    // Both pages hold the provider snapshot; page-a is the first selection.
+    const held: string[] = []
+    const cancelled: string[] = []
+    const pageBStarted: string[] = []
+    const holder =
+      (onStart: (supplyId: string) => void) =>
+      (request: HistorySupplyRequest, signal: AbortSignal): Promise<HistorySupplyResult> => {
+        if (request.mode === 'inventory') return Promise.resolve({ records: [], done: true })
+        onStart(request.supplyId)
+        return new Promise((resolve, reject) => {
+          signal.addEventListener('abort', () => {
+            cancelled.push(request.supplyId)
+            setTimeout(() => reject(signal.reason ?? new Error('aborted')), 30)
+          })
+        })
+      }
+    await registerHistoryProvider(
+      server,
+      { domain: DOMAIN, pageId: 'page-a' },
+      holder((id) => held.push(id))
+    )
+    await registerHistoryProvider(
+      server,
+      { domain: DOMAIN, pageId: 'page-b' },
+      holder((id) => pageBStarted.push(id))
+    )
+    fake.receive(roomId, 'peer-0', session({ id: 'user-0', name: 'User 0', avatar: '' }))
+    await settle()
+    fake.receive(roomId, 'peer-0', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'two-b',
+      page: 0,
+      messageIds: [],
+      done: true
+    })
+    await vi.waitFor(() => expect(held.length).toBe(1))
+    // Cleanup cancels the held page-a supply; the old selection loop must terminate so page-b
+    // never starts for the torn-down attempt.
+    fake.receive(roomId, 'peer-0', { type: MESSAGE_TYPE.SESSION_END, presenceId: 'presence-user-0' })
+    await vi.waitFor(() => expect(cancelled).toEqual([held[0]]))
+    await vi.waitFor(() => expect(cancelled.length).toBe(1))
+    await settle()
+    await settle()
+    expect(pageBStarted).toEqual([])
+  })
+
+  it('transfers a partial successor after cleanup settlement and completes it with one supply', async () => {
+    const { fake, server, roomId } = await setup()
+    const started: string[] = []
+    const cancelled: string[] = []
+    const settled: string[] = []
+    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, (request, signal) => {
+      if (request.mode === 'inventory') return Promise.resolve({ records: [], done: true })
+      started.push(request.syncId)
+      // The old supply settles only through its AbortSignal; any later supply resolves at once so
+      // its response is delivered.
+      if (request.syncId !== 'old-a') return Promise.resolve({ records: [], done: true })
+      return new Promise((resolve, reject) => {
+        signal.addEventListener('abort', () => {
+          cancelled.push(request.syncId)
+          setTimeout(() => {
+            settled.push(request.syncId)
+            reject(signal.reason ?? new Error('aborted'))
+          }, 30)
+        })
+      })
+    })
+    fake.receive(roomId, 'peer-0', session({ id: 'user-0', name: 'User 0', avatar: '' }))
+    await settle()
+    fake.receive(roomId, 'peer-0', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'old-a',
+      page: 0,
+      messageIds: [],
+      done: true
+    })
+    await vi.waitFor(() => expect(started).toEqual(['old-a']))
+    fake.receive(roomId, 'peer-0', { type: MESSAGE_TYPE.SESSION_END, presenceId: 'presence-user-0' })
+    await settle()
+    expect(cancelled).toEqual(['old-a'])
+    // A PARTIAL replacement (page zero, done:false) becomes a dormant successor.
+    fake.receive(roomId, 'peer-0', session({ id: 'user-0b', name: 'User 0b', avatar: '' }))
+    await settle()
+    fake.receive(roomId, 'peer-0', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'new-b',
+      page: 0,
+      messageIds: ['b-0'],
+      done: false
+    })
+    await settle()
+    expect(started).toEqual(['old-a'])
+    // The old supply settles: the partial successor is transferred (installed as provider with
+    // its canonical job) but NOT scheduled — still no supply for new-b.
+    await vi.waitFor(() => expect(settled).toEqual(['old-a']))
+    await settle()
+    expect(started).toEqual(['old-a'])
+    // The transferred attempt continues on the next page and completes: exactly ONE new-b supply.
+    fake.receive(roomId, 'peer-0', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'new-b',
+      page: 1,
+      messageIds: ['b-1'],
+      done: true
+    })
+    await vi.waitFor(() => expect(started).toEqual(['old-a', 'new-b']))
+    await vi.waitFor(() => {
+      const sent = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE)
+      expect(sent.some((m) => (m as { syncId: string }).syncId === 'new-b')).toBe(true)
+    })
+  })
+
+  it('transfers a partial successor on ordinary current cancellation and completes it later', async () => {
+    const { fake, server, roomId } = await setup()
+    const started: string[] = []
+    const cancelled: string[] = []
+    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, (request, signal) => {
+      if (request.mode === 'inventory') return Promise.resolve({ records: [], done: true })
+      started.push(request.syncId)
+      return new Promise((resolve, reject) => {
+        signal.addEventListener('abort', () => {
+          cancelled.push(request.syncId)
+          setTimeout(() => reject(signal.reason ?? new Error('aborted')), 30)
+        })
+      })
+    })
+    fake.receive(roomId, 'peer-0', session({ id: 'user-0', name: 'User 0', avatar: '' }))
+    await settle()
+    fake.receive(roomId, 'peer-0', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'old-a',
+      page: 0,
+      messageIds: [],
+      done: true
+    })
+    await vi.waitFor(() => expect(started).toEqual(['old-a']))
+    // A PARTIAL replacement request becomes a dormant successor beside the running current.
+    fake.receive(roomId, 'peer-0', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'new-b',
+      page: 0,
+      messageIds: ['b-0'],
+      done: false
+    })
+    await settle()
+    expect(started).toEqual(['old-a'])
+    // An out-of-order page cancels the CURRENT attempt: the partial successor is transferred
+    // (installed as provider, not forced ready) instead of being started from a partial inventory.
+    fake.receive(roomId, 'peer-0', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'old-a',
+      page: 2,
+      messageIds: [],
+      done: true
+    })
+    await settle()
+    await settle()
+    expect(started).toEqual(['old-a'])
+    // The transferred attempt completes on its next page: exactly ONE new-b supply starts.
+    fake.receive(roomId, 'peer-0', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'new-b',
+      page: 1,
+      messageIds: ['b-1'],
+      done: true
+    })
+    await vi.waitFor(() => expect(started).toEqual(['old-a', 'new-b']))
+  })
+
+  it('terminates the current provider attempt on cumulative overflow; smaller pages cannot revive it', async () => {
+    const { fake, server, roomId } = await setup()
+    const started: string[] = []
+    const gates = new Map<string, () => void>()
+    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, async (request) => {
+      if (request.mode === 'inventory') return { records: [], done: true }
+      started.push(request.syncId)
+      await new Promise<void>((resolve) => {
+        gates.set(request.syncId, resolve)
+      })
+      return { records: [], done: true }
+    })
+    const bigIds = Array.from({ length: 137 }, (_, i) => `b-${String(i).padStart(4, '0')}-${'x'.repeat(48)}`)
+    fake.receive(roomId, 'peer-a', session())
+    await settle()
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'big-a',
+      page: 0,
+      messageIds: bigIds,
+      done: false
+    })
+    await settle()
+    // An unrelated admitted job stays live across the overflow (peer-b partial).
+    fake.receive(roomId, 'peer-b', session({ id: 'sat-user-b', name: 'Sat B', avatar: '' }))
+    await settle()
+    fake.receive(roomId, 'peer-b', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'peer-b',
+      page: 0,
+      messageIds: ['b'],
+      done: false
+    })
+    await settle()
+    // peer-a's next page crosses the 8KiB cumulative budget: the matching attempt is terminated
+    // under its complete identity (provider + canonical job released).
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'big-a',
+      page: 1,
+      messageIds: bigIds,
+      done: false
+    })
+    await settle()
+    // A smaller payload at the same page number cannot revive the terminated attempt (gap).
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'big-a',
+      page: 1,
+      messageIds: ['small'],
+      done: true
+    })
+    await settle()
+    expect(started).toEqual([])
+    // The unrelated peer-b job survives and completes normally.
+    fake.receive(roomId, 'peer-b', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'peer-b',
+      page: 1,
+      messageIds: ['b-1'],
+      done: true
+    })
+    await vi.waitFor(() => expect(started).toEqual(['peer-b']))
+    // The terminated peer-a can be admitted fresh from page zero (its capacity was released).
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'big-a',
+      page: 0,
+      messageIds: ['fresh'],
+      done: true
+    })
+    await vi.waitFor(() => expect(started).toEqual(['peer-b', 'big-a']))
+  })
+
+  it('terminates a dormant successor on cumulative overflow; smaller pages cannot revive it', async () => {
+    const { fake, server, roomId } = await setup()
+    const started: string[] = []
+    const settled: string[] = []
+    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, (request, signal) => {
+      if (request.mode === 'inventory') return Promise.resolve({ records: [], done: true })
+      started.push(request.syncId)
+      return new Promise((resolve, reject) => {
+        signal.addEventListener('abort', () => {
+          setTimeout(() => {
+            settled.push(request.syncId)
+            reject(signal.reason ?? new Error('aborted'))
+          }, 30)
+        })
+      })
+    })
+    const bigIds = Array.from({ length: 137 }, (_, i) => `b-${String(i).padStart(4, '0')}-${'x'.repeat(48)}`)
+    fake.receive(roomId, 'peer-0', session({ id: 'user-0', name: 'User 0', avatar: '' }))
+    await settle()
+    fake.receive(roomId, 'peer-0', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'old-a',
+      page: 0,
+      messageIds: [],
+      done: true
+    })
+    await vi.waitFor(() => expect(started).toEqual(['old-a']))
+    // A replacement successor with a large page zero is admitted (dormant).
+    fake.receive(roomId, 'peer-0', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'new-b',
+      page: 0,
+      messageIds: bigIds,
+      done: false
+    })
+    await settle()
+    // Its next page crosses the 8KiB cumulative budget: the successor is terminated.
+    fake.receive(roomId, 'peer-0', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'new-b',
+      page: 1,
+      messageIds: bigIds,
+      done: false
+    })
+    await settle()
+    // A smaller payload at the same page number cannot revive the terminated successor (gap).
+    fake.receive(roomId, 'peer-0', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'new-b',
+      page: 1,
+      messageIds: ['small'],
+      done: true
+    })
+    await settle()
+    await settle()
+    // Cleanup cancels the old supply and removes any dormant state.
+    fake.receive(roomId, 'peer-0', { type: MESSAGE_TYPE.SESSION_END, presenceId: 'presence-user-0' })
+    await settle()
+    // A fresh session can admit a new page-zero successor again (the overflowed successor's
+    // capacity was released).
+    fake.receive(roomId, 'peer-0', session({ id: 'user-0b', name: 'User 0b', avatar: '' }))
+    await settle()
+    fake.receive(roomId, 'peer-0', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'new-b',
+      page: 0,
+      messageIds: ['b-0'],
+      done: true
+    })
+    await settle()
+    // On the old supply's settlement the complete successor is transferred and exactly ONE
+    // supply starts.
+    await vi.waitFor(() => expect(settled).toEqual(['old-a']))
+    await vi.waitFor(() => expect(started).toEqual(['old-a', 'new-b']))
+  })
+
   it('observes job acceptance at exactly 32 jobs and rejection of a new identity', async () => {
     const { fake, server, roomId } = await setup()
     // Every started supplier pipeline is held; the response is delivered only when released.
