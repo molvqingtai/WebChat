@@ -1,6 +1,6 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { Remesh } from 'remesh'
+import { Remesh, type RemeshStore } from 'remesh'
 import { RemeshRoot, RemeshScope } from 'remesh-react'
 // import { RemeshLogger } from 'remesh-logger'
 import { defineContentScript, createShadowRootUi } from '#imports'
@@ -35,7 +35,7 @@ import { ChatRoomExtern, type ChatRoom } from '@/domain/externs/ChatRoom'
 import { WorldRoomExtern, type WorldRoom } from '@/domain/externs/WorldRoom'
 import { ReadinessExtern, type Readiness } from '@/domain/externs/Readiness'
 import { ConnectionLifecycleExtern, type ConnectionLifecycle } from '@/domain/externs/ConnectionLifecycle'
-import { SendLifecycleExtern } from '@/domain/externs/SendLifecycle'
+import { SendLifecycleExtern, type SendLifecycle } from '@/domain/externs/SendLifecycle'
 import { BrowserSyncStorageExtern, type Storage, type StorageValue } from '@/domain/externs/Storage'
 import type { Database } from '@/domain/externs/Database'
 import {
@@ -227,13 +227,89 @@ const createContentStore = () => {
   return { store, activateApplicationDependencies, sendLifecycle: sendLifecycleInstance }
 }
 
+/**
+ * The one Content composition document-lifecycle owner. It coordinates page-scoped Runtime feedback,
+ * active sends, ClientLease ownership, and restoration for terminal exit, BFCache suspension, and
+ * BFCache restoration. `beforeunload`/`pagehide`/`pageshow` feed this owner only; no Domain, component,
+ * feedback adapter, or watchdog independently owns whether the document may attach or present state.
+ *
+ * Ordering per authority: on departure the owner first silences page feedback and removes the current
+ * readiness presentation, then cancels page-owned work and releases the ClientLease exactly once, so
+ * cleanup cannot create or update `webchat-runtime-readiness`. On persisted `pageshow` it starts exactly
+ * one current attach/init and resumes feedback from the current Runtime snapshot. Terminal exits have no
+ * restoration path. All transitions are idempotent.
+ */
+const createDocumentLifecycleOwner = () => {
+  let documentState: 'active' | 'suspended' | 'ended' = 'active'
+  let restored = false
+  let deps: { store: RemeshStore; sendLifecycle: SendLifecycle } | null = null
+  const feedbackDomain = () => deps!.store.getDomain(AppFeedbackDomain())
+
+  const silenceFeedback = () => {
+    deps!.store.send(feedbackDomain().command.SilenceFeedbackCommand())
+  }
+  const cleanupOnce = () => {
+    deps!.sendLifecycle.cancelActiveSends()
+    detachClient()
+  }
+  const suspend = () => {
+    if (!deps || documentState !== 'active') return
+    documentState = 'suspended'
+    restored = false
+    silenceFeedback()
+    cleanupOnce()
+  }
+  const end = () => {
+    if (!deps || documentState === 'ended') return
+    documentState = 'ended'
+    silenceFeedback()
+    cleanupOnce()
+  }
+  const restore = () => {
+    if (!deps || documentState !== 'suspended' || restored) return
+    restored = true
+    // Exactly one current attach/init for the restored document; feedback resumes from the resulting
+    // current snapshot (current ready dismisses the stable slot without a success Toast).
+    void initClient().finally(() => {
+      deps!.store.send(feedbackDomain().command.ResumeFeedbackCommand())
+    })
+  }
+  const onBeforeUnload = () => {
+    // Feedback becomes silent before any page-local readiness change; cleanup ownership stays with
+    // pagehide (which alone knows whether the document is suspended or terminal).
+    if (deps) silenceFeedback()
+  }
+  const onPageHide = (event: PageTransitionEvent) => {
+    if (event.persisted) suspend()
+    else end()
+  }
+  const onPageShow = (event: PageTransitionEvent) => {
+    if (event.persisted) restore()
+  }
+  window.addEventListener('beforeunload', onBeforeUnload)
+  window.addEventListener('pagehide', onPageHide)
+  window.addEventListener('pageshow', onPageShow)
+  return {
+    bind: (bound: { store: RemeshStore; sendLifecycle: SendLifecycle }) => {
+      deps = bound
+    },
+    dispose: () => {
+      window.removeEventListener('beforeunload', onBeforeUnload)
+      window.removeEventListener('pagehide', onPageHide)
+      window.removeEventListener('pageshow', onPageShow)
+    }
+  }
+}
+
 export default defineContentScript({
   cssInjectionMode: 'ui',
   runAt: 'document_idle',
   matches: ['https://*/*'],
   excludeMatches: ['*://localhost/*', '*://127.0.0.1/*', '*://*.csdn.net/*', '*://*.csdn.com/*'],
   async main(ctx) {
-    window.addEventListener('beforeunload', detachClient, { once: true })
+    // Page lifecycle registration happens before any UI/Runtime initialization can run or suspend, so
+    // an early failure still has exactly one cleanup owner (never a second lease authority).
+    const documentLifecycle = createDocumentLifecycleOwner()
 
     let mediaPreviewTransitionStyle: HTMLStyleElement | null = null
     const ui = await createShadowRootUi(ctx, {
@@ -249,9 +325,7 @@ export default defineContentScript({
         container.append(app)
         const root = createRoot(app)
         const { store, activateApplicationDependencies, sendLifecycle } = createContentStore()
-        // Content/lease teardown-supersession owner: cancel this page generation's active sends
-        // synchronously before the lease/domain release proceeds on detach.
-        window.addEventListener('beforeunload', () => sendLifecycle.cancelActiveSends(), { once: true })
+        documentLifecycle.bind({ store, sendLifecycle })
         root.render(
           <StrictMode>
             <RemeshRoot store={store}>
@@ -266,9 +340,10 @@ export default defineContentScript({
           dependencies: initializationDependencies,
           activateApplicationDependencies
         })
-        return { root, store, stopInitialization, sendLifecycle }
+        return { root, store, stopInitialization, sendLifecycle, disposeDocumentLifecycle: documentLifecycle.dispose }
       },
       onRemove: (content) => {
+        content?.disposeDocumentLifecycle()
         content?.stopInitialization()
         content?.sendLifecycle.cancelActiveSends()
         content?.root.unmount()

@@ -21,6 +21,9 @@ const fixture = vi.hoisted(() => ({
   mount: vi.fn(),
   createStore: vi.fn(),
   discard: vi.fn(),
+  storeSend: vi.fn(),
+  silenceFeedback: vi.fn(),
+  resumeFeedback: vi.fn(),
   startInitializationLifecycle: vi.fn(),
   stopInitialization: vi.fn(),
   initializationOptions: [] as Array<Record<string, unknown>>,
@@ -31,7 +34,7 @@ const fixture = vi.hoisted(() => ({
   prepareLocalConfigurationStorage: vi.fn(),
   prepareIndexedDBMessageDatabase: vi.fn(),
   createIndexedDBMessageDatabase: vi.fn(),
-  initClient: vi.fn(),
+  initClient: vi.fn(async () => null),
   detachClient: vi.fn(),
   whenHostPhase: vi.fn(),
   whenFailure: vi.fn(),
@@ -135,7 +138,16 @@ beforeEach(() => {
   fixture.owners.length = 0
   fixture.removeUis.length = 0
   fixture.appProps.length = 0
-  fixture.createStore.mockImplementation(() => ({ discard: fixture.discard }))
+  fixture.createStore.mockImplementation(() => ({
+    discard: fixture.discard,
+    send: fixture.storeSend,
+    getDomain: () => ({
+      command: {
+        SilenceFeedbackCommand: fixture.silenceFeedback,
+        ResumeFeedbackCommand: fixture.resumeFeedback
+      }
+    })
+  }))
   fixture.createIndexedDBMessageDatabase.mockReturnValue(fixture.database)
   fixture.createChatRoomImpl.mockReturnValue({
     value: fixture.chat,
@@ -235,14 +247,53 @@ describe('content composition root', () => {
     expect(sendLifecycleInstance.cancelActiveSends).toHaveBeenCalled()
   })
 
-  it('cancels this page generation sent lifecycle on beforeunload lease teardown', async () => {
+  it('silences page feedback on beforeunload and cancels sends + detaches exactly once on non-persisted pagehide', async () => {
     await startContent()
     const sendLifecycleInstance = fixture.createSendLifecycle.mock.results[0]?.value
     if (!sendLifecycleInstance) throw new Error('SendLifecycle was never created')
 
+    // Departure begins: feedback is silenced before any page-local readiness change.
     window.dispatchEvent(new window.Event('beforeunload'))
+    expect(fixture.silenceFeedback).toHaveBeenCalledTimes(1)
 
-    expect(sendLifecycleInstance.cancelActiveSends).toHaveBeenCalled()
+    // A non-persisted pagehide is the terminal exit: cancel page work and release the lease exactly once.
+    const pagehide = new window.Event('pagehide')
+    Object.defineProperty(pagehide, 'persisted', { value: false })
+    window.dispatchEvent(pagehide)
+    expect(sendLifecycleInstance.cancelActiveSends).toHaveBeenCalledTimes(1)
+    expect(fixture.detachClient).toHaveBeenCalledTimes(1)
+
+    // Repeated signals are idempotent.
+    window.dispatchEvent(pagehide)
+    expect(sendLifecycleInstance.cancelActiveSends).toHaveBeenCalledTimes(1)
+    expect(fixture.detachClient).toHaveBeenCalledTimes(1)
+  })
+
+  it('restores exactly one suspended document binding on persisted pageshow and resumes feedback', async () => {
+    await startContent()
+    const sendLifecycleInstance = fixture.createSendLifecycle.mock.results[0]?.value
+    if (!sendLifecycleInstance) throw new Error('SendLifecycle was never created')
+
+    // BFCache suspension: persisted pagehide silences feedback then cancels + detaches once.
+    const pagehide = new window.Event('pagehide')
+    Object.defineProperty(pagehide, 'persisted', { value: true })
+    window.dispatchEvent(pagehide)
+    expect(fixture.silenceFeedback).toHaveBeenCalledTimes(1)
+    expect(sendLifecycleInstance.cancelActiveSends).toHaveBeenCalledTimes(1)
+    expect(fixture.detachClient).toHaveBeenCalledTimes(1)
+
+    // Persisted pageshow restores exactly one current attach/init and resumes feedback.
+    const pageshow = new window.Event('pageshow')
+    Object.defineProperty(pageshow, 'persisted', { value: true })
+    window.dispatchEvent(pageshow)
+    await Promise.resolve()
+    expect(fixture.initClient).toHaveBeenCalledTimes(1)
+    expect(fixture.resumeFeedback).toHaveBeenCalledTimes(1)
+
+    // Duplicate restore signals do not create a second binding.
+    window.dispatchEvent(pageshow)
+    await Promise.resolve()
+    expect(fixture.initClient).toHaveBeenCalledTimes(1)
   })
 
   it('constructs each deferred application dependency exactly once only when initialization activates it', async () => {

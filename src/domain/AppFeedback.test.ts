@@ -190,6 +190,36 @@ describe('application feedback ownership', () => {
     expect(fixture.toast.error).not.toHaveBeenCalled()
   })
 
+  it('stays silent for cleanup-induced connecting while silenced and reconciles current ready on resume', async () => {
+    const fixture = createFixture()
+    markReady(fixture)
+    const feedback = fixture.store.getDomain(AppFeedbackDomain())
+    // An active page that is genuinely connecting establishes the stable loading slot.
+    fixture.emitReadiness('connecting')
+    await vi.waitFor(() =>
+      expect(fixture.toast.loading).toHaveBeenCalledWith('Connected to the chat.', {
+        id: RUNTIME_TOAST_ID,
+        dismissible: false
+      })
+    )
+    fixture.toast.loading.mockClear()
+
+    // The document begins departure: the lifecycle owner silences page feedback and removes the current
+    // readiness presentation, then lease cleanup changes page-local readiness to connecting again.
+    fixture.store.send(feedback.command.SilenceFeedbackCommand())
+    expect(fixture.toast.cancel).toHaveBeenCalledWith(RUNTIME_TOAST_ID)
+    fixture.emitReadiness('connecting')
+    await flushMicrotasks()
+    expect(fixture.toast.loading).not.toHaveBeenCalled()
+
+    // BFCache restore: feedback resumes and current ready reconciles (dismiss without a success Toast).
+    fixture.store.send(feedback.command.ResumeFeedbackCommand())
+    fixture.emitReadiness('ready')
+    await flushMicrotasks()
+    expect(fixture.toast.loading).not.toHaveBeenCalled()
+    expect(fixture.toast.success).not.toHaveBeenCalled()
+  })
+
   it('keeps a fast reconnect pending for its request-owned 300ms interval without a Toaster', async () => {
     vi.useFakeTimers()
     const fixture = createFixture()
