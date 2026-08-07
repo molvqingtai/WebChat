@@ -2851,23 +2851,21 @@ describe('RuntimeServer history', () => {
 
   it('never promotes a waiter before the old active supplier physically settles', async () => {
     const { fake, server, roomId } = await setup()
-    // A held supplier: every supplyHistory call waits on a gate, so four completed peers genuinely
-    // occupy the four active slots and a fifth is queued as a waiter.
-    const releases: (() => void)[] = []
-    const pendingSupplies: Promise<void>[] = []
-    const heldSupplier = () => {
-      const gate = new Promise<void>((resolve) => {
-        releases.push(resolve)
+    // A held supplier that settles ONLY through the real cancellation path: cleanup cancels the
+    // in-flight supply via its recorded supplyId, the provider's AbortSignal fires, and the
+    // supply settles (rejects) shortly after the abort is observed.
+    const started: string[] = []
+    const cancelled: string[] = []
+    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, (request, signal) => {
+      if (request.mode === 'inventory') return Promise.resolve({ records: [], done: true })
+      started.push(request.syncId)
+      return new Promise((resolve, reject) => {
+        signal.addEventListener('abort', () => {
+          cancelled.push(request.syncId)
+          // The physical query settles after the abort is observable, never before.
+          setTimeout(() => reject(signal.reason ?? new Error('aborted')), 30)
+        })
       })
-      pendingSupplies.push(gate)
-      return gate
-    }
-    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, async (request) => {
-      // Only the provider snapshot (mode: 'provider') is held; the requester's own inventory
-      // resolves immediately so the four active slots are exactly the provider pipeline.
-      if (request.mode === 'inventory') return { records: [], done: true }
-      await heldSupplier()
-      return { records: [], done: true }
     })
     for (let peer = 0; peer < 5; peer += 1) {
       const peerId = `peer-${peer}`
@@ -2882,27 +2880,129 @@ describe('RuntimeServer history', () => {
       })
       await settle()
     }
-    // Exactly four suppliers are physically held (the fifth is a waiting projection, never started).
-    expect(releases.length).toBe(4)
-    // Remove peer-0: its active supplier keeps its slot until physical settlement; the waiting
-    // fifth peer must NOT be promoted early.
+    // Exactly four suppliers are physically running (the fifth is a waiting projection).
+    expect(started).toEqual(['full-0', 'full-1', 'full-2', 'full-3'])
+    // Remove peer-0: cleanup must actually cancel its live supply through the recorded supplyId
+    // (observable on the AbortSignal), while the waiting fifth peer is NOT promoted early.
     fake.receive(roomId, 'peer-0', { type: MESSAGE_TYPE.SESSION_END, presenceId: 'presence-user-0' })
-    await settle()
-    expect(releases.length).toBe(4)
-    // Release peer-0's held supply: it settles and exactly one waiter is promoted.
-    releases[0]?.()
-    await vi.waitFor(() => expect(releases.length).toBe(5))
+    await vi.waitFor(() => expect(cancelled).toEqual(['full-0']))
+    expect(started).toEqual(['full-0', 'full-1', 'full-2', 'full-3'])
+    // The cancelled supply settles (abort rejection) and exactly one waiter is promoted; no
+    // manual gate resolution was involved anywhere.
+    await vi.waitFor(() => expect(started).toEqual(['full-0', 'full-1', 'full-2', 'full-3', 'full-4']))
   })
 
-  it('allows updates at exactly 32 admitted jobs and rejects a new identity', async () => {
+  it('promotes a fresh successor admitted after cleanup when the old supply settles', async () => {
     const { fake, server, roomId } = await setup()
-    // Hold every provider snapshot so all 32 admitted jobs stay live (never released).
+    const started: string[] = []
+    const cancelled: string[] = []
+    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, (request, signal) => {
+      if (request.mode === 'inventory') return Promise.resolve({ records: [], done: true })
+      started.push(request.syncId)
+      return new Promise((resolve, reject) => {
+        signal.addEventListener('abort', () => {
+          cancelled.push(request.syncId)
+          // Physical settlement follows the observable abort after a short delay, so the dormant
+          // successor has a window to be admitted before the old supply settles.
+          setTimeout(() => reject(signal.reason ?? new Error('aborted')), 30)
+        })
+      })
+    })
+    fake.receive(roomId, 'peer-0', session({ id: 'user-0', name: 'User 0', avatar: '' }))
+    await settle()
+    fake.receive(roomId, 'peer-0', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'old-a',
+      page: 0,
+      messageIds: [],
+      done: true
+    })
+    await vi.waitFor(() => expect(started).toEqual(['old-a']))
+    // Cleanup removes the peer: the in-flight supply is cancelled via its recorded supplyId.
+    fake.receive(roomId, 'peer-0', { type: MESSAGE_TYPE.SESSION_END, presenceId: 'presence-user-0' })
+    await settle()
+    expect(cancelled).toEqual(['old-a'])
+    // A fresh session submits a replacement request with a DIFFERENT syncId: it becomes one
+    // dormant successor while the old active supply is still unsettled (no parallel supply).
+    fake.receive(roomId, 'peer-0', session({ id: 'user-0b', name: 'User 0b', avatar: '' }))
+    await settle()
+    fake.receive(roomId, 'peer-0', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'new-b',
+      page: 0,
+      messageIds: [],
+      done: true
+    })
+    await settle()
+    expect(started).toEqual(['old-a'])
+    // The old supply settles (abort rejection): the successor is promoted by the late-settlement
+    // path and its own supply starts; it is never deleted as stale.
+    await vi.waitFor(() => expect(started).toEqual(['old-a', 'new-b']))
+  })
+
+  it('ignores a delayed same-sync page after cleanup without a parallel token or supply', async () => {
+    const { fake, server, roomId } = await setup()
+    const started: string[] = []
+    const cancelled: string[] = []
+    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, (request, signal) => {
+      if (request.mode === 'inventory') return Promise.resolve({ records: [], done: true })
+      started.push(request.syncId)
+      return new Promise((resolve, reject) => {
+        signal.addEventListener('abort', () => {
+          cancelled.push(request.syncId)
+          setTimeout(() => reject(signal.reason ?? new Error('aborted')), 30)
+        })
+      })
+    })
+    fake.receive(roomId, 'peer-0', session({ id: 'user-0', name: 'User 0', avatar: '' }))
+    await settle()
+    fake.receive(roomId, 'peer-0', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'old-a',
+      page: 0,
+      messageIds: [],
+      done: true
+    })
+    await vi.waitFor(() => expect(started).toEqual(['old-a']))
+    // Cleanup removes the peer and cancels the in-flight supply; the active entry stays unsettled.
+    fake.receive(roomId, 'peer-0', { type: MESSAGE_TYPE.SESSION_END, presenceId: 'presence-user-0' })
+    await settle()
+    expect(cancelled).toEqual(['old-a'])
+    // A delayed page carrying the SAME syncId arrives after cleanup (fresh session): it must be
+    // idempotently ignored against the unsettled old owner, never admitted as a parallel token.
+    fake.receive(roomId, 'peer-0', session({ id: 'user-0b', name: 'User 0b', avatar: '' }))
+    await settle()
+    fake.receive(roomId, 'peer-0', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'old-a',
+      page: 1,
+      messageIds: ['late'],
+      done: true
+    })
+    await settle()
+    expect(started).toEqual(['old-a'])
+    // After the old supply settles, still no parallel supply or job for the delayed page exists.
+    await vi.waitFor(() => expect(cancelled.length).toBe(1))
+    await settle()
+    await settle()
+    expect(started).toEqual(['old-a'])
+  })
+
+  it('observes job acceptance at exactly 32 jobs and rejection of a new identity', async () => {
+    const { fake, server, roomId } = await setup()
+    // Every started supplier pipeline is held; the response is delivered only when released.
+    const started: string[] = []
+    const gates = new Map<string, () => void>()
     await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, async (request) => {
       if (request.mode === 'inventory') return { records: [], done: true }
-      await new Promise<void>(() => {})
+      started.push(request.syncId)
+      await new Promise<void>((resolve) => {
+        gates.set(request.syncId, resolve)
+      })
       return { records: [], done: true }
     })
-    // 32 peers complete partial inventories: exactly 32 admitted jobs (32-job cap).
+    // 32 peers submit partial inventories: exactly 32 canonical jobs are admitted but none are
+    // ready, so no supplier pipeline starts (observable: no starts, no responses).
     for (let peer = 0; peer < 32; peer += 1) {
       const peerId = `peer-${peer}`
       fake.receive(roomId, peerId, session({ id: `sat-user-${peer}`, name: `Sat ${peer}`, avatar: '' }))
@@ -2916,7 +3016,9 @@ describe('RuntimeServer history', () => {
       })
       await settle()
     }
-    // An update to an existing admitted job at exactly 32 must still be accepted (upsert, not new).
+    expect(started).toEqual([])
+    // An update to an existing job at exactly 32 is accepted: its final page makes the job ready,
+    // so one supplier pipeline observably starts (positive outcome control).
     fake.receive(roomId, 'peer-0', {
       type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
       syncId: 'sat-0',
@@ -2924,8 +3026,9 @@ describe('RuntimeServer history', () => {
       messageIds: ['s-0-more'],
       done: true
     })
-    await settle()
-    // A NEW identity at exactly 32 jobs is rejected (no provider response from it).
+    await vi.waitFor(() => expect(started).toEqual(['sat-0']))
+    // A NEW identity at exactly 32 jobs is rejected: its ready page is dropped, so no second
+    // supplier pipeline ever starts even though a slot is free (negative outcome control).
     fake.receive(roomId, 'peer-32', session({ id: 'sat-user-32', name: 'Sat 32', avatar: '' }))
     await settle()
     fake.receive(roomId, 'peer-32', {
@@ -2936,8 +3039,71 @@ describe('RuntimeServer history', () => {
       done: true
     })
     await settle()
-    // No response flow for peer-32 (its admission was rejected at the 32-job cap).
-    expect(fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE)).toHaveLength(0)
+    expect(started).toEqual(['sat-0'])
+    // Releasing the accepted pipeline delivers its response; the rejected identity never responds.
+    gates.get('sat-0')?.()
+    await vi.waitFor(() => {
+      const sent = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE)
+      expect(sent.some((m) => (m as { syncId: string }).syncId === 'sat-0')).toBe(true)
+      expect(sent.some((m) => (m as { syncId: string }).syncId === 'sat-32')).toBe(false)
+    })
+  })
+
+  it('rejects a new identity when the cumulative queue budget reaches 8KiB', async () => {
+    const { fake, server, roomId } = await setup()
+    const started: string[] = []
+    const gates = new Map<string, () => void>()
+    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, async (request) => {
+      if (request.mode === 'inventory') return { records: [], done: true }
+      started.push(request.syncId)
+      await new Promise<void>((resolve) => {
+        gates.set(request.syncId, resolve)
+      })
+      return { records: [], done: true }
+    })
+    // The first inventory page encodes to 8035 bytes (137 long ids): under the 8192 cumulative
+    // budget. Its small completion page (1 id, ~94 bytes) still fits at ~8129 total.
+    const bigIds = Array.from({ length: 137 }, (_, i) => `b-${String(i).padStart(4, '0')}-${'x'.repeat(48)}`)
+    fake.receive(roomId, 'peer-a', session())
+    await settle()
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'big-0',
+      page: 0,
+      messageIds: bigIds,
+      done: false
+    })
+    await settle()
+    // Complete big-0: the upsert keeps its cumulative bytes and the small final page still fits,
+    // making the job ready so its supplier observably starts.
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'big-0',
+      page: 1,
+      messageIds: ['b-0-final'],
+      done: true
+    })
+    await vi.waitFor(() => expect(started).toEqual(['big-0']))
+    // A NEW identity whose cumulative bytes would cross 8192 is rejected: it never starts a
+    // supplier pipeline even though a slot is free (negative outcome control).
+    fake.receive(roomId, 'peer-b', session({ id: 'sat-user-b', name: 'Sat B', avatar: '' }))
+    await settle()
+    fake.receive(roomId, 'peer-b', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'big-1',
+      page: 0,
+      messageIds: ['b-1'],
+      done: true
+    })
+    await settle()
+    expect(started).toEqual(['big-0'])
+    // Releasing the accepted pipeline delivers its response; the rejected identity never responds.
+    gates.get('big-0')?.()
+    await vi.waitFor(() => {
+      const sent = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE)
+      expect(sent.some((m) => (m as { syncId: string }).syncId === 'big-0')).toBe(true)
+      expect(sent.some((m) => (m as { syncId: string }).syncId === 'big-1')).toBe(false)
+    })
   })
 
   it('keeps one peer in two domains as independent attempts without suppression', async () => {

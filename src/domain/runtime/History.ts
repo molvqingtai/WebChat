@@ -354,17 +354,41 @@ const HistoryDomain = Remesh.domain({
     // Removes every provider-owned scheduling entry (active/waiting/dormant/job) for one
     // domain+source and releases the matching active slots, so lifecycle cleanup never leaves a
     // waiting placeholder or leaks a concurrency slot.
+    const RecordActiveSupplyIdCommand = domain.command({
+      name: 'History.RecordActiveSupplyIdCommand',
+      impl: ({ get }, payload: { key: HistoryAttemptKey; supplyId: string }) => {
+        const active = get(ActiveSuppliesState())
+        if (!active.some((item) => matchesSync(item, payload.key))) return null
+        return ActiveSuppliesState().new(
+          active.map((item) => (matchesSync(item, payload.key) ? { ...item, supplyId: payload.supplyId } : item))
+        )
+      }
+    })
+
+    const CancelActiveSupplyCommand = domain.command({
+      name: 'History.CancelActiveSupplyCommand',
+      impl: (_context, payload: { key: HistoryAttemptKey; supplyId: string }) => {
+        void pagePort.cancelHistorySupply(payload.supplyId)
+        return null
+      }
+    })
+
     const CleanupProviderSlotsCommand = domain.command({
       name: 'History.CleanupProviderSlotsCommand',
       impl: ({ get }, payload: { domain: string; sourcePeerId: string }) => {
         const providers = get(ProviderAttemptsState())
         const successors = get(ProviderSupplySuccessorsState())
+        const active = get(ActiveSuppliesState())
         const waiting = get(WaitingSuppliesState())
         // Dormant successors, waiting projections, and provider state are removed immediately.
-        // Started active supplies and their canonical jobs stay in place (slot + accounting) until
-        // the physical supplier settles; the effect's provider-state check then releases the slot
-        // exactly once. A fresh same-source request is still routed as a dormant successor while an
-        // unsettled active entry for that source exists.
+        // Started active supplies stay in place (slot + accounting) and their live supplyId is
+        // cancelled so the physical query aborts and settles promptly; the late-settlement path
+        // then releases the slot exactly once. A fresh same-source request is still routed as a
+        // dormant successor while an unsettled active entry for that source exists.
+        const cancelled = active
+          .filter((item) => item.sourcePeerId === payload.sourcePeerId && item.domain === payload.domain)
+          .filter((item) => item.supplyId !== undefined)
+          .map((item) => CancelActiveSupplyCommand({ key: item, supplyId: item.supplyId! }))
         return [
           ProviderAttemptsState().new(
             providers.filter((item) => item.sourcePeerId !== payload.sourcePeerId || item.domain !== payload.domain)
@@ -374,7 +398,8 @@ const HistoryDomain = Remesh.domain({
           ),
           WaitingSuppliesState().new(
             waiting.filter((item) => item.sourcePeerId !== payload.sourcePeerId || item.domain !== payload.domain)
-          )
+          ),
+          ...cancelled
         ]
       }
     })
@@ -584,6 +609,12 @@ const HistoryDomain = Remesh.domain({
           ]
         }
 
+        // A delayed old inventory page carrying the SAME syncId as an unsettled active owner (after
+        // cleanup removed logical provider State) must be idempotently ignored or rejected against
+        // the old complete owner, never admitted as a new token/job beside the running query.
+        if (!current && unsettledActive && activeSync === payload.message.syncId) {
+          return null
+        }
         const expectedPage = current?.expectedRequestPage ?? 0
         // Identical replay of the last applied inventory page is idempotent; changed replay, gap,
         // out-of-order, empty non-final, or post-done input cancels the attempt.
@@ -808,7 +839,43 @@ const HistoryDomain = Remesh.domain({
         if (!current && !ownerActive && !successor && !hasSlotAccounting) return null
         if (!current) {
           // Late supplier settlement after cleanup: release the slot accounting exactly once so no
-          // active/waiting slot leaks, even when the provider state is already gone.
+          // active/waiting slot leaks, even when the provider state is already gone. If a valid
+          // complete successor exists for this source, it is atomically promoted (installed as the
+          // new provider with its canonical job) instead of being discarded.
+          const validSuccessor =
+            successor && successor.syncId !== key.syncId && successor.inventoryDone ? successor : null
+          if (validSuccessor) {
+            return [
+              ProviderAttemptsState().new([...providers, { ...validSuccessor }]),
+              ProviderSupplySuccessorsState().new(
+                removeBy(
+                  get(ProviderSupplySuccessorsState()),
+                  (item) => item.sourcePeerId === key.sourcePeerId && item.domain === key.domain
+                )
+              ),
+              ProviderSupplyJobsState().new([
+                ...removeBy(jobs, (item) => matchesSync(item, key)),
+                {
+                  sourcePeerId: validSuccessor.sourcePeerId,
+                  domain: validSuccessor.domain,
+                  syncId: validSuccessor.syncId,
+                  syncToken: validSuccessor.syncToken,
+                  queueBytes: validSuccessor.inventoryBytes,
+                  ready: true
+                }
+              ]),
+              ProviderTimeoutArmedEvent(validSuccessor),
+              ScheduleProviderSupplyCommand({
+                sourcePeerId: validSuccessor.sourcePeerId,
+                domain: validSuccessor.domain,
+                syncId: validSuccessor.syncId,
+                syncToken: validSuccessor.syncToken,
+                queueBytes: validSuccessor.inventoryBytes,
+                ready: true
+              }),
+              ...(hasSlotAccounting ? [ReleaseProviderSupplySlotCommand(key)] : [])
+            ]
+          }
           return [
             ProviderSupplySuccessorsState().new(
               removeBy(
@@ -1418,9 +1485,11 @@ const HistoryDomain = Remesh.domain({
                     break
                   }
                 } catch {
-                  try {
-                    pagePort.removePage(pageId)
-                  } finally {
+                  // PagePort removes the page itself on a genuine supply rejection or a synchronous
+                  // provider throw; a failover cancellation (cleanup/timeout abort) keeps the page
+                  // healthy so a promoted successor can still use it. Record only pages that are
+                  // actually gone; the query then settles without removing a healthy page.
+                  if (!pagePort.historyPageIds(key.domain).includes(pageId)) {
                     failedPageIds.push(pageId)
                   }
                 }
@@ -1575,6 +1644,26 @@ const HistoryDomain = Remesh.domain({
         )
     })
     domain.effect({
+      name: 'History.RecordProviderSupplyIdEffect',
+      // Persists the live supplyId on the active entry as owner state before the physical query
+      // starts (synchronously on the same ProviderSupplyRequestedEvent that starts it), so
+      // lifecycle cleanup can request idempotent cancellation of the in-flight supply by id.
+      impl: ({ fromEvent }) =>
+        fromEvent(ProviderSupplyRequestedEvent).pipe(
+          map((request) =>
+            RecordActiveSupplyIdCommand({
+              key: {
+                sourcePeerId: request.sourcePeerId,
+                domain: request.domain,
+                syncId: request.syncId,
+                syncToken: request.syncToken
+              },
+              supplyId: `supply:${request.syncToken}:0`
+            })
+          )
+        )
+    })
+    domain.effect({
       name: 'History.ProviderSupplyEffect',
       impl: ({ fromEvent, get }) =>
         fromEvent(ProviderSupplyRequestedEvent).pipe(
@@ -1608,9 +1697,11 @@ const HistoryDomain = Remesh.domain({
                     break
                   }
                 } catch {
-                  try {
-                    pagePort.removePage(pageId)
-                  } finally {
+                  // PagePort removes the page itself on a genuine supply rejection or a synchronous
+                  // provider throw; a failover cancellation (cleanup/timeout abort) keeps the page
+                  // healthy so a promoted successor can still use it. Record only pages that are
+                  // actually gone; the query then settles without removing a healthy page.
+                  if (!pagePort.historyPageIds(request.domain).includes(pageId)) {
                     failedPageIds.push(pageId)
                   }
                 }
