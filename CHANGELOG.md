@@ -1,3 +1,27 @@
+## [2.4.2](https://github.com/molvqingtai/WebChat/compare/v2.4.1...v2.4.2) (2026-08-07)
+
+### Bug Fixes
+
+- **runtime:** absorb transient recovery failures ([5fe769b](https://github.com/molvqingtai/WebChat/commit/5fe769b56efe5ef646ffbfad72f05d2508ffc242))
+- **runtime:** carry sends through presence recovery ([7f71048](https://github.com/molvqingtai/WebChat/commit/7f71048971226403a2a1d074c632fd11e03820ac))
+- **runtime:** drop the room id from the trusted-room invalid-message error text ([e950cb8](https://github.com/molvqingtai/WebChat/commit/e950cb833929f116b5549274eb2106b70f1f42b1))
+- **runtime:** exact invocation-bound connection tokens and page-owned send teardown ([35fd884](https://github.com/molvqingtai/WebChat/commit/35fd884486c6c999f1e9b2043ac11f1ccd1a9fc5))
+- **runtime:** make presence recovery handoff atomic ([949575d](https://github.com/molvqingtai/WebChat/commit/949575debd4aabbc836707b51e056b244952e7d1))
+- **runtime:** no provider-send replay, single-target reject, scoped failures ([276658f](https://github.com/molvqingtai/WebChat/commit/276658f4a62b9dfd5bb50bdc452e325e75bd4827))
+- **runtime:** own content transport rejections ([5d3dbb3](https://github.com/molvqingtai/WebChat/commit/5d3dbb3c188aaef331e77294c655279f4db36912))
+- **runtime:** per-invocation send and connection owner results and correct release-cancel ([6c468c4](https://github.com/molvqingtai/WebChat/commit/6c468c46d232e3bb60a88e64c9b063d422718acb))
+- **runtime:** per-operation structural lifecycle results and release step retry ([32d4b36](https://github.com/molvqingtai/WebChat/commit/32d4b362cf0cb08d7cfb9569c9e5013755c774f2))
+- **runtime:** preserve initial terminal rejection ([3a0b611](https://github.com/molvqingtai/WebChat/commit/3a0b611d11b01b86322c111bb9e94db207065338))
+- **runtime:** recover through current-generation lifecycle ([d9bb60e](https://github.com/molvqingtai/WebChat/commit/d9bb60e96421257e1ceb2aefa24c887509b22ac1))
+- **runtime:** register presence recovery before yielding ([749f288](https://github.com/molvqingtai/WebChat/commit/749f288f186be8024abb093c30e7e3dad446b11b))
+- **runtime:** report superseded connection as cancelled and consume every task result ([72f1ebd](https://github.com/molvqingtai/WebChat/commit/72f1ebdcd86558e513825d0dffe6b12e09fb399c))
+- **runtime:** settle native errors once ([70963d3](https://github.com/molvqingtai/WebChat/commit/70963d3bf302d425ae47f7092be4412be16f7a51))
+- **runtime:** single live release owner without a durable end journal ([bd55864](https://github.com/molvqingtai/WebChat/commit/bd55864985a3c9861278875979683e2041b6dcc0))
+- **runtime:** strict single-owner release with World continuation and scoped errors ([cb39417](https://github.com/molvqingtai/WebChat/commit/cb39417219c8abb012aa72ded3725b0d2026187d))
+- **runtime:** structural lifecycle cancellation and release closure ([8510dcc](https://github.com/molvqingtai/WebChat/commit/8510dcc13655d8bcd102b955f783a5317845b113))
+- **runtime:** surface terminal native errors ([4eefc56](https://github.com/molvqingtai/WebChat/commit/4eefc56f2906854763382c941dbf3d2620dd9c1c))
+- **runtime:** typed lifecycle outcomes and per-target send settlement ([d393630](https://github.com/molvqingtai/WebChat/commit/d393630a81867c76a963ec13c0acd7333847ca9e))
+
 ## [2.4.1](https://github.com/molvqingtai/WebChat/compare/v2.4.0...v2.4.1) (2026-08-05)
 
 ### Bug Fixes
