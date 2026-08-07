@@ -1,4 +1,3 @@
-import { ChatRoomExtern } from '@/domain/externs/ChatRoom'
 import type { Database } from '@/domain/externs/Database'
 import { createMessageStore, type MessageDatabaseSchema } from '@/domain/MessageStore'
 import { ChatRoom, type ChatRoomDependencies } from '@/domain/impls/runtime/ChatRoom'
@@ -14,5 +13,9 @@ export const createChatRoomImpl = (database: Database<MessageDatabaseSchema>) =>
     whenReady
   }
 
-  return ChatRoomExtern.impl(new ChatRoom(dependencies))
+  const room = new ChatRoom(dependencies)
+  return {
+    value: room,
+    epochSource: room
+  }
 }

@@ -5,6 +5,8 @@ import WorldRoomDomain from '@/domain/WorldRoom'
 import { ChatRoomExtern, type ChatRoom } from '@/domain/externs/ChatRoom'
 import { ReadinessExtern } from '@/domain/externs/Readiness'
 import { createMemoryMessageDatabase } from '@/domain/impls/database/Memory'
+import { SendLifecycleExtern } from '@/domain/externs/SendLifecycle'
+import { createSendLifecycle } from '@/domain/impls/SendLifecycle'
 import { MessageDatabaseExtern } from '@/domain/MessageStore'
 import { BrowserSyncStorageExtern, type Storage } from '@/domain/externs/Storage'
 import { WorldRoomExtern, type WorldRoom } from '@/domain/externs/WorldRoom'
@@ -44,6 +46,7 @@ describe('Page domain event lifecycle', () => {
     const store = Remesh.store({
       externs: [
         ChatRoomExtern.impl(chatRoom),
+        SendLifecycleExtern.impl(createSendLifecycle()),
         ReadinessExtern.impl({ onState: () => () => {} }),
         MessageDatabaseExtern.impl(createMemoryMessageDatabase('event-lifecycle')),
         BrowserSyncStorageExtern.impl(storage)

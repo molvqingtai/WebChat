@@ -29,7 +29,6 @@ export interface ServerConfig {
 }
 
 const defaultClock: Clock = { now: () => Date.now() }
-const INTERRUPTED_RELEASE_COMPLETED = 'Runtime completed an interrupted presence release; join again to re-enter'
 const serverDisposers = new WeakMap<RuntimeServer, () => void>()
 
 export const disposeServer = (server: RuntimeServer) => serverDisposers.get(server)?.()
@@ -90,27 +89,65 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   const connectionDomain = store.getDomain(connectionAction)
   store.send(lifecycleDomain.command.HostReadyCommand())
 
+  interface PresenceRecovery {
+    attempts: number
+    promise: Promise<void>
+    resolve: () => void
+  }
+
+  const presenceRecoveries = new Map<string, PresenceRecovery>()
+  let disposed = false
+
+  const beginPresenceRecovery = (domain: string) => {
+    const current = presenceRecoveries.get(domain)
+    if (current) {
+      current.attempts += 1
+      return current
+    }
+    let resolve = () => {}
+    const promise = new Promise<void>((onResolve) => {
+      resolve = onResolve
+    })
+    const recovery = { attempts: 1, promise, resolve }
+    presenceRecoveries.set(domain, recovery)
+    return recovery
+  }
+
+  const finishPresenceRecovery = (domain: string, recovery: PresenceRecovery, succeeded: boolean) => {
+    if (presenceRecoveries.get(domain) !== recovery) return
+    recovery.attempts -= 1
+    if (!succeeded && recovery.attempts > 0) return
+    presenceRecoveries.delete(domain)
+    recovery.resolve()
+  }
+
+  const operationCancelled = () => new DOMException('Runtime presence is completing its final release', 'AbortError')
+
+  const waitForLivePresence = async (domain: string) => {
+    if (disposed) throw operationCancelled()
+    const recovery = presenceRecoveries.get(domain)
+    if (!recovery) {
+      if (store.query(sessionDomain.query.FinalizingPresenceQuery(domain))) throw operationCancelled()
+      return
+    }
+    await recovery.promise
+    if (
+      disposed ||
+      store.query(sessionDomain.query.FinalizingPresenceQuery(domain)) ||
+      !store.query(sessionDomain.query.DomainQuery(domain))
+    ) {
+      throw operationCancelled()
+    }
+  }
+
   const snapshot = (): RuntimeSnapshot => store.query(connectionDomain.query.SnapshotQuery())
-  const acquirePresence = async (domain: string, userId: string): Promise<'active' | 'finalizing' | 'settled'> => {
+  const acquirePresence = async (domain: string, userId: string): Promise<'active' | 'acquired' | 'finalizing'> => {
     if (store.query(sessionDomain.query.DomainQuery(domain))) {
       return store.query(sessionDomain.query.FinalizingPresenceQuery(domain)) ? 'finalizing' : 'active'
     }
+    // No durable end journal: a rejoin always acquires the durable local lease or a fresh one and
+    // hydrates the current generation. An in-memory release fenced the domain only for this generation.
     const stored = (await presenceStore.load(domain)) ?? { domain, lastJoinedAt: 0, observers: [] }
-    const unsettledEnd = stored.pendingEnd ?? stored.inflightEnd
-    const finalEnd = stored.settledEnd ?? unsettledEnd
-    if (finalEnd && finalEnd.userId !== userId) {
-      throw new Error('Runtime pending presence belongs to another user')
-    }
-    if (stored.settledEnd) {
-      const { inflightEnd: _inflightEnd, pendingEnd: _pendingEnd, settledEnd: _settledEnd, ...record } = stored
-      await presenceStore.save(record)
-      store.send(sessionDomain.command.HydratePresenceCommand(record))
-      return 'settled'
-    }
-    if (unsettledEnd) {
-      store.send(sessionDomain.command.HydratePresenceCommand(stored))
-      return 'finalizing'
-    }
     const local =
       stored.local?.userId === userId
         ? stored.local
@@ -128,7 +165,19 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     }
     await presenceStore.save(record)
     store.send(sessionDomain.command.HydratePresenceCommand(record))
-    return 'active'
+    return 'acquired'
+  }
+  const acquireCurrentPresence = async (
+    domain: string,
+    userId: string
+  ): Promise<'active' | 'acquired' | 'finalizing'> => {
+    while (!disposed) {
+      const acquired = await acquirePresence(domain, userId)
+      if (store.query(sessionDomain.query.FinalizingPresenceQuery(domain))) return 'finalizing'
+      if (store.query(sessionDomain.query.DomainQuery(domain))) return 'active'
+      if (acquired === 'acquired') return 'acquired'
+    }
+    throw operationCancelled()
   }
   const pageBridges = [
     store.subscribeEvent(sessionDomain.event.RuntimeSessionChangedEvent, (event) => {
@@ -143,9 +192,22 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
         .flatMap((lease) => lease.pageIds)
       void pagePort.emitWorldPresence(pageIds, event)
     }),
-    store.subscribeEvent(connectionDomain.event.ErrorEvent, (error) => {
-      const pageIds = store.query(lifecycleDomain.query.DomainLeasesQuery()).flatMap((lease) => lease.pageIds)
-      void pagePort.emitError(pageIds, error)
+    store.subscribeEvent(connectionDomain.event.ErrorEvent, ({ error, domain }) => {
+      const leases = store.query(lifecycleDomain.query.DomainLeasesQuery())
+      const pageIds = domain
+        ? (leases.find((lease) => lease.domain === domain)?.pageIds ?? [])
+        : leases.flatMap((lease) => lease.pageIds)
+      if (pageIds.length === 0) {
+        console.error('[WebChat] Runtime failure without a current affected page:', error)
+        return
+      }
+      void pagePort.emitError(pageIds, {
+        eventId: nanoid(),
+        message: error.message,
+        subsystem: 'connection',
+        operation: 'lifecycle',
+        scope: domain
+      })
     })
   ]
 
@@ -217,12 +279,6 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       store.send(connectionDomain.command.LeaveDomainCommand(domain))
     })
 
-  const assertLivePresence = (domain: string) => {
-    if (store.query(sessionDomain.query.FinalizingPresenceQuery(domain))) {
-      throw new Error('Runtime presence is completing its final release')
-    }
-  }
-
   const server: RuntimeServer = {
     attachPage: async (payload) => {
       store.send(lifecycleDomain.command.AttachPageCommand(payload))
@@ -234,29 +290,48 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     },
     getSnapshot: async () => snapshot(),
     joinChatRoom: async (payload) => {
-      const presenceState = await acquirePresence(payload.domain, payload.user.id)
-      if (presenceState === 'settled') throw new Error(INTERRUPTED_RELEASE_COMPLETED)
-      if (presenceState === 'active' || !store.query(sessionDomain.query.DomainQuery(payload.domain))) {
-        const operationId = nanoid()
-        const committed = await runConnectionOperation(
-          operationId,
-          connectionDomain.command.JoinDomainCommand({ operationId, ...payload }),
-          () => true,
-          () => false
-        )
-        if (!committed) return null
+      const recovery = beginPresenceRecovery(payload.domain)
+      let recovered = false
+      try {
+        const connect = () => {
+          const operationId = nanoid()
+          return runConnectionOperation(
+            operationId,
+            connectionDomain.command.JoinDomainCommand({ operationId, ...payload }),
+            () => true,
+            () => false
+          )
+        }
+        while (true) {
+          const presenceState = await acquireCurrentPresence(payload.domain, payload.user.id)
+          if (presenceState === 'finalizing') {
+            if (!store.query(sessionDomain.query.DomainQuery(payload.domain))) {
+              if (!(await connect())) return null
+              continue
+            }
+            await completeInterruptedRelease(payload.domain)
+            continue
+          }
+          if (store.query(sessionDomain.query.FinalizingPresenceQuery(payload.domain))) {
+            await completeInterruptedRelease(payload.domain)
+            continue
+          }
+          if (presenceState === 'active' && !store.query(sessionDomain.query.DomainQuery(payload.domain))) {
+            continue
+          }
+          if (!(await connect())) return null
+          recovered = true
+          return snapshot()
+        }
+      } finally {
+        finishPresenceRecovery(payload.domain, recovery, recovered)
       }
-      if (presenceState === 'finalizing') {
-        await completeInterruptedRelease(payload.domain)
-        throw new Error(INTERRUPTED_RELEASE_COMPLETED)
-      }
-      return snapshot()
     },
     leaveChatRoom: async ({ domain }) => {
       store.send(connectionDomain.command.LeaveDomainCommand(domain))
     },
     allocateTextMessage: async (payload) => {
-      assertLivePresence(payload.domain)
+      await waitForLivePresence(payload.domain)
       const operationId = nanoid()
       return runSessionOperation(
         operationId,
@@ -268,7 +343,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       )
     },
     allocateReactionMessage: async (payload) => {
-      assertLivePresence(payload.domain)
+      await waitForLivePresence(payload.domain)
       const operationId = nanoid()
       return runSessionOperation(
         operationId,
@@ -280,7 +355,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       )
     },
     sendChatMessage: async (payload) => {
-      assertLivePresence(payload.domain)
+      await waitForLivePresence(payload.domain)
       const operationId = nanoid()
       await runSessionOperation(
         operationId,
@@ -313,6 +388,9 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   }
 
   serverDisposers.set(server, () => {
+    disposed = true
+    presenceRecoveries.forEach((recovery) => recovery.resolve())
+    presenceRecoveries.clear()
     pageBridges.forEach((subscription) => subscription.unsubscribe())
     try {
       store.discard()

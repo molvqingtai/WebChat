@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const fixture = vi.hoisted(() => ({
   peerStates: [] as ('ready' | 'connecting' | 'disconnected')[],
   peers: [] as { state: 'ready' | 'connecting' | 'disconnected'; emit(event: string, ...args: unknown[]): void }[],
+  joinShouldThrow: undefined as (() => Error) | undefined,
   room: null as null | {
     open(peerId: string): void
     loseReadiness(peerId: string): void
@@ -67,6 +68,7 @@ vi.mock('@rtco/client', () => {
     }
 
     join() {
+      if (fixture.joinShouldThrow) throw fixture.joinShouldThrow()
       const room = new FakeRoom()
       fixture.room = room
       return room
@@ -84,6 +86,7 @@ beforeEach(() => {
   fixture.peerStates.length = 0
   fixture.peers.length = 0
   fixture.room = null
+  fixture.joinShouldThrow = undefined
 })
 afterEach(() => vi.useRealTimers())
 
@@ -106,7 +109,7 @@ describe('ArticoRoomTransport per-target isolation', () => {
     ])
   })
 
-  it('contains an untargeted ready-to-closing miss and continues later peers exactly once', async () => {
+  it('contains an untargeted ready-to-closing miss, attempts later peers exactly once, and surfaces the failure', async () => {
     const transport = createArticoRoomTransport()
     await transport.join('room-a')
     fixture.room!.open('closing-peer')
@@ -114,7 +117,7 @@ describe('ArticoRoomTransport per-target isolation', () => {
     fixture.room!.open('ready-a')
     fixture.room!.loseReadiness('closing-peer')
 
-    await expect(transport.send('room-a', 'presence')).resolves.toBeUndefined()
+    await expect(transport.send('room-a', 'presence')).rejects.toThrow('Connection is not established yet.')
 
     expect(fixture.room!.attempts).toEqual([
       { peerId: 'closing-peer', payload: 'presence' },
@@ -137,7 +140,7 @@ describe('ArticoRoomTransport per-target isolation', () => {
 
     await expect(
       transport.send('room-a', 'targeted', ['ready-b', 'closing-peer', 'ready-a', 'ready-b'])
-    ).resolves.toBeUndefined()
+    ).rejects.toThrow('Connection is not established yet.')
 
     expect(fixture.room!.attempts).toEqual([
       { peerId: 'ready-b', payload: 'targeted' },
@@ -192,6 +195,56 @@ describe('ArticoRoomTransport per-target isolation', () => {
 
     expect(fixture.peers).toHaveLength(2)
     expect(errors).toEqual([])
+    transport.dispose()
+  })
+
+  it('surfaces a peer id-conflict error without message classification and still recovers on close', async () => {
+    vi.useFakeTimers()
+    const transport = createArticoRoomTransport()
+    const errors: Error[] = []
+    transport.onError((error) => errors.push(error))
+    const currentPeer = fixture.peers[0]
+
+    await transport.join('chat-v3')
+    // No provider error message is classified; a peer id-conflict surfaces as a real error, and the
+    // structural close→restart path still retries with the same stable identity.
+    currentPeer.emit('error', new Error('id-taken'))
+
+    expect(errors.map((error) => error.message)).toEqual(['id-taken'])
+
+    currentPeer.emit('close')
+    await vi.advanceTimersByTimeAsync(1000)
+
+    expect(fixture.peers).toHaveLength(2)
+    transport.dispose()
+  })
+
+  it('still forwards a genuine signaling error', async () => {
+    const transport = createArticoRoomTransport()
+    const errors: Error[] = []
+    transport.onError((error) => errors.push(error))
+    const currentPeer = fixture.peers[0]
+
+    await transport.join('chat-v3')
+    currentPeer.emit('error', new Error('connect-error'))
+
+    expect(errors.map((error) => error.message)).toEqual(['connect-error'])
+    transport.dispose()
+  })
+
+  it('rejects a throwing join scoped to its attempt without a duplicate global onError', async () => {
+    const transport = createArticoRoomTransport()
+    const errors: Error[] = []
+    transport.onError((error) => errors.push(error))
+    fixture.joinShouldThrow = () => new Error('provider join refused')
+
+    const joining = transport.join('chat-v3')
+
+    await expect(joining).rejects.toThrow('provider join refused')
+    // The join rejection is delivered scoped to the owning attempt. It must not also fan out as a
+    // room-less global error (which would surface as a duplicate cross-domain toast).
+    expect(errors).toEqual([])
+    fixture.joinShouldThrow = undefined
     transport.dispose()
   })
 

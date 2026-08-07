@@ -1,5 +1,5 @@
 import { Remesh } from 'remesh'
-import { concatMap, filter, fromEventPattern, map, mergeMap, timer } from 'rxjs'
+import { concatMap, filter, fromEventPattern, map, mergeMap, startWith, take, timer } from 'rxjs'
 import {
   ChatRoomExtern,
   type JoinRoomCommand as JoinRoomInput,
@@ -10,6 +10,8 @@ import MessageInputDomain from '@/domain/MessageInput'
 import ReadinessDomain from '@/domain/Readiness'
 import UserInfoDomain from '@/domain/UserInfo'
 import StatusModule from '@/domain/modules/Status'
+import { ConnectionLifecycleExtern } from '@/domain/externs/ConnectionLifecycle'
+import { SendLifecycleExtern } from '@/domain/externs/SendLifecycle'
 import { MESSAGE_TYPE, REACTION_TYPE, type ChatMessage, type MentionedUser } from '@/protocol/ChatRoom'
 import type { ChatSession } from '@/protocol/Session'
 import { MESSAGE_RECORD_TYPE, NOTICE_TYPE, type SystemNoticeRecord, type TextMessageRecord } from '@/domain/Message'
@@ -59,12 +61,13 @@ type ConnectionOperation = {
 }
 
 const normalizeError = (error: unknown) => (error instanceof Error ? error : new Error(String(error)))
-const isOperationCancelled = (error: unknown) => error instanceof DOMException && error.name === 'AbortError'
 
 const ChatRoomDomain = Remesh.domain({
   name: 'ChatRoomDomain',
   impl: (domain) => {
     const chatRoom = domain.getExtern(ChatRoomExtern)
+    const lifecycle = domain.getExtern(ConnectionLifecycleExtern)
+    const sendLifecycle = domain.getExtern(SendLifecycleExtern)
     const messageListDomain = domain.getDomain(MessageListDomain())
     const messageInputDomain = domain.getDomain(MessageInputDomain())
     const readinessDomain = domain.getDomain(ReadinessDomain())
@@ -107,6 +110,13 @@ const ChatRoomDomain = Remesh.domain({
         get(ConnectionOperationIsLoadingQuery()) ||
         get(ReconnectIsLoadingQuery()) ||
         get(readinessDomain.query.StateQuery()) === 'connecting'
+    })
+    const SendIsReadyQuery = domain.query({
+      name: 'Room.SendIsReadyQuery',
+      impl: ({ get }) =>
+        get(readinessDomain.query.StateQuery()) === 'ready' &&
+        !get(ConnectionOperationIsLoadingQuery()) &&
+        !get(ReconnectIsLoadingQuery())
     })
     const ReconnectAvailableQuery = domain.query({
       name: 'Room.ReconnectAvailableQuery',
@@ -252,7 +262,7 @@ const ChatRoomDomain = Remesh.domain({
           result.cancelled
             ? JoinStatus.command.SetInitialCommand()
             : result.error
-              ? FailJoinCommand()
+              ? [FailJoinCommand(), OnErrorEvent(result.error)]
               : CompleteJoinCommand(result.input),
           CompleteReconnectOperationCommand({ id: result.id, error: result.error })
         ]
@@ -275,8 +285,13 @@ const ChatRoomDomain = Remesh.domain({
         }
         if (result.error) {
           return result.mode === 'join'
-            ? [FailJoinCommand(), finished, ReconnectFinishedEvent({ id: result.id, error: result.error })]
-            : [finished, ReconnectFinishedEvent({ id: result.id, error: result.error })]
+            ? [
+                FailJoinCommand(),
+                finished,
+                ReconnectFinishedEvent({ id: result.id, error: result.error }),
+                OnErrorEvent(result.error)
+              ]
+            : [finished, ReconnectFinishedEvent({ id: result.id, error: result.error }), OnErrorEvent(result.error)]
         }
         return [
           result.mode === 'join' ? CompleteJoinCommand(result.input) : RetainJoinInputCommand(result.input),
@@ -311,16 +326,26 @@ const ChatRoomDomain = Remesh.domain({
 
     domain.effect({
       name: 'Room.ConnectionEffect',
-      impl: ({ fromEvent }) =>
+      impl: ({ fromEvent, get }) =>
         fromEvent(ConnectionRequestedEvent).pipe(
           mergeMap(async (operation) => {
+            const task = chatRoom.joinRoom(operation.input)
             try {
-              await chatRoom.joinRoom(operation.input)
+              await task
+              // Consume (release) the invocation's terminal token on success too.
+              lifecycle.getTaskResult(task)
               return CompleteConnectionOperationCommand(operation)
             } catch (error) {
+              // Consume the exact task's result once (releases its terminal state) before any
+              // request-staleness branching, so a superseded operation never leaks its result.
+              const result = lifecycle.getTaskResult(task)
+              // A completion is silent cancellation only when it is no longer the current live request
+              // (superseded) or that exact public-port task's own token is `cancelled`. It is never
+              // classified from the caught error's content.
+              const cancelled = get(ConnectionRequestState())?.id !== operation.id || result === 'cancelled'
               return CompleteConnectionOperationCommand({
                 ...operation,
-                ...(isOperationCancelled(error) ? { cancelled: true } : { error: normalizeError(error) })
+                ...(cancelled ? { cancelled: true } : { error: normalizeError(error) })
               })
             }
           })
@@ -351,53 +376,79 @@ const ChatRoomDomain = Remesh.domain({
 
     domain.effect({
       name: 'Room.SendTextEffect',
-      impl: ({ fromEvent, get }) =>
+      impl: ({ fromEvent, fromQuery, get }) =>
         fromEvent(SendTextRequestedEvent).pipe(
-          concatMap(async (command) => {
-            const user = get(userInfoDomain.query.UserInfoQuery())
-            if (!user) return OnErrorEvent(new Error('User identity is unavailable'))
-            try {
-              const message = await chatRoom.sendMessage({ type: 'text', ...command })
-              if (message.type !== MESSAGE_TYPE.TEXT || message.userId !== user.id) {
-                throw new Error('ChatRoom returned an invalid local text message')
-              }
-              const record: TextMessageRecord = {
-                type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE,
-                id: message.id,
-                message,
-                user,
-                receivedAt: Date.now()
-              }
-              return [messageInputDomain.command.ClearCommand(), SendTextMessageEvent(projectTextRecord(record))]
-            } catch (error) {
-              return OnErrorEvent(error as Error)
-            }
-          })
+          concatMap((command) =>
+            fromQuery(SendIsReadyQuery()).pipe(
+              startWith(get(SendIsReadyQuery())),
+              filter(Boolean),
+              take(1),
+              concatMap(async () => {
+                const user = get(userInfoDomain.query.UserInfoQuery())
+                if (!user) return OnErrorEvent(new Error('User identity is unavailable'))
+                const token = sendLifecycle.beginSend()
+                try {
+                  const message = await chatRoom.sendMessage({ type: 'text', ...command })
+                  if (message.type !== MESSAGE_TYPE.TEXT || message.userId !== user.id) {
+                    throw new Error('ChatRoom returned an invalid local text message')
+                  }
+                  sendLifecycle.settleSend(token, 'accepted')
+                  const record: TextMessageRecord = {
+                    type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE,
+                    id: message.id,
+                    message,
+                    user,
+                    receivedAt: Date.now()
+                  }
+                  return [messageInputDomain.command.ClearCommand(), SendTextMessageEvent(projectTextRecord(record))]
+                } catch (error) {
+                  // A send is silent cancellation only when its own exact token was cancelled by final
+                  // release; otherwise the owning invocation settles it as a real failure.
+                  if (sendLifecycle.getSendResult(token) === 'cancelled') return null
+                  sendLifecycle.settleSend(token, 'failed')
+                  return OnErrorEvent(normalizeError(error))
+                }
+              })
+            )
+          )
         )
     })
 
     domain.effect({
       name: 'Room.SendReactionEffect',
-      impl: ({ fromEvent, get }) =>
+      impl: ({ fromEvent, fromQuery, get }) =>
         fromEvent(SendReactionRequestedEvent).pipe(
-          concatMap(async ({ messageId, reaction }) => {
-            try {
-              const message = get(messageListDomain.query.ItemQuery(messageId))
-              const selfId = get(userInfoDomain.query.UserInfoQuery())?.id
-              if (!message || message.type !== MESSAGE_TYPE.TEXT || !selfId) return null
-              const users = reaction === REACTION_TYPE.LIKE ? message.reactions.likes : message.reactions.hates
-              const command: SendReactionInput = {
-                type: 'reaction',
-                targetId: messageId,
-                reaction,
-                active: !users.some((user) => user.id === selfId)
-              }
-              await chatRoom.sendMessage(command)
-              return null
-            } catch (error) {
-              return OnErrorEvent(error as Error)
-            }
-          })
+          concatMap(({ messageId, reaction }) =>
+            fromQuery(SendIsReadyQuery()).pipe(
+              startWith(get(SendIsReadyQuery())),
+              filter(Boolean),
+              take(1),
+              concatMap(async () => {
+                const message = get(messageListDomain.query.ItemQuery(messageId))
+                const selfId = get(userInfoDomain.query.UserInfoQuery())?.id
+                if (!message || message.type !== MESSAGE_TYPE.TEXT || !selfId) return null
+                const users = reaction === REACTION_TYPE.LIKE ? message.reactions.likes : message.reactions.hates
+                const command: SendReactionInput = {
+                  type: 'reaction',
+                  targetId: messageId,
+                  reaction,
+                  active: !users.some((user) => user.id === selfId)
+                }
+                const token = sendLifecycle.beginSend()
+                try {
+                  await chatRoom.sendMessage(command)
+                  sendLifecycle.settleSend(token, 'accepted')
+                  return null
+                } catch (error) {
+                  // A send is silent cancellation only when its own exact token was cancelled by final
+                  // release; otherwise the owning invocation settles it as a real failure.
+                  if (sendLifecycle.getSendResult(token) === 'cancelled') return null
+                  sendLifecycle.settleSend(token, 'failed')
+                  return OnErrorEvent(normalizeError(error))
+                }
+              })
+            )
+          )
         )
     })
 
@@ -406,14 +457,33 @@ const ChatRoomDomain = Remesh.domain({
       impl: ({ fromEvent }) =>
         fromEvent(ReconnectRequestedEvent).pipe(
           concatMap(async ({ id, input, mode }) => {
+            let leaveTask: Promise<void> | undefined
+            let joinTask: Promise<void> | undefined
             try {
-              if (mode === 'reconnect') await chatRoom.leaveRoom()
-              await chatRoom.joinRoom(input)
+              if (mode === 'reconnect') {
+                // Leave is its own public-port invocation with its own exact token.
+                leaveTask = chatRoom.leaveRoom()
+                await leaveTask
+              }
+              joinTask = chatRoom.joinRoom(input)
+              await joinTask
+              // Consume (release) the invocation's terminal tokens on success too.
+              if (leaveTask) lifecycle.getTaskResult(leaveTask)
+              if (joinTask) lifecycle.getTaskResult(joinTask)
               return mode === 'retry'
                 ? CompleteRetryOperationCommand({ id, input })
                 : CompleteReconnectOperationCommand({ id })
             } catch (error) {
-              if (isOperationCancelled(error)) {
+              // Consume each started task's result exactly once (releases terminal state) before deciding,
+              // so a reconnect's leave/join results are never leaked. A reconnect request is single-lived
+              // (ReconnectCommand is gated while one is in flight), so there is no reachable
+              // request-staleness branch to short-circuit here; cancellation is solely by the exact leave/
+              // join task's own token. Late/dropped completions are fenced by CompleteReconnectOperation
+              // Command's own request-id gate.
+              const leaveResult = leaveTask ? lifecycle.getTaskResult(leaveTask) === 'cancelled' : false
+              const joinResult = joinTask ? lifecycle.getTaskResult(joinTask) === 'cancelled' : false
+              const cancelled = leaveResult || joinResult
+              if (cancelled) {
                 return mode === 'retry'
                   ? CompleteRetryOperationCommand({ id, input, cancelled: true })
                   : CompleteReconnectOperationCommand({ id })

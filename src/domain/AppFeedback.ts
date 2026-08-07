@@ -15,9 +15,9 @@ const AppFeedbackDomain = Remesh.domain({
     const chatRoomDomain = domain.getDomain(ChatRoomDomain())
     const readinessDomain = domain.getDomain(ReadinessDomain())
     const toastDomain = domain.getDomain(ToastDomain())
-    const RuntimeToastTypeState = domain.state<'loading' | 'error' | null>({
-      name: 'AppFeedback.RuntimeToastTypeState',
-      default: null
+    const RuntimeLoadingState = domain.state<boolean>({
+      name: 'AppFeedback.RuntimeLoadingState',
+      default: false
     })
     const RuntimeFeedbackQuery = domain.query({
       name: 'AppFeedback.RuntimeFeedbackQuery',
@@ -28,46 +28,33 @@ const AppFeedbackDomain = Remesh.domain({
           : get(readinessDomain.query.StateQuery())
       }
     })
-    const PublishRuntimeFeedbackCommand = domain.command({
-      name: 'AppFeedback.PublishRuntimeFeedbackCommand',
-      impl: (_, state: Exclude<ReadinessState, 'ready'>) =>
-        state === 'connecting'
-          ? [
-              RuntimeToastTypeState().new('loading'),
+    const PublishRuntimeLoadingCommand = domain.command({
+      name: 'AppFeedback.PublishRuntimeLoadingCommand',
+      impl: ({ get }) =>
+        get(RuntimeLoadingState())
+          ? null
+          : [
+              RuntimeLoadingState().new(true),
               toastDomain.command.LoadingCommand({
                 id: RUNTIME_TOAST_ID,
                 message: 'Connected to the chat.',
                 dismissible: false
               })
             ]
-          : [
-              RuntimeToastTypeState().new('error'),
-              toastDomain.command.ErrorCommand({ id: RUNTIME_TOAST_ID, message: 'Connection failed' })
-            ]
     })
     const DismissRuntimeLoadingCommand = domain.command({
       name: 'AppFeedback.DismissRuntimeLoadingCommand',
       impl: ({ get }) =>
-        get(RuntimeToastTypeState()) === 'loading'
-          ? [RuntimeToastTypeState().new(null), toastDomain.command.CancelCommand(RUNTIME_TOAST_ID)]
+        get(RuntimeLoadingState())
+          ? [RuntimeLoadingState().new(false), toastDomain.command.CancelCommand(RUNTIME_TOAST_ID)]
           : null
     })
-    const runtimeFeedbackCommand = (state: ReadinessState | null) =>
-      state === null ? null : state === 'ready' ? DismissRuntimeLoadingCommand() : PublishRuntimeFeedbackCommand(state)
+    const runtimeFeedbackCommand = (feedback: ReadinessState | null) =>
+      feedback === null ? null : feedback === 'ready' ? DismissRuntimeLoadingCommand() : PublishRuntimeLoadingCommand()
 
     domain.effect({
       name: 'AppFeedback.OnRuntimeFeedbackEffect',
       impl: ({ fromQuery }) => fromQuery(RuntimeFeedbackQuery()).pipe(map(runtimeFeedbackCommand))
-    })
-
-    domain.effect({
-      name: 'AppFeedback.OnConnectionFinishedEffect',
-      impl: ({ fromEvent, get }) =>
-        fromEvent(chatRoomDomain.event.ReconnectFinishedEvent).pipe(
-          map(({ error }) =>
-            error && get(RuntimeFeedbackQuery()) === 'ready' ? PublishRuntimeFeedbackCommand('unavailable') : null
-          )
-        )
     })
 
     return {}

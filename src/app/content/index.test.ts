@@ -34,9 +34,16 @@ const fixture = vi.hoisted(() => ({
   initClient: vi.fn(),
   detachClient: vi.fn(),
   whenHostPhase: vi.fn(),
+  whenFailure: vi.fn(),
   createChatRoomImpl: vi.fn(),
   createWorldRoomImpl: vi.fn(),
   createReadinessImpl: vi.fn(),
+  createSendLifecycle: vi.fn(() => ({
+    beginSend: vi.fn(),
+    getSendResult: vi.fn(),
+    settleSend: vi.fn(),
+    cancelActiveSends: vi.fn()
+  })),
   createElement: vi.fn(),
   scope: vi.fn(),
   actions: {
@@ -96,11 +103,13 @@ vi.mock('@/domain/impls/database/IndexedDB', () => ({
 vi.mock('@/domain/impls/runtime/Client', () => ({
   detachClient: fixture.detachClient,
   initClient: fixture.initClient,
-  whenHostPhase: fixture.whenHostPhase
+  whenHostPhase: fixture.whenHostPhase,
+  whenFailure: fixture.whenFailure
 }))
 vi.mock('@/domain/impls/ChatRoom', () => ({ createChatRoomImpl: fixture.createChatRoomImpl }))
 vi.mock('@/domain/impls/WorldRoom', () => ({ createWorldRoomImpl: fixture.createWorldRoomImpl }))
 vi.mock('@/domain/impls/Readiness', () => ({ createReadinessImpl: fixture.createReadinessImpl }))
+vi.mock('@/domain/impls/SendLifecycle', () => ({ createSendLifecycle: fixture.createSendLifecycle }))
 vi.mock('@/domain/impls/Danmaku', () => ({ DanmakuImpl: {} }))
 vi.mock('@/domain/impls/Notification', () => ({ NotificationImpl: {} }))
 vi.mock('@/domain/impls/Toast', () => ({ ToastImpl: {} }))
@@ -128,7 +137,13 @@ beforeEach(() => {
   fixture.appProps.length = 0
   fixture.createStore.mockImplementation(() => ({ discard: fixture.discard }))
   fixture.createIndexedDBMessageDatabase.mockReturnValue(fixture.database)
-  fixture.createChatRoomImpl.mockReturnValue({ value: fixture.chat })
+  fixture.createChatRoomImpl.mockReturnValue({
+    value: fixture.chat,
+    epochSource: {
+      bindConnectionResultReporter: () => {},
+      bindStandaloneInvocation: () => {}
+    }
+  })
   fixture.createWorldRoomImpl.mockReturnValue({ value: fixture.world })
   fixture.createReadinessImpl.mockReturnValue({ value: fixture.readiness })
   fixture.createElement.mockImplementation(() => {
@@ -206,6 +221,28 @@ describe('content composition root', () => {
     })
 
     expect(styles[0]!.isConnected).toBe(false)
+  })
+
+  it('cancels active sends on Content onRemove teardown', async () => {
+    await startContent()
+    const sendLifecycleInstance = fixture.createSendLifecycle.mock.results[0]?.value
+    if (!sendLifecycleInstance) throw new Error('SendLifecycle was never created')
+
+    await act(async () => {
+      fixture.removeUis.shift()?.()
+    })
+
+    expect(sendLifecycleInstance.cancelActiveSends).toHaveBeenCalled()
+  })
+
+  it('cancels this page generation sent lifecycle on beforeunload lease teardown', async () => {
+    await startContent()
+    const sendLifecycleInstance = fixture.createSendLifecycle.mock.results[0]?.value
+    if (!sendLifecycleInstance) throw new Error('SendLifecycle was never created')
+
+    window.dispatchEvent(new window.Event('beforeunload'))
+
+    expect(sendLifecycleInstance.cancelActiveSends).toHaveBeenCalled()
   })
 
   it('constructs each deferred application dependency exactly once only when initialization activates it', async () => {

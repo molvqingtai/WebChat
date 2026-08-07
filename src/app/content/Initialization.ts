@@ -42,7 +42,8 @@ const runInitializationAttempt = async (
   dependencies: InitializationDependencies,
   signal: AbortSignal,
   onRuntimeStarted: () => void = () => {},
-  timeoutMs = CONTENT_INITIALIZATION_TIMEOUT_MS
+  timeoutMs = CONTENT_INITIALIZATION_TIMEOUT_MS,
+  runtimeFailed = { value: false }
 ) => {
   const deadline = Date.now() + timeoutMs
 
@@ -58,9 +59,13 @@ const runInitializationAttempt = async (
   await run(dependencies.prepareMessageDatabase)
   const runtime = await run(() => {
     onRuntimeStarted()
+    runtimeFailed.value = true
     return dependencies.initializeRuntime()
   })
-  if (!runtime) throw new Error('Shared runtime unavailable')
+  if (!runtime) {
+    runtimeFailed.value = true
+    throw new Error('Shared runtime unavailable')
+  }
 }
 
 interface InitializationLifecycleOptions {
@@ -103,13 +108,16 @@ export const startInitializationLifecycle = ({
       })
     )
 
+    const runtimeFailed = { value: false }
+
     void runInitializationAttempt(
       dependencies,
       signal,
       () => {
         runtimeStarted = true
       },
-      timeoutMs
+      timeoutMs,
+      runtimeFailed
     )
       .then(() => {
         if (!active || signal.aborted || generation !== attemptGeneration) return
@@ -121,13 +129,13 @@ export const startInitializationLifecycle = ({
         if (!active || signal.aborted || generation !== attemptGeneration) return
         detachRuntime()
         console.error('[WebChat] Initialization unavailable:', error)
-        // No cancel first: sonner defers a same-ID dismiss publish to the next animation frame, which
-        // would land after the error create and immediately remove the fresh error toast. The same-ID
-        // error descriptor directly replaces the loading descriptor (successor replacement).
-        store.send([
-          appStatus.command.MarkUnavailableCommand(),
-          toast.command.ErrorCommand({ id: INITIALIZATION_TOAST_ID, message: 'WebChat unavailable' })
-        ])
+        // The stable id owns only the loading descriptor; every real failure gets its own fresh
+        // original-message toast. A runtime failure is surfaced once by the Runtime lease owner;
+        // a preparation failure is surfaced here with its original message.
+        store.send([appStatus.command.MarkUnavailableCommand(), toast.command.CancelCommand(INITIALIZATION_TOAST_ID)])
+        if (!runtimeFailed.value) {
+          store.send(toast.command.ErrorCommand(error instanceof Error ? error.message : String(error)))
+        }
       })
   }
 

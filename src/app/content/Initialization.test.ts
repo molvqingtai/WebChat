@@ -133,9 +133,15 @@ describe('initialization lifecycle ownership', () => {
       id: INITIALIZATION_TOAST_ID,
       dismissible: false
     })
-    // The same-ID error descriptor directly replaces the loading descriptor; no cancel may race it away.
-    expect(fixture.toast.cancel).not.toHaveBeenCalled()
-    expect(fixture.toast.error).toHaveBeenCalledWith('WebChat unavailable', { id: INITIALIZATION_TOAST_ID })
+    // The stable id owns only loading; it is dismissed on failure.
+    expect(fixture.toast.cancel).toHaveBeenCalledWith(INITIALIZATION_TOAST_ID)
+    if (stage === 'initializeRuntime') {
+      // A runtime failure is surfaced once by the Runtime lease owner; initialization does not
+      // duplicate it into a second toast.
+      expect(fixture.toast.error).not.toHaveBeenCalled()
+    } else {
+      expect(fixture.toast.error).toHaveBeenCalledWith(`${stage} unavailable`)
+    }
     expect(fixture.activateApplicationDependencies).not.toHaveBeenCalled()
     stop()
   })

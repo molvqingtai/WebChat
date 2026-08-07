@@ -5,12 +5,16 @@ import AppFeedbackDomain from '@/domain/AppFeedback'
 import ChatRoomDomain from '@/domain/ChatRoom'
 import UserInfoDomain, { type UserInfo } from '@/domain/UserInfo'
 import { ChatRoomExtern, type ChatRoom } from '@/domain/externs/ChatRoom'
-import { ReadinessExtern, type ReadinessState } from '@/domain/externs/Readiness'
+import { ReadinessExtern, type Readiness, type ReadinessState } from '@/domain/externs/Readiness'
 import { BrowserSyncStorageExtern, LocalStorageExtern, type Storage, type StorageValue } from '@/domain/externs/Storage'
 import { ToastExtern, type Toast } from '@/domain/externs/Toast'
 import { WorldRoomExtern } from '@/domain/externs/WorldRoom'
 import { createMemoryMessageDatabase } from '@/domain/impls/database/Memory'
+import { SendLifecycleExtern } from '@/domain/externs/SendLifecycle'
+import { createSendLifecycle } from '@/domain/impls/SendLifecycle'
 import { MessageDatabaseExtern } from '@/domain/MessageStore'
+import { ClientLease } from '@/runtime/ClientLease'
+import type { RuntimeCoordinator, RuntimeSnapshot } from '@/runtime/Contract'
 
 const RUNTIME_TOAST_ID = 'webchat-runtime-readiness'
 
@@ -42,7 +46,7 @@ const flushMicrotasks = async () => {
 let databaseId = 0
 const activeStores = new Set<RemeshStore>()
 
-const createFixture = () => {
+const createFixture = (readiness?: Readiness) => {
   const toast = {
     success: vi.fn(() => 'success'),
     error: vi.fn(() => RUNTIME_TOAST_ID),
@@ -72,13 +76,16 @@ const createFixture = () => {
   const store = Remesh.store({
     externs: [
       ChatRoomExtern.impl(chat),
-      ReadinessExtern.impl({
-        onState: (listener) => {
-          readinessListeners.add(listener)
-          listener('ready')
-          return () => readinessListeners.delete(listener)
+      SendLifecycleExtern.impl(createSendLifecycle()),
+      ReadinessExtern.impl(
+        readiness ?? {
+          onState: (listener) => {
+            readinessListeners.add(listener)
+            listener('ready')
+            return () => readinessListeners.delete(listener)
+          }
         }
-      }),
+      ),
       LocalStorageExtern.impl({
         get: async () => null,
         set: async () => {},
@@ -138,7 +145,7 @@ afterEach(() => {
 })
 
 describe('application feedback ownership', () => {
-  it('publishes no Runtime Toast before initialization is ready and never dismisses a later error on ready', async () => {
+  it('publishes no Runtime Toast before initialization is ready and keeps bounded recovery on the loading owner', async () => {
     const fixture = createFixture()
 
     fixture.emitReadiness('unavailable')
@@ -149,14 +156,17 @@ describe('application feedback ownership', () => {
 
     markReady(fixture)
     await vi.waitFor(() =>
-      expect(fixture.toast.error).toHaveBeenCalledWith('Connection failed', { id: RUNTIME_TOAST_ID })
+      expect(fixture.toast.loading).toHaveBeenCalledWith('Connected to the chat.', {
+        id: RUNTIME_TOAST_ID,
+        dismissible: false
+      })
     )
-    expect(fixture.toast.loading).not.toHaveBeenCalled()
+    expect(fixture.toast.error).not.toHaveBeenCalled()
 
     fixture.emitReadiness('ready')
-    await flushMicrotasks()
-    expect(fixture.toast.cancel).not.toHaveBeenCalled()
+    await vi.waitFor(() => expect(fixture.toast.cancel).toHaveBeenCalledWith(RUNTIME_TOAST_ID))
     expect(fixture.toast.success).not.toHaveBeenCalled()
+    expect(fixture.toast.error).not.toHaveBeenCalled()
   })
 
   it('uses the stable loading owner and success cancels only that loading without a success Toast', async () => {
@@ -211,30 +221,99 @@ describe('application feedback ownership', () => {
     expect(fixture.toast.success).not.toHaveBeenCalled()
   })
 
-  it('replaces connection loading with the fixed terminal error and does not later dismiss it', async () => {
+  it('surfaces a failed join only through the original-message error path', async () => {
     const fixture = createFixture()
     markReady(fixture)
     vi.mocked(fixture.chat.joinRoom).mockRejectedValueOnce(new Error('provider detail'))
 
     fixture.store.send(fixture.room.command.JoinRoomCommand())
-    await vi.waitFor(() =>
-      expect(fixture.toast.error).toHaveBeenCalledWith('Connection failed', { id: RUNTIME_TOAST_ID })
-    )
+    await vi.waitFor(() => expect(fixture.toast.error).toHaveBeenCalledWith('provider detail'))
 
     expect(fixture.toast.loading).toHaveBeenCalledWith('Connected to the chat.', {
       id: RUNTIME_TOAST_ID,
       dismissible: false
     })
-    expect(fixture.toast.cancel).not.toHaveBeenCalled()
+    await vi.waitFor(() => expect(fixture.toast.cancel).toHaveBeenCalledWith(RUNTIME_TOAST_ID))
+    expect(fixture.toast.error).toHaveBeenCalledTimes(1)
     expect(fixture.toast.success).not.toHaveBeenCalled()
+  })
 
-    const errorCount = fixture.toast.error.mock.calls.length
+  it('keeps unavailable readiness on the bounded recovery loading without an error Toast', async () => {
+    const fixture = createFixture()
+    const joining = deferred()
+    vi.mocked(fixture.chat.joinRoom).mockReturnValueOnce(joining.promise)
+    markReady(fixture)
+    fixture.store.send(fixture.room.command.JoinRoomCommand())
+    await vi.waitFor(() =>
+      expect(fixture.toast.loading).toHaveBeenCalledWith('Connected to the chat.', {
+        id: RUNTIME_TOAST_ID,
+        dismissible: false
+      })
+    )
+
     fixture.emitReadiness('unavailable')
-    await vi.waitFor(() => expect(fixture.toast.error).toHaveBeenCalledTimes(errorCount + 1))
-    expect(fixture.toast.cancel).not.toHaveBeenCalled()
-
-    fixture.emitReadiness('ready')
+    fixture.emitReadiness('unavailable')
+    fixture.emitReadiness('connecting')
     await flushMicrotasks()
+
+    expect(fixture.toast.loading).toHaveBeenCalledTimes(1)
+    expect(fixture.toast.error).not.toHaveBeenCalled()
     expect(fixture.toast.cancel).not.toHaveBeenCalled()
+  })
+
+  it('lets the lease watchdog own the only visible native error while an in-flight send rejects', async () => {
+    vi.useFakeTimers()
+    const domain = 'https://example.test'
+    const pageId = 'page-a'
+    const nativeError = new Error('Extension context invalidated.')
+    const snapshot: RuntimeSnapshot = {
+      hostId: 'host-a',
+      hostPhase: 'ready',
+      peerId: 'peer-a',
+      domains: [
+        {
+          domain,
+          phase: 'active',
+          pageIds: [pageId],
+          chatRoomJoined: true,
+          sessions: []
+        }
+      ],
+      world: { joined: true, peerId: 'peer-a', presences: [] }
+    }
+    const registerPage = vi
+      .fn<RuntimeCoordinator['registerPage']>()
+      .mockResolvedValueOnce({ phase: 'ready', generation: 1, snapshot })
+      .mockRejectedValue(nativeError)
+    const lease = new ClientLease({
+      coordinator: { ensureHost: vi.fn(), registerPage },
+      pageId,
+      domain,
+      watchdogIntervalMs: 1000,
+      logError: vi.fn()
+    })
+    await lease.init()
+    const fixture = createFixture({
+      onState: (callback) =>
+        lease.whenHostPhase((phase) => callback(phase === 'ready' || phase === 'unavailable' ? phase : 'connecting'))
+    })
+    const sending = deferred()
+    vi.mocked(fixture.chat.sendMessage).mockReturnValueOnce(sending.promise as never)
+    markReady(fixture)
+    await join(fixture)
+    clearToastCalls(fixture.toast)
+
+    fixture.store.send(fixture.room.command.SendTextMessageCommand('held text'))
+    await flushMicrotasks()
+    expect(fixture.chat.sendMessage).toHaveBeenCalledOnce()
+
+    vi.advanceTimersByTime(1000)
+    sending.reject(nativeError)
+    await flushMicrotasks()
+
+    expect(registerPage.mock.calls.length).toBeGreaterThanOrEqual(2)
+    expect(fixture.toast.error).toHaveBeenCalledOnce()
+    expect(fixture.toast.error).toHaveBeenCalledWith('Extension context invalidated.')
+    lease.detach()
   })
 })

@@ -3,6 +3,8 @@ import { Remesh } from 'remesh'
 import ChatRoomDomain from '@/domain/ChatRoom'
 import { type ProjectedTextMessage } from '@/domain/Message'
 import { createMemoryMessageDatabase } from '@/domain/impls/database/Memory'
+import { SendLifecycleExtern } from '@/domain/externs/SendLifecycle'
+import { createSendLifecycle } from '@/domain/impls/SendLifecycle'
 import { MessageDatabaseExtern } from '@/domain/MessageStore'
 import NotificationDomain from '@/domain/Notification'
 import UserInfoDomain, { type UserInfo } from '@/domain/UserInfo'
@@ -86,6 +88,7 @@ const createFixture = (user: UserInfo, userInfoBeforeNotification = false) => {
       NotificationExtern.impl({ push }),
       BrowserSyncStorageExtern.impl(storage),
       ChatRoomExtern.impl(chatRoom),
+      SendLifecycleExtern.impl(createSendLifecycle()),
       ReadinessExtern.impl({ onState: () => () => {} }),
       MessageDatabaseExtern.impl(database)
     ]

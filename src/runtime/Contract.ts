@@ -117,6 +117,17 @@ export type HistorySupplyEvent =
   | { type: 'request'; request: HistorySupplyRequest }
   | { type: 'cancel'; supplyId: string }
 
+export interface RuntimeErrorEvent {
+  eventId: string
+  message: string
+  /** Runtime boundary that produced this presentation event. */
+  subsystem: 'connection'
+  /** The current operation at that boundary; this never participates in control flow. */
+  operation: 'lifecycle' | 'send' | 'history'
+  /** Exact failure scope carried to the content so presentation is never cross-domain. */
+  scope?: string
+}
+
 export interface RuntimeServer {
   attachPage: (payload: { domain: string; pageId: string }) => Promise<RuntimeSnapshot>
   detachPage: (payload: { domain: string; pageId: string }) => Promise<void>
@@ -144,7 +155,7 @@ export interface RuntimeServer {
     callback: (event: RuntimeSessionEvent) => void | Promise<void>
   ) => Promise<void>
   onWorldPresence: (payload: { pageId: string }, callback: (event: WorldPresenceEvent) => void) => Promise<void>
-  onError: (payload: { pageId: string }, callback: (message: string) => void) => Promise<void>
+  onError: (payload: { pageId: string }, callback: (event: RuntimeErrorEvent) => void) => Promise<void>
   provideHistory: (
     payload: { domain: string; pageId: string },
     callback: (event: HistorySupplyEvent) => void

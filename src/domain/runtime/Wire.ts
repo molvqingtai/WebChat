@@ -21,9 +21,12 @@ export interface WireJoinResult {
   roomIds: string[]
 }
 
+export type WireFailureStage = 'preflight' | 'provider' | 'cancelled'
+
 export interface WireFailure {
   requestId: string
   error: Error
+  stage?: WireFailureStage
 }
 
 export interface WireSendRequest {
@@ -73,6 +76,9 @@ interface DecodeQueue {
 interface SendQueue {
   roomId: string
   requestCount: number
+  suspended: boolean
+  /** True while the head request's provider call has already started and must settle, never re-send. */
+  headInvoked: boolean
   requests: QueuedSendRequest[]
 }
 
@@ -183,6 +189,37 @@ const WireDomain = Remesh.domain({
       }
     })
 
+    /**
+     * A provider call that already started must settle its target once. It pops the head and emits the
+     * result even if the room generation changed meanwhile; it is never re-sent into a new generation.
+     */
+    const CompleteProviderSendCommand = domain.command({
+      name: 'Wire.CompleteProviderSendCommand',
+      impl: ({ get }, payload: { request: QueuedSendRequest; error?: Error }) => {
+        const { request } = payload
+        const queues = get(SendQueuesState())
+        const current = queues.find((item) => item.roomId === request.roomId)
+        if (current?.requests[0]?.sequence !== request.sequence) return null
+        const requests = current.requests.slice(1)
+        const nextQueues =
+          requests.length === 0
+            ? queues.filter((item) => item.roomId !== request.roomId)
+            : replaceBy(queues, (item) => item.roomId === request.roomId, {
+                roomId: request.roomId,
+                requestCount: requests.length,
+                suspended: false,
+                headInvoked: false,
+                requests
+              })
+        const result = payload.error
+          ? MessageSendFailedEvent({ requestId: request.requestId, error: payload.error, stage: 'provider' })
+          : MessageSentEvent({ requestId: request.requestId })
+        return requests.length === 0
+          ? [SendQueuesState().new(nextQueues), result]
+          : [SendQueuesState().new(nextQueues), result, SendRequestedEvent(requests[0])]
+      }
+    })
+
     const CompleteJoinRoomsCommand = domain.command({
       name: 'Wire.CompleteJoinRoomsCommand',
       impl: ({ get }, payload: { requestId: string; rooms: { roomId: string; generation: number }[] }) => {
@@ -195,32 +232,64 @@ const WireDomain = Remesh.domain({
           })
         }
         const roomIds = payload.rooms.map((room) => room.roomId)
+        const sendQueues = get(SendQueuesState())
+        const resumed = roomIds.flatMap((roomId) => {
+          if (roomId === worldRoomId) return []
+          const queue = sendQueues.find((item) => item.roomId === roomId)
+          // Only work never given to the provider may move into the next join generation; an already
+          // invoked head settles its own result and is never re-sent here.
+          return queue?.suspended && !queue.headInvoked && queue.requests[0]
+            ? [{ roomId, queue, head: queue.requests[0] }]
+            : []
+        })
+        const nextQueues = resumed.reduce(
+          (queues, { roomId, queue }) =>
+            replaceBy(queues, (item) => item.roomId === roomId, {
+              ...queue,
+              suspended: false,
+              headInvoked: false,
+              requests: queue.requests.map((request) => ({ ...request, generation: current(roomId) }))
+            }),
+          sendQueues
+        )
         return [
           TrustedRoomsState().new([...new Set([...get(TrustedRoomsState()), ...roomIds])]),
+          ...(resumed.length ? [SendQueuesState().new(nextQueues)] : []),
           RoomsJoinedEvent({
             requestId: payload.requestId,
             roomIds
-          })
+          }),
+          ...resumed.map(({ head, roomId }) => SendRequestedEvent({ ...head, generation: current(roomId) }))
         ]
       }
     })
 
     const LeaveRoomCommand = domain.command({
       name: 'Wire.LeaveRoomCommand',
-      impl: ({ get }, roomId: string) => {
+      impl: ({ get }, payload: { roomId: string; preservePending: boolean }) => {
+        const { roomId } = payload
         const generations = get(RoomGenerationsState())
         const generation = generationFor(generations, roomId) + 1
         const sendQueues = get(SendQueuesState())
-        const invalidated = sendQueues.find((item) => item.roomId === roomId)?.requests ?? []
+        const invalidated = payload.preservePending
+          ? []
+          : (sendQueues.find((item) => item.roomId === roomId)?.requests ?? [])
         return [
           RoomGenerationsState().new(replaceBy(generations, (item) => item.roomId === roomId, { roomId, generation })),
           TrustedRoomsState().new(get(TrustedRoomsState()).filter((item) => item !== roomId)),
-          SendQueuesState().new(sendQueues.filter((item) => item.roomId !== roomId)),
+          ...(payload.preservePending
+            ? [
+                SendQueuesState().new(
+                  sendQueues.map((item) => (item.roomId === roomId ? { ...item, suspended: true } : item))
+                )
+              ]
+            : [SendQueuesState().new(sendQueues.filter((item) => item.roomId !== roomId))]),
           DecodeQueuesState().new(get(DecodeQueuesState()).filter((item) => item.frames[0]?.roomId !== roomId)),
           ...invalidated.map((request) =>
             MessageSendFailedEvent({
               requestId: request.requestId,
-              error: new Error('Room generation superseded')
+              error: new DOMException('Room operation cancelled', 'AbortError'),
+              stage: 'cancelled'
             })
           ),
           LeaveRoomRequestedEvent(roomId)
@@ -231,16 +300,23 @@ const WireDomain = Remesh.domain({
     const SendMessageCommand = domain.command({
       name: 'Wire.SendMessageCommand',
       impl: ({ get }, request: WireSendRequest) => {
-        if (!get(TrustedRoomsState()).includes(request.roomId)) {
+        const trusted = get(TrustedRoomsState()).includes(request.roomId)
+        if (
+          !trusted &&
+          (request.roomId === worldRoomId ||
+            !get(RoomGenerationsState()).some((item) => item.roomId === request.roomId))
+        ) {
           return MessageSendFailedEvent({
             requestId: request.requestId,
-            error: new Error('Untrusted room message')
+            error: new Error('Untrusted room message'),
+            stage: 'preflight'
           })
         }
         if (!parseMessage(request.roomId, request.message)) {
           return MessageSendFailedEvent({
             requestId: request.requestId,
-            error: new Error(`Invalid message for trusted room "${request.roomId}"`)
+            error: new Error('Invalid message for trusted room'),
+            stage: 'preflight'
           })
         }
         const sequence = get(QueueSequenceState()) + 1
@@ -256,35 +332,57 @@ const WireDomain = Remesh.domain({
           replaceBy(queues, (item) => item.roomId === request.roomId, {
             roomId: request.roomId,
             requestCount: requests.length,
+            suspended: current?.suspended ?? !trusted,
+            headInvoked: false,
             requests
           })
         )
-        return [QueueSequenceState().new(sequence), nextState, ...(current ? [] : [SendRequestedEvent(queued)])]
+        return [
+          QueueSequenceState().new(sequence),
+          nextState,
+          ...(current || !trusted ? [] : [SendRequestedEvent(queued)])
+        ]
       }
     })
 
     const CompleteSendCommand = domain.command({
       name: 'Wire.CompleteSendCommand',
-      impl: ({ get }, payload: { request: QueuedSendRequest; error?: Error }) => {
+      impl: ({ get }, payload: { request: QueuedSendRequest; error?: Error; stage?: WireFailureStage }) => {
         const { request } = payload
         const queues = get(SendQueuesState())
         const current = queues.find((item) => item.roomId === request.roomId)
         if (current?.requests[0]?.sequence !== request.sequence) return null
         const requests = current.requests.slice(1)
+        const isCurrent =
+          get(TrustedRoomsState()).includes(request.roomId) &&
+          generationFor(get(RoomGenerationsState()), request.roomId) === request.generation
+        // Work that never reached the provider (encode still pending when the room changed, or a
+        // preflight encode failure) is held at the suspended head and moves to the next join
+        // generation instead of being re-sent as a duplicate.
+        if (!isCurrent) {
+          const held = replaceBy(queues, (item) => item.roomId === request.roomId, {
+            ...current,
+            suspended: true,
+            requests: [request, ...requests]
+          })
+          return [SendQueuesState().new(held)]
+        }
         const nextQueues =
           requests.length === 0
             ? queues.filter((item) => item.roomId !== request.roomId)
             : replaceBy(queues, (item) => item.roomId === request.roomId, {
                 roomId: request.roomId,
                 requestCount: requests.length,
+                suspended: false,
+                headInvoked: false,
                 requests
               })
-        const isCurrent =
-          get(TrustedRoomsState()).includes(request.roomId) &&
-          generationFor(get(RoomGenerationsState()), request.roomId) === request.generation
-        const error = isCurrent ? payload.error : new Error('Room generation superseded')
-        const result = error
-          ? MessageSendFailedEvent({ requestId: request.requestId, error })
+        const result = payload.error
+          ? MessageSendFailedEvent({
+              requestId: request.requestId,
+              error: payload.error,
+              stage: payload.stage ?? 'provider'
+            })
           : MessageSentEvent({ requestId: request.requestId })
         return requests[0]
           ? [SendQueuesState().new(nextQueues), result, SendRequestedEvent(requests[0])]
@@ -300,16 +398,25 @@ const WireDomain = Remesh.domain({
         if (payload.error || payload.rawPayload === undefined) {
           return CompleteSendCommand({
             request: payload.request,
-            error: payload.error ?? new Error('Wire encode did not produce a payload')
+            error: payload.error ?? new Error('Wire encode did not produce a payload'),
+            stage: 'preflight'
           })
         }
         if (
           !get(TrustedRoomsState()).includes(payload.request.roomId) ||
           generationFor(get(RoomGenerationsState()), payload.request.roomId) !== payload.request.generation
         ) {
-          return CompleteSendCommand({ request: payload.request, error: new Error('Room generation superseded') })
+          return CompleteSendCommand({ request: payload.request })
         }
-        return ProviderSendRequestedEvent({ request: payload.request, rawPayload: payload.rawPayload })
+        // Mark the head as handed to the provider so a later generation switch never re-sends it.
+        const invokedQueues = replaceBy(get(SendQueuesState()), (item) => item.roomId === payload.request.roomId, {
+          ...current,
+          headInvoked: true
+        })
+        return [
+          SendQueuesState().new(invokedQueues),
+          ProviderSendRequestedEvent({ request: payload.request, rawPayload: payload.rawPayload })
+        ]
       }
     })
 
@@ -403,16 +510,24 @@ const WireDomain = Remesh.domain({
         const generations = get(RoomGenerationsState())
         const generation = generationFor(generations, roomId) + 1
         const sendQueues = get(SendQueuesState())
-        const invalidated = sendQueues.find((item) => item.roomId === roomId)?.requests ?? []
+        const worldRequests =
+          roomId === worldRoomId ? (sendQueues.find((item) => item.roomId === roomId)?.requests ?? []) : []
         return [
           RoomGenerationsState().new(replaceBy(generations, (item) => item.roomId === roomId, { roomId, generation })),
           TrustedRoomsState().new(get(TrustedRoomsState()).filter((item) => item !== roomId)),
-          SendQueuesState().new(sendQueues.filter((item) => item.roomId !== roomId)),
+          ...(roomId === worldRoomId
+            ? [SendQueuesState().new(sendQueues.filter((item) => item.roomId !== roomId))]
+            : [
+                SendQueuesState().new(
+                  sendQueues.map((item) => (item.roomId === roomId ? { ...item, suspended: true } : item))
+                )
+              ]),
           DecodeQueuesState().new(get(DecodeQueuesState()).filter((item) => item.frames[0]?.roomId !== roomId)),
-          ...invalidated.map((request) =>
+          ...worldRequests.map((request) =>
             MessageSendFailedEvent({
               requestId: request.requestId,
-              error: new Error('Room generation superseded')
+              error: new Error('Room generation superseded'),
+              stage: 'cancelled'
             })
           ),
           RoomClosedEvent({ roomId })
@@ -475,9 +590,9 @@ const WireDomain = Remesh.domain({
           mergeMap(async ({ request, rawPayload }) => {
             try {
               await transport.send(request.roomId, rawPayload, request.targetPeerIds)
-              return CompleteSendCommand({ request })
+              return CompleteProviderSendCommand({ request })
             } catch (error) {
-              return CompleteSendCommand({ request, error: error as Error })
+              return CompleteProviderSendCommand({ request, error: error as Error })
             }
           })
         )

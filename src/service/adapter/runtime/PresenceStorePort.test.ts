@@ -26,7 +26,7 @@ const initial: PresenceDomainRecord = {
 const forged: PresenceDomainRecord = {
   domain: DOMAIN,
   lastJoinedAt: 2,
-  settledEnd: { presenceId: 'forged-generation', userId: 'user', joinedAt: 2 },
+  local: { presenceId: 'forged-generation', userId: 'user', joinedAt: 2, status: 'active' },
   observers: []
 }
 
