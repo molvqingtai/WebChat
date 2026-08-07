@@ -1,3 +1,12 @@
+## [2.4.3](https://github.com/molvqingtai/WebChat/compare/v2.4.2...v2.4.3) (2026-08-07)
+
+### Bug Fixes
+
+- **content:** fence BFCache restore by generation and support repeated cycles ([c610fd3](https://github.com/molvqingtai/WebChat/commit/c610fd3a145dd0d6e491b19823068ac645b4377a))
+- **content:** make restore visible and hide-invalidatable, add composed control ([88a830d](https://github.com/molvqingtai/WebChat/commit/88a830da2536cc7dfe4435cca4f077f24a7a7504))
+- **content:** restore hide idempotency and compose the production lifecycle owner ([7155641](https://github.com/molvqingtai/WebChat/commit/7155641fae3ad1df141a16475f3623d387ee3d81))
+- **content:** silence readiness feedback on departure and restore once from BFCache ([9811ba0](https://github.com/molvqingtai/WebChat/commit/9811ba01798ca2ee241e09c29ead295197d3364f))
+
 ## [2.4.2](https://github.com/molvqingtai/WebChat/compare/v2.4.1...v2.4.2) (2026-08-07)
 
 ### Bug Fixes
