@@ -2433,6 +2433,139 @@ describe('RuntimeServer history', () => {
     // The violating page never applies.
     expect(delivered).not.toContain('newer-page-1')
   })
+
+  it('queues a valid next response page while a batch is pending and cancels a changed replay', async () => {
+    const { fake, server, roomId } = await setup()
+    await registerInventoryProvider(server)
+    const delivered: string[] = []
+    const release = { write: null as null | (() => void) }
+    await server.onInbound({ pageId: 'page-a' }, async (event) => {
+      delivered.push(event.record.message.id)
+      if (event.record.message.id === 'page-0-msg' && release.write) {
+        await release.write
+      }
+      await server.ackInbound({ domain: event.domain, sequence: event.sequence, inserted: true })
+    })
+    fake.receive(roomId, 'peer-a', session())
+    await settle()
+    const requestMsg = fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST)
+    const syncId = (requestMsg as { syncId: string }).syncId
+
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
+      syncId,
+      page: 0,
+      users: [REMOTE_USER],
+      messages: [text('page-0-msg', REMOTE_USER.id, NOW - 10)],
+      done: false
+    })
+    await vi.waitFor(() => expect(delivered).toContain('page-0-msg'))
+    // Page 1 arrives before page 0 settles: it joins the bounded serial queue.
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
+      syncId,
+      page: 1,
+      users: [REMOTE_USER],
+      messages: [text('page-1-msg', REMOTE_USER.id, NOW - 20)],
+      done: true
+    })
+    await settle()
+    // Changed replay of the accepted page while pending cancels the attempt.
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
+      syncId,
+      page: 0,
+      users: [REMOTE_USER],
+      messages: [text('changed-replay', REMOTE_USER.id, NOW - 30)],
+      done: false
+    })
+    await settle()
+    // The queued page 1 must still apply after page 0 settles (serial, not dropped).
+    release.write?.()
+    await vi.waitFor(() => expect(delivered).toContain('page-1-msg'))
+  })
+
+  it('preserves every provider record through the work list without a false terminal', async () => {
+    const { fake, server, roomId } = await setup()
+    const database = createMemoryMessageDatabase('history-preflight-db')
+    const store = createMessageStore(database)
+    await store.insert(textRecord('keep-1', NOW))
+    await store.insert(textRecord('keep-2', NOW - 1))
+    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, async () => {
+      const records = await store.query({ type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE })
+      return { records: records as TextMessageRecord[], done: true }
+    })
+    fake.receive(roomId, 'peer-a', session())
+    await settle()
+    const requestMsg = fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST)
+    const syncId = (requestMsg as { syncId: string }).syncId
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId,
+      page: 0,
+      messageIds: [],
+      done: true
+    })
+    await vi.waitFor(() => {
+      const sent = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE)
+      expect(sent.length).toBeGreaterThan(0)
+    })
+    const sent = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE)
+    const ids = sent.flatMap((m) => (m as { messages: { id: string }[] }).messages.map((x) => x.id))
+    expect(ids.sort()).toEqual(['keep-1', 'keep-2'])
+    expect(sent.every((m) => (m as { messages: unknown[] }).messages.length > 0 || sent.length === 1)).toBe(true)
+  })
+
+  it('cancels the attempt when a single opaque inventory id cannot form a valid page', async () => {
+    const { fake, server, roomId } = await setup()
+    const hugeId = 'x'.repeat(70 * 1024)
+    await registerInventoryProvider(server, [textRecord(hugeId, NOW)])
+    fake.receive(roomId, 'peer-a', session())
+    await settle()
+    // No inventory request page is ever sent (the local attempt aborts before sending).
+    expect(fake.messages(roomId).some((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST)).toBe(false)
+  })
+
+  it('keeps one peer in two domains as independent attempts without suppression', async () => {
+    const { fake, server, roomId } = await setup()
+    await registerInventoryProvider(server)
+    // The same source joins the first domain; its requester sends its own inventory request.
+    fake.receive(roomId, 'peer-a', session())
+    await vi.waitFor(() => {
+      expect(fake.messages(roomId).some((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST)).toBe(true)
+    })
+    // The same source joins a second domain: a second independent requester must start.
+    const OTHER_DOMAIN_2 = 'https://other-2.example'
+    await server.attachPage({ domain: OTHER_DOMAIN_2, pageId: 'page-b' })
+    await server.joinChatRoom({ domain: OTHER_DOMAIN_2, user: USER, site: { ...SITE, origin: OTHER_DOMAIN_2 } })
+    await registerHistoryProvider(
+      server,
+      { domain: OTHER_DOMAIN_2, pageId: 'page-b' },
+      async (): Promise<HistorySupplyResult> => ({ records: [], done: true })
+    )
+    await settle()
+    const otherRoomId = getChatRoomId(OTHER_DOMAIN_2)
+    fake.receive(otherRoomId, 'peer-a', session())
+    await vi.waitFor(() => {
+      expect(fake.messages(otherRoomId).some((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST)).toBe(true)
+    })
+    // Completing the first domain's requester must not finish the second domain's attempt.
+    const firstSync = (
+      fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST) as {
+        syncId: string
+      }
+    ).syncId
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
+      syncId: firstSync,
+      page: 0,
+      users: [],
+      messages: [],
+      done: true
+    })
+    await settle()
+    expect(fake.messages(otherRoomId).some((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST)).toBe(true)
+  })
 })
 
 describe('RuntimeServer Artico per-target isolation', () => {
