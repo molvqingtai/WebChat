@@ -19,6 +19,13 @@ const AppFeedbackDomain = Remesh.domain({
       name: 'AppFeedback.RuntimeLoadingState',
       default: false
     })
+    // The Content composition owner silences this page's Runtime feedback while the document is
+    // departing or suspended: a silenced page never publishes a new readiness loading entry (its lease
+    // cleanup may change page-local readiness), and may only remove the presentation it already owns.
+    const FeedbackSilencedState = domain.state<boolean>({
+      name: 'AppFeedback.FeedbackSilencedState',
+      default: false
+    })
     const RuntimeFeedbackQuery = domain.query({
       name: 'AppFeedback.RuntimeFeedbackQuery',
       impl: ({ get }): ReadinessState | null => {
@@ -31,7 +38,7 @@ const AppFeedbackDomain = Remesh.domain({
     const PublishRuntimeLoadingCommand = domain.command({
       name: 'AppFeedback.PublishRuntimeLoadingCommand',
       impl: ({ get }) =>
-        get(RuntimeLoadingState())
+        get(FeedbackSilencedState()) || get(RuntimeLoadingState())
           ? null
           : [
               RuntimeLoadingState().new(true),
@@ -57,7 +64,27 @@ const AppFeedbackDomain = Remesh.domain({
       impl: ({ fromQuery }) => fromQuery(RuntimeFeedbackQuery()).pipe(map(runtimeFeedbackCommand))
     })
 
-    return {}
+    const SilenceFeedbackCommand = domain.command({
+      name: 'AppFeedback.SilenceFeedbackCommand',
+      impl: ({ get }) =>
+        get(FeedbackSilencedState())
+          ? null
+          : [
+              FeedbackSilencedState().new(true),
+              get(RuntimeLoadingState()) ? DismissRuntimeLoadingCommand() : null
+            ].filter((action): action is NonNullable<typeof action> => action !== null)
+    })
+    const ResumeFeedbackCommand = domain.command({
+      name: 'AppFeedback.ResumeFeedbackCommand',
+      impl: ({ get }) => (get(FeedbackSilencedState()) ? FeedbackSilencedState().new(false) : null)
+    })
+
+    return {
+      command: {
+        SilenceFeedbackCommand,
+        ResumeFeedbackCommand
+      }
+    }
   }
 })
 

@@ -82,10 +82,8 @@ describe('replaceable application boundaries', () => {
   it('registers page cleanup before Runtime initialization can suspend', async () => {
     const content = await source('src/app/content/index.tsx')
 
-    expect(content.indexOf("window.addEventListener('beforeunload', detachClient")).toBeGreaterThan(-1)
-    expect(content.indexOf("window.addEventListener('beforeunload', detachClient")).toBeLessThan(
-      content.indexOf('createShadowRootUi(ctx')
-    )
+    expect(content.indexOf('createDocumentLifecycleOwner()')).toBeGreaterThan(-1)
+    expect(content.indexOf('createDocumentLifecycleOwner()')).toBeLessThan(content.indexOf('createShadowRootUi(ctx'))
     expect(content).toContain('initializeRuntime: initClient')
     expect(content).toContain('detachRuntime: detachClient')
   })

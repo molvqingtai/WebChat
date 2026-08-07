@@ -26,6 +26,7 @@ import '@/assets/styles/tailwind.css'
 import '@/assets/styles/overlay.css'
 import NotificationDomain from '@/domain/Notification'
 import AppFeedbackDomain from '@/domain/AppFeedback'
+import { createDocumentLifecycleOwner } from './documentLifecycle'
 import ToastDomain from '@/domain/Toast'
 import { createElement } from '@/utils'
 import { requestBrowserSyncStoragePreparation } from '@/service/StoragePreparation'
@@ -233,7 +234,9 @@ export default defineContentScript({
   matches: ['https://*/*'],
   excludeMatches: ['*://localhost/*', '*://127.0.0.1/*', '*://*.csdn.net/*', '*://*.csdn.com/*'],
   async main(ctx) {
-    window.addEventListener('beforeunload', detachClient, { once: true })
+    // Page lifecycle registration happens before any UI/Runtime initialization can run or suspend, so
+    // an early failure still has exactly one cleanup owner (never a second lease authority).
+    const documentLifecycle = createDocumentLifecycleOwner()
 
     let mediaPreviewTransitionStyle: HTMLStyleElement | null = null
     const ui = await createShadowRootUi(ctx, {
@@ -249,9 +252,7 @@ export default defineContentScript({
         container.append(app)
         const root = createRoot(app)
         const { store, activateApplicationDependencies, sendLifecycle } = createContentStore()
-        // Content/lease teardown-supersession owner: cancel this page generation's active sends
-        // synchronously before the lease/domain release proceeds on detach.
-        window.addEventListener('beforeunload', () => sendLifecycle.cancelActiveSends(), { once: true })
+        documentLifecycle.bind({ store, sendLifecycle, initLease: initClient, detachLease: detachClient })
         root.render(
           <StrictMode>
             <RemeshRoot store={store}>
@@ -266,9 +267,10 @@ export default defineContentScript({
           dependencies: initializationDependencies,
           activateApplicationDependencies
         })
-        return { root, store, stopInitialization, sendLifecycle }
+        return { root, store, stopInitialization, sendLifecycle, disposeDocumentLifecycle: documentLifecycle.dispose }
       },
       onRemove: (content) => {
+        content?.disposeDocumentLifecycle()
         content?.stopInitialization()
         content?.sendLifecycle.cancelActiveSends()
         content?.root.unmount()
