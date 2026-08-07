@@ -360,12 +360,11 @@ const HistoryDomain = Remesh.domain({
         const jobs = get(ProviderSupplyJobsState())
         const active = get(ActiveSuppliesState())
         const waiting = get(WaitingSuppliesState())
-        // Dormant successor and waiting projections are removed immediately. Started work (active
-        // supplies and their canonical jobs) stays counted until the physical supplier settles; the
-        // late-settlement path releases the slot and job accounting exactly once.
-        const releasedActive = active.filter(
-          (item) => item.sourcePeerId === payload.sourcePeerId && item.domain === payload.domain
-        )
+        // Dormant successors, waiting projections, and provider state are removed immediately.
+        // Started active supplies and their canonical jobs stay in place (slot + accounting) until
+        // the physical supplier settles; the late-settlement path releases the slot exactly once.
+        // Cleanup never promotes a waiter while an old physical supplier is still running, so no
+        // double promotion, active > 4, or same-source overlap can occur.
         return [
           ProviderAttemptsState().new(
             providers.filter((item) => item.sourcePeerId !== payload.sourcePeerId || item.domain !== payload.domain)
@@ -373,18 +372,9 @@ const HistoryDomain = Remesh.domain({
           ProviderSupplySuccessorsState().new(
             successors.filter((item) => item.sourcePeerId !== payload.sourcePeerId || item.domain !== payload.domain)
           ),
-          ProviderSupplyJobsState().new(
-            jobs.filter(
-              (item) =>
-                item.sourcePeerId !== payload.sourcePeerId ||
-                item.domain !== payload.domain ||
-                !active.some((a) => matchesSync(a, item))
-            )
-          ),
           WaitingSuppliesState().new(
             waiting.filter((item) => item.sourcePeerId !== payload.sourcePeerId || item.domain !== payload.domain)
-          ),
-          ...releasedActive.map((key) => ReleaseProviderSupplySlotCommand(key))
+          )
         ]
       }
     })
@@ -496,16 +486,17 @@ const HistoryDomain = Remesh.domain({
         if (current && current.syncId !== payload.message.syncId) {
           if (successor && successor.syncId !== payload.message.syncId) return null
           const jobs = get(ProviderSupplyJobsState())
-          // Upsert-aware admission: an existing successor's cumulative bytes are subtracted before
-          // the incoming page's cumulative bytes are checked, and an update at exactly 32 entries
-          // is allowed (only a NEW identity is bounded by the 32-job cap).
+          // Upsert-aware admission: the successor's cumulative bytes are subtracted before the
+          // check validates others + newCumulative (old + incoming page); an update at exactly 32
+          // entries is allowed (only a NEW identity is bounded by the 32-job cap).
           const existingBytes = successor?.queueBytes ?? 0
           const hasExisting = Boolean(successor)
           const admittedBytes = [...jobs, ...successors].reduce((total, item) => total + item.queueBytes, 0)
           const nextCount = hasExisting ? jobs.length + successors.length : jobs.length + successors.length + 1
+          const newCumulativeBytes = existingBytes + queueBytes
           if (
             nextCount > MAX_PROVIDER_SUPPLY_QUEUE_JOBS ||
-            queueBytes > MAX_PROVIDER_SUPPLY_QUEUE_BYTES - (admittedBytes - existingBytes)
+            admittedBytes - existingBytes + newCumulativeBytes > MAX_PROVIDER_SUPPLY_QUEUE_BYTES
           ) {
             return wireDomain.command.DropProtocolCommand({
               sourcePeerId: payload.sourcePeerId,
@@ -613,19 +604,32 @@ const HistoryDomain = Remesh.domain({
           })
         }
         const jobs = get(ProviderSupplyJobsState())
-        // Upsert-aware admission: the existing provider job's cumulative bytes are subtracted before
-        // the incoming page's cumulative bytes are checked, and an update at exactly 32 entries is
-        // allowed (only a NEW identity is bounded by the 32-job cap).
+        // Upsert-aware admission: the existing provider job is found by the COMPLETE sync identity,
+        // its old cumulative bytes are subtracted, and the check validates others + newCumulative
+        // (old + incoming page). An update at exactly 32 entries is allowed (only a NEW identity is
+        // bounded by the 32-job cap).
+        const currentKey = current ?? {
+          sourcePeerId: payload.sourcePeerId,
+          domain: binding.domain,
+          syncId: payload.message.syncId,
+          syncToken: token('provider', 0)
+        }
         const existingJob = jobs.find(
-          (item) => item.sourcePeerId === payload.sourcePeerId && item.domain === binding.domain
+          (item) =>
+            item.sourcePeerId === currentKey.sourcePeerId &&
+            item.domain === currentKey.domain &&
+            item.syncId === currentKey.syncId &&
+            item.syncToken === currentKey.syncToken
         )
         const existingBytes = existingJob?.queueBytes ?? 0
         const hasExisting = Boolean(existingJob)
         const admittedBytes = [...jobs, ...successors].reduce((total, item) => total + item.queueBytes, 0)
         const nextCount = hasExisting ? jobs.length + successors.length : jobs.length + successors.length + 1
+        // newCumulativeBytes = existing cumulative (if any) + this page's bytes.
+        const newCumulativeBytes = existingBytes + queueBytes
         if (
           nextCount > MAX_PROVIDER_SUPPLY_QUEUE_JOBS ||
-          queueBytes > MAX_PROVIDER_SUPPLY_QUEUE_BYTES - (admittedBytes - existingBytes)
+          admittedBytes - existingBytes + newCumulativeBytes > MAX_PROVIDER_SUPPLY_QUEUE_BYTES
         ) {
           return wireDomain.command.DropProtocolCommand({
             sourcePeerId: payload.sourcePeerId,
@@ -1036,18 +1040,13 @@ const HistoryDomain = Remesh.domain({
         )
         if (!current || current.syncId !== payload.message.syncId) return null
         if (current.awaitingBatchId) {
-          // While a batch is pending: post-done input is rejected before enqueue; a queued terminal
-          // page (done:true already queued) fences the attempt so any later page cancels
-          // immediately and discards queued work; an identical replay of the accepted page or of
-          // any queued page is idempotent; a changed replay cancels; and valid continuous pages
-          // (N+1, N+2, ...) join the bounded serial queue in order.
-          if (current.responseDone || current.pendingResponsePages.some((item) => item.done)) {
-            return FinishRequestedEvent({ domain: binding.domain, sourcePeerId: payload.sourcePeerId })
-          }
+          // While a batch is pending: replay fingerprint matching runs FIRST, so an identical replay
+          // of the accepted page or of any queued page (including a queued terminal page) is
+          // idempotent and a changed replay cancels. Only then does the terminal fence reject any
+          // post-done or post-queued-terminal page, and valid continuous pages (N+1, N+2, ...) join
+          // the bounded serial queue in order.
           const fingerprint = JSON.stringify(payload.message)
           const queued = current.pendingResponsePages
-          // Search the bounded queue by page: identical queued replay is a no-op, changed queued
-          // replay cancels. This must run before the tail check so a genuine replay is not missed.
           const queuedMatch = queued.find((item) => item.page === payload.message.page)
           if (queuedMatch) {
             return JSON.stringify(queuedMatch) === fingerprint
@@ -1058,6 +1057,9 @@ const HistoryDomain = Remesh.domain({
             return current.lastAppliedPageFingerprint === fingerprint
               ? null
               : FinishRequestedEvent({ domain: binding.domain, sourcePeerId: payload.sourcePeerId })
+          }
+          if (current.responseDone || queued.some((item) => item.done)) {
+            return FinishRequestedEvent({ domain: binding.domain, sourcePeerId: payload.sourcePeerId })
           }
           if (payload.message.page === current.queuedResponseTail) {
             if (queued.length >= MAX_PENDING_RESPONSE_PAGES) {
