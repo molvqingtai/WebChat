@@ -327,6 +327,7 @@ const createPendingConnectionFixture = (stage: PendingConnectionStage) => {
     provideHistory: async () => {},
     resolveHistorySupply: async () => {},
     rejectHistorySupply: async () => {},
+    onDeadPages: async () => {},
     onHistoryFeedback: async () => {}
   }
   const database = createMemoryMessageDatabase(`pending-connection-${stage}-${databaseId++}`)
@@ -934,6 +935,7 @@ describe('ChatRoomDomain exact application port', () => {
       provideHistory: async () => {},
       resolveHistorySupply: async () => {},
       rejectHistorySupply: async () => {},
+      onDeadPages: async () => {},
       onHistoryFeedback: async () => {}
     } as RuntimeServer
     const database = createMemoryMessageDatabase(`same-user-domain-${databaseId++}`)

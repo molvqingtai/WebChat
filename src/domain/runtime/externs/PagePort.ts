@@ -17,6 +17,7 @@ export interface PagePort {
   emitWorldPresence: (pageIds: string[], event: WorldPresenceEvent) => Promise<string[]>
   emitError: (pageIds: string[], event: RuntimeErrorEvent) => Promise<string[]>
   emitHistoryFeedback: (pageIds: string[], event: HistoryFeedbackEvent) => Promise<string[]>
+  emitDeadPages: (pageIds: string[], pageIdsPayload: string[]) => Promise<string[]>
   supplyHistory: (pageId: string, request: HistorySupplyRequest) => Promise<HistorySupplyResult | null>
   cancelHistorySupply: (supplyId: string) => Promise<void>
 }
@@ -34,6 +35,7 @@ export const PagePortExtern = Remesh.extern<PagePort>({
     emitWorldPresence: notImplemented('emitWorldPresence'),
     emitError: notImplemented('emitError'),
     emitHistoryFeedback: notImplemented('emitHistoryFeedback'),
+    emitDeadPages: notImplemented('emitDeadPages'),
     supplyHistory: notImplemented('supplyHistory'),
     cancelHistorySupply: async () => {}
   }

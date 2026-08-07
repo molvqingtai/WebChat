@@ -3636,6 +3636,306 @@ describe('RuntimeServer history', () => {
     expect(started).not.toContain('wait-4')
   })
 
+  it('releases non-active canonical jobs on lifecycle cleanup while a held active job stays counted', async () => {
+    const { fake, server, roomId } = await setup()
+    const started: string[] = []
+    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, async (request) => {
+      if (request.mode === 'inventory') return { records: [], done: true }
+      started.push(request.syncId)
+      await new Promise<void>(() => {})
+      return { records: [], done: true }
+    })
+    // One genuinely active held job first, then 31 partial jobs fill the pool to its 32-job cap.
+    fake.receive(roomId, 'peer-32', session({ id: 'lc-user-32', name: 'LC 32', avatar: '' }))
+    await settle()
+    fake.receive(roomId, 'peer-32', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'lc-active',
+      page: 0,
+      messageIds: [],
+      done: true
+    })
+    await vi.waitFor(() => expect(started).toEqual(['lc-active']))
+    for (let peer = 0; peer < 31; peer += 1) {
+      const peerId = `peer-${peer}`
+      fake.receive(roomId, peerId, session({ id: `lc-user-${peer}`, name: `LC ${peer}`, avatar: '' }))
+      await settle()
+      fake.receive(roomId, peerId, {
+        type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+        syncId: `lc-partial-${peer}`,
+        page: 0,
+        messageIds: [`p-${peer}`],
+        done: false
+      })
+      await settle()
+    }
+    // All 31 partial peers leave: cleanup must remove their canonical jobs IMMEDIATELY (no
+    // physical settlement callback exists for them), so fresh unrelated work is admitted at once.
+    for (let peer = 0; peer < 31; peer += 1) {
+      fake.receive(roomId, `peer-${peer}`, {
+        type: MESSAGE_TYPE.SESSION_END,
+        presenceId: `presence-lc-user-${peer}`
+      })
+    }
+    await settle()
+    // A fresh peer at the (now released) cap is admitted and its ready job starts immediately.
+    fake.receive(roomId, 'peer-33', session({ id: 'lc-user-33', name: 'LC 33', avatar: '' }))
+    await settle()
+    fake.receive(roomId, 'peer-33', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'lc-fresh',
+      page: 0,
+      messageIds: [],
+      done: true
+    })
+    await vi.waitFor(() => expect(started).toEqual(['lc-active', 'lc-fresh']))
+  })
+
+  it('keeps the slot through a held response send on lifecycle cleanup and releases exactly once', async () => {
+    const { fake, server, roomId } = await setup()
+    const started: string[] = []
+    // The snapshot supplies resolve immediately; the RESPONSE SEND is what hangs.
+    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, async (request) => {
+      if (request.mode === 'inventory') return { records: [], done: true }
+      started.push(request.syncId)
+      return { records: [], done: true }
+    })
+    fake.hangHistoryResponseSends()
+    for (let peer = 0; peer < 4; peer += 1) {
+      fake.receive(roomId, `peer-${peer}`, session({ id: `hs-user-${peer}`, name: `HS ${peer}`, avatar: '' }))
+      await settle()
+      fake.receive(roomId, `peer-${peer}`, {
+        type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+        syncId: `hs-${peer}`,
+        page: 0,
+        messageIds: [],
+        done: true
+      })
+      await settle()
+    }
+    await vi.waitFor(() => expect(started.length).toBe(4))
+    // Four response sends are now physically held; a fifth peer is a ready waiter.
+    fake.receive(roomId, 'peer-4', session({ id: 'hs-user-4', name: 'HS 4', avatar: '' }))
+    await settle()
+    fake.receive(roomId, 'peer-4', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'hs-4',
+      page: 0,
+      messageIds: [],
+      done: true
+    })
+    await settle()
+    // Lifecycle cleanup while the sends are invoked: the slots stay retained (no fifth stage).
+    fake.receive(roomId, 'peer-0', { type: MESSAGE_TYPE.SESSION_END, presenceId: 'presence-hs-user-0' })
+    await settle()
+    await settle()
+    expect(started.length).toBe(4)
+    // The held sends settle: the slot is released exactly once and exactly one waiter promotes.
+    fake.releaseHistoryResponseSends()
+    await vi.waitFor(() => expect(started.length).toBe(5))
+    await settle()
+    await settle()
+    expect(started.length).toBe(5)
+  })
+
+  it('keeps the slot through a held response send on cancellation and releases exactly once', async () => {
+    const { fake, server, roomId } = await setup()
+    const started: string[] = []
+    // The snapshot supplies resolve immediately; the RESPONSE SEND is what hangs.
+    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, async (request) => {
+      if (request.mode === 'inventory') return { records: [], done: true }
+      started.push(request.syncId)
+      return { records: [], done: true }
+    })
+    fake.hangHistoryResponseSends()
+    for (let peer = 0; peer < 4; peer += 1) {
+      fake.receive(roomId, `peer-${peer}`, session({ id: `tc-user-${peer}`, name: `TC ${peer}`, avatar: '' }))
+      await settle()
+      fake.receive(roomId, `peer-${peer}`, {
+        type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+        syncId: `tc-${peer}`,
+        page: 0,
+        messageIds: [],
+        done: true
+      })
+      await settle()
+    }
+    await vi.waitFor(() => expect(started.length).toBe(4))
+    fake.receive(roomId, 'peer-4', session({ id: 'tc-user-4', name: 'TC 4', avatar: '' }))
+    await settle()
+    fake.receive(roomId, 'peer-4', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'tc-4',
+      page: 0,
+      messageIds: [],
+      done: true
+    })
+    await settle()
+    // A logical cancellation (out-of-order page) while peer-0's response send is still invoked:
+    // the send-stage marker keeps the slot live, so no waiter may start before the send settles.
+    fake.receive(roomId, 'peer-0', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'tc-0',
+      page: 2,
+      messageIds: [],
+      done: true
+    })
+    await settle()
+    await settle()
+    expect(started.length).toBe(4)
+    // The send settles: exactly one waiter promotes.
+    fake.releaseHistoryResponseSends()
+    await vi.waitFor(() => expect(started.length).toBe(5))
+  })
+
+  it('fences every terminal cancellation, survives rollover pressure and session replacement', async () => {
+    const { fake, server, roomId } = await setup()
+    const started: string[] = []
+    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, async (request) => {
+      if (request.mode === 'inventory') return { records: [], done: true }
+      started.push(request.syncId)
+      return { records: [], done: true }
+    })
+    fake.receive(roomId, 'peer-a', session())
+    await settle()
+    // Seventeen sequential synchronizations complete and terminally fence their identities.
+    for (let i = 0; i < 17; i += 1) {
+      fake.receive(roomId, 'peer-a', {
+        type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+        syncId: `term-${i}`,
+        page: 0,
+        messageIds: [],
+        done: true
+      })
+      await vi.waitFor(() => expect(started).toEqual(Array.from({ length: i + 1 }, (_, n) => `term-${n}`)))
+      await vi.waitFor(() => {
+        const sent = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE)
+        expect(sent.some((m) => (m as { syncId: string }).syncId === `term-${i}`)).toBe(true)
+      })
+    }
+    // The OLDEST terminal id is still fenced (no LRU eviction at 16).
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'term-0',
+      page: 0,
+      messageIds: [],
+      done: true
+    })
+    await settle()
+    await settle()
+    expect(started.length).toBe(17)
+    // A changed-replay (gap) terminal cancellation is also fenced: a page-zero replay is inert.
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'gap-sync',
+      page: 0,
+      messageIds: [],
+      done: true
+    })
+    await vi.waitFor(() => expect(started.length).toBe(18))
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'gap-sync',
+      page: 2,
+      messageIds: [],
+      done: true
+    })
+    await settle()
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'gap-sync',
+      page: 0,
+      messageIds: [],
+      done: true
+    })
+    await settle()
+    await settle()
+    expect(started.length).toBe(18)
+    // The fence survives a session replacement (a fresh session message changes the binding
+    // without removing the peer): replayed old ids stay inert while a fresh identity is admitted.
+    fake.receive(roomId, 'peer-a', session({ id: 'remote-user-b', name: 'Remote B', avatar: '' }))
+    await settle()
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'term-0',
+      page: 0,
+      messageIds: [],
+      done: true
+    })
+    await settle()
+    expect(started.length).toBe(18)
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'fresh-after-reset',
+      page: 0,
+      messageIds: [],
+      done: true
+    })
+    await vi.waitFor(() => expect(started.length).toBe(19))
+  })
+
+  it('reports dead pages exactly once and never misclassifies healthy null/timeout pages', async () => {
+    const { fake, server, roomId } = await setup()
+    const started: string[] = []
+    const deadPages: string[][] = []
+    await server.onDeadPages({ pageId: 'page-a' }, (pageIds) => {
+      deadPages.push(pageIds)
+    })
+    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, async (request) => {
+      if (request.mode === 'inventory') return { records: [], done: true }
+      started.push(request.syncId)
+      throw new Error('page-a broken')
+    })
+    fake.receive(roomId, 'peer-a', session())
+    await settle()
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'dead-a',
+      page: 0,
+      messageIds: [],
+      done: true
+    })
+    // The genuinely failed page is reported dead exactly once and the attempt terminates.
+    await vi.waitFor(() => expect(deadPages).toEqual([['page-a']]))
+    await settle()
+    expect(fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE)).toHaveLength(0)
+    // A fresh page registration lets a fresh syncId proceed.
+    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, async (request) => {
+      if (request.mode === 'inventory') return { records: [], done: true }
+      started.push(request.syncId)
+      return { records: [], done: true }
+    })
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'dead-b',
+      page: 0,
+      messageIds: [],
+      done: true
+    })
+    await vi.waitFor(() => expect(started).toEqual(['dead-a', 'dead-b']))
+    // Replace the page provider with one that always resolves null (detached): an all-null
+    // candidate list exhausts the attempt without any dead-page report (healthy pages are never
+    // misclassified as dead).
+    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, async (request) => {
+      if (request.mode === 'inventory') return { records: [], done: true }
+      started.push(request.syncId)
+      return null as unknown as HistorySupplyResult
+    })
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'null-sync',
+      page: 0,
+      messageIds: [],
+      done: true
+    })
+    await vi.waitFor(() => expect(started).toEqual(['dead-a', 'dead-b', 'null-sync']))
+    await settle()
+    await settle()
+    expect(deadPages).toEqual([['page-a']])
+    // Only the successful dead-b attempt responded; the exhausted null attempt stays silent.
+    expect(fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE)).toHaveLength(1)
+  })
+
   it('observes job acceptance at exactly 32 jobs and rejection of a new identity', async () => {
     const { fake, server, roomId } = await setup()
     // Every started supplier pipeline is held; the response is delivered only when released.

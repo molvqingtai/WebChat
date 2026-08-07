@@ -158,6 +158,7 @@ export interface RuntimeServer {
   onWorldPresence: (payload: { pageId: string }, callback: (event: WorldPresenceEvent) => void) => Promise<void>
   onError: (payload: { pageId: string }, callback: (event: RuntimeErrorEvent) => void) => Promise<void>
   onHistoryFeedback: (payload: { pageId: string }, callback: (event: HistoryFeedbackEvent) => void) => Promise<void>
+  onDeadPages: (payload: { pageId: string }, callback: (pageIds: string[]) => void) => Promise<void>
   provideHistory: (
     payload: { domain: string; pageId: string },
     callback: (event: HistorySupplyEvent) => void
