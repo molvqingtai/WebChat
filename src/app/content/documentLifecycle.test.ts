@@ -67,10 +67,11 @@ const createComposedFixture = (lease: ClientLease) => {
     onState: (callback) =>
       lease.whenHostPhase((phase) => callback(phase === 'ready' || phase === 'unavailable' ? phase : 'connecting'))
   }
+  const sendLifecycle = createSendLifecycle()
   const store = Remesh.store({
     externs: [
       ChatRoomExtern.impl(chat),
-      SendLifecycleExtern.impl(createSendLifecycle()),
+      SendLifecycleExtern.impl(sendLifecycle),
       ReadinessExtern.impl(readiness),
       LocalStorageExtern.impl(storage),
       BrowserSyncStorageExtern.impl(storage),
@@ -90,7 +91,7 @@ const createComposedFixture = (lease: ClientLease) => {
   store.igniteDomain(feedbackAction)
   store.send(user.command.UpdateUserInfoCommand(SELF))
   activeStores.add(store)
-  return { store, appStatus, room, toast }
+  return { store, appStatus, room, toast, sendLifecycle }
 }
 
 const persistedEvent = (type: 'pagehide' | 'pageshow') => {
@@ -105,7 +106,7 @@ describe('Content document-lifecycle owner composed parent control', () => {
     activeStores.clear()
   })
 
-  it('produces no loading on departure and reconciles ready on restore through the real owner', async () => {
+  it('keeps every BFCache cycle exactly-once and final cleanup silent through the real owner', async () => {
     const domain = 'https://example.test'
     const pageId = 'page-a'
     const readySnapshot: RuntimeSnapshot = {
@@ -123,10 +124,11 @@ describe('Content document-lifecycle owner composed parent control', () => {
       ],
       world: { joined: true, peerId: 'peer-a', presences: [] }
     }
-    const registerPage = vi
-      .fn<RuntimeCoordinator['registerPage']>()
-      .mockResolvedValueOnce({ phase: 'ready', generation: 1, snapshot: readySnapshot })
-      .mockResolvedValueOnce({ phase: 'ready', generation: 2, snapshot: readySnapshot })
+    const registerPage = vi.fn<RuntimeCoordinator['registerPage']>().mockResolvedValue({
+      phase: 'ready',
+      generation: 1,
+      snapshot: readySnapshot
+    })
     const lease = new ClientLease({
       coordinator: { ensureHost: vi.fn(), registerPage },
       pageId,
@@ -136,32 +138,55 @@ describe('Content document-lifecycle owner composed parent control', () => {
     await lease.init()
     const fixture = createComposedFixture(lease)
     const owner = createDocumentLifecycleOwner()
+    // The owner uses the SAME SendLifecycle installed in the composed store, so page-owned cancellation
+    // in the real composition graph is exercised.
     owner.bind({
       store: fixture.store,
-      sendLifecycle: createSendLifecycle(),
+      sendLifecycle: fixture.sendLifecycle,
       initLease: () => lease.init(),
       detachLease: () => lease.detach()
     })
     fixture.store.send(fixture.appStatus.command.MarkReadyCommand())
     await flushMicrotasks()
+    const attachCount = () => registerPage.mock.calls.length
+    const initialAttaches = attachCount()
 
-    // Real departure: the owner receives the persisted hide, silences feedback, then the real lease
-    // detach changes readiness to connecting. No loading entry may be created by cleanup.
+    // Cycle 1: persisted hide silences feedback then the real lease detaches exactly once; no loading.
     window.dispatchEvent(persistedEvent('pagehide'))
     await flushMicrotasks()
     expect(fixture.toast.loading).not.toHaveBeenCalled()
-    expect(registerPage).toHaveBeenCalledTimes(1)
+    const attachesAfterCycle1Hide = attachCount()
+    expect(attachesAfterCycle1Hide).toBe(initialAttaches)
 
-    // Real restore: the owner re-inits the real lease (one current attach) and resumes feedback; the
-    // visible page reconciles to ready without a success Toast.
+    // Duplicate persisted hide while suspended is a no-op (no second detach / no new attach).
+    window.dispatchEvent(persistedEvent('pagehide'))
+    await flushMicrotasks()
+    expect(attachCount()).toBe(initialAttaches)
+
+    // Cycle 1 restore: exactly one current attach; the visible page reconciles to ready without a
+    // success Toast and no new loading.
     window.dispatchEvent(persistedEvent('pageshow'))
     await flushMicrotasks()
     await flushMicrotasks()
-    expect(registerPage).toHaveBeenCalledTimes(2)
+    expect(attachCount()).toBe(initialAttaches + 1)
     expect(fixture.toast.loading).not.toHaveBeenCalled()
     expect(fixture.toast.success).not.toHaveBeenCalled()
 
+    // Cycle 2: another full hide -> show performs exactly one more detach-equivalent and one more attach.
+    window.dispatchEvent(persistedEvent('pagehide'))
+    await flushMicrotasks()
+    window.dispatchEvent(persistedEvent('pageshow'))
+    await flushMicrotasks()
+    await flushMicrotasks()
+    expect(attachCount()).toBe(initialAttaches + 2)
+    expect(fixture.toast.loading).not.toHaveBeenCalled()
+    expect(fixture.toast.success).not.toHaveBeenCalled()
+
+    // Final teardown: no further lease/attach activity after dispose (no late callback revival).
     owner.dispose()
+    const attachesAfterDispose = attachCount()
     lease.detach()
+    await flushMicrotasks()
+    expect(attachCount()).toBe(attachesAfterDispose)
   })
 })
