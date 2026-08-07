@@ -6,9 +6,9 @@
 
 The Runtime page contract SHALL use an explicit `{supplyId}` request/cancel event plus `resolveHistorySupply`/`rejectHistorySupply` RPC. Each page supply attempt SHALL have a 5-second boundary. A page query SHALL receive an `AbortSignal` wired to its readonly IndexedDB transaction; the signal SHALL abort that transaction and gate all subsequent projection/filter/sort work, and the page SHALL confirm physical settlement only after the entire query and gated work truly exits. Failover, old-job release, and successor promotion SHALL wait for that confirmation. Supplier work SHALL be serial per source, isolated across domains and sources, and admitted through one pipeline covering supplier selection, encode, send, and final release; the pipeline SHALL have at most four active jobs, 32 admitted requests, and 8KiB of decoded request metadata. A replacement session's one-shot request arriving before the old source job settles SHALL occupy one dormant source-local successor within the same global admission; the successor itself SHALL count toward the 32-request and 8KiB decoded-metadata limits, SHALL NOT run concurrently, and SHALL automatically promote after physical settlement without another peer request. Timeout, leave, and release MAY remove an unstarted successor; a started job SHALL remain counted until settlement. A completed response releases its source slot immediately after send settlement, and an old timer/token SHALL NOT delay or close a newer domain/request. Cleanup SHALL retain active admission until physical settlement and remove dormant successors without starting them.
 
-After one valid history-response batch settles its application/page insert-if-absent work, that boundary SHALL count only messages newly inserted into the current origin store by that batch. If `count > 0`, it SHALL publish one generic loading Toast with exact copy `Pulled {count} new messages.` and exact `3000ms` duration. The template SHALL remain unchanged for every positive integer. The Toast SHALL NOT publish when a request starts, while waiting, when no response arrives, or when the batch adds zero messages. Existing same-id replay, retained conflicts, invalid values, and rejected values SHALL contribute zero.
+As soon as one valid history-response batch containing at least one message reaches the application/page boundary, that boundary SHALL publish one generic loading Toast with exact copy `Syncing message history` and exact `3000ms` duration. It SHALL publish without waiting for or inspecting the batch's insert-if-absent completion or result. The existing nonempty-batch fact SHALL be the only feedback trigger; WebChat SHALL NOT derive, propagate, aggregate, store, or display a message count for this feedback. A nonempty valid batch SHALL qualify even when every message is already stored locally or its later insertion work adds nothing. The Toast SHALL NOT publish when a request starts, while waiting, when no response arrives, when an existing completion response contains no messages, or when a response is rejected before reaching the application/page boundary.
 
-Every qualifying batch SHALL publish independently with its own count. WebChat SHALL NOT accumulate across a complete sync, delay feedback until sync completion, or add a batch-feedback queue. A later qualifying batch SHALL use the existing generic one-visible-Toast behavior to cover the earlier presentation and SHALL receive its own `3000ms` duration. Synchronization SHALL NOT manually dismiss this Toast, convert it to success, or otherwise make it an operation-lifecycle owner. Toast paint, expiry, cover, absence, or teardown SHALL NOT delay or redefine persistence, acknowledgement, pagination, failover, continuation, or synchronization outcome. History application SHALL continue to create no notification, boolean unread-attention mark, or system notice.
+Every qualifying batch SHALL publish independently with the same exact copy. WebChat SHALL NOT accumulate across a complete sync, delay feedback until insertion or sync completion, or add a batch-feedback queue. A later qualifying batch SHALL use the existing generic one-visible-Toast behavior to cover the earlier presentation and SHALL receive its own `3000ms` duration. Synchronization SHALL NOT manually dismiss this Toast, convert it to success, or otherwise make it an operation-lifecycle owner. Toast paint, expiry, cover, absence, or teardown SHALL NOT delay or redefine insertion, persistence, acknowledgement, pagination, failover, continuation, or synchronization outcome. History application SHALL continue to create no notification, boolean unread-attention mark, or system notice.
 
 #### Scenario: Frozen local history policy
 
@@ -53,26 +53,32 @@ Every qualifying batch SHALL publish independently with its own count. WebChat S
 #### Scenario: History application has no UI side effects
 
 - **WHEN** a valid history response reaches an application/page Domain
-- **THEN** records SHALL be inserted-if-absent through the origin store without notifications, boolean unread-attention marks, or system notices caused solely by history application; the exact positive-count pulled-message loading Toast specified below SHALL be the only added UI side effect
+- **THEN** records SHALL be inserted-if-absent through the origin store without notifications, boolean unread-attention marks, or system notices caused solely by history application; the exact receipt-time history-sync loading Toast specified below SHALL be the only added UI side effect
 
-#### Scenario: A positive history batch publishes one finite loading Toast
+#### Scenario: A nonempty history batch immediately publishes one finite loading Toast
 
-- **GIVEN** one valid history-response batch contains both messages already present in the current origin store and messages not yet stored there
-- **WHEN** its canonical insert-if-absent work settles with `count > 0` newly inserted messages
-- **THEN** WebChat SHALL publish exactly one generic loading Toast `Pulled {count} new messages.` with `3000ms` duration, count only the newly inserted messages, and create no notification, boolean unread-attention mark, or system notice because of history application
+- **GIVEN** one valid history-response batch contains at least one message
+- **WHEN** the application/page boundary receives the batch and its insert-if-absent work has not yet settled
+- **THEN** WebChat SHALL immediately publish exactly one generic loading Toast `Syncing message history` with `3000ms` duration, without awaiting or inspecting insertion completion, and create no notification, boolean unread-attention mark, or system notice because of history application
 
-#### Scenario: A batch without a new insertion stays silent
+#### Scenario: Receipt feedback does not depend on insertion results
 
-- **WHEN** a request starts, no response arrives, or a batch contains only existing same-id replay, retained conflicts, invalid values, or rejected values
-- **THEN** WebChat SHALL publish no pulled-message Toast and SHALL NOT infer a count from request or payload size
+- **GIVEN** every message in a nonempty valid history-response batch is already stored locally or its later insertion work adds nothing
+- **WHEN** the application/page boundary receives that batch
+- **THEN** WebChat SHALL still publish the same history-sync Toast exactly once and SHALL NOT derive, propagate, aggregate, store, or display a message count
+
+#### Scenario: No received history message stays silent
+
+- **WHEN** a request starts, WebChat is waiting, no response arrives, an existing completion response contains no messages, or a response is rejected before the application/page boundary
+- **THEN** WebChat SHALL publish no history-sync Toast
 
 #### Scenario: Successive batches remain independent
 
-- **GIVEN** a qualifying batch's pulled-message Toast is still within its `3000ms` duration
-- **WHEN** a later batch also inserts one or more new messages
-- **THEN** WebChat SHALL publish the later batch's own exact count through the existing one-visible-Toast behavior, cover the earlier presentation, start the later Toast's own `3000ms` duration, and SHALL NOT aggregate or queue the batches
+- **GIVEN** a qualifying batch's history-sync Toast is still within its `3000ms` duration
+- **WHEN** a later valid history-response batch containing at least one message reaches the application/page boundary
+- **THEN** WebChat SHALL publish the same exact copy through the existing one-visible-Toast behavior, cover the earlier presentation, start the later Toast's own `3000ms` duration, and SHALL NOT aggregate or queue the batches
 
-#### Scenario: Pulled-message feedback owns no synchronization lifecycle
+#### Scenario: History-sync feedback owns no insertion or synchronization lifecycle
 
 - **WHEN** a qualifying batch continues to acknowledgement, pagination, another batch, completion, failover, interruption, or surface teardown
-- **THEN** synchronization SHALL issue no manual cancel or success conversion for its pulled-message Toast, and Toast rendering or settlement SHALL NOT gate or change the synchronization path or outcome
+- **THEN** insertion and synchronization SHALL issue no manual cancel or success conversion for the history-sync Toast, and Toast rendering or settlement SHALL NOT gate or change the insertion or synchronization path or outcome
