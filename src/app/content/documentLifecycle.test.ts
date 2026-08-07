@@ -14,7 +14,7 @@ import { SendLifecycleExtern } from '@/domain/externs/SendLifecycle'
 import { createSendLifecycle } from '@/domain/impls/SendLifecycle'
 import { MessageDatabaseExtern } from '@/domain/MessageStore'
 import { ClientLease } from '@/runtime/ClientLease'
-import type { RuntimeCoordinator, RuntimeSnapshot } from '@/runtime/Contract'
+import type { RuntimeCoordinator, RuntimePageRegistration, RuntimeSnapshot } from '@/runtime/Contract'
 import { createDocumentLifecycleOwner } from './documentLifecycle'
 
 const RUNTIME_TOAST_ID = 'webchat-runtime-readiness'
@@ -106,7 +106,8 @@ describe('Content document-lifecycle owner composed parent control', () => {
     activeStores.clear()
   })
 
-  it('proves exact-once release/cancel/subscription and final cleanup through the real owner', async () => {
+  it('proves exact-once release/cancel, single readiness owner, and late-restore silence through the real owner', async () => {
+    vi.useFakeTimers()
     const domain = 'https://example.test'
     const pageId = 'page-a'
     const readySnapshot: RuntimeSnapshot = {
@@ -135,7 +136,6 @@ describe('Content document-lifecycle owner composed parent control', () => {
       domain,
       logError: vi.fn()
     })
-    await lease.init()
     const detachSpy = vi.spyOn(lease, 'detach')
     // Install readiness instrumentation BEFORE the composed store ignites the AppFeedback/Readiness
     // effect, so every real subscription/unsubscription is counted from the start.
@@ -150,6 +150,7 @@ describe('Content document-lifecycle owner composed parent control', () => {
         return unsubscribe()
       }
     })
+    await lease.init()
     const fixture = createComposedFixture(lease)
     // Spy the SAME SendLifecycle installed in the composed store so cancellation exact-once is observable.
     const cancelSpy = vi.spyOn(fixture.sendLifecycle, 'cancelActiveSends')
@@ -161,7 +162,10 @@ describe('Content document-lifecycle owner composed parent control', () => {
       detachLease: () => lease.detach()
     })
     fixture.store.send(fixture.appStatus.command.MarkReadyCommand())
+    await vi.advanceTimersByTimeAsync(0)
     await flushMicrotasks()
+    // Exactly one readiness subscription owner while active.
+    expect(readinessSubscriptions).toBe(1)
     const attachCount = () => registerPage.mock.calls.length
     const initialAttaches = attachCount()
     const initialCancels = cancelSpy.mock.calls.length
@@ -209,25 +213,111 @@ describe('Content document-lifecycle owner composed parent control', () => {
     expect(fixture.toast.loading).not.toHaveBeenCalled()
     expect(fixture.toast.success).not.toHaveBeenCalled()
 
-    // Final production teardown (faithful to index.tsx onRemove): a terminal exit silences feedback and
-    // detaches the lease exactly once through the owner, then dispose removes listeners and discard
-    // releases the store. Advance the watchdog boundary after teardown: no late register, no cleanup
-    // loading/success Toast, and readiness subscriptions balance exactly.
-    vi.useFakeTimers()
+    // Final production teardown: a terminal exit silences feedback, cancels the active send, and detaches
+    // the lease exactly once through the owner; then dispose + store discard. Advance the watchdog
+    // boundary (fake-controlled from the first init) and settle any late registration: no late register,
+    // no cleanup loading/success Toast, no live lease/watchdog, and exactly one readiness owner released.
+    const sendToken3 = fixture.sendLifecycle.beginSend()
     const terminal = new window.Event('pagehide')
     Object.defineProperty(terminal, 'persisted', { value: false })
     window.dispatchEvent(terminal)
     await flushMicrotasks()
     expect(detachSpy).toHaveBeenCalledTimes(3)
+    expect(cancelSpy.mock.calls.length).toBe(initialCancels + 3)
+    expect(fixture.sendLifecycle.getSendResult(sendToken3)).toBe('cancelled')
     expect(fixture.toast.loading).not.toHaveBeenCalled()
     owner.dispose()
     fixture.store.discard()
     await vi.advanceTimersByTimeAsync(6000)
     await flushMicrotasks()
-    expect(readinessUnsubscriptions).toBe(readinessSubscriptions)
+    expect(readinessUnsubscriptions).toBe(1)
     expect(attachCount()).toBe(initialAttaches + 2)
     expect(fixture.toast.loading).not.toHaveBeenCalled()
     expect(fixture.toast.success).not.toHaveBeenCalled()
+    vi.useRealTimers()
+  })
+
+  it('does not revive feedback or ownership when a held restore settles after terminal teardown', async () => {
+    vi.useFakeTimers()
+    const domain = 'https://example.test'
+    const pageId = 'page-a'
+    const readySnapshot: RuntimeSnapshot = {
+      hostId: 'host-a',
+      hostPhase: 'ready',
+      peerId: 'peer-a',
+      domains: [
+        {
+          domain,
+          phase: 'active',
+          pageIds: [pageId],
+          chatRoomJoined: true,
+          sessions: []
+        }
+      ],
+      world: { joined: true, peerId: 'peer-a', presences: [] }
+    }
+    let resolveHeld!: (value: RuntimePageRegistration) => void
+    const held = new Promise<RuntimePageRegistration>((resolve) => {
+      resolveHeld = resolve
+    })
+    const registerPage = vi
+      .fn<RuntimeCoordinator['registerPage']>()
+      .mockResolvedValueOnce({ phase: 'ready', generation: 1, snapshot: readySnapshot })
+      .mockImplementationOnce(() => held)
+    const lease = new ClientLease({
+      coordinator: { ensureHost: vi.fn(), registerPage },
+      pageId,
+      domain,
+      logError: vi.fn()
+    })
+    let readinessSubscriptions = 0
+    let readinessUnsubscriptions = 0
+    const originalReadiness = lease.whenHostPhase.bind(lease)
+    vi.spyOn(lease, 'whenHostPhase').mockImplementation((callback) => {
+      readinessSubscriptions += 1
+      const unsubscribe = originalReadiness(callback)
+      return () => {
+        readinessUnsubscriptions += 1
+        return unsubscribe()
+      }
+    })
+    await lease.init()
+    const fixture = createComposedFixture(lease)
+    const cancelSpy = vi.spyOn(fixture.sendLifecycle, 'cancelActiveSends')
+    const owner = createDocumentLifecycleOwner()
+    owner.bind({
+      store: fixture.store,
+      sendLifecycle: fixture.sendLifecycle,
+      initLease: () => lease.init(),
+      detachLease: () => lease.detach()
+    })
+    fixture.store.send(fixture.appStatus.command.MarkReadyCommand())
+    await vi.advanceTimersByTimeAsync(0)
+    await flushMicrotasks()
+
+    // Suspended, then a persisted pageshow starts a restore whose registration is HELD in flight.
+    window.dispatchEvent(persistedEvent('pagehide'))
+    await flushMicrotasks()
+    window.dispatchEvent(persistedEvent('pageshow'))
+    await flushMicrotasks()
+    expect(registerPage).toHaveBeenCalledTimes(2)
+
+    // Terminal teardown lands while the restore is still pending: silence + cancel + detach + dispose +
+    // discard. Then the held registration settles: it must not resume feedback, register again, or toast.
+    const terminal = new window.Event('pagehide')
+    Object.defineProperty(terminal, 'persisted', { value: false })
+    window.dispatchEvent(terminal)
+    await flushMicrotasks()
+    owner.dispose()
+    fixture.store.discard()
+    resolveHeld({ phase: 'ready', generation: 2, snapshot: readySnapshot })
+    await vi.advanceTimersByTimeAsync(6000)
+    await flushMicrotasks()
+    expect(fixture.toast.loading).not.toHaveBeenCalled()
+    expect(fixture.toast.success).not.toHaveBeenCalled()
+    expect(registerPage).toHaveBeenCalledTimes(2)
+    expect(cancelSpy.mock.calls.length).toBe(2)
+    expect(readinessUnsubscriptions).toBe(readinessSubscriptions)
     vi.useRealTimers()
   })
 })
