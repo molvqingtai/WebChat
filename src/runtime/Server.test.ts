@@ -2377,6 +2377,62 @@ describe('RuntimeServer history', () => {
     expect(types).not.toContain('history-request')
     expect(types).not.toContain('history-response')
   })
+
+  it('slices inventory pages by the encoded 64KiB frame cap, not the phase count', async () => {
+    const { fake, server, roomId } = await setup()
+    const manyIds = Array.from({ length: 10000 }, (_, index) => `id-${index.toString(36).padStart(6, '0')}`)
+    const records = manyIds.map((id, index) => textRecord(id, NOW - index))
+    await registerInventoryProvider(server, records)
+    fake.receive(roomId, 'peer-a', session())
+    await vi.waitFor(() => {
+      const pages = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST)
+      expect(pages.length).toBeGreaterThan(1)
+    })
+    const pages = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST)
+    const pageSizes = pages.map((p) => new TextEncoder().encode(JSON.stringify(p)).byteLength)
+    expect(Math.max(...pageSizes)).toBeLessThan(64 * 1024)
+    expect(pages[pages.length - 1]).toMatchObject({ done: true })
+    // The inventory id set is fully covered by the pages.
+    const covered = pages.flatMap((p) => (p as { messageIds: string[] }).messageIds)
+    expect(new Set(covered).size).toBe(manyIds.length)
+  })
+
+  it('rejects a cross-page recent-first violation atomically without applying a prefix', async () => {
+    const { fake, server, roomId } = await setup()
+    await registerInventoryProvider(server)
+    const delivered: string[] = []
+    await server.onInbound({ pageId: 'page-a' }, async (event) => {
+      delivered.push(event.record.message.id)
+      await server.ackInbound({ domain: event.domain, sequence: event.sequence, inserted: true })
+    })
+    fake.receive(roomId, 'peer-a', session())
+    await settle()
+    const requestMsg = fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST)
+    const syncId = (requestMsg as { syncId: string }).syncId
+
+    // Page 0 applies records older than page 1's newest: a cross-page ordering violation must cancel
+    // the attempt instead of applying the violating prefix.
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
+      syncId,
+      page: 0,
+      users: [REMOTE_USER],
+      messages: [text('older-page-0', REMOTE_USER.id, NOW - 10)],
+      done: false
+    })
+    await vi.waitFor(() => expect(delivered).toContain('older-page-0'))
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
+      syncId,
+      page: 1,
+      users: [REMOTE_USER],
+      messages: [text('newer-page-1', REMOTE_USER.id, NOW - 5)],
+      done: true
+    })
+    await settle()
+    // The violating page never applies.
+    expect(delivered).not.toContain('newer-page-1')
+  })
 })
 
 describe('RuntimeServer Artico per-target isolation', () => {
