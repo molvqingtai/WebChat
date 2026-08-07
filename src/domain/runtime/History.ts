@@ -16,7 +16,6 @@ import {
 } from '@/constants/config'
 import {
   MAX_HISTORY_RESPONSE_MESSAGES,
-  MAX_WIRE_BYTES,
   MESSAGE_TYPE,
   isChatRoomMessageSemanticallyValid,
   isMessageWithinLimit,
@@ -65,6 +64,8 @@ interface RequesterAttemptState extends HistoryAttemptKey {
   lastAppliedPageFingerprint?: string
   /** Bounded serial queue of valid response pages that arrived while a batch was pending. */
   pendingResponsePages: HistoryMessagesResponse[]
+  /** Page number of the next expected queued page (pages queue continuously, not only N+1). */
+  queuedResponseTail: number
   feedbackActive: boolean
 }
 
@@ -89,6 +90,8 @@ interface ProviderAttemptState extends HistoryAttemptKey {
 
 interface ProviderSupplyPayload extends HistoryAttemptKey {
   queueBytes: number
+  /** True only after the complete inventory arrived; only ready attempts run the supplier. */
+  ready: boolean
 }
 
 type ProviderSupplyJobState = ProviderSupplyPayload
@@ -297,6 +300,7 @@ const HistoryDomain = Remesh.domain({
           finalBatch: false,
           responseDone: false,
           pendingResponsePages: [],
+          queuedResponseTail: 0,
           feedbackActive: false
         }
         return [
@@ -455,6 +459,9 @@ const HistoryDomain = Remesh.domain({
 
         // A replacement syncId while the old attempt is still supplying occupies one dormant
         // source-local successor; it runs nothing concurrently and promotes only after old settlement.
+        // The successor applies the exact same request-page state machine as a current provider:
+        // fingerprint replay idempotency, changed/gap/post-done cancellation, raw budgets,
+        // inventoryDone, and a page-zero attempt timeout under its complete token.
         if (current && current.syncId !== payload.message.syncId) {
           if (successor && successor.syncId !== payload.message.syncId) return null
           const jobs = get(ProviderSupplyJobsState())
@@ -475,38 +482,50 @@ const HistoryDomain = Remesh.domain({
             syncId: payload.message.syncId,
             syncToken: successor?.syncToken ?? token('provider', allocated.values[0])
           }
-          const expectedPage = successor?.expectedRequestPage ?? 0
-          if (payload.message.page !== expectedPage) return null
-          if (payload.message.messageIds.length === 0 && !payload.message.done) return null
-          const inventory = new Set([...(successor?.inventory ?? []), ...payload.message.messageIds])
-          const inventoryCount = (successor?.inventoryCount ?? 0) + payload.message.messageIds.length
-          const inventoryBytes = (successor?.inventoryBytes ?? 0) + queueBytes
+          const base = successor ?? {
+            ...key,
+            cutoff: historyCutoff(clock.now()),
+            inventory: new Set<string>(),
+            inventoryCount: 0,
+            inventoryBytes: 0,
+            expectedRequestPage: 0,
+            inventoryDone: false,
+            snapshot: [],
+            nextResponsePage: 0,
+            responseBytes: 0,
+            responseCount: 0,
+            responseDone: false,
+            queueBytes
+          }
+          const expectedPage = base.expectedRequestPage
+          // Identical replay of the last applied page is idempotent; changed replay, gap,
+          // out-of-order, empty non-final, or post-done input cancels the successor attempt.
+          if (payload.message.page === expectedPage - 1 && base.lastAppliedRequestPageFingerprint) {
+            if (base.lastAppliedRequestPageFingerprint === JSON.stringify(payload.message)) {
+              return [TokenState().new(allocated.next)]
+            }
+            return null
+          }
+          if (
+            payload.message.page !== expectedPage ||
+            base.inventoryDone ||
+            (payload.message.messageIds.length === 0 && !payload.message.done)
+          ) {
+            return null
+          }
+          const inventory = new Set([...base.inventory, ...payload.message.messageIds])
+          const inventoryCount = base.inventoryCount + payload.message.messageIds.length
+          const inventoryBytes = base.inventoryBytes + queueBytes
           if (inventoryCount > historySessionMessages || inventoryBytes > historySessionBytes) return null
-          const nextSuccessor: ProviderSupplySuccessorState = successor
-            ? {
-                ...successor,
-                inventory,
-                inventoryCount,
-                inventoryBytes,
-                expectedRequestPage: expectedPage + 1,
-                lastAppliedRequestPageFingerprint: JSON.stringify(payload.message)
-              }
-            : {
-                ...key,
-                cutoff: historyCutoff(clock.now()),
-                inventory,
-                inventoryCount,
-                inventoryBytes,
-                expectedRequestPage: expectedPage + 1,
-                lastAppliedRequestPageFingerprint: JSON.stringify(payload.message),
-                inventoryDone: payload.message.done,
-                snapshot: [],
-                nextResponsePage: 0,
-                responseBytes: 0,
-                responseCount: 0,
-                responseDone: false,
-                queueBytes
-              }
+          const nextSuccessor: ProviderSupplySuccessorState = {
+            ...base,
+            inventory,
+            inventoryCount,
+            inventoryBytes,
+            expectedRequestPage: expectedPage + 1,
+            lastAppliedRequestPageFingerprint: JSON.stringify(payload.message),
+            inventoryDone: base.inventoryDone || payload.message.done
+          }
           return [
             TokenState().new(allocated.next),
             ProviderSupplySuccessorsState().new(
@@ -518,7 +537,8 @@ const HistoryDomain = Remesh.domain({
                   )
                 : [...successors, nextSuccessor]
             ),
-            ...(payload.message.done ? [ProviderTimeoutArmedEvent(key)] : [])
+            // The successor attempt timeout is armed from page zero, not only after done.
+            ...(successor ? [] : [ProviderTimeoutArmedEvent(key)])
           ]
         }
 
@@ -608,9 +628,13 @@ const HistoryDomain = Remesh.domain({
               next
             )
           ),
-          // The attempt timeout is armed from page zero, not only after done.
-          ...(current ? [] : [ProviderTimeoutArmedEvent(key)]),
-          ...(payload.message.done ? [AdmitProviderSupplyCommand({ ...key, queueBytes })] : [])
+          // The attempt timeout is armed from page zero, and the job is admitted from page zero so
+          // partial attempts count toward the 32-job/8KiB pool; the supplier request is issued only
+          // after the complete inventory arrives (done), but admission holds the attempt now.
+          ...(current
+            ? []
+            : [ProviderTimeoutArmedEvent(key), AdmitProviderSupplyCommand({ ...key, queueBytes, ready: false })]),
+          ...(payload.message.done && !current ? [AdmitProviderSupplyCommand({ ...key, queueBytes, ready: true })] : [])
         ]
       }
     })
@@ -631,14 +655,15 @@ const HistoryDomain = Remesh.domain({
         ) {
           return null
         }
-        if (active.length >= MAX_PROVIDER_SUPPLY_CONCURRENCY) {
+        const job = { ...request }
+        if (active.length >= MAX_PROVIDER_SUPPLY_CONCURRENCY || !request.ready) {
           return [
-            ProviderSupplyJobsState().new([...jobs, { ...request }]),
-            WaitingSuppliesState().new([...waiting, request])
+            ProviderSupplyJobsState().new([...jobs, job]),
+            ...(request.ready ? [WaitingSuppliesState().new([...waiting, request])] : [])
           ]
         }
         return [
-          ProviderSupplyJobsState().new([...jobs, { ...request }]),
+          ProviderSupplyJobsState().new([...jobs, job]),
           ActiveSuppliesState().new([...active, request]),
           ProviderSupplyRequestedEvent(request)
         ]
@@ -650,10 +675,10 @@ const HistoryDomain = Remesh.domain({
       impl: ({ get }, key: HistoryAttemptKey) => {
         const active = removeBy(get(ActiveSuppliesState()), (item) => matchesSync(item, key))
         const waiting = get(WaitingSuppliesState())
-        const next = waiting[0]
+        const next = waiting.find((item) => item.ready)
         return [
           ActiveSuppliesState().new(next ? [...active, next] : active),
-          WaitingSuppliesState().new(next ? waiting.slice(1) : waiting),
+          WaitingSuppliesState().new(next ? waiting.filter((item) => item !== next) : waiting),
           ...(next ? [ProviderSupplyRequestedEvent(next)] : [])
         ]
       }
@@ -670,15 +695,26 @@ const HistoryDomain = Remesh.domain({
         const successor = successors.find(
           (item) => item.sourcePeerId === key.sourcePeerId && item.domain === key.domain
         )
-        if (!current && !ownerActive && !successor) return null
+        const jobs = get(ProviderSupplyJobsState())
+        const active = get(ActiveSuppliesState())
+        const waiting = get(WaitingSuppliesState())
+        const hasSlotAccounting =
+          jobs.some((item) => matchesSync(item, key)) ||
+          active.some((item) => matchesSync(item, key)) ||
+          waiting.some((item) => matchesSync(item, key))
+        if (!current && !ownerActive && !successor && !hasSlotAccounting) return null
         if (!current) {
+          // Late supplier settlement after cleanup: release the slot accounting exactly once so no
+          // active/waiting slot leaks, even when the provider state is already gone.
           return [
             ProviderSupplySuccessorsState().new(
               removeBy(
                 get(ProviderSupplySuccessorsState()),
                 (item) => item.sourcePeerId === key.sourcePeerId && item.domain === key.domain
               )
-            )
+            ),
+            ProviderSupplyJobsState().new(removeBy(jobs, (item) => matchesSync(item, key))),
+            ...(hasSlotAccounting ? [ReleaseProviderSupplySlotCommand(key)] : [])
           ]
         }
         const promotion =
@@ -700,7 +736,8 @@ const HistoryDomain = Remesh.domain({
                   domain: successor.domain,
                   syncId: successor.syncId,
                   syncToken: successor.syncToken,
-                  queueBytes: getTextByteSize(JSON.stringify({ syncId: successor.syncId }))
+                  queueBytes: getTextByteSize(JSON.stringify({ syncId: successor.syncId })),
+                  ready: true
                 })
               ]
             : [
@@ -830,11 +867,12 @@ const HistoryDomain = Remesh.domain({
         }
         if (payload.stage === 'preflight') {
           // The oversized record moves to the front of the retained tail and keeps paginating; the
-          // page is never truncated to a false terminal. If even one record cannot form a valid page,
-          // the attempt is cancelled locally (no empty terminal response replaces it).
+          // page is never truncated to a false terminal. If no sendable record remains (including a
+          // single unencodable leading record with a retained tail), cancel the attempt immediately
+          // instead of emitting an empty non-final page that would loop until timeout.
           const dropped = current.records[current.records.length - 1]
           const shrunk = current.records.slice(0, -1)
-          if (shrunk.length === 0 && current.remaining.length === 0) {
+          if (shrunk.length === 0) {
             return [
               clear,
               ErrorEvent({ error: payload.error, domain: current.domain }),
@@ -922,22 +960,28 @@ const HistoryDomain = Remesh.domain({
         )
         if (!current || current.syncId !== payload.message.syncId) return null
         if (current.awaitingBatchId) {
-          // While a batch is pending, an identical replay of the accepted page is idempotent, a
-          // changed replay cancels, and a valid continuous next page joins the bounded serial queue.
+          // While a batch is pending: an identical replay of the accepted page is idempotent, a
+          // changed replay of the accepted page cancels the attempt (discarding queued work), an
+          // identical replay of a queued page is deduplicated, and valid continuous pages (N+1,
+          // N+2, ...) join the bounded serial queue in order.
           const fingerprint = JSON.stringify(payload.message)
           if (payload.message.page === current.expectedResponsePage - 1) {
             return current.lastAppliedPageFingerprint === fingerprint
               ? null
               : FinishRequestedEvent({ domain: binding.domain, sourcePeerId: payload.sourcePeerId })
           }
-          if (payload.message.page === current.expectedResponsePage) {
-            if (current.pendingResponsePages.length >= MAX_PENDING_RESPONSE_PAGES) {
+          if (payload.message.page === current.queuedResponseTail) {
+            const queued = current.pendingResponsePages
+            const lastQueued = queued[queued.length - 1]
+            if (lastQueued && JSON.stringify(lastQueued) === fingerprint) return null
+            if (queued.length >= MAX_PENDING_RESPONSE_PAGES) {
               return FinishRequestedEvent({ domain: binding.domain, sourcePeerId: payload.sourcePeerId })
             }
             return RequesterAttemptsState().new(
               replaceBy(requesters, (item) => matchesSync(item, current), {
                 ...current,
-                pendingResponsePages: [...current.pendingResponsePages, payload.message]
+                pendingResponsePages: [...queued, payload.message],
+                queuedResponseTail: current.queuedResponseTail + 1
               })
             )
           }
@@ -994,7 +1038,8 @@ const HistoryDomain = Remesh.domain({
           awaitingBatchId: batchId,
           finalBatch: page.done,
           responseDone: page.done,
-          lastAppliedPageFingerprint: JSON.stringify(page)
+          lastAppliedPageFingerprint: JSON.stringify(page),
+          queuedResponseTail: Math.max(current.queuedResponseTail, current.expectedResponsePage + 1)
         }
         return [
           TokenState().new(allocated.next),
@@ -1025,7 +1070,8 @@ const HistoryDomain = Remesh.domain({
           ...current,
           awaitingBatchId: undefined,
           feedbackActive: current.feedbackActive || payload.inserted,
-          pendingResponsePages: queued ? current.pendingResponsePages.slice(1) : []
+          pendingResponsePages: queued ? current.pendingResponsePages.slice(1) : [],
+          queuedResponseTail: queued ? current.queuedResponseTail : current.queuedResponseTail
         }
         const output: RemeshCommandOutput[] = [
           RequesterAttemptsState().new(replaceBy(requesters, (item) => matchesSync(item, current), next)),
@@ -1036,6 +1082,12 @@ const HistoryDomain = Remesh.domain({
             : [])
         ]
         if (!current.finalBatch && queued) {
+          // Dequeue must re-validate the page number: a stale or duplicated queued page that no
+          // longer matches the expected page cancels the attempt instead of being applied.
+          if (queued.page !== next.expectedResponsePage) {
+            output.push(FinishRequestedEvent({ domain: current.domain, sourcePeerId: current.sourcePeerId }))
+            return output
+          }
           const prepared = prepareResponsePage(next, {
             roomId: '',
             sourcePeerId: current.sourcePeerId,
@@ -1267,22 +1319,34 @@ const HistoryDomain = Remesh.domain({
                 .filter((record) => record.message.hlc.timestamp >= attempt.cutoff)
                 .slice(0, historySessionMessages)
                 .map((record) => record.message.id)
-              // Build inventory pages with the REAL codec so every page is strictly below the final
-              // 64KiB encoded frame; a single opaque ID that cannot form a valid page cancels locally.
+              // Build inventory pages with the REAL production codec so every page is strictly below
+              // the final 64KiB encoded frame. NativeWireCodec throws on an oversized frame, so the
+              // throw closes the current bucket; only a single ID that cannot form a valid page by
+              // itself cancels the attempt locally.
               const pages: HistoryMessagesRequest[] = []
               let bucket: string[] = []
-              for (const id of inventoryIds) {
-                const candidate = [...bucket, id]
+              const encodeFrame = async (messageIds: string[], done: boolean) => {
                 const frame = {
                   type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
                   syncId: key.syncId,
                   page: pages.length,
-                  messageIds: candidate,
-                  done: false
+                  messageIds,
+                  done
                 }
-                const encoded = await codec.encode(frame)
-                if (getTextByteSize(encoded) >= MAX_WIRE_BYTES) {
+                await codec.encode(frame)
+                return frame
+              }
+              for (const id of inventoryIds) {
+                const candidate = [...bucket, id]
+                let fits = true
+                try {
+                  await encodeFrame(candidate, false)
+                } catch {
+                  fits = false
+                }
+                if (!fits) {
                   if (bucket.length === 0) {
+                    // A single opaque ID cannot form a valid page: cancel locally, never loop.
                     return [
                       ...(failedPageIds.length > 0 ? [DeadPagesEvent(failedPageIds)] : []),
                       FinishCurrentRequestedEvent(key)
@@ -1295,6 +1359,14 @@ const HistoryDomain = Remesh.domain({
                     messageIds: bucket,
                     done: false
                   })
+                  try {
+                    await encodeFrame([id], false)
+                  } catch {
+                    return [
+                      ...(failedPageIds.length > 0 ? [DeadPagesEvent(failedPageIds)] : []),
+                      FinishCurrentRequestedEvent(key)
+                    ]
+                  }
                   bucket = [id]
                 } else {
                   bucket = candidate

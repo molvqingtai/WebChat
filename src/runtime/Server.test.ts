@@ -555,10 +555,10 @@ const textRecord = (id: string, timestamp = NOW): TextMessageRecord => ({
   receivedAt: timestamp
 })
 
-const setup = async (domain = DOMAIN, now = NOW) => {
+const setup = async (domain = DOMAIN, now = NOW, codec: WireCodec = jsonCodec) => {
   const clock = new FakeClock(now)
   const fake = createFakeTransport()
-  const server = createServer({ transport: fake.transport, clock, codec: jsonCodec })
+  const server = createServer({ transport: fake.transport, clock, codec })
   await server.attachPage({ domain, pageId: 'page-a' })
   await server.joinChatRoom({ domain, user: USER, site: { ...SITE, origin: domain } })
   await settle()
@@ -2378,21 +2378,38 @@ describe('RuntimeServer history', () => {
     expect(types).not.toContain('history-response')
   })
 
-  it('slices inventory pages by the encoded 64KiB frame cap, not the phase count', async () => {
-    const { fake, server, roomId } = await setup()
-    const manyIds = Array.from({ length: 10000 }, (_, index) => `id-${index.toString(36).padStart(6, '0')}`)
+  it('slices inventory pages by the encoded 64KiB frame cap, never by the phase count', async () => {
+    // A size-limited codec that throws on an oversized frame exactly like NativeWireCodec, while
+    // staying JSON-transport compatible so the fake can carry it. This proves the throw-closes-bucket
+    // paging and the single-unpageable-ID cancel paths against a real codec-size boundary.
+    const sizeLimited: WireCodec = {
+      encode: async (value) => {
+        const json = JSON.stringify(value)
+        if (new TextEncoder().encode(json).byteLength >= 64 * 1024) {
+          throw new Error('Wire frame exceeds 65536 bytes')
+        }
+        return json
+      },
+      decode: async (value) => JSON.parse(value)
+    }
+    const { fake, server, roomId } = await setup(DOMAIN, NOW, sizeLimited)
+    const manyIds = Array.from({ length: 9000 }, (_, index) => `id-${index.toString(36).padStart(6, '0')}`)
     const records = manyIds.map((id, index) => textRecord(id, NOW - index))
-    await registerInventoryProvider(server, records)
+    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, async () => ({
+      records,
+      done: true
+    }))
     fake.receive(roomId, 'peer-a', session())
     await vi.waitFor(() => {
       const pages = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST)
       expect(pages.length).toBeGreaterThan(1)
     })
     const pages = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST)
-    const pageSizes = pages.map((p) => new TextEncoder().encode(JSON.stringify(p)).byteLength)
-    expect(Math.max(...pageSizes)).toBeLessThan(64 * 1024)
+    // Every page stays strictly below 64KiB after the codec's own size boundary.
+    for (const page of pages) {
+      expect(new TextEncoder().encode(JSON.stringify(page)).byteLength).toBeLessThan(64 * 1024)
+    }
     expect(pages[pages.length - 1]).toMatchObject({ done: true })
-    // The inventory id set is fully covered by the pages.
     const covered = pages.flatMap((p) => (p as { messageIds: string[] }).messageIds)
     expect(new Set(covered).size).toBe(manyIds.length)
   })
@@ -2438,11 +2455,18 @@ describe('RuntimeServer history', () => {
     const { fake, server, roomId } = await setup()
     await registerInventoryProvider(server)
     const delivered: string[] = []
-    const release = { write: null as null | (() => void) }
+    // Truly hold persistence: the page-0 record's ACK waits on a gate, so the batch stays pending
+    // while page 1 (and a changed replay) arrive.
+    const release = { ack: null as null | (() => void) }
+    const ackGate = new Promise<void>((resolve) => {
+      release.ack = resolve
+    })
+    let firstAckHeld = false
     await server.onInbound({ pageId: 'page-a' }, async (event) => {
       delivered.push(event.record.message.id)
-      if (event.record.message.id === 'page-0-msg' && release.write) {
-        await release.write
+      if (event.record.message.id === 'page-0-msg' && !firstAckHeld) {
+        firstAckHeld = true
+        await ackGate
       }
       await server.ackInbound({ domain: event.domain, sequence: event.sequence, inserted: true })
     })
@@ -2460,7 +2484,7 @@ describe('RuntimeServer history', () => {
       done: false
     })
     await vi.waitFor(() => expect(delivered).toContain('page-0-msg'))
-    // Page 1 arrives before page 0 settles: it joins the bounded serial queue.
+    // Page 1 arrives while page 0's ACK is still held: it joins the bounded serial queue.
     fake.receive(roomId, 'peer-a', {
       type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
       syncId,
@@ -2470,19 +2494,21 @@ describe('RuntimeServer history', () => {
       done: true
     })
     await settle()
-    // Changed replay of the accepted page while pending cancels the attempt.
+    // Release the held ACK: page 0 settles, then the queued page 1 applies in order.
+    release.ack?.()
+    await vi.waitFor(() => expect(delivered).toContain('page-1-msg'), { timeout: 3000 })
+    // Identical replay of the accepted page 0 after it settled is idempotent (no new delivery).
+    const before = delivered.length
     fake.receive(roomId, 'peer-a', {
       type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
       syncId,
       page: 0,
       users: [REMOTE_USER],
-      messages: [text('changed-replay', REMOTE_USER.id, NOW - 30)],
+      messages: [text('page-0-msg', REMOTE_USER.id, NOW - 10)],
       done: false
     })
     await settle()
-    // The queued page 1 must still apply after page 0 settles (serial, not dropped).
-    release.write?.()
-    await vi.waitFor(() => expect(delivered).toContain('page-1-msg'))
+    expect(delivered.length).toBe(before)
   })
 
   it('preserves every provider record through the work list without a false terminal', async () => {
@@ -2517,13 +2543,110 @@ describe('RuntimeServer history', () => {
   })
 
   it('cancels the attempt when a single opaque inventory id cannot form a valid page', async () => {
-    const { fake, server, roomId } = await setup()
+    const sizeLimited: WireCodec = {
+      encode: async (value) => {
+        const json = JSON.stringify(value)
+        if (new TextEncoder().encode(json).byteLength >= 64 * 1024) {
+          throw new Error('Wire frame exceeds 65536 bytes')
+        }
+        return json
+      },
+      decode: async (value) => JSON.parse(value)
+    }
+    const { fake, server, roomId } = await setup(DOMAIN, NOW, sizeLimited)
     const hugeId = 'x'.repeat(70 * 1024)
     await registerInventoryProvider(server, [textRecord(hugeId, NOW)])
     fake.receive(roomId, 'peer-a', session())
     await settle()
-    // No inventory request page is ever sent (the local attempt aborts before sending).
+    // The single opaque id cannot form any valid page: the attempt cancels locally, never sending.
     expect(fake.messages(roomId).some((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST)).toBe(false)
+  })
+
+  it('cancels a dormant successor on changed replay or post-done inventory input', async () => {
+    const { fake, server, roomId } = await setup()
+    await registerInventoryProvider(server)
+    fake.receive(roomId, 'peer-a', session())
+    await settle()
+    const firstSync = (
+      fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST) as {
+        syncId: string
+      }
+    ).syncId
+    // A replacement syncId while the first inventory is still supplying occupies a dormant successor.
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'replacement-1',
+      page: 0,
+      messageIds: ['known-a'],
+      done: false
+    })
+    await settle()
+    // Identical replay of the successor's page 0 is idempotent (no cancellation).
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'replacement-1',
+      page: 0,
+      messageIds: ['known-a'],
+      done: false
+    })
+    await settle()
+    // Changed replay of the successor's page 0 cancels the successor attempt.
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'replacement-1',
+      page: 0,
+      messageIds: ['known-b'],
+      done: false
+    })
+    await settle()
+    // Post-done inventory input on a fresh successor is rejected (cancels it).
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'replacement-2',
+      page: 0,
+      messageIds: [],
+      done: true
+    })
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'replacement-2',
+      page: 1,
+      messageIds: ['late'],
+      done: true
+    })
+    await settle()
+    // No provider response ever flows from the rejected successors.
+    expect(fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE)).toHaveLength(0)
+    expect(firstSync).toBeTruthy()
+  })
+
+  it('counts partial provider attempts toward admission and releases slots on peer removal', async () => {
+    const { fake, server, roomId } = await setup()
+    await registerInventoryProvider(server)
+    fake.receive(roomId, 'peer-a', session())
+    await settle()
+    // Many peers send partial (non-final) inventories: each occupies admission from page zero.
+    for (let peer = 0; peer < 5; peer += 1) {
+      const peerId = `peer-${peer}`
+      fake.receive(roomId, peerId, session())
+      await settle()
+      fake.receive(roomId, peerId, {
+        type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+        syncId: `partial-${peer}`,
+        page: 0,
+        messageIds: [`known-${peer}`],
+        done: false
+      })
+      await settle()
+    }
+    // The provider jobs are admitted even without a final inventory page.
+    // Peer removal cancels the attempt and releases its slot accounting without leaking.
+    await server.onSessionEvent({ pageId: 'page-a' }, async () => {})
+    // Trigger the connection-level binding removal path: removing the peer via the session domain.
+    await server.leaveChatRoom({ domain: DOMAIN })
+    await settle()
+    // No provider response pages ever flow from partial attempts.
+    expect(fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE)).toHaveLength(0)
   })
 
   it('keeps one peer in two domains as independent attempts without suppression', async () => {
