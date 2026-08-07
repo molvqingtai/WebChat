@@ -592,6 +592,140 @@ describe('Runtime-backed ChatRoom application port', () => {
     await expect(messageStore.query()).resolves.toEqual([textRecord('history'), record])
   })
 
+  it('announces one nonempty history batch exactly once at receipt before insertion settles', async () => {
+    const database = createMemoryMessageDatabase(`history-sync-receipt-${databaseId++}`)
+    const controlled = new ControlledDatabase(database)
+    const { room, emitInbound, server } = await setup([], controlled)
+    const historySyncs: number[] = []
+    room.onHistorySync(() => historySyncs.push(historySyncs.length))
+    await settle()
+
+    // Hold insertion open: the receipt announcement must happen before insert-if-absent work settles.
+    const release = { write: null as null | (() => void) }
+    controlled.beforeWrite = () =>
+      new Promise<void>((resolve) => {
+        release.write = () => resolve()
+      })
+    const pending = emitInbound({
+      sequence: 1,
+      domain: DOMAIN,
+      record: textRecord('batch-a-1'),
+      source: 'history',
+      batchId: 'batch-a'
+    })
+    await settle()
+
+    expect(historySyncs).toEqual([0])
+
+    release.write?.()
+    await pending
+    expect(historySyncs).toEqual([0])
+    expect(server.ackInbound).toHaveBeenCalledWith({ domain: DOMAIN, sequence: 1 })
+  })
+
+  it('announces once per history batch and ignores live events and batch-less history events', async () => {
+    const { room, emitInbound } = await setup()
+    const historySyncs: number[] = []
+    room.onHistorySync(() => historySyncs.push(historySyncs.length))
+    await settle()
+
+    // Live events and history events without a batch id never announce.
+    await emitInbound({ sequence: 1, domain: DOMAIN, record: textRecord('live-1'), source: 'live' })
+    await emitInbound({ sequence: 2, domain: DOMAIN, record: textRecord('history-no-batch'), source: 'history' })
+    expect(historySyncs).toEqual([])
+
+    // Every event of one batch shares the batch id: announce exactly once for the batch.
+    await emitInbound({
+      sequence: 3,
+      domain: DOMAIN,
+      record: textRecord('batch-b-1'),
+      source: 'history',
+      batchId: 'batch-b'
+    })
+    await emitInbound({
+      sequence: 4,
+      domain: DOMAIN,
+      record: textRecord('batch-b-2'),
+      source: 'history',
+      batchId: 'batch-b'
+    })
+    expect(historySyncs).toEqual([0])
+
+    // A later batch publishes independently with its own announcement.
+    await emitInbound({
+      sequence: 5,
+      domain: DOMAIN,
+      record: textRecord('batch-c-1'),
+      source: 'history',
+      batchId: 'batch-c'
+    })
+    expect(historySyncs).toEqual([0, 1])
+  })
+
+  it('announces an all-existing replay batch once because the received batch is nonempty', async () => {
+    const record = textRecord('already-stored')
+    const { room, emitInbound } = await setup([record])
+    const historySyncs: number[] = []
+    room.onHistorySync(() => historySyncs.push(historySyncs.length))
+    await settle()
+
+    // The same record replayed through history still counts as a nonempty received batch: the receipt
+    // announcement does not depend on insert results or any count.
+    await emitInbound({
+      sequence: 1,
+      domain: DOMAIN,
+      record,
+      source: 'history',
+      batchId: 'batch-replay'
+    })
+    expect(historySyncs).toEqual([0])
+  })
+
+  it('re-announces a new host generation even when batch ids repeat', async () => {
+    const server = serverFixture()
+    const database = createMemoryMessageDatabase(`history-sync-generation-${databaseId++}`)
+    const messageStore = createMessageStore(database)
+    const readyListeners = new Set<() => void>()
+    const room = new ChatRoom({
+      server: server.server,
+      messageStore,
+      pageDomain: DOMAIN,
+      pageId: 'page-1',
+      getSnapshot: () => domainSnapshot(),
+      whenReady: (listener) => {
+        readyListeners.add(listener)
+        listener()
+        return () => readyListeners.delete(listener)
+      }
+    })
+    const historySyncs: number[] = []
+    room.onHistorySync(() => historySyncs.push(historySyncs.length))
+    await settle()
+
+    await server.emitInbound({
+      sequence: 1,
+      domain: DOMAIN,
+      record: textRecord('gen-1'),
+      source: 'history',
+      batchId: 'batch:0'
+    })
+    expect(historySyncs).toEqual([0])
+
+    // A fresh Runtime generation owns a fresh token counter and may reuse batch ids; the new
+    // attachment must announce them again instead of suppressing them.
+    readyListeners.forEach((listener) => listener())
+    await settle()
+    await settle()
+    await server.emitInbound({
+      sequence: 2,
+      domain: DOMAIN,
+      record: textRecord('gen-2'),
+      source: 'history',
+      batchId: 'batch:0'
+    })
+    expect(historySyncs).toEqual([0, 1])
+  })
+
   it('isolates an invalid inbound record before persistence and recovers on the next event', async () => {
     const { room, emitInbound, messageStore, server } = await setup()
     const messages: ChatMessage[] = []

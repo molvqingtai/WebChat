@@ -8,18 +8,18 @@
 
 ## 2. Minimum Implementation
 
-- [ ] 2.1 Use the existing nonempty-batch fact at the application/page history-response receipt boundary; do not wait for insertion completion or derive, propagate, aggregate, store, or display a count.
-- [ ] 2.2 Immediately publish one generic loading Toast with exact copy and `3000ms` when the received valid batch contains at least one message.
-- [ ] 2.3 Keep later batches independent and rely on the existing Toast surface coverage; add no aggregation, queue, manual cancel, terminal conversion, or source-specific presenter.
-- [ ] 2.4 Preserve every existing history side-effect exclusion and operation boundary, with no protocol, storage-schema, public-API, dependency, or Runtime-owner change.
+- [x] 2.1 Use the existing nonempty-batch fact at the application/page history-response receipt boundary; do not wait for insertion completion or derive, propagate, aggregate, store, or display a count.
+- [x] 2.2 Immediately publish one generic loading Toast with exact copy and `3000ms` when the received valid batch contains at least one message.
+- [x] 2.3 Keep later batches independent and rely on the existing Toast surface coverage; add no aggregation, queue, manual cancel, terminal conversion, or source-specific presenter.
+- [x] 2.4 Preserve every existing history side-effect exclusion and operation boundary, with no protocol, storage-schema, public-API, dependency, or Runtime-owner change.
 
 ## 3. Regression Coverage
 
-- [ ] 3.1 Prove one nonempty valid batch publishes exactly once upon receipt while its insertion work remains unsettled, without reading an insertion result.
-- [ ] 3.2 Prove request start, waiting, no response, an empty `done` response, and a response rejected before the application/page boundary publish no history-sync Toast.
-- [ ] 3.3 Prove an all-existing replay still publishes once because the received valid batch is nonempty, with no count state or visible count.
-- [ ] 3.4 Prove exact loading kind, copy, and `3000ms` expiry with no explicit cancel or success update.
-- [ ] 3.5 Prove rapid nonempty batches publish independently through the existing one-visible surface, do not aggregate, and do not delay insertion, acknowledgement, pagination, or continuation; history application still creates no notification, unread-attention mark, or system notice and does not disturb unrelated Toast sources.
+- [x] 3.1 Prove one nonempty valid batch publishes exactly once upon receipt while its insertion work remains unsettled, without reading an insertion result.
+- [x] 3.2 Prove request start, waiting, no response, an empty `done` response, and a response rejected before the application/page boundary publish no history-sync Toast.
+- [x] 3.3 Prove an all-existing replay still publishes once because the received valid batch is nonempty, with no count state or visible count.
+- [x] 3.4 Prove exact loading kind, copy, and `3000ms` expiry with no explicit cancel or success update.
+- [x] 3.5 Prove rapid nonempty batches publish independently through the existing one-visible surface, do not aggregate, and do not delay insertion, acknowledgement, pagination, or continuation; history application still creates no notification, unread-attention mark, or system notice and does not disturb unrelated Toast sources.
 
 ## 4. Delivery Gates
 

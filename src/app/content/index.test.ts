@@ -53,6 +53,8 @@ const fixture = vi.hoisted(() => ({
     notification: { owner: 'notification' },
     appFeedback: { owner: 'app-feedback' }
   },
+  loadingCommand: vi.fn(),
+  historySyncListener: null as null | (() => void),
   database: { read: vi.fn(), write: vi.fn(), watch: vi.fn(), close: vi.fn() },
   chat: {},
   world: {},
@@ -144,7 +146,8 @@ beforeEach(() => {
     getDomain: () => ({
       command: {
         SilenceFeedbackCommand: fixture.silenceFeedback,
-        ResumeFeedbackCommand: fixture.resumeFeedback
+        ResumeFeedbackCommand: fixture.resumeFeedback,
+        LoadingCommand: fixture.loadingCommand
       }
     })
   }))
@@ -153,7 +156,11 @@ beforeEach(() => {
     value: fixture.chat,
     epochSource: {
       bindConnectionResultReporter: () => {},
-      bindStandaloneInvocation: () => {}
+      bindStandaloneInvocation: () => {},
+      onHistorySync: (listener: () => void) => {
+        fixture.historySyncListener = listener
+        return () => {}
+      }
     }
   })
   fixture.createWorldRoomImpl.mockReturnValue({ value: fixture.world })
@@ -406,6 +413,23 @@ describe('content composition root', () => {
     expect(fixture.createWorldRoomImpl).toHaveBeenCalledOnce()
     expect(fixture.createReadinessImpl).toHaveBeenCalledOnce()
     expect(fixture.createReadinessImpl).toHaveBeenCalledWith(fixture.whenHostPhase)
+  })
+
+  it('publishes one exact history-sync loading Toast per nonempty batch receipt without cancel or success', async () => {
+    await startContent()
+    const activate = fixture.initializationOptions[0]?.activateApplicationDependencies
+    if (typeof activate !== 'function') throw new Error('Activation boundary is unavailable')
+    activate()
+    if (!fixture.historySyncListener) throw new Error('History sync listener was never wired')
+
+    fixture.historySyncListener()
+    fixture.historySyncListener()
+
+    expect(fixture.loadingCommand).toHaveBeenCalledTimes(2)
+    expect(fixture.loadingCommand).toHaveBeenCalledWith({ message: 'Syncing message history', duration: 3000 })
+    expect(fixture.storeSend).toHaveBeenCalledTimes(2)
+    // The mapping only publishes the generic loading Toast: it never cancels or converts it.
+    expect(fixture.storeSend.mock.calls.flat().some((action) => action?.name?.includes('Cancel'))).toBe(false)
   })
 
   it('creates one store and initialization owner per document generation', async () => {

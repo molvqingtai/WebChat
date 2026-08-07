@@ -208,6 +208,14 @@ const createContentStore = () => {
     const ReadinessImpl = createReadinessImpl(whenHostPhase)
     const lifecycleBundle = createConnectionLifecycle()
     ChatRoomImpl.epochSource.bindConnectionResultReporter(lifecycleBundle.report)
+    // Receipt-time history-sync feedback: every nonempty history-response batch that reaches this page
+    // publishes one generic loading Toast (exact copy, 3000ms). The impl emits the nonempty-batch fact
+    // once per batch before insertion; this mapping never cancels or converts the Toast.
+    ChatRoomImpl.epochSource.onHistorySync(() => {
+      store.send(
+        store.getDomain(ToastDomain()).command.LoadingCommand({ message: 'Syncing message history', duration: 3000 })
+      )
+    })
 
     browserSyncStorage.resolve(BrowserSyncStorageImpl.value)
     messageDatabase.resolve(database)

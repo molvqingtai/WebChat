@@ -175,6 +175,12 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
   private readonly pendingSelfJoinGenerations = new Set<string>()
   /** Dedups transport repeats of one failure event for the whole live content generation (never evicts). */
   private readonly seenErrorEventIds = new Set<string>()
+  /**
+   * History batch ids already announced as a receipt-time loading Toast for the current host generation.
+   * Cleared on each host generation replacement so a fresh Runtime's token counter cannot collide with
+   * an earlier generation's announced batch ids (a batch is announced at most once per attachment).
+   */
+  private announcedHistoryBatchIds = new Set<string>()
   private readyGeneration = 0
   private connectionSequence = 0
   private connectionTokenSequence = 0
@@ -190,6 +196,9 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
     this.disposeReady = dependencies.whenReady(() => {
       if (this.disposed) return
       this.readyGeneration += 1
+      // A fresh Runtime generation owns a fresh token counter; forget prior announcements so its
+      // history batch ids (which may reuse earlier values) always publish their receipt Toast.
+      this.announcedHistoryBatchIds = new Set<string>()
       // Runtime generation replacement supersedes the old connection attempt; that is a structural
       // cancellation fact for that attempt.
       if (this.activeConnection) this.reportResult?.(this.activeConnection.resultToken, 'cancelled')
@@ -437,6 +446,14 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
       if (!isCurrent()) {
         if (prerequisite) assertCurrent()
         return
+      }
+      // Receipt-time history-sync feedback: the first event of a history batch is the nonempty-batch
+      // fact at the application/page boundary. Announce each batch at most once per attachment, before
+      // insertion, without reading insert results or deriving any count. Replay of the same batch id
+      // within one attachment stays silent; live events never announce.
+      if (event.source === 'history' && event.batchId && !this.announcedHistoryBatchIds.has(event.batchId)) {
+        this.announcedHistoryBatchIds.add(event.batchId)
+        this.emit('historySync')
       }
       if (invalidInbound.has(event.sequence)) {
         try {
@@ -718,6 +735,16 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
   onError(listener: (error: Error) => void): Unsubscribe {
     this.on('error', listener)
     return () => this.off('error', listener)
+  }
+
+  /**
+   * Concrete-class receipt signal (not part of the replaceable ChatRoom port): fires once per nonempty
+   * history-response batch as soon as its first event reaches this page, before insertion settles. The
+   * composition root maps it to the generic history-sync loading Toast.
+   */
+  onHistorySync(listener: () => void): Unsubscribe {
+    this.on('historySync', listener)
+    return () => this.off('historySync', listener)
   }
 
   dispose() {
