@@ -6,7 +6,8 @@ const request = {
   supplyId: 'supply-1',
   domain: 'https://example.com',
   syncId: 'history-1',
-  cutoff: 0
+  cutoff: 0,
+  mode: 'provider' as const
 }
 
 describe('PagePort session-event lifecycle', () => {

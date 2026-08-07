@@ -195,7 +195,8 @@ const serverFixture = (): ServerFixture => {
     resolveHistorySupply: async ({ supplyId, result }) => {
       resolvedHistory.push({ supplyId, ids: result.records.map((record) => record.message.id), done: result.done })
     },
-    rejectHistorySupply: async () => {}
+    rejectHistorySupply: async () => {},
+    onHistoryFeedback: async () => {}
   }
   return {
     server,
@@ -613,7 +614,7 @@ describe('Runtime-backed ChatRoom application port', () => {
     expect(errors[0]).toMatchObject({ name: 'InvalidMessageRecordError' })
     expect(errors[1]).toEqual(new Error('invalid ACK failed'))
     await expect(messageStore.query()).resolves.toEqual([])
-    expect(server.ackInbound).toHaveBeenCalledWith({ domain: DOMAIN, sequence: 1 })
+    expect(server.ackInbound).toHaveBeenCalledWith({ domain: DOMAIN, sequence: 1, inserted: false })
 
     await vi.advanceTimersByTimeAsync(1000)
     expect(server.ackInbound).toHaveBeenCalledTimes(2)
@@ -779,7 +780,7 @@ describe('Runtime-backed ChatRoom application port', () => {
 
     fixture.emitHistory({
       type: 'request',
-      request: { supplyId: 'supply-1', domain: DOMAIN, syncId: 'sync-1', cutoff: 10 }
+      request: { supplyId: 'supply-1', domain: DOMAIN, syncId: 'sync-1', cutoff: 10, mode: 'provider' as const }
     })
     await vi.waitFor(() =>
       expect(fixture.resolvedHistory).toEqual([{ supplyId: 'supply-1', ids: ['recent', 'older'], done: true }])
@@ -793,7 +794,13 @@ describe('Runtime-backed ChatRoom application port', () => {
 
   it('terminally rejects a cancelled slow history query exactly once', async () => {
     const fixture = await setupHistoryCancellation()
-    const request = { supplyId: 'supply-cancel', domain: DOMAIN, syncId: 'sync-cancel', cutoff: 0 }
+    const request = {
+      supplyId: 'supply-cancel',
+      domain: DOMAIN,
+      syncId: 'sync-cancel',
+      cutoff: 0,
+      mode: 'provider' as const
+    }
     let suppliedResult: Error | 'pending' = 'pending'
     const supplied = fixture.pagePort.supplyHistory('page-1', request).then(
       () => {
@@ -838,7 +845,13 @@ describe('Runtime-backed ChatRoom application port', () => {
 
   it('settles provider replacement while fencing the old query from a new supply', async () => {
     const fixture = await setupHistoryCancellation()
-    const oldRequest = { supplyId: 'supply-old', domain: DOMAIN, syncId: 'sync-old', cutoff: 0 }
+    const oldRequest = {
+      supplyId: 'supply-old',
+      domain: DOMAIN,
+      syncId: 'sync-old',
+      cutoff: 0,
+      mode: 'provider' as const
+    }
     let oldSupplyResult: Error | 'pending' | null = 'pending'
     const oldSupply = fixture.pagePort.supplyHistory('page-1', oldRequest).then(
       (result) => {
@@ -866,7 +879,13 @@ describe('Runtime-backed ChatRoom application port', () => {
       })
       expect(oldSupplyResult).toBeNull()
 
-      const newRequest = { supplyId: 'supply-new', domain: DOMAIN, syncId: 'sync-new', cutoff: 0 }
+      const newRequest = {
+        supplyId: 'supply-new',
+        domain: DOMAIN,
+        syncId: 'sync-new',
+        cutoff: 0,
+        mode: 'provider' as const
+      }
       const newSupply = fixture.pagePort.supplyHistory('page-1', newRequest).catch((error: Error) => error)
       expect(replacementEvents).toEqual([{ type: 'request', request: newRequest }])
       fixture.releaseQuery.resolve([])

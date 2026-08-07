@@ -12,11 +12,11 @@ import {
   type MessageRecord,
   type SystemNoticeRecord
 } from '@/domain/Message'
-import type { ChatMessage, HistoryCursor } from '@/protocol/ChatRoom'
-import { MAX_HISTORY_RESPONSE_MESSAGES } from '@/protocol/Limits'
+import type { ChatMessage } from '@/protocol/ChatRoom'
 import { stringToHex } from '@/utils'
 import type { ChatSession } from '@/protocol/Session'
 import type {
+  HistoryFeedbackEvent,
   HistorySupplyEvent,
   HistorySupplyResult,
   RuntimeServer,
@@ -39,7 +39,7 @@ type RuntimeMessageStore = MessageStore & {
   insert(record: MessageRecord, options?: { signal?: AbortSignal }): Promise<InsertMessageResult>
 }
 
-type RegistrationKey = 'inbound' | 'session' | 'error' | 'history'
+type RegistrationKey = 'inbound' | 'session' | 'error' | 'history' | 'historyFeedback'
 
 interface RuntimeAttachment {
   readyGeneration: number
@@ -149,7 +149,6 @@ const persistSelfJoinNotice = async (
 
 const projectHistory = (
   records: readonly MessageRecord[],
-  before: HistoryCursor | undefined,
   cutoff: number,
   signal: AbortSignal
 ): HistorySupplyResult => {
@@ -160,14 +159,10 @@ const projectHistory = (
   signal.throwIfAborted()
   const recent = chatRecords.filter((record) => record.message.hlc.timestamp >= cutoff)
   signal.throwIfAborted()
-  const candidates = recent
-    .filter((record) => !before || compareEventPosition(record.message, before) < 0)
-    .toSorted((left, right) => compareEventPosition(right.message, left.message))
+  // One fixed snapshot in canonical recent-first order; the Runtime pages it for inventory or response.
+  const candidates = recent.toSorted((left, right) => compareEventPosition(right.message, left.message))
   signal.throwIfAborted()
-  return {
-    records: candidates.slice(0, MAX_HISTORY_RESPONSE_MESSAGES),
-    done: candidates.length <= MAX_HISTORY_RESPONSE_MESSAGES
-  }
+  return { records: candidates, done: true }
 }
 
 export class ChatRoom extends EventHub implements ChatRoomPort {
@@ -421,10 +416,10 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
       retryTimers.add(timer)
     }
 
-    const acknowledgeInbound = async (event: RuntimeInboundEvent) => {
+    const acknowledgeInbound = async (event: RuntimeInboundEvent, inserted: boolean) => {
       assertCurrent()
       await raceWithSignal(
-        dependencies.server.ackInbound({ domain: dependencies.pageDomain, sequence: event.sequence }),
+        dependencies.server.ackInbound({ domain: dependencies.pageDomain, sequence: event.sequence, inserted }),
         signal
       )
       assertCurrent()
@@ -440,7 +435,7 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
       }
       if (invalidInbound.has(event.sequence)) {
         try {
-          await acknowledgeInbound(event)
+          await acknowledgeInbound(event, false)
         } catch (error) {
           if (prerequisite) throw error
           if (!isCurrent()) return
@@ -453,7 +448,7 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
         const result = await raceWithSignal(dependencies.messageStore.insert(event.record, { signal }), signal)
         assertCurrent()
         if (result.inserted && event.source === 'live') this.emit('message', event.record.message)
-        await acknowledgeInbound(event)
+        await acknowledgeInbound(event, result.inserted)
       } catch (error) {
         if (!isCurrent()) {
           if (prerequisite) assertCurrent()
@@ -464,7 +459,7 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
           this.emit('error', error)
           invalidInbound.add(event.sequence)
           try {
-            await acknowledgeInbound(event)
+            await acknowledgeInbound(event, false)
           } catch (ackError) {
             if (prerequisite) throw ackError
             if (!isCurrent()) return
@@ -505,7 +500,7 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
       // Page-owned MessageStore supplies local history; Runtime owns only orchestration.
       void dependencies.messageStore
         .query({ type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE, signal: controller.signal })
-        .then((records) => projectHistory(records, request.before, request.cutoff, controller.signal))
+        .then((records) => projectHistory(records, request.cutoff, controller.signal))
         .then(async (result) => {
           controller.signal.throwIfAborted()
           if (!isCurrent() || activeHistorySupplies.get(request.supplyId) !== controller) return
@@ -564,9 +559,15 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
         { domain: dependencies.pageDomain, pageId: dependencies.pageId },
         provideHistory
       )
+    attachment.registrations.historyFeedback = () =>
+      dependencies.server.onHistoryFeedback({ pageId: dependencies.pageId }, (event) => {
+        if (isCurrent()) this.emit('historyFeedback', event)
+      })
 
     await Promise.all(
-      (['inbound', 'session', 'error', 'history'] as const).map((key) => this.register(attachment, key))
+      (['inbound', 'session', 'error', 'history', 'historyFeedback'] as const).map((key) =>
+        this.register(attachment, key)
+      )
     )
     assertCurrent()
 
@@ -718,6 +719,16 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
   onError(listener: (error: Error) => void): Unsubscribe {
     this.on('error', listener)
     return () => this.off('error', listener)
+  }
+
+  /**
+   * Concrete-class receipt signal (not part of the replaceable ChatRoom port): projects one
+   * attempt-owned History loading owner (activate/dismiss) to this page. The composition root maps
+   * it to the generic loading Toast through the attempt owner id.
+   */
+  onHistoryFeedback(listener: (event: HistoryFeedbackEvent) => void): Unsubscribe {
+    this.on('historyFeedback', listener)
+    return () => this.off('historyFeedback', listener)
   }
 
   dispose() {

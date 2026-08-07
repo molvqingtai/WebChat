@@ -1,6 +1,7 @@
 import type { PagePort as PagePortContract } from '@/domain/runtime/externs/PagePort'
 import { PagePortExtern } from '@/domain/runtime/externs/PagePort'
 import type {
+  HistoryFeedbackEvent,
   HistorySupplyEvent,
   HistorySupplyRequest,
   HistorySupplyResult,
@@ -15,6 +16,7 @@ export class PagePort implements PagePortContract {
   private readonly sessionEvents = new Map<string, (event: RuntimeSessionEvent) => void | Promise<void>>()
   private readonly worldPresences = new Map<string, (event: WorldPresenceEvent) => void | Promise<void>>()
   private readonly runtimeErrors = new Map<string, (event: RuntimeErrorEvent) => void | Promise<void>>()
+  private readonly historyFeedbacks = new Map<string, (event: HistoryFeedbackEvent) => void | Promise<void>>()
   private readonly historyProviders = new Map<
     string,
     { domain: string; callback: (event: HistorySupplyEvent) => void }
@@ -47,6 +49,10 @@ export class PagePort implements PagePortContract {
     this.runtimeErrors.set(pageId, callback)
   }
 
+  onHistoryFeedback(pageId: string, callback: (event: HistoryFeedbackEvent) => void | Promise<void>) {
+    this.historyFeedbacks.set(pageId, callback)
+  }
+
   provideHistory(pageId: string, domain: string, callback: (event: HistorySupplyEvent) => void) {
     // Replacing a provider cancels its work but resolves null after physical settlement so the caller may fail over.
     const previous = this.historyProviders.get(pageId)
@@ -68,6 +74,7 @@ export class PagePort implements PagePortContract {
     this.sessionEvents.delete(pageId)
     this.worldPresences.delete(pageId)
     this.runtimeErrors.delete(pageId)
+    this.historyFeedbacks.delete(pageId)
     const historyProvider = this.historyProviders.get(pageId)
     for (const [supplyId, pending] of this.pendingHistory) {
       if (pending.pageId !== pageId) continue
@@ -116,6 +123,10 @@ export class PagePort implements PagePortContract {
 
   emitError(pageIds: string[], event: RuntimeErrorEvent) {
     return this.emit(this.runtimeErrors, pageIds, event)
+  }
+
+  emitHistoryFeedback(pageIds: string[], event: HistoryFeedbackEvent) {
+    return this.emit(this.historyFeedbacks, pageIds, event)
   }
 
   supplyHistory(pageId: string, request: HistorySupplyRequest): Promise<HistorySupplyResult | null> {
@@ -209,6 +220,7 @@ export class PagePort implements PagePortContract {
       ...this.sessionEvents.keys(),
       ...this.worldPresences.keys(),
       ...this.runtimeErrors.keys(),
+      ...this.historyFeedbacks.keys(),
       ...this.historyProviders.keys()
     ])
     pageIds.forEach((pageId) => this.removePage(pageId))

@@ -1,13 +1,5 @@
 import type { ChatMessageRecord, ReactionMessageRecord, TextMessageRecord } from '@/domain/Message'
-import type {
-  ChatMessage,
-  HistoryCursor,
-  MentionedUser,
-  ChatUser,
-  ReactionType,
-  ChatSite,
-  WorldRoomMessage
-} from '@/protocol'
+import type { ChatMessage, MentionedUser, ChatUser, ReactionType, ChatSite, WorldRoomMessage } from '@/protocol'
 
 export type HostPhase = 'none' | 'connecting' | 'ready' | 'unavailable'
 
@@ -103,9 +95,10 @@ export interface HistorySupplyRequest {
   supplyId: string
   domain: string
   syncId: string
-  before?: HistoryCursor
-  /** Frozen from the provider's own clock at admission; page failover and later cursors retain it. */
+  /** Frozen from the provider's own clock at admission; the snapshot never re-reads time. */
   cutoff: number
+  /** 'inventory' returns the requester's eligible record ids; 'provider' returns eligible records. */
+  mode: 'inventory' | 'provider'
 }
 
 export interface HistorySupplyResult {
@@ -116,6 +109,14 @@ export interface HistorySupplyResult {
 export type HistorySupplyEvent =
   | { type: 'request'; request: HistorySupplyRequest }
   | { type: 'cancel'; supplyId: string }
+
+/** One attempt-owned History loading owner projected to same-domain pages. */
+export interface HistoryFeedbackEvent {
+  domain: string
+  /** Complete attempt identity, so one sync can never dismiss another or an unrelated Toast. */
+  ownerId: string
+  kind: 'loading' | 'dismiss'
+}
 
 export interface RuntimeErrorEvent {
   eventId: string
@@ -146,7 +147,7 @@ export interface RuntimeServer {
     active: boolean
   }) => Promise<ReactionMessageRecord>
   sendChatMessage: (payload: { domain: string; event: ChatMessage }) => Promise<void>
-  ackInbound: (payload: { domain: string; sequence: number }) => Promise<void>
+  ackInbound: (payload: { domain: string; sequence: number; inserted: boolean }) => Promise<void>
   replayInbound: (payload: { domain: string; after: number }) => Promise<InboundEvent[]>
   reconnectDomain: (payload: { domain: string }) => Promise<void | null>
   onInbound: (payload: { pageId: string }, callback: (event: InboundEvent) => void | Promise<void>) => Promise<void>
@@ -156,6 +157,7 @@ export interface RuntimeServer {
   ) => Promise<void>
   onWorldPresence: (payload: { pageId: string }, callback: (event: WorldPresenceEvent) => void) => Promise<void>
   onError: (payload: { pageId: string }, callback: (event: RuntimeErrorEvent) => void) => Promise<void>
+  onHistoryFeedback: (payload: { pageId: string }, callback: (event: HistoryFeedbackEvent) => void) => Promise<void>
   provideHistory: (
     payload: { domain: string; pageId: string },
     callback: (event: HistorySupplyEvent) => void

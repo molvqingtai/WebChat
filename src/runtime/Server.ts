@@ -380,6 +380,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     onSessionEvent: async (payload, callback) => pagePort.onSessionEvent(payload.pageId, callback),
     onWorldPresence: async (payload, callback) => pagePort.onWorldPresence(payload.pageId, callback),
     onError: async (payload, callback) => pagePort.onError(payload.pageId, callback),
+    onHistoryFeedback: async (payload, callback) => pagePort.onHistoryFeedback(payload.pageId, callback),
     provideHistory: async (payload, callback) => pagePort.provideHistory(payload.pageId, payload.domain, callback),
     resolveHistorySupply: async (payload) =>
       pagePort.resolveHistorySupply(payload.pageId, payload.supplyId, payload.result),

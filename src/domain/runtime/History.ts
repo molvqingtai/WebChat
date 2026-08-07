@@ -1,7 +1,7 @@
-import { Remesh } from 'remesh'
+import { Remesh, type RemeshAction } from 'remesh'
 import { catchError, defer, filter, map, mergeMap, Observable } from 'rxjs'
 import DeliveryDomain from '@/domain/runtime/Delivery'
-import SessionDomain, { observeHlc, type SessionDomainState } from '@/domain/runtime/Session'
+import SessionDomain, { observeHlc } from '@/domain/runtime/Session'
 import WireDomain, { type WireFailureStage, type WireMessageEvent } from '@/domain/runtime/Wire'
 import { ClockExtern } from '@/domain/runtime/externs/Clock'
 import { PagePortExtern } from '@/domain/runtime/externs/PagePort'
@@ -21,13 +21,12 @@ import {
   isMessageWithinLimit,
   isUserWithinLimit,
   type ChatMessage,
-  type HLC,
-  type HistoryRequestMessage,
-  type HistoryResponseMessage,
-  type ChatUser
+  type ChatUser,
+  type HistoryMessagesRequest,
+  type HistoryMessagesResponse
 } from '@/protocol'
 import { compareEventPosition, type ChatMessageRecord } from '@/domain/Message'
-import type { HistorySupplyRequest } from '@/runtime/Contract'
+import type { HistorySupplyRequest, HistoryFeedbackEvent } from '@/runtime/Contract'
 import { getTextByteSize } from '@/utils/getTextByteSize'
 
 export interface HistoryOptions {
@@ -36,72 +35,72 @@ export interface HistoryOptions {
   historySessionMessages?: number
 }
 
-interface RequesterHistoryState {
+/** Complete identity of one directional attempt; late work must match every field. */
+interface HistoryAttemptKey {
   sourcePeerId: string
   domain: string
   syncId: string
-  cutoff: number
-  decodedBytes: number
-  messageCount: number
   syncToken: string
+}
+
+/** Outgoing requester: fixed ID snapshot, paged inventory, incoming response pages. */
+interface RequesterAttemptState extends HistoryAttemptKey {
+  cutoff: number
+  inventoryIds: string[]
+  nextInventoryPage: number
+  expectedResponsePage: number
+  responseBytes: number
+  responseCount: number
   awaitingBatchId?: string
-  nextBefore?: { hlc: HLC; id: string }
-  stopAfterAck: boolean
+  finalBatch: boolean
+  feedbackActive: boolean
 }
 
-interface QueuedHistoryState {
-  sourcePeerId: string
-  domains: string[]
-}
-
-interface HistorySyncKey {
-  sourcePeerId: string
-  domain: string
-  syncId: string
-  syncToken: string
-}
-
-interface ProviderSessionState extends HistorySyncKey {
+/** Incoming provider: accumulated inventory, fixed record snapshot, outgoing response pages. */
+interface ProviderAttemptState extends HistoryAttemptKey {
   cutoff: number
-  decodedBytes: number
-  messageCount: number
-  supplying: boolean
+  inventory: Set<string>
+  expectedRequestPage: number
+  snapshot: ChatMessageRecord[]
+  nextResponsePage: number
+  responseBytes: number
+  responseCount: number
+  responseDone: boolean
 }
 
-interface ProviderSupplyPayload extends HistorySyncKey {
-  before?: { hlc: HLC; id: string }
-  cutoff: number
-  remainingBytes: number
-  remainingMessages: number
+interface ProviderSupplyPayload extends HistoryAttemptKey {
   queueBytes: number
 }
 
-interface ProviderSupplyJobState extends HistorySyncKey {
-  queueBytes: number
-}
+type ProviderSupplyJobState = ProviderSupplyPayload
 
 type ProviderSupplySuccessorState = ProviderSupplyPayload
 
-interface PendingRequestSend extends HistorySyncKey {
-  kind: 'request'
+interface PendingInventorySend extends HistoryAttemptKey {
+  kind: 'inventory'
   requestId: string
+  done: boolean
 }
 
-interface PendingProviderSend extends HistorySyncKey {
+interface PendingProviderSend extends HistoryAttemptKey {
   kind: 'provider'
   requestId: string
   records: { record: ChatMessageRecord; bytes: number }[]
-  suppliedCount: number
-  suppliedDone: boolean
+  remaining: { record: ChatMessageRecord; bytes: number }[]
+  done: boolean
 }
 
-type PendingWireSend = PendingRequestSend | PendingProviderSend
+type PendingWireSend = PendingInventorySend | PendingProviderSend
+
+interface FeedbackOwnerState extends HistoryAttemptKey {}
 
 const replaceBy = <T>(items: T[], predicate: (item: T) => boolean, next: T): T[] =>
   items.some(predicate) ? items.map((item) => (predicate(item) ? next : item)) : [...items, next]
 const removeBy = <T>(items: T[], predicate: (item: T) => boolean): T[] => items.filter((item) => !predicate(item))
 const historyCutoff = (now: number) => now - HISTORY_WINDOW_DAYS * 24 * 60 * 60 * 1000
 const token = (kind: string, counter: number) => `${kind}:${counter.toString(36)}`
+const feedbackOwnerId = (key: HistoryAttemptKey) =>
+  `history:${key.domain}:${key.sourcePeerId}:${key.syncId}:${key.syncToken}`
 
 const makeRecord = (message: ChatMessage, user: ChatUser, receivedAt: number): ChatMessageRecord => {
   if (user.id !== message.userId) throw new Error('Chat record user does not match its message')
@@ -120,7 +119,7 @@ const usersForRecords = (records: ChatMessageRecord[]): ChatUser[] => {
   return snapshots.map(({ user }) => user)
 }
 
-const matchesSync = (item: HistorySyncKey, key: HistorySyncKey) =>
+const matchesSync = (item: HistoryAttemptKey, key: HistoryAttemptKey) =>
   item.sourcePeerId === key.sourcePeerId &&
   item.domain === key.domain &&
   item.syncId === key.syncId &&
@@ -138,16 +137,12 @@ const HistoryDomain = Remesh.domain({
     const historySessionMessages = options.historySessionMessages ?? MAX_HISTORY_SESSION_MESSAGES
 
     const TokenState = domain.state<number>({ name: 'History.TokenState', default: 0 })
-    const RequesterHistoriesState = domain.state<RequesterHistoryState[]>({
-      name: 'History.RequesterHistoriesState',
+    const RequesterAttemptsState = domain.state<RequesterAttemptState[]>({
+      name: 'History.RequesterAttemptsState',
       default: []
     })
-    const QueuedHistoriesState = domain.state<QueuedHistoryState[]>({
-      name: 'History.QueuedHistoriesState',
-      default: []
-    })
-    const ProviderSessionsState = domain.state<ProviderSessionState[]>({
-      name: 'History.ProviderSessionsState',
+    const ProviderAttemptsState = domain.state<ProviderAttemptState[]>({
+      name: 'History.ProviderAttemptsState',
       default: []
     })
     const ProviderSupplyJobsState = domain.state<ProviderSupplyJobState[]>({
@@ -162,7 +157,7 @@ const HistoryDomain = Remesh.domain({
       name: 'History.PendingWireSendsState',
       default: []
     })
-    const ActiveSuppliesState = domain.state<HistorySyncKey[]>({
+    const ActiveSuppliesState = domain.state<HistoryAttemptKey[]>({
       name: 'History.ActiveSuppliesState',
       default: []
     })
@@ -170,346 +165,268 @@ const HistoryDomain = Remesh.domain({
       name: 'History.WaitingSuppliesState',
       default: []
     })
-
-    const RequesterHistoriesQuery = domain.query({
-      name: 'History.RequesterHistoriesQuery',
-      impl: ({ get }) => get(RequesterHistoriesState())
+    const FeedbackOwnersState = domain.state<FeedbackOwnerState[]>({
+      name: 'History.FeedbackOwnersState',
+      default: []
     })
-    const ProviderSessionsQuery = domain.query({
-      name: 'History.ProviderSessionsQuery',
-      impl: ({ get }) => get(ProviderSessionsState())
+
+    const RequesterAttemptsQuery = domain.query({
+      name: 'History.RequesterAttemptsQuery',
+      impl: ({ get }) => get(RequesterAttemptsState())
+    })
+    const ProviderAttemptsQuery = domain.query({
+      name: 'History.ProviderAttemptsQuery',
+      impl: ({ get }) => get(ProviderAttemptsState())
     })
     const ProviderSupplyJobsQuery = domain.query({
       name: 'History.ProviderSupplyJobsQuery',
       impl: ({ get }) => get(ProviderSupplyJobsState())
     })
 
-    const SyncStartedEvent = domain.event<HistorySyncKey>({ name: 'History.SyncStartedEvent' })
+    const SyncStartedEvent = domain.event<HistoryAttemptKey>({ name: 'History.SyncStartedEvent' })
     const SyncCompletedEvent = domain.event<{ sourcePeerId: string }>({ name: 'History.SyncCompletedEvent' })
-    const ResponseAcceptedEvent = domain.event<{ domain: string; sourcePeerId: string; count: number }>({
-      name: 'History.ResponseAcceptedEvent'
-    })
     const ProviderSupplyRequestedEvent = domain.event<ProviderSupplyPayload>({
       name: 'History.ProviderSupplyRequestedEvent'
     })
-    const HistoryTimeoutArmedEvent = domain.event<HistorySyncKey>({ name: 'History.TimeoutArmedEvent' })
-    const ProviderTimeoutArmedEvent = domain.event<HistorySyncKey>({ name: 'History.ProviderTimeoutArmedEvent' })
+    const HistoryTimeoutArmedEvent = domain.event<HistoryAttemptKey>({ name: 'History.TimeoutArmedEvent' })
+    const ProviderTimeoutArmedEvent = domain.event<HistoryAttemptKey>({ name: 'History.ProviderTimeoutArmedEvent' })
     const DeadPagesEvent = domain.event<string[]>({ name: 'History.DeadPagesEvent' })
     const ErrorEvent = domain.event<{ error: Error; domain?: string }>({ name: 'History.ErrorEvent' })
     const StartRequestedEvent = domain.event<{ domain: string; sourcePeerId: string }>({
       name: 'History.StartRequestedEvent'
     })
     const FinishRequestedEvent = domain.event<string>({ name: 'History.FinishRequestedEvent' })
-    const FinishCurrentRequestedEvent = domain.event<HistorySyncKey>({
+    const FinishCurrentRequestedEvent = domain.event<HistoryAttemptKey>({
       name: 'History.FinishCurrentRequestedEvent'
     })
-    const RequestQueuedEvent = domain.event<HistorySyncKey & { before?: { hlc: HLC; id: string } }>({
-      name: 'History.RequestQueuedEvent'
-    })
+    const FeedbackChangedEvent = domain.event<HistoryFeedbackEvent>({ name: 'History.FeedbackChangedEvent' })
 
     const nextTokens = (get: (action: ReturnType<typeof TokenState>) => number, count: number) => {
       const start = get(TokenState()) + 1
       return { next: start + count - 1, values: Array.from({ length: count }, (_, index) => start + index) }
     }
 
-    const StartHistoryCommand = domain.command({
-      name: 'History.StartHistoryCommand',
+    const feedbackOwner = (key: HistoryAttemptKey): FeedbackOwnerState => ({
+      sourcePeerId: key.sourcePeerId,
+      domain: key.domain,
+      syncId: key.syncId,
+      syncToken: key.syncToken
+    })
+    const feedbackMatches = (item: FeedbackOwnerState, key: HistoryAttemptKey) =>
+      item.sourcePeerId === key.sourcePeerId &&
+      item.domain === key.domain &&
+      item.syncId === key.syncId &&
+      item.syncToken === key.syncToken
+    const activateFeedback = (
+      get: (action: ReturnType<typeof FeedbackOwnersState>) => FeedbackOwnerState[],
+      key: HistoryAttemptKey
+    ) =>
+      get(FeedbackOwnersState()).some((item) => feedbackMatches(item, key))
+        ? null
+        : [
+            FeedbackOwnersState().new([...get(FeedbackOwnersState()), feedbackOwner(key)]),
+            FeedbackChangedEvent({ domain: key.domain, ownerId: feedbackOwnerId(key), kind: 'loading' })
+          ]
+    const dismissFeedback = (
+      get: (action: ReturnType<typeof FeedbackOwnersState>) => FeedbackOwnerState[],
+      key: HistoryAttemptKey
+    ) =>
+      get(FeedbackOwnersState()).some((item) => feedbackMatches(item, key))
+        ? [
+            FeedbackOwnersState().new(removeBy(get(FeedbackOwnersState()), (item) => feedbackMatches(item, key))),
+            FeedbackChangedEvent({ domain: key.domain, ownerId: feedbackOwnerId(key), kind: 'dismiss' })
+          ]
+        : null
+
+    const StartRequesterCommand = domain.command({
+      name: 'History.StartRequesterCommand',
       impl: ({ get }, payload: { domain: string; sourcePeerId: string }) => {
         const runtime = get(sessionDomain.query.DomainQuery(payload.domain))
         if (!runtime?.sessions.some((session) => session.sourcePeerId === payload.sourcePeerId)) return null
-        const requesters = get(RequesterHistoriesState())
-        if (requesters.some((item) => item.sourcePeerId === payload.sourcePeerId)) {
-          const queues = get(QueuedHistoriesState())
-          const current = queues.find((item) => item.sourcePeerId === payload.sourcePeerId)
-          if (current?.domains.includes(payload.domain)) return null
-          return QueuedHistoriesState().new(
-            replaceBy(queues, (item) => item.sourcePeerId === payload.sourcePeerId, {
-              sourcePeerId: payload.sourcePeerId,
-              domains: [...(current?.domains ?? []), payload.domain]
-            })
-          )
-        }
+        const requesters = get(RequesterAttemptsState())
+        if (requesters.some((item) => item.sourcePeerId === payload.sourcePeerId)) return null
         const allocated = nextTokens(get, 2)
-        const state: RequesterHistoryState = {
+        const state: RequesterAttemptState = {
           sourcePeerId: payload.sourcePeerId,
           domain: payload.domain,
           syncId: token('sync', allocated.values[0]),
-          cutoff: historyCutoff(clock.now()),
-          decodedBytes: 0,
-          messageCount: 0,
           syncToken: token('request', allocated.values[1]),
-          stopAfterAck: false
+          cutoff: historyCutoff(clock.now()),
+          inventoryIds: [],
+          nextInventoryPage: 0,
+          expectedResponsePage: 0,
+          responseBytes: 0,
+          responseCount: 0,
+          finalBatch: false,
+          feedbackActive: false
         }
-        const key: HistorySyncKey = state
         return [
           TokenState().new(allocated.next),
-          RequesterHistoriesState().new([...requesters, state]),
-          RequestQueuedEvent(key),
-          HistoryTimeoutArmedEvent(key),
-          SyncStartedEvent(key)
+          RequesterAttemptsState().new([...requesters, state]),
+          HistoryTimeoutArmedEvent(state),
+          SyncStartedEvent(state)
         ]
       }
     })
 
-    const QueueHistoryRequestCommand = domain.command({
-      name: 'History.QueueHistoryRequestCommand',
-      impl: ({ get }, payload: HistorySyncKey & { before?: { hlc: HLC; id: string } }) => {
-        const runtime = get(sessionDomain.query.DomainQuery(payload.domain))
-        if (!runtime) return FinishCurrentRequestedEvent(payload)
-        const requestId = `history:request:${payload.syncToken}`
-        const pending: PendingRequestSend = { ...payload, kind: 'request', requestId }
-        return [
-          PendingWireSendsState().new([
-            ...removeBy(get(PendingWireSendsState()), (item) => item.requestId === requestId),
-            pending
-          ]),
-          wireDomain.command.SendMessageCommand({
-            requestId,
-            roomId: runtime.roomId,
-            targetPeerIds: [payload.sourcePeerId],
-            message: {
-              type: MESSAGE_TYPE.HISTORY_REQUEST,
-              syncId: payload.syncId,
-              ...(payload.before ? { before: payload.before } : {})
-            }
-          })
-        ]
-      }
-    })
-
-    const FinishHistoryCommand = domain.command({
-      name: 'History.FinishHistoryCommand',
+    const FinishRequesterCommand = domain.command({
+      name: 'History.FinishRequesterCommand',
       impl: ({ get }, sourcePeerId: string) => {
-        const requesters = get(RequesterHistoriesState())
-        if (!requesters.some((item) => item.sourcePeerId === sourcePeerId)) return null
-        const queues = get(QueuedHistoriesState())
-        const currentQueue = queues.find((item) => item.sourcePeerId === sourcePeerId)?.domains ?? []
-        const nextDomain = currentQueue.find((queuedDomain) =>
-          get(sessionDomain.query.DomainQuery(queuedDomain))?.sessions.some(
-            (session) => session.sourcePeerId === sourcePeerId
-          )
-        )
-        const remainingQueue = nextDomain ? currentQueue.slice(currentQueue.indexOf(nextDomain) + 1) : []
-        const nextQueues =
-          remainingQueue.length > 0
-            ? replaceBy(queues, (item) => item.sourcePeerId === sourcePeerId, { sourcePeerId, domains: remainingQueue })
-            : removeBy(queues, (item) => item.sourcePeerId === sourcePeerId)
+        const requesters = get(RequesterAttemptsState())
+        const current = requesters.find((item) => item.sourcePeerId === sourcePeerId)
+        if (!current) return null
         return [
-          RequesterHistoriesState().new(removeBy(requesters, (item) => item.sourcePeerId === sourcePeerId)),
-          QueuedHistoriesState().new(nextQueues),
+          RequesterAttemptsState().new(removeBy(requesters, (item) => item.sourcePeerId === sourcePeerId)),
           PendingWireSendsState().new(
             removeBy(
               get(PendingWireSendsState()),
-              (item) => item.sourcePeerId === sourcePeerId && item.kind === 'request'
+              (item) => item.sourcePeerId === sourcePeerId && item.kind === 'inventory'
             )
           ),
-          SyncCompletedEvent({ sourcePeerId }),
-          ...(nextDomain ? [StartRequestedEvent({ domain: nextDomain, sourcePeerId })] : [])
+          ...(dismissFeedback(get, current) ?? []),
+          SyncCompletedEvent({ sourcePeerId })
         ]
       }
     })
 
-    const FinishCurrentHistoryCommand = domain.command({
-      name: 'History.FinishCurrentHistoryCommand',
-      impl: ({ get }, payload: HistorySyncKey) => {
-        const current = get(RequesterHistoriesState()).find((item) => item.sourcePeerId === payload.sourcePeerId)
-        return current?.domain === payload.domain &&
-          current.syncId === payload.syncId &&
-          current.syncToken === payload.syncToken
-          ? FinishRequestedEvent(payload.sourcePeerId)
-          : null
+    const FinishCurrentRequesterCommand = domain.command({
+      name: 'History.FinishCurrentRequesterCommand',
+      impl: ({ get }, payload: HistoryAttemptKey) => {
+        const current = get(RequesterAttemptsState()).find((item) => matchesSync(item, payload))
+        return current ? FinishRequestedEvent(payload.sourcePeerId) : null
       }
     })
 
     const ResetHistoryForSessionCommand = domain.command({
       name: 'History.ResetHistoryForSessionCommand',
-      impl: ({ get }, payload: { domain: string; sourcePeerId: string }) => [
-        RequesterHistoriesState().new(
-          get(RequesterHistoriesState()).filter(
-            (item) => item.sourcePeerId !== payload.sourcePeerId || item.domain !== payload.domain
-          )
-        ),
-        QueuedHistoriesState().new(
-          get(QueuedHistoriesState())
-            .map((item) =>
-              item.sourcePeerId === payload.sourcePeerId
-                ? { ...item, domains: item.domains.filter((queued) => queued !== payload.domain) }
-                : item
-            )
-            .filter((item) => item.domains.length > 0)
-        ),
-        ProviderSessionsState().new(
-          get(ProviderSessionsState()).filter(
-            (item) => item.sourcePeerId !== payload.sourcePeerId || item.domain !== payload.domain
-          )
-        ),
-        ProviderSupplySuccessorsState().new(
-          get(ProviderSupplySuccessorsState()).filter(
-            (item) => item.sourcePeerId !== payload.sourcePeerId || item.domain !== payload.domain
-          )
-        ),
-        StartRequestedEvent(payload)
-      ]
-    })
-
-    const ContinueHistoryBatchCommand = domain.command({
-      name: 'History.ContinueHistoryBatchCommand',
-      impl: ({ get }, payload: { domain: string; batchId: string }) => {
-        const requesters = get(RequesterHistoriesState())
-        const current = requesters.find(
-          (item) => item.domain === payload.domain && item.awaitingBatchId === payload.batchId
+      impl: ({ get }, payload: { domain: string; sourcePeerId: string }) => {
+        const requesters = get(RequesterAttemptsState())
+        const providers = get(ProviderAttemptsState())
+        const successors = get(ProviderSupplySuccessorsState())
+        const jobs = get(ProviderSupplyJobsState())
+        const owners = get(FeedbackOwnersState())
+        const removed = [
+          ...requesters.filter((item) => item.sourcePeerId === payload.sourcePeerId && item.domain === payload.domain),
+          ...providers.filter((item) => item.sourcePeerId === payload.sourcePeerId && item.domain === payload.domain)
+        ]
+        const dismissedOwners = owners.filter(
+          (item) => item.sourcePeerId === payload.sourcePeerId && item.domain === payload.domain
         )
-        if (!current) return null
-        if (current.stopAfterAck || !current.nextBefore) return FinishRequestedEvent(current.sourcePeerId)
-        const allocated = nextTokens(get, 1)
-        const next: RequesterHistoryState = {
-          ...current,
-          awaitingBatchId: undefined,
-          stopAfterAck: false,
-          syncToken: token('request', allocated.values[0])
-        }
-        const request = { ...next, before: next.nextBefore }
         return [
-          TokenState().new(allocated.next),
-          RequesterHistoriesState().new(
-            replaceBy(requesters, (item) => item.sourcePeerId === current.sourcePeerId, next)
+          RequesterAttemptsState().new(
+            requesters.filter((item) => item.sourcePeerId !== payload.sourcePeerId || item.domain !== payload.domain)
           ),
-          RequestQueuedEvent(request),
-          HistoryTimeoutArmedEvent(next)
+          ProviderAttemptsState().new(
+            providers.filter((item) => item.sourcePeerId !== payload.sourcePeerId || item.domain !== payload.domain)
+          ),
+          ProviderSupplySuccessorsState().new(
+            successors.filter((item) => item.sourcePeerId !== payload.sourcePeerId || item.domain !== payload.domain)
+          ),
+          ProviderSupplyJobsState().new(
+            jobs.filter((item) => item.sourcePeerId !== payload.sourcePeerId || item.domain !== payload.domain)
+          ),
+          ...dismissedOwners.flatMap((item) => dismissFeedback(get, item) ?? []),
+          StartRequestedEvent(payload)
         ]
       }
     })
 
-    const DiscardHistoryBatchCommand = domain.command({
-      name: 'History.DiscardHistoryBatchCommand',
-      impl: ({ get }, payload: { domain: string; batchId: string }) => {
-        const current = get(RequesterHistoriesState()).find(
-          (item) => item.domain === payload.domain && item.awaitingBatchId === payload.batchId
-        )
-        return current ? FinishRequestedEvent(current.sourcePeerId) : null
+    // ── Requester inventory output ──────────────────────────────────────────────
+
+    const AcquireRequesterInventoryCommand = domain.command({
+      name: 'History.AcquireRequesterInventoryCommand',
+      impl: ({ get }, key: HistoryAttemptKey) => {
+        const requesters = get(RequesterAttemptsState())
+        const current = requesters.find((item) => matchesSync(item, key))
+        if (!current || current.inventoryIds.length > 0 || current.nextInventoryPage > 0) return null
+        // The ID snapshot is supplied by the page supplier (mode: inventory); the effect below fills it.
+        return HistoryTimeoutArmedEvent(current)
       }
     })
 
-    const ApplyHistoryResponseCommand = domain.command({
-      name: 'History.ApplyHistoryResponseCommand',
-      impl: ({ get }, payload: WireMessageEvent & { message: HistoryResponseMessage }) => {
-        const binding = get(
-          sessionDomain.query.BindingQuery({ roomId: payload.roomId, sourcePeerId: payload.sourcePeerId })
-        )
-        if (!binding) return null
-        if (!isChatRoomMessageSemanticallyValid(payload.message, clock.now())) {
-          return wireDomain.command.DropProtocolCommand({
-            sourcePeerId: payload.sourcePeerId,
-            reason: 'invalid Chat message semantics'
-          })
-        }
-        const requesters = get(RequesterHistoriesState())
-        const current = requesters.find((item) => item.sourcePeerId === payload.sourcePeerId)
-        if (
-          !current ||
-          current.awaitingBatchId ||
-          current.domain !== binding.domain ||
-          current.syncId !== payload.message.syncId
-        ) {
-          return null
-        }
-        const ordered = payload.message.messages.every(
-          (event, index) => index === 0 || compareEventPosition(payload.message.messages[index - 1], event) > 0
-        )
-        if (!ordered) {
-          return wireDomain.command.DropProtocolCommand({
-            sourcePeerId: payload.sourcePeerId,
-            reason: 'history response is not strictly recent-first'
-          })
-        }
-
-        const expectedHlc = get(sessionDomain.query.HlcQuery())
-        let hlc = expectedHlc
-        let decodedBytes = current.decodedBytes
-        let messageCount = current.messageCount
-        let oldest: ChatMessage | undefined
-        let reachedLimit = false
-        const records: ChatMessageRecord[] = []
-        for (const event of payload.message.messages) {
-          if (event.hlc.timestamp < current.cutoff) {
-            reachedLimit = true
-            break
+    const QueueInventoryPageCommand = domain.command({
+      name: 'History.QueueInventoryPageCommand',
+      impl: ({ get }, payload: RequesterAttemptState) => {
+        const runtime = get(sessionDomain.query.DomainQuery(payload.domain))
+        if (!runtime) return FinishCurrentRequestedEvent(payload)
+        const current = get(RequesterAttemptsState()).find((item) => matchesSync(item, payload))
+        if (!current) return null
+        const start = current.nextInventoryPage * historySessionMessages
+        const slice = current.inventoryIds.slice(start, start + historySessionMessages)
+        const done = start + slice.length >= current.inventoryIds.length
+        if (slice.length === 0 && !done) {
+          // Empty inventory: one explicit empty completion page.
+          const emptyRequest: HistoryMessagesRequest = {
+            type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+            syncId: payload.syncId,
+            page: current.nextInventoryPage,
+            messageIds: [],
+            done: true
           }
-          const messageBytes = getTextByteSize(JSON.stringify(event))
-          if (messageCount + 1 > historySessionMessages || decodedBytes + messageBytes > historySessionBytes) {
-            reachedLimit = true
-            break
-          }
-          oldest = event
-          messageCount += 1
-          decodedBytes += messageBytes
-          const user = payload.message.users.find((candidate) => candidate.id === event.userId)
-          if (!user) continue
-          const observed = observeHlc(hlc, event.hlc, clock.now())
-          if (!observed) continue
-          hlc = observed
-          records.push(makeRecord(event, user, clock.now()))
-        }
-
-        const stopAfterAck =
-          reachedLimit ||
-          messageCount >= historySessionMessages ||
-          decodedBytes >= historySessionBytes ||
-          payload.message.done ||
-          !oldest
-        const allocated = nextTokens(get, records.length === 0 && !stopAfterAck ? 1 : 2)
-        if (records.length === 0) {
-          if (stopAfterAck) return FinishRequestedEvent(payload.sourcePeerId)
-          const next: RequesterHistoryState = {
-            ...current,
-            decodedBytes,
-            messageCount,
-            nextBefore: { hlc: oldest!.hlc, id: oldest!.id },
-            syncToken: token('request', allocated.values[0])
-          }
+          const requestId = `history:inventory:${payload.syncToken}:${current.nextInventoryPage}`
           return [
-            TokenState().new(allocated.next),
-            sessionDomain.command.UpdateHlcCommand({ expected: expectedHlc, next: hlc }),
-            RequesterHistoriesState().new(
-              replaceBy(requesters, (item) => item.sourcePeerId === payload.sourcePeerId, next)
-            ),
-            RequestQueuedEvent({ ...next, before: next.nextBefore }),
-            HistoryTimeoutArmedEvent(next)
+            PendingWireSendsState().new([
+              ...removeBy(get(PendingWireSendsState()), (item) => item.requestId === requestId),
+              { ...payload, kind: 'inventory' as const, requestId, done: true }
+            ]),
+            wireDomain.command.SendMessageCommand({
+              requestId,
+              roomId: runtime.roomId,
+              targetPeerIds: [payload.sourcePeerId],
+              message: emptyRequest
+            })
           ]
         }
-
-        const batchId = token('batch', allocated.values[0])
-        const syncToken = token('request', allocated.values[1])
-        const next: RequesterHistoryState = {
-          ...current,
-          decodedBytes,
-          messageCount,
-          awaitingBatchId: batchId,
-          nextBefore: oldest ? { hlc: oldest.hlc, id: oldest.id } : undefined,
-          stopAfterAck,
-          syncToken
+        const requestId = `history:inventory:${payload.syncToken}:${current.nextInventoryPage}`
+        const request: HistoryMessagesRequest = {
+          type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+          syncId: payload.syncId,
+          page: current.nextInventoryPage,
+          messageIds: slice,
+          done
         }
         return [
-          TokenState().new(allocated.next),
-          sessionDomain.command.UpdateHlcCommand({ expected: expectedHlc, next: hlc }),
-          RequesterHistoriesState().new(
-            replaceBy(requesters, (item) => item.sourcePeerId === payload.sourcePeerId, next)
-          ),
-          deliveryDomain.command.AcceptInboundBatchCommand({
-            domain: binding.domain,
-            records,
-            source: 'history',
-            batchId
-          }),
-          HistoryTimeoutArmedEvent(next),
-          ResponseAcceptedEvent({ domain: binding.domain, sourcePeerId: payload.sourcePeerId, count: records.length })
+          PendingWireSendsState().new([
+            ...removeBy(get(PendingWireSendsState()), (item) => item.requestId === requestId),
+            { ...payload, kind: 'inventory' as const, requestId, done }
+          ]),
+          wireDomain.command.SendMessageCommand({
+            requestId,
+            roomId: runtime.roomId,
+            targetPeerIds: [payload.sourcePeerId],
+            message: request
+          })
         ]
       }
     })
 
-    const HandleProviderRequestCommand = domain.command({
-      name: 'History.HandleProviderRequestCommand',
-      impl: ({ get }, payload: WireMessageEvent & { message: HistoryRequestMessage }) => {
+    const ContinueRequesterInventoryCommand = domain.command({
+      name: 'History.ContinueRequesterInventoryCommand',
+      impl: ({ get }, requestId: string) => {
+        const pending = get(PendingWireSendsState())
+        const current = pending.find((item) => item.requestId === requestId && item.kind === 'inventory')
+        if (!current) return null
+        const requesters = get(RequesterAttemptsState())
+        const attempt = requesters.find((item) => matchesSync(item, current))
+        if (!attempt) return null
+        const next: RequesterAttemptState = {
+          ...attempt,
+          nextInventoryPage: attempt.nextInventoryPage + 1
+        }
+        const done = current.done || next.nextInventoryPage * historySessionMessages >= attempt.inventoryIds.length
+        return [
+          PendingWireSendsState().new(removeBy(pending, (item) => item.requestId === requestId)),
+          RequesterAttemptsState().new(replaceBy(requesters, (item) => matchesSync(item, attempt), next)),
+          ...(done ? [] : [QueueInventoryPageCommand(next)])
+        ]
+      }
+    })
+
+    // ── Provider inventory input ────────────────────────────────────────────────
+
+    const HandleInventoryPageCommand = domain.command({
+      name: 'History.HandleInventoryPageCommand',
+      impl: ({ get }, payload: WireMessageEvent & { message: HistoryMessagesRequest }) => {
         const binding = get(
           sessionDomain.query.BindingQuery({ roomId: payload.roomId, sourcePeerId: payload.sourcePeerId })
         )
@@ -520,19 +437,12 @@ const HistoryDomain = Remesh.domain({
             reason: 'invalid Chat message semantics'
           })
         }
-        const sessions = get(ProviderSessionsState())
-        const current = sessions.find((item) => item.sourcePeerId === payload.sourcePeerId)
+        const providers = get(ProviderAttemptsState())
+        const current = providers.find((item) => item.sourcePeerId === payload.sourcePeerId)
+        if (current && (current.domain !== binding.domain || current.syncId !== payload.message.syncId)) return null
+        const queueBytes = getTextByteSize(JSON.stringify(payload.message))
         const jobs = get(ProviderSupplyJobsState())
         const successors = get(ProviderSupplySuccessorsState())
-        const activeJob = jobs.some((job) => job.sourcePeerId === payload.sourcePeerId)
-        if (
-          successors.some((item) => item.sourcePeerId === payload.sourcePeerId) ||
-          (current &&
-            (current.supplying || current.domain !== binding.domain || current.syncId !== payload.message.syncId))
-        ) {
-          return null
-        }
-        const queueBytes = getTextByteSize(JSON.stringify(payload.message))
         const admittedBytes = [...jobs, ...successors].reduce((total, item) => total + item.queueBytes, 0)
         if (
           jobs.length + successors.length >= MAX_PROVIDER_SUPPLY_QUEUE_JOBS ||
@@ -543,54 +453,68 @@ const HistoryDomain = Remesh.domain({
             reason: 'history provider queue limit reached'
           })
         }
+        const expectedPage = current?.expectedRequestPage ?? 0
+        if (payload.message.page !== expectedPage) {
+          return CancelProviderAttemptCommand({
+            sourcePeerId: payload.sourcePeerId,
+            domain: binding.domain,
+            syncId: current?.syncId ?? payload.message.syncId,
+            syncToken: current?.syncToken ?? ''
+          })
+        }
         const allocated = nextTokens(get, 1)
-        const key: HistorySyncKey = {
+        const key: HistoryAttemptKey = {
           sourcePeerId: payload.sourcePeerId,
           domain: binding.domain,
           syncId: payload.message.syncId,
-          syncToken: token('provider', allocated.values[0])
+          syncToken: current?.syncToken ?? token('provider', allocated.values[0])
         }
-        if (activeJob) {
-          const successor: ProviderSupplySuccessorState = {
-            ...key,
-            before: payload.message.before,
-            cutoff: historyCutoff(clock.now()),
-            remainingBytes: historySessionBytes,
-            remainingMessages: historySessionMessages,
-            queueBytes
-          }
-          return [
-            TokenState().new(allocated.next),
-            ProviderSupplySuccessorsState().new([...successors, successor]),
-            ProviderTimeoutArmedEvent(key)
-          ]
-        }
-        const next: ProviderSessionState = current
-          ? { ...current, supplying: true, syncToken: key.syncToken }
+        const inventory = new Set([...(current?.inventory ?? []), ...payload.message.messageIds])
+        if (inventory.size > historySessionMessages) return CancelProviderAttemptCommand(key)
+        const next: ProviderAttemptState = current
+          ? { ...current, inventory, expectedRequestPage: expectedPage + 1 }
           : {
               ...key,
               cutoff: historyCutoff(clock.now()),
-              decodedBytes: 0,
-              messageCount: 0,
-              supplying: true
+              inventory,
+              expectedRequestPage: expectedPage + 1,
+              snapshot: [],
+              nextResponsePage: 0,
+              responseBytes: 0,
+              responseCount: 0,
+              responseDone: false
             }
-        const request: ProviderSupplyPayload = {
-          ...key,
-          before: payload.message.before,
-          cutoff: next.cutoff,
-          remainingBytes: historySessionBytes - next.decodedBytes,
-          remainingMessages: historySessionMessages - next.messageCount,
-          queueBytes
-        }
         return [
           TokenState().new(allocated.next),
-          ProviderSessionsState().new(replaceBy(sessions, (item) => item.sourcePeerId === payload.sourcePeerId, next)),
-          ProviderSupplyJobsState().new([...jobs, { ...key, queueBytes }]),
-          AdmitProviderSupplyCommand(request),
-          ProviderTimeoutArmedEvent(key)
+          ProviderAttemptsState().new(replaceBy(providers, (item) => item.sourcePeerId === payload.sourcePeerId, next)),
+          ...(payload.message.done
+            ? [ProviderTimeoutArmedEvent(key), AdmitProviderSupplyCommand({ ...key, queueBytes })]
+            : [])
         ]
       }
     })
+
+    const CancelProviderAttemptCommand = domain.command({
+      name: 'History.CancelProviderAttemptCommand',
+      impl: ({ get }, key: HistoryAttemptKey) => {
+        const providers = get(ProviderAttemptsState())
+        const owners = get(FeedbackOwnersState())
+        const current = providers.find((item) => matchesSync(item, key))
+        const ownerActive = owners.some((item) => feedbackMatches(item, key))
+        if (!current && !ownerActive) return null
+        return [
+          ProviderAttemptsState().new(removeBy(providers, (item) => matchesSync(item, key))),
+          ProviderSupplySuccessorsState().new(
+            removeBy(get(ProviderSupplySuccessorsState()), (item) => matchesSync(item, key))
+          ),
+          ProviderSupplyJobsState().new(removeBy(get(ProviderSupplyJobsState()), (item) => matchesSync(item, key))),
+          ...(dismissFeedback(get, key) ?? []),
+          ReleaseProviderSupplySlotCommand(key)
+        ]
+      }
+    })
+
+    // ── Provider snapshot + response output ─────────────────────────────────────
 
     const AdmitProviderSupplyCommand = domain.command({
       name: 'History.AdmitProviderSupplyCommand',
@@ -605,7 +529,7 @@ const HistoryDomain = Remesh.domain({
 
     const ReleaseProviderSupplySlotCommand = domain.command({
       name: 'History.ReleaseProviderSupplySlotCommand',
-      impl: ({ get }, key: HistorySyncKey) => {
+      impl: ({ get }, key: HistoryAttemptKey) => {
         const active = removeBy(get(ActiveSuppliesState()), (item) => matchesSync(item, key))
         const waiting = get(WaitingSuppliesState())
         const next = waiting[0]
@@ -617,156 +541,41 @@ const HistoryDomain = Remesh.domain({
       }
     })
 
-    const releaseProviderJob = (
-      key: HistorySyncKey,
-      jobs: ProviderSupplyJobState[],
-      sessions: ProviderSessionState[],
-      successors: ProviderSupplySuccessorState[],
-      domains: SessionDomainState[]
-    ) => {
-      const nextJobs = removeBy(jobs, (job) => matchesSync(job, key))
-      const successor = successors.find((item) => item.sourcePeerId === key.sourcePeerId)
-      if (!successor || nextJobs.some((job) => job.sourcePeerId === key.sourcePeerId)) {
-        return [
-          ProviderSessionsState().new(sessions),
-          ProviderSupplyJobsState().new(nextJobs),
-          ReleaseProviderSupplySlotCommand(key)
-        ]
-      }
-      const nextSuccessors = removeBy(successors, (item) => item.sourcePeerId === key.sourcePeerId)
-      const isLive = domains
-        .find((runtime) => runtime.domain === successor.domain)
-        ?.sessions.some((session) => session.sourcePeerId === successor.sourcePeerId)
-      if (!isLive) {
-        return [
-          ProviderSessionsState().new(sessions),
-          ProviderSupplyJobsState().new(nextJobs),
-          ProviderSupplySuccessorsState().new(nextSuccessors),
-          ReleaseProviderSupplySlotCommand(key)
-        ]
-      }
-      const nextSession: ProviderSessionState = {
-        sourcePeerId: successor.sourcePeerId,
-        domain: successor.domain,
-        syncId: successor.syncId,
-        syncToken: successor.syncToken,
-        cutoff: successor.cutoff,
-        decodedBytes: 0,
-        messageCount: 0,
-        supplying: true
-      }
-      return [
-        ProviderSessionsState().new(
-          replaceBy(sessions, (item) => item.sourcePeerId === successor.sourcePeerId, nextSession)
-        ),
-        ProviderSupplyJobsState().new([
-          ...nextJobs,
-          {
-            sourcePeerId: successor.sourcePeerId,
-            domain: successor.domain,
-            syncId: successor.syncId,
-            syncToken: successor.syncToken,
-            queueBytes: successor.queueBytes
-          }
-        ]),
-        ProviderSupplySuccessorsState().new(nextSuccessors),
-        ReleaseProviderSupplySlotCommand(key),
-        AdmitProviderSupplyCommand(successor)
-      ]
-    }
-
-    const AbortProviderSupplyCommand = domain.command({
-      name: 'History.AbortProviderSupplyCommand',
-      impl: ({ get }, key: HistorySyncKey) =>
-        releaseProviderJob(
-          key,
-          get(ProviderSupplyJobsState()),
-          removeBy(get(ProviderSessionsState()), (item) => matchesSync(item, key)),
-          get(ProviderSupplySuccessorsState()),
-          get(sessionDomain.query.DomainsQuery())
-        )
-    })
-
-    const ProviderTimedOutCommand = domain.command({
-      name: 'History.ProviderTimedOutCommand',
-      impl: ({ get }, key: HistorySyncKey) => {
-        const sessions = get(ProviderSessionsState())
-        const successors = get(ProviderSupplySuccessorsState())
-        if (!sessions.some((item) => matchesSync(item, key)) && !successors.some((item) => matchesSync(item, key))) {
-          return null
-        }
-        return [
-          ProviderSessionsState().new(removeBy(sessions, (item) => matchesSync(item, key))),
-          ProviderSupplySuccessorsState().new(removeBy(successors, (item) => matchesSync(item, key)))
-        ]
-      }
-    })
-
-    const CompleteProviderSupplyCommand = domain.command({
-      name: 'History.CompleteProviderSupplyCommand',
-      impl: ({ get }, payload: HistorySyncKey & { decodedBytes: number; messageCount: number; done: boolean }) => {
-        const jobs = get(ProviderSupplyJobsState())
-        const sessions = get(ProviderSessionsState())
-        const current = sessions.find((item) => matchesSync(item, payload))
-        if (!current) {
-          return releaseProviderJob(
-            payload,
-            jobs,
-            sessions,
-            get(ProviderSupplySuccessorsState()),
-            get(sessionDomain.query.DomainsQuery())
-          )
-        }
-        const decodedBytes = current.decodedBytes + payload.decodedBytes
-        const messageCount = current.messageCount + payload.messageCount
-        if (payload.done || decodedBytes >= historySessionBytes || messageCount >= historySessionMessages) {
-          return releaseProviderJob(
-            payload,
-            jobs,
-            removeBy(sessions, (item) => matchesSync(item, payload)),
-            get(ProviderSupplySuccessorsState()),
-            get(sessionDomain.query.DomainsQuery())
-          )
-        }
-        const allocated = nextTokens(get, 1)
-        const next: ProviderSessionState = {
-          ...current,
-          decodedBytes,
-          messageCount,
-          supplying: false,
-          syncToken: token('provider', allocated.values[0])
-        }
-        return [
-          TokenState().new(allocated.next),
-          ProviderSessionsState().new(replaceBy(sessions, (item) => item.sourcePeerId === payload.sourcePeerId, next)),
-          ProviderSupplyJobsState().new(removeBy(jobs, (job) => matchesSync(job, payload))),
-          ReleaseProviderSupplySlotCommand(payload),
-          ProviderTimeoutArmedEvent(next)
-        ]
-      }
-    })
-
     const QueueProviderResponseCommand = domain.command({
       name: 'History.QueueProviderResponseCommand',
       impl: (
         { get },
-        payload: HistorySyncKey & {
+        payload: HistoryAttemptKey & {
           records: { record: ChatMessageRecord; bytes: number }[]
-          suppliedCount: number
-          suppliedDone: boolean
+          remaining: { record: ChatMessageRecord; bytes: number }[]
+          done: boolean
         }
       ) => {
         const runtime = get(sessionDomain.query.DomainQuery(payload.domain))
-        if (!runtime) return AbortProviderSupplyCommand(payload)
-        const requestId = `history:provider:${payload.syncToken}:${payload.records.length}`
-        const response: HistoryResponseMessage = {
-          type: MESSAGE_TYPE.HISTORY_RESPONSE,
+        if (!runtime) return CancelProviderAttemptCommand(payload)
+        const providers = get(ProviderAttemptsState())
+        const current = providers.find((item) => matchesSync(item, payload))
+        if (!current) return null
+        const slice = payload.records.slice(0, MAX_HISTORY_RESPONSE_MESSAGES)
+        const pageDone = payload.done && slice.length === payload.records.length
+        const response: HistoryMessagesResponse = {
+          type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
           syncId: payload.syncId,
-          users: usersForRecords(payload.records.map(({ record }) => record)),
-          messages: payload.records.map(({ record }) => record.message),
-          done: payload.suppliedDone && payload.records.length === payload.suppliedCount
+          page: current.nextResponsePage,
+          users: usersForRecords(slice.map(({ record }) => record)),
+          messages: slice.map(({ record }) => record.message),
+          done: pageDone
         }
-        const pending: PendingProviderSend = { ...payload, kind: 'provider', requestId }
+        const requestId = `history:provider:${payload.syncToken}:${current.nextResponsePage}`
+        const nextRemaining = payload.records.slice(MAX_HISTORY_RESPONSE_MESSAGES)
+        const pending: PendingProviderSend = {
+          ...payload,
+          kind: 'provider',
+          requestId,
+          records: slice,
+          remaining: nextRemaining,
+          done: pageDone
+        }
         return [
           PendingWireSendsState().new([
             ...removeBy(get(PendingWireSendsState()), (item) => item.kind === 'provider' && matchesSync(item, payload)),
@@ -782,27 +591,42 @@ const HistoryDomain = Remesh.domain({
       }
     })
 
-    const CompleteWireSendCommand = domain.command({
-      name: 'History.CompleteWireSendCommand',
+    const CompleteProviderResponseCommand = domain.command({
+      name: 'History.CompleteProviderResponseCommand',
       impl: ({ get }, requestId: string) => {
         const pending = get(PendingWireSendsState())
-        const current = pending.find((item) => item.requestId === requestId)
-        if (!current) return null
+        const found = pending.find((item) => item.requestId === requestId && item.kind === 'provider')
+        if (!found) return null
+        const current = found as PendingProviderSend
+        const providers = get(ProviderAttemptsState())
+        const attempt = providers.find((item) => matchesSync(item, current))
         const clear = PendingWireSendsState().new(removeBy(pending, (item) => item.requestId === requestId))
-        return current.kind === 'request'
-          ? clear
-          : [
-              clear,
-              CompleteProviderSupplyCommand({
-                sourcePeerId: current.sourcePeerId,
-                domain: current.domain,
-                syncId: current.syncId,
-                syncToken: current.syncToken,
-                decodedBytes: current.records.reduce((total, item) => total + item.bytes, 0),
-                messageCount: current.records.length,
-                done: current.suppliedDone && current.records.length === current.suppliedCount
-              })
-            ]
+        if (!attempt) return clear
+        const decodedBytes = attempt.responseBytes + current.records.reduce((total, item) => total + item.bytes, 0)
+        const messageCount = attempt.responseCount + current.records.length
+        const next: ProviderAttemptState = {
+          ...attempt,
+          nextResponsePage: attempt.nextResponsePage + 1,
+          responseBytes: decodedBytes,
+          responseCount: messageCount,
+          responseDone: current.done
+        }
+        return [
+          clear,
+          ProviderAttemptsState().new(replaceBy(providers, (item) => matchesSync(item, attempt), next)),
+          ...(current.remaining.length > 0
+            ? [
+                QueueProviderResponseCommand({
+                  ...current,
+                  records: current.remaining,
+                  remaining: [],
+                  done: current.done
+                })
+              ]
+            : current.done
+              ? [CancelProviderAttemptCommand(current)]
+              : [])
+        ]
       }
     })
 
@@ -813,58 +637,179 @@ const HistoryDomain = Remesh.domain({
         const current = pending.find((item) => item.requestId === payload.requestId)
         if (!current) return null
         const clear = PendingWireSendsState().new(removeBy(pending, (item) => item.requestId === payload.requestId))
-        if (current.kind === 'request') {
+        if (current.kind === 'inventory') {
           return [
             clear,
             ErrorEvent({ error: payload.error, domain: current.domain }),
             FinishCurrentRequestedEvent(current)
           ]
         }
-        // A preflight failure means the oversized history frame never reached the provider: drop the
-        // offending record and advance. Branches on the producer-set structured stage, never on the
-        // error's constructor.
         if (payload.stage === 'preflight' && current.records.length > 0) {
-          return [clear, QueueProviderResponseCommand({ ...current, records: current.records.slice(0, -1) })]
+          return [
+            clear,
+            QueueProviderResponseCommand({
+              ...current,
+              records: current.records.slice(0, -1),
+              remaining: current.remaining,
+              done: current.done
+            })
+          ]
         }
         return [
           clear,
           ErrorEvent({ error: payload.error, domain: current.domain }),
-          AbortProviderSupplyCommand(current)
+          CancelProviderAttemptCommand(current)
         ]
+      }
+    })
+
+    // ── Requester response input ────────────────────────────────────────────────
+
+    const ApplyResponsePageCommand = domain.command({
+      name: 'History.ApplyResponsePageCommand',
+      impl: ({ get }, payload: WireMessageEvent & { message: HistoryMessagesResponse }) => {
+        const binding = get(
+          sessionDomain.query.BindingQuery({ roomId: payload.roomId, sourcePeerId: payload.sourcePeerId })
+        )
+        if (!binding) return null
+        if (!isChatRoomMessageSemanticallyValid(payload.message, clock.now())) {
+          return wireDomain.command.DropProtocolCommand({
+            sourcePeerId: payload.sourcePeerId,
+            reason: 'invalid Chat message semantics'
+          })
+        }
+        const requesters = get(RequesterAttemptsState())
+        const current = requesters.find(
+          (item) => item.sourcePeerId === payload.sourcePeerId && item.domain === binding.domain
+        )
+        if (!current || current.awaitingBatchId || current.syncId !== payload.message.syncId) return null
+        if (payload.message.page !== current.expectedResponsePage) {
+          return FinishRequestedEvent(payload.sourcePeerId)
+        }
+        const ordered = payload.message.messages.every(
+          (event, index) => index === 0 || compareEventPosition(payload.message.messages[index - 1], event) > 0
+        )
+        if (!ordered) {
+          return wireDomain.command.DropProtocolCommand({
+            sourcePeerId: payload.sourcePeerId,
+            reason: 'history response is not strictly recent-first'
+          })
+        }
+        const expectedHlc = get(sessionDomain.query.HlcQuery())
+        let hlc = expectedHlc
+        let decodedBytes = current.responseBytes
+        let messageCount = current.responseCount
+        let reachedLimit = false
+        const records: ChatMessageRecord[] = []
+        for (const event of payload.message.messages) {
+          if (event.hlc.timestamp < current.cutoff) {
+            reachedLimit = true
+            break
+          }
+          const messageBytes = getTextByteSize(JSON.stringify(event))
+          if (messageCount + 1 > historySessionMessages || decodedBytes + messageBytes > historySessionBytes) {
+            reachedLimit = true
+            break
+          }
+          messageCount += 1
+          decodedBytes += messageBytes
+          const user = payload.message.users.find((candidate) => candidate.id === event.userId)
+          if (!user) continue
+          const observed = observeHlc(hlc, event.hlc, clock.now())
+          if (!observed) continue
+          hlc = observed
+          records.push(makeRecord(event, user, clock.now()))
+        }
+        const allocated = nextTokens(get, 1)
+        const batchId = token('batch', allocated.values[0])
+        const next: RequesterAttemptState = {
+          ...current,
+          expectedResponsePage: current.expectedResponsePage + 1,
+          responseBytes: decodedBytes,
+          responseCount: messageCount,
+          awaitingBatchId: batchId,
+          finalBatch: payload.message.done || reachedLimit
+        }
+        return [
+          TokenState().new(allocated.next),
+          sessionDomain.command.UpdateHlcCommand({ expected: expectedHlc, next: hlc }),
+          RequesterAttemptsState().new(
+            replaceBy(requesters, (item) => item.sourcePeerId === payload.sourcePeerId, next)
+          ),
+          deliveryDomain.command.AcceptInboundBatchCommand({
+            domain: binding.domain,
+            records,
+            source: 'history',
+            batchId
+          }),
+          HistoryTimeoutArmedEvent(next)
+        ]
+      }
+    })
+
+    const ContinueRequesterBatchCommand = domain.command({
+      name: 'History.ContinueRequesterBatchCommand',
+      impl: ({ get }, payload: { domain: string; batchId: string; inserted: boolean }) => {
+        const requesters = get(RequesterAttemptsState())
+        const current = requesters.find(
+          (item) => item.domain === payload.domain && item.awaitingBatchId === payload.batchId
+        )
+        if (!current) return null
+        const activation = payload.inserted && !current.feedbackActive
+        const next: RequesterAttemptState = {
+          ...current,
+          awaitingBatchId: undefined,
+          feedbackActive: current.feedbackActive || payload.inserted
+        }
+        return [
+          RequesterAttemptsState().new(
+            replaceBy(requesters, (item) => item.sourcePeerId === current.sourcePeerId, next)
+          ),
+          HistoryTimeoutArmedEvent(next),
+          ...(activation ? (activateFeedback(get, current) ?? []) : []),
+          ...(current.finalBatch ? [FinishRequestedEvent(current.sourcePeerId)] : [])
+        ]
+      }
+    })
+
+    const DiscardRequesterBatchCommand = domain.command({
+      name: 'History.DiscardRequesterBatchCommand',
+      impl: ({ get }, payload: { domain: string; batchId: string }) => {
+        const current = get(RequesterAttemptsState()).find(
+          (item) => item.domain === payload.domain && item.awaitingBatchId === payload.batchId
+        )
+        return current ? FinishRequestedEvent(current.sourcePeerId) : null
       }
     })
 
     const RemovePeerCommand = domain.command({
       name: 'History.RemovePeerCommand',
       impl: ({ get }, payload: { domain: string; sourcePeerId: string }) => {
-        const queues = get(QueuedHistoriesState())
+        const requesters = get(RequesterAttemptsState())
+        const providers = get(ProviderAttemptsState())
+        const successors = get(ProviderSupplySuccessorsState())
+        const jobs = get(ProviderSupplyJobsState())
+        const owners = get(FeedbackOwnersState())
+        const removedRequesters = requesters.filter(
+          (item) => item.sourcePeerId === payload.sourcePeerId && item.domain === payload.domain
+        )
         return [
-          QueuedHistoriesState().new(
-            queues
-              .map((item) =>
-                item.sourcePeerId === payload.sourcePeerId
-                  ? { ...item, domains: item.domains.filter((queued) => queued !== payload.domain) }
-                  : item
-              )
-              .filter((item) => item.domains.length > 0)
+          ...(removedRequesters.length > 0 ? [FinishRequestedEvent(payload.sourcePeerId)] : []),
+          RequesterAttemptsState().new(
+            requesters.filter((item) => item.sourcePeerId !== payload.sourcePeerId || item.domain !== payload.domain)
           ),
-          ...(get(RequesterHistoriesState()).some(
-            (item) => item.sourcePeerId === payload.sourcePeerId && item.domain === payload.domain
-          )
-            ? [FinishRequestedEvent(payload.sourcePeerId)]
-            : []),
-          ProviderSessionsState().new(
-            removeBy(
-              get(ProviderSessionsState()),
-              (item) => item.sourcePeerId === payload.sourcePeerId && item.domain === payload.domain
-            )
+          ProviderAttemptsState().new(
+            providers.filter((item) => item.sourcePeerId !== payload.sourcePeerId || item.domain !== payload.domain)
           ),
           ProviderSupplySuccessorsState().new(
-            removeBy(
-              get(ProviderSupplySuccessorsState()),
-              (item) => item.sourcePeerId === payload.sourcePeerId && item.domain === payload.domain
-            )
-          )
+            successors.filter((item) => item.sourcePeerId !== payload.sourcePeerId || item.domain !== payload.domain)
+          ),
+          ProviderSupplyJobsState().new(
+            jobs.filter((item) => item.sourcePeerId !== payload.sourcePeerId || item.domain !== payload.domain)
+          ),
+          ...owners
+            .filter((item) => item.sourcePeerId === payload.sourcePeerId && item.domain === payload.domain)
+            .flatMap((item) => dismissFeedback(get, item) ?? [])
         ]
       }
     })
@@ -872,14 +817,16 @@ const HistoryDomain = Remesh.domain({
     const ReleaseDomainCommand = domain.command({
       name: 'History.ReleaseDomainCommand',
       impl: ({ get }, runtimeDomain: string) => {
-        const sourceIds = get(RequesterHistoriesState())
+        const sourceIds = get(RequesterAttemptsState())
           .filter((item) => item.domain === runtimeDomain)
           .map((item) => item.sourcePeerId)
+        const owners = get(FeedbackOwnersState()).filter((item) => item.domain === runtimeDomain)
         return [
-          ProviderSessionsState().new(removeBy(get(ProviderSessionsState()), (item) => item.domain === runtimeDomain)),
+          ProviderAttemptsState().new(removeBy(get(ProviderAttemptsState()), (item) => item.domain === runtimeDomain)),
           ProviderSupplySuccessorsState().new(
             removeBy(get(ProviderSupplySuccessorsState()), (item) => item.domain === runtimeDomain)
           ),
+          ...owners.flatMap((item) => dismissFeedback(get, item) ?? []),
           ...sourceIds.map(FinishRequestedEvent)
         ]
       }
@@ -915,29 +862,98 @@ const HistoryDomain = Remesh.domain({
 
     domain.effect({
       name: 'History.StartEffect',
-      impl: ({ fromEvent }) => fromEvent(StartRequestedEvent).pipe(map(StartHistoryCommand))
+      impl: ({ fromEvent }) => fromEvent(StartRequestedEvent).pipe(map(StartRequesterCommand))
     })
     domain.effect({
       name: 'History.FinishEffect',
-      impl: ({ fromEvent }) => fromEvent(FinishRequestedEvent).pipe(map(FinishHistoryCommand))
+      impl: ({ fromEvent }) => fromEvent(FinishRequestedEvent).pipe(map(FinishRequesterCommand))
     })
     domain.effect({
       name: 'History.FinishCurrentEffect',
-      impl: ({ fromEvent }) => fromEvent(FinishCurrentRequestedEvent).pipe(map(FinishCurrentHistoryCommand))
+      impl: ({ fromEvent }) => fromEvent(FinishCurrentRequestedEvent).pipe(map(FinishCurrentRequesterCommand))
     })
     domain.effect({
-      name: 'History.RequestQueueEffect',
-      impl: ({ fromEvent }) => fromEvent(RequestQueuedEvent).pipe(map(QueueHistoryRequestCommand))
+      name: 'History.AcquireInventoryEffect',
+      impl: ({ fromEvent }) => fromEvent(SyncStartedEvent).pipe(map(AcquireRequesterInventoryCommand))
     })
     domain.effect({
-      name: 'History.WireRequestEffect',
+      name: 'History.RequesterInventorySupplyEffect',
+      impl: ({ fromEvent, get }) =>
+        fromEvent(SyncStartedEvent).pipe(
+          mergeMap((key) => {
+            const failedPageIds: string[] = []
+            return defer(async () => {
+              const current = get(RequesterAttemptsState()).find((item) => matchesSync(item, key))
+              if (!current || current.inventoryIds.length > 0) return []
+              const pageIds = pagePort.historyPageIds(key.domain)
+              const supplyRequest = {
+                domain: key.domain,
+                syncId: key.syncId,
+                cutoff: current.cutoff,
+                mode: 'inventory' as const
+              }
+              let supplied: Awaited<ReturnType<typeof pagePort.supplyHistory>> | null = null
+              const supplyDeadline = clock.now() + HISTORY_REQUEST_TIMEOUT_MS
+              for (const pageId of pageIds) {
+                const remainingMs = supplyDeadline - clock.now()
+                if (remainingMs <= 0) break
+                try {
+                  const supplyId = `inventory:${key.syncToken}:${failedPageIds.length}`
+                  const requestWithId: HistorySupplyRequest = { ...supplyRequest, supplyId }
+                  const result = await withHistoryTimeout(
+                    pagePort.supplyHistory(pageId, requestWithId),
+                    Math.min(HISTORY_REQUEST_TIMEOUT_MS / 2, remainingMs),
+                    () => pagePort.cancelHistorySupply(supplyId)
+                  )
+                  if (result) {
+                    supplied = result
+                    break
+                  }
+                } catch {
+                  try {
+                    pagePort.removePage(pageId)
+                  } finally {
+                    failedPageIds.push(pageId)
+                  }
+                }
+              }
+              const attempt = get(RequesterAttemptsState()).find((item) => matchesSync(item, key))
+              if (!supplied || !attempt) {
+                return [
+                  ...(failedPageIds.length > 0 ? [DeadPagesEvent(failedPageIds)] : []),
+                  FinishCurrentRequestedEvent(key)
+                ]
+              }
+              const inventoryIds = supplied.records
+                .filter((record) => record.message.hlc.timestamp >= attempt.cutoff)
+                .slice(0, historySessionMessages)
+                .map((record) => record.message.id)
+              const next: RequesterAttemptState = { ...attempt, inventoryIds }
+              return [
+                ...(failedPageIds.length > 0 ? [DeadPagesEvent(failedPageIds)] : []),
+                RequesterAttemptsState().new(
+                  replaceBy(get(RequesterAttemptsState()), (item) => matchesSync(item, attempt), next)
+                ),
+                QueueInventoryPageCommand(next) as never
+              ]
+            }).pipe(
+              catchError(() => [
+                ...(failedPageIds.length > 0 ? [DeadPagesEvent(failedPageIds)] : []),
+                FinishCurrentRequestedEvent(key)
+              ])
+            )
+          }, MAX_PROVIDER_SUPPLY_CONCURRENCY)
+        ) as unknown as Observable<RemeshAction[]>
+    })
+    domain.effect({
+      name: 'History.WireInventoryEffect',
       impl: ({ fromEvent }) =>
         fromEvent(wireDomain.event.MessageAcceptedEvent).pipe(
           filter(
-            (event): event is WireMessageEvent & { message: HistoryRequestMessage } =>
-              'type' in event.message && event.message.type === MESSAGE_TYPE.HISTORY_REQUEST
+            (event): event is WireMessageEvent & { message: HistoryMessagesRequest } =>
+              'type' in event.message && event.message.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST
           ),
-          map(HandleProviderRequestCommand)
+          map(HandleInventoryPageCommand)
         )
     })
     domain.effect({
@@ -945,16 +961,24 @@ const HistoryDomain = Remesh.domain({
       impl: ({ fromEvent }) =>
         fromEvent(wireDomain.event.MessageAcceptedEvent).pipe(
           filter(
-            (event): event is WireMessageEvent & { message: HistoryResponseMessage } =>
-              'type' in event.message && event.message.type === MESSAGE_TYPE.HISTORY_RESPONSE
+            (event): event is WireMessageEvent & { message: HistoryMessagesResponse } =>
+              'type' in event.message && event.message.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE
           ),
-          map(ApplyHistoryResponseCommand)
+          map(ApplyResponsePageCommand)
         )
     })
     domain.effect({
       name: 'History.WireSendSuccessEffect',
-      impl: ({ fromEvent }) =>
-        fromEvent(wireDomain.event.MessageSentEvent).pipe(map(({ requestId }) => CompleteWireSendCommand(requestId)))
+      impl: ({ fromEvent, get }) =>
+        fromEvent(wireDomain.event.MessageSentEvent).pipe(
+          map(({ requestId }) => {
+            const pending = get(PendingWireSendsState()).find((item) => item.requestId === requestId)
+            if (!pending) return []
+            return pending.kind === 'inventory'
+              ? ContinueRequesterInventoryCommand(requestId)
+              : CompleteProviderResponseCommand(requestId)
+          })
+        )
     })
     domain.effect({
       name: 'History.WireSendFailureEffect',
@@ -966,7 +990,7 @@ const HistoryDomain = Remesh.domain({
         fromEvent(HistoryTimeoutArmedEvent).pipe(
           mergeMap(
             (payload) =>
-              new Observable<HistorySyncKey>((observer) => {
+              new Observable<HistoryAttemptKey>((observer) => {
                 const timerId = globalThis.setTimeout(() => {
                   observer.next(payload)
                   observer.complete()
@@ -974,7 +998,7 @@ const HistoryDomain = Remesh.domain({
                 return () => globalThis.clearTimeout(timerId)
               })
           ),
-          map(FinishCurrentHistoryCommand)
+          map(FinishCurrentRequesterCommand)
         )
     })
     domain.effect({
@@ -984,15 +1008,14 @@ const HistoryDomain = Remesh.domain({
           mergeMap((request) => {
             const failedPageIds: string[] = []
             return defer(async () => {
-              if (!get(ProviderSessionsState()).some((item) => matchesSync(item, request))) {
-                return AbortProviderSupplyCommand(request)
-              }
+              const currentProvider = get(ProviderAttemptsState()).find((item) => matchesSync(item, request))
+              if (!currentProvider) return [CancelProviderAttemptCommand(request)]
               const pageIds = pagePort.historyPageIds(request.domain)
               const supplyRequest = {
                 domain: request.domain,
                 syncId: request.syncId,
-                before: request.before,
-                cutoff: request.cutoff
+                cutoff: currentProvider.cutoff,
+                mode: 'provider' as const
               }
               let supplied: Awaited<ReturnType<typeof pagePort.supplyHistory>> | null = null
               const supplyDeadline = clock.now() + HISTORY_REQUEST_TIMEOUT_MS
@@ -1022,54 +1045,54 @@ const HistoryDomain = Remesh.domain({
               if (!supplied) {
                 return [
                   ...(failedPageIds.length > 0 ? [DeadPagesEvent(failedPageIds)] : []),
-                  AbortProviderSupplyCommand(request)
+                  CancelProviderAttemptCommand(request)
                 ]
               }
-
+              const attempt = get(ProviderAttemptsState()).find((item) => matchesSync(item, request))
+              if (!attempt) {
+                return [
+                  ...(failedPageIds.length > 0 ? [DeadPagesEvent(failedPageIds)] : []),
+                  CancelProviderAttemptCommand(request)
+                ]
+              }
+              const known = attempt.inventory
               const eligible: { record: ChatMessageRecord; bytes: number }[] = []
               let decodedBytes = 0
               for (const record of supplied.records) {
-                if (eligible.length >= MAX_HISTORY_RESPONSE_MESSAGES || eligible.length >= request.remainingMessages) {
-                  break
-                }
-                if (record.message.hlc.timestamp < request.cutoff) continue
+                if (known.has(record.message.id)) continue
+                if (eligible.length >= historySessionMessages || decodedBytes >= historySessionBytes) break
+                if (record.message.hlc.timestamp < attempt.cutoff) continue
                 if (record.id !== record.message.id || record.user.id !== record.message.userId) continue
                 if (!isMessageWithinLimit(record.message) || !isUserWithinLimit(record.user)) continue
                 const bytes = getTextByteSize(JSON.stringify(record.message))
-                if (decodedBytes + bytes > request.remainingBytes) break
+                if (decodedBytes + bytes > historySessionBytes) break
                 decodedBytes += bytes
                 eligible.push({ record, bytes })
               }
-              const current = get(ProviderSessionsState()).find((item) => matchesSync(item, request))
-              const binding = get(
-                sessionDomain.query.BindingQuery({
-                  roomId: get(sessionDomain.query.DomainQuery(request.domain))?.roomId ?? '',
-                  sourcePeerId: request.sourcePeerId
-                })
-              )
-              if (!current || !binding) {
-                return [
-                  ...(failedPageIds.length > 0 ? [DeadPagesEvent(failedPageIds)] : []),
-                  AbortProviderSupplyCommand(request)
-                ]
+              const nextProvider: ProviderAttemptState = {
+                ...attempt,
+                snapshot: eligible.map(({ record }) => record)
               }
               return [
                 ...(failedPageIds.length > 0 ? [DeadPagesEvent(failedPageIds)] : []),
+                ProviderAttemptsState().new(
+                  replaceBy(get(ProviderAttemptsState()), (item) => matchesSync(item, attempt), nextProvider)
+                ),
                 QueueProviderResponseCommand({
                   ...request,
                   records: eligible,
-                  suppliedCount: supplied.records.length,
-                  suppliedDone: supplied.done
-                })
+                  remaining: [],
+                  done: true
+                }) as never
               ]
             }).pipe(
               catchError(() => [
                 ...(failedPageIds.length > 0 ? [DeadPagesEvent(failedPageIds)] : []),
-                AbortProviderSupplyCommand(request)
+                CancelProviderAttemptCommand(request)
               ])
             )
           }, MAX_PROVIDER_SUPPLY_CONCURRENCY)
-        )
+        ) as unknown as Observable<RemeshAction[]>
     })
     domain.effect({
       name: 'History.ProviderTimeoutEffect',
@@ -1077,7 +1100,7 @@ const HistoryDomain = Remesh.domain({
         fromEvent(ProviderTimeoutArmedEvent).pipe(
           mergeMap(
             (payload) =>
-              new Observable<HistorySyncKey>((observer) => {
+              new Observable<HistoryAttemptKey>((observer) => {
                 const timerId = globalThis.setTimeout(() => {
                   observer.next(payload)
                   observer.complete()
@@ -1085,34 +1108,46 @@ const HistoryDomain = Remesh.domain({
                 return () => globalThis.clearTimeout(timerId)
               })
           ),
-          map(ProviderTimedOutCommand)
+          map(CancelProviderAttemptCommand)
         )
     })
     domain.effect({
       name: 'History.BatchAckEffect',
       impl: ({ fromEvent }) =>
-        fromEvent(deliveryDomain.event.HistoryBatchAckedEvent).pipe(map(ContinueHistoryBatchCommand))
+        fromEvent(deliveryDomain.event.HistoryBatchAckedEvent).pipe(
+          map(({ domain, batchId, inserted }) => ContinueRequesterBatchCommand({ domain, batchId, inserted }))
+        )
     })
     domain.effect({
       name: 'History.BatchDiscardEffect',
       impl: ({ fromEvent }) =>
-        fromEvent(deliveryDomain.event.InboundBatchDiscardedEvent).pipe(map(DiscardHistoryBatchCommand))
+        fromEvent(deliveryDomain.event.InboundBatchDiscardedEvent).pipe(map(DiscardRequesterBatchCommand))
+    })
+    domain.effect({
+      name: 'History.FeedbackProjectEffect',
+      impl: ({ fromEvent }) =>
+        fromEvent(FeedbackChangedEvent).pipe(
+          map((event) => {
+            void pagePort.emitHistoryFeedback(pagePort.historyPageIds(event.domain), event)
+            return null
+          })
+        )
     })
 
     return {
-      query: { RequesterHistoriesQuery, ProviderSessionsQuery, ProviderSupplyJobsQuery },
+      query: { RequesterAttemptsQuery, ProviderAttemptsQuery, ProviderSupplyJobsQuery },
       command: {
-        StartHistoryCommand,
+        StartRequesterCommand,
         ResetHistoryForSessionCommand,
-        FinishHistoryCommand,
+        FinishRequesterCommand,
         RemovePeerCommand,
         ReleaseDomainCommand,
-        HandleProviderRequestCommand
+        HandleInventoryPageCommand,
+        AcquireRequesterInventoryCommand
       },
       event: {
         SyncStartedEvent,
         SyncCompletedEvent,
-        ResponseAcceptedEvent,
         DeadPagesEvent,
         ErrorEvent
       }

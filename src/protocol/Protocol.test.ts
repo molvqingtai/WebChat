@@ -65,12 +65,25 @@ describe('public v3 protocol contract', () => {
   })
 
   it('accepts only the current sync, mention-range, and history-message keys', () => {
-    const request = { type: MESSAGE_TYPE.HISTORY_REQUEST, syncId: 'sync-1' }
+    const request = {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'sync-1',
+      page: 0,
+      messageIds: [],
+      done: true
+    }
     expect(parseChatRoomMessage(request)).toEqual(request)
     expect(parseChatRoomMessage({ ...request, requestId: 'legacy' })).toBeNull()
     expect(parseChatRoomMessage({ type: request.type, requestId: 'legacy' })).toBeNull()
     expect(parseChatRoomMessage({ type: request.type })).toBeNull()
     expect(parseChatRoomMessage({ ...request, unknown: true })).toBeNull()
+    expect(parseChatRoomMessage({ ...request, page: -1 })).toBeNull()
+    expect(parseChatRoomMessage({ ...request, page: 1.5 })).toBeNull()
+    // Old cursor shapes and keys are absent.
+    expect(parseChatRoomMessage({ type: 'history-request', syncId: 'sync-1' })).toBeNull()
+    expect(parseChatRoomMessage({ ...request, before: { hlc: { timestamp: 1, counter: 0 }, id: 'x' } })).toBeNull()
+    expect(parseChatRoomMessage({ ...request, snapshotId: 'snap' })).toBeNull()
+    expect(parseChatRoomMessage({ ...request, nextBefore: { hlc: { timestamp: 1, counter: 0 }, id: 'x' } })).toBeNull()
 
     const mentionedText = {
       ...text(),
@@ -87,8 +100,9 @@ describe('public v3 protocol contract', () => {
     ).toBeNull()
 
     const response = {
-      type: MESSAGE_TYPE.HISTORY_RESPONSE,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
       syncId: 'sync-1',
+      page: 0,
       users: [USER],
       messages: [text()],
       done: true
@@ -99,6 +113,7 @@ describe('public v3 protocol contract', () => {
       parseChatRoomMessage({
         type: response.type,
         syncId: response.syncId,
+        page: response.page,
         users: response.users,
         events: response.messages,
         done: response.done
@@ -108,11 +123,16 @@ describe('public v3 protocol contract', () => {
       parseChatRoomMessage({
         type: response.type,
         syncId: response.syncId,
+        page: response.page,
         users: response.users,
         done: response.done
       })
     ).toBeNull()
     expect(parseChatRoomMessage({ ...response, unknown: true })).toBeNull()
+    expect(parseChatRoomMessage({ ...response, page: -1 })).toBeNull()
+    expect(
+      parseChatRoomMessage({ type: 'history-response', syncId: 'sync-1', users: [], messages: [], done: true })
+    ).toBeNull()
   })
 
   it('validates inclusive UTF-16 mention ranges against body code units', () => {
@@ -210,8 +230,9 @@ describe('public v3 protocol contract', () => {
     expect(
       checkChatRoomMessage(
         {
-          type: MESSAGE_TYPE.HISTORY_RESPONSE,
+          type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
           syncId: 'request-1',
+          page: 0,
           users: [USER],
           messages: [text(), reaction],
           done: true
@@ -220,8 +241,9 @@ describe('public v3 protocol contract', () => {
       )
     ).toBe(false)
     const complete = {
-      type: MESSAGE_TYPE.HISTORY_RESPONSE,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
       syncId: 'request-1',
+      page: 0,
       users: [USER, { id: 'actor-1', name: 'Actor', avatar: '' }],
       messages: [text(), reaction],
       done: true
@@ -238,8 +260,9 @@ describe('public v3 protocol contract', () => {
 
   it('accepts the exact public history message count and rejects one more', () => {
     const response = {
-      type: MESSAGE_TYPE.HISTORY_RESPONSE,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
       syncId: 'request-1',
+      page: 0,
       users: [USER],
       messages: Array.from({ length: MAX_HISTORY_RESPONSE_MESSAGES }, (_, index) => ({
         ...text(),

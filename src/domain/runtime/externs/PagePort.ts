@@ -1,5 +1,6 @@
 import { Remesh } from 'remesh'
 import type {
+  HistoryFeedbackEvent,
   HistorySupplyRequest,
   HistorySupplyResult,
   InboundEvent,
@@ -15,6 +16,7 @@ export interface PagePort {
   emitSessionEvent: (pageIds: string[], event: RuntimeSessionEvent) => Promise<string[]>
   emitWorldPresence: (pageIds: string[], event: WorldPresenceEvent) => Promise<string[]>
   emitError: (pageIds: string[], event: RuntimeErrorEvent) => Promise<string[]>
+  emitHistoryFeedback: (pageIds: string[], event: HistoryFeedbackEvent) => Promise<string[]>
   supplyHistory: (pageId: string, request: HistorySupplyRequest) => Promise<HistorySupplyResult | null>
   cancelHistorySupply: (supplyId: string) => Promise<void>
 }
@@ -31,6 +33,7 @@ export const PagePortExtern = Remesh.extern<PagePort>({
     emitSessionEvent: notImplemented('emitSessionEvent'),
     emitWorldPresence: notImplemented('emitWorldPresence'),
     emitError: notImplemented('emitError'),
+    emitHistoryFeedback: notImplemented('emitHistoryFeedback'),
     supplyHistory: notImplemented('supplyHistory'),
     cancelHistorySupply: async () => {}
   }

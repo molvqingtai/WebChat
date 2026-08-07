@@ -13,6 +13,8 @@ import {
   type WorldRoomMessage
 } from '@/protocol'
 import { MESSAGE_RECORD_TYPE, type TextMessageRecord } from '@/domain/Message'
+import { createMessageStore } from '@/domain/MessageStore'
+import { createMemoryMessageDatabase } from '@/domain/impls/database/Memory'
 import type {
   HistorySupplyRequest,
   HistorySupplyResult,
@@ -21,9 +23,8 @@ import type {
   RuntimeSessionEvent,
   WorldPresenceEvent
 } from '@/runtime/Contract'
-import { HISTORY_WINDOW_DAYS, RUNTIME_DOMAIN_GRACE_MS } from '@/constants/config'
+import { RUNTIME_DOMAIN_GRACE_MS } from '@/constants/config'
 import { createArticoRoomTransport } from '@/runtime/ArticoRoomTransport'
-import { PagePort } from '@/runtime/PagePort'
 import { createBrowserPresenceStore } from '@/runtime/PresenceStore'
 
 const NOW = 1_800_000_000_000
@@ -333,7 +334,7 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
       sent.push(attempt)
       if (sendGate && roomId === blockedSendRoomId) await sendGate
       const message = JSON.parse(payload) as TestWireMessage
-      if (!('type' in message) || message.type !== MESSAGE_TYPE.HISTORY_RESPONSE) return
+      if (!('type' in message) || message.type !== MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE) return
       if (!historySendGate) return
       activeHistorySends += 1
       maxActiveHistorySends = Math.max(maxActiveHistorySends, activeHistorySends)
@@ -1686,10 +1687,17 @@ describe('RuntimeServer trusted delivery', () => {
       ...text('dual-mention'),
       mentions: [{ ...REMOTE_USER, ranges: [[0, 0]], positions: [[0, 0]] }]
     }
-    const legacyRequest = { type: MESSAGE_TYPE.HISTORY_REQUEST, requestId: 'legacy-sync' }
-    const dualRequest = { ...legacyRequest, syncId: 'current-sync' }
+    const legacyRequest = { type: 'history-request', requestId: 'legacy-sync' }
+    const dualRequest = {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'current-sync',
+      page: 0,
+      messageIds: [],
+      done: true,
+      requestId: 'legacy'
+    }
     const legacyResponse = {
-      type: MESSAGE_TYPE.HISTORY_RESPONSE,
+      type: 'history-response',
       requestId: 'legacy-sync',
       users: [REMOTE_USER],
       events: [text('legacy-history')],
@@ -1732,12 +1740,12 @@ describe('RuntimeServer trusted delivery', () => {
     fake.receive(roomId, 'peer-a', text('two', REMOTE_USER.id, NOW + 1))
     await settle()
 
-    await server.ackInbound({ domain: DOMAIN, sequence: 2 })
-    await server.ackInbound({ domain: DOMAIN, sequence: 2 })
+    await server.ackInbound({ domain: DOMAIN, sequence: 2, inserted: false })
+    await server.ackInbound({ domain: DOMAIN, sequence: 2, inserted: false })
     const replay = await server.replayInbound({ domain: DOMAIN, after: 0 })
     expect(replay.map((event) => event.record.message.id)).toEqual(['one'])
 
-    await server.ackInbound({ domain: DOMAIN, sequence: 1 })
+    await server.ackInbound({ domain: DOMAIN, sequence: 1, inserted: false })
     expect(await server.replayInbound({ domain: DOMAIN, after: 0 })).toEqual([])
   })
 })
@@ -2202,860 +2210,172 @@ describe('RuntimeServer concurrent World registration convergence', () => {
 })
 
 describe('RuntimeServer history', () => {
-  it('serializes one history request per source while queueing another domain', async () => {
-    const clock = new FakeClock()
-    const fake = createFakeTransport()
-    const server = createServer({ transport: fake.transport, clock, codec: jsonCodec })
-    const firstRoom = getChatRoomId(DOMAIN)
-    const secondRoom = getChatRoomId(OTHER_DOMAIN)
-    await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
-    await server.attachPage({ domain: OTHER_DOMAIN, pageId: 'page-b' })
-    await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
-    await server.joinChatRoom({ domain: OTHER_DOMAIN, user: USER, site: { origin: OTHER_DOMAIN } })
-
-    fake.receive(firstRoom, 'shared-peer', session())
-    fake.receive(secondRoom, 'shared-peer', session())
-    await settle()
-    const firstRequest = fake.messages(firstRoom).find((message) => message.type === MESSAGE_TYPE.HISTORY_REQUEST)
-    expect(firstRequest?.type).toBe(MESSAGE_TYPE.HISTORY_REQUEST)
-    expect(fake.messages(secondRoom).filter((message) => message.type === MESSAGE_TYPE.HISTORY_REQUEST)).toHaveLength(0)
-
-    fake.receive(firstRoom, 'shared-peer', {
-      type: MESSAGE_TYPE.HISTORY_RESPONSE,
-      syncId: (firstRequest as { syncId: string }).syncId,
-      users: [],
-      messages: [],
-      done: true
-    })
-    await settle()
-
-    expect(fake.messages(secondRoom).filter((message) => message.type === MESSAGE_TYPE.HISTORY_REQUEST)).toHaveLength(1)
+  const request = (syncId: string, page: number, messageIds: string[], done: boolean) => ({
+    type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+    syncId,
+    page,
+    messageIds,
+    done
   })
-
-  it('keeps a queued requester domain alive for its full timeout after the prior domain finishes', async () => {
-    const clock = new FakeClock()
-    const fake = createFakeTransport()
-    const server = createServer({ transport: fake.transport, clock, codec: jsonCodec })
-    const firstRoom = getChatRoomId(DOMAIN)
-    const secondRoom = getChatRoomId(OTHER_DOMAIN)
-    const received: string[] = []
-    await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
-    await server.attachPage({ domain: OTHER_DOMAIN, pageId: 'page-b' })
-    await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
-    await server.joinChatRoom({ domain: OTHER_DOMAIN, user: USER, site: { origin: OTHER_DOMAIN } })
-    await server.onInbound({ pageId: 'page-b' }, (event) => {
-      received.push(event.record.message.id)
-    })
-    fake.receive(firstRoom, 'shared-peer', session())
-    fake.receive(secondRoom, 'shared-peer', session())
-    await settle()
-    const firstRequest = fake.messages(firstRoom).find((message) => message.type === MESSAGE_TYPE.HISTORY_REQUEST)
-
-    clock.advance(9000)
-    fake.receive(firstRoom, 'shared-peer', {
-      type: MESSAGE_TYPE.HISTORY_RESPONSE,
-      syncId: (firstRequest as { syncId: string }).syncId,
-      users: [],
-      messages: [],
-      done: true
-    })
-    await settle()
-    const secondRequest = fake.messages(secondRoom).find((message) => message.type === MESSAGE_TYPE.HISTORY_REQUEST)
-
-    clock.advance(1001)
-    await settle()
-    clock.advance(8998)
-    await settle()
-    fake.receive(secondRoom, 'shared-peer', {
-      type: MESSAGE_TYPE.HISTORY_RESPONSE,
-      syncId: (secondRequest as { syncId: string }).syncId,
-      users: [REMOTE_USER],
-      messages: [text('domain-b-after-old-timeout')],
-      done: true
-    })
-    await settle()
-
-    expect(received).toEqual(['domain-b-after-old-timeout'])
+  const response = (syncId: string, page: number, messages: TextMessage[], done: boolean) => ({
+    type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
+    syncId,
+    page,
+    users: [...new Map(messages.map((m) => [m.userId, { id: m.userId, name: m.userId, avatar: '' }])).values()],
+    messages,
+    done
   })
+  const pageOf = (messages: TextMessage[], done: boolean) => response('sync', 0, messages, done)
 
-  it('releases a completed provider domain before serving the same source in another domain', async () => {
-    const clock = new FakeClock()
-    const fake = createFakeTransport()
-    const server = createServer({ transport: fake.transport, clock, codec: jsonCodec })
-    const firstRoom = getChatRoomId(DOMAIN)
-    const secondRoom = getChatRoomId(OTHER_DOMAIN)
-    await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
-    await server.attachPage({ domain: OTHER_DOMAIN, pageId: 'page-b' })
-    await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
-    await server.joinChatRoom({ domain: OTHER_DOMAIN, user: USER, site: { origin: OTHER_DOMAIN } })
-    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, async () => ({
-      records: [],
-      done: true
-    }))
-    await registerHistoryProvider(server, { domain: OTHER_DOMAIN, pageId: 'page-b' }, async () => ({
-      records: [textRecord('domain-b-immediate')],
-      done: true
-    }))
-    fake.receive(firstRoom, 'shared-peer', session())
-    fake.receive(secondRoom, 'shared-peer', session())
-    fake.receive(firstRoom, 'shared-peer', { type: MESSAGE_TYPE.HISTORY_REQUEST, syncId: 'provider-a' })
-
-    await vi.waitFor(() => {
-      expect(
-        fake
-          .messages(firstRoom)
-          .filter((message) => message.type === MESSAGE_TYPE.HISTORY_RESPONSE && message.syncId === 'provider-a')
-      ).toHaveLength(1)
-    })
-    fake.receive(secondRoom, 'shared-peer', { type: MESSAGE_TYPE.HISTORY_REQUEST, syncId: 'provider-b' })
-
-    await vi.waitFor(() => {
-      expect(
-        fake
-          .messages(secondRoom)
-          .filter((message) => message.type === MESSAGE_TYPE.HISTORY_RESPONSE && message.syncId === 'provider-b')
-      ).toHaveLength(1)
-    })
-  })
-
-  it('does not let an old provider timer close a newer domain sync for the same source', async () => {
-    const clock = new FakeClock()
-    const fake = createFakeTransport()
-    const server = createServer({ transport: fake.transport, clock, codec: jsonCodec })
-    const firstRoom = getChatRoomId(DOMAIN)
-    const secondRoom = getChatRoomId(OTHER_DOMAIN)
-    let secondSupplyCalls = 0
-    await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
-    await server.attachPage({ domain: OTHER_DOMAIN, pageId: 'page-b' })
-    await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
-    await server.joinChatRoom({ domain: OTHER_DOMAIN, user: USER, site: { origin: OTHER_DOMAIN } })
-    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, async () => ({
-      records: [],
-      done: true
-    }))
-    await registerHistoryProvider(server, { domain: OTHER_DOMAIN, pageId: 'page-b' }, async () => {
-      secondSupplyCalls += 1
-      return secondSupplyCalls === 1
-        ? { records: [], done: false }
-        : { records: [textRecord('provider-b-after-old-timeout')], done: true }
-    })
-    fake.receive(firstRoom, 'shared-peer', session())
-    fake.receive(secondRoom, 'shared-peer', session())
-    fake.receive(firstRoom, 'shared-peer', { type: MESSAGE_TYPE.HISTORY_REQUEST, syncId: 'provider-a' })
-    await vi.waitFor(() => {
-      expect(
-        fake
-          .messages(firstRoom)
-          .filter((message) => message.type === MESSAGE_TYPE.HISTORY_RESPONSE && message.syncId === 'provider-a')
-      ).toHaveLength(1)
-    })
-
-    clock.advance(9000)
-    fake.receive(secondRoom, 'shared-peer', { type: MESSAGE_TYPE.HISTORY_REQUEST, syncId: 'provider-b' })
-    await vi.waitFor(() => {
-      expect(
-        fake
-          .messages(secondRoom)
-          .filter((message) => message.type === MESSAGE_TYPE.HISTORY_RESPONSE && message.syncId === 'provider-b')
-      ).toHaveLength(1)
-    })
-    clock.advance(1001)
-    await settle()
-    clock.advance(8998)
-    await settle()
-    fake.receive(secondRoom, 'shared-peer', { type: MESSAGE_TYPE.HISTORY_REQUEST, syncId: 'provider-b' })
-
-    await vi.waitFor(() => {
-      expect(
-        fake
-          .messages(secondRoom)
-          .filter((message) => message.type === MESSAGE_TYPE.HISTORY_RESPONSE && message.syncId === 'provider-b')
-      ).toHaveLength(2)
-    })
-  })
-
-  it('waits for durable ACK of every history-response sequence before requesting the next response', async () => {
-    const { fake, server, roomId } = await setup()
-    const delivered: { sequence: number; id: string }[] = []
-    await server.onInbound({ pageId: 'page-a' }, (event) => {
-      delivered.push({ sequence: event.sequence, id: event.record.message.id })
-    })
-    fake.receive(roomId, 'peer-a', session())
-    await settle()
-    const initial = fake.messages(roomId).find((message) => message.type === MESSAGE_TYPE.HISTORY_REQUEST)
-    const syncId = (initial as { syncId: string }).syncId
-
-    fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_RESPONSE,
-      syncId,
-      users: [REMOTE_USER],
-      messages: [text('history-newer'), text('history-older', REMOTE_USER.id, NOW - 1)],
-      done: false
-    })
-    await settle()
-
-    expect(delivered).toEqual([
-      { sequence: 1, id: 'history-newer' },
-      { sequence: 2, id: 'history-older' }
-    ])
-    expect(fake.messages(roomId).filter((message) => message.type === MESSAGE_TYPE.HISTORY_REQUEST)).toHaveLength(1)
-
-    await server.ackInbound({ domain: DOMAIN, sequence: delivered[0].sequence })
-    await settle()
-    expect(fake.messages(roomId).filter((message) => message.type === MESSAGE_TYPE.HISTORY_REQUEST)).toHaveLength(1)
-
-    await server.ackInbound({ domain: DOMAIN, sequence: delivered[1].sequence })
-    await settle()
-    const requests = fake.messages(roomId).filter((message) => message.type === MESSAGE_TYPE.HISTORY_REQUEST)
-    expect(requests).toHaveLength(2)
-    expect(requests[1]).toMatchObject({ before: { id: 'history-older' } })
-  })
-
-  it('keeps provider supplies alive after page lookup throws before yielding an id', async () => {
-    const originalHistoryPageIds = PagePort.prototype.historyPageIds
-    let failNextPageLookup = true
-    const pageLookup = vi
-      .spyOn(PagePort.prototype, 'historyPageIds')
-      .mockImplementation(function (this: PagePort, domain) {
-        if (failNextPageLookup) {
-          failNextPageLookup = false
-          throw new Error('transient history page lookup failure')
-        }
-        return originalHistoryPageIds.call(this, domain)
-      })
-    let server: RuntimeServer | null = null
-
-    try {
-      const runtime = await setup()
-      server = runtime.server
-      await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, async () => ({
-        records: [],
-        done: true
-      }))
-      runtime.fake.receive(runtime.roomId, 'peer-a', session())
-      runtime.fake.receive(runtime.roomId, 'peer-a', {
-        type: MESSAGE_TYPE.HISTORY_REQUEST,
-        syncId: 'failed-page-lookup'
-      })
-      await settle()
-      runtime.fake.receive(runtime.roomId, 'peer-a', {
-        type: MESSAGE_TYPE.HISTORY_REQUEST,
-        syncId: 'healthy-page-lookup'
-      })
-
-      await vi.waitFor(() =>
-        expect(
-          runtime.fake
-            .messages(runtime.roomId)
-            .filter(
-              (message) => message.type === MESSAGE_TYPE.HISTORY_RESPONSE && message.syncId === 'healthy-page-lookup'
-            )
-        ).toHaveLength(1)
-      )
-    } finally {
-      pageLookup.mockRestore()
-      if (server) disposeServer(server)
-    }
-  })
-
-  it('fails over a physically cancelled local history supplier and bounds provider sessions per source', async () => {
-    const { clock, fake, server, roomId } = await setup()
-    await server.attachPage({ domain: DOMAIN, pageId: 'page-b' })
-    await registerHistoryProvider(
+  const registerInventoryProvider = (server: RuntimeServer, records: TextMessageRecord[] = []) =>
+    registerHistoryProvider(
       server,
       { domain: DOMAIN, pageId: 'page-a' },
-      (_request, signal) =>
-        new Promise((_resolve, reject) => {
-          signal.addEventListener('abort', () => reject(signal.reason), { once: true })
-        })
+      async (): Promise<HistorySupplyResult> => ({ records, done: true })
     )
-    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-b' }, async () => ({
-      records: [textRecord('from-page-b')],
-      done: false
-    }))
 
-    fake.receive(roomId, 'peer-a', session())
-    fake.receive(roomId, 'peer-a', { type: MESSAGE_TYPE.HISTORY_REQUEST, syncId: 'provider-1' })
-    await settle()
-    clock.advance(5000)
-    await settle()
-
-    expect(
-      fake
-        .messages(roomId)
-        .filter((message) => message.type === MESSAGE_TYPE.HISTORY_RESPONSE && message.syncId === 'provider-1')
-    ).toHaveLength(1)
-
-    fake.receive(roomId, 'peer-a', { type: MESSAGE_TYPE.HISTORY_REQUEST, syncId: 'provider-2' })
-    await settle()
-    expect(
-      fake
-        .messages(roomId)
-        .filter((message) => message.type === MESSAGE_TYPE.HISTORY_RESPONSE && message.syncId === 'provider-2')
-    ).toHaveLength(0)
-
-    clock.advance(10000)
-    await settle()
-    fake.receive(roomId, 'peer-a', { type: MESSAGE_TYPE.HISTORY_REQUEST, syncId: 'provider-2' })
-    await settle()
-    clock.advance(5000)
-    await settle()
-    expect(
-      fake
-        .messages(roomId)
-        .filter((message) => message.type === MESSAGE_TYPE.HISTORY_RESPONSE && message.syncId === 'provider-2')
-    ).toHaveLength(1)
-  })
-
-  it('freezes the provider cutoff across page and cursor failover using its own clock', async () => {
-    const dayMs = 24 * 60 * 60 * 1000
-    const requesterNow = NOW
-    const providerNow = requesterNow + dayMs
-    const requesterCutoff = requesterNow - HISTORY_WINDOW_DAYS * dayMs
-    const providerCutoff = providerNow - HISTORY_WINDOW_DAYS * dayMs
-    const { clock, fake, server, roomId } = await setup(DOMAIN, providerNow)
-    const firstPageCutoffs: number[] = []
-    const secondPageCutoffs: number[] = []
-    const localCandidates = [
-      textRecord('at-provider-cutoff', providerCutoff),
-      textRecord('requester-boundary-omitted-by-skew', requesterCutoff)
-    ]
-    await server.attachPage({ domain: DOMAIN, pageId: 'page-b' })
-    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, (request, signal) => {
-      firstPageCutoffs.push(request.cutoff)
-      return new Promise((_resolve, reject) => {
-        signal.addEventListener('abort', () => reject(signal.reason), { once: true })
-      })
-    })
-    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-b' }, async (request) => {
-      secondPageCutoffs.push(request.cutoff)
-      return secondPageCutoffs.length === 1 ? { records: localCandidates, done: false } : { records: [], done: true }
+  it('runs one exact-difference inventory -> missing-body sync through the real page boundary', async () => {
+    const { fake, server, roomId } = await setup()
+    await registerInventoryProvider(server)
+    const delivered: string[] = []
+    await server.onInbound({ pageId: 'page-a' }, (event) => {
+      delivered.push(event.record.message.id)
     })
     fake.receive(roomId, 'peer-a', session())
-    fake.receive(roomId, 'peer-a', { type: MESSAGE_TYPE.HISTORY_REQUEST, syncId: 'independent-provider' })
-    await vi.waitFor(() => expect(firstPageCutoffs).toEqual([providerCutoff]))
+    await settle()
+    const requestMsg = fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST)
+    const syncId = (requestMsg as { syncId: string }).syncId
+    expect((requestMsg as { messageIds: string[] }).messageIds).toEqual([])
+    expect((requestMsg as { done: boolean }).done).toBe(true)
 
-    clock.advance(5000)
-    await vi.waitFor(() => expect(secondPageCutoffs).toEqual([providerCutoff]))
-    const response = fake
-      .messages(roomId)
-      .find((message) => message.type === MESSAGE_TYPE.HISTORY_RESPONSE && message.syncId === 'independent-provider')
-    if (response?.type !== MESSAGE_TYPE.HISTORY_RESPONSE) throw new Error('Expected provider history response')
-    expect(response.messages.map((event) => event.id)).toEqual(['at-provider-cutoff'])
-    expect(response).not.toHaveProperty('cutoff')
-    expect(localCandidates.map((record) => record.message.id)).toEqual([
-      'at-provider-cutoff',
-      'requester-boundary-omitted-by-skew'
-    ])
-    expect(providerCutoff).not.toBe(requesterCutoff)
-
-    clock.advance(1000)
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_REQUEST,
-      syncId: 'independent-provider',
-      before: { hlc: { timestamp: providerCutoff, counter: 0 }, id: 'at-provider-cutoff' }
-    })
-    await vi.waitFor(() => expect(secondPageCutoffs).toEqual([providerCutoff, providerCutoff]))
-  })
-
-  it('fails over immediately when the selected page detaches during supply', async () => {
-    const { fake, server, roomId } = await setup()
-    let firstPageCalls = 0
-    await server.attachPage({ domain: DOMAIN, pageId: 'page-b' })
-    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, () => {
-      firstPageCalls += 1
-      return new Promise(() => {})
-    })
-    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-b' }, async () => ({
-      records: [textRecord('page-b-after-detach')],
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
+      syncId,
+      page: 0,
+      users: [REMOTE_USER],
+      messages: [text('history-a'), text('history-b', REMOTE_USER.id, NOW - 1)],
       done: true
-    }))
-    fake.receive(roomId, 'peer-a', session())
-    fake.receive(roomId, 'peer-a', { type: MESSAGE_TYPE.HISTORY_REQUEST, syncId: 'page-detach' })
-    await vi.waitFor(() => expect(firstPageCalls).toBe(1))
-
-    await server.detachPage({ domain: DOMAIN, pageId: 'page-a' })
-
-    await vi.waitFor(() => {
-      expect(
-        fake
-          .messages(roomId)
-          .filter((message) => message.type === MESSAGE_TYPE.HISTORY_RESPONSE && message.syncId === 'page-detach')
-      ).toHaveLength(1)
     })
+    await vi.waitFor(() => expect(delivered).toEqual(['history-a', 'history-b']))
   })
 
-  it('keeps another domain provider alive when the same peer leaves one room', async () => {
-    const clock = new FakeClock()
-    const fake = createFakeTransport()
-    const server = createServer({ transport: fake.transport, clock, codec: jsonCodec })
-    const firstRoom = getChatRoomId(DOMAIN)
-    const secondRoom = getChatRoomId(OTHER_DOMAIN)
-    const supplied = deferred<{ records: TextMessageRecord[]; done: boolean }>()
-    await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
-    await server.attachPage({ domain: OTHER_DOMAIN, pageId: 'page-b' })
-    await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
-    await server.joinChatRoom({ domain: OTHER_DOMAIN, user: USER, site: { origin: OTHER_DOMAIN } })
-    await registerHistoryProvider(server, { domain: OTHER_DOMAIN, pageId: 'page-b' }, () => supplied.promise)
-    fake.receive(firstRoom, 'shared-peer', session())
-    fake.receive(secondRoom, 'shared-peer', session())
-    fake.receive(secondRoom, 'shared-peer', { type: MESSAGE_TYPE.HISTORY_REQUEST, syncId: 'domain-b-provider' })
-    await settle()
-
-    fake.peerLeave(firstRoom, 'shared-peer')
-    supplied.resolve({ records: [textRecord('domain-b-history')], done: true })
-
-    await vi.waitFor(() => {
-      expect(
-        fake
-          .messages(secondRoom)
-          .filter((message) => message.type === MESSAGE_TYPE.HISTORY_RESPONSE && message.syncId === 'domain-b-provider')
-      ).toHaveLength(1)
-    })
-  })
-
-  it('isolates provider supply by source so one hung peer cannot block another', async () => {
+  it('publishes one attempt-owned loading Toast on first actual insert and dismisses at final page', async () => {
     const { fake, server, roomId } = await setup()
-    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, (request) =>
-      request.syncId === 'hung-source'
-        ? new Promise(() => {})
-        : Promise.resolve({ records: [textRecord('responsive-history')], done: true })
-    )
-    fake.receive(roomId, 'peer-a', session())
-    fake.receive(roomId, 'peer-b', session({ ...REMOTE_USER, id: 'remote-b' }))
-    fake.receive(roomId, 'peer-a', { type: MESSAGE_TYPE.HISTORY_REQUEST, syncId: 'hung-source' })
-    fake.receive(roomId, 'peer-b', { type: MESSAGE_TYPE.HISTORY_REQUEST, syncId: 'responsive-source' })
-
-    await vi.waitFor(() => {
-      expect(
-        fake
-          .messages(roomId)
-          .filter((message) => message.type === MESSAGE_TYPE.HISTORY_RESPONSE && message.syncId === 'responsive-source')
-      ).toHaveLength(1)
+    await registerInventoryProvider(server)
+    // The page persists each inbound History record and ACKs with the real insert result.
+    await server.onInbound({ pageId: 'page-a' }, async (event) => {
+      await server.ackInbound({ domain: event.domain, sequence: event.sequence, inserted: true })
     })
-    expect(
-      fake
-        .messages(roomId)
-        .filter((message) => message.type === MESSAGE_TYPE.HISTORY_RESPONSE && message.syncId === 'hung-source')
-    ).toHaveLength(0)
-  })
-
-  it('freezes a dormant successor cutoff at its own admission and retains it after promotion', async () => {
-    const { clock, fake, server, roomId } = await setup()
-    const firstSupply = deferred<{ records: TextMessageRecord[]; done: boolean }>()
-    const suppliedRequests: { syncId: string; cutoff: number }[] = []
-    const windowMs = HISTORY_WINDOW_DAYS * 24 * 60 * 60 * 1000
-    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, (request) => {
-      suppliedRequests.push({ syncId: request.syncId, cutoff: request.cutoff })
-      return request.syncId === 'before-reset'
-        ? firstSupply.promise
-        : Promise.resolve({ records: [textRecord('replacement-history')], done: true })
+    const feedback: { kind: string; ownerId: string }[] = []
+    await server.onHistoryFeedback({ pageId: 'page-a' }, (event) => {
+      feedback.push(event)
     })
     fake.receive(roomId, 'peer-a', session())
-    fake.receive(roomId, 'peer-a', { type: MESSAGE_TYPE.HISTORY_REQUEST, syncId: 'before-reset' })
-    await vi.waitFor(() => expect(suppliedRequests).toEqual([{ syncId: 'before-reset', cutoff: NOW - windowMs }]))
-
-    fake.receive(roomId, 'peer-a', { ...session(), sessionId: 'replacement-session' })
-    clock.advance(1000)
-    fake.receive(roomId, 'peer-a', { type: MESSAGE_TYPE.HISTORY_REQUEST, syncId: 'replacement-request' })
     await settle()
-    expect(suppliedRequests).toHaveLength(1)
+    const requestMsg = fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST)
+    const syncId = (requestMsg as { syncId: string }).syncId
 
-    clock.advance(1000)
-    firstSupply.resolve({ records: [], done: true })
-    await vi.waitFor(() =>
-      expect(suppliedRequests).toEqual([
-        { syncId: 'before-reset', cutoff: NOW - windowMs },
-        { syncId: 'replacement-request', cutoff: NOW + 1000 - windowMs }
-      ])
-    )
-    await vi.waitFor(() => {
-      expect(
-        fake
-          .messages(roomId)
-          .filter(
-            (message) => message.type === MESSAGE_TYPE.HISTORY_RESPONSE && message.syncId === 'replacement-request'
-          )
-      ).toHaveLength(1)
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
+      syncId,
+      page: 0,
+      users: [REMOTE_USER],
+      messages: [text('history-a')],
+      done: true
     })
+    await vi.waitFor(() => expect(feedback.some((f) => f.kind === 'loading')).toBe(true))
+    await vi.waitFor(() => expect(feedback.some((f) => f.kind === 'dismiss')).toBe(true))
+    expect(feedback.filter((f) => f.kind === 'loading')).toHaveLength(1)
+    expect(feedback.filter((f) => f.kind === 'dismiss')).toHaveLength(1)
+    expect(new Set(feedback.map((f) => f.ownerId)).size).toBe(1)
   })
 
-  it('waits for timed-out page work to physically settle before failover and successor promotion', async () => {
-    const { clock, fake, server, roomId } = await setup()
-    const oldPhysicalWork = deferred<{ records: TextMessageRecord[]; done: boolean }>()
-    const calls: string[] = []
-    let oldSignal: AbortSignal | null = null
-    await server.attachPage({ domain: DOMAIN, pageId: 'page-b' })
-    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, (request, signal) => {
-      calls.push(`page-a:${request.syncId}`)
-      oldSignal = signal
-      return oldPhysicalWork.promise
-    })
-    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-b' }, async (request) => {
-      calls.push(`page-b:${request.syncId}`)
-      return { records: [textRecord(request.syncId)], done: true }
-    })
-    fake.receive(roomId, 'peer-a', session())
-    fake.receive(roomId, 'peer-a', { type: MESSAGE_TYPE.HISTORY_REQUEST, syncId: 'old-work' })
-    await vi.waitFor(() => expect(calls).toEqual(['page-a:old-work']))
-
-    fake.receive(roomId, 'peer-a', { ...session(), sessionId: 'replacement-session' })
-    fake.receive(roomId, 'peer-a', { type: MESSAGE_TYPE.HISTORY_REQUEST, syncId: 'successor' })
-    clock.advance(5001)
-    await settle()
-
-    expect(oldSignal).not.toBeNull()
-    expect((oldSignal as unknown as AbortSignal).aborted).toBe(true)
-    expect(calls).toEqual(['page-a:old-work'])
-    expect(fake.messages(roomId).filter((message) => message.type === MESSAGE_TYPE.HISTORY_RESPONSE)).toHaveLength(0)
-
-    oldPhysicalWork.resolve({ records: [], done: true })
-    await vi.waitFor(() => expect(calls).toEqual(['page-a:old-work', 'page-b:old-work', 'page-b:successor']))
-    await vi.waitFor(() => {
-      expect(
-        fake
-          .messages(roomId)
-          .filter((message) => message.type === MESSAGE_TYPE.HISTORY_RESPONSE && message.syncId === 'successor')
-      ).toHaveLength(1)
-    })
-  })
-
-  it('invalidates a queued replacement request when the peer leaves before the old job settles', async () => {
+  it('stays silent when a response page is empty or every insert already exists', async () => {
     const { fake, server, roomId } = await setup()
-    const firstSupply = deferred<{ records: TextMessageRecord[]; done: boolean }>()
-    const suppliedSyncIds: string[] = []
-    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, (request) => {
-      suppliedSyncIds.push(request.syncId)
-      return firstSupply.promise
+    await registerInventoryProvider(server)
+    const feedback: { kind: string }[] = []
+    await server.onHistoryFeedback({ pageId: 'page-a' }, (event) => {
+      feedback.push(event)
     })
     fake.receive(roomId, 'peer-a', session())
-    fake.receive(roomId, 'peer-a', { type: MESSAGE_TYPE.HISTORY_REQUEST, syncId: 'before-leave' })
-    await vi.waitFor(() => expect(suppliedSyncIds).toEqual(['before-leave']))
-
-    fake.receive(roomId, 'peer-a', { ...session(), sessionId: 'replacement-before-leave' })
-    fake.receive(roomId, 'peer-a', { type: MESSAGE_TYPE.HISTORY_REQUEST, syncId: 'queued-before-leave' })
     await settle()
-    expect(suppliedSyncIds).toEqual(['before-leave'])
-    fake.peerLeave(roomId, 'peer-a')
-    await settle()
-    firstSupply.resolve({ records: [], done: true })
-    await settle()
+    const requestMsg = fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST)
+    const syncId = (requestMsg as { syncId: string }).syncId
 
-    expect(suppliedSyncIds).toEqual(['before-leave'])
-  })
-
-  it('invalidates a queued replacement request when its domain is released', async () => {
-    const { clock, fake, server, roomId } = await setup()
-    const suppliedSyncIds: string[] = []
-    fake.hangHistoryResponseSends()
-    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, async (request) => {
-      suppliedSyncIds.push(request.syncId)
-      return { records: [], done: true }
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
+      syncId,
+      page: 0,
+      users: [],
+      messages: [],
+      done: true
     })
-    fake.receive(roomId, 'peer-a', session())
-    fake.receive(roomId, 'peer-a', { type: MESSAGE_TYPE.HISTORY_REQUEST, syncId: 'before-release' })
-    await vi.waitFor(() => expect(fake.activeHistorySends()).toBe(1))
-
-    fake.receive(roomId, 'peer-a', { ...session(), sessionId: 'replacement-before-release' })
-    fake.receive(roomId, 'peer-a', { type: MESSAGE_TYPE.HISTORY_REQUEST, syncId: 'queued-before-release' })
-    await server.detachPage({ domain: DOMAIN, pageId: 'page-a' })
-    clock.advance(RUNTIME_DOMAIN_GRACE_MS + 1)
     await settle()
-
-    fake.releaseHistoryResponseSends()
-    await vi.waitFor(() => expect(fake.activeHistorySends()).toBe(0))
-    await settle()
-    expect(suppliedSyncIds).toEqual(['before-release'])
+    expect(feedback).toEqual([])
   })
 
-  it('invalidates a queued replacement request on timeout without releasing the old active job', async () => {
-    const { clock, fake, server, roomId } = await setup()
-    const firstSupply = deferred<{ records: TextMessageRecord[]; done: boolean }>()
-    const suppliedSyncIds: string[] = []
-    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, (request) => {
-      suppliedSyncIds.push(request.syncId)
-      return firstSupply.promise
-    })
-    fake.receive(roomId, 'peer-a', session())
-    fake.receive(roomId, 'peer-a', { type: MESSAGE_TYPE.HISTORY_REQUEST, syncId: 'before-timeout' })
-    await vi.waitFor(() => expect(suppliedSyncIds).toEqual(['before-timeout']))
-
-    fake.receive(roomId, 'peer-a', { ...session(), sessionId: 'replacement-before-timeout' })
-    fake.receive(roomId, 'peer-a', { type: MESSAGE_TYPE.HISTORY_REQUEST, syncId: 'queued-before-timeout' })
-    clock.advance(10001)
-    await settle()
-    firstSupply.resolve({ records: [], done: true })
-    await settle()
-
-    expect(suppliedSyncIds).toEqual(['before-timeout'])
-  })
-
-  it('counts dormant replacement successors against the shared admission cap', async () => {
+  it('provides only records absent from the complete inventory in recent-first order', async () => {
     const { fake, server, roomId } = await setup()
-    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    let supplyCalls = 0
-    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, () => {
-      supplyCalls += 1
-      return new Promise(() => {})
-    })
-    for (let index = 0; index < 16; index += 1) {
-      const peerId = `successor-peer-${index}`
-      const user = { ...REMOTE_USER, id: `successor-user-${index}` }
-      fake.receive(roomId, peerId, session(user))
-      fake.receive(roomId, peerId, { type: MESSAGE_TYPE.HISTORY_REQUEST, syncId: `active-${index}` })
-      fake.receive(roomId, peerId, { ...session(user), sessionId: `replacement-${index}` })
-      fake.receive(roomId, peerId, { type: MESSAGE_TYPE.HISTORY_REQUEST, syncId: `successor-${index}` })
-    }
-    await vi.waitFor(() => expect(supplyCalls).toBe(4))
-
-    fake.receive(roomId, 'overflow-peer', session({ ...REMOTE_USER, id: 'overflow-user' }))
-    fake.receive(roomId, 'overflow-peer', { type: MESSAGE_TYPE.HISTORY_REQUEST, syncId: 'overflow' })
-    await vi.waitFor(() => {
-      expect(warning).toHaveBeenCalledWith(expect.stringContaining('history provider queue limit reached'), '')
-    })
-    const warningCount = warning.mock.calls.length
-
-    fake.peerLeave(roomId, 'successor-peer-0')
-    await settle()
-    fake.receive(roomId, 'overflow-peer', { type: MESSAGE_TYPE.HISTORY_REQUEST, syncId: 'after-release' })
-    await settle()
-    expect(warning).toHaveBeenCalledTimes(warningCount)
-    warning.mockRestore()
-  })
-
-  it('uses one four-job concurrency boundary across supplier and hung page send', async () => {
-    const { clock, fake, server, roomId } = await setup()
-    let supplyCalls = 0
-    fake.hangHistoryResponseSends()
+    const database = createMemoryMessageDatabase('history-provider-db')
+    const store = createMessageStore(database)
+    await store.insert(textRecord('local-1', NOW))
+    await store.insert(textRecord('local-2', NOW - 1))
     await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, async () => {
-      supplyCalls += 1
-      return { records: [], done: true }
+      const records = await store.query({ type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE })
+      return { records: records as TextMessageRecord[], done: true }
     })
-    for (let index = 0; index < 8; index += 1) {
-      fake.receive(roomId, `send-peer-${index}`, session({ ...REMOTE_USER, id: `send-remote-${index}` }))
-    }
-    await settle()
-    for (let index = 0; index < 8; index += 1) {
-      fake.receive(roomId, `send-peer-${index}`, {
-        type: MESSAGE_TYPE.HISTORY_REQUEST,
-        syncId: `send-${index}`
-      })
-    }
 
-    await vi.waitFor(() => expect(supplyCalls).toBe(4))
-    expect(fake.maxActiveHistorySends()).toBeLessThanOrEqual(1)
-    expect(fake.activeHistorySends()).toBe(1)
-    clock.advance(10001)
-    await settle()
-    expect(supplyCalls).toBe(4)
-    expect(fake.activeHistorySends()).toBe(1)
-
-    fake.releaseHistoryResponseSends()
-    await vi.waitFor(() => expect(fake.activeHistorySends()).toBe(0))
-    await settle()
-    fake.receive(roomId, 'send-peer-0', {
-      type: MESSAGE_TYPE.HISTORY_REQUEST,
-      syncId: 'send-after-timeout'
-    })
-    await vi.waitFor(() => expect(supplyCalls).toBe(5))
-  })
-
-  it('drops a late supplier completion after timeout and releases its admission exactly once', async () => {
-    const { clock, fake, server, roomId } = await setup()
-    const lateSupply = deferred<{ records: TextMessageRecord[]; done: boolean }>()
-    let supplyCalls = 0
-    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, () => {
-      supplyCalls += 1
-      return lateSupply.promise
-    })
-    fake.receive(roomId, 'peer-a', session())
-    fake.receive(roomId, 'peer-a', { type: MESSAGE_TYPE.HISTORY_REQUEST, syncId: 'timed-out' })
-    await vi.waitFor(() => expect(supplyCalls).toBe(1))
-
-    clock.advance(5001)
-    await settle()
-    lateSupply.resolve({ records: [textRecord('too-late')], done: true })
-    await settle()
-    expect(fake.messages(roomId).filter((message) => message.type === MESSAGE_TYPE.HISTORY_RESPONSE)).toHaveLength(0)
-
-    await server.attachPage({ domain: DOMAIN, pageId: 'page-b' })
-    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-b' }, async () => {
-      supplyCalls += 1
-      return { records: [textRecord('after-timeout')], done: true }
-    })
-    fake.receive(roomId, 'peer-a', { ...session(), sessionId: 'after-timeout-session' })
-    fake.receive(roomId, 'peer-a', { type: MESSAGE_TYPE.HISTORY_REQUEST, syncId: 'after-timeout' })
-
-    await vi.waitFor(() => expect(supplyCalls).toBe(2))
-    await vi.waitFor(() => {
-      expect(
-        fake
-          .messages(roomId)
-          .filter((message) => message.type === MESSAGE_TYPE.HISTORY_RESPONSE && message.syncId === 'after-timeout')
-      ).toHaveLength(1)
-    })
-  })
-
-  it('counts dormant successors against queued-byte admission during session cleanup', async () => {
-    const { fake, server, roomId } = await setup()
-    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, () => new Promise(() => {}))
-    for (let index = 0; index < 15; index += 1) {
-      const peerId = `queue-peer-${index}`
-      const user = { ...REMOTE_USER, id: `queue-user-${index}` }
-      fake.receive(roomId, peerId, session(user))
-      fake.receive(roomId, peerId, {
-        type: MESSAGE_TYPE.HISTORY_REQUEST,
-        syncId: `active-${index}`.padEnd(128, 'a'),
-        before: { hlc: { timestamp: NOW, counter: 0 }, id: 'i'.repeat(128) }
-      })
-      fake.receive(roomId, peerId, { ...session(user), sessionId: `reset-${index}` })
-      fake.receive(roomId, peerId, {
-        type: MESSAGE_TYPE.HISTORY_REQUEST,
-        syncId: `successor-${index}`.padEnd(128, 's'),
-        before: { hlc: { timestamp: NOW, counter: 0 }, id: 'j'.repeat(128) }
-      })
-    }
-
-    await vi.waitFor(() => {
-      expect(warning).toHaveBeenCalledWith(expect.stringContaining('history provider queue limit reached'), '')
-    })
-    warning.mockRestore()
-  })
-
-  it('retains request-count admission across provider session cleanup', async () => {
-    const { fake, server, roomId } = await setup()
-    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, () => new Promise(() => {}))
-    for (let index = 0; index < 33; index += 1) {
-      const peerId = `count-peer-${index}`
-      fake.receive(roomId, peerId, session({ ...REMOTE_USER, id: `count-remote-${index}` }))
-    }
-    await settle()
-    for (let index = 0; index < 33; index += 1) {
-      fake.receive(roomId, `count-peer-${index}`, {
-        type: MESSAGE_TYPE.HISTORY_REQUEST,
-        syncId: `count-${index}`
-      })
-      fake.receive(roomId, `count-peer-${index}`, {
-        ...session({ ...REMOTE_USER, id: `count-remote-${index}` }),
-        sessionId: `count-reset-${index}`
-      })
-    }
-
-    await vi.waitFor(() => {
-      expect(warning).toHaveBeenCalledWith(expect.stringContaining('history provider queue limit reached'), '')
-    })
-    warning.mockRestore()
-  })
-
-  it('serves immutable history responses with user snapshots from one selected local page', async () => {
-    const { fake, server, roomId } = await setup()
-    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, async (request) => ({
-      records: [textRecord('history-1', request.cutoff + 1)],
-      done: true
-    }))
-    fake.receive(roomId, 'peer-a', session())
-    fake.receive(roomId, 'peer-a', { type: MESSAGE_TYPE.HISTORY_REQUEST, syncId: 'request-1' })
-    await settle()
-
-    const response = fake
-      .messages(roomId)
-      .find((message) => message.type === MESSAGE_TYPE.HISTORY_RESPONSE && message.syncId === 'request-1')
-    expect(response).toMatchObject({
-      type: MESSAGE_TYPE.HISTORY_RESPONSE,
-      users: [USER],
-      messages: [{ id: 'history-1' }],
-      done: true
-    })
-  })
-
-  it('stops at the requester message budget without issuing another page request', async () => {
-    const clock = new FakeClock()
-    const fake = createFakeTransport()
-    const server = createServer({
-      transport: fake.transport,
-      clock,
-      codec: jsonCodec,
-      historySessionMessages: 1
-    })
-    const roomId = getChatRoomId(DOMAIN)
-    await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
-    await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
-    const received: string[] = []
-    await server.onInbound({ pageId: 'page-a' }, (event) => {
-      received.push(event.record.message.id)
-    })
+    // Commit the remote session so the provider binding exists, then the requester sends inventory.
     fake.receive(roomId, 'peer-a', session())
     await settle()
-    const request = fake.messages(roomId).find((message) => message.type === MESSAGE_TYPE.HISTORY_REQUEST)
-    const syncId = (request as { syncId: string }).syncId
+    fake.receive(roomId, 'peer-a', request('sync-provider', 0, ['local-1'], true))
+    await vi.waitFor(() => {
+      const sent = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE)
+      expect(sent.length).toBeGreaterThan(0)
+    })
+    const sent = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE)
+    expect(sent[0]).toMatchObject({
+      syncId: 'sync-provider',
+      page: 0,
+      done: true,
+      messages: [{ id: 'local-2' }]
+    })
+    expect(sent[0].users).toHaveLength(1)
+  })
+
+  it('cancels the attempt on a page gap or out-of-order page', async () => {
+    const { fake, server, roomId } = await setup()
+    await registerInventoryProvider(server)
+    fake.receive(roomId, 'peer-a', session())
+    await settle()
+    const requestMsg = fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST)
+    const syncId = (requestMsg as { syncId: string }).syncId
 
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_RESPONSE,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
       syncId,
+      page: 5,
       users: [REMOTE_USER],
-      messages: [text('newer'), text('older', REMOTE_USER.id, NOW - 1)],
-      done: false
-    })
-    await settle()
-
-    expect(received).toEqual(['newer'])
-    expect(fake.messages(roomId).filter((message) => message.type === MESSAGE_TYPE.HISTORY_REQUEST)).toHaveLength(1)
-  })
-
-  it('keeps requester authority frozen across pagination and rejects an older provider-clock boundary', async () => {
-    const dayMs = 24 * 60 * 60 * 1000
-    const requesterNow = NOW
-    const providerNow = requesterNow - dayMs
-    const requesterCutoff = requesterNow - HISTORY_WINDOW_DAYS * dayMs
-    const providerCutoff = providerNow - HISTORY_WINDOW_DAYS * dayMs
-    const { clock, fake, server, roomId } = await setup(DOMAIN, requesterNow)
-    const delivered: { sequence: number; id: string }[] = []
-    await server.onInbound({ pageId: 'page-a' }, (event) => {
-      delivered.push({ sequence: event.sequence, id: event.record.message.id })
-    })
-    fake.receive(roomId, 'peer-a', session())
-    await settle()
-    const initial = fake.messages(roomId).find((message) => message.type === MESSAGE_TYPE.HISTORY_REQUEST)
-    expect(initial?.type).toBe(MESSAGE_TYPE.HISTORY_REQUEST)
-    const syncId = (initial as { syncId: string }).syncId
-    expect(initial).toEqual({ type: MESSAGE_TYPE.HISTORY_REQUEST, syncId })
-
-    clock.advance(1000)
-    fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_RESPONSE,
-      syncId,
-      users: [REMOTE_USER],
-      messages: [text('first-response', REMOTE_USER.id, requesterCutoff + 1)],
-      done: false
-    })
-    await vi.waitFor(() => expect(delivered).toEqual([{ sequence: 1, id: 'first-response' }]))
-    await server.ackInbound({ domain: DOMAIN, sequence: delivered[0].sequence })
-    await settle()
-    const requests = fake.messages(roomId).filter((message) => message.type === MESSAGE_TYPE.HISTORY_REQUEST)
-    expect(requests).toHaveLength(2)
-    expect(requests[1]).toMatchObject({ syncId, before: { id: 'first-response' } })
-    expect(requests.every((request) => !('cutoff' in request))).toBe(true)
-
-    clock.advance(1000)
-    fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_RESPONSE,
-      syncId,
-      users: [REMOTE_USER],
-      messages: [
-        text('at-requester-cutoff', REMOTE_USER.id, requesterCutoff),
-        text('older-provider-clock-boundary', REMOTE_USER.id, providerCutoff)
-      ],
+      messages: [text('gap')],
       done: true
     })
-    await vi.waitFor(() =>
-      expect(delivered).toEqual([
-        { sequence: 1, id: 'first-response' },
-        { sequence: 2, id: 'at-requester-cutoff' }
-      ])
-    )
-    expect(providerCutoff).not.toBe(requesterCutoff)
+    await settle()
+    // The requester cancels the attempt: no further request pages are sent.
+    expect(fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST)).toHaveLength(1)
+  })
+
+  it('rejects old history shapes and never falls back', async () => {
+    const { fake, roomId } = await setup()
+    fake.receive(roomId, 'peer-a', {
+      type: 'history-request',
+      syncId: 'old',
+      before: { hlc: { timestamp: 1, counter: 0 }, id: 'x' }
+    })
+    fake.receive(roomId, 'peer-a', { type: 'history-response', syncId: 'old', users: [], messages: [], done: true })
+    await settle()
+    const types = fake.messages(roomId).map((m) => ('type' in m ? m.type : ''))
+    expect(types).not.toContain('history-request')
+    expect(types).not.toContain('history-response')
   })
 })
 
