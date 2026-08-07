@@ -190,15 +190,22 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
   private attachment: RuntimeAttachment | null = null
   private activeConnection: PageConnectionAttempt | null = null
   private disposed = false
+  /** The Runtime host generation whose history batch ids have been announced; '' before first ready. */
+  private announcedHostId: string | null = null
 
   constructor(private readonly dependencies: ChatRoomDependencies) {
     super()
     this.disposeReady = dependencies.whenReady(() => {
       if (this.disposed) return
       this.readyGeneration += 1
-      // A fresh Runtime generation owns a fresh token counter; forget prior announcements so its
-      // history batch ids (which may reuse earlier values) always publish their receipt Toast.
-      this.announcedHistoryBatchIds = new Set<string>()
+      // Only an actual Runtime host change owns a fresh token counter; a same-host reattach (e.g.
+      // BFCache restore) replays the same delivery buffer and must stay silent for an already
+      // announced batch. A new hostId forgets prior announcements so reused token values publish.
+      const hostId = this.dependencies.getSnapshot().hostId
+      if (hostId !== this.announcedHostId) {
+        this.announcedHostId = hostId
+        this.announcedHistoryBatchIds = new Set<string>()
+      }
       // Runtime generation replacement supersedes the old connection attempt; that is a structural
       // cancellation fact for that attempt.
       if (this.activeConnection) this.reportResult?.(this.activeConnection.resultToken, 'cancelled')

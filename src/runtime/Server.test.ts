@@ -13,6 +13,9 @@ import {
   type WorldRoomMessage
 } from '@/protocol'
 import { MESSAGE_RECORD_TYPE, type TextMessageRecord } from '@/domain/Message'
+import { ChatRoom } from '@/domain/impls/runtime/ChatRoom'
+import { createMessageStore } from '@/domain/MessageStore'
+import { createMemoryMessageDatabase } from '@/domain/impls/database/Memory'
 import type {
   HistorySupplyRequest,
   HistorySupplyResult,
@@ -2409,6 +2412,91 @@ describe('RuntimeServer history', () => {
     const requests = fake.messages(roomId).filter((message) => message.type === MESSAGE_TYPE.HISTORY_REQUEST)
     expect(requests).toHaveLength(2)
     expect(requests[1]).toMatchObject({ before: { id: 'history-older' } })
+  })
+
+  it('publishes the real history-sync receipt Toast per nonempty batch and stays silent for empty or rejected responses', async () => {
+    const { fake, server, roomId } = await setup()
+    const database = createMemoryMessageDatabase('server-history-sync')
+    const room = new ChatRoom({
+      server,
+      messageStore: createMessageStore(database),
+      pageDomain: DOMAIN,
+      pageId: 'page-a',
+      getSnapshot: () => ({
+        hostId: 'test-host',
+        hostPhase: 'ready',
+        peerId: 'local-peer',
+        domains: [],
+        world: { joined: true, peerId: 'local-peer', presences: [] }
+      }),
+      whenReady: (listener) => {
+        listener()
+        return () => {}
+      }
+    })
+    const historySyncs: number[] = []
+    room.onHistorySync(() => historySyncs.push(historySyncs.length))
+    await settle()
+
+    // A real remote session arrival starts the requester history sync over the wire.
+    fake.receive(roomId, 'peer-a', session())
+    await settle()
+    const initial = fake.messages(roomId).find((message) => message.type === MESSAGE_TYPE.HISTORY_REQUEST)
+    const syncId = (initial as { syncId: string }).syncId
+    expect(syncId).toBeTruthy()
+
+    // A first nonempty batch (done:false) flows through the real producer-to-page boundary and
+    // publishes exactly one receipt Toast before insertion settles.
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_RESPONSE,
+      syncId,
+      users: [REMOTE_USER],
+      messages: [text('real-chain-a'), text('real-chain-b', REMOTE_USER.id, NOW - 1)],
+      done: false
+    })
+    await settle()
+    expect(historySyncs).toEqual([0])
+
+    // A second successive batch with its own continuation cursor announces independently.
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_RESPONSE,
+      syncId,
+      users: [REMOTE_USER],
+      messages: [text('real-chain-c', REMOTE_USER.id, NOW - 2)],
+      done: true
+    })
+    await settle()
+    expect(historySyncs).toEqual([0, 1])
+
+    // A second source's sync completes with an empty `done` response: no messages were received, so
+    // the receipt Toast stays silent.
+    fake.receive(roomId, 'peer-b', session({ id: 'other-user', name: 'Other', avatar: '' }))
+    await settle()
+    const peerBRequests = fake.messages(roomId).filter((message) => message.type === MESSAGE_TYPE.HISTORY_REQUEST)
+    const peerBSyncId = (peerBRequests[peerBRequests.length - 1] as { syncId: string }).syncId
+    fake.receive(roomId, 'peer-b', {
+      type: MESSAGE_TYPE.HISTORY_RESPONSE,
+      syncId: peerBSyncId,
+      users: [],
+      messages: [],
+      done: true
+    })
+    await settle()
+    expect(historySyncs).toEqual([0, 1])
+
+    // A response rejected before the application/page boundary (non-recent-first ordering) never
+    // reaches the page, so it cannot publish.
+    const beforeRejected = historySyncs.length
+    fake.receive(roomId, 'peer-b', {
+      type: MESSAGE_TYPE.HISTORY_RESPONSE,
+      syncId: peerBSyncId,
+      users: [REMOTE_USER],
+      messages: [text('newer-first', REMOTE_USER.id, NOW), text('older-second', REMOTE_USER.id, NOW + 1)],
+      done: true
+    })
+    await settle()
+    expect(historySyncs).toHaveLength(beforeRejected)
+    room.dispose()
   })
 
   it('keeps provider supplies alive after page lookup throws before yielding an id', async () => {

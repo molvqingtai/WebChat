@@ -681,17 +681,18 @@ describe('Runtime-backed ChatRoom application port', () => {
     expect(historySyncs).toEqual([0])
   })
 
-  it('re-announces a new host generation even when batch ids repeat', async () => {
+  it('keeps same-host reattach replay silent and re-announces only when the host id changes', async () => {
     const server = serverFixture()
     const database = createMemoryMessageDatabase(`history-sync-generation-${databaseId++}`)
     const messageStore = createMessageStore(database)
     const readyListeners = new Set<() => void>()
+    let snapshot = domainSnapshot()
     const room = new ChatRoom({
       server: server.server,
       messageStore,
       pageDomain: DOMAIN,
       pageId: 'page-1',
-      getSnapshot: () => domainSnapshot(),
+      getSnapshot: () => snapshot,
       whenReady: (listener) => {
         readyListeners.add(listener)
         listener()
@@ -711,13 +712,28 @@ describe('Runtime-backed ChatRoom application port', () => {
     })
     expect(historySyncs).toEqual([0])
 
-    // A fresh Runtime generation owns a fresh token counter and may reuse batch ids; the new
-    // attachment must announce them again instead of suppressing them.
+    // Same-host reattach (e.g. BFCache restore): the Runtime replays the same delivery buffer, so the
+    // already-announced batch id must stay silent instead of publishing a second Toast.
     readyListeners.forEach((listener) => listener())
     await settle()
     await settle()
     await server.emitInbound({
       sequence: 2,
+      domain: DOMAIN,
+      record: textRecord('gen-1-replayed'),
+      source: 'history',
+      batchId: 'batch:0'
+    })
+    expect(historySyncs).toEqual([0])
+
+    // A fresh Runtime host owns a fresh token counter and may reuse batch ids; the new attachment
+    // must announce them again instead of suppressing them.
+    snapshot = { ...domainSnapshot(), hostId: 'host-2' }
+    readyListeners.forEach((listener) => listener())
+    await settle()
+    await settle()
+    await server.emitInbound({
+      sequence: 3,
       domain: DOMAIN,
       record: textRecord('gen-2'),
       source: 'history',
