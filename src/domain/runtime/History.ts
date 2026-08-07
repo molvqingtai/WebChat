@@ -1,5 +1,19 @@
 import { Remesh, type RemeshCommandOutput } from 'remesh'
-import { catchError, concatMap, defer, filter, from, map, mergeMap, Observable, of, startWith, takeWhile } from 'rxjs'
+import {
+  catchError,
+  concatMap,
+  concatWith,
+  defer,
+  EMPTY,
+  filter,
+  from,
+  map,
+  mergeMap,
+  Observable,
+  of,
+  startWith,
+  takeWhile
+} from 'rxjs'
 import DeliveryDomain from '@/domain/runtime/Delivery'
 import SessionDomain, { observeHlc } from '@/domain/runtime/Session'
 import WireDomain, { type WireFailureStage, type WireMessageEvent } from '@/domain/runtime/Wire'
@@ -12,7 +26,8 @@ import {
   MAX_HISTORY_SESSION_MESSAGES,
   MAX_PROVIDER_SUPPLY_CONCURRENCY,
   MAX_PROVIDER_SUPPLY_QUEUE_BYTES,
-  MAX_PROVIDER_SUPPLY_QUEUE_JOBS
+  MAX_PROVIDER_SUPPLY_QUEUE_JOBS,
+  MAX_TERMINATED_SYNC_IDS
 } from '@/constants/config'
 import {
   MAX_HISTORY_RESPONSE_MESSAGES,
@@ -201,6 +216,14 @@ const HistoryDomain = Remesh.domain({
       name: 'History.WaitingSuppliesState',
       default: []
     })
+    // Bounded current-session terminal fence: one syncId identifies one current-session
+    // synchronization, so a terminally cancelled identity (budget overflow) can never be
+    // resurrected at page zero; replacement work requires a fresh syncId. Entries are keyed by
+    // source+domain, capped per key, and cleared on session reset.
+    const TerminatedSyncIdsState = domain.state<Map<string, string[]>>({
+      name: 'History.TerminatedSyncIdsState',
+      default: new Map()
+    })
     const FeedbackOwnersState = domain.state<FeedbackOwnerState[]>({
       name: 'History.FeedbackOwnersState',
       default: []
@@ -373,6 +396,36 @@ const HistoryDomain = Remesh.domain({
       }
     })
 
+    // Marks the active entry's supply settled by clearing its recorded supplyId. The slot
+    // accounting stays until the slot is released; the cleared id distinguishes a settled supply
+    // (immediate release allowed) from a live one (release deferred to physical settlement).
+    const ClearActiveSupplyIdCommand = domain.command({
+      name: 'History.ClearActiveSupplyIdCommand',
+      impl: ({ get }, payload: { key: HistoryAttemptKey }) => {
+        const active = get(ActiveSuppliesState())
+        if (!active.some((item) => matchesSync(item, payload.key))) return null
+        return ActiveSuppliesState().new(
+          active.map((item) => (matchesSync(item, payload.key) ? { ...item, supplyId: undefined } : item))
+        )
+      }
+    })
+
+    const FenceSyncIdCommand = domain.command({
+      name: 'History.FenceSyncIdCommand',
+      impl: ({ get }, payload: { sourcePeerId: string; domain: string; syncId: string }) => {
+        const fences = get(TerminatedSyncIdsState())
+        const fenceKey = `${payload.sourcePeerId}\u0000${payload.domain}`
+        const current = fences.get(fenceKey) ?? []
+        const next = [payload.syncId, ...current.filter((id) => id !== payload.syncId)].slice(
+          0,
+          MAX_TERMINATED_SYNC_IDS
+        )
+        const updated = new Map(fences)
+        updated.set(fenceKey, next)
+        return TerminatedSyncIdsState().new(updated)
+      }
+    })
+
     const CleanupProviderSlotsCommand = domain.command({
       name: 'History.CleanupProviderSlotsCommand',
       impl: ({ get }, payload: { domain: string; sourcePeerId: string }) => {
@@ -412,10 +465,14 @@ const HistoryDomain = Remesh.domain({
         const dismissedOwners = owners.filter(
           (item) => item.sourcePeerId === payload.sourcePeerId && item.domain === payload.domain
         )
+        const fences = get(TerminatedSyncIdsState())
+        const clearedFences = new Map(fences)
+        clearedFences.delete(`${payload.sourcePeerId}\u0000${payload.domain}`)
         return [
           RequesterAttemptsState().new(
             requesters.filter((item) => item.sourcePeerId !== payload.sourcePeerId || item.domain !== payload.domain)
           ),
+          TerminatedSyncIdsState().new(clearedFences),
           CleanupProviderSlotsCommand(payload),
           ...dismissedOwners.flatMap((item) => dismissFeedback(get, item) ?? []),
           StartRequestedEvent(payload)
@@ -487,6 +544,16 @@ const HistoryDomain = Remesh.domain({
           sessionDomain.query.BindingQuery({ roomId: payload.roomId, sourcePeerId: payload.sourcePeerId })
         )
         if (!binding) return null
+        // A terminally cancelled synchronization identity (budget overflow) stays fenced for the
+        // current session: every page of that syncId, including page zero, is inert; replacement
+        // work requires a fresh syncId.
+        const fenceKey = `${payload.sourcePeerId}\u0000${binding.domain}`
+        if ((get(TerminatedSyncIdsState()).get(fenceKey) ?? []).includes(payload.message.syncId)) {
+          return wireDomain.command.DropProtocolCommand({
+            sourcePeerId: payload.sourcePeerId,
+            reason: 'terminated history sync identity'
+          })
+        }
         if (!isChatRoomMessageSemanticallyValid(payload.message, clock.now())) {
           return wireDomain.command.DropProtocolCommand({
             sourcePeerId: payload.sourcePeerId,
@@ -540,6 +607,11 @@ const HistoryDomain = Remesh.domain({
               wireDomain.command.DropProtocolCommand({
                 sourcePeerId: payload.sourcePeerId,
                 reason: 'history provider queue limit reached'
+              }),
+              FenceSyncIdCommand({
+                sourcePeerId: payload.sourcePeerId,
+                domain: binding.domain,
+                syncId: payload.message.syncId
               }),
               ...(successor
                 ? [
@@ -696,6 +768,11 @@ const HistoryDomain = Remesh.domain({
               sourcePeerId: payload.sourcePeerId,
               reason: 'history provider queue limit reached'
             }),
+            FenceSyncIdCommand({
+              sourcePeerId: payload.sourcePeerId,
+              domain: binding.domain,
+              syncId: payload.message.syncId
+            }),
             CancelProviderAttemptCommand(currentKey)
           ]
         }
@@ -821,9 +898,13 @@ const HistoryDomain = Remesh.domain({
     const ReleaseProviderSupplySlotCommand = domain.command({
       name: 'History.ReleaseProviderSupplySlotCommand',
       impl: ({ get }, key: HistoryAttemptKey) => {
-        const active = removeBy(get(ActiveSuppliesState()), (item) => matchesSync(item, key))
+        const activeList = get(ActiveSuppliesState())
+        // A slot is released only when the exact key actually occupies one; otherwise no waiter
+        // may be promoted (the global concurrency cap must never be exceeded).
+        const wasActive = activeList.some((item) => matchesSync(item, key))
+        const active = wasActive ? removeBy(activeList, (item) => matchesSync(item, key)) : activeList
         const waiting = get(WaitingSuppliesState())
-        const next = waiting.find((item) => item.ready)
+        const next = wasActive ? waiting.find((item) => item.ready) : undefined
         return [
           ActiveSuppliesState().new(next ? [...active, next] : active),
           WaitingSuppliesState().new(next ? waiting.filter((item) => item !== next) : waiting),
@@ -860,7 +941,14 @@ const HistoryDomain = Remesh.domain({
           active.some((item) => matchesSync(item, key)) ||
           waiting.some((item) => matchesSync(item, key))
         if (!current && !ownerActive && !successor && !hasSlotAccounting) return null
+        const liveActive = active.find((item) => matchesSync(item, key))
         if (!current) {
+          // While the physical supply is still live (recorded supplyId not yet cleared by its
+          // settlement), the slot accounting and any dormant successor stay in place: release and
+          // promotion happen only at the late-settlement boundary after physical exit.
+          if (liveActive?.supplyId) {
+            return [CancelActiveSupplyCommand({ key, supplyId: liveActive.supplyId })]
+          }
           // Late supplier settlement after cleanup: release the slot accounting exactly once so no
           // active/waiting slot leaks, even when the provider state is already gone. A dormant
           // successor (same source, different syncId) is atomically transferred: it becomes the
@@ -916,6 +1004,18 @@ const HistoryDomain = Remesh.domain({
             ...(hasSlotAccounting ? [ReleaseProviderSupplySlotCommand(key)] : [])
           ]
         }
+        // A started current provider with a still-live supply must not release its slot or
+        // schedule its successor before the physical query/projection chain confirms exit: cancel
+        // the live supplyId, remove the provider state, and keep the canonical job, the active
+        // slot accounting, and any dormant successor until the late-settlement boundary transfers
+        // them (the effect re-checks the attempt after physical settlement).
+        if (liveActive?.supplyId) {
+          return [
+            CancelActiveSupplyCommand({ key, supplyId: liveActive.supplyId }),
+            ProviderAttemptsState().new(removeBy(providers, (item) => matchesSync(item, key))),
+            ...(dismissFeedback(get, key) ?? [])
+          ]
+        }
         const successorJob: ProviderSupplyJobState = successor
           ? {
               sourcePeerId: successor.sourcePeerId,
@@ -968,7 +1068,19 @@ const HistoryDomain = Remesh.domain({
                 })
               ]
             : []
-        return [...promotion, ...schedule, ...(dismissFeedback(get, key) ?? []), ReleaseProviderSupplySlotCommand(key)]
+        // A slot is released only when the exact key actually occupied one; a canceled partial or
+        // waiting key is removed from waiting independently so canceled work never starts and the
+        // active pool never exceeds its cap.
+        const waitingRemoval = liveActive
+          ? []
+          : [WaitingSuppliesState().new(waiting.filter((item) => !matchesSync(item, key)))]
+        return [
+          ...promotion,
+          ...schedule,
+          ...waitingRemoval,
+          ...(dismissFeedback(get, key) ?? []),
+          ...(liveActive ? [ReleaseProviderSupplySlotCommand(key)] : [])
+        ]
       }
     })
 
@@ -1162,6 +1274,16 @@ const HistoryDomain = Remesh.domain({
           sessionDomain.query.BindingQuery({ roomId: payload.roomId, sourcePeerId: payload.sourcePeerId })
         )
         if (!binding) return null
+        // A terminally cancelled synchronization identity (budget overflow) stays fenced for the
+        // current session: every page of that syncId, including page zero, is inert; replacement
+        // work requires a fresh syncId.
+        const fenceKey = `${payload.sourcePeerId}\u0000${binding.domain}`
+        if ((get(TerminatedSyncIdsState()).get(fenceKey) ?? []).includes(payload.message.syncId)) {
+          return wireDomain.command.DropProtocolCommand({
+            sourcePeerId: payload.sourcePeerId,
+            reason: 'terminated history sync identity'
+          })
+        }
         if (!isChatRoomMessageSemanticallyValid(payload.message, clock.now())) {
           return wireDomain.command.DropProtocolCommand({
             sourcePeerId: payload.sourcePeerId,
@@ -1525,15 +1647,14 @@ const HistoryDomain = Remesh.domain({
                   }
                 } catch {
                   // PagePort removes the page itself on a genuine supply rejection or a synchronous
-                  // provider throw; a failover cancellation (cleanup/timeout abort) keeps the page
-                  // healthy and must TERMINATE the old selection loop, never fail over to another
-                  // page of a torn-down attempt.
+                  // provider throw; a healthy page that hit its boundary (per-page timeout) keeps
+                  // its registration. After every settlement, attempt liveness classifies the
+                  // rejection: a cleanup-invalidated requester terminates the old loop, while a
+                  // still-current attempt fails over to the next page after physical settlement.
                   if (!pagePort.historyPageIds(key.domain).includes(pageId)) {
                     failedPageIds.push(pageId)
-                    if (!get(RequesterAttemptsState()).some((item) => matchesSync(item, key))) {
-                      return finishEarly()
-                    }
-                  } else {
+                  }
+                  if (!get(RequesterAttemptsState()).some((item) => matchesSync(item, key))) {
                     return finishEarly()
                   }
                 }
@@ -1702,9 +1823,14 @@ const HistoryDomain = Remesh.domain({
             const supplyIdFor = (attempt: number) => `supply:${request.syncToken}:${attempt}`
             const recordCommand = (supplyId: string) => RecordActiveSupplyIdCommand({ key, supplyId })
             let terminal = false
+            // Marks the settled supply (clears the recorded id) so an ordinary cancellation of the
+            // attempt can release its slot immediately instead of deferring to a settlement that
+            // already happened.
+            const settledMarker: RemeshCommandOutput = ClearActiveSupplyIdCommand({ key })
             const cancelOutcome = (): RemeshCommandOutput[] => {
               terminal = true
               return [
+                settledMarker,
                 ...(failedPageIds.length > 0 ? [DeadPagesEvent(failedPageIds)] : []),
                 CancelProviderAttemptCommand(request)
               ]
@@ -1734,6 +1860,7 @@ const HistoryDomain = Remesh.domain({
               }
               terminal = true
               return [
+                settledMarker,
                 ...(failedPageIds.length > 0 ? [DeadPagesEvent(failedPageIds)] : []),
                 ProviderAttemptsState().new(
                   replaceBy(get(ProviderAttemptsState()), (item) => matchesSync(item, attempt), nextProvider)
@@ -1745,6 +1872,31 @@ const HistoryDomain = Remesh.domain({
                   terminal: true
                 }) as RemeshCommandOutput
               ]
+            }
+            type PageOutcome =
+              | { kind: 'success'; supplied: NonNullable<Awaited<ReturnType<typeof pagePort.supplyHistory>>> }
+              | { kind: 'detached' }
+              | { kind: 'failed' }
+              | { kind: 'timedOut' }
+              | { kind: 'cancelled' }
+              | { kind: 'exhausted' }
+            const outcomeActions = (outcome: PageOutcome): RemeshCommandOutput[] => {
+              switch (outcome.kind) {
+                case 'success':
+                  return successOutcome(outcome.supplied)
+                case 'cancelled':
+                  return cancelOutcome()
+                case 'exhausted':
+                  // The per-page boundary or the whole attempt deadline ran out with no result:
+                  // same terminal classification as any other non-success exhaustion.
+                  return cancelOutcome()
+                case 'detached':
+                case 'failed':
+                case 'timedOut':
+                  // Fail over to the next page after physical settlement (the next page records
+                  // its own supply owner before starting).
+                  return []
+              }
             }
             return defer(async () => {
               const currentProvider = get(ProviderAttemptsState()).find((item) => matchesSync(item, request))
@@ -1763,16 +1915,21 @@ const HistoryDomain = Remesh.domain({
                   cutoff: ctx.cutoff,
                   mode: 'provider' as const
                 }
-                // Sequential page selection. Each attempt records its live supplyId as the
-                // physical owner immediately before the query starts (startWith dispatch), and
-                // after every settlement the complete live attempt is re-checked before another
-                // page is selected; lifecycle cancellation terminates the old selection loop
-                // instead of failing over to the next page of a torn-down attempt.
+                // One serial page-selection path with explicit per-page outcomes. Each attempt
+                // records its live supplyId as the physical owner immediately before the query
+                // starts; after every settlement the complete live attempt is re-checked so
+                // lifecycle cancellation terminates the old loop while a still-current attempt
+                // (per-page timeout, detached page, genuine failure) fails over to the next page.
                 return from(ctx.pageIds).pipe(
                   concatMap((pageId) =>
-                    defer(async (): Promise<RemeshCommandOutput[]> => {
+                    defer(async (): Promise<PageOutcome> => {
+                      // Re-check before selecting another page: a cleanup-invalidated attempt
+                      // stops the old pipeline without starting a new query.
+                      if (!get(ProviderAttemptsState()).some((item) => matchesSync(item, request))) {
+                        return { kind: 'cancelled' }
+                      }
                       const remainingMs = ctx.supplyDeadline - clock.now()
-                      if (remainingMs <= 0) return cancelOutcome()
+                      if (remainingMs <= 0) return { kind: 'exhausted' }
                       const supplyId = supplyIdFor(failedPageIds.length)
                       try {
                         const result = await withHistoryTimeout(
@@ -1780,32 +1937,39 @@ const HistoryDomain = Remesh.domain({
                           Math.min(HISTORY_REQUEST_TIMEOUT_MS / 2, remainingMs),
                           () => pagePort.cancelHistorySupply(supplyId)
                         )
-                        if (result) return successOutcome(result)
-                        // A null result means the page detached or was replaced without a failure:
-                        // select the next page (after the post-settlement liveness re-check below).
-                        return [recordCommand(supplyIdFor(failedPageIds.length))]
+                        return result ? { kind: 'success', supplied: result } : { kind: 'detached' }
                       } catch {
-                        // PagePort removes the page itself on a genuine supply rejection or a
-                        // synchronous provider throw; a failover cancellation (cleanup/timeout
-                        // abort) keeps the page healthy and must TERMINATE the old selection loop.
+                        // PagePort removes the page itself on a genuine rejection or synchronous
+                        // provider throw; a healthy page that hit its boundary stays registered.
+                        // Attempt liveness classifies the rejection after settlement: lifecycle
+                        // cancellation terminates, a still-current attempt fails over.
                         if (!pagePort.historyPageIds(request.domain).includes(pageId)) {
                           failedPageIds.push(pageId)
-                          return [recordCommand(supplyIdFor(failedPageIds.length))]
+                          return { kind: 'failed' }
                         }
-                        return cancelOutcome()
+                        if (!get(ProviderAttemptsState()).some((item) => matchesSync(item, request))) {
+                          return { kind: 'cancelled' }
+                        }
+                        return { kind: 'timedOut' }
                       }
                     }).pipe(
-                      startWith([recordCommand(supplyIdFor(failedPageIds.length))] as RemeshCommandOutput[]),
-                      // Post-settlement liveness re-check before any further page selection: a
-                      // cleanup-invalidated attempt stops the old pipeline immediately.
-                      map((actions) => {
-                        if (terminal) return actions
-                        if (get(ProviderAttemptsState()).some((item) => matchesSync(item, request))) return actions
-                        return cancelOutcome()
+                      startWith({ kind: 'record', supplyId: supplyIdFor(failedPageIds.length) } as const),
+                      // Each page emits one atomic action batch (owner record, or the explicit
+                      // outcome's actions), so the outer takeWhile can stop page selection exactly
+                      // on the terminal batch without splitting it.
+                      concatMap((emission) => {
+                        if (emission.kind === 'record') return of([recordCommand(emission.supplyId)])
+                        const actions = outcomeActions(emission)
+                        return actions.length > 0 ? of(actions) : EMPTY
                       })
                     )
                   ),
-                  takeWhile(() => !terminal, true)
+                  takeWhile(() => !terminal, true),
+                  // Explicit exhaustion epilogue: an empty candidate list, all-detached, or
+                  // all-genuinely-failed selection publishes the accumulated dead pages and
+                  // cancels/releases the exact attempt immediately (no dependence on the
+                  // unrelated attempt timer).
+                  concatWith(defer(() => (terminal ? EMPTY : of(cancelOutcome()))))
                 )
               }),
               catchError(() => cancelOutcome())
