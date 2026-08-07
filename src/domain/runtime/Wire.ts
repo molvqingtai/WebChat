@@ -315,7 +315,7 @@ const WireDomain = Remesh.domain({
         if (!parseMessage(request.roomId, request.message)) {
           return MessageSendFailedEvent({
             requestId: request.requestId,
-            error: new Error(`Invalid message for trusted room "${request.roomId}"`),
+            error: new Error('Invalid message for trusted room'),
             stage: 'preflight'
           })
         }
