@@ -3069,6 +3069,47 @@ describe('RuntimeServer history', () => {
     ])
   })
 
+  it('keeps the committed grace running when a prepared rebind source leaves again before commit', async () => {
+    const { fake, server, roomId } = await setup()
+    fake.receive(roomId, 'peer-b', session({ id: 'user-b', name: 'User B', avatar: '' }))
+    await settle()
+    // B departs: the committed binding is retained only by the leave grace.
+    fake.peerLeave(roomId, 'peer-b')
+    await settle()
+    // A held local replacement accepts B's valid same-presence SESSION in its prepared attempt.
+    fake.plantPeer(roomId, 'remote-peer')
+    fake.makeNotReady()
+    fake.hangSendsTo(roomId)
+    const chatBroadcastStarted = fake.waitForSendAttempt(roomId)
+    const reconnect = server.reconnectDomain({ domain: DOMAIN })
+    await fake.waitForJoinCalls(4)
+    fake.open()
+    await expect(chatBroadcastStarted).resolves.toMatchObject({ roomId, to: ['remote-peer'] })
+    fake.receive(roomId, 'peer-b', session({ id: 'user-b', name: 'User B', avatar: '' }))
+    await settle()
+    // The rebind source leaves AGAIN before the commit: its cancellation fact is revoked.
+    fake.peerLeave(roomId, 'peer-b')
+    await settle()
+    fake.releaseSends()
+    await reconnect
+    await settle()
+    // The committed grace is NOT cancelled by a stale marker: B stays displayed and its live
+    // authority stays closed without a CURRENT valid SESSION.
+    const snapshot = await server.getSnapshot()
+    expect(snapshot.domains[0].sessions.some((session) => session.user.id === 'user-b')).toBe(true)
+    fake.receive(roomId, 'peer-b', { ...text('ghost-after-revoked-commit'), userId: 'user-b' })
+    await settle()
+    expect(await server.replayInbound({ domain: DOMAIN, after: 0 })).toEqual([])
+    // A CURRENT valid SESSION restores authority.
+    fake.receive(roomId, 'peer-b', session({ id: 'user-b', name: 'User B', avatar: '' }))
+    await settle()
+    fake.receive(roomId, 'peer-b', { ...text('post-current-rebind'), userId: 'user-b' })
+    await settle()
+    expect((await server.replayInbound({ domain: DOMAIN, after: 0 })).map((item) => item.record.message.id)).toEqual([
+      'post-current-rebind'
+    ])
+  })
+
   it('keeps a grace-retained committed binding untrusted across an ordinary local replacement join', async () => {
     const { fake, server, roomId } = await setup()
     fake.receive(roomId, 'peer-b', session({ id: 'user-b', name: 'User B', avatar: '' }))

@@ -45,8 +45,8 @@ interface PreparedSession {
   runtime: SessionDomainState
   observers: ObservedPresence[]
   isNewPresence: boolean
-  /** presenceIds whose pending-leave deadlines this attempt may cancel on commit (attempt-owned). */
-  reboundPresenceIds: string[]
+  /** (presenceId, sourcePeerId) rebinds whose pending-leave deadlines this attempt may cancel on commit. */
+  reboundBindings: Array<{ presenceId: string; sourcePeerId: string }>
   publishRequestId?: string
   /** Frozen distinct publication targets still awaiting their single send. */
   publishPendingTargets: string[]
@@ -72,6 +72,8 @@ interface PendingLeave {
   armedId: string
   /** Release-fenced: expiry effects are suspended but the record still closes authority. */
   fenced: boolean
+  /** Absolute expiry (Date.now() based): restoration resumes only the unelapsed remainder. */
+  expiresAt: number
 }
 
 interface PendingChatSend {
@@ -318,7 +320,12 @@ const SessionDomain = Remesh.domain({
     const ClearActivePresenceRequestedEvent = domain.event<{ domain: string }>({
       name: 'Session.ClearActivePresenceRequestedEvent'
     })
-    const PendingLeaveArmedEvent = domain.event<{ domain: string; presenceId: string; armedId: string }>({
+    const PendingLeaveArmedEvent = domain.event<{
+      domain: string
+      presenceId: string
+      armedId: string
+      delayMs: number
+    }>({
       name: 'Session.PendingLeaveArmedEvent'
     })
     const RuntimeSessionChangedEvent = domain.event<RuntimeSessionEvent>({
@@ -420,7 +427,7 @@ const SessionDomain = Remesh.domain({
           runtime,
           observers: priorPrepared?.observers ?? presence?.observers ?? [],
           isNewPresence: !current && local.status === 'pending',
-          reboundPresenceIds: priorPrepared?.reboundPresenceIds ?? [],
+          reboundBindings: priorPrepared?.reboundBindings ?? [],
           publishPendingTargets: [],
           missedPeerIds: [],
           baselinePeerIds: []
@@ -601,16 +608,37 @@ const SessionDomain = Remesh.domain({
                 sourcePeerIds
               })
             : removeBy(baselines, (item) => item.domain === prepared.runtime.domain)
-        // Atomic commit: promote the attempt's runtime and cancel ONLY the pending-leave
-        // deadlines this attempt actually rebound (abort preserved them; commit fences them).
+        // Atomic commit: promote the attempt's runtime (merging committed sessions whose
+        // sources the attempt did not supersede, so grace-retained bindings stay displayed) and
+        // cancel ONLY the pending-leave deadlines this attempt actually rebound and still holds
+        // current sources for (abort preserved them; commit fences them).
+        const promotedRuntime: SessionDomainState = {
+          ...prepared.runtime,
+          sessions: [
+            ...prepared.runtime.sessions,
+            ...(previous?.sessions ?? []).filter(
+              (current) => !prepared.runtime.sessions.some((session) => session.sourcePeerId === current.sourcePeerId)
+            )
+          ]
+        }
         const pendingLeaves = get(PendingLeavesState())
         return [
-          DomainsState().new(replaceBy(domains, (item) => item.domain === prepared.runtime.domain, prepared.runtime)),
+          DomainsState().new(replaceBy(domains, (item) => item.domain === prepared.runtime.domain, promotedRuntime)),
           PreparedSessionsState().new(removeBy(get(PreparedSessionsState()), (item) => item.attemptId === attemptId)),
           PendingLeavesState().new(
             pendingLeaves.filter(
               (item) =>
-                !(item.domain === prepared.runtime.domain && prepared.reboundPresenceIds.includes(item.presenceId))
+                !(
+                  item.domain === prepared.runtime.domain &&
+                  prepared.reboundBindings.some(
+                    (rebind) =>
+                      rebind.presenceId === item.presenceId &&
+                      prepared.runtime.sessions.some(
+                        (session) =>
+                          session.sourcePeerId === rebind.sourcePeerId && session.presenceId === item.presenceId
+                      )
+                  )
+                )
             )
           ),
           PendingBaselinePeersState().new(nextBaselines),
@@ -621,7 +649,7 @@ const SessionDomain = Remesh.domain({
           RuntimeSessionChangedEvent({
             type: 'snapshot',
             domain: prepared.runtime.domain,
-            snapshot: snapshot(prepared.runtime),
+            snapshot: snapshot(promotedRuntime),
             // Only a newly allocated logical presence owns a local self-notice.
             provenance: prepared.isNewPresence
               ? 'join'
@@ -635,7 +663,7 @@ const SessionDomain = Remesh.domain({
             RuntimeSessionChangedEvent({
               type: 'join',
               domain: prepared.runtime.domain,
-              snapshot: snapshot(prepared.runtime),
+              snapshot: snapshot(promotedRuntime),
               session: projectRuntimeSession(session),
               provenance: 'live'
             })
@@ -716,14 +744,27 @@ const SessionDomain = Remesh.domain({
         const pending = get(PendingLeavesState())
         const affected = pending.filter((item) => item.domain === runtimeDomain && item.fenced)
         if (affected.length === 0) return null
-        const restored = affected.map((item) => ({ ...item, fenced: false, armedId: identity.nextId() }))
+        // Resume only the unelapsed remainder of the ORIGINAL absolute deadline: cleanup failure
+        // is neither a new PeerLeave nor a valid rebind and must not extend remote lifecycle time.
+        const now = Date.now()
+        const restored = affected.map((item) => ({
+          ...item,
+          fenced: false,
+          armedId: identity.nextId(),
+          delayMs: Math.max(0, item.expiresAt - now)
+        }))
         return [
           PendingLeavesState().new([
             ...pending.filter((item) => !(item.domain === runtimeDomain && item.fenced)),
-            ...restored
+            ...restored.map(({ delayMs: _delayMs, ...record }) => record)
           ]),
           ...restored.map((item) =>
-            PendingLeaveArmedEvent({ domain: item.domain, presenceId: item.presenceId, armedId: item.armedId })
+            PendingLeaveArmedEvent({
+              domain: item.domain,
+              presenceId: item.presenceId,
+              armedId: item.armedId,
+              delayMs: item.delayMs
+            })
           )
         ]
       }
@@ -1077,15 +1118,18 @@ const SessionDomain = Remesh.domain({
         // the committed binding; this attempt records the exact rebind it owns, and only the
         // atomic commit of THIS attempt may cancel it (rollback/supersession transfers nothing).
         if (prepared) {
-          const reboundPresenceIds = pendingLeave
-            ? appendUnique(prepared.reboundPresenceIds, message.presenceId)
-            : prepared.reboundPresenceIds
+          const reboundBindings = pendingLeave
+            ? appendUnique(prepared.reboundBindings, {
+                presenceId: message.presenceId,
+                sourcePeerId: payload.sourcePeerId
+              })
+            : prepared.reboundBindings
           return PreparedSessionsState().new(
             replaceBy(preparedSessions, (item) => item.attemptId === prepared.attemptId, {
               ...prepared,
               runtime: nextRuntime,
               observers: nextObservers,
-              reboundPresenceIds,
+              reboundBindings,
               baselinePeerIds: prepared.baselinePeerIds.filter((sourcePeerId) => sourcePeerId !== payload.sourcePeerId)
             })
           )
@@ -1272,6 +1316,11 @@ const SessionDomain = Remesh.domain({
                 ...prepared,
                 missedPeerIds: prepared.missedPeerIds.filter((item) => item !== payload.sourcePeerId),
                 baselinePeerIds: prepared.baselinePeerIds.filter((item) => item !== payload.sourcePeerId),
+                // The departed source's rebind marker is revoked: only a CURRENT source may
+                // carry cancellation authority to the commit.
+                reboundBindings: prepared.reboundBindings.filter(
+                  (rebind) => rebind.sourcePeerId !== payload.sourcePeerId
+                ),
                 runtime: {
                   ...prepared.runtime,
                   sessions: prepared.runtime.sessions.filter((item) => item.sourcePeerId !== payload.sourcePeerId)
@@ -1346,12 +1395,18 @@ const SessionDomain = Remesh.domain({
           user: session.user,
           joinedAt: session.joinedAt,
           armedId,
-          fenced: false
+          fenced: false,
+          expiresAt: Date.now() + PENDING_LEAVE_GRACE_MS
         }
         return [
           ...cleanupActions,
           PendingLeavesState().new([...pending, pendingLeave]),
-          PendingLeaveArmedEvent({ domain: runtime.domain, presenceId: session.presenceId, armedId }),
+          PendingLeaveArmedEvent({
+            domain: runtime.domain,
+            presenceId: session.presenceId,
+            armedId,
+            delayMs: PENDING_LEAVE_GRACE_MS
+          }),
           BindingRemovedEvent({ domain: runtime.domain, sourcePeerId: payload.sourcePeerId })
         ]
       }
@@ -1435,7 +1490,7 @@ const SessionDomain = Remesh.domain({
                 const timerId = globalThis.setTimeout(() => {
                   observer.next(payload)
                   observer.complete()
-                }, PENDING_LEAVE_GRACE_MS)
+                }, payload.delayMs)
                 return () => globalThis.clearTimeout(timerId)
               })
           ),

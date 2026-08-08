@@ -978,6 +978,62 @@ describe('single live release owner', () => {
     }
   })
 
+  it('resumes only the unelapsed grace remainder after cleanup rejection and never extends it', async () => {
+    vi.useFakeTimers()
+    try {
+      const network = new DeterministicNetwork()
+      const durable = createMemoryPresenceStore()
+      let rejectReleaseWrite = true
+      const store: PresenceStore = {
+        load: (domain) => durable.load(domain),
+        save: async (record) => {
+          if (!record.local && record.observers.length === 0 && rejectReleaseWrite) {
+            throw new Error('release cleanup rejected')
+          }
+          await durable.save(record)
+        }
+      }
+      const a = await createStack(
+        network,
+        'grace-remainder-peer-a',
+        { id: 'grace-remainder-user-a', name: 'A', avatar: '' },
+        { presenceStore: store }
+      )
+      const b = await createStack(network, 'grace-remainder-peer-b', {
+        id: 'grace-remainder-user-b',
+        name: 'B',
+        avatar: ''
+      })
+      await a.join()
+      await b.join()
+      await vi.waitFor(async () =>
+        expect((await noticeUsers(a)).filter((id) => id === 'grace-remainder-user-b')).toHaveLength(1)
+      )
+      // B departs: A arms the five-second grace.
+      network.disconnectPeer('grace-remainder-peer-b')
+      b.crash()
+      await vi.advanceTimersByTimeAsync(50)
+      // At 4.9s the release cleanup rejects: the deadline resumes only the 0.1s remainder.
+      await vi.advanceTimersByTimeAsync(4850)
+      await expect(a.server.leaveChatRoom({ domain: DOMAIN })).rejects.toThrow('release cleanup rejected')
+      await vi.advanceTimersByTimeAsync(0)
+      // B is still displayed just before the original five-second boundary.
+      expect(await noticeUsers(a, NOTICE_TYPE.LEAVE)).toEqual([])
+      // A repeated rejection does NOT extend the deadline: at the original 5.0s it expires once.
+      await expect(a.server.leaveChatRoom({ domain: DOMAIN })).rejects.toThrow('release cleanup rejected')
+      await vi.advanceTimersByTimeAsync(50)
+      await vi.advanceTimersByTimeAsync(0)
+      await vi.waitFor(async () =>
+        expect((await noticeUsers(a, NOTICE_TYPE.LEAVE)).filter((id) => id === 'grace-remainder-user-b')).toHaveLength(
+          1
+        )
+      )
+      expect((await noticeUsers(a, NOTICE_TYPE.LEAVE)).filter((id) => id === 'grace-remainder-user-b')).toHaveLength(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('retains the release fence and membership when the active-record cleanup write rejects; a later retry succeeds', async () => {
     vi.useFakeTimers()
     try {
