@@ -173,12 +173,16 @@ describe('HistoryDomain dead-page projection', () => {
       }
     })
     sendProviderRequest(store, history, 'null-sync', 0, true)
+    // The synchronization is admitted (the snapshot supply starts and the direction binds).
     await vi.waitFor(() => expect(pendingSupplyIds.length).toBe(1))
+    await vi.waitFor(() => expect(store.query(history.query.ProviderAttemptsQuery())).toHaveLength(1))
     // Replacing the page provider settles the pending snapshot with null (replacement mode).
     pagePort.provideHistory('page-a', DOMAIN, (event) => {
       if (event.type === 'request') pendingSupplyIds.push(event.request.supplyId)
     })
-    await vi.waitFor(() => expect(deadPages).not.toHaveBeenCalled())
+    // The selection exhausts to its real terminal state: the attempt is discarded and the page
+    // stays healthy. Only after that terminal boundary may we assert no dead-page report.
+    await vi.waitFor(() => expect(store.query(history.query.ProviderAttemptsQuery())).toHaveLength(0))
     expect(deadPages).not.toHaveBeenCalled()
     expect(pagePort.historyPageIds(DOMAIN)).toEqual(['page-a'])
   })

@@ -3954,6 +3954,94 @@ describe('RuntimeServer history', () => {
     await vi.waitFor(() => expect(delivered).toEqual(['direction-kept']))
   })
 
+  it('clears both directional bindings on domain grace release and reconnects independently', async () => {
+    const { clock, fake, server, roomId } = await setup()
+    const started: string[] = []
+    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, async (request) => {
+      if (request.mode === 'inventory') return { records: [], done: true }
+      started.push(request.syncId)
+      return { records: [], done: true }
+    })
+    fake.receive(roomId, 'peer-a', session())
+    await settle()
+    // The connection runs its one synchronization in both directions.
+    const firstInventory = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST)
+    const firstRequesterSyncId = (firstInventory[0] as { syncId: string }).syncId
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'prov-a',
+      page: 0,
+      messageIds: [],
+      done: true
+    })
+    await vi.waitFor(() => expect(started).toEqual(['prov-a']))
+    await vi.waitFor(() => {
+      const sent = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE)
+      expect(sent.some((m) => (m as { syncId: string }).syncId === 'prov-a')).toBe(true)
+    })
+    // The requester completes: its terminal binding is retained on this connection.
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
+      syncId: firstRequesterSyncId,
+      page: 0,
+      users: [],
+      messages: [],
+      done: true
+    })
+    await settle()
+    await settle()
+    // Terminal connection: a replayed provider request is inert.
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'prov-a',
+      page: 0,
+      messageIds: [],
+      done: true
+    })
+    await settle()
+    await settle()
+    expect(started).toEqual(['prov-a'])
+    // Domain grace release through the production lifecycle: the room leaves after the grace.
+    await server.detachPage({ domain: DOMAIN, pageId: 'page-a' })
+    clock.advance(RUNTIME_DOMAIN_GRACE_MS + 1)
+    await vi.waitFor(() => expect(fake.joined.has(roomId)).toBe(false))
+    // A later room connection re-attaches the page and starts exactly one independent
+    // synchronization per direction with no retained old progress.
+    await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
+    // The page re-registers its history provider for the later connection.
+    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, async (request) => {
+      if (request.mode === 'inventory') return { records: [], done: true }
+      started.push(request.syncId)
+      return { records: [], done: true }
+    })
+    // The later connection re-establishes its local room join, then the remote source reconnects.
+    await server.joinChatRoom({ domain: DOMAIN, user: USER, site: { ...SITE, origin: DOMAIN } })
+    await settle()
+    await settle()
+    await vi.waitFor(() => expect(fake.joined.has(roomId)).toBe(true))
+    fake.receive(roomId, 'peer-a', session({ id: 'remote-user-b', name: 'Remote B', avatar: '' }))
+    await settle()
+    await settle()
+    // The fresh requester uses a NEW syncId and sends its inventory again.
+    await vi.waitFor(() => {
+      const requests = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST)
+      expect(requests.some((m) => (m as { syncId: string }).syncId !== firstRequesterSyncId)).toBe(true)
+    })
+    // The fresh provider synchronization completes with its own id.
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'prov-b',
+      page: 0,
+      messageIds: [],
+      done: true
+    })
+    await vi.waitFor(() => expect(started).toEqual(['prov-a', 'prov-b']))
+    await vi.waitFor(() => {
+      const sent = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE)
+      expect(sent.some((m) => (m as { syncId: string }).syncId === 'prov-b')).toBe(true)
+    })
+  })
+
   it('observes job acceptance at exactly 32 jobs and rejection of a new identity', async () => {
     const { fake, server, roomId } = await setup()
     // Every started supplier pipeline is held; the response is delivered only when released.

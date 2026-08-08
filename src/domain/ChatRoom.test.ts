@@ -934,9 +934,8 @@ describe('ChatRoomDomain exact application port', () => {
       provideHistory: async () => {},
       resolveHistorySupply: async () => {},
       rejectHistorySupply: async () => {},
-      onDeadPages: async () => {},
       onHistoryFeedback: async () => {}
-    } as RuntimeServer
+    } satisfies RuntimeServer
     const database = createMemoryMessageDatabase(`same-user-domain-${databaseId++}`)
     const messageStore = createMessageStore(database)
     const adapter = new RuntimeChatRoom({
