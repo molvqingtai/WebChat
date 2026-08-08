@@ -1,3 +1,26 @@
+## [2.4.4](https://github.com/molvqingtai/WebChat/compare/v2.4.3...v2.4.4) (2026-08-08)
+
+### Bug Fixes
+
+- toast message overflow ([58c6fce](https://github.com/molvqingtai/WebChat/commit/58c6fcecd2aea7bc179e20e308420a55cff2c973))
+
+### Performance Improvements
+
+- **protocol:** cleanup job partition, end-to-end send ownership, lifetime sync fence ([e194b3e](https://github.com/molvqingtai/WebChat/commit/e194b3ed78b8560b02de36d3cf7f10ff4af8d784))
+- **protocol:** close admission identity, physical cleanup, terminal replay ([557e9ae](https://github.com/molvqingtai/WebChat/commit/557e9aee08b2ee634a62f3f49442bffddb4899ea))
+- **protocol:** close admission saturation, cleanup settlement, terminal fence ([612ebc9](https://github.com/molvqingtai/WebChat/commit/612ebc9353d05c3a730c5df88d0a4c934f870982))
+- **protocol:** close cleanup ownership, atomic promotion, test controls ([2f15ac7](https://github.com/molvqingtai/WebChat/commit/2f15ac7e0ccb1f13bd67e0c72353f93827c447f4))
+- **protocol:** close exact-history paging/identity/admission P1 controls ([ea86c31](https://github.com/molvqingtai/WebChat/commit/ea86c318661d45f1bfde28ab1d3afe3b384a0d48))
+- **protocol:** close exact-history state/paging/resource P1 controls ([47b4bf6](https://github.com/molvqingtai/WebChat/commit/47b4bf655d98411fc8ad1c0bc6095bba50ec4910))
+- **protocol:** close provider admission/successor/queue P1 controls ([72572db](https://github.com/molvqingtai/WebChat/commit/72572db8c298ecf6872d6492022f9005ec18bdd4))
+- **protocol:** close real-codec/provider/queue P1 controls ([9eb431f](https://github.com/molvqingtai/WebChat/commit/9eb431fe41c4a9bfa7203d6c8a4af37a85e74069))
+- **protocol:** connection-bound one-sync history with constant-size terminal binding ([12aece5](https://github.com/molvqingtai/WebChat/commit/12aece5f96c67cbc15f4bbb4731abcd9dd6cf8e6))
+- **protocol:** directional bounded sync fence, cleanup fencing, real dead-page evidence ([009472c](https://github.com/molvqingtai/WebChat/commit/009472ccfa8853c05c276ddaeb041b62b3cbcb26))
+- **protocol:** per-attempt supply ownership and physical-exit cancellation ([e1b96c9](https://github.com/molvqingtai/WebChat/commit/e1b96c973262b83c2a9382db438ee4c7fc365bba))
+- **protocol:** replace History with exact-ID diff sync and loading Toast ([ce7edc4](https://github.com/molvqingtai/WebChat/commit/ce7edc4b5cc77fbf3ae6784d4897c85350dbee1f))
+- **protocol:** settlement-bound cancel, exhaustion terminal, timeout failover, slot-exact release ([f140d50](https://github.com/molvqingtai/WebChat/commit/f140d50ae99cb55aed85fc2f0bb4af5e994747e7))
+- **protocol:** wire real supply cancellation and successor promotion after cleanup ([5e009b4](https://github.com/molvqingtai/WebChat/commit/5e009b4a22a952442c933be4d0fcf2b7f227766d))
+
 ## [2.4.3](https://github.com/molvqingtai/WebChat/compare/v2.4.2...v2.4.3) (2026-08-07)
 
 ### Bug Fixes
