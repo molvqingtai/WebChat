@@ -47,6 +47,8 @@ interface PreparedSession {
   isNewPresence: boolean
   /** (presenceId, sourcePeerId) rebinds whose pending-leave deadlines this attempt may cancel on commit. */
   reboundBindings: Array<{ presenceId: string; sourcePeerId: string }>
+  /** Unprotected same-source bindings this attempt displaced (rollback/supersession transfers none). */
+  displacedBindings: SessionBinding[]
   publishRequestId?: string
   /** Frozen distinct publication targets still awaiting their single send. */
   publishPendingTargets: string[]
@@ -448,6 +450,7 @@ const SessionDomain = Remesh.domain({
           observers: priorPrepared?.observers ?? presence?.observers ?? [],
           isNewPresence: !current && local.status === 'pending',
           reboundBindings: priorPrepared?.reboundBindings ?? [],
+          displacedBindings: priorPrepared?.displacedBindings ?? [],
           publishPendingTargets: [],
           missedPeerIds: [],
           baselinePeerIds: []
@@ -634,6 +637,15 @@ const SessionDomain = Remesh.domain({
         // that logical generation and the attempt has no session for the same presence (a
         // different presence on the same source is NOT a reason to erase the graced generation).
         const pendingLeaves = get(PendingLeavesState())
+        const commitDisplacedLeaves = prepared.displacedBindings.filter(
+          (displaced) =>
+            !prepared.observers.some(
+              (observation) =>
+                observation.status === 'active' &&
+                observation.user.id === displaced.user.id &&
+                observation.presenceId !== displaced.presenceId
+            )
+        )
         const promotedRuntime: SessionDomainState = {
           ...prepared.runtime,
           sessions: [
@@ -683,15 +695,58 @@ const SessionDomain = Remesh.domain({
                   ? 'recovery'
                   : 'refresh'
           }),
-          ...laterJoins.map((session) =>
-            RuntimeSessionChangedEvent({
-              type: 'join',
-              domain: prepared.runtime.domain,
-              snapshot: snapshot(promotedRuntime),
-              session: projectRuntimeSession(session),
-              provenance: 'live'
-            })
-          ),
+          ...(commitDisplacedLeaves.length > 0 && laterJoins.length > 0
+            ? [
+                RuntimeSessionChangedEvent({
+                  type: 'replace',
+                  domain: prepared.runtime.domain,
+                  snapshot: snapshot(promotedRuntime),
+                  previous: projectRuntimeSession(commitDisplacedLeaves[0]),
+                  session: projectRuntimeSession(laterJoins[0]),
+                  occurredAt: clock.now(),
+                  provenance: 'live'
+                }),
+                ...commitDisplacedLeaves.slice(1).map((displaced) =>
+                  RuntimeSessionChangedEvent({
+                    type: 'leave',
+                    domain: prepared.runtime.domain,
+                    snapshot: snapshot(promotedRuntime),
+                    session: projectRuntimeSession(displaced),
+                    occurredAt: clock.now(),
+                    provenance: 'live'
+                  })
+                ),
+                ...laterJoins.slice(1).map((session) =>
+                  RuntimeSessionChangedEvent({
+                    type: 'join',
+                    domain: prepared.runtime.domain,
+                    snapshot: snapshot(promotedRuntime),
+                    session: projectRuntimeSession(session),
+                    provenance: 'live'
+                  })
+                )
+              ]
+            : [
+                ...commitDisplacedLeaves.map((displaced) =>
+                  RuntimeSessionChangedEvent({
+                    type: 'leave',
+                    domain: prepared.runtime.domain,
+                    snapshot: snapshot(promotedRuntime),
+                    session: projectRuntimeSession(displaced),
+                    occurredAt: clock.now(),
+                    provenance: 'live'
+                  })
+                ),
+                ...laterJoins.map((session) =>
+                  RuntimeSessionChangedEvent({
+                    type: 'join',
+                    domain: prepared.runtime.domain,
+                    snapshot: snapshot(promotedRuntime),
+                    session: projectRuntimeSession(session),
+                    provenance: 'live'
+                  })
+                )
+              ]),
           DomainCommittedEvent({ attemptId, domain: prepared.runtime.domain, newSessions }),
           ...prepared.missedPeerIds.map((sourcePeerId) =>
             wireDomain.command.SendMessageCommand({
@@ -1114,6 +1169,7 @@ const SessionDomain = Remesh.domain({
           const previous = nextObservers.find((item) => item.presenceId === displaced.presenceId)
           if (previous) nextObservers = replaceObservation(nextObservers, { ...previous, status: 'ended' })
         }
+        const displacedBinding = displaced ?? undefined
         const session: SessionBinding = {
           sourcePeerId: payload.sourcePeerId,
           sessionId: message.sessionId,
@@ -1167,6 +1223,14 @@ const SessionDomain = Remesh.domain({
           )
         }
         if (prepared) {
+          const displacedBindings = displacedBinding
+            ? prepared.displacedBindings.some(
+                (item) =>
+                  item.presenceId === displacedBinding.presenceId && item.sourcePeerId === displacedBinding.sourcePeerId
+              )
+              ? prepared.displacedBindings
+              : [...prepared.displacedBindings, displacedBinding]
+            : prepared.displacedBindings
           const binding = { presenceId: message.presenceId, sourcePeerId: payload.sourcePeerId }
           // A same-source switch revokes this attempt's rebind markers for other presences: the
           // recorded source no longer holds its old presence, so commit cannot cancel those
@@ -1197,6 +1261,7 @@ const SessionDomain = Remesh.domain({
               runtime: nextRuntime,
               observers: nextObservers,
               reboundBindings,
+              displacedBindings,
               baselinePeerIds: prepared.baselinePeerIds.filter((sourcePeerId) => sourcePeerId !== payload.sourcePeerId)
             })
           )
@@ -1231,10 +1296,19 @@ const SessionDomain = Remesh.domain({
         // The displaced user's one-to-zero transition is classified independently from the
         // incoming generation's zero-to-one eligibility: replace when both apply, a final leave
         // when only the displaced side applies, a join when only the incoming side applies,
-        // otherwise a refresh snapshot.
+        // otherwise a refresh snapshot. The displaced side counts only when the displaced user
+        // has no OTHER active or grace-preserved observation (excluding the displaced presence).
         const incomingJoins = isLaterLogicalJoin && !wasLogicallyActive
+        const displacedLeaves =
+          displaced !== undefined &&
+          !nextObservers.some(
+            (observation) =>
+              observation.status === 'active' &&
+              observation.user.id === displaced.user.id &&
+              observation.presenceId !== displaced.presenceId
+          )
         const sessionEvent: RuntimeSessionEvent =
-          incomingJoins && displaced
+          incomingJoins && displacedLeaves
             ? {
                 type: 'replace',
                 domain: runtime.domain,
@@ -1244,7 +1318,7 @@ const SessionDomain = Remesh.domain({
                 occurredAt: clock.now(),
                 provenance: 'live'
               }
-            : displaced
+            : displacedLeaves
               ? {
                   type: 'leave',
                   domain: runtime.domain,

@@ -3244,6 +3244,71 @@ describe('RuntimeServer history', () => {
     }
   })
 
+  it('emits a replacement lifecycle when a held ordinary join switches a changed user during preparation', async () => {
+    const { fake, server, roomId } = await setup()
+    const events: string[] = []
+    await server.onSessionEvent({ pageId: 'page-a' }, (event) => {
+      events.push(event.type)
+    })
+    fake.receive(roomId, 'peer-b', session({ id: 'user-b', name: 'User B', avatar: '' }))
+    await settle()
+    // A held ordinary join receives a later changed-user C SESSION from B's same source.
+    fake.plantPeer(roomId, 'remote-peer')
+    fake.makeNotReady()
+    fake.hangSendsTo(roomId)
+    const chatBroadcastStarted = fake.waitForSendAttempt(roomId)
+    const join = server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
+    await fake.waitForJoinCalls(4)
+    fake.open()
+    await expect(chatBroadcastStarted).resolves.toMatchObject({ roomId })
+    fake.receive(roomId, 'peer-b', session({ id: 'user-c', name: 'User C', avatar: '' }))
+    await settle()
+    fake.releaseSends()
+    const snapshot = await join
+    if (!snapshot) throw new Error('Join was cancelled')
+    await settle()
+    // The commit classifies the attempt-owned displaced fact: join,replace (not join,join).
+    expect(events.filter((type) => type === 'join' || type === 'replace')).toEqual(['join', 'replace'])
+    const after = (await server.getSnapshot()).domains[0].sessions.map((session) => session.user.id)
+    expect(after).toEqual(['user-c'])
+    disposeServer(server)
+  })
+
+  it('emits only the displaced final leave when a held ordinary join switches to historical C', async () => {
+    const { fake, server, roomId } = await setup()
+    const events: string[] = []
+    await server.onSessionEvent({ pageId: 'page-a' }, (event) => {
+      events.push(event.type)
+    })
+    fake.receive(roomId, 'peer-b', session({ id: 'user-b', name: 'User B', avatar: '' }))
+    await settle()
+    fake.plantPeer(roomId, 'remote-peer')
+    fake.makeNotReady()
+    fake.hangSendsTo(roomId)
+    const chatBroadcastStarted = fake.waitForSendAttempt(roomId)
+    const join = server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
+    await fake.waitForJoinCalls(4)
+    fake.open()
+    await expect(chatBroadcastStarted).resolves.toMatchObject({ roomId })
+    // Historical C (joinedAt before the local generation): converges without a join notice.
+    fake.receive(roomId, 'peer-b', {
+      type: MESSAGE_TYPE.SESSION,
+      sessionId: 'session-historical',
+      presenceId: 'presence-historical',
+      joinedAt: NOW - 10,
+      user: { id: 'user-c', name: 'User C', avatar: '' }
+    })
+    await settle()
+    fake.releaseSends()
+    const snapshot = await join
+    if (!snapshot) throw new Error('Join was cancelled')
+    await settle()
+    expect(events.filter((type) => type === 'leave')).toEqual(['leave'])
+    const after = (await server.getSnapshot()).domains[0].sessions.map((session) => session.user.id)
+    expect(after).toEqual(['user-c'])
+    disposeServer(server)
+  })
+
   it('keeps one current C and one grace B when a held ordinary join repeats C during preparation', async () => {
     const { fake, server, roomId } = await setup()
     // Build [grace B, current C] on one source in the committed runtime.
@@ -3389,6 +3454,64 @@ describe('RuntimeServer history', () => {
     expect(events.filter((type) => type === 'join' || type === 'replace')).toEqual(['join', 'replace'])
     const after = (await server.getSnapshot()).domains[0].sessions.map((session) => session.user.id)
     expect(after).toEqual(['user-c'])
+    disposeServer(server)
+  })
+
+  it('emits no leave when the displaced user keeps another active presence', async () => {
+    const { fake, server, roomId } = await setup()
+    const events: string[] = []
+    await server.onSessionEvent({ pageId: 'page-a' }, (event) => {
+      events.push(event.type)
+    })
+    // C is already active on peer-c; user B has TWO distinct active presences on two sources.
+    fake.receive(roomId, 'peer-c', session({ id: 'user-c', name: 'User C', avatar: '' }))
+    await settle()
+    fake.receive(roomId, 'peer-b1', session({ id: 'user-b', name: 'User B', avatar: '' }))
+    await settle()
+    fake.receive(roomId, 'peer-b2', {
+      type: MESSAGE_TYPE.SESSION,
+      sessionId: 'session-b2',
+      presenceId: 'presence-b2',
+      joinedAt: NOW + 1,
+      user: { id: 'user-b', name: 'User B', avatar: '' }
+    })
+    await settle()
+    // One B source switches to the already-active C: the other B stays displayed, so NO final
+    // leave is emitted (the incoming C was not a zero-to-one join either).
+    fake.receive(roomId, 'peer-b1', session({ id: 'user-c', name: 'User C', avatar: '' }))
+    await settle()
+    expect(events.filter((type) => type === 'leave')).toEqual([])
+    // The displaced B1 binding is removed, but the other B presence stays displayed.
+    const after = (await server.getSnapshot()).domains[0].sessions.map((session) => session.user.id)
+    expect(after).toEqual(['user-c', 'user-b', 'user-c'])
+    disposeServer(server)
+  })
+
+  it('emits no leave when the displaced user keeps a grace-preserved presence', async () => {
+    const { fake, server, roomId } = await setup()
+    const events: string[] = []
+    await server.onSessionEvent({ pageId: 'page-a' }, (event) => {
+      events.push(event.type)
+    })
+    // User B has one grace-preserved presence and one current presence on two sources.
+    fake.receive(roomId, 'peer-b1', session({ id: 'user-b', name: 'User B', avatar: '' }))
+    await settle()
+    fake.peerLeave(roomId, 'peer-b1')
+    await settle()
+    fake.receive(roomId, 'peer-b2', {
+      type: MESSAGE_TYPE.SESSION,
+      sessionId: 'session-b2',
+      presenceId: 'presence-b2',
+      joinedAt: NOW + 1,
+      user: { id: 'user-b', name: 'User B', avatar: '' }
+    })
+    await settle()
+    // The current B source switches to C: grace B stays displayed, so NO final leave is emitted.
+    fake.receive(roomId, 'peer-b2', session({ id: 'user-c', name: 'User C', avatar: '' }))
+    await settle()
+    expect(events.filter((type) => type === 'leave')).toEqual([])
+    const after = (await server.getSnapshot()).domains[0].sessions.map((session) => session.user.id)
+    expect(after).toEqual(['user-b', 'user-c'])
     disposeServer(server)
   })
 
