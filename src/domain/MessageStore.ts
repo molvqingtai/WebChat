@@ -134,24 +134,44 @@ export const isInvalidMessageRecordError = (error: unknown): error is InvalidMes
   error instanceof InvalidMessageRecordError
 
 /**
- * Canonical content comparison excluding only the receiver-local `receivedAt` metadata key.
- * Structural (order-insensitive) deep equality over plain data: no schema parse, no property
- * inspection beyond the excluded key, and no cast of the raw occupant.
+ * Structural (order-insensitive) deep equality over plain data comparing every own key.
  */
-const canonicalEqualExcludingReceivedAt = (left: unknown, right: unknown): boolean => {
+const plainDataEqual = (left: unknown, right: unknown): boolean => {
   if (left === right) return true
   if (typeof left !== 'object' || left === null || typeof right !== 'object' || right === null) return false
   if (Array.isArray(left) || Array.isArray(right)) {
     if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false
-    return left.every((item, index) => canonicalEqualExcludingReceivedAt(item, right[index]))
+    return left.every((item, index) => plainDataEqual(item, right[index]))
+  }
+  const leftRecord = left as Record<string, unknown>
+  const rightRecord = right as Record<string, unknown>
+  const leftKeys = Object.keys(leftRecord)
+  const rightKeys = Object.keys(rightRecord)
+  if (leftKeys.length !== rightKeys.length) return false
+  return leftKeys.every((key) => key in rightRecord && plainDataEqual(leftRecord[key], rightRecord[key]))
+}
+
+/**
+ * Persistence-write duplicate decision: the receiver-local top-level `receivedAt` metadata key
+ * is excluded at the ROOT only; every nested own key is compared structurally and
+ * order-independently, so any nested difference is a conflict.
+ */
+const replayEqualExcludingRootReceivedAt = (left: unknown, right: unknown): boolean => {
+  if (typeof left !== 'object' || left === null || typeof right !== 'object' || right === null) {
+    return left === right
+  }
+  if (Array.isArray(left) || Array.isArray(right)) {
+    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false
+    return left.every((item, index) => plainDataEqual(item, right[index]))
   }
   const leftRecord = left as Record<string, unknown>
   const rightRecord = right as Record<string, unknown>
   const leftKeys = Object.keys(leftRecord).filter((key) => key !== 'receivedAt')
   const rightKeys = Object.keys(rightRecord).filter((key) => key !== 'receivedAt')
   if (leftKeys.length !== rightKeys.length) return false
-  return leftKeys.every(
-    (key) => key in rightRecord && canonicalEqualExcludingReceivedAt(leftRecord[key], rightRecord[key])
+  return (
+    leftKeys.every((key) => key in rightRecord && plainDataEqual(leftRecord[key], rightRecord[key])) &&
+    rightKeys.every((key) => key in leftRecord)
   )
 }
 
@@ -275,7 +295,7 @@ export const createMessageStore = (database: Database<MessageDatabaseSchema>): M
         // and a trusted typed existing is derived only from the typed input. Any other stored
         // occupant is a conflict and is never exposed as a typed record.
         const existing = result.existing
-        if (canonicalEqualExcludingReceivedAt(existing, record)) {
+        if (replayEqualExcludingRootReceivedAt(existing, record)) {
           return { inserted: false, existing: record }
         }
 

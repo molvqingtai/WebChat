@@ -303,6 +303,14 @@ const SessionDomain = Remesh.domain({
     const OperationSucceededEvent = domain.event<SessionOperationSucceeded>({
       name: 'Session.OperationSucceededEvent'
     })
+    // Typed allocation successes: the record variant is exact, so the Session-to-Server path
+    // needs no value assertion below the public contract.
+    const TextMessageAllocatedEvent = domain.event<{ operationId: string; record: TextMessageRecord }>({
+      name: 'Session.TextMessageAllocatedEvent'
+    })
+    const ReactionMessageAllocatedEvent = domain.event<{ operationId: string; record: ReactionMessageRecord }>({
+      name: 'Session.ReactionMessageAllocatedEvent'
+    })
     const OperationFailedEvent = domain.event<SessionOperationFailed>({ name: 'Session.OperationFailedEvent' })
     const ErrorEvent = domain.event<SessionFailure>({ name: 'Session.ErrorEvent' })
 
@@ -776,7 +784,11 @@ const SessionDomain = Remesh.domain({
           user: runtime.user,
           receivedAt: clock.now()
         }
-        return [HlcState().new(hlc), OperationSucceededEvent({ operationId: payload.operationId, record })]
+        return [
+          HlcState().new(hlc),
+          OperationSucceededEvent({ operationId: payload.operationId, record }),
+          TextMessageAllocatedEvent({ operationId: payload.operationId, record })
+        ]
       }
     })
 
@@ -827,7 +839,11 @@ const SessionDomain = Remesh.domain({
           user: runtime.user,
           receivedAt: clock.now()
         }
-        return [HlcState().new(hlc), OperationSucceededEvent({ operationId: payload.operationId, record })]
+        return [
+          HlcState().new(hlc),
+          OperationSucceededEvent({ operationId: payload.operationId, record }),
+          ReactionMessageAllocatedEvent({ operationId: payload.operationId, record })
+        ]
       }
     })
 
@@ -1474,6 +1490,8 @@ const SessionDomain = Remesh.domain({
         BindingChangedEvent,
         BindingRemovedEvent,
         OperationSucceededEvent,
+        TextMessageAllocatedEvent,
+        ReactionMessageAllocatedEvent,
         OperationFailedEvent,
         ErrorEvent
       }

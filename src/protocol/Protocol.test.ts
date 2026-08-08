@@ -84,6 +84,17 @@ describe('public protocol schema contract', () => {
       done: true
     }
     expect(parseChat(pull)).toEqual(pull)
+    // Every safe-integer field is directly covered for non-finite values: page, and HLC
+    // timestamp/counter inside text and reaction messages.
+    for (const page of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(parseChat({ ...pull, page })).toBeNull()
+    }
+    for (const timestamp of [Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(parseChat({ ...text(), hlc: { timestamp, counter: 0 } })).toBeNull()
+    }
+    for (const counter of [Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(parseChat({ ...text(), hlc: { timestamp: 1, counter } })).toBeNull()
+    }
     expect(parseChat({ ...pull, requestId: 'legacy' })).toBeNull()
     expect(parseChat({ type: pull.type, requestId: 'legacy' })).toBeNull()
     expect(parseChat({ type: pull.type })).toBeNull()
@@ -163,7 +174,7 @@ describe('public protocol schema contract', () => {
     expect(parseChat(oversized)).toBeNull()
   })
 
-  it('rejects invalid World payloads with strict keys and non-finite values', () => {
+  it('rejects invalid World payloads with strict keys (the World schema has no numeric fields)', () => {
     const presence = {
       sessionId: 'world-session',
       user: USER,

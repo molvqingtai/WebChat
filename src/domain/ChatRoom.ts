@@ -16,7 +16,6 @@ import { MESSAGE_TYPE, REACTION_TYPE, type ChatMessage, type MentionedUser } fro
 import type { ChatUser } from '@/protocol/Session'
 import type { ChatSession } from '@/protocol/Session'
 import { MESSAGE_RECORD_TYPE, NOTICE_TYPE, type SystemNoticeRecord, type TextMessageRecord } from '@/domain/Message'
-import type { TextMessage } from '@/protocol/ChatRoom'
 import { projectTextRecord } from '@/domain/MessageProjection'
 import { getSiteMeta, stringToHex } from '@/utils'
 

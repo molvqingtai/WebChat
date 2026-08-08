@@ -111,22 +111,35 @@ describe('MessageStore static contract', () => {
 })
 
 describe.each(backends)('$name MessageStore contract', (backend) => {
-  it('classifies a reordered-key receivedAt-only replay as existing with no conflict', async () => {
+  it('classifies a genuinely reordered-key receivedAt-only replay as existing with no conflict', async () => {
     const { database, messageStore } = create(backend)
     const first = textRecord('reorder-id', 'first', 1)
-    await expect(messageStore.insert(first)).resolves.toEqual({ inserted: true })
-    // The stored occupant may have been written with a different property insertion order: the
-    // canonical comparison is structural, so the same-ID value differing only in the top-level
-    // receivedAt is still a replay (first row retained, no conflict).
-    const reorderedRaw = JSON.parse(
-      JSON.stringify({ ...first, receivedAt: 99 }, ['receivedAt', 'message', 'type', 'id', 'user'])
-    )
-    await database.write(['records'], (transaction) => transaction.insert('records', 'reorder-id', reorderedRaw))
+    // Seed the stored occupant with a different property insertion order and a different
+    // top-level receivedAt (put overwrites the row before any typed insert).
+    const reorderedRaw = { receivedAt: 99, message: first.message, type: first.type, id: first.id, user: first.user }
+    await database.write(['records'], (transaction) => transaction.put('records', 'reorder-id', reorderedRaw))
     const replay = await messageStore.insert({ ...first, receivedAt: 99 })
     expect(replay.inserted).toBe(false)
     if (!replay.inserted) expect(replay.existing).toEqual({ ...first, receivedAt: 99 })
-    await expect(messageStore.query()).resolves.toEqual([first])
+    // The first stored row (the seeded reordered occupant) is retained unchanged.
+    await expect(messageStore.query()).resolves.toEqual([reorderedRaw])
     await expect(database.read(['conflicts'], (transaction) => transaction.count('conflicts'))).resolves.toBe(0)
+  })
+
+  it('treats a nested receivedAt difference as a conflict (only the top-level field is excluded)', async () => {
+    const { database, messageStore } = create(backend)
+    const first = textRecord('nested-replay-id', 'first', 1)
+    await expect(messageStore.insert(first)).resolves.toEqual({ inserted: true })
+    // The nested message carries an extra `receivedAt` key: it differs from the canonical
+    // content (only the ROOT receivedAt is receiver-local), so it is a conflict.
+    const nestedDifference = {
+      ...first,
+      message: { ...first.message, receivedAt: 999 }
+    } as unknown as MessageRecord
+    const conflict = await messageStore.insert(nestedDifference)
+    expect(conflict.inserted).toBe(false)
+    await expect(messageStore.query()).resolves.toEqual([first])
+    await expect(database.read(['conflicts'], (transaction) => transaction.count('conflicts'))).resolves.toBe(1)
   })
 
   it('classifies a receivedAt-only replay as existing with no conflict', async () => {
