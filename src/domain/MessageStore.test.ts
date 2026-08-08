@@ -111,31 +111,99 @@ describe('MessageStore static contract', () => {
 })
 
 describe.each(backends)('$name MessageStore contract', (backend) => {
-  it('keeps the first canonical value and classifies receivedAt-only replay as existing', async () => {
+  it('classifies a genuinely reordered-key receivedAt-only replay as existing with no conflict', async () => {
+    const { database, messageStore } = create(backend)
+    const first = textRecord('reorder-id', 'first', 1)
+    // Seed the stored occupant with a different property insertion order and a different
+    // top-level receivedAt (put overwrites the row before any typed insert).
+    const reorderedRaw = { receivedAt: 99, message: first.message, type: first.type, id: first.id, user: first.user }
+    await database.write(['records'], (transaction) => transaction.put('records', 'reorder-id', reorderedRaw))
+    const replay = await messageStore.insert({ ...first, receivedAt: 99 })
+    expect(replay.inserted).toBe(false)
+    if (!replay.inserted) expect(replay.existing).toEqual({ ...first, receivedAt: 99 })
+    // The first stored row (the seeded reordered occupant) is retained unchanged.
+    await expect(messageStore.query()).resolves.toEqual([reorderedRaw])
+    await expect(database.read(['conflicts'], (transaction) => transaction.count('conflicts'))).resolves.toBe(0)
+  })
+
+  it('treats an own __proto__ nested key difference as a conflict (own-key membership)', async () => {
+    const { database, messageStore } = create(backend)
+    const first = textRecord('proto-id', 'first', 1)
+    // Seed a raw occupant whose nested message replaces the required own `body` key with an
+    // own enumerable `__proto__` key. The inherited prototype must not satisfy own-key
+    // membership (Object.hasOwn), so the typed incoming record is a conflict and the raw
+    // first row is retained.
+    const protoOccupant = { ...first, message: { ...first.message } } as unknown as Record<string, unknown>
+    const message = protoOccupant.message as Record<string, unknown>
+    delete message.body
+    Object.defineProperty(message, '__proto__', {
+      value: {},
+      enumerable: true,
+      writable: true,
+      configurable: true
+    })
+    await database.write(['records'], (transaction) => transaction.insert('records', first.id, protoOccupant))
+    const conflict = await messageStore.insert(first)
+    expect(conflict.inserted).toBe(false)
+    // The raw first row is retained unchanged and the conflict is recorded.
+    await expect(database.read(['records'], (transaction) => transaction.get('records', first.id))).resolves.toEqual(
+      protoOccupant
+    )
+    await expect(database.read(['conflicts'], (transaction) => transaction.count('conflicts'))).resolves.toBe(1)
+  })
+
+  it('treats a nested receivedAt difference as a conflict (only the top-level field is excluded)', async () => {
+    const { database, messageStore } = create(backend)
+    const first = textRecord('nested-replay-id', 'first', 1)
+    await expect(messageStore.insert(first)).resolves.toEqual({ inserted: true })
+    // The nested message carries an extra `receivedAt` key: it differs from the canonical
+    // content (only the ROOT receivedAt is receiver-local), so it is a conflict.
+    const nestedDifference = {
+      ...first,
+      message: { ...first.message, receivedAt: 999 }
+    } as unknown as MessageRecord
+    const conflict = await messageStore.insert(nestedDifference)
+    expect(conflict.inserted).toBe(false)
+    await expect(messageStore.query()).resolves.toEqual([first])
+    await expect(database.read(['conflicts'], (transaction) => transaction.count('conflicts'))).resolves.toBe(1)
+  })
+
+  it('classifies a receivedAt-only replay as existing with no conflict', async () => {
+    const { database, messageStore } = create(backend)
+    const first = textRecord('replay-id', 'first', 1)
+    await expect(messageStore.insert(first)).resolves.toEqual({ inserted: true })
+    // `receivedAt` is receiver-local metadata, not canonical identity: a same-ID value identical
+    // except the top-level receivedAt is a replay — keep the first row, no conflict.
+    const replay = await messageStore.insert({ ...first, receivedAt: 99 })
+    expect(replay.inserted).toBe(false)
+    if (!replay.inserted) expect(replay.existing).toEqual({ ...first, receivedAt: 99 })
+    await expect(messageStore.query()).resolves.toEqual([first])
+    await expect(database.read(['conflicts'], (transaction) => transaction.count('conflicts'))).resolves.toBe(0)
+  })
+
+  it('keeps the first stored value and compares duplicate content without protocol parsing', async () => {
     const { messageStore } = create(backend)
     const first = textRecord('message-1', 'first', 1)
 
     await expect(messageStore.insert(first)).resolves.toEqual({ inserted: true })
-    await expect(messageStore.insert({ ...first, receivedAt: 99 })).resolves.toEqual({
-      inserted: false,
-      existing: first
-    })
+    // An exact duplicate is content-equal and returns the typed record as existing.
+    await expect(messageStore.insert(first)).resolves.toEqual({ inserted: false, existing: first })
     await expect(messageStore.query()).resolves.toEqual([first])
   })
 
-  it('preserves the first value for content and cross-variant id conflicts', async () => {
+  it('preserves the first stored value and records content and cross-variant id conflicts', async () => {
     const { database, messageStore } = create(backend)
     const first = textRecord('shared-id', 'first')
+    const changed = textRecord('shared-id', 'different')
 
     await messageStore.insert(first)
-    await expect(messageStore.insert(textRecord('shared-id', 'different'))).resolves.toEqual({
-      inserted: false,
-      existing: first
-    })
-    await expect(messageStore.insert(noticeRecord('shared-id'))).resolves.toEqual({
-      inserted: false,
-      existing: first
-    })
+    // The conflict result exposes the raw stored value as unknown, never as a typed record.
+    const changedResult = await messageStore.insert(changed)
+    expect(changedResult.inserted).toBe(false)
+    if (!changedResult.inserted) expect(changedResult.existing).toMatchObject({ id: 'shared-id' })
+    const crossVariantResult = await messageStore.insert(noticeRecord('shared-id'))
+    expect(crossVariantResult.inserted).toBe(false)
+    if (!crossVariantResult.inserted) expect(crossVariantResult.existing).toMatchObject({ id: 'shared-id' })
     await expect(messageStore.query()).resolves.toEqual([first])
     await expect(database.read(['conflicts'], (transaction) => transaction.count('conflicts'))).resolves.toBe(2)
   })
@@ -152,7 +220,7 @@ describe.each(backends)('$name MessageStore contract', (backend) => {
     await expect(messageStore.query()).resolves.toEqual([textRecord('bounded', 'first')])
   })
 
-  it('isolates records outside the strict outer-type union or key/id/user equalities', async () => {
+  it('isolates records outside the strict outer-type union', async () => {
     const invalid: Array<{ key: string; value: unknown }> = [
       { key: 'legacy', value: { event: textRecord('legacy').message, user: USER, receivedAt: 1 } },
       {
@@ -162,18 +230,6 @@ describe.each(backends)('$name MessageStore contract', (backend) => {
       {
         key: 'unknown-field',
         value: { ...textRecord('unknown-field'), unknown: true }
-      },
-      {
-        key: 'wrong-key',
-        value: textRecord('different-id')
-      },
-      {
-        key: 'outer-mismatch',
-        value: { ...textRecord('outer-mismatch'), id: 'other' }
-      },
-      {
-        key: 'user-mismatch',
-        value: { ...textRecord('user-mismatch'), user: { ...USER, id: 'other-user' } }
       },
       {
         key: 'property-shape',
@@ -196,8 +252,50 @@ describe.each(backends)('$name MessageStore contract', (backend) => {
     }
   })
 
-  it('rejects invalid input before persistence and never uses key shape as a discriminator', async () => {
+  it('loads records whose key/identity/user relationships differ (relationships are unvalidated)', async () => {
+    const { database } = create(backend)
+    // The declarative record schema cannot express key/identity/user equality, so a stored row
+    // with a mismatched key, outer id, or user id is still accepted at load.
+    const equalityRows: Array<{ key: string; value: unknown }> = [
+      { key: 'wrong-key', value: textRecord('different-id') },
+      { key: 'outer-mismatch', value: { ...textRecord('outer-mismatch'), id: 'other' } },
+      { key: 'user-mismatch', value: { ...textRecord('user-mismatch'), user: { ...USER, id: 'other-user' } } }
+    ]
+    for (const { key, value } of equalityRows) {
+      const { database: db, messageStore: store } = create(backend)
+      await db.write(['records'], (transaction) => transaction.insert('records', key, value))
+      await expect(store.query()).resolves.toEqual([value])
+    }
+    await expect(database.read(['records'], (transaction) => transaction.count('records'))).resolves.toBe(0)
+  })
+
+  it('accepts finite fractional receivedAt values for both record variants at load', async () => {
+    const { database, messageStore } = create(backend)
+    const fractionalChat = { ...textRecord('fractional-chat'), receivedAt: 1.5 }
+    const fractionalNotice = {
+      ...noticeRecord('fractional-notice'),
+      receivedAt: 1.5
+    }
+    await database.write(['records'], async (transaction) => {
+      await transaction.insert('records', 'fractional-chat', fractionalChat)
+      await transaction.insert('records', 'fractional-notice', fractionalNotice)
+    })
+    // The record schemas use the declarative v.finite() action for both variants.
+    await expect(messageStore.query()).resolves.toEqual([fractionalChat, fractionalNotice])
+  })
+
+  it('accepts finite fractional receivedAt values at load (persisted format is a finite number)', async () => {
+    const { database, messageStore } = create(backend)
+    const fractional = { ...textRecord('fractional'), receivedAt: 1.5 }
+    await database.write(['records'], (transaction) => transaction.insert('records', 'fractional', fractional))
+    // The record schema uses the declarative v.finite() action, so fractional values remain
+    // loadable; the database layer itself rejects non-finite numbers before storage.
+    await expect(messageStore.query()).resolves.toEqual([fractional])
+  })
+
+  it('trusts typed inputs at write and omits invalid stored values at load', async () => {
     const { messageStore } = create(backend)
+    // Persistence write does not validate protocol shape: typed inputs are trusted.
     const prefixedButUntyped = {
       id: 'chat-message:looks-typed',
       message: textRecord('chat-message:looks-typed').message,
@@ -205,10 +303,8 @@ describe.each(backends)('$name MessageStore contract', (backend) => {
       receivedAt: 1
     }
 
-    for (const input of [prefixedButUntyped, null, undefined, []]) {
-      await expect(messageStore.insert(input as unknown as MessageRecord)).rejects.toMatchObject({
-        name: 'InvalidMessageRecordError'
-      })
+    for (const input of [prefixedButUntyped, { id: 'missing-fields' }]) {
+      await expect(messageStore.insert(input as unknown as MessageRecord)).resolves.toEqual({ inserted: true })
     }
     await expect(messageStore.query()).resolves.toEqual([])
     const valid = textRecord('valid-after-invalid-input')

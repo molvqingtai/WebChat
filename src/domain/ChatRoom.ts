@@ -13,6 +13,7 @@ import StatusModule from '@/domain/modules/Status'
 import { ConnectionLifecycleExtern } from '@/domain/externs/ConnectionLifecycle'
 import { SendLifecycleExtern } from '@/domain/externs/SendLifecycle'
 import { MESSAGE_TYPE, REACTION_TYPE, type ChatMessage, type MentionedUser } from '@/protocol/ChatRoom'
+import type { ChatUser } from '@/protocol/Session'
 import type { ChatSession } from '@/protocol/Session'
 import { MESSAGE_RECORD_TYPE, NOTICE_TYPE, type SystemNoticeRecord, type TextMessageRecord } from '@/domain/Message'
 import { projectTextRecord } from '@/domain/MessageProjection'
@@ -147,9 +148,12 @@ const ChatRoomDomain = Remesh.domain({
         if (!get(JoinStatus.query.IsInitialQuery())) return null
         const user = get(userInfoDomain.query.UserInfoQuery())
         if (!user) return OnErrorEvent(new Error('User identity is unavailable'))
+        // Application-to-protocol boundary: the broader UserInfo model is explicitly mapped to
+        // the schema-owned ChatUser shape here; downstream consumers pass it through unchanged.
+        const wireUser: ChatUser = { id: user.id, name: user.name, avatar: user.avatar }
         return [
           JoinStatus.command.SetLoadingCommand(),
-          StartConnectionCommand({ input: { user, site: getSiteMeta() }, mode: 'join' })
+          StartConnectionCommand({ input: { user: wireUser, site: getSiteMeta() }, mode: 'join' })
         ]
       }
     })
@@ -190,7 +194,8 @@ const ChatRoomDomain = Remesh.domain({
         if (!get(ReconnectAvailableQuery())) return null
         const joined = get(JoinIsFinishedQuery())
         const user = get(userInfoDomain.query.UserInfoQuery())!
-        const input = joined ? get(JoinInputState())! : { user, site: getSiteMeta() }
+        const wireUser: ChatUser = { id: user.id, name: user.name, avatar: user.avatar }
+        const input = joined ? get(JoinInputState())! : { user: wireUser, site: getSiteMeta() }
         const id = get(ReconnectSequenceState()) + 1
         return [
           ReconnectSequenceState().new(id),
@@ -370,7 +375,10 @@ const ChatRoomDomain = Remesh.domain({
       impl: ({ fromEvent, get }) =>
         fromEvent(userInfoDomain.event.UpdateUserInfoEvent).pipe(
           filter((user): user is NonNullable<typeof user> => Boolean(user) && get(JoinIsFinishedQuery())),
-          map((user) => StartConnectionCommand({ input: { user, site: getSiteMeta() }, mode: 'automatic' }))
+          map((user) => {
+            const wireUser: ChatUser = { id: user.id, name: user.name, avatar: user.avatar }
+            return StartConnectionCommand({ input: { user: wireUser, site: getSiteMeta() }, mode: 'automatic' })
+          })
         )
     })
 
@@ -389,9 +397,6 @@ const ChatRoomDomain = Remesh.domain({
                 const token = sendLifecycle.beginSend()
                 try {
                   const message = await chatRoom.sendMessage({ type: 'text', ...command })
-                  if (message.type !== MESSAGE_TYPE.TEXT || message.userId !== user.id) {
-                    throw new Error('ChatRoom returned an invalid local text message')
-                  }
                   sendLifecycle.settleSend(token, 'accepted')
                   const record: TextMessageRecord = {
                     type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE,

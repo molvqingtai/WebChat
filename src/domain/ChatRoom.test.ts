@@ -4,7 +4,7 @@ import ChatRoomDomain from '@/domain/ChatRoom'
 import MessageInputDomain from '@/domain/MessageInput'
 import MessageListDomain from '@/domain/MessageList'
 import UserInfoDomain, { type UserInfo } from '@/domain/UserInfo'
-import { ChatRoomExtern, type ChatRoom } from '@/domain/externs/ChatRoom'
+import { ChatRoomExtern, type ChatRoom, type SendMessageCommand } from '@/domain/externs/ChatRoom'
 import { ReadinessExtern } from '@/domain/externs/Readiness'
 import { ConnectionLifecycleExtern, type ConnectionLifecycleResult } from '@/domain/externs/ConnectionLifecycle'
 import { SendLifecycleExtern } from '@/domain/externs/SendLifecycle'
@@ -26,6 +26,7 @@ import { MESSAGE_TYPE, type ChatMessage, type ChatSession } from '@/protocol'
 import type { RuntimeServer, RuntimeSessionEvent, RuntimeSnapshot } from '@/runtime/Contract'
 import { stringToHex } from '@/utils'
 
+const WIRE_SELF = { id: 'local-user', name: 'Local', avatar: '' }
 const SELF: UserInfo = {
   id: 'local-user',
   name: 'Local',
@@ -109,7 +110,7 @@ const createFixture = (options: { delayRecordWatch?: boolean; user?: UserInfo | 
   const chat: ChatRoom = {
     joinRoom: vi.fn(async () => {}),
     leaveRoom: vi.fn(async () => {}),
-    sendMessage: vi.fn(async (command) => {
+    sendMessage: vi.fn(async (command: SendMessageCommand) => {
       if (command.type === 'reaction') {
         const message = {
           type: MESSAGE_TYPE.REACTION,
@@ -145,7 +146,7 @@ const createFixture = (options: { delayRecordWatch?: boolean; user?: UserInfo | 
         receivedAt: 4
       })
       return message
-    }),
+    }) as unknown as ChatRoom['sendMessage'],
     onMessage: (listener) => subscribe(listeners.message, listener),
     onJoinRoom: (listener) => subscribe(listeners.join, listener),
     onLeaveRoom: (listener) => subscribe(listeners.leave, listener),
@@ -453,7 +454,7 @@ describe('ChatRoomDomain exact application port', () => {
     await join(fixture)
 
     expect(fixture.chat.joinRoom).toHaveBeenCalledWith({
-      user: SELF,
+      user: WIRE_SELF,
       site: expect.objectContaining({ origin: 'https://example.test' })
     })
     expect(fixture.store.query(fixture.room.query.UserListQuery())).toEqual([SELF])
@@ -726,7 +727,7 @@ describe('ChatRoomDomain exact application port', () => {
     await vi.waitFor(() => expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())?.outcome).toEqual({}))
     expect(fixture.chat.joinRoom).toHaveBeenCalledTimes(2)
     expect(fixture.chat.joinRoom).toHaveBeenLastCalledWith({
-      user: SELF,
+      user: WIRE_SELF,
       site: expect.objectContaining({ origin: 'https://example.test' })
     })
     expect(fixture.store.query(fixture.list.query.LoadIsFinishedQuery())).toBe(true)
@@ -735,7 +736,7 @@ describe('ChatRoomDomain exact application port', () => {
     fixture.emitReadiness('ready')
     await vi.waitFor(() => expect(fixture.chat.joinRoom).toHaveBeenCalledTimes(3))
     expect(fixture.chat.joinRoom).toHaveBeenLastCalledWith({
-      user: SELF,
+      user: WIRE_SELF,
       site: expect.objectContaining({ origin: 'https://example.test' })
     })
 
@@ -794,7 +795,7 @@ describe('ChatRoomDomain exact application port', () => {
 
     await vi.waitFor(() => expect(fixture.chat.joinRoom).toHaveBeenCalledTimes(2))
     expect(fixture.chat.joinRoom).toHaveBeenLastCalledWith({
-      user: SELF,
+      user: WIRE_SELF,
       site: expect.objectContaining({ origin: 'https://example.test' })
     })
 

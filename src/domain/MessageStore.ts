@@ -2,8 +2,8 @@ import { Remesh } from 'remesh'
 import * as v from 'valibot'
 import type { Database, DatabaseItem } from '@/domain/externs/Database'
 import type { Unsubscribe } from '@/domain/Subscription'
-import { HLCSchema, ChatMessageSchema, isMessageWithinLimit } from '@/protocol/ChatRoom'
-import { ChatUserSchema, isUserWithinLimit } from '@/protocol/Session'
+import { ChatMessageSchema, HLCSchema } from '@/protocol/ChatRoom'
+import { ChatUserSchema } from '@/protocol/Session'
 import { MESSAGE_RECORD_TYPE, NOTICE_TYPE, type MessageRecord } from '@/domain/Message'
 import { MAX_CONFLICTS_PER_RECORD, MAX_STORED_CONFLICTS } from '@/constants/config'
 import type { DatabaseDefinition } from '@/domain/impls/database/Definition'
@@ -40,7 +40,7 @@ export const createMessageDatabaseDefinition = (
 
 export type InsertMessageResult =
   | { readonly inserted: true }
-  | { readonly inserted: false; readonly existing: MessageRecord }
+  | { readonly inserted: false; readonly existing: MessageRecord | unknown }
 
 export type MessageQuery = Readonly<{
   type?: MessageRecord['type']
@@ -95,10 +95,11 @@ export const MessageDatabaseExtern = Remesh.extern<Database<MessageDatabaseSchem
   }
 })
 
-const finiteNumber = v.pipe(
-  v.number(),
-  v.check((value) => Number.isFinite(value), 'Expected a finite number')
-)
+// The local persistence-load boundary: the record schema composes the authoritative protocol
+// schema (declarative structure and ceilings) with the local-only record fields, so one schema
+// parse accepts or rejects a whole stored item. Relationships the declarative schema cannot
+// express (key/identity equality) are not validated.
+const finiteNumber = v.pipe(v.number(), v.finite())
 
 const ChatMessageRecordSchema = v.strictObject({
   type: v.literal(MESSAGE_RECORD_TYPE.CHAT_MESSAGE),
@@ -132,6 +133,48 @@ class InvalidMessageRecordError extends TypeError {
 export const isInvalidMessageRecordError = (error: unknown): error is InvalidMessageRecordError =>
   error instanceof InvalidMessageRecordError
 
+/**
+ * Structural (order-insensitive) deep equality over plain data comparing every own key.
+ */
+const plainDataEqual = (left: unknown, right: unknown): boolean => {
+  if (left === right) return true
+  if (typeof left !== 'object' || left === null || typeof right !== 'object' || right === null) return false
+  if (Array.isArray(left) || Array.isArray(right)) {
+    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false
+    return left.every((item, index) => plainDataEqual(item, right[index]))
+  }
+  const leftRecord = left as Record<string, unknown>
+  const rightRecord = right as Record<string, unknown>
+  const leftKeys = Object.keys(leftRecord)
+  const rightKeys = Object.keys(rightRecord)
+  if (leftKeys.length !== rightKeys.length) return false
+  return leftKeys.every((key) => Object.hasOwn(rightRecord, key) && plainDataEqual(leftRecord[key], rightRecord[key]))
+}
+
+/**
+ * Persistence-write duplicate decision: the receiver-local top-level `receivedAt` metadata key
+ * is excluded at the ROOT only; every nested own key is compared structurally and
+ * order-independently, so any nested difference is a conflict.
+ */
+const replayEqualExcludingRootReceivedAt = (left: unknown, right: unknown): boolean => {
+  if (typeof left !== 'object' || left === null || typeof right !== 'object' || right === null) {
+    return left === right
+  }
+  if (Array.isArray(left) || Array.isArray(right)) {
+    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false
+    return left.every((item, index) => plainDataEqual(item, right[index]))
+  }
+  const leftRecord = left as Record<string, unknown>
+  const rightRecord = right as Record<string, unknown>
+  const leftKeys = Object.keys(leftRecord).filter((key) => key !== 'receivedAt')
+  const rightKeys = Object.keys(rightRecord).filter((key) => key !== 'receivedAt')
+  if (leftKeys.length !== rightKeys.length) return false
+  return (
+    leftKeys.every((key) => Object.hasOwn(rightRecord, key) && plainDataEqual(leftRecord[key], rightRecord[key])) &&
+    rightKeys.every((key) => Object.hasOwn(leftRecord, key))
+  )
+}
+
 const invalidMessageRecord = (message: string): never => {
   throw new InvalidMessageRecordError(message)
 }
@@ -139,21 +182,7 @@ const invalidMessageRecord = (message: string): never => {
 const decodeMessageRecord = (item: DatabaseItem<string, unknown>): MessageRecord => {
   const parsed = v.safeParse(MessageRecordSchema, item.value)
   if (!parsed.success) return invalidMessageRecord('Database contains an invalid MessageRecord')
-  const record = parsed.output as MessageRecord
-  if (item.key !== record.id) return invalidMessageRecord('Database item key does not match record id')
-  if (!isUserWithinLimit(record.user)) return invalidMessageRecord('MessageRecord user exceeds protocol limits')
-  if (record.type === MESSAGE_RECORD_TYPE.CHAT_MESSAGE) {
-    if (record.id !== record.message.id) return invalidMessageRecord('Chat record id does not match message id')
-    if (record.user.id !== record.message.userId) {
-      return invalidMessageRecord('Chat record user does not match message user')
-    }
-    if (!isMessageWithinLimit(record.message)) {
-      return invalidMessageRecord('Chat record message exceeds protocol limits')
-    }
-  } else if (record.id !== record.notice.id) {
-    return invalidMessageRecord('System notice record id does not match notice id')
-  }
-  return record
+  return parsed.output
 }
 
 const safeDecodeMessageRecord = (
@@ -174,9 +203,6 @@ const canonicalContent = (record: MessageRecord): unknown =>
 
 const canonicalJson = (record: MessageRecord): string => JSON.stringify(canonicalContent(record))
 
-const contentEquals = (left: MessageRecord, right: MessageRecord): boolean =>
-  canonicalJson(left) === canonicalJson(right)
-
 const hashString = (value: string): string => {
   let hash = 2166136261
   for (let index = 0; index < value.length; index += 1) {
@@ -190,7 +216,8 @@ interface StoredConflict {
   /** Preserved v2 physical index key path; its value is the outer record id. */
   eventId: string
   incomingHash: string
-  existing: MessageRecord
+  /** Raw stored value preserved as a private diagnostic; never protocol-validated. */
+  existing: unknown
   incoming: MessageRecord
   recordedAt: number
 }
@@ -250,25 +277,27 @@ const retainInvalidRecordDiagnostics = async (
   )
 }
 
-const decodeInput = (record: MessageRecord): MessageRecord => {
-  const value = record as unknown
-  const id = typeof value === 'object' && value !== null ? (value as { id?: unknown }).id : undefined
-  return decodeMessageRecord({ key: typeof id === 'string' ? id : '', value })
-}
-
 const reportedDiagnosticFailures = new WeakSet<Database<MessageDatabaseSchema>>()
 
 export const createMessageStore = (database: Database<MessageDatabaseSchema>): MessageStore => ({
   insert: async (input, { signal }: MessageInsertOptions = {}) => {
-    const record = decodeInput(input)
+    const record = input
     signal?.throwIfAborted()
     return database.write(
       ['records', 'conflicts'],
       async (transaction) => {
         const result = await transaction.insert('records', record.id, record)
         if (result.inserted) return { inserted: true }
-        const existing = decodeMessageRecord({ key: record.id, value: result.existing })
-        if (contentEquals(existing, record)) return { inserted: false, existing }
+        // Duplicate handling stays on the write path: the stored raw value is compared by
+        // content without any protocol parse or property/resource validation. `receivedAt` is
+        // receiver-local metadata, not canonical record identity: a same-ID value identical
+        // except for the top-level `receivedAt` is a replay (keep the first row, no conflict),
+        // and a trusted typed existing is derived only from the typed input. Any other stored
+        // occupant is a conflict and is never exposed as a typed record.
+        const existing = result.existing
+        if (replayEqualExcludingRootReceivedAt(existing, record)) {
+          return { inserted: false, existing: record }
+        }
 
         const incomingHash = hashString(canonicalJson(record))
         const conflictKey = `${record.id}:${incomingHash}`

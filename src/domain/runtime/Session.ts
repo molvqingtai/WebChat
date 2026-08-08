@@ -1,5 +1,5 @@
 import { Remesh } from 'remesh'
-import { concatMap, filter, map } from 'rxjs'
+import { concatMap, filter, map, mergeMap, Observable } from 'rxjs'
 import DeliveryDomain from '@/domain/runtime/Delivery'
 import WireDomain, { type WireFailureStage, type WireMessageEvent } from '@/domain/runtime/Wire'
 import { ClockExtern } from '@/domain/runtime/externs/Clock'
@@ -11,19 +11,8 @@ import {
   type ObservedPresence,
   type PresenceDomainRecord
 } from '@/domain/runtime/externs/PresenceStore'
-import { CHAT_ROOM_NAMESPACE_V4 } from '@/constants/config'
-import {
-  MESSAGE_TYPE,
-  isChatRoomMessageSemanticallyValid,
-  isHLCInRange,
-  parseChatRoomMessage,
-  parseWorldRoomMessage,
-  type ChatMessage,
-  type HLC,
-  type MentionedUser,
-  type ChatSite,
-  type ChatUser
-} from '@/protocol'
+import { CHAT_ROOM_NAMESPACE_V5, PENDING_LEAVE_GRACE_MS } from '@/constants/config'
+import { MESSAGE_TYPE, type ChatMessage, type HLC, type MentionedUser, type ChatSite, type ChatUser } from '@/protocol'
 import {
   MESSAGE_RECORD_TYPE,
   type ChatMessageRecord,
@@ -73,6 +62,19 @@ interface DepartedBinding {
   binding: SessionBinding
 }
 
+/** One observer-side pending-leave deadline per remote presence (idempotent duplicates). */
+interface PendingLeave {
+  domain: string
+  presenceId: string
+  /** The departed physical source whose session entry stays visible throughout the grace. */
+  sourcePeerId: string
+  sessionId: string
+  user: ChatUser
+  joinedAt: number
+  /** Distinguishes this armed deadline instance so stale timers are fenced after a rebind. */
+  armedId: string
+}
+
 interface PendingChatSend {
   operationId: string
   requestId: string
@@ -91,12 +93,21 @@ interface LiveRelease {
   presenceId: string
   userId: string
   joinedAt: number
-  requestId: string
 }
 
 export interface SessionOperationSucceeded {
   operationId: string
-  record?: ChatMessageRecord
+}
+
+/** Typed allocation-success payloads: the exact record variant is the boundary contract. */
+export interface TextMessageAllocatedEventPayload {
+  operationId: string
+  record: TextMessageRecord
+}
+
+export interface ReactionMessageAllocatedEventPayload {
+  operationId: string
+  record: ReactionMessageRecord
 }
 
 export interface SessionOperationFailed {
@@ -110,7 +121,7 @@ export interface SessionFailure {
   domain?: string
 }
 
-const getChatRoomId = (domain: string): string => stringToHex(`${CHAT_ROOM_NAMESPACE_V4}:${domain}`)
+const getChatRoomId = (domain: string): string => stringToHex(`${CHAT_ROOM_NAMESPACE_V5}:${domain}`)
 const replaceBy = <T>(items: T[], predicate: (item: T) => boolean, next: T): T[] =>
   items.some(predicate) ? items.map((item) => (predicate(item) ? next : item)) : [...items, next]
 const removeBy = <T>(items: T[], predicate: (item: T) => boolean): T[] => items.filter((item) => !predicate(item))
@@ -132,27 +143,6 @@ const hasActiveUserPresence = (observations: ObservedPresence[], userId: string,
       observation.status === 'active' && observation.user.id === userId && observation.presenceId !== exceptPresenceId
   )
 
-const optionalSiteField = (value: unknown, maxLength: number): string | undefined =>
-  typeof value === 'string' && value.length <= maxLength ? value : undefined
-
-const sanitizeSite = (site: ChatSite): ChatSite => {
-  const title = optionalSiteField(site.title, 512)
-  const icon = optionalSiteField(site.icon, 16 * 1024)
-  const description = optionalSiteField(site.description, 2048)
-  return {
-    origin: site.origin,
-    ...(title ? { title } : {}),
-    ...(icon ? { icon } : {}),
-    ...(description ? { description } : {})
-  }
-}
-
-const projectChatUser = (value: unknown): unknown => {
-  if (typeof value !== 'object' || value === null) return value
-  const user = value as Record<keyof ChatUser, unknown>
-  return { id: user.id, name: user.name, avatar: user.avatar }
-}
-
 export const allocateHlc = (current: HLC, now: number): HLC => {
   if (now > current.timestamp) return { timestamp: now, counter: 0 }
   const counter = current.counter + 1
@@ -160,8 +150,7 @@ export const allocateHlc = (current: HLC, now: number): HLC => {
   return { timestamp: current.timestamp, counter }
 }
 
-export const adoptHlc = (current: HLC, remote: HLC, now: number): HLC | null => {
-  if (!isHLCInRange(remote, now)) return null
+export const adoptHlc = (current: HLC, remote: HLC): HLC | null => {
   return remote.timestamp > current.timestamp ||
     (remote.timestamp === current.timestamp && remote.counter > current.counter)
     ? { ...remote }
@@ -169,7 +158,6 @@ export const adoptHlc = (current: HLC, remote: HLC, now: number): HLC | null => 
 }
 
 export const observeHlc = (current: HLC, remote: HLC, now: number): HLC | null => {
-  if (!isHLCInRange(remote, now)) return null
   const timestamp = Math.max(now, current.timestamp, remote.timestamp)
   if (timestamp === now && now > current.timestamp && now > remote.timestamp) {
     return { timestamp: now, counter: 0 }
@@ -186,10 +174,13 @@ const snapshot = (runtime: SessionDomainState): RuntimeSessionSnapshot => ({
   sessions: runtime.sessions.map(projectRuntimeSession)
 })
 
-const makeRecord = (message: ChatMessage, user: ChatUser, receivedAt: number): ChatMessageRecord => {
-  if (user.id !== message.userId) throw new Error('Chat record user does not match its message')
-  return { type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE, id: message.id, message, user, receivedAt }
-}
+const makeRecord = (message: ChatMessage, user: ChatUser, receivedAt: number): ChatMessageRecord => ({
+  type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE,
+  id: message.id,
+  message,
+  user,
+  receivedAt
+})
 
 const initialRequestId = (attemptId: string) => `session:initial:${attemptId}`
 const publishTargetRequestId = (requestId: string, target: string) => `${requestId}:${target}`
@@ -198,7 +189,6 @@ const publishedTarget = (prepared: { publishRequestId?: string }, requestId: str
 const catchUpRequestId = (attemptId: string, sourcePeerId: string) => `session:catch-up:${attemptId}:${sourcePeerId}`
 const chatRequestId = (operationId: string) => `session:chat:${operationId}`
 const chatTargetRequestId = (requestId: string, target: string) => `${requestId}:${target}`
-const endRequestId = (presenceId: string) => `session:end:${presenceId}`
 /** Extracts the exact domain from identity/catch-up send request ids, when structurally present. */
 const backgroundSendDomain = (requestId: string): string | undefined => {
   if (requestId.startsWith('session:peer:')) {
@@ -213,7 +203,6 @@ const backgroundSendDomain = (requestId: string): string | undefined => {
   }
   return undefined
 }
-const RELEASE_END_RETRY_INTERVAL_MS = 5000
 const retainedLocalLifecycle = (record: PresenceDomainRecord | undefined) =>
   record?.local ? { local: record.local } : {}
 
@@ -243,6 +232,10 @@ const SessionDomain = Remesh.domain({
     })
     const DepartedBindingsState = domain.state<DepartedBinding[]>({
       name: 'Session.DepartedBindingsState',
+      default: []
+    })
+    const PendingLeavesState = domain.state<PendingLeave[]>({
+      name: 'Session.PendingLeavesState',
       default: []
     })
     const LiveReleasesState = domain.state<LiveRelease[]>({
@@ -316,11 +309,11 @@ const SessionDomain = Remesh.domain({
     const DomainReleaseFailedEvent = domain.event<{ domain: string; error: Error }>({
       name: 'Session.DomainReleaseFailedEvent'
     })
-    const ReleaseEndRetryRequestedEvent = domain.event<{ requestId: string }>({
-      name: 'Session.ReleaseEndRetryRequestedEvent'
-    })
     const PersistPresenceRequestedEvent = domain.event<{ record: PresenceDomainRecord }>({
       name: 'Session.PersistPresenceRequestedEvent'
+    })
+    const PendingLeaveArmedEvent = domain.event<{ domain: string; presenceId: string; armedId: string }>({
+      name: 'Session.PendingLeaveArmedEvent'
     })
     const RuntimeSessionChangedEvent = domain.event<RuntimeSessionEvent>({
       name: 'Session.RuntimeSessionChangedEvent'
@@ -333,6 +326,14 @@ const SessionDomain = Remesh.domain({
     })
     const OperationSucceededEvent = domain.event<SessionOperationSucceeded>({
       name: 'Session.OperationSucceededEvent'
+    })
+    // Typed allocation successes: the record variant is exact, so the Session-to-Server path
+    // needs no value assertion below the public contract.
+    const TextMessageAllocatedEvent = domain.event<TextMessageAllocatedEventPayload>({
+      name: 'Session.TextMessageAllocatedEvent'
+    })
+    const ReactionMessageAllocatedEvent = domain.event<ReactionMessageAllocatedEventPayload>({
+      name: 'Session.ReactionMessageAllocatedEvent'
     })
     const OperationFailedEvent = domain.event<SessionOperationFailed>({ name: 'Session.OperationFailedEvent' })
     const ErrorEvent = domain.event<SessionFailure>({ name: 'Session.ErrorEvent' })
@@ -367,19 +368,16 @@ const SessionDomain = Remesh.domain({
         let user: ChatUser
         let site: ChatSite
         if (payload.mode === 'join') {
-          site = sanitizeSite(payload.site!)
-          const valid = parseWorldRoomMessage({
-            sessionId: 'validation',
-            user: projectChatUser(payload.user),
-            sites: [site]
-          })
-          if (!valid || site.origin !== payload.domain) {
+          site = payload.site!
+          user = payload.user!
+          // Local identity authorization: the joined site must belong to the domain. Protocol
+          // shape is not validated here (local production trusts its typed inputs).
+          if (site.origin !== payload.domain) {
             return PreparationFailedEvent({
               attemptId: payload.attemptId,
               error: new Error('Invalid local identity or site metadata')
             })
           }
-          user = valid.user
         } else {
           user = current!.user
           site = current!.site
@@ -655,25 +653,13 @@ const SessionDomain = Remesh.domain({
       }
     })
 
-    const PublishPresenceEndCommand = domain.command({
-      name: 'Session.PublishPresenceEndCommand',
-      impl: ({ get }, release: LiveRelease) =>
-        get(LiveReleasesState()).some((item) => item.domain === release.domain && item.requestId === release.requestId)
-          ? wireDomain.command.SendMessageCommand({
-              requestId: release.requestId,
-              roomId: release.roomId,
-              message: { type: MESSAGE_TYPE.SESSION_END, presenceId: release.presenceId }
-            })
-          : null
-    })
-
-    // Retirement and every unsettled END attempt retain one durable final-generation identity.
+    // Retirement keeps one live in-memory release owner: local cleanup (no Chat end value)
+    // -> contribution remove (world.ReleaseDomain publishes latest Presence via the sole
+    // iterator) -> Connection settles close. No durable owner/outcome/journal; on host
+    // replacement the next current event reconciles.
     const BeginReleaseDomainCommand = domain.command({
       name: 'Session.BeginReleaseDomainCommand',
       impl: ({ get }, runtimeDomain: string) => {
-        // A single live in-memory release owner: Chat leave (SESSION_END) -> contribution remove
-        // (world.ReleaseDomain publishes latest Presence via the sole iterator) -> Connection settles close.
-        // No durable owner/outcome/journal; on host replacement the next current event reconciles.
         if (get(ReleasingDomainQuery(runtimeDomain))) return null
         const runtime = get(DomainsState()).find((item) => item.domain === runtimeDomain)
         const prepared = get(PreparedSessionsState()).find((item) => item.runtime.domain === runtimeDomain)
@@ -684,52 +670,21 @@ const SessionDomain = Remesh.domain({
           roomId: current.roomId,
           presenceId: current.presenceId,
           userId: current.user.id,
-          joinedAt: current.joinedAt,
-          requestId: endRequestId(current.presenceId)
+          joinedAt: current.joinedAt
         }
-        return [LiveReleasesState().new([...get(LiveReleasesState()), release]), PublishPresenceEndCommand(release)]
-      }
-    })
-
-    const RetryReleaseEndCommand = domain.command({
-      name: 'Session.RetryReleaseEndCommand',
-      impl: ({ get }, requestId: string) => {
-        const current = get(LiveReleasesState()).find((item) => item.requestId === requestId)
-        return current ? PublishPresenceEndCommand(current) : null
-      }
-    })
-
-    const CompletePresenceEndCommand = domain.command({
-      name: 'Session.CompletePresenceEndCommand',
-      impl: ({ get }, requestId: string) => {
-        const pending = get(LiveReleasesState())
-        const current = pending.find((item) => item.requestId === requestId)
-        if (!current) return null
+        // The Chat leave produces no outbound lifecycle frame: remove the local active-generation
+        // authority through the private persistence boundary and release domain State directly.
         return [
-          // The live owner advances only after the Chat leave has been accepted.
-          DomainsState().new(removeBy(get(DomainsState()), (item) => item.domain === current.domain)),
+          LiveReleasesState().new([...get(LiveReleasesState()), release]),
+          DomainsState().new(removeBy(get(DomainsState()), (item) => item.domain === runtimeDomain)),
           PreparedSessionsState().new(
-            removeBy(get(PreparedSessionsState()), (item) => item.runtime.domain === current.domain)
+            removeBy(get(PreparedSessionsState()), (item) => item.runtime.domain === runtimeDomain)
           ),
-          PresenceDomainsState().new(removeBy(get(PresenceDomainsState()), (item) => item.domain === current.domain)),
+          PresenceDomainsState().new(removeBy(get(PresenceDomainsState()), (item) => item.domain === runtimeDomain)),
           PersistPresenceRequestedEvent({
-            record: { domain: current.domain, lastJoinedAt: 0, observers: [] }
+            record: { domain: runtimeDomain, lastJoinedAt: 0, observers: [] }
           }),
-          ChatLeavePublishedEvent({ domain: current.domain })
-        ]
-      }
-    })
-
-    const FailPresenceEndCommand = domain.command({
-      name: 'Session.FailPresenceEndCommand',
-      impl: ({ get }, payload: { requestId: string; error: Error }) => {
-        const pending = get(LiveReleasesState())
-        const current = pending.find((item) => item.requestId === payload.requestId)
-        if (!current) return null
-        // The Chat-leave END step failed: surface it once and retry only this step boundedly.
-        return [
-          ErrorEvent({ error: payload.error, domain: current.domain }),
-          ReleaseEndRetryRequestedEvent({ requestId: current.requestId })
+          ChatLeavePublishedEvent({ domain: runtimeDomain })
         ]
       }
     })
@@ -801,27 +756,16 @@ const SessionDomain = Remesh.domain({
           hlc,
           userId: runtime.user.id,
           body: payload.body,
-          mentions: payload.mentions.map(({ id, name, avatar, ranges }) => ({ id, name, avatar, ranges }))
-        }
-        const validated = parseChatRoomMessage(candidate)
-        if (
-          !validated ||
-          validated.type !== MESSAGE_TYPE.TEXT ||
-          !isChatRoomMessageSemanticallyValid(validated, clock.now())
-        ) {
-          return OperationFailedEvent({
-            operationId: payload.operationId,
-            error: new Error('Message exceeds the v4 event contract')
-          })
+          mentions: payload.mentions
         }
         const record: TextMessageRecord = {
           type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE,
-          id: validated.id,
-          message: validated,
+          id: candidate.id,
+          message: candidate,
           user: runtime.user,
           receivedAt: clock.now()
         }
-        return [HlcState().new(hlc), OperationSucceededEvent({ operationId: payload.operationId, record })]
+        return [HlcState().new(hlc), TextMessageAllocatedEvent({ operationId: payload.operationId, record })]
       }
     })
 
@@ -865,25 +809,14 @@ const SessionDomain = Remesh.domain({
           reaction: payload.reaction,
           active: payload.active
         }
-        const validated = parseChatRoomMessage(candidate)
-        if (
-          !validated ||
-          validated.type !== MESSAGE_TYPE.REACTION ||
-          !isChatRoomMessageSemanticallyValid(validated, clock.now())
-        ) {
-          return OperationFailedEvent({
-            operationId: payload.operationId,
-            error: new Error('Reaction exceeds the v4 event contract')
-          })
-        }
         const record: ReactionMessageRecord = {
           type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE,
-          id: validated.id,
-          message: validated,
+          id: candidate.id,
+          message: candidate,
           user: runtime.user,
           receivedAt: clock.now()
         }
-        return [HlcState().new(hlc), OperationSucceededEvent({ operationId: payload.operationId, record })]
+        return [HlcState().new(hlc), ReactionMessageAllocatedEvent({ operationId: payload.operationId, record })]
       }
     })
 
@@ -897,19 +830,14 @@ const SessionDomain = Remesh.domain({
           })
         }
         const runtime = get(DomainsState()).find((item) => item.domain === payload.domain)
-        const event = parseChatRoomMessage(payload.event)
-        if (
-          !runtime ||
-          !event ||
-          (event.type !== MESSAGE_TYPE.TEXT && event.type !== MESSAGE_TYPE.REACTION) ||
-          !isChatRoomMessageSemanticallyValid(event, clock.now())
-        ) {
+        const event = payload.event
+        if (!runtime || (event.type !== MESSAGE_TYPE.TEXT && event.type !== MESSAGE_TYPE.REACTION)) {
           return OperationFailedEvent({
             operationId: payload.operationId,
-            error: new Error('Chat message does not match the v4 event contract')
+            error: new Error('Chat message does not match the active local session')
           })
         }
-        const adopted = adoptHlc(get(HlcState()), event.hlc, clock.now())
+        const adopted = adoptHlc(get(HlcState()), event.hlc)
         if (event.userId !== runtime.user.id || !adopted) {
           return OperationFailedEvent({
             operationId: payload.operationId,
@@ -1059,12 +987,25 @@ const SessionDomain = Remesh.domain({
           joinedAt: session.joinedAt,
           status: 'active'
         })
+        // A valid SESSION for a presence under a pending-leave deadline cancels the grace and
+        // removes the departed source's retained entry (the fresh source entry replaces it).
+        const pendingLeaves = get(PendingLeavesState())
+        const pendingLeave = pendingLeaves.find(
+          (item) => item.domain === runtime.domain && item.presenceId === message.presenceId
+        )
         const nextRuntime = {
           ...runtime,
           sessions: replaceBy(
-            runtime.sessions.map((item) =>
-              item.presenceId === message.presenceId ? { ...item, user: message.user } : item
-            ),
+            runtime.sessions
+              .map((item) => (item.presenceId === message.presenceId ? { ...item, user: message.user } : item))
+              .filter(
+                (item) =>
+                  !(
+                    pendingLeave &&
+                    item.presenceId === message.presenceId &&
+                    item.sourcePeerId === pendingLeave.sourcePeerId
+                  )
+              ),
             (item) => item.sourcePeerId === payload.sourcePeerId,
             session
           )
@@ -1133,104 +1074,22 @@ const SessionDomain = Remesh.domain({
           DepartedBindingsState().new(
             removeBy(get(DepartedBindingsState()), (item) => item.binding.presenceId === message.presenceId)
           ),
+          ...(pendingLeave
+            ? [
+                PendingLeavesState().new(
+                  removeBy(
+                    pendingLeaves,
+                    (item) => item.domain === runtime.domain && item.presenceId === message.presenceId
+                  )
+                )
+              ]
+            : []),
           PersistPresenceRequestedEvent({ record }),
           ...(isBaselinePeer ? [PendingBaselinePeersState().new(nextBaselines)] : []),
           RuntimeSessionChangedEvent(sessionEvent),
           ...(physicalBindingChanged
             ? [BindingChangedEvent({ domain: runtime.domain, sourcePeerId: payload.sourcePeerId })]
             : [])
-        ]
-      }
-    })
-
-    const ApplySessionEndCommand = domain.command({
-      name: 'Session.ApplySessionEndCommand',
-      impl: ({ get }, payload: WireMessageEvent) => {
-        if (!('type' in payload.message) || payload.message.type !== MESSAGE_TYPE.SESSION_END) return null
-        const message = payload.message
-        const preparedSessions = get(PreparedSessionsState())
-        const prepared = preparedSessions.find((item) => item.runtime.roomId === payload.roomId)
-        const domains = get(DomainsState())
-        const runtime = prepared?.runtime ?? domains.find((item) => item.roomId === payload.roomId)
-        if (!runtime || get(ReleasingDomainQuery(runtime.domain))) return null
-        const presenceDomains = get(PresenceDomainsState())
-        const persisted = presenceDomains.find((item) => item.domain === runtime.domain)
-        const observers = prepared?.observers ?? persisted?.observers ?? []
-        const observed = observers.find((item) => item.presenceId === message.presenceId)
-        if (observed?.status === 'ended') return null
-        const departed = get(DepartedBindingsState())
-        const binding =
-          runtime.sessions.find(
-            (item) => item.sourcePeerId === payload.sourcePeerId && item.presenceId === message.presenceId
-          ) ??
-          departed.find(
-            (item) =>
-              item.domain === runtime.domain &&
-              item.binding.sourcePeerId === payload.sourcePeerId &&
-              item.binding.presenceId === message.presenceId
-          )?.binding
-        if (!binding) {
-          return wireDomain.command.DropProtocolCommand({
-            sourcePeerId: payload.sourcePeerId,
-            reason: 'presence end arrived without a matching source binding'
-          })
-        }
-        const ended: ObservedPresence = {
-          presenceId: message.presenceId,
-          sessionId: observed?.sessionId ?? binding.sessionId,
-          user: observed?.user ?? binding.user,
-          joinedAt: observed?.joinedAt ?? binding.joinedAt,
-          status: 'ended'
-        }
-        const nextObservers = replaceObservation(observers, ended)
-        const removed = runtime.sessions.filter((item) => item.presenceId === message.presenceId)
-        const nextRuntime = {
-          ...runtime,
-          sessions: runtime.sessions.filter((item) => item.presenceId !== message.presenceId)
-        }
-        const nextDeparted = removeBy(
-          departed,
-          (item) => item.domain === runtime.domain && item.binding.presenceId === message.presenceId
-        )
-        if (prepared) {
-          return [
-            PreparedSessionsState().new(
-              replaceBy(preparedSessions, (item) => item.attemptId === prepared.attemptId, {
-                ...prepared,
-                runtime: nextRuntime,
-                observers: nextObservers
-              })
-            ),
-            DepartedBindingsState().new(nextDeparted)
-          ]
-        }
-        const record: PresenceDomainRecord = {
-          domain: runtime.domain,
-          lastJoinedAt: persisted?.lastJoinedAt ?? 0,
-          ...retainedLocalLifecycle(persisted),
-          observers: nextObservers
-        }
-        const publicBinding = projectRuntimeSession(binding)
-        const sessionSnapshot = snapshot(nextRuntime)
-        const stillOnline = hasActiveUserPresence(nextObservers, binding.user.id, message.presenceId)
-        return [
-          DomainsState().new(replaceBy(domains, (item) => item.domain === runtime.domain, nextRuntime)),
-          PresenceDomainsState().new(replaceBy(presenceDomains, (item) => item.domain === runtime.domain, record)),
-          DepartedBindingsState().new(nextDeparted),
-          PersistPresenceRequestedEvent({ record }),
-          RuntimeSessionChangedEvent(
-            stillOnline
-              ? { type: 'snapshot', domain: runtime.domain, snapshot: sessionSnapshot, provenance: 'refresh' }
-              : {
-                  type: 'leave',
-                  domain: runtime.domain,
-                  snapshot: sessionSnapshot,
-                  session: publicBinding,
-                  occurredAt: clock.now(),
-                  provenance: 'live'
-                }
-          ),
-          ...removed.map((item) => BindingRemovedEvent({ domain: runtime.domain, sourcePeerId: item.sourcePeerId }))
         ]
       }
     })
@@ -1366,33 +1225,148 @@ const SessionDomain = Remesh.domain({
         ]
         if (!runtime) return cleanupActions.length > 0 ? cleanupActions : null
         const session = runtime.sessions.find((item) => item.sourcePeerId === payload.sourcePeerId)
+        // Duplicate PeerLeave facts are idempotent and SHALL NOT restart or extend a deadline.
         if (!session) return cleanupActions.length > 0 ? cleanupActions : null
-        const nextRuntime = {
-          ...runtime,
-          sessions: runtime.sessions.filter((item) => item.sourcePeerId !== payload.sourcePeerId)
+        const pending = get(PendingLeavesState())
+        const existingPending = pending.find(
+          (item) => item.domain === runtime.domain && item.presenceId === session.presenceId
+        )
+        const otherCurrentSource = runtime.sessions.some(
+          (item) => item.presenceId === session.presenceId && item.sourcePeerId !== payload.sourcePeerId
+        )
+        if (existingPending) {
+          return [
+            ...cleanupActions,
+            BindingRemovedEvent({ domain: runtime.domain, sourcePeerId: payload.sourcePeerId })
+          ]
         }
-        const departed = get(DepartedBindingsState())
+        if (otherCurrentSource) {
+          // Another current physical source for the same presence prevents pending leave.
+          const nextRuntime = {
+            ...runtime,
+            sessions: runtime.sessions.filter((item) => item.sourcePeerId !== payload.sourcePeerId)
+          }
+          return [
+            ...cleanupActions,
+            DomainsState().new(replaceBy(domains, (item) => item.domain === runtime.domain, nextRuntime)),
+            RuntimeSessionChangedEvent({
+              type: 'snapshot',
+              domain: runtime.domain,
+              snapshot: snapshot(nextRuntime),
+              provenance: 'refresh'
+            }),
+            BindingRemovedEvent({ domain: runtime.domain, sourcePeerId: payload.sourcePeerId })
+          ]
+        }
+        // Last current physical source: start exactly one five-second pending-leave deadline and
+        // retain the generation in every online snapshot throughout the grace.
+        const armedId = identity.nextId()
+        const pendingLeave: PendingLeave = {
+          domain: runtime.domain,
+          presenceId: session.presenceId,
+          sourcePeerId: session.sourcePeerId,
+          sessionId: session.sessionId,
+          user: session.user,
+          joinedAt: session.joinedAt,
+          armedId
+        }
         return [
           ...cleanupActions,
-          DomainsState().new(replaceBy(domains, (item) => item.domain === runtime.domain, nextRuntime)),
-          DepartedBindingsState().new(
-            replaceBy(
-              departed,
-              (item) => item.domain === runtime.domain && item.binding.sourcePeerId === payload.sourcePeerId,
-              { domain: runtime.domain, binding: session }
-            )
-          ),
-          RuntimeSessionChangedEvent({
-            type: 'snapshot',
-            domain: runtime.domain,
-            snapshot: snapshot(nextRuntime),
-            provenance: 'refresh'
-          }),
+          PendingLeavesState().new([...pending, pendingLeave]),
+          PendingLeaveArmedEvent({ domain: runtime.domain, presenceId: session.presenceId, armedId }),
           BindingRemovedEvent({ domain: runtime.domain, sourcePeerId: payload.sourcePeerId })
         ]
       }
     })
 
+    const ExpirePendingLeaveCommand = domain.command({
+      name: 'Session.ExpirePendingLeaveCommand',
+      impl: ({ get }, payload: { domain: string; presenceId: string; armedId: string }) => {
+        const pending = get(PendingLeavesState())
+        const current = pending.find((item) => item.domain === payload.domain && item.presenceId === payload.presenceId)
+        // A valid rebind cancelled the pending leave; a stale timer is fenced by its armed id.
+        if (!current || current.armedId !== payload.armedId) return null
+        const domains = get(DomainsState())
+        const runtime = domains.find((item) => item.domain === payload.domain)
+        const presenceDomains = get(PresenceDomainsState())
+        const persisted = presenceDomains.find((item) => item.domain === payload.domain)
+        const observers = persisted?.observers ?? []
+        const nextObservers = replaceObservation(observers, {
+          presenceId: current.presenceId,
+          sessionId: current.sessionId,
+          user: current.user,
+          joinedAt: current.joinedAt,
+          status: 'ended'
+        })
+        const removed = runtime?.sessions.filter((item) => item.presenceId === payload.presenceId) ?? []
+        const nextRuntime = runtime
+          ? {
+              ...runtime,
+              sessions: runtime.sessions.filter((item) => item.presenceId !== payload.presenceId)
+            }
+          : undefined
+        const stillOnline = hasActiveUserPresence(nextObservers, current.user.id, payload.presenceId)
+        const record: PresenceDomainRecord = {
+          domain: payload.domain,
+          lastJoinedAt: persisted?.lastJoinedAt ?? 0,
+          ...retainedLocalLifecycle(persisted),
+          observers: nextObservers
+        }
+        const snapshotAction = runtime
+          ? RuntimeSessionChangedEvent(
+              stillOnline
+                ? {
+                    type: 'snapshot',
+                    domain: payload.domain,
+                    snapshot: snapshot(nextRuntime as SessionDomainState),
+                    provenance: 'refresh'
+                  }
+                : {
+                    type: 'leave',
+                    domain: payload.domain,
+                    snapshot: snapshot(nextRuntime as SessionDomainState),
+                    session: projectRuntimeSession(current),
+                    occurredAt: clock.now(),
+                    provenance: 'live'
+                  }
+            )
+          : null
+        return [
+          ...(runtime
+            ? [
+                DomainsState().new(
+                  replaceBy(domains, (item) => item.domain === payload.domain, nextRuntime as SessionDomainState)
+                )
+              ]
+            : []),
+          PresenceDomainsState().new(replaceBy(presenceDomains, (item) => item.domain === payload.domain, record)),
+          PendingLeavesState().new(
+            removeBy(pending, (item) => item.domain === payload.domain && item.presenceId === payload.presenceId)
+          ),
+          PersistPresenceRequestedEvent({ record }),
+          ...(snapshotAction ? [snapshotAction] : []),
+          ...removed.map((item) => BindingRemovedEvent({ domain: payload.domain, sourcePeerId: item.sourcePeerId }))
+        ]
+      }
+    })
+
+    domain.effect({
+      name: 'Session.PendingLeaveGraceEffect',
+      impl: ({ fromEvent }) =>
+        fromEvent(PendingLeaveArmedEvent).pipe(
+          mergeMap(
+            (payload) =>
+              new Observable<typeof payload>((observer) => {
+                const timerId = globalThis.setTimeout(() => {
+                  observer.next(payload)
+                  observer.complete()
+                }, PENDING_LEAVE_GRACE_MS)
+                return () => globalThis.clearTimeout(timerId)
+              })
+          ),
+          map(ExpirePendingLeaveCommand)
+        )
+    })
     domain.effect({
       name: 'Session.PresencePersistEffect',
       impl: ({ fromEvent }) =>
@@ -1405,35 +1379,6 @@ const SessionDomain = Remesh.domain({
               return ErrorEvent({ error: error as Error, domain: request.record.domain })
             }
           })
-        )
-    })
-    domain.effect({
-      name: 'Session.ReleaseEndRetryEffect',
-      impl: ({ fromEvent }) =>
-        fromEvent(ReleaseEndRetryRequestedEvent).pipe(
-          concatMap(
-            ({ requestId }) =>
-              new globalThis.Promise<{ requestId: string }>((resolve) =>
-                globalThis.setTimeout(() => resolve({ requestId }), RELEASE_END_RETRY_INTERVAL_MS)
-              )
-          ),
-          map(({ requestId }) => RetryReleaseEndCommand(requestId))
-        )
-    })
-    domain.effect({
-      name: 'Session.PresenceEndSendSuccessEffect',
-      impl: ({ fromEvent }) =>
-        fromEvent(wireDomain.event.MessageSentEvent).pipe(
-          filter(({ requestId }) => requestId.startsWith('session:end:')),
-          map(({ requestId }) => CompletePresenceEndCommand(requestId))
-        )
-    })
-    domain.effect({
-      name: 'Session.PresenceEndSendFailureEffect',
-      impl: ({ fromEvent }) =>
-        fromEvent(wireDomain.event.MessageSendFailedEvent).pipe(
-          filter(({ requestId }) => requestId.startsWith('session:end:')),
-          map(FailPresenceEndCommand)
         )
     })
     domain.effect({
@@ -1470,14 +1415,6 @@ const SessionDomain = Remesh.domain({
         fromEvent(wireDomain.event.MessageAcceptedEvent).pipe(
           filter((event) => 'type' in event.message && event.message.type === MESSAGE_TYPE.SESSION),
           map(ApplySessionMessageCommand)
-        )
-    })
-    domain.effect({
-      name: 'Session.WirePresenceEndEffect',
-      impl: ({ fromEvent }) =>
-        fromEvent(wireDomain.event.MessageAcceptedEvent).pipe(
-          filter((event) => 'type' in event.message && event.message.type === MESSAGE_TYPE.SESSION_END),
-          map(ApplySessionEndCommand)
         )
     })
     domain.effect({
@@ -1519,7 +1456,8 @@ const SessionDomain = Remesh.domain({
         SendChatMessageCommand,
         UpdateHlcCommand,
         PeerJoinedCommand,
-        PeerLeftCommand
+        PeerLeftCommand,
+        ExpirePendingLeaveCommand
       },
       event: {
         PreparedEvent,
@@ -1535,8 +1473,11 @@ const SessionDomain = Remesh.domain({
         BindingChangedEvent,
         BindingRemovedEvent,
         OperationSucceededEvent,
+        TextMessageAllocatedEvent,
+        ReactionMessageAllocatedEvent,
         OperationFailedEvent,
-        ErrorEvent
+        ErrorEvent,
+        PendingLeaveArmedEvent
       }
     }
   }

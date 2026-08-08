@@ -4,6 +4,7 @@ import {
   MESSAGE_RECORD_TYPE,
   compareEventPosition,
   isChatMessageRecord,
+  type ChatMessageRecord,
   type DisplayMessage,
   type MessageRecord,
   type ProjectedTextMessage,
@@ -12,6 +13,10 @@ import {
   type TextMessageRecord
 } from '@/domain/Message'
 
+/** Discriminated-union narrowing for the consumer projection (no schema parse). */
+const isReactionMessageRecord = (record: ChatMessageRecord): record is ReactionMessageRecord =>
+  record.message.type === MESSAGE_TYPE.REACTION
+
 /** Reaction state is LWW per target/user/reaction over the immutable message position. */
 const reactionKey = (record: ReactionMessageRecord): string =>
   `${record.message.targetId}\u0000${record.message.userId}\u0000${record.message.reaction}`
@@ -19,8 +24,8 @@ const reactionKey = (record: ReactionMessageRecord): string =>
 export const projectRecords = (records: readonly MessageRecord[]): DisplayMessage[] => {
   const reactionWinners = new Map<string, ReactionMessageRecord>()
   records.forEach((record) => {
-    if (!isChatMessageRecord(record) || record.message.type !== MESSAGE_TYPE.REACTION) return
-    const reactionRecord = record as ReactionMessageRecord
+    if (!isChatMessageRecord(record) || !isReactionMessageRecord(record)) return
+    const reactionRecord = record
     const key = reactionKey(reactionRecord)
     const current = reactionWinners.get(key)
     if (!current || compareEventPosition(current.message, reactionRecord.message) < 0) {

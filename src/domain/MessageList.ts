@@ -12,7 +12,7 @@ const noticeAtSlot = (record: SystemNoticeRecord, slot: number): SystemNoticeRec
   return { ...record, id, notice: { ...record.notice, id } }
 }
 
-const isEquivalentNotice = (record: MessageRecord, expected: SystemNoticeRecord): boolean =>
+const isEquivalentTypedNotice = (record: MessageRecord, expected: SystemNoticeRecord): boolean =>
   record.type === MESSAGE_RECORD_TYPE.SYSTEM_NOTICE &&
   record.notice.type === expected.notice.type &&
   record.notice.body === expected.notice.body &&
@@ -24,7 +24,13 @@ const persistNotice = async (messageStore: MessageStore, record: SystemNoticeRec
   for (let slot = 0; ; slot += 1) {
     const candidate = noticeAtSlot(record, slot)
     const result = await messageStore.insert(candidate)
-    if (result.inserted || isEquivalentNotice(result.existing, candidate)) return
+    if (result.inserted) return
+    // The raw conflict occupant stays opaque (never cast or interpreted): the typed occupant
+    // is obtained only through the authorized local-load boundary; continue to the next slot
+    // if it is absent (a corrupt near-match row is dropped by that load parse).
+    const stored = await messageStore.query({ type: MESSAGE_RECORD_TYPE.SYSTEM_NOTICE })
+    const occupant = stored.find((item) => item.id === candidate.id)
+    if (occupant && isEquivalentTypedNotice(occupant, candidate)) return
   }
 }
 

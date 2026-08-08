@@ -1,6 +1,13 @@
 import EventHub from '@resreq/event-hub'
 import { isInvalidMessageRecordError, type InsertMessageResult, type MessageStore } from '@/domain/MessageStore'
-import type { ChatRoom as ChatRoomPort, JoinRoomCommand, SendMessageCommand } from '@/domain/externs/ChatRoom'
+import type {
+  ChatRoom as ChatRoomPort,
+  JoinRoomCommand,
+  SendMessageCommand,
+  SendReactionCommand,
+  SendTextCommand
+} from '@/domain/externs/ChatRoom'
+import type { ChatMessage, ReactionMessage, TextMessage } from '@/protocol/ChatRoom'
 import type { ConnectionLifecycleResult } from '@/domain/externs/ConnectionLifecycle'
 import type { ConnectionResultReporter } from '@/domain/impls/ConnectionLifecycle'
 import type { Unsubscribe } from '@/domain/Subscription'
@@ -12,7 +19,6 @@ import {
   type MessageRecord,
   type SystemNoticeRecord
 } from '@/domain/Message'
-import type { ChatMessage } from '@/protocol/ChatRoom'
 import { stringToHex } from '@/utils'
 import type { ChatSession } from '@/protocol/Session'
 import type {
@@ -129,7 +135,7 @@ const selfJoinNotice = (session: Pick<RuntimeSession, 'user' | 'joinedAt'>, slot
   }
 }
 
-const isSelfJoinNotice = (record: MessageRecord, session: Pick<RuntimeSession, 'user' | 'joinedAt'>): boolean =>
+const isTypedSelfJoinNotice = (record: MessageRecord, session: Pick<RuntimeSession, 'user' | 'joinedAt'>): boolean =>
   record.type === MESSAGE_RECORD_TYPE.SYSTEM_NOTICE &&
   record.notice.type === NOTICE_TYPE.JOIN &&
   record.user.id === session.user.id &&
@@ -142,8 +148,14 @@ const persistSelfJoinNotice = async (
 ): Promise<void> => {
   for (let slot = 0; ; slot += 1) {
     signal.throwIfAborted()
-    const result = await raceWithSignal(messageStore.insert(selfJoinNotice(session, slot), { signal }), signal)
-    if (result.inserted || isSelfJoinNotice(result.existing, session)) return
+    const candidate = selfJoinNotice(session, slot)
+    const result = await raceWithSignal(messageStore.insert(candidate, { signal }), signal)
+    if (result.inserted) return
+    // The raw conflict occupant stays opaque: the typed occupant is obtained only through the
+    // authorized local-load boundary; continue to the next slot if it is absent.
+    const stored = await messageStore.query({ type: MESSAGE_RECORD_TYPE.SYSTEM_NOTICE, signal })
+    const occupant = stored.find((item) => item.id === candidate.id)
+    if (occupant && isTypedSelfJoinNotice(occupant, session)) return
   }
 }
 
@@ -690,6 +702,9 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
     }
   }
 
+  async sendMessage(command: SendTextCommand): Promise<TextMessage>
+  async sendMessage(command: SendReactionCommand): Promise<ReactionMessage>
+  async sendMessage(command: SendMessageCommand): Promise<ChatMessage>
   async sendMessage(command: SendMessageCommand): Promise<ChatMessage> {
     const record =
       command.type === 'text'

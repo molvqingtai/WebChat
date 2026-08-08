@@ -8,7 +8,7 @@ import { createSendLifecycle } from '@/domain/impls/SendLifecycle'
 import { MessageDatabaseExtern } from '@/domain/MessageStore'
 import NotificationDomain from '@/domain/Notification'
 import UserInfoDomain, { type UserInfo } from '@/domain/UserInfo'
-import { ChatRoomExtern, type ChatRoom } from '@/domain/externs/ChatRoom'
+import { ChatRoomExtern, type ChatRoom, type SendMessageCommand } from '@/domain/externs/ChatRoom'
 import { NotificationExtern } from '@/domain/externs/Notification'
 import { ReadinessExtern } from '@/domain/externs/Readiness'
 import { BrowserSyncStorageExtern, type Storage, type StorageValue } from '@/domain/externs/Storage'
@@ -65,7 +65,7 @@ const createFixture = (user: UserInfo, userInfoBeforeNotification = false) => {
   const chatRoom: ChatRoom = {
     joinRoom: async () => {},
     leaveRoom: async () => {},
-    sendMessage: async (command) => {
+    sendMessage: (async (command: SendMessageCommand) => {
       if (command.type === 'reaction') throw new Error('not used')
       return {
         type: 'text',
@@ -75,7 +75,7 @@ const createFixture = (user: UserInfo, userInfoBeforeNotification = false) => {
         body: command.body,
         mentions: command.mentions
       }
-    },
+    }) as unknown as ChatRoom['sendMessage'],
     onMessage: (listener) => subscribe(messageListeners, listener),
     onJoinRoom: () => () => {},
     onLeaveRoom: () => () => {},

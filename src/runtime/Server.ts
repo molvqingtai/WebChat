@@ -1,4 +1,4 @@
-import { Remesh, type RemeshAction, type RemeshStore } from 'remesh'
+import { Remesh, type RemeshAction, type RemeshStore, type RemeshSubscribeOnlyEvent } from 'remesh'
 import { nanoid } from 'nanoid'
 import ConnectionDomain, { type ConnectionOperationSucceeded } from '@/domain/runtime/Connection'
 import DeliveryDomain from '@/domain/runtime/Delivery'
@@ -12,7 +12,6 @@ import { IdentityExtern } from '@/domain/runtime/externs/Identity'
 import { PresenceStoreExtern, type PresenceStore } from '@/domain/runtime/externs/PresenceStore'
 import { RoomTransportExtern, WireCodecExtern } from '@/domain/runtime/externs/RoomTransport'
 import type { RoomTransport } from '@/runtime/RoomTransport'
-import type { ReactionMessageRecord, TextMessageRecord } from '@/domain/Message'
 import { NativeWireCodec, type WireCodec } from '@/protocol'
 import type { RuntimeServer, RuntimeSnapshot } from '@/runtime/Contract'
 import { MAX_HISTORY_SESSION_BYTES, MAX_HISTORY_SESSION_MESSAGES } from '@/constants/config'
@@ -262,6 +261,31 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       store.send(command)
     })
 
+  /** Typed allocation runner: the exact record variant is carried by a typed success event. */
+  const runAllocationOperation = <TRecord>(
+    operationId: string,
+    command: RemeshAction,
+    successEvent: RemeshSubscribeOnlyEvent<
+      [{ operationId: string; record: TRecord }],
+      { operationId: string; record: TRecord }
+    >
+  ): Promise<TRecord> =>
+    new Promise<TRecord>((resolve, reject) => {
+      const success = store.subscribeEvent(successEvent, (result) => {
+        if (result.operationId !== operationId) return
+        success.unsubscribe()
+        failure.unsubscribe()
+        resolve(result.record)
+      })
+      const failure = store.subscribeEvent(sessionDomain.event.OperationFailedEvent, (result) => {
+        if (result.operationId !== operationId) return
+        success.unsubscribe()
+        failure.unsubscribe()
+        reject(result.error)
+      })
+      store.send(command)
+    })
+
   const completeInterruptedRelease = (domain: string): Promise<void> =>
     new Promise<void>((resolve, reject) => {
       const success = store.subscribeEvent(connectionDomain.event.ConnectionLeftEvent, (event) => {
@@ -290,6 +314,8 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     },
     getSnapshot: async () => snapshot(),
     joinChatRoom: async (payload) => {
+      // Typed ChatUser/ChatSite values pass through unchanged; the application-to-protocol
+      // mapping already happened before the value was narrowed to the schema-owned type.
       const recovery = beginPresenceRecovery(payload.domain)
       let recovered = false
       try {
@@ -333,25 +359,19 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     allocateTextMessage: async (payload) => {
       await waitForLivePresence(payload.domain)
       const operationId = nanoid()
-      return runSessionOperation(
+      return runAllocationOperation(
         operationId,
         sessionDomain.command.AllocateTextMessageCommand({ operationId, ...payload }),
-        (result) => {
-          if (result.record?.message.type !== 'text') throw new Error('Runtime returned an invalid text record')
-          return result.record as TextMessageRecord
-        }
+        sessionDomain.event.TextMessageAllocatedEvent
       )
     },
     allocateReactionMessage: async (payload) => {
       await waitForLivePresence(payload.domain)
       const operationId = nanoid()
-      return runSessionOperation(
+      return runAllocationOperation(
         operationId,
         sessionDomain.command.AllocateReactionMessageCommand({ operationId, ...payload }),
-        (result) => {
-          if (result.record?.message.type !== 'reaction') throw new Error('Runtime returned an invalid reaction record')
-          return result.record as ReactionMessageRecord
-        }
+        sessionDomain.event.ReactionMessageAllocatedEvent
       )
     },
     sendChatMessage: async (payload) => {

@@ -1,11 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  MAX_WIRE_BYTES,
-  NativeWireCodec,
-  WireCodecError,
-  isHistoryPageFrameWithinLimit,
-  isWireFrameWithinLimit
-} from '@/protocol'
+import { NativeWireCodec, WireCodecError } from '@/protocol'
 
 const compressWithoutDecodedLimit = async (text: string): Promise<string> => {
   const bytes = new TextEncoder().encode(text)
@@ -119,10 +113,9 @@ describe('NativeWireCodec public reference implementation', () => {
     await expect(NativeWireCodec.decode(bomb)).rejects.toThrow('Decoded JSON exceeds')
   })
 
-  it('publishes the ordinary and stricter history frame boundaries', () => {
-    expect(isWireFrameWithinLimit('x'.repeat(MAX_WIRE_BYTES))).toBe(true)
-    expect(isWireFrameWithinLimit('x'.repeat(MAX_WIRE_BYTES + 1))).toBe(false)
-    expect(isHistoryPageFrameWithinLimit('x'.repeat(MAX_WIRE_BYTES - 1))).toBe(true)
-    expect(isHistoryPageFrameWithinLimit('x'.repeat(MAX_WIRE_BYTES))).toBe(false)
+  it('enforces the uniform encoded-frame bound without message-property validation', async () => {
+    // The codec's representation bound is uniform; no message validator exists in the protocol.
+    const frame = await NativeWireCodec.encode({ type: 'session-end', presenceId: 'p' })
+    expect(frame).toMatch(/^[A-Za-z0-9+/]+={0,2}$/)
   })
 })

@@ -4,15 +4,9 @@ import type { Clock } from '@/domain/runtime/externs/Clock'
 import type { RoomTransport } from '@/runtime/RoomTransport'
 import type { UserInfo } from '@/domain/UserInfo'
 import type { WireCodec } from '@/protocol'
-import {
-  MESSAGE_TYPE,
-  type ChatRoomMessage,
-  type ChatUser,
-  type TextMessage,
-  type ChatSite,
-  type WorldRoomMessage
-} from '@/protocol'
-import { MESSAGE_RECORD_TYPE, type TextMessageRecord } from '@/domain/Message'
+import { MESSAGE_TYPE, type ChatRoomMessage, type ChatUser, type TextMessage, type WorldRoomMessage } from '@/protocol'
+import { MESSAGE_RECORD_TYPE, type ReactionMessageRecord, type TextMessageRecord } from '@/domain/Message'
+import type { ReactionMessageAllocatedEventPayload, TextMessageAllocatedEventPayload } from '@/domain/runtime/Session'
 import { createMessageStore } from '@/domain/MessageStore'
 import { createMemoryMessageDatabase } from '@/domain/impls/database/Memory'
 import type {
@@ -603,6 +597,33 @@ const registerHistoryProvider = (
   })
 }
 
+/**
+ * Compile-time negative fixture at the typed Session allocation-event boundary (guarded by the
+ * tsc gate): the payload types are exact, so a reaction payload cannot satisfy a text
+ * allocation payload and a missing record is rejected. If the events ever regressed to the
+ * generic optional record, the directives would go unused and tsc would fail.
+ */
+const sessionAllocationEventFixture = () => {
+  const textPayload: TextMessageAllocatedEventPayload = {
+    operationId: 'fixture',
+    record: {} as TextMessageRecord
+  }
+  const reactionPayload: ReactionMessageAllocatedEventPayload = {
+    operationId: 'fixture',
+    record: {} as ReactionMessageRecord
+  }
+  // @ts-expect-error — a reaction allocation payload is not a text allocation payload
+  const wrongVariant: TextMessageAllocatedEventPayload = { operationId: 'fixture', record: {} as ReactionMessageRecord }
+  // @ts-expect-error — the typed allocation payload requires a record
+  const missingRecord: TextMessageAllocatedEventPayload = { operationId: 'fixture' }
+  void textPayload
+  void reactionPayload
+  void wrongVariant
+  void missingRecord
+}
+
+void sessionAllocationEventFixture
+
 describe('RuntimeServer lifecycle', () => {
   it('returns the committed local snapshot without awaiting active Presence persistence', async () => {
     const values: Record<string, unknown> = {}
@@ -654,7 +675,11 @@ describe('RuntimeServer lifecycle', () => {
     fake.plantPeer(getChatRoomId(DOMAIN), 'remote-peer')
     fake.plantPeer(getWorldRoomId(), 'remote-peer')
 
-    const snapshot = await server.joinChatRoom({ domain: DOMAIN, user: USER_INFO, site: SITE })
+    const snapshot = await server.joinChatRoom({
+      domain: DOMAIN,
+      user: { id: USER_INFO.id, name: USER_INFO.name, avatar: USER_INFO.avatar },
+      site: SITE
+    })
     if (!snapshot) throw new Error('Join was cancelled')
 
     expect(fake.joinCalls).toEqual([getChatRoomId(DOMAIN), getWorldRoomId()])
@@ -1182,20 +1207,22 @@ describe('RuntimeServer lifecycle', () => {
     expect((await server.getSnapshot()).domains[0]).toMatchObject({ phase: 'active', pageIds: ['page-a'] })
   })
 
-  it('rejects invalid projected identity fields before joining transport', async () => {
+  it('trusts typed identity at local production and joins without protocol revalidation', async () => {
     const clock = new FakeClock()
     const fake = createFakeTransport()
     const server = createServer({ transport: fake.transport, clock, codec: jsonCodec })
     await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
 
+    // Local identity production does not validate protocol shape: the typed join proceeds and
+    // the receiving peer remains responsible for its own inbound parse.
     await expect(
       server.joinChatRoom({
         domain: DOMAIN,
         user: { ...USER_INFO, name: 1 } as unknown as ChatUser,
         site: SITE
       })
-    ).rejects.toThrow('Invalid local identity or site metadata')
-    expect(fake.joinCalls).toEqual([])
+    ).resolves.toMatchObject({ domains: [{ domain: DOMAIN, chatRoomJoined: true }] })
+    expect(fake.joinCalls.length).toBeGreaterThan(0)
   })
 
   it('disposes the Remesh host and physical transport exactly once', async () => {
@@ -1713,7 +1740,7 @@ describe('RuntimeServer trusted delivery', () => {
     expect(received).toEqual(['valid-after-rejections'])
   })
 
-  it('rejects future HLC without poisoning the central clock', async () => {
+  it('accepts any safe HLC at receive (time rules are not declaratively expressible)', async () => {
     const { fake, server, roomId } = await setup()
     const received: string[] = []
     await server.onInbound({ pageId: 'page-a' }, (event) => {
@@ -1728,9 +1755,11 @@ describe('RuntimeServer trusted delivery', () => {
     fake.receive(roomId, 'peer-a', text('valid'))
     await settle()
 
-    expect(received).toEqual(['valid'])
+    // The declarative schema accepts every safe non-negative integer HLC; the receiver-time
+    // future rule is not expressible and is therefore not validated.
+    expect(received).toEqual(['future', 'counter-overflow', 'valid'])
     const local = await server.allocateTextMessage({ domain: DOMAIN, body: 'next', mentions: [] })
-    expect(local.message.hlc.timestamp).toBe(NOW)
+    expect(local.message.hlc.timestamp).toBe(NOW + 5 * 60 * 1000 + 1)
   })
 
   it('clears buffered events only after a page ACK and treats duplicate ACK as idempotent', async () => {
@@ -1842,12 +1871,7 @@ describe('RuntimeServer World presence', () => {
     await server.joinChatRoom({
       domain: OTHER_DOMAIN,
       user: USER,
-      site: {
-        origin: OTHER_DOMAIN,
-        description: 'Other',
-        host: 'other.example',
-        href: 'https://other.example/private?token=secret'
-      } as ChatSite & { host: string; href: string }
+      site: { origin: OTHER_DOMAIN, description: 'Other' }
     })
     await settle()
 
@@ -2217,22 +2241,72 @@ describe('RuntimeServer history', () => {
     messageIds,
     done
   })
-  const response = (syncId: string, page: number, messages: TextMessage[], done: boolean) => ({
-    type: MESSAGE_TYPE.HISTORY_MESSAGES_PUSH,
-    syncId,
-    page,
-    users: [...new Map(messages.map((m) => [m.userId, { id: m.userId, name: m.userId, avatar: '' }])).values()],
-    messages,
-    done
-  })
-  const pageOf = (messages: TextMessage[], done: boolean) => response('sync', 0, messages, done)
-
   const registerInventoryProvider = (server: RuntimeServer, records: TextMessageRecord[] = []) =>
     registerHistoryProvider(
       server,
       { domain: DOMAIN, pageId: 'page-a' },
       async (): Promise<HistorySupplyResult> => ({ records, done: true })
     )
+
+  it('delivers a schema-accepted response whose message userId is absent from the users array', async () => {
+    const { fake, server, roomId } = await setup()
+    await registerInventoryProvider(server)
+    const delivered: string[] = []
+    await server.onInbound({ pageId: 'page-a' }, (event) => {
+      delivered.push(event.record.message.id)
+    })
+    fake.receive(roomId, 'peer-a', session())
+    await settle()
+    await settle()
+    const requestMsg = await vi.waitFor(() => {
+      const found = fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)
+      expect(found).toBeDefined()
+      return found
+    })
+    const syncId = (requestMsg as { syncId: string }).syncId
+
+    // The declarative schema does not validate History user references: a message whose userId
+    // is absent from the page users is still delivered with a minimal author snapshot, not
+    // silently filtered or converted into an error.
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PUSH,
+      syncId,
+      page: 0,
+      users: [],
+      messages: [text('missing-reference')],
+      done: true
+    })
+    await vi.waitFor(() => expect(delivered).toEqual(['missing-reference']))
+  })
+
+  it('serves a load-accepted record whose outer/message/user identities differ', async () => {
+    const { fake, server, roomId } = await setup()
+    const database = createMemoryMessageDatabase('history-mismatch-db')
+    const store = createMessageStore(database)
+    // The load boundary accepts identity mismatches (relationships are not validated), and the
+    // History supplier must not re-filter them downstream.
+    const mismatched = {
+      type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE,
+      id: 'outer-mismatch',
+      message: { ...text('inner-message', REMOTE_USER.id, NOW - 1), id: 'inner-message' },
+      user: { id: 'another-user', name: 'Another', avatar: '' },
+      receivedAt: NOW - 1
+    }
+    await store.insert(mismatched)
+    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, async () => {
+      const records = await store.query({ type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE })
+      return { records: records as TextMessageRecord[], done: true }
+    })
+    fake.receive(roomId, 'peer-a', session())
+    await settle()
+    fake.receive(roomId, 'peer-a', request('sync-mismatch', 0, [], true))
+    await vi.waitFor(() => {
+      const sent = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH)
+      expect(sent.some((m) => (m as { syncId: string }).syncId === 'sync-mismatch')).toBe(true)
+    })
+    const sent = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH)
+    expect(sent[sent.length - 1]).toMatchObject({ messages: [{ id: 'inner-message' }] })
+  })
 
   it('runs one exact-difference inventory -> missing-body sync through the real page boundary', async () => {
     const { fake, server, roomId } = await setup()
@@ -2840,7 +2914,7 @@ describe('RuntimeServer history', () => {
       done: true
     })
     // Remove the first peer: its dormant/waiting/provider accounting is cleaned.
-    fake.receive(roomId, 'peer-removed', { type: MESSAGE_TYPE.SESSION_END, presenceId: 'presence-remote-user' })
+    fake.peerLeave(roomId, 'peer-removed')
     await settle()
     // The live peer's completed inventory must still be able to transition to ready and serve.
     await vi.waitFor(() => {
@@ -2884,7 +2958,7 @@ describe('RuntimeServer history', () => {
     expect(started).toEqual(['full-0', 'full-1', 'full-2', 'full-3'])
     // Remove peer-0: cleanup must actually cancel its live supply through the recorded supplyId
     // (observable on the AbortSignal), while the waiting fifth peer is NOT promoted early.
-    fake.receive(roomId, 'peer-0', { type: MESSAGE_TYPE.SESSION_END, presenceId: 'presence-user-0' })
+    fake.peerLeave(roomId, 'peer-0')
     await vi.waitFor(() => expect(cancelled).toEqual(['full-0']))
     expect(started).toEqual(['full-0', 'full-1', 'full-2', 'full-3'])
     // The cancelled supply settles (abort rejection) and exactly one waiter is promoted; no
@@ -2919,7 +2993,7 @@ describe('RuntimeServer history', () => {
     })
     await vi.waitFor(() => expect(started).toEqual(['old-a']))
     // Cleanup removes the peer: the in-flight supply is cancelled via its recorded supplyId.
-    fake.receive(roomId, 'peer-0', { type: MESSAGE_TYPE.SESSION_END, presenceId: 'presence-user-0' })
+    fake.peerLeave(roomId, 'peer-0')
     await settle()
     expect(cancelled).toEqual(['old-a'])
     // A fresh session submits a replacement request with a DIFFERENT syncId: it becomes one
@@ -2965,7 +3039,7 @@ describe('RuntimeServer history', () => {
     })
     await vi.waitFor(() => expect(started).toEqual(['old-a']))
     // Cleanup removes the peer and cancels the in-flight supply; the active entry stays unsettled.
-    fake.receive(roomId, 'peer-0', { type: MESSAGE_TYPE.SESSION_END, presenceId: 'presence-user-0' })
+    fake.peerLeave(roomId, 'peer-0')
     await settle()
     expect(cancelled).toEqual(['old-a'])
     // A delayed page carrying the SAME syncId arrives after cleanup (fresh session): it must be
@@ -3024,7 +3098,7 @@ describe('RuntimeServer history', () => {
     await vi.waitFor(() => expect(pageBHeld.length).toBe(1))
     expect(pageBHeld[0]).toMatch(/^supply:.*:1$/)
     // Cleanup cancels the LIVE second-page supplyId (the recorded owner), not the stale first one.
-    fake.receive(roomId, 'peer-0', { type: MESSAGE_TYPE.SESSION_END, presenceId: 'presence-user-0' })
+    fake.peerLeave(roomId, 'peer-0')
     await vi.waitFor(() => expect(pageBCancelled).toEqual([pageBHeld[0]]))
     // The old selection loop terminates: no further page is selected for the torn-down attempt.
     await vi.waitFor(() => expect(pageBHeld.length).toBe(1))
@@ -3071,7 +3145,7 @@ describe('RuntimeServer history', () => {
     await vi.waitFor(() => expect(held.length).toBe(1))
     // Cleanup cancels the held page-a supply; the old selection loop must terminate so page-b
     // never starts for the torn-down attempt.
-    fake.receive(roomId, 'peer-0', { type: MESSAGE_TYPE.SESSION_END, presenceId: 'presence-user-0' })
+    fake.peerLeave(roomId, 'peer-0')
     await vi.waitFor(() => expect(cancelled).toEqual([held[0]]))
     await vi.waitFor(() => expect(cancelled.length).toBe(1))
     await settle()
@@ -3110,7 +3184,7 @@ describe('RuntimeServer history', () => {
       done: true
     })
     await vi.waitFor(() => expect(started).toEqual(['old-a']))
-    fake.receive(roomId, 'peer-0', { type: MESSAGE_TYPE.SESSION_END, presenceId: 'presence-user-0' })
+    fake.peerLeave(roomId, 'peer-0')
     await settle()
     expect(cancelled).toEqual(['old-a'])
     // A PARTIAL replacement (page zero, done:false) becomes a dormant successor.
@@ -3293,7 +3367,7 @@ describe('RuntimeServer history', () => {
     await settle()
     // Cleanup cancels the old supply and removes any dormant state; a fresh session with a
     // FRESH syncId is the positive re-admission case (the overflowed capacity was released).
-    fake.receive(roomId, 'peer-0', { type: MESSAGE_TYPE.SESSION_END, presenceId: 'presence-user-0' })
+    fake.peerLeave(roomId, 'peer-0')
     await settle()
     fake.receive(roomId, 'peer-0', session({ id: 'user-0b', name: 'User 0b', avatar: '' }))
     await settle()
@@ -3622,10 +3696,7 @@ describe('RuntimeServer history', () => {
     // All 31 partial peers leave: cleanup must remove their canonical jobs IMMEDIATELY (no
     // physical settlement callback exists for them), so fresh unrelated work is admitted at once.
     for (let peer = 0; peer < 31; peer += 1) {
-      fake.receive(roomId, `peer-${peer}`, {
-        type: MESSAGE_TYPE.SESSION_END,
-        presenceId: `presence-lc-user-${peer}`
-      })
+      fake.peerLeave(roomId, `peer-${peer}`)
     }
     await settle()
     // A fresh peer at the (now released) cap is admitted and its ready job starts immediately.
@@ -3676,7 +3747,7 @@ describe('RuntimeServer history', () => {
     })
     await settle()
     // Lifecycle cleanup while the sends are invoked: the slots stay retained (no fifth stage).
-    fake.receive(roomId, 'peer-0', { type: MESSAGE_TYPE.SESSION_END, presenceId: 'presence-hs-user-0' })
+    fake.peerLeave(roomId, 'peer-0')
     await settle()
     await settle()
     expect(started.length).toBe(4)
