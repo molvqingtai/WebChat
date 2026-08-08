@@ -11,7 +11,7 @@ import {
   type ObservedPresence,
   type PresenceDomainRecord
 } from '@/domain/runtime/externs/PresenceStore'
-import { CHAT_ROOM_NAMESPACE_V3 } from '@/constants/config'
+import { CHAT_ROOM_NAMESPACE_V4 } from '@/constants/config'
 import {
   MESSAGE_TYPE,
   isChatRoomMessageSemanticallyValid,
@@ -110,7 +110,7 @@ export interface SessionFailure {
   domain?: string
 }
 
-const getChatRoomId = (domain: string): string => stringToHex(`${CHAT_ROOM_NAMESPACE_V3}:${domain}`)
+const getChatRoomId = (domain: string): string => stringToHex(`${CHAT_ROOM_NAMESPACE_V4}:${domain}`)
 const replaceBy = <T>(items: T[], predicate: (item: T) => boolean, next: T): T[] =>
   items.some(predicate) ? items.map((item) => (predicate(item) ? next : item)) : [...items, next]
 const removeBy = <T>(items: T[], predicate: (item: T) => boolean): T[] => items.filter((item) => !predicate(item))
@@ -811,7 +811,7 @@ const SessionDomain = Remesh.domain({
         ) {
           return OperationFailedEvent({
             operationId: payload.operationId,
-            error: new Error('Message exceeds the v3 event contract')
+            error: new Error('Message exceeds the v4 event contract')
           })
         }
         const record: TextMessageRecord = {
@@ -873,7 +873,7 @@ const SessionDomain = Remesh.domain({
         ) {
           return OperationFailedEvent({
             operationId: payload.operationId,
-            error: new Error('Reaction exceeds the v3 event contract')
+            error: new Error('Reaction exceeds the v4 event contract')
           })
         }
         const record: ReactionMessageRecord = {
@@ -906,7 +906,7 @@ const SessionDomain = Remesh.domain({
         ) {
           return OperationFailedEvent({
             operationId: payload.operationId,
-            error: new Error('Chat message does not match the v3 event contract')
+            error: new Error('Chat message does not match the v4 event contract')
           })
         }
         const adopted = adoptHlc(get(HlcState()), event.hlc, clock.now())

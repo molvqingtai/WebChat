@@ -2,7 +2,7 @@ import { Remesh } from 'remesh'
 import { concatMap, filter, map } from 'rxjs'
 import WireDomain, { type WireFailureStage, type WireMessageEvent } from '@/domain/runtime/Wire'
 import { RoomTransportExtern } from '@/domain/runtime/externs/RoomTransport'
-import { WORLD_ROOM_ID_V3 } from '@/constants/config'
+import { WORLD_ROOM_ID_V4 } from '@/constants/config'
 import { type ChatSite, type ChatUser, type WorldRoomMessage } from '@/protocol'
 import type { WorldPresenceEvent, WorldPresenceRecord } from '@/runtime/Contract'
 import stringToHex from '@/utils/stringToHex'
@@ -46,7 +46,7 @@ export interface WorldOptions {
   sessionId: string
 }
 
-const worldRoomId = stringToHex(WORLD_ROOM_ID_V3)
+const worldRoomId = stringToHex(WORLD_ROOM_ID_V4)
 export const getWorldRoomId = () => worldRoomId
 const replaceBy = <T>(items: T[], predicate: (item: T) => boolean, next: T): T[] =>
   items.some(predicate) ? items.map((item) => (predicate(item) ? next : item)) : [...items, next]

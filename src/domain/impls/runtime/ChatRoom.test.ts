@@ -195,7 +195,8 @@ const serverFixture = (): ServerFixture => {
     resolveHistorySupply: async ({ supplyId, result }) => {
       resolvedHistory.push({ supplyId, ids: result.records.map((record) => record.message.id), done: result.done })
     },
-    rejectHistorySupply: async () => {}
+    rejectHistorySupply: async () => {},
+    onHistoryFeedback: async () => {}
   }
   return {
     server,
@@ -613,7 +614,7 @@ describe('Runtime-backed ChatRoom application port', () => {
     expect(errors[0]).toMatchObject({ name: 'InvalidMessageRecordError' })
     expect(errors[1]).toEqual(new Error('invalid ACK failed'))
     await expect(messageStore.query()).resolves.toEqual([])
-    expect(server.ackInbound).toHaveBeenCalledWith({ domain: DOMAIN, sequence: 1 })
+    expect(server.ackInbound).toHaveBeenCalledWith({ domain: DOMAIN, sequence: 1, inserted: false })
 
     await vi.advanceTimersByTimeAsync(1000)
     expect(server.ackInbound).toHaveBeenCalledTimes(2)
@@ -779,7 +780,7 @@ describe('Runtime-backed ChatRoom application port', () => {
 
     fixture.emitHistory({
       type: 'request',
-      request: { supplyId: 'supply-1', domain: DOMAIN, syncId: 'sync-1', cutoff: 10 }
+      request: { supplyId: 'supply-1', domain: DOMAIN, syncId: 'sync-1', cutoff: 10, mode: 'provider' as const }
     })
     await vi.waitFor(() =>
       expect(fixture.resolvedHistory).toEqual([{ supplyId: 'supply-1', ids: ['recent', 'older'], done: true }])
@@ -793,7 +794,13 @@ describe('Runtime-backed ChatRoom application port', () => {
 
   it('terminally rejects a cancelled slow history query exactly once', async () => {
     const fixture = await setupHistoryCancellation()
-    const request = { supplyId: 'supply-cancel', domain: DOMAIN, syncId: 'sync-cancel', cutoff: 0 }
+    const request = {
+      supplyId: 'supply-cancel',
+      domain: DOMAIN,
+      syncId: 'sync-cancel',
+      cutoff: 0,
+      mode: 'provider' as const
+    }
     let suppliedResult: Error | 'pending' = 'pending'
     const supplied = fixture.pagePort.supplyHistory('page-1', request).then(
       () => {
@@ -812,7 +819,18 @@ describe('Runtime-backed ChatRoom application port', () => {
     try {
       await settle()
 
+      // The AbortSignal fires immediately, but the physical query is still held: Runtime
+      // cancellation must remain pending until the query/projection chain exits.
       expect(signal.aborted).toBe(true)
+      expect(fixture.server.rejectHistorySupply).not.toHaveBeenCalled()
+      expect(cancellationSettled).toBe(false)
+      expect(suppliedResult).toBe('pending')
+      expect(fixture.pagePort.pendingHistoryCountForTest()).toBe(1)
+
+      fixture.releaseQuery.resolve([])
+      await settle()
+      await settle()
+      // After physical exit the cancelled supply settles exactly once.
       expect(fixture.server.rejectHistorySupply).toHaveBeenCalledOnce()
       expect(fixture.server.rejectHistorySupply).toHaveBeenCalledWith({
         pageId: 'page-1',
@@ -822,10 +840,6 @@ describe('Runtime-backed ChatRoom application port', () => {
       expect(cancellationSettled).toBe(true)
       expect(suppliedResult).toEqual(new Error('History supplier timed out'))
       expect(fixture.pagePort.pendingHistoryCountForTest()).toBe(0)
-
-      fixture.releaseQuery.resolve([])
-      await settle()
-      expect(fixture.server.rejectHistorySupply).toHaveBeenCalledOnce()
       expect(fixture.server.resolveHistorySupply).not.toHaveBeenCalled()
     } finally {
       fixture.releaseQuery.resolve([])
@@ -838,7 +852,13 @@ describe('Runtime-backed ChatRoom application port', () => {
 
   it('settles provider replacement while fencing the old query from a new supply', async () => {
     const fixture = await setupHistoryCancellation()
-    const oldRequest = { supplyId: 'supply-old', domain: DOMAIN, syncId: 'sync-old', cutoff: 0 }
+    const oldRequest = {
+      supplyId: 'supply-old',
+      domain: DOMAIN,
+      syncId: 'sync-old',
+      cutoff: 0,
+      mode: 'provider' as const
+    }
     let oldSupplyResult: Error | 'pending' | null = 'pending'
     const oldSupply = fixture.pagePort.supplyHistory('page-1', oldRequest).then(
       (result) => {
@@ -857,7 +877,27 @@ describe('Runtime-backed ChatRoom application port', () => {
       })
       await settle()
 
+      // The AbortSignal fires immediately, but the old query is still physically running: no
+      // Runtime settlement and no release/promotion may happen before it exits.
       expect(oldSignal.aborted).toBe(true)
+      expect(fixture.server.rejectHistorySupply).not.toHaveBeenCalled()
+      expect(oldSupplyResult).toBe('pending')
+
+      const newRequest = {
+        supplyId: 'supply-new',
+        domain: DOMAIN,
+        syncId: 'sync-new',
+        cutoff: 0,
+        mode: 'provider' as const
+      }
+      const newSupply = fixture.pagePort.supplyHistory('page-1', newRequest).catch((error: Error) => error)
+      expect(replacementEvents).toEqual([{ type: 'request', request: newRequest }])
+      fixture.releaseQuery.resolve([])
+      await settle()
+      await settle()
+
+      // After physical exit the old supply settles exactly once (replacement mode resolves null),
+      // while the new supply (owned by the replacement provider registration) stays pending.
       expect(fixture.server.rejectHistorySupply).toHaveBeenCalledOnce()
       expect(fixture.server.rejectHistorySupply).toHaveBeenCalledWith({
         pageId: 'page-1',
@@ -865,15 +905,7 @@ describe('Runtime-backed ChatRoom application port', () => {
         reason: 'History supply cancelled'
       })
       expect(oldSupplyResult).toBeNull()
-
-      const newRequest = { supplyId: 'supply-new', domain: DOMAIN, syncId: 'sync-new', cutoff: 0 }
-      const newSupply = fixture.pagePort.supplyHistory('page-1', newRequest).catch((error: Error) => error)
-      expect(replacementEvents).toEqual([{ type: 'request', request: newRequest }])
-      fixture.releaseQuery.resolve([])
-      await settle()
-
       expect(fixture.pagePort.pendingHistoryCountForTest()).toBe(1)
-      expect(fixture.server.rejectHistorySupply).toHaveBeenCalledOnce()
       expect(fixture.server.resolveHistorySupply).not.toHaveBeenCalled()
 
       fixture.pagePort.removePage('page-1')

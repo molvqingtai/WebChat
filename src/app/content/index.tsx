@@ -208,6 +208,18 @@ const createContentStore = () => {
     const ReadinessImpl = createReadinessImpl(whenHostPhase)
     const lifecycleBundle = createConnectionLifecycle()
     ChatRoomImpl.epochSource.bindConnectionResultReporter(lifecycleBundle.report)
+    // One attempt-owned History loading Toast per incoming sync: the Runtime projects activate/dismiss
+    // with a complete attempt owner id, and the page maps it to the generic loading Toast (no count,
+    // no fixed duration). The owner id guarantees one sync never dismisses another or an unrelated Toast.
+    ChatRoomImpl.epochSource.onHistoryFeedback((event) => {
+      store.send(
+        event.kind === 'loading'
+          ? store
+              .getDomain(ToastDomain())
+              .command.LoadingCommand({ id: event.ownerId, message: 'Syncing message history...' })
+          : store.getDomain(ToastDomain()).command.CancelCommand(event.ownerId)
+      )
+    })
 
     browserSyncStorage.resolve(BrowserSyncStorageImpl.value)
     messageDatabase.resolve(database)

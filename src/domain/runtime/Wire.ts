@@ -1,11 +1,11 @@
 import { Remesh } from 'remesh'
 import { fromEventPattern, map, mergeMap } from 'rxjs'
-import { MAX_DECODE_QUEUE_BYTES, MAX_DECODE_QUEUE_FRAMES, WORLD_ROOM_ID_V3 } from '@/constants/config'
+import { MAX_DECODE_QUEUE_BYTES, MAX_DECODE_QUEUE_FRAMES, WORLD_ROOM_ID_V4 } from '@/constants/config'
 import { RoomTransportExtern, WireCodecExtern } from '@/domain/runtime/externs/RoomTransport'
 import {
   MESSAGE_TYPE,
   WireCodecError,
-  isHistoryResponseFrameWithinLimit,
+  isHistoryPageFrameWithinLimit,
   parseChatRoomMessage,
   parseWorldRoomMessage,
   type ChatRoomMessage,
@@ -89,7 +89,7 @@ interface DropRecord {
 
 const MAX_LOGGED_SOURCES = 256
 const LOG_INTERVAL_MS = 10000
-const worldRoomId = stringToHex(WORLD_ROOM_ID_V3)
+const worldRoomId = stringToHex(WORLD_ROOM_ID_V4)
 const queueId = (roomId: string, sourcePeerId: string) => JSON.stringify([roomId, sourcePeerId])
 const generationFor = (generations: RoomGeneration[], roomId: string) =>
   generations.find((item) => item.roomId === roomId)?.generation ?? 0
@@ -492,8 +492,9 @@ const WireDomain = Remesh.domain({
         if (
           !message ||
           ('type' in message &&
-            message.type === MESSAGE_TYPE.HISTORY_RESPONSE &&
-            !isHistoryResponseFrameWithinLimit(payload.rawPayload))
+            (message.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST ||
+              message.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE) &&
+            !isHistoryPageFrameWithinLimit(payload.rawPayload))
         ) {
           return [...queueOutput, RecordDropCommand({ sourcePeerId: payload.sourcePeerId, reason: 'invalid message' })]
         }
@@ -570,10 +571,11 @@ const WireDomain = Remesh.domain({
               const rawPayload = await codec.encode(request.message)
               if (
                 'type' in request.message &&
-                request.message.type === MESSAGE_TYPE.HISTORY_RESPONSE &&
-                !isHistoryResponseFrameWithinLimit(rawPayload)
+                (request.message.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST ||
+                  request.message.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE) &&
+                !isHistoryPageFrameWithinLimit(rawPayload)
               ) {
-                throw new WireCodecError('History response reached the wire limit')
+                throw new WireCodecError('History page reached the wire limit')
               }
               return CompleteEncodeCommand({ request, rawPayload })
             } catch (error) {
@@ -663,7 +665,7 @@ const WireDomain = Remesh.domain({
       impl: ({ fromEvent }) =>
         fromEvent(ProtocolDropEvent).pipe(
           map(({ sourcePeerId, reason, error }) => {
-            console.warn(`[WebChat] Dropped v3 frame from ${sourcePeerId}: ${reason}`, error ?? '')
+            console.warn(`[WebChat] Dropped v4 frame from ${sourcePeerId}: ${reason}`, error ?? '')
             return null
           })
         )

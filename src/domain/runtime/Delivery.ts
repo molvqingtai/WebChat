@@ -121,10 +121,16 @@ const DeliveryDomain = Remesh.domain({
       }
     })
 
-    // ACK clears volatile delivery only after durable insert-or-existing settlement; a batch advances only after every member ACKs.
+    // ACK clears volatile delivery only after durable insert-or-existing settlement; a batch advances
+    // only after every member ACKs. The page reports whether the record was actually inserted so the
+    // History loading owner can activate on the first winning insert of its attempt.
+    const BatchInsertedState = domain.state<Record<string, boolean>>({
+      name: 'Delivery.BatchInsertedState',
+      default: {}
+    })
     const AckInboundCommand = domain.command({
       name: 'Delivery.AckInboundCommand',
-      impl: ({ get }, payload: { domain: string; sequence: number }) => {
+      impl: ({ get }, payload: { domain: string; sequence: number; inserted?: boolean }) => {
         const deliveries = get(DeliveriesState())
         const current = deliveries.find((item) => item.domain === payload.domain)
         if (!current) return null
@@ -134,12 +140,28 @@ const DeliveryDomain = Remesh.domain({
         const batchId = acknowledged.batchId
         const batchComplete = Boolean(batchId && !buffer.some((event) => event.batchId === batchId))
         const bufferBytes = Math.max(0, current.bufferBytes - getTextByteSize(JSON.stringify(acknowledged.record)))
+        if (!batchId) {
+          return [
+            DeliveriesState().new(
+              deliveries.map((item) => (item.domain === payload.domain ? { ...item, buffer, bufferBytes } : item))
+            ),
+            InboundAckedEvent(payload)
+          ]
+        }
+        const key = `${payload.domain}:${batchId}`
+        const batchInserted = (get(BatchInsertedState())[key] ?? false) || (payload.inserted ?? false)
+        const remaining = { ...get(BatchInsertedState()) }
+        if (batchComplete) delete remaining[key]
+        else remaining[key] = batchInserted
         return [
           DeliveriesState().new(
             deliveries.map((item) => (item.domain === payload.domain ? { ...item, buffer, bufferBytes } : item))
           ),
+          BatchInsertedState().new(remaining),
           InboundAckedEvent(payload),
-          ...(batchComplete && batchId ? [HistoryBatchAckedEvent({ domain: payload.domain, batchId })] : [])
+          ...(batchComplete
+            ? [HistoryBatchAckedEvent({ domain: payload.domain, batchId, inserted: batchInserted })]
+            : [])
         ]
       }
     })
@@ -171,7 +193,7 @@ const DeliveryDomain = Remesh.domain({
       source: InboundEvent['source']
       batchId?: string
     }>({ name: 'Delivery.InboundDiscardedEvent' })
-    const HistoryBatchAckedEvent = domain.event<{ domain: string; batchId: string }>({
+    const HistoryBatchAckedEvent = domain.event<{ domain: string; batchId: string; inserted: boolean }>({
       name: 'Delivery.HistoryBatchAckedEvent'
     })
     const InboundBatchDiscardedEvent = domain.event<{ domain: string; batchId: string }>({

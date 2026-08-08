@@ -7,8 +7,8 @@ export const MESSAGE_TYPE = {
   SESSION_END: 'session-end',
   TEXT: 'text',
   REACTION: 'reaction',
-  HISTORY_REQUEST: 'history-request',
-  HISTORY_RESPONSE: 'history-response'
+  HISTORY_MESSAGES_REQUEST: 'history-messages-request',
+  HISTORY_MESSAGES_RESPONSE: 'history-messages-response'
 } as const
 
 export const REACTION_TYPE = {
@@ -59,20 +59,18 @@ export interface ReactionMessage {
 
 export type ChatMessage = TextMessage | ReactionMessage
 
-export interface HistoryCursor {
-  hlc: HLC
-  id: string
+export interface HistoryMessagesRequest {
+  type: typeof MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST
+  syncId: string
+  page: number
+  messageIds: string[]
+  done: boolean
 }
 
-export interface HistoryRequestMessage {
-  type: typeof MESSAGE_TYPE.HISTORY_REQUEST
+export interface HistoryMessagesResponse {
+  type: typeof MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE
   syncId: string
-  before?: HistoryCursor
-}
-
-export interface HistoryResponseMessage {
-  type: typeof MESSAGE_TYPE.HISTORY_RESPONSE
-  syncId: string
+  page: number
   users: ChatUser[]
   messages: ChatMessage[]
   done: boolean
@@ -82,8 +80,8 @@ export type ChatRoomMessage =
   | SessionMessage
   | SessionEndMessage
   | ChatMessage
-  | HistoryRequestMessage
-  | HistoryResponseMessage
+  | HistoryMessagesRequest
+  | HistoryMessagesResponse
 
 const boundedString = (maxLength: number) => v.pipe(v.string(), v.maxLength(maxLength))
 const OpaquePresenceIdSchema = v.pipe(v.string(), v.minLength(1), v.maxLength(128))
@@ -133,20 +131,18 @@ export const ReactionMessageSchema = v.strictObject({
 
 export const ChatMessageSchema = v.variant('type', [TextMessageSchema, ReactionMessageSchema])
 
-export const HistoryCursorSchema = v.strictObject({
-  hlc: HLCSchema,
-  id: boundedString(128)
+export const HistoryMessagesRequestSchema = v.strictObject({
+  type: v.literal(MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST),
+  syncId: boundedString(128),
+  page: safeNonNegativeInteger,
+  messageIds: v.array(v.string()),
+  done: v.boolean()
 })
 
-export const HistoryRequestMessageSchema = v.strictObject({
-  type: v.literal(MESSAGE_TYPE.HISTORY_REQUEST),
+export const HistoryMessagesResponseSchema = v.strictObject({
+  type: v.literal(MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE),
   syncId: boundedString(128),
-  before: v.optional(HistoryCursorSchema)
-})
-
-export const HistoryResponseMessageSchema = v.strictObject({
-  type: v.literal(MESSAGE_TYPE.HISTORY_RESPONSE),
-  syncId: boundedString(128),
+  page: safeNonNegativeInteger,
   users: v.pipe(v.array(ChatUserSchema), v.maxLength(200)),
   messages: v.pipe(v.array(ChatMessageSchema), v.maxLength(MAX_HISTORY_RESPONSE_MESSAGES)),
   done: v.boolean()
@@ -157,8 +153,8 @@ export const ChatRoomMessageSchema = v.variant('type', [
   SessionEndMessageSchema,
   TextMessageSchema,
   ReactionMessageSchema,
-  HistoryRequestMessageSchema,
-  HistoryResponseMessageSchema
+  HistoryMessagesRequestSchema,
+  HistoryMessagesResponseSchema
 ])
 
 export const isHLCInRange = (hlc: HLC, now: number): boolean =>
@@ -187,7 +183,7 @@ export const parseChatRoomMessage = (value: unknown): ChatRoomMessage | null => 
   if (message.type === MESSAGE_TYPE.TEXT || message.type === MESSAGE_TYPE.REACTION) {
     return isMessageWithinLimit(message) ? message : null
   }
-  if (message.type !== MESSAGE_TYPE.HISTORY_RESPONSE) return message
+  if (message.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST) return message
 
   const userIds = message.users.map((user) => user.id)
   return message.users.every(isUserWithinLimit) &&
@@ -203,9 +199,7 @@ export const isChatRoomMessageSemanticallyValid = (message: ChatRoomMessage, now
   if (message.type === MESSAGE_TYPE.TEXT || message.type === MESSAGE_TYPE.REACTION) {
     return isHLCInRange(message.hlc, now)
   }
-  if (message.type === MESSAGE_TYPE.HISTORY_REQUEST) {
-    return !message.before || isHLCInRange(message.before.hlc, now)
-  }
+  if (message.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST) return true
   const userIds = new Set(message.users.map((user) => user.id))
   return message.messages.every((item) => isHLCInRange(item.hlc, now) && userIds.has(item.userId))
 }
