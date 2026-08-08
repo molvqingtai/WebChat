@@ -18,7 +18,7 @@ import type {
   RuntimeSessionEvent,
   WorldPresenceEvent
 } from '@/runtime/Contract'
-import { HISTORY_REQUEST_TIMEOUT_MS, RUNTIME_DOMAIN_GRACE_MS } from '@/constants/config'
+import { HISTORY_REQUEST_TIMEOUT_MS, RUNTIME_DOMAIN_GRACE_MS, PENDING_LEAVE_GRACE_MS } from '@/constants/config'
 import { createArticoRoomTransport } from '@/runtime/ArticoRoomTransport'
 import { createBrowserPresenceStore } from '@/runtime/PresenceStore'
 
@@ -3142,6 +3142,13 @@ describe('RuntimeServer history', () => {
     expect((await server.replayInbound({ domain: DOMAIN, after: 0 })).map((item) => item.record.message.id)).toEqual([
       'post-c-current'
     ])
+    // A REPEATED current C SESSION updates only the current slot: one C, one B (the graced
+    // generation is not duplicated or erased by the shared source).
+    fake.receive(roomId, 'peer-b', session({ id: 'user-c', name: 'User C', avatar: '' }))
+    await settle()
+    const afterRepeat = (await server.getSnapshot()).domains[0].sessions.map((session) => session.user.id)
+    expect(afterRepeat.filter((id) => id === 'user-c')).toHaveLength(1)
+    expect(afterRepeat.filter((id) => id === 'user-b')).toHaveLength(1)
     disposeServer(server)
   })
 
@@ -3177,7 +3184,101 @@ describe('RuntimeServer history', () => {
     disposeServer(server)
   })
 
-  it('keeps the committed grace running when a prepared rebind source leaves again before commit', async () => {
+  it('does not cancel the reused-source History supply when the graced generation expires', async () => {
+    vi.useFakeTimers()
+    try {
+      const clock = new FakeClock()
+      const fake = createFakeTransport()
+      const server = createServer({ transport: fake.transport, clock, codec: jsonCodec })
+      await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
+      await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
+      const roomId = getChatRoomId(DOMAIN)
+      fake.receive(roomId, 'peer-b', session({ id: 'user-b', name: 'User B', avatar: '' }))
+      await settle()
+      // B departs (grace armed); the same source later carries current C.
+      fake.peerLeave(roomId, 'peer-b')
+      await settle()
+      fake.plantPeer(roomId, 'remote-peer')
+      fake.makeNotReady()
+      fake.hangSendsTo(roomId)
+      const chatBroadcastStarted = fake.waitForSendAttempt(roomId)
+      const reconnect = server.reconnectDomain({ domain: DOMAIN })
+      await fake.waitForJoinCalls(4)
+      fake.open()
+      await expect(chatBroadcastStarted).resolves.toMatchObject({ roomId })
+      fake.receive(roomId, 'peer-b', session({ id: 'user-c', name: 'User C', avatar: '' }))
+      await settle()
+      fake.releaseSends()
+      await reconnect
+      await settle()
+      // A real public History supply for current C on the reused source starts while B's grace
+      // is still running (its own request timeout is separated from the grace deadline).
+      const cancelled: string[] = []
+      await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, (request, signal) => {
+        if (request.mode !== 'inventory') {
+          signal.addEventListener('abort', () => cancelled.push(request.syncId))
+          return new Promise<HistorySupplyResult>(() => {})
+        }
+        return Promise.resolve({ records: [], done: true })
+      })
+      await vi.advanceTimersByTimeAsync(100)
+      fake.receive(roomId, 'peer-b', {
+        type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
+        syncId: 'current-c',
+        page: 0,
+        messageIds: [],
+        done: true
+      })
+      await settle()
+      // B's original deadline expires: B is removed, C stays current, and C's active supply is
+      // NOT cancelled (the expiry never emits a source-removal event for a still-owned source).
+      await vi.advanceTimersByTimeAsync(PENDING_LEAVE_GRACE_MS - 100)
+      await vi.advanceTimersByTimeAsync(0)
+      const after = (await server.getSnapshot()).domains[0].sessions.map((session) => session.user.id)
+      expect(after).not.toContain('user-b')
+      expect(after).toContain('user-c')
+      expect(cancelled).toEqual([])
+      disposeServer(server)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps [current C, grace B] stable under a repeated current C SESSION', async () => {
+    const { fake, server, roomId } = await setup()
+    fake.receive(roomId, 'peer-b', session({ id: 'user-b', name: 'User B', avatar: '' }))
+    await settle()
+    fake.peerLeave(roomId, 'peer-b')
+    await settle()
+    fake.plantPeer(roomId, 'remote-peer')
+    fake.makeNotReady()
+    fake.hangSendsTo(roomId)
+    const chatBroadcastStarted = fake.waitForSendAttempt(roomId)
+    const reconnect = server.reconnectDomain({ domain: DOMAIN })
+    await fake.waitForJoinCalls(4)
+    fake.open()
+    await expect(chatBroadcastStarted).resolves.toMatchObject({ roomId })
+    // B's same-presence rebind then the SAME source switches to C before commit.
+    fake.receive(roomId, 'peer-b', session({ id: 'user-b', name: 'User B', avatar: '' }))
+    await settle()
+    fake.receive(roomId, 'peer-b', session({ id: 'user-c', name: 'User C', avatar: '' }))
+    await settle()
+    fake.releaseSends()
+    await reconnect
+    await settle()
+    const userIds = (await server.getSnapshot()).domains[0].sessions.map((session) => session.user.id)
+    expect(userIds).toContain('user-c')
+    expect(userIds).toContain('user-b')
+    // A repeated valid C SESSION updates only the current C slot: B stays graced, C not duplicated.
+    fake.receive(roomId, 'peer-b', session({ id: 'user-c', name: 'User C', avatar: '' }))
+    await settle()
+    const after = (await server.getSnapshot()).domains[0].sessions.map((session) => session.user.id)
+    expect(after.filter((id) => id === 'user-c')).toHaveLength(1)
+    expect(after.filter((id) => id === 'user-b')).toHaveLength(1)
+    disposeServer(server)
+  })
+
+  it('keeps the graced generation displayed when the rebound source switches to a different presence', async () => {
     const { fake, server, roomId } = await setup()
     fake.receive(roomId, 'peer-b', session({ id: 'user-b', name: 'User B', avatar: '' }))
     await settle()
