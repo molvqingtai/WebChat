@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createServer, disposeServer, getChatRoomId, getWorldRoomId } from '@/runtime/Server'
 import type { Clock } from '@/domain/runtime/externs/Clock'
+import type { PresenceStore } from '@/domain/runtime/externs/PresenceStore'
 import type { RoomTransport } from '@/runtime/RoomTransport'
 import type { UserInfo } from '@/domain/UserInfo'
 import type { WireCodec } from '@/protocol'
@@ -3053,12 +3054,73 @@ describe('RuntimeServer history', () => {
     fake.releaseSends()
     const snapshot = await replacement
     if (!snapshot) throw new Error('Join was cancelled')
-    // After the replacement commit the rebind is trusted.
+    // The aborted attempt's rebind does NOT transfer to the successor replacement: B's committed
+    // binding stays under its pending leave after the replacement commit (live and History closed).
     fake.receive(roomId, 'peer-b', { ...text('post-commit-live'), userId: 'user-b' })
     await settle()
+    expect(await server.replayInbound({ domain: DOMAIN, after: 0 })).toEqual([])
+    // Only a CURRENT source publishing a valid SESSION cancels the matching leave.
+    fake.receive(roomId, 'peer-b', session({ id: 'user-b', name: 'User B', avatar: '' }))
+    await settle()
+    fake.receive(roomId, 'peer-b', { ...text('post-rebind-live'), userId: 'user-b' })
+    await settle()
     expect((await server.replayInbound({ domain: DOMAIN, after: 0 })).map((item) => item.record.message.id)).toEqual([
-      'post-commit-live'
+      'post-rebind-live'
     ])
+  })
+
+  it('keeps a grace-retained committed binding untrusted across an ordinary local replacement join', async () => {
+    const { fake, server, roomId } = await setup()
+    fake.receive(roomId, 'peer-b', session({ id: 'user-b', name: 'User B', avatar: '' }))
+    await settle()
+    // B departs: the committed binding is retained only by the leave grace.
+    fake.peerLeave(roomId, 'peer-b')
+    await settle()
+    // An ordinary local replacement join carries the committed sessions into its prepared runtime
+    // but never receives a valid same-presence SESSION for B.
+    await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
+    await settle()
+    // Fresh TEXT from B's departed source is NOT admitted after the replacement commit.
+    fake.receive(roomId, 'peer-b', { ...text('ghost-after-local-commit'), userId: 'user-b' })
+    await settle()
+    expect(await server.replayInbound({ domain: DOMAIN, after: 0 })).toEqual([])
+  })
+
+  it('keeps a grace-retained binding untrusted when the release cleanup write rejects', async () => {
+    const clock = new FakeClock()
+    const fake = createFakeTransport()
+    const rejectStore: PresenceStore = {
+      load: async () => ({
+        domain: DOMAIN,
+        lastJoinedAt: 0,
+        local: { presenceId: 'presence-a', userId: USER.id, joinedAt: 1, status: 'active' as const },
+        observers: []
+      }),
+      save: async (record) => {
+        if (!record.local && record.observers.length === 0) {
+          throw new Error('release cleanup rejected')
+        }
+      }
+    }
+    const server = createServer({ transport: fake.transport, clock, codec: jsonCodec, presenceStore: rejectStore })
+    await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
+    const joined = await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
+    if (!joined) throw new Error('Join was cancelled')
+    const roomId = getChatRoomId(DOMAIN)
+    fake.receive(roomId, 'peer-b', session({ id: 'user-b', name: 'User B', avatar: '' }))
+    await settle()
+    // B departs: the committed binding is retained only by the leave grace.
+    fake.peerLeave(roomId, 'peer-b')
+    await settle()
+    // The release cleanup rejects: the fence and physical membership are retained, and the
+    // fenced pending leave still closes live/History authority for B's departed source.
+    await expect(server.leaveChatRoom({ domain: DOMAIN })).rejects.toThrow('release cleanup rejected')
+    await settle()
+    expect(fake.joined.has(roomId)).toBe(true)
+    fake.receive(roomId, 'peer-b', { ...text('ghost-after-cleanup-failure'), userId: 'user-b' })
+    await settle()
+    expect(await server.replayInbound({ domain: DOMAIN, after: 0 })).toEqual([])
+    disposeServer(server)
   })
 
   it('treats a repeated public leave of an already-released domain as idempotent', async () => {

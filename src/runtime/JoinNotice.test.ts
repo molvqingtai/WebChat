@@ -920,6 +920,64 @@ describe('single live release owner', () => {
     }
   })
 
+  it('keeps grace-retained authority closed and restores its deadline when the cleanup write rejects', async () => {
+    vi.useFakeTimers()
+    try {
+      const network = new DeterministicNetwork()
+      const durable = createMemoryPresenceStore()
+      let rejectReleaseWrite = true
+      const store: PresenceStore = {
+        load: (domain) => durable.load(domain),
+        save: async (record) => {
+          if (!record.local && record.observers.length === 0 && rejectReleaseWrite) {
+            throw new Error('release cleanup rejected')
+          }
+          await durable.save(record)
+        }
+      }
+      const a = await createStack(
+        network,
+        'cleanup-ghost-peer-a',
+        { id: 'cleanup-ghost-user-a', name: 'A', avatar: '' },
+        { presenceStore: store }
+      )
+      const b = await createStack(network, 'cleanup-ghost-peer-b', {
+        id: 'cleanup-ghost-user-b',
+        name: 'B',
+        avatar: ''
+      })
+      await a.join()
+      await b.join()
+      await vi.waitFor(async () =>
+        expect((await noticeUsers(a)).filter((id) => id === 'cleanup-ghost-user-b')).toHaveLength(1)
+      )
+      // B departs: A arms the five-second grace.
+      network.disconnectPeer('cleanup-ghost-peer-b')
+      b.crash()
+      await vi.advanceTimersByTimeAsync(0)
+      // A's release cleanup rejects: the fence and membership are retained, and the fenced
+      // pending leave still closes live authority for B's departed source.
+      await expect(a.server.leaveChatRoom({ domain: DOMAIN })).rejects.toThrow('release cleanup rejected')
+      await vi.advanceTimersByTimeAsync(0)
+      expect(network.isJoined('cleanup-ghost-peer-a', getChatRoomId(DOMAIN))).toBe(true)
+      const before = (await durable.load(DOMAIN))?.local
+      expect(before?.status).toBe('active')
+      // The departed source stays untrusted (live) while the release fence waits for a retry.
+      // B is still displayed (membership unchanged) and no stale persistence appeared.
+      const membership = a.sessionEvents
+        .at(-1)
+        ?.snapshot.sessions.some((session) => session.user.id === 'cleanup-ghost-user-b')
+      expect(membership).toBe(true)
+      // Storage recovers; the later retry completes the release (fencing again, then clearing).
+      rejectReleaseWrite = false
+      await a.server.leaveChatRoom({ domain: DOMAIN })
+      await vi.waitFor(() => expect(network.isJoined('cleanup-ghost-peer-a', getChatRoomId(DOMAIN))).toBe(false))
+      expect((await durable.load(DOMAIN))?.local).toBeUndefined()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('retains the release fence and membership when the active-record cleanup write rejects; a later retry succeeds', async () => {
     vi.useFakeTimers()
     try {

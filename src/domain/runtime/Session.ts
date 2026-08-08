@@ -45,6 +45,8 @@ interface PreparedSession {
   runtime: SessionDomainState
   observers: ObservedPresence[]
   isNewPresence: boolean
+  /** presenceIds whose pending-leave deadlines this attempt may cancel on commit (attempt-owned). */
+  reboundPresenceIds: string[]
   publishRequestId?: string
   /** Frozen distinct publication targets still awaiting their single send. */
   publishPendingTargets: string[]
@@ -68,6 +70,8 @@ interface PendingLeave {
   joinedAt: number
   /** Distinguishes this armed deadline instance so stale timers are fenced after a rebind. */
   armedId: string
+  /** Release-fenced: expiry effects are suspended but the record still closes authority. */
+  fenced: boolean
 }
 
 interface PendingChatSend {
@@ -416,6 +420,7 @@ const SessionDomain = Remesh.domain({
           runtime,
           observers: priorPrepared?.observers ?? presence?.observers ?? [],
           isNewPresence: !current && local.status === 'pending',
+          reboundPresenceIds: priorPrepared?.reboundPresenceIds ?? [],
           publishPendingTargets: [],
           missedPeerIds: [],
           baselinePeerIds: []
@@ -596,8 +601,8 @@ const SessionDomain = Remesh.domain({
                 sourcePeerIds
               })
             : removeBy(baselines, (item) => item.domain === prepared.runtime.domain)
-        // Atomic commit: promote the attempt's runtime and cancel the committed pending-leave
-        // deadline for every rebound presence (abort preserved it; commit fences it).
+        // Atomic commit: promote the attempt's runtime and cancel ONLY the pending-leave
+        // deadlines this attempt actually rebound (abort preserved them; commit fences them).
         const pendingLeaves = get(PendingLeavesState())
         return [
           DomainsState().new(replaceBy(domains, (item) => item.domain === prepared.runtime.domain, prepared.runtime)),
@@ -605,10 +610,7 @@ const SessionDomain = Remesh.domain({
           PendingLeavesState().new(
             pendingLeaves.filter(
               (item) =>
-                !(
-                  item.domain === prepared.runtime.domain &&
-                  prepared.runtime.sessions.some((session) => session.presenceId === item.presenceId)
-                )
+                !(item.domain === prepared.runtime.domain && prepared.reboundPresenceIds.includes(item.presenceId))
             )
           ),
           PendingBaselinePeersState().new(nextBaselines),
@@ -679,8 +681,16 @@ const SessionDomain = Remesh.domain({
         const existing = get(LiveReleasesState()).find((item) => item.domain === runtimeDomain)
         if (existing) {
           // A release is already fenced (its cleanup write was rejected earlier): a later
-          // request retries only the cleanup; no state may advance before it succeeds.
-          return ClearActivePresenceRequestedEvent({ domain: runtimeDomain })
+          // request retries only the cleanup (re-fencing the observer deadlines), and no state
+          // may advance before it succeeds.
+          return [
+            PendingLeavesState().new(
+              get(PendingLeavesState()).map((item) =>
+                item.domain === runtimeDomain ? { ...item, fenced: true } : item
+              )
+            ),
+            ClearActivePresenceRequestedEvent({ domain: runtimeDomain })
+          ]
         }
         const runtime = get(DomainsState()).find((item) => item.domain === runtimeDomain)
         const prepared = get(PreparedSessionsState()).find((item) => item.runtime.domain === runtimeDomain)
@@ -688,11 +698,33 @@ const SessionDomain = Remesh.domain({
         if (!current) return ReleaseCompletedEvent({ domain: runtimeDomain })
         const release: LiveRelease = { domain: runtimeDomain, roomId: current.roomId }
         // Fence every domain-owned observer deadline BEFORE the awaited cleanup write: a grace
-        // expiry can never queue a stale pre-release record behind the cleanup.
+        // expiry can never queue a stale pre-release record behind the cleanup, while the fenced
+        // records still close live/History authority until the release resolves.
         return [
           LiveReleasesState().new([...get(LiveReleasesState()), release]),
-          PendingLeavesState().new(removeBy(get(PendingLeavesState()), (item) => item.domain === runtimeDomain)),
+          PendingLeavesState().new(
+            get(PendingLeavesState()).map((item) => (item.domain === runtimeDomain ? { ...item, fenced: true } : item))
+          ),
           ClearActivePresenceRequestedEvent({ domain: runtimeDomain })
+        ]
+      }
+    })
+
+    const RestorePendingLeavesCommand = domain.command({
+      name: 'Session.RestorePendingLeavesCommand',
+      impl: ({ get }, runtimeDomain: string) => {
+        const pending = get(PendingLeavesState())
+        const affected = pending.filter((item) => item.domain === runtimeDomain && item.fenced)
+        if (affected.length === 0) return null
+        const restored = affected.map((item) => ({ ...item, fenced: false, armedId: identity.nextId() }))
+        return [
+          PendingLeavesState().new([
+            ...pending.filter((item) => !(item.domain === runtimeDomain && item.fenced)),
+            ...restored
+          ]),
+          ...restored.map((item) =>
+            PendingLeaveArmedEvent({ domain: item.domain, presenceId: item.presenceId, armedId: item.armedId })
+          )
         ]
       }
     })
@@ -1042,13 +1074,18 @@ const SessionDomain = Remesh.domain({
         }
         // Cancellation is attempt-owned: a SESSION received during a provisional local attempt
         // stays attempt-owned and invisible until commit. The committed deadline keeps governing
-        // the committed binding; only the atomic commit cancels it (and the rollback keeps it).
+        // the committed binding; this attempt records the exact rebind it owns, and only the
+        // atomic commit of THIS attempt may cancel it (rollback/supersession transfers nothing).
         if (prepared) {
+          const reboundPresenceIds = pendingLeave
+            ? appendUnique(prepared.reboundPresenceIds, message.presenceId)
+            : prepared.reboundPresenceIds
           return PreparedSessionsState().new(
             replaceBy(preparedSessions, (item) => item.attemptId === prepared.attemptId, {
               ...prepared,
               runtime: nextRuntime,
               observers: nextObservers,
+              reboundPresenceIds,
               baselinePeerIds: prepared.baselinePeerIds.filter((sourcePeerId) => sourcePeerId !== payload.sourcePeerId)
             })
           )
@@ -1308,7 +1345,8 @@ const SessionDomain = Remesh.domain({
           sessionId: session.sessionId,
           user: session.user,
           joinedAt: session.joinedAt,
-          armedId
+          armedId,
+          fenced: false
         }
         return [
           ...cleanupActions,
@@ -1324,8 +1362,9 @@ const SessionDomain = Remesh.domain({
       impl: ({ get }, payload: { domain: string; presenceId: string; armedId: string }) => {
         const pending = get(PendingLeavesState())
         const current = pending.find((item) => item.domain === payload.domain && item.presenceId === payload.presenceId)
-        // A valid rebind cancelled the pending leave; a stale timer is fenced by its armed id.
-        if (!current || current.armedId !== payload.armedId) return null
+        // A valid rebind cancelled the pending leave; a stale timer is fenced by its armed id;
+        // a release-fenced deadline suspends ALL effects (authority stays closed by the record).
+        if (!current || current.armedId !== payload.armedId || current.fenced) return null
         const domains = get(DomainsState())
         const runtime = domains.find((item) => item.domain === payload.domain)
         const presenceDomains = get(PresenceDomainsState())
@@ -1413,8 +1452,9 @@ const SessionDomain = Remesh.domain({
               return CompleteReleaseCleanupCommand(domain)
             } catch (error) {
               // The authoritative active record was not removed: surface the exact failure,
-              // retain the current fence and physical membership, and allow a later retry.
-              return DomainReleaseFailedEvent({ domain, error: error as Error })
+              // retain the current fence and physical membership, restore the observer deadline
+              // ownership (re-armed), and allow a later retry.
+              return [DomainReleaseFailedEvent({ domain, error: error as Error }), RestorePendingLeavesCommand(domain)]
             }
           })
         )
@@ -1501,6 +1541,7 @@ const SessionDomain = Remesh.domain({
         CommitPreparedCommand,
         AbortPreparedCommand,
         BeginReleaseDomainCommand,
+        RestorePendingLeavesCommand,
         CompleteReleaseCommand,
         ReleaseDomainCommand,
         AllocateTextMessageCommand,
