@@ -125,15 +125,12 @@ describe('MessageList Database-backed pipeline', () => {
 
   it('survives a corrupt raw same-key occupant without a typed value escaping', async () => {
     const databaseName = `message-list-corrupt-${databaseId++}`
-    const seedStore = createMessageStore(createMemoryMessageDatabase(databaseName))
-    // A manually corrupted row occupies the raw notice id: its value is not a typed record.
-    await seedStore.insert({
-      type: MESSAGE_RECORD_TYPE.SYSTEM_NOTICE,
-      id: 'notice:corrupt',
-      notice: { id: 'notice:corrupt', hlc: { timestamp: 1, counter: 0 }, type: NOTICE_TYPE.INFO, body: 'x' },
-      user: { id: 'u', name: 'U', avatar: '' },
-      receivedAt: 1
-    })
+    const database = createMemoryMessageDatabase(databaseName)
+    const seedStore = createMessageStore(database)
+    // An arbitrary raw value (not a typed record) occupies the raw notice id.
+    await database.write(['records'], (transaction) =>
+      transaction.insert('records', 'notice:corrupt', { arbitrary: true, garbage: [1, 2, 3] })
+    )
     const harness = createHarness(databaseName)
     await settle()
     const notice = noticeRecord('notice:corrupt')

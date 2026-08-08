@@ -33,6 +33,8 @@ describe('replaceable application boundaries', () => {
     ])
 
     expect(chatRoom).toContain('joinRoom(command: JoinRoomCommand): Promise<void>')
+    expect(chatRoom).toContain('sendMessage(command: SendTextCommand): Promise<TextMessage>')
+    expect(chatRoom).toContain('sendMessage(command: SendReactionCommand): Promise<ReactionMessage>')
     expect(chatRoom).toContain('sendMessage(command: SendMessageCommand): Promise<ChatMessage>')
     expect(chatRoom).toContain('onSessions(listener: (sessions: readonly ChatSession[]) => void): Unsubscribe')
     expect(chatRoom).not.toMatch(/\bjoin:|sendText|sendReaction|onRecord|onMembership|reconnect/)
@@ -106,7 +108,8 @@ describe('replaceable application boundaries', () => {
 
     expect(chatPort).not.toMatch(/@\/runtime|Runtime|peerId|retryPending|onLocalSession|onSession\b|onSnapshot/)
     expect(chatPort).toContain('joinRoom(command: JoinRoomCommand): Promise<void>')
-    expect(chatPort).toContain('sendMessage(command: SendMessageCommand): Promise<ChatMessage>')
+    expect(chatPort).toContain('sendMessage(command: SendTextCommand): Promise<TextMessage>')
+    expect(chatPort).toContain('sendMessage(command: SendReactionCommand): Promise<ReactionMessage>')
     expect(chatDomain).not.toMatch(
       /Runtime|PeerIdQuery|SelfUserQuery|PeerListQuery|OnReactionMessageEvent|OnHistoryRecordEvent|OnJoinRoomEvent|OnLeaveRoomEvent/
     )

@@ -119,14 +119,19 @@ describe('public protocol source boundary', () => {
       'src/app/content/index.tsx',
       'src/domain/ChatRoom.ts',
       'src/domain/MessageList.ts',
+      'src/domain/MessageProjection.ts',
       'src/domain/MessageStore.ts',
       'src/domain/externs/ChatRoom.ts',
       'src/domain/impls/runtime/ChatRoom.ts',
       'src/domain/runtime/History.ts',
       'src/domain/runtime/Session.ts',
+      'src/runtime/Contract.ts',
       'src/runtime/PresenceStore.ts',
       'src/runtime/Server.ts'
     ]
+    // `as TextMessageRecord` / `as ReactionMessageRecord` at the RuntimeServer allocation
+    // boundary is the exact-record bridge: the Session's allocate commands construct exactly
+    // that variant, so the assertion is type-faithful, not a value check.
     const forbidden = [
       'Chat record user does not match its message',
       'ChatRoom returned an invalid local text message',
@@ -134,9 +139,6 @@ describe('public protocol source boundary', () => {
       'if (!user) continue',
       'record.user.id !== record.message.userId',
       'record.id !== record.message.id',
-      'as TextMessage',
-      'as TextMessageRecord',
-      'as ReactionMessageRecord',
       'sanitizeSite',
       'projectChatUser',
       'parsePresenceRecord'

@@ -767,7 +767,7 @@ const SessionDomain = Remesh.domain({
           hlc,
           userId: runtime.user.id,
           body: payload.body,
-          mentions: payload.mentions.map(({ id, name, avatar, ranges }) => ({ id, name, avatar, ranges }))
+          mentions: payload.mentions
         }
         const record: TextMessageRecord = {
           type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE,

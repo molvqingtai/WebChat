@@ -13,7 +13,7 @@ import { PresenceStoreExtern, type PresenceStore } from '@/domain/runtime/extern
 import { RoomTransportExtern, WireCodecExtern } from '@/domain/runtime/externs/RoomTransport'
 import type { RoomTransport } from '@/runtime/RoomTransport'
 import type { ReactionMessageRecord, TextMessageRecord } from '@/domain/Message'
-import { NativeWireCodec, type ChatSite, type WireCodec } from '@/protocol'
+import { NativeWireCodec, type WireCodec } from '@/protocol'
 import type { RuntimeServer, RuntimeSnapshot } from '@/runtime/Contract'
 import { MAX_HISTORY_SESSION_BYTES, MAX_HISTORY_SESSION_MESSAGES } from '@/constants/config'
 import { PagePort, createPagePortImpl } from '@/runtime/PagePort'
@@ -290,16 +290,8 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     },
     getSnapshot: async () => snapshot(),
     joinChatRoom: async (payload) => {
-      // Port adaptation: the page's typed identity/site data is projected to the wire shapes at
-      // the runtime boundary (not revalidated; the wire schemas remain authoritative at receive).
-      const wireUser = { id: payload.user.id, name: payload.user.name, avatar: payload.user.avatar }
-      const wireSite: ChatSite = {
-        origin: payload.site.origin,
-        ...(payload.site.title !== undefined ? { title: payload.site.title } : {}),
-        ...(payload.site.icon !== undefined ? { icon: payload.site.icon } : {}),
-        ...(payload.site.description !== undefined ? { description: payload.site.description } : {})
-      }
-      const projected = { ...payload, user: wireUser, site: wireSite }
+      // Typed ChatUser/ChatSite values pass through unchanged; the application-to-protocol
+      // mapping already happened before the value was narrowed to the schema-owned type.
       const recovery = beginPresenceRecovery(payload.domain)
       let recovered = false
       try {
@@ -307,7 +299,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
           const operationId = nanoid()
           return runConnectionOperation(
             operationId,
-            connectionDomain.command.JoinDomainCommand({ operationId, ...projected }),
+            connectionDomain.command.JoinDomainCommand({ operationId, ...payload }),
             () => true,
             () => false
           )
@@ -346,7 +338,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       return runSessionOperation(
         operationId,
         sessionDomain.command.AllocateTextMessageCommand({ operationId, ...payload }),
-        (result) => result.record!
+        (result) => result.record as TextMessageRecord
       )
     },
     allocateReactionMessage: async (payload) => {
@@ -355,7 +347,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       return runSessionOperation(
         operationId,
         sessionDomain.command.AllocateReactionMessageCommand({ operationId, ...payload }),
-        (result) => result.record!
+        (result) => result.record as ReactionMessageRecord
       )
     },
     sendChatMessage: async (payload) => {

@@ -133,11 +133,26 @@ class InvalidMessageRecordError extends TypeError {
 export const isInvalidMessageRecordError = (error: unknown): error is InvalidMessageRecordError =>
   error instanceof InvalidMessageRecordError
 
-/** Canonical content comparison excluding only the receiver-local `receivedAt` metadata key. */
-const withoutReceivedAt = (value: unknown): string => {
-  if (typeof value !== 'object' || value === null) return JSON.stringify(value)
-  const { receivedAt: _receivedAt, ...rest } = value as Record<string, unknown>
-  return JSON.stringify(rest)
+/**
+ * Canonical content comparison excluding only the receiver-local `receivedAt` metadata key.
+ * Structural (order-insensitive) deep equality over plain data: no schema parse, no property
+ * inspection beyond the excluded key, and no cast of the raw occupant.
+ */
+const canonicalEqualExcludingReceivedAt = (left: unknown, right: unknown): boolean => {
+  if (left === right) return true
+  if (typeof left !== 'object' || left === null || typeof right !== 'object' || right === null) return false
+  if (Array.isArray(left) || Array.isArray(right)) {
+    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false
+    return left.every((item, index) => canonicalEqualExcludingReceivedAt(item, right[index]))
+  }
+  const leftRecord = left as Record<string, unknown>
+  const rightRecord = right as Record<string, unknown>
+  const leftKeys = Object.keys(leftRecord).filter((key) => key !== 'receivedAt')
+  const rightKeys = Object.keys(rightRecord).filter((key) => key !== 'receivedAt')
+  if (leftKeys.length !== rightKeys.length) return false
+  return leftKeys.every(
+    (key) => key in rightRecord && canonicalEqualExcludingReceivedAt(leftRecord[key], rightRecord[key])
+  )
 }
 
 const invalidMessageRecord = (message: string): never => {
@@ -260,7 +275,7 @@ export const createMessageStore = (database: Database<MessageDatabaseSchema>): M
         // and a trusted typed existing is derived only from the typed input. Any other stored
         // occupant is a conflict and is never exposed as a typed record.
         const existing = result.existing
-        if (withoutReceivedAt(existing) === withoutReceivedAt(record)) {
+        if (canonicalEqualExcludingReceivedAt(existing, record)) {
           return { inserted: false, existing: record }
         }
 

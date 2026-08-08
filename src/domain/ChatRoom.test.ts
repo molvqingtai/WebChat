@@ -26,6 +26,7 @@ import { MESSAGE_TYPE, type ChatMessage, type ChatSession } from '@/protocol'
 import type { RuntimeServer, RuntimeSessionEvent, RuntimeSnapshot } from '@/runtime/Contract'
 import { stringToHex } from '@/utils'
 
+const WIRE_SELF = { id: 'local-user', name: 'Local', avatar: '' }
 const SELF: UserInfo = {
   id: 'local-user',
   name: 'Local',
@@ -453,7 +454,7 @@ describe('ChatRoomDomain exact application port', () => {
     await join(fixture)
 
     expect(fixture.chat.joinRoom).toHaveBeenCalledWith({
-      user: SELF,
+      user: WIRE_SELF,
       site: expect.objectContaining({ origin: 'https://example.test' })
     })
     expect(fixture.store.query(fixture.room.query.UserListQuery())).toEqual([SELF])
@@ -726,7 +727,7 @@ describe('ChatRoomDomain exact application port', () => {
     await vi.waitFor(() => expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())?.outcome).toEqual({}))
     expect(fixture.chat.joinRoom).toHaveBeenCalledTimes(2)
     expect(fixture.chat.joinRoom).toHaveBeenLastCalledWith({
-      user: SELF,
+      user: WIRE_SELF,
       site: expect.objectContaining({ origin: 'https://example.test' })
     })
     expect(fixture.store.query(fixture.list.query.LoadIsFinishedQuery())).toBe(true)
@@ -735,7 +736,7 @@ describe('ChatRoomDomain exact application port', () => {
     fixture.emitReadiness('ready')
     await vi.waitFor(() => expect(fixture.chat.joinRoom).toHaveBeenCalledTimes(3))
     expect(fixture.chat.joinRoom).toHaveBeenLastCalledWith({
-      user: SELF,
+      user: WIRE_SELF,
       site: expect.objectContaining({ origin: 'https://example.test' })
     })
 
@@ -794,7 +795,7 @@ describe('ChatRoomDomain exact application port', () => {
 
     await vi.waitFor(() => expect(fixture.chat.joinRoom).toHaveBeenCalledTimes(2))
     expect(fixture.chat.joinRoom).toHaveBeenLastCalledWith({
-      user: SELF,
+      user: WIRE_SELF,
       site: expect.objectContaining({ origin: 'https://example.test' })
     })
 

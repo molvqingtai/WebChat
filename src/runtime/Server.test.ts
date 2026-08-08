@@ -4,14 +4,7 @@ import type { Clock } from '@/domain/runtime/externs/Clock'
 import type { RoomTransport } from '@/runtime/RoomTransport'
 import type { UserInfo } from '@/domain/UserInfo'
 import type { WireCodec } from '@/protocol'
-import {
-  MESSAGE_TYPE,
-  type ChatRoomMessage,
-  type ChatUser,
-  type TextMessage,
-  type ChatSite,
-  type WorldRoomMessage
-} from '@/protocol'
+import { MESSAGE_TYPE, type ChatRoomMessage, type ChatUser, type TextMessage, type WorldRoomMessage } from '@/protocol'
 import { MESSAGE_RECORD_TYPE, type TextMessageRecord } from '@/domain/Message'
 import { createMessageStore } from '@/domain/MessageStore'
 import { createMemoryMessageDatabase } from '@/domain/impls/database/Memory'
@@ -654,7 +647,11 @@ describe('RuntimeServer lifecycle', () => {
     fake.plantPeer(getChatRoomId(DOMAIN), 'remote-peer')
     fake.plantPeer(getWorldRoomId(), 'remote-peer')
 
-    const snapshot = await server.joinChatRoom({ domain: DOMAIN, user: USER_INFO, site: SITE })
+    const snapshot = await server.joinChatRoom({
+      domain: DOMAIN,
+      user: { id: USER_INFO.id, name: USER_INFO.name, avatar: USER_INFO.avatar },
+      site: SITE
+    })
     if (!snapshot) throw new Error('Join was cancelled')
 
     expect(fake.joinCalls).toEqual([getChatRoomId(DOMAIN), getWorldRoomId()])
@@ -1846,12 +1843,7 @@ describe('RuntimeServer World presence', () => {
     await server.joinChatRoom({
       domain: OTHER_DOMAIN,
       user: USER,
-      site: {
-        origin: OTHER_DOMAIN,
-        description: 'Other',
-        host: 'other.example',
-        href: 'https://other.example/private?token=secret'
-      } as ChatSite & { host: string; href: string }
+      site: { origin: OTHER_DOMAIN, description: 'Other' }
     })
     await settle()
 
@@ -2219,14 +2211,6 @@ describe('RuntimeServer history', () => {
     syncId,
     page,
     messageIds,
-    done
-  })
-  const response = (syncId: string, page: number, messages: TextMessage[], done: boolean) => ({
-    type: MESSAGE_TYPE.HISTORY_MESSAGES_PUSH,
-    syncId,
-    page,
-    users: [...new Map(messages.map((m) => [m.userId, { id: m.userId, name: m.userId, avatar: '' }])).values()],
-    messages,
     done
   })
   const registerInventoryProvider = (server: RuntimeServer, records: TextMessageRecord[] = []) =>

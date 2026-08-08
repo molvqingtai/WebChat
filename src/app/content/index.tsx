@@ -32,7 +32,14 @@ import { createElement } from '@/utils'
 import { requestBrowserSyncStoragePreparation } from '@/service/StoragePreparation'
 import { createDirectPreparationCoordinator, createWebLocksPreparationCoordinator } from '@/utils/withPreparationLock'
 import { MessageDatabaseExtern, type MessageDatabaseSchema } from '@/domain/MessageStore'
-import { ChatRoomExtern, type ChatRoom } from '@/domain/externs/ChatRoom'
+import {
+  ChatRoomExtern,
+  type ChatRoom,
+  type SendMessageCommand,
+  type SendReactionCommand,
+  type SendTextCommand
+} from '@/domain/externs/ChatRoom'
+import type { ChatMessage, ReactionMessage, TextMessage } from '@/protocol/ChatRoom'
 import { WorldRoomExtern, type WorldRoom } from '@/domain/externs/WorldRoom'
 import { ReadinessExtern, type Readiness } from '@/domain/externs/Readiness'
 import { ConnectionLifecycleExtern, type ConnectionLifecycle } from '@/domain/externs/ConnectionLifecycle'
@@ -138,6 +145,12 @@ const createContentStore = () => {
     watch: (stores, listener) => subscribeDeferred(messageDatabase, (database) => database.watch(stores, listener)),
     close: async () => (await messageDatabase.get()).close()
   }
+  async function deferredSendMessage(command: SendTextCommand): Promise<TextMessage>
+  async function deferredSendMessage(command: SendReactionCommand): Promise<ReactionMessage>
+  async function deferredSendMessage(command: SendMessageCommand): Promise<ChatMessage>
+  async function deferredSendMessage(command: SendMessageCommand): Promise<ChatMessage> {
+    return (await chatRoom.get()).sendMessage(command)
+  }
   const deferredChatRoom: ChatRoom = {
     joinRoom: (command) => {
       // Mint the exact invocation token synchronously (before any await), pass it explicitly into the
@@ -155,7 +168,7 @@ const createContentStore = () => {
       deferredConnectionLifecycle.bindTask(task, token)
       return task
     },
-    sendMessage: (async (command) => (await chatRoom.get()).sendMessage(command)) as ChatRoom['sendMessage'],
+    sendMessage: deferredSendMessage,
     onMessage: (listener) => subscribeDeferred(chatRoom, (room) => room.onMessage(listener)),
     onJoinRoom: (listener) => subscribeDeferred(chatRoom, (room) => room.onJoinRoom(listener)),
     onLeaveRoom: (listener) => subscribeDeferred(chatRoom, (room) => room.onLeaveRoom(listener)),

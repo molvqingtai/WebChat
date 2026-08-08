@@ -111,6 +111,24 @@ describe('MessageStore static contract', () => {
 })
 
 describe.each(backends)('$name MessageStore contract', (backend) => {
+  it('classifies a reordered-key receivedAt-only replay as existing with no conflict', async () => {
+    const { database, messageStore } = create(backend)
+    const first = textRecord('reorder-id', 'first', 1)
+    await expect(messageStore.insert(first)).resolves.toEqual({ inserted: true })
+    // The stored occupant may have been written with a different property insertion order: the
+    // canonical comparison is structural, so the same-ID value differing only in the top-level
+    // receivedAt is still a replay (first row retained, no conflict).
+    const reorderedRaw = JSON.parse(
+      JSON.stringify({ ...first, receivedAt: 99 }, ['receivedAt', 'message', 'type', 'id', 'user'])
+    )
+    await database.write(['records'], (transaction) => transaction.insert('records', 'reorder-id', reorderedRaw))
+    const replay = await messageStore.insert({ ...first, receivedAt: 99 })
+    expect(replay.inserted).toBe(false)
+    if (!replay.inserted) expect(replay.existing).toEqual({ ...first, receivedAt: 99 })
+    await expect(messageStore.query()).resolves.toEqual([first])
+    await expect(database.read(['conflicts'], (transaction) => transaction.count('conflicts'))).resolves.toBe(0)
+  })
+
   it('classifies a receivedAt-only replay as existing with no conflict', async () => {
     const { database, messageStore } = create(backend)
     const first = textRecord('replay-id', 'first', 1)
@@ -196,7 +214,7 @@ describe.each(backends)('$name MessageStore contract', (backend) => {
   })
 
   it('loads records whose key/identity/user relationships differ (relationships are unvalidated)', async () => {
-    const { database, messageStore } = create(backend)
+    const { database } = create(backend)
     // The declarative record schema cannot express key/identity/user equality, so a stored row
     // with a mismatched key, outer id, or user id is still accepted at load.
     const equalityRows: Array<{ key: string; value: unknown }> = [
@@ -206,7 +224,6 @@ describe.each(backends)('$name MessageStore contract', (backend) => {
     ]
     for (const { key, value } of equalityRows) {
       const { database: db, messageStore: store } = create(backend)
-      void store
       await db.write(['records'], (transaction) => transaction.insert('records', key, value))
       await expect(store.query()).resolves.toEqual([value])
     }
