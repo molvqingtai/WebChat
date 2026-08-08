@@ -596,9 +596,21 @@ const SessionDomain = Remesh.domain({
                 sourcePeerIds
               })
             : removeBy(baselines, (item) => item.domain === prepared.runtime.domain)
+        // Atomic commit: promote the attempt's runtime and cancel the committed pending-leave
+        // deadline for every rebound presence (abort preserved it; commit fences it).
+        const pendingLeaves = get(PendingLeavesState())
         return [
           DomainsState().new(replaceBy(domains, (item) => item.domain === prepared.runtime.domain, prepared.runtime)),
           PreparedSessionsState().new(removeBy(get(PreparedSessionsState()), (item) => item.attemptId === attemptId)),
+          PendingLeavesState().new(
+            pendingLeaves.filter(
+              (item) =>
+                !(
+                  item.domain === prepared.runtime.domain &&
+                  prepared.runtime.sessions.some((session) => session.presenceId === item.presenceId)
+                )
+            )
+          ),
           PendingBaselinePeersState().new(nextBaselines),
           PresenceDomainsState().new(
             replaceBy(presenceDomains, (item) => item.domain === prepared.runtime.domain, presence)
@@ -675,8 +687,11 @@ const SessionDomain = Remesh.domain({
         const current = runtime ?? prepared?.runtime
         if (!current) return ReleaseCompletedEvent({ domain: runtimeDomain })
         const release: LiveRelease = { domain: runtimeDomain, roomId: current.roomId }
+        // Fence every domain-owned observer deadline BEFORE the awaited cleanup write: a grace
+        // expiry can never queue a stale pre-release record behind the cleanup.
         return [
           LiveReleasesState().new([...get(LiveReleasesState()), release]),
+          PendingLeavesState().new(removeBy(get(PendingLeavesState()), (item) => item.domain === runtimeDomain)),
           ClearActivePresenceRequestedEvent({ domain: runtimeDomain })
         ]
       }
@@ -1025,33 +1040,18 @@ const SessionDomain = Remesh.domain({
             session
           )
         }
-        // Matching cancellation is common to prepared and committed branches: a valid
-        // same-presence SESSION received during a reconnect publication also cancels and
-        // fences the committed deadline (the armed timer stays fenced by its removed record).
-        const cancelPendingLeaveAction = pendingLeave
-          ? [
-              PendingLeavesState().new(
-                removeBy(
-                  pendingLeaves,
-                  (item) => item.domain === runtime.domain && item.presenceId === message.presenceId
-                )
-              )
-            ]
-          : []
+        // Cancellation is attempt-owned: a SESSION received during a provisional local attempt
+        // stays attempt-owned and invisible until commit. The committed deadline keeps governing
+        // the committed binding; only the atomic commit cancels it (and the rollback keeps it).
         if (prepared) {
-          return [
-            PreparedSessionsState().new(
-              replaceBy(preparedSessions, (item) => item.attemptId === prepared.attemptId, {
-                ...prepared,
-                runtime: nextRuntime,
-                observers: nextObservers,
-                baselinePeerIds: prepared.baselinePeerIds.filter(
-                  (sourcePeerId) => sourcePeerId !== payload.sourcePeerId
-                )
-              })
-            ),
-            ...cancelPendingLeaveAction
-          ]
+          return PreparedSessionsState().new(
+            replaceBy(preparedSessions, (item) => item.attemptId === prepared.attemptId, {
+              ...prepared,
+              runtime: nextRuntime,
+              observers: nextObservers,
+              baselinePeerIds: prepared.baselinePeerIds.filter((sourcePeerId) => sourcePeerId !== payload.sourcePeerId)
+            })
+          )
         }
 
         const record: PresenceDomainRecord = {
@@ -1104,7 +1104,16 @@ const SessionDomain = Remesh.domain({
         return [
           DomainsState().new(replaceBy(domains, (item) => item.domain === runtime.domain, nextRuntime)),
           PresenceDomainsState().new(replaceBy(presenceDomains, (item) => item.domain === runtime.domain, record)),
-          ...cancelPendingLeaveAction,
+          ...(pendingLeave
+            ? [
+                PendingLeavesState().new(
+                  removeBy(
+                    pendingLeaves,
+                    (item) => item.domain === runtime.domain && item.presenceId === message.presenceId
+                  )
+                )
+              ]
+            : []),
           PersistPresenceRequestedEvent({ record }),
           ...(isBaselinePeer ? [PendingBaselinePeersState().new(nextBaselines)] : []),
           RuntimeSessionChangedEvent(sessionEvent),

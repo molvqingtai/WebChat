@@ -762,6 +762,126 @@ describe('single live release owner', () => {
     }
   })
 
+  it('never resurrects the active record when a grace deadline races the release cleanup write', async () => {
+    vi.useFakeTimers()
+    try {
+      const network = new DeterministicNetwork()
+      const durable = createMemoryPresenceStore()
+      let cleanupWriteStartedResolve!: () => void
+      const cleanupWriteStarted = new Promise<void>((resolve) => {
+        cleanupWriteStartedResolve = resolve
+      })
+      let releaseCleanupWrite!: () => void
+      const gated: PresenceStore = {
+        load: (domain) => durable.load(domain),
+        save: async (record) => {
+          if (!record.local && record.observers.length === 0) {
+            cleanupWriteStartedResolve()
+            await new Promise<void>((resolve) => {
+              releaseCleanupWrite = resolve
+            })
+          }
+          await durable.save(record)
+        }
+      }
+      const a = await createStack(
+        network,
+        'race-cleanup-peer-a',
+        { id: 'race-cleanup-user-a', name: 'A', avatar: '' },
+        { presenceStore: gated }
+      )
+      const b = await createStack(network, 'race-cleanup-peer-b', { id: 'race-cleanup-user-b', name: 'B', avatar: '' })
+      await a.join()
+      await b.join()
+      await vi.waitFor(async () =>
+        expect((await noticeUsers(a)).filter((id) => id === 'race-cleanup-user-b')).toHaveLength(1)
+      )
+      // B departs: A arms the five-second grace.
+      network.disconnectPeer('race-cleanup-peer-b')
+      b.crash()
+      await vi.advanceTimersByTimeAsync(50)
+      // A releases; the cleanup write is held in flight (the deadline is fenced BEFORE it).
+      const leaveA = a.server.leaveChatRoom({ domain: DOMAIN })
+      await cleanupWriteStarted
+      // B's deadline expires while the cleanup write is still in flight (the bounded store's own
+      // five-second operation timeout is not reached: the write started after the deadline).
+      await vi.advanceTimersByTimeAsync(4950)
+      await vi.advanceTimersByTimeAsync(0)
+      releaseCleanupWrite()
+      await leaveA
+      await vi.advanceTimersByTimeAsync(0)
+      // The serialized writes settle in production order: no pre-release record lands after the
+      // cleanup, and the durable state stays cleared.
+      expect((await durable.load(DOMAIN))?.local).toBeUndefined()
+      expect((await durable.load(DOMAIN))?.observers ?? []).toEqual([])
+      // A later return allocates a fresh generation (no resurrection of the old one).
+      const returned = await createStack(
+        network,
+        'race-cleanup-peer-a2',
+        { id: 'race-cleanup-user-a', name: 'A', avatar: '' },
+        { presenceStore: gated }
+      )
+      await returned.join()
+      const local = (await durable.load(DOMAIN))?.local
+      expect(local?.status).toBe('active')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('shares one in-flight release settlement across overlapping leave requests', async () => {
+    vi.useFakeTimers()
+    try {
+      const network = new DeterministicNetwork()
+      const durable = createMemoryPresenceStore()
+      let cleanupWriteStartedResolve!: () => void
+      const cleanupWriteStarted = new Promise<void>((resolve) => {
+        cleanupWriteStartedResolve = resolve
+      })
+      let releaseCleanupWrite!: () => void
+      const gated: PresenceStore = {
+        load: (domain) => durable.load(domain),
+        save: async (record) => {
+          if (!record.local && record.observers.length === 0) {
+            cleanupWriteStartedResolve()
+            await new Promise<void>((resolve) => {
+              releaseCleanupWrite = resolve
+            })
+          }
+          await durable.save(record)
+        }
+      }
+      const a = await createStack(
+        network,
+        'overlap-peer-a',
+        { id: 'overlap-user-a', name: 'A', avatar: '' },
+        { presenceStore: gated }
+      )
+      await a.join()
+      // Two overlapping leaves share one in-flight settlement while the cleanup write is held.
+      const first = a.server.leaveChatRoom({ domain: DOMAIN })
+      await cleanupWriteStarted
+      const second = a.server.leaveChatRoom({ domain: DOMAIN })
+      let firstSettled = false
+      let secondSettled = false
+      void first.then(() => {
+        firstSettled = true
+      })
+      void second.then(() => {
+        secondSettled = true
+      })
+      await vi.advanceTimersByTimeAsync(0)
+      expect(firstSettled).toBe(false)
+      expect(secondSettled).toBe(false)
+      releaseCleanupWrite()
+      await Promise.all([first, second])
+      expect(firstSettled).toBe(true)
+      expect(secondSettled).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('does not resurrect released observer state when a stale leave-grace timer fires', async () => {
     vi.useFakeTimers()
     try {

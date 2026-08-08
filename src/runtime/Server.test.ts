@@ -3019,6 +3019,57 @@ describe('RuntimeServer history', () => {
     await vi.waitFor(() => expect(started).toEqual(['old-a', 'new-b']))
   })
 
+  it('keeps a grace-retained committed binding untrusted across a prepared rebind and its rollback', async () => {
+    const { fake, server, roomId } = await setup()
+    fake.receive(roomId, 'peer-b', session({ id: 'user-b', name: 'User B', avatar: '' }))
+    await settle()
+    // B departs: the committed binding is retained only by the leave grace.
+    fake.peerLeave(roomId, 'peer-b')
+    await settle()
+    // A local reconnect enters its prepared phase; its SESSION publication is held.
+    fake.plantPeer(roomId, 'remote-peer')
+    fake.makeNotReady()
+    fake.hangSendsTo(roomId)
+    const chatBroadcastStarted = fake.waitForSendAttempt(roomId)
+    const reconnect = server.reconnectDomain({ domain: DOMAIN })
+    await fake.waitForJoinCalls(4)
+    fake.open()
+    await expect(chatBroadcastStarted).resolves.toMatchObject({ roomId, to: ['remote-peer'] })
+    // B's valid same-presence SESSION arrives during the prepared phase.
+    fake.receive(roomId, 'peer-b', session({ id: 'user-b', name: 'User B', avatar: '' }))
+    await settle()
+    // A fresh TEXT from B's source before the commit is NOT admitted (attempt-owned until commit).
+    fake.receive(roomId, 'peer-b', { ...text('pre-commit-live'), userId: 'user-b' })
+    await settle()
+    expect(await server.replayInbound({ domain: DOMAIN, after: 0 })).toEqual([])
+    // The prepared attempt is superseded (rolled back): the committed deadline is preserved, so
+    // the retained committed binding stays untrusted after the rollback too.
+    const replacement = server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
+    await expect(reconnect).resolves.toBeNull()
+    await settle()
+    fake.receive(roomId, 'peer-b', { ...text('post-rollback-live'), userId: 'user-b' })
+    await settle()
+    expect(await server.replayInbound({ domain: DOMAIN, after: 0 })).toEqual([])
+    fake.releaseSends()
+    const snapshot = await replacement
+    if (!snapshot) throw new Error('Join was cancelled')
+    // After the replacement commit the rebind is trusted.
+    fake.receive(roomId, 'peer-b', { ...text('post-commit-live'), userId: 'user-b' })
+    await settle()
+    expect((await server.replayInbound({ domain: DOMAIN, after: 0 })).map((item) => item.record.message.id)).toEqual([
+      'post-commit-live'
+    ])
+  })
+
+  it('treats a repeated public leave of an already-released domain as idempotent', async () => {
+    const { server } = await setup()
+    await server.leaveChatRoom({ domain: DOMAIN })
+    await settle()
+    // A second public leave of the absent domain settles immediately (no leaked subscription).
+    await expect(server.leaveChatRoom({ domain: DOMAIN })).resolves.toBeUndefined()
+    await settle()
+  })
+
   it('drops live messages from a source retained only by the leave grace until a valid rebind', async () => {
     const { fake, server, roomId } = await setup()
     fake.receive(roomId, 'peer-0', session({ id: 'user-0', name: 'User 0', avatar: '' }))

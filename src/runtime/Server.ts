@@ -286,8 +286,21 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       store.send(command)
     })
 
-  const completeInterruptedRelease = (domain: string): Promise<void> =>
-    new Promise<void>((resolve, reject) => {
+  /** One shared in-flight settlement per domain: overlapping release requests share it. */
+  const inFlightReleases = new Map<string, Promise<void>>()
+
+  const completeInterruptedRelease = (domain: string): Promise<void> => {
+    // Idempotent completed release: no runtime, no join attempt, and no current fence.
+    if (
+      !store.query(sessionDomain.query.DomainQuery(domain)) &&
+      !store.query(connectionDomain.query.AttemptsQuery()).some((item) => item.domain === domain) &&
+      !store.query(sessionDomain.query.ReleasingDomainQuery(domain))
+    ) {
+      return Promise.resolve()
+    }
+    const inFlight = inFlightReleases.get(domain)
+    if (inFlight) return inFlight
+    const task = new Promise<void>((resolve, reject) => {
       const success = store.subscribeEvent(connectionDomain.event.ConnectionLeftEvent, (event) => {
         if (event.domain !== domain) return
         success.unsubscribe()
@@ -302,6 +315,14 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       })
       store.send(connectionDomain.command.LeaveDomainCommand(domain))
     })
+    inFlightReleases.set(domain, task)
+    task
+      .catch(() => {})
+      .finally(() => {
+        inFlightReleases.delete(domain)
+      })
+    return task
+  }
 
   const server: RuntimeServer = {
     attachPage: async (payload) => {
