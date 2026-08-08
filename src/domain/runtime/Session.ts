@@ -166,6 +166,23 @@ export const observeHlc = (current: HLC, remote: HLC, now: number): HLC | null =
   return Number.isSafeInteger(counter) ? { timestamp, counter } : null
 }
 
+/** The source's CURRENT binding: the first entry not retained by a pending-leave record. */
+const currentBindingForSource = (
+  runtime: SessionDomainState,
+  sourcePeerId: string,
+  pendingLeaves: PendingLeave[]
+): SessionBinding | undefined =>
+  runtime.sessions.find(
+    (item) =>
+      item.sourcePeerId === sourcePeerId &&
+      !pendingLeaves.some(
+        (leave) =>
+          leave.domain === runtime.domain &&
+          leave.sourcePeerId === item.sourcePeerId &&
+          leave.presenceId === item.presenceId
+      )
+  )
+
 const projectRuntimeSession = ({ presenceId: _presenceId, ...session }: SessionBinding): RuntimeSession => session
 const snapshot = (runtime: SessionDomainState): RuntimeSessionSnapshot => ({
   localSession: { sessionId: runtime.sessionId, user: runtime.user, joinedAt: runtime.joinedAt },
@@ -252,11 +269,6 @@ const SessionDomain = Remesh.domain({
       name: 'Session.PreparedSessionQuery',
       impl: ({ get }, attemptId: string) =>
         get(PreparedSessionsState()).find((item) => item.attemptId === attemptId) ?? null
-    })
-    const PreparedRebindCountQuery = domain.query({
-      name: 'Session.PreparedRebindCountQuery',
-      impl: ({ get }, attemptId: string) =>
-        get(PreparedSessionsState()).find((item) => item.attemptId === attemptId)?.reboundBindings.length ?? 0
     })
     const PresenceDomainQuery = domain.query({
       name: 'Session.PresenceDomainQuery',
@@ -1077,9 +1089,7 @@ const SessionDomain = Remesh.domain({
           observed?.status === 'ended' ||
           (observed && (observed.user.id !== message.user.id || observed.joinedAt !== message.joinedAt)) ||
           (current?.sessionId === message.sessionId &&
-            (current.presenceId !== message.presenceId ||
-              current.user.id !== message.user.id ||
-              current.joinedAt !== message.joinedAt))
+            (current.user.id !== message.user.id || current.joinedAt !== message.joinedAt))
         ) {
           return wireDomain.command.DropProtocolCommand({
             sourcePeerId: payload.sourcePeerId,
@@ -1088,10 +1098,6 @@ const SessionDomain = Remesh.domain({
         }
 
         let nextObservers = observers
-        if (current && current.presenceId !== message.presenceId) {
-          const previous = nextObservers.find((item) => item.presenceId === current.presenceId)
-          if (previous) nextObservers = replaceObservation(nextObservers, { ...previous, status: 'ended' })
-        }
         const session: SessionBinding = {
           sourcePeerId: payload.sourcePeerId,
           sessionId: message.sessionId,
@@ -1113,9 +1119,11 @@ const SessionDomain = Remesh.domain({
           (item) => item.domain === runtime.domain && item.presenceId === message.presenceId
         )
         // In a provisional attempt the source owns one slot (the latest SESSION wins, so a
-        // same-source presence switch replaces the prepared binding); in the committed runtime a
-        // source may legally carry a current presence plus a different grace-preserved one, so
-        // the replacement is keyed by the exact (source, presence) current slot.
+        // same-source presence switch replaces the prepared binding). In the committed runtime a
+        // source may legally carry a current presence plus a different grace-preserved one: the
+        // exact (source, presence) slot is replaced, and any OTHER same-source generation is
+        // retained only when a pending-leave record preserves it (an unprotected historical
+        // presence must not keep live/History authority after a valid source switch).
         const replaceKey = prepared
           ? (item: SessionBinding) => item.sourcePeerId === payload.sourcePeerId
           : (item: SessionBinding) =>
@@ -1125,6 +1133,14 @@ const SessionDomain = Remesh.domain({
           sessions: replaceBy(
             runtime.sessions
               .map((item) => (item.presenceId === message.presenceId ? { ...item, user: message.user } : item))
+              .filter((item) => {
+                if (!(item.sourcePeerId === payload.sourcePeerId && item.presenceId !== message.presenceId)) {
+                  return true
+                }
+                return pendingLeaves.some(
+                  (leave) => leave.domain === runtime.domain && leave.presenceId === item.presenceId
+                )
+              })
               .filter(
                 (item) =>
                   !(
@@ -1242,20 +1258,11 @@ const SessionDomain = Remesh.domain({
         }
         const runtime = get(DomainsState()).find((item) => item.roomId === payload.roomId)
         if (!runtime) return null
-        const session = runtime.sessions.find((item) => item.sourcePeerId === payload.sourcePeerId)
-        // A source retained only for the pending-leave grace is not current physical authority:
-        // only a valid same-presence SESSION rebind restores it (a fresh presence stays trusted).
-        const underPendingLeave = session
-          ? get(PendingLeavesState()).some(
-              (item) =>
-                item.domain === runtime.domain &&
-                item.sourcePeerId === payload.sourcePeerId &&
-                item.presenceId === session.presenceId
-            )
-          : false
-        if (payload.message.id === 'ghost-after-presence-switch') {
-        }
-        if (!session || underPendingLeave) {
+        // The source's CURRENT binding: a grace-retained generation is not current physical
+        // authority, so live admission resolves the first non-pending entry (e.g. current C on
+        // a reused source carrying grace-preserved B).
+        const session = currentBindingForSource(runtime, payload.sourcePeerId, get(PendingLeavesState()))
+        if (!session) {
           return wireDomain.command.DropProtocolCommand({
             sourcePeerId: payload.sourcePeerId,
             reason: 'message arrived before session binding'
@@ -1378,7 +1385,10 @@ const SessionDomain = Remesh.domain({
           ...(baselineAction ? [baselineAction] : [])
         ]
         if (!runtime) return cleanupActions.length > 0 ? cleanupActions : null
-        const session = runtime.sessions.find((item) => item.sourcePeerId === payload.sourcePeerId)
+        // Resolve the source's CURRENT binding: on a reused source carrying a grace-preserved
+        // older generation plus a current one, physical departure closes/arms the CURRENT
+        // generation's leave (the older deadline keeps running untouched).
+        const session = currentBindingForSource(runtime, payload.sourcePeerId, get(PendingLeavesState()))
         // Duplicate PeerLeave facts are idempotent and SHALL NOT restart or extend a deadline.
         if (!session) return cleanupActions.length > 0 ? cleanupActions : null
         const pending = get(PendingLeavesState())
@@ -1485,8 +1495,6 @@ const SessionDomain = Remesh.domain({
         const freedSources = removed
           .filter((item) => !nextRuntime.sessions.some((session) => session.sourcePeerId === item.sourcePeerId))
           .map((item) => item.sourcePeerId)
-        if (payload.presenceId === 'presence-user-b') {
-        }
         return [
           DomainsState().new(replaceBy(domains, (item) => item.domain === payload.domain, nextRuntime)),
           PresenceDomainsState().new(replaceBy(presenceDomains, (item) => item.domain === payload.domain, record)),
@@ -1616,7 +1624,6 @@ const SessionDomain = Remesh.domain({
     return {
       query: {
         HlcQuery,
-        PreparedRebindCountQuery,
         DomainsQuery,
         DomainQuery,
         PreparedSessionQuery,

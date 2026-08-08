@@ -729,11 +729,7 @@ const ConnectionDomain = Remesh.domain({
     domain.effect({
       name: 'Connection.BindingRemovedEffect',
       impl: ({ fromEvent }) =>
-        fromEvent(sessionDomain.event.BindingRemovedEvent).pipe(
-          map((event) => {
-            return historyDomain.command.RemovePeerCommand(event)
-          })
-        )
+        fromEvent(sessionDomain.event.BindingRemovedEvent).pipe(map(historyDomain.command.RemovePeerCommand))
     })
     domain.effect({
       name: 'Connection.CommittedSessionsEffect',

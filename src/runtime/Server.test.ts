@@ -3278,7 +3278,7 @@ describe('RuntimeServer history', () => {
     disposeServer(server)
   })
 
-  it('keeps the graced generation displayed when the rebound source switches to a different presence', async () => {
+  it('keeps the committed grace running when a prepared rebind source leaves again before commit', async () => {
     const { fake, server, roomId } = await setup()
     fake.receive(roomId, 'peer-b', session({ id: 'user-b', name: 'User B', avatar: '' }))
     await settle()
@@ -3317,6 +3317,66 @@ describe('RuntimeServer history', () => {
     expect((await server.replayInbound({ domain: DOMAIN, after: 0 })).map((item) => item.record.message.id)).toEqual([
       'post-current-rebind'
     ])
+  })
+
+  it('replaces the unprotected committed source binding on a direct same-source switch', async () => {
+    const { fake, server, roomId } = await setup()
+    fake.receive(roomId, 'peer-b', session({ id: 'user-b', name: 'User B', avatar: '' }))
+    await settle()
+    // A valid C SESSION from the SAME committed source, with NO pending leave protecting B.
+    fake.receive(roomId, 'peer-b', session({ id: 'user-c', name: 'User C', avatar: '' }))
+    await settle()
+    // The snapshot contains only C (stale unprotected B is replaced, not appended).
+    const after = (await server.getSnapshot()).domains[0].sessions.map((session) => session.user.id)
+    expect(after).toEqual(['user-c'])
+    // Stale B live is rejected; current C live is admitted.
+    fake.receive(roomId, 'peer-b', { ...text('stale-b-live'), userId: 'user-b' })
+    await settle()
+    expect(await server.replayInbound({ domain: DOMAIN, after: 0 })).toEqual([])
+    fake.receive(roomId, 'peer-b', { ...text('current-c-live'), userId: 'user-c' })
+    await settle()
+    expect((await server.replayInbound({ domain: DOMAIN, after: 0 })).map((item) => item.record.message.id)).toEqual([
+      'current-c-live'
+    ])
+    disposeServer(server)
+  })
+
+  it('admits current C live and arms C own leave on a direct [grace B, current C] source', async () => {
+    vi.useFakeTimers()
+    try {
+      const clock = new FakeClock()
+      const fake = createFakeTransport()
+      const server = createServer({ transport: fake.transport, clock, codec: jsonCodec })
+      await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
+      await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
+      const roomId = getChatRoomId(DOMAIN)
+      // B commits and departs: B's pending leave arms.
+      fake.receive(roomId, 'peer-b', session({ id: 'user-b', name: 'User B', avatar: '' }))
+      await settle()
+      fake.peerLeave(roomId, 'peer-b')
+      await settle()
+      // The SAME committed source directly receives current C.
+      fake.receive(roomId, 'peer-b', session({ id: 'user-c', name: 'User C', avatar: '' }))
+      await settle()
+      const afterSwitch = (await server.getSnapshot()).domains[0].sessions.map((session) => session.user.id)
+      expect(afterSwitch).toEqual(['user-b', 'user-c'])
+      // C's live traffic is admitted (the current binding resolves the non-pending C).
+      fake.receive(roomId, 'peer-b', { ...text('current-c-live'), userId: 'user-c' })
+      await settle()
+      expect((await server.replayInbound({ domain: DOMAIN, after: 0 })).map((item) => item.record.message.id)).toEqual([
+        'current-c-live'
+      ])
+      // The source leaves again: C's OWN leave arms; B's original deadline keeps running.
+      fake.peerLeave(roomId, 'peer-b')
+      await settle()
+      await vi.advanceTimersByTimeAsync(PENDING_LEAVE_GRACE_MS)
+      await vi.advanceTimersByTimeAsync(0)
+      const afterExpiry = (await server.getSnapshot()).domains[0].sessions.map((session) => session.user.id)
+      expect(afterExpiry).toEqual([])
+      disposeServer(server)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('keeps a grace-retained committed binding untrusted across an ordinary local replacement join', async () => {

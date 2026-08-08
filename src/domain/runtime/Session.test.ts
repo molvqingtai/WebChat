@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { Remesh } from 'remesh'
-import SessionDomain, { getChatRoomId } from './Session'
-import { MESSAGE_TYPE } from '@/protocol/ChatRoom'
+import SessionDomain from './Session'
 import { ClockExtern } from '@/domain/runtime/externs/Clock'
 import { IdentityExtern } from '@/domain/runtime/externs/Identity'
 import { PresenceStoreExtern } from '@/domain/runtime/externs/PresenceStore'
@@ -70,90 +69,6 @@ const setup = async () => {
   await new Promise((resolve) => setTimeout(resolve, 0))
   return { store, session }
 }
-
-describe('Session prepared rebind markers', () => {
-  it('deduplicates repeated same-presence prepared SESSION frames into one rebind marker', async () => {
-    const { store, session } = await setup()
-    const chatRoomId = getChatRoomId(DOMAIN)
-    const remoteSession = {
-      type: MESSAGE_TYPE.SESSION,
-      sessionId: 'session-b',
-      presenceId: 'presence-b',
-      joinedAt: 2,
-      user: { id: 'user-b', name: 'B', avatar: '' }
-    }
-    // A remote B commits, departs (pending armed), then a prepared attempt receives B's SESSION
-    // twice: the marker array must stay structurally deduplicated.
-    store.send(
-      session.command.ApplySessionMessageCommand({
-        roomId: chatRoomId,
-        sourcePeerId: 'peer-b',
-        message: remoteSession
-      })
-    )
-    store.send(session.command.PeerLeftCommand({ roomId: chatRoomId, sourcePeerId: 'peer-b' }))
-    store.send(
-      session.command.PrepareDomainCommand({
-        attemptId: 'attempt-2',
-        mode: 'join',
-        domain: DOMAIN,
-        user: USER,
-        site: { origin: DOMAIN }
-      })
-    )
-    store.send(
-      session.command.ApplySessionMessageCommand({
-        roomId: chatRoomId,
-        sourcePeerId: 'peer-b',
-        message: remoteSession
-      })
-    )
-    store.send(
-      session.command.ApplySessionMessageCommand({
-        roomId: chatRoomId,
-        sourcePeerId: 'peer-b',
-        message: remoteSession
-      })
-    )
-    expect(store.query(session.query.PreparedRebindCountQuery('attempt-2'))).toBe(1)
-  })
-})
-
-describe('Session prepared rebind markers', () => {
-  it('deduplicates repeated same-presence prepared SESSION frames into one rebind marker', async () => {
-    const { store, session } = await setup()
-    const roomId = getChatRoomId(DOMAIN)
-    const bSession = {
-      type: MESSAGE_TYPE.SESSION,
-      sessionId: 'session-b',
-      presenceId: 'presence-b',
-      joinedAt: 2,
-      user: { id: 'user-b', name: 'B', avatar: '' }
-    }
-    // B binds in the committed runtime, then its source departs (pending leave armed).
-    store.send(session.command.ApplySessionMessageCommand({ roomId, sourcePeerId: 'peer-b', message: bSession }))
-    await new Promise((resolve) => setTimeout(resolve, 0))
-    store.send(session.command.PeerLeftCommand({ roomId, sourcePeerId: 'peer-b' }))
-    await new Promise((resolve) => setTimeout(resolve, 0))
-    // A local join preparation seeds the committed sessions.
-    store.send(
-      session.command.PrepareDomainCommand({
-        attemptId: 'attempt-2',
-        mode: 'join',
-        domain: DOMAIN,
-        user: USER,
-        site: { origin: DOMAIN }
-      })
-    )
-    await new Promise((resolve) => setTimeout(resolve, 0))
-    // B's valid same-presence SESSION arrives twice in the prepared attempt: one logical marker.
-    store.send(session.command.ApplySessionMessageCommand({ roomId, sourcePeerId: 'peer-b', message: bSession }))
-    await new Promise((resolve) => setTimeout(resolve, 0))
-    store.send(session.command.ApplySessionMessageCommand({ roomId, sourcePeerId: 'peer-b', message: bSession }))
-    await new Promise((resolve) => setTimeout(resolve, 0))
-    expect(store.query(session.query.PreparedRebindCountQuery('attempt-2'))).toBe(1)
-  })
-})
 
 describe('Session allocation success events', () => {
   it('emits only the typed allocation event (zero generic successes) for a text allocation', async () => {
