@@ -148,7 +148,7 @@ const plainDataEqual = (left: unknown, right: unknown): boolean => {
   const leftKeys = Object.keys(leftRecord)
   const rightKeys = Object.keys(rightRecord)
   if (leftKeys.length !== rightKeys.length) return false
-  return leftKeys.every((key) => key in rightRecord && plainDataEqual(leftRecord[key], rightRecord[key]))
+  return leftKeys.every((key) => Object.hasOwn(rightRecord, key) && plainDataEqual(leftRecord[key], rightRecord[key]))
 }
 
 /**
@@ -170,8 +170,8 @@ const replayEqualExcludingRootReceivedAt = (left: unknown, right: unknown): bool
   const rightKeys = Object.keys(rightRecord).filter((key) => key !== 'receivedAt')
   if (leftKeys.length !== rightKeys.length) return false
   return (
-    leftKeys.every((key) => key in rightRecord && plainDataEqual(leftRecord[key], rightRecord[key])) &&
-    rightKeys.every((key) => key in leftRecord)
+    leftKeys.every((key) => Object.hasOwn(rightRecord, key) && plainDataEqual(leftRecord[key], rightRecord[key])) &&
+    rightKeys.every((key) => Object.hasOwn(leftRecord, key))
   )
 }
 

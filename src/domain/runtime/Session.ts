@@ -85,7 +85,17 @@ interface LiveRelease {
 
 export interface SessionOperationSucceeded {
   operationId: string
-  record?: ChatMessageRecord
+}
+
+/** Typed allocation-success payloads: the exact record variant is the boundary contract. */
+export interface TextMessageAllocatedEventPayload {
+  operationId: string
+  record: TextMessageRecord
+}
+
+export interface ReactionMessageAllocatedEventPayload {
+  operationId: string
+  record: ReactionMessageRecord
 }
 
 export interface SessionOperationFailed {
@@ -305,10 +315,10 @@ const SessionDomain = Remesh.domain({
     })
     // Typed allocation successes: the record variant is exact, so the Session-to-Server path
     // needs no value assertion below the public contract.
-    const TextMessageAllocatedEvent = domain.event<{ operationId: string; record: TextMessageRecord }>({
+    const TextMessageAllocatedEvent = domain.event<TextMessageAllocatedEventPayload>({
       name: 'Session.TextMessageAllocatedEvent'
     })
-    const ReactionMessageAllocatedEvent = domain.event<{ operationId: string; record: ReactionMessageRecord }>({
+    const ReactionMessageAllocatedEvent = domain.event<ReactionMessageAllocatedEventPayload>({
       name: 'Session.ReactionMessageAllocatedEvent'
     })
     const OperationFailedEvent = domain.event<SessionOperationFailed>({ name: 'Session.OperationFailedEvent' })
@@ -786,7 +796,7 @@ const SessionDomain = Remesh.domain({
         }
         return [
           HlcState().new(hlc),
-          OperationSucceededEvent({ operationId: payload.operationId, record }),
+          OperationSucceededEvent({ operationId: payload.operationId }),
           TextMessageAllocatedEvent({ operationId: payload.operationId, record })
         ]
       }
@@ -841,7 +851,7 @@ const SessionDomain = Remesh.domain({
         }
         return [
           HlcState().new(hlc),
-          OperationSucceededEvent({ operationId: payload.operationId, record }),
+          OperationSucceededEvent({ operationId: payload.operationId }),
           ReactionMessageAllocatedEvent({ operationId: payload.operationId, record })
         ]
       }

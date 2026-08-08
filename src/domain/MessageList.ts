@@ -12,28 +12,25 @@ const noticeAtSlot = (record: SystemNoticeRecord, slot: number): SystemNoticeRec
   return { ...record, id, notice: { ...record.notice, id } }
 }
 
-const isEquivalentNotice = (record: unknown, expected: SystemNoticeRecord): boolean => {
-  if (typeof record !== 'object' || record === null) return false
-  const value = record as {
-    type?: unknown
-    notice?: { type?: unknown; body?: unknown }
-    user?: { id?: unknown; name?: unknown; avatar?: unknown }
-  }
-  return (
-    value.type === MESSAGE_RECORD_TYPE.SYSTEM_NOTICE &&
-    value.notice?.type === expected.notice.type &&
-    value.notice?.body === expected.notice.body &&
-    value.user?.id === expected.user.id &&
-    value.user?.name === expected.user.name &&
-    value.user?.avatar === expected.user.avatar
-  )
-}
+const isEquivalentTypedNotice = (record: MessageRecord, expected: SystemNoticeRecord): boolean =>
+  record.type === MESSAGE_RECORD_TYPE.SYSTEM_NOTICE &&
+  record.notice.type === expected.notice.type &&
+  record.notice.body === expected.notice.body &&
+  record.user.id === expected.user.id &&
+  record.user.name === expected.user.name &&
+  record.user.avatar === expected.user.avatar
 
 const persistNotice = async (messageStore: MessageStore, record: SystemNoticeRecord) => {
   for (let slot = 0; ; slot += 1) {
     const candidate = noticeAtSlot(record, slot)
     const result = await messageStore.insert(candidate)
-    if (result.inserted || isEquivalentNotice(result.existing, candidate)) return
+    if (result.inserted) return
+    // The raw conflict occupant stays opaque (never cast or interpreted): the typed occupant
+    // is obtained only through the authorized local-load boundary; continue to the next slot
+    // if it is absent (a corrupt near-match row is dropped by that load parse).
+    const stored = await messageStore.query({ type: MESSAGE_RECORD_TYPE.SYSTEM_NOTICE })
+    const occupant = stored.find((item) => item.id === candidate.id)
+    if (occupant && isEquivalentTypedNotice(occupant, candidate)) return
   }
 }
 

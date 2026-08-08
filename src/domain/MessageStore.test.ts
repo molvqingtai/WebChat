@@ -126,6 +126,32 @@ describe.each(backends)('$name MessageStore contract', (backend) => {
     await expect(database.read(['conflicts'], (transaction) => transaction.count('conflicts'))).resolves.toBe(0)
   })
 
+  it('treats an own __proto__ nested key difference as a conflict (own-key membership)', async () => {
+    const { database, messageStore } = create(backend)
+    const first = textRecord('proto-id', 'first', 1)
+    // Seed a raw occupant whose nested message replaces the required own `body` key with an
+    // own enumerable `__proto__` key. The inherited prototype must not satisfy own-key
+    // membership (Object.hasOwn), so the typed incoming record is a conflict and the raw
+    // first row is retained.
+    const protoOccupant = { ...first, message: { ...first.message } } as unknown as Record<string, unknown>
+    const message = protoOccupant.message as Record<string, unknown>
+    delete message.body
+    Object.defineProperty(message, '__proto__', {
+      value: {},
+      enumerable: true,
+      writable: true,
+      configurable: true
+    })
+    await database.write(['records'], (transaction) => transaction.insert('records', first.id, protoOccupant))
+    const conflict = await messageStore.insert(first)
+    expect(conflict.inserted).toBe(false)
+    // The raw first row is retained unchanged and the conflict is recorded.
+    await expect(database.read(['records'], (transaction) => transaction.get('records', first.id))).resolves.toEqual(
+      protoOccupant
+    )
+    await expect(database.read(['conflicts'], (transaction) => transaction.count('conflicts'))).resolves.toBe(1)
+  })
+
   it('treats a nested receivedAt difference as a conflict (only the top-level field is excluded)', async () => {
     const { database, messageStore } = create(backend)
     const first = textRecord('nested-replay-id', 'first', 1)

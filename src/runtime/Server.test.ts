@@ -6,6 +6,7 @@ import type { UserInfo } from '@/domain/UserInfo'
 import type { WireCodec } from '@/protocol'
 import { MESSAGE_TYPE, type ChatRoomMessage, type ChatUser, type TextMessage, type WorldRoomMessage } from '@/protocol'
 import { MESSAGE_RECORD_TYPE, type ReactionMessageRecord, type TextMessageRecord } from '@/domain/Message'
+import type { ReactionMessageAllocatedEventPayload, TextMessageAllocatedEventPayload } from '@/domain/runtime/Session'
 import { createMessageStore } from '@/domain/MessageStore'
 import { createMemoryMessageDatabase } from '@/domain/impls/database/Memory'
 import type {
@@ -597,42 +598,31 @@ const registerHistoryProvider = (
 }
 
 /**
- * Compile-time negative fixture (guarded by the tsc gate): the allocation results are exact.
- * - A reaction allocation result cannot satisfy a text allocation (`@ts-expect-error` is
- *   consumed only while the wrong-variant assignment type-errors).
- * - A missing allocation record cannot satisfy the exact allocation promise.
+ * Compile-time negative fixture at the typed Session allocation-event boundary (guarded by the
+ * tsc gate): the payload types are exact, so a reaction payload cannot satisfy a text
+ * allocation payload and a missing record is rejected. If the events ever regressed to the
+ * generic optional record, the directives would go unused and tsc would fail.
  */
-const allocationTypeFixture = (server: Pick<RuntimeServer, 'allocateTextMessage' | 'allocateReactionMessage'>) => {
-  void (async () => {
-    const payload = { domain: 'fixture', targetId: 'target-1', body: 'fixture', mentions: [] }
-    const text: TextMessageRecord = await server.allocateTextMessage(payload)
-    const reaction: ReactionMessageRecord = await server.allocateReactionMessage({
-      domain: 'fixture',
-      targetId: 'target-1',
-      reaction: 'like',
-      active: true
-    })
-    void text
-    void reaction
-    // @ts-expect-error — a reaction allocation result is not a text allocation result
-    const wrongVariant: TextMessageRecord = await server.allocateReactionMessage({
-      domain: 'fixture',
-      targetId: 'target-1',
-      reaction: 'like',
-      active: true
-    })
-    void wrongVariant
-    // A missing allocation record cannot satisfy the exact allocation promise: the widened
-    // optional promise is not assignable back to the exact promise (consumes @ts-expect-error
-    // only while the allocation record stays non-optional).
-    const optionalAllocation: Promise<TextMessageRecord | undefined> = server.allocateTextMessage(payload)
-    // @ts-expect-error — a missing allocation record is rejected by the exact promise type
-    const exactAllocation: Promise<TextMessageRecord> = optionalAllocation
-    void exactAllocation
-  })()
+const sessionAllocationEventFixture = () => {
+  const textPayload: TextMessageAllocatedEventPayload = {
+    operationId: 'fixture',
+    record: {} as TextMessageRecord
+  }
+  const reactionPayload: ReactionMessageAllocatedEventPayload = {
+    operationId: 'fixture',
+    record: {} as ReactionMessageRecord
+  }
+  // @ts-expect-error — a reaction allocation payload is not a text allocation payload
+  const wrongVariant: TextMessageAllocatedEventPayload = { operationId: 'fixture', record: {} as ReactionMessageRecord }
+  // @ts-expect-error — the typed allocation payload requires a record
+  const missingRecord: TextMessageAllocatedEventPayload = { operationId: 'fixture' }
+  void textPayload
+  void reactionPayload
+  void wrongVariant
+  void missingRecord
 }
 
-void allocationTypeFixture
+void sessionAllocationEventFixture
 
 describe('RuntimeServer lifecycle', () => {
   it('returns the committed local snapshot without awaiting active Presence persistence', async () => {

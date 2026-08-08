@@ -123,19 +123,28 @@ describe('MessageList Database-backed pipeline', () => {
     harness.store.discardDomain(harness.action)
   })
 
-  it('survives a corrupt raw same-key occupant without a typed value escaping', async () => {
+  it('survives a near-match corrupt raw same-key occupant without a typed value escaping', async () => {
     const databaseName = `message-list-corrupt-${databaseId++}`
     const database = createMemoryMessageDatabase(databaseName)
     const seedStore = createMessageStore(database)
-    // An arbitrary raw value (not a typed record) occupies the raw notice id.
+    const notice = noticeRecord('notice:corrupt')
+    // A near-match raw value: every field a subset classifier would check matches the notice,
+    // plus an unknown extra key. The raw occupant must stay opaque — the fallback loop moves
+    // to the next slot and persists the valid notice there.
     await database.write(['records'], (transaction) =>
-      transaction.insert('records', 'notice:corrupt', { arbitrary: true, garbage: [1, 2, 3] })
+      transaction.insert('records', notice.id, {
+        type: MESSAGE_RECORD_TYPE.SYSTEM_NOTICE,
+        id: notice.id,
+        notice: { ...notice.notice },
+        user: notice.user,
+        receivedAt: notice.receivedAt,
+        unknownExtraKey: true
+      })
     )
     const harness = createHarness(databaseName)
     await settle()
-    const notice = noticeRecord('notice:corrupt')
-    // The fallback loop must not crash or misclassify the raw occupant: it moves to the next
-    // slot and persists the JOIN notice there.
+    // The fallback must not interpret the raw conflict result: it queries the typed occupant
+    // through the load boundary (which drops the corrupt row) and continues to the next slot.
     harness.store.send(harness.domain.command.PersistRecordCommand(notice))
     await settle()
     await settle()
@@ -145,6 +154,8 @@ describe('MessageList Database-backed pipeline', () => {
         record.type === MESSAGE_RECORD_TYPE.SYSTEM_NOTICE && record.notice.type === NOTICE_TYPE.JOIN
     )
     expect(joinNotices).toHaveLength(1)
+    expect(joinNotices[0]?.id).not.toBe(notice.id)
+    expect(records.some((record) => record.id === notice.id)).toBe(false)
     harness.errorSubscription.unsubscribe()
     harness.domainSubscription.unsubscribe()
     harness.store.discardDomain(harness.action)

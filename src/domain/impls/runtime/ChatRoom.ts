@@ -135,20 +135,11 @@ const selfJoinNotice = (session: Pick<RuntimeSession, 'user' | 'joinedAt'>, slot
   }
 }
 
-const isSelfJoinNotice = (record: unknown, session: Pick<RuntimeSession, 'user' | 'joinedAt'>): boolean => {
-  if (typeof record !== 'object' || record === null) return false
-  const value = record as {
-    type?: unknown
-    notice?: { type?: unknown; hlc?: { timestamp?: unknown } }
-    user?: { id?: unknown }
-  }
-  return (
-    value.type === MESSAGE_RECORD_TYPE.SYSTEM_NOTICE &&
-    value.notice?.type === NOTICE_TYPE.JOIN &&
-    value.user?.id === session.user.id &&
-    value.notice?.hlc?.timestamp === session.joinedAt
-  )
-}
+const isTypedSelfJoinNotice = (record: MessageRecord, session: Pick<RuntimeSession, 'user' | 'joinedAt'>): boolean =>
+  record.type === MESSAGE_RECORD_TYPE.SYSTEM_NOTICE &&
+  record.notice.type === NOTICE_TYPE.JOIN &&
+  record.user.id === session.user.id &&
+  record.notice.hlc.timestamp === session.joinedAt
 
 const persistSelfJoinNotice = async (
   messageStore: RuntimeMessageStore,
@@ -157,8 +148,14 @@ const persistSelfJoinNotice = async (
 ): Promise<void> => {
   for (let slot = 0; ; slot += 1) {
     signal.throwIfAborted()
-    const result = await raceWithSignal(messageStore.insert(selfJoinNotice(session, slot), { signal }), signal)
-    if (result.inserted || isSelfJoinNotice(result.existing, session)) return
+    const candidate = selfJoinNotice(session, slot)
+    const result = await raceWithSignal(messageStore.insert(candidate, { signal }), signal)
+    if (result.inserted) return
+    // The raw conflict occupant stays opaque: the typed occupant is obtained only through the
+    // authorized local-load boundary; continue to the next slot if it is absent.
+    const stored = await messageStore.query({ type: MESSAGE_RECORD_TYPE.SYSTEM_NOTICE, signal })
+    const occupant = stored.find((item) => item.id === candidate.id)
+    if (occupant && isTypedSelfJoinNotice(occupant, session)) return
   }
 }
 
