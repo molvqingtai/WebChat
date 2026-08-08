@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { Remesh } from 'remesh'
-import SessionDomain from './Session'
+import SessionDomain, { getChatRoomId } from './Session'
+import WireDomain from './Wire'
+import { MESSAGE_TYPE } from '@/protocol/ChatRoom'
 import { ClockExtern } from '@/domain/runtime/externs/Clock'
 import { IdentityExtern } from '@/domain/runtime/externs/Identity'
 import { PresenceStoreExtern } from '@/domain/runtime/externs/PresenceStore'
@@ -18,6 +20,7 @@ const jsonCodec = {
 }
 
 const setup = async () => {
+  let messageListener: ((roomId: string, sourcePeerId: string, rawPayload: string) => void) | null = null
   const store = Remesh.store({
     externs: [
       ClockExtern.impl({ now: () => 1_000_000 }),
@@ -32,7 +35,12 @@ const setup = async () => {
         leave: () => {},
         peers: () => [],
         send: async () => {},
-        onMessage: () => () => {},
+        onMessage: (callback) => {
+          messageListener = callback
+          return () => {
+            messageListener = null
+          }
+        },
         onPeerJoin: () => () => {},
         onPeerLeave: () => () => {},
         onRoomClose: () => () => {},
@@ -43,9 +51,13 @@ const setup = async () => {
       PagePortExtern.impl(new PagePort())
     ]
   })
+  const wireAction = WireDomain()
   const sessionAction = SessionDomain()
+  const wire = store.getDomain(wireAction)
   const session = store.getDomain(sessionAction)
+  store.subscribeDomain(wireAction)
   store.subscribeDomain(sessionAction)
+  store.igniteDomain(wireAction)
   store.igniteDomain(sessionAction)
   // A committed runtime is required by the allocation commands.
   store.send(
@@ -66,9 +78,53 @@ const setup = async () => {
     })
   )
   store.send(session.command.CommitPreparedCommand('attempt-1'))
+  store.send(wire.command.JoinRoomsCommand({ requestId: 'join-1', roomIds: [getChatRoomId(DOMAIN)] }))
   await new Promise((resolve) => setTimeout(resolve, 0))
-  return { store, session }
+  return {
+    store,
+    session,
+    receive: (roomId: string, sourcePeerId: string, message: unknown) => {
+      messageListener?.(roomId, sourcePeerId, JSON.stringify(message))
+    }
+  }
 }
+
+describe('Session prepared rebind markers (Wire boundary)', () => {
+  it('deduplicates repeated same-presence prepared SESSION frames into one structural rebind marker', async () => {
+    const { store, session, receive } = await setup()
+    const roomId = getChatRoomId(DOMAIN)
+    const remoteSession = {
+      type: MESSAGE_TYPE.SESSION,
+      sessionId: 'session-b',
+      presenceId: 'presence-b',
+      joinedAt: 2,
+      user: { id: 'user-b', name: 'B', avatar: '' }
+    }
+    // B binds through the real Wire boundary, then its source departs (pending armed).
+    receive(roomId, 'peer-b', remoteSession)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    store.send(session.command.PeerLeftCommand({ roomId, sourcePeerId: 'peer-b' }))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    // A prepared attempt receives B's SESSION twice through the Wire boundary.
+    store.send(
+      session.command.PrepareDomainCommand({
+        attemptId: 'attempt-2',
+        mode: 'join',
+        domain: DOMAIN,
+        user: USER,
+        site: { origin: DOMAIN }
+      })
+    )
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    receive(roomId, 'peer-b', remoteSession)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    receive(roomId, 'peer-b', remoteSession)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    // One logical structural marker (a reference-identity implementation would store two).
+    const prepared = store.query(session.query.PreparedSessionQuery('attempt-2'))
+    expect(prepared?.reboundBindings).toHaveLength(1)
+  })
+})
 
 describe('Session allocation success events', () => {
   it('emits only the typed allocation event (zero generic successes) for a text allocation', async () => {

@@ -3341,6 +3341,69 @@ describe('RuntimeServer history', () => {
     disposeServer(server)
   })
 
+  it('emits a replacement lifecycle (not a second join) for a changed-user direct source switch', async () => {
+    const { fake, server, roomId } = await setup()
+    const events: string[] = []
+    await server.onSessionEvent({ pageId: 'page-a' }, (event) => {
+      events.push(event.type)
+    })
+    fake.receive(roomId, 'peer-b', session({ id: 'user-b', name: 'User B', avatar: '' }))
+    await settle()
+    // Direct changed-user switch on the same committed source: the displaced B observation is
+    // ended and the lifecycle is a replacement, not a second join.
+    fake.receive(roomId, 'peer-b', session({ id: 'user-c', name: 'User C', avatar: '' }))
+    await settle()
+    expect(events.filter((type) => type === 'join' || type === 'replace')).toEqual(['join', 'replace'])
+    const after = (await server.getSnapshot()).domains[0].sessions.map((session) => session.user.id)
+    expect(after).toEqual(['user-c'])
+    disposeServer(server)
+  })
+
+  it('emits exactly one final leave when the replaced same-user generation itself departs and expires', async () => {
+    vi.useFakeTimers()
+    try {
+      const clock = new FakeClock()
+      const fake = createFakeTransport()
+      const server = createServer({ transport: fake.transport, clock, codec: jsonCodec })
+      await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
+      await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
+      const roomId = getChatRoomId(DOMAIN)
+      const events: string[] = []
+      await server.onSessionEvent({ pageId: 'page-a' }, (event) => {
+        events.push(event.type)
+      })
+      // B and C are two distinct generations of the SAME user on one source.
+      fake.receive(roomId, 'peer-b', {
+        type: MESSAGE_TYPE.SESSION,
+        sessionId: 'session-b',
+        presenceId: 'presence-same-b',
+        joinedAt: NOW + 1,
+        user: { id: 'same-user', name: 'Same', avatar: '' }
+      })
+      await settle()
+      fake.receive(roomId, 'peer-b', {
+        type: MESSAGE_TYPE.SESSION,
+        sessionId: 'session-c',
+        presenceId: 'presence-same-c',
+        joinedAt: NOW + 2,
+        user: { id: 'same-user', name: 'Same', avatar: '' }
+      })
+      await settle()
+      // C's real PeerLeave arms C's own deadline; the displaced B observation is ended, so the
+      // expiry emits exactly one final leave (no phantom active presence suppresses it).
+      fake.peerLeave(roomId, 'peer-b')
+      await settle()
+      await vi.advanceTimersByTimeAsync(PENDING_LEAVE_GRACE_MS)
+      await vi.advanceTimersByTimeAsync(0)
+      const after = (await server.getSnapshot()).domains[0].sessions.map((session) => session.user.id)
+      expect(after).toEqual([])
+      expect(events.filter((type) => type === 'leave')).toHaveLength(1)
+      disposeServer(server)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('admits current C live and arms C own leave on a direct [grace B, current C] source', async () => {
     vi.useFakeTimers()
     try {

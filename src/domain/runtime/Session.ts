@@ -1081,6 +1081,7 @@ const SessionDomain = Remesh.domain({
         const current = runtime.sessions.find(
           (item) => item.sourcePeerId === payload.sourcePeerId && item.presenceId === message.presenceId
         )
+        const pendingLeaves = get(PendingLeavesState())
         const presenceDomains = get(PresenceDomainsState())
         const persisted = presenceDomains.find((item) => item.domain === runtime.domain)
         const observers = prepared?.observers ?? persisted?.observers ?? []
@@ -1097,7 +1098,22 @@ const SessionDomain = Remesh.domain({
           })
         }
 
+        // The displaced source-current: the source's previous NON-pending binding that is not
+        // the incoming generation. It is replaced by the new SESSION: its observation is marked
+        // ended (so no phantom active presence suppresses the final leave) and it becomes the
+        // `previous` side of a replacement lifecycle. A pending-protected generation is never
+        // displaced by this rule.
+        const displaced = runtime.sessions.find(
+          (item) =>
+            item.sourcePeerId === payload.sourcePeerId &&
+            item.presenceId !== message.presenceId &&
+            !pendingLeaves.some((leave) => leave.domain === runtime.domain && leave.presenceId === item.presenceId)
+        )
         let nextObservers = observers
+        if (displaced) {
+          const previous = nextObservers.find((item) => item.presenceId === displaced.presenceId)
+          if (previous) nextObservers = replaceObservation(nextObservers, { ...previous, status: 'ended' })
+        }
         const session: SessionBinding = {
           sourcePeerId: payload.sourcePeerId,
           sessionId: message.sessionId,
@@ -1114,7 +1130,6 @@ const SessionDomain = Remesh.domain({
         })
         // A valid SESSION for a presence under a pending-leave deadline cancels the grace and
         // removes the departed source's retained entry (the fresh source entry replaces it).
-        const pendingLeaves = get(PendingLeavesState())
         const pendingLeave = pendingLeaves.find(
           (item) => item.domain === runtime.domain && item.presenceId === message.presenceId
         )
@@ -1153,10 +1168,6 @@ const SessionDomain = Remesh.domain({
             session
           )
         }
-        // Cancellation is attempt-owned: a SESSION received during a provisional local attempt
-        // stays attempt-owned and invisible until commit. The committed deadline keeps governing
-        // the committed binding; this attempt records the exact rebind it owns, and only the
-        // atomic commit of THIS attempt may cancel it (rollback/supersession transfers nothing).
         if (prepared) {
           const binding = { presenceId: message.presenceId, sourcePeerId: payload.sourcePeerId }
           const reboundBindings = pendingLeave
@@ -1205,14 +1216,14 @@ const SessionDomain = Remesh.domain({
         const publicSession = projectRuntimeSession(session)
         // Preparation peers and known generations are membership convergence; only logical zero-to-one is a live join.
         const sessionEvent: RuntimeSessionEvent =
-          !isLaterLogicalJoin || wasLogicallyActive || (current?.user.id === message.user.id && Boolean(current))
+          !isLaterLogicalJoin || wasLogicallyActive || (displaced?.user.id === message.user.id && Boolean(displaced))
             ? { type: 'snapshot', domain: runtime.domain, snapshot: sessionSnapshot, provenance: 'refresh' }
-            : current
+            : displaced
               ? {
                   type: 'replace',
                   domain: runtime.domain,
                   snapshot: sessionSnapshot,
-                  previous: projectRuntimeSession(current),
+                  previous: projectRuntimeSession(displaced),
                   session: publicSession,
                   occurredAt: clock.now(),
                   provenance: 'live'
@@ -1646,7 +1657,6 @@ const SessionDomain = Remesh.domain({
         AllocateTextMessageCommand,
         AllocateReactionMessageCommand,
         SendChatMessageCommand,
-        ApplySessionMessageCommand,
         UpdateHlcCommand,
         PeerJoinedCommand,
         PeerLeftCommand,
