@@ -142,6 +142,45 @@ const sendProviderRequest = (
   )
 }
 
+describe('HistoryDomain connection-binding lifecycle', () => {
+  it('domain release clears both directional bindings (mutation-sensitive)', async () => {
+    const { store, history, pagePort, receive } = await setup()
+    pagePort.provideHistory('page-a', DOMAIN, (event) => {
+      if (event.type === 'request') throw new Error('page-a broken')
+    })
+    // Provider direction: a synchronization binds, terminates, and its replay is inert.
+    sendProviderRequest(store, history, 'rel-a', 0, true)
+    await vi.waitFor(() => expect(store.query(history.query.ProviderAttemptsQuery())).toHaveLength(0))
+    sendProviderRequest(store, history, 'rel-a', 0, true)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(store.query(history.query.ProviderAttemptsQuery())).toHaveLength(0)
+    // Requester direction: start, complete through the real response input path, and verify the
+    // terminal start is blocked.
+    store.send(history.command.StartRequesterCommand({ domain: DOMAIN, sourcePeerId: 'peer-a' }))
+    const requester = store.query(history.query.RequesterAttemptsQuery()).find((item) => item.sourcePeerId === 'peer-a')
+    expect(requester).toBeDefined()
+    receive(ROOM_ID, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
+      syncId: requester!.syncId,
+      page: 0,
+      users: [],
+      messages: [],
+      done: true
+    })
+    await vi.waitFor(() => expect(store.query(history.query.RequesterAttemptsQuery())).toHaveLength(0))
+    store.send(history.command.StartRequesterCommand({ domain: DOMAIN, sourcePeerId: 'peer-a' }))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(store.query(history.query.RequesterAttemptsQuery())).toHaveLength(0)
+    // Domain release must clear BOTH directional bindings itself: only then can the same ids
+    // bind again and start fresh synchronization work (a stale terminal binding would block both).
+    store.send(history.command.ReleaseDomainCommand(DOMAIN))
+    sendProviderRequest(store, history, 'rel-a', 0, true)
+    await vi.waitFor(() => expect(store.query(history.query.ProviderAttemptsQuery())).toHaveLength(1))
+    store.send(history.command.StartRequesterCommand({ domain: DOMAIN, sourcePeerId: 'peer-a' }))
+    await vi.waitFor(() => expect(store.query(history.query.RequesterAttemptsQuery())).toHaveLength(1))
+  })
+})
+
 describe('HistoryDomain dead-page projection', () => {
   it('publishes DeadPagesEvent exactly once for an all-genuine-failure selection', async () => {
     const { store, history, pagePort } = await setup()
