@@ -1,7 +1,7 @@
 ## 1. Replace The Public History Protocol
 
-- [x] 1.1 Replace `HistoryCursor`, `HistoryRequestMessage`, and `HistoryResponseMessage` with the exact `HistoryMessagesRequest` and `HistoryMessagesResponse` declarations, strict schemas, exports, and Chat union.
-- [x] 1.2 Enforce continuous non-negative page values, exact response user references, 64KiB frame limits, 100-message response pages, opaque message-ID elements, and strict old-type/key rejection.
+- [x] 1.1 Replace `HistoryCursor`, `HistoryRequestMessage`, and `HistoryResponseMessage` with the exact `HistoryMessagesPull` and `HistoryMessagesPush` declarations, strict declarative schemas, exports, and Chat union.
+- [x] 1.2 Enforce declarative non-negative page values, 100-message Push pages, opaque message-ID elements, and strict old-type/key rejection; keep encoded/decompressed codec bounds separate and do not schema-validate user/message references.
 - [x] 1.3 Advance Chat and World room namespaces to v4, preserve non-History v3 payload bytes, and prove v1/v2/v3/v4 isolation with no fallback or dual publication.
 
 ## 2. Replace History Orchestration End To End
@@ -21,7 +21,7 @@
 
 ## 4. Replace Regression Coverage And Remove Residue
 
-- [x] 4.1 Replace protocol fixtures and tests with exact new structures, limits, author-reference completeness, opaque-ID aggregate bounds, old-shape rejection, v4 isolation, and unchanged non-History bytes.
+- [x] 4.1 Replace protocol fixtures and tests with exact new structures, declarative limits, opaque-ID aggregate bounds, old-shape rejection, v4 isolation, unchanged non-History bytes, and no callback-backed author-reference rejection.
 - [x] 4.2 Replace History runtime tests with both directional flows, fixed 180-day snapshots, exact filtering, empty phases, ordering/replay/caps, supplier cancellation, local send semantics, response serialization, exactly one synchronization per connection/direction, terminal same/different-ID rejection, domain-release fence cleanup, and an independent next-connection synchronization with no continued progress.
 - [x] 4.3 Prove live, multi-peer, and same-domain-page insert races; one activation per `syncId`; same-domain fan-out; new-page projection; terminal/cancellation dismissal; concurrent-owner isolation; and zero-insert silence through the real persistence boundary.
 - [x] 4.4 Delete old cursor/full-window implementation, tests, fixtures, names, room inputs, compatibility branches, body-request/ACK proposals, and behavior assertions rather than retaining them behind aliases or fallbacks.

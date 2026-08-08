@@ -9,13 +9,13 @@ The accepted boundary is narrower: this change covers only peer-protocol data ow
 **Goals:**
 
 - Establish one schema-owned definition graph for every public protocol data type.
-- Express every retained structural, resource, and cross-field protocol rule inside the complete schema pipeline.
+- Retain only protocol rules expressible through declarative Valibot primitives and combinators.
 - Give peer receive and local persistence load exclusive ownership of protocol parsing.
 - Remove duplicate protocol checks and partially validated values from every other path.
 
 **Non-Goals:**
 
-- Changing protocol fields, message types, v4 namespaces, canonical bytes, History behavior, persistence format, or UI.
+- Changing encoded protocol fields, wire variants/literals, v4 namespaces, canonical bytes, History behavior, persistence format, or UI; only the public History Request/Response symbols are renamed to Pull/Push.
 - Applying schema-first rules to extension page/content/background/offscreen control-plane messages.
 - Removing non-protocol authorization, ownership, lifecycle, queue, or scheduling decisions.
 - Adding a dependency, compatibility path, data migration, or user-facing validation feedback.
@@ -24,25 +24,29 @@ The accepted boundary is narrower: this change covers only peer-protocol data ow
 
 ### 1. The schema graph defines the public data graph
 
-`Session` owns the schemas for `ChatUser` and `ChatSession`; `ChatRoom` owns `HLC`, mention, SESSION/END, text, reaction, History, Chat-message, and closed Chat-room schemas; `WorldRoom` owns `ChatSite` and the complete World snapshot schema. Parent schemas compose exported child schemas rather than copying their fields into a separate type declaration.
+`Session` owns the schemas for `ChatUser` and `ChatSession`; `ChatRoom` owns `HLC`, mention, SESSION/END, text, reaction, History Pull/Push, Chat-message, and closed Chat-room schemas; `WorldRoom` owns `ChatSite` and the complete World snapshot schema. Parent schemas compose exported child schemas rather than copying their fields into a separate type declaration.
 
 Every public protocol data type is inferred from its owning schema output. This includes leaf values, variants, and unions. Constants may remain ordinary values, and `WireCodec`, `NativeWireCodec`, `WireCodecError`, and public limits remain ordinary non-message API declarations. Handwritten interfaces/unions, type assertions that manufacture schema output, and aliases duplicating a schema-owned structure are removed.
 
+The current History symbols are `HistoryMessagesPull`/`HistoryMessagesPullSchema` and `HistoryMessagesPush`/`HistoryMessagesPushSchema`. The old Request/Response symbols are deleted without aliases; the existing `history-messages-pull`/`history-messages-push` literals and encoded shapes do not change.
+
 Alternative rejected: retain interfaces as documentation and test them against schemas. That still leaves two editable facts and cannot prevent drift.
 
-### 2. Complete schemas own supported cross-field and contextual rules
+### 2. Protocol schemas contain no executable validation logic
 
-Whole-value byte limits, mention ranges relative to `body`, exact World origins, unique World sites, unique History users, History message-to-user references, and similar relationships are schema pipeline actions on the smallest complete value that owns all required fields. Reusable child schemas own only constraints they can decide independently.
+Protocol schemas use only declarative Valibot primitives and combinators such as strict objects, variants, literals, picklists, arrays, tuples, optionals, primitive types, and built-in length/value/integer actions. A pipeline remains declarative only when every member is a built-in declarative schema or action.
 
-The complete Chat schema is constructed with explicit receiver `now` so future-HLC rejection stays inside the schema without a hidden clock. Its inferred output remains the public Chat type. No `is*`, `check*`, or post-parse `parse*` helper may finish validation after schema parsing. If the installed schema API cannot express a rule, the rule and its validation test are deleted; a custom caller predicate is not an alternative.
+`v.check`, `v.partialCheck`, `v.rawCheck`, `v.custom`, `v.transform`, user-provided callbacks, and equivalent executable predicates or transforms are forbidden. The Chat and World schemas are static and receive no contextual `now`, clock, URL parser, byte counter, Set, reference map, or other JavaScript validation input. No `is*`, `check*`, schema factory, or post-parse helper may finish validation after parsing.
 
-Alternative rejected: perform a structural schema parse and then run semantic validators. That is the current split authority the change removes.
+Whole-value canonical JSON byte size, mention ranges relative to `body`, future HLC relative to receiver time, origin-only URL semantics, uniqueness, History user/message reference completeness, and local record identity relationships are therefore not validated. Their former callback tests are deleted. Structural keys, discriminants, primitive types, safe non-negative integer shape, field/array ceilings, and other rules directly expressible by declarative built-ins remain.
+
+Alternative rejected: hide a JavaScript callback inside `v.pipe` and call it schema-native. The callback is still handwritten validation and violates the pure-Schema boundary.
 
 ### 3. Only peer receive and local load parse protocol values
 
-At peer receive, Wire first uses trusted transport context to select the World or Chat protocol, supplies explicit `now` where required, and safe-parses the decoded `unknown` through that complete schema. Failure emits no typed message and reaches no Session, History, persistence, notification, unread, or page behavior. It creates no Toast.
+At peer receive, Wire first uses trusted transport context to select the static World or Chat protocol schema and safe-parses the decoded `unknown` once. Failure emits no typed message and reaches no Session, History, persistence, notification, unread, or page behavior. It creates no Toast.
 
-At local load, the local record schema composes the authoritative protocol child schema and all local-only record fields/relationships needed to accept one database item. Each unknown stored item is parsed once as it enters the typed query result. Failure omits the item from the returned result and every projection, with no Toast.
+At local load, the declarative local record schema composes the authoritative protocol child schema with its local-only structural fields. Each unknown stored item is parsed once as it enters the typed query result. Failure omits the item from the returned result and every projection, with no Toast. Database-key/message/user relationships that need a callback are not validated.
 
 Local producers, outbound send, persistence write, History supply, clock adoption, and downstream Session/History consumers trust their TypeScript inputs and do not parse or inspect message fields for protocol validity. Existing non-protocol identity authorization, operation ownership, lifecycle fencing, and bounded scheduling remain where they are.
 
@@ -60,15 +64,15 @@ Schema output for every accepted value remains structurally identical to the cur
 
 ## Risks / Trade-offs
 
-- [A schema action hides an old predicate inside a new name] -> Keep the action inside the exported owning schema pipeline, remove separately callable validation helpers, and prove callers use only complete schema parse results.
-- [A contextual Chat schema is rebuilt for each parse] -> Keep construction pure and limited to the two validation boundaries; correctness and explicit clock ownership take priority over caching a schema with hidden time.
+- [A callback is hidden inside a schema pipeline] -> Ban every callback/custom/transform API and add residue controls over the full protocol schema graph and local-load schema.
+- [An unsupported former rule is assumed to remain enforced] -> Name the removed byte, cross-field, time, URL, uniqueness, reference, and record-identity checks explicitly and delete their rejection tests.
 - [A locally produced invalid typed value reaches encode/send] -> This is intentional: producers do not validate protocol shape, and the receiving boundary is authoritative.
 - [A previously enforced rule is unsupported by the schema API] -> Remove the rule and its tests exactly as authorized; do not retain a fallback or imply the rule remains enforced.
 - [Manually corrupted local rows disappear from results] -> Discard before projection and preserve all valid rows; do not repair, coerce, migrate, or surface a Toast.
 
 ## Migration Plan
 
-1. Land the docs authority, schema/type refactor, two boundary integrations, duplicate-check deletion, and replacement tests on one requirement branch and Draft PR.
+1. Land the corrected docs authority, declarative schema/type refactor, History Pull/Push rename, two boundary integrations, duplicate-check deletion, and replacement tests on one requirement branch and Draft PR.
 2. Keep v4 wire namespaces, encoded values, and the database version unchanged; no compatibility or data migration step exists.
 3. Obtain fresh architecture-first review of the complete branch diff and verify all final gates on one exact.
 4. Roll back by reverting the complete requirement PR; no persisted-data conversion or cross-version bridge requires separate reversal.

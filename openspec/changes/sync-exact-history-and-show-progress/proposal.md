@@ -6,7 +6,7 @@ WebChat needs one current-only History design that exchanges an exact paged mess
 
 ## What Changes
 
-- **BREAKING** Replace `HistoryCursor`, `HistoryRequestMessage`, and `HistoryResponseMessage` with exactly two wire variants: paged `HistoryMessagesRequest` inventory pages and paged `HistoryMessagesResponse` missing-record pages.
+- **BREAKING** Replace `HistoryCursor`, `HistoryRequestMessage`, and `HistoryResponseMessage` with exactly two wire variants: paged `HistoryMessagesPull` inventory pages and paged `HistoryMessagesPush` missing-record pages.
 - Freeze the requester's eligible message-ID inventory for one directional `syncId`; after the complete inventory arrives, freeze the provider's eligible history snapshot and stream only records whose IDs are absent from that inventory.
 - Make request and response pages continuous, bounded, replay-safe, and current-connection-only. Establishing a connection and joining the room starts exactly one independent synchronization per direction. Success, cancellation, or failure is terminal for that connection; it never retries or resumes. A later connection starts a new synchronization with a fresh `syncId` and no prior progress.
 - Remove the old cursor/full-window History state machine, message types, behavior tests, and every fallback, compatibility, capability-negotiation, or dual-protocol path. Advance the isolated peer protocol generation so old and new History shapes never share a room namespace.
@@ -22,12 +22,12 @@ None.
 
 ### Modified Capabilities
 
-- `peer-wire-protocol`: Replace the public History wire shapes, schemas, limits, pagination rules, and protocol-generation boundary with the exact-ID inventory contract.
+- `peer-wire-protocol`: Replace the public History wire shapes, declarative schemas, limits, pagination rules, and protocol-generation boundary with the exact-ID inventory contract.
 - `webrtc-runtime`: Replace History orchestration end to end and bind one truthful, operation-owned loading Toast to actual insertion and local attempt completion.
 
 ## Impact
 
 - Affected protocol: public History types/schemas, the Chat wire union, protocol limits, codec fixtures, and current Chat/World room generation.
 - Affected Runtime/application behavior: History requester/provider state, local supplier projection, page delivery and persistence settlement, attempt cleanup, and same-domain History loading feedback.
-- Affected verification: strict wire rejection, inventory/difference pagination, fixed snapshots, replay/order/caps, one synchronization per connection and direction, terminal same/different-`syncId` rejection, independent next-connection recomputation, concurrent insertion races, per-sync Toast ownership, completion/cancellation dismissal, and deletion of the old full-window path.
+- Affected verification: declarative strict wire rejection, inventory/difference pagination, fixed snapshots, replay/order/caps, one synchronization per connection and direction, terminal same/different-`syncId` rejection, independent next-connection recomputation, concurrent insertion races, per-sync Toast ownership, completion/cancellation dismissal, and deletion of the old full-window path.
 - Unchanged: dependencies, durable record/database shape, live messages, Session/World semantics, HLC/LWW rules, Room transport contract, local delivery ACK infrastructure, notifications, unread attention, system notices, and remote delivery guarantees.

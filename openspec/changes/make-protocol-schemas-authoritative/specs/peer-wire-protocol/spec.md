@@ -2,9 +2,11 @@
 
 ### Requirement: Protocol schemas are the sole data and validation authority
 
-Every public peer-protocol data structure in `src/protocol` SHALL be defined schema-first. `ChatUser`, `ChatSession`, `HLC`, `MentionedUser`, `SessionMessage`, `SessionEndMessage`, `TextMessage`, `ReactionType`, `ReactionMessage`, `ChatMessage`, `HistoryMessagesRequest`, `HistoryMessagesResponse`, `ChatRoomMessage`, `ChatSite`, and `WorldRoomMessage` SHALL each be inferred from the output of its exported owning schema; no handwritten interface, structural type, duplicate union, compatibility DTO, or post-parse cast SHALL independently describe the same value.
+Every public peer-protocol data structure in `src/protocol` SHALL be defined schema-first. `ChatUser`, `ChatSession`, `HLC`, `MentionedUser`, `SessionMessage`, `SessionEndMessage`, `TextMessage`, `ReactionType`, `ReactionMessage`, `ChatMessage`, `HistoryMessagesPull`, `HistoryMessagesPush`, `ChatRoomMessage`, `ChatSite`, and `WorldRoomMessage` SHALL each be inferred from the output of its exported owning schema; no handwritten interface, structural type, duplicate union, compatibility DTO, or post-parse cast SHALL independently describe the same value.
 
-A complete Chat or World schema SHALL compose the exported child schemas and SHALL itself own every supported protocol constraint, including strict keys, discriminants, field limits, whole-value byte limits, mention ranges, HLC time, origin-only World sites, uniqueness, and History user references. Protocol validation SHALL use only schema parsing and schema-native composition/actions. No standalone boolean validator, post-parse predicate, caller-side property inspection, or partially validated protocol value SHALL add another validation stage. If the installed schema system cannot express a proposed protocol constraint, that constraint SHALL not be validated and SHALL not be reintroduced through a handwritten fallback.
+A complete Chat or World schema SHALL compose the exported child schemas and SHALL contain only declarative Valibot primitives and combinators. Strict keys and unions, literals, primitive types, safe non-negative integers, tuples, field ceilings, array ceilings, and other constraints directly expressible by built-in declarative schemas or actions SHALL remain in the owning schema. `v.check`, `v.partialCheck`, `v.rawCheck`, `v.custom`, `v.transform`, every user callback, and every equivalent executable predicate, transform, or contextual schema factory SHALL be absent from the complete schema graph.
+
+Whole-value canonical byte size, mention ranges relative to `body`, HLC time relative to receiver time, origin-only URL semantics, uniqueness, History user/message references, and every other rule that requires executable JavaScript SHALL not be validated and SHALL have no fallback. No standalone boolean validator, post-parse predicate, caller-side property inspection, or partially validated protocol value SHALL add another validation stage.
 
 The codec SHALL continue to perform only the fixed representation work required to turn a bounded Base64/deflate/UTF-8/JSON frame into `unknown` or encode a typed value. Codec representation and bounded-I/O failures SHALL NOT inspect decoded message properties and SHALL NOT become an alternative protocol-data validator.
 
@@ -13,15 +15,15 @@ The codec SHALL continue to perform only the fixed representation work required 
 - **WHEN** any exported protocol field, union member, or output shape changes
 - **THEN** the owning schema SHALL be the edited source and the exported TypeScript type SHALL change through schema inference, with no second handwritten declaration to update
 
-#### Scenario: Complete schema owns cross-field rules
+#### Scenario: Complete schema owns declarative rules
 
-- **WHEN** a Text message contains mention ranges, a World snapshot contains sites, or a History response contains users and messages
-- **THEN** the corresponding complete schema SHALL either accept or reject all structural, resource, uniqueness, range, and reference relationships in one parse result, without a later predicate
+- **WHEN** a Text message contains mentions, a World snapshot contains sites, or a History Push contains users and messages
+- **THEN** the corresponding complete schema SHALL accept or reject only its declarative structure, primitive values, strict keys/unions, tuples, and field/array ceilings, without executing a callback or later predicate
 
 #### Scenario: Unsupported validation is absent
 
-- **WHEN** the installed schema system cannot represent a proposed protocol constraint
-- **THEN** the implementation SHALL omit that validation and its tests rather than inspect the parsed value through a helper, caller branch, cast, or custom fallback outside the schema
+- **WHEN** a proposed rule requires whole-value serialization, cross-field comparison, receiver time, URL parsing, uniqueness tracking, reference lookup, or another user callback
+- **THEN** the implementation SHALL omit that validation and its rejection tests rather than inspect the value through a schema callback, helper, caller branch, cast, or custom fallback
 
 #### Scenario: Codec output remains unknown until schema parse
 
@@ -32,7 +34,7 @@ The codec SHALL continue to perform only the fixed representation work required 
 
 ### Requirement: Public protocol module is pure and explicitly bounded
 
-The code-level public module `src/protocol/index.ts` SHALL be the third-party-facing peer contract without introducing a package, publishing flow, or SDK. Its wire structures SHALL be exactly the Owner-frozen `ChatUser`, `ChatSession`, `HLC`, `MentionedUser`, `SessionMessage`, `SessionEndMessage`, `TextMessage`, `ReactionType`, `ReactionMessage`, `ChatMessage`, `HistoryMessagesRequest`, `HistoryMessagesResponse`, `ChatRoomMessage`, `ChatSite`, and `WorldRoomMessage` contracts. It SHALL export only their authoritative strict schemas, schema-inferred TypeScript types, public limits/constants, and the public codec surface (`WireCodec`, `NativeWireCodec` reference implementation, `WireCodecError`). It SHALL NOT export a standalone parse/check/boolean validator, handwritten duplicate message declaration, structural alias, compatibility DTO, or optional/open metadata bag. Supported schema validation SHALL cover closed-union and unknown-key rejection, field/resource limits, mention `ranges`, user/message size, origin-only and uniqueness rules, History response reference completeness, required SESSION `joinedAt`, and explicit-`now` HLC rules. The `NativeWireCodec` SHALL own only the fixed codec/security algorithm; the public protocol SHALL NOT export local persistence/UI models, projections, ordering implementations, Runtime lifecycle or page-host RPC contracts, WirePipeline queue/drop/apply/flush types, or application orchestration.
+The code-level public module `src/protocol/index.ts` SHALL be the third-party-facing peer contract without introducing a package, publishing flow, or SDK. Its wire structures SHALL be exactly the Owner-frozen `ChatUser`, `ChatSession`, `HLC`, `MentionedUser`, `SessionMessage`, `SessionEndMessage`, `TextMessage`, `ReactionType`, `ReactionMessage`, `ChatMessage`, `HistoryMessagesPull`, `HistoryMessagesPush`, `ChatRoomMessage`, `ChatSite`, and `WorldRoomMessage` contracts. It SHALL export only their authoritative static declarative schemas, schema-inferred TypeScript types, public limits/constants, and the public codec surface (`WireCodec`, `NativeWireCodec` reference implementation, `WireCodecError`). It SHALL NOT export a standalone parse/check/boolean validator, schema factory, handwritten duplicate message declaration, structural alias, compatibility DTO, or optional/open metadata bag. Declarative schema validation SHALL cover closed-union and unknown-key rejection, primitive and literal shape, field/array ceilings, tuples, required SESSION `joinedAt`, and safe non-negative integer fields. It SHALL NOT validate whole-value canonical byte size, mention/body relationships, future HLC relative to receiver time, origin-only URL semantics, uniqueness, or History user/message references. The `NativeWireCodec` SHALL own only the fixed codec/security algorithm; the public protocol SHALL NOT export local persistence/UI models, projections, ordering implementations, Runtime lifecycle or page-host RPC contracts, WirePipeline queue/drop/apply/flush types, or application orchestration.
 
 `src/protocol/**` SHALL NOT depend on `domain/runtime`, `service`, `app`, UI, storage, comctx, browser-extension APIs/globals (`chrome.*`/`browser.*`), DOM/window/document, host lifecycle APIs, or app configuration. The public `NativeWireCodec` MAY use the standard Web codec APIs it implements (`CompressionStream`, `DecompressionStream`, `Blob`, `ReadableStream`, `TextEncoder`, and `TextDecoder`) and exactly the two scoped `core-js` imports; no whole-package polyfill is permitted. Protocol-owned limits and pure byte utilities SHALL be defined within the protocol boundary. Runtime and Domain code SHALL depend on the public protocol one way; the protocol SHALL NOT import Runtime or Domain code.
 
@@ -83,14 +85,14 @@ interface ReactionMessage {
   active: boolean
 }
 type ChatMessage = TextMessage | ReactionMessage
-interface HistoryMessagesRequest {
+interface HistoryMessagesPull {
   type: 'history-messages-pull'
   syncId: string
   page: number
   messageIds: string[]
   done: boolean
 }
-interface HistoryMessagesResponse {
+interface HistoryMessagesPush {
   type: 'history-messages-push'
   syncId: string
   page: number
@@ -98,12 +100,7 @@ interface HistoryMessagesResponse {
   messages: ChatMessage[]
   done: boolean
 }
-type ChatRoomMessage =
-  | SessionMessage
-  | SessionEndMessage
-  | ChatMessage
-  | HistoryMessagesRequest
-  | HistoryMessagesResponse
+type ChatRoomMessage = SessionMessage | SessionEndMessage | ChatMessage | HistoryMessagesPull | HistoryMessagesPush
 interface ChatSite {
   origin: string
   title?: string
@@ -127,23 +124,23 @@ interface WorldRoomMessage extends ChatSession {
 
 ### Requirement: Wire messages are strict closed unions with limits
 
-The public protocol SHALL define authoritative closed schemas and pure limits. At peer receive, `WireDomain` SHALL select and parse exactly one complete schema using trusted transport context and MAY apply source-local operational policies after rejection, but it SHALL NOT compose a separate validator. Queue/drop/apply/flush scheduling, rate-limited diagnostics, reconnect behavior, page sequencing, attempt budgets, and delivery admission are not public protocol semantics.
+The public protocol SHALL define authoritative closed declarative schemas and pure limits. At peer receive, `WireDomain` SHALL select and parse exactly one static complete schema using trusted transport context and MAY apply source-local operational policies after rejection, but it SHALL NOT compose a separate validator. Queue/drop/apply/flush scheduling, rate-limited diagnostics, reconnect behavior, page sequencing, attempt budgets, and delivery admission are not public protocol semantics.
 
-Chat wire messages SHALL form a strict, closed discriminated union keyed by `type`; World wire payloads SHALL use one strict schema selected by trusted v4 `roomId` and SHALL NOT carry a payload `type`. The public protocol SHALL export and enforce these fixed limits: `MAX_WIRE_BYTES = 64KiB` for final encoded frames, `MAX_DECODED_JSON_BYTES = 256KiB` for streaming decompressed JSON before parse, `MAX_CHAT_EVENT_BYTES = 48KiB` for one canonical message, `MAX_USER_BYTES = 8KiB` for one `ChatUser` JSON value, and at most 100 messages in one History response page. Every string, array, nesting depth, and final encoded byte size SHALL have an explicit public limit except that each `messageIds[]` element remains an opaque string with no standalone length or format rule and is bounded only by the containing frame and Runtime attempt budgets. SESSION `joinedAt`, HLC timestamp, HLC counter, and History `page` SHALL be finite safe non-negative integers. Unknown types, unknown keys, forbidden envelope/context fields, missing or invalid required values, and schema-supported message limit violations SHALL fail the complete schema parse. Malformed/non-canonical Base64, invalid UTF-8/JSON/deflate, and encoded/decompressed frame bounds SHALL remain codec representation failures before message schema parsing.
+Chat wire messages SHALL form a strict, closed discriminated union keyed by `type`; World wire payloads SHALL use one strict schema selected by trusted v4 `roomId` and SHALL NOT carry a payload `type`. The codec SHALL enforce `MAX_WIRE_BYTES = 64KiB` for final encoded frames and `MAX_DECODED_JSON_BYTES = 256KiB` for streaming decompressed JSON before parse. Declarative schemas SHALL enforce explicit built-in field and array ceilings, including at most 100 messages in one History Push page. Each `messageIds[]` element SHALL remain an opaque string with no standalone length or format rule and SHALL be bounded only by the containing codec frame and Runtime attempt budgets. SESSION `joinedAt`, HLC timestamp, HLC counter, and History `page` SHALL be finite safe non-negative integers. Unknown types, unknown keys, forbidden envelope/context fields, missing or invalid required values, and declaratively expressible limit violations SHALL fail the complete schema parse. Whole-value `ChatUser`, `ChatMessage`, and History page canonical byte sizes SHALL not be computed or validated. Malformed/non-canonical Base64, invalid UTF-8/JSON/deflate, and encoded/decompressed frame bounds SHALL remain codec representation failures before message schema parsing.
 
 #### Scenario: Unknown or oversized message
 
-- **WHEN** a decoded value has an unknown type or violates a schema-owned message limit at peer receive or local persistence load
+- **WHEN** a decoded value has an unknown type or violates a declarative field or array limit at peer receive or local persistence load
 - **THEN** the complete schema parse SHALL fail before any Runtime application, without a second validator or partial output
 
 #### Scenario: Decompression and field resource limits
 
-- **WHEN** a frame exceeds the encoded/decompressed codec bounds, one `ChatUser` exceeds `MAX_USER_BYTES = 8KiB`, or one canonical `ChatMessage` exceeds `MAX_CHAT_EVENT_BYTES = 48KiB`
-- **THEN** the codec SHALL stop unsafe frame materialization while the complete message schema SHALL own the user/message limits; neither layer SHALL duplicate the other's checks
+- **WHEN** a frame exceeds an encoded/decompressed codec bound or a decoded value exceeds a declarative field or array ceiling
+- **THEN** the codec SHALL stop unsafe frame materialization or the static schema SHALL reject the declarative field/array violation; neither layer SHALL compute or validate canonical whole-value `ChatUser` or `ChatMessage` byte size
 
 #### Scenario: Opaque message IDs remain aggregate-bounded
 
-- **WHEN** a History request carries message IDs with any string content or individual length
+- **WHEN** a History Pull carries message IDs with any string content or individual length
 - **THEN** the schema SHALL apply no per-ID regex, NanoID-length rule, or independent string ceiling, while the complete request frame SHALL still satisfy the encoded/decompressed frame limits and Runtime SHALL still enforce its total inventory budgets
 
 #### Scenario: Redundant envelope fields
@@ -163,12 +160,12 @@ Chat wire messages SHALL form a strict, closed discriminated union keyed by `typ
 
 ### Requirement: HLC is strictly validated
 
-Hybrid Logical Clock values on wire `ChatMessage` values SHALL be finite non-negative safe integers for both timestamp and counter. Construction of the complete Chat schema SHALL receive the receiver's current time as an explicit `now` input; protocol code SHALL NOT call `Date.now()` or any hidden clock. An event whose HLC timestamp exceeds `now` by more than 5 minutes SHALL fail that complete schema parse. The protocol SHALL define the canonical total-ordering and last-writer-wins rule as composite `(hlc, id)`; comparison and clock adoption after an accepted parse belong to the application/page Domain/model layer, or a shared Domain/model module when both pages and Runtime consume them, and SHALL NOT revalidate the HLC.
+Hybrid Logical Clock values on wire `ChatMessage` values SHALL be finite non-negative safe integers for both timestamp and counter. The complete Chat schema SHALL be static and SHALL receive no receiver time or clock input. A structurally valid event SHALL NOT be rejected solely because its HLC timestamp is in the future. The protocol SHALL define the canonical total-ordering and last-writer-wins rule as composite `(hlc, id)`; comparison and clock adoption after an accepted parse belong to the application/page Domain/model layer, or a shared Domain/model module when both pages and Runtime consume them, and SHALL NOT revalidate the HLC.
 
 #### Scenario: Future-poisoned event
 
-- **WHEN** the complete Chat schema receives an event with an HLC timestamp more than 5 minutes in the future and an explicit `now`
-- **THEN** the schema parse SHALL fail without calling a hidden clock or requiring a later time predicate
+- **WHEN** the complete Chat schema receives an event with a finite safe non-negative HLC timestamp more than 5 minutes ahead of the receiver's clock
+- **THEN** the schema SHALL NOT reject it solely for being future-dated and SHALL NOT receive or call a clock or later time predicate
 
 #### Scenario: Same-clock different messages
 

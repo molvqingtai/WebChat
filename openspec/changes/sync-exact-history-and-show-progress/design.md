@@ -26,7 +26,7 @@ The new peer contract has exactly two variants. Request pages carry the requeste
 
 ### 1. v4 is a structural replacement boundary
 
-Both Chat and World select v4 room namespaces. Non-History payloads retain their v3 bytes, while the Chat union removes `HistoryCursor`, `HistoryRequestMessage`, and `HistoryResponseMessage` and admits only `HistoryMessagesRequest` and `HistoryMessagesResponse`.
+Both Chat and World select v4 room namespaces. Non-History payloads retain their v3 bytes, while the Chat union removes `HistoryCursor`, `HistoryRequestMessage`, and `HistoryResponseMessage` and admits only `HistoryMessagesPull` and `HistoryMessagesPush`.
 
 This keeps strict schema selection simple and prevents an old peer from sharing presence while silently rejecting the new History phase. A same-room compatibility decoder, capability bit, translator, or dual publish would preserve two products and is rejected by the current-only rule.
 
@@ -74,7 +74,7 @@ Delivery continues to admit each History response page as one atomic batch withi
 
 ### 9. Regression coverage replaces rather than extends old behavior
 
-Protocol tests must prove exact new shapes, unknown-key/old-type rejection, v4 isolation, per-frame/count/reference limits, and opaque-ID aggregate bounds. Runtime tests must prove both directional flows, snapshot timing, exact filtering, empty phases, ordering/replay rejection, serial insertion, budgets, exactly one synchronization per connection and direction, terminal rejection of the same and different IDs, timeout/leave/replacement cleanup, and an independent next-connection synchronization with no continued progress. Toast tests must cross the real insert-result and final-page/cancellation boundaries, including live and same-domain races plus same-domain fan-out.
+Protocol tests must prove exact new shapes, declarative unknown-key/old-type/count rejection, v4 isolation, and opaque-ID aggregate bounds. They must not claim schema rejection for History user/message reference completeness or another rule requiring a callback. Runtime tests must prove both directional flows, snapshot timing, exact filtering, producer-created page authors, empty phases, ordering/replay rejection, serial insertion, budgets, exactly one synchronization per connection and direction, terminal rejection of the same and different IDs, timeout/leave/replacement cleanup, and an independent next-connection synchronization with no continued progress. Toast tests must cross the real insert-result and final-page/cancellation boundaries, including live and same-domain races plus same-domain fan-out.
 
 Old cursor/full-window fixtures and tests are deleted. No test may retain an old path as a fallback or describe an intermediate migration state as product behavior.
 
