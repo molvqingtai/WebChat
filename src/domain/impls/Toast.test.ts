@@ -29,9 +29,9 @@ describe('ToastImpl loading lifecycle', () => {
   })
 
   it('retains timed loading behavior when a duration is provided', () => {
-    expect(ToastImpl.value.loading('Connected to the chat.', 3000)).toBe('loading')
+    expect(ToastImpl.value.loading('Connected to the chat...', 3000)).toBe('loading')
 
-    expect(sonner.loading).toHaveBeenCalledWith('Connected to the chat.', { duration: 3000 })
+    expect(sonner.loading).toHaveBeenCalledWith('Connected to the chat...', { duration: 3000 })
     expect(vi.getTimerCount()).toBe(1)
     vi.advanceTimersByTime(3000)
     expect(sonner.dismiss).toHaveBeenCalledWith('loading')

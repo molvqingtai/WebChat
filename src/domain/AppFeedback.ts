@@ -44,7 +44,7 @@ const AppFeedbackDomain = Remesh.domain({
               RuntimeLoadingState().new(true),
               toastDomain.command.LoadingCommand({
                 id: RUNTIME_TOAST_ID,
-                message: 'Connected to the chat.',
+                message: 'Connected to the chat...',
                 dismissible: false
               })
             ]
