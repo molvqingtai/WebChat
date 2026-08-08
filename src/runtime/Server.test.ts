@@ -3244,6 +3244,84 @@ describe('RuntimeServer history', () => {
     }
   })
 
+  it('emits exactly one join for a provisional presence that later binds authoritatively', async () => {
+    const { fake, server, roomId } = await setup()
+    const events: string[] = []
+    await server.onSessionEvent({ pageId: 'page-a' }, (event) => {
+      events.push(event.type)
+    })
+    fake.receive(roomId, 'peer-b', session({ id: 'user-b', name: 'User B', avatar: '' }))
+    await settle()
+    // A held ordinary join provisionally switches that source to C.
+    fake.plantPeer(roomId, 'remote-peer')
+    fake.makeNotReady()
+    fake.hangSendsTo(roomId)
+    const chatBroadcastStarted = fake.waitForSendAttempt(roomId)
+    const join = server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
+    await fake.waitForJoinCalls(4)
+    fake.open()
+    await expect(chatBroadcastStarted).resolves.toMatchObject({ roomId })
+    fake.receive(roomId, 'peer-b', session({ id: 'user-c', name: 'User C', avatar: '' }))
+    await settle()
+    // The source departs before the commit: provisional C has no surviving authoritative
+    // binding and must not remain logically active.
+    fake.peerLeave(roomId, 'peer-b')
+    await settle()
+    fake.releaseSends()
+    const snapshot = await join
+    if (!snapshot) throw new Error('Join was cancelled')
+    await settle()
+    // C's first REAL binding on a different source is a zero-to-one join.
+    fake.receive(roomId, 'peer-c', session({ id: 'user-c', name: 'User C', avatar: '' }))
+    await settle()
+    expect(events.filter((type) => type === 'join' || type === 'replace')).toEqual(['join', 'join'])
+    const after = (await server.getSnapshot()).domains[0].sessions.map((session) => session.user.id)
+    expect(after).toEqual(['user-b', 'user-c'])
+    disposeServer(server)
+  })
+
+  it('accepts an exact grace rebind on a new source before commit and keeps B past the deadline', async () => {
+    vi.useFakeTimers()
+    try {
+      const clock = new FakeClock()
+      const fake = createFakeTransport()
+      const server = createServer({ transport: fake.transport, clock, codec: jsonCodec })
+      await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
+      await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
+      const roomId = getChatRoomId(DOMAIN)
+      fake.receive(roomId, 'peer-b', session({ id: 'user-b', name: 'User B', avatar: '' }))
+      await settle()
+      fake.plantPeer(roomId, 'remote-peer')
+      fake.makeNotReady()
+      fake.hangSendsTo(roomId)
+      const chatBroadcastStarted = fake.waitForSendAttempt(roomId)
+      const join = server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
+      await fake.waitForJoinCalls(4)
+      fake.open()
+      await expect(chatBroadcastStarted).resolves.toMatchObject({ roomId })
+      // The prepared switch to C and the source departure arm B's committed grace.
+      fake.receive(roomId, 'peer-b', session({ id: 'user-c', name: 'User C', avatar: '' }))
+      await settle()
+      fake.peerLeave(roomId, 'peer-b')
+      await settle()
+      // A valid exact B rebind on a NEW source before the commit cancels the pending leave.
+      fake.receive(roomId, 'peer-b-new', session({ id: 'user-b', name: 'User B', avatar: '' }))
+      await settle()
+      fake.releaseSends()
+      const snapshot = await join
+      if (!snapshot) throw new Error('Join was cancelled')
+      await settle()
+      // B stays continuously present past the original grace deadline (the rebind cancelled it).
+      await vi.advanceTimersByTimeAsync(PENDING_LEAVE_GRACE_MS)
+      await vi.advanceTimersByTimeAsync(0)
+      const after = (await server.getSnapshot()).domains[0].sessions.map((session) => session.user.id)
+      expect(after).toContain('user-b')
+      disposeServer(server)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('emits no finality event when the prepared switch source departs before commit', async () => {
     const { fake, server, roomId } = await setup()
     const events: string[] = []

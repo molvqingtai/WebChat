@@ -1471,25 +1471,57 @@ const SessionDomain = Remesh.domain({
         const preparedSessions = get(PreparedSessionsState())
         const prepared = preparedSessions.find((item) => item.runtime.roomId === payload.roomId)
         const preparedAction = prepared
-          ? PreparedSessionsState().new(
-              replaceBy(preparedSessions, (item) => item.attemptId === prepared.attemptId, {
-                ...prepared,
-                missedPeerIds: prepared.missedPeerIds.filter((item) => item !== payload.sourcePeerId),
-                baselinePeerIds: prepared.baselinePeerIds.filter((item) => item !== payload.sourcePeerId),
-                // The departed source's rebind marker AND displaced fact are revoked: only a
-                // CURRENT source may carry cancellation authority or a displacement to the commit.
-                reboundBindings: prepared.reboundBindings.filter(
-                  (rebind) => rebind.sourcePeerId !== payload.sourcePeerId
-                ),
-                displacedBindings: prepared.displacedBindings.filter(
-                  (displaced) => displaced.sourcePeerId !== payload.sourcePeerId
-                ),
-                runtime: {
-                  ...prepared.runtime,
-                  sessions: prepared.runtime.sessions.filter((item) => item.sourcePeerId !== payload.sourcePeerId)
-                }
-              })
-            )
+          ? (() => {
+              const nextPreparedRuntime = {
+                ...prepared.runtime,
+                sessions: prepared.runtime.sessions.filter((item) => item.sourcePeerId !== payload.sourcePeerId)
+              }
+              const committed = get(DomainsState()).find((item) => item.domain === prepared.runtime.domain)
+              const pendingLeaves = get(PendingLeavesState())
+              // Reconcile the attempt's observer ledger with the surviving prepared sessions plus
+              // the committed/pending-leave authority: a provisional presence with no surviving
+              // authoritative binding must not remain active, and a grace-preserved committed
+              // binding stays eligible for an exact rebind.
+              const authoritativePresences = new Set([
+                ...nextPreparedRuntime.sessions.map((session) => session.presenceId),
+                ...(committed?.sessions
+                  .filter(
+                    (session) =>
+                      !pendingLeaves.some(
+                        (leave) => leave.domain === prepared.runtime.domain && leave.presenceId === session.presenceId
+                      )
+                  )
+                  .map((session) => session.presenceId) ?? []),
+                ...pendingLeaves
+                  .filter(
+                    (leave) =>
+                      leave.domain === prepared.runtime.domain &&
+                      (committed?.sessions.some((session) => session.presenceId === leave.presenceId) ||
+                        nextPreparedRuntime.sessions.some((session) => session.presenceId === leave.presenceId))
+                  )
+                  .map((leave) => leave.presenceId)
+              ])
+              const reconciledObservers = prepared.observers
+                .filter((observer) => authoritativePresences.has(observer.presenceId))
+                .map((observer) => ({ ...observer, status: 'active' as const }))
+              return PreparedSessionsState().new(
+                replaceBy(preparedSessions, (item) => item.attemptId === prepared.attemptId, {
+                  ...prepared,
+                  missedPeerIds: prepared.missedPeerIds.filter((item) => item !== payload.sourcePeerId),
+                  baselinePeerIds: prepared.baselinePeerIds.filter((item) => item !== payload.sourcePeerId),
+                  // The departed source's rebind marker AND displaced fact are revoked: only a
+                  // CURRENT source may carry cancellation authority or a displacement to the commit.
+                  reboundBindings: prepared.reboundBindings.filter(
+                    (rebind) => rebind.sourcePeerId !== payload.sourcePeerId
+                  ),
+                  displacedBindings: prepared.displacedBindings.filter(
+                    (displaced) => displaced.sourcePeerId !== payload.sourcePeerId
+                  ),
+                  runtime: nextPreparedRuntime,
+                  observers: reconciledObservers
+                })
+              )
+            })()
           : null
         const domains = get(DomainsState())
         const runtime = domains.find((item) => item.roomId === payload.roomId)
