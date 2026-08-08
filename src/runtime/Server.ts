@@ -354,7 +354,9 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       }
     },
     leaveChatRoom: async ({ domain }) => {
-      store.send(connectionDomain.command.LeaveDomainCommand(domain))
+      // The leave resolves only after physical departure and rejects with the exact
+      // DomainReleaseFailedEvent when the active-record cleanup write fails.
+      await completeInterruptedRelease(domain)
     },
     allocateTextMessage: async (payload) => {
       await waitForLivePresence(payload.domain)

@@ -714,6 +714,140 @@ describe('single live release owner', () => {
     }
   })
 
+  it('cancels the pending leave when a valid same-presence SESSION rebinds during a prepared reconnect', async () => {
+    vi.useFakeTimers()
+    try {
+      const network = new DeterministicNetwork()
+      const a = await createStack(network, 'prepared-rebind-peer-a', {
+        id: 'prepared-rebind-user-a',
+        name: 'A',
+        avatar: ''
+      })
+      const b = await createStack(network, 'prepared-rebind-peer-b', {
+        id: 'prepared-rebind-user-b',
+        name: 'B',
+        avatar: ''
+      })
+      await a.join()
+      await b.join()
+      await vi.waitFor(async () =>
+        expect((await noticeUsers(a)).filter((id) => id === 'prepared-rebind-user-b')).toHaveLength(1)
+      )
+
+      // A's reconnect publication is held while B's physical source departs.
+      network.holdSession('prepared-rebind-peer-a', 'prepared-rebind-peer-b')
+      const reconnect = a.adapter
+        .leaveRoom()
+        .then(() => a.adapter.joinRoom({ user: { id: 'prepared-rebind-user-a', name: 'A', avatar: '' }, site: SITE }))
+      await vi.advanceTimersByTimeAsync(0)
+      network.disconnectPeer('prepared-rebind-peer-b')
+      b.crash()
+      // Let the reconnect reach its prepared phase (its SESSION publication stays held).
+      for (let flush = 0; flush < 20; flush += 1) await vi.advanceTimersByTimeAsync(0)
+      // B's valid same-presence SESSION arrives during A's prepared phase.
+      network.redeliverLastSession('prepared-rebind-peer-b', 'prepared-rebind-peer-a')
+      await vi.advanceTimersByTimeAsync(0)
+      network.releaseSession('prepared-rebind-peer-a', 'prepared-rebind-peer-b')
+      await reconnect
+      await vi.advanceTimersByTimeAsync(0)
+      // The stale deadline is fenced: B stays in the snapshot after five seconds.
+      await vi.advanceTimersByTimeAsync(5000)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(await noticeUsers(a, NOTICE_TYPE.LEAVE)).toEqual([])
+      // B is still displayed in the FINAL snapshot after the stale deadline.
+      const lastEvent = a.sessionEvents.at(-1)
+      expect(lastEvent?.snapshot.sessions.some((session) => session.user.id === 'prepared-rebind-user-b')).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not resurrect released observer state when a stale leave-grace timer fires', async () => {
+    vi.useFakeTimers()
+    try {
+      const network = new DeterministicNetwork()
+      const durable = createMemoryPresenceStore()
+      const a = await createStack(
+        network,
+        'stale-timer-peer-a',
+        { id: 'stale-timer-user-a', name: 'A', avatar: '' },
+        { presenceStore: durable }
+      )
+      const b = await createStack(network, 'stale-timer-peer-b', { id: 'stale-timer-user-b', name: 'B', avatar: '' })
+      await a.join()
+      await b.join()
+      await vi.waitFor(async () =>
+        expect((await noticeUsers(a)).filter((id) => id === 'stale-timer-user-b')).toHaveLength(1)
+      )
+      // B's physical source departs: A arms the five-second grace.
+      network.disconnectPeer('stale-timer-peer-b')
+      b.crash()
+      await vi.advanceTimersByTimeAsync(0)
+      // A completes its own local release BEFORE the grace expires; the observers are cleared.
+      await a.server.leaveChatRoom({ domain: DOMAIN })
+      await vi.advanceTimersByTimeAsync(0)
+      expect((await durable.load(DOMAIN))?.observers ?? []).toEqual([])
+      // The stale deadline fires after the release: it is a pure no-op — no state, persistence,
+      // notice, or binding action recreates the released domain.
+      await vi.advanceTimersByTimeAsync(5000)
+      await vi.advanceTimersByTimeAsync(0)
+      expect((await durable.load(DOMAIN))?.observers ?? []).toEqual([])
+      // No leave notice and no recreated membership surface after the stale timer.
+      expect(await noticeUsers(a, NOTICE_TYPE.LEAVE)).toEqual([])
+      expect((await durable.load(DOMAIN))?.lastJoinedAt ?? 0).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('retains the release fence and membership when the active-record cleanup write rejects; a later retry succeeds', async () => {
+    vi.useFakeTimers()
+    try {
+      const network = new DeterministicNetwork()
+      const durable = createMemoryPresenceStore()
+      let rejectReleaseWrite = true
+      const store: PresenceStore = {
+        load: (domain) => durable.load(domain),
+        save: async (record) => {
+          if (!record.local && record.observers.length === 0 && rejectReleaseWrite) {
+            throw new Error('release cleanup rejected')
+          }
+          await durable.save(record)
+        }
+      }
+      const a = await createStack(network, 'cleanup-fail-peer-a', { id: 'cleanup-fail-user-a', name: 'A', avatar: '' })
+      const b = await createStack(
+        network,
+        'cleanup-fail-peer-b',
+        { id: 'cleanup-fail-user-b', name: 'B', avatar: '' },
+        { presenceStore: store }
+      )
+      await a.join()
+      await b.join()
+      await vi.waitFor(async () =>
+        expect((await noticeUsers(a)).filter((id) => id === 'cleanup-fail-user-b')).toHaveLength(1)
+      )
+      const chatRoomId = getChatRoomId(DOMAIN)
+
+      // The cleanup write rejects: the leave rejects with the exact failure, the fence and
+      // physical membership are retained, and no observer leave lands.
+      await expect(b.server.leaveChatRoom({ domain: DOMAIN })).rejects.toThrow('release cleanup rejected')
+      await vi.advanceTimersByTimeAsync(0)
+      expect(network.isJoined('cleanup-fail-peer-b', chatRoomId)).toBe(true)
+      expect(network.isJoined('cleanup-fail-peer-b', getWorldRoomId())).toBe(true)
+      expect(await noticeUsers(a, NOTICE_TYPE.LEAVE)).toEqual([])
+
+      // Storage recovers: a later release request retries only the cleanup and completes.
+      rejectReleaseWrite = false
+      await b.server.leaveChatRoom({ domain: DOMAIN })
+      await vi.waitFor(() => expect(network.isJoined('cleanup-fail-peer-b', chatRoomId)).toBe(false))
+      await vi.waitFor(() => expect(network.isJoined('cleanup-fail-peer-b', getWorldRoomId())).toBe(false))
+      expect((await durable.load(DOMAIN))?.local).toBeUndefined()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('suppresses the final leave while the user keeps another active or grace-preserved presence', async () => {
     vi.useFakeTimers()
     try {

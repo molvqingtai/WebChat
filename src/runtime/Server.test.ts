@@ -2018,13 +2018,16 @@ describe('RuntimeServer concurrent World registration convergence', () => {
       joinedB = true
     })
     await vi.waitFor(() => expect(attempts).toHaveLength(2))
-    await server.leaveChatRoom({ domain: domainA })
+    // The release is queued while the staged send is held; it resolves only after the World
+    // convergence settles.
+    const leaveA = server.leaveChatRoom({ domain: domainA })
     attempts[1].settle.resolve()
     await vi.waitFor(() => expect(attempts).toHaveLength(3))
 
     expect(joinedB).toBe(false)
     expect(attempts[2].message.sites.map(({ origin }) => origin)).toEqual([domainB])
     attempts[2].settle.resolve()
+    await leaveA
     await joinB
 
     expect(accepted.at(-1)?.sites.map(({ origin }) => origin)).toEqual([domainB])
@@ -2060,11 +2063,12 @@ describe('RuntimeServer concurrent World registration convergence', () => {
     await server.attachPage({ domain: domainB, pageId: 'page-b' })
     const joinB = server.joinChatRoom({ domain: domainB, user: USER, site: { origin: domainB } })
     await vi.waitFor(() => expect(attempts).toHaveLength(3))
-    await server.leaveChatRoom({ domain: domainA })
+    const leaveA = server.leaveChatRoom({ domain: domainA })
     attempts[2].settle.resolve()
     await vi.waitFor(() => expect(attempts).toHaveLength(4))
     expect(attempts[3].message.sites.map(({ origin }) => origin).toSorted()).toEqual([domainB, domainC])
     attempts[3].settle.resolve()
+    await leaveA
     await joinB
 
     const expected = [domainB, domainC]
@@ -2146,13 +2150,14 @@ describe('RuntimeServer concurrent World registration convergence', () => {
 
     await vi.waitFor(() => expect(attempts).toHaveLength(1))
     expect(attempts[0].message.sites.map(({ origin }) => origin)).toEqual([domainA])
-    await server.leaveChatRoom({ domain: domainA })
+    const leaveA = server.leaveChatRoom({ domain: domainA })
     attempts[0].settle.reject(new Error('released A publication failed late'))
     await vi.waitFor(() => expect(attempts).toHaveLength(2))
 
     expect(joinedB).toBe(false)
     expect(attempts[1].message.sites.map(({ origin }) => origin)).toEqual([domainB])
     attempts[1].settle.resolve()
+    await leaveA
     await joinB
 
     expect((await joinAResult)?.message).toBe('Domain released during join')
@@ -3012,6 +3017,26 @@ describe('RuntimeServer history', () => {
     // The old supply settles (abort rejection): the successor is promoted by the late-settlement
     // path and its own supply starts; it is never deleted as stale.
     await vi.waitFor(() => expect(started).toEqual(['old-a', 'new-b']))
+  })
+
+  it('drops live messages from a source retained only by the leave grace until a valid rebind', async () => {
+    const { fake, server, roomId } = await setup()
+    fake.receive(roomId, 'peer-0', session({ id: 'user-0', name: 'User 0', avatar: '' }))
+    await settle()
+    fake.peerLeave(roomId, 'peer-0')
+    await settle()
+    // A fresh TEXT from the departed source is not admitted before a valid same-presence rebind.
+    fake.receive(roomId, 'peer-0', { ...text('after-peer-leave'), userId: 'user-0' })
+    await settle()
+    expect(await server.replayInbound({ domain: DOMAIN, after: 0 })).toEqual([])
+    // A valid SESSION rebind restores authority; a later live message is admitted.
+    fake.receive(roomId, 'peer-0', session({ id: 'user-0', name: 'User 0', avatar: '' }))
+    await settle()
+    fake.receive(roomId, 'peer-0', { ...text('after-rebind'), userId: 'user-0' })
+    await settle()
+    expect((await server.replayInbound({ domain: DOMAIN, after: 0 })).map((item) => item.record.message.id)).toEqual([
+      'after-rebind'
+    ])
   })
 
   it('ignores a delayed same-sync page after cleanup without a parallel token or supply', async () => {
