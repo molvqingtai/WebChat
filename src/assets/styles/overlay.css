@@ -18,13 +18,10 @@ section[aria-live='polite'] {
 
 /* Keep the pill toast single-line: let flex children shrink and ellipse the text at the 300px cap
    without changing the layout structure. */
-[data-sonner-toast][data-styled='true'] section[data-content],
+[data-sonner-toast][data-styled='true'] [data-content],
 [data-sonner-toast][data-styled='true'] [data-title],
 [data-sonner-toast][data-styled='true'] [data-description] {
   min-width: 0;
-}
-[data-sonner-toast][data-styled='true'] [data-title],
-[data-sonner-toast][data-styled='true'] [data-description] {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

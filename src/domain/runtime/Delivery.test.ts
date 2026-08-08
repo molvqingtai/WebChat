@@ -93,6 +93,7 @@ describe('DeliveryDomain resource and batch ACK boundaries', () => {
       emitSessionEvent: async () => [],
       emitWorldPresence: async () => [],
       emitError: async () => [],
+      emitHistoryFeedback: async () => [],
       supplyHistory: async () => null,
       cancelHistorySupply: async () => {}
     }

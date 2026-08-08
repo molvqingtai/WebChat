@@ -3,7 +3,7 @@ import {
   MAX_WIRE_BYTES,
   NativeWireCodec,
   WireCodecError,
-  isHistoryResponseFrameWithinLimit,
+  isHistoryPageFrameWithinLimit,
   isWireFrameWithinLimit
 } from '@/protocol'
 
@@ -122,7 +122,7 @@ describe('NativeWireCodec public reference implementation', () => {
   it('publishes the ordinary and stricter history frame boundaries', () => {
     expect(isWireFrameWithinLimit('x'.repeat(MAX_WIRE_BYTES))).toBe(true)
     expect(isWireFrameWithinLimit('x'.repeat(MAX_WIRE_BYTES + 1))).toBe(false)
-    expect(isHistoryResponseFrameWithinLimit('x'.repeat(MAX_WIRE_BYTES - 1))).toBe(true)
-    expect(isHistoryResponseFrameWithinLimit('x'.repeat(MAX_WIRE_BYTES))).toBe(false)
+    expect(isHistoryPageFrameWithinLimit('x'.repeat(MAX_WIRE_BYTES - 1))).toBe(true)
+    expect(isHistoryPageFrameWithinLimit('x'.repeat(MAX_WIRE_BYTES))).toBe(false)
   })
 })

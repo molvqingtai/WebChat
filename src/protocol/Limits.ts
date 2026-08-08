@@ -25,5 +25,5 @@ const getByteSize = (value: string): number => new TextEncoder().encode(value).b
 
 export const isWireFrameWithinLimit = (value: string): boolean => getByteSize(value) <= MAX_WIRE_BYTES
 
-/** History responses stay below the ceiling so successive cursor responses retain framing headroom. */
-export const isHistoryResponseFrameWithinLimit = (value: string): boolean => getByteSize(value) < MAX_WIRE_BYTES
+/** History request and response pages stay below the ceiling so paged frames retain framing headroom. */
+export const isHistoryPageFrameWithinLimit = (value: string): boolean => getByteSize(value) < MAX_WIRE_BYTES

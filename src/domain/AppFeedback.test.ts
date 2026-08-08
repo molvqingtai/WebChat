@@ -156,7 +156,7 @@ describe('application feedback ownership', () => {
 
     markReady(fixture)
     await vi.waitFor(() =>
-      expect(fixture.toast.loading).toHaveBeenCalledWith('Connected to the chat.', {
+      expect(fixture.toast.loading).toHaveBeenCalledWith('Connected to the chat...', {
         id: RUNTIME_TOAST_ID,
         dismissible: false
       })
@@ -177,7 +177,7 @@ describe('application feedback ownership', () => {
 
     fixture.store.send(fixture.room.command.JoinRoomCommand())
     await vi.waitFor(() =>
-      expect(fixture.toast.loading).toHaveBeenCalledWith('Connected to the chat.', {
+      expect(fixture.toast.loading).toHaveBeenCalledWith('Connected to the chat...', {
         id: RUNTIME_TOAST_ID,
         dismissible: false
       })
@@ -197,7 +197,7 @@ describe('application feedback ownership', () => {
     // An active page that is genuinely connecting establishes the stable loading slot.
     fixture.emitReadiness('connecting')
     await vi.waitFor(() =>
-      expect(fixture.toast.loading).toHaveBeenCalledWith('Connected to the chat.', {
+      expect(fixture.toast.loading).toHaveBeenCalledWith('Connected to the chat...', {
         id: RUNTIME_TOAST_ID,
         dismissible: false
       })
@@ -230,7 +230,7 @@ describe('application feedback ownership', () => {
     fixture.store.send(fixture.room.command.ReconnectCommand())
     await flushMicrotasks()
 
-    expect(fixture.toast.loading).toHaveBeenCalledWith('Connected to the chat.', {
+    expect(fixture.toast.loading).toHaveBeenCalledWith('Connected to the chat...', {
       id: RUNTIME_TOAST_ID,
       dismissible: false
     })
@@ -259,7 +259,7 @@ describe('application feedback ownership', () => {
     fixture.store.send(fixture.room.command.JoinRoomCommand())
     await vi.waitFor(() => expect(fixture.toast.error).toHaveBeenCalledWith('provider detail'))
 
-    expect(fixture.toast.loading).toHaveBeenCalledWith('Connected to the chat.', {
+    expect(fixture.toast.loading).toHaveBeenCalledWith('Connected to the chat...', {
       id: RUNTIME_TOAST_ID,
       dismissible: false
     })
@@ -275,7 +275,7 @@ describe('application feedback ownership', () => {
     markReady(fixture)
     fixture.store.send(fixture.room.command.JoinRoomCommand())
     await vi.waitFor(() =>
-      expect(fixture.toast.loading).toHaveBeenCalledWith('Connected to the chat.', {
+      expect(fixture.toast.loading).toHaveBeenCalledWith('Connected to the chat...', {
         id: RUNTIME_TOAST_ID,
         dismissible: false
       })

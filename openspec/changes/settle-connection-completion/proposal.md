@@ -1,6 +1,6 @@
 ## Why
 
-A page can remain permanently stuck on the `Connected to the chat.` loading feedback even after the shared Runtime has physically joined Chat and World and projected the local user. A different pending signature leaves the page at zero users before any physical join. Refresh or replacement can reproduce either state because the page operation is rebuilt while shared domain work survives; a return during the existing five-second lifecycle grace also reuses the same physical rooms.
+A page can remain permanently stuck on the `Connected to the chat...` loading feedback even after the shared Runtime has physically joined Chat and World and projected the local user. A different pending signature leaves the page at zero users before any physical join. Refresh or replacement can reproduce either state because the page operation is rebuilt while shared domain work survives; a return during the existing five-second lifecycle grace also reuses the same physical rooms.
 
 Exact-bound stage tracing on `develop@d7fa3d386250aee22a740ca84e3cd29dadbbc724` proved that the visible-user signature is a post-commit active Presence persistence tail. It also narrowed the zero-user signature to callback registration, replay, or replay persistence/IndexedDB before connection, without identifying one field request among those three. The page connection operation currently has no terminal deadline or cancellation owner across those waits.
 

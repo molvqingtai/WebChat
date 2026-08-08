@@ -24,6 +24,9 @@ const fixture = vi.hoisted(() => ({
   storeSend: vi.fn(),
   silenceFeedback: vi.fn(),
   resumeFeedback: vi.fn(),
+  loadingCommand: vi.fn(),
+  cancelCommand: vi.fn(),
+  historyFeedbackListener: null as null | ((event: { kind: string; ownerId: string }) => void),
   startInitializationLifecycle: vi.fn(),
   stopInitialization: vi.fn(),
   initializationOptions: [] as Array<Record<string, unknown>>,
@@ -144,7 +147,9 @@ beforeEach(() => {
     getDomain: () => ({
       command: {
         SilenceFeedbackCommand: fixture.silenceFeedback,
-        ResumeFeedbackCommand: fixture.resumeFeedback
+        ResumeFeedbackCommand: fixture.resumeFeedback,
+        LoadingCommand: fixture.loadingCommand,
+        CancelCommand: fixture.cancelCommand
       }
     })
   }))
@@ -153,7 +158,11 @@ beforeEach(() => {
     value: fixture.chat,
     epochSource: {
       bindConnectionResultReporter: () => {},
-      bindStandaloneInvocation: () => {}
+      bindStandaloneInvocation: () => {},
+      onHistoryFeedback: (listener: (event: { kind: string; ownerId: string }) => void) => {
+        fixture.historyFeedbackListener = listener
+        return () => {}
+      }
     }
   })
   fixture.createWorldRoomImpl.mockReturnValue({ value: fixture.world })
@@ -406,6 +415,26 @@ describe('content composition root', () => {
     expect(fixture.createWorldRoomImpl).toHaveBeenCalledOnce()
     expect(fixture.createReadinessImpl).toHaveBeenCalledOnce()
     expect(fixture.createReadinessImpl).toHaveBeenCalledWith(fixture.whenHostPhase)
+  })
+
+  it('maps one attempt-owned History loading owner to the exact loading Toast and dismiss', async () => {
+    await startContent()
+    const activate = fixture.initializationOptions[0]?.activateApplicationDependencies
+    if (typeof activate !== 'function') throw new Error('Activation boundary is unavailable')
+    activate()
+    if (!fixture.historyFeedbackListener) throw new Error('History feedback listener was never wired')
+
+    fixture.historyFeedbackListener({ kind: 'loading', ownerId: 'history:owner-1' })
+    expect(fixture.loadingCommand).toHaveBeenCalledWith({
+      id: 'history:owner-1',
+      message: 'Syncing message history...'
+    })
+    expect(fixture.cancelCommand).not.toHaveBeenCalled()
+
+    fixture.historyFeedbackListener({ kind: 'dismiss', ownerId: 'history:owner-1' })
+    expect(fixture.cancelCommand).toHaveBeenCalledWith('history:owner-1')
+    // One sync never dismisses another owner or an unrelated Toast.
+    expect(fixture.cancelCommand).toHaveBeenCalledTimes(1)
   })
 
   it('creates one store and initialization owner per document generation', async () => {

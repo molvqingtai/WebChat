@@ -215,8 +215,8 @@ export const MAX_PROVIDER_SUPPLY_QUEUE_BYTES = 8 * 1024
 export const MAX_CONFLICTS_PER_RECORD = 4
 export const MAX_STORED_CONFLICTS = 1000
 
-export const CHAT_ROOM_NAMESPACE_V3 = 'WEB_CHAT_CHAT_ROOM_V3' as const
-export const WORLD_ROOM_ID_V3 = 'WEB_CHAT_WORLD_ROOM_V3' as const
+export const CHAT_ROOM_NAMESPACE_V4 = 'WEB_CHAT_CHAT_ROOM_V4' as const
+export const WORLD_ROOM_ID_V4 = 'WEB_CHAT_WORLD_ROOM_V4' as const
 
 /**
  * Unified grace window after the last page of a domain disconnects.
