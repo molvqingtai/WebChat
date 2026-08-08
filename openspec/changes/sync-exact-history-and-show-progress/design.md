@@ -24,11 +24,11 @@ The new peer contract has exactly two variants. Request pages carry the requeste
 
 ## Decisions
 
-### 1. v4 is a structural replacement boundary
+### 1. v5 is the current structural boundary
 
-Both Chat and World select v4 room namespaces. Non-History payloads retain their v3 bytes, while the Chat union removes `HistoryCursor`, `HistoryRequestMessage`, and `HistoryResponseMessage` and admits only `HistoryMessagesPull` and `HistoryMessagesPush`.
+Both Chat and World select v5 room namespaces. Chat admits only SESSION, live text/reaction, `HistoryMessagesPull`, and `HistoryMessagesPush`; the removed cursor Request/Response variants and `session-end` are unknown types. World retains its strict current snapshot shape. Current peers never join v1-v4 rooms.
 
-This keeps strict schema selection simple and prevents an old peer from sharing presence while silently rejecting the new History phase. A same-room compatibility decoder, capability bit, translator, or dual publish would preserve two products and is rejected by the current-only rule.
+This keeps strict schema selection simple and prevents an incompatible peer from sharing presence while rejecting current Chat traffic. A same-room compatibility decoder, capability bit, translator, or dual publish would preserve two products and is rejected by the current-only rule.
 
 ### 2. A room connection owns one two-phase synchronization per direction
 
@@ -74,7 +74,7 @@ Delivery continues to admit each History response page as one atomic batch withi
 
 ### 9. Regression coverage replaces rather than extends old behavior
 
-Protocol tests must prove exact new shapes, declarative unknown-key/old-type/count rejection, v4 isolation, and opaque-ID aggregate bounds. They must not claim schema rejection for History user/message reference completeness or another rule requiring a callback. Runtime tests must prove both directional flows, snapshot timing, exact filtering, producer-created page authors, empty phases, ordering/replay rejection, serial insertion, budgets, exactly one synchronization per connection and direction, terminal rejection of the same and different IDs, timeout/leave/replacement cleanup, and an independent next-connection synchronization with no continued progress. Toast tests must cross the real insert-result and final-page/cancellation boundaries, including live and same-domain races plus same-domain fan-out.
+Protocol tests must prove exact current shapes, declarative unknown-key/old-type/count rejection, v5 isolation, `session-end` rejection, and opaque-ID aggregate bounds. They must not claim schema rejection for History user/message reference completeness or another rule requiring a callback. Runtime tests must prove both directional flows, snapshot timing, exact filtering, producer-created page authors, empty phases, ordering/replay rejection, serial insertion, budgets, exactly one synchronization per connection and direction, terminal rejection of the same and different IDs, timeout/leave/replacement cleanup, and an independent next-connection synchronization with no continued progress. Toast tests must cross the real insert-result and final-page/cancellation boundaries, including live and same-domain races plus same-domain fan-out.
 
 Old cursor/full-window fixtures and tests are deleted. No test may retain an old path as a fallback or describe an intermediate migration state as product behavior.
 
@@ -84,12 +84,12 @@ Old cursor/full-window fixtures and tests are deleted. No test may retain an old
 - [Provider pages can outrun remote processing without peer ACK] -> Local sends remain bounded and serial; remote gap/overflow terminates this connection's synchronization, while a later independent connection computes from then-current persisted IDs.
 - [Live or another page inserts after the requester snapshot] -> Atomic `insert-if-absent` remains the final truth; all-existing pages stay silent and do not repeat feedback.
 - [Several peer syncs overlap] -> Each complete attempt identity owns its own Toast and terminal dismissal; source/generation checks make old completion inert.
-- [v4 temporarily partitions current and older clients] -> Isolation is intentional for a breaking clean cut and avoids dual protocol state.
+- [v5 partitions incompatible clients] -> Isolation is intentional for the current clean generation and avoids dual protocol state.
 - [A final page first inserts and immediately completes] -> With no minimum dwell, activation and owner-scoped dismissal may be brief; this truthfully follows the confirmed operation lifetime.
 
 ## Migration Plan
 
-1. Land the complete v4 protocol, Runtime replacement, application bridge, Toast lifecycle, and replacement tests in one requirement PR.
-2. Delete every v3 History runtime/type/test residue in the same exact; retain no compatibility path.
-3. Verify v1/v2/v3/v4 namespace isolation and unchanged non-History v3-to-v4 payload bytes.
-4. If the unmerged candidate must be abandoned, revert the complete PR as one unit; the existing v3 release and unchanged local record database remain independently usable.
+1. Land the complete current v5 protocol, Runtime History flow, application bridge, Toast lifecycle, and replacement tests in one requirement PR.
+2. Delete every obsolete History runtime/type/test residue and every removed Chat lifecycle variant in the same exact; retain no compatibility path.
+3. Verify v1-v5 Chat/World namespace isolation, exact current Chat union rejection, and retained payload/codec behavior.
+4. If the candidate must be abandoned, revert the complete PR as one unit; the unchanged local record database requires no conversion.

@@ -1,29 +1,29 @@
 ## ADDED Requirements
 
-### Requirement: Current v4 peer wire is a clean generation cut
+### Requirement: Current v5 peer wire is a clean generation cut
 
-The current peer protocol SHALL use exact v4 Chat and World physical namespaces. Its `SessionMessage`, `SessionEndMessage`, `ChatMessage`, reaction, World payload, general limits, and codec algorithm SHALL remain unchanged from v3; only the History variants and History-specific limits SHALL change. Current clients SHALL join only v4 rooms and SHALL provide no v3 History decoder, optional alias, dual publication, room bridge, translator, or fallback.
+The current peer protocol SHALL use exact v5 Chat and World physical namespaces. Chat wire SHALL contain only `SessionMessage`, live `ChatMessage`, `HistoryMessagesPull`, and `HistoryMessagesPush`; `session-end` and obsolete History variants SHALL be unknown. World SHALL retain its strict current snapshot shape. Current clients SHALL join only v5 rooms and SHALL provide no v1-v4 decoder, optional alias, dual publication, room bridge, translator, or fallback.
 
-#### Scenario: Current peers use v4 only
+#### Scenario: Current peers use v5 only
 
 - **WHEN** a current client joins Chat and World
-- **THEN** it SHALL select the exact v4 namespace inputs, exchange only strict v4 values, and SHALL not join or publish to v1, v2, or v3 rooms
+- **THEN** it SHALL select the exact v5 namespace inputs, exchange only strict v5 values, and SHALL not join or publish to v1, v2, v3, or v4 rooms
 
-#### Scenario: Non-History bytes remain stable
+#### Scenario: Removed Chat lifecycle type stays outside v5
 
-- **WHEN** the same canonical SESSION, SESSION_END, live Chat, or World value is encoded by v3 and v4 implementations
-- **THEN** its strict payload, canonical JSON, limits, and encoded bytes SHALL be identical, while only the selected physical namespace differs
+- **WHEN** a peer presents `type:'session-end'` or another removed Chat lifecycle value
+- **THEN** the strict v5 Chat schema SHALL reject it as unknown, and no current client SHALL join an older room to interpret it
 
 #### Scenario: History bytes use only the replacement shapes
 
-- **WHEN** the same peer begins History synchronization under v4
+- **WHEN** the same peer begins History synchronization under v5
 - **THEN** it SHALL exchange only `history-messages-pull` and `history-messages-push` pages and SHALL emit no v3 `history-request`, `history-response`, `before`, or `HistoryCursor` value
 
 ## MODIFIED Requirements
 
 ### Requirement: Public protocol module is pure and explicitly bounded
 
-The code-level public module `src/protocol/index.ts` SHALL be the third-party-facing peer contract without introducing a package, publishing flow, or SDK. Its wire structures SHALL be exactly the Owner-frozen `ChatUser`, `ChatSession`, `HLC`, `MentionedUser`, `SessionMessage`, `SessionEndMessage`, `TextMessage`, `ReactionMessage`, `ChatMessage`, `HistoryMessagesPull`, `HistoryMessagesPush`, `ChatRoomMessage`, `ChatSite`, and `WorldRoomMessage` contracts. It SHALL additionally export only their static declarative schemas, schema-inferred TypeScript types, public limits/constants, and the public codec surface (`WireCodec`, `NativeWireCodec` reference implementation, `WireCodecError`). It SHALL NOT add or rename any encoded field or literal, export a structural alias or compatibility DTO, or expose an optional/open metadata bag without explicit Owner intervention. Declarative validation SHALL cover closed-union and unknown-key rejection, primitive/literal shape, field and array ceilings, tuples, required SESSION `joinedAt`, and safe non-negative integer fields. It SHALL NOT validate whole-value canonical byte size, mention/body relationships, future HLC relative to receiver time, origin-only URL semantics, uniqueness, or History user/message references. The `NativeWireCodec` SHALL own only the fixed codec/security algorithm; the public protocol SHALL NOT export local persistence/UI models, projections, ordering implementations, Runtime lifecycle or page-host RPC contracts, WirePipeline queue/drop/apply/flush types, or application orchestration.
+The code-level public module `src/protocol/index.ts` SHALL be the third-party-facing peer contract without introducing a package, publishing flow, or SDK. Its wire structures SHALL be exactly the Owner-frozen `ChatUser`, `ChatSession`, `HLC`, `MentionedUser`, `SessionMessage`, `TextMessage`, `ReactionMessage`, `ChatMessage`, `HistoryMessagesPull`, `HistoryMessagesPush`, `ChatRoomMessage`, `ChatSite`, and `WorldRoomMessage` contracts. It SHALL additionally export only their static declarative schemas, schema-inferred TypeScript types, public limits/constants, and the public codec surface (`WireCodec`, `NativeWireCodec` reference implementation, `WireCodecError`). It SHALL NOT add or rename any retained encoded field or literal, export a structural alias or compatibility DTO, expose a session-end surface, or expose an optional/open metadata bag without explicit Owner intervention. Declarative validation SHALL cover closed-union and unknown-key rejection, primitive/literal shape, field and array ceilings, tuples, required SESSION `joinedAt`, and safe non-negative integer fields. It SHALL NOT validate whole-value canonical byte size, mention/body relationships, future HLC relative to receiver time, origin-only URL semantics, uniqueness, or History user/message references. The `NativeWireCodec` SHALL own only the fixed codec/security algorithm; the public protocol SHALL NOT export local persistence/UI models, projections, ordering implementations, Runtime lifecycle or page-host RPC contracts, WirePipeline queue/drop/apply/flush types, or application orchestration.
 
 `src/protocol/**` SHALL NOT depend on `domain/runtime`, `service`, `app`, UI, storage, comctx, browser-extension APIs/globals (`chrome.*`/`browser.*`), DOM/window/document, host lifecycle APIs, or app configuration. The public `NativeWireCodec` MAY use the standard Web codec APIs it implements (`CompressionStream`, `DecompressionStream`, `Blob`, `ReadableStream`, `TextEncoder`, and `TextDecoder`) and exactly the two scoped `core-js` imports; no whole-package polyfill is permitted. Protocol-owned limits and pure byte utilities SHALL be defined within the protocol boundary. Runtime and Domain code SHALL depend on the public protocol one way; the protocol SHALL NOT import Runtime or Domain code.
 
@@ -50,10 +50,6 @@ interface SessionMessage extends ChatSession {
   type: 'session'
   presenceId: string
   joinedAt: number
-}
-interface SessionEndMessage {
-  type: 'session-end'
-  presenceId: string
 }
 interface TextMessage {
   type: 'text'
@@ -88,7 +84,7 @@ interface HistoryMessagesPush {
   messages: ChatMessage[]
   done: boolean
 }
-type ChatRoomMessage = SessionMessage | SessionEndMessage | ChatMessage | HistoryMessagesPull | HistoryMessagesPush
+type ChatRoomMessage = SessionMessage | ChatMessage | HistoryMessagesPull | HistoryMessagesPush
 interface ChatSite {
   origin: string
   title?: string
@@ -114,7 +110,7 @@ interface WorldRoomMessage extends ChatSession {
 
 The public protocol SHALL define closed static declarative schemas and pure limits. `WireDomain` SHALL parse the room-selected schema once at peer acceptance and MAY apply source-local operational policies after rejection, but queue/drop/apply/flush scheduling, rate-limited logging, reconnect behavior, page sequencing, attempt budgets, and delivery admission are not public protocol semantics.
 
-Chat wire messages SHALL form a strict, closed discriminated union keyed by `type`; World wire payloads SHALL use one strict schema selected by trusted v4 `roomId` and SHALL NOT carry a payload `type`. The codec SHALL enforce `MAX_WIRE_BYTES = 64KiB` for final encoded frames and `MAX_DECODED_JSON_BYTES = 256KiB` for streaming decompressed JSON before parse. Declarative schemas SHALL enforce explicit built-in field and array ceilings, including at most 100 messages in one History Push page. Each `messageIds[]` element SHALL remain an opaque string with no standalone length or format rule and SHALL be bounded only by the containing codec frame and Runtime attempt budgets. SESSION `joinedAt`, HLC timestamp, HLC counter, and History `page` SHALL be finite safe non-negative integers. Unknown types, unknown keys, forbidden envelope/context fields, missing or invalid required values, and declaratively expressible limit violations SHALL fail schema parsing. Whole-value `ChatUser`, `ChatMessage`, and History page canonical byte sizes SHALL not be computed or validated. Non-canonical or malformed Base64, invalid UTF-8/JSON/deflate, and encoded/decompressed bounds SHALL remain codec representation failures before schema parsing.
+Chat wire messages SHALL form a strict, closed discriminated union keyed by `type`; World wire payloads SHALL use one strict schema selected by trusted v5 `roomId` and SHALL NOT carry a payload `type`. The codec SHALL enforce `MAX_WIRE_BYTES = 64KiB` for final encoded frames and `MAX_DECODED_JSON_BYTES = 256KiB` for streaming decompressed JSON before parse. Declarative schemas SHALL enforce explicit built-in field and array ceilings, including at most 100 messages in one History Push page. Each `messageIds[]` element SHALL remain an opaque string with no standalone length or format rule and SHALL be bounded only by the containing codec frame and Runtime attempt budgets. SESSION `joinedAt`, HLC timestamp, HLC counter, and History `page` SHALL be finite safe non-negative integers. Unknown types including `session-end`, unknown keys, forbidden envelope/context fields, missing or invalid required values, and declaratively expressible limit violations SHALL fail schema parsing. Whole-value `ChatUser`, `ChatMessage`, and History page canonical byte sizes SHALL not be computed or validated. Non-canonical or malformed Base64, invalid UTF-8/JSON/deflate, and encoded/decompressed bounds SHALL remain codec representation failures before schema parsing.
 
 #### Scenario: Unknown or oversized message
 
@@ -162,12 +158,17 @@ Hybrid Logical Clock values on wire `ChatMessage` values SHALL be finite non-neg
 
 ### Requirement: Chat wire uses immutable typed messages
 
-Chat wire SHALL be exactly `ChatRoomMessage = SessionMessage | SessionEndMessage | ChatMessage | HistoryMessagesPull | HistoryMessagesPush`, where `ChatMessage = TextMessage | ReactionMessage`, `SessionMessage extends ChatSession {type:'session', presenceId:string, joinedAt:number}`, `SessionEndMessage = {type:'session-end', presenceId:string}`, and `ChatSession = {sessionId, user:ChatUser}`. `joinedAt` SHALL be a required finite safe non-negative integer. `ChatUser` SHALL be exactly `{id,name,avatar}`. `MentionedUser extends ChatUser` and SHALL add exactly `ranges: [number, number][]`. Each pair denotes an inclusive `[start,end]` range in JavaScript string/UTF-16 code-unit indices. The schema SHALL validate only a two-item tuple of safe non-negative integers; it SHALL NOT compare `start` with `end` or either value with `body.length`. Text and reaction messages SHALL be immutable once created, and live fields SHALL use `userId`; Runtime session binding, logical-time use, and application are specified by `webrtc-runtime`.
+Chat wire SHALL be exactly `ChatRoomMessage = SessionMessage | ChatMessage | HistoryMessagesPull | HistoryMessagesPush`, where `ChatMessage = TextMessage | ReactionMessage`, `SessionMessage extends ChatSession {type:'session', presenceId:string, joinedAt:number}`, and `ChatSession = {sessionId, user:ChatUser}`. `joinedAt` SHALL be a required finite safe non-negative integer. `ChatUser` SHALL be exactly `{id,name,avatar}`. `MentionedUser extends ChatUser` and SHALL add exactly `ranges: [number, number][]`. Each pair denotes an inclusive `[start,end]` range in JavaScript string/UTF-16 code-unit indices. The schema SHALL validate only a two-item tuple of safe non-negative integers; it SHALL NOT compare `start` with `end` or either value with `body.length`. Text and reaction messages SHALL be immutable once created, and live fields SHALL use `userId`; Runtime session binding, logical-time use, physical-leave grace, and application are specified by `webrtc-runtime`.
 
 #### Scenario: Chat union and text shape
 
 - **WHEN** a peer sends a Chat message
 - **THEN** the strict wire union SHALL accept only the exact frozen fields; SESSION SHALL require `presenceId` and `joinedAt`; each mention SHALL contain exactly `id`, `name`, `avatar`, and `ranges`; and each range SHALL be exactly two safe non-negative integers without a callback-backed order/body-length or whole-message byte check
+
+#### Scenario: Session end is outside the Chat union
+
+- **WHEN** a decoded Chat value uses `type:'session-end'`
+- **THEN** the strict current union SHALL reject it before Runtime application and no compatibility decoder SHALL run
 
 #### Scenario: Reaction is explicit state
 
@@ -225,17 +226,17 @@ The schemas SHALL accept only the two replacement type strings and exact replace
 
 ### Requirement: No old-protocol compatibility
 
-The peer protocol SHALL NOT bridge, translate, or interoperate with released v1, v2, or v3 wire protocols. v1, v2, v3, and v4 SHALL use isolated Chat and World room namespaces so none parses another generation's wire traffic or advertises an incompatible peer as currently reachable. The unchanged local record format requires no data migration or old-record compatibility path. Unmerged development residues MAY be cleaned up directly.
+The peer protocol SHALL NOT bridge, translate, or interoperate with released v1, v2, v3, or v4 wire protocols. v1, v2, v3, v4, and v5 SHALL use isolated Chat and World room namespaces so none parses another generation's wire traffic or advertises an incompatible peer as currently reachable. The unchanged local record format requires no data migration or old-record compatibility path. Unmerged development residues MAY be cleaned up directly.
 
 #### Scenario: v1/v2 cross-traffic
 
-- **WHEN** v1, v2, v3, and v4 clients meet in a shared physical environment
+- **WHEN** v1, v2, v3, v4, and v5 clients meet in a shared physical environment
 - **THEN** each generation SHALL use isolated Chat and World namespaces, none SHALL parse or advertise another generation's traffic, and no compatibility fallback SHALL exist
 
 ## REMOVED Requirements
 
 ### Requirement: Current v3 peer wire is a clean generation cut
 
-**Reason**: The exact-ID History replacement is an intentional breaking peer-wire change and v3 must not share rooms with v4.
+**Reason**: The current exact-ID History and physical-leave presence contract are an intentional clean peer generation and v3 must not share current rooms.
 
-**Migration**: Current clients join only v4 Chat and World namespaces and use only the new History variants; no runtime compatibility or data migration path exists.
+**Migration**: Current clients join only v5 Chat and World namespaces, use only Pull/Push History variants, and carry no Chat end variant; no runtime compatibility or data migration path exists.

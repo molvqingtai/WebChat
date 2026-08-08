@@ -2,7 +2,7 @@
 
 ### Requirement: Protocol schemas are the sole data and validation authority
 
-Every public peer-protocol data structure in `src/protocol` SHALL be defined schema-first. `ChatUser`, `ChatSession`, `HLC`, `MentionedUser`, `SessionMessage`, `SessionEndMessage`, `TextMessage`, `ReactionType`, `ReactionMessage`, `ChatMessage`, `HistoryMessagesPull`, `HistoryMessagesPush`, `ChatRoomMessage`, `ChatSite`, and `WorldRoomMessage` SHALL each be inferred from the output of its exported owning schema; no handwritten interface, structural type, duplicate union, compatibility DTO, or post-parse cast SHALL independently describe the same value.
+Every public peer-protocol data structure in `src/protocol` SHALL be defined schema-first. `ChatUser`, `ChatSession`, `HLC`, `MentionedUser`, `SessionMessage`, `TextMessage`, `ReactionType`, `ReactionMessage`, `ChatMessage`, `HistoryMessagesPull`, `HistoryMessagesPush`, `ChatRoomMessage`, `ChatSite`, and `WorldRoomMessage` SHALL each be inferred from the output of its exported owning schema; no handwritten interface, structural type, duplicate union, compatibility DTO, or post-parse cast SHALL independently describe the same value.
 
 A complete Chat or World schema SHALL compose the exported child schemas and SHALL contain only declarative Valibot primitives and combinators. Strict keys and unions, literals, primitive types, safe non-negative integers, tuples, field ceilings, array ceilings, and other constraints directly expressible by built-in declarative schemas or actions SHALL remain in the owning schema. `v.check`, `v.partialCheck`, `v.rawCheck`, `v.custom`, `v.transform`, every user callback, and every equivalent executable predicate, transform, or contextual schema factory SHALL be absent from the complete schema graph.
 
@@ -30,11 +30,47 @@ The codec SHALL continue to perform only the fixed representation work required 
 - **WHEN** the codec successfully decodes a bounded canonical frame
 - **THEN** it SHALL return `unknown`, and only the room-selected complete schema at an authorized validation boundary may turn that value into a protocol type
 
+### Requirement: Chat presence uses causal generation and physical leave facts
+
+Every `SessionMessage` SHALL carry a required opaque `presenceId` identifying one logical online generation independently of physical `sessionId` and transport `sourcePeerId`, plus required `joinedAt` identifying when that generation began. Session SHALL allocate and persist the exact finite safe non-negative `{presenceId, joinedAt}` for an initial join or true return after completed local release. Reconnect, refresh, recovery, reattach, duplicate publication, an additional physical session, or supported Runtime host replacement SHALL reuse the active generation.
+
+The Chat protocol SHALL contain no end message, end schema, end union member, end alias, or receiver end handler. Physical peer departure is trusted provider lifecycle context and SHALL NOT be encoded as peer data. The strict Chat schema SHALL reject `session-end` and every other unknown type. Runtime logical membership, five-second leave grace, same-presence recovery, and user-level final-leave classification are specified by `webrtc-runtime`.
+
+The first accepted remote SESSION SHALL bind exact `user.id` and `joinedAt` to its source and `presenceId` and record the current `{name, avatar}` projection. A duplicate or replacement SESSION for the same accepted generation with the same `user.id` and `joinedAt` SHALL update only a changed projection and otherwise remain idempotent. A different `user.id` or `joinedAt` SHALL reject source-locally without changing the accepted binding, membership, history, or observer notices. Receiver observation time SHALL remain local metadata and SHALL not substitute for remote logical time.
+
+For one committed local generation, a remote generation SHALL be eligible for an observer-local join only when its accepted `joinedAt` is strictly greater than the local generation's `joinedAt` and the remote user transitions from zero displayed logical generations to one. Equal or earlier remote time SHALL converge as historical snapshot state without a join notice. Sender time SHALL serve only observer-local notice eligibility and SHALL NOT authorize identity, routing, admission, persistence, or a globally trusted order.
+
+#### Scenario: Transport recovery reuses a generation
+
+- **WHEN** one logical user loses and restores a physical transport, refreshes, reattaches, or replaces a supported Runtime host while its generation remains current
+- **THEN** every replacement SESSION SHALL carry the same `presenceId` and `joinedAt`, and a same-presence recovery inside the Runtime leave grace SHALL create no logical leave or join
+
+#### Scenario: Removed end type is rejected
+
+- **WHEN** a current Chat peer receives a decoded value whose `type` is `session-end`
+- **THEN** the v5 closed Chat schema SHALL reject the complete value as unknown before Session, persistence, projection, or notice behavior
+
+#### Scenario: Same generation refreshes its user projection
+
+- **WHEN** a source republishes an accepted `presenceId` with the same `user.id` and `joinedAt` but a changed `name` or `avatar`
+- **THEN** the receiver SHALL accept the current projection idempotently without changing membership count or emitting a chat, History, join, or leave event
+
+#### Scenario: Same generation cannot change identity
+
+- **WHEN** a source republishes an accepted `presenceId` with a different `user.id` or `joinedAt`
+- **THEN** the receiver SHALL reject that source-local SESSION without changing membership, notice state, or the original generation binding
+
+#### Scenario: Later generation creates one join notice
+
+- **GIVEN** a committed local generation and no displayed logical generation for a remote user
+- **WHEN** a valid remote SESSION first binds a `presenceId` whose `joinedAt` is strictly later than the local generation
+- **THEN** the receiver SHALL classify one observer-local join on the user's zero-to-one transition and no duplicate for repeated publication
+
 ## MODIFIED Requirements
 
 ### Requirement: Public protocol module is pure and explicitly bounded
 
-The code-level public module `src/protocol/index.ts` SHALL be the third-party-facing peer contract without introducing a package, publishing flow, or SDK. Its wire structures SHALL be exactly the Owner-frozen `ChatUser`, `ChatSession`, `HLC`, `MentionedUser`, `SessionMessage`, `SessionEndMessage`, `TextMessage`, `ReactionType`, `ReactionMessage`, `ChatMessage`, `HistoryMessagesPull`, `HistoryMessagesPush`, `ChatRoomMessage`, `ChatSite`, and `WorldRoomMessage` contracts. It SHALL export only their authoritative static declarative schemas, schema-inferred TypeScript types, public limits/constants, and the public codec surface (`WireCodec`, `NativeWireCodec` reference implementation, `WireCodecError`). It SHALL NOT export a standalone parse/check/boolean validator, schema factory, handwritten duplicate message declaration, structural alias, compatibility DTO, or optional/open metadata bag. Declarative schema validation SHALL cover closed-union and unknown-key rejection, primitive and literal shape, field/array ceilings, tuples, required SESSION `joinedAt`, and safe non-negative integer fields. It SHALL NOT validate whole-value canonical byte size, mention/body relationships, future HLC relative to receiver time, origin-only URL semantics, uniqueness, or History user/message references. The `NativeWireCodec` SHALL own only the fixed codec/security algorithm; the public protocol SHALL NOT export local persistence/UI models, projections, ordering implementations, Runtime lifecycle or page-host RPC contracts, WirePipeline queue/drop/apply/flush types, or application orchestration.
+The code-level public module `src/protocol/index.ts` SHALL be the third-party-facing peer contract without introducing a package, publishing flow, or SDK. Its wire structures SHALL be exactly the Owner-frozen `ChatUser`, `ChatSession`, `HLC`, `MentionedUser`, `SessionMessage`, `TextMessage`, `ReactionType`, `ReactionMessage`, `ChatMessage`, `HistoryMessagesPull`, `HistoryMessagesPush`, `ChatRoomMessage`, `ChatSite`, and `WorldRoomMessage` contracts. It SHALL export only their authoritative static declarative schemas, schema-inferred TypeScript types, public limits/constants, and the public codec surface (`WireCodec`, `NativeWireCodec` reference implementation, `WireCodecError`). It SHALL NOT export a standalone parse/check/boolean validator, schema factory, handwritten duplicate message declaration, structural alias, compatibility DTO, optional/open metadata bag, or session-end surface. Declarative schema validation SHALL cover closed-union and unknown-key rejection, primitive and literal shape, field/array ceilings, tuples, required SESSION `joinedAt`, and safe non-negative integer fields. It SHALL NOT validate whole-value canonical byte size, mention/body relationships, future HLC relative to receiver time, origin-only URL semantics, uniqueness, or History user/message references. The `NativeWireCodec` SHALL own only the fixed codec/security algorithm; the public protocol SHALL NOT export local persistence/UI models, projections, ordering implementations, Runtime lifecycle or page-host RPC contracts, WirePipeline queue/drop/apply/flush types, or application orchestration.
 
 `src/protocol/**` SHALL NOT depend on `domain/runtime`, `service`, `app`, UI, storage, comctx, browser-extension APIs/globals (`chrome.*`/`browser.*`), DOM/window/document, host lifecycle APIs, or app configuration. The public `NativeWireCodec` MAY use the standard Web codec APIs it implements (`CompressionStream`, `DecompressionStream`, `Blob`, `ReadableStream`, `TextEncoder`, and `TextDecoder`) and exactly the two scoped `core-js` imports; no whole-package polyfill is permitted. Protocol-owned limits and pure byte utilities SHALL be defined within the protocol boundary. Runtime and Domain code SHALL depend on the public protocol one way; the protocol SHALL NOT import Runtime or Domain code.
 
@@ -61,10 +97,6 @@ interface SessionMessage extends ChatSession {
   type: 'session'
   presenceId: string
   joinedAt: number
-}
-interface SessionEndMessage {
-  type: 'session-end'
-  presenceId: string
 }
 interface TextMessage {
   type: 'text'
@@ -100,7 +132,7 @@ interface HistoryMessagesPush {
   messages: ChatMessage[]
   done: boolean
 }
-type ChatRoomMessage = SessionMessage | SessionEndMessage | ChatMessage | HistoryMessagesPull | HistoryMessagesPush
+type ChatRoomMessage = SessionMessage | ChatMessage | HistoryMessagesPull | HistoryMessagesPush
 interface ChatSite {
   origin: string
   title?: string
@@ -126,12 +158,17 @@ interface WorldRoomMessage extends ChatSession {
 
 The public protocol SHALL define authoritative closed declarative schemas and pure limits. At peer receive, `WireDomain` SHALL select and parse exactly one static complete schema using trusted transport context and MAY apply source-local operational policies after rejection, but it SHALL NOT compose a separate validator. Queue/drop/apply/flush scheduling, rate-limited diagnostics, reconnect behavior, page sequencing, attempt budgets, and delivery admission are not public protocol semantics.
 
-Chat wire messages SHALL form a strict, closed discriminated union keyed by `type`; World wire payloads SHALL use one strict schema selected by trusted v4 `roomId` and SHALL NOT carry a payload `type`. The codec SHALL enforce `MAX_WIRE_BYTES = 64KiB` for final encoded frames and `MAX_DECODED_JSON_BYTES = 256KiB` for streaming decompressed JSON before parse. Declarative schemas SHALL enforce explicit built-in field and array ceilings, including at most 100 messages in one History Push page. Each `messageIds[]` element SHALL remain an opaque string with no standalone length or format rule and SHALL be bounded only by the containing codec frame and Runtime attempt budgets. SESSION `joinedAt`, HLC timestamp, HLC counter, and History `page` SHALL be finite safe non-negative integers. Unknown types, unknown keys, forbidden envelope/context fields, missing or invalid required values, and declaratively expressible limit violations SHALL fail the complete schema parse. Whole-value `ChatUser`, `ChatMessage`, and History page canonical byte sizes SHALL not be computed or validated. Malformed/non-canonical Base64, invalid UTF-8/JSON/deflate, and encoded/decompressed frame bounds SHALL remain codec representation failures before message schema parsing.
+Chat wire messages SHALL form a strict, closed discriminated union keyed by `type`; World wire payloads SHALL use one strict schema selected by trusted v5 `roomId` and SHALL NOT carry a payload `type`. The codec SHALL enforce `MAX_WIRE_BYTES = 64KiB` for final encoded frames and `MAX_DECODED_JSON_BYTES = 256KiB` for streaming decompressed JSON before parse. Declarative schemas SHALL enforce explicit built-in field and array ceilings, including at most 100 messages in one History Push page. Each `messageIds[]` element SHALL remain an opaque string with no standalone length or format rule and SHALL be bounded only by the containing codec frame and Runtime attempt budgets. SESSION `joinedAt`, HLC timestamp, HLC counter, and History `page` SHALL be finite safe non-negative integers. Unknown types including `session-end`, unknown keys, forbidden envelope/context fields, missing or invalid required values, and declaratively expressible limit violations SHALL fail the complete schema parse. Whole-value `ChatUser`, `ChatMessage`, and History page canonical byte sizes SHALL not be computed or validated. Malformed/non-canonical Base64, invalid UTF-8/JSON/deflate, and encoded/decompressed frame bounds SHALL remain codec representation failures before message schema parsing.
 
 #### Scenario: Unknown or oversized message
 
 - **WHEN** a decoded value has an unknown type or violates a declarative field or array limit at peer receive or local persistence load
 - **THEN** the complete schema parse SHALL fail before any Runtime application, without a second validator or partial output
+
+#### Scenario: Session end has no compatibility path
+
+- **WHEN** a decoded Chat value carries `type:'session-end'` in a current v5 room
+- **THEN** the complete Chat schema SHALL reject it as an unknown type, and no end handler, projection, notice, fallback, or compatibility branch SHALL run
 
 #### Scenario: Decompression and field resource limits
 
@@ -171,3 +208,11 @@ Hybrid Logical Clock values on wire `ChatMessage` values SHALL be finite non-neg
 
 - **WHEN** two schema-accepted messages share an HLC timestamp and counter but have different ids
 - **THEN** they SHALL be ordered and deduplicated by `(hlc, id)`, never by HLC alone, without revalidating either message
+
+## REMOVED Requirements
+
+### Requirement: Chat presence uses causal generation and final-end facts
+
+**Reason**: Artico physical peer departure is the sole leave input. A best-effort peer end message cannot cover sleep, disconnect, or process termination and creates a second leave authority.
+
+**Migration**: Current v5 peers carry no Chat end variant. Runtime retains the user online during a five-second PeerLeave grace, cancels a same-presence recovery without lifecycle notices, and confirms leave only when the final displayed presence expires. No compatibility path exists.

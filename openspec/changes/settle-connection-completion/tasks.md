@@ -3,7 +3,7 @@
 ## 1. Authority And Evidence
 
 - [x] 1.1 Freeze `develop@d7fa3d386250aee22a740ca84e3cd29dadbbc724`, task #422 diagnostic SHA-256 `256872c6688aedeb03859a75ac68ec331fb48bfe3ef0d12434a7aebde72dad27`, the four RED signatures, and the lifecycle PASS before source edits.
-- [x] 1.2 Freeze the minimum product boundary: terminal page-attempt ownership, pre-connection prerequisite deadlines/cancellation, post-commit active Presence persistence independence, tail recovery, and unchanged final release/grace semantics.
+- [x] 1.2 Freeze the minimum product boundary: terminal page-attempt ownership, pre-connection prerequisite deadlines/cancellation, post-commit active Presence persistence independence, tail recovery, and current local release/grace semantics.
 - [x] 1.3 Record callback/replay/IDB request identity, `pageId` metadata, and provider-refresh callback behavior as non-prescriptive hypotheses rather than implementation requirements.
 
 ## 2. Focused RED Controls
@@ -20,7 +20,7 @@
 - [x] 3.2 Make failed/cancelled prerequisite work clear only its matching application request, dispose partial callbacks/resources, abort Database work where supported, and reject stale late results.
 - [x] 3.3 Complete page success from the current committed Chat/World snapshot containing the local session; keep active post-commit Presence persistence outside the page completion Promise.
 - [x] 3.4 Bound and recover the per-domain active Presence persistence tail so an unresolved predecessor cannot strand later current-generation persistence or final release and a late old completion cannot replace the current generation.
-- [x] 3.5 Preserve durable final retirement, SESSION_END/cleanup ordering, application request-ID fencing, five-second grace, room reuse/release, and the exact public `ChatRoom`/protocol/schema/version/UI contracts.
+- [ ] 3.5 Preserve local active-generation cleanup, application request-ID fencing, five-second domain grace, room reuse/release, and the exact current public `ChatRoom`/protocol/schema/version/UI contracts; retain no Chat end send, retry, settlement, cleanup record, or physical-departure gate.
 
 ## 4. Exact-Bound Verification
 

@@ -2,7 +2,7 @@
 
 See `proposal.md` for motivation. The current public protocol defines message interfaces/unions before their Valibot schemas, then completes validation through exported predicates and repeated caller checks. The repeated checks currently appear at peer receive, local record load, local identity/message production, send, clock adoption, History supply, and intermediate Runtime consumption.
 
-The accepted boundary is narrower: this change covers only peer-protocol data owned by `src/protocol`. Protocol validation exists only at peer receive and local persistence load, uses schemas exclusively, and silently discards failures without a Toast. Current v4 wire values, physical namespaces, codec representation, and persisted record format do not change.
+Protocol validation exists only at peer receive and local persistence load, uses schemas exclusively, and silently discards failures without a Toast. The same current contract removes the unreliable Chat end variant, makes Artico physical departure the sole remote leave input, and isolates the resulting wire through v5 Chat and World namespaces.
 
 ## Goals / Non-Goals
 
@@ -12,19 +12,22 @@ The accepted boundary is narrower: this change covers only peer-protocol data ow
 - Retain only protocol rules expressible through declarative Valibot primitives and combinators.
 - Give peer receive and local persistence load exclusive ownership of protocol parsing.
 - Remove duplicate protocol checks and partially validated values from every other path.
+- Remove `SessionEndMessage` and every final-end state/effect so one physical lifecycle signal owns remote leave classification.
+- Preserve stable online presence across a bounded five-second PeerLeave grace and classify one user leave only after the last presence expires.
+- Make the breaking wire change through one v5 Chat/World namespace cut with no compatibility path.
 
 **Non-Goals:**
 
-- Changing encoded protocol fields, wire variants/literals, v4 namespaces, canonical bytes, History behavior, persistence format, or UI; only the public History Request/Response symbols are renamed to Pull/Push.
+- Changing retained SESSION, text, reaction, History, or World payload fields; History behavior, codec representation, origin-database format, and UI copy remain current.
 - Applying schema-first rules to extension page/content/background/offscreen control-plane messages.
-- Removing non-protocol authorization, ownership, lifecycle, queue, or scheduling decisions.
+- Removing non-protocol authorization, ownership, queue, or scheduling decisions unrelated to final-end deletion and PeerLeave grace.
 - Adding a dependency, compatibility path, data migration, or user-facing validation feedback.
 
 ## Decisions
 
 ### 1. The schema graph defines the public data graph
 
-`Session` owns the schemas for `ChatUser` and `ChatSession`; `ChatRoom` owns `HLC`, mention, SESSION/END, text, reaction, History Pull/Push, Chat-message, and closed Chat-room schemas; `WorldRoom` owns `ChatSite` and the complete World snapshot schema. Parent schemas compose exported child schemas rather than copying their fields into a separate type declaration.
+`Session` owns the schemas for `ChatUser` and `ChatSession`; `ChatRoom` owns `HLC`, mention, SESSION, text, reaction, History Pull/Push, Chat-message, and closed Chat-room schemas; `WorldRoom` owns `ChatSite` and the complete World snapshot schema. Parent schemas compose exported child schemas rather than copying their fields into a separate type declaration.
 
 Every public protocol data type is inferred from its owning schema output. This includes leaf values, variants, and unions. Constants may remain ordinary values, and `WireCodec`, `NativeWireCodec`, `WireCodecError`, and public limits remain ordinary non-message API declarations. Handwritten interfaces/unions, type assertions that manufacture schema output, and aliases duplicating a schema-owned structure are removed.
 
@@ -58,9 +61,25 @@ Alternative rejected: validate before persistence or send as defense in depth. T
 
 Alternative rejected: move compressed-frame safety into message schemas. A message schema cannot safely inspect a value until frame decoding has completed, so this would remove the resource boundary needed to reach schema parsing.
 
-### 5. The refactor is wire- and storage-neutral
+### 5. PeerLeave owns remote leave classification
 
-Schema output for every accepted value remains structurally identical to the current v4 value. No field transform, default, strip, coercion, alias, namespace change, or compatibility branch is introduced. Stored record identity and database version remain unchanged; the load boundary only determines whether an unknown row becomes a typed result.
+Artico peer departure is the only remote leave input. When the last current physical source for an accepted `presenceId` leaves, Session retains that logical presence in the online snapshot and starts exactly one five-second pending-leave deadline. Duplicate physical-leave facts neither extend the deadline nor emit a notice. A valid SESSION that rebinds the same `presenceId`, `user.id`, and `joinedAt` before expiry cancels the pending leave and changes no membership or notice.
+
+If no current source has rebound when the deadline expires, Session removes that presence. It emits one observer-local leave only when the user transitions from at least one active or grace-preserved presence to zero; another active or pending presence for that user suppresses the leave. A new physical source or a different presence does not resurrect an expired generation. Pending leave state is Runtime-owned lifecycle state, not peer wire or a durable final-end transaction.
+
+Alternative rejected: remove `SessionEndMessage` and apply PeerLeave immediately. That makes ordinary transport replacement flicker offline/online and produces false leave/join notices.
+
+### 6. Final release has no end transaction
+
+Local domain release retains the existing page-owned five-second Lifecycle grace and current local cleanup. It removes the local active-generation authority and physically leaves the Chat/World rooms without producing a Chat end frame. There is no in-flight end, pending-end retry, settled-cleanup record, end-send settlement, observer end handler, or end-specific live-message gate. Release fencing remains only for the current local release operation and disappears with its owned state.
+
+Alternative rejected: retain private final-end persistence while deleting only the wire variant. Without an end frame, those records and gates own no externally observable fact and only prolong physical departure.
+
+### 7. v5 is one clean current generation
+
+`ChatRoomMessage` is exactly `SessionMessage | ChatMessage | HistoryMessagesPull | HistoryMessagesPush`. The strict Chat schema rejects `session-end` as an unknown type. Both Chat and World select v5 physical namespace inputs so no v1-v4 peer shares membership or payload traffic with the current presence model. No decoder alias, dual publication, bridge, translator, fallback, or capability negotiation exists.
+
+Every retained accepted payload preserves its current field structure and codec representation. The origin message database and version remain unchanged; obsolete private final-end records are deleted rather than migrated or interpreted.
 
 ## Risks / Trade-offs
 
@@ -69,10 +88,13 @@ Schema output for every accepted value remains structurally identical to the cur
 - [A locally produced invalid typed value reaches encode/send] -> This is intentional: producers do not validate protocol shape, and the receiving boundary is authoritative.
 - [A previously enforced rule is unsupported by the schema API] -> Remove the rule and its tests exactly as authorized; do not retain a fallback or imply the rule remains enforced.
 - [Manually corrupted local rows disappear from results] -> Discard before projection and preserve all valid rows; do not repair, coerce, migrate, or surface a Toast.
+- [A transport replacement looks like a user departure] -> Keep the accepted presence online for exactly five seconds and cancel only on a valid same-presence rebind.
+- [Two physical sources or presences belong to one user] -> Expire only the affected presence and emit leave only on the user's final active-or-pending transition to zero.
+- [An older client would still send `session-end`] -> Isolate v5 Chat and World namespaces and retain no compatibility decoder.
 
 ## Migration Plan
 
-1. Land the corrected docs authority, declarative schema/type refactor, History Pull/Push rename, two boundary integrations, duplicate-check deletion, and replacement tests on one requirement branch and Draft PR.
-2. Keep v4 wire namespaces, encoded values, and the database version unchanged; no compatibility or data migration step exists.
+1. Land the corrected docs authority, declarative schema/type refactor, History Pull/Push rename, two boundary integrations, SessionEnd deletion, PeerLeave grace, v5 namespace cut, duplicate-path deletion, and replacement tests on one requirement branch and Draft PR.
+2. Delete obsolete final-end state and all v1-v4 compatibility inputs in the same exact; no data migration or cross-version bridge exists.
 3. Obtain fresh architecture-first review of the complete branch diff and verify all final gates on one exact.
-4. Roll back by reverting the complete requirement PR; no persisted-data conversion or cross-version bridge requires separate reversal.
+4. Roll back by reverting the complete requirement PR; the unchanged origin database requires no separate reversal.
