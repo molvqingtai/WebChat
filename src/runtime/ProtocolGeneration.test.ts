@@ -14,9 +14,9 @@ describe('current peer protocol generation', () => {
     const session = readFileSync(path.resolve(process.cwd(), 'src/domain/runtime/Session.ts'), 'utf8')
     const wire = readFileSync(path.resolve(process.cwd(), 'src/domain/runtime/Wire.ts'), 'utf8')
 
-    expect(session).toContain('Message exceeds the v4 event contract')
-    expect(session).toContain('Reaction exceeds the v4 event contract')
-    expect(session).toContain('Chat message does not match the v4 event contract')
+    // Local production no longer revalidates protocol shape, so those diagnostics are gone;
+    // the remaining Wire rejection diagnostic keeps the v4 label.
+    expect(session).not.toContain('Message exceeds the v4 event contract')
     expect(wire).toContain('Dropped v4 frame')
     expect(`${session}\n${wire}`).not.toMatch(/\bv3\b/)
   })

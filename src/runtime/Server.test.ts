@@ -1182,20 +1182,22 @@ describe('RuntimeServer lifecycle', () => {
     expect((await server.getSnapshot()).domains[0]).toMatchObject({ phase: 'active', pageIds: ['page-a'] })
   })
 
-  it('rejects invalid projected identity fields before joining transport', async () => {
+  it('trusts typed identity at local production and joins without protocol revalidation', async () => {
     const clock = new FakeClock()
     const fake = createFakeTransport()
     const server = createServer({ transport: fake.transport, clock, codec: jsonCodec })
     await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
 
+    // Local identity production does not validate protocol shape: the typed join proceeds and
+    // the receiving peer remains responsible for its own inbound parse.
     await expect(
       server.joinChatRoom({
         domain: DOMAIN,
         user: { ...USER_INFO, name: 1 } as unknown as ChatUser,
         site: SITE
       })
-    ).rejects.toThrow('Invalid local identity or site metadata')
-    expect(fake.joinCalls).toEqual([])
+    ).resolves.toMatchObject({ domains: [{ domain: DOMAIN, chatRoomJoined: true }] })
+    expect(fake.joinCalls.length).toBeGreaterThan(0)
   })
 
   it('disposes the Remesh host and physical transport exactly once', async () => {

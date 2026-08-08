@@ -593,7 +593,7 @@ describe('Runtime-backed ChatRoom application port', () => {
     await expect(messageStore.query()).resolves.toEqual([textRecord('history'), record])
   })
 
-  it('isolates an invalid inbound record before persistence and recovers on the next event', async () => {
+  it('persists a runtime-accepted record through an ACK failure and recovers on the next event', async () => {
     const { room, emitInbound, messageStore, server } = await setup()
     const messages: ChatMessage[] = []
     const errors: Error[] = []
@@ -602,30 +602,27 @@ describe('Runtime-backed ChatRoom application port', () => {
     vi.mocked(server.ackInbound).mockRejectedValueOnce(new Error('invalid ACK failed'))
     await settle()
 
-    await emitInbound({
-      sequence: 1,
-      domain: DOMAIN,
-      record: { legacy: true, schema: 'unsupported-v1' } as unknown as TextMessageRecord,
-      source: 'live'
-    })
+    // The Runtime hands the adapter an already schema-accepted typed record: persistence write
+    // trusts it (the receiving boundary is authoritative), so the record is inserted and only
+    // the ACK transport failure surfaces as an error with a bounded retry.
+    const accepted = textRecord('accepted-inbound')
+    await emitInbound({ sequence: 1, domain: DOMAIN, record: accepted, source: 'live' })
 
-    expect(messages).toEqual([])
-    expect(errors).toHaveLength(2)
-    expect(errors[0]).toMatchObject({ name: 'InvalidMessageRecordError' })
-    expect(errors[1]).toEqual(new Error('invalid ACK failed'))
-    await expect(messageStore.query()).resolves.toEqual([])
-    expect(server.ackInbound).toHaveBeenCalledWith({ domain: DOMAIN, sequence: 1, inserted: false })
+    expect(messages).toEqual([accepted.message])
+    expect(errors).toEqual([new Error('invalid ACK failed')])
+    await expect(messageStore.query()).resolves.toEqual([accepted])
+    expect(server.ackInbound).toHaveBeenCalledWith({ domain: DOMAIN, sequence: 1, inserted: true })
 
     await vi.advanceTimersByTimeAsync(1000)
     expect(server.ackInbound).toHaveBeenCalledTimes(2)
-    expect(errors).toHaveLength(2)
+    expect(errors).toHaveLength(1)
 
-    const valid = textRecord('valid-after-invalid')
+    const valid = textRecord('valid-after-retry')
     await emitInbound({ sequence: 2, domain: DOMAIN, record: valid, source: 'live' })
 
-    expect(messages).toEqual([valid.message])
-    expect(errors).toHaveLength(2)
-    await expect(messageStore.query()).resolves.toEqual([valid])
+    expect(messages).toEqual([accepted.message, valid.message])
+    expect(errors).toHaveLength(1)
+    await expect(messageStore.query()).resolves.toEqual([accepted, valid])
     expect(server.ackInbound).toHaveBeenCalledTimes(3)
   })
 

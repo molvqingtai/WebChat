@@ -5,6 +5,16 @@ import { describe, expect, it } from 'vitest'
 const PROTOCOL_ROOT = path.resolve(import.meta.dirname)
 const CONFIG_PATH = path.resolve(PROTOCOL_ROOT, '../constants/config.ts')
 const PUBLIC_FILES = ['ChatRoom.ts', 'Limits.ts', 'Session.ts', 'WireCodec.ts', 'WorldRoom.ts', 'index.ts']
+const FORBIDDEN_VALIDATORS = [
+  'parseChatRoomMessage',
+  'parseWorldRoomMessage',
+  'checkChatRoomMessage',
+  'checkWorldRoomMessage',
+  'isUserWithinLimit',
+  'isMessageWithinLimit',
+  'isHLCInRange',
+  'isChatRoomMessageSemanticallyValid'
+]
 const FORBIDDEN_SYMBOLS = [
   'LocalRecord',
   'DurableEventRecord',
@@ -76,7 +86,30 @@ describe('public protocol source boundary', () => {
     }
   })
 
-  it('exports only peer definitions, limits, validators, and the reference codec', async () => {
+  it('derives every public type from its owning schema with no handwritten duplicate', async () => {
+    const sources = await Promise.all(
+      PUBLIC_FILES.map(async (file) => [file, await readFile(path.join(PROTOCOL_ROOT, file), 'utf8')] as const)
+    )
+    for (const [file, source] of sources) {
+      // No handwritten interface or standalone structural type may describe a protocol value
+      // (WireCodec is an ordinary non-message API declaration, not a protocol data type).
+      if (file !== 'WireCodec.ts') {
+        expect(source, `${file} declares a handwritten interface`).not.toMatch(/export interface/)
+      }
+      expect(source, `${file} has a non-inferred structural export type`).not.toMatch(
+        /export type [A-Za-z0-9_]+ = (?:\{|ChatUser\b|ChatSession\b|HLC\b|WorldRoomMessage\b)/
+      )
+      // No post-parse validator or output cast may finish validation after schema parsing.
+      for (const validator of FORBIDDEN_VALIDATORS) {
+        expect(source, `${file} retains validator ${validator}`).not.toContain(validator)
+      }
+      expect(source, `${file} casts schema output`).not.toMatch(
+        /as (?:ChatRoomMessage|ChatMessage|WorldRoomMessage|ChatUser|ChatSession|HLC)\b/
+      )
+    }
+  })
+
+  it('exports only peer definitions, limits, schemas, inferred types, and the reference codec', async () => {
     const entry = await readFile(path.join(PROTOCOL_ROOT, 'index.ts'), 'utf8')
     expect(entry.trim().split('\n')).toEqual([
       "export * from './Limits'",

@@ -196,8 +196,9 @@ describe.each(backends)('$name MessageStore contract', (backend) => {
     }
   })
 
-  it('rejects invalid input before persistence and never uses key shape as a discriminator', async () => {
+  it('trusts typed inputs at write and omits invalid stored values at load', async () => {
     const { messageStore } = create(backend)
+    // Persistence write does not validate protocol shape: typed inputs are trusted.
     const prefixedButUntyped = {
       id: 'chat-message:looks-typed',
       message: textRecord('chat-message:looks-typed').message,
@@ -205,10 +206,8 @@ describe.each(backends)('$name MessageStore contract', (backend) => {
       receivedAt: 1
     }
 
-    for (const input of [prefixedButUntyped, null, undefined, []]) {
-      await expect(messageStore.insert(input as unknown as MessageRecord)).rejects.toMatchObject({
-        name: 'InvalidMessageRecordError'
-      })
+    for (const input of [prefixedButUntyped, { id: 'missing-fields' }]) {
+      await expect(messageStore.insert(input as unknown as MessageRecord)).resolves.toEqual({ inserted: true })
     }
     await expect(messageStore.query()).resolves.toEqual([])
     const valid = textRecord('valid-after-invalid-input')

@@ -1,16 +1,18 @@
 import { Remesh } from 'remesh'
+import * as v from 'valibot'
 import { fromEventPattern, map, mergeMap } from 'rxjs'
 import { MAX_DECODE_QUEUE_BYTES, MAX_DECODE_QUEUE_FRAMES, WORLD_ROOM_ID_V4 } from '@/constants/config'
 import { RoomTransportExtern, WireCodecExtern } from '@/domain/runtime/externs/RoomTransport'
 import {
   MESSAGE_TYPE,
   WireCodecError,
+  WorldRoomMessageSchema,
+  createChatRoomMessageSchema,
   isHistoryPageFrameWithinLimit,
-  parseChatRoomMessage,
-  parseWorldRoomMessage,
   type ChatRoomMessage,
   type WorldRoomMessage
 } from '@/protocol'
+import { ClockExtern } from '@/domain/runtime/externs/Clock'
 import { getTextByteSize } from '@/utils/getTextByteSize'
 import stringToHex from '@/utils/stringToHex'
 
@@ -101,6 +103,7 @@ const WireDomain = Remesh.domain({
   impl: (domain) => {
     const transport = domain.getExtern(RoomTransportExtern)
     const codec = domain.getExtern(WireCodecExtern)
+    const clock = domain.getExtern(ClockExtern)
 
     const TrustedRoomsState = domain.state<string[]>({ name: 'Wire.TrustedRoomsState', default: [] })
     const RoomGenerationsState = domain.state<RoomGeneration[]>({
@@ -150,9 +153,15 @@ const WireDomain = Remesh.domain({
     const ProviderSendRequestedEvent = domain.event<EncodedSend>({ name: 'Wire.ProviderSendRequestedEvent' })
     const RawFrameAdmittedEvent = domain.event<RawFrame>({ name: 'Wire.RawFrameAdmittedEvent' })
 
+    // The single peer-receive parse boundary: the room-selected complete schema owns all
+    // protocol validation (the Chat schema is built with an explicit receiver now). A rejection
+    // emits no typed message and reaches no downstream domain or user-visible feedback.
     const parseMessage = (roomId: string, value: unknown): WireMessage | null => {
-      if (roomId === worldRoomId) return parseWorldRoomMessage(value)
-      return parseChatRoomMessage(value)
+      const parsed =
+        roomId === worldRoomId
+          ? v.safeParse(WorldRoomMessageSchema, value)
+          : v.safeParse(createChatRoomMessageSchema(clock.now()), value)
+      return parsed.success ? parsed.output : null
     }
 
     const RecordDropCommand = domain.command({
@@ -309,13 +318,6 @@ const WireDomain = Remesh.domain({
           return MessageSendFailedEvent({
             requestId: request.requestId,
             error: new Error('Untrusted room message'),
-            stage: 'preflight'
-          })
-        }
-        if (!parseMessage(request.roomId, request.message)) {
-          return MessageSendFailedEvent({
-            requestId: request.requestId,
-            error: new Error('Invalid message for trusted room'),
             stage: 'preflight'
           })
         }

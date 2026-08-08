@@ -12,18 +12,7 @@ import {
   type PresenceDomainRecord
 } from '@/domain/runtime/externs/PresenceStore'
 import { CHAT_ROOM_NAMESPACE_V4 } from '@/constants/config'
-import {
-  MESSAGE_TYPE,
-  isChatRoomMessageSemanticallyValid,
-  isHLCInRange,
-  parseChatRoomMessage,
-  parseWorldRoomMessage,
-  type ChatMessage,
-  type HLC,
-  type MentionedUser,
-  type ChatSite,
-  type ChatUser
-} from '@/protocol'
+import { MESSAGE_TYPE, type ChatMessage, type HLC, type MentionedUser, type ChatSite, type ChatUser } from '@/protocol'
 import {
   MESSAGE_RECORD_TYPE,
   type ChatMessageRecord,
@@ -147,11 +136,11 @@ const sanitizeSite = (site: ChatSite): ChatSite => {
   }
 }
 
-const projectChatUser = (value: unknown): unknown => {
-  if (typeof value !== 'object' || value === null) return value
-  const user = value as Record<keyof ChatUser, unknown>
-  return { id: user.id, name: user.name, avatar: user.avatar }
-}
+const projectChatUser = (value: ChatUser): ChatUser => ({
+  id: value.id,
+  name: value.name,
+  avatar: value.avatar
+})
 
 export const allocateHlc = (current: HLC, now: number): HLC => {
   if (now > current.timestamp) return { timestamp: now, counter: 0 }
@@ -161,7 +150,6 @@ export const allocateHlc = (current: HLC, now: number): HLC => {
 }
 
 export const adoptHlc = (current: HLC, remote: HLC, now: number): HLC | null => {
-  if (!isHLCInRange(remote, now)) return null
   return remote.timestamp > current.timestamp ||
     (remote.timestamp === current.timestamp && remote.counter > current.counter)
     ? { ...remote }
@@ -169,7 +157,6 @@ export const adoptHlc = (current: HLC, remote: HLC, now: number): HLC | null => 
 }
 
 export const observeHlc = (current: HLC, remote: HLC, now: number): HLC | null => {
-  if (!isHLCInRange(remote, now)) return null
   const timestamp = Math.max(now, current.timestamp, remote.timestamp)
   if (timestamp === now && now > current.timestamp && now > remote.timestamp) {
     return { timestamp: now, counter: 0 }
@@ -368,18 +355,15 @@ const SessionDomain = Remesh.domain({
         let site: ChatSite
         if (payload.mode === 'join') {
           site = sanitizeSite(payload.site!)
-          const valid = parseWorldRoomMessage({
-            sessionId: 'validation',
-            user: projectChatUser(payload.user),
-            sites: [site]
-          })
-          if (!valid || site.origin !== payload.domain) {
+          user = projectChatUser(payload.user!)
+          // Local identity authorization: the joined site must belong to the domain. Protocol
+          // shape is not validated here (local production trusts its typed inputs).
+          if (site.origin !== payload.domain) {
             return PreparationFailedEvent({
               attemptId: payload.attemptId,
               error: new Error('Invalid local identity or site metadata')
             })
           }
-          user = valid.user
         } else {
           user = current!.user
           site = current!.site
@@ -803,21 +787,10 @@ const SessionDomain = Remesh.domain({
           body: payload.body,
           mentions: payload.mentions.map(({ id, name, avatar, ranges }) => ({ id, name, avatar, ranges }))
         }
-        const validated = parseChatRoomMessage(candidate)
-        if (
-          !validated ||
-          validated.type !== MESSAGE_TYPE.TEXT ||
-          !isChatRoomMessageSemanticallyValid(validated, clock.now())
-        ) {
-          return OperationFailedEvent({
-            operationId: payload.operationId,
-            error: new Error('Message exceeds the v4 event contract')
-          })
-        }
         const record: TextMessageRecord = {
           type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE,
-          id: validated.id,
-          message: validated,
+          id: candidate.id,
+          message: candidate,
           user: runtime.user,
           receivedAt: clock.now()
         }
@@ -865,21 +838,10 @@ const SessionDomain = Remesh.domain({
           reaction: payload.reaction,
           active: payload.active
         }
-        const validated = parseChatRoomMessage(candidate)
-        if (
-          !validated ||
-          validated.type !== MESSAGE_TYPE.REACTION ||
-          !isChatRoomMessageSemanticallyValid(validated, clock.now())
-        ) {
-          return OperationFailedEvent({
-            operationId: payload.operationId,
-            error: new Error('Reaction exceeds the v4 event contract')
-          })
-        }
         const record: ReactionMessageRecord = {
           type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE,
-          id: validated.id,
-          message: validated,
+          id: candidate.id,
+          message: candidate,
           user: runtime.user,
           receivedAt: clock.now()
         }
@@ -897,16 +859,11 @@ const SessionDomain = Remesh.domain({
           })
         }
         const runtime = get(DomainsState()).find((item) => item.domain === payload.domain)
-        const event = parseChatRoomMessage(payload.event)
-        if (
-          !runtime ||
-          !event ||
-          (event.type !== MESSAGE_TYPE.TEXT && event.type !== MESSAGE_TYPE.REACTION) ||
-          !isChatRoomMessageSemanticallyValid(event, clock.now())
-        ) {
+        const event = payload.event
+        if (!runtime || (event.type !== MESSAGE_TYPE.TEXT && event.type !== MESSAGE_TYPE.REACTION)) {
           return OperationFailedEvent({
             operationId: payload.operationId,
-            error: new Error('Chat message does not match the v4 event contract')
+            error: new Error('Chat message does not match the active local session')
           })
         }
         const adopted = adoptHlc(get(HlcState()), event.hlc, clock.now())

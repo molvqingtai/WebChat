@@ -2,8 +2,8 @@ import { Remesh } from 'remesh'
 import * as v from 'valibot'
 import type { Database, DatabaseItem } from '@/domain/externs/Database'
 import type { Unsubscribe } from '@/domain/Subscription'
-import { HLCSchema, ChatMessageSchema, isMessageWithinLimit } from '@/protocol/ChatRoom'
-import { ChatUserSchema, isUserWithinLimit } from '@/protocol/Session'
+import { ChatMessageSchema, HLCSchema } from '@/protocol/ChatRoom'
+import { ChatUserSchema } from '@/protocol/Session'
 import { MESSAGE_RECORD_TYPE, NOTICE_TYPE, type MessageRecord } from '@/domain/Message'
 import { MAX_CONFLICTS_PER_RECORD, MAX_STORED_CONFLICTS } from '@/constants/config'
 import type { DatabaseDefinition } from '@/domain/impls/database/Definition'
@@ -100,13 +100,22 @@ const finiteNumber = v.pipe(
   v.check((value) => Number.isFinite(value), 'Expected a finite number')
 )
 
-const ChatMessageRecordSchema = v.strictObject({
-  type: v.literal(MESSAGE_RECORD_TYPE.CHAT_MESSAGE),
-  id: v.string(),
-  message: ChatMessageSchema,
-  user: ChatUserSchema,
-  receivedAt: finiteNumber
-})
+// The local persistence-load boundary: each record schema composes the authoritative protocol
+// child schema (structural keys, field/resource limits, mention ranges, and user size) with the
+// local-only record fields and relationships, so one schema parse accepts or rejects a whole
+// stored item. The explicit-now HLC time rule belongs to the receiving boundary only.
+const createChatMessageRecordSchema = () =>
+  v.pipe(
+    v.strictObject({
+      type: v.literal(MESSAGE_RECORD_TYPE.CHAT_MESSAGE),
+      id: v.string(),
+      message: ChatMessageSchema,
+      user: ChatUserSchema,
+      receivedAt: finiteNumber
+    }),
+    v.check((record) => record.id === record.message.id, 'Chat record id does not match message id'),
+    v.check((record) => record.user.id === record.message.userId, 'Chat record user does not match message user')
+  )
 
 const NoticeSchema = v.strictObject({
   id: v.string(),
@@ -115,15 +124,20 @@ const NoticeSchema = v.strictObject({
   body: v.string()
 })
 
-const SystemNoticeRecordSchema = v.strictObject({
-  type: v.literal(MESSAGE_RECORD_TYPE.SYSTEM_NOTICE),
-  id: v.string(),
-  notice: NoticeSchema,
-  user: ChatUserSchema,
-  receivedAt: finiteNumber
-})
+const createSystemNoticeRecordSchema = () =>
+  v.pipe(
+    v.strictObject({
+      type: v.literal(MESSAGE_RECORD_TYPE.SYSTEM_NOTICE),
+      id: v.string(),
+      notice: NoticeSchema,
+      user: ChatUserSchema,
+      receivedAt: finiteNumber
+    }),
+    v.check((record) => record.id === record.notice.id, 'System notice record id does not match notice id')
+  )
 
-const MessageRecordSchema = v.variant('type', [ChatMessageRecordSchema, SystemNoticeRecordSchema])
+const createMessageRecordSchema = () =>
+  v.variant('type', [createChatMessageRecordSchema(), createSystemNoticeRecordSchema()])
 
 class InvalidMessageRecordError extends TypeError {
   override readonly name = 'InvalidMessageRecordError'
@@ -137,22 +151,12 @@ const invalidMessageRecord = (message: string): never => {
 }
 
 const decodeMessageRecord = (item: DatabaseItem<string, unknown>): MessageRecord => {
-  const parsed = v.safeParse(MessageRecordSchema, item.value)
+  const parsed = v.safeParse(createMessageRecordSchema(), item.value)
   if (!parsed.success) return invalidMessageRecord('Database contains an invalid MessageRecord')
-  const record = parsed.output as MessageRecord
+  const record = parsed.output
+  // Database index integrity (the item key is outside the stored value, so it cannot be a
+  // schema rule): the item is omitted when its key does not match the record identity.
   if (item.key !== record.id) return invalidMessageRecord('Database item key does not match record id')
-  if (!isUserWithinLimit(record.user)) return invalidMessageRecord('MessageRecord user exceeds protocol limits')
-  if (record.type === MESSAGE_RECORD_TYPE.CHAT_MESSAGE) {
-    if (record.id !== record.message.id) return invalidMessageRecord('Chat record id does not match message id')
-    if (record.user.id !== record.message.userId) {
-      return invalidMessageRecord('Chat record user does not match message user')
-    }
-    if (!isMessageWithinLimit(record.message)) {
-      return invalidMessageRecord('Chat record message exceeds protocol limits')
-    }
-  } else if (record.id !== record.notice.id) {
-    return invalidMessageRecord('System notice record id does not match notice id')
-  }
   return record
 }
 
@@ -250,17 +254,11 @@ const retainInvalidRecordDiagnostics = async (
   )
 }
 
-const decodeInput = (record: MessageRecord): MessageRecord => {
-  const value = record as unknown
-  const id = typeof value === 'object' && value !== null ? (value as { id?: unknown }).id : undefined
-  return decodeMessageRecord({ key: typeof id === 'string' ? id : '', value })
-}
-
 const reportedDiagnosticFailures = new WeakSet<Database<MessageDatabaseSchema>>()
 
 export const createMessageStore = (database: Database<MessageDatabaseSchema>): MessageStore => ({
   insert: async (input, { signal }: MessageInsertOptions = {}) => {
-    const record = decodeInput(input)
+    const record = input
     signal?.throwIfAborted()
     return database.write(
       ['records', 'conflicts'],

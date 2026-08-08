@@ -1,30 +1,7 @@
 import * as v from 'valibot'
-import { ChatSessionSchema, isUserWithinLimit, type ChatSession } from './Session'
-
-export interface ChatSite {
-  origin: string
-  title?: string
-  icon?: string
-  description?: string
-}
-
-export interface WorldRoomMessage extends ChatSession {
-  sites: ChatSite[]
-}
+import { ChatSessionSchema, type ChatSession } from './Session'
 
 const boundedString = (maxLength: number) => v.pipe(v.string(), v.maxLength(maxLength))
-
-export const ChatSiteSchema = v.strictObject({
-  origin: boundedString(2048),
-  title: v.optional(boundedString(512)),
-  icon: v.optional(boundedString(16 * 1024)),
-  description: v.optional(boundedString(2048))
-})
-
-export const WorldRoomMessageSchema = v.strictObject({
-  ...ChatSessionSchema.entries,
-  sites: v.pipe(v.array(ChatSiteSchema), v.maxLength(100))
-})
 
 /** Rejects paths/query/fragments so World presence cannot leak the visited page URL. */
 const isOriginOnly = (origin: string): boolean => {
@@ -35,17 +12,27 @@ const isOriginOnly = (origin: string): boolean => {
   }
 }
 
-export const parseWorldRoomMessage = (value: unknown): WorldRoomMessage | null => {
-  const parsed = v.safeParse(WorldRoomMessageSchema, value)
-  if (!parsed.success) return null
-  const message = parsed.output as WorldRoomMessage
-  const origins = message.sites.map((site) => site.origin)
-  return isUserWithinLimit(message.user) &&
-    message.sites.every((site) => isOriginOnly(site.origin)) &&
-    new Set(origins).size === origins.length
-    ? message
-    : null
-}
+export const ChatSiteSchema = v.pipe(
+  v.strictObject({
+    origin: boundedString(2048),
+    title: v.optional(boundedString(512)),
+    icon: v.optional(boundedString(16 * 1024)),
+    description: v.optional(boundedString(2048))
+  }),
+  // Rejects paths/query/fragments so World presence cannot leak the visited page URL.
+  v.check((site) => isOriginOnly(site.origin), 'World site origin must be origin-only')
+)
+export type ChatSite = v.InferOutput<typeof ChatSiteSchema>
 
-export const checkWorldRoomMessage = (value: unknown): value is WorldRoomMessage =>
-  parseWorldRoomMessage(value) !== null
+export const WorldRoomMessageSchema = v.pipe(
+  v.strictObject({
+    ...ChatSessionSchema.entries,
+    sites: v.pipe(v.array(ChatSiteSchema), v.maxLength(100))
+  }),
+  // One snapshot per distinct origin: duplicate World sites are rejected.
+  v.check(
+    (message) => new Set(message.sites.map((site) => site.origin)).size === message.sites.length,
+    'World sites must be unique'
+  )
+)
+export type WorldRoomMessage = v.InferOutput<typeof WorldRoomMessageSchema>

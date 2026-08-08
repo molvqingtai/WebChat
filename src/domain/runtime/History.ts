@@ -17,10 +17,7 @@ import {
 import {
   MAX_HISTORY_RESPONSE_MESSAGES,
   MESSAGE_TYPE,
-  isChatRoomMessageSemanticallyValid,
   isHistoryPageFrameWithinLimit,
-  isMessageWithinLimit,
-  isUserWithinLimit,
   type ChatMessage,
   type ChatUser,
   type HLC,
@@ -643,12 +640,7 @@ const HistoryDomain = Remesh.domain({
             reason: 'history sync identity does not match the connection binding'
           })
         }
-        if (!isChatRoomMessageSemanticallyValid(payload.message, clock.now())) {
-          return wireDomain.command.DropProtocolCommand({
-            sourcePeerId: payload.sourcePeerId,
-            reason: 'invalid Chat message semantics'
-          })
-        }
+
         const providers = get(ProviderAttemptsState())
         const current = providers.find(
           (item) => item.sourcePeerId === payload.sourcePeerId && item.domain === binding.domain
@@ -1425,12 +1417,7 @@ const HistoryDomain = Remesh.domain({
             reason: 'history sync already terminal for this connection'
           })
         }
-        if (!isChatRoomMessageSemanticallyValid(payload.message, clock.now())) {
-          return wireDomain.command.DropProtocolCommand({
-            sourcePeerId: payload.sourcePeerId,
-            reason: 'invalid Chat message semantics'
-          })
-        }
+
         const requesters = get(RequesterAttemptsState())
         const current = requesters.find(
           (item) => item.sourcePeerId === payload.sourcePeerId && item.domain === binding.domain
@@ -1988,7 +1975,6 @@ const HistoryDomain = Remesh.domain({
                 if (eligible.length >= historySessionMessages || decodedBytes >= historySessionBytes) break
                 if (record.message.hlc.timestamp < attempt.cutoff) continue
                 if (record.id !== record.message.id || record.user.id !== record.message.userId) continue
-                if (!isMessageWithinLimit(record.message) || !isUserWithinLimit(record.user)) continue
                 const bytes = getTextByteSize(JSON.stringify(record.message))
                 if (decodedBytes + bytes > historySessionBytes) break
                 decodedBytes += bytes
