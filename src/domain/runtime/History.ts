@@ -17,14 +17,12 @@ import {
 import {
   MAX_HISTORY_RESPONSE_MESSAGES,
   MESSAGE_TYPE,
-  isHistoryPageFrameWithinLimit,
   type ChatMessage,
   type ChatUser,
   type HLC,
-  type HistoryMessagesRequest,
-  type HistoryMessagesResponse
+  type HistoryMessagesPull,
+  type HistoryMessagesPush
 } from '@/protocol'
-import { WireCodecError } from '@/protocol'
 import { WireCodecExtern } from '@/domain/runtime/externs/RoomTransport'
 import { compareEventPosition, type ChatMessageRecord } from '@/domain/Message'
 import type { HistorySupplyRequest, HistoryFeedbackEvent } from '@/runtime/Contract'
@@ -49,7 +47,7 @@ interface RequesterAttemptState extends HistoryAttemptKey {
   cutoff: number
   inventoryIds: string[]
   /** Pre-built inventory pages (real codec encoded < 64KiB each); sent in order. */
-  inventoryPages: HistoryMessagesRequest[]
+  inventoryPages: HistoryMessagesPull[]
   nextInventoryPage: number
   expectedResponsePage: number
   responseBytes: number
@@ -62,7 +60,7 @@ interface RequesterAttemptState extends HistoryAttemptKey {
   /** Fingerprint of the last applied response page, so an identical replay is idempotent. */
   lastAppliedPageFingerprint?: string
   /** Bounded serial queue of valid response pages that arrived while a batch was pending. */
-  pendingResponsePages: HistoryMessagesResponse[]
+  pendingResponsePages: HistoryMessagesPush[]
   /** Page number of the next expected queued page (pages queue continuously, not only N+1). */
   queuedResponseTail: number
   feedbackActive: boolean
@@ -616,7 +614,7 @@ const HistoryDomain = Remesh.domain({
 
     const HandleInventoryPageCommand = domain.command({
       name: 'History.HandleInventoryPageCommand',
-      impl: ({ get }, payload: WireMessageEvent & { message: HistoryMessagesRequest }) => {
+      impl: ({ get }, payload: WireMessageEvent & { message: HistoryMessagesPull }) => {
         const binding = get(
           sessionDomain.query.BindingQuery({ roomId: payload.roomId, sourcePeerId: payload.sourcePeerId })
         )
@@ -1224,7 +1222,7 @@ const HistoryDomain = Remesh.domain({
         // Page from one combined ordered work list: the retained tail is never dropped.
         const tail = [...payload.records.slice(MAX_HISTORY_RESPONSE_MESSAGES), ...payload.remaining]
         const pageDone = payload.terminal && tail.length === 0
-        const response: HistoryMessagesResponse = {
+        const response: HistoryMessagesPush = {
           type: MESSAGE_TYPE.HISTORY_MESSAGES_PUSH,
           syncId: payload.syncId,
           page: current.nextResponsePage,
@@ -1358,13 +1356,13 @@ const HistoryDomain = Remesh.domain({
 
     const prepareResponsePage = (
       current: RequesterAttemptState,
-      payload: WireMessageEvent & { message: HistoryMessagesResponse }
+      payload: WireMessageEvent & { message: HistoryMessagesPush }
     ):
       | {
           ok: false
           action: ReturnType<typeof FinishRequestedEvent> | ReturnType<typeof wireDomain.command.DropProtocolCommand>
         }
-      | { ok: true; page: HistoryMessagesResponse } => {
+      | { ok: true; page: HistoryMessagesPush } => {
       if (current.responseDone) {
         return {
           ok: false,
@@ -1400,7 +1398,7 @@ const HistoryDomain = Remesh.domain({
 
     const ApplyResponsePageCommand = domain.command({
       name: 'History.ApplyResponsePageCommand',
-      impl: ({ get }, payload: WireMessageEvent & { message: HistoryMessagesResponse }) => {
+      impl: ({ get }, payload: WireMessageEvent & { message: HistoryMessagesPush }) => {
         const binding = get(
           sessionDomain.query.BindingQuery({ roomId: payload.roomId, sourcePeerId: payload.sourcePeerId })
         )
@@ -1804,7 +1802,7 @@ const HistoryDomain = Remesh.domain({
               // the final 64KiB encoded frame. NativeWireCodec throws on an oversized frame, so the
               // throw closes the current bucket; only a single ID that cannot form a valid page by
               // itself cancels the attempt locally.
-              const pages: HistoryMessagesRequest[] = []
+              const pages: HistoryMessagesPull[] = []
               let bucket: string[] = []
               const encodeFrame = async (messageIds: string[], done: boolean) => {
                 const frame = {
@@ -1814,12 +1812,9 @@ const HistoryDomain = Remesh.domain({
                   messageIds,
                   done
                 }
-                // A codec rejection closes the bucket; a frame that encodes to exactly 65,536 bytes
-                // also fails the strict History predicate (isHistoryPageFrameWithinLimit) and must not
-                // be treated as a fitting page.
-                const encoded = await codec.encode(frame)
-                if (!isHistoryPageFrameWithinLimit(encoded))
-                  throw new WireCodecError('History page reached the wire limit')
+                // The codec's uniform encoded-frame bound is the only representation check: a
+                // rejection closes the current bucket.
+                await codec.encode(frame)
                 return frame
               }
               for (const id of inventoryIds) {
@@ -1887,7 +1882,7 @@ const HistoryDomain = Remesh.domain({
       impl: ({ fromEvent }) =>
         fromEvent(wireDomain.event.MessageAcceptedEvent).pipe(
           filter(
-            (event): event is WireMessageEvent & { message: HistoryMessagesRequest } =>
+            (event): event is WireMessageEvent & { message: HistoryMessagesPull } =>
               'type' in event.message && event.message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL
           ),
           map(HandleInventoryPageCommand)
@@ -1898,7 +1893,7 @@ const HistoryDomain = Remesh.domain({
       impl: ({ fromEvent }) =>
         fromEvent(wireDomain.event.MessageAcceptedEvent).pipe(
           filter(
-            (event): event is WireMessageEvent & { message: HistoryMessagesResponse } =>
+            (event): event is WireMessageEvent & { message: HistoryMessagesPush } =>
               'type' in event.message && event.message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH
           ),
           map(ApplyResponsePageCommand)

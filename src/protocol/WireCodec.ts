@@ -1,6 +1,11 @@
 import 'core-js/actual/typed-array/from-base64'
 import 'core-js/actual/typed-array/to-base64'
-import { MAX_DECODED_JSON_BYTES, MAX_WIRE_BYTES, isWireFrameWithinLimit } from './Limits'
+import { MAX_DECODED_JSON_BYTES, MAX_WIRE_BYTES } from './Limits'
+
+const getByteSize = (value: string): number => new TextEncoder().encode(value).byteLength
+
+/** Uniform encoded-frame representation bound; private codec work, not a message validator. */
+const isWireFrameWithinLimit = (value: string): boolean => getByteSize(value) <= MAX_WIRE_BYTES
 
 export interface WireCodec {
   encode: (value: unknown) => Promise<string>

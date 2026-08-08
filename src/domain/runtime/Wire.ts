@@ -3,16 +3,7 @@ import * as v from 'valibot'
 import { fromEventPattern, map, mergeMap } from 'rxjs'
 import { MAX_DECODE_QUEUE_BYTES, MAX_DECODE_QUEUE_FRAMES, WORLD_ROOM_ID_V4 } from '@/constants/config'
 import { RoomTransportExtern, WireCodecExtern } from '@/domain/runtime/externs/RoomTransport'
-import {
-  MESSAGE_TYPE,
-  WireCodecError,
-  WorldRoomMessageSchema,
-  createChatRoomMessageSchema,
-  isHistoryPageFrameWithinLimit,
-  type ChatRoomMessage,
-  type WorldRoomMessage
-} from '@/protocol'
-import { ClockExtern } from '@/domain/runtime/externs/Clock'
+import { ChatRoomMessageSchema, WorldRoomMessageSchema, type ChatRoomMessage, type WorldRoomMessage } from '@/protocol'
 import { getTextByteSize } from '@/utils/getTextByteSize'
 import stringToHex from '@/utils/stringToHex'
 
@@ -103,7 +94,6 @@ const WireDomain = Remesh.domain({
   impl: (domain) => {
     const transport = domain.getExtern(RoomTransportExtern)
     const codec = domain.getExtern(WireCodecExtern)
-    const clock = domain.getExtern(ClockExtern)
 
     const TrustedRoomsState = domain.state<string[]>({ name: 'Wire.TrustedRoomsState', default: [] })
     const RoomGenerationsState = domain.state<RoomGeneration[]>({
@@ -153,14 +143,12 @@ const WireDomain = Remesh.domain({
     const ProviderSendRequestedEvent = domain.event<EncodedSend>({ name: 'Wire.ProviderSendRequestedEvent' })
     const RawFrameAdmittedEvent = domain.event<RawFrame>({ name: 'Wire.RawFrameAdmittedEvent' })
 
-    // The single peer-receive parse boundary: the room-selected complete schema owns all
-    // protocol validation (the Chat schema is built with an explicit receiver now). A rejection
-    // emits no typed message and reaches no downstream domain or user-visible feedback.
+    // The single peer-receive parse boundary: the room-selected complete declarative schema
+    // owns all protocol validation. A rejection emits no typed message and reaches no downstream
+    // domain or user-visible feedback.
     const parseMessage = (roomId: string, value: unknown): WireMessage | null => {
       const parsed =
-        roomId === worldRoomId
-          ? v.safeParse(WorldRoomMessageSchema, value)
-          : v.safeParse(createChatRoomMessageSchema(clock.now()), value)
+        roomId === worldRoomId ? v.safeParse(WorldRoomMessageSchema, value) : v.safeParse(ChatRoomMessageSchema, value)
       return parsed.success ? parsed.output : null
     }
 
@@ -491,13 +479,7 @@ const WireDomain = Remesh.domain({
           ]
         }
         const message = parseMessage(payload.roomId, payload.value)
-        if (
-          !message ||
-          ('type' in message &&
-            (message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL ||
-              message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH) &&
-            !isHistoryPageFrameWithinLimit(payload.rawPayload))
-        ) {
+        if (!message) {
           return [...queueOutput, RecordDropCommand({ sourcePeerId: payload.sourcePeerId, reason: 'invalid message' })]
         }
         return [
@@ -570,15 +552,9 @@ const WireDomain = Remesh.domain({
         fromEvent(SendRequestedEvent).pipe(
           mergeMap(async (request) => {
             try {
+              // The codec's uniform encoded-frame bound is the only representation check; no
+              // message-property validation happens on the outbound path.
               const rawPayload = await codec.encode(request.message)
-              if (
-                'type' in request.message &&
-                (request.message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL ||
-                  request.message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH) &&
-                !isHistoryPageFrameWithinLimit(rawPayload)
-              ) {
-                throw new WireCodecError('History page reached the wire limit')
-              }
               return CompleteEncodeCommand({ request, rawPayload })
             } catch (error) {
               return CompleteEncodeCommand({ request, error: error as Error })

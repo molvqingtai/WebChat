@@ -149,7 +149,7 @@ export const allocateHlc = (current: HLC, now: number): HLC => {
   return { timestamp: current.timestamp, counter }
 }
 
-export const adoptHlc = (current: HLC, remote: HLC, now: number): HLC | null => {
+export const adoptHlc = (current: HLC, remote: HLC): HLC | null => {
   return remote.timestamp > current.timestamp ||
     (remote.timestamp === current.timestamp && remote.counter > current.counter)
     ? { ...remote }
@@ -866,7 +866,7 @@ const SessionDomain = Remesh.domain({
             error: new Error('Chat message does not match the active local session')
           })
         }
-        const adopted = adoptHlc(get(HlcState()), event.hlc, clock.now())
+        const adopted = adoptHlc(get(HlcState()), event.hlc)
         if (event.userId !== runtime.user.id || !adopted) {
           return OperationFailedEvent({
             operationId: payload.operationId,

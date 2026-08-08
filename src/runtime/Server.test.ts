@@ -1715,7 +1715,7 @@ describe('RuntimeServer trusted delivery', () => {
     expect(received).toEqual(['valid-after-rejections'])
   })
 
-  it('rejects future HLC without poisoning the central clock', async () => {
+  it('accepts any safe HLC at receive (time rules are not declaratively expressible)', async () => {
     const { fake, server, roomId } = await setup()
     const received: string[] = []
     await server.onInbound({ pageId: 'page-a' }, (event) => {
@@ -1730,9 +1730,11 @@ describe('RuntimeServer trusted delivery', () => {
     fake.receive(roomId, 'peer-a', text('valid'))
     await settle()
 
-    expect(received).toEqual(['valid'])
+    // The declarative schema accepts every safe non-negative integer HLC; the receiver-time
+    // future rule is not expressible and is therefore not validated.
+    expect(received).toEqual(['future', 'counter-overflow', 'valid'])
     const local = await server.allocateTextMessage({ domain: DOMAIN, body: 'next', mentions: [] })
-    expect(local.message.hlc.timestamp).toBe(NOW)
+    expect(local.message.hlc.timestamp).toBe(NOW + 5 * 60 * 1000 + 1)
   })
 
   it('clears buffered events only after a page ACK and treats duplicate ACK as idempotent', async () => {

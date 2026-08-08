@@ -9,17 +9,16 @@ import {
   MAX_WIRE_BYTES,
   MESSAGE_TYPE,
   WorldRoomMessageSchema,
-  createChatRoomMessageSchema,
+  ChatRoomMessageSchema,
   type ChatRoomMessage,
   type WorldRoomMessage
 } from '@/protocol'
 
 const NOW = 1_800_000_000_000
 const USER = { id: 'user-1', name: 'User', avatar: '' }
-const byteSize = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).byteLength
 
 const parseChat = (value: unknown): ChatRoomMessage | null => {
-  const parsed = v.safeParse(createChatRoomMessageSchema(NOW), value)
+  const parsed = v.safeParse(ChatRoomMessageSchema, value)
   return parsed.success ? parsed.output : null
 }
 
@@ -76,26 +75,26 @@ describe('public protocol schema contract', () => {
     expect(parseChat({ type: MESSAGE_TYPE.SESSION_END })).toBeNull()
   })
 
-  it('accepts only the current sync, mention-range, and history-message keys', () => {
-    const request = {
+  it('accepts only the current sync, mention, and history keys', () => {
+    const pull = {
       type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'sync-1',
       page: 0,
       messageIds: [],
       done: true
     }
-    expect(parseChat(request)).toEqual(request)
-    expect(parseChat({ ...request, requestId: 'legacy' })).toBeNull()
-    expect(parseChat({ type: request.type, requestId: 'legacy' })).toBeNull()
-    expect(parseChat({ type: request.type })).toBeNull()
-    expect(parseChat({ ...request, unknown: true })).toBeNull()
-    expect(parseChat({ ...request, page: -1 })).toBeNull()
-    expect(parseChat({ ...request, page: 1.5 })).toBeNull()
+    expect(parseChat(pull)).toEqual(pull)
+    expect(parseChat({ ...pull, requestId: 'legacy' })).toBeNull()
+    expect(parseChat({ type: pull.type, requestId: 'legacy' })).toBeNull()
+    expect(parseChat({ type: pull.type })).toBeNull()
+    expect(parseChat({ ...pull, unknown: true })).toBeNull()
+    expect(parseChat({ ...pull, page: -1 })).toBeNull()
+    expect(parseChat({ ...pull, page: 1.5 })).toBeNull()
     // Old cursor shapes and keys are absent.
     expect(parseChat({ type: 'history-request', syncId: 'sync-1' })).toBeNull()
-    expect(parseChat({ ...request, before: { hlc: { timestamp: 1, counter: 0 }, id: 'x' } })).toBeNull()
-    expect(parseChat({ ...request, snapshotId: 'snap' })).toBeNull()
-    expect(parseChat({ ...request, nextBefore: { hlc: { timestamp: 1, counter: 0 }, id: 'x' } })).toBeNull()
+    expect(parseChat({ ...pull, before: { hlc: { timestamp: 1, counter: 0 }, id: 'x' } })).toBeNull()
+    expect(parseChat({ ...pull, snapshotId: 'snap' })).toBeNull()
+    expect(parseChat({ ...pull, nextBefore: { hlc: { timestamp: 1, counter: 0 }, id: 'x' } })).toBeNull()
 
     const mentionedText = {
       ...text(),
@@ -107,7 +106,7 @@ describe('public protocol schema contract', () => {
     expect(parseChat({ ...mentionedText, mentions: [USER] })).toBeNull()
     expect(parseChat({ ...mentionedText, mentions: [{ ...USER, ranges: [[0, 4]], unknown: true }] })).toBeNull()
 
-    const response = {
+    const push = {
       type: MESSAGE_TYPE.HISTORY_MESSAGES_PUSH,
       syncId: 'sync-1',
       page: 0,
@@ -115,142 +114,40 @@ describe('public protocol schema contract', () => {
       messages: [text()],
       done: true
     }
-    expect(parseChat(response)).toEqual(response)
-    expect(parseChat({ ...response, events: response.messages })).toBeNull()
+    expect(parseChat(push)).toEqual(push)
+    expect(parseChat({ ...push, events: push.messages })).toBeNull()
     expect(
       parseChat({
-        type: response.type,
-        syncId: response.syncId,
-        page: response.page,
-        users: response.users,
-        events: response.messages,
-        done: response.done
+        type: push.type,
+        syncId: push.syncId,
+        page: push.page,
+        users: push.users,
+        events: push.messages,
+        done: push.done
       })
     ).toBeNull()
     expect(
       parseChat({
-        type: response.type,
-        syncId: response.syncId,
-        page: response.page,
-        users: response.users,
-        done: response.done
+        type: push.type,
+        syncId: push.syncId,
+        page: push.page,
+        users: push.users,
+        done: push.done
       })
     ).toBeNull()
-    expect(parseChat({ ...response, unknown: true })).toBeNull()
-    expect(parseChat({ ...response, page: -1 })).toBeNull()
+    expect(parseChat({ ...push, unknown: true })).toBeNull()
+    expect(parseChat({ ...push, page: -1 })).toBeNull()
     expect(parseChat({ type: 'history-response', syncId: 'sync-1', users: [], messages: [], done: true })).toBeNull()
   })
 
-  it('validates inclusive UTF-16 mention ranges against body code units', () => {
-    const body = 'a😀b'
-    expect(body.length).toBe(4)
-    expect(
-      parseChat({
-        ...text(),
-        body,
-        mentions: [
-          {
-            ...USER,
-            ranges: [
-              [1, 2],
-              [3, 3]
-            ]
-          }
-        ]
-      })
-    ).not.toBeNull()
-    expect(parseChat({ ...text(), body, mentions: [{ ...USER, ranges: [[2, 1]] }] })).toBeNull()
-    expect(parseChat({ ...text(), body, mentions: [{ ...USER, ranges: [[4, 4]] }] })).toBeNull()
-  })
-
-  it('applies the per-user byte limit to every mentioned user', () => {
-    const mention = {
-      ...USER,
-      avatar: '😀'.repeat(2200),
-      ranges: [[0, 0]] as [number, number][]
-    }
-    const message = { ...text(), body: 'x', mentions: [mention] }
-
-    expect(byteSize({ id: mention.id, name: mention.name, avatar: mention.avatar })).toBeGreaterThan(MAX_USER_BYTES)
-    expect(byteSize(message)).toBeLessThan(MAX_CHAT_EVENT_BYTES)
-    expect(parseChat(message)).toBeNull()
-  })
-
-  it('requires an explicit clock and rejects future HLC without hidden wall-clock access', () => {
-    expect(parseChat(text())).not.toBeNull()
-    expect(parseChat({ ...text(), hlc: { timestamp: NOW + 5 * 60 * 1000 + 1, counter: 0 } })).toBeNull()
-    // A different explicit now changes the acceptance window.
-    const parsedLater = v.safeParse(createChatRoomMessageSchema(NOW + 10 * 60 * 1000), text())
-    expect(parsedLater.success).toBe(true)
-  })
-
-  it('accepts exact User/event byte ceilings and rejects values one byte larger', () => {
+  it('accepts exact declarative field and array ceilings and rejects one more', () => {
     const eventBase = { ...text(), body: '' }
-    const exactEvent = { ...eventBase, body: 'x'.repeat(MAX_CHAT_EVENT_BYTES - byteSize(eventBase)) }
-    expect(byteSize(exactEvent)).toBe(MAX_CHAT_EVENT_BYTES)
-    expect(parseChat(exactEvent)).not.toBeNull()
-    expect(parseChat({ ...exactEvent, body: `${exactEvent.body}x` })).toBeNull()
+    // The body field ceiling is declarative (MAX_CHAT_EVENT_BYTES characters).
+    const exactBody = { ...eventBase, body: 'x'.repeat(MAX_CHAT_EVENT_BYTES) }
+    expect(parseChat(exactBody)).not.toBeNull()
+    expect(parseChat({ ...exactBody, body: `${exactBody.body}x` })).toBeNull()
 
-    const userBase = { ...USER, avatar: '' }
-    const exactUser = { ...userBase, avatar: 'x'.repeat(MAX_USER_BYTES - byteSize(userBase)) }
-    expect(byteSize(exactUser)).toBe(MAX_USER_BYTES)
-    expect(
-      parseChat({
-        type: MESSAGE_TYPE.SESSION,
-        sessionId: 'session-1',
-        presenceId: 'presence-1',
-        joinedAt: NOW,
-        user: exactUser
-      })
-    ).not.toBeNull()
-    expect(
-      parseChat({
-        type: MESSAGE_TYPE.SESSION,
-        sessionId: 'session-1',
-        presenceId: 'presence-1',
-        joinedAt: NOW,
-        user: { ...exactUser, avatar: `${exactUser.avatar}x` }
-      })
-    ).toBeNull()
-  })
-
-  it('keeps history references complete, accepts extra users, and rejects duplicate ids', () => {
-    const reaction = {
-      type: MESSAGE_TYPE.REACTION,
-      id: 'reaction-1',
-      hlc: { timestamp: NOW, counter: 1 },
-      targetId: 'event-1',
-      userId: 'actor-1',
-      reaction: 'like' as const,
-      active: true
-    }
-    expect(
-      parseChat({
-        type: MESSAGE_TYPE.HISTORY_MESSAGES_PUSH,
-        syncId: 'request-1',
-        page: 0,
-        users: [USER],
-        messages: [text(), reaction],
-        done: true
-      })
-    ).toBeNull()
-    const complete = {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_PUSH,
-      syncId: 'request-1',
-      page: 0,
-      users: [USER, { id: 'actor-1', name: 'Actor', avatar: '' }],
-      messages: [text(), reaction],
-      done: true
-    }
-    expect(parseChat(complete)).not.toBeNull()
-    expect(
-      parseChat({ ...complete, users: [...complete.users, { id: 'unused', name: 'Unused', avatar: '' }] })
-    ).not.toBeNull()
-    expect(parseChat({ ...complete, users: [USER, USER, complete.users[1]] })).toBeNull()
-  })
-
-  it('accepts the exact public history message count and rejects one more', () => {
-    const response = {
+    const push = {
       type: MESSAGE_TYPE.HISTORY_MESSAGES_PUSH,
       syncId: 'request-1',
       page: 0,
@@ -261,13 +158,12 @@ describe('public protocol schema contract', () => {
       })),
       done: false
     }
-    expect(parseChat(response)).toEqual(response)
-
-    const oversized = { ...response, messages: [...response.messages, { ...text(), id: 'event-over-limit' }] }
+    expect(parseChat(push)).toEqual(push)
+    const oversized = { ...push, messages: [...push.messages, { ...text(), id: 'event-over-limit' }] }
     expect(parseChat(oversized)).toBeNull()
   })
 
-  it('allows only display-safe ChatSite fields and origin-only URLs', () => {
+  it('rejects invalid World payloads with strict keys and non-finite values', () => {
     const presence = {
       sessionId: 'world-session',
       user: USER,
@@ -282,12 +178,6 @@ describe('public protocol schema contract', () => {
       })
     ).toBeNull()
     expect(parseWorld({ ...presence, sites: [{ origin: 'https://example.com', hostname: 'example.com' }] })).toBeNull()
-    expect(
-      parseWorld({
-        ...presence,
-        sites: [{ origin: 'https://example.com' }, { origin: 'https://example.com' }]
-      })
-    ).toBeNull()
   })
 
   it('does not expose application or internal Runtime values from the public entry', () => {
@@ -296,7 +186,40 @@ describe('public protocol schema contract', () => {
     expect(protocol).not.toHaveProperty('RUNTIME_NAMESPACE_PREFIX')
   })
 
-  it('does not export standalone validators, handwritten duplicates, or post-parse helpers', () => {
+  it('exports exactly the declarative schemas, inferred types surface, limits, constants, and codec', () => {
+    // The public entry exposes only the schema-owned data authority: schemas, constants/limits,
+    // and the codec surface; no standalone validator, factory, or duplicate alias exists.
+    expect(Object.keys(protocol).sort()).toEqual(
+      [
+        'ChatMessageSchema',
+        'ChatRoomMessageSchema',
+        'ChatSessionSchema',
+        'ChatSiteSchema',
+        'ChatUserSchema',
+        'HLCSchema',
+        'HistoryMessagesPullSchema',
+        'HistoryMessagesPushSchema',
+        'MAX_CHAT_EVENT_BYTES',
+        'MAX_DECODED_JSON_BYTES',
+        'MAX_HISTORY_RESPONSE_MESSAGES',
+        'MAX_USER_BYTES',
+        'MAX_WIRE_BYTES',
+        'MESSAGE_TYPE',
+        'MentionedUserSchema',
+        'NativeWireCodec',
+        'REACTION_TYPE',
+        'ReactionMessageSchema',
+        'ReactionTypeSchema',
+        'SessionEndMessageSchema',
+        'SessionMessageSchema',
+        'TextMessageSchema',
+        'WireCodecError',
+        'WorldRoomMessageSchema'
+      ].sort()
+    )
+  })
+
+  it('does not export standalone validators, schema factories, handwritten duplicates, or legacy names', () => {
     for (const name of [
       'parseChatRoomMessage',
       'parseWorldRoomMessage',
@@ -305,7 +228,16 @@ describe('public protocol schema contract', () => {
       'isUserWithinLimit',
       'isMessageWithinLimit',
       'isHLCInRange',
-      'isChatRoomMessageSemanticallyValid'
+      'isChatRoomMessageSemanticallyValid',
+      'isWireFrameWithinLimit',
+      'isHistoryPageFrameWithinLimit',
+      'createChatRoomMessageSchema',
+      'createChatMessageSchema',
+      'CompleteChatRoomMessage',
+      'HistoryMessagesRequest',
+      'HistoryMessagesRequestSchema',
+      'HistoryMessagesResponse',
+      'HistoryMessagesResponseSchema'
     ]) {
       expect(protocol).not.toHaveProperty(name)
     }

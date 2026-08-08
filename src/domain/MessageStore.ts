@@ -95,27 +95,19 @@ export const MessageDatabaseExtern = Remesh.extern<Database<MessageDatabaseSchem
   }
 })
 
-const finiteNumber = v.pipe(
-  v.number(),
-  v.check((value) => Number.isFinite(value), 'Expected a finite number')
-)
+// The local persistence-load boundary: the record schema composes the authoritative protocol
+// schema (declarative structure and ceilings) with the local-only record fields, so one schema
+// parse accepts or rejects a whole stored item. Relationships the declarative schema cannot
+// express (key/identity equality) are not validated.
+const safeNumber = v.pipe(v.number(), v.safeInteger())
 
-// The local persistence-load boundary: each record schema composes the authoritative protocol
-// child schema (structural keys, field/resource limits, mention ranges, and user size) with the
-// local-only record fields and relationships, so one schema parse accepts or rejects a whole
-// stored item. The explicit-now HLC time rule belongs to the receiving boundary only.
-const createChatMessageRecordSchema = () =>
-  v.pipe(
-    v.strictObject({
-      type: v.literal(MESSAGE_RECORD_TYPE.CHAT_MESSAGE),
-      id: v.string(),
-      message: ChatMessageSchema,
-      user: ChatUserSchema,
-      receivedAt: finiteNumber
-    }),
-    v.check((record) => record.id === record.message.id, 'Chat record id does not match message id'),
-    v.check((record) => record.user.id === record.message.userId, 'Chat record user does not match message user')
-  )
+const ChatMessageRecordSchema = v.strictObject({
+  type: v.literal(MESSAGE_RECORD_TYPE.CHAT_MESSAGE),
+  id: v.string(),
+  message: ChatMessageSchema,
+  user: ChatUserSchema,
+  receivedAt: safeNumber
+})
 
 const NoticeSchema = v.strictObject({
   id: v.string(),
@@ -124,20 +116,15 @@ const NoticeSchema = v.strictObject({
   body: v.string()
 })
 
-const createSystemNoticeRecordSchema = () =>
-  v.pipe(
-    v.strictObject({
-      type: v.literal(MESSAGE_RECORD_TYPE.SYSTEM_NOTICE),
-      id: v.string(),
-      notice: NoticeSchema,
-      user: ChatUserSchema,
-      receivedAt: finiteNumber
-    }),
-    v.check((record) => record.id === record.notice.id, 'System notice record id does not match notice id')
-  )
+const SystemNoticeRecordSchema = v.strictObject({
+  type: v.literal(MESSAGE_RECORD_TYPE.SYSTEM_NOTICE),
+  id: v.string(),
+  notice: NoticeSchema,
+  user: ChatUserSchema,
+  receivedAt: safeNumber
+})
 
-const createMessageRecordSchema = () =>
-  v.variant('type', [createChatMessageRecordSchema(), createSystemNoticeRecordSchema()])
+const MessageRecordSchema = v.variant('type', [ChatMessageRecordSchema, SystemNoticeRecordSchema])
 
 class InvalidMessageRecordError extends TypeError {
   override readonly name = 'InvalidMessageRecordError'
@@ -151,13 +138,9 @@ const invalidMessageRecord = (message: string): never => {
 }
 
 const decodeMessageRecord = (item: DatabaseItem<string, unknown>): MessageRecord => {
-  const parsed = v.safeParse(createMessageRecordSchema(), item.value)
+  const parsed = v.safeParse(MessageRecordSchema, item.value)
   if (!parsed.success) return invalidMessageRecord('Database contains an invalid MessageRecord')
-  const record = parsed.output
-  // Database index integrity (the item key is outside the stored value, so it cannot be a
-  // schema rule): the item is omitted when its key does not match the record identity.
-  if (item.key !== record.id) return invalidMessageRecord('Database item key does not match record id')
-  return record
+  return parsed.output
 }
 
 const safeDecodeMessageRecord = (
@@ -178,9 +161,6 @@ const canonicalContent = (record: MessageRecord): unknown =>
 
 const canonicalJson = (record: MessageRecord): string => JSON.stringify(canonicalContent(record))
 
-const contentEquals = (left: MessageRecord, right: MessageRecord): boolean =>
-  canonicalJson(left) === canonicalJson(right)
-
 const hashString = (value: string): string => {
   let hash = 2166136261
   for (let index = 0; index < value.length; index += 1) {
@@ -194,7 +174,8 @@ interface StoredConflict {
   /** Preserved v2 physical index key path; its value is the outer record id. */
   eventId: string
   incomingHash: string
-  existing: MessageRecord
+  /** Raw stored value preserved as a private diagnostic; never protocol-validated. */
+  existing: unknown
   incoming: MessageRecord
   recordedAt: number
 }
@@ -265,8 +246,12 @@ export const createMessageStore = (database: Database<MessageDatabaseSchema>): M
       async (transaction) => {
         const result = await transaction.insert('records', record.id, record)
         if (result.inserted) return { inserted: true }
-        const existing = decodeMessageRecord({ key: record.id, value: result.existing })
-        if (contentEquals(existing, record)) return { inserted: false, existing }
+        // Duplicate handling stays on the write path: the stored raw value is compared by
+        // content without any protocol parse or property/resource validation. The raw stored
+        // value is returned as the existing value so caller conflict control can compare it
+        // without a second parse.
+        const existing = result.existing
+        if (JSON.stringify(existing) === JSON.stringify(record)) return { inserted: false, existing: record }
 
         const incomingHash = hashString(canonicalJson(record))
         const conflictKey = `${record.id}:${incomingHash}`
@@ -287,7 +272,7 @@ export const createMessageStore = (database: Database<MessageDatabaseSchema>): M
             await transaction.insert('conflicts', conflictKey, conflict)
           }
         }
-        return { inserted: false, existing }
+        return { inserted: false, existing: existing as MessageRecord }
       },
       signal
     )

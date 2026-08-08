@@ -96,13 +96,18 @@ describe('public protocol source boundary', () => {
       if (file !== 'WireCodec.ts') {
         expect(source, `${file} declares a handwritten interface`).not.toMatch(/export interface/)
       }
-      expect(source, `${file} has a non-inferred structural export type`).not.toMatch(
-        /export type [A-Za-z0-9_]+ = (?:\{|ChatUser\b|ChatSession\b|HLC\b|WorldRoomMessage\b)/
+      // Every exported type is inferred from its owning schema output.
+      expect(source, `${file} has a non-inferred export type`).not.toMatch(
+        /export type [A-Za-z0-9_]+ = (?!v\.InferOutput)/
       )
-      // No post-parse validator or output cast may finish validation after schema parsing.
+      // No post-parse validator, output cast, schema factory, or executable callback may finish
+      // validation after schema parsing (declarative Valibot primitives only).
       for (const validator of FORBIDDEN_VALIDATORS) {
         expect(source, `${file} retains validator ${validator}`).not.toContain(validator)
       }
+      expect(source, `${file} uses an executable callback predicate`).not.toMatch(
+        /v\.(?:check|partialCheck|rawCheck|custom|transform)\b/
+      )
       expect(source, `${file} casts schema output`).not.toMatch(
         /as (?:ChatRoomMessage|ChatMessage|WorldRoomMessage|ChatUser|ChatSession|HLC)\b/
       )

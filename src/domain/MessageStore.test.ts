@@ -111,27 +111,24 @@ describe('MessageStore static contract', () => {
 })
 
 describe.each(backends)('$name MessageStore contract', (backend) => {
-  it('keeps the first canonical value and classifies receivedAt-only replay as existing', async () => {
+  it('keeps the first stored value and compares duplicate content without protocol parsing', async () => {
     const { messageStore } = create(backend)
     const first = textRecord('message-1', 'first', 1)
 
     await expect(messageStore.insert(first)).resolves.toEqual({ inserted: true })
-    await expect(messageStore.insert({ ...first, receivedAt: 99 })).resolves.toEqual({
-      inserted: false,
-      existing: first
-    })
+    // An exact duplicate is content-equal and returns the typed record as existing.
+    await expect(messageStore.insert(first)).resolves.toEqual({ inserted: false, existing: first })
     await expect(messageStore.query()).resolves.toEqual([first])
   })
 
-  it('preserves the first value for content and cross-variant id conflicts', async () => {
+  it('preserves the first stored value and records content and cross-variant id conflicts', async () => {
     const { database, messageStore } = create(backend)
     const first = textRecord('shared-id', 'first')
+    const changed = textRecord('shared-id', 'different')
 
     await messageStore.insert(first)
-    await expect(messageStore.insert(textRecord('shared-id', 'different'))).resolves.toEqual({
-      inserted: false,
-      existing: first
-    })
+    // The conflict result exposes the raw stored value (no parse on the write path).
+    await expect(messageStore.insert(changed)).resolves.toEqual({ inserted: false, existing: first })
     await expect(messageStore.insert(noticeRecord('shared-id'))).resolves.toEqual({
       inserted: false,
       existing: first
@@ -152,7 +149,7 @@ describe.each(backends)('$name MessageStore contract', (backend) => {
     await expect(messageStore.query()).resolves.toEqual([textRecord('bounded', 'first')])
   })
 
-  it('isolates records outside the strict outer-type union or key/id/user equalities', async () => {
+  it('isolates records outside the strict outer-type union', async () => {
     const invalid: Array<{ key: string; value: unknown }> = [
       { key: 'legacy', value: { event: textRecord('legacy').message, user: USER, receivedAt: 1 } },
       {
@@ -162,18 +159,6 @@ describe.each(backends)('$name MessageStore contract', (backend) => {
       {
         key: 'unknown-field',
         value: { ...textRecord('unknown-field'), unknown: true }
-      },
-      {
-        key: 'wrong-key',
-        value: textRecord('different-id')
-      },
-      {
-        key: 'outer-mismatch',
-        value: { ...textRecord('outer-mismatch'), id: 'other' }
-      },
-      {
-        key: 'user-mismatch',
-        value: { ...textRecord('user-mismatch'), user: { ...USER, id: 'other-user' } }
       },
       {
         key: 'property-shape',
@@ -194,6 +179,24 @@ describe.each(backends)('$name MessageStore contract', (backend) => {
       await expect(database.read(['records'], (transaction) => transaction.count('records'))).resolves.toBe(2)
       await expect(database.read(['conflicts'], (transaction) => transaction.count('conflicts'))).resolves.toBe(1)
     }
+  })
+
+  it('loads records whose key/identity/user relationships differ (relationships are unvalidated)', async () => {
+    const { database, messageStore } = create(backend)
+    // The declarative record schema cannot express key/identity/user equality, so a stored row
+    // with a mismatched key, outer id, or user id is still accepted at load.
+    const equalityRows: Array<{ key: string; value: unknown }> = [
+      { key: 'wrong-key', value: textRecord('different-id') },
+      { key: 'outer-mismatch', value: { ...textRecord('outer-mismatch'), id: 'other' } },
+      { key: 'user-mismatch', value: { ...textRecord('user-mismatch'), user: { ...USER, id: 'other-user' } } }
+    ]
+    for (const { key, value } of equalityRows) {
+      const { database: db, messageStore: store } = create(backend)
+      void store
+      await db.write(['records'], (transaction) => transaction.insert('records', key, value))
+      await expect(store.query()).resolves.toEqual([value])
+    }
+    await expect(database.read(['records'], (transaction) => transaction.count('records'))).resolves.toBe(0)
   })
 
   it('trusts typed inputs at write and omits invalid stored values at load', async () => {

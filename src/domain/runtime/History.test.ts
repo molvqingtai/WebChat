@@ -12,7 +12,7 @@ import { RoomTransportExtern, WireCodecExtern } from '@/domain/runtime/externs/R
 import { PagePortExtern } from '@/domain/runtime/externs/PagePort'
 import { MESSAGE_TYPE } from '@/protocol'
 import type { RoomTransport } from '@/runtime/RoomTransport'
-import type { HistoryMessagesRequest, WireCodec, ChatRoomMessage } from '@/protocol'
+import type { HistoryMessagesPull, WireCodec, ChatRoomMessage } from '@/protocol'
 import { getChatRoomId } from '@/runtime/Server'
 
 const DOMAIN = 'https://example.com'
@@ -117,7 +117,7 @@ const setup = async () => {
   return { store, session, history, wire, delivery, pagePort, receive }
 }
 
-const providerRequest = (syncId: string, page: number, done: boolean): HistoryMessagesRequest => ({
+const providerRequest = (syncId: string, page: number, done: boolean): HistoryMessagesPull => ({
   type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
   syncId,
   page,
