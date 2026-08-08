@@ -492,8 +492,8 @@ const WireDomain = Remesh.domain({
         if (
           !message ||
           ('type' in message &&
-            (message.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST ||
-              message.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE) &&
+            (message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL ||
+              message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH) &&
             !isHistoryPageFrameWithinLimit(payload.rawPayload))
         ) {
           return [...queueOutput, RecordDropCommand({ sourcePeerId: payload.sourcePeerId, reason: 'invalid message' })]
@@ -571,8 +571,8 @@ const WireDomain = Remesh.domain({
               const rawPayload = await codec.encode(request.message)
               if (
                 'type' in request.message &&
-                (request.message.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST ||
-                  request.message.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE) &&
+                (request.message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL ||
+                  request.message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH) &&
                 !isHistoryPageFrameWithinLimit(rawPayload)
               ) {
                 throw new WireCodecError('History page reached the wire limit')

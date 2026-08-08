@@ -17,7 +17,7 @@ The current peer protocol SHALL use exact v4 Chat and World physical namespaces.
 #### Scenario: History bytes use only the replacement shapes
 
 - **WHEN** the same peer begins History synchronization under v4
-- **THEN** it SHALL exchange only `history-messages-request` and `history-messages-response` pages and SHALL emit no v3 `history-request`, `history-response`, `before`, or `HistoryCursor` value
+- **THEN** it SHALL exchange only `history-messages-pull` and `history-messages-push` pages and SHALL emit no v3 `history-request`, `history-response`, `before`, or `HistoryCursor` value
 
 ## MODIFIED Requirements
 
@@ -74,14 +74,14 @@ interface ReactionMessage {
 }
 type ChatMessage = TextMessage | ReactionMessage
 interface HistoryMessagesRequest {
-  type: 'history-messages-request'
+  type: 'history-messages-pull'
   syncId: string
   page: number
   messageIds: string[]
   done: boolean
 }
 interface HistoryMessagesResponse {
-  type: 'history-messages-response'
+  type: 'history-messages-push'
   syncId: string
   page: number
   users: ChatUser[]
@@ -181,7 +181,7 @@ Chat wire SHALL be exactly `ChatRoomMessage = SessionMessage | SessionEndMessage
 
 ### Requirement: History wire shapes are bounded and reference-complete
 
-The public peer protocol SHALL define only this exact History wire contract: `HistoryMessagesRequest = {type:'history-messages-request', syncId, page, messageIds, done}` and `HistoryMessagesResponse = {type:'history-messages-response', syncId, page, users, messages, done}`. One `syncId` SHALL identify the sole synchronization for one current room connection and one direction; the opposite direction SHALL use another `syncId`. Establishing that connection and joining the room SHALL be the only synchronization trigger. The first valid request page zero SHALL bind the sole incoming `syncId` for that source incarnation. While active, pages using that ID MAY progress or replay only as specified below. After either direction succeeds, is canceled, or fails, neither the same nor a different `syncId` SHALL start another synchronization on that connection. Source replacement or domain release SHALL end the binding; a later connection SHALL use a fresh ID for a new independent synchronization and SHALL NOT retry, resume, or carry progress from the prior one. Request and response `page` values SHALL each start at zero and advance continuously within their own phase. Request `done` SHALL identify the final inventory page. Response `done` SHALL identify the final missing-record page.
+The public peer protocol SHALL define only this exact History wire contract: `HistoryMessagesRequest = {type:'history-messages-pull', syncId, page, messageIds, done}` and `HistoryMessagesResponse = {type:'history-messages-push', syncId, page, users, messages, done}`. One `syncId` SHALL identify the sole synchronization for one current room connection and one direction; the opposite direction SHALL use another `syncId`. Establishing that connection and joining the room SHALL be the only synchronization trigger. The first valid request page zero SHALL bind the sole incoming `syncId` for that source incarnation. While active, pages using that ID MAY progress or replay only as specified below. After either direction succeeds, is canceled, or fails, neither the same nor a different `syncId` SHALL start another synchronization on that connection. Source replacement or domain release SHALL end the binding; a later connection SHALL use a fresh ID for a new independent synchronization and SHALL NOT retry, resume, or carry progress from the prior one. Request and response `page` values SHALL each start at zero and advance continuously within their own phase. Request `done` SHALL identify the final inventory page. Response `done` SHALL identify the final missing-record page.
 
 Every request and response page SHALL remain strictly below `MAX_WIRE_BYTES = 64KiB` after canonical encoding. Each response SHALL carry at most 100 messages. Its `users` array SHALL contain exactly one `ChatUser` for every distinct `messages[].userId`, no duplicate or unrelated users, and no users when `messages` is empty. Every message `userId` SHALL therefore resolve to exactly one matching `users[].id`.
 
@@ -190,7 +190,7 @@ The schemas SHALL accept only the two replacement type strings and exact replace
 #### Scenario: Pull pagination
 
 - **WHEN** two current peers synchronize one direction
-- **THEN** the requester SHALL send continuous `history-messages-request` inventory pages through one final `done: true` page, after which the provider SHALL send continuous `history-messages-response` missing-record pages through one final `done: true` page using the same `syncId`; no third peer message type or body request SHALL participate
+- **THEN** the requester SHALL send continuous `history-messages-pull` inventory pages through one final `done: true` page, after which the provider SHALL send continuous `history-messages-push` missing-record pages through one final `done: true` page using the same `syncId`; no third peer message type or body request SHALL participate
 
 #### Scenario: A current connection cannot synchronize twice in one direction
 
@@ -210,7 +210,7 @@ The schemas SHALL accept only the two replacement type strings and exact replace
 
 #### Scenario: Complete history references
 
-- **WHEN** a `history-messages-response` contains messages and users
+- **WHEN** a `history-messages-push` contains messages and users
 - **THEN** every distinct message `userId` SHALL have exactly one matching user entry, duplicate or unrelated user ids SHALL reject the response as a whole, and an empty message page SHALL require an empty user array
 
 #### Scenario: History response wire limits

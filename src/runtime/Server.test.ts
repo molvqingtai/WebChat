@@ -334,7 +334,7 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
       sent.push(attempt)
       if (sendGate && roomId === blockedSendRoomId) await sendGate
       const message = JSON.parse(payload) as TestWireMessage
-      if (!('type' in message) || message.type !== MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE) return
+      if (!('type' in message) || message.type !== MESSAGE_TYPE.HISTORY_MESSAGES_PUSH) return
       if (!historySendGate) return
       activeHistorySends += 1
       maxActiveHistorySends = Math.max(maxActiveHistorySends, activeHistorySends)
@@ -1689,7 +1689,7 @@ describe('RuntimeServer trusted delivery', () => {
     }
     const legacyRequest = { type: 'history-request', requestId: 'legacy-sync' }
     const dualRequest = {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'current-sync',
       page: 0,
       messageIds: [],
@@ -2211,14 +2211,14 @@ describe('RuntimeServer concurrent World registration convergence', () => {
 
 describe('RuntimeServer history', () => {
   const request = (syncId: string, page: number, messageIds: string[], done: boolean) => ({
-    type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+    type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
     syncId,
     page,
     messageIds,
     done
   })
   const response = (syncId: string, page: number, messages: TextMessage[], done: boolean) => ({
-    type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
+    type: MESSAGE_TYPE.HISTORY_MESSAGES_PUSH,
     syncId,
     page,
     users: [...new Map(messages.map((m) => [m.userId, { id: m.userId, name: m.userId, avatar: '' }])).values()],
@@ -2243,13 +2243,13 @@ describe('RuntimeServer history', () => {
     })
     fake.receive(roomId, 'peer-a', session())
     await settle()
-    const requestMsg = fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST)
+    const requestMsg = fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)
     const syncId = (requestMsg as { syncId: string }).syncId
     expect((requestMsg as { messageIds: string[] }).messageIds).toEqual([])
     expect((requestMsg as { done: boolean }).done).toBe(true)
 
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PUSH,
       syncId,
       page: 0,
       users: [REMOTE_USER],
@@ -2272,11 +2272,11 @@ describe('RuntimeServer history', () => {
     })
     fake.receive(roomId, 'peer-a', session())
     await settle()
-    const requestMsg = fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST)
+    const requestMsg = fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)
     const syncId = (requestMsg as { syncId: string }).syncId
 
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PUSH,
       syncId,
       page: 0,
       users: [REMOTE_USER],
@@ -2299,11 +2299,11 @@ describe('RuntimeServer history', () => {
     })
     fake.receive(roomId, 'peer-a', session())
     await settle()
-    const requestMsg = fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST)
+    const requestMsg = fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)
     const syncId = (requestMsg as { syncId: string }).syncId
 
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PUSH,
       syncId,
       page: 0,
       users: [],
@@ -2330,10 +2330,10 @@ describe('RuntimeServer history', () => {
     await settle()
     fake.receive(roomId, 'peer-a', request('sync-provider', 0, ['local-1'], true))
     await vi.waitFor(() => {
-      const sent = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE)
+      const sent = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH)
       expect(sent.length).toBeGreaterThan(0)
     })
-    const sent = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE)
+    const sent = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH)
     expect(sent[0]).toMatchObject({
       syncId: 'sync-provider',
       page: 0,
@@ -2348,11 +2348,11 @@ describe('RuntimeServer history', () => {
     await registerInventoryProvider(server)
     fake.receive(roomId, 'peer-a', session())
     await settle()
-    const requestMsg = fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST)
+    const requestMsg = fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)
     const syncId = (requestMsg as { syncId: string }).syncId
 
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PUSH,
       syncId,
       page: 5,
       users: [REMOTE_USER],
@@ -2361,7 +2361,7 @@ describe('RuntimeServer history', () => {
     })
     await settle()
     // The requester cancels the attempt: no further request pages are sent.
-    expect(fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST)).toHaveLength(1)
+    expect(fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)).toHaveLength(1)
   })
 
   it('rejects old history shapes and never falls back', async () => {
@@ -2403,10 +2403,10 @@ describe('RuntimeServer history', () => {
     }))
     fake.receive(roomId, 'peer-a', session())
     await vi.waitFor(() => {
-      const pages = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST)
+      const pages = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)
       expect(pages.length).toBeGreaterThan(1)
     })
-    const pages = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST)
+    const pages = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)
     // Every page stays strictly below 64KiB after the codec's own size boundary.
     for (const page of pages) {
       expect(new TextEncoder().encode(JSON.stringify(page)).byteLength).toBeLessThan(64 * 1024)
@@ -2426,13 +2426,13 @@ describe('RuntimeServer history', () => {
     })
     fake.receive(roomId, 'peer-a', session())
     await settle()
-    const requestMsg = fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST)
+    const requestMsg = fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)
     const syncId = (requestMsg as { syncId: string }).syncId
 
     // Page 0 applies records older than page 1's newest: a cross-page ordering violation must cancel
     // the attempt instead of applying the violating prefix.
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PUSH,
       syncId,
       page: 0,
       users: [REMOTE_USER],
@@ -2441,7 +2441,7 @@ describe('RuntimeServer history', () => {
     })
     await vi.waitFor(() => expect(delivered).toContain('older-page-0'))
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PUSH,
       syncId,
       page: 1,
       users: [REMOTE_USER],
@@ -2474,11 +2474,11 @@ describe('RuntimeServer history', () => {
     })
     fake.receive(roomId, 'peer-a', session())
     await settle()
-    const requestMsg = fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST)
+    const requestMsg = fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)
     const syncId = (requestMsg as { syncId: string }).syncId
 
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PUSH,
       syncId,
       page: 0,
       users: [REMOTE_USER],
@@ -2488,7 +2488,7 @@ describe('RuntimeServer history', () => {
     await vi.waitFor(() => expect(delivered).toContain('page-0-msg'))
     // Page 1 arrives while page 0's ACK is still held: it joins the bounded serial queue.
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PUSH,
       syncId,
       page: 1,
       users: [REMOTE_USER],
@@ -2502,7 +2502,7 @@ describe('RuntimeServer history', () => {
     // Identical replay of the accepted page 0 after it settled is idempotent (no new delivery).
     const before = delivered.length
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PUSH,
       syncId,
       page: 0,
       users: [REMOTE_USER],
@@ -2525,20 +2525,20 @@ describe('RuntimeServer history', () => {
     })
     fake.receive(roomId, 'peer-a', session())
     await settle()
-    const requestMsg = fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST)
+    const requestMsg = fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)
     const syncId = (requestMsg as { syncId: string }).syncId
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId,
       page: 0,
       messageIds: [],
       done: true
     })
     await vi.waitFor(() => {
-      const sent = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE)
+      const sent = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH)
       expect(sent.length).toBeGreaterThan(0)
     })
-    const sent = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE)
+    const sent = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH)
     const ids = sent.flatMap((m) => (m as { messages: { id: string }[] }).messages.map((x) => x.id))
     expect(ids.sort()).toEqual(['keep-1', 'keep-2'])
     expect(sent.every((m) => (m as { messages: unknown[] }).messages.length > 0 || sent.length === 1)).toBe(true)
@@ -2563,7 +2563,7 @@ describe('RuntimeServer history', () => {
     fake.receive(roomId, 'peer-a', session())
     await settle()
     // The single opaque id cannot form any valid page: the attempt cancels locally, never sending.
-    expect(fake.messages(roomId).some((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST)).toBe(false)
+    expect(fake.messages(roomId).some((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)).toBe(false)
   })
 
   it('cancels a dormant successor on changed replay or post-done inventory input', async () => {
@@ -2572,13 +2572,13 @@ describe('RuntimeServer history', () => {
     fake.receive(roomId, 'peer-a', session())
     await settle()
     const firstSync = (
-      fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST) as {
+      fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL) as {
         syncId: string
       }
     ).syncId
     // A replacement syncId while the first inventory is still supplying occupies a dormant successor.
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'replacement-1',
       page: 0,
       messageIds: ['known-a'],
@@ -2587,7 +2587,7 @@ describe('RuntimeServer history', () => {
     await settle()
     // Identical replay of the successor's page 0 is idempotent (no cancellation).
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'replacement-1',
       page: 0,
       messageIds: ['known-a'],
@@ -2596,7 +2596,7 @@ describe('RuntimeServer history', () => {
     await settle()
     // Changed replay of the successor's page 0 cancels the successor attempt.
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'replacement-1',
       page: 0,
       messageIds: ['known-b'],
@@ -2605,14 +2605,14 @@ describe('RuntimeServer history', () => {
     await settle()
     // Post-done inventory input on a fresh successor is rejected (cancels it).
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'replacement-2',
       page: 0,
       messageIds: [],
       done: true
     })
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'replacement-2',
       page: 1,
       messageIds: ['late'],
@@ -2620,7 +2620,7 @@ describe('RuntimeServer history', () => {
     })
     await settle()
     // No provider response ever flows from the rejected successors.
-    expect(fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE)).toHaveLength(0)
+    expect(fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH)).toHaveLength(0)
     expect(firstSync).toBeTruthy()
   })
 
@@ -2635,7 +2635,7 @@ describe('RuntimeServer history', () => {
       fake.receive(roomId, peerId, session())
       await settle()
       fake.receive(roomId, peerId, {
-        type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+        type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
         syncId: `partial-${peer}`,
         page: 0,
         messageIds: [`known-${peer}`],
@@ -2650,7 +2650,7 @@ describe('RuntimeServer history', () => {
     await server.leaveChatRoom({ domain: DOMAIN })
     await settle()
     // No provider response pages ever flow from partial attempts.
-    expect(fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE)).toHaveLength(0)
+    expect(fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH)).toHaveLength(0)
   })
 
   it('transitions a partial provider inventory to ready on the final page and serves responses', async () => {
@@ -2668,7 +2668,7 @@ describe('RuntimeServer history', () => {
     // A multi-page inventory: page 0 is partial, page 1 is final. The provider must transition the
     // single page-zero admission to ready on the final page and then serve the missing records.
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'multi-page',
       page: 0,
       messageIds: ['mp-1'],
@@ -2676,17 +2676,17 @@ describe('RuntimeServer history', () => {
     })
     await settle()
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'multi-page',
       page: 1,
       messageIds: [],
       done: true
     })
     await vi.waitFor(() => {
-      const responses = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE)
+      const responses = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH)
       expect(responses.length).toBeGreaterThan(0)
     })
-    const responses = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE)
+    const responses = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH)
     const ids = responses.flatMap((m) => (m as { messages: { id: string }[] }).messages.map((x) => x.id))
     // Only the record absent from the inventory is returned.
     expect(ids).toEqual(['mp-2'])
@@ -2711,11 +2711,11 @@ describe('RuntimeServer history', () => {
     })
     fake.receive(roomId, 'peer-a', session())
     await settle()
-    const requestMsg = fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST)
+    const requestMsg = fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)
     const syncId = (requestMsg as { syncId: string }).syncId
 
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PUSH,
       syncId,
       page: 0,
       users: [REMOTE_USER],
@@ -2724,7 +2724,7 @@ describe('RuntimeServer history', () => {
     })
     await vi.waitFor(() => expect(delivered).toContain('page-0-msg'))
     const page1 = {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PUSH,
       syncId,
       page: 1,
       users: [REMOTE_USER],
@@ -2732,7 +2732,7 @@ describe('RuntimeServer history', () => {
       done: false
     }
     const page2 = {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PUSH,
       syncId,
       page: 2,
       users: [REMOTE_USER],
@@ -2770,11 +2770,11 @@ describe('RuntimeServer history', () => {
     })
     fake.receive(roomId, 'peer-a', session())
     await settle()
-    const requestMsg = fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST)
+    const requestMsg = fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)
     const syncId = (requestMsg as { syncId: string }).syncId
 
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PUSH,
       syncId,
       page: 0,
       users: [REMOTE_USER],
@@ -2783,7 +2783,7 @@ describe('RuntimeServer history', () => {
     })
     await vi.waitFor(() => expect(delivered).toContain('page-0-msg'))
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PUSH,
       syncId,
       page: 1,
       users: [REMOTE_USER],
@@ -2791,7 +2791,7 @@ describe('RuntimeServer history', () => {
       done: false
     })
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PUSH,
       syncId,
       page: 2,
       users: [REMOTE_USER],
@@ -2802,7 +2802,7 @@ describe('RuntimeServer history', () => {
     // A changed replay of the queued terminal N+2 cancels the attempt immediately and discards the
     // queued N+1 and N+2, even after the held page 0 settles.
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PUSH,
       syncId,
       page: 2,
       users: [REMOTE_USER],
@@ -2823,7 +2823,7 @@ describe('RuntimeServer history', () => {
     fake.receive(roomId, 'peer-removed', session({ id: 'removed-user', name: 'Removed', avatar: '' }))
     await settle()
     fake.receive(roomId, 'peer-removed', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'removed-partial',
       page: 0,
       messageIds: ['r-1'],
@@ -2833,7 +2833,7 @@ describe('RuntimeServer history', () => {
     fake.receive(roomId, 'peer-live', session({ id: 'live-user', name: 'Live', avatar: '' }))
     await settle()
     fake.receive(roomId, 'peer-live', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'live-partial',
       page: 0,
       messageIds: ['l-1'],
@@ -2844,7 +2844,7 @@ describe('RuntimeServer history', () => {
     await settle()
     // The live peer's completed inventory must still be able to transition to ready and serve.
     await vi.waitFor(() => {
-      const responses = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE)
+      const responses = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH)
       expect(responses.length).toBeGreaterThan(0)
     })
   })
@@ -2872,7 +2872,7 @@ describe('RuntimeServer history', () => {
       fake.receive(roomId, peerId, session({ id: `user-${peer}`, name: `User ${peer}`, avatar: '' }))
       await settle()
       fake.receive(roomId, peerId, {
-        type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+        type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
         syncId: `full-${peer}`,
         page: 0,
         messageIds: [],
@@ -2911,7 +2911,7 @@ describe('RuntimeServer history', () => {
     fake.receive(roomId, 'peer-0', session({ id: 'user-0', name: 'User 0', avatar: '' }))
     await settle()
     fake.receive(roomId, 'peer-0', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'old-a',
       page: 0,
       messageIds: [],
@@ -2927,7 +2927,7 @@ describe('RuntimeServer history', () => {
     fake.receive(roomId, 'peer-0', session({ id: 'user-0b', name: 'User 0b', avatar: '' }))
     await settle()
     fake.receive(roomId, 'peer-0', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'new-b',
       page: 0,
       messageIds: [],
@@ -2957,7 +2957,7 @@ describe('RuntimeServer history', () => {
     fake.receive(roomId, 'peer-0', session({ id: 'user-0', name: 'User 0', avatar: '' }))
     await settle()
     fake.receive(roomId, 'peer-0', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'old-a',
       page: 0,
       messageIds: [],
@@ -2973,7 +2973,7 @@ describe('RuntimeServer history', () => {
     fake.receive(roomId, 'peer-0', session({ id: 'user-0b', name: 'User 0b', avatar: '' }))
     await settle()
     fake.receive(roomId, 'peer-0', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'old-a',
       page: 1,
       messageIds: ['late'],
@@ -3013,7 +3013,7 @@ describe('RuntimeServer history', () => {
     fake.receive(roomId, 'peer-0', session({ id: 'user-0', name: 'User 0', avatar: '' }))
     await settle()
     fake.receive(roomId, 'peer-0', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'two-a',
       page: 0,
       messageIds: [],
@@ -3062,7 +3062,7 @@ describe('RuntimeServer history', () => {
     fake.receive(roomId, 'peer-0', session({ id: 'user-0', name: 'User 0', avatar: '' }))
     await settle()
     fake.receive(roomId, 'peer-0', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'two-b',
       page: 0,
       messageIds: [],
@@ -3103,7 +3103,7 @@ describe('RuntimeServer history', () => {
     fake.receive(roomId, 'peer-0', session({ id: 'user-0', name: 'User 0', avatar: '' }))
     await settle()
     fake.receive(roomId, 'peer-0', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'old-a',
       page: 0,
       messageIds: [],
@@ -3117,7 +3117,7 @@ describe('RuntimeServer history', () => {
     fake.receive(roomId, 'peer-0', session({ id: 'user-0b', name: 'User 0b', avatar: '' }))
     await settle()
     fake.receive(roomId, 'peer-0', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'new-b',
       page: 0,
       messageIds: ['b-0'],
@@ -3132,7 +3132,7 @@ describe('RuntimeServer history', () => {
     expect(started).toEqual(['old-a'])
     // The transferred attempt continues on the next page and completes: exactly ONE new-b supply.
     fake.receive(roomId, 'peer-0', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'new-b',
       page: 1,
       messageIds: ['b-1'],
@@ -3140,7 +3140,7 @@ describe('RuntimeServer history', () => {
     })
     await vi.waitFor(() => expect(started).toEqual(['old-a', 'new-b']))
     await vi.waitFor(() => {
-      const sent = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE)
+      const sent = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH)
       expect(sent.some((m) => (m as { syncId: string }).syncId === 'new-b')).toBe(true)
     })
   })
@@ -3157,7 +3157,7 @@ describe('RuntimeServer history', () => {
     fake.receive(roomId, 'peer-a', session())
     await settle()
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'big-a',
       page: 0,
       messageIds: bigIds,
@@ -3168,7 +3168,7 @@ describe('RuntimeServer history', () => {
     fake.receive(roomId, 'peer-b', session({ id: 'sat-user-b', name: 'Sat B', avatar: '' }))
     await settle()
     fake.receive(roomId, 'peer-b', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'peer-b',
       page: 0,
       messageIds: ['b'],
@@ -3178,7 +3178,7 @@ describe('RuntimeServer history', () => {
     // peer-a's next page crosses the 8KiB cumulative budget: the synchronization terminates and
     // its connection direction becomes terminal.
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'big-a',
       page: 1,
       messageIds: bigIds,
@@ -3187,7 +3187,7 @@ describe('RuntimeServer history', () => {
     await settle()
     // Neither the same id nor a different id can start History again on this connection.
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'big-a',
       page: 0,
       messageIds: ['small'],
@@ -3195,7 +3195,7 @@ describe('RuntimeServer history', () => {
     })
     await settle()
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'different-a',
       page: 0,
       messageIds: ['small'],
@@ -3205,7 +3205,7 @@ describe('RuntimeServer history', () => {
     expect(started).toEqual([])
     // The unrelated peer-b job survives and completes normally.
     fake.receive(roomId, 'peer-b', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'peer-b',
       page: 1,
       messageIds: ['b-1'],
@@ -3217,7 +3217,7 @@ describe('RuntimeServer history', () => {
     fake.receive(roomId, 'peer-a', session({ id: 'sat-user-a-b', name: 'Sat A2', avatar: '' }))
     await settle()
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'fresh-a',
       page: 0,
       messageIds: [],
@@ -3246,7 +3246,7 @@ describe('RuntimeServer history', () => {
     fake.receive(roomId, 'peer-0', session({ id: 'user-0', name: 'User 0', avatar: '' }))
     await settle()
     fake.receive(roomId, 'peer-0', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'old-a',
       page: 0,
       messageIds: [],
@@ -3255,7 +3255,7 @@ describe('RuntimeServer history', () => {
     await vi.waitFor(() => expect(started).toEqual(['old-a']))
     // A replacement successor with a large page zero is admitted (dormant).
     fake.receive(roomId, 'peer-0', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'new-b',
       page: 0,
       messageIds: bigIds,
@@ -3264,7 +3264,7 @@ describe('RuntimeServer history', () => {
     await settle()
     // Its next page crosses the 8KiB cumulative budget: the successor is terminated.
     fake.receive(roomId, 'peer-0', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'new-b',
       page: 1,
       messageIds: bigIds,
@@ -3273,7 +3273,7 @@ describe('RuntimeServer history', () => {
     await settle()
     // A smaller payload at the same page number cannot revive the terminated successor (gap).
     fake.receive(roomId, 'peer-0', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'new-b',
       page: 1,
       messageIds: ['small'],
@@ -3283,7 +3283,7 @@ describe('RuntimeServer history', () => {
     await settle()
     // The terminated syncId is fenced: even a fresh page zero with the same id is inert.
     fake.receive(roomId, 'peer-0', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'new-b',
       page: 0,
       messageIds: ['b-0'],
@@ -3298,7 +3298,7 @@ describe('RuntimeServer history', () => {
     fake.receive(roomId, 'peer-0', session({ id: 'user-0b', name: 'User 0b', avatar: '' }))
     await settle()
     fake.receive(roomId, 'peer-0', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'new-c',
       page: 0,
       messageIds: ['b-0'],
@@ -3318,7 +3318,7 @@ describe('RuntimeServer history', () => {
     fake.receive(roomId, 'peer-a', session())
     await settle()
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'ex-a',
       page: 0,
       messageIds: [],
@@ -3329,7 +3329,7 @@ describe('RuntimeServer history', () => {
     await settle()
     await settle()
     expect(started).toEqual([])
-    expect(fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE)).toHaveLength(0)
+    expect(fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH)).toHaveLength(0)
     // Registering a page afterwards cannot restart History on the same connection.
     await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, async (request) => {
       if (request.mode === 'inventory') return { records: [], done: true }
@@ -3337,7 +3337,7 @@ describe('RuntimeServer history', () => {
       return { records: [], done: true }
     })
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'ex-b',
       page: 0,
       messageIds: [],
@@ -3350,7 +3350,7 @@ describe('RuntimeServer history', () => {
     fake.receive(roomId, 'peer-a', session({ id: 'remote-user-b', name: 'Remote B', avatar: '' }))
     await settle()
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'ex-c',
       page: 0,
       messageIds: [],
@@ -3370,7 +3370,7 @@ describe('RuntimeServer history', () => {
     fake.receive(roomId, 'peer-a', session())
     await settle()
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'ex-a',
       page: 0,
       messageIds: [],
@@ -3381,7 +3381,7 @@ describe('RuntimeServer history', () => {
     await vi.waitFor(() => expect(started).toEqual(['ex-a']))
     await settle()
     await settle()
-    expect(fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE)).toHaveLength(0)
+    expect(fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH)).toHaveLength(0)
     // A fresh page registration cannot restart History on the same connection.
     await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, async (request) => {
       if (request.mode === 'inventory') return { records: [], done: true }
@@ -3389,7 +3389,7 @@ describe('RuntimeServer history', () => {
       return { records: [], done: true }
     })
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'ex-b',
       page: 0,
       messageIds: [],
@@ -3402,7 +3402,7 @@ describe('RuntimeServer history', () => {
     fake.receive(roomId, 'peer-a', session({ id: 'remote-user-b', name: 'Remote B', avatar: '' }))
     await settle()
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'ex-c',
       page: 0,
       messageIds: [],
@@ -3437,7 +3437,7 @@ describe('RuntimeServer history', () => {
     fake.receive(roomId, 'peer-a', session())
     await settle()
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'to-a',
       page: 0,
       messageIds: [],
@@ -3458,7 +3458,7 @@ describe('RuntimeServer history', () => {
     await vi.waitFor(() => expect(pageBStarted.length).toBe(1))
     // The successful page-b supply produces the response for the same attempt.
     await vi.waitFor(() => {
-      const sent = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE)
+      const sent = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH)
       expect(sent.some((m) => (m as { syncId: string }).syncId === 'to-a')).toBe(true)
     })
   })
@@ -3495,7 +3495,7 @@ describe('RuntimeServer history', () => {
     // inventory request is sent to the peer.
     await vi.waitFor(() => expect(inventoryStarts.length).toBe(1))
     await vi.waitFor(() => {
-      const sent = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST)
+      const sent = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)
       expect(sent.length).toBeGreaterThan(0)
     })
   })
@@ -3516,7 +3516,7 @@ describe('RuntimeServer history', () => {
       fake.receive(roomId, `peer-${peer}`, session({ id: `user-${peer}`, name: `User ${peer}`, avatar: '' }))
       await settle()
       fake.receive(roomId, `peer-${peer}`, {
-        type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+        type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
         syncId: `sat-${peer}`,
         page: 0,
         messageIds: [],
@@ -3528,7 +3528,7 @@ describe('RuntimeServer history', () => {
     fake.receive(roomId, 'peer-4', session({ id: 'user-4', name: 'User 4', avatar: '' }))
     await settle()
     fake.receive(roomId, 'peer-4', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'wait-4',
       page: 0,
       messageIds: [],
@@ -3538,7 +3538,7 @@ describe('RuntimeServer history', () => {
     fake.receive(roomId, 'peer-5', session({ id: 'user-5', name: 'User 5', avatar: '' }))
     await settle()
     fake.receive(roomId, 'peer-5', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'partial-5',
       page: 0,
       messageIds: ['p'],
@@ -3548,7 +3548,7 @@ describe('RuntimeServer history', () => {
     expect(started.length).toBe(4)
     // Cancel the ready waiter (gap): its waiting projection is removed; no slot is released.
     fake.receive(roomId, 'peer-4', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'wait-4',
       page: 2,
       messageIds: [],
@@ -3557,7 +3557,7 @@ describe('RuntimeServer history', () => {
     await settle()
     // Cancel the partial provider (gap): it held no slot, so no waiter may be promoted.
     fake.receive(roomId, 'peer-5', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'partial-5',
       page: 2,
       messageIds: [],
@@ -3571,7 +3571,7 @@ describe('RuntimeServer history', () => {
     fake.receive(roomId, 'peer-6', session({ id: 'user-6', name: 'User 6', avatar: '' }))
     await settle()
     fake.receive(roomId, 'peer-6', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'wait-6',
       page: 0,
       messageIds: [],
@@ -3599,7 +3599,7 @@ describe('RuntimeServer history', () => {
     fake.receive(roomId, 'peer-32', session({ id: 'lc-user-32', name: 'LC 32', avatar: '' }))
     await settle()
     fake.receive(roomId, 'peer-32', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'lc-active',
       page: 0,
       messageIds: [],
@@ -3611,7 +3611,7 @@ describe('RuntimeServer history', () => {
       fake.receive(roomId, peerId, session({ id: `lc-user-${peer}`, name: `LC ${peer}`, avatar: '' }))
       await settle()
       fake.receive(roomId, peerId, {
-        type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+        type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
         syncId: `lc-partial-${peer}`,
         page: 0,
         messageIds: [`p-${peer}`],
@@ -3632,7 +3632,7 @@ describe('RuntimeServer history', () => {
     fake.receive(roomId, 'peer-33', session({ id: 'lc-user-33', name: 'LC 33', avatar: '' }))
     await settle()
     fake.receive(roomId, 'peer-33', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'lc-fresh',
       page: 0,
       messageIds: [],
@@ -3655,7 +3655,7 @@ describe('RuntimeServer history', () => {
       fake.receive(roomId, `peer-${peer}`, session({ id: `hs-user-${peer}`, name: `HS ${peer}`, avatar: '' }))
       await settle()
       fake.receive(roomId, `peer-${peer}`, {
-        type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+        type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
         syncId: `hs-${peer}`,
         page: 0,
         messageIds: [],
@@ -3668,7 +3668,7 @@ describe('RuntimeServer history', () => {
     fake.receive(roomId, 'peer-4', session({ id: 'hs-user-4', name: 'HS 4', avatar: '' }))
     await settle()
     fake.receive(roomId, 'peer-4', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'hs-4',
       page: 0,
       messageIds: [],
@@ -3702,7 +3702,7 @@ describe('RuntimeServer history', () => {
       fake.receive(roomId, `peer-${peer}`, session({ id: `tc-user-${peer}`, name: `TC ${peer}`, avatar: '' }))
       await settle()
       fake.receive(roomId, `peer-${peer}`, {
-        type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+        type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
         syncId: `tc-${peer}`,
         page: 0,
         messageIds: [],
@@ -3714,7 +3714,7 @@ describe('RuntimeServer history', () => {
     fake.receive(roomId, 'peer-4', session({ id: 'tc-user-4', name: 'TC 4', avatar: '' }))
     await settle()
     fake.receive(roomId, 'peer-4', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'tc-4',
       page: 0,
       messageIds: [],
@@ -3724,7 +3724,7 @@ describe('RuntimeServer history', () => {
     // A logical cancellation (out-of-order page) while peer-0's response send is still invoked:
     // the send-stage marker keeps the slot live, so no waiter may start before the send settles.
     fake.receive(roomId, 'peer-0', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'tc-0',
       page: 2,
       messageIds: [],
@@ -3750,7 +3750,7 @@ describe('RuntimeServer history', () => {
     await settle()
     // One synchronization completes and its connection direction becomes terminal.
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'conn-a',
       page: 0,
       messageIds: [],
@@ -3758,12 +3758,12 @@ describe('RuntimeServer history', () => {
     })
     await vi.waitFor(() => expect(started).toEqual(['conn-a']))
     await vi.waitFor(() => {
-      const sent = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE)
+      const sent = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH)
       expect(sent.some((m) => (m as { syncId: string }).syncId === 'conn-a')).toBe(true)
     })
     // Replays of the same id and a different id are inert on the same connection.
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'conn-a',
       page: 0,
       messageIds: [],
@@ -3771,7 +3771,7 @@ describe('RuntimeServer history', () => {
     })
     await settle()
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'conn-b',
       page: 0,
       messageIds: [],
@@ -3780,13 +3780,13 @@ describe('RuntimeServer history', () => {
     await settle()
     await settle()
     expect(started).toEqual(['conn-a'])
-    expect(fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE)).toHaveLength(1)
+    expect(fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH)).toHaveLength(1)
     // A source replacement ends the terminal binding: the next connection starts one independent
     // synchronization with a fresh id.
     fake.receive(roomId, 'peer-a', session({ id: 'remote-user-b', name: 'Remote B', avatar: '' }))
     await settle()
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'conn-c',
       page: 0,
       messageIds: [],
@@ -3807,7 +3807,7 @@ describe('RuntimeServer history', () => {
     await settle()
     // A page-one-first request is invalid and never binds the direction.
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'gap-first',
       page: 1,
       messageIds: [],
@@ -3817,7 +3817,7 @@ describe('RuntimeServer history', () => {
     expect(started).toEqual([])
     // The first valid page zero (same or different id) binds the sole synchronization.
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'gap-first',
       page: 0,
       messageIds: [],
@@ -3826,7 +3826,7 @@ describe('RuntimeServer history', () => {
     await vi.waitFor(() => expect(started).toEqual(['gap-first']))
     // After completion the direction is terminal: replays are inert.
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'gap-first',
       page: 0,
       messageIds: [],
@@ -3850,7 +3850,7 @@ describe('RuntimeServer history', () => {
     fake.receive(roomId, 'peer-a', session({ id: 'user-a', name: 'User A', avatar: '' }))
     await settle()
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'done-sync',
       page: 0,
       messageIds: [],
@@ -3860,7 +3860,7 @@ describe('RuntimeServer history', () => {
     fake.receive(roomId, 'peer-b', session({ id: 'user-b', name: 'User B', avatar: '' }))
     await settle()
     fake.receive(roomId, 'peer-b', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'gap-sync',
       page: 0,
       messageIds: [],
@@ -3868,7 +3868,7 @@ describe('RuntimeServer history', () => {
     })
     await vi.waitFor(() => expect(started).toEqual(['done-sync', 'gap-sync']))
     fake.receive(roomId, 'peer-b', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'gap-sync',
       page: 2,
       messageIds: [],
@@ -3877,21 +3877,21 @@ describe('RuntimeServer history', () => {
     await settle()
     // Replays of both terminal ids on their connections are inert (same and different ids).
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'done-sync',
       page: 0,
       messageIds: [],
       done: true
     })
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'another-id',
       page: 0,
       messageIds: [],
       done: true
     })
     fake.receive(roomId, 'peer-b', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'gap-sync',
       page: 0,
       messageIds: [],
@@ -3906,7 +3906,7 @@ describe('RuntimeServer history', () => {
     fake.receive(roomId, 'peer-a', session({ id: 'user-a-b', name: 'User A2', avatar: '' }))
     await settle()
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'fresh-after-reset',
       page: 0,
       messageIds: [],
@@ -3928,12 +3928,12 @@ describe('RuntimeServer history', () => {
     fake.receive(roomId, 'peer-a', session())
     await settle()
     // The local requester's own syncId is visible in its outgoing inventory request.
-    const inventoryRequest = fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST)
+    const inventoryRequest = fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)
     const requesterSyncId = (inventoryRequest as { syncId: string }).syncId
     // The peer uses the SAME string for its own provider request: it completes and fences the
     // PROVIDER direction only.
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: requesterSyncId,
       page: 0,
       messageIds: [],
@@ -3944,7 +3944,7 @@ describe('RuntimeServer history', () => {
     // The requester's opposite-direction response with the same string must NOT be dropped by
     // the provider fence: it is applied normally.
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PUSH,
       syncId: requesterSyncId,
       page: 0,
       users: [REMOTE_USER],
@@ -3965,10 +3965,10 @@ describe('RuntimeServer history', () => {
     fake.receive(roomId, 'peer-a', session())
     await settle()
     // The connection runs its one synchronization in both directions.
-    const firstInventory = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST)
+    const firstInventory = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)
     const firstRequesterSyncId = (firstInventory[0] as { syncId: string }).syncId
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'prov-a',
       page: 0,
       messageIds: [],
@@ -3976,12 +3976,12 @@ describe('RuntimeServer history', () => {
     })
     await vi.waitFor(() => expect(started).toEqual(['prov-a']))
     await vi.waitFor(() => {
-      const sent = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE)
+      const sent = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH)
       expect(sent.some((m) => (m as { syncId: string }).syncId === 'prov-a')).toBe(true)
     })
     // The requester completes: its terminal binding is retained on this connection.
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PUSH,
       syncId: firstRequesterSyncId,
       page: 0,
       users: [],
@@ -3992,7 +3992,7 @@ describe('RuntimeServer history', () => {
     await settle()
     // Terminal connection: a replayed provider request is inert.
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'prov-a',
       page: 0,
       messageIds: [],
@@ -4024,12 +4024,12 @@ describe('RuntimeServer history', () => {
     await settle()
     // The fresh requester uses a NEW syncId and sends its inventory again.
     await vi.waitFor(() => {
-      const requests = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST)
+      const requests = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)
       expect(requests.some((m) => (m as { syncId: string }).syncId !== firstRequesterSyncId)).toBe(true)
     })
     // The fresh provider synchronization completes with its own id.
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'prov-b',
       page: 0,
       messageIds: [],
@@ -4037,7 +4037,7 @@ describe('RuntimeServer history', () => {
     })
     await vi.waitFor(() => expect(started).toEqual(['prov-a', 'prov-b']))
     await vi.waitFor(() => {
-      const sent = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE)
+      const sent = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH)
       expect(sent.some((m) => (m as { syncId: string }).syncId === 'prov-b')).toBe(true)
     })
   })
@@ -4062,7 +4062,7 @@ describe('RuntimeServer history', () => {
       fake.receive(roomId, peerId, session({ id: `sat-user-${peer}`, name: `Sat ${peer}`, avatar: '' }))
       await settle()
       fake.receive(roomId, peerId, {
-        type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+        type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
         syncId: `sat-${peer}`,
         page: 0,
         messageIds: [`s-${peer}`],
@@ -4074,7 +4074,7 @@ describe('RuntimeServer history', () => {
     // An update to an existing job at exactly 32 is accepted: its final page makes the job ready,
     // so one supplier pipeline observably starts (positive outcome control).
     fake.receive(roomId, 'peer-0', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'sat-0',
       page: 1,
       messageIds: ['s-0-more'],
@@ -4086,7 +4086,7 @@ describe('RuntimeServer history', () => {
     fake.receive(roomId, 'peer-32', session({ id: 'sat-user-32', name: 'Sat 32', avatar: '' }))
     await settle()
     fake.receive(roomId, 'peer-32', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'sat-32',
       page: 0,
       messageIds: ['s-32'],
@@ -4097,7 +4097,7 @@ describe('RuntimeServer history', () => {
     // Releasing the accepted pipeline delivers its response; the rejected identity never responds.
     gates.get('sat-0')?.()
     await vi.waitFor(() => {
-      const sent = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE)
+      const sent = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH)
       expect(sent.some((m) => (m as { syncId: string }).syncId === 'sat-0')).toBe(true)
       expect(sent.some((m) => (m as { syncId: string }).syncId === 'sat-32')).toBe(false)
     })
@@ -4121,7 +4121,7 @@ describe('RuntimeServer history', () => {
     fake.receive(roomId, 'peer-a', session())
     await settle()
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'big-0',
       page: 0,
       messageIds: bigIds,
@@ -4131,7 +4131,7 @@ describe('RuntimeServer history', () => {
     // Complete big-0: the upsert keeps its cumulative bytes and the small final page still fits,
     // making the job ready so its supplier observably starts.
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'big-0',
       page: 1,
       messageIds: ['b-0-final'],
@@ -4143,7 +4143,7 @@ describe('RuntimeServer history', () => {
     fake.receive(roomId, 'peer-b', session({ id: 'sat-user-b', name: 'Sat B', avatar: '' }))
     await settle()
     fake.receive(roomId, 'peer-b', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'big-1',
       page: 0,
       messageIds: ['b-1'],
@@ -4154,7 +4154,7 @@ describe('RuntimeServer history', () => {
     // Releasing the accepted pipeline delivers its response; the rejected identity never responds.
     gates.get('big-0')?.()
     await vi.waitFor(() => {
-      const sent = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE)
+      const sent = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH)
       expect(sent.some((m) => (m as { syncId: string }).syncId === 'big-0')).toBe(true)
       expect(sent.some((m) => (m as { syncId: string }).syncId === 'big-1')).toBe(false)
     })
@@ -4166,7 +4166,7 @@ describe('RuntimeServer history', () => {
     // The same source joins the first domain; its requester sends its own inventory request.
     fake.receive(roomId, 'peer-a', session())
     await vi.waitFor(() => {
-      expect(fake.messages(roomId).some((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST)).toBe(true)
+      expect(fake.messages(roomId).some((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)).toBe(true)
     })
     // The same source joins a second domain: a second independent requester must start.
     const OTHER_DOMAIN_2 = 'https://other-2.example'
@@ -4181,16 +4181,16 @@ describe('RuntimeServer history', () => {
     const otherRoomId = getChatRoomId(OTHER_DOMAIN_2)
     fake.receive(otherRoomId, 'peer-a', session())
     await vi.waitFor(() => {
-      expect(fake.messages(otherRoomId).some((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST)).toBe(true)
+      expect(fake.messages(otherRoomId).some((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)).toBe(true)
     })
     // Completing the first domain's requester must not finish the second domain's attempt.
     const firstSync = (
-      fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST) as {
+      fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL) as {
         syncId: string
       }
     ).syncId
     fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PUSH,
       syncId: firstSync,
       page: 0,
       users: [],
@@ -4198,7 +4198,7 @@ describe('RuntimeServer history', () => {
       done: true
     })
     await settle()
-    expect(fake.messages(otherRoomId).some((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST)).toBe(true)
+    expect(fake.messages(otherRoomId).some((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)).toBe(true)
   })
 })
 

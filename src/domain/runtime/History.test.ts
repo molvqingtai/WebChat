@@ -118,7 +118,7 @@ const setup = async () => {
 }
 
 const providerRequest = (syncId: string, page: number, done: boolean): HistoryMessagesRequest => ({
-  type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+  type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
   syncId,
   page,
   messageIds: [],
@@ -160,7 +160,7 @@ describe('HistoryDomain connection-binding lifecycle', () => {
     const requester = store.query(history.query.RequesterAttemptsQuery()).find((item) => item.sourcePeerId === 'peer-a')
     expect(requester).toBeDefined()
     receive(ROOM_ID, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PUSH,
       syncId: requester!.syncId,
       page: 0,
       users: [],

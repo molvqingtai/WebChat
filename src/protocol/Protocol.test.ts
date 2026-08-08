@@ -66,7 +66,7 @@ describe('public v3 protocol contract', () => {
 
   it('accepts only the current sync, mention-range, and history-message keys', () => {
     const request = {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
       syncId: 'sync-1',
       page: 0,
       messageIds: [],
@@ -100,7 +100,7 @@ describe('public v3 protocol contract', () => {
     ).toBeNull()
 
     const response = {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PUSH,
       syncId: 'sync-1',
       page: 0,
       users: [USER],
@@ -230,7 +230,7 @@ describe('public v3 protocol contract', () => {
     expect(
       checkChatRoomMessage(
         {
-          type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
+          type: MESSAGE_TYPE.HISTORY_MESSAGES_PUSH,
           syncId: 'request-1',
           page: 0,
           users: [USER],
@@ -241,7 +241,7 @@ describe('public v3 protocol contract', () => {
       )
     ).toBe(false)
     const complete = {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PUSH,
       syncId: 'request-1',
       page: 0,
       users: [USER, { id: 'actor-1', name: 'Actor', avatar: '' }],
@@ -260,7 +260,7 @@ describe('public v3 protocol contract', () => {
 
   it('accepts the exact public history message count and rejects one more', () => {
     const response = {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PUSH,
       syncId: 'request-1',
       page: 0,
       users: [USER],

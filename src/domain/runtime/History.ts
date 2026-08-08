@@ -1233,7 +1233,7 @@ const HistoryDomain = Remesh.domain({
         const tail = [...payload.records.slice(MAX_HISTORY_RESPONSE_MESSAGES), ...payload.remaining]
         const pageDone = payload.terminal && tail.length === 0
         const response: HistoryMessagesResponse = {
-          type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
+          type: MESSAGE_TYPE.HISTORY_MESSAGES_PUSH,
           syncId: payload.syncId,
           page: current.nextResponsePage,
           users: usersForRecords(slice.map(({ record }) => record)),
@@ -1821,7 +1821,7 @@ const HistoryDomain = Remesh.domain({
               let bucket: string[] = []
               const encodeFrame = async (messageIds: string[], done: boolean) => {
                 const frame = {
-                  type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+                  type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
                   syncId: key.syncId,
                   page: pages.length,
                   messageIds,
@@ -1852,7 +1852,7 @@ const HistoryDomain = Remesh.domain({
                     ]
                   }
                   pages.push({
-                    type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+                    type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
                     syncId: key.syncId,
                     page: pages.length,
                     messageIds: bucket,
@@ -1872,7 +1872,7 @@ const HistoryDomain = Remesh.domain({
                 }
               }
               pages.push({
-                type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+                type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
                 syncId: key.syncId,
                 page: pages.length,
                 messageIds: bucket,
@@ -1901,7 +1901,7 @@ const HistoryDomain = Remesh.domain({
         fromEvent(wireDomain.event.MessageAcceptedEvent).pipe(
           filter(
             (event): event is WireMessageEvent & { message: HistoryMessagesRequest } =>
-              'type' in event.message && event.message.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST
+              'type' in event.message && event.message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL
           ),
           map(HandleInventoryPageCommand)
         )
@@ -1912,7 +1912,7 @@ const HistoryDomain = Remesh.domain({
         fromEvent(wireDomain.event.MessageAcceptedEvent).pipe(
           filter(
             (event): event is WireMessageEvent & { message: HistoryMessagesResponse } =>
-              'type' in event.message && event.message.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE
+              'type' in event.message && event.message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH
           ),
           map(ApplyResponsePageCommand)
         )

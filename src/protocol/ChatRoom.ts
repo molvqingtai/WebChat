@@ -7,8 +7,8 @@ export const MESSAGE_TYPE = {
   SESSION_END: 'session-end',
   TEXT: 'text',
   REACTION: 'reaction',
-  HISTORY_MESSAGES_REQUEST: 'history-messages-request',
-  HISTORY_MESSAGES_RESPONSE: 'history-messages-response'
+  HISTORY_MESSAGES_PULL: 'history-messages-pull',
+  HISTORY_MESSAGES_PUSH: 'history-messages-push'
 } as const
 
 export const REACTION_TYPE = {
@@ -60,7 +60,7 @@ export interface ReactionMessage {
 export type ChatMessage = TextMessage | ReactionMessage
 
 export interface HistoryMessagesRequest {
-  type: typeof MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST
+  type: typeof MESSAGE_TYPE.HISTORY_MESSAGES_PULL
   syncId: string
   page: number
   messageIds: string[]
@@ -68,7 +68,7 @@ export interface HistoryMessagesRequest {
 }
 
 export interface HistoryMessagesResponse {
-  type: typeof MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE
+  type: typeof MESSAGE_TYPE.HISTORY_MESSAGES_PUSH
   syncId: string
   page: number
   users: ChatUser[]
@@ -132,7 +132,7 @@ export const ReactionMessageSchema = v.strictObject({
 export const ChatMessageSchema = v.variant('type', [TextMessageSchema, ReactionMessageSchema])
 
 export const HistoryMessagesRequestSchema = v.strictObject({
-  type: v.literal(MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST),
+  type: v.literal(MESSAGE_TYPE.HISTORY_MESSAGES_PULL),
   syncId: boundedString(128),
   page: safeNonNegativeInteger,
   messageIds: v.array(v.string()),
@@ -140,7 +140,7 @@ export const HistoryMessagesRequestSchema = v.strictObject({
 })
 
 export const HistoryMessagesResponseSchema = v.strictObject({
-  type: v.literal(MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE),
+  type: v.literal(MESSAGE_TYPE.HISTORY_MESSAGES_PUSH),
   syncId: boundedString(128),
   page: safeNonNegativeInteger,
   users: v.pipe(v.array(ChatUserSchema), v.maxLength(200)),
@@ -183,7 +183,7 @@ export const parseChatRoomMessage = (value: unknown): ChatRoomMessage | null => 
   if (message.type === MESSAGE_TYPE.TEXT || message.type === MESSAGE_TYPE.REACTION) {
     return isMessageWithinLimit(message) ? message : null
   }
-  if (message.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST) return message
+  if (message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL) return message
 
   const userIds = message.users.map((user) => user.id)
   return message.users.every(isUserWithinLimit) &&
@@ -199,7 +199,7 @@ export const isChatRoomMessageSemanticallyValid = (message: ChatRoomMessage, now
   if (message.type === MESSAGE_TYPE.TEXT || message.type === MESSAGE_TYPE.REACTION) {
     return isHLCInRange(message.hlc, now)
   }
-  if (message.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST) return true
+  if (message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL) return true
   const userIds = new Set(message.users.map((user) => user.id))
   return message.messages.every((item) => isHLCInRange(item.hlc, now) && userIds.has(item.userId))
 }

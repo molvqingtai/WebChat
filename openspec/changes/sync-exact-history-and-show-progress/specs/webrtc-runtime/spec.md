@@ -134,7 +134,7 @@ The Runtime page contract SHALL retain explicit `{supplyId}` request/cancel owne
 
 ### Requirement: Event sequence and un-ACK buffer
 
-`DeliveryDomain` SHALL maintain a short-term per-domain event sequence and volatile inbound un-ACK delivery buffer bounded to 512 records and 8MiB. An event SHALL be cleared once at least one page acknowledges durable persistence. One `history-messages-response` page SHALL be admitted atomically or rejected as a whole when it would exceed either bound; rejection SHALL apply none of that page, SHALL cancel the local History attempt, and SHALL not emit a peer acknowledgement or ask the provider for another page. A page that reconnects within the same current domain lifecycle SHALL be re-sent unacknowledged inbound events by sequence. Events still unacknowledged when the domain's grace period ends SHALL be discarded. Loss of the buffer when the browser kills the Runtime is an accepted boundary. This local delivery ACK and buffer SHALL NOT become a History peer message, outbound outbox, remote delivery confirmation, or cross-disconnect History recovery mechanism.
+`DeliveryDomain` SHALL maintain a short-term per-domain event sequence and volatile inbound un-ACK delivery buffer bounded to 512 records and 8MiB. An event SHALL be cleared once at least one page acknowledges durable persistence. One `history-messages-push` page SHALL be admitted atomically or rejected as a whole when it would exceed either bound; rejection SHALL apply none of that page, SHALL cancel the local History attempt, and SHALL not emit a peer acknowledgement or ask the provider for another page. A page that reconnects within the same current domain lifecycle SHALL be re-sent unacknowledged inbound events by sequence. Events still unacknowledged when the domain's grace period ends SHALL be discarded. Loss of the buffer when the browser kills the Runtime is an accepted boundary. This local delivery ACK and buffer SHALL NOT become a History peer message, outbound outbox, remote delivery confirmation, or cross-disconnect History recovery mechanism.
 
 #### Scenario: ACK clears buffer
 
@@ -153,7 +153,7 @@ The Runtime page contract SHALL retain explicit `{supplyId}` request/cancel owne
 
 #### Scenario: Atomic history batch admission
 
-- **WHEN** a `history-messages-response` page would exceed 512 records or 8MiB in the volatile un-ACK buffer
+- **WHEN** a `history-messages-push` page would exceed 512 records or 8MiB in the volatile un-ACK buffer
 - **THEN** the Runtime SHALL reject the whole page, preserve existing records, cancel only that History attempt, and SHALL send no peer acknowledgement or continuation request
 
 ### Requirement: Runtime facts have exactly one writable Domain owner
