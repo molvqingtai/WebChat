@@ -794,11 +794,7 @@ const SessionDomain = Remesh.domain({
           user: runtime.user,
           receivedAt: clock.now()
         }
-        return [
-          HlcState().new(hlc),
-          OperationSucceededEvent({ operationId: payload.operationId }),
-          TextMessageAllocatedEvent({ operationId: payload.operationId, record })
-        ]
+        return [HlcState().new(hlc), TextMessageAllocatedEvent({ operationId: payload.operationId, record })]
       }
     })
 
@@ -849,11 +845,7 @@ const SessionDomain = Remesh.domain({
           user: runtime.user,
           receivedAt: clock.now()
         }
-        return [
-          HlcState().new(hlc),
-          OperationSucceededEvent({ operationId: payload.operationId }),
-          ReactionMessageAllocatedEvent({ operationId: payload.operationId, record })
-        ]
+        return [HlcState().new(hlc), ReactionMessageAllocatedEvent({ operationId: payload.operationId, record })]
       }
     })
 
