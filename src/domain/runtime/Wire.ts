@@ -1,7 +1,7 @@
 import { Remesh } from 'remesh'
 import * as v from 'valibot'
 import { fromEventPattern, map, mergeMap } from 'rxjs'
-import { MAX_DECODE_QUEUE_BYTES, MAX_DECODE_QUEUE_FRAMES, WORLD_ROOM_ID_V4 } from '@/constants/config'
+import { MAX_DECODE_QUEUE_BYTES, MAX_DECODE_QUEUE_FRAMES, WORLD_ROOM_ID_V5 } from '@/constants/config'
 import { RoomTransportExtern, WireCodecExtern } from '@/domain/runtime/externs/RoomTransport'
 import { ChatRoomMessageSchema, WorldRoomMessageSchema, type ChatRoomMessage, type WorldRoomMessage } from '@/protocol'
 import { getTextByteSize } from '@/utils/getTextByteSize'
@@ -82,7 +82,7 @@ interface DropRecord {
 
 const MAX_LOGGED_SOURCES = 256
 const LOG_INTERVAL_MS = 10000
-const worldRoomId = stringToHex(WORLD_ROOM_ID_V4)
+const worldRoomId = stringToHex(WORLD_ROOM_ID_V5)
 const queueId = (roomId: string, sourcePeerId: string) => JSON.stringify([roomId, sourcePeerId])
 const generationFor = (generations: RoomGeneration[], roomId: string) =>
   generations.find((item) => item.roomId === roomId)?.generation ?? 0
@@ -643,7 +643,7 @@ const WireDomain = Remesh.domain({
       impl: ({ fromEvent }) =>
         fromEvent(ProtocolDropEvent).pipe(
           map(({ sourcePeerId, reason, error }) => {
-            console.warn(`[WebChat] Dropped v4 frame from ${sourcePeerId}: ${reason}`, error ?? '')
+            console.warn(`[WebChat] Dropped v5 frame from ${sourcePeerId}: ${reason}`, error ?? '')
             return null
           })
         )

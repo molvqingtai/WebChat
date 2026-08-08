@@ -53,7 +53,7 @@ describe('public protocol schema contract', () => {
     expect(parseChat({ type: 'unknown' })).toBeNull()
   })
 
-  it('requires causal logical-presence generations and strict final-end facts', () => {
+  it('requires causal logical-presence generations and rejects the removed end type', () => {
     const session = {
       type: MESSAGE_TYPE.SESSION,
       sessionId: 'session-1',
@@ -61,7 +61,6 @@ describe('public protocol schema contract', () => {
       joinedAt: NOW,
       user: USER
     }
-    const end = { type: MESSAGE_TYPE.SESSION_END, presenceId: 'presence-1' }
 
     expect(parseChat(session)).toEqual(session)
     for (const joinedAt of [undefined, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1]) {
@@ -69,10 +68,10 @@ describe('public protocol schema contract', () => {
     }
     expect(parseChat({ ...session, generation: session.presenceId })).toBeNull()
     expect(parseChat({ ...session, presenceId: '' })).toBeNull()
-    expect(parseChat(end)).toEqual(end)
-    expect(parseChat({ ...end, sessionId: session.sessionId })).toBeNull()
-    expect(parseChat({ ...end, presenceId: '' })).toBeNull()
-    expect(parseChat({ type: MESSAGE_TYPE.SESSION_END })).toBeNull()
+    // The v5 Chat schema contains no end surface: `session-end` is rejected as an unknown type.
+    expect(parseChat({ type: 'session-end', presenceId: 'presence-1' })).toBeNull()
+    expect(parseChat({ type: 'session-end', presenceId: 'presence-1', sessionId: session.sessionId })).toBeNull()
+    expect(parseChat({ type: 'session-end' })).toBeNull()
   })
 
   it('accepts only the current sync, mention, and history keys', () => {
@@ -221,7 +220,6 @@ describe('public protocol schema contract', () => {
         'REACTION_TYPE',
         'ReactionMessageSchema',
         'ReactionTypeSchema',
-        'SessionEndMessageSchema',
         'SessionMessageSchema',
         'TextMessageSchema',
         'WireCodecError',
@@ -233,6 +231,8 @@ describe('public protocol schema contract', () => {
   it('does not export standalone validators, schema factories, handwritten duplicates, or legacy names', () => {
     for (const name of [
       'parseChatRoomMessage',
+      'SessionEndMessage',
+      'SessionEndMessageSchema',
       'parseWorldRoomMessage',
       'checkChatRoomMessage',
       'checkWorldRoomMessage',

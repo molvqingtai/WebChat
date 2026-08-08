@@ -42,11 +42,6 @@ interface HeldFrame {
   payload: string
 }
 
-interface HeldSessionEnd {
-  notifyStarted(): void
-  settled: Promise<void>
-}
-
 class DeterministicNetwork {
   private readonly endpoints = new Map<string, Endpoint>()
   private readonly heldDiscoveries = new Set<string>()
@@ -54,8 +49,6 @@ class DeterministicNetwork {
   private readonly heldFrames: HeldFrame[] = []
   private readonly deliveredFrames: HeldFrame[] = []
   private readonly lifecycleEvents: string[] = []
-  private readonly rejectedSessionEnds = new Set<string>()
-  private readonly heldSessionEnds = new Map<string, HeldSessionEnd>()
   private readonly announcedPairs = new Set<string>()
   private readonly releaseOnSessionSend = new Map<string, { sourcePeerId: string; targetPeerId: string }>()
 
@@ -109,23 +102,6 @@ class DeterministicNetwork {
 
   isJoined(peerId: string, roomId: string) {
     return this.endpoints.get(peerId)?.rooms.has(roomId) ?? false
-  }
-
-  rejectNextSessionEnd(peerId: string) {
-    this.rejectedSessionEnds.add(peerId)
-  }
-
-  holdNextSessionEnd(peerId: string) {
-    let notifyStarted!: () => void
-    const started = new Promise<void>((resolve) => {
-      notifyStarted = resolve
-    })
-    let settle!: () => void
-    const settled = new Promise<void>((resolve) => {
-      settle = resolve
-    })
-    this.heldSessionEnds.set(peerId, { notifyStarted, settled })
-    return { started, settle }
   }
 
   recordLifecycle(event: string) {
@@ -206,17 +182,6 @@ class DeterministicNetwork {
       send: async (roomId, payload, to) => {
         const selected = to === undefined ? null : new Set(Array.isArray(to) ? to : [to])
         const parsed = JSON.parse(payload) as { type?: unknown }
-        const heldEnd = parsed.type === MESSAGE_TYPE.SESSION_END ? this.heldSessionEnds.get(peerId) : undefined
-        if (heldEnd) {
-          this.heldSessionEnds.delete(peerId)
-          this.recordLifecycle(`session-end-held:${peerId}:${roomId}`)
-          heldEnd.notifyStarted()
-          await heldEnd.settled
-        }
-        if (parsed.type === MESSAGE_TYPE.SESSION_END && this.rejectedSessionEnds.delete(peerId)) {
-          this.recordLifecycle(`session-end-rejected:${peerId}:${roomId}`)
-          throw new Error('session end send rejected')
-        }
         this.discover(roomId, peerId)
         await Promise.resolve()
         await Promise.resolve()
@@ -232,9 +197,6 @@ class DeterministicNetwork {
           if (parsed.type === MESSAGE_TYPE.SESSION && this.heldRoutes.has(route)) this.heldFrames.push(frame)
           else this.deliver(frame)
         })
-        if (parsed.type === MESSAGE_TYPE.SESSION_END) {
-          this.recordLifecycle(`session-end-settled:${peerId}:${roomId}`)
-        }
       },
       onMessage: (listener) => subscribe(endpoint.messages, listener),
       onPeerJoin: (listener) => subscribe(endpoint.joins, listener),
@@ -600,30 +562,53 @@ describe('join notice observation baseline', () => {
     await observerReplacement.join()
     expect(await noticeUsers(observerReplacement)).toEqual([])
 
-    // T4: D retires the generation, publishes its end fact, then leaves the room.
-    await d.server.leaveChatRoom({ domain: DOMAIN })
-    await vi.waitFor(async () => expect(await noticeUsers(observerReplacement, NOTICE_TYPE.LEAVE)).toEqual(['user-b']))
-    network.redeliverLastMessage('peer-d', 'peer-a-replacement', MESSAGE_TYPE.SESSION_END)
-    network.redeliverLastSession('peer-d', 'peer-a-replacement')
-    expect((await noticeUsers(a)).filter((id) => id === 'user-b')).toHaveLength(1)
-    expect((await noticeUsers(observerReplacement, NOTICE_TYPE.LEAVE)).filter((id) => id === 'user-b')).toHaveLength(1)
+    // T4: D retires the generation. The release sends no Chat end value: the observer keeps B
+    // online during the five-second leave grace and persists one leave only on expiry.
+    vi.useFakeTimers()
+    try {
+      await d.server.leaveChatRoom({ domain: DOMAIN })
+      await vi.advanceTimersByTimeAsync(0)
+      // The generation is still displayed throughout the grace (the replacement observer
+      // persisted no join notice: its ledger restored B as already active).
+      expect(
+        observerReplacement.sessionEvents.some((event) =>
+          event.snapshot.sessions.some((session) => session.user.id === 'user-b')
+        )
+      ).toBe(true)
+      expect(await noticeUsers(observerReplacement, NOTICE_TYPE.LEAVE)).toEqual([])
+      // No Chat lifecycle frame was ever produced by the release.
+      expect(network.messageCount('peer-d', 'session-end')).toBe(0)
+      await vi.advanceTimersByTimeAsync(5000)
+      await vi.advanceTimersByTimeAsync(0)
+      await vi.waitFor(async () =>
+        expect(await noticeUsers(observerReplacement, NOTICE_TYPE.LEAVE)).toEqual(['user-b'])
+      )
+      // An expired generation SHALL NOT resurrect: a later duplicate SESSION is dropped.
+      network.redeliverLastSession('peer-d', 'peer-a-replacement')
+      await vi.advanceTimersByTimeAsync(0)
+      expect((await noticeUsers(observerReplacement, NOTICE_TYPE.LEAVE)).filter((id) => id === 'user-b')).toHaveLength(
+        1
+      )
 
-    // T5: a later return allocates a fresh generation and therefore a fresh join.
-    const returned = await createStack(
-      network,
-      'peer-returned',
-      { id: 'user-b', name: 'B', avatar: '' },
-      { presenceStore: sharedPresence }
-    )
-    await returned.join()
-    await vi.waitFor(async () =>
-      expect((await noticeUsers(observerReplacement)).filter((id) => id === 'user-b')).toHaveLength(1)
-    )
-    expect(
-      (await noticeUsers(a)).filter((id) => id === 'user-b').length +
-        (await noticeUsers(observerReplacement)).filter((id) => id === 'user-b').length
-    ).toBe(2)
-    await vi.waitFor(async () => expect(await noticeUsers(returned)).toEqual(['user-b']))
+      // T5: a later return allocates a fresh generation and therefore a fresh join.
+      const returned = await createStack(
+        network,
+        'peer-returned',
+        { id: 'user-b', name: 'B', avatar: '' },
+        { presenceStore: sharedPresence }
+      )
+      await returned.join()
+      await vi.waitFor(async () =>
+        expect((await noticeUsers(observerReplacement)).filter((id) => id === 'user-b')).toHaveLength(1)
+      )
+      expect(
+        (await noticeUsers(a)).filter((id) => id === 'user-b').length +
+          (await noticeUsers(observerReplacement)).filter((id) => id === 'user-b').length
+      ).toBe(2)
+      await vi.waitFor(async () => expect(await noticeUsers(returned)).toEqual(['user-b']))
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 
@@ -655,7 +640,7 @@ describe('single live release owner', () => {
     expect(await noticeUsers(a, NOTICE_TYPE.LEAVE)).toEqual([])
   })
 
-  it('releases through one live owner: Chat leave, contribution remove, then close', async () => {
+  it('releases through one live owner without a Chat end value; the observer leave lands on grace expiry', async () => {
     const network = new DeterministicNetwork()
     const durable = createMemoryPresenceStore()
     const a = await createStack(network, 'live-release-peer-a', { id: 'release-user-a', name: 'A', avatar: '' })
@@ -669,66 +654,135 @@ describe('single live release owner', () => {
     await b.join()
     await vi.waitFor(async () => expect((await noticeUsers(a)).filter((id) => id === 'release-user-b')).toHaveLength(1))
 
-    await b.server.leaveChatRoom({ domain: DOMAIN })
-    await vi.waitFor(async () =>
-      expect((await noticeUsers(a, NOTICE_TYPE.LEAVE)).filter((id) => id === 'release-user-b')).toHaveLength(1)
-    )
-
     const chatRoomId = getChatRoomId(DOMAIN)
-    // The durable local lease is cleared on final release; there is no durable end journal.
-    await vi.waitFor(async () => expect((await durable.load(DOMAIN))?.local).toBeUndefined())
-    await vi.waitFor(() => expect(network.isJoined('live-release-peer-b', chatRoomId)).toBe(false))
-    await vi.waitFor(() => expect(network.isJoined('live-release-peer-b', getWorldRoomId())).toBe(false))
-    expect(network.lifecycle().filter((event) => event.includes('live-release-peer-b'))).toContain(
-      `physical-leave:live-release-peer-b:${chatRoomId}`
-    )
+    // Fake timers before the release so the observer's pending-leave deadline is fake-owned.
+    vi.useFakeTimers()
+    try {
+      await b.server.leaveChatRoom({ domain: DOMAIN })
+      await vi.advanceTimersByTimeAsync(0)
+      // The release produces no Chat lifecycle frame and no durable end journal.
+      // No Chat lifecycle frame was ever produced by the release.
+      expect(network.messageCount('live-release-peer-b', 'session-end')).toBe(0)
+      await vi.waitFor(async () => expect((await durable.load(DOMAIN))?.local).toBeUndefined())
+      await vi.waitFor(() => expect(network.isJoined('live-release-peer-b', chatRoomId)).toBe(false))
+      await vi.waitFor(() => expect(network.isJoined('live-release-peer-b', getWorldRoomId())).toBe(false))
+      expect(network.lifecycle().filter((event) => event.includes('live-release-peer-b'))).toContain(
+        `physical-leave:live-release-peer-b:${chatRoomId}`
+      )
+      // The observer keeps B online during the leave grace and persists one leave on expiry.
+      expect((await noticeUsers(a)).filter((id) => id === 'release-user-b')).toHaveLength(1)
+      expect(await noticeUsers(a, NOTICE_TYPE.LEAVE)).toEqual([])
+      await vi.advanceTimersByTimeAsync(5000)
+      await vi.advanceTimersByTimeAsync(0)
+      await vi.waitFor(async () =>
+        expect((await noticeUsers(a, NOTICE_TYPE.LEAVE)).filter((id) => id === 'release-user-b')).toHaveLength(1)
+      )
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
-  it('rejoins immediately in the current live model after a release settles', async () => {
+  it('rejoins with a fresh generation after the release grace settles', async () => {
     const network = new DeterministicNetwork()
     const a = await createStack(network, 'fence-peer-a', { id: 'fence-user-a', name: 'A', avatar: '' })
     const b = await createStack(network, 'fence-peer-b', { id: 'fence-user-b', name: 'B', avatar: '' })
     await a.join()
     await b.join()
 
-    await b.server.leaveChatRoom({ domain: DOMAIN })
-    await vi.waitFor(async () =>
-      expect((await noticeUsers(a, NOTICE_TYPE.LEAVE)).filter((id) => id === 'fence-user-b')).toHaveLength(1)
-    )
-    // A rejoin after release creates a fresh presence generation in the current live model.
-    await b.server.joinChatRoom({
-      domain: DOMAIN,
-      user: { id: 'fence-user-b', name: 'B', avatar: '' },
-      site: SITE
-    })
-    await vi.waitFor(async () =>
-      expect((await noticeUsers(a)).filter((id) => id === 'fence-user-b').length).toBeGreaterThanOrEqual(2)
-    )
-    expect(network.isJoined('fence-peer-b', getChatRoomId(DOMAIN))).toBe(true)
+    vi.useFakeTimers()
+    try {
+      await b.server.leaveChatRoom({ domain: DOMAIN })
+      await vi.advanceTimersByTimeAsync(0)
+      // The observer grace expires before the rejoin: one leave lands.
+      await vi.advanceTimersByTimeAsync(5000)
+      await vi.advanceTimersByTimeAsync(0)
+      await vi.waitFor(async () =>
+        expect((await noticeUsers(a, NOTICE_TYPE.LEAVE)).filter((id) => id === 'fence-user-b')).toHaveLength(1)
+      )
+      // A rejoin after release creates a fresh presence generation in the current live model.
+      await b.server.joinChatRoom({
+        domain: DOMAIN,
+        user: { id: 'fence-user-b', name: 'B', avatar: '' },
+        site: SITE
+      })
+      await vi.waitFor(async () =>
+        expect((await noticeUsers(a)).filter((id) => id === 'fence-user-b').length).toBeGreaterThanOrEqual(2)
+      )
+      expect(network.isJoined('fence-peer-b', getChatRoomId(DOMAIN))).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
-  it('retries the Chat-leave END step boundedly and surfaces the failure once per attempt', async () => {
+  it('suppresses the final leave while the user keeps another active or grace-preserved presence', async () => {
     vi.useFakeTimers()
     try {
       const network = new DeterministicNetwork()
-      const a = await createStack(network, 'end-retry-peer-a', { id: 'end-retry-user-a', name: 'A', avatar: '' })
-      const b = await createStack(network, 'end-retry-peer-b', { id: 'end-retry-user-b', name: 'B', avatar: '' })
+      const a = await createStack(network, 'multi-peer-a', { id: 'multi-user-a', name: 'A', avatar: '' })
+      const b1 = await createStack(network, 'multi-peer-b1', { id: 'multi-user-b', name: 'B', avatar: '' })
+      const b2 = await createStack(network, 'multi-peer-b2', { id: 'multi-user-b', name: 'B', avatar: '' })
       await a.join()
-      await b.join()
-      network.rejectNextSessionEnd('end-retry-peer-b')
+      await b1.join()
+      await b2.join()
+      await vi.waitFor(async () => expect((await noticeUsers(a)).filter((id) => id === 'multi-user-b')).toHaveLength(1))
 
-      await b.server.leaveChatRoom({ domain: DOMAIN })
+      // B1's physical source departs: the user still has B2's active generation, so the expiry
+      // removes only B1's generation and persists NO leave notice.
+      network.disconnectPeer('multi-peer-b1')
+      b1.crash()
       await vi.advanceTimersByTimeAsync(0)
-      await vi.waitFor(() => expect(b.errors).toContain('session end send rejected'))
-      expect(network.isJoined('end-retry-peer-b', getChatRoomId(DOMAIN))).toBe(true)
-
-      // The single owner retries only the failed END step at a bounded cadence; on success it settles.
+      expect(await noticeUsers(a, NOTICE_TYPE.LEAVE)).toEqual([])
       await vi.advanceTimersByTimeAsync(5000)
       await vi.advanceTimersByTimeAsync(0)
-      await vi.waitFor(() => expect(network.isJoined('end-retry-peer-b', getChatRoomId(DOMAIN))).toBe(false))
+      expect(await noticeUsers(a, NOTICE_TYPE.LEAVE)).toEqual([])
+      // The user remains displayed through B2.
+      expect(
+        a.sessionEvents.some((event) => event.snapshot.sessions.some((session) => session.user.id === 'multi-user-b'))
+      ).toBe(true)
+
+      // B2's physical source also departs: its expiry removes the last generation and lands one leave.
+      network.disconnectPeer('multi-peer-b2')
+      b2.crash()
+      await vi.advanceTimersByTimeAsync(0)
+      await vi.advanceTimersByTimeAsync(5000)
+      await vi.advanceTimersByTimeAsync(0)
       await vi.waitFor(async () =>
-        expect((await noticeUsers(a, NOTICE_TYPE.LEAVE)).filter((id) => id === 'end-retry-user-b')).toHaveLength(1)
+        expect((await noticeUsers(a, NOTICE_TYPE.LEAVE)).filter((id) => id === 'multi-user-b')).toHaveLength(1)
       )
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps the remote user online during the leave grace and emits exactly one leave on expiry', async () => {
+    vi.useFakeTimers()
+    try {
+      const network = new DeterministicNetwork()
+      const a = await createStack(network, 'grace-peer-a', { id: 'grace-user-a', name: 'A', avatar: '' })
+      const b = await createStack(network, 'grace-peer-b', { id: 'grace-user-b', name: 'B', avatar: '' })
+      await a.join()
+      await b.join()
+      await vi.waitFor(async () => expect((await noticeUsers(a)).filter((id) => id === 'grace-user-b')).toHaveLength(1))
+
+      // B's physical host disappears without any Chat lifecycle frame.
+      network.disconnectPeer('grace-peer-b')
+      b.crash()
+      await vi.advanceTimersByTimeAsync(0)
+      // The generation is retained in the online snapshot throughout the five-second deadline.
+      expect((await noticeUsers(a)).filter((id) => id === 'grace-user-b')).toHaveLength(1)
+      expect(await noticeUsers(a, NOTICE_TYPE.LEAVE)).toEqual([])
+      const onlineDuringGrace = a.sessionEvents.some((event) =>
+        event.snapshot.sessions.some((session) => session.user.id === 'grace-user-b')
+      )
+      expect(onlineDuringGrace).toBe(true)
+
+      // Expiry removes only that generation and persists exactly one observer-local leave.
+      await vi.advanceTimersByTimeAsync(5000)
+      await vi.advanceTimersByTimeAsync(0)
+      await vi.waitFor(async () =>
+        expect((await noticeUsers(a, NOTICE_TYPE.LEAVE)).filter((id) => id === 'grace-user-b')).toHaveLength(1)
+      )
+      expect((await noticeUsers(a)).filter((id) => id === 'grace-user-b')).toHaveLength(1)
     } finally {
       vi.useRealTimers()
     }

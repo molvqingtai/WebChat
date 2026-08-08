@@ -4,7 +4,6 @@ import { ChatSessionSchema, ChatUserSchema } from './Session'
 
 export const MESSAGE_TYPE = {
   SESSION: 'session',
-  SESSION_END: 'session-end',
   TEXT: 'text',
   REACTION: 'reaction',
   HISTORY_MESSAGES_PULL: 'history-messages-pull',
@@ -42,12 +41,6 @@ export const SessionMessageSchema = v.strictObject({
   joinedAt: safeNonNegativeInteger
 })
 export type SessionMessage = v.InferOutput<typeof SessionMessageSchema>
-
-export const SessionEndMessageSchema = v.strictObject({
-  type: v.literal(MESSAGE_TYPE.SESSION_END),
-  presenceId: OpaquePresenceIdSchema
-})
-export type SessionEndMessage = v.InferOutput<typeof SessionEndMessageSchema>
 
 export const TextMessageSchema = v.strictObject({
   type: v.literal(MESSAGE_TYPE.TEXT),
@@ -96,7 +89,6 @@ export type HistoryMessagesPush = v.InferOutput<typeof HistoryMessagesPushSchema
 
 export const ChatRoomMessageSchema = v.variant('type', [
   SessionMessageSchema,
-  SessionEndMessageSchema,
   TextMessageSchema,
   ReactionMessageSchema,
   HistoryMessagesPullSchema,

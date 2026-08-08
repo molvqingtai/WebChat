@@ -2914,7 +2914,7 @@ describe('RuntimeServer history', () => {
       done: true
     })
     // Remove the first peer: its dormant/waiting/provider accounting is cleaned.
-    fake.receive(roomId, 'peer-removed', { type: MESSAGE_TYPE.SESSION_END, presenceId: 'presence-remote-user' })
+    fake.peerLeave(roomId, 'peer-removed')
     await settle()
     // The live peer's completed inventory must still be able to transition to ready and serve.
     await vi.waitFor(() => {
@@ -2958,7 +2958,7 @@ describe('RuntimeServer history', () => {
     expect(started).toEqual(['full-0', 'full-1', 'full-2', 'full-3'])
     // Remove peer-0: cleanup must actually cancel its live supply through the recorded supplyId
     // (observable on the AbortSignal), while the waiting fifth peer is NOT promoted early.
-    fake.receive(roomId, 'peer-0', { type: MESSAGE_TYPE.SESSION_END, presenceId: 'presence-user-0' })
+    fake.peerLeave(roomId, 'peer-0')
     await vi.waitFor(() => expect(cancelled).toEqual(['full-0']))
     expect(started).toEqual(['full-0', 'full-1', 'full-2', 'full-3'])
     // The cancelled supply settles (abort rejection) and exactly one waiter is promoted; no
@@ -2993,7 +2993,7 @@ describe('RuntimeServer history', () => {
     })
     await vi.waitFor(() => expect(started).toEqual(['old-a']))
     // Cleanup removes the peer: the in-flight supply is cancelled via its recorded supplyId.
-    fake.receive(roomId, 'peer-0', { type: MESSAGE_TYPE.SESSION_END, presenceId: 'presence-user-0' })
+    fake.peerLeave(roomId, 'peer-0')
     await settle()
     expect(cancelled).toEqual(['old-a'])
     // A fresh session submits a replacement request with a DIFFERENT syncId: it becomes one
@@ -3039,7 +3039,7 @@ describe('RuntimeServer history', () => {
     })
     await vi.waitFor(() => expect(started).toEqual(['old-a']))
     // Cleanup removes the peer and cancels the in-flight supply; the active entry stays unsettled.
-    fake.receive(roomId, 'peer-0', { type: MESSAGE_TYPE.SESSION_END, presenceId: 'presence-user-0' })
+    fake.peerLeave(roomId, 'peer-0')
     await settle()
     expect(cancelled).toEqual(['old-a'])
     // A delayed page carrying the SAME syncId arrives after cleanup (fresh session): it must be
@@ -3098,7 +3098,7 @@ describe('RuntimeServer history', () => {
     await vi.waitFor(() => expect(pageBHeld.length).toBe(1))
     expect(pageBHeld[0]).toMatch(/^supply:.*:1$/)
     // Cleanup cancels the LIVE second-page supplyId (the recorded owner), not the stale first one.
-    fake.receive(roomId, 'peer-0', { type: MESSAGE_TYPE.SESSION_END, presenceId: 'presence-user-0' })
+    fake.peerLeave(roomId, 'peer-0')
     await vi.waitFor(() => expect(pageBCancelled).toEqual([pageBHeld[0]]))
     // The old selection loop terminates: no further page is selected for the torn-down attempt.
     await vi.waitFor(() => expect(pageBHeld.length).toBe(1))
@@ -3145,7 +3145,7 @@ describe('RuntimeServer history', () => {
     await vi.waitFor(() => expect(held.length).toBe(1))
     // Cleanup cancels the held page-a supply; the old selection loop must terminate so page-b
     // never starts for the torn-down attempt.
-    fake.receive(roomId, 'peer-0', { type: MESSAGE_TYPE.SESSION_END, presenceId: 'presence-user-0' })
+    fake.peerLeave(roomId, 'peer-0')
     await vi.waitFor(() => expect(cancelled).toEqual([held[0]]))
     await vi.waitFor(() => expect(cancelled.length).toBe(1))
     await settle()
@@ -3184,7 +3184,7 @@ describe('RuntimeServer history', () => {
       done: true
     })
     await vi.waitFor(() => expect(started).toEqual(['old-a']))
-    fake.receive(roomId, 'peer-0', { type: MESSAGE_TYPE.SESSION_END, presenceId: 'presence-user-0' })
+    fake.peerLeave(roomId, 'peer-0')
     await settle()
     expect(cancelled).toEqual(['old-a'])
     // A PARTIAL replacement (page zero, done:false) becomes a dormant successor.
@@ -3367,7 +3367,7 @@ describe('RuntimeServer history', () => {
     await settle()
     // Cleanup cancels the old supply and removes any dormant state; a fresh session with a
     // FRESH syncId is the positive re-admission case (the overflowed capacity was released).
-    fake.receive(roomId, 'peer-0', { type: MESSAGE_TYPE.SESSION_END, presenceId: 'presence-user-0' })
+    fake.peerLeave(roomId, 'peer-0')
     await settle()
     fake.receive(roomId, 'peer-0', session({ id: 'user-0b', name: 'User 0b', avatar: '' }))
     await settle()
@@ -3696,10 +3696,7 @@ describe('RuntimeServer history', () => {
     // All 31 partial peers leave: cleanup must remove their canonical jobs IMMEDIATELY (no
     // physical settlement callback exists for them), so fresh unrelated work is admitted at once.
     for (let peer = 0; peer < 31; peer += 1) {
-      fake.receive(roomId, `peer-${peer}`, {
-        type: MESSAGE_TYPE.SESSION_END,
-        presenceId: `presence-lc-user-${peer}`
-      })
+      fake.peerLeave(roomId, `peer-${peer}`)
     }
     await settle()
     // A fresh peer at the (now released) cap is admitted and its ready job starts immediately.
@@ -3750,7 +3747,7 @@ describe('RuntimeServer history', () => {
     })
     await settle()
     // Lifecycle cleanup while the sends are invoked: the slots stay retained (no fifth stage).
-    fake.receive(roomId, 'peer-0', { type: MESSAGE_TYPE.SESSION_END, presenceId: 'presence-hs-user-0' })
+    fake.peerLeave(roomId, 'peer-0')
     await settle()
     await settle()
     expect(started.length).toBe(4)

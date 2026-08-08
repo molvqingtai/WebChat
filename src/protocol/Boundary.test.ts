@@ -140,7 +140,12 @@ describe('public protocol source boundary', () => {
       'as ReactionMessageRecord',
       'sanitizeSite',
       'projectChatUser',
-      'parsePresenceRecord'
+      'parsePresenceRecord',
+      // The v5 Chat protocol has no end surface: no end message, end schema, end union member,
+      // end alias, or receiver end handler may exist in the runtime graph.
+      'SESSION_END',
+      'session-end',
+      'SessionEnd'
     ]
     for (const file of runtimeFiles) {
       const source = await readFile(path.resolve(import.meta.dirname, `../../${file}`), 'utf8')
