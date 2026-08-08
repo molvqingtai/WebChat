@@ -1133,16 +1133,14 @@ const SessionDomain = Remesh.domain({
         const pendingLeave = pendingLeaves.find(
           (item) => item.domain === runtime.domain && item.presenceId === message.presenceId
         )
-        // In a provisional attempt the source owns one slot (the latest SESSION wins, so a
-        // same-source presence switch replaces the prepared binding). In the committed runtime a
-        // source may legally carry a current presence plus a different grace-preserved one: the
-        // exact (source, presence) slot is replaced, and any OTHER same-source generation is
-        // retained only when a pending-leave record preserves it (an unprotected historical
-        // presence must not keep live/History authority after a valid source switch).
-        const replaceKey = prepared
-          ? (item: SessionBinding) => item.sourcePeerId === payload.sourcePeerId
-          : (item: SessionBinding) =>
-              item.sourcePeerId === payload.sourcePeerId && item.presenceId === message.presenceId
+        // A source may legally carry a current presence plus a different grace-preserved one.
+        // In a prepared attempt the source owns one NON-pending current slot (the latest SESSION
+        // replaces it, while pending-preserved generations stay); in the committed runtime the
+        // exact (source, presence) slot is replaced. Any OTHER same-source generation is retained
+        // only when a pending-leave record preserves it, so a repeated SESSION never duplicates
+        // a binding and an unprotected historical presence keeps no live/History authority.
+        const replaceKey = (item: SessionBinding) =>
+          item.sourcePeerId === payload.sourcePeerId && item.presenceId === message.presenceId
         const nextRuntime = {
           ...runtime,
           sessions: replaceBy(
@@ -1170,13 +1168,29 @@ const SessionDomain = Remesh.domain({
         }
         if (prepared) {
           const binding = { presenceId: message.presenceId, sourcePeerId: payload.sourcePeerId }
+          // A same-source switch revokes this attempt's rebind markers for other presences: the
+          // recorded source no longer holds its old presence, so commit cannot cancel those
+          // leaves from a stale fact (rollback/supersession transfers nothing either).
           const reboundBindings = pendingLeave
-            ? prepared.reboundBindings.some(
-                (rebind) => rebind.presenceId === binding.presenceId && rebind.sourcePeerId === binding.sourcePeerId
+            ? prepared.reboundBindings
+                .filter(
+                  (rebind) => rebind.sourcePeerId !== payload.sourcePeerId || rebind.presenceId === message.presenceId
+                )
+                .some(
+                  (rebind) => rebind.presenceId === binding.presenceId && rebind.sourcePeerId === binding.sourcePeerId
+                )
+              ? prepared.reboundBindings.filter(
+                  (rebind) => rebind.sourcePeerId !== payload.sourcePeerId || rebind.presenceId === message.presenceId
+                )
+              : [
+                  ...prepared.reboundBindings.filter(
+                    (rebind) => rebind.sourcePeerId !== payload.sourcePeerId || rebind.presenceId === message.presenceId
+                  ),
+                  binding
+                ]
+            : prepared.reboundBindings.filter(
+                (rebind) => rebind.sourcePeerId !== payload.sourcePeerId || rebind.presenceId === message.presenceId
               )
-              ? prepared.reboundBindings
-              : [...prepared.reboundBindings, binding]
-            : prepared.reboundBindings
           return PreparedSessionsState().new(
             replaceBy(preparedSessions, (item) => item.attemptId === prepared.attemptId, {
               ...prepared,
@@ -1214,27 +1228,45 @@ const SessionDomain = Remesh.domain({
           current?.sessionId !== message.sessionId || current?.presenceId !== message.presenceId
         const sessionSnapshot = snapshot(nextRuntime)
         const publicSession = projectRuntimeSession(session)
-        // Preparation peers and known generations are membership convergence; only logical zero-to-one is a live join.
+        // The displaced user's one-to-zero transition is classified independently from the
+        // incoming generation's zero-to-one eligibility: replace when both apply, a final leave
+        // when only the displaced side applies, a join when only the incoming side applies,
+        // otherwise a refresh snapshot.
+        const incomingJoins = isLaterLogicalJoin && !wasLogicallyActive
         const sessionEvent: RuntimeSessionEvent =
-          !isLaterLogicalJoin || wasLogicallyActive || (displaced?.user.id === message.user.id && Boolean(displaced))
-            ? { type: 'snapshot', domain: runtime.domain, snapshot: sessionSnapshot, provenance: 'refresh' }
+          incomingJoins && displaced
+            ? {
+                type: 'replace',
+                domain: runtime.domain,
+                snapshot: sessionSnapshot,
+                previous: projectRuntimeSession(displaced),
+                session: publicSession,
+                occurredAt: clock.now(),
+                provenance: 'live'
+              }
             : displaced
               ? {
-                  type: 'replace',
+                  type: 'leave',
                   domain: runtime.domain,
                   snapshot: sessionSnapshot,
-                  previous: projectRuntimeSession(displaced),
-                  session: publicSession,
+                  session: projectRuntimeSession(displaced),
                   occurredAt: clock.now(),
                   provenance: 'live'
                 }
-              : {
-                  type: 'join',
-                  domain: runtime.domain,
-                  snapshot: sessionSnapshot,
-                  session: publicSession,
-                  provenance: 'live'
-                }
+              : incomingJoins
+                ? {
+                    type: 'join',
+                    domain: runtime.domain,
+                    snapshot: sessionSnapshot,
+                    session: publicSession,
+                    provenance: 'live'
+                  }
+                : {
+                    type: 'snapshot',
+                    domain: runtime.domain,
+                    snapshot: sessionSnapshot,
+                    provenance: 'refresh'
+                  }
         return [
           DomainsState().new(replaceBy(domains, (item) => item.domain === runtime.domain, nextRuntime)),
           PresenceDomainsState().new(replaceBy(presenceDomains, (item) => item.domain === runtime.domain, record)),
