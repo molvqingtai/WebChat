@@ -3069,6 +3069,114 @@ describe('RuntimeServer history', () => {
     ])
   })
 
+  it('removes an absent non-grace source at reconnect commit and admits nothing without a current SESSION', async () => {
+    const { fake, server, roomId } = await setup()
+    // B is an ordinary ACTIVE committed source (no pending leave).
+    fake.receive(roomId, 'peer-b', session({ id: 'user-b', name: 'User B', avatar: '' }))
+    await settle()
+    // A local reconnect's replacement Room contains no B and B publishes no replacement SESSION.
+    fake.plantPeer(roomId, 'remote-peer')
+    fake.makeNotReady()
+    fake.hangSendsTo(roomId)
+    const chatBroadcastStarted = fake.waitForSendAttempt(roomId)
+    const reconnect = server.reconnectDomain({ domain: DOMAIN })
+    await fake.waitForJoinCalls(4)
+    fake.open()
+    await expect(chatBroadcastStarted).resolves.toMatchObject({ roomId })
+    fake.releaseSends()
+    await reconnect
+    await settle()
+    // The commit cannot manufacture a current binding the attempt never observed: B is removed.
+    const snapshot = await server.getSnapshot()
+    expect(snapshot.domains[0].sessions.some((session) => session.user.id === 'user-b')).toBe(false)
+    fake.receive(roomId, 'peer-b', { ...text('ghost-after-absent-reconnect'), userId: 'user-b' })
+    await settle()
+    expect(await server.replayInbound({ domain: DOMAIN, after: 0 })).toEqual([])
+    // A current valid SESSION restores authority.
+    fake.receive(roomId, 'peer-b', session({ id: 'user-b', name: 'User B', avatar: '' }))
+    await settle()
+    fake.receive(roomId, 'peer-b', { ...text('post-absent-reconnect'), userId: 'user-b' })
+    await settle()
+    expect((await server.replayInbound({ domain: DOMAIN, after: 0 })).map((item) => item.record.message.id)).toEqual([
+      'post-absent-reconnect'
+    ])
+  })
+
+  it('keeps the graced generation displayed when the rebound source switches to a different presence', async () => {
+    const { fake, server, roomId } = await setup()
+    fake.receive(roomId, 'peer-b', session({ id: 'user-b', name: 'User B', avatar: '' }))
+    await settle()
+    // B departs: the committed binding is retained by the leave grace.
+    fake.peerLeave(roomId, 'peer-b')
+    await settle()
+    // A held local replacement accepts B's valid same-presence SESSION in its prepared attempt...
+    fake.plantPeer(roomId, 'remote-peer')
+    fake.makeNotReady()
+    fake.hangSendsTo(roomId)
+    const chatBroadcastStarted = fake.waitForSendAttempt(roomId)
+    const reconnect = server.reconnectDomain({ domain: DOMAIN })
+    await fake.waitForJoinCalls(4)
+    fake.open()
+    await expect(chatBroadcastStarted).resolves.toMatchObject({ roomId })
+    fake.receive(roomId, 'peer-b', session({ id: 'user-b', name: 'User B', avatar: '' }))
+    await settle()
+    // ... then the SAME source switches to a different presence C before commit.
+    fake.receive(roomId, 'peer-b', session({ id: 'user-c', name: 'User C', avatar: '' }))
+    await settle()
+    fake.releaseSends()
+    await reconnect
+    await settle()
+    // The commit keeps current C AND the grace-preserved B (a different presence is not a valid
+    // cancellation fact; the sourcePeerId collision does not erase the graced generation).
+    const snapshot = await server.getSnapshot()
+    const userIds = snapshot.domains[0].sessions.map((session) => session.user.id)
+    expect(userIds).toContain('user-c')
+    expect(userIds).toContain('user-b')
+    // B's departed source stays untrusted (live) without a CURRENT valid B SESSION.
+    fake.receive(roomId, 'peer-b', { ...text('ghost-after-presence-switch'), userId: 'user-b' })
+    await settle()
+    expect(await server.replayInbound({ domain: DOMAIN, after: 0 })).toEqual([])
+    // C is current and trusted.
+    fake.receive(roomId, 'peer-b', { ...text('post-c-current'), userId: 'user-c' })
+    await settle()
+    expect((await server.replayInbound({ domain: DOMAIN, after: 0 })).map((item) => item.record.message.id)).toEqual([
+      'post-c-current'
+    ])
+    disposeServer(server)
+  })
+
+  it('deduplicates repeated same-presence prepared SESSION frames into one cancellation fact', async () => {
+    const { fake, server, roomId } = await setup()
+    fake.receive(roomId, 'peer-b', session({ id: 'user-b', name: 'User B', avatar: '' }))
+    await settle()
+    fake.peerLeave(roomId, 'peer-b')
+    await settle()
+    fake.plantPeer(roomId, 'remote-peer')
+    fake.makeNotReady()
+    fake.hangSendsTo(roomId)
+    const chatBroadcastStarted = fake.waitForSendAttempt(roomId)
+    const reconnect = server.reconnectDomain({ domain: DOMAIN })
+    await fake.waitForJoinCalls(4)
+    fake.open()
+    await expect(chatBroadcastStarted).resolves.toMatchObject({ roomId })
+    // Duplicate valid same-presence SESSION frames: one logical rebind marker.
+    const rebind = session({ id: 'user-b', name: 'User B', avatar: '' })
+    fake.receive(roomId, 'peer-b', rebind)
+    await settle()
+    fake.receive(roomId, 'peer-b', rebind)
+    await settle()
+    fake.releaseSends()
+    await reconnect
+    await settle()
+    // The single cancellation fact is honored: B is current and trusted after the commit.
+    fake.receive(roomId, 'peer-b', { ...text('post-duplicate-rebind'), userId: 'user-b' })
+    await settle()
+    expect((await server.replayInbound({ domain: DOMAIN, after: 0 })).map((item) => item.record.message.id)).toEqual([
+      'post-duplicate-rebind'
+    ])
+    disposeServer(server)
+  })
+
   it('keeps the committed grace running when a prepared rebind source leaves again before commit', async () => {
     const { fake, server, roomId } = await setup()
     fake.receive(roomId, 'peer-b', session({ id: 'user-b', name: 'User B', avatar: '' }))

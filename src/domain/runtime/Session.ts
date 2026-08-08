@@ -608,20 +608,24 @@ const SessionDomain = Remesh.domain({
                 sourcePeerIds
               })
             : removeBy(baselines, (item) => item.domain === prepared.runtime.domain)
-        // Atomic commit: promote the attempt's runtime (merging committed sessions whose
-        // sources the attempt did not supersede, so grace-retained bindings stay displayed) and
-        // cancel ONLY the pending-leave deadlines this attempt actually rebound and still holds
-        // current sources for (abort preserved them; commit fences them).
+        // Atomic commit: promote the attempt's runtime and cancel ONLY the pending-leave
+        // deadlines this attempt actually rebound and still holds current sources for. Prior
+        // committed sessions are retained only when a current pending-leave record preserves
+        // that logical generation and the attempt has no session for the same presence (a
+        // different presence on the same source is NOT a reason to erase the graced generation).
+        const pendingLeaves = get(PendingLeavesState())
         const promotedRuntime: SessionDomainState = {
           ...prepared.runtime,
           sessions: [
             ...prepared.runtime.sessions,
             ...(previous?.sessions ?? []).filter(
-              (current) => !prepared.runtime.sessions.some((session) => session.sourcePeerId === current.sourcePeerId)
+              (current) =>
+                pendingLeaves.some(
+                  (leave) => leave.domain === prepared.runtime.domain && leave.presenceId === current.presenceId
+                ) && !prepared.runtime.sessions.some((session) => session.presenceId === current.presenceId)
             )
           ]
         }
-        const pendingLeaves = get(PendingLeavesState())
         return [
           DomainsState().new(replaceBy(domains, (item) => item.domain === prepared.runtime.domain, promotedRuntime)),
           PreparedSessionsState().new(removeBy(get(PreparedSessionsState()), (item) => item.attemptId === attemptId)),
@@ -1118,11 +1122,13 @@ const SessionDomain = Remesh.domain({
         // the committed binding; this attempt records the exact rebind it owns, and only the
         // atomic commit of THIS attempt may cancel it (rollback/supersession transfers nothing).
         if (prepared) {
+          const binding = { presenceId: message.presenceId, sourcePeerId: payload.sourcePeerId }
           const reboundBindings = pendingLeave
-            ? appendUnique(prepared.reboundBindings, {
-                presenceId: message.presenceId,
-                sourcePeerId: payload.sourcePeerId
-              })
+            ? prepared.reboundBindings.some(
+                (rebind) => rebind.presenceId === binding.presenceId && rebind.sourcePeerId === binding.sourcePeerId
+              )
+              ? prepared.reboundBindings
+              : [...prepared.reboundBindings, binding]
             : prepared.reboundBindings
           return PreparedSessionsState().new(
             replaceBy(preparedSessions, (item) => item.attemptId === prepared.attemptId, {
