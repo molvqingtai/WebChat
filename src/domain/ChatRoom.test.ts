@@ -4,7 +4,7 @@ import ChatRoomDomain from '@/domain/ChatRoom'
 import MessageInputDomain from '@/domain/MessageInput'
 import MessageListDomain from '@/domain/MessageList'
 import UserInfoDomain, { type UserInfo } from '@/domain/UserInfo'
-import { ChatRoomExtern, type ChatRoom } from '@/domain/externs/ChatRoom'
+import { ChatRoomExtern, type ChatRoom, type SendMessageCommand } from '@/domain/externs/ChatRoom'
 import { ReadinessExtern } from '@/domain/externs/Readiness'
 import { ConnectionLifecycleExtern, type ConnectionLifecycleResult } from '@/domain/externs/ConnectionLifecycle'
 import { SendLifecycleExtern } from '@/domain/externs/SendLifecycle'
@@ -109,7 +109,7 @@ const createFixture = (options: { delayRecordWatch?: boolean; user?: UserInfo | 
   const chat: ChatRoom = {
     joinRoom: vi.fn(async () => {}),
     leaveRoom: vi.fn(async () => {}),
-    sendMessage: vi.fn(async (command) => {
+    sendMessage: vi.fn(async (command: SendMessageCommand) => {
       if (command.type === 'reaction') {
         const message = {
           type: MESSAGE_TYPE.REACTION,
@@ -145,7 +145,7 @@ const createFixture = (options: { delayRecordWatch?: boolean; user?: UserInfo | 
         receivedAt: 4
       })
       return message
-    }),
+    }) as unknown as ChatRoom['sendMessage'],
     onMessage: (listener) => subscribe(listeners.message, listener),
     onJoinRoom: (listener) => subscribe(listeners.join, listener),
     onLeaveRoom: (listener) => subscribe(listeners.leave, listener),

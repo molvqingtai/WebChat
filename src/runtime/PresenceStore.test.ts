@@ -45,34 +45,46 @@ describe('presence store', () => {
     await expect(createBrowserPresenceStore(storage).load(DOMAIN)).resolves.toBeNull()
   })
 
-  it('enforces the bounded observer ledger', async () => {
-    const store = createMemoryPresenceStore()
+  it('enforces the bounded observer ledger at the durable load boundary', async () => {
+    const values: Record<string, unknown> = {}
+    const store = createBrowserPresenceStore({
+      get: async (key) => values,
+      set: async (items) => {
+        Object.assign(values, items)
+      }
+    })
     const observers = Array.from({ length: 512 }, (_, index) => ({
       ...record.observers[0],
       presenceId: `remote-generation-${index}`,
       sessionId: `remote-session-${index}`
     }))
 
+    // Typed save trusts its input (no parse on the write path); the declarative ledger ceiling
+    // is enforced when the durable value is loaded.
     await expect(store.save({ ...record, observers })).resolves.toBeUndefined()
-    await expect(
-      store.save({
-        ...record,
-        observers: [
-          ...observers,
-          { ...record.observers[0], presenceId: 'overflow-generation', sessionId: 'overflow-session' }
-        ]
-      })
-    ).rejects.toThrow('Invalid Runtime presence record')
-    await expect(store.load(DOMAIN)).resolves.toEqual({ ...record, observers })
+    await store.save({
+      ...record,
+      observers: [
+        ...observers,
+        { ...record.observers[0], presenceId: 'overflow-generation', sessionId: 'overflow-session' }
+      ]
+    })
+    await expect(store.load(DOMAIN)).resolves.toBeNull()
   })
 
-  it('rejects invalid state before replacing a valid generation', async () => {
-    const store = createMemoryPresenceStore()
+  it('trusts typed saves and isolates an invalid generation at the durable load boundary', async () => {
+    const values: Record<string, unknown> = {}
+    const store = createBrowserPresenceStore({
+      get: async (key) => values,
+      set: async (items) => {
+        Object.assign(values, items)
+      }
+    })
     await store.save(record)
-    await expect(
-      store.save({ ...record, local: { ...record.local!, status: 'unknown' } } as unknown as PresenceDomainRecord)
-    ).rejects.toThrow('Invalid Runtime presence record')
-    await expect(store.load(DOMAIN)).resolves.toEqual(record)
+    // Typed save trusts its input; the invalid status value is stored but is omitted at load by
+    // the declarative schema (no typed write is rejected).
+    await store.save({ ...record, local: { ...record.local!, status: 'unknown' } } as unknown as PresenceDomainRecord)
+    await expect(store.load(DOMAIN)).resolves.toBeNull()
   })
 
   it('serializes per-domain saves and the newest record wins after a held first write', async () => {

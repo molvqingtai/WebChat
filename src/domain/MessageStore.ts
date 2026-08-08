@@ -133,6 +133,13 @@ class InvalidMessageRecordError extends TypeError {
 export const isInvalidMessageRecordError = (error: unknown): error is InvalidMessageRecordError =>
   error instanceof InvalidMessageRecordError
 
+/** Canonical content comparison excluding only the receiver-local `receivedAt` metadata key. */
+const withoutReceivedAt = (value: unknown): string => {
+  if (typeof value !== 'object' || value === null) return JSON.stringify(value)
+  const { receivedAt: _receivedAt, ...rest } = value as Record<string, unknown>
+  return JSON.stringify(rest)
+}
+
 const invalidMessageRecord = (message: string): never => {
   throw new InvalidMessageRecordError(message)
 }
@@ -247,11 +254,15 @@ export const createMessageStore = (database: Database<MessageDatabaseSchema>): M
         const result = await transaction.insert('records', record.id, record)
         if (result.inserted) return { inserted: true }
         // Duplicate handling stays on the write path: the stored raw value is compared by
-        // content without any protocol parse or property/resource validation. A trusted typed
-        // existing value is derived only from the typed input; any other stored occupant is a
-        // conflict and is never exposed as a typed record.
+        // content without any protocol parse or property/resource validation. `receivedAt` is
+        // receiver-local metadata, not canonical record identity: a same-ID value identical
+        // except for the top-level `receivedAt` is a replay (keep the first row, no conflict),
+        // and a trusted typed existing is derived only from the typed input. Any other stored
+        // occupant is a conflict and is never exposed as a typed record.
         const existing = result.existing
-        if (JSON.stringify(existing) === JSON.stringify(record)) return { inserted: false, existing: record }
+        if (withoutReceivedAt(existing) === withoutReceivedAt(record)) {
+          return { inserted: false, existing: record }
+        }
 
         const incomingHash = hashString(canonicalJson(record))
         const conflictKey = `${record.id}:${incomingHash}`

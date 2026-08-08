@@ -389,7 +389,7 @@ const ChatRoomDomain = Remesh.domain({
                 if (!user) return OnErrorEvent(new Error('User identity is unavailable'))
                 const token = sendLifecycle.beginSend()
                 try {
-                  const message = (await chatRoom.sendMessage({ type: 'text', ...command })) as TextMessage
+                  const message = await chatRoom.sendMessage({ type: 'text', ...command })
                   sendLifecycle.settleSend(token, 'accepted')
                   const record: TextMessageRecord = {
                     type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE,

@@ -42,11 +42,6 @@ interface SessionStorage {
 
 const storageKey = (domain: string) => `${PRESENCE_STORAGE_PREFIX}:${stringToHex(domain)}`
 const clone = <Value>(value: Value): Value => structuredClone(value)
-const parsePresenceRecord = (record: unknown): PresenceDomainRecord => {
-  const parsed = v.safeParse(PresenceDomainRecordSchema, record)
-  if (!parsed.success) throw new Error('Invalid Runtime presence record')
-  return parsed.output
-}
 
 const boundedStores = new WeakMap<PresenceStore, PresenceStore>()
 
@@ -101,11 +96,12 @@ export const createBoundedPresenceStore = (store: PresenceStore): PresenceStore 
       return withDeadline(Promise.resolve().then(() => store.load(domain)))
     },
     save: async (record) => {
-      const parsed = clone(parsePresenceRecord(record))
-      const task = stateFor(parsed.domain)
+      // Typed save trusts its input; no protocol parse happens on the persistence-write path.
+      const value = clone(record)
+      const task = stateFor(record.domain)
         .tail.catch(() => {})
-        .then(() => withDeadline(Promise.resolve().then(() => store.save(clone(parsed)))))
-      stateFor(parsed.domain).tail = task
+        .then(() => withDeadline(Promise.resolve().then(() => store.save(clone(value)))))
+      stateFor(record.domain).tail = task
       await task
     }
   }
@@ -117,13 +113,17 @@ export const createBoundedPresenceStore = (store: PresenceStore): PresenceStore 
 export const createBrowserPresenceStore = (storage: SessionStorage): PresenceStore => {
   const store: PresenceStore = {
     load: async (domain) => {
+      // Durable presence load is a local-persistence parse boundary: the raw unknown is parsed
+      // once with the static declarative schema; failure silently yields null (no Toast, repair,
+      // or fallback). The storage-key/domain identity relationship is not expressible
+      // declaratively and is therefore not validated.
       const key = storageKey(domain)
       const parsed = v.safeParse(PresenceDomainRecordSchema, (await storage.get(key))[key])
-      return parsed.success && parsed.output.domain === domain ? clone(parsed.output) : null
+      return parsed.success ? clone(parsed.output) : null
     },
     save: async (record) => {
-      const parsed = parsePresenceRecord(record)
-      await storage.set({ [storageKey(record.domain)]: clone(parsed) })
+      // Typed save trusts its input; no protocol parse happens on the persistence-write path.
+      await storage.set({ [storageKey(record.domain)]: clone(record) })
     }
   }
   return createBoundedPresenceStore(store)
@@ -134,8 +134,8 @@ export const createMemoryPresenceStore = (): PresenceStore => {
   return {
     load: async (domain) => clone(records.get(domain) ?? null),
     save: async (record) => {
-      const parsed = parsePresenceRecord(record)
-      records.set(record.domain, clone(parsed))
+      // In-memory persistence trusts typed values end to end; no parse at any point.
+      records.set(record.domain, clone(record))
     }
   }
 }

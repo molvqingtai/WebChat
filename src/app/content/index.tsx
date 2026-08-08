@@ -155,7 +155,7 @@ const createContentStore = () => {
       deferredConnectionLifecycle.bindTask(task, token)
       return task
     },
-    sendMessage: async (command) => (await chatRoom.get()).sendMessage(command),
+    sendMessage: (async (command) => (await chatRoom.get()).sendMessage(command)) as ChatRoom['sendMessage'],
     onMessage: (listener) => subscribeDeferred(chatRoom, (room) => room.onMessage(listener)),
     onJoinRoom: (listener) => subscribeDeferred(chatRoom, (room) => room.onJoinRoom(listener)),
     onLeaveRoom: (listener) => subscribeDeferred(chatRoom, (room) => room.onLeaveRoom(listener)),

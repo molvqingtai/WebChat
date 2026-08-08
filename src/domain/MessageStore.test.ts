@@ -111,6 +111,19 @@ describe('MessageStore static contract', () => {
 })
 
 describe.each(backends)('$name MessageStore contract', (backend) => {
+  it('classifies a receivedAt-only replay as existing with no conflict', async () => {
+    const { database, messageStore } = create(backend)
+    const first = textRecord('replay-id', 'first', 1)
+    await expect(messageStore.insert(first)).resolves.toEqual({ inserted: true })
+    // `receivedAt` is receiver-local metadata, not canonical identity: a same-ID value identical
+    // except the top-level receivedAt is a replay — keep the first row, no conflict.
+    const replay = await messageStore.insert({ ...first, receivedAt: 99 })
+    expect(replay.inserted).toBe(false)
+    if (!replay.inserted) expect(replay.existing).toEqual({ ...first, receivedAt: 99 })
+    await expect(messageStore.query()).resolves.toEqual([first])
+    await expect(database.read(['conflicts'], (transaction) => transaction.count('conflicts'))).resolves.toBe(0)
+  })
+
   it('keeps the first stored value and compares duplicate content without protocol parsing', async () => {
     const { messageStore } = create(backend)
     const first = textRecord('message-1', 'first', 1)
@@ -198,6 +211,21 @@ describe.each(backends)('$name MessageStore contract', (backend) => {
       await expect(store.query()).resolves.toEqual([value])
     }
     await expect(database.read(['records'], (transaction) => transaction.count('records'))).resolves.toBe(0)
+  })
+
+  it('accepts finite fractional receivedAt values for both record variants at load', async () => {
+    const { database, messageStore } = create(backend)
+    const fractionalChat = { ...textRecord('fractional-chat'), receivedAt: 1.5 }
+    const fractionalNotice = {
+      ...noticeRecord('fractional-notice'),
+      receivedAt: 1.5
+    }
+    await database.write(['records'], async (transaction) => {
+      await transaction.insert('records', 'fractional-chat', fractionalChat)
+      await transaction.insert('records', 'fractional-notice', fractionalNotice)
+    })
+    // The record schemas use the declarative v.finite() action for both variants.
+    await expect(messageStore.query()).resolves.toEqual([fractionalChat, fractionalNotice])
   })
 
   it('accepts finite fractional receivedAt values at load (persisted format is a finite number)', async () => {

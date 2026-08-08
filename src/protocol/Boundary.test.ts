@@ -114,14 +114,18 @@ describe('public protocol source boundary', () => {
     }
   })
 
-  it('has no caller-side protocol revalidation in the runtime graph', async () => {
+  it('has no caller-side protocol revalidation or output casts in the runtime graph', async () => {
     const runtimeFiles = [
+      'src/app/content/index.tsx',
       'src/domain/ChatRoom.ts',
       'src/domain/MessageList.ts',
       'src/domain/MessageStore.ts',
+      'src/domain/externs/ChatRoom.ts',
       'src/domain/impls/runtime/ChatRoom.ts',
       'src/domain/runtime/History.ts',
-      'src/domain/runtime/Session.ts'
+      'src/domain/runtime/Session.ts',
+      'src/runtime/PresenceStore.ts',
+      'src/runtime/Server.ts'
     ]
     const forbidden = [
       'Chat record user does not match its message',
@@ -129,7 +133,13 @@ describe('public protocol source boundary', () => {
       'existing as MessageRecord',
       'if (!user) continue',
       'record.user.id !== record.message.userId',
-      'record.id !== record.message.id'
+      'record.id !== record.message.id',
+      'as TextMessage',
+      'as TextMessageRecord',
+      'as ReactionMessageRecord',
+      'sanitizeSite',
+      'projectChatUser',
+      'parsePresenceRecord'
     ]
     for (const file of runtimeFiles) {
       const source = await readFile(path.resolve(import.meta.dirname, `../../${file}`), 'utf8')

@@ -123,6 +123,36 @@ describe('MessageList Database-backed pipeline', () => {
     harness.store.discardDomain(harness.action)
   })
 
+  it('survives a corrupt raw same-key occupant without a typed value escaping', async () => {
+    const databaseName = `message-list-corrupt-${databaseId++}`
+    const seedStore = createMessageStore(createMemoryMessageDatabase(databaseName))
+    // A manually corrupted row occupies the raw notice id: its value is not a typed record.
+    await seedStore.insert({
+      type: MESSAGE_RECORD_TYPE.SYSTEM_NOTICE,
+      id: 'notice:corrupt',
+      notice: { id: 'notice:corrupt', hlc: { timestamp: 1, counter: 0 }, type: NOTICE_TYPE.INFO, body: 'x' },
+      user: { id: 'u', name: 'U', avatar: '' },
+      receivedAt: 1
+    })
+    const harness = createHarness(databaseName)
+    await settle()
+    const notice = noticeRecord('notice:corrupt')
+    // The fallback loop must not crash or misclassify the raw occupant: it moves to the next
+    // slot and persists the JOIN notice there.
+    harness.store.send(harness.domain.command.PersistRecordCommand(notice))
+    await settle()
+    await settle()
+    const records = await seedStore.query()
+    const joinNotices = records.filter(
+      (record): record is SystemNoticeRecord =>
+        record.type === MESSAGE_RECORD_TYPE.SYSTEM_NOTICE && record.notice.type === NOTICE_TYPE.JOIN
+    )
+    expect(joinNotices).toHaveLength(1)
+    harness.errorSubscription.unsubscribe()
+    harness.domainSubscription.unsubscribe()
+    harness.store.discardDomain(harness.action)
+  })
+
   it('preserves occupied fallback slots while parallel pages and reload converge on one notice', async () => {
     const databaseName = `message-list-notice-fallback-${databaseId++}`
     const seedStore = createMessageStore(createMemoryMessageDatabase(databaseName))

@@ -2229,8 +2229,6 @@ describe('RuntimeServer history', () => {
     messages,
     done
   })
-  const pageOf = (messages: TextMessage[], done: boolean) => response('sync', 0, messages, done)
-
   const registerInventoryProvider = (server: RuntimeServer, records: TextMessageRecord[] = []) =>
     registerHistoryProvider(
       server,

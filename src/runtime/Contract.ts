@@ -139,13 +139,13 @@ export interface RuntimeServer {
     domain: string
     body: string
     mentions: MentionedUser[]
-  }) => Promise<TextMessageRecord>
+  }) => Promise<ChatMessageRecord>
   allocateReactionMessage: (payload: {
     domain: string
     targetId: string
     reaction: ReactionType
     active: boolean
-  }) => Promise<ReactionMessageRecord>
+  }) => Promise<ChatMessageRecord>
   sendChatMessage: (payload: { domain: string; event: ChatMessage }) => Promise<void>
   ackInbound: (payload: { domain: string; sequence: number; inserted: boolean }) => Promise<void>
   replayInbound: (payload: { domain: string; after: number }) => Promise<InboundEvent[]>

@@ -121,27 +121,6 @@ const hasActiveUserPresence = (observations: ObservedPresence[], userId: string,
       observation.status === 'active' && observation.user.id === userId && observation.presenceId !== exceptPresenceId
   )
 
-const optionalSiteField = (value: unknown, maxLength: number): string | undefined =>
-  typeof value === 'string' && value.length <= maxLength ? value : undefined
-
-const sanitizeSite = (site: ChatSite): ChatSite => {
-  const title = optionalSiteField(site.title, 512)
-  const icon = optionalSiteField(site.icon, 16 * 1024)
-  const description = optionalSiteField(site.description, 2048)
-  return {
-    origin: site.origin,
-    ...(title ? { title } : {}),
-    ...(icon ? { icon } : {}),
-    ...(description ? { description } : {})
-  }
-}
-
-const projectChatUser = (value: ChatUser): ChatUser => ({
-  id: value.id,
-  name: value.name,
-  avatar: value.avatar
-})
-
 export const allocateHlc = (current: HLC, now: number): HLC => {
   if (now > current.timestamp) return { timestamp: now, counter: 0 }
   const counter = current.counter + 1
@@ -357,8 +336,8 @@ const SessionDomain = Remesh.domain({
         let user: ChatUser
         let site: ChatSite
         if (payload.mode === 'join') {
-          site = sanitizeSite(payload.site!)
-          user = projectChatUser(payload.user!)
+          site = payload.site!
+          user = payload.user!
           // Local identity authorization: the joined site must belong to the domain. Protocol
           // shape is not validated here (local production trusts its typed inputs).
           if (site.origin !== payload.domain) {
