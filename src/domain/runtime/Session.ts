@@ -637,15 +637,23 @@ const SessionDomain = Remesh.domain({
         // that logical generation and the attempt has no session for the same presence (a
         // different presence on the same source is NOT a reason to erase the graced generation).
         const pendingLeaves = get(PendingLeavesState())
-        const commitDisplacedLeaves = prepared.displacedBindings.filter(
-          (displaced) =>
-            !prepared.observers.some(
-              (observation) =>
-                observation.status === 'active' &&
-                observation.user.id === displaced.user.id &&
-                observation.presenceId !== displaced.presenceId
-            )
-        )
+        // One final transition per logical user: displaced bindings whose user keeps no other
+        // active or grace-preserved observation collapse to a single per-user fact.
+        const commitDisplacedLeaves = [
+          ...new Map(
+            prepared.displacedBindings
+              .filter(
+                (displaced) =>
+                  !prepared.observers.some(
+                    (observation) =>
+                      observation.status === 'active' &&
+                      observation.user.id === displaced.user.id &&
+                      observation.presenceId !== displaced.presenceId
+                  )
+              )
+              .map((displaced) => [displaced.user.id, displaced])
+          ).values()
+        ]
         const promotedRuntime: SessionDomainState = {
           ...prepared.runtime,
           sessions: [
@@ -1468,10 +1476,13 @@ const SessionDomain = Remesh.domain({
                 ...prepared,
                 missedPeerIds: prepared.missedPeerIds.filter((item) => item !== payload.sourcePeerId),
                 baselinePeerIds: prepared.baselinePeerIds.filter((item) => item !== payload.sourcePeerId),
-                // The departed source's rebind marker is revoked: only a CURRENT source may
-                // carry cancellation authority to the commit.
+                // The departed source's rebind marker AND displaced fact are revoked: only a
+                // CURRENT source may carry cancellation authority or a displacement to the commit.
                 reboundBindings: prepared.reboundBindings.filter(
                   (rebind) => rebind.sourcePeerId !== payload.sourcePeerId
+                ),
+                displacedBindings: prepared.displacedBindings.filter(
+                  (displaced) => displaced.sourcePeerId !== payload.sourcePeerId
                 ),
                 runtime: {
                   ...prepared.runtime,
