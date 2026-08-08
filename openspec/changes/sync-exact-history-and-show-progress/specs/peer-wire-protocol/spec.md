@@ -181,7 +181,7 @@ Chat wire SHALL be exactly `ChatRoomMessage = SessionMessage | SessionEndMessage
 
 ### Requirement: History wire shapes are bounded and reference-complete
 
-The public peer protocol SHALL define only this exact History wire contract: `HistoryMessagesRequest = {type:'history-messages-request', syncId, page, messageIds, done}` and `HistoryMessagesResponse = {type:'history-messages-response', syncId, page, users, messages, done}`. One `syncId` SHALL identify one current-session, one-direction synchronization; the opposite direction SHALL use another `syncId`. Request and response `page` values SHALL each start at zero and advance continuously within their own phase. Request `done` SHALL identify the final inventory page. Response `done` SHALL identify the final missing-record page.
+The public peer protocol SHALL define only this exact History wire contract: `HistoryMessagesRequest = {type:'history-messages-request', syncId, page, messageIds, done}` and `HistoryMessagesResponse = {type:'history-messages-response', syncId, page, users, messages, done}`. One `syncId` SHALL identify the sole synchronization for one current room connection and one direction; the opposite direction SHALL use another `syncId`. Establishing that connection and joining the room SHALL be the only synchronization trigger. The first valid request page zero SHALL bind the sole incoming `syncId` for that source incarnation. While active, pages using that ID MAY progress or replay only as specified below. After either direction succeeds, is canceled, or fails, neither the same nor a different `syncId` SHALL start another synchronization on that connection. Source replacement or domain release SHALL end the binding; a later connection SHALL use a fresh ID for a new independent synchronization and SHALL NOT retry, resume, or carry progress from the prior one. Request and response `page` values SHALL each start at zero and advance continuously within their own phase. Request `done` SHALL identify the final inventory page. Response `done` SHALL identify the final missing-record page.
 
 Every request and response page SHALL remain strictly below `MAX_WIRE_BYTES = 64KiB` after canonical encoding. Each response SHALL carry at most 100 messages. Its `users` array SHALL contain exactly one `ChatUser` for every distinct `messages[].userId`, no duplicate or unrelated users, and no users when `messages` is empty. Every message `userId` SHALL therefore resolve to exactly one matching `users[].id`.
 
@@ -191,6 +191,17 @@ The schemas SHALL accept only the two replacement type strings and exact replace
 
 - **WHEN** two current peers synchronize one direction
 - **THEN** the requester SHALL send continuous `history-messages-request` inventory pages through one final `done: true` page, after which the provider SHALL send continuous `history-messages-response` missing-record pages through one final `done: true` page using the same `syncId`; no third peer message type or body request SHALL participate
+
+#### Scenario: A current connection cannot synchronize twice in one direction
+
+- **GIVEN** one source incarnation and direction has bound its sole `syncId`
+- **WHEN** that synchronization completes, is canceled, or fails and any later page uses either the same or a different `syncId`
+- **THEN** no new History synchronization SHALL start until source replacement or domain release ends that connection binding
+
+#### Scenario: A later connection starts independently
+
+- **WHEN** a source is replaced or released and a later connection joins the room
+- **THEN** that connection SHALL use a fresh `syncId`, page zero, and current snapshots without any resumed page, cursor, retry count, or progress from the prior connection
 
 #### Scenario: Empty inventory and empty difference are explicit
 

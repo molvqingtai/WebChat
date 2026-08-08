@@ -23,11 +23,7 @@ import type {
   RuntimeSessionEvent,
   WorldPresenceEvent
 } from '@/runtime/Contract'
-import {
-  HISTORY_REQUEST_TIMEOUT_MS,
-  MAX_TERMINATED_SYNC_IDS_PER_SOURCE,
-  RUNTIME_DOMAIN_GRACE_MS
-} from '@/constants/config'
+import { HISTORY_REQUEST_TIMEOUT_MS, RUNTIME_DOMAIN_GRACE_MS } from '@/constants/config'
 import { createArticoRoomTransport } from '@/runtime/ArticoRoomTransport'
 import { createBrowserPresenceStore } from '@/runtime/PresenceStore'
 
@@ -3149,88 +3145,12 @@ describe('RuntimeServer history', () => {
     })
   })
 
-  it('transfers a partial successor on ordinary current cancellation and completes it later', async () => {
+  it('terminates the provider attempt on cumulative overflow; the connection cannot resync until reset', async () => {
     const { fake, server, roomId } = await setup()
     const started: string[] = []
-    const cancelled: string[] = []
-    const settled: string[] = []
-    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, (request, signal) => {
-      if (request.mode === 'inventory') return Promise.resolve({ records: [], done: true })
-      started.push(request.syncId)
-      // The old supply settles only through its AbortSignal; any later supply resolves at once so
-      // its response is delivered.
-      if (request.syncId !== 'old-a') return Promise.resolve({ records: [], done: true })
-      return new Promise((resolve, reject) => {
-        signal.addEventListener('abort', () => {
-          cancelled.push(request.syncId)
-          setTimeout(() => {
-            settled.push(request.syncId)
-            reject(signal.reason ?? new Error('aborted'))
-          }, 30)
-        })
-      })
-    })
-    fake.receive(roomId, 'peer-0', session({ id: 'user-0', name: 'User 0', avatar: '' }))
-    await settle()
-    fake.receive(roomId, 'peer-0', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
-      syncId: 'old-a',
-      page: 0,
-      messageIds: [],
-      done: true
-    })
-    await vi.waitFor(() => expect(started).toEqual(['old-a']))
-    // A PARTIAL replacement request becomes a dormant successor beside the running current.
-    fake.receive(roomId, 'peer-0', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
-      syncId: 'new-b',
-      page: 0,
-      messageIds: ['b-0'],
-      done: false
-    })
-    await settle()
-    expect(started).toEqual(['old-a'])
-    // An out-of-order page cancels the CURRENT attempt while its supply is still physically
-    // held: the live supplyId is cancelled immediately, the provider state is removed, and the
-    // partial successor stays dormant — the slot is NOT released and the successor is NOT
-    // scheduled before the old query/projection chain confirms exit.
-    fake.receive(roomId, 'peer-0', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
-      syncId: 'old-a',
-      page: 2,
-      messageIds: [],
-      done: true
-    })
-    await settle()
-    expect(cancelled).toEqual(['old-a'])
-    expect(started).toEqual(['old-a'])
-    // The transferred attempt's final page arrives before the old supply settles: it updates the
-    // dormant successor but must NOT start supplier work beside the unsettled old query.
-    fake.receive(roomId, 'peer-0', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
-      syncId: 'new-b',
-      page: 1,
-      messageIds: ['b-1'],
-      done: true
-    })
-    await settle()
-    expect(started).toEqual(['old-a'])
-    // After the old supply physically settles, the successor is transferred and exactly ONE
-    // new-b supply starts.
-    await vi.waitFor(() => expect(settled).toEqual(['old-a']))
-    await vi.waitFor(() => expect(started).toEqual(['old-a', 'new-b']))
-  })
-
-  it('terminates the current provider attempt on cumulative overflow; smaller pages cannot revive it', async () => {
-    const { fake, server, roomId } = await setup()
-    const started: string[] = []
-    const gates = new Map<string, () => void>()
     await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, async (request) => {
       if (request.mode === 'inventory') return { records: [], done: true }
       started.push(request.syncId)
-      await new Promise<void>((resolve) => {
-        gates.set(request.syncId, resolve)
-      })
       return { records: [], done: true }
     })
     const bigIds = Array.from({ length: 137 }, (_, i) => `b-${String(i).padStart(4, '0')}-${'x'.repeat(48)}`)
@@ -3255,8 +3175,8 @@ describe('RuntimeServer history', () => {
       done: false
     })
     await settle()
-    // peer-a's next page crosses the 8KiB cumulative budget: the matching attempt is terminated
-    // under its complete identity (provider + canonical job released).
+    // peer-a's next page crosses the 8KiB cumulative budget: the synchronization terminates and
+    // its connection direction becomes terminal.
     fake.receive(roomId, 'peer-a', {
       type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
       syncId: 'big-a',
@@ -3265,23 +3185,20 @@ describe('RuntimeServer history', () => {
       done: false
     })
     await settle()
-    // A smaller payload at the same page number cannot revive the terminated attempt (gap).
-    fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
-      syncId: 'big-a',
-      page: 1,
-      messageIds: ['small'],
-      done: true
-    })
-    await settle()
-    expect(started).toEqual([])
-    // The terminated syncId is fenced for the current session: even page zero with the same id
-    // is inert (one syncId = one synchronization; replacement requires a fresh identity).
+    // Neither the same id nor a different id can start History again on this connection.
     fake.receive(roomId, 'peer-a', {
       type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
       syncId: 'big-a',
       page: 0,
-      messageIds: ['fresh'],
+      messageIds: ['small'],
+      done: true
+    })
+    await settle()
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'different-a',
+      page: 0,
+      messageIds: ['small'],
       done: true
     })
     await settle()
@@ -3295,12 +3212,15 @@ describe('RuntimeServer history', () => {
       done: true
     })
     await vi.waitFor(() => expect(started).toEqual(['peer-b']))
-    // A FRESH syncId is the positive re-admission case (capacity was released).
+    // A source replacement ends the terminal binding: the next connection starts an independent
+    // synchronization with a fresh id.
+    fake.receive(roomId, 'peer-a', session({ id: 'sat-user-a-b', name: 'Sat A2', avatar: '' }))
+    await settle()
     fake.receive(roomId, 'peer-a', {
       type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
       syncId: 'fresh-a',
       page: 0,
-      messageIds: ['fresh'],
+      messageIds: [],
       done: true
     })
     await vi.waitFor(() => expect(started).toEqual(['peer-b', 'fresh-a']))
@@ -3404,12 +3324,13 @@ describe('RuntimeServer history', () => {
       messageIds: [],
       done: true
     })
-    // The exhausted attempt terminates without any supplier start and without a response.
+    // The exhausted attempt terminates without any supplier start and without a response, and
+    // its connection direction becomes terminal.
     await settle()
     await settle()
     expect(started).toEqual([])
     expect(fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE)).toHaveLength(0)
-    // Registering a page afterwards lets a fresh syncId proceed (no stale state blocks it).
+    // Registering a page afterwards cannot restart History on the same connection.
     await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, async (request) => {
       if (request.mode === 'inventory') return { records: [], done: true }
       started.push(request.syncId)
@@ -3422,7 +3343,20 @@ describe('RuntimeServer history', () => {
       messageIds: [],
       done: true
     })
-    await vi.waitFor(() => expect(started).toEqual(['ex-b']))
+    await settle()
+    await settle()
+    expect(started).toEqual([])
+    // A source replacement ends the terminal binding: the next connection starts fresh.
+    fake.receive(roomId, 'peer-a', session({ id: 'remote-user-b', name: 'Remote B', avatar: '' }))
+    await settle()
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'ex-c',
+      page: 0,
+      messageIds: [],
+      done: true
+    })
+    await vi.waitFor(() => expect(started).toEqual(['ex-c']))
   })
 
   it('terminates an attempt whose every page candidate genuinely fails (exhaustion with dead pages)', async () => {
@@ -3443,13 +3377,12 @@ describe('RuntimeServer history', () => {
       done: true
     })
     // The single candidate fails genuinely: the attempt terminates immediately (no response, no
-    // waiting for the 10s attempt timer).
+    // waiting for the 10s attempt timer) and the connection direction becomes terminal.
     await vi.waitFor(() => expect(started).toEqual(['ex-a']))
     await settle()
     await settle()
     expect(fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE)).toHaveLength(0)
-    // A fresh page registration lets a fresh syncId proceed (the exhausted attempt released its
-    // state immediately).
+    // A fresh page registration cannot restart History on the same connection.
     await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, async (request) => {
       if (request.mode === 'inventory') return { records: [], done: true }
       started.push(request.syncId)
@@ -3462,7 +3395,20 @@ describe('RuntimeServer history', () => {
       messageIds: [],
       done: true
     })
-    await vi.waitFor(() => expect(started).toEqual(['ex-a', 'ex-b']))
+    await settle()
+    await settle()
+    expect(started).toEqual(['ex-a'])
+    // A source replacement ends the terminal binding: the next connection starts fresh.
+    fake.receive(roomId, 'peer-a', session({ id: 'remote-user-b', name: 'Remote B', avatar: '' }))
+    await settle()
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'ex-c',
+      page: 0,
+      messageIds: [],
+      done: true
+    })
+    await vi.waitFor(() => expect(started).toEqual(['ex-a', 'ex-c']))
   })
 
   it('fails over to the next page after a per-page timeout once the held query settles (provider)', async () => {
@@ -3792,7 +3738,7 @@ describe('RuntimeServer history', () => {
     await vi.waitFor(() => expect(started.length).toBe(5))
   })
 
-  it('fences every terminal cancellation, survives rollover pressure and session replacement', async () => {
+  it('starts exactly one synchronization per connection; terminal same/different-ID replays are inert', async () => {
     const { fake, server, roomId } = await setup()
     const started: string[] = []
     await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, async (request) => {
@@ -3802,83 +3748,54 @@ describe('RuntimeServer history', () => {
     })
     fake.receive(roomId, 'peer-a', session())
     await settle()
-    // Seventeen sequential synchronizations complete and terminally fence their identities.
-    for (let i = 0; i < 17; i += 1) {
-      fake.receive(roomId, 'peer-a', {
-        type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
-        syncId: `term-${i}`,
-        page: 0,
-        messageIds: [],
-        done: true
-      })
-      await vi.waitFor(() => expect(started).toEqual(Array.from({ length: i + 1 }, (_, n) => `term-${n}`)))
-      await vi.waitFor(() => {
-        const sent = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE)
-        expect(sent.some((m) => (m as { syncId: string }).syncId === `term-${i}`)).toBe(true)
-      })
-    }
-    // The OLDEST terminal id is still fenced (no LRU eviction at 16).
+    // One synchronization completes and its connection direction becomes terminal.
     fake.receive(roomId, 'peer-a', {
       type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
-      syncId: 'term-0',
+      syncId: 'conn-a',
+      page: 0,
+      messageIds: [],
+      done: true
+    })
+    await vi.waitFor(() => expect(started).toEqual(['conn-a']))
+    await vi.waitFor(() => {
+      const sent = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE)
+      expect(sent.some((m) => (m as { syncId: string }).syncId === 'conn-a')).toBe(true)
+    })
+    // Replays of the same id and a different id are inert on the same connection.
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'conn-a',
+      page: 0,
+      messageIds: [],
+      done: true
+    })
+    await settle()
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'conn-b',
       page: 0,
       messageIds: [],
       done: true
     })
     await settle()
     await settle()
-    expect(started.length).toBe(17)
-    // A changed-replay (gap) terminal cancellation is also fenced: a page-zero replay is inert.
-    fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
-      syncId: 'gap-sync',
-      page: 0,
-      messageIds: [],
-      done: true
-    })
-    await vi.waitFor(() => expect(started.length).toBe(18))
-    fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
-      syncId: 'gap-sync',
-      page: 2,
-      messageIds: [],
-      done: true
-    })
-    await settle()
-    fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
-      syncId: 'gap-sync',
-      page: 0,
-      messageIds: [],
-      done: true
-    })
-    await settle()
-    await settle()
-    expect(started.length).toBe(18)
-    // The fence survives a session replacement (a fresh session message changes the binding
-    // without removing the peer): replayed old ids stay inert while a fresh identity is admitted.
+    expect(started).toEqual(['conn-a'])
+    expect(fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE)).toHaveLength(1)
+    // A source replacement ends the terminal binding: the next connection starts one independent
+    // synchronization with a fresh id.
     fake.receive(roomId, 'peer-a', session({ id: 'remote-user-b', name: 'Remote B', avatar: '' }))
     await settle()
     fake.receive(roomId, 'peer-a', {
       type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
-      syncId: 'term-0',
+      syncId: 'conn-c',
       page: 0,
       messageIds: [],
       done: true
     })
-    await settle()
-    expect(started.length).toBe(18)
-    fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
-      syncId: 'fresh-after-reset',
-      page: 0,
-      messageIds: [],
-      done: true
-    })
-    await vi.waitFor(() => expect(started.length).toBe(19))
+    await vi.waitFor(() => expect(started).toEqual(['conn-a', 'conn-c']))
   })
 
-  it('fences a never-admitted page-one-first identity so page zero cannot revive it', async () => {
+  it('drops a page-one-first request without binding and lets the first valid page zero bind', async () => {
     const { fake, server, roomId } = await setup()
     const started: string[] = []
     await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, async (request) => {
@@ -3888,7 +3805,7 @@ describe('RuntimeServer history', () => {
     })
     fake.receive(roomId, 'peer-a', session())
     await settle()
-    // A page-one-first request never creates an admitted job, but its identity is still terminal.
+    // A page-one-first request is invalid and never binds the direction.
     fake.receive(roomId, 'peer-a', {
       type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
       syncId: 'gap-first',
@@ -3897,7 +3814,17 @@ describe('RuntimeServer history', () => {
       done: true
     })
     await settle()
-    // A later page zero with the same id cannot start a new synchronization.
+    expect(started).toEqual([])
+    // The first valid page zero (same or different id) binds the sole synchronization.
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'gap-first',
+      page: 0,
+      messageIds: [],
+      done: true
+    })
+    await vi.waitFor(() => expect(started).toEqual(['gap-first']))
+    // After completion the direction is terminal: replays are inert.
     fake.receive(roomId, 'peer-a', {
       type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
       syncId: 'gap-first',
@@ -3907,115 +3834,85 @@ describe('RuntimeServer history', () => {
     })
     await settle()
     await settle()
-    expect(started).toEqual([])
-    expect(fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE)).toHaveLength(0)
-    // A distinct fresh identity still starts.
-    fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
-      syncId: 'fresh-after-gap',
-      page: 0,
-      messageIds: [],
-      done: true
-    })
-    await vi.waitFor(() => expect(started).toEqual(['fresh-after-gap']))
+    expect(started).toEqual(['gap-first'])
   })
 
-  it('fences live, partial, and waiting identities removed by binding-reset cleanup', async () => {
+  it('keeps terminal syncs inert until binding reset; the next connection starts independently', async () => {
     const { fake, server, roomId } = await setup()
     const started: string[] = []
-    const gates = new Map<string, () => void>()
     await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, async (request) => {
       if (request.mode === 'inventory') return { records: [], done: true }
       started.push(request.syncId)
-      await new Promise<void>((resolve) => {
-        gates.set(request.syncId, resolve)
-      })
       return { records: [], done: true }
     })
-    // Four held active suppliers fill the pool; peer-4 is a ready waiter; peer-5 is partial.
-    for (let peer = 0; peer < 4; peer += 1) {
-      fake.receive(roomId, `peer-${peer}`, session({ id: `user-${peer}`, name: `User ${peer}`, avatar: '' }))
-      await settle()
-      fake.receive(roomId, `peer-${peer}`, {
-        type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
-        syncId: `active-${peer}`,
-        page: 0,
-        messageIds: [],
-        done: true
-      })
-      await settle()
-    }
-    fake.receive(roomId, 'peer-4', session({ id: 'user-4', name: 'User 4', avatar: '' }))
+    // One completed synchronization (peer-a) and one canceled (gap) synchronization (peer-b):
+    // each connection direction is terminal after its synchronization ends.
+    fake.receive(roomId, 'peer-a', session({ id: 'user-a', name: 'User A', avatar: '' }))
     await settle()
-    fake.receive(roomId, 'peer-4', {
+    fake.receive(roomId, 'peer-a', {
       type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
-      syncId: 'waiting-c',
+      syncId: 'done-sync',
+      page: 0,
+      messageIds: [],
+      done: true
+    })
+    await vi.waitFor(() => expect(started).toEqual(['done-sync']))
+    fake.receive(roomId, 'peer-b', session({ id: 'user-b', name: 'User B', avatar: '' }))
+    await settle()
+    fake.receive(roomId, 'peer-b', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'gap-sync',
+      page: 0,
+      messageIds: [],
+      done: true
+    })
+    await vi.waitFor(() => expect(started).toEqual(['done-sync', 'gap-sync']))
+    fake.receive(roomId, 'peer-b', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'gap-sync',
+      page: 2,
+      messageIds: [],
+      done: true
+    })
+    await settle()
+    // Replays of both terminal ids on their connections are inert (same and different ids).
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'done-sync',
+      page: 0,
+      messageIds: [],
+      done: true
+    })
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'another-id',
+      page: 0,
+      messageIds: [],
+      done: true
+    })
+    fake.receive(roomId, 'peer-b', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+      syncId: 'gap-sync',
       page: 0,
       messageIds: [],
       done: true
     })
     await settle()
-    fake.receive(roomId, 'peer-5', session({ id: 'user-5', name: 'User 5', avatar: '' }))
     await settle()
-    fake.receive(roomId, 'peer-5', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
-      syncId: 'partial-b',
-      page: 0,
-      messageIds: ['p'],
-      done: false
-    })
+    expect(started).toEqual(['done-sync', 'gap-sync'])
+    // Binding reset (a fresh session message replaces the binding without removing the peer):
+    // the old connection's terminal bindings are cleared and the next connection starts one
+    // independent synchronization.
+    fake.receive(roomId, 'peer-a', session({ id: 'user-a-b', name: 'User A2', avatar: '' }))
     await settle()
-    expect(started).toEqual(['active-0', 'active-1', 'active-2', 'active-3'])
-    // Binding reset (fresh session messages replace the bindings without removing the peers):
-    // cleanup fences every removed identity (live, waiting, partial).
-    for (let peer = 0; peer < 6; peer += 1) {
-      fake.receive(roomId, `peer-${peer}`, session({ id: `user-${peer}b`, name: `User ${peer}b`, avatar: '' }))
-    }
-    await settle()
-    await settle()
-    // Replays of all identities at page zero are inert.
-    for (let peer = 0; peer < 4; peer += 1) {
-      fake.receive(roomId, `peer-${peer}`, {
-        type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
-        syncId: `active-${peer}`,
-        page: 0,
-        messageIds: [],
-        done: true
-      })
-    }
-    fake.receive(roomId, 'peer-4', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
-      syncId: 'waiting-c',
-      page: 0,
-      messageIds: [],
-      done: true
-    })
-    fake.receive(roomId, 'peer-5', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
-      syncId: 'partial-b',
-      page: 0,
-      messageIds: ['p'],
-      done: true
-    })
-    await settle()
-    await settle()
-    expect(started).toEqual(['active-0', 'active-1', 'active-2', 'active-3'])
-    // A fresh identity is admitted (it waits behind the retained active slots).
-    fake.receive(roomId, 'peer-5', {
+    fake.receive(roomId, 'peer-a', {
       type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
       syncId: 'fresh-after-reset',
       page: 0,
       messageIds: [],
       done: true
     })
-    await settle()
-    // Releasing one active slot promotes exactly the fresh waiter.
-    const firstGate = [...gates.keys()][0]
-    gates.get(firstGate)?.()
-    gates.delete(firstGate)
-    await vi.waitFor(() =>
-      expect(started).toEqual(['active-0', 'active-1', 'active-2', 'active-3', 'fresh-after-reset'])
-    )
+    await vi.waitFor(() => expect(started).toEqual(['done-sync', 'gap-sync', 'fresh-after-reset']))
   })
 
   it('keeps provider and requester directions independent when syncId strings collide', async () => {
@@ -4055,81 +3952,6 @@ describe('RuntimeServer history', () => {
       done: true
     })
     await vi.waitFor(() => expect(delivered).toEqual(['direction-kept']))
-  })
-
-  it('bounds the terminal fence per source direction (lifetime pressure at the cap)', async () => {
-    // 130 sequential synchronizations complete and fence; the loop is bounded by the cap.
-    const { fake, server, roomId } = await setup()
-    const started: string[] = []
-    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, async (request) => {
-      if (request.mode === 'inventory') return { records: [], done: true }
-      started.push(request.syncId)
-      return { records: [], done: true }
-    })
-    fake.receive(roomId, 'peer-a', session())
-    await settle()
-    const responseCount = () =>
-      fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE).length
-    // Sequentially complete MAX_TERMINATED_SYNC_IDS_PER_SOURCE + 1 synchronizations: every
-    // completion terminally fences its identity, and the per-direction fence is resource-bounded
-    // so the oldest identity is evicted once the cap is exceeded.
-    for (let i = 0; i < MAX_TERMINATED_SYNC_IDS_PER_SOURCE + 1; i += 1) {
-      fake.receive(roomId, 'peer-a', {
-        type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
-        syncId: `press-${i}`,
-        page: 0,
-        messageIds: [],
-        done: true
-      })
-      await vi.waitFor(() => expect(responseCount()).toBe(i + 1), { interval: 5 })
-      // Flush the full completion chain (response send -> MessageSentEvent -> terminal cancel ->
-      // fence) before the next synchronization starts.
-      await settle()
-      await settle()
-      await settle()
-    }
-    await settle()
-    await settle()
-    // The oldest identity was evicted by the bound: its replay is admitted as a new attempt
-    // (the documented bounded policy), while the newest terminal identity stays fenced.
-    fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
-      syncId: 'press-0',
-      page: 0,
-      messageIds: [],
-      done: true
-    })
-    // The evicted oldest identity is re-admitted: its replay starts a second attempt.
-    await vi.waitFor(() => expect(started.filter((id) => id === 'press-0')).toHaveLength(2))
-    fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
-      syncId: 'press-100',
-      page: 0,
-      messageIds: [],
-      done: true
-    })
-    await settle()
-    await settle()
-    fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
-      syncId: `press-${MAX_TERMINATED_SYNC_IDS_PER_SOURCE}`,
-      page: 0,
-      messageIds: [],
-      done: true
-    })
-    await settle()
-    await settle()
-    // The newest terminal identity stays fenced: its replay starts nothing (only the loop start).
-    expect(started.filter((id) => id === `press-${MAX_TERMINATED_SYNC_IDS_PER_SOURCE}`)).toHaveLength(1)
-    // A distinct fresh identity is still admitted.
-    fake.receive(roomId, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
-      syncId: 'press-fresh',
-      page: 0,
-      messageIds: [],
-      done: true
-    })
-    await vi.waitFor(() => expect(started).toContain('press-fresh'))
   })
 
   it('observes job acceptance at exactly 32 jobs and rejection of a new identity', async () => {

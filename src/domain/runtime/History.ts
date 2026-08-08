@@ -12,8 +12,7 @@ import {
   MAX_HISTORY_SESSION_MESSAGES,
   MAX_PROVIDER_SUPPLY_CONCURRENCY,
   MAX_PROVIDER_SUPPLY_QUEUE_BYTES,
-  MAX_PROVIDER_SUPPLY_QUEUE_JOBS,
-  MAX_TERMINATED_SYNC_IDS_PER_SOURCE
+  MAX_PROVIDER_SUPPLY_QUEUE_JOBS
 } from '@/constants/config'
 import {
   MAX_HISTORY_RESPONSE_MESSAGES,
@@ -100,6 +99,11 @@ interface ProviderSupplyPayload extends HistoryAttemptKey {
 }
 
 type HistoryDirection = 'provider' | 'requester'
+
+interface HistorySyncBinding {
+  syncId: string
+  terminal: boolean
+}
 
 type ProviderSupplyJobState = ProviderSupplyPayload
 
@@ -204,19 +208,18 @@ const HistoryDomain = Remesh.domain({
       name: 'History.WaitingSuppliesState',
       default: []
     })
-    // Terminal synchronization fence: one syncId identifies one current-session, one-direction
-    // synchronization, so a terminally cancelled identity can never be resurrected at page zero;
-    // replacement work requires a fresh syncId. The identity is scoped by source + domain +
-    // DIRECTION (a provider-request fence never affects the opposite requester-response
-    // direction). The fence is resource-bounded: per key it retains only the most recent
-    // MAX_TERMINATED_SYNC_IDS_PER_SOURCE identities (oldest evicted), so a nonconforming peer
-    // cannot grow Runtime memory without limit; it is cleared when the peer is removed or the
-    // domain is released (the source-generation lifetime).
-    const TerminatedSyncIdsState = domain.state<Map<string, Set<string>>>({
-      name: 'History.TerminatedSyncIdsState',
+    // Connection-bound synchronization binding: one syncId per (source, domain, direction) per
+    // connection incarnation. The first valid request page zero (provider) or connection
+    // acceptance (requester) binds the sole syncId; completion, cancellation, or failure retains
+    // the bound id plus one terminal bit, so neither the same nor a different syncId can restart
+    // History on that connection. Source replacement or domain release clears the complete
+    // binding; a later connection starts one independent synchronization with a fresh id. The
+    // state is constant-size per direction (one record), never peer-controlled growth.
+    const HistorySyncBindingsState = domain.state<Map<string, HistorySyncBinding>>({
+      name: 'History.HistorySyncBindingsState',
       default: new Map()
     })
-    const fenceKeyFor = (payload: { sourcePeerId: string; domain: string; direction: HistoryDirection }) =>
+    const bindingKeyFor = (payload: { sourcePeerId: string; domain: string; direction: HistoryDirection }) =>
       `${payload.sourcePeerId}\u0000${payload.domain}\u0000${payload.direction}`
     const FeedbackOwnersState = domain.state<FeedbackOwnerState[]>({
       name: 'History.FeedbackOwnersState',
@@ -302,6 +305,13 @@ const HistoryDomain = Remesh.domain({
       impl: ({ get }, payload: { domain: string; sourcePeerId: string }) => {
         const runtime = get(sessionDomain.query.DomainQuery(payload.domain))
         if (!runtime?.sessions.some((session) => session.sourcePeerId === payload.sourcePeerId)) return null
+        // Exactly one outgoing synchronization per connection incarnation: a terminal outgoing
+        // direction never starts again, so repeating a session or a late trigger cannot restart
+        // History on the same connection.
+        const requesterBinding = get(HistorySyncBindingsState()).get(
+          bindingKeyFor({ sourcePeerId: payload.sourcePeerId, domain: payload.domain, direction: 'requester' })
+        )
+        if (requesterBinding?.terminal) return null
         // One requester attempt per domain + source: a source in two domains runs two independent attempts.
         const requesters = get(RequesterAttemptsState())
         if (requesters.some((item) => sameSourceDomain(item, { ...payload, syncId: '', syncToken: '' }))) return null
@@ -326,6 +336,12 @@ const HistoryDomain = Remesh.domain({
         }
         return [
           TokenState().new(allocated.next),
+          BindSyncIdCommand({
+            sourcePeerId: payload.sourcePeerId,
+            domain: payload.domain,
+            direction: 'requester',
+            syncId: state.syncId
+          }),
           RequesterAttemptsState().new([...requesters, state]),
           HistoryTimeoutArmedEvent(state),
           SyncStartedEvent(state)
@@ -342,6 +358,12 @@ const HistoryDomain = Remesh.domain({
         )
         if (!current) return null
         return [
+          TerminateSyncBindingCommand({
+            sourcePeerId: payload.sourcePeerId,
+            domain: payload.domain,
+            direction: 'requester',
+            syncId: current.syncId
+          }),
           RequesterAttemptsState().new(
             removeBy(requesters, (item) => item.sourcePeerId === payload.sourcePeerId && item.domain === payload.domain)
           ),
@@ -404,39 +426,69 @@ const HistoryDomain = Remesh.domain({
       }
     })
 
-    const FenceSyncIdCommand = domain.command({
-      name: 'History.FenceSyncIdCommand',
+    const BindSyncIdCommand = domain.command({
+      name: 'History.BindSyncIdCommand',
       impl: (
         { get },
         payload: { sourcePeerId: string; domain: string; direction: HistoryDirection; syncId: string }
       ) => {
-        const fences = get(TerminatedSyncIdsState())
-        const fenceKey = fenceKeyFor(payload)
-        const current = fences.get(fenceKey) ?? new Set<string>()
-        // Set preserves insertion order: the most recent identities are retained and the oldest
-        // are evicted only when the per-key resource bound is exceeded.
-        const next = new Set(current)
-        next.delete(payload.syncId)
-        next.add(payload.syncId)
-        while (next.size > MAX_TERMINATED_SYNC_IDS_PER_SOURCE) {
-          const oldest = next.values().next().value as string
-          next.delete(oldest)
-        }
-        const updated = new Map(fences)
-        updated.set(fenceKey, next)
-        return TerminatedSyncIdsState().new(updated)
+        const bindings = get(HistorySyncBindingsState())
+        const key = bindingKeyFor(payload)
+        const current = bindings.get(key)
+        // The first valid page zero (or connection acceptance) binds the sole id; a later
+        // different id can never replace it, and a repeated bind is idempotent.
+        if (current) return null
+        const updated = new Map(bindings)
+        updated.set(key, { syncId: payload.syncId, terminal: false })
+        return HistorySyncBindingsState().new(updated)
       }
     })
 
-    const ClearSyncFenceCommand = domain.command({
-      name: 'History.ClearSyncFenceCommand',
+    const TerminateSyncBindingCommand = domain.command({
+      name: 'History.TerminateSyncBindingCommand',
+      impl: (
+        { get },
+        payload: { sourcePeerId: string; domain: string; direction: HistoryDirection; syncId: string }
+      ) => {
+        const bindings = get(HistorySyncBindingsState())
+        const key = bindingKeyFor(payload)
+        const current = bindings.get(key)
+        // Only the complete bound identity may terminalize its binding: late work from an old
+        // incarnation (whose binding was cleared and re-bound) must not kill the replacement's
+        // synchronization, and an already-terminal binding stays terminal.
+        if (!current || current.syncId !== payload.syncId || current.terminal) return null
+        const updated = new Map(bindings)
+        updated.set(key, { ...current, terminal: true })
+        return HistorySyncBindingsState().new(updated)
+      }
+    })
+
+    const ClearSyncBindingsCommand = domain.command({
+      name: 'History.ClearSyncBindingsCommand',
       impl: ({ get }, payload: { sourcePeerId: string; domain: string }) => {
-        const fences = get(TerminatedSyncIdsState())
-        const updated = new Map(fences)
-        for (const key of fences.keys()) {
+        const bindings = get(HistorySyncBindingsState())
+        const updated = new Map(bindings)
+        for (const key of bindings.keys()) {
           if (key.startsWith(`${payload.sourcePeerId}\u0000${payload.domain}\u0000`)) updated.delete(key)
         }
-        return TerminatedSyncIdsState().new(updated)
+        return HistorySyncBindingsState().new(updated)
+      }
+    })
+
+    const ClearDomainSyncBindingsCommand = domain.command({
+      name: 'History.ClearDomainSyncBindingsCommand',
+      impl: ({ get }, runtimeDomain: string) => {
+        const bindings = get(HistorySyncBindingsState())
+        const updated = new Map(bindings)
+        for (const key of bindings.keys()) {
+          if (
+            key.endsWith(`\u0000${runtimeDomain}\u0000provider`) ||
+            key.endsWith(`\u0000${runtimeDomain}\u0000requester`)
+          ) {
+            updated.delete(key)
+          }
+        }
+        return HistorySyncBindingsState().new(updated)
       }
     })
 
@@ -466,29 +518,9 @@ const HistoryDomain = Remesh.domain({
           .filter((item) => item.sourcePeerId === payload.sourcePeerId && item.domain === payload.domain)
           .filter((item) => item.supplyId !== undefined)
           .map((item) => CancelActiveSupplyCommand({ key: item, supplyId: item.supplyId! }))
-        // Every provider identity discarded by cleanup is terminal for its syncId: partial,
-        // waiting, dormant-successor, and non-active job identities are fenced so a replayed
-        // page zero with the same id can never start a new synchronization.
-        const removedSyncIds = [
-          ...providers,
-          ...successors,
-          ...waiting,
-          ...jobs.filter((job) =>
-            job.sourcePeerId === payload.sourcePeerId && job.domain === payload.domain
-              ? !active.some((item) => matchesSync(item, job))
-              : false
-          )
-        ]
-          .filter((item) => item.sourcePeerId === payload.sourcePeerId && item.domain === payload.domain)
-          .map((item) => item.syncId)
-        const fences = [...new Set(removedSyncIds)].map((syncId) =>
-          FenceSyncIdCommand({
-            sourcePeerId: payload.sourcePeerId,
-            domain: payload.domain,
-            direction: 'provider',
-            syncId
-          })
-        )
+        // The connection binding (bound id + terminal bit) is cleared by the caller of cleanup
+        // (session reset / peer removal / domain release), which ends the old connection's
+        // synchronization entirely; a later connection starts one independent synchronization.
         return [
           ProviderAttemptsState().new(
             providers.filter((item) => item.sourcePeerId !== payload.sourcePeerId || item.domain !== payload.domain)
@@ -500,8 +532,7 @@ const HistoryDomain = Remesh.domain({
             waiting.filter((item) => item.sourcePeerId !== payload.sourcePeerId || item.domain !== payload.domain)
           ),
           ProviderSupplyJobsState().new(retainedJobs),
-          ...cancelled,
-          ...fences
+          ...cancelled
         ]
       }
     })
@@ -514,13 +545,14 @@ const HistoryDomain = Remesh.domain({
         const dismissedOwners = owners.filter(
           (item) => item.sourcePeerId === payload.sourcePeerId && item.domain === payload.domain
         )
-        // The terminal syncId fence intentionally SURVIVES a session replacement: one syncId is
-        // one synchronization for the whole source-generation lifetime, and replacement work
-        // requires a fresh identity even after the physical session changes.
+        // Source replacement ends the old connection's synchronization: working and terminal
+        // bindings are cleared for the source+domain, and the replacement connection starts its
+        // one independent synchronization with a fresh id.
         return [
           RequesterAttemptsState().new(
             requesters.filter((item) => item.sourcePeerId !== payload.sourcePeerId || item.domain !== payload.domain)
           ),
+          ClearSyncBindingsCommand(payload),
           CleanupProviderSlotsCommand(payload),
           ...dismissedOwners.flatMap((item) => dismissFeedback(get, item) ?? []),
           StartRequestedEvent(payload)
@@ -592,19 +624,23 @@ const HistoryDomain = Remesh.domain({
           sessionDomain.query.BindingQuery({ roomId: payload.roomId, sourcePeerId: payload.sourcePeerId })
         )
         if (!binding) return null
-        // A terminally cancelled provider synchronization identity stays fenced for the source
-        // generation: every page of that syncId, including page zero, is inert; replacement work
-        // requires a fresh syncId. The fence is direction-scoped so a provider-request identity
-        // never affects the opposite requester direction.
-        const fenceKey = fenceKeyFor({
-          sourcePeerId: payload.sourcePeerId,
-          domain: binding.domain,
-          direction: 'provider'
-        })
-        if ((get(TerminatedSyncIdsState()).get(fenceKey) ?? new Set<string>()).has(payload.message.syncId)) {
+        // One synchronization per connection incarnation and direction: after the direction is
+        // terminal, neither the same nor a different syncId may start History again on this
+        // connection; while active, only the bound syncId progresses and a different id is inert
+        // (it can never replace the bound id).
+        const syncBinding = get(HistorySyncBindingsState()).get(
+          bindingKeyFor({ sourcePeerId: payload.sourcePeerId, domain: binding.domain, direction: 'provider' })
+        )
+        if (syncBinding?.terminal) {
           return wireDomain.command.DropProtocolCommand({
             sourcePeerId: payload.sourcePeerId,
-            reason: 'terminated history sync identity'
+            reason: 'history sync already terminal for this connection'
+          })
+        }
+        if (syncBinding && syncBinding.syncId !== payload.message.syncId) {
+          return wireDomain.command.DropProtocolCommand({
+            sourcePeerId: payload.sourcePeerId,
+            reason: 'history sync identity does not match the connection binding'
           })
         }
         if (!isChatRoomMessageSemanticallyValid(payload.message, clock.now())) {
@@ -740,8 +776,20 @@ const HistoryDomain = Remesh.domain({
                   )
                 : [...successors, nextSuccessor]
             ),
-            // The successor attempt timeout is armed from page zero, not only after done.
-            ...(successor ? [] : [ProviderTimeoutArmedEvent(key)])
+            // The successor attempt timeout is armed from page zero, not only after done. The
+            // first valid successor page zero is the new connection's sole provider syncId and
+            // binds it for the source+domain+provider direction.
+            ...(successor
+              ? []
+              : [
+                  BindSyncIdCommand({
+                    sourcePeerId: payload.sourcePeerId,
+                    domain: binding.domain,
+                    direction: 'provider',
+                    syncId: payload.message.syncId
+                  }),
+                  ProviderTimeoutArmedEvent(key)
+                ])
           ]
         }
 
@@ -868,8 +916,19 @@ const HistoryDomain = Remesh.domain({
           ),
           // One canonical admission record is upserted on every accepted page: its cumulative
           // metadata bytes are updated, and it transitions to ready exactly once on the final page.
-          // The attempt timeout is armed from page zero.
-          ...(current ? [] : [ProviderTimeoutArmedEvent(key)]),
+          // The attempt timeout is armed from page zero. The first valid page zero binds this
+          // connection's sole provider syncId for the source+domain+provider direction.
+          ...(current
+            ? []
+            : [
+                BindSyncIdCommand({
+                  sourcePeerId: payload.sourcePeerId,
+                  domain: binding.domain,
+                  direction: 'provider',
+                  syncId: payload.message.syncId
+                }),
+                ProviderTimeoutArmedEvent(key)
+              ]),
           AdmitProviderSupplyCommand({
             ...key,
             queueBytes: next.inventoryBytes,
@@ -961,9 +1020,9 @@ const HistoryDomain = Remesh.domain({
       impl: ({ get }, key: HistoryAttemptKey) => {
         const successors = get(ProviderSupplySuccessorsState())
         if (!successors.some((item) => matchesSync(item, key))) return null
-        // Every terminal cancellation fences the syncId for the source-generation lifetime.
+        // The successor's synchronization is terminal for its connection direction.
         return [
-          FenceSyncIdCommand({
+          TerminateSyncBindingCommand({
             sourcePeerId: key.sourcePeerId,
             domain: key.domain,
             direction: 'provider',
@@ -993,21 +1052,13 @@ const HistoryDomain = Remesh.domain({
           active.some((item) => matchesSync(item, key)) ||
           waiting.some((item) => matchesSync(item, key))
         if (!current && !ownerActive && !successor && !hasSlotAccounting) {
-          // Invalid input that never created an admitted job is still terminal for its syncId:
-          // a page-one-first gap or invalid new successor must fence the identity so a later
-          // page zero with the same id cannot start a new synchronization.
-          return [
-            FenceSyncIdCommand({
-              sourcePeerId: key.sourcePeerId,
-              domain: key.domain,
-              direction: 'provider',
-              syncId: key.syncId
-            })
-          ]
+          // Invalid input without an admitted job has no bound synchronization to terminalize;
+          // the direction stays unbound until a first valid page zero binds its sole id.
+          return null
         }
-        // Every terminal cancellation fences the synchronization identity for the whole
-        // source-generation lifetime: a replayed page zero can never create a new local token.
-        const fence = FenceSyncIdCommand({
+        // Completion, cancellation, and failure retain the bound syncId plus one terminal bit:
+        // neither the same nor a different syncId can restart History on this connection.
+        const terminate = TerminateSyncBindingCommand({
           sourcePeerId: key.sourcePeerId,
           domain: key.domain,
           direction: 'provider',
@@ -1019,7 +1070,7 @@ const HistoryDomain = Remesh.domain({
           // settlement), the slot accounting and any dormant successor stay in place: release and
           // promotion happen only at the late-settlement boundary after physical exit.
           if (liveActive?.supplyId) {
-            return [fence, CancelActiveSupplyCommand({ key, supplyId: liveActive.supplyId })]
+            return [terminate, CancelActiveSupplyCommand({ key, supplyId: liveActive.supplyId })]
           }
           // Late supplier settlement after cleanup: release the slot accounting exactly once so no
           // active/waiting slot leaks, even when the provider state is already gone. A dormant
@@ -1032,7 +1083,7 @@ const HistoryDomain = Remesh.domain({
           if (validSuccessor) {
             const ready = validSuccessor.inventoryDone
             return [
-              fence,
+              terminate,
               ProviderAttemptsState().new([...providers, { ...validSuccessor }]),
               ProviderSupplySuccessorsState().new(
                 removeBy(
@@ -1067,7 +1118,7 @@ const HistoryDomain = Remesh.domain({
             ]
           }
           return [
-            fence,
+            terminate,
             ProviderSupplySuccessorsState().new(
               removeBy(
                 get(ProviderSupplySuccessorsState()),
@@ -1085,7 +1136,7 @@ const HistoryDomain = Remesh.domain({
         // them (the effect re-checks the attempt after physical settlement).
         if (liveActive?.supplyId) {
           return [
-            fence,
+            terminate,
             CancelActiveSupplyCommand({ key, supplyId: liveActive.supplyId }),
             ProviderAttemptsState().new(removeBy(providers, (item) => matchesSync(item, key))),
             ...(dismissFeedback(get, key) ?? [])
@@ -1150,7 +1201,7 @@ const HistoryDomain = Remesh.domain({
           ? []
           : [WaitingSuppliesState().new(waiting.filter((item) => !matchesSync(item, key)))]
         return [
-          fence,
+          terminate,
           ...promotion,
           ...schedule,
           ...waitingRemoval,
@@ -1362,17 +1413,16 @@ const HistoryDomain = Remesh.domain({
           sessionDomain.query.BindingQuery({ roomId: payload.roomId, sourcePeerId: payload.sourcePeerId })
         )
         if (!binding) return null
-        // The requester direction has its own fence: a provider-request terminal identity with
-        // the same string can never drop this Runtime's independent outgoing synchronization.
-        const fenceKey = fenceKeyFor({
-          sourcePeerId: payload.sourcePeerId,
-          domain: binding.domain,
-          direction: 'requester'
-        })
-        if ((get(TerminatedSyncIdsState()).get(fenceKey) ?? new Set<string>()).has(payload.message.syncId)) {
+        // The requester direction has its own connection binding: a provider-request identity
+        // with the same string can never affect this Runtime's independent outgoing
+        // synchronization, and a terminal outgoing direction stops all incoming responses.
+        const requesterBinding = get(HistorySyncBindingsState()).get(
+          bindingKeyFor({ sourcePeerId: payload.sourcePeerId, domain: binding.domain, direction: 'requester' })
+        )
+        if (requesterBinding?.terminal) {
           return wireDomain.command.DropProtocolCommand({
             sourcePeerId: payload.sourcePeerId,
-            reason: 'terminated history sync identity'
+            reason: 'history sync already terminal for this connection'
           })
         }
         if (!isChatRoomMessageSemanticallyValid(payload.message, clock.now())) {
@@ -1623,7 +1673,7 @@ const HistoryDomain = Remesh.domain({
             requesters.filter((item) => item.sourcePeerId !== payload.sourcePeerId || item.domain !== payload.domain)
           ),
           CleanupProviderSlotsCommand(payload),
-          ClearSyncFenceCommand(payload),
+          ClearSyncBindingsCommand(payload),
           ...owners
             .filter((item) => item.sourcePeerId === payload.sourcePeerId && item.domain === payload.domain)
             .flatMap((item) => dismissFeedback(get, item) ?? [])
@@ -1647,14 +1697,9 @@ const HistoryDomain = Remesh.domain({
           ...new Map([...providerSources, ...successorSources].map((item) => [item.sourcePeerId, item])).values()
         ]
         const owners = get(FeedbackOwnersState()).filter((item) => item.domain === runtimeDomain)
-        const fences = get(TerminatedSyncIdsState())
-        const clearedFences = new Map(fences)
-        for (const key of fences.keys()) {
-          if (key.endsWith(`\u0000${runtimeDomain}`)) clearedFences.delete(key)
-        }
         return [
           ...uniqueSources.map((item) => CleanupProviderSlotsCommand(item)),
-          TerminatedSyncIdsState().new(clearedFences),
+          ClearDomainSyncBindingsCommand(runtimeDomain),
           ...owners.flatMap((item) => dismissFeedback(get, item) ?? []),
           ...sourceIds.map(FinishRequestedEvent)
         ]
