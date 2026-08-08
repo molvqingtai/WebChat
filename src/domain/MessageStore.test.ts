@@ -127,12 +127,13 @@ describe.each(backends)('$name MessageStore contract', (backend) => {
     const changed = textRecord('shared-id', 'different')
 
     await messageStore.insert(first)
-    // The conflict result exposes the raw stored value (no parse on the write path).
-    await expect(messageStore.insert(changed)).resolves.toEqual({ inserted: false, existing: first })
-    await expect(messageStore.insert(noticeRecord('shared-id'))).resolves.toEqual({
-      inserted: false,
-      existing: first
-    })
+    // The conflict result exposes the raw stored value as unknown, never as a typed record.
+    const changedResult = await messageStore.insert(changed)
+    expect(changedResult.inserted).toBe(false)
+    if (!changedResult.inserted) expect(changedResult.existing).toMatchObject({ id: 'shared-id' })
+    const crossVariantResult = await messageStore.insert(noticeRecord('shared-id'))
+    expect(crossVariantResult.inserted).toBe(false)
+    if (!crossVariantResult.inserted) expect(crossVariantResult.existing).toMatchObject({ id: 'shared-id' })
     await expect(messageStore.query()).resolves.toEqual([first])
     await expect(database.read(['conflicts'], (transaction) => transaction.count('conflicts'))).resolves.toBe(2)
   })
@@ -197,6 +198,15 @@ describe.each(backends)('$name MessageStore contract', (backend) => {
       await expect(store.query()).resolves.toEqual([value])
     }
     await expect(database.read(['records'], (transaction) => transaction.count('records'))).resolves.toBe(0)
+  })
+
+  it('accepts finite fractional receivedAt values at load (persisted format is a finite number)', async () => {
+    const { database, messageStore } = create(backend)
+    const fractional = { ...textRecord('fractional'), receivedAt: 1.5 }
+    await database.write(['records'], (transaction) => transaction.insert('records', 'fractional', fractional))
+    // The record schema uses the declarative v.finite() action, so fractional values remain
+    // loadable; the database layer itself rejects non-finite numbers before storage.
+    await expect(messageStore.query()).resolves.toEqual([fractional])
   })
 
   it('trusts typed inputs at write and omits invalid stored values at load', async () => {

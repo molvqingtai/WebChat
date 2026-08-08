@@ -173,10 +173,13 @@ const snapshot = (runtime: SessionDomainState): RuntimeSessionSnapshot => ({
   sessions: runtime.sessions.map(projectRuntimeSession)
 })
 
-const makeRecord = (message: ChatMessage, user: ChatUser, receivedAt: number): ChatMessageRecord => {
-  if (user.id !== message.userId) throw new Error('Chat record user does not match its message')
-  return { type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE, id: message.id, message, user, receivedAt }
-}
+const makeRecord = (message: ChatMessage, user: ChatUser, receivedAt: number): ChatMessageRecord => ({
+  type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE,
+  id: message.id,
+  message,
+  user,
+  receivedAt
+})
 
 const initialRequestId = (attemptId: string) => `session:initial:${attemptId}`
 const publishTargetRequestId = (requestId: string, target: string) => `${requestId}:${target}`

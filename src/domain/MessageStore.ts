@@ -40,7 +40,7 @@ export const createMessageDatabaseDefinition = (
 
 export type InsertMessageResult =
   | { readonly inserted: true }
-  | { readonly inserted: false; readonly existing: MessageRecord }
+  | { readonly inserted: false; readonly existing: MessageRecord | unknown }
 
 export type MessageQuery = Readonly<{
   type?: MessageRecord['type']
@@ -99,14 +99,14 @@ export const MessageDatabaseExtern = Remesh.extern<Database<MessageDatabaseSchem
 // schema (declarative structure and ceilings) with the local-only record fields, so one schema
 // parse accepts or rejects a whole stored item. Relationships the declarative schema cannot
 // express (key/identity equality) are not validated.
-const safeNumber = v.pipe(v.number(), v.safeInteger())
+const finiteNumber = v.pipe(v.number(), v.finite())
 
 const ChatMessageRecordSchema = v.strictObject({
   type: v.literal(MESSAGE_RECORD_TYPE.CHAT_MESSAGE),
   id: v.string(),
   message: ChatMessageSchema,
   user: ChatUserSchema,
-  receivedAt: safeNumber
+  receivedAt: finiteNumber
 })
 
 const NoticeSchema = v.strictObject({
@@ -121,7 +121,7 @@ const SystemNoticeRecordSchema = v.strictObject({
   id: v.string(),
   notice: NoticeSchema,
   user: ChatUserSchema,
-  receivedAt: safeNumber
+  receivedAt: finiteNumber
 })
 
 const MessageRecordSchema = v.variant('type', [ChatMessageRecordSchema, SystemNoticeRecordSchema])
@@ -247,9 +247,9 @@ export const createMessageStore = (database: Database<MessageDatabaseSchema>): M
         const result = await transaction.insert('records', record.id, record)
         if (result.inserted) return { inserted: true }
         // Duplicate handling stays on the write path: the stored raw value is compared by
-        // content without any protocol parse or property/resource validation. The raw stored
-        // value is returned as the existing value so caller conflict control can compare it
-        // without a second parse.
+        // content without any protocol parse or property/resource validation. A trusted typed
+        // existing value is derived only from the typed input; any other stored occupant is a
+        // conflict and is never exposed as a typed record.
         const existing = result.existing
         if (JSON.stringify(existing) === JSON.stringify(record)) return { inserted: false, existing: record }
 
@@ -272,7 +272,7 @@ export const createMessageStore = (database: Database<MessageDatabaseSchema>): M
             await transaction.insert('conflicts', conflictKey, conflict)
           }
         }
-        return { inserted: false, existing: existing as MessageRecord }
+        return { inserted: false, existing }
       },
       signal
     )

@@ -15,6 +15,7 @@ import { SendLifecycleExtern } from '@/domain/externs/SendLifecycle'
 import { MESSAGE_TYPE, REACTION_TYPE, type ChatMessage, type MentionedUser } from '@/protocol/ChatRoom'
 import type { ChatSession } from '@/protocol/Session'
 import { MESSAGE_RECORD_TYPE, NOTICE_TYPE, type SystemNoticeRecord, type TextMessageRecord } from '@/domain/Message'
+import type { TextMessage } from '@/protocol/ChatRoom'
 import { projectTextRecord } from '@/domain/MessageProjection'
 import { getSiteMeta, stringToHex } from '@/utils'
 
@@ -388,10 +389,7 @@ const ChatRoomDomain = Remesh.domain({
                 if (!user) return OnErrorEvent(new Error('User identity is unavailable'))
                 const token = sendLifecycle.beginSend()
                 try {
-                  const message = await chatRoom.sendMessage({ type: 'text', ...command })
-                  if (message.type !== MESSAGE_TYPE.TEXT || message.userId !== user.id) {
-                    throw new Error('ChatRoom returned an invalid local text message')
-                  }
+                  const message = (await chatRoom.sendMessage({ type: 'text', ...command })) as TextMessage
                   sendLifecycle.settleSend(token, 'accepted')
                   const record: TextMessageRecord = {
                     type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE,

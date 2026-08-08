@@ -129,11 +129,20 @@ const selfJoinNotice = (session: Pick<RuntimeSession, 'user' | 'joinedAt'>, slot
   }
 }
 
-const isSelfJoinNotice = (record: MessageRecord, session: Pick<RuntimeSession, 'user' | 'joinedAt'>): boolean =>
-  record.type === MESSAGE_RECORD_TYPE.SYSTEM_NOTICE &&
-  record.notice.type === NOTICE_TYPE.JOIN &&
-  record.user.id === session.user.id &&
-  record.notice.hlc.timestamp === session.joinedAt
+const isSelfJoinNotice = (record: unknown, session: Pick<RuntimeSession, 'user' | 'joinedAt'>): boolean => {
+  if (typeof record !== 'object' || record === null) return false
+  const value = record as {
+    type?: unknown
+    notice?: { type?: unknown; hlc?: { timestamp?: unknown } }
+    user?: { id?: unknown }
+  }
+  return (
+    value.type === MESSAGE_RECORD_TYPE.SYSTEM_NOTICE &&
+    value.notice?.type === NOTICE_TYPE.JOIN &&
+    value.user?.id === session.user.id &&
+    value.notice?.hlc?.timestamp === session.joinedAt
+  )
+}
 
 const persistSelfJoinNotice = async (
   messageStore: RuntimeMessageStore,

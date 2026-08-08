@@ -2238,6 +2238,66 @@ describe('RuntimeServer history', () => {
       async (): Promise<HistorySupplyResult> => ({ records, done: true })
     )
 
+  it('delivers a schema-accepted response whose message userId is absent from the users array', async () => {
+    const { fake, server, roomId } = await setup()
+    await registerInventoryProvider(server)
+    const delivered: string[] = []
+    await server.onInbound({ pageId: 'page-a' }, (event) => {
+      delivered.push(event.record.message.id)
+    })
+    fake.receive(roomId, 'peer-a', session())
+    await settle()
+    await settle()
+    const requestMsg = await vi.waitFor(() => {
+      const found = fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)
+      expect(found).toBeDefined()
+      return found
+    })
+    const syncId = (requestMsg as { syncId: string }).syncId
+
+    // The declarative schema does not validate History user references: a message whose userId
+    // is absent from the page users is still delivered with a minimal author snapshot, not
+    // silently filtered or converted into an error.
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PUSH,
+      syncId,
+      page: 0,
+      users: [],
+      messages: [text('missing-reference')],
+      done: true
+    })
+    await vi.waitFor(() => expect(delivered).toEqual(['missing-reference']))
+  })
+
+  it('serves a load-accepted record whose outer/message/user identities differ', async () => {
+    const { fake, server, roomId } = await setup()
+    const database = createMemoryMessageDatabase('history-mismatch-db')
+    const store = createMessageStore(database)
+    // The load boundary accepts identity mismatches (relationships are not validated), and the
+    // History supplier must not re-filter them downstream.
+    const mismatched = {
+      type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE,
+      id: 'outer-mismatch',
+      message: { ...text('inner-message', REMOTE_USER.id, NOW - 1), id: 'inner-message' },
+      user: { id: 'another-user', name: 'Another', avatar: '' },
+      receivedAt: NOW - 1
+    }
+    await store.insert(mismatched)
+    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, async () => {
+      const records = await store.query({ type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE })
+      return { records: records as TextMessageRecord[], done: true }
+    })
+    fake.receive(roomId, 'peer-a', session())
+    await settle()
+    fake.receive(roomId, 'peer-a', request('sync-mismatch', 0, [], true))
+    await vi.waitFor(() => {
+      const sent = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH)
+      expect(sent.some((m) => (m as { syncId: string }).syncId === 'sync-mismatch')).toBe(true)
+    })
+    const sent = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH)
+    expect(sent[sent.length - 1]).toMatchObject({ messages: [{ id: 'inner-message' }] })
+  })
+
   it('runs one exact-difference inventory -> missing-body sync through the real page boundary', async () => {
     const { fake, server, roomId } = await setup()
     await registerInventoryProvider(server)

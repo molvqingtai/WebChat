@@ -136,10 +136,13 @@ const feedbackOwnerId = (key: HistoryAttemptKey) =>
 /** Maximum length of the bounded serial response-page queue for one requester attempt. */
 const MAX_PENDING_RESPONSE_PAGES = 64
 
-const makeRecord = (message: ChatMessage, user: ChatUser, receivedAt: number): ChatMessageRecord => {
-  if (user.id !== message.userId) throw new Error('Chat record user does not match its message')
-  return { type: 'chat-message', id: message.id, message, user, receivedAt }
-}
+const makeRecord = (message: ChatMessage, user: ChatUser, receivedAt: number): ChatMessageRecord => ({
+  type: 'chat-message',
+  id: message.id,
+  message,
+  user,
+  receivedAt
+})
 
 const usersForRecords = (records: ChatMessageRecord[]): ChatUser[] => {
   const snapshots: { user: ChatUser; message: ChatMessage }[] = []
@@ -1489,8 +1492,9 @@ const HistoryDomain = Remesh.domain({
           if (event.hlc.timestamp < current.cutoff) {
             return FinishRequestedEvent({ domain: binding.domain, sourcePeerId: payload.sourcePeerId })
           }
-          const user = page.users.find((candidate) => candidate.id === event.userId)
-          if (!user) continue
+          const user =
+            page.users.find((candidate) => candidate.id === event.userId) ??
+            ({ id: event.userId, name: event.userId, avatar: '' } satisfies ChatUser)
           const observed = observeHlc(hlc, event.hlc, clock.now())
           if (!observed) continue
           hlc = observed
@@ -1590,8 +1594,9 @@ const HistoryDomain = Remesh.domain({
                   output.push(FinishRequestedEvent({ domain: current.domain, sourcePeerId: current.sourcePeerId }))
                   break
                 }
-                const user = page.users.find((candidate) => candidate.id === event.userId)
-                if (!user) continue
+                const user =
+                  page.users.find((candidate) => candidate.id === event.userId) ??
+                  ({ id: event.userId, name: event.userId, avatar: '' } satisfies ChatUser)
                 const observed = observeHlc(hlc, event.hlc, clock.now())
                 if (!observed) continue
                 hlc = observed
@@ -1969,7 +1974,6 @@ const HistoryDomain = Remesh.domain({
                 if (known.has(record.message.id)) continue
                 if (eligible.length >= historySessionMessages || decodedBytes >= historySessionBytes) break
                 if (record.message.hlc.timestamp < attempt.cutoff) continue
-                if (record.id !== record.message.id || record.user.id !== record.message.userId) continue
                 const bytes = getTextByteSize(JSON.stringify(record.message))
                 if (decodedBytes + bytes > historySessionBytes) break
                 decodedBytes += bytes

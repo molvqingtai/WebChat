@@ -114,6 +114,31 @@ describe('public protocol source boundary', () => {
     }
   })
 
+  it('has no caller-side protocol revalidation in the runtime graph', async () => {
+    const runtimeFiles = [
+      'src/domain/ChatRoom.ts',
+      'src/domain/MessageList.ts',
+      'src/domain/MessageStore.ts',
+      'src/domain/impls/runtime/ChatRoom.ts',
+      'src/domain/runtime/History.ts',
+      'src/domain/runtime/Session.ts'
+    ]
+    const forbidden = [
+      'Chat record user does not match its message',
+      'ChatRoom returned an invalid local text message',
+      'existing as MessageRecord',
+      'if (!user) continue',
+      'record.user.id !== record.message.userId',
+      'record.id !== record.message.id'
+    ]
+    for (const file of runtimeFiles) {
+      const source = await readFile(path.resolve(import.meta.dirname, `../../${file}`), 'utf8')
+      for (const pattern of forbidden) {
+        expect(source, `${file} retains forbidden caller-side check ${pattern}`).not.toContain(pattern)
+      }
+    }
+  })
+
   it('exports only peer definitions, limits, schemas, inferred types, and the reference codec', async () => {
     const entry = await readFile(path.join(PROTOCOL_ROOT, 'index.ts'), 'utf8')
     expect(entry.trim().split('\n')).toEqual([
