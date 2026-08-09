@@ -3322,6 +3322,46 @@ describe('RuntimeServer history', () => {
     }
   })
 
+  it('keeps a same-presence generation ended when its last prepared source departs after displacement', async () => {
+    const { fake, server, roomId } = await setup()
+    // One logical B presence committed on TWO physical sources.
+    fake.receive(roomId, 'peer-b-1', session({ id: 'user-b', name: 'User B', avatar: '' }))
+    await settle()
+    fake.receive(roomId, 'peer-b-2', {
+      type: MESSAGE_TYPE.SESSION,
+      sessionId: 'session-b2',
+      presenceId: 'presence-user-b',
+      joinedAt: NOW + 1,
+      user: { id: 'user-b', name: 'User B', avatar: '' }
+    })
+    await settle()
+    // A held ordinary preparation switches peer-b-1 from B to C (B displaced on that source).
+    fake.plantPeer(roomId, 'remote-peer')
+    fake.makeNotReady()
+    fake.hangSendsTo(roomId)
+    const chatBroadcastStarted = fake.waitForSendAttempt(roomId)
+    const join = server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
+    await fake.waitForJoinCalls(4)
+    fake.open()
+    await expect(chatBroadcastStarted).resolves.toMatchObject({ roomId })
+    fake.receive(roomId, 'peer-b-1', session({ id: 'user-c', name: 'User C', avatar: '' }))
+    await settle()
+    // The LAST prepared B source departs: no B source survives in the preparation, and the
+    // displaced committed peer-b-1=B binding must not keep B active.
+    fake.peerLeave(roomId, 'peer-b-2')
+    await settle()
+    fake.releaseSends()
+    const snapshot = await join
+    if (!snapshot) throw new Error('Join was cancelled')
+    await settle()
+    // Replaying B's exact generation from a new source is source-locally dropped.
+    fake.receive(roomId, 'peer-b-new', session({ id: 'user-b', name: 'User B', avatar: '' }))
+    await settle()
+    const after = (await server.getSnapshot()).domains[0].sessions.map((session) => session.user.id)
+    expect(after).toEqual(['user-c'])
+    disposeServer(server)
+  })
+
   it('keeps unrelated ended tombstones across a prepared PeerLeave and rejects the expired replay', async () => {
     vi.useFakeTimers()
     try {

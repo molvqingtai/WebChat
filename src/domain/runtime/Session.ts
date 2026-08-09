@@ -1489,11 +1489,31 @@ const SessionDomain = Remesh.domain({
                   .filter((session) => session.sourcePeerId === payload.sourcePeerId)
                   .map((session) => session.presenceId) ?? [])
               ])
+              // Committed bindings the current preparation has already displaced/replaced cannot
+              // keep their presence active: post-departure authority obeys preparation precedence.
+              const displacedSourceBindings = new Set(
+                prepared.displacedBindings.map((displaced) => `${displaced.sourcePeerId}\u0000${displaced.presenceId}`)
+              )
+              // This same PeerLeft arms a grace deadline for the departed source's presence when
+              // that source was its last current committed binding (mirroring the committed
+              // branch), so the observation must stay eligible for an exact rebind.
+              const pendingWillBeArmedFor = (presenceId: string) => {
+                const committedForPresence = (committed?.sessions ?? []).filter(
+                  (session) => session.presenceId === presenceId
+                )
+                return (
+                  committedForPresence.length > 0 &&
+                  committedForPresence.every((session) => session.sourcePeerId === payload.sourcePeerId)
+                )
+              }
               const authoritativeAfterDeparture = (presenceId: string) =>
                 nextPreparedRuntime.sessions.some((session) => session.presenceId === presenceId) ||
+                pendingWillBeArmedFor(presenceId) ||
                 (committed?.sessions.some(
                   (session) =>
                     session.presenceId === presenceId &&
+                    session.sourcePeerId !== payload.sourcePeerId &&
+                    !displacedSourceBindings.has(`${session.sourcePeerId}\u0000${session.presenceId}`) &&
                     !pendingLeaves.some(
                       (leave) => leave.domain === prepared.runtime.domain && leave.presenceId === presenceId
                     )
@@ -1509,10 +1529,14 @@ const SessionDomain = Remesh.domain({
               const reconciledObservers = prepared.observers
                 .filter((observer) => {
                   if (!departedSourcePresences.has(observer.presenceId)) return true
-                  return authoritativeAfterDeparture(observer.presenceId)
+                  if (authoritativeAfterDeparture(observer.presenceId)) return true
+                  // A provisional ACTIVE observation with no authority is dropped (its later
+                  // real binding must emit a join); an already-ENDED observation stays as a
+                  // tombstone so an expired generation cannot resurrect.
+                  return observer.status === 'ended'
                 })
                 .map((observer) =>
-                  departedSourcePresences.has(observer.presenceId)
+                  departedSourcePresences.has(observer.presenceId) && authoritativeAfterDeparture(observer.presenceId)
                     ? { ...observer, status: 'active' as const }
                     : observer
                 )
