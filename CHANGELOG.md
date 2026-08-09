@@ -1,3 +1,32 @@
+## [2.4.5](https://github.com/molvqingtai/WebChat/compare/v2.4.4...v2.4.5) (2026-08-09)
+
+### Bug Fixes
+
+- **appbutton:** drop stale 60px comment residue in geometry owner ([4f3af3f](https://github.com/molvqingtai/WebChat/commit/4f3af3f13b3421fbde15447c3127c9cfd5153f54))
+- **appbutton:** keep a fixed 60px outer-top margin on drag ([e8c713b](https://github.com/molvqingtai/WebChat/commit/e8c713b278603f2208bc9863d993be833b6fd926))
+- **appbutton:** keep the largest feasible top margin below the threshold ([d61db88](https://github.com/molvqingtai/WebChat/commit/d61db880dc3717badb424eb1af0ba5af0a265acd))
+- **appbutton:** set the collapsed top margin to 62px ([a8b1f9a](https://github.com/molvqingtai/WebChat/commit/a8b1f9ae9065772e1805982afbaa50c988cf389d))
+- **protocol:** attempt-owned rebind authority and release settlement edges ([792cea1](https://github.com/molvqingtai/WebChat/commit/792cea15fd7de3f275ac3484baea4c39169bb3f9))
+- **protocol:** attempt-owned rebind records and release-fenced deadlines ([90706f4](https://github.com/molvqingtai/WebChat/commit/90706f4b585095aed00be531e248e68c2d372936))
+- **protocol:** current-binding selection and unprotected switch replacement ([0150b5d](https://github.com/molvqingtai/WebChat/commit/0150b5d2b0bec19fdafbd67f708c5649b1b30e6c))
+- **protocol:** displaced-generation lifecycle and Wire-boundary dedup proof ([36655c2](https://github.com/molvqingtai/WebChat/commit/36655c2cf1ad5e9601bb50c2d15d946ad205b9c4))
+- **protocol:** displaced-user finality and attempt-owned displaced commit facts ([bcca86e](https://github.com/molvqingtai/WebChat/commit/bcca86ee78f3fc543e69fec41eb4b04d169b7042))
+- **protocol:** gate release on cleanup and fence observer grace lifecycle ([070705f](https://github.com/molvqingtai/WebChat/commit/070705f9bb1d38397bd1939562c87bdcddd83650))
+- **protocol:** independent displaced-leave classification and prepared slot normalization ([ec83281](https://github.com/molvqingtai/WebChat/commit/ec83281f84e2d1f433bef47a9fe5197f10dfa52f))
+- **protocol:** multi-source same-presence preparation precedence ([e8ea20e](https://github.com/molvqingtai/WebChat/commit/e8ea20e9f2c44ac3d72a50b81ab68ae58915b186))
+- **protocol:** pending-gated promotion and structural rebind dedupe ([5983b33](https://github.com/molvqingtai/WebChat/commit/5983b33b3601aeddad4ab712679596cc24137c23))
+- **protocol:** reconcile prepared observers on physical source departure ([70f0d56](https://github.com/molvqingtai/WebChat/commit/70f0d566af0cb1b30ca657e9b08e404bba80d814))
+- **protocol:** revoke displaced facts on departure and per-user commit finality ([da1e747](https://github.com/molvqingtai/WebChat/commit/da1e747f058329e89fb4e27aca0f8fbc2fdb4e99))
+- **protocol:** slot-keyed current bindings and source-removal gating ([23c41b6](https://github.com/molvqingtai/WebChat/commit/23c41b6926e765ad934ebd4e936b7266cb2100aa))
+- **protocol:** source-bound rebind facts and absolute grace expiry ([d8109a3](https://github.com/molvqingtai/WebChat/commit/d8109a3394593a42ca6294f4effab114210498f4))
+- **protocol:** source-scoped prepared observer reconciliation ([d57070d](https://github.com/molvqingtai/WebChat/commit/d57070d2b4def9ce1ef6a0fa14e50dad6f9f50c7))
+
+### Performance Improvements
+
+- **protocol:** declarative-only schemas, Pull/Push rename, write-trust, frame-bound privacy ([3b0adb0](https://github.com/molvqingtai/WebChat/commit/3b0adb075ab6c740c5ca8f058dc331c0efc5c134))
+- **protocol:** schema-first protocol authority with two validation boundaries ([3709067](https://github.com/molvqingtai/WebChat/commit/3709067332161b7821902ec71e87f8481445326d))
+- rename histoy message type ([b996f15](https://github.com/molvqingtai/WebChat/commit/b996f15508bd648471833b2e76b50a2fe6562f19))
+
 ## [2.4.4](https://github.com/molvqingtai/WebChat/compare/v2.4.3...v2.4.4) (2026-08-08)
 
 ### Bug Fixes
