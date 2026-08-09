@@ -1,13 +1,13 @@
 ## 1. Freeze The Top-Margin Contract
 
-- [ ] 1.1 Define the collapsed AppButton top margin as at least `60px` from the viewport top to the launcher's outer top edge when the viewport can satisfy all fixed launcher margins.
+- [ ] 1.1 Define the collapsed AppButton top margin as at least `62px` from the viewport top to the launcher's outer top edge when the viewport can satisfy all fixed launcher margins.
 - [ ] 1.2 Keep top, bottom, left, and right in one launcher-only viewport boundary mechanism; change only the top value and keep this AppButton calculation independent of shell height.
 - [ ] 1.3 Retain the existing fully-visible collapsed small-viewport fallback and restore the fixed margin when a later collapsed viewport can satisfy it.
 - [ ] 1.4 Preserve every horizontal and bottom bound, the complete expanded-shell bound and resulting AppButton position, initial position, cross-edge motion, pointer interaction, and release behavior.
 
 ## 2. Change The Existing Geometry Owner
 
-- [ ] 2.1 Derive the launcher-only vertical lower bound from the existing `44px` launcher size plus the `60px` outer-edge margin alongside the existing three edge bounds.
+- [ ] 2.1 Derive the launcher-only vertical lower bound from the existing `44px` launcher size plus the `62px` outer-edge margin alongside the existing three edge bounds.
 - [ ] 2.2 Keep the expanded shell's vertical constraint as a separate unchanged layer, including its fallback and resulting AppButton position.
 - [ ] 2.3 Add no regression case; limit the test diff to mechanical synchronization of an existing expectation directly changed by the collapsed output.
 - [ ] 2.4 Keep both boundary layers in the existing geometry owner, with no second position owner, persisted correction, component transform, or compatibility path.

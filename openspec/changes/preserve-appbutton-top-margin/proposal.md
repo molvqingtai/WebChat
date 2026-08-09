@@ -4,7 +4,7 @@ The collapsed AppButton can currently be dragged flush against the viewport top 
 
 ## What Changes
 
-- Keep the collapsed AppButton's outer top edge at least `60px` below the viewport top when the viewport can satisfy that margin together with the existing launcher size and bottom bound.
+- Keep the collapsed AppButton's outer top edge at least `62px` below the viewport top when the viewport can satisfy that margin together with the existing launcher size and bottom bound.
 - Calculate the top margin through the same launcher-only viewport boundary mechanism as the existing left, right, and bottom margins. Only the margin values differ; the AppButton boundary does not use shell height.
 - Apply the launcher bounds through the existing local AppButton geometry owner so active dragging and local projection of a shared position produce the same visible result.
 - Preserve the current shared edge-relative position format. User drag continues to write the bounded position, while hydration, synchronization, and viewport resize continue to project locally without a persistence write.
@@ -20,7 +20,7 @@ None.
 
 ### Modified Capabilities
 
-- `webrtc-runtime`: Add the collapsed AppButton's fixed `60px` top-edge margin to its existing viewport-derived placement contract.
+- `webrtc-runtime`: Add the collapsed AppButton's fixed `62px` top-edge margin to its existing viewport-derived placement contract.
 
 ## Impact
 
