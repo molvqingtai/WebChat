@@ -53,12 +53,6 @@ WebChat 建立在以下优秀的开源项目之上：
 - **[Artico](https://github.com/matallui/artico)** 提供了灵活的点对点通信 WebRTC 基础。
 - **[ugly-avatar](https://github.com/txstc55/ugly-avatar)** 生成了 WebChat 独具特色的随机头像。
 
-## 赞助商
-
-WebChat 是一个由贡献者与赞助商共同维系的开源项目。
-
-<a href="https://dartnode.com" title="由 DartNode 提供支持 - 面向开源的免费 VPS"><img src="https://dartnode.com/branding/DN-Open-Source-sm.png" width="500" alt="由 DartNode 提供支持" /></a>
-
 ## 许可证
 
 WebChat 基于 [MIT 许可证](./LICENSE) 开放使用。
