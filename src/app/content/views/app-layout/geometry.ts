@@ -3,6 +3,9 @@ import { clamp } from '@/utils'
 
 const APP_BUTTON_SIZE = 44
 const APP_BUTTON_RADIUS = APP_BUTTON_SIZE / 2
+const APP_BUTTON_TOP_MARGIN = 60
+const APP_BUTTON_BOTTOM_MARGIN = APP_BUTTON_RADIUS
+const APP_BUTTON_MINIMUM_BOTTOM_EDGE = APP_BUTTON_TOP_MARGIN + APP_BUTTON_SIZE
 const APP_BUTTON_HORIZONTAL_CENTER_MARGIN = 50
 const APP_SHELL_TOP_INSET = 40
 const APP_SHELL_MINIMUM_SIZE = 375
@@ -46,10 +49,17 @@ export const getAppButtonDragBounds = ({ width, height }: ViewportSize, expanded
   const horizontalInset = Math.min(APP_BUTTON_HORIZONTAL_CENTER_MARGIN, width / 2)
   const launcherMinimumBottomEdge = Math.min(APP_BUTTON_SIZE, height)
   const maximumBottomEdge = Math.max(launcherMinimumBottomEdge, height - APP_BUTTON_RADIUS)
+  // The fixed top margin applies only when the viewport can satisfy every fixed launcher margin
+  // (60px outer-top + 44px launcher + 22px bottom edge = 126px). A viewport that can contain
+  // the launcher but not every margin keeps the fully-visible fallback with the largest
+  // feasible margin; an expanded shell-safe bound remains authoritative when farther from top.
+  const fixedMarginsSatisfiable = height >= APP_BUTTON_MINIMUM_BOTTOM_EDGE + APP_BUTTON_BOTTOM_MARGIN
   const minimumBottomEdge =
     expanded && maximumBottomEdge >= APP_SHELL_MINIMUM_LAUNCHER_BOTTOM_EDGE
       ? APP_SHELL_MINIMUM_LAUNCHER_BOTTOM_EDGE
-      : launcherMinimumBottomEdge
+      : fixedMarginsSatisfiable
+        ? Math.max(launcherMinimumBottomEdge, APP_BUTTON_MINIMUM_BOTTOM_EDGE)
+        : launcherMinimumBottomEdge
   return {
     minX: horizontalInset,
     maxX: width - horizontalInset,
