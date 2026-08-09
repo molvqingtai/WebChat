@@ -14,7 +14,7 @@ Owner smoke on the repaired source exposed a separate bootstrap ownership defect
 - Bound and fence the per-domain active Presence persistence tail so an unresolved predecessor cannot permanently block later current-generation persistence or final release.
 - Mount the existing Shadow UI, launcher, and openable panel shell independently of browser-sync/local configuration, MessageStore, and Runtime bootstrap results; present one visible, accessible, retryable degraded state without unmounting or blanking the shell.
 - Ignite each dependency-backed application domain only after its required bootstrap dependency is ready, then recover the same mounted shell in place after a successful retry.
-- Preserve the existing five-second same-domain grace, physical room reuse/release behavior, durable final-retirement ordering, connection semantics, and stale-request fencing.
+- Preserve the existing five-second same-domain grace, physical room reuse/release behavior, local active-presence cleanup, connection semantics, and stale-request fencing. Final release sends no Chat lifecycle message and owns no end-send settlement chain.
 - Keep `pageId` metadata and provider-refresh callback behavior as implementation-neutral diagnostic hypotheses. The change does not prescribe either mechanism.
 
 ## Capabilities
@@ -33,4 +33,4 @@ None.
 - Runtime join completion, active Presence persistence queue ownership, and focused tests.
 - Application connection-request terminal settlement and stale-request regressions.
 - A new OpenSpec delta for the existing `webrtc-runtime` capability.
-- No peer wire, public `ChatRoom` method, database schema/version, stored record shape, Toast copy/duration, readiness-state model, panel visual structure, dependency, WXT, or browser-specific business change.
+- No additional peer message, public `ChatRoom` method, origin-database schema/version, stored message-record shape, Toast copy/duration, readiness-state model, panel visual structure, dependency, WXT, or browser-specific business change.

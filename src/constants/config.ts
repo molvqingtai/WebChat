@@ -215,8 +215,8 @@ export const MAX_PROVIDER_SUPPLY_QUEUE_BYTES = 8 * 1024
 export const MAX_CONFLICTS_PER_RECORD = 4
 export const MAX_STORED_CONFLICTS = 1000
 
-export const CHAT_ROOM_NAMESPACE_V4 = 'WEB_CHAT_CHAT_ROOM_V4' as const
-export const WORLD_ROOM_ID_V4 = 'WEB_CHAT_WORLD_ROOM_V4' as const
+export const CHAT_ROOM_NAMESPACE_V5 = 'WEB_CHAT_CHAT_ROOM_V5' as const
+export const WORLD_ROOM_ID_V5 = 'WEB_CHAT_WORLD_ROOM_V5' as const
 
 /**
  * Unified grace window after the last page of a domain disconnects.
@@ -224,3 +224,10 @@ export const WORLD_ROOM_ID_V4 = 'WEB_CHAT_WORLD_ROOM_V4' as const
  * presence are retained together and released together when it expires.
  */
 export const RUNTIME_DOMAIN_GRACE_MS = 5000 as const
+
+/**
+ * Observer-side pending-leave grace after the last physical source of a remote presence
+ * departs: the generation stays online throughout the deadline; a same-generation rebind
+ * cancels it, expiry removes the generation and emits one leave when no other presence remains.
+ */
+export const PENDING_LEAVE_GRACE_MS = 5000 as const

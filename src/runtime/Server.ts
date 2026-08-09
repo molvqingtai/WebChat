@@ -1,4 +1,4 @@
-import { Remesh, type RemeshAction, type RemeshStore } from 'remesh'
+import { Remesh, type RemeshAction, type RemeshStore, type RemeshSubscribeOnlyEvent } from 'remesh'
 import { nanoid } from 'nanoid'
 import ConnectionDomain, { type ConnectionOperationSucceeded } from '@/domain/runtime/Connection'
 import DeliveryDomain from '@/domain/runtime/Delivery'
@@ -12,7 +12,6 @@ import { IdentityExtern } from '@/domain/runtime/externs/Identity'
 import { PresenceStoreExtern, type PresenceStore } from '@/domain/runtime/externs/PresenceStore'
 import { RoomTransportExtern, WireCodecExtern } from '@/domain/runtime/externs/RoomTransport'
 import type { RoomTransport } from '@/runtime/RoomTransport'
-import type { ReactionMessageRecord, TextMessageRecord } from '@/domain/Message'
 import { NativeWireCodec, type WireCodec } from '@/protocol'
 import type { RuntimeServer, RuntimeSnapshot } from '@/runtime/Contract'
 import { MAX_HISTORY_SESSION_BYTES, MAX_HISTORY_SESSION_MESSAGES } from '@/constants/config'
@@ -262,8 +261,46 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       store.send(command)
     })
 
-  const completeInterruptedRelease = (domain: string): Promise<void> =>
-    new Promise<void>((resolve, reject) => {
+  /** Typed allocation runner: the exact record variant is carried by a typed success event. */
+  const runAllocationOperation = <TRecord>(
+    operationId: string,
+    command: RemeshAction,
+    successEvent: RemeshSubscribeOnlyEvent<
+      [{ operationId: string; record: TRecord }],
+      { operationId: string; record: TRecord }
+    >
+  ): Promise<TRecord> =>
+    new Promise<TRecord>((resolve, reject) => {
+      const success = store.subscribeEvent(successEvent, (result) => {
+        if (result.operationId !== operationId) return
+        success.unsubscribe()
+        failure.unsubscribe()
+        resolve(result.record)
+      })
+      const failure = store.subscribeEvent(sessionDomain.event.OperationFailedEvent, (result) => {
+        if (result.operationId !== operationId) return
+        success.unsubscribe()
+        failure.unsubscribe()
+        reject(result.error)
+      })
+      store.send(command)
+    })
+
+  /** One shared in-flight settlement per domain: overlapping release requests share it. */
+  const inFlightReleases = new Map<string, Promise<void>>()
+
+  const completeInterruptedRelease = (domain: string): Promise<void> => {
+    // Idempotent completed release: no runtime, no join attempt, and no current fence.
+    if (
+      !store.query(sessionDomain.query.DomainQuery(domain)) &&
+      !store.query(connectionDomain.query.AttemptsQuery()).some((item) => item.domain === domain) &&
+      !store.query(sessionDomain.query.ReleasingDomainQuery(domain))
+    ) {
+      return Promise.resolve()
+    }
+    const inFlight = inFlightReleases.get(domain)
+    if (inFlight) return inFlight
+    const task = new Promise<void>((resolve, reject) => {
       const success = store.subscribeEvent(connectionDomain.event.ConnectionLeftEvent, (event) => {
         if (event.domain !== domain) return
         success.unsubscribe()
@@ -278,6 +315,14 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       })
       store.send(connectionDomain.command.LeaveDomainCommand(domain))
     })
+    inFlightReleases.set(domain, task)
+    task
+      .catch(() => {})
+      .finally(() => {
+        inFlightReleases.delete(domain)
+      })
+    return task
+  }
 
   const server: RuntimeServer = {
     attachPage: async (payload) => {
@@ -290,6 +335,8 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     },
     getSnapshot: async () => snapshot(),
     joinChatRoom: async (payload) => {
+      // Typed ChatUser/ChatSite values pass through unchanged; the application-to-protocol
+      // mapping already happened before the value was narrowed to the schema-owned type.
       const recovery = beginPresenceRecovery(payload.domain)
       let recovered = false
       try {
@@ -328,30 +375,26 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       }
     },
     leaveChatRoom: async ({ domain }) => {
-      store.send(connectionDomain.command.LeaveDomainCommand(domain))
+      // The leave resolves only after physical departure and rejects with the exact
+      // DomainReleaseFailedEvent when the active-record cleanup write fails.
+      await completeInterruptedRelease(domain)
     },
     allocateTextMessage: async (payload) => {
       await waitForLivePresence(payload.domain)
       const operationId = nanoid()
-      return runSessionOperation(
+      return runAllocationOperation(
         operationId,
         sessionDomain.command.AllocateTextMessageCommand({ operationId, ...payload }),
-        (result) => {
-          if (result.record?.message.type !== 'text') throw new Error('Runtime returned an invalid text record')
-          return result.record as TextMessageRecord
-        }
+        sessionDomain.event.TextMessageAllocatedEvent
       )
     },
     allocateReactionMessage: async (payload) => {
       await waitForLivePresence(payload.domain)
       const operationId = nanoid()
-      return runSessionOperation(
+      return runAllocationOperation(
         operationId,
         sessionDomain.command.AllocateReactionMessageCommand({ operationId, ...payload }),
-        (result) => {
-          if (result.record?.message.type !== 'reaction') throw new Error('Runtime returned an invalid reaction record')
-          return result.record as ReactionMessageRecord
-        }
+        sessionDomain.event.ReactionMessageAllocatedEvent
       )
     },
     sendChatMessage: async (payload) => {

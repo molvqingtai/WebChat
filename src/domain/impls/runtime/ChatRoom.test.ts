@@ -387,7 +387,7 @@ describe('Runtime-backed ChatRoom application port', () => {
 
   it('preserves an existing Chat winner while parallel joins converge on one fallback self notice', async () => {
     const database = createMemoryMessageDatabase(`self-join-existing-winner-${databaseId++}`)
-    const stableNoticeId = `notice:${stringToHex(`self:join:${USER.id}`)}`
+    const stableNoticeId = `notice:${stringToHex(`self:join:${USER.id}:1`)}`
     const collision = textRecord(stableNoticeId)
     const seedStore = createMessageStore(database)
     await seedStore.insert(collision)
@@ -421,7 +421,7 @@ describe('Runtime-backed ChatRoom application port', () => {
     const controlled = new ControlledDatabase(createMemoryMessageDatabase(databaseName))
     const fixture = await setup([], controlled)
     const competingStore = createMessageStore(createMemoryMessageDatabase(databaseName))
-    const stableNoticeId = `notice:${stringToHex(`self:join:${USER.id}`)}`
+    const stableNoticeId = `notice:${stringToHex(`self:join:${USER.id}:1`)}`
     const collision = textRecord(stableNoticeId)
     let raced = false
     controlled.beforeWrite = async () => {
@@ -437,6 +437,38 @@ describe('Runtime-backed ChatRoom application port', () => {
     const notices = records.filter((record) => record.type === MESSAGE_RECORD_TYPE.SYSTEM_NOTICE)
     expect(raced).toBe(true)
     expect(records.find((record) => record.id === stableNoticeId)).toEqual(collision)
+    expect(notices).toHaveLength(1)
+    expect(notices[0]?.id).not.toBe(stableNoticeId)
+    expect(notices[0]).toMatchObject({
+      notice: { type: NOTICE_TYPE.JOIN, body: '"Local" joined the chat' },
+      user: USER
+    })
+  })
+
+  it('does not let a near-match corrupt raw row suppress the canonical self-join notice', async () => {
+    const databaseName = `self-join-near-match-${databaseId++}`
+    const database = createMemoryMessageDatabase(databaseName)
+    // The raw occupant at the actual first self-join slot matches every field a subset
+    // classifier would check (type, JOIN, user id, hlc.timestamp) plus an unknown key: the
+    // fallback must not interpret it — the typed occupant is absent after the load parse, so
+    // the canonical notice is persisted at the next slot.
+    const stableNoticeId = `notice:${stringToHex(`self:join:${USER.id}:1`)}`
+    await database.write(['records'], (transaction) =>
+      transaction.insert('records', stableNoticeId, {
+        type: MESSAGE_RECORD_TYPE.SYSTEM_NOTICE,
+        id: stableNoticeId,
+        notice: { id: stableNoticeId, hlc: { timestamp: 1, counter: 0 }, type: NOTICE_TYPE.JOIN, body: 'near-match' },
+        user: USER,
+        receivedAt: 1,
+        unknownExtraKey: true
+      })
+    )
+    const fixture = await setup([], database)
+    await settle()
+    await fixture.room.joinRoom({ user: USER, site: SITE })
+    await settle()
+    const records = await fixture.messageStore.query()
+    const notices = records.filter((record) => record.type === MESSAGE_RECORD_TYPE.SYSTEM_NOTICE)
     expect(notices).toHaveLength(1)
     expect(notices[0]?.id).not.toBe(stableNoticeId)
     expect(notices[0]).toMatchObject({
@@ -593,7 +625,7 @@ describe('Runtime-backed ChatRoom application port', () => {
     await expect(messageStore.query()).resolves.toEqual([textRecord('history'), record])
   })
 
-  it('isolates an invalid inbound record before persistence and recovers on the next event', async () => {
+  it('persists a runtime-accepted record through an ACK failure and recovers on the next event', async () => {
     const { room, emitInbound, messageStore, server } = await setup()
     const messages: ChatMessage[] = []
     const errors: Error[] = []
@@ -602,30 +634,27 @@ describe('Runtime-backed ChatRoom application port', () => {
     vi.mocked(server.ackInbound).mockRejectedValueOnce(new Error('invalid ACK failed'))
     await settle()
 
-    await emitInbound({
-      sequence: 1,
-      domain: DOMAIN,
-      record: { legacy: true, schema: 'unsupported-v1' } as unknown as TextMessageRecord,
-      source: 'live'
-    })
+    // The Runtime hands the adapter an already schema-accepted typed record: persistence write
+    // trusts it (the receiving boundary is authoritative), so the record is inserted and only
+    // the ACK transport failure surfaces as an error with a bounded retry.
+    const accepted = textRecord('accepted-inbound')
+    await emitInbound({ sequence: 1, domain: DOMAIN, record: accepted, source: 'live' })
 
-    expect(messages).toEqual([])
-    expect(errors).toHaveLength(2)
-    expect(errors[0]).toMatchObject({ name: 'InvalidMessageRecordError' })
-    expect(errors[1]).toEqual(new Error('invalid ACK failed'))
-    await expect(messageStore.query()).resolves.toEqual([])
-    expect(server.ackInbound).toHaveBeenCalledWith({ domain: DOMAIN, sequence: 1, inserted: false })
+    expect(messages).toEqual([accepted.message])
+    expect(errors).toEqual([new Error('invalid ACK failed')])
+    await expect(messageStore.query()).resolves.toEqual([accepted])
+    expect(server.ackInbound).toHaveBeenCalledWith({ domain: DOMAIN, sequence: 1, inserted: true })
 
     await vi.advanceTimersByTimeAsync(1000)
     expect(server.ackInbound).toHaveBeenCalledTimes(2)
-    expect(errors).toHaveLength(2)
+    expect(errors).toHaveLength(1)
 
-    const valid = textRecord('valid-after-invalid')
+    const valid = textRecord('valid-after-retry')
     await emitInbound({ sequence: 2, domain: DOMAIN, record: valid, source: 'live' })
 
-    expect(messages).toEqual([valid.message])
-    expect(errors).toHaveLength(2)
-    await expect(messageStore.query()).resolves.toEqual([valid])
+    expect(messages).toEqual([accepted.message, valid.message])
+    expect(errors).toHaveLength(1)
+    await expect(messageStore.query()).resolves.toEqual([accepted, valid])
     expect(server.ackInbound).toHaveBeenCalledTimes(3)
   })
 

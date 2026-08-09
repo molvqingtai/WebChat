@@ -8,7 +8,7 @@ Callback registration, inbound replay, and replay-record persistence SHALL remai
 
 Once the current Runtime generation has physically accepted the required Chat and World publications, committed the domain, and can return a snapshot containing the local session, page connection success SHALL settle from that committed fact. Active post-commit Presence persistence SHALL continue under a bounded Runtime persistence owner and SHALL NOT retain or reopen page connection loading, reverse the committed snapshot solely because it is slow, or become a second page request. An unresolved active Presence predecessor SHALL NOT permanently block later current-generation persistence or final release, and a late old completion SHALL NOT overwrite, retire, or report success for a newer Presence generation. Persistence failure SHALL use the existing Runtime error path.
 
-This active-persistence decoupling SHALL NOT weaken final release. Durable retirement, SESSION_END settlement, cleanup, and physical Chat/World departure SHALL retain their existing causal order and retryable failure semantics. An ordinary page-context refresh while the authoritative physical tab binding remains SHALL start no grace, retain the current physical rooms, and give the replacement page an independent attempt. The existing five-second Lifecycle grace SHALL remain unchanged: a current page returning during actual grace SHALL cancel grace, reuse the same committed physical rooms, and independently settle from the current snapshot, while a page arriving after completed grace release SHALL join new physical rooms.
+This active-persistence decoupling SHALL NOT weaken final release. Session SHALL remove the private local active-generation authority through the current release owner, release domain State, and allow physical Chat/World departure without producing or waiting for a Chat lifecycle message. No in-flight end, retryable end, end-send settlement, or settled-cleanup State SHALL exist. A required local active-record cleanup failure SHALL retain the current release failure semantics, but no peer signal SHALL gate departure. An ordinary page-context refresh while the authoritative physical tab binding remains SHALL start no grace, retain the current physical rooms, and give the replacement page an independent attempt. The existing five-second Lifecycle grace SHALL remain unchanged: a current page returning during actual grace SHALL cancel grace, reuse the same committed physical rooms, and independently settle from the current snapshot, while a page arriving after completed grace release SHALL join new physical rooms.
 
 This requirement SHALL add no success Toast, copy/duration masking, readiness or panel state, protocol field, public `ChatRoom` method, database schema/version, stored record shape, browser-specific business branch, or compatibility path. It SHALL NOT require `pageId` transport metadata, Provider callback re-registration, or another specific mechanism unless later evidence independently requires such a change.
 
@@ -66,11 +66,11 @@ This requirement SHALL add no success Toast, copy/duration masking, readiness or
 - **WHEN** a later page generation attaches and connects
 - **THEN** it SHALL create one new physical Chat room and one new physical World room through the existing join path and settle only its own connection request
 
-#### Scenario: Final retirement remains durable
+#### Scenario: Final release has no peer end phase
 
 - **GIVEN** an active domain begins final release after page connection success
-- **WHEN** durable retirement, SESSION_END, or cleanup rejects or remains unsettled
-- **THEN** the existing release failure and retry ownership SHALL remain authoritative, physical departure SHALL not bypass its required order, and active-persistence decoupling SHALL NOT convert final release into success
+- **WHEN** required local active-record cleanup rejects or remains unsettled
+- **THEN** the existing local release failure and retry ownership SHALL remain authoritative, active-persistence decoupling SHALL NOT convert final release into success, and no Chat end send, retry, settlement, cleanup marker, or peer-signal gate SHALL be created
 
 ### Requirement: Bootstrap errors do not block the panel shell
 

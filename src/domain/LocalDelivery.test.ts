@@ -4,7 +4,7 @@ import { Remesh } from 'remesh'
 import ChatRoomDomain from '@/domain/ChatRoom'
 import MessageListDomain from '@/domain/MessageList'
 import UserInfoDomain, { type UserInfo } from '@/domain/UserInfo'
-import { ChatRoomExtern, type ChatRoom } from '@/domain/externs/ChatRoom'
+import { ChatRoomExtern, type ChatRoom, type SendMessageCommand } from '@/domain/externs/ChatRoom'
 import { ReadinessExtern } from '@/domain/externs/Readiness'
 import type { Database } from '@/domain/externs/Database'
 import { createIndexedDBDatabase } from '@/domain/impls/database/IndexedDB'
@@ -87,7 +87,7 @@ const createPage = (database: Database<MessageDatabaseSchema>, nextId: () => str
   const chat: ChatRoom = {
     joinRoom: async () => {},
     leaveRoom: async () => {},
-    sendMessage: async (command) => {
+    sendMessage: (async (command: SendMessageCommand) => {
       const id = nextId()
       if (command.type === 'reaction') {
         const message = {
@@ -111,7 +111,7 @@ const createPage = (database: Database<MessageDatabaseSchema>, nextId: () => str
       const record = textRecord(id, command.body)
       await messageStore.insert(record)
       return record.message
-    },
+    }) as unknown as ChatRoom['sendMessage'],
     onMessage: (listener) => subscribe(listeners.message, listener),
     onJoinRoom: (listener) => subscribe(listeners.join, listener),
     onLeaveRoom: (listener) => subscribe(listeners.leave, listener),

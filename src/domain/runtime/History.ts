@@ -17,17 +17,12 @@ import {
 import {
   MAX_HISTORY_RESPONSE_MESSAGES,
   MESSAGE_TYPE,
-  isChatRoomMessageSemanticallyValid,
-  isHistoryPageFrameWithinLimit,
-  isMessageWithinLimit,
-  isUserWithinLimit,
   type ChatMessage,
   type ChatUser,
   type HLC,
-  type HistoryMessagesRequest,
-  type HistoryMessagesResponse
+  type HistoryMessagesPull,
+  type HistoryMessagesPush
 } from '@/protocol'
-import { WireCodecError } from '@/protocol'
 import { WireCodecExtern } from '@/domain/runtime/externs/RoomTransport'
 import { compareEventPosition, type ChatMessageRecord } from '@/domain/Message'
 import type { HistorySupplyRequest, HistoryFeedbackEvent } from '@/runtime/Contract'
@@ -52,7 +47,7 @@ interface RequesterAttemptState extends HistoryAttemptKey {
   cutoff: number
   inventoryIds: string[]
   /** Pre-built inventory pages (real codec encoded < 64KiB each); sent in order. */
-  inventoryPages: HistoryMessagesRequest[]
+  inventoryPages: HistoryMessagesPull[]
   nextInventoryPage: number
   expectedResponsePage: number
   responseBytes: number
@@ -65,7 +60,7 @@ interface RequesterAttemptState extends HistoryAttemptKey {
   /** Fingerprint of the last applied response page, so an identical replay is idempotent. */
   lastAppliedPageFingerprint?: string
   /** Bounded serial queue of valid response pages that arrived while a batch was pending. */
-  pendingResponsePages: HistoryMessagesResponse[]
+  pendingResponsePages: HistoryMessagesPush[]
   /** Page number of the next expected queued page (pages queue continuously, not only N+1). */
   queuedResponseTail: number
   feedbackActive: boolean
@@ -141,10 +136,13 @@ const feedbackOwnerId = (key: HistoryAttemptKey) =>
 /** Maximum length of the bounded serial response-page queue for one requester attempt. */
 const MAX_PENDING_RESPONSE_PAGES = 64
 
-const makeRecord = (message: ChatMessage, user: ChatUser, receivedAt: number): ChatMessageRecord => {
-  if (user.id !== message.userId) throw new Error('Chat record user does not match its message')
-  return { type: 'chat-message', id: message.id, message, user, receivedAt }
-}
+const makeRecord = (message: ChatMessage, user: ChatUser, receivedAt: number): ChatMessageRecord => ({
+  type: 'chat-message',
+  id: message.id,
+  message,
+  user,
+  receivedAt
+})
 
 const usersForRecords = (records: ChatMessageRecord[]): ChatUser[] => {
   const snapshots: { user: ChatUser; message: ChatMessage }[] = []
@@ -619,7 +617,7 @@ const HistoryDomain = Remesh.domain({
 
     const HandleInventoryPageCommand = domain.command({
       name: 'History.HandleInventoryPageCommand',
-      impl: ({ get }, payload: WireMessageEvent & { message: HistoryMessagesRequest }) => {
+      impl: ({ get }, payload: WireMessageEvent & { message: HistoryMessagesPull }) => {
         const binding = get(
           sessionDomain.query.BindingQuery({ roomId: payload.roomId, sourcePeerId: payload.sourcePeerId })
         )
@@ -643,12 +641,7 @@ const HistoryDomain = Remesh.domain({
             reason: 'history sync identity does not match the connection binding'
           })
         }
-        if (!isChatRoomMessageSemanticallyValid(payload.message, clock.now())) {
-          return wireDomain.command.DropProtocolCommand({
-            sourcePeerId: payload.sourcePeerId,
-            reason: 'invalid Chat message semantics'
-          })
-        }
+
         const providers = get(ProviderAttemptsState())
         const current = providers.find(
           (item) => item.sourcePeerId === payload.sourcePeerId && item.domain === binding.domain
@@ -1232,7 +1225,7 @@ const HistoryDomain = Remesh.domain({
         // Page from one combined ordered work list: the retained tail is never dropped.
         const tail = [...payload.records.slice(MAX_HISTORY_RESPONSE_MESSAGES), ...payload.remaining]
         const pageDone = payload.terminal && tail.length === 0
-        const response: HistoryMessagesResponse = {
+        const response: HistoryMessagesPush = {
           type: MESSAGE_TYPE.HISTORY_MESSAGES_PUSH,
           syncId: payload.syncId,
           page: current.nextResponsePage,
@@ -1366,13 +1359,13 @@ const HistoryDomain = Remesh.domain({
 
     const prepareResponsePage = (
       current: RequesterAttemptState,
-      payload: WireMessageEvent & { message: HistoryMessagesResponse }
+      payload: WireMessageEvent & { message: HistoryMessagesPush }
     ):
       | {
           ok: false
           action: ReturnType<typeof FinishRequestedEvent> | ReturnType<typeof wireDomain.command.DropProtocolCommand>
         }
-      | { ok: true; page: HistoryMessagesResponse } => {
+      | { ok: true; page: HistoryMessagesPush } => {
       if (current.responseDone) {
         return {
           ok: false,
@@ -1408,7 +1401,7 @@ const HistoryDomain = Remesh.domain({
 
     const ApplyResponsePageCommand = domain.command({
       name: 'History.ApplyResponsePageCommand',
-      impl: ({ get }, payload: WireMessageEvent & { message: HistoryMessagesResponse }) => {
+      impl: ({ get }, payload: WireMessageEvent & { message: HistoryMessagesPush }) => {
         const binding = get(
           sessionDomain.query.BindingQuery({ roomId: payload.roomId, sourcePeerId: payload.sourcePeerId })
         )
@@ -1425,12 +1418,7 @@ const HistoryDomain = Remesh.domain({
             reason: 'history sync already terminal for this connection'
           })
         }
-        if (!isChatRoomMessageSemanticallyValid(payload.message, clock.now())) {
-          return wireDomain.command.DropProtocolCommand({
-            sourcePeerId: payload.sourcePeerId,
-            reason: 'invalid Chat message semantics'
-          })
-        }
+
         const requesters = get(RequesterAttemptsState())
         const current = requesters.find(
           (item) => item.sourcePeerId === payload.sourcePeerId && item.domain === binding.domain
@@ -1504,8 +1492,9 @@ const HistoryDomain = Remesh.domain({
           if (event.hlc.timestamp < current.cutoff) {
             return FinishRequestedEvent({ domain: binding.domain, sourcePeerId: payload.sourcePeerId })
           }
-          const user = page.users.find((candidate) => candidate.id === event.userId)
-          if (!user) continue
+          const user =
+            page.users.find((candidate) => candidate.id === event.userId) ??
+            ({ id: event.userId, name: event.userId, avatar: '' } satisfies ChatUser)
           const observed = observeHlc(hlc, event.hlc, clock.now())
           if (!observed) continue
           hlc = observed
@@ -1605,8 +1594,9 @@ const HistoryDomain = Remesh.domain({
                   output.push(FinishRequestedEvent({ domain: current.domain, sourcePeerId: current.sourcePeerId }))
                   break
                 }
-                const user = page.users.find((candidate) => candidate.id === event.userId)
-                if (!user) continue
+                const user =
+                  page.users.find((candidate) => candidate.id === event.userId) ??
+                  ({ id: event.userId, name: event.userId, avatar: '' } satisfies ChatUser)
                 const observed = observeHlc(hlc, event.hlc, clock.now())
                 if (!observed) continue
                 hlc = observed
@@ -1817,7 +1807,7 @@ const HistoryDomain = Remesh.domain({
               // the final 64KiB encoded frame. NativeWireCodec throws on an oversized frame, so the
               // throw closes the current bucket; only a single ID that cannot form a valid page by
               // itself cancels the attempt locally.
-              const pages: HistoryMessagesRequest[] = []
+              const pages: HistoryMessagesPull[] = []
               let bucket: string[] = []
               const encodeFrame = async (messageIds: string[], done: boolean) => {
                 const frame = {
@@ -1827,12 +1817,9 @@ const HistoryDomain = Remesh.domain({
                   messageIds,
                   done
                 }
-                // A codec rejection closes the bucket; a frame that encodes to exactly 65,536 bytes
-                // also fails the strict History predicate (isHistoryPageFrameWithinLimit) and must not
-                // be treated as a fitting page.
-                const encoded = await codec.encode(frame)
-                if (!isHistoryPageFrameWithinLimit(encoded))
-                  throw new WireCodecError('History page reached the wire limit')
+                // The codec's uniform encoded-frame bound is the only representation check: a
+                // rejection closes the current bucket.
+                await codec.encode(frame)
                 return frame
               }
               for (const id of inventoryIds) {
@@ -1900,7 +1887,7 @@ const HistoryDomain = Remesh.domain({
       impl: ({ fromEvent }) =>
         fromEvent(wireDomain.event.MessageAcceptedEvent).pipe(
           filter(
-            (event): event is WireMessageEvent & { message: HistoryMessagesRequest } =>
+            (event): event is WireMessageEvent & { message: HistoryMessagesPull } =>
               'type' in event.message && event.message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL
           ),
           map(HandleInventoryPageCommand)
@@ -1911,7 +1898,7 @@ const HistoryDomain = Remesh.domain({
       impl: ({ fromEvent }) =>
         fromEvent(wireDomain.event.MessageAcceptedEvent).pipe(
           filter(
-            (event): event is WireMessageEvent & { message: HistoryMessagesResponse } =>
+            (event): event is WireMessageEvent & { message: HistoryMessagesPush } =>
               'type' in event.message && event.message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH
           ),
           map(ApplyResponsePageCommand)
@@ -1987,8 +1974,6 @@ const HistoryDomain = Remesh.domain({
                 if (known.has(record.message.id)) continue
                 if (eligible.length >= historySessionMessages || decodedBytes >= historySessionBytes) break
                 if (record.message.hlc.timestamp < attempt.cutoff) continue
-                if (record.id !== record.message.id || record.user.id !== record.message.userId) continue
-                if (!isMessageWithinLimit(record.message) || !isUserWithinLimit(record.user)) continue
                 const bytes = getTextByteSize(JSON.stringify(record.message))
                 if (decodedBytes + bytes > historySessionBytes) break
                 decodedBytes += bytes
