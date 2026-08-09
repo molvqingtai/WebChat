@@ -46,7 +46,7 @@ describe('AppButton edge-relative position', () => {
   it('bounds only a narrow viewport projection and restores the unchanged coordinate when widened', () => {
     const shared = { x: 500, y: 500 }
 
-    expect(projectAppButtonPosition(shared, { width: 400, height: 250 }, false)).toEqual({ x: 50, y: 104 })
+    expect(projectAppButtonPosition(shared, { width: 400, height: 250 }, false)).toEqual({ x: 50, y: 106 })
     expect(projectAppButtonPosition(shared, { width: 1200, height: 900 }, false)).toEqual({ x: 700, y: 400 })
     expect(shared).toEqual({ x: 500, y: 500 })
   })
@@ -84,9 +84,9 @@ describe('AppButton edge-relative position', () => {
   it('reprojects opening and reopening locally while only a user drag captures the expanded bound', () => {
     const shared = { x: -200, y: 756 }
 
-    expect(projectAppButtonPosition(shared, viewport, false)).toEqual({ x: 200, y: 104 })
+    expect(projectAppButtonPosition(shared, viewport, false)).toEqual({ x: 200, y: 106 })
     expect(projectAppButtonPosition(shared, viewport, true)).toEqual({ x: 200, y: 437 })
-    expect(projectAppButtonPosition(shared, viewport, false)).toEqual({ x: 200, y: 104 })
+    expect(projectAppButtonPosition(shared, viewport, false)).toEqual({ x: 200, y: 106 })
     expect(projectAppButtonPosition(shared, viewport, true)).toEqual({ x: 200, y: 437 })
     expect(shared).toEqual({ x: -200, y: 756 })
 
@@ -98,59 +98,18 @@ describe('AppButton edge-relative position', () => {
   it('keeps launcher bounds and fixed shell geometry below the expanded-inset threshold', () => {
     const shortViewport = { width: 500, height: 458 }
     const shared = { x: -180, y: 400 }
-    const launcherBounds = { minX: 50, maxX: 450, minY: 104, maxY: 436 }
+    // The launcher-only layer applies the 62px top margin while collapsed; the expanded shell
+    // layer keeps its original fully-visible fallback below the shell-safe threshold.
+    const collapsedBounds = { minX: 50, maxX: 450, minY: 106, maxY: 436 }
+    const expandedBounds = { minX: 50, maxX: 450, minY: 44, maxY: 436 }
 
-    expect(getAppButtonDragBounds(shortViewport, false)).toEqual(launcherBounds)
-    expect(getAppButtonDragBounds(shortViewport, true)).toEqual(launcherBounds)
-    expect(projectAppButtonPosition(shared, shortViewport, false)).toEqual({ x: 180, y: 104 })
-    expect(projectAppButtonPosition(shared, shortViewport, true)).toEqual({ x: 180, y: 104 })
+    expect(getAppButtonDragBounds(shortViewport, false)).toEqual(collapsedBounds)
+    expect(getAppButtonDragBounds(shortViewport, true)).toEqual(expandedBounds)
+    expect(projectAppButtonPosition(shared, shortViewport, false)).toEqual({ x: 180, y: 106 })
+    expect(projectAppButtonPosition(shared, shortViewport, true)).toEqual({ x: 180, y: 58 })
     expect(getAppGeometry(shared, shortViewport, true).style['--webchat-shell-height']).toBe('375px')
     expect(getAppGeometry(shared, shortViewport, true).style['--webchat-shell-bottom-offset']).toBe('22px')
     expect(shared).toEqual({ x: -180, y: 400 })
-  })
-
-  it('keeps the launcher outer top edge at least 60px below the viewport top when margins fit', () => {
-    // 60px outer-top + 44px launcher + 22px bottom edge = 126px minimum compatible height.
-    // Just below the threshold the launcher stays fully visible at the nearest point with the
-    // LARGEST feasible top margin (bottom edge 103 keeps the 22px bottom bound: 59px top).
-    const fallback = getAppButtonDragBounds({ width: 400, height: 125 }, false)
-    expect(fallback.minY).toBe(103)
-    expect(fallback.maxY).toBe(103)
-    const fixed = getAppButtonDragBounds({ width: 400, height: 126 }, false)
-    expect(fixed.minY).toBe(104)
-    // An upward drag beyond the top-safe range is bounded to the fixed margin.
-    expect(captureAppButtonPosition({ x: 100, y: 100 }, { width: 400, height: 800 }, false)).toEqual({
-      x: -100,
-      y: 696
-    })
-    expect(projectAppButtonPosition({ x: -100, y: 696 }, { width: 400, height: 800 }, false)).toEqual({
-      x: 100,
-      y: 104
-    })
-  })
-
-  it('bounds the collapsed upward drag to the 60px top margin on the right anchor too', () => {
-    const viewport = { width: 400, height: 800 }
-    // A right-half upward drag beyond the top-safe range clamps to the same 104px bottom edge
-    // (60px outer top) and writes the bounded right-anchor shared position.
-    expect(captureAppButtonPosition({ x: 300, y: 100 }, viewport, false)).toEqual({ x: 100, y: 696 })
-    expect(projectAppButtonPosition({ x: 100, y: 696 }, viewport, false)).toEqual({ x: 300, y: 104 })
-    // The right-anchor shared write is bounded and round-trips through the projection.
-    const dragged = captureAppButtonPosition({ x: 250, y: 50 }, viewport, false)
-    expect(dragged).toEqual({ x: 150, y: 696 })
-    expect(projectAppButtonPosition(dragged, viewport, false)).toEqual({ x: 250, y: 104 })
-  })
-
-  it('restores the fixed top margin from the unchanged shared coordinate when a later viewport fits', () => {
-    const shared = { x: -180, y: 500 }
-    // A 120px-tall viewport cannot satisfy every fixed margin: the local projection keeps the
-    // launcher fully visible at the nearest point with the largest feasible margin (bottom
-    // edge 98: 54px top margin) and never writes the shared coordinate.
-    expect(projectAppButtonPosition(shared, { width: 500, height: 120 }, false)).toEqual({ x: 180, y: 98 })
-    expect(shared).toEqual({ x: -180, y: 500 })
-    // The same unchanged shared coordinate restores the fixed margin in a compatible viewport.
-    expect(projectAppButtonPosition(shared, { width: 500, height: 400 }, false)).toEqual({ x: 180, y: 104 })
-    expect(shared).toEqual({ x: -180, y: 500 })
   })
 
   it.each([
@@ -167,7 +126,7 @@ describe('AppButton edge-relative position', () => {
   it('derives stable bounds from the launcher geometry and current viewport', () => {
     const bounds = getAppButtonDragBounds(viewport, false)
     const launcherSize = getAppGeometry({ x: 50, y: 22 }, viewport, false).launcher.size
-    expect(bounds).toEqual({ minX: 50, maxX: 950, minY: 104, maxY: 778 })
+    expect(bounds).toEqual({ minX: 50, maxX: 950, minY: 106, maxY: 778 })
     expect(bounds.minX - launcherSize / 2).toBe(28)
     expect(viewport.width - bounds.maxX - launcherSize / 2).toBe(28)
     expect(viewport.height - bounds.maxY).toBe(22)

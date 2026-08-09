@@ -3,7 +3,7 @@ import { clamp } from '@/utils'
 
 const APP_BUTTON_SIZE = 44
 const APP_BUTTON_RADIUS = APP_BUTTON_SIZE / 2
-const APP_BUTTON_TOP_MARGIN = 60
+const APP_BUTTON_TOP_MARGIN = 62
 const APP_BUTTON_MINIMUM_BOTTOM_EDGE = APP_BUTTON_TOP_MARGIN + APP_BUTTON_SIZE
 const APP_BUTTON_HORIZONTAL_CENTER_MARGIN = 50
 const APP_SHELL_TOP_INSET = 40
@@ -53,10 +53,20 @@ export const getAppButtonDragBounds = ({ width, height }: ViewportSize, expanded
   // every fixed margin still keeps the launcher fully visible at the nearest point with the
   // LARGEST feasible top margin; an expanded shell-safe bound remains authoritative when it
   // places the launcher farther from the top.
-  const minimumBottomEdge =
-    expanded && maximumBottomEdge >= APP_SHELL_MINIMUM_LAUNCHER_BOTTOM_EDGE
+  // Two independent layers in the one geometry owner:
+  // - Launcher-only (collapsed): the 62px outer-top margin (bottom edge 106px) requested
+  //   whenever the viewport can contain the launcher, capped by the existing bottom bound so a
+  //   viewport that cannot satisfy every fixed margin keeps the launcher fully visible at the
+  //   nearest point with the LARGEST feasible top margin. Shell height is never read here.
+  // - Expanded shell layer: the existing shell-safe bound remains authoritative when it places
+  //   the launcher farther from the top; below that threshold the expanded fallback stays the
+  //   original fully-visible bound, so expanded placement is unchanged by the collapsed value.
+  const collapsedMinimumBottomEdge = Math.min(APP_BUTTON_MINIMUM_BOTTOM_EDGE, maximumBottomEdge)
+  const minimumBottomEdge = expanded
+    ? maximumBottomEdge >= APP_SHELL_MINIMUM_LAUNCHER_BOTTOM_EDGE
       ? APP_SHELL_MINIMUM_LAUNCHER_BOTTOM_EDGE
-      : Math.min(APP_BUTTON_MINIMUM_BOTTOM_EDGE, maximumBottomEdge)
+      : launcherMinimumBottomEdge
+    : collapsedMinimumBottomEdge
   return {
     minX: horizontalInset,
     maxX: width - horizontalInset,
