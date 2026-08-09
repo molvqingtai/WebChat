@@ -1,3 +1,9 @@
+## [2.4.6](https://github.com/molvqingtai/WebChat/compare/v2.4.5...v2.4.6) (2026-08-09)
+
+### Bug Fixes
+
+- **runtime:** extend recovery cadences for peer restart and lease retry ([d5b9661](https://github.com/molvqingtai/WebChat/commit/d5b96619279757c2f207f17894137f14ef186c46))
+
 ## [2.4.5](https://github.com/molvqingtai/WebChat/compare/v2.4.4...v2.4.5) (2026-08-09)
 
 ### Bug Fixes
