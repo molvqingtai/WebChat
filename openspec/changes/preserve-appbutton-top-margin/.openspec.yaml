@@ -1,4 +1,4 @@
 schema: spec-driven
 created: 2026-08-09
-goal: Keep the dragged AppButton at least 60px below the viewport top without
+goal: Keep the dragged AppButton at least 62px below the viewport top without
   changing its other placement or motion behavior.
