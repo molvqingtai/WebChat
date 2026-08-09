@@ -48,11 +48,6 @@ export const getAppButtonDragBounds = ({ width, height }: ViewportSize, expanded
   const horizontalInset = Math.min(APP_BUTTON_HORIZONTAL_CENTER_MARGIN, width / 2)
   const launcherMinimumBottomEdge = Math.min(APP_BUTTON_SIZE, height)
   const maximumBottomEdge = Math.max(launcherMinimumBottomEdge, height - APP_BUTTON_RADIUS)
-  // The fixed 60px outer-top margin (bottom edge 104px) is requested whenever the viewport can
-  // contain the launcher, capped by the existing bottom bound: a viewport that cannot satisfy
-  // every fixed margin still keeps the launcher fully visible at the nearest point with the
-  // LARGEST feasible top margin; an expanded shell-safe bound remains authoritative when it
-  // places the launcher farther from the top.
   // Two independent layers in the one geometry owner:
   // - Launcher-only (collapsed): the 62px outer-top margin (bottom edge 106px) requested
   //   whenever the viewport can contain the launcher, capped by the existing bottom bound so a
