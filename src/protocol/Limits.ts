@@ -20,10 +20,3 @@ export const MAX_USER_BYTES = 8 * 1024
 
 /** Count and encoded-byte limits jointly bound responses containing many small messages. */
 export const MAX_HISTORY_RESPONSE_MESSAGES = 100
-
-const getByteSize = (value: string): number => new TextEncoder().encode(value).byteLength
-
-export const isWireFrameWithinLimit = (value: string): boolean => getByteSize(value) <= MAX_WIRE_BYTES
-
-/** History request and response pages stay below the ceiling so paged frames retain framing headroom. */
-export const isHistoryPageFrameWithinLimit = (value: string): boolean => getByteSize(value) < MAX_WIRE_BYTES

@@ -5,6 +5,16 @@ import { describe, expect, it } from 'vitest'
 const PROTOCOL_ROOT = path.resolve(import.meta.dirname)
 const CONFIG_PATH = path.resolve(PROTOCOL_ROOT, '../constants/config.ts')
 const PUBLIC_FILES = ['ChatRoom.ts', 'Limits.ts', 'Session.ts', 'WireCodec.ts', 'WorldRoom.ts', 'index.ts']
+const FORBIDDEN_VALIDATORS = [
+  'parseChatRoomMessage',
+  'parseWorldRoomMessage',
+  'checkChatRoomMessage',
+  'checkWorldRoomMessage',
+  'isUserWithinLimit',
+  'isMessageWithinLimit',
+  'isHLCInRange',
+  'isChatRoomMessageSemanticallyValid'
+]
 const FORBIDDEN_SYMBOLS = [
   'LocalRecord',
   'DurableEventRecord',
@@ -76,7 +86,76 @@ describe('public protocol source boundary', () => {
     }
   })
 
-  it('exports only peer definitions, limits, validators, and the reference codec', async () => {
+  it('derives every public type from its owning schema with no handwritten duplicate', async () => {
+    const sources = await Promise.all(
+      PUBLIC_FILES.map(async (file) => [file, await readFile(path.join(PROTOCOL_ROOT, file), 'utf8')] as const)
+    )
+    for (const [file, source] of sources) {
+      // No handwritten interface or standalone structural type may describe a protocol value
+      // (WireCodec is an ordinary non-message API declaration, not a protocol data type).
+      if (file !== 'WireCodec.ts') {
+        expect(source, `${file} declares a handwritten interface`).not.toMatch(/export interface/)
+      }
+      // Every exported type is inferred from its owning schema output.
+      expect(source, `${file} has a non-inferred export type`).not.toMatch(
+        /export type [A-Za-z0-9_]+ = (?!v\.InferOutput)/
+      )
+      // No post-parse validator, output cast, schema factory, or executable callback may finish
+      // validation after schema parsing (declarative Valibot primitives only).
+      for (const validator of FORBIDDEN_VALIDATORS) {
+        expect(source, `${file} retains validator ${validator}`).not.toContain(validator)
+      }
+      expect(source, `${file} uses an executable callback predicate`).not.toMatch(
+        /v\.(?:check|partialCheck|rawCheck|custom|transform)\b/
+      )
+      expect(source, `${file} casts schema output`).not.toMatch(
+        /as (?:ChatRoomMessage|ChatMessage|WorldRoomMessage|ChatUser|ChatSession|HLC)\b/
+      )
+    }
+  })
+
+  it('has no caller-side protocol revalidation or output casts in the runtime graph', async () => {
+    const runtimeFiles = [
+      'src/app/content/index.tsx',
+      'src/domain/ChatRoom.ts',
+      'src/domain/MessageList.ts',
+      'src/domain/MessageProjection.ts',
+      'src/domain/MessageStore.ts',
+      'src/domain/externs/ChatRoom.ts',
+      'src/domain/impls/runtime/ChatRoom.ts',
+      'src/domain/runtime/History.ts',
+      'src/domain/runtime/Session.ts',
+      'src/runtime/Contract.ts',
+      'src/runtime/PresenceStore.ts',
+      'src/runtime/Server.ts'
+    ]
+    const forbidden = [
+      'Chat record user does not match its message',
+      'ChatRoom returned an invalid local text message',
+      'existing as MessageRecord',
+      'if (!user) continue',
+      'record.user.id !== record.message.userId',
+      'record.id !== record.message.id',
+      'as TextMessageRecord',
+      'as ReactionMessageRecord',
+      'sanitizeSite',
+      'projectChatUser',
+      'parsePresenceRecord',
+      // The v5 Chat protocol has no end surface: no end message, end schema, end union member,
+      // end alias, or receiver end handler may exist in the runtime graph.
+      'SESSION_END',
+      'session-end',
+      'SessionEnd'
+    ]
+    for (const file of runtimeFiles) {
+      const source = await readFile(path.resolve(import.meta.dirname, `../../${file}`), 'utf8')
+      for (const pattern of forbidden) {
+        expect(source, `${file} retains forbidden caller-side check ${pattern}`).not.toContain(pattern)
+      }
+    }
+  })
+
+  it('exports only peer definitions, limits, schemas, inferred types, and the reference codec', async () => {
     const entry = await readFile(path.join(PROTOCOL_ROOT, 'index.ts'), 'utf8')
     expect(entry.trim().split('\n')).toEqual([
       "export * from './Limits'",

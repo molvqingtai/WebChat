@@ -1,5 +1,5 @@
 import { Remesh } from 'remesh'
-import { concatMap, filter, map } from 'rxjs'
+import { concatMap, filter, map, mergeMap, Observable } from 'rxjs'
 import DeliveryDomain from '@/domain/runtime/Delivery'
 import WireDomain, { type WireFailureStage, type WireMessageEvent } from '@/domain/runtime/Wire'
 import { ClockExtern } from '@/domain/runtime/externs/Clock'
@@ -11,19 +11,8 @@ import {
   type ObservedPresence,
   type PresenceDomainRecord
 } from '@/domain/runtime/externs/PresenceStore'
-import { CHAT_ROOM_NAMESPACE_V4 } from '@/constants/config'
-import {
-  MESSAGE_TYPE,
-  isChatRoomMessageSemanticallyValid,
-  isHLCInRange,
-  parseChatRoomMessage,
-  parseWorldRoomMessage,
-  type ChatMessage,
-  type HLC,
-  type MentionedUser,
-  type ChatSite,
-  type ChatUser
-} from '@/protocol'
+import { CHAT_ROOM_NAMESPACE_V5, PENDING_LEAVE_GRACE_MS } from '@/constants/config'
+import { MESSAGE_TYPE, type ChatMessage, type HLC, type MentionedUser, type ChatSite, type ChatUser } from '@/protocol'
 import {
   MESSAGE_RECORD_TYPE,
   type ChatMessageRecord,
@@ -56,6 +45,10 @@ interface PreparedSession {
   runtime: SessionDomainState
   observers: ObservedPresence[]
   isNewPresence: boolean
+  /** (presenceId, sourcePeerId) rebinds whose pending-leave deadlines this attempt may cancel on commit. */
+  reboundBindings: Array<{ presenceId: string; sourcePeerId: string }>
+  /** Unprotected same-source bindings this attempt displaced (rollback/supersession transfers none). */
+  displacedBindings: SessionBinding[]
   publishRequestId?: string
   /** Frozen distinct publication targets still awaiting their single send. */
   publishPendingTargets: string[]
@@ -68,9 +61,21 @@ interface PendingBaselinePeers {
   sourcePeerIds: string[]
 }
 
-interface DepartedBinding {
+/** One observer-side pending-leave deadline per remote presence (idempotent duplicates). */
+interface PendingLeave {
   domain: string
-  binding: SessionBinding
+  presenceId: string
+  /** The departed physical source whose session entry stays visible throughout the grace. */
+  sourcePeerId: string
+  sessionId: string
+  user: ChatUser
+  joinedAt: number
+  /** Distinguishes this armed deadline instance so stale timers are fenced after a rebind. */
+  armedId: string
+  /** Release-fenced: expiry effects are suspended but the record still closes authority. */
+  fenced: boolean
+  /** Absolute expiry (Date.now() based): restoration resumes only the unelapsed remainder. */
+  expiresAt: number
 }
 
 interface PendingChatSend {
@@ -88,15 +93,21 @@ interface PendingChatSend {
 interface LiveRelease {
   domain: string
   roomId: string
-  presenceId: string
-  userId: string
-  joinedAt: number
-  requestId: string
 }
 
 export interface SessionOperationSucceeded {
   operationId: string
-  record?: ChatMessageRecord
+}
+
+/** Typed allocation-success payloads: the exact record variant is the boundary contract. */
+export interface TextMessageAllocatedEventPayload {
+  operationId: string
+  record: TextMessageRecord
+}
+
+export interface ReactionMessageAllocatedEventPayload {
+  operationId: string
+  record: ReactionMessageRecord
 }
 
 export interface SessionOperationFailed {
@@ -110,7 +121,7 @@ export interface SessionFailure {
   domain?: string
 }
 
-const getChatRoomId = (domain: string): string => stringToHex(`${CHAT_ROOM_NAMESPACE_V4}:${domain}`)
+const getChatRoomId = (domain: string): string => stringToHex(`${CHAT_ROOM_NAMESPACE_V5}:${domain}`)
 const replaceBy = <T>(items: T[], predicate: (item: T) => boolean, next: T): T[] =>
   items.some(predicate) ? items.map((item) => (predicate(item) ? next : item)) : [...items, next]
 const removeBy = <T>(items: T[], predicate: (item: T) => boolean): T[] => items.filter((item) => !predicate(item))
@@ -132,27 +143,6 @@ const hasActiveUserPresence = (observations: ObservedPresence[], userId: string,
       observation.status === 'active' && observation.user.id === userId && observation.presenceId !== exceptPresenceId
   )
 
-const optionalSiteField = (value: unknown, maxLength: number): string | undefined =>
-  typeof value === 'string' && value.length <= maxLength ? value : undefined
-
-const sanitizeSite = (site: ChatSite): ChatSite => {
-  const title = optionalSiteField(site.title, 512)
-  const icon = optionalSiteField(site.icon, 16 * 1024)
-  const description = optionalSiteField(site.description, 2048)
-  return {
-    origin: site.origin,
-    ...(title ? { title } : {}),
-    ...(icon ? { icon } : {}),
-    ...(description ? { description } : {})
-  }
-}
-
-const projectChatUser = (value: unknown): unknown => {
-  if (typeof value !== 'object' || value === null) return value
-  const user = value as Record<keyof ChatUser, unknown>
-  return { id: user.id, name: user.name, avatar: user.avatar }
-}
-
 export const allocateHlc = (current: HLC, now: number): HLC => {
   if (now > current.timestamp) return { timestamp: now, counter: 0 }
   const counter = current.counter + 1
@@ -160,8 +150,7 @@ export const allocateHlc = (current: HLC, now: number): HLC => {
   return { timestamp: current.timestamp, counter }
 }
 
-export const adoptHlc = (current: HLC, remote: HLC, now: number): HLC | null => {
-  if (!isHLCInRange(remote, now)) return null
+export const adoptHlc = (current: HLC, remote: HLC): HLC | null => {
   return remote.timestamp > current.timestamp ||
     (remote.timestamp === current.timestamp && remote.counter > current.counter)
     ? { ...remote }
@@ -169,7 +158,6 @@ export const adoptHlc = (current: HLC, remote: HLC, now: number): HLC | null => 
 }
 
 export const observeHlc = (current: HLC, remote: HLC, now: number): HLC | null => {
-  if (!isHLCInRange(remote, now)) return null
   const timestamp = Math.max(now, current.timestamp, remote.timestamp)
   if (timestamp === now && now > current.timestamp && now > remote.timestamp) {
     return { timestamp: now, counter: 0 }
@@ -180,16 +168,36 @@ export const observeHlc = (current: HLC, remote: HLC, now: number): HLC | null =
   return Number.isSafeInteger(counter) ? { timestamp, counter } : null
 }
 
+/** The source's CURRENT binding: the first entry not retained by a pending-leave record. */
+const currentBindingForSource = (
+  runtime: SessionDomainState,
+  sourcePeerId: string,
+  pendingLeaves: PendingLeave[]
+): SessionBinding | undefined =>
+  runtime.sessions.find(
+    (item) =>
+      item.sourcePeerId === sourcePeerId &&
+      !pendingLeaves.some(
+        (leave) =>
+          leave.domain === runtime.domain &&
+          leave.sourcePeerId === item.sourcePeerId &&
+          leave.presenceId === item.presenceId
+      )
+  )
+
 const projectRuntimeSession = ({ presenceId: _presenceId, ...session }: SessionBinding): RuntimeSession => session
 const snapshot = (runtime: SessionDomainState): RuntimeSessionSnapshot => ({
   localSession: { sessionId: runtime.sessionId, user: runtime.user, joinedAt: runtime.joinedAt },
   sessions: runtime.sessions.map(projectRuntimeSession)
 })
 
-const makeRecord = (message: ChatMessage, user: ChatUser, receivedAt: number): ChatMessageRecord => {
-  if (user.id !== message.userId) throw new Error('Chat record user does not match its message')
-  return { type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE, id: message.id, message, user, receivedAt }
-}
+const makeRecord = (message: ChatMessage, user: ChatUser, receivedAt: number): ChatMessageRecord => ({
+  type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE,
+  id: message.id,
+  message,
+  user,
+  receivedAt
+})
 
 const initialRequestId = (attemptId: string) => `session:initial:${attemptId}`
 const publishTargetRequestId = (requestId: string, target: string) => `${requestId}:${target}`
@@ -198,7 +206,6 @@ const publishedTarget = (prepared: { publishRequestId?: string }, requestId: str
 const catchUpRequestId = (attemptId: string, sourcePeerId: string) => `session:catch-up:${attemptId}:${sourcePeerId}`
 const chatRequestId = (operationId: string) => `session:chat:${operationId}`
 const chatTargetRequestId = (requestId: string, target: string) => `${requestId}:${target}`
-const endRequestId = (presenceId: string) => `session:end:${presenceId}`
 /** Extracts the exact domain from identity/catch-up send request ids, when structurally present. */
 const backgroundSendDomain = (requestId: string): string | undefined => {
   if (requestId.startsWith('session:peer:')) {
@@ -213,7 +220,6 @@ const backgroundSendDomain = (requestId: string): string | undefined => {
   }
   return undefined
 }
-const RELEASE_END_RETRY_INTERVAL_MS = 5000
 const retainedLocalLifecycle = (record: PresenceDomainRecord | undefined) =>
   record?.local ? { local: record.local } : {}
 
@@ -241,8 +247,8 @@ const SessionDomain = Remesh.domain({
       name: 'Session.PresenceDomainsState',
       default: []
     })
-    const DepartedBindingsState = domain.state<DepartedBinding[]>({
-      name: 'Session.DepartedBindingsState',
+    const PendingLeavesState = domain.state<PendingLeave[]>({
+      name: 'Session.PendingLeavesState',
       default: []
     })
     const LiveReleasesState = domain.state<LiveRelease[]>({
@@ -288,8 +294,22 @@ const SessionDomain = Remesh.domain({
       name: 'Session.BindingQuery',
       impl: ({ get }, payload: { roomId: string; sourcePeerId: string }) => {
         const runtime = get(DomainsState()).find((item) => item.roomId === payload.roomId)
-        const session = runtime?.sessions.find((item) => item.sourcePeerId === payload.sourcePeerId)
-        return runtime && session ? { domain: runtime.domain, runtime, session } : null
+        if (!runtime) return null
+        // A source may carry a current presence plus a grace-preserved one: the current binding
+        // is the entry NOT retained by a pending-leave record (a grace-only source is not
+        // current physical authority; a fresh presence on the same source stays trusted).
+        const pendingLeaves = get(PendingLeavesState())
+        const session = runtime.sessions.find(
+          (item) =>
+            item.sourcePeerId === payload.sourcePeerId &&
+            !pendingLeaves.some(
+              (leave) =>
+                leave.domain === runtime.domain &&
+                leave.sourcePeerId === item.sourcePeerId &&
+                leave.presenceId === item.presenceId
+            )
+        )
+        return session ? { domain: runtime.domain, runtime, session } : null
       }
     })
 
@@ -316,11 +336,19 @@ const SessionDomain = Remesh.domain({
     const DomainReleaseFailedEvent = domain.event<{ domain: string; error: Error }>({
       name: 'Session.DomainReleaseFailedEvent'
     })
-    const ReleaseEndRetryRequestedEvent = domain.event<{ requestId: string }>({
-      name: 'Session.ReleaseEndRetryRequestedEvent'
-    })
     const PersistPresenceRequestedEvent = domain.event<{ record: PresenceDomainRecord }>({
       name: 'Session.PersistPresenceRequestedEvent'
+    })
+    const ClearActivePresenceRequestedEvent = domain.event<{ domain: string }>({
+      name: 'Session.ClearActivePresenceRequestedEvent'
+    })
+    const PendingLeaveArmedEvent = domain.event<{
+      domain: string
+      presenceId: string
+      armedId: string
+      delayMs: number
+    }>({
+      name: 'Session.PendingLeaveArmedEvent'
     })
     const RuntimeSessionChangedEvent = domain.event<RuntimeSessionEvent>({
       name: 'Session.RuntimeSessionChangedEvent'
@@ -333,6 +361,14 @@ const SessionDomain = Remesh.domain({
     })
     const OperationSucceededEvent = domain.event<SessionOperationSucceeded>({
       name: 'Session.OperationSucceededEvent'
+    })
+    // Typed allocation successes: the record variant is exact, so the Session-to-Server path
+    // needs no value assertion below the public contract.
+    const TextMessageAllocatedEvent = domain.event<TextMessageAllocatedEventPayload>({
+      name: 'Session.TextMessageAllocatedEvent'
+    })
+    const ReactionMessageAllocatedEvent = domain.event<ReactionMessageAllocatedEventPayload>({
+      name: 'Session.ReactionMessageAllocatedEvent'
     })
     const OperationFailedEvent = domain.event<SessionOperationFailed>({ name: 'Session.OperationFailedEvent' })
     const ErrorEvent = domain.event<SessionFailure>({ name: 'Session.ErrorEvent' })
@@ -367,19 +403,16 @@ const SessionDomain = Remesh.domain({
         let user: ChatUser
         let site: ChatSite
         if (payload.mode === 'join') {
-          site = sanitizeSite(payload.site!)
-          const valid = parseWorldRoomMessage({
-            sessionId: 'validation',
-            user: projectChatUser(payload.user),
-            sites: [site]
-          })
-          if (!valid || site.origin !== payload.domain) {
+          site = payload.site!
+          user = payload.user!
+          // Local identity authorization: the joined site must belong to the domain. Protocol
+          // shape is not validated here (local production trusts its typed inputs).
+          if (site.origin !== payload.domain) {
             return PreparationFailedEvent({
               attemptId: payload.attemptId,
               error: new Error('Invalid local identity or site metadata')
             })
           }
-          user = valid.user
         } else {
           user = current!.user
           site = current!.site
@@ -416,6 +449,8 @@ const SessionDomain = Remesh.domain({
           runtime,
           observers: priorPrepared?.observers ?? presence?.observers ?? [],
           isNewPresence: !current && local.status === 'pending',
+          reboundBindings: priorPrepared?.reboundBindings ?? [],
+          displacedBindings: priorPrepared?.displacedBindings ?? [],
           publishPendingTargets: [],
           missedPeerIds: [],
           baselinePeerIds: []
@@ -596,9 +631,60 @@ const SessionDomain = Remesh.domain({
                 sourcePeerIds
               })
             : removeBy(baselines, (item) => item.domain === prepared.runtime.domain)
+        // Atomic commit: promote the attempt's runtime and cancel ONLY the pending-leave
+        // deadlines this attempt actually rebound and still holds current sources for. Prior
+        // committed sessions are retained only when a current pending-leave record preserves
+        // that logical generation and the attempt has no session for the same presence (a
+        // different presence on the same source is NOT a reason to erase the graced generation).
+        const pendingLeaves = get(PendingLeavesState())
+        // One final transition per logical user: displaced bindings whose user keeps no other
+        // active or grace-preserved observation collapse to a single per-user fact.
+        const commitDisplacedLeaves = [
+          ...new Map(
+            prepared.displacedBindings
+              .filter(
+                (displaced) =>
+                  !prepared.observers.some(
+                    (observation) =>
+                      observation.status === 'active' &&
+                      observation.user.id === displaced.user.id &&
+                      observation.presenceId !== displaced.presenceId
+                  )
+              )
+              .map((displaced) => [displaced.user.id, displaced])
+          ).values()
+        ]
+        const promotedRuntime: SessionDomainState = {
+          ...prepared.runtime,
+          sessions: [
+            ...prepared.runtime.sessions,
+            ...(previous?.sessions ?? []).filter(
+              (current) =>
+                pendingLeaves.some(
+                  (leave) => leave.domain === prepared.runtime.domain && leave.presenceId === current.presenceId
+                ) && !prepared.runtime.sessions.some((session) => session.presenceId === current.presenceId)
+            )
+          ]
+        }
         return [
-          DomainsState().new(replaceBy(domains, (item) => item.domain === prepared.runtime.domain, prepared.runtime)),
+          DomainsState().new(replaceBy(domains, (item) => item.domain === prepared.runtime.domain, promotedRuntime)),
           PreparedSessionsState().new(removeBy(get(PreparedSessionsState()), (item) => item.attemptId === attemptId)),
+          PendingLeavesState().new(
+            pendingLeaves.filter(
+              (item) =>
+                !(
+                  item.domain === prepared.runtime.domain &&
+                  prepared.reboundBindings.some(
+                    (rebind) =>
+                      rebind.presenceId === item.presenceId &&
+                      prepared.runtime.sessions.some(
+                        (session) =>
+                          session.sourcePeerId === rebind.sourcePeerId && session.presenceId === item.presenceId
+                      )
+                  )
+                )
+            )
+          ),
           PendingBaselinePeersState().new(nextBaselines),
           PresenceDomainsState().new(
             replaceBy(presenceDomains, (item) => item.domain === prepared.runtime.domain, presence)
@@ -607,7 +693,7 @@ const SessionDomain = Remesh.domain({
           RuntimeSessionChangedEvent({
             type: 'snapshot',
             domain: prepared.runtime.domain,
-            snapshot: snapshot(prepared.runtime),
+            snapshot: snapshot(promotedRuntime),
             // Only a newly allocated logical presence owns a local self-notice.
             provenance: prepared.isNewPresence
               ? 'join'
@@ -617,15 +703,58 @@ const SessionDomain = Remesh.domain({
                   ? 'recovery'
                   : 'refresh'
           }),
-          ...laterJoins.map((session) =>
-            RuntimeSessionChangedEvent({
-              type: 'join',
-              domain: prepared.runtime.domain,
-              snapshot: snapshot(prepared.runtime),
-              session: projectRuntimeSession(session),
-              provenance: 'live'
-            })
-          ),
+          ...(commitDisplacedLeaves.length > 0 && laterJoins.length > 0
+            ? [
+                RuntimeSessionChangedEvent({
+                  type: 'replace',
+                  domain: prepared.runtime.domain,
+                  snapshot: snapshot(promotedRuntime),
+                  previous: projectRuntimeSession(commitDisplacedLeaves[0]),
+                  session: projectRuntimeSession(laterJoins[0]),
+                  occurredAt: clock.now(),
+                  provenance: 'live'
+                }),
+                ...commitDisplacedLeaves.slice(1).map((displaced) =>
+                  RuntimeSessionChangedEvent({
+                    type: 'leave',
+                    domain: prepared.runtime.domain,
+                    snapshot: snapshot(promotedRuntime),
+                    session: projectRuntimeSession(displaced),
+                    occurredAt: clock.now(),
+                    provenance: 'live'
+                  })
+                ),
+                ...laterJoins.slice(1).map((session) =>
+                  RuntimeSessionChangedEvent({
+                    type: 'join',
+                    domain: prepared.runtime.domain,
+                    snapshot: snapshot(promotedRuntime),
+                    session: projectRuntimeSession(session),
+                    provenance: 'live'
+                  })
+                )
+              ]
+            : [
+                ...commitDisplacedLeaves.map((displaced) =>
+                  RuntimeSessionChangedEvent({
+                    type: 'leave',
+                    domain: prepared.runtime.domain,
+                    snapshot: snapshot(promotedRuntime),
+                    session: projectRuntimeSession(displaced),
+                    occurredAt: clock.now(),
+                    provenance: 'live'
+                  })
+                ),
+                ...laterJoins.map((session) =>
+                  RuntimeSessionChangedEvent({
+                    type: 'join',
+                    domain: prepared.runtime.domain,
+                    snapshot: snapshot(promotedRuntime),
+                    session: projectRuntimeSession(session),
+                    provenance: 'live'
+                  })
+                )
+              ]),
           DomainCommittedEvent({ attemptId, domain: prepared.runtime.domain, newSessions }),
           ...prepared.missedPeerIds.map((sourcePeerId) =>
             wireDomain.command.SendMessageCommand({
@@ -655,81 +784,97 @@ const SessionDomain = Remesh.domain({
       }
     })
 
-    const PublishPresenceEndCommand = domain.command({
-      name: 'Session.PublishPresenceEndCommand',
-      impl: ({ get }, release: LiveRelease) =>
-        get(LiveReleasesState()).some((item) => item.domain === release.domain && item.requestId === release.requestId)
-          ? wireDomain.command.SendMessageCommand({
-              requestId: release.requestId,
-              roomId: release.roomId,
-              message: { type: MESSAGE_TYPE.SESSION_END, presenceId: release.presenceId }
-            })
-          : null
-    })
-
-    // Retirement and every unsettled END attempt retain one durable final-generation identity.
+    // Retirement keeps one live in-memory release owner: awaited local cleanup (no Chat end
+    // value) -> contribution remove (world.ReleaseDomain publishes latest Presence via the sole
+    // iterator) -> Connection settles close. No durable owner/outcome/journal; on host
+    // replacement the next current event reconciles. The cleanup write is request-correlated:
+    // only a successful removal of the local active-generation record may release Session State
+    // and advance World/Chat departure; failure retains the fence and physical membership.
     const BeginReleaseDomainCommand = domain.command({
       name: 'Session.BeginReleaseDomainCommand',
       impl: ({ get }, runtimeDomain: string) => {
-        // A single live in-memory release owner: Chat leave (SESSION_END) -> contribution remove
-        // (world.ReleaseDomain publishes latest Presence via the sole iterator) -> Connection settles close.
-        // No durable owner/outcome/journal; on host replacement the next current event reconciles.
-        if (get(ReleasingDomainQuery(runtimeDomain))) return null
+        const existing = get(LiveReleasesState()).find((item) => item.domain === runtimeDomain)
+        if (existing) {
+          // A release is already fenced (its cleanup write was rejected earlier): a later
+          // request retries only the cleanup (re-fencing the observer deadlines), and no state
+          // may advance before it succeeds.
+          return [
+            PendingLeavesState().new(
+              get(PendingLeavesState()).map((item) =>
+                item.domain === runtimeDomain ? { ...item, fenced: true } : item
+              )
+            ),
+            ClearActivePresenceRequestedEvent({ domain: runtimeDomain })
+          ]
+        }
         const runtime = get(DomainsState()).find((item) => item.domain === runtimeDomain)
         const prepared = get(PreparedSessionsState()).find((item) => item.runtime.domain === runtimeDomain)
         const current = runtime ?? prepared?.runtime
         if (!current) return ReleaseCompletedEvent({ domain: runtimeDomain })
-        const release: LiveRelease = {
-          domain: runtimeDomain,
-          roomId: current.roomId,
-          presenceId: current.presenceId,
-          userId: current.user.id,
-          joinedAt: current.joinedAt,
-          requestId: endRequestId(current.presenceId)
-        }
-        return [LiveReleasesState().new([...get(LiveReleasesState()), release]), PublishPresenceEndCommand(release)]
-      }
-    })
-
-    const RetryReleaseEndCommand = domain.command({
-      name: 'Session.RetryReleaseEndCommand',
-      impl: ({ get }, requestId: string) => {
-        const current = get(LiveReleasesState()).find((item) => item.requestId === requestId)
-        return current ? PublishPresenceEndCommand(current) : null
-      }
-    })
-
-    const CompletePresenceEndCommand = domain.command({
-      name: 'Session.CompletePresenceEndCommand',
-      impl: ({ get }, requestId: string) => {
-        const pending = get(LiveReleasesState())
-        const current = pending.find((item) => item.requestId === requestId)
-        if (!current) return null
+        const release: LiveRelease = { domain: runtimeDomain, roomId: current.roomId }
+        // Fence every domain-owned observer deadline BEFORE the awaited cleanup write: a grace
+        // expiry can never queue a stale pre-release record behind the cleanup, while the fenced
+        // records still close live/History authority until the release resolves.
         return [
-          // The live owner advances only after the Chat leave has been accepted.
-          DomainsState().new(removeBy(get(DomainsState()), (item) => item.domain === current.domain)),
-          PreparedSessionsState().new(
-            removeBy(get(PreparedSessionsState()), (item) => item.runtime.domain === current.domain)
+          LiveReleasesState().new([...get(LiveReleasesState()), release]),
+          PendingLeavesState().new(
+            get(PendingLeavesState()).map((item) => (item.domain === runtimeDomain ? { ...item, fenced: true } : item))
           ),
-          PresenceDomainsState().new(removeBy(get(PresenceDomainsState()), (item) => item.domain === current.domain)),
-          PersistPresenceRequestedEvent({
-            record: { domain: current.domain, lastJoinedAt: 0, observers: [] }
-          }),
-          ChatLeavePublishedEvent({ domain: current.domain })
+          ClearActivePresenceRequestedEvent({ domain: runtimeDomain })
         ]
       }
     })
 
-    const FailPresenceEndCommand = domain.command({
-      name: 'Session.FailPresenceEndCommand',
-      impl: ({ get }, payload: { requestId: string; error: Error }) => {
-        const pending = get(LiveReleasesState())
-        const current = pending.find((item) => item.requestId === payload.requestId)
-        if (!current) return null
-        // The Chat-leave END step failed: surface it once and retry only this step boundedly.
+    const RestorePendingLeavesCommand = domain.command({
+      name: 'Session.RestorePendingLeavesCommand',
+      impl: ({ get }, runtimeDomain: string) => {
+        const pending = get(PendingLeavesState())
+        const affected = pending.filter((item) => item.domain === runtimeDomain && item.fenced)
+        if (affected.length === 0) return null
+        // Resume only the unelapsed remainder of the ORIGINAL absolute deadline: cleanup failure
+        // is neither a new PeerLeave nor a valid rebind and must not extend remote lifecycle time.
+        const now = Date.now()
+        const restored = affected.map((item) => ({
+          ...item,
+          fenced: false,
+          armedId: identity.nextId(),
+          delayMs: Math.max(0, item.expiresAt - now)
+        }))
         return [
-          ErrorEvent({ error: payload.error, domain: current.domain }),
-          ReleaseEndRetryRequestedEvent({ requestId: current.requestId })
+          PendingLeavesState().new([
+            ...pending.filter((item) => !(item.domain === runtimeDomain && item.fenced)),
+            ...restored.map(({ delayMs: _delayMs, ...record }) => record)
+          ]),
+          ...restored.map((item) =>
+            PendingLeaveArmedEvent({
+              domain: item.domain,
+              presenceId: item.presenceId,
+              armedId: item.armedId,
+              delayMs: item.delayMs
+            })
+          )
+        ]
+      }
+    })
+
+    const CompleteReleaseCleanupCommand = domain.command({
+      name: 'Session.CompleteReleaseCleanupCommand',
+      impl: ({ get }, runtimeDomain: string) => {
+        const release = get(LiveReleasesState()).find((item) => item.domain === runtimeDomain)
+        if (!release) return null
+        // Only the fenced release owner advances: remove every domain-owned State (including any
+        // observer pending-leave deadlines) and emit the event that advances World/Chat departure.
+        return [
+          DomainsState().new(removeBy(get(DomainsState()), (item) => item.domain === runtimeDomain)),
+          PreparedSessionsState().new(
+            removeBy(get(PreparedSessionsState()), (item) => item.runtime.domain === runtimeDomain)
+          ),
+          PresenceDomainsState().new(removeBy(get(PresenceDomainsState()), (item) => item.domain === runtimeDomain)),
+          PendingLeavesState().new(removeBy(get(PendingLeavesState()), (item) => item.domain === runtimeDomain)),
+          PendingBaselinePeersState().new(
+            removeBy(get(PendingBaselinePeersState()), (item) => item.domain === runtimeDomain)
+          ),
+          ChatLeavePublishedEvent({ domain: runtimeDomain })
         ]
       }
     })
@@ -766,7 +911,7 @@ const SessionDomain = Remesh.domain({
             removeBy(get(PendingBaselinePeersState()), (item) => item.domain === runtimeDomain)
           ),
           PresenceDomainsState().new(removeBy(get(PresenceDomainsState()), (item) => item.domain === runtimeDomain)),
-          DepartedBindingsState().new(removeBy(get(DepartedBindingsState()), (item) => item.domain === runtimeDomain)),
+          PendingLeavesState().new(removeBy(get(PendingLeavesState()), (item) => item.domain === runtimeDomain)),
           LiveReleasesState().new(removeBy(get(LiveReleasesState()), (item) => item.domain === runtimeDomain)),
           DomainReleasedEvent(runtimeDomain)
         ]
@@ -801,27 +946,16 @@ const SessionDomain = Remesh.domain({
           hlc,
           userId: runtime.user.id,
           body: payload.body,
-          mentions: payload.mentions.map(({ id, name, avatar, ranges }) => ({ id, name, avatar, ranges }))
-        }
-        const validated = parseChatRoomMessage(candidate)
-        if (
-          !validated ||
-          validated.type !== MESSAGE_TYPE.TEXT ||
-          !isChatRoomMessageSemanticallyValid(validated, clock.now())
-        ) {
-          return OperationFailedEvent({
-            operationId: payload.operationId,
-            error: new Error('Message exceeds the v4 event contract')
-          })
+          mentions: payload.mentions
         }
         const record: TextMessageRecord = {
           type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE,
-          id: validated.id,
-          message: validated,
+          id: candidate.id,
+          message: candidate,
           user: runtime.user,
           receivedAt: clock.now()
         }
-        return [HlcState().new(hlc), OperationSucceededEvent({ operationId: payload.operationId, record })]
+        return [HlcState().new(hlc), TextMessageAllocatedEvent({ operationId: payload.operationId, record })]
       }
     })
 
@@ -865,25 +999,14 @@ const SessionDomain = Remesh.domain({
           reaction: payload.reaction,
           active: payload.active
         }
-        const validated = parseChatRoomMessage(candidate)
-        if (
-          !validated ||
-          validated.type !== MESSAGE_TYPE.REACTION ||
-          !isChatRoomMessageSemanticallyValid(validated, clock.now())
-        ) {
-          return OperationFailedEvent({
-            operationId: payload.operationId,
-            error: new Error('Reaction exceeds the v4 event contract')
-          })
-        }
         const record: ReactionMessageRecord = {
           type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE,
-          id: validated.id,
-          message: validated,
+          id: candidate.id,
+          message: candidate,
           user: runtime.user,
           receivedAt: clock.now()
         }
-        return [HlcState().new(hlc), OperationSucceededEvent({ operationId: payload.operationId, record })]
+        return [HlcState().new(hlc), ReactionMessageAllocatedEvent({ operationId: payload.operationId, record })]
       }
     })
 
@@ -897,19 +1020,14 @@ const SessionDomain = Remesh.domain({
           })
         }
         const runtime = get(DomainsState()).find((item) => item.domain === payload.domain)
-        const event = parseChatRoomMessage(payload.event)
-        if (
-          !runtime ||
-          !event ||
-          (event.type !== MESSAGE_TYPE.TEXT && event.type !== MESSAGE_TYPE.REACTION) ||
-          !isChatRoomMessageSemanticallyValid(event, clock.now())
-        ) {
+        const event = payload.event
+        if (!runtime || (event.type !== MESSAGE_TYPE.TEXT && event.type !== MESSAGE_TYPE.REACTION)) {
           return OperationFailedEvent({
             operationId: payload.operationId,
-            error: new Error('Chat message does not match the v4 event contract')
+            error: new Error('Chat message does not match the active local session')
           })
         }
-        const adopted = adoptHlc(get(HlcState()), event.hlc, clock.now())
+        const adopted = adoptHlc(get(HlcState()), event.hlc)
         if (event.userId !== runtime.user.id || !adopted) {
           return OperationFailedEvent({
             operationId: payload.operationId,
@@ -1021,7 +1139,12 @@ const SessionDomain = Remesh.domain({
         const runtime = prepared?.runtime ?? committed
         if (!runtime || get(ReleasingDomainQuery(runtime.domain))) return null
 
-        const current = runtime.sessions.find((item) => item.sourcePeerId === payload.sourcePeerId)
+        // A source may legally carry a current presence plus a different grace-preserved one:
+        // the current binding slot is keyed by (source, presence), never by the bare source.
+        const current = runtime.sessions.find(
+          (item) => item.sourcePeerId === payload.sourcePeerId && item.presenceId === message.presenceId
+        )
+        const pendingLeaves = get(PendingLeavesState())
         const presenceDomains = get(PresenceDomainsState())
         const persisted = presenceDomains.find((item) => item.domain === runtime.domain)
         const observers = prepared?.observers ?? persisted?.observers ?? []
@@ -1030,9 +1153,7 @@ const SessionDomain = Remesh.domain({
           observed?.status === 'ended' ||
           (observed && (observed.user.id !== message.user.id || observed.joinedAt !== message.joinedAt)) ||
           (current?.sessionId === message.sessionId &&
-            (current.presenceId !== message.presenceId ||
-              current.user.id !== message.user.id ||
-              current.joinedAt !== message.joinedAt))
+            (current.user.id !== message.user.id || current.joinedAt !== message.joinedAt))
         ) {
           return wireDomain.command.DropProtocolCommand({
             sourcePeerId: payload.sourcePeerId,
@@ -1040,11 +1161,23 @@ const SessionDomain = Remesh.domain({
           })
         }
 
+        // The displaced source-current: the source's previous NON-pending binding that is not
+        // the incoming generation. It is replaced by the new SESSION: its observation is marked
+        // ended (so no phantom active presence suppresses the final leave) and it becomes the
+        // `previous` side of a replacement lifecycle. A pending-protected generation is never
+        // displaced by this rule.
+        const displaced = runtime.sessions.find(
+          (item) =>
+            item.sourcePeerId === payload.sourcePeerId &&
+            item.presenceId !== message.presenceId &&
+            !pendingLeaves.some((leave) => leave.domain === runtime.domain && leave.presenceId === item.presenceId)
+        )
         let nextObservers = observers
-        if (current && current.presenceId !== message.presenceId) {
-          const previous = nextObservers.find((item) => item.presenceId === current.presenceId)
+        if (displaced) {
+          const previous = nextObservers.find((item) => item.presenceId === displaced.presenceId)
           if (previous) nextObservers = replaceObservation(nextObservers, { ...previous, status: 'ended' })
         }
+        const displacedBinding = displaced ?? undefined
         const session: SessionBinding = {
           sourcePeerId: payload.sourcePeerId,
           sessionId: message.sessionId,
@@ -1059,22 +1192,84 @@ const SessionDomain = Remesh.domain({
           joinedAt: session.joinedAt,
           status: 'active'
         })
+        // A valid SESSION for a presence under a pending-leave deadline cancels the grace and
+        // removes the departed source's retained entry (the fresh source entry replaces it).
+        const pendingLeave = pendingLeaves.find(
+          (item) => item.domain === runtime.domain && item.presenceId === message.presenceId
+        )
+        // A source may legally carry a current presence plus a different grace-preserved one.
+        // In a prepared attempt the source owns one NON-pending current slot (the latest SESSION
+        // replaces it, while pending-preserved generations stay); in the committed runtime the
+        // exact (source, presence) slot is replaced. Any OTHER same-source generation is retained
+        // only when a pending-leave record preserves it, so a repeated SESSION never duplicates
+        // a binding and an unprotected historical presence keeps no live/History authority.
+        const replaceKey = (item: SessionBinding) =>
+          item.sourcePeerId === payload.sourcePeerId && item.presenceId === message.presenceId
         const nextRuntime = {
           ...runtime,
           sessions: replaceBy(
-            runtime.sessions.map((item) =>
-              item.presenceId === message.presenceId ? { ...item, user: message.user } : item
-            ),
-            (item) => item.sourcePeerId === payload.sourcePeerId,
+            runtime.sessions
+              .map((item) => (item.presenceId === message.presenceId ? { ...item, user: message.user } : item))
+              .filter((item) => {
+                if (!(item.sourcePeerId === payload.sourcePeerId && item.presenceId !== message.presenceId)) {
+                  return true
+                }
+                return pendingLeaves.some(
+                  (leave) => leave.domain === runtime.domain && leave.presenceId === item.presenceId
+                )
+              })
+              .filter(
+                (item) =>
+                  !(
+                    pendingLeave &&
+                    item.presenceId === message.presenceId &&
+                    item.sourcePeerId === pendingLeave.sourcePeerId
+                  )
+              ),
+            replaceKey,
             session
           )
         }
         if (prepared) {
+          const displacedBindings = displacedBinding
+            ? prepared.displacedBindings.some(
+                (item) =>
+                  item.presenceId === displacedBinding.presenceId && item.sourcePeerId === displacedBinding.sourcePeerId
+              )
+              ? prepared.displacedBindings
+              : [...prepared.displacedBindings, displacedBinding]
+            : prepared.displacedBindings
+          const binding = { presenceId: message.presenceId, sourcePeerId: payload.sourcePeerId }
+          // A same-source switch revokes this attempt's rebind markers for other presences: the
+          // recorded source no longer holds its old presence, so commit cannot cancel those
+          // leaves from a stale fact (rollback/supersession transfers nothing either).
+          const reboundBindings = pendingLeave
+            ? prepared.reboundBindings
+                .filter(
+                  (rebind) => rebind.sourcePeerId !== payload.sourcePeerId || rebind.presenceId === message.presenceId
+                )
+                .some(
+                  (rebind) => rebind.presenceId === binding.presenceId && rebind.sourcePeerId === binding.sourcePeerId
+                )
+              ? prepared.reboundBindings.filter(
+                  (rebind) => rebind.sourcePeerId !== payload.sourcePeerId || rebind.presenceId === message.presenceId
+                )
+              : [
+                  ...prepared.reboundBindings.filter(
+                    (rebind) => rebind.sourcePeerId !== payload.sourcePeerId || rebind.presenceId === message.presenceId
+                  ),
+                  binding
+                ]
+            : prepared.reboundBindings.filter(
+                (rebind) => rebind.sourcePeerId !== payload.sourcePeerId || rebind.presenceId === message.presenceId
+              )
           return PreparedSessionsState().new(
             replaceBy(preparedSessions, (item) => item.attemptId === prepared.attemptId, {
               ...prepared,
               runtime: nextRuntime,
               observers: nextObservers,
+              reboundBindings,
+              displacedBindings,
               baselinePeerIds: prepared.baselinePeerIds.filter((sourcePeerId) => sourcePeerId !== payload.sourcePeerId)
             })
           )
@@ -1106,131 +1301,73 @@ const SessionDomain = Remesh.domain({
           current?.sessionId !== message.sessionId || current?.presenceId !== message.presenceId
         const sessionSnapshot = snapshot(nextRuntime)
         const publicSession = projectRuntimeSession(session)
-        // Preparation peers and known generations are membership convergence; only logical zero-to-one is a live join.
+        // The displaced user's one-to-zero transition is classified independently from the
+        // incoming generation's zero-to-one eligibility: replace when both apply, a final leave
+        // when only the displaced side applies, a join when only the incoming side applies,
+        // otherwise a refresh snapshot. The displaced side counts only when the displaced user
+        // has no OTHER active or grace-preserved observation (excluding the displaced presence).
+        const incomingJoins = isLaterLogicalJoin && !wasLogicallyActive
+        const displacedLeaves =
+          displaced !== undefined &&
+          !nextObservers.some(
+            (observation) =>
+              observation.status === 'active' &&
+              observation.user.id === displaced.user.id &&
+              observation.presenceId !== displaced.presenceId
+          )
         const sessionEvent: RuntimeSessionEvent =
-          !isLaterLogicalJoin || wasLogicallyActive || (current?.user.id === message.user.id && Boolean(current))
-            ? { type: 'snapshot', domain: runtime.domain, snapshot: sessionSnapshot, provenance: 'refresh' }
-            : current
+          incomingJoins && displacedLeaves
+            ? {
+                type: 'replace',
+                domain: runtime.domain,
+                snapshot: sessionSnapshot,
+                previous: projectRuntimeSession(displaced),
+                session: publicSession,
+                occurredAt: clock.now(),
+                provenance: 'live'
+              }
+            : displacedLeaves
               ? {
-                  type: 'replace',
+                  type: 'leave',
                   domain: runtime.domain,
                   snapshot: sessionSnapshot,
-                  previous: projectRuntimeSession(current),
-                  session: publicSession,
+                  session: projectRuntimeSession(displaced),
                   occurredAt: clock.now(),
                   provenance: 'live'
                 }
-              : {
-                  type: 'join',
-                  domain: runtime.domain,
-                  snapshot: sessionSnapshot,
-                  session: publicSession,
-                  provenance: 'live'
-                }
+              : incomingJoins
+                ? {
+                    type: 'join',
+                    domain: runtime.domain,
+                    snapshot: sessionSnapshot,
+                    session: publicSession,
+                    provenance: 'live'
+                  }
+                : {
+                    type: 'snapshot',
+                    domain: runtime.domain,
+                    snapshot: sessionSnapshot,
+                    provenance: 'refresh'
+                  }
         return [
           DomainsState().new(replaceBy(domains, (item) => item.domain === runtime.domain, nextRuntime)),
           PresenceDomainsState().new(replaceBy(presenceDomains, (item) => item.domain === runtime.domain, record)),
-          DepartedBindingsState().new(
-            removeBy(get(DepartedBindingsState()), (item) => item.binding.presenceId === message.presenceId)
-          ),
+          ...(pendingLeave
+            ? [
+                PendingLeavesState().new(
+                  removeBy(
+                    pendingLeaves,
+                    (item) => item.domain === runtime.domain && item.presenceId === message.presenceId
+                  )
+                )
+              ]
+            : []),
           PersistPresenceRequestedEvent({ record }),
           ...(isBaselinePeer ? [PendingBaselinePeersState().new(nextBaselines)] : []),
           RuntimeSessionChangedEvent(sessionEvent),
           ...(physicalBindingChanged
             ? [BindingChangedEvent({ domain: runtime.domain, sourcePeerId: payload.sourcePeerId })]
             : [])
-        ]
-      }
-    })
-
-    const ApplySessionEndCommand = domain.command({
-      name: 'Session.ApplySessionEndCommand',
-      impl: ({ get }, payload: WireMessageEvent) => {
-        if (!('type' in payload.message) || payload.message.type !== MESSAGE_TYPE.SESSION_END) return null
-        const message = payload.message
-        const preparedSessions = get(PreparedSessionsState())
-        const prepared = preparedSessions.find((item) => item.runtime.roomId === payload.roomId)
-        const domains = get(DomainsState())
-        const runtime = prepared?.runtime ?? domains.find((item) => item.roomId === payload.roomId)
-        if (!runtime || get(ReleasingDomainQuery(runtime.domain))) return null
-        const presenceDomains = get(PresenceDomainsState())
-        const persisted = presenceDomains.find((item) => item.domain === runtime.domain)
-        const observers = prepared?.observers ?? persisted?.observers ?? []
-        const observed = observers.find((item) => item.presenceId === message.presenceId)
-        if (observed?.status === 'ended') return null
-        const departed = get(DepartedBindingsState())
-        const binding =
-          runtime.sessions.find(
-            (item) => item.sourcePeerId === payload.sourcePeerId && item.presenceId === message.presenceId
-          ) ??
-          departed.find(
-            (item) =>
-              item.domain === runtime.domain &&
-              item.binding.sourcePeerId === payload.sourcePeerId &&
-              item.binding.presenceId === message.presenceId
-          )?.binding
-        if (!binding) {
-          return wireDomain.command.DropProtocolCommand({
-            sourcePeerId: payload.sourcePeerId,
-            reason: 'presence end arrived without a matching source binding'
-          })
-        }
-        const ended: ObservedPresence = {
-          presenceId: message.presenceId,
-          sessionId: observed?.sessionId ?? binding.sessionId,
-          user: observed?.user ?? binding.user,
-          joinedAt: observed?.joinedAt ?? binding.joinedAt,
-          status: 'ended'
-        }
-        const nextObservers = replaceObservation(observers, ended)
-        const removed = runtime.sessions.filter((item) => item.presenceId === message.presenceId)
-        const nextRuntime = {
-          ...runtime,
-          sessions: runtime.sessions.filter((item) => item.presenceId !== message.presenceId)
-        }
-        const nextDeparted = removeBy(
-          departed,
-          (item) => item.domain === runtime.domain && item.binding.presenceId === message.presenceId
-        )
-        if (prepared) {
-          return [
-            PreparedSessionsState().new(
-              replaceBy(preparedSessions, (item) => item.attemptId === prepared.attemptId, {
-                ...prepared,
-                runtime: nextRuntime,
-                observers: nextObservers
-              })
-            ),
-            DepartedBindingsState().new(nextDeparted)
-          ]
-        }
-        const record: PresenceDomainRecord = {
-          domain: runtime.domain,
-          lastJoinedAt: persisted?.lastJoinedAt ?? 0,
-          ...retainedLocalLifecycle(persisted),
-          observers: nextObservers
-        }
-        const publicBinding = projectRuntimeSession(binding)
-        const sessionSnapshot = snapshot(nextRuntime)
-        const stillOnline = hasActiveUserPresence(nextObservers, binding.user.id, message.presenceId)
-        return [
-          DomainsState().new(replaceBy(domains, (item) => item.domain === runtime.domain, nextRuntime)),
-          PresenceDomainsState().new(replaceBy(presenceDomains, (item) => item.domain === runtime.domain, record)),
-          DepartedBindingsState().new(nextDeparted),
-          PersistPresenceRequestedEvent({ record }),
-          RuntimeSessionChangedEvent(
-            stillOnline
-              ? { type: 'snapshot', domain: runtime.domain, snapshot: sessionSnapshot, provenance: 'refresh' }
-              : {
-                  type: 'leave',
-                  domain: runtime.domain,
-                  snapshot: sessionSnapshot,
-                  session: publicBinding,
-                  occurredAt: clock.now(),
-                  provenance: 'live'
-                }
-          ),
-          ...removed.map((item) => BindingRemovedEvent({ domain: runtime.domain, sourcePeerId: item.sourcePeerId }))
         ]
       }
     })
@@ -1246,7 +1383,10 @@ const SessionDomain = Remesh.domain({
         }
         const runtime = get(DomainsState()).find((item) => item.roomId === payload.roomId)
         if (!runtime) return null
-        const session = runtime.sessions.find((item) => item.sourcePeerId === payload.sourcePeerId)
+        // The source's CURRENT binding: a grace-retained generation is not current physical
+        // authority, so live admission resolves the first non-pending entry (e.g. current C on
+        // a reused source carrying grace-preserved B).
+        const session = currentBindingForSource(runtime, payload.sourcePeerId, get(PendingLeavesState()))
         if (!session) {
           return wireDomain.command.DropProtocolCommand({
             sourcePeerId: payload.sourcePeerId,
@@ -1331,17 +1471,93 @@ const SessionDomain = Remesh.domain({
         const preparedSessions = get(PreparedSessionsState())
         const prepared = preparedSessions.find((item) => item.runtime.roomId === payload.roomId)
         const preparedAction = prepared
-          ? PreparedSessionsState().new(
-              replaceBy(preparedSessions, (item) => item.attemptId === prepared.attemptId, {
-                ...prepared,
-                missedPeerIds: prepared.missedPeerIds.filter((item) => item !== payload.sourcePeerId),
-                baselinePeerIds: prepared.baselinePeerIds.filter((item) => item !== payload.sourcePeerId),
-                runtime: {
-                  ...prepared.runtime,
-                  sessions: prepared.runtime.sessions.filter((item) => item.sourcePeerId !== payload.sourcePeerId)
-                }
-              })
-            )
+          ? (() => {
+              const nextPreparedRuntime = {
+                ...prepared.runtime,
+                sessions: prepared.runtime.sessions.filter((item) => item.sourcePeerId !== payload.sourcePeerId)
+              }
+              const committed = get(DomainsState()).find((item) => item.domain === prepared.runtime.domain)
+              const pendingLeaves = get(PendingLeavesState())
+              // Reconcile ONLY the observations whose authority the departed source carried:
+              // the source's prepared bindings and its committed bindings. Unrelated ended
+              // tombstones and finality already owned by the current preparation are preserved.
+              const departedSourcePresences = new Set([
+                ...prepared.runtime.sessions
+                  .filter((session) => session.sourcePeerId === payload.sourcePeerId)
+                  .map((session) => session.presenceId),
+                ...(committed?.sessions
+                  .filter((session) => session.sourcePeerId === payload.sourcePeerId)
+                  .map((session) => session.presenceId) ?? [])
+              ])
+              // Committed bindings the current preparation has already displaced/replaced cannot
+              // keep their presence active: post-departure authority obeys preparation precedence.
+              const displacedSourceBindings = new Set(
+                prepared.displacedBindings.map((displaced) => `${displaced.sourcePeerId}\u0000${displaced.presenceId}`)
+              )
+              // This same PeerLeft arms a grace deadline for the departed source's presence when
+              // that source was its last current committed binding (mirroring the committed
+              // branch), so the observation must stay eligible for an exact rebind.
+              const pendingWillBeArmedFor = (presenceId: string) => {
+                const committedForPresence = (committed?.sessions ?? []).filter(
+                  (session) => session.presenceId === presenceId
+                )
+                return (
+                  committedForPresence.length > 0 &&
+                  committedForPresence.every((session) => session.sourcePeerId === payload.sourcePeerId)
+                )
+              }
+              const authoritativeAfterDeparture = (presenceId: string) =>
+                nextPreparedRuntime.sessions.some((session) => session.presenceId === presenceId) ||
+                pendingWillBeArmedFor(presenceId) ||
+                (committed?.sessions.some(
+                  (session) =>
+                    session.presenceId === presenceId &&
+                    session.sourcePeerId !== payload.sourcePeerId &&
+                    !displacedSourceBindings.has(`${session.sourcePeerId}\u0000${session.presenceId}`) &&
+                    !pendingLeaves.some(
+                      (leave) => leave.domain === prepared.runtime.domain && leave.presenceId === presenceId
+                    )
+                ) ??
+                  false) ||
+                pendingLeaves.some(
+                  (leave) =>
+                    leave.domain === prepared.runtime.domain &&
+                    leave.presenceId === presenceId &&
+                    (committed?.sessions.some((session) => session.presenceId === presenceId) ||
+                      nextPreparedRuntime.sessions.some((session) => session.presenceId === presenceId))
+                )
+              const reconciledObservers = prepared.observers
+                .filter((observer) => {
+                  if (!departedSourcePresences.has(observer.presenceId)) return true
+                  if (authoritativeAfterDeparture(observer.presenceId)) return true
+                  // A provisional ACTIVE observation with no authority is dropped (its later
+                  // real binding must emit a join); an already-ENDED observation stays as a
+                  // tombstone so an expired generation cannot resurrect.
+                  return observer.status === 'ended'
+                })
+                .map((observer) =>
+                  departedSourcePresences.has(observer.presenceId) && authoritativeAfterDeparture(observer.presenceId)
+                    ? { ...observer, status: 'active' as const }
+                    : observer
+                )
+              return PreparedSessionsState().new(
+                replaceBy(preparedSessions, (item) => item.attemptId === prepared.attemptId, {
+                  ...prepared,
+                  missedPeerIds: prepared.missedPeerIds.filter((item) => item !== payload.sourcePeerId),
+                  baselinePeerIds: prepared.baselinePeerIds.filter((item) => item !== payload.sourcePeerId),
+                  // The departed source's rebind marker AND displaced fact are revoked: only a
+                  // CURRENT source may carry cancellation authority or a displacement to the commit.
+                  reboundBindings: prepared.reboundBindings.filter(
+                    (rebind) => rebind.sourcePeerId !== payload.sourcePeerId
+                  ),
+                  displacedBindings: prepared.displacedBindings.filter(
+                    (displaced) => displaced.sourcePeerId !== payload.sourcePeerId
+                  ),
+                  runtime: nextPreparedRuntime,
+                  observers: reconciledObservers
+                })
+              )
+            })()
           : null
         const domains = get(DomainsState())
         const runtime = domains.find((item) => item.roomId === payload.roomId)
@@ -1365,34 +1581,179 @@ const SessionDomain = Remesh.domain({
           ...(baselineAction ? [baselineAction] : [])
         ]
         if (!runtime) return cleanupActions.length > 0 ? cleanupActions : null
-        const session = runtime.sessions.find((item) => item.sourcePeerId === payload.sourcePeerId)
+        // Resolve the source's CURRENT binding: on a reused source carrying a grace-preserved
+        // older generation plus a current one, physical departure closes/arms the CURRENT
+        // generation's leave (the older deadline keeps running untouched).
+        const session = currentBindingForSource(runtime, payload.sourcePeerId, get(PendingLeavesState()))
+        // Duplicate PeerLeave facts are idempotent and SHALL NOT restart or extend a deadline.
         if (!session) return cleanupActions.length > 0 ? cleanupActions : null
-        const nextRuntime = {
-          ...runtime,
-          sessions: runtime.sessions.filter((item) => item.sourcePeerId !== payload.sourcePeerId)
+        const pending = get(PendingLeavesState())
+        const existingPending = pending.find(
+          (item) => item.domain === runtime.domain && item.presenceId === session.presenceId
+        )
+        const otherCurrentSource = runtime.sessions.some(
+          (item) => item.presenceId === session.presenceId && item.sourcePeerId !== payload.sourcePeerId
+        )
+        if (existingPending) {
+          return [
+            ...cleanupActions,
+            BindingRemovedEvent({ domain: runtime.domain, sourcePeerId: payload.sourcePeerId })
+          ]
         }
-        const departed = get(DepartedBindingsState())
+        if (otherCurrentSource) {
+          // Another current physical source for the same presence prevents pending leave.
+          const nextRuntime = {
+            ...runtime,
+            sessions: runtime.sessions.filter((item) => item.sourcePeerId !== payload.sourcePeerId)
+          }
+          return [
+            ...cleanupActions,
+            DomainsState().new(replaceBy(domains, (item) => item.domain === runtime.domain, nextRuntime)),
+            RuntimeSessionChangedEvent({
+              type: 'snapshot',
+              domain: runtime.domain,
+              snapshot: snapshot(nextRuntime),
+              provenance: 'refresh'
+            }),
+            BindingRemovedEvent({ domain: runtime.domain, sourcePeerId: payload.sourcePeerId })
+          ]
+        }
+        // Last current physical source: start exactly one five-second pending-leave deadline and
+        // retain the generation in every online snapshot throughout the grace.
+        const armedId = identity.nextId()
+        const pendingLeave: PendingLeave = {
+          domain: runtime.domain,
+          presenceId: session.presenceId,
+          sourcePeerId: session.sourcePeerId,
+          sessionId: session.sessionId,
+          user: session.user,
+          joinedAt: session.joinedAt,
+          armedId,
+          fenced: false,
+          expiresAt: Date.now() + PENDING_LEAVE_GRACE_MS
+        }
         return [
           ...cleanupActions,
-          DomainsState().new(replaceBy(domains, (item) => item.domain === runtime.domain, nextRuntime)),
-          DepartedBindingsState().new(
-            replaceBy(
-              departed,
-              (item) => item.domain === runtime.domain && item.binding.sourcePeerId === payload.sourcePeerId,
-              { domain: runtime.domain, binding: session }
-            )
-          ),
-          RuntimeSessionChangedEvent({
-            type: 'snapshot',
+          PendingLeavesState().new([...pending, pendingLeave]),
+          PendingLeaveArmedEvent({
             domain: runtime.domain,
-            snapshot: snapshot(nextRuntime),
-            provenance: 'refresh'
+            presenceId: session.presenceId,
+            armedId,
+            delayMs: PENDING_LEAVE_GRACE_MS
           }),
           BindingRemovedEvent({ domain: runtime.domain, sourcePeerId: payload.sourcePeerId })
         ]
       }
     })
 
+    const ExpirePendingLeaveCommand = domain.command({
+      name: 'Session.ExpirePendingLeaveCommand',
+      impl: ({ get }, payload: { domain: string; presenceId: string; armedId: string }) => {
+        const pending = get(PendingLeavesState())
+        const current = pending.find((item) => item.domain === payload.domain && item.presenceId === payload.presenceId)
+        // A valid rebind cancelled the pending leave; a stale timer is fenced by its armed id;
+        // a release-fenced deadline suspends ALL effects (authority stays closed by the record).
+        if (!current || current.armedId !== payload.armedId || current.fenced) return null
+        const domains = get(DomainsState())
+        const runtime = domains.find((item) => item.domain === payload.domain)
+        const presenceDomains = get(PresenceDomainsState())
+        const persisted = presenceDomains.find((item) => item.domain === payload.domain)
+        // The local domain was released: the deadline is stale and SHALL create no state,
+        // persistence, notice, or binding action.
+        if (!runtime) {
+          return PendingLeavesState().new(
+            removeBy(pending, (item) => item.domain === payload.domain && item.presenceId === payload.presenceId)
+          )
+        }
+        const observers = persisted?.observers ?? []
+        const nextObservers = replaceObservation(observers, {
+          presenceId: current.presenceId,
+          sessionId: current.sessionId,
+          user: current.user,
+          joinedAt: current.joinedAt,
+          status: 'ended'
+        })
+        const removed = runtime.sessions.filter((item) => item.presenceId === payload.presenceId)
+        const nextRuntime = {
+          ...runtime,
+          sessions: runtime.sessions.filter((item) => item.presenceId !== payload.presenceId)
+        }
+        const stillOnline = hasActiveUserPresence(nextObservers, current.user.id, payload.presenceId)
+        const record: PresenceDomainRecord = {
+          domain: payload.domain,
+          lastJoinedAt: persisted?.lastJoinedAt ?? 0,
+          ...retainedLocalLifecycle(persisted),
+          observers: nextObservers
+        }
+        // Source-removal cleanup only when NO current session still owns that source: a reused
+        // source carrying a current presence must not lose its History owner to an expired
+        // older generation on the same source.
+        const freedSources = removed
+          .filter((item) => !nextRuntime.sessions.some((session) => session.sourcePeerId === item.sourcePeerId))
+          .map((item) => item.sourcePeerId)
+        return [
+          DomainsState().new(replaceBy(domains, (item) => item.domain === payload.domain, nextRuntime)),
+          PresenceDomainsState().new(replaceBy(presenceDomains, (item) => item.domain === payload.domain, record)),
+          PendingLeavesState().new(
+            removeBy(pending, (item) => item.domain === payload.domain && item.presenceId === payload.presenceId)
+          ),
+          PersistPresenceRequestedEvent({ record }),
+          RuntimeSessionChangedEvent(
+            stillOnline
+              ? {
+                  type: 'snapshot',
+                  domain: payload.domain,
+                  snapshot: snapshot(nextRuntime),
+                  provenance: 'refresh'
+                }
+              : {
+                  type: 'leave',
+                  domain: payload.domain,
+                  snapshot: snapshot(nextRuntime),
+                  session: projectRuntimeSession(current),
+                  occurredAt: clock.now(),
+                  provenance: 'live'
+                }
+          ),
+          ...freedSources.map((sourcePeerId) => BindingRemovedEvent({ domain: payload.domain, sourcePeerId }))
+        ]
+      }
+    })
+
+    domain.effect({
+      name: 'Session.PendingLeaveGraceEffect',
+      impl: ({ fromEvent }) =>
+        fromEvent(PendingLeaveArmedEvent).pipe(
+          mergeMap(
+            (payload) =>
+              new Observable<typeof payload>((observer) => {
+                const timerId = globalThis.setTimeout(() => {
+                  observer.next(payload)
+                  observer.complete()
+                }, payload.delayMs)
+                return () => globalThis.clearTimeout(timerId)
+              })
+          ),
+          map(ExpirePendingLeaveCommand)
+        )
+    })
+    domain.effect({
+      name: 'Session.ClearActivePresenceEffect',
+      impl: ({ fromEvent }) =>
+        fromEvent(ClearActivePresenceRequestedEvent).pipe(
+          concatMap(async ({ domain }) => {
+            try {
+              await presenceStore.save({ domain, lastJoinedAt: 0, observers: [] })
+              return CompleteReleaseCleanupCommand(domain)
+            } catch (error) {
+              // The authoritative active record was not removed: surface the exact failure,
+              // retain the current fence and physical membership, restore the observer deadline
+              // ownership (re-armed), and allow a later retry.
+              return [DomainReleaseFailedEvent({ domain, error: error as Error }), RestorePendingLeavesCommand(domain)]
+            }
+          })
+        )
+    })
     domain.effect({
       name: 'Session.PresencePersistEffect',
       impl: ({ fromEvent }) =>
@@ -1405,35 +1766,6 @@ const SessionDomain = Remesh.domain({
               return ErrorEvent({ error: error as Error, domain: request.record.domain })
             }
           })
-        )
-    })
-    domain.effect({
-      name: 'Session.ReleaseEndRetryEffect',
-      impl: ({ fromEvent }) =>
-        fromEvent(ReleaseEndRetryRequestedEvent).pipe(
-          concatMap(
-            ({ requestId }) =>
-              new globalThis.Promise<{ requestId: string }>((resolve) =>
-                globalThis.setTimeout(() => resolve({ requestId }), RELEASE_END_RETRY_INTERVAL_MS)
-              )
-          ),
-          map(({ requestId }) => RetryReleaseEndCommand(requestId))
-        )
-    })
-    domain.effect({
-      name: 'Session.PresenceEndSendSuccessEffect',
-      impl: ({ fromEvent }) =>
-        fromEvent(wireDomain.event.MessageSentEvent).pipe(
-          filter(({ requestId }) => requestId.startsWith('session:end:')),
-          map(({ requestId }) => CompletePresenceEndCommand(requestId))
-        )
-    })
-    domain.effect({
-      name: 'Session.PresenceEndSendFailureEffect',
-      impl: ({ fromEvent }) =>
-        fromEvent(wireDomain.event.MessageSendFailedEvent).pipe(
-          filter(({ requestId }) => requestId.startsWith('session:end:')),
-          map(FailPresenceEndCommand)
         )
     })
     domain.effect({
@@ -1473,14 +1805,6 @@ const SessionDomain = Remesh.domain({
         )
     })
     domain.effect({
-      name: 'Session.WirePresenceEndEffect',
-      impl: ({ fromEvent }) =>
-        fromEvent(wireDomain.event.MessageAcceptedEvent).pipe(
-          filter((event) => 'type' in event.message && event.message.type === MESSAGE_TYPE.SESSION_END),
-          map(ApplySessionEndCommand)
-        )
-    })
-    domain.effect({
       name: 'Session.WireLiveEffect',
       impl: ({ fromEvent }) =>
         fromEvent(wireDomain.event.MessageAcceptedEvent).pipe(
@@ -1512,6 +1836,7 @@ const SessionDomain = Remesh.domain({
         CommitPreparedCommand,
         AbortPreparedCommand,
         BeginReleaseDomainCommand,
+        RestorePendingLeavesCommand,
         CompleteReleaseCommand,
         ReleaseDomainCommand,
         AllocateTextMessageCommand,
@@ -1519,7 +1844,8 @@ const SessionDomain = Remesh.domain({
         SendChatMessageCommand,
         UpdateHlcCommand,
         PeerJoinedCommand,
-        PeerLeftCommand
+        PeerLeftCommand,
+        ExpirePendingLeaveCommand
       },
       event: {
         PreparedEvent,
@@ -1535,8 +1861,11 @@ const SessionDomain = Remesh.domain({
         BindingChangedEvent,
         BindingRemovedEvent,
         OperationSucceededEvent,
+        TextMessageAllocatedEvent,
+        ReactionMessageAllocatedEvent,
         OperationFailedEvent,
-        ErrorEvent
+        ErrorEvent,
+        PendingLeaveArmedEvent
       }
     }
   }

@@ -61,8 +61,8 @@ The headless Runtime SHALL bind each Chat source to a session identity and logic
 
 #### Scenario: Future HLC does not advance Runtime clock
 
-- **WHEN** the Runtime receives a wire event rejected because its HLC is more than five minutes ahead of the explicit receiver `now`
-- **THEN** it SHALL reject the event, leave the central HLC clock unchanged, and continue processing later valid events
+- **WHEN** the Runtime receives a schema-accepted wire event whose finite safe non-negative HLC is more than five minutes ahead of the receiver's clock
+- **THEN** it SHALL NOT reject the event through a receiver-time predicate and SHALL process clock adoption through the same path as every other schema-accepted HLC
 
 ### Requirement: Headless Runtime owns history orchestration
 
@@ -70,7 +70,7 @@ The headless Runtime SHALL bind each Chat source to a session identity and logic
 
 Each request and response phase SHALL accept no more than 10,000 entries and 8MiB of bounded canonical content in addition to the public per-frame limits; every non-final page SHALL contain at least one entry, so page count is bounded by the same entry budget. The one explicit empty phase representation SHALL be `page: 0, done: true` with an empty inventory or empty response. Page numbers SHALL be continuous within each phase. Each directional synchronization SHALL retain the existing 10-second operational timeout scoped to its complete active identity. While active, an identical replay of the current expected/already-applied page SHALL be idempotent; a changed replay, gap, out-of-order page, response before complete inventory, page after `done`, invalid source/session binding, or exceeded budget SHALL terminate only that synchronization without partial page application. No History peer acknowledgement, cursor, body request, provider receipt, or remote-persistence state SHALL exist.
 
-The provider SHALL stream response pages only after the full inventory is accepted, but SHALL not wait for or infer remote processing between pages; each local `room.send()` settlement remains only local acceptance. The receiver SHALL admit each response page atomically and process accepted pages through one bounded serial local queue. It SHALL construct each complete `ChatMessageRecord` from the page's `messages` and exact referenced `users`, then perform `insert-if-absent`; concurrent live, peer, or same-domain-page races SHALL therefore converge without overwrite. A final response page completes the requester attempt only after that page's complete local processing settles.
+The provider SHALL stream response pages only after the full inventory is accepted, but SHALL not wait for or infer remote processing between pages; each local `room.send()` settlement remains only local acceptance. The provider SHALL construct each page's exact author set. The receiver SHALL admit each response page atomically, trust the schema-accepted typed `messages` and `users` without a uniqueness/reference validation stage, and process them through one bounded serial local queue before `insert-if-absent`; concurrent live, peer, or same-domain-page races SHALL therefore converge without overwrite. A final response page completes the requester attempt only after that page's complete local processing settles.
 
 Working State SHALL be scoped by current domain, source incarnation, direction, generation, `syncId`, and unique local token. Completion, transport departure, timeout, invalid input, budget rejection, local supplier failure, local processing failure, or lifecycle cleanup SHALL discard snapshots, pages, queues, and feedback ownership but SHALL retain exactly the bound `syncId` plus one terminal bit for that source incarnation and direction. Once terminal, neither the same nor a different ID SHALL start another synchronization on that connection. No automatic, delayed, or event-driven retry SHALL exist. Source replacement or domain release SHALL clear all working and terminal bindings for that source/domain. A later connection SHALL generate a fresh `syncId`, read current storage, and start one independent synchronization with no resumed page, snapshot, cursor, retry count, or other prior progress. Any previously uninserted response record is eligible only because the new connection computes from current storage, not because History retained recovery State.
 
@@ -134,7 +134,7 @@ The Runtime page contract SHALL retain explicit `{supplyId}` request/cancel owne
 
 ### Requirement: Event sequence and un-ACK buffer
 
-`DeliveryDomain` SHALL maintain a short-term per-domain event sequence and volatile inbound un-ACK delivery buffer bounded to 512 records and 8MiB. An event SHALL be cleared once at least one page acknowledges durable persistence. One `history-messages-response` page SHALL be admitted atomically or rejected as a whole when it would exceed either bound; rejection SHALL apply none of that page, SHALL cancel the local History attempt, and SHALL not emit a peer acknowledgement or ask the provider for another page. A page that reconnects within the same current domain lifecycle SHALL be re-sent unacknowledged inbound events by sequence. Events still unacknowledged when the domain's grace period ends SHALL be discarded. Loss of the buffer when the browser kills the Runtime is an accepted boundary. This local delivery ACK and buffer SHALL NOT become a History peer message, outbound outbox, remote delivery confirmation, or cross-disconnect History recovery mechanism.
+`DeliveryDomain` SHALL maintain a short-term per-domain event sequence and volatile inbound un-ACK delivery buffer bounded to 512 records and 8MiB. An event SHALL be cleared once at least one page acknowledges durable persistence. One `history-messages-push` page SHALL be admitted atomically or rejected as a whole when it would exceed either bound; rejection SHALL apply none of that page, SHALL cancel the local History attempt, and SHALL not emit a peer acknowledgement or ask the provider for another page. A page that reconnects within the same current domain lifecycle SHALL be re-sent unacknowledged inbound events by sequence. Events still unacknowledged when the domain's grace period ends SHALL be discarded. Loss of the buffer when the browser kills the Runtime is an accepted boundary. This local delivery ACK and buffer SHALL NOT become a History peer message, outbound outbox, remote delivery confirmation, or cross-disconnect History recovery mechanism.
 
 #### Scenario: ACK clears buffer
 
@@ -153,7 +153,7 @@ The Runtime page contract SHALL retain explicit `{supplyId}` request/cancel owne
 
 #### Scenario: Atomic history batch admission
 
-- **WHEN** a `history-messages-response` page would exceed 512 records or 8MiB in the volatile un-ACK buffer
+- **WHEN** a `history-messages-push` page would exceed 512 records or 8MiB in the volatile un-ACK buffer
 - **THEN** the Runtime SHALL reject the whole page, preserve existing records, cancel only that History attempt, and SHALL send no peer acknowledgement or continuation request
 
 ### Requirement: Runtime facts have exactly one writable Domain owner

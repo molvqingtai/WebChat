@@ -573,10 +573,13 @@ const ConnectionDomain = Remesh.domain({
         const attempt = attempts.find((item) => item.domain === releasedDomain)
         if (!runtime && !attempt) return null
         if (!runtime && attempt) {
-          return AbortAttemptCommand({
-            attemptId: attempt.attemptId,
-            error: new Error('Domain released during join')
-          })
+          return [
+            AbortAttemptCommand({
+              attemptId: attempt.attemptId,
+              error: new Error('Domain released during join')
+            }),
+            sessionDomain.command.BeginReleaseDomainCommand(releasedDomain)
+          ]
         }
         const generations = get(GenerationsState())
         const generation = (generations.find((item) => item.domain === releasedDomain)?.generation ?? 0) + 1

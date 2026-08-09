@@ -12,7 +12,7 @@ import { RoomTransportExtern, WireCodecExtern } from '@/domain/runtime/externs/R
 import { PagePortExtern } from '@/domain/runtime/externs/PagePort'
 import { MESSAGE_TYPE } from '@/protocol'
 import type { RoomTransport } from '@/runtime/RoomTransport'
-import type { HistoryMessagesRequest, WireCodec, ChatRoomMessage } from '@/protocol'
+import type { HistoryMessagesPull, WireCodec, ChatRoomMessage } from '@/protocol'
 import { getChatRoomId } from '@/runtime/Server'
 
 const DOMAIN = 'https://example.com'
@@ -117,8 +117,8 @@ const setup = async () => {
   return { store, session, history, wire, delivery, pagePort, receive }
 }
 
-const providerRequest = (syncId: string, page: number, done: boolean): HistoryMessagesRequest => ({
-  type: MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST,
+const providerRequest = (syncId: string, page: number, done: boolean): HistoryMessagesPull => ({
+  type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
   syncId,
   page,
   messageIds: [],
@@ -160,7 +160,7 @@ describe('HistoryDomain connection-binding lifecycle', () => {
     const requester = store.query(history.query.RequesterAttemptsQuery()).find((item) => item.sourcePeerId === 'peer-a')
     expect(requester).toBeDefined()
     receive(ROOM_ID, 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE,
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PUSH,
       syncId: requester!.syncId,
       page: 0,
       users: [],

@@ -261,7 +261,7 @@ describe('App browser ancestry', () => {
     await page.viewport(1000, 800)
     await render(<App />)
 
-    expect(getComputedStyle(getLauncherPositioner()).bottom).toBe('756px')
+    expect(getComputedStyle(getLauncherPositioner()).bottom).toBe('694px')
     getLauncher().click()
 
     await vi.waitFor(() => {
@@ -271,7 +271,7 @@ describe('App browser ancestry', () => {
     })
 
     getLauncher().click()
-    await vi.waitFor(() => expect(getComputedStyle(getLauncherPositioner()).bottom).toBe('756px'))
+    await vi.waitFor(() => expect(getComputedStyle(getLauncherPositioner()).bottom).toBe('694px'))
     const closePresenceOffset = getLauncherToShellOffset()
 
     await vi.waitFor(() => expect(getPanel()).toBeNull())

@@ -1,6 +1,14 @@
 import { Remesh } from 'remesh'
 import type { Unsubscribe } from '@/domain/Subscription'
-import type { ChatMessage, ChatSession, ChatSite, ChatUser, MentionedUser } from '@/protocol'
+import type {
+  ChatMessage,
+  ChatSession,
+  ChatSite,
+  ChatUser,
+  MentionedUser,
+  ReactionMessage,
+  TextMessage
+} from '@/protocol'
 
 export interface JoinRoomCommand {
   user: ChatUser
@@ -25,6 +33,8 @@ export type SendMessageCommand = SendTextCommand | SendReactionCommand
 export interface ChatRoom {
   joinRoom(command: JoinRoomCommand): Promise<void>
   leaveRoom(): Promise<void>
+  sendMessage(command: SendTextCommand): Promise<TextMessage>
+  sendMessage(command: SendReactionCommand): Promise<ReactionMessage>
   sendMessage(command: SendMessageCommand): Promise<ChatMessage>
   onMessage(listener: (message: ChatMessage) => void): Unsubscribe
   onJoinRoom(listener: (session: ChatSession) => void): Unsubscribe

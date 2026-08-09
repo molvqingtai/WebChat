@@ -1,16 +1,9 @@
 import { Remesh } from 'remesh'
+import * as v from 'valibot'
 import { fromEventPattern, map, mergeMap } from 'rxjs'
-import { MAX_DECODE_QUEUE_BYTES, MAX_DECODE_QUEUE_FRAMES, WORLD_ROOM_ID_V4 } from '@/constants/config'
+import { MAX_DECODE_QUEUE_BYTES, MAX_DECODE_QUEUE_FRAMES, WORLD_ROOM_ID_V5 } from '@/constants/config'
 import { RoomTransportExtern, WireCodecExtern } from '@/domain/runtime/externs/RoomTransport'
-import {
-  MESSAGE_TYPE,
-  WireCodecError,
-  isHistoryPageFrameWithinLimit,
-  parseChatRoomMessage,
-  parseWorldRoomMessage,
-  type ChatRoomMessage,
-  type WorldRoomMessage
-} from '@/protocol'
+import { ChatRoomMessageSchema, WorldRoomMessageSchema, type ChatRoomMessage, type WorldRoomMessage } from '@/protocol'
 import { getTextByteSize } from '@/utils/getTextByteSize'
 import stringToHex from '@/utils/stringToHex'
 
@@ -89,7 +82,7 @@ interface DropRecord {
 
 const MAX_LOGGED_SOURCES = 256
 const LOG_INTERVAL_MS = 10000
-const worldRoomId = stringToHex(WORLD_ROOM_ID_V4)
+const worldRoomId = stringToHex(WORLD_ROOM_ID_V5)
 const queueId = (roomId: string, sourcePeerId: string) => JSON.stringify([roomId, sourcePeerId])
 const generationFor = (generations: RoomGeneration[], roomId: string) =>
   generations.find((item) => item.roomId === roomId)?.generation ?? 0
@@ -150,9 +143,13 @@ const WireDomain = Remesh.domain({
     const ProviderSendRequestedEvent = domain.event<EncodedSend>({ name: 'Wire.ProviderSendRequestedEvent' })
     const RawFrameAdmittedEvent = domain.event<RawFrame>({ name: 'Wire.RawFrameAdmittedEvent' })
 
+    // The single peer-receive parse boundary: the room-selected complete declarative schema
+    // owns all protocol validation. A rejection emits no typed message and reaches no downstream
+    // domain or user-visible feedback.
     const parseMessage = (roomId: string, value: unknown): WireMessage | null => {
-      if (roomId === worldRoomId) return parseWorldRoomMessage(value)
-      return parseChatRoomMessage(value)
+      const parsed =
+        roomId === worldRoomId ? v.safeParse(WorldRoomMessageSchema, value) : v.safeParse(ChatRoomMessageSchema, value)
+      return parsed.success ? parsed.output : null
     }
 
     const RecordDropCommand = domain.command({
@@ -309,13 +306,6 @@ const WireDomain = Remesh.domain({
           return MessageSendFailedEvent({
             requestId: request.requestId,
             error: new Error('Untrusted room message'),
-            stage: 'preflight'
-          })
-        }
-        if (!parseMessage(request.roomId, request.message)) {
-          return MessageSendFailedEvent({
-            requestId: request.requestId,
-            error: new Error('Invalid message for trusted room'),
             stage: 'preflight'
           })
         }
@@ -489,13 +479,7 @@ const WireDomain = Remesh.domain({
           ]
         }
         const message = parseMessage(payload.roomId, payload.value)
-        if (
-          !message ||
-          ('type' in message &&
-            (message.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST ||
-              message.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE) &&
-            !isHistoryPageFrameWithinLimit(payload.rawPayload))
-        ) {
+        if (!message) {
           return [...queueOutput, RecordDropCommand({ sourcePeerId: payload.sourcePeerId, reason: 'invalid message' })]
         }
         return [
@@ -568,15 +552,9 @@ const WireDomain = Remesh.domain({
         fromEvent(SendRequestedEvent).pipe(
           mergeMap(async (request) => {
             try {
+              // The codec's uniform encoded-frame bound is the only representation check; no
+              // message-property validation happens on the outbound path.
               const rawPayload = await codec.encode(request.message)
-              if (
-                'type' in request.message &&
-                (request.message.type === MESSAGE_TYPE.HISTORY_MESSAGES_REQUEST ||
-                  request.message.type === MESSAGE_TYPE.HISTORY_MESSAGES_RESPONSE) &&
-                !isHistoryPageFrameWithinLimit(rawPayload)
-              ) {
-                throw new WireCodecError('History page reached the wire limit')
-              }
               return CompleteEncodeCommand({ request, rawPayload })
             } catch (error) {
               return CompleteEncodeCommand({ request, error: error as Error })
@@ -665,7 +643,7 @@ const WireDomain = Remesh.domain({
       impl: ({ fromEvent }) =>
         fromEvent(ProtocolDropEvent).pipe(
           map(({ sourcePeerId, reason, error }) => {
-            console.warn(`[WebChat] Dropped v4 frame from ${sourcePeerId}: ${reason}`, error ?? '')
+            console.warn(`[WebChat] Dropped v5 frame from ${sourcePeerId}: ${reason}`, error ?? '')
             return null
           })
         )

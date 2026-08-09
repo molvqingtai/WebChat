@@ -22,14 +22,14 @@ Owner smoke on source exact `8c4905804b49669ad748ee3a55ac708a90bb3d46` then expo
 - Prevent a timed-out, released, or superseded attempt or persistence tail from blocking a later current generation.
 - Mount the existing launcher and openable panel shell once before browser-sync/local configuration, MessageStore, or Runtime bootstrap can fail.
 - Present any bootstrap terminal as one visible, accessible, retryable degraded state; ignite each dependency-backed Domain only after its prerequisite is ready and recover the same mounted shell in place.
-- Preserve current same-domain grace, room reuse/release, final-retirement durability, and request-local stale fencing.
+- Preserve current same-domain grace, room reuse/release, local active-presence cleanup, and request-local stale fencing.
 
 **Non-Goals:**
 
 - No assumption about which callback/replay/IndexedDB request hangs in the field.
 - No required `pageId` transport metadata, provider callback re-registration design, or Injector/Provider API change.
 - No shortcut that connects before required callback registration and replay persistence finish.
-- No change to peer wire, public ports, schema/version, message history semantics, active/final Presence record shapes, or release ordering.
+- No additional peer message, public port, origin-database schema/version, message-history behavior, or release authority beyond the current active-presence and physical-departure model.
 - No success feedback, detailed diagnostic copy, panel visual redesign, automatically opened panel, or second Runtime-readiness authority.
 - No permanent production trace surface unless implementation evidence proves it necessary.
 
@@ -57,7 +57,7 @@ Once the current Runtime generation has physically accepted the required Chat an
 
 Active Presence persistence still requires a finite failure/timeout owner. Its per-domain queue SHALL release or supersede an unresolved predecessor so later current-generation persistence and final release are not permanently serialized behind it. A late old completion SHALL not overwrite, retire, or report success for a newer Presence generation. Failure SHALL use the existing Runtime error path; it SHALL not add or modify Toast behavior or create a second page request.
 
-This decision applies only to active post-commit persistence. Final release SHALL retain the existing durable retirement, SESSION_END settlement, cleanup, and physical departure ordering. A final-retirement failure remains a release failure and is not converted into success by this change.
+This decision applies only to active post-commit persistence. Final release SHALL retain one local release owner: it removes the private active-generation authority, releases the domain State, and physically departs Chat/World without an outbound lifecycle message. No in-flight end, retryable end, end-send settlement, or settled-cleanup phase exists. A required local active-record cleanup failure remains a release failure and is not converted into success by this change, but physical departure SHALL wait on no peer end signal.
 
 Alternative rejected: keep the page request attached to the Presence tail and merely add a longer loading duration. A non-settling Promise has no finite duration and continues to poison later domain work.
 
@@ -65,7 +65,7 @@ Alternative rejected: keep the page request attached to the Presence tail and me
 
 An ordinary page-context refresh while the authoritative physical tab binding remains SHALL start no grace, retain the current physical Chat and World rooms, and give the replacement page an independent connection attempt. A page returning during an actual five-second domain grace SHALL cancel that grace, reuse the same committed physical rooms, and independently settle from the current Runtime snapshot. Neither replacement SHALL inherit the prior page's pending operation or loading owner. After grace expires and release completes, a later page SHALL create new physical rooms through the existing join path.
 
-The repair SHALL not start grace for an ordinary page-context refresh while the authoritative physical tab binding remains, change the grace duration, or weaken generation fencing and durable final release.
+The repair SHALL not start grace for an ordinary page-context refresh while the authoritative physical tab binding remains, change the grace duration, or weaken generation fencing and current local release ownership.
 
 ### 5. The contract is mechanism-neutral where evidence is incomplete
 
@@ -79,7 +79,7 @@ Each bootstrap generation SHALL own one finite result for every attempted depend
 
 One Retry SHALL create one fresh bounded bootstrap generation, reuse already valid dependency results where safe, and fence every late result from the failed generation. If all required dependencies become ready, the same root SHALL ignite each dependent Domain exactly once and recover the normal UI without requiring a document reload. If Retry fails, its loading owner SHALL settle back to the same accessible unavailable state. Reload or genuine document replacement SHALL mount one fresh shell and start one fresh generation; old work remains fenced by the existing attempt rules.
 
-The shell continuity rule changes no Runtime truth. Runtime `connecting | ready | unavailable`, `Connection failed`, ready dismissal, manual reconnect ownership, Chat/World prerequisites, and final release remain authoritative after their dependencies are available. It adds no success feedback, second Toast/Readiness owner, raw diagnostic detail, or panel visual redesign.
+The shell continuity rule changes no Runtime truth. Runtime `connecting | ready | unavailable`, `Connection failed`, ready dismissal, manual reconnect ownership, Chat/World prerequisites, and current local release remain authoritative after their dependencies are available. It adds no success feedback, second Toast/Readiness owner, raw diagnostic detail, or panel visual redesign.
 
 ### 7. Verification preserves RED sensitivity without shipping diagnostic bulk
 
@@ -87,7 +87,7 @@ Focused tests SHALL prove all four pending boundaries against application-observ
 
 ## Risks / Trade-offs
 
-- [An active Presence save can fail after page success] -> Keep that persistence under a bounded Runtime owner and surface its existing error independently; do not redefine the already committed connection or final-retirement rules.
+- [An active Presence save can fail after page success] -> Keep that persistence under a bounded Runtime owner and surface its existing error independently; do not redefine the already committed connection or local release rules.
 - [Timing out prerequisite work can leave partial callbacks] -> Require attempt-owned cleanup and stale-generation rejection before allowing a fresh attempt.
 - [A finite deadline can reject a genuinely slow browser operation] -> Keep the deadline implementation-owned and deterministic, reuse existing cancellation/error semantics, and make retry/new-page admission fresh rather than permanently blocked.
 - [Resetting a persistence tail can admit late old work] -> Fence late completion against the current Presence generation and prove later persistence/release remains authoritative.
