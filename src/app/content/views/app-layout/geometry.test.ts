@@ -111,8 +111,11 @@ describe('AppButton edge-relative position', () => {
 
   it('keeps the launcher outer top edge at least 60px below the viewport top when margins fit', () => {
     // 60px outer-top + 44px launcher + 22px bottom edge = 126px minimum compatible height.
+    // Just below the threshold the launcher stays fully visible at the nearest point with the
+    // LARGEST feasible top margin (bottom edge 103 keeps the 22px bottom bound: 59px top).
     const fallback = getAppButtonDragBounds({ width: 400, height: 125 }, false)
-    expect(fallback.minY).toBe(44)
+    expect(fallback.minY).toBe(103)
+    expect(fallback.maxY).toBe(103)
     const fixed = getAppButtonDragBounds({ width: 400, height: 126 }, false)
     expect(fixed.minY).toBe(104)
     // An upward drag beyond the top-safe range is bounded to the fixed margin.
@@ -126,10 +129,24 @@ describe('AppButton edge-relative position', () => {
     })
   })
 
+  it('bounds the collapsed upward drag to the 60px top margin on the right anchor too', () => {
+    const viewport = { width: 400, height: 800 }
+    // A right-half upward drag beyond the top-safe range clamps to the same 104px bottom edge
+    // (60px outer top) and writes the bounded right-anchor shared position.
+    expect(captureAppButtonPosition({ x: 300, y: 100 }, viewport, false)).toEqual({ x: 100, y: 696 })
+    expect(projectAppButtonPosition({ x: 100, y: 696 }, viewport, false)).toEqual({ x: 300, y: 104 })
+    // The right-anchor shared write is bounded and round-trips through the projection.
+    const dragged = captureAppButtonPosition({ x: 250, y: 50 }, viewport, false)
+    expect(dragged).toEqual({ x: 150, y: 696 })
+    expect(projectAppButtonPosition(dragged, viewport, false)).toEqual({ x: 250, y: 104 })
+  })
+
   it('restores the fixed top margin from the unchanged shared coordinate when a later viewport fits', () => {
     const shared = { x: -180, y: 500 }
-    // A 120px-tall viewport cannot satisfy every fixed margin: fully-visible local fallback.
-    expect(projectAppButtonPosition(shared, { width: 500, height: 120 }, false)).toEqual({ x: 180, y: 44 })
+    // A 120px-tall viewport cannot satisfy every fixed margin: the local projection keeps the
+    // launcher fully visible at the nearest point with the largest feasible margin (bottom
+    // edge 98: 54px top margin) and never writes the shared coordinate.
+    expect(projectAppButtonPosition(shared, { width: 500, height: 120 }, false)).toEqual({ x: 180, y: 98 })
     expect(shared).toEqual({ x: -180, y: 500 })
     // The same unchanged shared coordinate restores the fixed margin in a compatible viewport.
     expect(projectAppButtonPosition(shared, { width: 500, height: 400 }, false)).toEqual({ x: 180, y: 104 })
