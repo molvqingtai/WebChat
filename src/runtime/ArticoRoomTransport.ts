@@ -103,7 +103,7 @@ export const createArticoRoomTransport = (): RoomTransport => {
       restartTimer = globalThis.setTimeout(() => {
         restartTimer = null
         startPeer()
-      }, 1000)
+      }, 5000)
     })
   }
 

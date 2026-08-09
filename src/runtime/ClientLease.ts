@@ -69,7 +69,7 @@ export class ClientLease {
 
   constructor(private readonly options: ClientLeaseOptions) {
     this.startupTimeoutMs = options.startupTimeoutMs ?? 15000
-    this.startupRetryIntervalMs = options.startupRetryIntervalMs ?? 500
+    this.startupRetryIntervalMs = options.startupRetryIntervalMs ?? 1000
     this.watchdogIntervalMs = options.watchdogIntervalMs ?? 5000
     this.logError = options.logError ?? ((error) => console.error('[WebChat] Runtime recovery failed:', error))
   }

@@ -1,0 +1,3 @@
+schema: spec-driven
+created: 2026-08-09
+goal: Use deliberate fixed waits for close-driven Artico peer replacement and ClientLease Runtime registration retry without changing recovery ownership or budgets.

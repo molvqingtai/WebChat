@@ -191,7 +191,7 @@ describe('ArticoRoomTransport per-target isolation', () => {
     stalePeer.emit('open')
     stalePeer.emit('error', new Error('stale peer error'))
     stalePeer.emit('close')
-    await vi.advanceTimersByTimeAsync(1000)
+    await vi.advanceTimersByTimeAsync(5000)
 
     expect(fixture.peers).toHaveLength(2)
     expect(errors).toEqual([])
@@ -213,7 +213,7 @@ describe('ArticoRoomTransport per-target isolation', () => {
     expect(errors.map((error) => error.message)).toEqual(['id-taken'])
 
     currentPeer.emit('close')
-    await vi.advanceTimersByTimeAsync(1000)
+    await vi.advanceTimersByTimeAsync(5000)
 
     expect(fixture.peers).toHaveLength(2)
     transport.dispose()
@@ -257,7 +257,7 @@ describe('ArticoRoomTransport per-target isolation', () => {
     currentPeer.emit('close')
 
     transport.leave('chat-v3')
-    await vi.advanceTimersByTimeAsync(1000)
+    await vi.advanceTimersByTimeAsync(5000)
 
     expect(fixture.peers).toHaveLength(1)
     transport.dispose()
