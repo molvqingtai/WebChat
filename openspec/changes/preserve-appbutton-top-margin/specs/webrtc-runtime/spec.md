@@ -2,13 +2,13 @@
 
 ### Requirement: AppButton keeps a fixed top margin
 
-When a viewport can satisfy every fixed launcher margin, the AppButton's outer top edge SHALL remain at least `60px` below the viewport top. With the existing `44px` launcher and `22px` bottom-edge margin, a viewport at least `126px` high SHALL satisfy both vertical margins.
+When WebChat is collapsed and a viewport can satisfy every fixed launcher margin, the AppButton's outer top edge SHALL remain at least `60px` below the viewport top. With the existing `44px` launcher and `22px` bottom-edge margin, a viewport at least `126px` high SHALL satisfy both vertical margins.
 
-The single local AppButton geometry owner SHALL apply this top bound to active drag capture and to projection of the shared edge-relative position. User drag SHALL continue to write the bounded shared position. Hydration, same-domain synchronization, and viewport resize SHALL project locally without mutating or persisting the shared coordinate.
+The single local AppButton geometry owner SHALL calculate all four launcher-only viewport bounds through the same boundary mechanism. The top value SHALL be `60px` from the launcher's outer edge; the existing left, right, and bottom values SHALL remain unchanged. This launcher-only calculation SHALL derive every edge from the launcher and viewport without using shell height. It SHALL apply the effective bounds to active drag capture and to projection of the shared edge-relative position. User drag SHALL continue to write the bounded shared position. Hydration, same-domain synchronization, and viewport resize SHALL project locally without mutating or persisting the shared coordinate.
 
-If a viewport can contain the launcher but cannot satisfy every fixed margin, its local projection SHALL keep the launcher fully visible at the nearest point with the largest feasible margin. A smaller viewport SHALL retain its existing nearest projection. A later compatible viewport SHALL restore the fixed margins from the unchanged shared coordinate unless a user drag has written a new bounded position.
+If a collapsed viewport can contain the launcher but cannot satisfy every fixed margin, its local projection SHALL keep the launcher fully visible at the nearest point with the largest feasible margin. A smaller collapsed viewport SHALL retain its existing nearest projection. A later compatible collapsed viewport SHALL restore the fixed margins from the unchanged shared coordinate unless a user drag has written a new bounded position. Expanded fallback behavior SHALL remain unchanged.
 
-When WebChat is expanded, the existing shell-safe vertical bound SHALL remain authoritative whenever it places the launcher farther from the top. The shell SHALL retain its current `40px` top inset, size range, and launcher relationship. The new top margin SHALL NOT weaken or replace that expanded-shell constraint.
+When WebChat is expanded, the existing shell-safe vertical constraint SHALL remain a separate layer from the launcher-only margins. It SHALL retain the shell's current `40px` top inset, size range, launcher relationship, fallback, and resulting AppButton position. The shell constraint SHALL remain unchanged and authoritative for effective expanded placement, so the new launcher top value SHALL be visible only while collapsed.
 
 The existing left and right horizontal-center margins, bottom-edge margin, initial position, horizontal anchor representation, midpoint crossing, pointer following, cursor, selection suppression, release behavior, cross-edge animation, and absence of snap/rebound/easing SHALL remain unchanged. This requirement SHALL add no UI control, copy, setting, state owner, persistence field, dependency, permission, protocol value, or browser-specific branch.
 
@@ -26,15 +26,15 @@ The existing left and right horizontal-center margins, bottom-edge margin, initi
 
 #### Scenario: A later compatible viewport restores the fixed margin
 
-- **GIVEN** a smaller viewport could not satisfy every fixed launcher margin and used its local fallback without a shared write
-- **WHEN** the same shared position is projected in a viewport that can satisfy the fixed margins
+- **GIVEN** a smaller collapsed viewport could not satisfy every fixed launcher margin and used its local fallback without a shared write
+- **WHEN** the same shared position is projected while collapsed in a viewport that can satisfy the fixed margins
 - **THEN** the launcher SHALL again retain at least `60px` above its outer top edge and the existing bottom margin
 
-#### Scenario: Expanded shell safety remains stricter
+#### Scenario: Expanded placement remains unchanged
 
-- **GIVEN** WebChat is expanded and its existing shell-safe bound requires the launcher farther from the viewport top than the collapsed top margin
+- **GIVEN** WebChat is expanded
 - **WHEN** the AppButton is dragged or locally projected
-- **THEN** the shell-safe bound SHALL win, the shell top SHALL retain its current `40px` inset, and no shell size or launcher relationship SHALL change
+- **THEN** the existing shell-safe bound and resulting AppButton position SHALL remain unchanged, the shell top SHALL retain its current `40px` inset, and the collapsed `60px` change SHALL have no effect on expanded placement
 
 #### Scenario: Other placement and motion remain unchanged
 
