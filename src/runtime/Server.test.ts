@@ -3322,6 +3322,86 @@ describe('RuntimeServer history', () => {
     }
   })
 
+  it('keeps unrelated ended tombstones across a prepared PeerLeave and rejects the expired replay', async () => {
+    vi.useFakeTimers()
+    try {
+      const clock = new FakeClock()
+      const fake = createFakeTransport()
+      const server = createServer({ transport: fake.transport, clock, codec: jsonCodec })
+      await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
+      await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
+      const roomId = getChatRoomId(DOMAIN)
+      // Commit B, deliver B's PeerLeave, and advance the deadline so B is removed and recorded ended.
+      fake.receive(roomId, 'peer-b', session({ id: 'user-b', name: 'User B', avatar: '' }))
+      await settle()
+      fake.peerLeave(roomId, 'peer-b')
+      await settle()
+      await vi.advanceTimersByTimeAsync(PENDING_LEAVE_GRACE_MS)
+      await vi.advanceTimersByTimeAsync(0)
+      // Commit an unrelated current D.
+      fake.receive(roomId, 'peer-d', session({ id: 'user-d', name: 'User D', avatar: '' }))
+      await settle()
+      // A held ordinary replacement preparation receives D's PeerLeave (exercises reconciliation).
+      fake.plantPeer(roomId, 'remote-peer')
+      fake.makeNotReady()
+      fake.hangSendsTo(roomId)
+      const chatBroadcastStarted = fake.waitForSendAttempt(roomId)
+      const join = server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
+      await fake.waitForJoinCalls(4)
+      fake.open()
+      await expect(chatBroadcastStarted).resolves.toMatchObject({ roomId })
+      fake.peerLeave(roomId, 'peer-d')
+      await settle()
+      fake.releaseSends()
+      const snapshot = await join
+      if (!snapshot) throw new Error('Join was cancelled')
+      await settle()
+      // Replaying B's exact expired SESSION from a new source is source-locally dropped:
+      // the tombstone survived the unrelated reconciliation, and grace-preserved D stays shown.
+      fake.receive(roomId, 'peer-b-new', session({ id: 'user-b', name: 'User B', avatar: '' }))
+      await settle()
+      const after = (await server.getSnapshot()).domains[0].sessions.map((session) => session.user.id)
+      expect(after).toEqual(['user-d'])
+      disposeServer(server)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps the preparation-owned displaced finality across an unrelated PeerLeave', async () => {
+    const { fake, server, roomId } = await setup()
+    // Commit B and D.
+    fake.receive(roomId, 'peer-b', session({ id: 'user-b', name: 'User B', avatar: '' }))
+    await settle()
+    fake.receive(roomId, 'peer-d', session({ id: 'user-d', name: 'User D', avatar: '' }))
+    await settle()
+    // A held ordinary preparation switches B's source to C.
+    fake.plantPeer(roomId, 'remote-peer')
+    fake.makeNotReady()
+    fake.hangSendsTo(roomId)
+    const chatBroadcastStarted = fake.waitForSendAttempt(roomId)
+    const join = server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
+    await fake.waitForJoinCalls(4)
+    fake.open()
+    await expect(chatBroadcastStarted).resolves.toMatchObject({ roomId })
+    fake.receive(roomId, 'peer-b', session({ id: 'user-c', name: 'User C', avatar: '' }))
+    await settle()
+    // An UNRELATED D PeerLeave must not reactivate the preparation-displaced B.
+    fake.peerLeave(roomId, 'peer-d')
+    await settle()
+    fake.releaseSends()
+    const snapshot = await join
+    if (!snapshot) throw new Error('Join was cancelled')
+    await settle()
+    // B stays ended: replaying its exact generation on a new source is source-locally rejected,
+    // while grace-preserved D stays displayed.
+    fake.receive(roomId, 'peer-b-new', session({ id: 'user-b', name: 'User B', avatar: '' }))
+    await settle()
+    const after = (await server.getSnapshot()).domains[0].sessions.map((session) => session.user.id)
+    expect(after).toEqual(['user-c', 'user-d'])
+    disposeServer(server)
+  })
+
   it('emits no finality event when the prepared switch source departs before commit', async () => {
     const { fake, server, roomId } = await setup()
     const events: string[] = []

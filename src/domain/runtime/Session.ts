@@ -1478,32 +1478,44 @@ const SessionDomain = Remesh.domain({
               }
               const committed = get(DomainsState()).find((item) => item.domain === prepared.runtime.domain)
               const pendingLeaves = get(PendingLeavesState())
-              // Reconcile the attempt's observer ledger with the surviving prepared sessions plus
-              // the committed/pending-leave authority: a provisional presence with no surviving
-              // authoritative binding must not remain active, and a grace-preserved committed
-              // binding stays eligible for an exact rebind.
-              const authoritativePresences = new Set([
-                ...nextPreparedRuntime.sessions.map((session) => session.presenceId),
+              // Reconcile ONLY the observations whose authority the departed source carried:
+              // the source's prepared bindings and its committed bindings. Unrelated ended
+              // tombstones and finality already owned by the current preparation are preserved.
+              const departedSourcePresences = new Set([
+                ...prepared.runtime.sessions
+                  .filter((session) => session.sourcePeerId === payload.sourcePeerId)
+                  .map((session) => session.presenceId),
                 ...(committed?.sessions
-                  .filter(
-                    (session) =>
-                      !pendingLeaves.some(
-                        (leave) => leave.domain === prepared.runtime.domain && leave.presenceId === session.presenceId
-                      )
-                  )
-                  .map((session) => session.presenceId) ?? []),
-                ...pendingLeaves
-                  .filter(
-                    (leave) =>
-                      leave.domain === prepared.runtime.domain &&
-                      (committed?.sessions.some((session) => session.presenceId === leave.presenceId) ||
-                        nextPreparedRuntime.sessions.some((session) => session.presenceId === leave.presenceId))
-                  )
-                  .map((leave) => leave.presenceId)
+                  .filter((session) => session.sourcePeerId === payload.sourcePeerId)
+                  .map((session) => session.presenceId) ?? [])
               ])
+              const authoritativeAfterDeparture = (presenceId: string) =>
+                nextPreparedRuntime.sessions.some((session) => session.presenceId === presenceId) ||
+                (committed?.sessions.some(
+                  (session) =>
+                    session.presenceId === presenceId &&
+                    !pendingLeaves.some(
+                      (leave) => leave.domain === prepared.runtime.domain && leave.presenceId === presenceId
+                    )
+                ) ??
+                  false) ||
+                pendingLeaves.some(
+                  (leave) =>
+                    leave.domain === prepared.runtime.domain &&
+                    leave.presenceId === presenceId &&
+                    (committed?.sessions.some((session) => session.presenceId === presenceId) ||
+                      nextPreparedRuntime.sessions.some((session) => session.presenceId === presenceId))
+                )
               const reconciledObservers = prepared.observers
-                .filter((observer) => authoritativePresences.has(observer.presenceId))
-                .map((observer) => ({ ...observer, status: 'active' as const }))
+                .filter((observer) => {
+                  if (!departedSourcePresences.has(observer.presenceId)) return true
+                  return authoritativeAfterDeparture(observer.presenceId)
+                })
+                .map((observer) =>
+                  departedSourcePresences.has(observer.presenceId)
+                    ? { ...observer, status: 'active' as const }
+                    : observer
+                )
               return PreparedSessionsState().new(
                 replaceBy(preparedSessions, (item) => item.attemptId === prepared.attemptId, {
                   ...prepared,
