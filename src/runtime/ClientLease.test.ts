@@ -91,13 +91,13 @@ describe('ClientLease generation ownership', () => {
       coordinator,
       pageId: 'page-a',
       domain: 'https://example.test',
-      startupTimeoutMs: 6000
+      startupTimeoutMs: 7000
     })
     client.whenReady(ready)
 
     const initializing = client.init()
     await vi.waitFor(() => expect(registerPage).toHaveBeenCalledOnce())
-    await vi.advanceTimersByTimeAsync(5500)
+    await vi.advanceTimersByTimeAsync(6000)
     await initializing
     expect(client.snapshot().hostId).toBe('host-b')
 
