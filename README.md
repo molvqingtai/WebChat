@@ -53,12 +53,6 @@ WebChat builds on these excellent open-source projects:
 - **[Artico](https://github.com/matallui/artico)** provides the flexible WebRTC foundation for peer-to-peer communication.
 - **[ugly-avatar](https://github.com/txstc55/ugly-avatar)** generates WebChat's distinctive random avatars.
 
-## Sponsors
-
-WebChat is an open-source project sustained by its contributors and sponsors.
-
-<a href="https://dartnode.com" title="Powered by DartNode - Free VPS for Open Source"><img src="https://dartnode.com/branding/DN-Open-Source-sm.png" width="500" alt="Powered by DartNode" /></a>
-
 ## License
 
 WebChat is available under the [MIT License](./LICENSE).
