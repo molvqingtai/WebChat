@@ -35,12 +35,12 @@ Alternative considered: provider wildcards such as `*.google.com` or `*.stripe.c
 
 Extend the current `excludeMatches` array directly. Do not add a runtime URL guard, shared registry, generated config layer, or provider model. A second owner would add drift and control flow to a fixed manifest decision.
 
-### Verify exact hosts and near misses
+### Verify the generated browser declarations
 
-Focused coverage must prove that every path on each selected host is excluded, while representative apex, generic `www`, sibling, child, and removed-provider hosts remain eligible unless an existing exclusion already applies. Chrome and Firefox build outputs must carry the same ten additions and preserve the existing exclusions.
+Chrome and Firefox build outputs must carry the same ten additions and preserve the existing exclusions. This requirement adds no dedicated automated test suite.
 
 ## Risks / Trade-offs
 
-- **A wildcard could exclude unrelated pages** -> Use only fixed host literals and assert representative near misses.
-- **An existing exclusion could be lost during the edit** -> Assert the prior localhost, loopback, and CSDN entries remain present.
+- **A wildcard could exclude unrelated pages** -> Use only the ten reviewed fixed host literals.
+- **An existing exclusion could be lost during the edit** -> Inspect the declaration and generated manifests for the prior localhost, loopback, and CSDN entries.
 - **Browser targets could diverge** -> Inspect both generated manifests from the same source declaration.

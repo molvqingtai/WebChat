@@ -22,5 +22,5 @@ None.
 ## Impact
 
 - Affected implementation: the existing content-script `excludeMatches` declaration.
-- Affected verification: focused targeting coverage and generated Chrome/Firefox manifest inspection.
+- Affected verification: generated Chrome/Firefox manifest inspection and existing repository delivery checks.
 - Unchanged: the broad HTTPS match, existing exclusions, frame behavior, permissions, runtime behavior, page UI, dependencies, and every nonselected host.
