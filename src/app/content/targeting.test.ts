@@ -56,8 +56,8 @@ describe('content-script authorization host exclusion', () => {
     for (const host of AUTHORIZATION_HOSTS) {
       expect(patterns).toContain(`https://${host}/*`)
     }
-    expect(patterns.filter((pattern) => AUTHORIZATION_HOSTS.some((host) => pattern.includes(host)))).toHaveLength(
-      AUTHORIZATION_HOSTS.length
+    expect([...patterns].sort()).toEqual(
+      [...EXISTING_EXCLUSIONS, ...AUTHORIZATION_HOSTS.map((host) => `https://${host}/*`)].sort()
     )
   })
 
