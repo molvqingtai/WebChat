@@ -1,3 +1,9 @@
+## [2.4.7](https://github.com/molvqingtai/WebChat/compare/v2.4.6...v2.4.7) (2026-08-10)
+
+### Performance Improvements
+
+- **content:** exclude common authorization subdomains from content targeting ([80fc9fc](https://github.com/molvqingtai/WebChat/commit/80fc9fc53c151fd3bd1756aee4fd55a7a08f7b4d))
+
 ## [2.4.6](https://github.com/molvqingtai/WebChat/compare/v2.4.5...v2.4.6) (2026-08-09)
 
 ### Bug Fixes
