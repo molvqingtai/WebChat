@@ -24,7 +24,8 @@ interface PeerOwner {
  * Runtime-private transport facade. Each joined room owns exactly one scoped Artico peer: a fresh
  * physical identity per owner creation, one allowed room, and one restart owner while demand for
  * that room is non-empty. World and every Chat domain therefore never share a peer, a desired-room
- * set, a restart, or a pending operation.
+ * set, a restart, or a pending operation. Every provider error carries its exact room scope and is
+ * fenced by the current owner generation; a retired or disposed owner cannot emit anything.
  */
 export const createArticoRoomTransport = (): RoomTransport => {
   const owners = new Map<string, PeerOwner>()
@@ -33,7 +34,7 @@ export const createArticoRoomTransport = (): RoomTransport => {
   const joinListeners = new Set<(roomId: string, peerId: string) => void>()
   const leaveListeners = new Set<(roomId: string, peerId: string) => void>()
   const closeListeners = new Set<(roomId: string) => void>()
-  const errorListeners = new Set<(error: Error) => void>()
+  const errorListeners = new Set<(error: Error, roomId: string) => void>()
 
   const createPendingJoin = (): PendingJoin => {
     let resolve!: () => void
@@ -45,8 +46,9 @@ export const createArticoRoomTransport = (): RoomTransport => {
     return { promise, resolve, reject }
   }
 
-  const bindRoom = (owner: PeerOwner, room: Room) => {
-    const isCurrent = () => owners.get(owner.roomId) === owner && owner.room === room
+  const bindRoom = (owner: PeerOwner, peer: Artico, room: Room) => {
+    const isCurrent = () =>
+      owners.get(owner.roomId) === owner && !owner.disposed && owner.peer === peer && owner.room === room
     room.on('message', (rawPayload, sourcePeerId) => {
       if (isCurrent()) messageListeners.forEach((listener) => listener(owner.roomId, sourcePeerId, rawPayload))
     })
@@ -73,7 +75,7 @@ export const createArticoRoomTransport = (): RoomTransport => {
     try {
       const room = owner.peer.join(owner.roomId)
       owner.room = room
-      bindRoom(owner, room)
+      bindRoom(owner, owner.peer, room)
       owner.pendingJoin?.resolve()
       owner.pendingJoin = undefined
     } catch (error) {
@@ -86,22 +88,34 @@ export const createArticoRoomTransport = (): RoomTransport => {
     }
   }
 
+  /** Retire the current physical peer before any successor exists; its room is settled with it. */
+  const retirePeer = (owner: PeerOwner) => {
+    const stale = owner.peer
+    owner.room = undefined
+    owner.readyPeers.clear()
+    try {
+      stale?.close()
+    } catch {}
+  }
+
   const startPeer = (owner: PeerOwner) => {
     if (owner.disposed) return
+    retirePeer(owner)
     const nextPeer = new Artico({ id: owner.peerId })
     owner.peer = nextPeer
     nextPeer.on('open', () => {
-      if (owner.peer !== nextPeer) return
+      if (owner.disposed || owners.get(owner.roomId) !== owner || owner.peer !== nextPeer) return
       joinNow(owner)
     })
     nextPeer.on('error', (error) => {
       // Errors are never classified by message/name/code; they surface as real peer failures while
-      // the physical restart path below is the only structural self-healing mechanism.
-      if (owner.peer !== nextPeer) return
-      errorListeners.forEach((listener) => listener(error))
+      // the physical restart path below is the only structural self-healing mechanism. A retired or
+      // disposed owner can never leak an error outside its exact room scope.
+      if (owner.disposed || owners.get(owner.roomId) !== owner || owner.peer !== nextPeer) return
+      errorListeners.forEach((listener) => listener(error, owner.roomId))
     })
     nextPeer.on('close', () => {
-      if (owner.disposed || owner.peer !== nextPeer || owner.restartTimer) return
+      if (owner.disposed || owners.get(owner.roomId) !== owner || owner.peer !== nextPeer || owner.restartTimer) return
       owner.restartTimer = globalThis.setTimeout(() => {
         owner.restartTimer = null
         startPeer(owner)
@@ -135,6 +149,7 @@ export const createArticoRoomTransport = (): RoomTransport => {
   const dropOwner = (owner: PeerOwner) => {
     if (owner.disposed) return
     owner.disposed = true
+    owners.delete(owner.roomId)
     if (owner.restartTimer) {
       globalThis.clearTimeout(owner.restartTimer)
       owner.restartTimer = null
@@ -144,12 +159,11 @@ export const createArticoRoomTransport = (): RoomTransport => {
     const room = owner.room
     owner.room = undefined
     owner.readyPeers.clear()
-    owners.delete(owner.roomId)
     if (room) {
       try {
         room.leave()
       } catch (error) {
-        errorListeners.forEach((listener) => listener(error as Error))
+        errorListeners.forEach((listener) => listener(error as Error, owner.roomId))
       }
     }
     try {
@@ -158,7 +172,6 @@ export const createArticoRoomTransport = (): RoomTransport => {
   }
 
   return {
-    peerId: '',
     peerIdOf: (roomId) => owners.get(roomId)?.peerId ?? '',
     join: (roomId) => {
       const owner = owners.get(roomId) ?? createOwner(roomId)

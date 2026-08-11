@@ -90,6 +90,12 @@ const WorldDomain = Remesh.domain({
       name: 'World.LiveReleaseContinuationsState',
       default: []
     })
+    // A final-site release still owes the World room one empty `sites: []` snapshot before the
+    // release owner may close; the removed registration's identity is retained for that publication.
+    const PendingFinalPublicationState = domain.state<{ user: ChatUser } | null>({
+      name: 'World.PendingFinalPublicationState',
+      default: null
+    })
     const PublicationRevisionState = domain.state<number>({
       name: 'World.PublicationRevisionState',
       default: 0
@@ -125,6 +131,8 @@ const WorldDomain = Remesh.domain({
     const PublicationPresenceQuery = domain.query({
       name: 'World.PublicationPresenceQuery',
       impl: ({ get }) => {
+        const pendingFinal = get(PendingFinalPublicationState())
+        if (pendingFinal) return { sessionId: options.sessionId, user: pendingFinal.user, sites: [] }
         const staged = get(StagedRegistrationsState()).find((item) => item.publicationPending)
         const registrations = staged
           ? replaceBy(get(RegistrationsState()), (item) => item.domain === staged.domain, staged)
@@ -165,8 +173,17 @@ const WorldDomain = Remesh.domain({
       const staged = get(StagedRegistrationsState()).find((item) => item.publicationPending)
       const recovery = get(RecoveryState())
       const released = get(LiveReleaseContinuationsState())
+      const pendingFinal = get(PendingFinalPublicationState())
       return [
         FullPublicationState().new(null),
+        ...(pendingFinal
+          ? [
+              PendingFinalPublicationState().new(null),
+              JoinedState().new(false),
+              PresencesState().new([]),
+              RecoveryState().new(null)
+            ]
+          : []),
         ...(released.length > 0
           ? [
               LiveReleaseContinuationsState().new([]),
@@ -495,6 +512,7 @@ const WorldDomain = Remesh.domain({
       impl: ({ get }, runtimeDomain: string) => {
         const registrations = get(RegistrationsState())
         const stages = get(StagedRegistrationsState())
+        const removed = registrations.find((item) => item.domain === runtimeDomain)
         const next = registrations.filter((item) => item.domain !== runtimeDomain)
         const remainingStages = stages.filter((item) => item.domain !== runtimeDomain)
         if (next.length === registrations.length && remainingStages.length === stages.length) return null
@@ -505,18 +523,19 @@ const WorldDomain = Remesh.domain({
         const revision = get(PublicationRevisionState()) + (publicationChanged ? 1 : 0)
         if (!Number.isSafeInteger(revision)) return ErrorEvent(new Error('World publication revision exhausted'))
         const nextStage = remainingStages.find((item) => !item.publicationPending)
-        const continuationNeeded = publicationChanged && next.length > 0
+        const finalSite = next.length === 0 && remainingStages.length === 0 && removed
+        // Even the final site owes the World room its removal snapshot (empty `sites`) before the
+        // release owner may close; the continuation survives a zero-page state and retries only the
+        // remaining publication step at the bounded cadence.
+        const continuationNeeded = publicationChanged && (next.length > 0 || Boolean(finalSite))
         return [
           RegistrationsState().new(next),
           StagedRegistrationsState().new(remainingStages),
+          ...(finalSite ? [PendingFinalPublicationState().new({ user: removed.user })] : []),
           ...(continuationNeeded
             ? [LiveReleaseContinuationsState().new(appendUnique(get(LiveReleaseContinuationsState()), runtimeDomain))]
             : []),
           ...(publicationChanged ? [PublicationRevisionState().new(revision)] : []),
-          ...(next.length === 0 && remainingStages.length === 0
-            ? [JoinedState().new(false), PresencesState().new([])]
-            : []),
-          ...(next.length === 0 && remainingStages.length === 0 ? [RecoveryState().new(null)] : []),
           ...(nextStage && !activeAfter ? [PublishStagedCommand(nextStage.attemptId)] : []),
           ...(publicationChanged ? [EnsureFullPublicationCommand()] : []),
           ...(continuationNeeded ? [] : [DomainReleasedEvent(runtimeDomain)])

@@ -281,6 +281,11 @@ const SessionDomain = Remesh.domain({
       name: 'Session.ReleasingDomainQuery',
       impl: ({ get }, runtimeDomain: string) => get(LiveReleasesState()).some((item) => item.domain === runtimeDomain)
     })
+    const ReleaseRoomQuery = domain.query({
+      name: 'Session.ReleaseRoomQuery',
+      impl: ({ get }, runtimeDomain: string) =>
+        get(LiveReleasesState()).find((item) => item.domain === runtimeDomain)?.roomId ?? null
+    })
     // Message authority ends as soon as release starts or a durable finalization marker is restored.
     const FinalizingPresenceQuery = domain.query({
       name: 'Session.FinalizingPresenceQuery',
@@ -1827,7 +1832,8 @@ const SessionDomain = Remesh.domain({
         ReleasingDomainQuery,
         FinalizingPresenceQuery,
         RoomDomainQuery,
-        BindingQuery
+        BindingQuery,
+        ReleaseRoomQuery
       },
       command: {
         HydratePresenceCommand,

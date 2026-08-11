@@ -229,6 +229,7 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
   const joined = new Set<string>()
   const joinCalls: string[] = []
   const physicalJoinCalls: string[] = []
+  const operationLog: string[] = []
   const sent: { roomId: string; payload: string; to?: string | string[] }[] = []
   const sendAttempts: { roomId: string; payload: string; to?: string | string[] }[] = []
   const sendAttemptWaiters: {
@@ -247,6 +248,7 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
   const joinListeners = new Set<(roomId: string, peerId: string) => void>()
   const leaveListeners = new Set<(roomId: string, peerId: string) => void>()
   const closeListeners = new Set<(roomId: string) => void>()
+  const errorListeners = new Set<(error: Error, roomId: string) => void>()
   let sendError: Error | null = null
   let sendErrorRoomId: string | null = null
   let blockedSendRoomId: string | null = null
@@ -285,7 +287,6 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
   }
 
   const transport: RoomTransport = {
-    peerId: 'local-peer',
     peerIdOf: (roomId) => (roomId === getWorldRoomId() ? 'local-peer' : `local-peer:${roomId}`),
     join: (roomId) => {
       joinCalls.push(roomId)
@@ -309,6 +310,7 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
       return pending.promise
     },
     leave: (roomId) => {
+      operationLog.push(`leave:${roomId}`)
       desired.delete(roomId)
       joined.delete(roomId)
       pendingJoins.get(roomId)?.reject(new Error(`Room "${roomId}" join cancelled`))
@@ -328,6 +330,7 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
       if (!joined.has(roomId)) throw new Error(`Room "${roomId}" not joined`)
       if (sendError && (!sendErrorRoomId || sendErrorRoomId === roomId)) throw sendError
       sent.push(attempt)
+      operationLog.push(`send:${roomId}`)
       if (sendGate && roomId === blockedSendRoomId) await sendGate
       const message = JSON.parse(payload) as TestWireMessage
       if (!('type' in message) || message.type !== MESSAGE_TYPE.HISTORY_MESSAGES_PUSH) return
@@ -356,7 +359,10 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
       closeListeners.add(callback)
       return () => closeListeners.delete(callback)
     },
-    onError: () => () => {},
+    onError: (callback) => {
+      errorListeners.add(callback)
+      return () => errorListeners.delete(callback)
+    },
     dispose: () => {
       disposeCount += 1
       desired.clear()
@@ -373,6 +379,7 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
       joinListeners.clear()
       leaveListeners.clear()
       closeListeners.clear()
+      errorListeners.clear()
     }
   }
 
@@ -382,6 +389,7 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
     joined,
     joinCalls,
     physicalJoinCalls,
+    operationLog,
     sent,
     sendAttempts,
     waitForSendAttempt: (roomId?: string) =>
@@ -473,6 +481,9 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
     roomClose: (roomId: string) => {
       joined.delete(roomId)
       closeListeners.forEach((listener) => listener(roomId))
+    },
+    emitError: (error: Error, roomId: string) => {
+      errorListeners.forEach((listener) => listener(error, roomId))
     },
     messages: (roomId: string) =>
       sent.filter((item) => item.roomId === roomId).map((item) => JSON.parse(item.payload) as TestWireMessage)
@@ -1374,6 +1385,105 @@ describe('RuntimeServer lifecycle', () => {
     expect(failures).toHaveLength(1)
   })
 
+  it('retries a failed initial domain join at the bounded cadence with its preserved typed input', async () => {
+    const clock = new FakeClock()
+    const fake = createFakeTransport()
+    const server = createServer({ transport: fake.transport, clock, codec: jsonCodec })
+    await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
+    const chatRoomId = getChatRoomId(DOMAIN)
+    fake.failNextJoin(chatRoomId)
+
+    await expect(server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })).rejects.toThrow()
+    const joinsBefore = fake.joinCalls.filter((roomId) => roomId === chatRoomId).length
+
+    await vi.advanceTimersByTimeAsync(5000)
+    await settle()
+
+    const joinsAfter = fake.joinCalls.filter((roomId) => roomId === chatRoomId).length
+    expect(joinsAfter).toBeGreaterThan(joinsBefore)
+    expect((await server.getSnapshot()).domains[0]).toMatchObject({
+      domain: DOMAIN,
+      chatRoomJoined: true,
+      localSession: { user: USER }
+    })
+    disposeServer(server)
+  })
+
+  it('retries a failed initial World step at the same bounded cadence', async () => {
+    const clock = new FakeClock()
+    const fake = createFakeTransport()
+    const server = createServer({ transport: fake.transport, clock, codec: jsonCodec })
+    await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
+    const worldRoomId = getWorldRoomId()
+    fake.failNextJoin(worldRoomId)
+
+    await expect(server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })).rejects.toThrow()
+    const worldJoinsBefore = fake.joinCalls.filter((roomId) => roomId === worldRoomId).length
+
+    await vi.advanceTimersByTimeAsync(5000)
+    await settle()
+
+    const worldJoinsAfter = fake.joinCalls.filter((roomId) => roomId === worldRoomId).length
+    expect(worldJoinsAfter).toBeGreaterThan(worldJoinsBefore)
+    expect((await server.getSnapshot()).world.joined).toBe(true)
+    disposeServer(server)
+  })
+
+  it('leaves the released Chat peer physically before publishing its World removal', async () => {
+    const { clock, fake, server, roomId } = await setup()
+    const worldRoomId = getWorldRoomId()
+    fake.plantPeer(worldRoomId, 'remote-peer')
+    await server.attachPage({ domain: OTHER_DOMAIN, pageId: 'page-b' })
+    await server.joinChatRoom({ domain: OTHER_DOMAIN, user: USER, site: { origin: OTHER_DOMAIN } })
+    await settle()
+    fake.operationLog.length = 0
+
+    await server.detachPage({ domain: DOMAIN, pageId: 'page-a' })
+    clock.advance(RUNTIME_DOMAIN_GRACE_MS + 1)
+    await vi.waitFor(() => expect(fake.joined.has(roomId)).toBe(false))
+
+    const chatLeaveIndex = fake.operationLog.indexOf(`leave:${roomId}`)
+    const worldRemovalIndex = fake.operationLog.indexOf(`send:${worldRoomId}`)
+    expect(chatLeaveIndex).toBeGreaterThanOrEqual(0)
+    expect(worldRemovalIndex).toBeGreaterThan(chatLeaveIndex)
+    expect((await server.getSnapshot()).domains.map((item) => item.domain)).toEqual([OTHER_DOMAIN])
+  })
+
+  it('publishes the empty World snapshot before the final-site release owner closes', async () => {
+    const { clock, fake, server } = await setup()
+    const worldRoomId = getWorldRoomId()
+    fake.plantPeer(worldRoomId, 'remote-peer')
+    await settle()
+
+    await server.detachPage({ domain: DOMAIN, pageId: 'page-a' })
+    clock.advance(RUNTIME_DOMAIN_GRACE_MS + 1)
+    await vi.waitFor(() => expect(fake.joined.has(worldRoomId)).toBe(false))
+
+    const finalSnapshot = fake.messages(worldRoomId).filter(isWorldPresence).at(-1)
+    expect(finalSnapshot?.sites).toEqual([])
+    expect(fake.operationLog.indexOf(`leave:${worldRoomId}`)).toBeGreaterThan(
+      fake.operationLog.lastIndexOf(`send:${worldRoomId}`)
+    )
+    expect((await server.getSnapshot()).world.joined).toBe(false)
+  })
+
+  it("routes a Chat-domain provider error only to that domain's pages", async () => {
+    const { fake, server, roomId } = await setup()
+    await server.attachPage({ domain: OTHER_DOMAIN, pageId: 'page-b' })
+    await server.joinChatRoom({ domain: OTHER_DOMAIN, user: USER, site: { origin: OTHER_DOMAIN } })
+    await settle()
+    const failuresA: string[] = []
+    const failuresB: string[] = []
+    await server.onError({ pageId: 'page-a' }, (event) => failuresA.push(event.message))
+    await server.onError({ pageId: 'page-b' }, (event) => failuresB.push(event.message))
+
+    fake.emitError(new Error('chat-a signaling failed'), roomId)
+    await settle()
+
+    expect(failuresA).toEqual(['chat-a signaling failed'])
+    expect(failuresB).toEqual([])
+  })
+
   it("routes a domain-scoped failure only to that domain's current pages", async () => {
     const { fake, server, roomId } = await setup()
     await server.attachPage({ domain: OTHER_DOMAIN, pageId: 'page-b' })
@@ -1424,7 +1534,7 @@ describe('RuntimeServer provisional recovery races', () => {
       localSessions.push(event)
     })
     await server.onWorldPresence({ pageId: 'page-a' }, (event) => {
-      if (event.sourcePeerId === fake.transport.peerId) localPresences.push(event)
+      if (event.sourcePeerId === fake.transport.peerIdOf(getWorldRoomId())) localPresences.push(event)
     })
     // A pre-existing Chat member makes the session publication block on the wire gate, keeping the
     // staged World publication pending while a remote World member lands.
@@ -1598,7 +1708,7 @@ describe('RuntimeServer provisional recovery races', () => {
     expect(sentToPeer(fake, worldRoomId, 'remote-peer')).toEqual([currentPresence])
     const localPresenceEvents: WorldPresenceEvent[] = []
     await server.onWorldPresence({ pageId: 'page-a' }, (event) => {
-      if (event.sourcePeerId === fake.transport.peerId) localPresenceEvents.push(event)
+      if (event.sourcePeerId === fake.transport.peerIdOf(getWorldRoomId())) localPresenceEvents.push(event)
     })
     fake.makeNotReady()
 
@@ -1625,8 +1735,8 @@ describe('RuntimeServer provisional recovery races', () => {
     expect(sentToPeer(fake, worldRoomId, 'missed-peer')).toEqual([currentPresence])
     expect(localPresenceEvents).toEqual([
       {
-        sourcePeerId: fake.transport.peerId,
-        presence: { sourcePeerId: fake.transport.peerId, presence: currentPresence }
+        sourcePeerId: fake.transport.peerIdOf(getWorldRoomId()),
+        presence: { sourcePeerId: fake.transport.peerIdOf(getWorldRoomId()), presence: currentPresence }
       }
     ])
   })
@@ -1828,9 +1938,9 @@ describe('RuntimeServer World presence', () => {
     await server.joinChatRoom({ domain: OTHER_DOMAIN, user: USER, site: { origin: OTHER_DOMAIN } })
     await settle()
 
-    const localEvents = events.filter((event) => event.sourcePeerId === fake.transport.peerId)
+    const localEvents = events.filter((event) => event.sourcePeerId === fake.transport.peerIdOf(getWorldRoomId()))
     expect(localEvents).toHaveLength(1)
-    expect(localEvents[0]?.presence?.sourcePeerId).toBe(fake.transport.peerId)
+    expect(localEvents[0]?.presence?.sourcePeerId).toBe(fake.transport.peerIdOf(getWorldRoomId()))
     expect(localEvents[0]?.presence?.presence.user).toEqual(USER)
     expect(Object.keys(localEvents[0]?.presence?.presence.user ?? {})).toEqual(['id', 'name', 'avatar'])
     expect(localEvents[0]?.presence?.presence.sites).toEqual([SITE, { origin: OTHER_DOMAIN }])
@@ -1859,7 +1969,7 @@ describe('RuntimeServer World presence', () => {
 
     expect(snapshot.domains.map((domain) => domain.domain)).toEqual([DOMAIN, OTHER_DOMAIN])
     expect(failures).toEqual(['world send failed'])
-    const localEvents = events.filter((event) => event.sourcePeerId === fake.transport.peerId)
+    const localEvents = events.filter((event) => event.sourcePeerId === fake.transport.peerIdOf(getWorldRoomId()))
     expect(localEvents.at(-1)?.presence?.presence.sites).toEqual([SITE, { origin: OTHER_DOMAIN }])
   })
 
@@ -1913,7 +2023,6 @@ describe('RuntimeServer concurrent World registration convergence', () => {
     let releaseJoinGate = () => {}
     let primed = false
     const transport: RoomTransport = {
-      peerId: 'local-peer',
       peerIdOf: () => 'local-peer',
       join: async (roomId) => {
         joinCalls.push(roomId)

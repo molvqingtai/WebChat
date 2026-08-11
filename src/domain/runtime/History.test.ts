@@ -27,7 +27,6 @@ const jsonCodec: WireCodec = {
 const fakeTransport = () => {
   let messageListener: ((roomId: string, sourcePeerId: string, rawPayload: string) => void) | null = null
   const transport: RoomTransport = {
-    peerId: 'local-peer',
     peerIdOf: () => 'local-peer',
     join: async () => {},
     leave: () => {},

@@ -5,6 +5,7 @@ const fixture = vi.hoisted(() => ({
   peers: [] as {
     id: string
     state: 'ready' | 'connecting' | 'disconnected'
+    closed: boolean
     emit(event: string, ...args: unknown[]): void
   }[],
   joinShouldThrow: undefined as (() => Error) | undefined,
@@ -73,6 +74,7 @@ vi.mock('@rtco/client', () => {
   class FakeArtico extends Emitter {
     readonly id: string
     state = fixture.peerStates.shift() ?? 'ready'
+    closed = false
 
     constructor(options?: { id?: string }) {
       super()
@@ -89,7 +91,9 @@ vi.mock('@rtco/client', () => {
       return room
     }
 
-    close() {}
+    close() {
+      this.closed = true
+    }
   }
 
   return { Artico: FakeArtico }
@@ -337,12 +341,12 @@ describe('ArticoRoomTransport per-target isolation', () => {
 
     expect(fixture.peers).toHaveLength(3)
     const replacement = fixture.peers[2]
-    // The close→restart self-healing path retains the scoped owner's identity and room; only the
-    // physical peer generation is new.
+    // The close→restart repair retires the predecessor, retains the scoped owner's identity, and
+    // genuinely rejoins the exact room on the successor peer; the World owner is untouched.
     expect(replacement.id).toBe(chatPeer.id)
     expect(transport.peerIdOf('chat-a')).toBe(chatPeer.id)
     expect(transport.peerIdOf('world-v3')).toBe(worldPeer.id)
-    expect(fixture.rooms.get('chat-a')).toBe(chatRoom)
+    expect(fixture.rooms.get('chat-a')).not.toBe(chatRoom)
     expect(fixture.rooms.get('world-v3')).toBe(worldRoom)
     transport.dispose()
   })
@@ -363,6 +367,43 @@ describe('ArticoRoomTransport per-target isolation', () => {
     expect(transport.peerIdOf('world-v3')).toBe(worldPeer.id)
     expect(fixture.rooms.get('world-v3')).toBe(worldRoom)
     expect(transport.peers('world-v3')).toEqual([])
+    transport.dispose()
+  })
+
+  it('closes the retired predecessor before constructing its successor and rebinds a new room', async () => {
+    vi.useFakeTimers()
+    const transport = createArticoRoomTransport()
+    await transport.join('chat-a')
+    const stalePeer = fixture.peers[0]
+    const staleRoom = fixture.rooms.get('chat-a')!
+
+    stalePeer.emit('close')
+    await vi.advanceTimersByTimeAsync(5000)
+
+    expect(stalePeer.closed).toBe(true)
+    expect(fixture.peers).toHaveLength(2)
+    expect(fixture.rooms.get('chat-a')).not.toBe(staleRoom)
+    expect(transport.peers('chat-a')).toEqual([])
+    transport.dispose()
+  })
+
+  it('never forwards an error from a retired or disposed owner', async () => {
+    vi.useFakeTimers()
+    const transport = createArticoRoomTransport()
+    const errors: Error[] = []
+    transport.onError((error) => errors.push(error))
+    await transport.join('chat-a')
+    const stalePeer = fixture.peers[0]
+
+    stalePeer.emit('close')
+    await vi.advanceTimersByTimeAsync(5000)
+    stalePeer.emit('error', new Error('retired peer error'))
+    expect(errors).toEqual([])
+
+    transport.leave('chat-a')
+    const disposedPeer = fixture.peers[1]
+    disposedPeer.emit('error', new Error('disposed owner error'))
+    expect(errors).toEqual([])
     transport.dispose()
   })
 })

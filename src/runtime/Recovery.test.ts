@@ -38,7 +38,6 @@ beforeEach(() => vi.useFakeTimers())
 afterEach(() => vi.useRealTimers())
 
 const createTransport = (peerId: string): RoomTransport => ({
-  peerId,
   peerIdOf: () => peerId,
   join: async () => {},
   leave: () => {},

@@ -1,5 +1,5 @@
 import { Remesh } from 'remesh'
-import { filter, map, mergeMap, Observable } from 'rxjs'
+import { map, mergeMap, Observable } from 'rxjs'
 import HistoryDomain from '@/domain/runtime/History'
 import LifecycleDomain from '@/domain/runtime/Lifecycle'
 import SessionDomain, { type SessionPreparationMode } from '@/domain/runtime/Session'
@@ -25,6 +25,9 @@ interface JoinAttempt {
   hostGeneration: number
   roomId?: string
   joinRequestId?: string
+  /** Preserved typed join input so a failed initial attempt can retry as a fresh generation. */
+  user?: ChatUser
+  site?: ChatSite
 }
 
 interface DomainGeneration {
@@ -190,7 +193,9 @@ const ConnectionDomain = Remesh.domain({
         mode: payload.mode,
         domain: payload.domain,
         generation,
-        hostGeneration: get(lifecycleDomain.query.HostGenerationQuery())
+        hostGeneration: get(lifecycleDomain.query.HostGenerationQuery()),
+        user: payload.user,
+        site: payload.site
       }
       return [
         GenerationsState().new(
@@ -468,16 +473,24 @@ const ConnectionDomain = Remesh.domain({
 
     const RetryDomainRecoveryCommand = domain.command({
       name: 'Connection.RetryDomainRecoveryCommand',
-      impl: ({ get }, payload: { domain: string; generation: number; hostGeneration: number }) => {
+      impl: (
+        { get },
+        payload: { domain: string; generation: number; hostGeneration: number; user?: ChatUser; site?: ChatSite }
+      ) => {
         if (get(lifecycleDomain.query.HostGenerationQuery()) !== payload.hostGeneration) return null
         if (!get(lifecycleDomain.query.DomainLeaseQuery(payload.domain))) return null
         if (get(AttemptsState()).some((item) => item.domain === payload.domain)) return null
         const current = get(GenerationsState()).find((item) => item.domain === payload.domain)?.generation ?? 0
         if (current !== payload.generation) return null
+        // A failed initial join retries as a fresh join generation with its preserved typed input;
+        // a failed recovery attempt stays a recovery attempt.
+        const isInitialRetry = payload.user !== undefined && payload.site !== undefined
         return startAttempt(get, {
           attemptId: `recovery:${payload.domain}:${payload.generation + 1}`,
-          mode: 'recover',
-          domain: payload.domain
+          mode: isInitialRetry ? 'join' : 'recover',
+          domain: payload.domain,
+          user: payload.user,
+          site: payload.site
         })
       }
     })
@@ -541,6 +554,35 @@ const ConnectionDomain = Remesh.domain({
       }
     })
 
+    /** A provider error arrives with its exact room scope and maps to the owning domain; World stays global. */
+    const ReportWireErrorCommand = domain.command({
+      name: 'Connection.ReportWireErrorCommand',
+      impl: ({ get }, payload: { error: Error; roomId: string }) =>
+        ErrorEvent({
+          error: payload.error,
+          domain:
+            payload.roomId === getWorldRoomId()
+              ? undefined
+              : (get(sessionDomain.query.RoomDomainQuery(payload.roomId)) ?? undefined)
+        })
+    })
+
+    /**
+     * Release order: the Chat peer physically leaves first (its exact scoped exit), then the World
+     * removal publishes without the released site. The World removal is only started after the Chat
+     * leave, so a World failure can never outrun the physical Chat departure.
+     */
+    const FinalizeChatDepartureCommand = domain.command({
+      name: 'Connection.FinalizeChatDepartureCommand',
+      impl: ({ get }, releasedDomain: string) => {
+        const roomId = get(sessionDomain.query.ReleaseRoomQuery(releasedDomain))
+        return [
+          ...(roomId ? [wireDomain.command.LeaveRoomCommand({ roomId, preservePending: false })] : []),
+          worldDomain.command.ReleaseDomainCommand(releasedDomain)
+        ]
+      }
+    })
+
     const FinalizeReleaseDomainCommand = domain.command({
       name: 'Connection.FinalizeReleaseDomainCommand',
       impl: ({ get }, payload: { domain: string; roomId?: string }) => {
@@ -551,9 +593,6 @@ const ConnectionDomain = Remesh.domain({
         return [
           historyDomain.command.ReleaseDomainCommand(payload.domain),
           sessionDomain.command.ReleaseDomainCommand(payload.domain),
-          ...(payload.roomId
-            ? [wireDomain.command.LeaveRoomCommand({ roomId: payload.roomId, preservePending: false })]
-            : []),
           ...(remainingDomains.length === 0 && remainingAttempts.length === 0
             ? [wireDomain.command.LeaveRoomCommand({ roomId: getWorldRoomId(), preservePending: false })]
             : []),
@@ -753,7 +792,7 @@ const ConnectionDomain = Remesh.domain({
       name: 'Connection.ChatLeavePublishedEffect',
       impl: ({ fromEvent }) =>
         fromEvent(sessionDomain.event.ChatLeavePublishedEvent).pipe(
-          map(({ domain: releasedDomain }) => worldDomain.command.ReleaseDomainCommand(releasedDomain))
+          map(({ domain: releasedDomain }) => FinalizeChatDepartureCommand(releasedDomain))
         )
     })
     domain.effect({
@@ -768,7 +807,7 @@ const ConnectionDomain = Remesh.domain({
     })
     domain.effect({
       name: 'Connection.ErrorEffect',
-      impl: ({ fromEvent }) => fromEvent(wireDomain.event.ErrorEvent).pipe(map((error) => ErrorEvent({ error })))
+      impl: ({ fromEvent }) => fromEvent(wireDomain.event.ErrorEvent).pipe(map(ReportWireErrorCommand))
     })
     domain.effect({
       name: 'Connection.SessionErrorEffect',
@@ -788,7 +827,6 @@ const ConnectionDomain = Remesh.domain({
       name: 'Connection.DomainRecoveryRetryEffect',
       impl: ({ fromEvent }) =>
         fromEvent(AttemptFailedEvent).pipe(
-          filter((attempt) => !attempt.operationId),
           mergeMap(
             (attempt) =>
               new Observable<typeof attempt>((observer) => {
@@ -803,7 +841,9 @@ const ConnectionDomain = Remesh.domain({
             RetryDomainRecoveryCommand({
               domain: attempt.domain,
               generation: attempt.generation,
-              hostGeneration: attempt.hostGeneration
+              hostGeneration: attempt.hostGeneration,
+              user: attempt.user,
+              site: attempt.site
             })
           )
         )
