@@ -62,7 +62,7 @@ Normal or eventual World completion closes the release handle first and then res
 
 ### 5. Existing contracts compose at their current authority boundaries
 
-Page connection completion still settles from the current committed Chat connection plus accepted World contribution and local-session snapshot. Same-document replacement does not start grace and therefore reuses the current scoped peers. A return during actual grace also reuses them. A return after release creates a new Chat peer and reuses the dedicated World peer when another site retains it; if no site retains World demand, the same attempt creates a fresh World peer.
+Page connection completion still settles from the current committed Chat connection plus accepted World contribution and local-session snapshot. An ordinary same-domain document replacement/page-context refresh does not start grace and therefore reuses the current scoped peers. A return during actual grace also reuses them. A return after release creates a new Chat peer and reuses the dedicated World peer when another site retains it; if no site retains World demand, the same attempt creates a fresh World peer.
 
 History remains bound only to accepted Chat source incarnations. World peer creation, World site publication, page attachment, and History termination do not create a History synchronization. History remains independent of ready and connection retry.
 

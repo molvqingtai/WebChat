@@ -1,6 +1,6 @@
 ## Why
 
-Refreshing or recovering one domain must establish a completely new Chat transport without interrupting Chat on other domains or the user's World presence. The Runtime therefore needs one unambiguous physical peer owner for each network scope and one closed lifecycle for connection, replacement, and release.
+An AppButton Refresh/current-domain reconnect or recovery must establish a completely new Chat transport without interrupting Chat on other domains or the user's World presence. The Runtime therefore needs one unambiguous physical peer owner for each network scope and one closed lifecycle for connection, replacement, and release.
 
 ## What Changes
 
