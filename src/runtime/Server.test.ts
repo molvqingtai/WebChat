@@ -286,6 +286,7 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
 
   const transport: RoomTransport = {
     peerId: 'local-peer',
+    peerIdOf: (roomId) => (roomId === getWorldRoomId() ? 'local-peer' : `local-peer:${roomId}`),
     join: (roomId) => {
       joinCalls.push(roomId)
       resolveJoinCallWaiters()
@@ -1913,6 +1914,7 @@ describe('RuntimeServer concurrent World registration convergence', () => {
     let primed = false
     const transport: RoomTransport = {
       peerId: 'local-peer',
+      peerIdOf: () => 'local-peer',
       join: async (roomId) => {
         joinCalls.push(roomId)
         if (joinGate) await joinGate

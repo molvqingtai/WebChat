@@ -105,7 +105,10 @@ const WireDomain = Remesh.domain({
     const QueueSequenceState = domain.state<number>({ name: 'Wire.QueueSequenceState', default: 0 })
     const DropRecordsState = domain.state<DropRecord[]>({ name: 'Wire.DropRecordsState', default: [] })
 
-    const PeerIdQuery = domain.query({ name: 'Wire.PeerIdQuery', impl: () => transport.peerId })
+    const PeerIdQuery = domain.query({
+      name: 'Wire.PeerIdQuery',
+      impl: (_, roomId: string) => transport.peerIdOf(roomId)
+    })
     const TrustedRoomsQuery = domain.query({
       name: 'Wire.TrustedRoomsQuery',
       impl: ({ get }) => get(TrustedRoomsState())

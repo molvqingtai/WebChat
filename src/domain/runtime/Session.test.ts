@@ -31,6 +31,7 @@ const setup = async () => {
       }),
       RoomTransportExtern.impl({
         peerId: 'local-peer',
+        peerIdOf: () => 'local-peer',
         join: async () => {},
         leave: () => {},
         peers: () => [],

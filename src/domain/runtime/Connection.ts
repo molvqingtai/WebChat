@@ -109,7 +109,7 @@ const ConnectionDomain = Remesh.domain({
         return {
           hostId: options.hostId,
           hostPhase: get(lifecycleDomain.query.HostPhaseQuery()),
-          peerId: get(wireDomain.query.PeerIdQuery()),
+          peerId: get(wireDomain.query.PeerIdQuery(getWorldRoomId())),
           domains: get(lifecycleDomain.query.DomainLeasesQuery()).map((lease) => {
             const runtime = runtimes.find((item) => item.domain === lease.domain)
             return {
@@ -125,7 +125,7 @@ const ConnectionDomain = Remesh.domain({
           }),
           world: {
             joined: get(worldDomain.query.JoinedQuery()),
-            peerId: get(wireDomain.query.PeerIdQuery()),
+            peerId: get(wireDomain.query.PeerIdQuery(getWorldRoomId())),
             localPresence: get(worldDomain.query.LocalPresenceQuery()),
             presences: get(worldDomain.query.PresencesQuery())
           }

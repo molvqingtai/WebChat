@@ -2,14 +2,27 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const fixture = vi.hoisted(() => ({
   peerStates: [] as ('ready' | 'connecting' | 'disconnected')[],
-  peers: [] as { state: 'ready' | 'connecting' | 'disconnected'; emit(event: string, ...args: unknown[]): void }[],
+  peers: [] as {
+    id: string
+    state: 'ready' | 'connecting' | 'disconnected'
+    emit(event: string, ...args: unknown[]): void
+  }[],
   joinShouldThrow: undefined as (() => Error) | undefined,
   room: null as null | {
     open(peerId: string): void
     loseReadiness(peerId: string): void
     attempts: { peerId: string; payload: string }[]
     sent: { peerId: string; payload: string }[]
-  }
+  },
+  rooms: new Map<
+    string,
+    {
+      open(peerId: string): void
+      loseReadiness(peerId: string): void
+      attempts: { peerId: string; payload: string }[]
+      sent: { peerId: string; payload: string }[]
+    }
+  >()
 }))
 
 vi.mock('@rtco/client', () => {
@@ -58,19 +71,21 @@ vi.mock('@rtco/client', () => {
   }
 
   class FakeArtico extends Emitter {
-    readonly id = 'local-peer'
+    readonly id: string
     state = fixture.peerStates.shift() ?? 'ready'
 
-    constructor() {
+    constructor(options?: { id?: string }) {
       super()
+      this.id = options?.id ?? 'local-peer'
       fixture.peers.push(this)
       if (this.state === 'ready') queueMicrotask(() => this.emit('open'))
     }
 
-    join() {
+    join(roomId: string) {
       if (fixture.joinShouldThrow) throw fixture.joinShouldThrow()
       const room = new FakeRoom()
       fixture.room = room
+      fixture.rooms.set(roomId, room)
       return room
     }
 
@@ -86,6 +101,7 @@ beforeEach(() => {
   fixture.peerStates.length = 0
   fixture.peers.length = 0
   fixture.room = null
+  fixture.rooms.clear()
   fixture.joinShouldThrow = undefined
 })
 afterEach(() => vi.useRealTimers())
@@ -163,17 +179,22 @@ describe('ArticoRoomTransport per-target isolation', () => {
     await expect(transport.send('missing-room', 'payload')).rejects.toThrow('Room "missing-room" not joined')
   })
 
-  it('shares one replacement when fresh Chat and World demand finds a disconnected retained peer', async () => {
-    fixture.peerStates.push('disconnected', 'ready')
+  it('gives fresh Chat and World demand independent scoped peers and replacement owners', async () => {
+    fixture.peerStates.push('disconnected', 'ready', 'disconnected', 'ready')
     const transport = createArticoRoomTransport()
     const chat = transport.join('chat-v3')
     const world = transport.join('world-v3')
 
     try {
       await Promise.all([chat, world])
-      expect(fixture.peers).toHaveLength(2)
+      // Each room owns its own physical peer; nothing is shared between scopes.
+      expect(fixture.peers).toHaveLength(4)
       expect(fixture.peers[0].state).toBe('disconnected')
       expect(fixture.peers[1].state).toBe('ready')
+      expect(fixture.peers[2].state).toBe('disconnected')
+      expect(fixture.peers[3].state).toBe('ready')
+      expect(fixture.rooms.has('chat-v3')).toBe(true)
+      expect(fixture.rooms.has('world-v3')).toBe(true)
     } finally {
       transport.dispose()
     }
@@ -185,12 +206,16 @@ describe('ArticoRoomTransport per-target isolation', () => {
     const transport = createArticoRoomTransport()
     const errors: Error[] = []
     transport.onError((error) => errors.push(error))
-    const stalePeer = fixture.peers[0]
 
     await transport.join('chat-v3')
+    const stalePeer = fixture.peers[0]
+    expect(stalePeer.state).toBe('disconnected')
+    // Fresh demand for the same scope replaces the retained disconnected peer with one current peer.
+    const rejoin = transport.join('chat-v3')
     stalePeer.emit('open')
     stalePeer.emit('error', new Error('stale peer error'))
     stalePeer.emit('close')
+    await rejoin
     await vi.advanceTimersByTimeAsync(5000)
 
     expect(fixture.peers).toHaveLength(2)
@@ -203,9 +228,9 @@ describe('ArticoRoomTransport per-target isolation', () => {
     const transport = createArticoRoomTransport()
     const errors: Error[] = []
     transport.onError((error) => errors.push(error))
-    const currentPeer = fixture.peers[0]
 
     await transport.join('chat-v3')
+    const currentPeer = fixture.peers[0]
     // No provider error message is classified; a peer id-conflict surfaces as a real error, and the
     // structural close→restart path still retries with the same stable identity.
     currentPeer.emit('error', new Error('id-taken'))
@@ -223,9 +248,9 @@ describe('ArticoRoomTransport per-target isolation', () => {
     const transport = createArticoRoomTransport()
     const errors: Error[] = []
     transport.onError((error) => errors.push(error))
-    const currentPeer = fixture.peers[0]
 
     await transport.join('chat-v3')
+    const currentPeer = fixture.peers[0]
     currentPeer.emit('error', new Error('connect-error'))
 
     expect(errors.map((error) => error.message)).toEqual(['connect-error'])
@@ -273,5 +298,71 @@ describe('ArticoRoomTransport per-target isolation', () => {
     await expect(joining).rejects.toThrow('Room "chat-v3" join cancelled')
     fixture.peers[0].emit('open')
     expect(fixture.room).toBeNull()
+  })
+
+  it('gives each scope its own physical identity and rotates it on rejoin', async () => {
+    const transport = createArticoRoomTransport()
+    await transport.join('world-v3')
+    await transport.join('chat-a')
+    await transport.join('chat-b')
+
+    const worldId = transport.peerIdOf('world-v3')
+    const chatAId = transport.peerIdOf('chat-a')
+    const chatBId = transport.peerIdOf('chat-b')
+    expect(new Set([worldId, chatAId, chatBId]).size).toBe(3)
+    expect(fixture.peers.map((peer) => peer.id)).toEqual([worldId, chatAId, chatBId])
+
+    transport.leave('chat-a')
+    expect(transport.peerIdOf('chat-a')).toBe('')
+    await transport.join('chat-a')
+    const rotatedChatAId = transport.peerIdOf('chat-a')
+    expect(rotatedChatAId).not.toBe(chatAId)
+    expect(transport.peerIdOf('world-v3')).toBe(worldId)
+    expect(transport.peerIdOf('chat-b')).toBe(chatBId)
+    transport.dispose()
+  })
+
+  it('restarts only the closing owner and rejoins only its own room', async () => {
+    vi.useFakeTimers()
+    const transport = createArticoRoomTransport()
+    await transport.join('world-v3')
+    await transport.join('chat-a')
+    const worldPeer = fixture.peers[0]
+    const chatPeer = fixture.peers[1]
+    const worldRoom = fixture.rooms.get('world-v3')!
+    const chatRoom = fixture.rooms.get('chat-a')!
+
+    chatPeer.emit('close')
+    await vi.advanceTimersByTimeAsync(5000)
+
+    expect(fixture.peers).toHaveLength(3)
+    const replacement = fixture.peers[2]
+    // The close→restart self-healing path retains the scoped owner's identity and room; only the
+    // physical peer generation is new.
+    expect(replacement.id).toBe(chatPeer.id)
+    expect(transport.peerIdOf('chat-a')).toBe(chatPeer.id)
+    expect(transport.peerIdOf('world-v3')).toBe(worldPeer.id)
+    expect(fixture.rooms.get('chat-a')).toBe(chatRoom)
+    expect(fixture.rooms.get('world-v3')).toBe(worldRoom)
+    transport.dispose()
+  })
+
+  it('settles scoped leave and dispose against only their exact owner', async () => {
+    vi.useFakeTimers()
+    const transport = createArticoRoomTransport()
+    await transport.join('world-v3')
+    await transport.join('chat-a')
+    const worldPeer = fixture.peers[0]
+    const worldRoom = fixture.rooms.get('world-v3')!
+
+    transport.leave('chat-a')
+    await vi.advanceTimersByTimeAsync(5000)
+
+    expect(fixture.peers).toHaveLength(2)
+    expect(transport.peerIdOf('chat-a')).toBe('')
+    expect(transport.peerIdOf('world-v3')).toBe(worldPeer.id)
+    expect(fixture.rooms.get('world-v3')).toBe(worldRoom)
+    expect(transport.peers('world-v3')).toEqual([])
+    transport.dispose()
   })
 })

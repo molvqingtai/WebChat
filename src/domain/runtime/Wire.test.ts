@@ -40,6 +40,7 @@ const fixture = (
   let onError: Parameters<RoomTransport['onError']>[0] = () => {}
   const transport: RoomTransport = {
     peerId: 'local-peer',
+    peerIdOf: () => 'local-peer',
     join: (roomId) => join(roomId),
     leave: vi.fn(),
     peers: () => [],

@@ -180,9 +180,9 @@ const WorldDomain = Remesh.domain({
         ...(!staged && !recovery?.publicationPending && get(JoinedState())
           ? [
               PresenceChangedEvent({
-                sourcePeerId: get(wireDomain.query.PeerIdQuery()),
+                sourcePeerId: get(wireDomain.query.PeerIdQuery(worldRoomId)),
                 presence: {
-                  sourcePeerId: get(wireDomain.query.PeerIdQuery()),
+                  sourcePeerId: get(wireDomain.query.PeerIdQuery(worldRoomId)),
                   presence: publication.presence
                 }
               })
@@ -395,8 +395,8 @@ const WorldDomain = Remesh.domain({
           ...(presence
             ? [
                 PresenceChangedEvent({
-                  sourcePeerId: get(wireDomain.query.PeerIdQuery()),
-                  presence: { sourcePeerId: get(wireDomain.query.PeerIdQuery()), presence }
+                  sourcePeerId: get(wireDomain.query.PeerIdQuery(worldRoomId)),
+                  presence: { sourcePeerId: get(wireDomain.query.PeerIdQuery(worldRoomId)), presence }
                 })
               ]
             : []),
@@ -658,8 +658,8 @@ const WorldDomain = Remesh.domain({
           RecoveryState().new(null),
           JoinedState().new(true),
           PresenceChangedEvent({
-            sourcePeerId: get(wireDomain.query.PeerIdQuery()),
-            presence: { sourcePeerId: get(wireDomain.query.PeerIdQuery()), presence }
+            sourcePeerId: get(wireDomain.query.PeerIdQuery(worldRoomId)),
+            presence: { sourcePeerId: get(wireDomain.query.PeerIdQuery(worldRoomId)), presence }
           }),
           ...recovery.missedPeerIds.map((sourcePeerId) =>
             wireDomain.command.SendMessageCommand({

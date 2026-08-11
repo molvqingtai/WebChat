@@ -1,6 +1,12 @@
 /** Trusted source metadata is supplied by the physical Artico room/call. */
 export interface RoomTransport {
+  /**
+   * @deprecated Host-wide identity no longer exists; each joined room owns its scoped peer. Use
+   * {@link RoomTransport.peerIdOf}. Always empty.
+   */
   readonly peerId: string
+  /** The current physical peer identity of the exact room's owner, or '' when the room has none. */
+  readonly peerIdOf: (roomId: string) => string
   /** Resolves only after the provider has created the physical room. */
   join: (roomId: string) => Promise<void>
   leave: (roomId: string) => void
