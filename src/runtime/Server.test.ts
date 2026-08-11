@@ -1518,6 +1518,105 @@ describe('RuntimeServer lifecycle', () => {
     )
     diagnostic.mockRestore()
   })
+
+  it("routes a provisional domain's provider error only to its joining page", async () => {
+    const { fake, server } = await setup()
+    const roomIdB = getChatRoomId(OTHER_DOMAIN)
+    await server.attachPage({ domain: OTHER_DOMAIN, pageId: 'page-b' })
+    // Keep Chat(B) provisional: the physical room joined but its session broadcast stays hung
+    // before the domain commits.
+    fake.plantPeer(roomIdB, 'chat-peer-b')
+    fake.hangSendsTo(roomIdB)
+    const joinB = server.joinChatRoom({ domain: OTHER_DOMAIN, user: USER, site: { origin: OTHER_DOMAIN } })
+    await fake.waitForSendAttempt(roomIdB)
+    await settle()
+
+    const failuresA: string[] = []
+    const failuresB: string[] = []
+    await server.onError({ pageId: 'page-a' }, (event) => failuresA.push(event.message))
+    await server.onError({ pageId: 'page-b' }, (event) => failuresB.push(event.message))
+    fake.emitError(new Error('chat-b provisional signaling failed'), roomIdB)
+    await settle()
+
+    expect(failuresB).toEqual(['chat-b provisional signaling failed'])
+    expect(failuresA).toEqual([])
+
+    fake.releaseSends()
+    await joinB
+  })
+
+  it("routes a releasing domain's provider error away from unrelated domains", async () => {
+    const { clock, fake, server, roomId } = await setup()
+    await server.attachPage({ domain: OTHER_DOMAIN, pageId: 'page-b' })
+    await server.joinChatRoom({ domain: OTHER_DOMAIN, user: USER, site: { origin: OTHER_DOMAIN } })
+    await settle()
+    const failuresB: string[] = []
+    await server.onError({ pageId: 'page-b' }, (event) => failuresB.push(event.message))
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    emitRemoteWorldPresence(fake)
+    fake.hangSendsTo(getWorldRoomId())
+    await server.detachPage({ domain: DOMAIN, pageId: 'page-a' })
+    clock.advance(RUNTIME_DOMAIN_GRACE_MS + 1)
+    // The release closes Chat(A) and holds the final World publication, so Chat(A) stays in the
+    // live-release record without any committed or prepared state.
+    await vi.waitFor(() => expect(fake.joined.has(roomId)).toBe(false))
+
+    fake.emitError(new Error('chat-a closing leave failed'), roomId)
+    await settle()
+
+    expect(failuresB).toEqual([])
+    expect(diagnostic).toHaveBeenCalledWith(
+      '[WebChat] Runtime failure without a current affected page:',
+      expect.objectContaining({ message: 'chat-a closing leave failed' })
+    )
+
+    diagnostic.mockRestore()
+    fake.releaseSends()
+    await settle()
+  })
+
+  it('coalesces overlapping finalizing-release leases into one fresh committed generation', async () => {
+    const { clock, fake, server, roomId } = await setup()
+    emitRemoteWorldPresence(fake)
+    fake.hangSendsTo(getWorldRoomId())
+
+    await server.detachPage({ domain: DOMAIN, pageId: 'page-a' })
+    clock.advance(RUNTIME_DOMAIN_GRACE_MS + 1)
+    // The release closes Chat(A) and then holds the final World publication.
+    await vi.waitFor(() => expect(fake.joined.has(roomId)).toBe(false))
+
+    await server.attachPage({ domain: DOMAIN, pageId: 'page-b' })
+    await server.attachPage({ domain: DOMAIN, pageId: 'page-c' })
+    let rejectedB: unknown
+    let rejectedC: unknown
+    const joinB = server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE }).catch((error: unknown) => {
+      rejectedB = error
+      return null
+    })
+    const joinC = server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE }).catch((error: unknown) => {
+      rejectedC = error
+      return null
+    })
+    await settle()
+    await settle()
+
+    // Both leases wait behind the single closing release; neither is rejected mid-release.
+    expect(rejectedB).toBeUndefined()
+    expect(rejectedC).toBeUndefined()
+    expect(fake.joined.has(roomId)).toBe(false)
+
+    fake.releaseSends()
+    const [snapshotB, snapshotC] = await Promise.all([joinB, joinC])
+    expect(rejectedB).toBeUndefined()
+    expect(rejectedC).toBeUndefined()
+    expect(snapshotB?.domains[0]).toMatchObject({ domain: DOMAIN, chatRoomJoined: true })
+    expect(snapshotC?.domains[0]).toMatchObject({ domain: DOMAIN, chatRoomJoined: true })
+    // Exactly one fresh physical rebuild served both coalesced leases.
+    expect(fake.physicalJoinCalls.filter((id) => id === roomId)).toHaveLength(2)
+    expect(fake.physicalJoinCalls.filter((id) => id === getWorldRoomId())).toHaveLength(2)
+    expect((await server.getSnapshot()).domains[0].pageIds.slice().sort()).toEqual(['page-b', 'page-c'])
+  })
 })
 
 describe('RuntimeServer provisional recovery races', () => {

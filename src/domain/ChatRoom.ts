@@ -126,7 +126,17 @@ const ChatRoomDomain = Remesh.domain({
 
     const ApplySessionsCommand = domain.command({
       name: 'Room.ApplySessionsCommand',
-      impl: (_, sessions: readonly ChatSession[]) => SessionsState().new(sessions)
+      impl: ({ get }, sessions: readonly ChatSession[]) => {
+        const next = SessionsState().new(sessions)
+        // One current-generation commit terminal: when the domain commits after the original
+        // public attempt already reported its exact failure, the retained join input completes the
+        // page join instead of leaving it logically unjoined.
+        if (get(JoinIsFinishedQuery()) || get(ConnectionRequestState())) return next
+        const input = get(JoinInputState())
+        if (!input) return next
+        if (!sessions.some((session) => session.user.id === input.user.id)) return next
+        return [next, CompleteJoinCommand(input)]
+      }
     })
 
     const ConnectionRequestedEvent = domain.event<ConnectionOperation>({ name: 'Room.ConnectionRequestedEvent' })
@@ -137,6 +147,7 @@ const ChatRoomDomain = Remesh.domain({
         return [
           ConnectionSequenceState().new(id),
           ConnectionRequestState().new({ id }),
+          ...(operation.mode === 'join' ? [RetainJoinInputCommand(operation.input)] : []),
           ConnectionRequestedEvent({ id, ...operation })
         ]
       }

@@ -293,7 +293,16 @@ const SessionDomain = Remesh.domain({
     })
     const RoomDomainQuery = domain.query({
       name: 'Session.RoomDomainQuery',
-      impl: ({ get }, roomId: string) => get(DomainsState()).find((item) => item.roomId === roomId)?.domain ?? null
+      impl: ({ get }, roomId: string) => {
+        // The exact room→domain authority stays valid through committed membership, a prepared
+        // attempt, and live-release teardown until the physical cleanup settles; a provider error
+        // must never fall back to global delivery merely because committed state is absent.
+        const committed = get(DomainsState()).find((item) => item.roomId === roomId)?.domain
+        if (committed) return committed
+        const prepared = get(PreparedSessionsState()).find((item) => item.runtime.roomId === roomId)?.runtime.domain
+        if (prepared) return prepared
+        return get(LiveReleasesState()).find((item) => item.roomId === roomId)?.domain ?? null
+      }
     })
     const BindingQuery = domain.query({
       name: 'Session.BindingQuery',

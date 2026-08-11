@@ -511,6 +511,21 @@ describe('ChatRoomDomain exact application port', () => {
     fixture.store.discard()
   })
 
+  it('completes the page join when a committed local session projects after the public attempt failed', async () => {
+    const fixture = createFixture()
+    const failure = new Error('first join failed')
+    vi.mocked(fixture.chat.joinRoom).mockRejectedValueOnce(failure)
+    fixture.store.send(fixture.room.command.JoinRoomCommand())
+    await vi.waitFor(() => expect(fixture.chat.joinRoom).toHaveBeenCalledOnce())
+    await vi.waitFor(() => expect(fixture.store.query(fixture.room.query.ConnectionIsLoadingQuery())).toBe(false))
+    expect(fixture.store.query(fixture.room.query.JoinIsFinishedQuery())).toBe(false)
+
+    // The exact failure was already delivered; the join input stays retained for the projection.
+    fixture.emitSessions([SELF_SESSION])
+    await vi.waitFor(() => expect(fixture.store.query(fixture.room.query.JoinIsFinishedQuery())).toBe(true))
+    fixture.store.discard()
+  })
+
   it.each(['callback-registration', 'replay', 'replay-write'] as const)(
     'settles a timed-out %s attempt and admits a fresh page attempt',
     async (stage) => {

@@ -100,6 +100,7 @@ export const createArticoRoomTransport = (): RoomTransport => {
 
   const startPeer = (owner: PeerOwner) => {
     if (owner.disposed) return
+    if (owner.peer) owner.peerId = nanoid()
     retirePeer(owner)
     const nextPeer = new Artico({ id: owner.peerId })
     owner.peer = nextPeer

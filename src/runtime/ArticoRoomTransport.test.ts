@@ -341,10 +341,11 @@ describe('ArticoRoomTransport per-target isolation', () => {
 
     expect(fixture.peers).toHaveLength(3)
     const replacement = fixture.peers[2]
-    // The close→restart repair retires the predecessor, retains the scoped owner's identity, and
-    // genuinely rejoins the exact room on the successor peer; the World owner is untouched.
-    expect(replacement.id).toBe(chatPeer.id)
-    expect(transport.peerIdOf('chat-a')).toBe(chatPeer.id)
+    // The close→restart repair retires the predecessor, rotates the physical identity for the
+    // replacement generation, and genuinely rejoins the exact room on the successor peer; the
+    // World owner is untouched.
+    expect(replacement.id).not.toBe(chatPeer.id)
+    expect(transport.peerIdOf('chat-a')).toBe(replacement.id)
     expect(transport.peerIdOf('world-v3')).toBe(worldPeer.id)
     expect(fixture.rooms.get('chat-a')).not.toBe(chatRoom)
     expect(fixture.rooms.get('world-v3')).toBe(worldRoom)
