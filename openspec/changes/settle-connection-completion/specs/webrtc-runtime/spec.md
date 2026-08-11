@@ -8,7 +8,7 @@ Callback registration, inbound replay, and replay-record persistence SHALL remai
 
 Once the current Runtime generation has physically accepted the required Chat and World publications, committed the domain, and can return a snapshot containing the local session, page connection success SHALL settle from that committed fact. Active post-commit Presence persistence SHALL continue under a bounded Runtime persistence owner and SHALL NOT retain or reopen page connection loading, reverse the committed snapshot solely because it is slow, or become a second page request. An unresolved active Presence predecessor SHALL NOT permanently block later current-generation persistence or final release, and a late old completion SHALL NOT overwrite, retire, or report success for a newer Presence generation. Persistence failure SHALL use the existing Runtime error path.
 
-This active-persistence decoupling SHALL NOT weaken final release. Session SHALL remove the private local active-generation authority through the current release owner, release domain State, and allow physical Chat/World departure without producing or waiting for a Chat lifecycle message. No in-flight end, retryable end, end-send settlement, or settled-cleanup State SHALL exist. A required local active-record cleanup failure SHALL retain the current release failure semantics, but no peer signal SHALL gate departure. An ordinary page-context refresh while the authoritative physical tab binding remains SHALL start no grace, retain the current physical rooms, and give the replacement page an independent attempt. The existing five-second Lifecycle grace SHALL remain unchanged: a current page returning during actual grace SHALL cancel grace, reuse the same committed physical rooms, and independently settle from the current snapshot, while a page arriving after completed grace release SHALL join new physical rooms.
+This active-persistence decoupling SHALL NOT weaken final release. Session SHALL remove the private local active-generation authority through the current release owner, release domain State, allow physical departure of the domain Chat peer, and remove that domain's World contribution without producing or waiting for a Chat lifecycle message. The dedicated World peer SHALL depart only when its final site contribution has been removed. No in-flight end, retryable end, end-send settlement, or settled-cleanup State SHALL exist. A required local active-record cleanup failure SHALL retain the current release failure semantics, but no peer signal SHALL gate departure. An ordinary page-context refresh while the authoritative physical tab binding remains SHALL start no grace, retain the current domain Chat peer plus dedicated World owner and contribution, and give the replacement page an independent attempt. The existing five-second Lifecycle grace SHALL remain unchanged: a current page returning during actual grace SHALL cancel grace, reuse those same committed scoped peers, and independently settle from the current snapshot. A page arriving after completed grace release SHALL join through one new domain Chat peer and SHALL reuse the dedicated World peer when another site retains it or create a new World peer when no site retains World demand.
 
 This requirement SHALL add no success Toast, copy/duration masking, readiness or panel state, protocol field, public `ChatRoom` method, database schema/version, stored record shape, browser-specific business branch, or compatibility path. It SHALL NOT require `pageId` transport metadata, Provider callback re-registration, or another specific mechanism unless later evidence independently requires such a change.
 
@@ -52,19 +52,19 @@ This requirement SHALL add no success Toast, copy/duration masking, readiness or
 
 - **GIVEN** page generation g1 completed a domain connection and its page context is replaced while the authoritative physical tab binding remains current
 - **WHEN** replacement page generation g2 attaches
-- **THEN** no Lifecycle grace SHALL start, g2 SHALL retain the same physical Chat and World rooms, independently complete from the current snapshot, and inherit neither g1's request terminal nor loading owner
+- **THEN** no Lifecycle grace SHALL start, g2 SHALL retain the same domain Chat peer plus dedicated World owner and contribution, independently complete from the current snapshot, and inherit neither g1's request terminal nor loading owner
 
 #### Scenario: Return during grace reuses rooms with fresh page settlement
 
 - **GIVEN** the last authoritative domain binding was removed and the existing five-second Lifecycle grace is current
 - **WHEN** page generation g2 returns before grace expiry
-- **THEN** g2 SHALL cancel grace, reuse the same physical Chat and World rooms, independently complete from the current snapshot, and inherit no prior request terminal or loading owner
+- **THEN** g2 SHALL cancel grace, reuse the same domain Chat peer plus dedicated World owner and contribution, independently complete from the current snapshot, and inherit no prior request terminal or loading owner
 
-#### Scenario: Reopen after grace creates new physical rooms
+#### Scenario: Reopen after grace creates a new domain peer
 
-- **GIVEN** the last page detached and the five-second grace completed durable release of Chat and World
+- **GIVEN** the last page detached and the five-second grace completed the domain Chat release and removal of its World contribution
 - **WHEN** a later page generation attaches and connects
-- **THEN** it SHALL create one new physical Chat room and one new physical World room through the existing join path and settle only its own connection request
+- **THEN** it SHALL create one new domain Chat peer, reuse the dedicated World peer when another site retains it or create a new World peer when none does, and settle only its own connection request
 
 #### Scenario: Final release has no peer end phase
 
