@@ -1,5 +1,5 @@
 import * as v from 'valibot'
-import { MAX_CHAT_EVENT_BYTES, MAX_HISTORY_RESPONSE_MESSAGES } from './Limits'
+import { MAX_CHAT_BODY_CODE_UNITS, MAX_HISTORY_RESPONSE_MESSAGES } from './Limits'
 import { ChatSessionSchema, ChatUserSchema } from './Session'
 
 export const MESSAGE_TYPE = {
@@ -47,7 +47,7 @@ export const TextMessageSchema = v.strictObject({
   id: boundedString(128),
   hlc: HLCSchema,
   userId: boundedString(128),
-  body: boundedString(MAX_CHAT_EVENT_BYTES),
+  body: boundedString(MAX_CHAT_BODY_CODE_UNITS),
   mentions: v.pipe(v.array(MentionedUserSchema), v.maxLength(100))
 })
 export type TextMessage = v.InferOutput<typeof TextMessageSchema>

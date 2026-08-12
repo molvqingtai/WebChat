@@ -13,9 +13,10 @@ import { PresenceStoreExtern, type PresenceStore } from '@/domain/runtime/extern
 import { RoomTransportExtern, WireCodecExtern } from '@/domain/runtime/externs/RoomTransport'
 import type { RoomTransport } from '@/runtime/RoomTransport'
 import { NativeWireCodec, type WireCodec } from '@/protocol'
+import { isChatUserWithinBudget } from '@/protocol/Limits'
 import type { ChatSite, ChatUser } from '@/protocol'
 import type { RuntimeServer, RuntimeSnapshot } from '@/runtime/Contract'
-import { MAX_HISTORY_SESSION_BYTES, MAX_HISTORY_SESSION_MESSAGES } from '@/constants/config'
+
 import { PagePort, createPagePortImpl } from '@/runtime/PagePort'
 import { createBoundedPresenceStore, createMemoryPresenceStore } from '@/runtime/PresenceStore'
 
@@ -23,8 +24,6 @@ export interface ServerConfig {
   transport: RoomTransport
   clock?: Clock
   codec?: WireCodec
-  historySessionBytes?: number
-  historySessionMessages?: number
   presenceStore?: PresenceStore
 }
 
@@ -40,14 +39,9 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     ? createBoundedPresenceStore(config.presenceStore)
     : createMemoryPresenceStore()
   const worldSessionId = nanoid()
-  const historyOptions = {
-    historySessionBytes: config.historySessionBytes ?? MAX_HISTORY_SESSION_BYTES,
-    historySessionMessages: config.historySessionMessages ?? MAX_HISTORY_SESSION_MESSAGES
-  }
   const connectionOptions = {
     hostId: nanoid(),
-    worldSessionId,
-    ...historyOptions
+    worldSessionId
   }
 
   const store: RemeshStore = Remesh.store({
@@ -65,7 +59,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   const deliveryAction = DeliveryDomain()
   const sessionAction = SessionDomain()
   const worldAction = WorldDomain({ sessionId: worldSessionId })
-  const historyAction = HistoryDomain(historyOptions)
+  const historyAction = HistoryDomain()
   const connectionAction = ConnectionDomain(connectionOptions)
   store.subscribeDomain(lifecycleAction)
   store.subscribeDomain(wireAction)
@@ -480,6 +474,10 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     },
     getSnapshot: async () => snapshot(),
     joinChatRoom: (payload) => {
+      // The locally produced user must fit its complete canonical budget before join/publication.
+      if (!isChatUserWithinBudget(payload.user)) {
+        return Promise.reject(new Error('User exceeds the canonical size budget'))
+      }
       // Overlapping same-domain joins observed while the domain's release is closing coalesce into
       // one shared settlement; fresh cold joins keep the existing newest-generation supersession.
       if (store.query(sessionDomain.query.ReleasingDomainQuery(payload.domain))) {

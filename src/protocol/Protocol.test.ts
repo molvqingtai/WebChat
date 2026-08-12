@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest'
 import * as v from 'valibot'
 import * as protocol from '@/protocol'
 import {
-  MAX_CHAT_EVENT_BYTES,
+  MAX_CHAT_BODY_CODE_UNITS,
+  MAX_CHAT_MESSAGE_BYTES,
   MAX_DECODED_JSON_BYTES,
   MAX_HISTORY_RESPONSE_MESSAGES,
   MAX_USER_BYTES,
@@ -38,9 +39,9 @@ const text = () => ({
 
 describe('public protocol schema contract', () => {
   it('exports the five independently enforced resource budgets', () => {
-    expect(MAX_WIRE_BYTES).toBe(64 * 1024)
-    expect(MAX_DECODED_JSON_BYTES).toBe(256 * 1024)
-    expect(MAX_CHAT_EVENT_BYTES).toBe(48 * 1024)
+    expect(MAX_WIRE_BYTES).toBe(256 * 1024)
+    expect(MAX_DECODED_JSON_BYTES).toBe(1024 * 1024)
+    expect(MAX_CHAT_MESSAGE_BYTES).toBe(192 * 1024)
     expect(MAX_USER_BYTES).toBe(8 * 1024)
     expect(MAX_HISTORY_RESPONSE_MESSAGES).toBe(100)
   })
@@ -152,8 +153,8 @@ describe('public protocol schema contract', () => {
 
   it('accepts exact declarative field and array ceilings and rejects one more', () => {
     const eventBase = { ...text(), body: '' }
-    // The body field ceiling is declarative (MAX_CHAT_EVENT_BYTES characters).
-    const exactBody = { ...eventBase, body: 'x'.repeat(MAX_CHAT_EVENT_BYTES) }
+    // The body field ceiling is declarative (MAX_CHAT_BODY_CODE_UNITS characters).
+    const exactBody = { ...eventBase, body: 'x'.repeat(MAX_CHAT_BODY_CODE_UNITS) }
     expect(parseChat(exactBody)).not.toBeNull()
     expect(parseChat({ ...exactBody, body: `${exactBody.body}x` })).toBeNull()
 
@@ -209,7 +210,8 @@ describe('public protocol schema contract', () => {
         'HLCSchema',
         'HistoryMessagesPullSchema',
         'HistoryMessagesPushSchema',
-        'MAX_CHAT_EVENT_BYTES',
+        'MAX_CHAT_BODY_CODE_UNITS',
+        'MAX_CHAT_MESSAGE_BYTES',
         'MAX_DECODED_JSON_BYTES',
         'MAX_HISTORY_RESPONSE_MESSAGES',
         'MAX_USER_BYTES',
@@ -223,7 +225,9 @@ describe('public protocol schema contract', () => {
         'SessionMessageSchema',
         'TextMessageSchema',
         'WireCodecError',
-        'WorldRoomMessageSchema'
+        'WorldRoomMessageSchema',
+        'isChatMessageWithinBudget',
+        'isChatUserWithinBudget'
       ].sort()
     )
   })

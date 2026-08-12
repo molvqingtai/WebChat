@@ -11,8 +11,16 @@ import {
   type ObservedPresence,
   type PresenceDomainRecord
 } from '@/domain/runtime/externs/PresenceStore'
-import { CHAT_ROOM_NAMESPACE_V5, PENDING_LEAVE_GRACE_MS } from '@/constants/config'
-import { MESSAGE_TYPE, type ChatMessage, type HLC, type MentionedUser, type ChatSite, type ChatUser } from '@/protocol'
+import { CHAT_ROOM_NAMESPACE_V6, PENDING_LEAVE_GRACE_MS } from '@/constants/config'
+import {
+  MESSAGE_TYPE,
+  type ChatMessage,
+  type HLC,
+  type MentionedUser,
+  type ChatSite,
+  type ChatUser,
+  isChatMessageWithinBudget
+} from '@/protocol'
 import {
   MESSAGE_RECORD_TYPE,
   type ChatMessageRecord,
@@ -127,7 +135,7 @@ export interface SessionFailure {
   domain?: string
 }
 
-const getChatRoomId = (domain: string): string => stringToHex(`${CHAT_ROOM_NAMESPACE_V5}:${domain}`)
+const getChatRoomId = (domain: string): string => stringToHex(`${CHAT_ROOM_NAMESPACE_V6}:${domain}`)
 const replaceBy = <T>(items: T[], predicate: (item: T) => boolean, next: T): T[] =>
   items.some(predicate) ? items.map((item) => (predicate(item) ? next : item)) : [...items, next]
 const removeBy = <T>(items: T[], predicate: (item: T) => boolean): T[] => items.filter((item) => !predicate(item))
@@ -1136,6 +1144,12 @@ const SessionDomain = Remesh.domain({
           return OperationFailedEvent({
             operationId: payload.operationId,
             error: new Error('Chat message does not match the active local session')
+          })
+        }
+        if (!isChatMessageWithinBudget(event)) {
+          return OperationFailedEvent({
+            operationId: payload.operationId,
+            error: new Error('Chat message exceeds the canonical size budget')
           })
         }
         const adopted = adoptHlc(get(HlcState()), event.hlc)

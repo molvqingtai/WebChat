@@ -1,5 +1,5 @@
 import type { InputEventHandler, KeyboardEvent, ClipboardEvent } from 'react'
-import { useMemo, useRef, useState, type FC } from 'react'
+import { useEffect, useMemo, useRef, useState, type FC } from 'react'
 import { CornerDownLeftIcon } from 'lucide-react'
 import { useRemeshDomain, useRemeshQuery, useRemeshSend } from 'remesh-react'
 import MessageInput from '../../components/message-input'
@@ -7,7 +7,7 @@ import EmojiButton from '../../components/emoji-button'
 import { Button } from '@/components/ui/button'
 import MessageInputDomain from '@/domain/MessageInput'
 import { MESSAGE_IMAGE_TARGET_SIZE, MESSAGE_MAX_LENGTH } from '@/constants/config'
-import { MAX_CHAT_EVENT_BYTES } from '@/protocol/Limits'
+import { MAX_CHAT_MESSAGE_BYTES } from '@/protocol/Limits'
 import ChatRoomDomain from '@/domain/ChatRoom'
 import useCursorPosition from '@/hooks/useCursorPosition'
 import useShareRef from '@/hooks/useShareRef'
@@ -24,7 +24,6 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { AvatarImage } from '@radix-ui/react-avatar'
 import ToastDomain from '@/domain/Toast'
 import ImageButton from '../../components/image-button'
-import { nanoid } from 'nanoid'
 import imgcap from 'imgcap'
 import useRoot from '@/hooks/useRoot'
 
@@ -58,7 +57,7 @@ const Footer: FC = () => {
    * When inserting a username using the @ syntax, record the username's position information and the mapping relationship between the position information and userId to distinguish between users with the same name.
    */
   const atUserRecord = useRef<Map<string, Set<[number, number]>>>(new Map())
-  const imageRecord = useRef<Map<string, string>>(new Map())
+  const ownedImageUrls = useRef<Set<string>>(new Set())
 
   const updateAtUserAtRecord = useMemo(
     () => (message: string, start: number, end: number, offset: number, atUserId?: string) => {
@@ -114,22 +113,25 @@ const Footer: FC = () => {
 
   const selectedUser = autoCompleteList.find((_, index) => index === selectedUserIndex)!
 
-  // Replace the hash URL in ![Image](hash:${hash}) with base64 and update the atUserRecord.
-  const transformMessage = async (message: string) => {
-    let newMessage = message
-    const matchList = [...message.matchAll(/!\[Image\]\(hash:([^\s)]+)\)/g)]
-    matchList?.forEach((match) => {
-      const base64 = imageRecord.current.get(match[1])
-      if (base64) {
-        const base64Syntax = `![Image](${base64})`
-        const hashSyntax = match[0]
-        const startIndex = match.index
-        const endIndex = startIndex + base64Syntax.length - hashSyntax.length
-        newMessage = newMessage.replace(hashSyntax, base64Syntax)
-        updateAtUserAtRecord(newMessage, startIndex, endIndex, 0)
-      }
-    })
-    return newMessage
+  // Resolve the editor's owned blob references into data URLs in a temporary send candidate;
+  // only currently referenced, live object URLs owned by this editor may resolve. The literal
+  // draft itself stays untouched so a failed send preserves it for correction or retry.
+  const resolveImageDraft = async (draft: string) => {
+    let expanded = draft
+    const matchList = [...draft.matchAll(/!\[Image\]\(blob:([^\s)]+)\)/g)]
+    for (const match of matchList) {
+      const url = match[1]
+      if (!ownedImageUrls.current.has(url)) throw new Error('Image reference is no longer owned by this editor')
+      const blob = await (await fetch(url)).blob()
+      const dataUrl = await blobToBase64(blob)
+      const dataSyntax = `![Image](${dataUrl})`
+      const blobSyntax = match[0]
+      const startIndex = match.index
+      const endIndex = startIndex + dataSyntax.length - blobSyntax.length
+      expanded = expanded.replace(blobSyntax, dataSyntax)
+      updateAtUserAtRecord(expanded, startIndex, endIndex, 0)
+    }
+    return expanded
   }
 
   const handleSendMessage = async () => {
@@ -137,7 +139,15 @@ const Footer: FC = () => {
       inputRef.current?.focus()
       return
     }
-    const transformedMessage = await transformMessage(message)
+    let transformedMessage: string
+    try {
+      transformedMessage = await resolveImageDraft(message)
+    } catch (error) {
+      // Reject the whole send and preserve the literal draft; every still-referenced owned URL
+      // stays live for correction or retry.
+      send(toastDomain.command.ErrorCommand((error as Error).message))
+      return
+    }
     const mentions = [...atUserRecord.current]
       .map(([userId, ranges]) => {
         const user = userList.find((user) => user.id === userId)
@@ -148,12 +158,32 @@ const Footer: FC = () => {
     const newMessage = { body: transformedMessage, mentions }
     const byteSize = getTextByteSize(JSON.stringify(newMessage))
 
-    if (byteSize > MAX_CHAT_EVENT_BYTES) {
-      return send(toastDomain.command.WarningCommand('Message size cannot exceed 48KiB.'))
+    if (byteSize > MAX_CHAT_MESSAGE_BYTES) {
+      return send(toastDomain.command.WarningCommand('Message size cannot exceed 192KiB.'))
     }
 
     send(chatRoomDomain.command.SendTextMessageCommand({ body: transformedMessage, mentions }))
   }
+
+  // Revoke every owned blob URL whose final draft reference disappeared (edit, clear, or send
+  // success), and revoke all owned URLs when the editor unmounts.
+  useEffect(() => {
+    const referenced = new Set([...message.matchAll(/!\[Image\]\(blob:([^\s)]+)\)/g)].map((match) => match[1]))
+    ownedImageUrls.current.forEach((url) => {
+      if (!referenced.has(url)) {
+        URL.revokeObjectURL(url)
+        ownedImageUrls.current.delete(url)
+      }
+    })
+  }, [message])
+
+  useEffect(
+    () => () => {
+      ownedImageUrls.current.forEach((url) => URL.revokeObjectURL(url))
+      ownedImageUrls.current.clear()
+    },
+    []
+  )
 
   const handleSend = useThrottle(handleSendMessage, 1000)
 
@@ -270,17 +300,15 @@ const Footer: FC = () => {
         outputType: file.size > MESSAGE_IMAGE_TARGET_SIZE ? 'image/webp' : undefined
       })
 
-      const base64 = await blobToBase64(blob)
-      const hash = nanoid()
-      const newMessage = `${message.slice(0, selectionEnd)}![Image](hash:${hash})${message.slice(selectionEnd)}`
+      const url = URL.createObjectURL(blob)
+      ownedImageUrls.current.add(url)
+      const newMessage = `${message.slice(0, selectionEnd)}![Image](blob:${url})${message.slice(selectionEnd)}`
 
       const start = selectionStart
       const end = selectionEnd + newMessage.length - message.length
 
       updateAtUserAtRecord(newMessage, start, end, 0)
       send(messageInputDomain.command.InputCommand(newMessage))
-
-      imageRecord.current.set(hash, base64)
 
       requestIdleCallback(() => {
         inputRef.current?.setSelectionRange(end, end)

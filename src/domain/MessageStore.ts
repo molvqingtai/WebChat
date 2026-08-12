@@ -3,6 +3,7 @@ import * as v from 'valibot'
 import type { Database, DatabaseItem } from '@/domain/externs/Database'
 import type { Unsubscribe } from '@/domain/Subscription'
 import { ChatMessageSchema, HLCSchema } from '@/protocol/ChatRoom'
+import { isChatMessageWithinBudget } from '@/protocol/Limits'
 import { ChatUserSchema } from '@/protocol/Session'
 import { MESSAGE_RECORD_TYPE, NOTICE_TYPE, type MessageRecord } from '@/domain/Message'
 import { MAX_CONFLICTS_PER_RECORD, MAX_STORED_CONFLICTS } from '@/constants/config'
@@ -182,6 +183,9 @@ const invalidMessageRecord = (message: string): never => {
 const decodeMessageRecord = (item: DatabaseItem<string, unknown>): MessageRecord => {
   const parsed = v.safeParse(MessageRecordSchema, item.value)
   if (!parsed.success) return invalidMessageRecord('Database contains an invalid MessageRecord')
+  if (parsed.output.type === MESSAGE_RECORD_TYPE.CHAT_MESSAGE && !isChatMessageWithinBudget(parsed.output.message)) {
+    return invalidMessageRecord('Database contains an over-budget ChatMessage')
+  }
   return parsed.output
 }
 

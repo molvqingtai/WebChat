@@ -1,7 +1,9 @@
 import { Remesh } from 'remesh'
 import * as v from 'valibot'
 import { fromEventPattern, map, mergeMap } from 'rxjs'
-import { MAX_DECODE_QUEUE_BYTES, MAX_DECODE_QUEUE_FRAMES, WORLD_ROOM_ID_V5 } from '@/constants/config'
+import { MAX_DECODE_QUEUE_BYTES, MAX_DECODE_QUEUE_FRAMES, WORLD_ROOM_ID_V6 } from '@/constants/config'
+import { isChatMessageWithinBudget, isChatUserWithinBudget } from '@/protocol/Limits'
+import { MESSAGE_TYPE } from '@/protocol/ChatRoom'
 import { RoomTransportExtern, WireCodecExtern } from '@/domain/runtime/externs/RoomTransport'
 import { ChatRoomMessageSchema, WorldRoomMessageSchema, type ChatRoomMessage, type WorldRoomMessage } from '@/protocol'
 import { getTextByteSize } from '@/utils/getTextByteSize'
@@ -82,7 +84,7 @@ interface DropRecord {
 
 const MAX_LOGGED_SOURCES = 256
 const LOG_INTERVAL_MS = 10000
-const worldRoomId = stringToHex(WORLD_ROOM_ID_V5)
+const worldRoomId = stringToHex(WORLD_ROOM_ID_V6)
 const queueId = (roomId: string, sourcePeerId: string) => JSON.stringify([roomId, sourcePeerId])
 const generationFor = (generations: RoomGeneration[], roomId: string) =>
   generations.find((item) => item.roomId === roomId)?.generation ?? 0
@@ -538,6 +540,34 @@ const WireDomain = Remesh.domain({
         const message = parseMessage(payload.roomId, payload.value)
         if (!message) {
           return [...queueOutput, RecordDropCommand({ sourcePeerId: payload.sourcePeerId, reason: 'invalid message' })]
+        }
+        // v6 complete-object resource guards run once after the structural parse and before typed
+        // application: an over-budget complete ChatMessage or any nested ChatUser rejects the
+        // complete value without dropping the connection.
+        if (payload.roomId !== worldRoomId && 'type' in message) {
+          if (message.type === MESSAGE_TYPE.TEXT || message.type === MESSAGE_TYPE.REACTION) {
+            if (!isChatMessageWithinBudget(message)) {
+              return [
+                ...queueOutput,
+                RecordDropCommand({ sourcePeerId: payload.sourcePeerId, reason: 'complete message over budget' })
+              ]
+            }
+          }
+          if (message.type === MESSAGE_TYPE.SESSION && !isChatUserWithinBudget(message.user)) {
+            return [
+              ...queueOutput,
+              RecordDropCommand({ sourcePeerId: payload.sourcePeerId, reason: 'complete user over budget' })
+            ]
+          }
+          if (
+            message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH &&
+            message.users.some((user) => !isChatUserWithinBudget(user))
+          ) {
+            return [
+              ...queueOutput,
+              RecordDropCommand({ sourcePeerId: payload.sourcePeerId, reason: 'complete user over budget' })
+            ]
+          }
         }
         return [
           ...queueOutput,
