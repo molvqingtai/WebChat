@@ -21,6 +21,6 @@ None.
 
 ## Impact
 
-- Affected implementation: the existing content-script `excludeMatches` declaration.
+- Affected implementation: the existing content-script `excludeMatches` declaration and the Runtime content-URL eligibility guard that must accept the same otherwise eligible HTTPS hosts.
 - Affected verification: generated Chrome/Firefox manifest inspection and existing repository delivery checks.
-- Unchanged: the broad HTTPS match, frame behavior, permissions, runtime behavior, page UI, dependencies, and every nonselected host.
+- Unchanged: `excludeMatches` remains the sole targeting declaration; the broad HTTPS match, frame behavior, permissions, page UI, dependencies, and every nonselected host remain unchanged.
