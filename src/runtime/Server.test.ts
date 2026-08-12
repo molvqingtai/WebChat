@@ -3324,7 +3324,7 @@ describe('RuntimeServer history', () => {
     await server.onInbound({ pageId: 'page-a' }, async (event) => {
       await server.ackInbound({ domain: event.domain, sequence: event.sequence, inserted: true })
     })
-    const feedback: { kind: string; ownerId: string }[] = []
+    const feedback: { type: string; ownerId: string }[] = []
     await server.onHistoryFeedback({ pageId: 'page-a' }, (event) => {
       feedback.push(event)
     })
@@ -3341,17 +3341,17 @@ describe('RuntimeServer history', () => {
       messages: [text('history-a')],
       done: true
     })
-    await vi.waitFor(() => expect(feedback.some((f) => f.kind === 'loading')).toBe(true))
-    await vi.waitFor(() => expect(feedback.some((f) => f.kind === 'dismiss')).toBe(true))
-    expect(feedback.filter((f) => f.kind === 'loading')).toHaveLength(1)
-    expect(feedback.filter((f) => f.kind === 'dismiss')).toHaveLength(1)
+    await vi.waitFor(() => expect(feedback.some((f) => f.type === 'loading')).toBe(true))
+    await vi.waitFor(() => expect(feedback.some((f) => f.type === 'dismiss')).toBe(true))
+    expect(feedback.filter((f) => f.type === 'loading')).toHaveLength(1)
+    expect(feedback.filter((f) => f.type === 'dismiss')).toHaveLength(1)
     expect(new Set(feedback.map((f) => f.ownerId)).size).toBe(1)
   })
 
   it('stays silent when a response page is empty or every insert already exists', async () => {
     const { fake, server, roomId } = await setup()
     await registerInventoryProvider(server)
-    const feedback: { kind: string }[] = []
+    const feedback: { type: string }[] = []
     await server.onHistoryFeedback({ pageId: 'page-a' }, (event) => {
       feedback.push(event)
     })

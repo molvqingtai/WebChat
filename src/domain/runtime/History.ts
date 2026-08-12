@@ -107,14 +107,14 @@ interface ProviderSupplySuccessorState extends ProviderAttemptState {
 }
 
 interface PendingInventorySend extends HistoryAttemptKey {
-  kind: 'inventory'
+  type: 'inventory'
   requestId: string
   messageIds: string[]
   done: boolean
 }
 
 interface PendingProviderSend extends HistoryAttemptKey {
-  kind: 'provider'
+  type: 'provider'
   requestId: string
   records: { record: ChatMessageRecord; bytes: number }[]
   remaining: { record: ChatMessageRecord; bytes: number }[]
@@ -130,7 +130,7 @@ const replaceBy = <T>(items: T[], predicate: (item: T) => boolean, next: T): T[]
   items.some(predicate) ? items.map((item) => (predicate(item) ? next : item)) : [...items, next]
 const removeBy = <T>(items: T[], predicate: (item: T) => boolean): T[] => items.filter((item) => !predicate(item))
 const historyCutoff = (now: number) => now - HISTORY_WINDOW_DAYS * 24 * 60 * 60 * 1000
-const token = (kind: string, counter: number) => `${kind}:${counter.toString(36)}`
+const token = (prefix: string, counter: number) => `${prefix}:${counter.toString(36)}`
 const feedbackOwnerId = (key: HistoryAttemptKey) =>
   `history:${key.domain}:${key.sourcePeerId}:${key.syncId}:${key.syncToken}`
 /** Maximum length of the bounded serial response-page queue for one requester attempt. */
@@ -283,7 +283,7 @@ const HistoryDomain = Remesh.domain({
         ? null
         : [
             FeedbackOwnersState().new([...get(FeedbackOwnersState()), feedbackOwner(key)]),
-            FeedbackChangedEvent({ domain: key.domain, ownerId: feedbackOwnerId(key), kind: 'loading' })
+            FeedbackChangedEvent({ domain: key.domain, ownerId: feedbackOwnerId(key), type: 'loading' })
           ]
     const dismissFeedback = (
       get: (action: ReturnType<typeof FeedbackOwnersState>) => FeedbackOwnerState[],
@@ -292,7 +292,7 @@ const HistoryDomain = Remesh.domain({
       get(FeedbackOwnersState()).some((item) => feedbackMatches(item, key))
         ? [
             FeedbackOwnersState().new(removeBy(get(FeedbackOwnersState()), (item) => feedbackMatches(item, key))),
-            FeedbackChangedEvent({ domain: key.domain, ownerId: feedbackOwnerId(key), kind: 'dismiss' })
+            FeedbackChangedEvent({ domain: key.domain, ownerId: feedbackOwnerId(key), type: 'dismiss' })
           ]
         : null
 
@@ -371,7 +371,7 @@ const HistoryDomain = Remesh.domain({
               (item) =>
                 item.sourcePeerId === payload.sourcePeerId &&
                 item.domain === payload.domain &&
-                item.kind === 'inventory'
+                item.type === 'inventory'
             )
           ),
           ...(dismissFeedback(get, current) ?? []),
@@ -590,7 +590,7 @@ const HistoryDomain = Remesh.domain({
             ...removeBy(get(PendingWireSendsState()), (item) => item.requestId === requestId),
             {
               ...payload,
-              kind: 'inventory' as const,
+              type: 'inventory' as const,
               requestId,
               messageIds: page.messageIds,
               done: page.done
@@ -610,7 +610,7 @@ const HistoryDomain = Remesh.domain({
       name: 'History.ContinueRequesterInventoryCommand',
       impl: ({ get }, requestId: string) => {
         const pending = get(PendingWireSendsState())
-        const found = pending.find((item) => item.requestId === requestId && item.kind === 'inventory')
+        const found = pending.find((item) => item.requestId === requestId && item.type === 'inventory')
         if (!found) return null
         const current = found as PendingInventorySend
         const requesters = get(RequesterAttemptsState())
@@ -1251,7 +1251,7 @@ const HistoryDomain = Remesh.domain({
         const requestId = `history:provider:${payload.syncToken}:${current.nextResponsePage}`
         const pending: PendingProviderSend = {
           ...payload,
-          kind: 'provider',
+          type: 'provider',
           requestId,
           records: slice,
           remaining: tail,
@@ -1260,7 +1260,7 @@ const HistoryDomain = Remesh.domain({
         }
         return [
           PendingWireSendsState().new([
-            ...removeBy(get(PendingWireSendsState()), (item) => item.kind === 'provider' && matchesSync(item, payload)),
+            ...removeBy(get(PendingWireSendsState()), (item) => item.type === 'provider' && matchesSync(item, payload)),
             pending
           ]),
           wireDomain.command.SendMessageCommand({
@@ -1277,7 +1277,7 @@ const HistoryDomain = Remesh.domain({
       name: 'History.CompleteProviderResponseCommand',
       impl: ({ get }, requestId: string) => {
         const pending = get(PendingWireSendsState())
-        const found = pending.find((item) => item.requestId === requestId && item.kind === 'provider')
+        const found = pending.find((item) => item.requestId === requestId && item.type === 'provider')
         if (!found) return null
         const current = found as PendingProviderSend
         const providers = get(ProviderAttemptsState())
@@ -1329,7 +1329,7 @@ const HistoryDomain = Remesh.domain({
         const current = pending.find((item) => item.requestId === payload.requestId)
         if (!current) return null
         const clear = PendingWireSendsState().new(removeBy(pending, (item) => item.requestId === payload.requestId))
-        if (current.kind === 'inventory') {
+        if (current.type === 'inventory') {
           return [
             clear,
             ErrorEvent({ error: payload.error, domain: current.domain }),
@@ -1926,7 +1926,7 @@ const HistoryDomain = Remesh.domain({
           map(({ requestId }) => {
             const pending = get(PendingWireSendsState()).find((item) => item.requestId === requestId)
             if (!pending) return []
-            return pending.kind === 'inventory'
+            return pending.type === 'inventory'
               ? ContinueRequesterInventoryCommand(requestId)
               : CompleteProviderResponseCommand(requestId)
           })
@@ -2013,11 +2013,11 @@ const HistoryDomain = Remesh.domain({
               ]
             }
             type PageOutcome =
-              | { kind: 'success'; supplied: NonNullable<Awaited<ReturnType<typeof pagePort.supplyHistory>>> }
-              | { kind: 'detached' }
-              | { kind: 'failed' }
-              | { kind: 'timedOut' }
-              | { kind: 'cancelled' }
+              | { type: 'success'; supplied: NonNullable<Awaited<ReturnType<typeof pagePort.supplyHistory>>> }
+              | { type: 'detached' }
+              | { type: 'failed' }
+              | { type: 'timedOut' }
+              | { type: 'cancelled' }
             // One explicit serial selection loop: record the live supply id immediately before
             // each query, await the physical settlement, classify the result, and yield one
             // terminal action batch (or fail over to the next page). No nested stream control.
@@ -2057,7 +2057,7 @@ const HistoryDomain = Remesh.domain({
                     Math.min(HISTORY_REQUEST_TIMEOUT_MS / 2, remainingMs),
                     () => pagePort.cancelHistorySupply(supplyId)
                   )
-                  outcome = result ? { kind: 'success', supplied: result } : { kind: 'detached' }
+                  outcome = result ? { type: 'success', supplied: result } : { type: 'detached' }
                 } catch {
                   // PagePort removes the page itself on a genuine rejection or synchronous provider
                   // throw; a healthy page that hit its boundary stays registered. After physical
@@ -2065,18 +2065,18 @@ const HistoryDomain = Remesh.domain({
                   // terminates, a still-current attempt fails over to the next page.
                   if (!pagePort.historyPageIds(request.domain).includes(pageId)) {
                     failedPageIds.push(pageId)
-                    outcome = { kind: 'failed' }
+                    outcome = { type: 'failed' }
                   } else if (!get(ProviderAttemptsState()).some((item) => matchesSync(item, request))) {
-                    outcome = { kind: 'cancelled' }
+                    outcome = { type: 'cancelled' }
                   } else {
-                    outcome = { kind: 'timedOut' }
+                    outcome = { type: 'timedOut' }
                   }
                 }
-                if (outcome.kind === 'success') {
+                if (outcome.type === 'success') {
                   yield successOutcome(outcome.supplied)
                   return
                 }
-                if (outcome.kind === 'cancelled') {
+                if (outcome.type === 'cancelled') {
                   yield cancelOutcome()
                   return
                 }

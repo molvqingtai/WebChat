@@ -26,7 +26,7 @@ const fixture = vi.hoisted(() => ({
   resumeFeedback: vi.fn(),
   loadingCommand: vi.fn(),
   cancelCommand: vi.fn(),
-  historyFeedbackListener: null as null | ((event: { kind: string; ownerId: string }) => void),
+  historyFeedbackListener: null as null | ((event: { type: string; ownerId: string }) => void),
   startInitializationLifecycle: vi.fn(),
   stopInitialization: vi.fn(),
   initializationOptions: [] as Array<Record<string, unknown>>,
@@ -159,7 +159,7 @@ beforeEach(() => {
     epochSource: {
       bindConnectionResultReporter: () => {},
       bindStandaloneInvocation: () => {},
-      onHistoryFeedback: (listener: (event: { kind: string; ownerId: string }) => void) => {
+      onHistoryFeedback: (listener: (event: { type: string; ownerId: string }) => void) => {
         fixture.historyFeedbackListener = listener
         return () => {}
       }
@@ -424,14 +424,14 @@ describe('content composition root', () => {
     activate()
     if (!fixture.historyFeedbackListener) throw new Error('History feedback listener was never wired')
 
-    fixture.historyFeedbackListener({ kind: 'loading', ownerId: 'history:owner-1' })
+    fixture.historyFeedbackListener({ type: 'loading', ownerId: 'history:owner-1' })
     expect(fixture.loadingCommand).toHaveBeenCalledWith({
       id: 'history:owner-1',
       message: 'Syncing message history...'
     })
     expect(fixture.cancelCommand).not.toHaveBeenCalled()
 
-    fixture.historyFeedbackListener({ kind: 'dismiss', ownerId: 'history:owner-1' })
+    fixture.historyFeedbackListener({ type: 'dismiss', ownerId: 'history:owner-1' })
     expect(fixture.cancelCommand).toHaveBeenCalledWith('history:owner-1')
     // One sync never dismisses another owner or an unrelated Toast.
     expect(fixture.cancelCommand).toHaveBeenCalledTimes(1)

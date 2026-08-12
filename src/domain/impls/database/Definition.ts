@@ -88,13 +88,13 @@ export const assertCanonicalValue = (value: unknown): void => assertPlainValue(v
 
 export function assertDatabaseKey(
   value: unknown,
-  kind?: 'string' | 'number' | 'string-or-number'
+  type?: 'string' | 'number' | 'string-or-number'
 ): asserts value is DatabaseKey {
   if (typeof value !== 'string' && (typeof value !== 'number' || !Number.isFinite(value))) {
     throw new TypeError('Database keys must be strings or finite numbers')
   }
-  if (kind && kind !== 'string-or-number' && typeof value !== kind) {
-    throw new TypeError(`Database key must be a ${kind}`)
+  if (type && type !== 'string-or-number' && typeof value !== type) {
+    throw new TypeError(`Database key must be a ${type}`)
   }
 }
 
@@ -142,7 +142,7 @@ export const validateScope = <Schema extends DatabaseSchema<Schema>>(
 
 const validateRange = (
   range: Record<string, unknown> | undefined,
-  kind: 'string' | 'number' | 'string-or-number'
+  type: 'string' | 'number' | 'string-or-number'
 ): void => {
   if (!range) return
   if (Object.keys(range).some((key) => !['lower', 'lowerOpen', 'upper', 'upperOpen'].includes(key))) {
@@ -162,8 +162,8 @@ const validateRange = (
   if (Object.prototype.hasOwnProperty.call(range, 'upperOpen') && typeof range.upperOpen !== 'boolean') {
     throw new TypeError('upperOpen must be a boolean')
   }
-  if (hasLower) assertDatabaseKey(range.lower, kind)
-  if (hasUpper) assertDatabaseKey(range.upper, kind)
+  if (hasLower) assertDatabaseKey(range.lower, type)
+  if (hasUpper) assertDatabaseKey(range.upper, type)
   if (hasLower && hasUpper && compareDatabaseKeys(range.lower as DatabaseKey, range.upper as DatabaseKey) > 0) {
     throw new TypeError('Database range lower bound exceeds upper bound')
   }
@@ -196,14 +196,14 @@ export const validateQuery = <Schema extends StoreSchema>(
   ) {
     throw new TypeError(`Unknown database index: ${String(index)}`)
   }
-  const kind = index
+  const type = index
     ? (definition.indexes as unknown as Record<string, IndexDefinition<DatabaseKey>>)[index as string].key
     : definition.key
   const range = input.range
   if (range !== undefined && (typeof range !== 'object' || range === null || Array.isArray(range))) {
     throw new TypeError('Database range must be an object')
   }
-  validateRange(range as Record<string, unknown> | undefined, kind)
+  validateRange(range as Record<string, unknown> | undefined, type)
   const direction = input.direction ?? 'asc'
   if (includeScan && direction !== 'asc' && direction !== 'desc') {
     throw new TypeError('Database scan direction must be asc or desc')
