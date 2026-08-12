@@ -13,6 +13,7 @@ import { PresenceStoreExtern, type PresenceStore } from '@/domain/runtime/extern
 import { RoomTransportExtern, WireCodecExtern } from '@/domain/runtime/externs/RoomTransport'
 import type { RoomTransport } from '@/runtime/RoomTransport'
 import { NativeWireCodec, type WireCodec } from '@/protocol'
+import type { ChatSite, ChatUser } from '@/protocol'
 import type { RuntimeServer, RuntimeSnapshot } from '@/runtime/Contract'
 import { MAX_HISTORY_SESSION_BYTES, MAX_HISTORY_SESSION_MESSAGES } from '@/constants/config'
 import { PagePort, createPagePortImpl } from '@/runtime/PagePort'
@@ -85,6 +86,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   const deliveryDomain = store.getDomain(deliveryAction)
   const sessionDomain = store.getDomain(sessionAction)
   const worldDomain = store.getDomain(worldAction)
+  const historyDomain = store.getDomain(historyAction)
   const connectionDomain = store.getDomain(connectionAction)
   store.send(lifecycleDomain.command.HostReadyCommand())
 
@@ -289,6 +291,46 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   /** One shared in-flight settlement per domain: overlapping release requests share it. */
   const inFlightReleases = new Map<string, Promise<void>>()
 
+  /**
+   * Manual-refresh destruction phase: destroys the complete current-domain connection aggregate,
+   * awaits the cleared-observer persistence settlement, then awaits the domain's History work
+   * physically settling. Returns the captured local identity for the replacement attempt.
+   */
+  // The active local logical identity captured at reset time; reused by a retry after a failed
+  // reset persistence (the committed aggregate is already gone), and retired on full release.
+  const refreshIdentity = new Map<string, { user: ChatUser; site: ChatSite }>()
+  store.subscribeEvent(connectionDomain.event.ConnectionLeftEvent, (event) => {
+    refreshIdentity.delete(event.domain)
+  })
+  const resetDomainConnection = async (
+    domain: string,
+    operationId: string
+  ): Promise<{ ok: boolean; user?: ChatUser; site?: ChatSite }> => {
+    const runtime = store.query(sessionDomain.query.DomainQuery(domain))
+    if (!runtime) {
+      return { ok: true, ...refreshIdentity.get(domain) }
+    }
+    const user = runtime.user
+    const site = runtime.site
+    refreshIdentity.set(domain, { user, site })
+    const persistence = new Promise<boolean>((resolve) => {
+      const subscription = store.subscribeEvent(sessionDomain.event.PresencePersistenceSettledEvent, (event) => {
+        if (event.requestId !== operationId) return
+        subscription.unsubscribe()
+        resolve(event.error === undefined)
+      })
+    })
+    store.send(connectionDomain.command.DestroyDomainConnectionCommand({ domain, operationId }))
+    const settled = await persistence
+    if (!settled) return { ok: false }
+    // Active History supplies/jobs physically settle through their abort callbacks; the
+    // replacement may bind new History work only after every old owner is gone.
+    while (!store.query(historyDomain.query.DomainCleanupSettledQuery(domain))) {
+      await new Promise<void>((resolve) => queueMicrotask(resolve))
+    }
+    return { ok: true, user, site }
+  }
+
   const completeInterruptedRelease = (domain: string): Promise<void> => {
     // Idempotent completed release: no runtime, no join attempt, and no current fence.
     if (
@@ -439,9 +481,31 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     replayInbound: async (payload) => store.query(deliveryDomain.query.BufferedEventsQuery(payload)),
     reconnectDomain: async (payload) => {
       const operationId = nanoid()
+      // Phase 1: correlated destruction of the complete current-domain connection aggregate. The
+      // cleared-observer persistence must settle and the domain's History work must physically
+      // settle before the replacement may prepare; a persistence rejection fails the request
+      // retryably without committing a mixed old/new snapshot.
+      const reset = await resetDomainConnection(payload.domain, operationId)
+      if (!reset.ok) {
+        return runConnectionOperation(
+          operationId,
+          connectionDomain.command.FailOperationCommand({
+            operationId,
+            error: new Error('Domain connection reset persistence failed')
+          }),
+          () => undefined,
+          () => null
+        )
+      }
+      // Phase 2: the canonical replacement attempt, seeded with the captured local identity.
       return runConnectionOperation(
         operationId,
-        connectionDomain.command.ReconnectDomainCommand({ operationId, ...payload }),
+        connectionDomain.command.ReconnectDomainCommand({
+          operationId,
+          domain: payload.domain,
+          user: reset.user,
+          site: reset.site
+        }),
         () => undefined,
         () => null
       )

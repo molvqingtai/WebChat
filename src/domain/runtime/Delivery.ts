@@ -176,9 +176,21 @@ const DeliveryDomain = Remesh.domain({
       name: 'Delivery.ReleaseDomainCommand',
       impl: ({ get }, releasedDomain: string) => {
         const deliveries = get(DeliveriesState())
-        return deliveries.some((item) => item.domain === releasedDomain)
-          ? DeliveriesState().new(deliveries.filter((item) => item.domain !== releasedDomain))
-          : null
+        const batches = get(BatchInsertedState())
+        // Remove the domain's volatile buffer AND its batch acknowledgement keys so a same batchId
+        // in a later generation cannot inherit the prior generation's `inserted: true` fact.
+        return [
+          ...(deliveries.some((item) => item.domain === releasedDomain)
+            ? [DeliveriesState().new(deliveries.filter((item) => item.domain !== releasedDomain))]
+            : []),
+          ...(Object.keys(batches).some((key) => key.startsWith(`${releasedDomain}:`))
+            ? [
+                BatchInsertedState().new(
+                  Object.fromEntries(Object.entries(batches).filter(([key]) => !key.startsWith(`${releasedDomain}:`)))
+                )
+              ]
+            : [])
+        ]
       }
     })
 

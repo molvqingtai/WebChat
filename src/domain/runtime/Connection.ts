@@ -249,7 +249,7 @@ const ConnectionDomain = Remesh.domain({
 
     const ReconnectDomainCommand = domain.command({
       name: 'Connection.ReconnectDomainCommand',
-      impl: ({ get }, payload: { operationId: string; domain: string }) => {
+      impl: ({ get }, payload: { operationId: string; domain: string; user?: ChatUser; site?: ChatSite }) => {
         if (get(sessionDomain.query.ReleasingDomainQuery(payload.domain))) {
           return OperationFailedEvent({
             operationId: payload.operationId,
@@ -263,31 +263,53 @@ const ConnectionDomain = Remesh.domain({
           })
         }
         const runtime = get(sessionDomain.query.DomainQuery(payload.domain))
-        if (!runtime) {
+        const retainedLocalSeed = get(sessionDomain.query.RetainedLocalSeedQuery(payload.domain))
+        if (!runtime && !retainedLocalSeed) {
           return OperationSucceededEvent({ operationId: payload.operationId })
         }
-        // One coordinated destruction of the complete current-domain connection aggregate before
-        // the replacement prepares or receives authoritative inbound data. Wire/transport drops
-        // the Chat owner, trusted membership, and queues; Session removes every committed/
-        // prepared/observer/leave/baseline fact except the retained local logical seed; History
-        // and Delivery clear their domain-owned work. Lifecycle keeps the exact page lease and
-        // this request as the fence. World and every other domain are outside the aggregate.
+        // The Server-level reset phase already destroyed the complete current-domain connection
+        // aggregate and settled its persistence/cleanup; this command only sequences the canonical
+        // replacement attempt. Lifecycle keeps the exact page lease and this request as the fence.
         return [
-          wireDomain.command.LeaveRoomCommand({ roomId: runtime.roomId, preservePending: false }),
-          sessionDomain.command.ResetDomainConnectionCommand(payload.domain),
-          historyDomain.command.ReleaseDomainCommand(payload.domain),
-          deliveryDomain.command.ReleaseDomainCommand(payload.domain),
           lifecycleDomain.command.BeginReconnectCommand(payload.domain),
           startAttempt(get, {
             attemptId: payload.operationId,
             operationId: payload.operationId,
             mode: 'reconnect',
             domain: payload.domain,
-            user: runtime.user,
-            site: runtime.site
+            user: runtime?.user ?? payload.user,
+            site: runtime?.site ?? payload.site
           })
         ]
       }
+    })
+
+    // One coordinated destruction of the complete current-domain connection aggregate, correlated
+    // to the reconnect operation: Wire/transport drops the Chat owner, trusted membership, source
+    // admission, and queues; Session removes every committed/prepared/observer/leave/baseline fact
+    // except the retained local logical seed and persists the cleared record; History and Delivery
+    // clear their domain-owned work. World and every other domain are outside the aggregate.
+    const DestroyDomainConnectionCommand = domain.command({
+      name: 'Connection.DestroyDomainConnectionCommand',
+      impl: ({ get }, payload: { domain: string; operationId: string }) => {
+        const runtime = get(sessionDomain.query.DomainQuery(payload.domain))
+        if (!runtime) return null
+        return [
+          wireDomain.command.LeaveRoomCommand({ roomId: runtime.roomId, preservePending: false }),
+          sessionDomain.command.ResetDomainConnectionCommand({
+            domain: payload.domain,
+            requestId: payload.operationId
+          }),
+          historyDomain.command.ReleaseDomainCommand(payload.domain),
+          deliveryDomain.command.ReleaseDomainCommand(payload.domain)
+        ]
+      }
+    })
+
+    const FailOperationCommand = domain.command({
+      name: 'Connection.FailOperationCommand',
+      impl: (_, payload: { operationId: string; error: Error }) =>
+        OperationFailedEvent({ operationId: payload.operationId, error: payload.error })
     })
 
     const StartPreparedAttemptCommand = domain.command({
@@ -888,7 +910,13 @@ const ConnectionDomain = Remesh.domain({
 
     return {
       query: { AttemptsQuery, PhaseQuery, SnapshotQuery },
-      command: { JoinDomainCommand, LeaveDomainCommand, ReconnectDomainCommand },
+      command: {
+        JoinDomainCommand,
+        LeaveDomainCommand,
+        ReconnectDomainCommand,
+        DestroyDomainConnectionCommand,
+        FailOperationCommand
+      },
       event: {
         OperationSucceededEvent,
         OperationFailedEvent,

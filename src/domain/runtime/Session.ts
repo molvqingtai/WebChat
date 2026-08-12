@@ -287,6 +287,13 @@ const SessionDomain = Remesh.domain({
       name: 'Session.ReleasingDomainQuery',
       impl: ({ get }, runtimeDomain: string) => get(LiveReleasesState()).some((item) => item.domain === runtimeDomain)
     })
+    // True after a manual-refresh reset: the committed aggregate is gone but the active local
+    // logical seed was retained, authorizing the canonical replacement attempt.
+    const RetainedLocalSeedQuery = domain.query({
+      name: 'Session.RetainedLocalSeedQuery',
+      impl: ({ get }, runtimeDomain: string) =>
+        get(PresenceDomainsState()).some((item) => item.domain === runtimeDomain && item.local !== undefined)
+    })
     const ReleaseRoomQuery = domain.query({
       name: 'Session.ReleaseRoomQuery',
       impl: ({ get }, runtimeDomain: string) =>
@@ -356,8 +363,13 @@ const SessionDomain = Remesh.domain({
     const DomainReleaseFailedEvent = domain.event<{ domain: string; error: Error }>({
       name: 'Session.DomainReleaseFailedEvent'
     })
-    const PersistPresenceRequestedEvent = domain.event<{ record: PresenceDomainRecord }>({
+    const PersistPresenceRequestedEvent = domain.event<{ record: PresenceDomainRecord; requestId?: string }>({
       name: 'Session.PersistPresenceRequestedEvent'
+    })
+    // Correlated settlement for a manual-refresh reset: the replacement may only start after the
+    // cleared-observer record persisted; a rejection fails the reconnect request retryably.
+    const PresencePersistenceSettledEvent = domain.event<{ requestId: string; error?: Error }>({
+      name: 'Session.PresencePersistenceSettledEvent'
     })
     const ClearActivePresenceRequestedEvent = domain.event<{ domain: string }>({
       name: 'Session.ClearActivePresenceRequestedEvent'
@@ -991,10 +1003,12 @@ const SessionDomain = Remesh.domain({
 
     // Manual refresh destruction: remove the domain's complete Session connection aggregate while
     // retaining only the active local logical seed. No remote observer, member, pending-leave, or
-    // baseline fact may seed the replacement; the canonical join rebuilds them from the wire.
+    // baseline fact may seed the replacement; the canonical join rebuilds them from the wire. The
+    // cleared-observer record persistence is correlated to the reconnect operation.
     const ResetDomainConnectionCommand = domain.command({
       name: 'Session.ResetDomainConnectionCommand',
-      impl: ({ get }, runtimeDomain: string) => {
+      impl: ({ get }, payload: { domain: string; requestId: string }) => {
+        const { domain: runtimeDomain, requestId } = payload
         const presenceDomains = get(PresenceDomainsState())
         const persisted = presenceDomains.find((item) => item.domain === runtimeDomain)
         const record: PresenceDomainRecord = persisted
@@ -1010,7 +1024,7 @@ const SessionDomain = Remesh.domain({
           PendingBaselinePeersState().new(
             removeBy(get(PendingBaselinePeersState()), (item) => item.domain === runtimeDomain)
           ),
-          PersistPresenceRequestedEvent({ record })
+          PersistPresenceRequestedEvent({ record, requestId })
         ]
       }
     })
@@ -1248,13 +1262,18 @@ const SessionDomain = Remesh.domain({
         const observed = observers.find((item) => item.presenceId === message.presenceId)
         if (observed?.status === 'ended') {
           // The wire acceptance already limited this frame to the current trusted Chat room
-          // generation and an admitted physical source. A lawful same-presence correction is
-          // accepted only with a NEW physical sessionId that exactly matches the observer's
-          // accepted logical identity and time and conflicts with no newer active binding or
-          // logical generation; an exact replay, an identity/time mutation, or a newer conflict
-          // stays terminally rejected.
+          // generation. A lawful same-presence correction additionally requires the source to be a
+          // CURRENTLY ADMITTED physical member of the room: a source that left (PeerLeave) without
+          // a fresh PeerJoin may not re-activate an ended presence with a sender-chosen new
+          // sessionId. It is accepted only with a NEW physical sessionId that exactly matches the
+          // observer's accepted logical identity and time and conflicts with no newer active
+          // binding or logical generation; an exact replay, an identity/time mutation, or a newer
+          // conflict stays terminally rejected.
           const exactReplay = message.sessionId === observed.sessionId
           const identityMatch = message.user.id === observed.user.id && message.joinedAt === observed.joinedAt
+          const admitted = get(
+            wireDomain.query.IsSourceAdmittedQuery({ roomId: payload.roomId, sourcePeerId: payload.sourcePeerId })
+          )
           const newerConflict =
             runtime.sessions.some((item) => item.user.id === message.user.id && item.joinedAt > message.joinedAt) ||
             observers.some(
@@ -1264,7 +1283,7 @@ const SessionDomain = Remesh.domain({
                 observer.presenceId !== message.presenceId &&
                 observer.joinedAt > message.joinedAt
             )
-          if (exactReplay || !identityMatch || newerConflict) {
+          if (exactReplay || !identityMatch || !admitted || newerConflict) {
             return wireDomain.command.DropProtocolCommand({
               sourcePeerId: payload.sourcePeerId,
               reason: 'session does not match its logical presence binding'
@@ -1892,9 +1911,11 @@ const SessionDomain = Remesh.domain({
           concatMap(async (request) => {
             try {
               await presenceStore.save(request.record)
-              return null
+              return request.requestId ? PresencePersistenceSettledEvent({ requestId: request.requestId }) : null
             } catch (error) {
-              return ErrorEvent({ error: error as Error, domain: request.record.domain })
+              return request.requestId
+                ? PresencePersistenceSettledEvent({ requestId: request.requestId, error: error as Error })
+                : ErrorEvent({ error: error as Error, domain: request.record.domain })
             }
           })
         )
@@ -1956,6 +1977,7 @@ const SessionDomain = Remesh.domain({
         PreparedSessionQuery,
         PresenceDomainQuery,
         ReleasingDomainQuery,
+        RetainedLocalSeedQuery,
         FinalizingPresenceQuery,
         RoomDomainQuery,
         BindingQuery,
@@ -1990,6 +2012,7 @@ const SessionDomain = Remesh.domain({
         DomainReleasedEvent,
         ReleaseCompletedEvent,
         DomainReleaseFailedEvent,
+        PresencePersistenceSettledEvent,
         RuntimeSessionChangedEvent,
         BindingChangedEvent,
         BindingRemovedEvent,

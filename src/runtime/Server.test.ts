@@ -638,7 +638,7 @@ const sessionAllocationEventFixture = () => {
 void sessionAllocationEventFixture
 
 describe('RuntimeServer lifecycle', () => {
-  it('recovers the stale member count through lawful rebind and one clean refresh', async () => {
+  it('one clean refresh converges the stale member count from the ended-observation state', async () => {
     vi.useFakeTimers()
     try {
       const { clock, fake, server, roomId } = await setup()
@@ -665,16 +665,9 @@ describe('RuntimeServer lifecycle', () => {
       await settle()
       expect(await memberCount()).toBe(3)
 
-      // Remote-1 returns with the same logical presence on a NEW physical session: the lawful
-      // rebind must not be rejected by the stale ended observation (fail-before: released code
-      // drops the SESSION and stays at three).
-      announce('peer-1', remoteUsers[0], 'session-user-1-rejoined')
-      await settle()
-      expect(await memberCount()).toBe(4)
-
-      // One AppButton-equivalent refresh must also converge to four after the remotes re-announce
-      // through the canonical join (fail-before: the ended observer survives the released
-      // reconnect, so the count remains three).
+      // One AppButton-equivalent refresh STARTING FROM THE STALE THREE state must converge to four
+      // after the remotes re-announce through the canonical join (fail-before: the ended observer
+      // survives the released reconnect, so the count remains three).
       await server.reconnectDomain({ domain: DOMAIN })
       await settle()
       remoteUsers.forEach((user, index) => {
@@ -699,6 +692,132 @@ describe('RuntimeServer lifecycle', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('accepts a lawful same-presence rebind and rejects stale replays, mutations, departed sources, and newer conflicts', async () => {
+    vi.useFakeTimers()
+    try {
+      const { fake, server, roomId } = await setup()
+      const user1 = { id: 'user-1', name: 'User 1', avatar: '' }
+      const user2 = { id: 'user-2', name: 'User 2', avatar: '' }
+      const memberCount = async () => {
+        const domain = (await server.getSnapshot()).domains[0]
+        return new Set(domain.sessions.map((item) => item.user.id)).size + (domain.localSession ? 1 : 0)
+      }
+      const announce = (peerId: string, user: { id: string; name: string; avatar: string }, sessionId: string) => {
+        fake.peerJoin(roomId, peerId)
+        fake.receive(roomId, peerId, { ...session(user), sessionId })
+      }
+      announce('peer-1', user1, 'session-user-1')
+      announce('peer-2', user2, 'session-user-2')
+      await settle()
+      expect(await memberCount()).toBe(3)
+
+      // Remote-1 leaves and its pending leave expires into an ended observer.
+      fake.peerLeave(roomId, 'peer-1')
+      await vi.advanceTimersByTimeAsync(PENDING_LEAVE_GRACE_MS)
+      await settle()
+      expect(await memberCount()).toBe(2)
+
+      // The lawful rebind: the source re-joins (admitted), sends a NEW physical sessionId with
+      // the exact accepted logical identity/time, and the ended observation is corrected.
+      announce('peer-1', user1, 'session-user-1-rejoined')
+      await settle()
+      expect(await memberCount()).toBe(3)
+
+      // Remote-2 leaves and its pending leave expires into an ended observer.
+      fake.peerLeave(roomId, 'peer-2')
+      await vi.advanceTimersByTimeAsync(PENDING_LEAVE_GRACE_MS)
+      await settle()
+      expect(await memberCount()).toBe(2)
+
+      // An exact replay of the ended physical sessionId from a NEW source (never joined) is rejected.
+      fake.receive(roomId, 'peer-new', { ...session(user2), sessionId: 'session-user-2' })
+      await settle()
+      expect(await memberCount()).toBe(2)
+
+      // An identity/time mutation of the ended presence is rejected.
+      fake.receive(roomId, 'peer-new', {
+        ...session(user2),
+        sessionId: 'session-user-2-mutated',
+        user: { id: 'user-X', name: 'Impostor', avatar: '' }
+      })
+      await settle()
+      expect(await memberCount()).toBe(2)
+
+      // A SESSION from the departed source WITHOUT a fresh PeerJoin cannot re-activate the ended
+      // presence: the source is not a currently admitted physical member.
+      fake.receive(roomId, 'peer-2', { ...session(user2), sessionId: 'session-user-2-departed' })
+      await settle()
+      expect(await memberCount()).toBe(2)
+
+      // A NEWER logical generation for the same user becomes active (a different presence with a
+      // strictly later joinedAt).
+      fake.peerJoin(roomId, 'peer-2b')
+      fake.receive(roomId, 'peer-2b', {
+        type: MESSAGE_TYPE.SESSION,
+        sessionId: 'session-user-2-new',
+        presenceId: 'presence-user-2-new',
+        joinedAt: NOW + 2,
+        user: user2
+      })
+      await settle()
+      expect(await memberCount()).toBe(3)
+
+      // The ended OLD generation may not resurrect once a newer active binding exists.
+      fake.receive(roomId, 'peer-2b', { ...session(user2), sessionId: 'session-user-2-old-new' })
+      await settle()
+      expect(await memberCount()).toBe(3)
+      disposeServer(server)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('fails the refresh request retryably when the reset persistence rejects', async () => {
+    const clock = new FakeClock()
+    const fake = createFakeTransport()
+    const values: Record<string, unknown> = {}
+    let rejectClearSave = false
+    const presenceStore = createBrowserPresenceStore({
+      get: async (key) => ({ [key]: values[key] }),
+      set: async (items) => {
+        const record = Object.values(items)[0] as { local?: { status?: string }; observers?: unknown[] }
+        // The refresh reset persists the cleared-observer record (retained local seed, no remote
+        // observations); a healthy join's commit save carries the same shape, so only reject once
+        // the test arms the failure after the initial join settled.
+        if (
+          rejectClearSave &&
+          record &&
+          typeof record === 'object' &&
+          record.local?.status === 'active' &&
+          (record.observers ?? []).length === 0
+        ) {
+          throw new Error('clear save rejected')
+        }
+        Object.assign(values, items)
+      }
+    })
+    const server = createServer({ transport: fake.transport, clock, codec: jsonCodec, presenceStore })
+    await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
+    await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
+    await settle()
+    expect((await server.getSnapshot()).domains[0].chatRoomJoined).toBe(true)
+
+    // The cleared-observer persistence rejects: the refresh must fail without committing a
+    // replacement, and a later retry must recover through the canonical join.
+    rejectClearSave = true
+    await expect(server.reconnectDomain({ domain: DOMAIN })).rejects.toThrow(
+      'Domain connection reset persistence failed'
+    )
+    await settle()
+    expect((await server.getSnapshot()).domains[0].chatRoomJoined).toBe(false)
+
+    rejectClearSave = false
+    await server.reconnectDomain({ domain: DOMAIN })
+    await settle()
+    expect((await server.getSnapshot()).domains[0].chatRoomJoined).toBe(true)
+    disposeServer(server)
   })
 
   it('preserves World, other domains, page lease, and the logical presence across refresh', async () => {
