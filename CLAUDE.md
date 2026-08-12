@@ -178,7 +178,7 @@ Public limits in `src/protocol/Limits.ts` are deliberately separate:
 
 - Permissions: `storage`, `notifications`, `tabs`
 - Matches: `https://*/*`
-- Excludes: localhost, 127.0.0.1, csdn.net, csdn.com
+- Excludes: localhost, 127.0.0.1, accounts.google.com
 - Browser-specific manifests for Chrome and Firefox
 
 **Content Script Injection**:
