@@ -96,7 +96,26 @@ vi.mock('@rtco/client', () => {
     }
   }
 
-  return { Artico: FakeArtico }
+  return {
+    Artico: FakeArtico,
+    SocketSignaling: class {
+      readonly id = 'fake-signaling'
+      readonly state = 'ready'
+      connect() {}
+      disconnect() {}
+      signal() {}
+      join() {}
+      on() {
+        return this
+      }
+      off() {
+        return this
+      }
+      emit() {
+        return this
+      }
+    }
+  }
 })
 
 import { createArticoRoomTransport } from './ArticoRoomTransport'

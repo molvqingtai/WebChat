@@ -1,4 +1,4 @@
-import { Artico } from '@rtco/client'
+import { Artico, SocketSignaling } from '@rtco/client'
 import type { Room } from '@rtco/client'
 import { nanoid } from 'nanoid'
 import type { RoomTransport } from '@/runtime/RoomTransport'
@@ -102,7 +102,12 @@ export const createArticoRoomTransport = (): RoomTransport => {
     if (owner.disposed) return
     if (owner.peer) owner.peerId = nanoid()
     retirePeer(owner)
-    const nextPeer = new Artico({ id: owner.peerId })
+    // Every World/Chat Artico generation explicitly uses the owned signaling endpoint with its
+    // own physical peer identity; no env selector, endpoint list, or host fallback exists.
+    const nextPeer = new Artico({
+      id: owner.peerId,
+      signaling: new SocketSignaling({ url: 'wss://web-chat.io', id: owner.peerId })
+    })
     owner.peer = nextPeer
     nextPeer.on('open', () => {
       if (owner.disposed || owners.get(owner.roomId) !== owner || owner.peer !== nextPeer) return
