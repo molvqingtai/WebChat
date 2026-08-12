@@ -30,11 +30,11 @@ bumps the constant; renderers then reject older-version files with a clear
 schema error instead of misrendering them. Additive, backwards-compatible
 fields do not bump the version.
 
-The **architecture** schema is currently **v2** (`"const": 2`): its element
-discriminator was renamed from `kind` to `type` as an intentionally
-incompatible clean cut, so version-1 architecture files (and any `kind`-keyed
-IR) are rejected. The other four diagram schemas (`workflow`, `sequence`,
-`dataflow`, `lifecycle`) remain **v1** (`"const": 1`) and are unchanged.
+The **architecture** schema is currently **v2** (`"const": 2`): it replaced
+the boundary discriminator with `type` as an intentionally incompatible clean
+cut, so all v1 architecture IR is deliberately rejected. The other four
+diagram schemas (`workflow`, `sequence`, `dataflow`, `lifecycle`) remain
+**v1** (`"const": 1`) and are unchanged.
 
 ## Shared definitions (common.schema.json)
 
