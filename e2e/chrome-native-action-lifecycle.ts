@@ -48,13 +48,13 @@ export interface ChromeLifecycleWorkerIdentity {
 }
 
 export type ChromeLifecycleEvent =
-  | { readonly kind: 'target-created'; readonly target: ChromeLifecycleTarget }
-  | { readonly kind: 'target-changed'; readonly target: ChromeLifecycleTarget }
-  | { readonly kind: 'target-destroyed'; readonly targetId: string }
-  | { readonly kind: 'target-attached'; readonly target: ChromeLifecycleTarget; readonly sessionId: string }
-  | { readonly kind: 'target-detached'; readonly targetId: string; readonly sessionId: string }
+  | { readonly type: 'target-created'; readonly target: ChromeLifecycleTarget }
+  | { readonly type: 'target-changed'; readonly target: ChromeLifecycleTarget }
+  | { readonly type: 'target-destroyed'; readonly targetId: string }
+  | { readonly type: 'target-attached'; readonly target: ChromeLifecycleTarget; readonly sessionId: string }
+  | { readonly type: 'target-detached'; readonly targetId: string; readonly sessionId: string }
   | {
-      readonly kind: 'frame-navigated'
+      readonly type: 'frame-navigated'
       readonly targetId: string
       readonly sessionId: string
       readonly frameId: string
@@ -63,14 +63,14 @@ export type ChromeLifecycleEvent =
       readonly url: string
     }
   | {
-      readonly kind: 'page-lifecycle'
+      readonly type: 'page-lifecycle'
       readonly targetId: string
       readonly sessionId: string
       readonly frameId: string
       readonly name: string
     }
   | {
-      readonly kind: 'execution-context-created'
+      readonly type: 'execution-context-created'
       readonly targetId: string
       readonly sessionId: string
       readonly contextId: number
@@ -80,13 +80,13 @@ export type ChromeLifecycleEvent =
       readonly name?: string
     }
   | {
-      readonly kind: 'execution-context-destroyed'
+      readonly type: 'execution-context-destroyed'
       readonly targetId: string
       readonly sessionId: string
       readonly contextId: number
     }
   | {
-      readonly kind: 'console'
+      readonly type: 'console'
       readonly targetId: string
       readonly sessionId: string
       readonly contextId: number
@@ -94,7 +94,7 @@ export type ChromeLifecycleEvent =
       readonly args: readonly unknown[]
     }
   | {
-      readonly kind: 'exception'
+      readonly type: 'exception'
       readonly targetId: string
       readonly sessionId: string
       readonly contextId?: number
@@ -102,7 +102,7 @@ export type ChromeLifecycleEvent =
       readonly stack?: unknown
     }
   | {
-      readonly kind: 'observation-error'
+      readonly type: 'observation-error'
       readonly targetId?: string
       readonly sessionId?: string
       readonly message: string
@@ -173,7 +173,7 @@ type ChromeLifecycleTerminal = {
 export interface ChromeLifecycleTimelineEntry {
   readonly sequence: number
   readonly atMs: number
-  readonly kind: string
+  readonly type: string
   readonly detail?: JsonValue
 }
 
@@ -493,13 +493,13 @@ class Timeline {
     return current
   }
 
-  record(kind: string, detail?: unknown, atMs?: number): void {
+  record(type: string, detail?: unknown, atMs?: number): void {
     if (this.entries.length >= MAX_NONTERMINAL_ENTRIES) {
       this.markOverflow(`Timeline exceeds ${MAX_TIMELINE_ENTRIES} entries`)
       return
     }
 
-    this.append(kind, detail, atMs)
+    this.append(type, detail, atMs)
   }
 
   recordTerminal(outcome: ChromeNativeActionLifecycleOutcome, reason: string, atMs: number): ChromeLifecycleTerminal {
@@ -514,13 +514,13 @@ class Timeline {
     this.entries.push({
       sequence: this.entries.length + 1,
       atMs: Math.max(atMs, this.entries.at(-1)?.atMs ?? atMs),
-      kind: 'terminal',
+      type: 'terminal',
       detail: { outcome: terminal.outcome, reason: terminal.reason }
     })
     return terminal
   }
 
-  private append(kind: string, detail?: unknown, atMs?: number): void {
+  private append(type: string, detail?: unknown, atMs?: number): void {
     let normalized: JsonValue | undefined
     try {
       normalized = detail === undefined ? undefined : normalizeEvidence(detail)
@@ -535,7 +535,7 @@ class Timeline {
     this.entries.push({
       sequence: this.entries.length + 1,
       atMs: atMs ?? this.now(),
-      kind,
+      type,
       ...(normalized === undefined ? {} : { detail: normalized })
     })
   }
@@ -549,8 +549,8 @@ class Timeline {
     return this.overflow === undefined && this.clockFailure === undefined
   }
 
-  captureEventEvidence(kind: ChromeLifecycleEvent['kind'], detail: JsonObject, atMs: number): boolean {
-    this.record(`event:${kind}`, detail, atMs)
+  captureEventEvidence(type: ChromeLifecycleEvent['type'], detail: JsonObject, atMs: number): boolean {
+    this.record(`event:${type}`, detail, atMs)
     return this.overflow === undefined
   }
 
@@ -561,7 +561,7 @@ class Timeline {
       this.entries.push({
         sequence: this.entries.length + 1,
         atMs: this.now(),
-        kind: 'evidence-overflow',
+        type: 'evidence-overflow',
         detail: { reason: reason.slice(0, MAX_VALUE_STRING_LENGTH) }
       })
     }
@@ -677,12 +677,12 @@ const observeStartupContinuity = (
     }
   }
 
-  if (event.kind === 'target-created' || event.kind === 'target-changed') {
+  if (event.type === 'target-created' || event.type === 'target-changed') {
     if (event.target.targetId === acceptedTargetId) return
     if (event.target.targetId === continuity.pageTarget.targetId) {
       if (event.target.type !== 'page' || event.target.url !== 'about:blank') {
         fail('The startup about:blank page changed identity or URL')
-      } else if (event.kind === 'target-created') {
+      } else if (event.type === 'target-created') {
         if (continuity.pageCreateObserved) fail('The startup about:blank page was created more than once')
         continuity.pageCreateObserved = true
       }
@@ -694,7 +694,7 @@ const observeStartupContinuity = (
     return
   }
 
-  if (event.kind === 'target-attached') {
+  if (event.type === 'target-attached') {
     if (event.target.targetId === acceptedTargetId) return
     if (event.target.targetId === continuity.pageTarget.targetId) {
       if (
@@ -714,7 +714,7 @@ const observeStartupContinuity = (
     return
   }
 
-  if (event.kind === 'target-destroyed') {
+  if (event.type === 'target-destroyed') {
     if (event.targetId === acceptedTargetId) return
     if (event.targetId === continuity.pageTarget.targetId) {
       fail('The startup about:blank page was destroyed')
@@ -722,7 +722,7 @@ const observeStartupContinuity = (
     return
   }
 
-  if (event.kind === 'target-detached') {
+  if (event.type === 'target-detached') {
     if (event.targetId === acceptedTargetId) return
     if (event.targetId === continuity.pageTarget.targetId) {
       fail('The startup about:blank page session detached')
@@ -730,7 +730,7 @@ const observeStartupContinuity = (
     return
   }
 
-  if (event.kind === 'frame-navigated') {
+  if (event.type === 'frame-navigated') {
     if (event.targetId === acceptedTargetId) return
     if (event.targetId !== continuity.pageTarget.targetId) return
     if (
@@ -755,7 +755,7 @@ const observeStartupContinuity = (
     return
   }
 
-  if (event.kind === 'observation-error') {
+  if (event.type === 'observation-error') {
     if (acceptedTargetId === undefined) {
       fail('Pre-target lifecycle observation failed', true)
     } else if (
@@ -829,31 +829,31 @@ const privacySafeTargetUrlEvidence = (target: ChromeLifecycleTarget): JsonObject
 }
 
 const privacySafeEventEvidence = (event: ChromeLifecycleEvent): JsonObject => {
-  switch (event.kind) {
+  switch (event.type) {
     case 'target-created':
     case 'target-changed':
       return {
-        kind: event.kind,
+        type: event.type,
         targetId: event.target.targetId,
         targetType: event.target.type,
         ...privacySafeTargetUrlEvidence(event.target)
       }
     case 'target-destroyed':
-      return { kind: event.kind, targetId: event.targetId }
+      return { type: event.type, targetId: event.targetId }
     case 'target-attached':
       return {
-        kind: event.kind,
+        type: event.type,
         sessionId: event.sessionId,
         targetId: event.target.targetId,
         targetType: event.target.type,
         ...privacySafeTargetUrlEvidence(event.target)
       }
     case 'target-detached':
-      return { kind: event.kind, sessionId: event.sessionId, targetId: event.targetId }
+      return { type: event.type, sessionId: event.sessionId, targetId: event.targetId }
     case 'frame-navigated':
       return {
         frameId: event.frameId,
-        kind: event.kind,
+        type: event.type,
         navigationId: event.navigationId,
         parentFrameId: event.parentFrameId ?? null,
         sessionId: event.sessionId,
@@ -863,7 +863,7 @@ const privacySafeEventEvidence = (event: ChromeLifecycleEvent): JsonObject => {
     case 'page-lifecycle':
       return {
         frameId: event.frameId,
-        kind: event.kind,
+        type: event.type,
         name: event.name,
         sessionId: event.sessionId,
         targetId: event.targetId
@@ -872,8 +872,8 @@ const privacySafeEventEvidence = (event: ChromeLifecycleEvent): JsonObject => {
       return {
         contextId: event.contextId,
         frameId: event.frameId,
-        kind: event.kind,
-        originKind: event.origin.startsWith('chrome-extension://') ? 'extension' : 'other',
+        type: event.type,
+        originType: event.origin.startsWith('chrome-extension://') ? 'extension' : 'other',
         sessionId: event.sessionId,
         targetId: event.targetId,
         world: event.world
@@ -881,7 +881,7 @@ const privacySafeEventEvidence = (event: ChromeLifecycleEvent): JsonObject => {
     case 'execution-context-destroyed':
       return {
         contextId: event.contextId,
-        kind: event.kind,
+        type: event.type,
         sessionId: event.sessionId,
         targetId: event.targetId
       }
@@ -893,7 +893,7 @@ const privacySafeEventEvidence = (event: ChromeLifecycleEvent): JsonObject => {
             ? 'unexpected-error'
             : 'diagnostic',
         contextId: event.contextId,
-        kind: event.kind,
+        type: event.type,
         sessionId: event.sessionId,
         targetId: event.targetId
       }
@@ -903,14 +903,14 @@ const privacySafeEventEvidence = (event: ChromeLifecycleEvent): JsonObject => {
           ? 'shared-runtime-unavailable'
           : 'unexpected-exception',
         contextId: event.contextId ?? null,
-        kind: event.kind,
+        type: event.type,
         sessionId: event.sessionId,
         targetId: event.targetId
       }
     case 'observation-error':
       return {
         classification: 'observation-error',
-        kind: event.kind,
+        type: event.type,
         sessionId: event.sessionId ?? null,
         targetId: event.targetId ?? null
       }
@@ -1081,9 +1081,9 @@ export const diagnoseChromeNativeActionLifecycle = async (
       try {
         snapshot = structuredClone(event)
       } catch {
-        snapshot = { kind: 'observation-error', message: 'Lifecycle event could not be snapshotted' }
+        snapshot = { type: 'observation-error', message: 'Lifecycle event could not be snapshotted' }
       }
-      if (timeline.captureEventEvidence(snapshot.kind, privacySafeEventEvidence(snapshot), atMs)) {
+      if (timeline.captureEventEvidence(snapshot.type, privacySafeEventEvidence(snapshot), atMs)) {
         pendingEvents.push({ event: snapshot, atMs })
       }
     })
@@ -1238,7 +1238,7 @@ export const diagnoseChromeNativeActionLifecycle = async (
 
   const initialWorkerSightings = [
     ...pendingEvents.flatMap(({ event, atMs }, index) =>
-      (event.kind === 'target-created' || event.kind === 'target-changed' || event.kind === 'target-attached') &&
+      (event.type === 'target-created' || event.type === 'target-changed' || event.type === 'target-attached') &&
       event.target.type === 'service_worker'
         ? [{ target: event.target, atMs, order: index }]
         : []
@@ -1250,7 +1250,7 @@ export const diagnoseChromeNativeActionLifecycle = async (
   for (const { target, atMs } of initialWorkerSightings) addWorker(target, atMs)
 
   const observeWorkerEvent = (event: ChromeLifecycleEvent, eventAtMs: number): boolean => {
-    if (event.kind === 'target-created' || event.kind === 'target-changed' || event.kind === 'target-attached') {
+    if (event.type === 'target-created' || event.type === 'target-changed' || event.type === 'target-attached') {
       const known = workerRecords.get(event.target.targetId)
       if (event.target.type !== 'service_worker' && !known) return false
       if (event.target.type !== 'service_worker') {
@@ -1267,7 +1267,7 @@ export const diagnoseChromeNativeActionLifecycle = async (
       const record = known ?? addWorker(event.target, eventAtMs)
       if (!record) return true
 
-      if (event.kind === 'target-created') {
+      if (event.type === 'target-created') {
         record.createEvents += 1
         if (record.createEvents > 1) {
           failWorker('A Service Worker target was created more than once')
@@ -1278,7 +1278,7 @@ export const diagnoseChromeNativeActionLifecycle = async (
           return true
         }
       }
-      if (event.kind === 'target-attached') {
+      if (event.type === 'target-attached') {
         record.attachEvents += 1
         if (record.attachEvents > 1) {
           failWorker('A Service Worker target attached more than once')
@@ -1310,10 +1310,10 @@ export const diagnoseChromeNativeActionLifecycle = async (
       return true
     }
 
-    if (event.kind === 'target-destroyed' || event.kind === 'target-detached') {
+    if (event.type === 'target-destroyed' || event.type === 'target-detached') {
       const record = workerRecords.get(event.targetId)
       if (!record) return false
-      if (event.kind === 'target-detached' && record.sessionId !== undefined && event.sessionId !== record.sessionId) {
+      if (event.type === 'target-detached' && record.sessionId !== undefined && event.sessionId !== record.sessionId) {
         failWorker('A Service Worker detached with a divergent session identity')
         return true
       }
@@ -1324,12 +1324,12 @@ export const diagnoseChromeNativeActionLifecycle = async (
       timeline.record('worker-inactive', {
         appearanceOrder: record.appearanceOrder,
         targetId: record.target.targetId,
-        reason: event.kind
+        reason: event.type
       })
       return true
     }
 
-    if (event.kind === 'observation-error') {
+    if (event.type === 'observation-error') {
       const record = [...workerRecords.values()].find(
         ({ target, sessionId }) => event.targetId === target.targetId || event.sessionId === sessionId
       )
@@ -1665,7 +1665,7 @@ export const diagnoseChromeNativeActionLifecycle = async (
       if (workerFailure) state.extensionFailure ??= workerFailure
       validateBoundWorker()
       const workerWasReclassifiedAsPage =
-        (event.kind === 'target-created' || event.kind === 'target-changed' || event.kind === 'target-attached') &&
+        (event.type === 'target-created' || event.type === 'target-changed' || event.type === 'target-attached') &&
         event.target.type === 'page'
       if (!workerWasReclassifiedAsPage) return
     }
@@ -1678,7 +1678,7 @@ export const diagnoseChromeNativeActionLifecycle = async (
     if (state.extensionFailure || state.targetFailure || state.unexpectedFailure || state.sharedRuntimeUnavailable)
       return
 
-    if (event.kind === 'target-created' || event.kind === 'target-changed') {
+    if (event.type === 'target-created' || event.type === 'target-changed') {
       if (event.target.targetId === state.targetId) {
         if (event.target.type !== 'page' || event.target.url !== CHROME_NATIVE_ACTION_ACCEPTED_URL) {
           state.targetFailure = 'The bound target changed type or URL'
@@ -1697,7 +1697,7 @@ export const diagnoseChromeNativeActionLifecycle = async (
       return
     }
 
-    if (event.kind === 'target-destroyed') {
+    if (event.type === 'target-destroyed') {
       if (event.targetId === state.targetId) {
         state.targetDestroyed = true
         state.targetFailure = 'The sole accepted target was destroyed'
@@ -1705,7 +1705,7 @@ export const diagnoseChromeNativeActionLifecycle = async (
       return
     }
 
-    if (event.kind === 'target-attached') {
+    if (event.type === 'target-attached') {
       if (event.target.targetId !== state.targetId) {
         if (event.target.type === 'page' && event.target.targetId !== startupPages[0]!.targetId) {
           state.targetFailure = 'A replacement page session attached during the bound lifecycle'
@@ -1763,7 +1763,7 @@ export const diagnoseChromeNativeActionLifecycle = async (
       return
     }
 
-    if (event.kind === 'target-detached') {
+    if (event.type === 'target-detached') {
       if (event.targetId === state.targetId) {
         state.targetFailure =
           event.sessionId === state.pageSessionId
@@ -1773,7 +1773,7 @@ export const diagnoseChromeNativeActionLifecycle = async (
       return
     }
 
-    if (event.kind === 'observation-error') {
+    if (event.type === 'observation-error') {
       state.unexpectedFailure = 'Accepted target lifecycle observation failed'
       return
     }
@@ -1785,7 +1785,7 @@ export const diagnoseChromeNativeActionLifecycle = async (
       return
     }
 
-    if (event.kind === 'frame-navigated') {
+    if (event.type === 'frame-navigated') {
       if (event.parentFrameId !== undefined) return
       if (!state.pageSessionId || event.url !== CHROME_NATIVE_ACTION_ACCEPTED_URL || !nonEmpty(event.navigationId)) {
         state.targetFailure = 'The accepted target did not bind its planned main-frame navigation'
@@ -1803,7 +1803,7 @@ export const diagnoseChromeNativeActionLifecycle = async (
       return
     }
 
-    if (event.kind === 'execution-context-created') {
+    if (event.type === 'execution-context-created') {
       const exactContext =
         state.mainFrameId !== undefined &&
         event.frameId === state.mainFrameId &&
@@ -1818,14 +1818,14 @@ export const diagnoseChromeNativeActionLifecycle = async (
       return
     }
 
-    if (event.kind === 'execution-context-destroyed') {
+    if (event.type === 'execution-context-destroyed') {
       if (event.contextId === state.isolatedContextId) {
         state.unexpectedFailure = 'The exact page-bound isolated context was destroyed'
       }
       return
     }
 
-    if (event.kind === 'console') {
+    if (event.type === 'console') {
       if (event.contextId !== state.isolatedContextId) return
       if (containsSharedRuntimeUnavailable(event.args)) {
         state.sharedRuntimeUnavailable = 'The exact isolated context reported Shared runtime unavailable'
@@ -1835,7 +1835,7 @@ export const diagnoseChromeNativeActionLifecycle = async (
       return
     }
 
-    if (event.kind === 'exception') {
+    if (event.type === 'exception') {
       if (event.contextId !== state.isolatedContextId) return
       if (containsSharedRuntimeUnavailable([event.message, event.stack])) {
         state.sharedRuntimeUnavailable = 'The exact isolated context reported Shared runtime unavailable'

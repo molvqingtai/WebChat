@@ -6,7 +6,7 @@ The Owner requires error Toasts to keep the existing default duration and forbid
 
 ## What Changes
 
-- Treat an error descriptor's current presentation kind as authoritative for its lifetime. Application, Domain, readiness, bootstrap, panel, or presentation state transitions SHALL NOT actively dismiss a currently presented error.
+- Treat an error descriptor's current presentation type as authoritative for its lifetime. Application, Domain, readiness, bootstrap, panel, or presentation state transitions SHALL NOT actively dismiss a currently presented error.
 - Preserve the generic Toast renderer's existing default duration. Do not add a custom duration, indefinite error lifetime, new timer, or second lifecycle owner.
 - Allow only the existing user dismissal, natural default-duration expiry, a later explicit same-ID descriptor replacement, or actual Toast-surface teardown to end presentation of an error.
 - Keep success and ready cleanup for matching loading entries. A ready/success transition may dismiss the current request/readiness loading entry after its existing dwell, but it SHALL NOT dismiss an error that now occupies the same stable ID.

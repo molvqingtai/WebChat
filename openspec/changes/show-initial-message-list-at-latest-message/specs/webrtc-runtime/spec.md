@@ -80,11 +80,11 @@ WebChat SHALL NOT return an automatic follow result for the non-bottom case, iss
 - **WHEN** the append reaches Virtuoso
 - **THEN** the list SHALL perform no follow action, preserve the user's reading position, and SHALL NOT jump or animate to the bottom
 
-#### Scenario: Message kind does not change the follow rule
+#### Scenario: Message type does not change the follow rule
 
 - **GIVEN** a later text, notice, or grouped-row update reaches the mounted list
 - **WHEN** Virtuoso supplies the current bottom fact
-- **THEN** WebChat SHALL smooth-follow only for true and perform no follow action for false without a message-kind branch or copied bottom state
+- **THEN** WebChat SHALL smooth-follow only for true and perform no follow action for false without a message-type branch or copied bottom state
 
 #### Scenario: Initial history never enters live following
 

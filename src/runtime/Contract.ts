@@ -115,7 +115,7 @@ export interface HistoryFeedbackEvent {
   domain: string
   /** Complete attempt identity, so one sync can never dismiss another or an unrelated Toast. */
   ownerId: string
-  kind: 'loading' | 'dismiss'
+  type: 'loading' | 'dismiss'
 }
 
 export interface RuntimeErrorEvent {
