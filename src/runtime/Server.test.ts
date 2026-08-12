@@ -638,6 +638,125 @@ const sessionAllocationEventFixture = () => {
 void sessionAllocationEventFixture
 
 describe('RuntimeServer lifecycle', () => {
+  it('recovers the stale member count through lawful rebind and one clean refresh', async () => {
+    vi.useFakeTimers()
+    try {
+      const { clock, fake, server, roomId } = await setup()
+      const remoteUsers = [
+        { id: 'user-1', name: 'User 1', avatar: '' },
+        { id: 'user-2', name: 'User 2', avatar: '' },
+        { id: 'user-3', name: 'User 3', avatar: '' }
+      ]
+      const memberCount = async () => {
+        const domain = (await server.getSnapshot()).domains[0]
+        return new Set(domain.sessions.map((item) => item.user.id)).size + (domain.localSession ? 1 : 0)
+      }
+      const announce = (peerId: string, user: { id: string; name: string; avatar: string }, sessionId: string) => {
+        fake.peerJoin(roomId, peerId)
+        fake.receive(roomId, peerId, { ...session(user), sessionId })
+      }
+      remoteUsers.forEach((user, index) => announce(`peer-${index + 1}`, user, `session-${user.id}`))
+      await settle()
+      expect(await memberCount()).toBe(4)
+
+      // Remote-1 leaves; its pending leave expires into an ended observer, so the room shows three.
+      fake.peerLeave(roomId, 'peer-1')
+      await vi.advanceTimersByTimeAsync(PENDING_LEAVE_GRACE_MS)
+      await settle()
+      expect(await memberCount()).toBe(3)
+
+      // Remote-1 returns with the same logical presence on a NEW physical session: the lawful
+      // rebind must not be rejected by the stale ended observation (fail-before: released code
+      // drops the SESSION and stays at three).
+      announce('peer-1', remoteUsers[0], 'session-user-1-rejoined')
+      await settle()
+      expect(await memberCount()).toBe(4)
+
+      // One AppButton-equivalent refresh must also converge to four after the remotes re-announce
+      // through the canonical join (fail-before: the ended observer survives the released
+      // reconnect, so the count remains three).
+      await server.reconnectDomain({ domain: DOMAIN })
+      await settle()
+      remoteUsers.forEach((user, index) => {
+        fake.receive(roomId, `peer-${index + 1}`, { ...session(user), sessionId: `session-${user.id}-fresh` })
+      })
+      await settle()
+      expect(await memberCount()).toBe(4)
+
+      // Complete release/reopen is the independent control that reaches four on released code.
+      await server.detachPage({ domain: DOMAIN, pageId: 'page-a' })
+      clock.advance(RUNTIME_DOMAIN_GRACE_MS + 1)
+      await vi.waitFor(() => expect(fake.joined.has(roomId)).toBe(false))
+      await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
+      await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
+      await settle()
+      remoteUsers.forEach((user, index) => {
+        fake.receive(roomId, `peer-${index + 1}`, { ...session(user), sessionId: `session-${user.id}-reopen` })
+      })
+      await settle()
+      expect(await memberCount()).toBe(4)
+      disposeServer(server)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('preserves World, other domains, page lease, and the logical presence across refresh', async () => {
+    const clock = new FakeClock()
+    const fake = createFakeTransport()
+    const values: Record<string, unknown> = {}
+    const presenceStore = createBrowserPresenceStore({
+      get: async (key) => ({ [key]: values[key] }),
+      set: async (items) => {
+        Object.assign(values, items)
+      }
+    })
+    const server = createServer({ transport: fake.transport, clock, codec: jsonCodec, presenceStore })
+    const worldRoomId = getWorldRoomId()
+    const otherRoomId = getChatRoomId(OTHER_DOMAIN)
+    await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
+    await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
+    await settle()
+    await server.attachPage({ domain: OTHER_DOMAIN, pageId: 'page-b' })
+    await server.joinChatRoom({ domain: OTHER_DOMAIN, user: USER, site: { origin: OTHER_DOMAIN } })
+    await settle()
+    fake.peerJoin(otherRoomId, 'peer-x')
+    fake.receive(otherRoomId, 'peer-x', session({ id: 'user-x', name: 'User X', avatar: '' }))
+    await settle()
+    emitRemoteWorldPresence(fake)
+    await settle()
+
+    const presenceIdBefore = (Object.values(values)[0] as { local: { presenceId: string } }).local.presenceId
+    const before = await server.getSnapshot()
+    const beforeLocal = before.domains.find((item) => item.domain === DOMAIN)!.localSession!
+    const beforeOther = before.domains.find((item) => item.domain === OTHER_DOMAIN)!
+    const beforeWorld = before.world
+
+    await server.reconnectDomain({ domain: DOMAIN })
+    await settle()
+
+    const after = await server.getSnapshot()
+    const afterLocal = after.domains.find((item) => item.domain === DOMAIN)!.localSession!
+    const afterOther = after.domains.find((item) => item.domain === OTHER_DOMAIN)!
+    const afterWorld = after.world
+    // Physical identity rotates; the active local logical generation is retained.
+    expect(afterLocal.sessionId).not.toBe(beforeLocal.sessionId)
+    expect(afterLocal.joinedAt).toBe(beforeLocal.joinedAt)
+    expect(afterLocal.user).toEqual(beforeLocal.user)
+    expect((Object.values(values)[0] as { local: { presenceId: string } }).local.presenceId).toBe(presenceIdBefore)
+    // The page lease stays attached.
+    expect(after.domains.find((item) => item.domain === DOMAIN)!.pageIds).toContain('page-a')
+    // World stays joined with the same remote presence and the refreshed domain site re-published.
+    expect(fake.joined.has(worldRoomId)).toBe(true)
+    expect(afterWorld.joined).toBe(true)
+    expect(afterWorld.presences).toEqual(beforeWorld.presences)
+    expect(afterWorld.localPresence?.sites.map((site) => site.origin)).toContain(DOMAIN)
+    // The other domain's connection, members, and local session are untouched.
+    expect(afterOther.localSession).toEqual(beforeOther.localSession)
+    expect(afterOther.sessions.map((item) => item.user.id)).toEqual(['user-x'])
+    disposeServer(server)
+  })
+
   it('returns the committed local snapshot without awaiting active Presence persistence', async () => {
     const values: Record<string, unknown> = {}
     const activeStarted = deferred<void>()
@@ -1103,7 +1222,9 @@ describe('RuntimeServer lifecycle', () => {
 
     expect(reconnectResult).toBe('pending')
     expect(fake.joined).toEqual(new Set([worldRoomId]))
-    expect((await server.getSnapshot()).domains[0].localSession).toEqual(before.domains[0].localSession)
+    // The refresh destruction removed the committed aggregate: no prior session/readiness may
+    // satisfy the replacement while it is still provisional.
+    expect((await server.getSnapshot()).domains[0].localSession).toBeUndefined()
     fake.open()
     await Promise.all([reconnect, localSessionSeen.promise])
 
@@ -3577,12 +3698,11 @@ describe('RuntimeServer history', () => {
     fake.releaseSends()
     await reconnect
     await settle()
-    // The commit keeps current C AND the grace-preserved B (a different presence is not a valid
-    // cancellation fact; the sourcePeerId collision does not erase the graced generation).
+    // The refresh destroyed the grace ledger and the fresh B observation was displaced by C on
+    // the same source without grace protection: the commit keeps only current C.
     const snapshot = await server.getSnapshot()
     const userIds = snapshot.domains[0].sessions.map((session) => session.user.id)
-    expect(userIds).toContain('user-c')
-    expect(userIds).toContain('user-b')
+    expect(userIds).toEqual(['user-c'])
     // B's departed source stays untrusted (live) without a CURRENT valid B SESSION.
     fake.receive(roomId, 'peer-b', { ...text('ghost-after-presence-switch'), userId: 'user-b' })
     await settle()
@@ -3593,13 +3713,13 @@ describe('RuntimeServer history', () => {
     expect((await server.replayInbound({ domain: DOMAIN, after: 0 })).map((item) => item.record.message.id)).toEqual([
       'post-c-current'
     ])
-    // A REPEATED current C SESSION updates only the current slot: one C, one B (the graced
-    // generation is not duplicated or erased by the shared source).
+    // A REPEATED current C SESSION updates only the current slot: one C and no B (the refresh
+    // destroyed the grace ledger, so no graced generation remains to protect).
     fake.receive(roomId, 'peer-b', session({ id: 'user-c', name: 'User C', avatar: '' }))
     await settle()
     const afterRepeat = (await server.getSnapshot()).domains[0].sessions.map((session) => session.user.id)
     expect(afterRepeat.filter((id) => id === 'user-c')).toHaveLength(1)
-    expect(afterRepeat.filter((id) => id === 'user-b')).toHaveLength(1)
+    expect(afterRepeat.filter((id) => id === 'user-b')).toHaveLength(0)
     disposeServer(server)
   })
 
@@ -4097,15 +4217,16 @@ describe('RuntimeServer history', () => {
     fake.releaseSends()
     await reconnect
     await settle()
+    // The refresh destroyed the grace ledger; the fresh B rebind was displaced by C on the same
+    // source without grace protection, so the commit keeps only current C.
     const userIds = (await server.getSnapshot()).domains[0].sessions.map((session) => session.user.id)
-    expect(userIds).toContain('user-c')
-    expect(userIds).toContain('user-b')
-    // A repeated valid C SESSION updates only the current C slot: B stays graced, C not duplicated.
+    expect(userIds).toEqual(['user-c'])
+    // A repeated valid C SESSION updates only the current C slot: C stays single, no graced B.
     fake.receive(roomId, 'peer-b', session({ id: 'user-c', name: 'User C', avatar: '' }))
     await settle()
     const after = (await server.getSnapshot()).domains[0].sessions.map((session) => session.user.id)
     expect(after.filter((id) => id === 'user-c')).toHaveLength(1)
-    expect(after.filter((id) => id === 'user-b')).toHaveLength(1)
+    expect(after.filter((id) => id === 'user-b')).toHaveLength(0)
     disposeServer(server)
   })
 
@@ -4133,10 +4254,11 @@ describe('RuntimeServer history', () => {
     fake.releaseSends()
     await reconnect
     await settle()
-    // The committed grace is NOT cancelled by a stale marker: B stays displayed and its live
-    // authority stays closed without a CURRENT valid SESSION.
+    // The refresh destroyed the committed grace: the rebind source left again before commit and
+    // no grace ledger remains to protect it, so B is not displayed and its authority is closed
+    // without a CURRENT valid SESSION.
     const snapshot = await server.getSnapshot()
-    expect(snapshot.domains[0].sessions.some((session) => session.user.id === 'user-b')).toBe(true)
+    expect(snapshot.domains[0].sessions.some((session) => session.user.id === 'user-b')).toBe(false)
     fake.receive(roomId, 'peer-b', { ...text('ghost-after-revoked-commit'), userId: 'user-b' })
     await settle()
     expect(await server.replayInbound({ domain: DOMAIN, after: 0 })).toEqual([])

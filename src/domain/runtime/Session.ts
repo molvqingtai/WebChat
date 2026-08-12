@@ -416,7 +416,12 @@ const SessionDomain = Remesh.domain({
         const committed = get(DomainsState()).find((item) => item.domain === payload.domain)
         const priorPrepared = get(PreparedSessionsState()).find((item) => item.runtime.domain === payload.domain)
         const current = committed ?? priorPrepared?.runtime
-        if (payload.mode !== 'join' && !current) {
+        // A manual-refresh reset removed the committed aggregate but retained the active local
+        // logical seed; that retained seed authorizes the reconnect preparation.
+        const retainedLocalSeed = get(PresenceDomainsState()).some(
+          (item) => item.domain === payload.domain && item.local
+        )
+        if (payload.mode !== 'join' && !current && !retainedLocalSeed) {
           return PreparationFailedEvent({ attemptId: payload.attemptId, error: new Error('Runtime domain missing') })
         }
 
@@ -434,8 +439,16 @@ const SessionDomain = Remesh.domain({
             })
           }
         } else {
-          user = current!.user
-          site = current!.site
+          // A manual-refresh reset removed the committed aggregate: the replacement reuses the
+          // captured local logical identity carried by the attempt instead of the retired runtime.
+          user = current?.user ?? payload.user!
+          site = current?.site ?? payload.site!
+          if (!current && site.origin !== payload.domain) {
+            return PreparationFailedEvent({
+              attemptId: payload.attemptId,
+              error: new Error('Invalid local identity or site metadata')
+            })
+          }
         }
 
         const presence = get(PresenceDomainsState()).find((item) => item.domain === payload.domain)
@@ -976,6 +989,32 @@ const SessionDomain = Remesh.domain({
       }
     })
 
+    // Manual refresh destruction: remove the domain's complete Session connection aggregate while
+    // retaining only the active local logical seed. No remote observer, member, pending-leave, or
+    // baseline fact may seed the replacement; the canonical join rebuilds them from the wire.
+    const ResetDomainConnectionCommand = domain.command({
+      name: 'Session.ResetDomainConnectionCommand',
+      impl: ({ get }, runtimeDomain: string) => {
+        const presenceDomains = get(PresenceDomainsState())
+        const persisted = presenceDomains.find((item) => item.domain === runtimeDomain)
+        const record: PresenceDomainRecord = persisted
+          ? { ...persisted, observers: [] }
+          : { domain: runtimeDomain, lastJoinedAt: 0, observers: [] }
+        return [
+          DomainsState().new(removeBy(get(DomainsState()), (item) => item.domain === runtimeDomain)),
+          PreparedSessionsState().new(
+            removeBy(get(PreparedSessionsState()), (item) => item.runtime.domain === runtimeDomain)
+          ),
+          PresenceDomainsState().new(replaceBy(presenceDomains, (item) => item.domain === runtimeDomain, record)),
+          PendingLeavesState().new(removeBy(get(PendingLeavesState()), (item) => item.domain === runtimeDomain)),
+          PendingBaselinePeersState().new(
+            removeBy(get(PendingBaselinePeersState()), (item) => item.domain === runtimeDomain)
+          ),
+          PersistPresenceRequestedEvent({ record })
+        ]
+      }
+    })
+
     const AllocateTextMessageCommand = domain.command({
       name: 'Session.AllocateTextMessageCommand',
       impl: ({ get }, payload: { operationId: string; domain: string; body: string; mentions: MentionedUser[] }) => {
@@ -1207,8 +1246,33 @@ const SessionDomain = Remesh.domain({
         const persisted = presenceDomains.find((item) => item.domain === runtime.domain)
         const observers = prepared?.observers ?? persisted?.observers ?? []
         const observed = observers.find((item) => item.presenceId === message.presenceId)
-        if (
-          observed?.status === 'ended' ||
+        if (observed?.status === 'ended') {
+          // The wire acceptance already limited this frame to the current trusted Chat room
+          // generation and an admitted physical source. A lawful same-presence correction is
+          // accepted only with a NEW physical sessionId that exactly matches the observer's
+          // accepted logical identity and time and conflicts with no newer active binding or
+          // logical generation; an exact replay, an identity/time mutation, or a newer conflict
+          // stays terminally rejected.
+          const exactReplay = message.sessionId === observed.sessionId
+          const identityMatch = message.user.id === observed.user.id && message.joinedAt === observed.joinedAt
+          const newerConflict =
+            runtime.sessions.some((item) => item.user.id === message.user.id && item.joinedAt > message.joinedAt) ||
+            observers.some(
+              (observer) =>
+                observer.status === 'active' &&
+                observer.user.id === message.user.id &&
+                observer.presenceId !== message.presenceId &&
+                observer.joinedAt > message.joinedAt
+            )
+          if (exactReplay || !identityMatch || newerConflict) {
+            return wireDomain.command.DropProtocolCommand({
+              sourcePeerId: payload.sourcePeerId,
+              reason: 'session does not match its logical presence binding'
+            })
+          }
+          // Legal correction: fall through so the binding/observer/leave flow below re-activates
+          // the same logical observation without allocating a new logical generation.
+        } else if (
           (observed && (observed.user.id !== message.user.id || observed.joinedAt !== message.joinedAt)) ||
           (current?.sessionId === message.sessionId &&
             (current.user.id !== message.user.id || current.joinedAt !== message.joinedAt))
@@ -1233,7 +1297,16 @@ const SessionDomain = Remesh.domain({
         let nextObservers = observers
         if (displaced) {
           const previous = nextObservers.find((item) => item.presenceId === displaced.presenceId)
-          if (previous) nextObservers = replaceObservation(nextObservers, { ...previous, status: 'ended' })
+          if (previous) {
+            // The ended marker carries the SUPERSEDED binding's physical sessionId so an exact
+            // replay of the displaced generation is recognized and rejected, while a genuinely
+            // new physical sessionId for the same logical presence remains correctable.
+            nextObservers = replaceObservation(nextObservers, {
+              ...previous,
+              sessionId: displaced.sessionId,
+              status: 'ended'
+            })
+          }
         }
         const displacedBinding = displaced ?? undefined
         const session: SessionBinding = {
@@ -1895,6 +1968,7 @@ const SessionDomain = Remesh.domain({
         CommitPreparedCommand,
         AbortPreparedCommand,
         BeginReleaseDomainCommand,
+        ResetDomainConnectionCommand,
         RestorePendingLeavesCommand,
         CompleteReleaseCommand,
         ReleaseDomainCommand,

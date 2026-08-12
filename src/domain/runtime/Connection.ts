@@ -2,6 +2,7 @@ import { Remesh } from 'remesh'
 import { map, mergeMap, Observable } from 'rxjs'
 import HistoryDomain from '@/domain/runtime/History'
 import LifecycleDomain from '@/domain/runtime/Lifecycle'
+import DeliveryDomain from '@/domain/runtime/Delivery'
 import SessionDomain, { type SessionPreparationMode } from '@/domain/runtime/Session'
 import WireDomain from '@/domain/runtime/Wire'
 import WorldDomain, { getWorldRoomId } from '@/domain/runtime/World'
@@ -76,6 +77,7 @@ const ConnectionDomain = Remesh.domain({
     const wireDomain = domain.getDomain(WireDomain())
     const sessionDomain = domain.getDomain(SessionDomain())
     const worldDomain = domain.getDomain(WorldDomain({ sessionId: options.worldSessionId }))
+    const deliveryDomain = domain.getDomain(DeliveryDomain())
     const historyDomain = domain.getDomain(
       HistoryDomain({
         historySessionBytes: options.historySessionBytes,
@@ -260,16 +262,29 @@ const ConnectionDomain = Remesh.domain({
             error: new Error('Domain reconnect is already in progress')
           })
         }
-        if (!get(sessionDomain.query.DomainQuery(payload.domain))) {
+        const runtime = get(sessionDomain.query.DomainQuery(payload.domain))
+        if (!runtime) {
           return OperationSucceededEvent({ operationId: payload.operationId })
         }
+        // One coordinated destruction of the complete current-domain connection aggregate before
+        // the replacement prepares or receives authoritative inbound data. Wire/transport drops
+        // the Chat owner, trusted membership, and queues; Session removes every committed/
+        // prepared/observer/leave/baseline fact except the retained local logical seed; History
+        // and Delivery clear their domain-owned work. Lifecycle keeps the exact page lease and
+        // this request as the fence. World and every other domain are outside the aggregate.
         return [
+          wireDomain.command.LeaveRoomCommand({ roomId: runtime.roomId, preservePending: false }),
+          sessionDomain.command.ResetDomainConnectionCommand(payload.domain),
+          historyDomain.command.ReleaseDomainCommand(payload.domain),
+          deliveryDomain.command.ReleaseDomainCommand(payload.domain),
           lifecycleDomain.command.BeginReconnectCommand(payload.domain),
           startAttempt(get, {
             attemptId: payload.operationId,
             operationId: payload.operationId,
             mode: 'reconnect',
-            domain: payload.domain
+            domain: payload.domain,
+            user: runtime.user,
+            site: runtime.site
           })
         ]
       }
