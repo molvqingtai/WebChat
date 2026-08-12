@@ -192,3 +192,11 @@ The current peer protocol SHALL NOT bridge, translate, negotiate, or interoperat
 
 - **WHEN** v1, v2, v3, v4, v5, and v6 clients meet in a shared signaling environment
 - **THEN** each generation SHALL use isolated Chat and World namespaces, none SHALL parse or advertise another generation's traffic, and no compatibility fallback SHALL exist
+
+## REMOVED Requirements
+
+### Requirement: Current v3 peer wire is a clean generation cut
+
+**Reason**: The current capacity contract advances the clean peer generation to v6, so the canonical v3 requirement must not remain a second current-generation authority.
+
+**Migration**: None. Current clients join only v6 Chat and World namespaces under the added v6 requirement; no runtime compatibility, room bridge, fallback, or data migration path exists.
