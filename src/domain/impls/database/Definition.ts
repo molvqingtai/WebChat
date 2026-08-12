@@ -2,20 +2,20 @@ import type { DatabaseKey, DatabaseSchema, QueryOptions, ScanOptions, StoreSchem
 
 type StoreName<Schema> = keyof Schema & string
 
-type KeyKind<Key extends DatabaseKey> = string extends Key
+type KeyType<Key extends DatabaseKey> = string extends Key
   ? number extends Key
     ? 'string-or-number'
     : 'string'
   : 'number'
 
 export interface IndexDefinition<Key extends DatabaseKey> {
-  readonly key: KeyKind<Key>
+  readonly key: KeyType<Key>
   readonly keyPath: string
   readonly introducedIn: number
 }
 
 export interface StoreDefinition<Schema extends StoreSchema> {
-  readonly key: KeyKind<Schema['key']>
+  readonly key: KeyType<Schema['key']>
   readonly introducedIn: number
   readonly indexes: {
     readonly [Index in keyof Schema['indexes'] & string]: IndexDefinition<Schema['indexes'][Index]>

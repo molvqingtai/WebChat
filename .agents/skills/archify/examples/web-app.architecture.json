@@ -85,11 +85,11 @@
   ],
   "boundaries": [
     {
-      "kind": "region",
+      "type": "region",
       "label": "AWS Region: us-west-2",
       "wraps": ["cdn", "lb", "api", "cache", "db", "s3", "queue", "worker"]
     },
-    { "kind": "security-group", "label": "sg-api :443/:8000", "wraps": ["lb", "api"] }
+    { "type": "security-group", "label": "sg-api :443/:8000", "wraps": ["lb", "api"] }
   ],
   "connections": [
     { "from": "users", "to": "cdn", "label": "HTTPS", "variant": "emphasis" },

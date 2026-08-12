@@ -18,7 +18,7 @@ Connection feedback is meaningful only while its Content document is active. Lea
 
 - Changing shared Runtime, ChatRoom, WorldRoom, transport, protocol, persistence, or retry semantics.
 - Treating a detached page as ready, retaining a lease through a terminal exit, or adding a second connection owner.
-- Adding a user control, status view, Toast kind, durable lifecycle flag, parallel lifecycle branch, dependency, or test-only production seam.
+- Adding a user control, status view, Toast type, durable lifecycle flag, parallel lifecycle branch, dependency, or test-only production seam.
 - Coupling this lifecycle to ordinary document visibility changes that do not suspend or end the document.
 
 ## Decisions

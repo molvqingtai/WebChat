@@ -27,11 +27,11 @@ The defect is therefore neither a short Sonner default duration, a successor des
 
 ## Decisions
 
-### 1. The currently presented descriptor kind controls active cleanup
+### 1. The currently presented descriptor type controls active cleanup
 
 A stable ID identifies the presentation slot; it does not authorize every later business state to dismiss whatever currently occupies that slot. An ID-scoped business `DismissCommand` may settle only a matching loading entry whose success/ready lifecycle owns that cleanup. If an error descriptor currently occupies the ID, no readiness, request settlement, bootstrap, panel, or ordinary application transition may actively dismiss it.
 
-This is a behavioral boundary, not a required implementation shape. The implementation may preserve descriptor kind, fence the command at its producer, or use another minimal private representation, but it SHALL retain one generic Toast authority and SHALL NOT add a second feedback state machine.
+This is a behavioral boundary, not a required implementation shape. The implementation may preserve descriptor type, fence the command at its producer, or use another minimal private representation, but it SHALL retain one generic Toast authority and SHALL NOT add a second feedback state machine.
 
 ### 2. Error lifetime remains presentation-owned and finite
 
@@ -41,7 +41,7 @@ An error uses the existing generic Toast default duration. It receives no custom
 2. the generic Toast default duration expiring; or
 3. a later explicit descriptor replacing the same ID.
 
-An implicit ready state or a bare `DismissCommand` is not a successor descriptor. A successor is an actual later generic Toast descriptor with the same ID and its own content/kind. Replacement starts the successor's ordinary presentation lifecycle and remains allowed because the user can understand the new visible state.
+An implicit ready state or a bare `DismissCommand` is not a successor descriptor. A successor is an actual later generic Toast descriptor with the same ID and its own content/type. Replacement starts the successor's ordinary presentation lifecycle and remains allowed because the user can understand the new visible state.
 
 ### 3. Actual surface teardown removes presentation without replay
 
@@ -68,7 +68,7 @@ The candidate SHALL prove the same input publishes `loading -> error` with no bu
 ## Risks / Trade-offs
 
 - [A recovered connection can coexist briefly with its preceding error Toast] -> This is intentional: the error describes the failed attempt and remains for only the existing default duration unless the user closes it or a later descriptor replaces it.
-- [A shared stable ID can be reused by several connection states] -> Gate active cleanup by the currently presented semantic kind and keep successor replacement explicit.
+- [A shared stable ID can be reused by several connection states] -> Gate active cleanup by the currently presented semantic type and keep successor replacement explicit.
 - [A panel close removes the error before duration expiry] -> Physical surface absence remains allowed and terminal feedback is not replayed; the prohibition is against business dismissal while the surface remains mounted.
 - [A broad ban could strand loading forever] -> The ban applies only to current error descriptors; matching loading entries retain success/ready cleanup and existing bounded presentation settlement.
 - [Error duration can vary if the generic library default changes later] -> That default is the deliberate single authority; this requirement forbids a second error-specific timer.

@@ -90,18 +90,18 @@ const acceptedSession = 'accepted-session'
 const mainFrame = 'main-frame'
 const isolatedContext = 17
 
-const targetCreated = (target = acceptedTarget): ChromeLifecycleEvent => ({ kind: 'target-created', target })
+const targetCreated = (target = acceptedTarget): ChromeLifecycleEvent => ({ type: 'target-created', target })
 
 const targetAttached = (target = acceptedTarget, sessionId = acceptedSession): ChromeLifecycleEvent => ({
-  kind: 'target-attached',
+  type: 'target-attached',
   target,
   sessionId
 })
 
 const frameNavigated = (
-  overrides: Partial<Extract<ChromeLifecycleEvent, { kind: 'frame-navigated' }>> = {}
+  overrides: Partial<Extract<ChromeLifecycleEvent, { type: 'frame-navigated' }>> = {}
 ): ChromeLifecycleEvent => ({
-  kind: 'frame-navigated',
+  type: 'frame-navigated',
   targetId: acceptedTarget.targetId,
   sessionId: acceptedSession,
   frameId: mainFrame,
@@ -111,9 +111,9 @@ const frameNavigated = (
 })
 
 const contextCreated = (
-  overrides: Partial<Extract<ChromeLifecycleEvent, { kind: 'execution-context-created' }>> = {}
+  overrides: Partial<Extract<ChromeLifecycleEvent, { type: 'execution-context-created' }>> = {}
 ): ChromeLifecycleEvent => ({
-  kind: 'execution-context-created',
+  type: 'execution-context-created',
   targetId: acceptedTarget.targetId,
   sessionId: acceptedSession,
   contextId: isolatedContext,
@@ -373,7 +373,7 @@ const cleanLifecycleSteps = (): AdapterStep[] => [
   targetAttached(),
   frameNavigated(),
   {
-    kind: 'page-lifecycle',
+    type: 'page-lifecycle',
     targetId: acceptedTarget.targetId,
     sessionId: acceptedSession,
     frameId: mainFrame,
@@ -483,7 +483,7 @@ describe('Chrome native action lifecycle diagnostic', () => {
     expect(new Set(adapter.operationDeadlines.map(({ deadlineMs }) => deadlineMs))).toEqual(
       new Set([1000 + CHROME_NATIVE_ACTION_LIFECYCLE_BUDGET_MS])
     )
-    const workerEvidence = result.timeline.find(({ kind }) => kind === 'worker-classified')
+    const workerEvidence = result.timeline.find(({ type }) => type === 'worker-classified')
     expect(workerEvidence).toMatchObject({
       detail: {
         appearanceOrder: 1,
@@ -582,7 +582,7 @@ describe('Chrome native action lifecycle diagnostic', () => {
     })
     expect(
       result.timeline
-        .filter(({ kind }) => kind === 'worker-observed')
+        .filter(({ type }) => type === 'worker-observed')
         .map(({ detail }) => ({
           appearedAfterMs: (detail as Record<string, unknown>).appearedAfterMs,
           targetId: (detail as Record<string, unknown>).targetId
@@ -704,7 +704,7 @@ describe('Chrome native action lifecycle diagnostic', () => {
       expect.soft(result.outcome).toBe('extension-setup-failed')
       expect.soft(result.actionAuthorization).toBeNull()
       expect.soft(adapter.createdUrls).toEqual([])
-      expect.soft(result.timeline.some(({ kind }) => kind === 'worker-classified')).toBe(true)
+      expect.soft(result.timeline.some(({ type }) => type === 'worker-classified')).toBe(true)
     }
   })
 
@@ -724,8 +724,8 @@ describe('Chrome native action lifecycle diagnostic', () => {
 
     const result = await diagnoseChromeNativeActionLifecycle(adapter, context)
     const foreignEvidence = result.timeline.find(
-      ({ kind, detail }) =>
-        kind === 'worker-classified' &&
+      ({ type, detail }) =>
+        type === 'worker-classified' &&
         (detail as Record<string, unknown> | undefined)?.targetId === foreignWorkerTarget.targetId
     )
     const detail = foreignEvidence?.detail as Record<string, unknown>
@@ -763,7 +763,7 @@ describe('Chrome native action lifecycle diagnostic', () => {
   it('uses one non-resetting worker discovery deadline across foreign changes and empty observation turns', async () => {
     const adapter = prepareAdapter([
       { advanceMs: 10_000 },
-      { kind: 'target-changed', target: foreignWorkerTarget },
+      { type: 'target-changed', target: foreignWorkerTarget },
       { advanceMs: 20_000 }
     ])
     adapter.startupTargets = [blankTarget, foreignWorkerTarget]
@@ -809,7 +809,7 @@ describe('Chrome native action lifecycle diagnostic', () => {
     expect(result.reason).toContain('worker discovery deadline')
     expect(result.actionAuthorization).toBeNull()
     expect(adapter.createdUrls).toEqual([])
-    expect(result.timeline.some(({ kind }) => kind === 'worker-bound')).toBe(false)
+    expect(result.timeline.some(({ type }) => type === 'worker-bound')).toBe(false)
   })
 
   it('keeps a fully classified unrelated worker after binding as evidence only', async () => {
@@ -819,7 +819,7 @@ describe('Chrome native action lifecycle diagnostic', () => {
       url: 'chrome-extension://bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/later.js'
     }
     const adapter = prepareAdapter([
-      { kind: 'target-changed', target: workerTarget },
+      { type: 'target-changed', target: workerTarget },
       targetCreated(laterWorker),
       ...cleanLifecycleSteps()
     ])
@@ -834,8 +834,8 @@ describe('Chrome native action lifecycle diagnostic', () => {
     expect(result.actionAuthorization?.workerTargetId).toBe(workerTarget.targetId)
     expect(
       result.timeline.some(
-        ({ kind, detail }) =>
-          kind === 'worker-classified' &&
+        ({ type, detail }) =>
+          type === 'worker-classified' &&
           (detail as Record<string, unknown> | undefined)?.targetId === laterWorker.targetId
       )
     ).toBe(true)
@@ -855,7 +855,7 @@ describe('Chrome native action lifecycle diagnostic', () => {
       },
       {
         name: 'target-changed',
-        event: { kind: 'target-changed', target: pageTarget },
+        event: { type: 'target-changed', target: pageTarget },
         expectedReason: 'A replacement or second page target appeared during startup continuity'
       },
       {
@@ -871,8 +871,8 @@ describe('Chrome native action lifecycle diagnostic', () => {
 
       const result = await diagnoseChromeNativeActionLifecycle(adapter, context)
       const foreignWorkerWasClassified = result.timeline.some(
-        ({ kind, detail }) =>
-          kind === 'worker-classified' &&
+        ({ type, detail }) =>
+          type === 'worker-classified' &&
           (detail as Record<string, unknown> | undefined)?.targetId === foreignWorkerTarget.targetId &&
           (detail as Record<string, unknown>).exact === false
       )
@@ -941,7 +941,7 @@ describe('Chrome native action lifecycle diagnostic', () => {
         arrange: (adapter) => {
           const replacement = { ...workerTarget, targetId: 'replacement-exact-worker' }
           adapter.registerWorker(replacement, 'replacement-exact-session', exactWorkerIdentity())
-          return [{ kind: 'target-destroyed', targetId: workerTarget.targetId }, targetCreated(replacement)]
+          return [{ type: 'target-destroyed', targetId: workerTarget.targetId }, targetCreated(replacement)]
         }
       },
       {
@@ -952,7 +952,7 @@ describe('Chrome native action lifecycle diagnostic', () => {
         name: 'entry change',
         arrange: () => [
           {
-            kind: 'target-changed',
+            type: 'target-changed',
             target: { ...workerTarget, url: `chrome-extension://${extensionId}/replacement.js` }
           }
         ]
@@ -964,7 +964,7 @@ describe('Chrome native action lifecycle diagnostic', () => {
             ...exactWorkerIdentity(),
             runtimeId: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
           })
-          return [{ kind: 'target-changed', target: workerTarget }]
+          return [{ type: 'target-changed', target: workerTarget }]
         }
       },
       {
@@ -974,7 +974,7 @@ describe('Chrome native action lifecycle diagnostic', () => {
             runtimeId: extensionId,
             manifest: { ...packagedManifest, version: '2.0.0' }
           })
-          return [{ kind: 'target-changed', target: workerTarget }]
+          return [{ type: 'target-changed', target: workerTarget }]
         }
       }
     ]
@@ -1007,7 +1007,7 @@ describe('Chrome native action lifecycle diagnostic', () => {
       ...targetBoundSteps(),
       contextCreated(),
       {
-        kind: 'console',
+        type: 'console',
         targetId: acceptedTarget.targetId,
         sessionId: acceptedSession,
         contextId: isolatedContext,
@@ -1046,7 +1046,7 @@ describe('Chrome native action lifecycle diagnostic', () => {
       ...targetBoundSteps(),
       contextCreated(),
       {
-        kind: 'exception',
+        type: 'exception',
         targetId: acceptedTarget.targetId,
         sessionId: acceptedSession,
         contextId: isolatedContext,
@@ -1073,7 +1073,7 @@ describe('Chrome native action lifecycle diagnostic', () => {
       {
         name: 'console',
         event: {
-          kind: 'console',
+          type: 'console',
           targetId: acceptedTarget.targetId,
           sessionId: acceptedSession,
           contextId: isolatedContext,
@@ -1085,7 +1085,7 @@ describe('Chrome native action lifecycle diagnostic', () => {
       {
         name: 'exception',
         event: {
-          kind: 'exception',
+          type: 'exception',
           targetId: acceptedTarget.targetId,
           sessionId: acceptedSession,
           contextId: isolatedContext,
@@ -1101,7 +1101,7 @@ describe('Chrome native action lifecycle diagnostic', () => {
       adapter.domSamples = [mountedSample()]
 
       const result = await diagnoseChromeNativeActionLifecycle(adapter, context)
-      const evidence = result.timeline.find(({ kind }) => kind === `event:${testCase.event.kind}`)
+      const evidence = result.timeline.find(({ type }) => type === `event:${testCase.event.type}`)
       const detail = evidence?.detail as Record<string, unknown> | undefined
 
       expect.soft(result.outcome, testCase.name).toBe('unexpected-content-failure')
@@ -1135,21 +1135,21 @@ describe('Chrome native action lifecycle diagnostic', () => {
     const eventKinds = ['target-created', 'target-changed', 'target-attached'] as const
 
     for (const targetCase of targetCases) {
-      for (const kind of eventKinds) {
+      for (const type of eventKinds) {
         const target: ChromeLifecycleTarget = {
-          targetId: `${kind}-${targetCase.name}-target`,
+          targetId: `${type}-${targetCase.name}-target`,
           type: targetCase.type,
           url: targetCase.url
         }
         const event: ChromeLifecycleEvent =
-          kind === 'target-attached' ? { kind, target, sessionId: `${target.targetId}-session` } : { kind, target }
-        const name = `${kind} ${targetCase.name}`
+          type === 'target-attached' ? { type, target, sessionId: `${target.targetId}-session` } : { type, target }
+        const name = `${type} ${targetCase.name}`
         const adapter = prepareAdapter([...targetBoundSteps(), contextCreated(), event, { advanceMs: 1 }])
 
         const result = await diagnoseChromeNativeActionLifecycle(adapter, context)
-        const evidence = result.timeline.find(({ kind: entryKind, detail }) => {
+        const evidence = result.timeline.find(({ type: entryKind, detail }) => {
           const fields = detail as Record<string, unknown> | undefined
-          return entryKind === `event:${kind}` && fields?.targetId === target.targetId
+          return entryKind === `event:${type}` && fields?.targetId === target.targetId
         })
         const detail = evidence?.detail as Record<string, unknown> | undefined
 
@@ -1172,7 +1172,7 @@ describe('Chrome native action lifecycle diagnostic', () => {
       ...targetBoundSteps(),
       contextCreated(),
       {
-        kind: 'observation-error',
+        type: 'observation-error',
         targetId: acceptedTarget.targetId,
         sessionId: acceptedSession,
         message: `CDP observation exposed credential ${sentinel}`
@@ -1180,7 +1180,7 @@ describe('Chrome native action lifecycle diagnostic', () => {
     ])
 
     const result = await diagnoseChromeNativeActionLifecycle(adapter, context)
-    const evidence = result.timeline.find(({ kind }) => kind === 'event:observation-error')
+    const evidence = result.timeline.find(({ type }) => type === 'event:observation-error')
 
     expect(result.outcome).toBe('unexpected-content-failure')
     expect(result.reason).toBe('Accepted target lifecycle observation failed')
@@ -1227,13 +1227,13 @@ describe('Chrome native action lifecycle diagnostic', () => {
   it('fails closed on replacement targets, destroyed targets, divergent sessions, and divergent main frames', async () => {
     const cases: readonly AdapterStep[][] = [
       [targetCreated(), targetCreated({ ...acceptedTarget, targetId: 'replacement-target' })],
-      [targetCreated(), targetAttached(), { kind: 'target-destroyed', targetId: acceptedTarget.targetId }],
+      [targetCreated(), targetAttached(), { type: 'target-destroyed', targetId: acceptedTarget.targetId }],
       [targetCreated(), targetAttached(), frameNavigated({ sessionId: 'wrong-session' })],
       [
         targetCreated(),
         targetAttached(),
         {
-          kind: 'target-changed',
+          type: 'target-changed',
           target: { ...blankTarget, url: CHROME_NATIVE_ACTION_ACCEPTED_URL }
         }
       ],
@@ -1266,7 +1266,7 @@ describe('Chrome native action lifecycle diagnostic', () => {
       contextCreated(),
       {
         lateEvent: {
-          kind: 'page-lifecycle',
+          type: 'page-lifecycle',
           targetId: acceptedTarget.targetId,
           sessionId: acceptedSession,
           frameId: mainFrame,
@@ -1352,7 +1352,7 @@ describe('Chrome native action lifecycle diagnostic', () => {
 
   it('preserves startup page and worker continuity across setup, create, wait, and sample phases', async () => {
     const blankRedirect: ChromeLifecycleEvent = {
-      kind: 'frame-navigated',
+      type: 'frame-navigated',
       targetId: blankTarget.targetId,
       sessionId: 'blank-session',
       frameId: 'blank-frame',
@@ -1390,14 +1390,14 @@ describe('Chrome native action lifecycle diagnostic', () => {
       {
         name: 'setup observation failure',
         phase: `ensure-session:${blankTarget.targetId}`,
-        event: { kind: 'observation-error', message: 'pre-target CDP observation disconnected' },
+        event: { type: 'observation-error', message: 'pre-target CDP observation disconnected' },
         createsAcceptedTarget: false,
         expectedOutcome: 'extension-setup-failed'
       },
       {
         name: 'create-time worker destruction',
         phase: 'create-target',
-        event: { kind: 'target-destroyed', targetId: workerTarget.targetId },
+        event: { type: 'target-destroyed', targetId: workerTarget.targetId },
         createsAcceptedTarget: true,
         expectedOutcome: 'extension-setup-failed'
       },
@@ -1405,7 +1405,7 @@ describe('Chrome native action lifecycle diagnostic', () => {
         name: 'accepted-observation worker replacement',
         phase: `observe-session:${acceptedTarget.targetId}:${acceptedSession}`,
         event: {
-          kind: 'target-changed',
+          type: 'target-changed',
           target: {
             ...workerTarget,
             url: 'chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/background.js'
@@ -1417,14 +1417,14 @@ describe('Chrome native action lifecycle diagnostic', () => {
       {
         name: 'wait-time worker detach',
         phase: 'wait-event',
-        event: { kind: 'target-detached', targetId: workerTarget.targetId, sessionId: 'worker-session' },
+        event: { type: 'target-detached', targetId: workerTarget.targetId, sessionId: 'worker-session' },
         createsAcceptedTarget: true,
         expectedOutcome: 'extension-setup-failed'
       },
       {
         name: 'wait-time divergent accepted detach',
         phase: 'wait-event',
-        event: { kind: 'target-detached', targetId: acceptedTarget.targetId, sessionId: 'wrong-session' },
+        event: { type: 'target-detached', targetId: acceptedTarget.targetId, sessionId: 'wrong-session' },
         createsAcceptedTarget: true,
         expectedOutcome: 'target-lifecycle-failed'
       },
@@ -1438,7 +1438,7 @@ describe('Chrome native action lifecycle diagnostic', () => {
       {
         name: 'sample-time observation failure',
         phase: 'sample-dom',
-        event: { kind: 'observation-error', message: 'CDP observation disconnected' },
+        event: { type: 'observation-error', message: 'CDP observation disconnected' },
         createsAcceptedTarget: true,
         expectedOutcome: 'unexpected-content-failure'
       }
@@ -1462,7 +1462,7 @@ describe('Chrome native action lifecycle diagnostic', () => {
     const noisyEvents: ChromeLifecycleEvent[] = Array.from(
       { length: CHROME_NATIVE_ACTION_MAX_EVIDENCE_EVENTS + 1 },
       (_, index) => ({
-        kind: 'page-lifecycle',
+        type: 'page-lifecycle',
         targetId: acceptedTarget.targetId,
         sessionId: acceptedSession,
         frameId: mainFrame,
@@ -1483,13 +1483,13 @@ describe('Chrome native action lifecycle diagnostic', () => {
     const adapter = prepareAdapter()
     const burst: ChromeLifecycleEvent[] = [
       ...Array.from({ length: CHROME_NATIVE_ACTION_MAX_EVIDENCE_EVENTS }, (_, index) => ({
-        kind: 'page-lifecycle' as const,
+        type: 'page-lifecycle' as const,
         targetId: acceptedTarget.targetId,
         sessionId: acceptedSession,
         frameId: mainFrame,
         name: `synchronous-noise-${index}`
       })),
-      { kind: 'target-destroyed', targetId: acceptedTarget.targetId }
+      { type: 'target-destroyed', targetId: acceptedTarget.targetId }
     ]
     adapter.phaseEffects.set('sample-dom', burst)
 
@@ -1499,13 +1499,13 @@ describe('Chrome native action lifecycle diagnostic', () => {
     expect(result.reason).toContain(`Event count exceeds ${CHROME_NATIVE_ACTION_MAX_EVIDENCE_EVENTS}`)
     expect(result.actionAuthorization).toBeNull()
     expect(adapter.createdUrls).toEqual([CHROME_NATIVE_ACTION_ACCEPTED_URL])
-    expect(result.timeline.filter(({ kind }) => kind.startsWith('event:'))).toHaveLength(
+    expect(result.timeline.filter(({ type }) => type.startsWith('event:'))).toHaveLength(
       CHROME_NATIVE_ACTION_MAX_EVIDENCE_EVENTS
     )
-    expect(result.timeline.filter(({ kind }) => kind === 'event:target-destroyed')).toHaveLength(0)
-    expect(result.timeline.filter(({ kind }) => kind === 'evidence-overflow')).toHaveLength(1)
+    expect(result.timeline.filter(({ type }) => type === 'event:target-destroyed')).toHaveLength(0)
+    expect(result.timeline.filter(({ type }) => type === 'evidence-overflow')).toHaveLength(1)
     expect(result.timeline.at(-1)).toMatchObject({
-      kind: 'terminal',
+      type: 'terminal',
       detail: { outcome: result.outcome, reason: result.reason }
     })
   })
@@ -1526,10 +1526,10 @@ describe('Chrome native action lifecycle diagnostic', () => {
     expect(result.actionAuthorization).toBeNull()
     expect(result.timeline).toHaveLength(CHROME_NATIVE_ACTION_MAX_EVIDENCE_EVENTS + 32)
     expect(result.timeline.map(({ sequence }) => sequence)).toEqual(result.timeline.map((_, index) => index + 1))
-    expect(result.timeline.filter(({ kind }) => kind === 'evidence-overflow')).toHaveLength(1)
-    expect(result.timeline.filter(({ kind }) => kind === 'terminal')).toHaveLength(1)
+    expect(result.timeline.filter(({ type }) => type === 'evidence-overflow')).toHaveLength(1)
+    expect(result.timeline.filter(({ type }) => type === 'terminal')).toHaveLength(1)
     expect(result.timeline.at(-1)).toMatchObject({
-      kind: 'terminal',
+      type: 'terminal',
       detail: { outcome: result.outcome, reason: result.reason }
     })
   })
@@ -1544,10 +1544,10 @@ describe('Chrome native action lifecycle diagnostic', () => {
     expect.soft(result.reason.length).toBeLessThanOrEqual(512)
     expect.soft(result.actionAuthorization).toBeNull()
     expect.soft(result.timeline.length).toBeLessThanOrEqual(CHROME_NATIVE_ACTION_MAX_EVIDENCE_EVENTS + 32)
-    expect.soft(result.timeline.filter(({ kind }) => kind === 'evidence-overflow')).toHaveLength(1)
-    expect.soft(result.timeline.filter(({ kind }) => kind === 'terminal')).toHaveLength(1)
+    expect.soft(result.timeline.filter(({ type }) => type === 'evidence-overflow')).toHaveLength(1)
+    expect.soft(result.timeline.filter(({ type }) => type === 'terminal')).toHaveLength(1)
     expect.soft(result.timeline.at(-1)).toMatchObject({
-      kind: 'terminal',
+      type: 'terminal',
       detail: { outcome: result.outcome, reason: result.reason }
     })
   })

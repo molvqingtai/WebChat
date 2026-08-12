@@ -301,9 +301,9 @@ function pathFor(conn) {
 
 // ---- Rendering ---------------------------------------------------------------
 function renderBoundary(b) {
-  const cls = b.kind === 'security-group' ? 'c-security-group' : 'c-region'
-  const labelCls = b.kind === 'security-group' ? 't-security' : 't-cloud'
-  const rx = b.kind === 'security-group' ? 8 : 12
+  const cls = b.type === 'security-group' ? 'c-security-group' : 'c-region'
+  const labelCls = b.type === 'security-group' ? 't-security' : 't-cloud'
+  const rx = b.type === 'security-group' ? 8 : 12
   return `        <rect x="${b.x}" y="${b.y}" width="${b.width}" height="${b.height}" rx="${rx}" class="${cls}" stroke-width="1"/>
         <text x="${b.x + 8}" y="${b.y + 18}" class="${labelCls}" font-size="9" font-weight="600">${esc(b.label)}</text>`
 }

@@ -22,7 +22,7 @@ const context: FirefoxActionContext = {
 const ordinaryTab = (handle: string, url = 'about:blank', active = false, testOwned = true): FirefoxActionTab => ({
   identity: `physical:${handle}`,
   url,
-  kind: 'ordinary',
+  type: 'ordinary',
   testOwned,
   active
 })
@@ -30,7 +30,7 @@ const ordinaryTab = (handle: string, url = 'about:blank', active = false, testOw
 const optionsTab = (handle: string, active = false): FirefoxActionTab => ({
   identity: `physical:${handle}`,
   url: 'moz-extension://exact-addon/options.html',
-  kind: 'options',
+  type: 'options',
   testOwned: true,
   active
 })
@@ -38,9 +38,9 @@ const optionsTab = (handle: string, active = false): FirefoxActionTab => ({
 type HandleOperation = 'navigate' | 'runtime' | 'activate'
 
 type OperationSideEffect =
-  | { readonly operation: HandleOperation; readonly kind: 'create' }
-  | { readonly operation: HandleOperation; readonly kind: 'replace'; readonly identity: string }
-  | { readonly operation: HandleOperation; readonly kind: 'change-classification'; readonly identity: string }
+  | { readonly operation: HandleOperation; readonly type: 'create' }
+  | { readonly operation: HandleOperation; readonly type: 'replace'; readonly identity: string }
+  | { readonly operation: HandleOperation; readonly type: 'change-classification'; readonly identity: string }
 
 class FakeFirefoxAdapter implements FirefoxActionPreconditionAdapter {
   tabs: FirefoxActionTab[]
@@ -101,7 +101,7 @@ class FakeFirefoxAdapter implements FirefoxActionPreconditionAdapter {
           ? {
               ...tab,
               url: 'moz-extension://exact-addon/options.html',
-              kind: 'options'
+              type: 'options'
             }
           : tab
       )
@@ -142,7 +142,7 @@ class FakeFirefoxAdapter implements FirefoxActionPreconditionAdapter {
       return
     }
 
-    this.tabs = this.tabs.map((tab) => (tab.identity === identity ? { ...tab, url: target, kind: 'ordinary' } : tab))
+    this.tabs = this.tabs.map((tab) => (tab.identity === identity ? { ...tab, url: target, type: 'ordinary' } : tab))
 
     if (this.runtimeReadyAfterNavigation) {
       this.runtimeReadyIdentities.add(identity)
@@ -179,11 +179,11 @@ class FakeFirefoxAdapter implements FirefoxActionPreconditionAdapter {
     this.nativeClicks += 1
     this.currentCapability = undefined
     this.tabs = this.tabs.map((tab) =>
-      tab.active && tab.kind === 'ordinary'
+      tab.active && tab.type === 'ordinary'
         ? {
             ...tab,
             url: 'moz-extension://exact-addon/options.html',
-            kind: 'options'
+            type: 'options'
           }
         : tab
     )
@@ -199,7 +199,7 @@ class FakeFirefoxAdapter implements FirefoxActionPreconditionAdapter {
           ? {
               ...tab,
               url: 'moz-extension://exact-addon/options.html',
-              kind: 'options' as const,
+              type: 'options' as const,
               active: false
             }
           : tab
@@ -229,7 +229,7 @@ class FakeFirefoxAdapter implements FirefoxActionPreconditionAdapter {
 
   acceptedContentHandles(target = context.acceptedTarget) {
     return this.tabs
-      .filter((tab) => tab.kind === 'ordinary' && tab.url === target)
+      .filter((tab) => tab.type === 'ordinary' && tab.url === target)
       .map((tab) => this.requireBaseHandle(tab.identity))
   }
 
@@ -242,14 +242,14 @@ class FakeFirefoxAdapter implements FirefoxActionPreconditionAdapter {
     this.operationSideEffect = undefined
     this.appliedOperationSideEffects.push(sideEffect)
 
-    if (sideEffect.kind === 'create') {
+    if (sideEffect.type === 'create') {
       const created = ordinaryTab(`${operation}-side-effect`)
       this.tabs.push(created)
       this.baseHandles.set(created.identity, `${operation}-side-effect`)
       return
     }
 
-    if (sideEffect.kind === 'replace') {
+    if (sideEffect.type === 'replace') {
       const replacement = ordinaryTab(`${operation}-replacement`)
       this.tabs = this.tabs.filter((tab) => tab.identity !== sideEffect.identity).concat(replacement)
       this.baseHandles.delete(sideEffect.identity)
@@ -263,7 +263,7 @@ class FakeFirefoxAdapter implements FirefoxActionPreconditionAdapter {
         ? {
             ...tab,
             url: 'moz-extension://unrelated-addon/options.html',
-            kind: 'options',
+            type: 'options',
             testOwned: false
           }
         : tab
@@ -358,7 +358,7 @@ describe('Firefox action precondition', () => {
     expect(binding.actionRecipientHandle).toMatch(/^recipient@/)
     expect(adapter.createdHandles).toEqual([])
     expect([binding.contentIdentity, binding.actionRecipientIdentity]).not.toContain('physical:options')
-    expect(binding.preActionTabs.find((tab) => tab.identity === 'physical:options')?.kind).toBe('options')
+    expect(binding.preActionTabs.find((tab) => tab.identity === 'physical:options')?.type).toBe('options')
   })
 
   it('rejects ambiguous physical tab identities before action', async () => {
@@ -420,10 +420,10 @@ describe('Firefox action precondition', () => {
       [ordinaryTab('content', context.acceptedTarget, false), ordinaryTab('recipient', 'about:blank', true)],
       ['content']
     )
-    adapter.operationSideEffect = { operation: 'runtime', kind: 'create' }
+    adapter.operationSideEffect = { operation: 'runtime', type: 'create' }
 
     await expectCode(prepareFirefoxActionPrecondition(adapter, context), 'accepted-content-unavailable')
-    expect(adapter.appliedOperationSideEffects).toEqual([{ operation: 'runtime', kind: 'create' }])
+    expect(adapter.appliedOperationSideEffects).toEqual([{ operation: 'runtime', type: 'create' }])
     expect(adapter.operationTrace.slice(-2)).toEqual(['lookup:physical:content', 'runtime:physical:content'])
     expect(adapter.tabs.some((tab) => tab.identity === 'physical:runtime-side-effect')).toBe(true)
   })
@@ -439,7 +439,7 @@ describe('Firefox action precondition', () => {
     )
     adapter.operationSideEffect = {
       operation: 'activate',
-      kind: 'replace',
+      type: 'replace',
       identity: 'physical:unrelated'
     }
 
@@ -458,7 +458,7 @@ describe('Firefox action precondition', () => {
     ])
     adapter.operationSideEffect = {
       operation: 'navigate',
-      kind: 'change-classification',
+      type: 'change-classification',
       identity: 'physical:unrelated'
     }
 
@@ -471,7 +471,7 @@ describe('Firefox action precondition', () => {
     expect(adapter.tabs.find((tab) => tab.identity === 'physical:content-candidate')?.url).toBe(context.acceptedTarget)
     expect(adapter.tabs.find((tab) => tab.identity === 'physical:unrelated')).toMatchObject({
       url: 'moz-extension://unrelated-addon/options.html',
-      kind: 'options',
+      type: 'options',
       testOwned: false
     })
   })
@@ -483,10 +483,10 @@ describe('Firefox action precondition', () => {
     )
     const binding = await prepareFirefoxActionPrecondition(adapter, context)
     adapter.clickNativeAction()
-    adapter.operationSideEffect = { operation: 'runtime', kind: 'create' }
+    adapter.operationSideEffect = { operation: 'runtime', type: 'create' }
 
     await expectCode(assertFirefoxActionBinding(adapter, binding, context), 'invalid-binding')
-    expect(adapter.appliedOperationSideEffects).toEqual([{ operation: 'runtime', kind: 'create' }])
+    expect(adapter.appliedOperationSideEffects).toEqual([{ operation: 'runtime', type: 'create' }])
     expect(adapter.operationTrace.slice(-2)).toEqual(['lookup:physical:content', 'runtime:physical:content'])
     expect(adapter.tabs.some((tab) => tab.identity === 'physical:runtime-side-effect')).toBe(true)
   })
@@ -542,14 +542,14 @@ describe('Firefox action precondition', () => {
       'lookup:physical:recipient',
       'activate:physical:recipient'
     ])
-    const beforeOptionsCount = adapter.tabs.filter((tab) => tab.kind === 'options').length
+    const beforeOptionsCount = adapter.tabs.filter((tab) => tab.type === 'options').length
 
     adapter.clickNativeAction()
 
-    const afterOptionsCount = adapter.tabs.filter((tab) => tab.kind === 'options').length
+    const afterOptionsCount = adapter.tabs.filter((tab) => tab.type === 'options').length
     expect(adapter.nativeClicks).toBe(1)
     expect(afterOptionsCount - beforeOptionsCount).toBe(1)
-    expect(adapter.tabs.find((tab) => tab.identity === 'physical:recipient')?.kind).toBe('options')
+    expect(adapter.tabs.find((tab) => tab.identity === 'physical:recipient')?.type).toBe('options')
     await expect(assertFirefoxActionBinding(adapter, binding, context)).resolves.toBeUndefined()
     expect(adapter.runtimeChecks.at(-1)).toMatch(/^content@/)
     expect(adapter.operationTrace.slice(-2)).toEqual(['lookup:physical:content', 'runtime:physical:content'])
@@ -568,7 +568,7 @@ describe('Firefox action precondition', () => {
 
     expect(adapter.createdHandles).toEqual([])
     expect(adapter.acceptedContentHandles()).toEqual(['content-after'])
-    expect(adapter.tabs.find((tab) => tab.identity === physicalIdentity)?.kind).toBe('ordinary')
+    expect(adapter.tabs.find((tab) => tab.identity === physicalIdentity)?.type).toBe('ordinary')
     await expect(assertFirefoxActionBinding(adapter, binding, context)).resolves.toBeUndefined()
     expect(adapter.runtimeChecks.at(-1)).toMatch(/^content-after@/)
   })
@@ -664,7 +664,7 @@ describe('Firefox action precondition', () => {
     adapter.dropCurrentHandle(binding.contentIdentity)
 
     await expectCode(assertFirefoxActionBinding(adapter, binding, context), 'invalid-binding')
-    expect(adapter.tabs.find((tab) => tab.identity === binding.contentIdentity)?.kind).toBe('ordinary')
+    expect(adapter.tabs.find((tab) => tab.identity === binding.contentIdentity)?.type).toBe('ordinary')
   })
 
   it('rejects a replacement content tab created after the action', async () => {

@@ -77,9 +77,9 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["kind", "label", "wraps"],
+        "required": ["type", "label", "wraps"],
         "properties": {
-          "kind": { "enum": ["region", "security-group"] },
+          "type": { "enum": ["region", "security-group"] },
           "label": { "type": "string", "minLength": 1 },
           "wraps": {
             "type": "array",
