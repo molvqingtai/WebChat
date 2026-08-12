@@ -207,82 +207,68 @@ This per-target settlement is best-effort physical provider acceptance, not remo
 - **WHEN** Chat or World tries to send
 - **THEN** the operation SHALL reject through the existing generation-owned failure path, send to no target, and gain no retry, outbox, status, fallback, or local persistence success
 
-### Requirement: Unified five-second lifecycle grace
+### Requirement: Local domain release uses one five-second lifecycle grace
 
-When the last authoritative physical tab binding of a domain is removed because the trusted tab closed, lost content eligibility, or moved to another Runtime domain, `LifecycleDomain` SHALL uniquely own one unified five-second grace phase/deadline. Page ping, heartbeat, Port, visibility, freeze, discard, page-context detach, and connectivity timeout SHALL NOT start this grace while the physical tab binding remains. During grace, Connection SHALL retain that domain's ChatRoom connection, Session/History SHALL retain domain State, Delivery SHALL retain the volatile inbound un-ACK buffer, and World SHALL retain domain presence. On grace expiry, the Lifecycle domain-released Event SHALL begin a fenced final release: Session SHALL persist the retired private presence record with an unsettled final-end identity before publishing SESSION_END, retain that identity until the send settles, durably replace it with settled-cleanup ownership, and then remove that marker. Session's authoritative finalization state SHALL reject text/reaction allocation and live send from pending retirement through physical release. Connection SHALL physically leave Chat or the last World room only after marker removal succeeds. A trusted eligible tab binding for the same domain that returns within grace SHALL cancel grace through Lifecycle and read the current Runtime snapshot without a false offline/online transition. No persistent outbound outbox or delivery-status retry survives a successfully completed grace release; only the separately specified volatile inbound un-ACK buffer participates in this lifecycle.
+When the last authoritative physical tab binding of a domain is removed because the trusted tab closed, lost content eligibility, or moved to another Runtime domain, `LifecycleDomain` SHALL uniquely own one unified five-second local-domain grace phase/deadline. Page ping, heartbeat, Port, visibility, freeze, discard, page-context detach, and connectivity timeout SHALL NOT start this grace while the physical tab binding remains. During grace, Connection SHALL retain that domain's ChatRoom connection, Session/History SHALL retain domain State, Delivery SHALL retain the volatile inbound un-ACK buffer, and World SHALL retain domain presence.
 
-#### Scenario: Refresh within grace
+On local-domain grace expiry, the Lifecycle domain-released Event SHALL begin one fenced release. Session SHALL remove the local active-generation authority through its existing private local-persistence boundary, and Session, History, Delivery, and World SHALL release only that domain's owned State. Connection SHALL physically leave Chat and the last World room after required local cleanup; it SHALL produce no Chat lifecycle-end value and SHALL wait on no wire send, retry, or settlement State. The release fence SHALL reject text/reaction allocation and live send only from release start through physical departure. A trusted eligible tab binding for the same domain that returns during local-domain grace SHALL cancel that grace and read the current Runtime snapshot without a false offline/online transition.
+
+Remote logical leave is independent: Artico physical departure starts the observer-side Session grace defined below. No persistent outbound outbox, delivery-status retry, or final-end record survives a completed local release; only the separately specified volatile inbound un-ACK buffer participates in the local lifecycle.
+
+#### Scenario: Refresh within local-domain grace boundary
 
 - **WHEN** a user refreshes the only eligible tab of a domain and its old page context disconnects before the new document attaches
-- **THEN** the background SHALL retain the same physical tab binding, Lifecycle grace SHALL not start, and the domain connection and state SHALL continue without re-join flapping, presence flicker, or message loss caused by the refresh
+- **THEN** the background SHALL retain the same physical tab binding, local-domain grace SHALL not start, and the domain connection and State SHALL continue without rejoin flapping, presence flicker, or message loss caused by the refresh
 
-#### Scenario: Connectivity loss does not impersonate final release
+#### Scenario: Connectivity loss does not impersonate domain release
 
 - **GIVEN** the only eligible tab of a domain remains open
 - **WHEN** its ping, heartbeat, Port, visibility, frozen, discarded, or page-context attachment state is lost
-- **THEN** bounded connectivity recovery MAY run, but no domain grace, SESSION_END, observer leave, or physical room departure SHALL begin
+- **THEN** bounded connectivity recovery MAY run, but no local-domain grace or physical room departure SHALL begin and remote membership SHALL remain unchanged
 
 #### Scenario: Application reconnect preserves the logical generation
 
 - **GIVEN** the application Reconnect Effect retains the frozen `leaveRoom()` then `joinRoom(command)` composition
 - **WHEN** the Runtime ChatRoom implementation executes that composition for an active domain
-- **THEN** `leaveRoom()` SHALL invoke current-domain Runtime reconnect rather than final logical release, the replacement physical Chat session SHALL reuse the same `presenceId`, World SHALL remain physically joined, and local plus observer views SHALL receive snapshots without SESSION_END, logical join/leave, or another notice
+- **THEN** `leaveRoom()` SHALL invoke current-domain Runtime reconnect rather than local final release, the replacement physical Chat session SHALL reuse the same `presenceId`, World SHALL remain physically joined, and a remote PeerLeave followed by the same presence within five seconds SHALL produce neither a confirmed leave nor another join
 
-#### Scenario: Durable retirement rejects
+#### Scenario: Local active-generation cleanup rejects
 
-- **GIVEN** a committed active presence generation and a PresenceStore that rejects the retired record
-- **WHEN** final release begins
-- **THEN** the same active durable and in-memory lease, Chat/World physical membership, History state, World desired presence, and joined Runtime snapshot SHALL remain; no SESSION_END, observer leave, or physical departure SHALL occur; the pending release fence SHALL be removed so allocation and live send remain usable; and the existing Runtime error path SHALL surface a retryable request-local failure
+- **GIVEN** a committed active local presence and a PresenceStore operation that rejects removal of its active record
+- **WHEN** local final release begins
+- **THEN** the release SHALL retain its current fence and physical membership, create no final-end State or wire value, and surface the existing retryable request-local failure without allowing allocation or live send to bypass the current release owner
 
-#### Scenario: Retirement succeeds after storage recovery
+#### Scenario: Local cleanup succeeds after storage recovery
 
-- **GIVEN** a prior retirement attempt was fenced by storage rejection and the PresenceStore later recovers
-- **WHEN** final release is requested again
-- **THEN** the same generation SHALL persist one retired identity before exactly one SESSION_END settles, durably transition it to settled-cleanup ownership, remove that marker, and only then SHALL Connection physically leave Chat and the last World room while observers classify one leave
+- **GIVEN** a prior local release was fenced by active-record cleanup rejection and the PresenceStore later recovers
+- **WHEN** release is requested again
+- **THEN** Session SHALL remove the local active-generation record once, release its domain State, and allow Connection to leave Chat and the last World room without publishing any Chat lifecycle message
 
-#### Scenario: Every non-active final-release phase fences live authority
+#### Scenario: Release fence has one current phase
 
-- **GIVEN** Session has a pending release in `retiring`, `retrying`, `publishing`, `pending`, `settling`, `settlement-failed`, `cleaning`, or `cleanup-failed`, or has restored `inflightEnd`, `pendingEnd`, or `settledEnd` without an active `local` lease
+- **GIVEN** Session owns a current local release that has not physically departed
 - **WHEN** the current or replacement host requests text allocation, reaction allocation, or live Chat send
-- **THEN** both Server preflight and the authoritative Session Command SHALL reject before HLC allocation or Wire send, no live frame SHALL be added, and successful marker cleanup SHALL retain that fence until physical domain release completes
+- **THEN** both Server preflight and the authoritative Session Command SHALL reject before HLC allocation or Wire send, and the fence SHALL disappear with completed physical domain release rather than transition through end-specific States
 
-#### Scenario: SESSION_END send rejects
+#### Scenario: Host replacement continues only current local cleanup
 
-- **GIVEN** durable retirement succeeded but the SESSION_END send rejects
-- **WHEN** the send failure settles
-- **THEN** Session SHALL durably transition that generation from in-flight to retryable pending final end, Connection SHALL retain Chat/World physical membership and publish no false local departure, and a later same-host final-release request SHALL durably transition the same marker back to in-flight before retrying the idempotent end
-
-#### Scenario: Host replacement continues an unsettled final end
-
-- **GIVEN** durable retirement succeeded and a first or retry SESSION_END is unsettled or explicitly rejected
-- **WHEN** the Runtime host is replaced and the same user invokes join before END settlement
-- **THEN** the replacement SHALL use the retained `presenceId` only to physically rebind and continue the same END transaction, SHALL expose no successful active join or live-message authority, and SHALL finish with at most one observer leave plus no persistent marker; a subsequent explicit join SHALL allocate a new generation
-
-#### Scenario: Post-settlement cleanup rejects
-
-- **GIVEN** SESSION_END settled and Session durably replaced the unsettled identity with private settled-cleanup ownership
-- **WHEN** marker removal rejects
-- **THEN** Session SHALL retain settled-cleanup ownership and Chat/World physical membership still owned by the current host, surface a request-local error, publish no second SESSION_END merely to retry cleanup in the same host, and permit physical departure only after later marker removal succeeds
-
-#### Scenario: Host replacement assumes settled cleanup ownership
-
-- **GIVEN** the observer ledger accepted SESSION_END and durable settled-cleanup ownership remains after a cleanup rejection
-- **WHEN** the same user's replacement host invokes join
-- **THEN** it SHALL only remove that marker, SHALL join neither Chat nor World, SHALL publish no SESSION or SESSION_END, SHALL expose no active session or live-message authority, and SHALL preserve the observer's exactly-once leave; only a later explicit join MAY allocate a fresh `presenceId` and one new logical join
+- **GIVEN** local active-generation cleanup or physical departure is unsettled when the Runtime host is replaced
+- **WHEN** the replacement host restores the same domain operation
+- **THEN** it SHALL continue only the current local cleanup/release ownership, SHALL publish no Chat end value, and SHALL expose no duplicate active authority or final-end marker
 
 #### Scenario: Readiness helper distinguishes mounted UI from convergence
 
 - **WHEN** automated acceptance observes an already-mounted usable chat textarea after a refresh or restart
-- **THEN** the helper SHALL accept that UI readiness immediately; a separate bounded eventual membership/presence wait MAY guard against a hang, and the five-second domain grace SHALL NOT be treated as a UI-convergence deadline
+- **THEN** the helper SHALL accept that UI readiness immediately; a separate bounded eventual membership/presence wait MAY guard against a hang, and the five-second local-domain grace SHALL NOT be treated as a UI-convergence deadline
 
-#### Scenario: Grace expiry
+#### Scenario: Local-domain grace expiry
 
-- **WHEN** no eligible physical tab binding for the domain returns within 5 seconds and durable retirement plus SESSION_END settlement succeed
-- **THEN** the ChatRoom connection, Runtime domain state, volatile inbound un-ACK delivery buffer, and WorldRoom presence for that domain SHALL all be released or removed in the required causal order, with no persistent outbound status or same-id crash retry retained
+- **WHEN** no eligible physical tab binding for the domain returns within five seconds and required local cleanup succeeds
+- **THEN** the ChatRoom connection, Runtime domain State, volatile inbound un-ACK delivery buffer, and WorldRoom presence for that domain SHALL all be released or removed without an outbound lifecycle frame or persistent final-end retry
 
-#### Scenario: Event outside grace
+#### Scenario: Event outside local-domain grace
 
-- **WHEN** an inbound event targets a domain that is unregistered or past its grace period
+- **WHEN** an inbound event targets a domain that is unregistered or past its local-domain grace
 - **THEN** the system SHALL discard the event because no persistence location exists for it
 
 ### Requirement: Application/page Domain owns local records and projections
@@ -377,7 +363,7 @@ interface ChatRoom {
 
 No alias, compatibility field, overload, extra method, generic metadata bag, Runtime type, or peer/source/joinedAt/timer/IDB/host/page/lease/retry field SHALL extend this contract without explicit Owner intervention. `joinRoom` SHALL use the caller-supplied user/site and `impls` SHALL create `sessionId`. `leaveRoom` SHALL operate on the currently joined room instance. `sendMessage` SHALL accept only the frozen business commands; `impls` SHALL create `id`, `hlc`, and `userId`, complete transport acceptance, and call local `MessageStore.insert`. Only after that insert operation successfully settles SHALL it resolve with the exact `ChatMessage` allocated and transported by that call. It SHALL NOT return or expose an insert result, same-id existing winner, `MessageRecord`, delivery status, or Runtime provenance.
 
-`onSessions` SHALL be the only application session-state truth. For a normal accepted live change, the implementation SHALL publish the updated immutable session snapshot before the corresponding `onJoinRoom` or `onLeaveRoom` fact. Initialization, first join, hydration, refresh, reconnect, host replacement, and replay SHALL publish snapshots only, with no synthetic live delta. `onMessage` SHALL publish only a first durably accepted remote live `ChatMessage`; it SHALL exclude `SessionMessage`, history request/response/control traffic, history messages/replay, initial IDB reads, local sends, duplicate/conflicting inserts, and store-watch replay. Chat and World session instances SHALL remain distinct; same-origin pages share one Runtime logical Chat view, while separate browsers/devices maintain local views that converge.
+`onSessions` SHALL be the only application session-state truth. For a normal accepted live change, the implementation SHALL publish the updated immutable session snapshot before the corresponding `onJoinRoom` or `onLeaveRoom` fact. Initialization, first join, hydration, refresh, reconnect, host replacement, and replay SHALL publish snapshots only, with no synthetic live delta. `onMessage` SHALL publish only a first durably accepted remote live `ChatMessage`; it SHALL exclude `SessionMessage`, History Pull/Push control traffic, History replay, initial IDB reads, local sends, duplicate/conflicting inserts, and store-watch replay. Chat and World session instances SHALL remain distinct; same-origin pages share one Runtime logical Chat view, while separate browsers/devices maintain local views that converge.
 
 Only explicit composition roots SHALL select and inject concrete `impls`. Application Domains and externs SHALL NOT import concrete `impls` or Runtime contracts. Application readiness SHALL retain immediate replay of `connecting | ready | unavailable`. `WorldRoomExtern` SHALL remain separately projected and source-free as specified by `world-room-presence`.
 
@@ -546,7 +532,7 @@ Production Runtime/application adapters SHALL use `globalThis.setTimeout` and `g
 #### Scenario: Database and MessageStore exclude history protocol
 
 - **WHEN** the Database extern, internal MessageStore, and their implementation imports are inventoried
-- **THEN** only Database SHALL be replaceable; MessageStore SHALL remain the one concrete four-method facade; neither SHALL expose history request/response/cursor/cutoff/limit/done projection or a test-only count API, while the outside owner retains cancellable physical history selection and projection
+- **THEN** only Database SHALL be replaceable; MessageStore SHALL remain the one concrete four-method facade; neither SHALL expose History Pull/Push/page/cutoff/limit/done projection or a test-only count API, while the outside owner retains cancellable physical History selection and projection
 
 #### Scenario: Duplicate delivery and conflict convergence
 
@@ -814,9 +800,9 @@ Artico SHALL appear only in the provider implementation and explicit composition
 
 ### Requirement: Immutable peer values terminate in explicit Domain mappings
 
-`WireDomain` SHALL terminate every protocol DTO at one typed accepted-message Event and SHALL NOT expose raw provider callbacks, decoded unknown values, or a shared mutable wire model. `SessionMessage` SHALL enter Session binding/generation commit Commands, and `SessionEndMessage` SHALL enter Session's source-bound idempotent generation-end Command. `TextMessage` and `ReactionMessage` SHALL enter Session source/user validation and then Delivery admission. `HistoryRequestMessage` and `HistoryResponseMessage` SHALL enter History Commands; History SHALL verify the current trusted source/session binding through a Session Query before its requester/provider transition, with accepted response batches entering Delivery atomically. `WorldRoomMessage` SHALL enter World source-snapshot replacement. Provider peer-ready/leave and room-close/error facts SHALL enter Connection transitions, which SHALL request Session/World/History cleanup through their Commands rather than mutate them.
+`WireDomain` SHALL terminate every protocol DTO at one typed accepted-message Event and SHALL NOT expose raw provider callbacks, decoded unknown values, or a shared mutable wire model. `SessionMessage` SHALL enter Session binding/generation commit Commands. `TextMessage` and `ReactionMessage` SHALL enter Session source/user validation and then Delivery admission. `HistoryMessagesPull` and `HistoryMessagesPush` SHALL enter History Commands; History SHALL verify the current trusted source/session binding through a Session Query before its requester/provider transition, with accepted Push pages entering Delivery atomically. `WorldRoomMessage` SHALL enter World source-snapshot replacement. Provider peer-ready/leave and room-close/error facts SHALL enter Connection transitions; a trusted PeerLeave for a bound Chat source SHALL reach Session's physical-source departure Command, while Connection requests World/History cleanup through their named Commands rather than mutating those Domains.
 
-Outbound `SessionMessage` SHALL originate from Session after an accepted Connection generation. Outbound `SessionEndMessage` SHALL originate from final Session release only after private lease retirement and SHALL be sent before physical Chat-room leave. Outbound Text/Reaction SHALL use Session-owned id/HLC allocation and a Wire send Command. History request/response SHALL originate from History State and page-supply outcomes. `WorldRoomMessage` SHALL originate from World's current full snapshot only after Connection acceptance. All outbound values SHALL use the strict current schemas and unchanged codec algorithm; only the Owner-authorized SESSION `presenceId` and SESSION_END shapes differ from the prior baseline.
+Outbound `SessionMessage` SHALL originate from Session after an accepted Connection generation. No outbound Chat lifecycle-end value exists. Outbound Text/Reaction SHALL use Session-owned id/HLC allocation and a Wire send Command. History Pull/Push SHALL originate from History State and page-supply outcomes. `WorldRoomMessage` SHALL originate from World's current full snapshot only after Connection acceptance. All outbound values SHALL use the strict current schemas and codec algorithm.
 
 #### Scenario: Chat message crosses one trust and delivery path
 
@@ -825,13 +811,18 @@ Outbound `SessionMessage` SHALL originate from Session after an accepted Connect
 
 #### Scenario: History response crosses one owner path
 
-- **WHEN** Wire accepts a HistoryResponseMessage
-- **THEN** History SHALL first verify the current trusted source/session binding through a Session Query, then validate its requester/provider/cursor/budget State and issue at most one atomic Delivery batch admission, without Wire, Server, or ChatRoom adapter owning the history session
+- **WHEN** Wire accepts a `HistoryMessagesPush`
+- **THEN** History SHALL first verify the current trusted source/session binding through a Session Query, then validate its requester/provider/page/budget State and issue at most one atomic Delivery batch admission, without Wire, Server, or the ChatRoom adapter owning the History session
 
 #### Scenario: World snapshot crosses one owner path
 
 - **WHEN** Wire accepts a WorldRoomMessage or Connection accepts a generation that must publish local presence
-- **THEN** World SHALL be the only source-snapshot/presence owner and SHALL replace or publish one full current snapshot through the unchanged protocol
+- **THEN** World SHALL be the only source-snapshot/presence owner and SHALL replace or publish one full current snapshot through the current protocol
+
+#### Scenario: Physical leave crosses one lifecycle path
+
+- **WHEN** the provider reports PeerLeave for a transport-confirmed Chat source
+- **THEN** Connection SHALL route that source fact to Session's physical-departure Command, Session SHALL own the pending logical-presence grace, and no decoded peer message or second Domain SHALL classify the leave
 
 ### Requirement: Remesh modules represent only semantic reuse
 
@@ -872,13 +863,19 @@ Implementation SHALL move one writable owner at a time and immediately delete th
 
 ### Requirement: Session classifies logical presence across physical lifecycles
 
-Session SHALL uniquely own local active-generation state, unsettled in-flight final-end identity, rejected retryable pending-final-end identity, observer-accepted settled-cleanup identity, and a bounded observer ledger. A private two-method `PresenceStoreExtern` SHALL persist those facts through `browser.storage.session` across supported Runtime host replacement; it SHALL NOT expand MessageStore, the origin database schema, `RuntimeServer`, `ChatRoomExtern`, or any UI/public model. Active lease, in-flight final end, retryable pending final end, and settled cleanup SHALL be four mutually exclusive strict records. Session SHALL allocate exact `{presenceId, joinedAt}` only for initial join or true return after complete final end. Refresh, reconnect, recovery, replay, duplicate SESSION, additional physical session, page reattach, supported host replacement, and replacement recovery of any final-end marker SHALL reuse the retained generation and logical time and emit snapshot convergence without a logical join/leave.
+Session SHALL uniquely own local active-generation State, a bounded remote observer ledger, physical-source bindings, and one pending physical-leave deadline per affected remote presence. A private two-method `PresenceStoreExtern` SHALL persist the local active-generation record and bounded observer ledger through `browser.storage.session` across supported Runtime host replacement; it SHALL NOT expand MessageStore, the origin database schema, `RuntimeServer`, `ChatRoomExtern`, or any UI/public model. No in-flight end, retryable pending end, settled cleanup, or other final-end record SHALL exist. Session SHALL allocate exact `{presenceId, joinedAt}` only for initial join or true return after completed local release. Refresh, reconnect, recovery, replay, duplicate SESSION, additional physical session, page reattach, and supported host replacement SHALL reuse the retained generation and logical time and emit snapshot convergence without a logical join/leave.
 
-Chrome MV3 SHALL construct the concrete session-backed PresenceStore in the background Service Worker and expose only its existing `load`/`save` methods to the Offscreen Runtime through a dedicated comctx adapter over a point-to-point Runtime Port. Port name and comctx namespace SHALL be routing values rather than authority. Before delivering a message, Background SHALL require the transport sender's runtime id, exact Offscreen document URL, and absence of a tab; content, options, and every other extension source SHALL be disconnected without reading or writing durable state. Every provider response SHALL resolve through the exact request-to-Port binding recorded when its request arrived. If that binding has detached or been replaced, the response SHALL be dropped and SHALL NOT fall back to the current active Port. Offscreen SHALL admit a response only while that request remains pending on the same binding; uncorrelated, replayed, old-binding, wrong-namespace, wrong-direction, and broadcast responses SHALL reach no comctx callback. From request-ID response registration, each one-shot call SHALL reserve exactly one ordered transport generation. Generic response subscription SHALL NOT open a Port. The local heartbeat response subscription SHALL unregister before the actual `apply`, and that `apply` SHALL consume the oldest remaining request reservation. If the reserved generation terminates before pending insertion, the call SHALL reject before connecting or posting to a replacement and the adapter SHALL remove that operation's one-shot response entry. Port disconnect, synchronous connect/send failure, and adapter disposal SHALL reject every request and pre-send reservation owned by the terminal generation exactly once and release every adapter-owned per-operation response entry, without hanging or automatically replaying `load` or `save`; stale and late traffic SHALL traverse no terminal operation callback, and only a later new application call with a new request ID may create a replacement Port and correlation. Provider-owned long-lived callback handles SHALL retain their existing refresh/re-registration lifetime and SHALL NOT be removed by this one-shot cleanup. The dedicated adapter SHALL use Port send/disconnect as its liveness authority, satisfy comctx heartbeat preflight locally, and transmit only actual one-shot PresenceStore operations. Offscreen SHALL register no broadcast Runtime-message listener for PresenceStore, so another context cannot forge a provider response or observe one through that adapter. The Offscreen document SHALL receive the dependency through host assembly and SHALL NOT dereference an unavailable `browser.storage.session`, create memory storage, or route presence records through tabs/pages. Firefox MV2 SHALL pass the same concrete session-backed store directly from its persistent Background Page into the same shared host. Storage rejection and authenticated-Port termination SHALL reach Session's existing request-local failure fences without acknowledging, discarding, or weakening the durable transition; a later call after Service Worker recreation SHALL reconnect and use the same session-backed record.
+Chrome MV3 SHALL construct the concrete session-backed PresenceStore in the background Service Worker and expose only its existing `load`/`save` methods to the Offscreen Runtime through a dedicated comctx adapter over a point-to-point Runtime Port. Port name and comctx namespace SHALL be routing values rather than authority. Before delivering a message, Background SHALL require the transport sender's runtime id, exact Offscreen document URL, and absence of a tab; content, options, and every other extension source SHALL be disconnected without reading or writing durable state. Every provider response SHALL resolve through the exact request-to-Port binding recorded when its request arrived. If that binding has detached or been replaced, the response SHALL be dropped and SHALL NOT fall back to the current active Port. Offscreen SHALL admit a response only while that request remains pending on the same binding; uncorrelated, replayed, old-binding, wrong-namespace, wrong-direction, and broadcast responses SHALL reach no comctx callback. From request-ID response registration, each one-shot call SHALL reserve exactly one ordered transport generation. Generic response subscription SHALL NOT open a Port. The local heartbeat response subscription SHALL unregister before the actual `apply`, and that `apply` SHALL consume the oldest remaining request reservation. If the reserved generation terminates before pending insertion, the call SHALL reject before connecting or posting to a replacement and the adapter SHALL remove that operation's one-shot response entry. Port disconnect, synchronous connect/send failure, and adapter disposal SHALL reject every request and pre-send reservation owned by the terminal generation exactly once and release every adapter-owned per-operation response entry, without hanging or automatically replaying `load` or `save`; stale and late traffic SHALL traverse no terminal operation callback, and only a later new application call with a new request ID may create a replacement Port and correlation. Provider-owned long-lived callback handles SHALL retain their existing refresh/re-registration lifetime and SHALL NOT be removed by this one-shot cleanup. The dedicated adapter SHALL use Port send/disconnect as its liveness authority, satisfy comctx heartbeat preflight locally, and transmit only actual one-shot PresenceStore operations. Offscreen SHALL register no broadcast Runtime-message listener for PresenceStore, so another context cannot forge a provider response or observe one through that adapter. The Offscreen document SHALL receive the dependency through host assembly and SHALL NOT dereference an unavailable `browser.storage.session`, create memory storage, or route presence records through tabs/pages. Firefox MV2 SHALL pass the same concrete session-backed store directly from its persistent Background Page into the same shared host. Storage rejection and authenticated-Port termination SHALL reach Session's existing request-local active-generation or release fences without acknowledging, discarding, or weakening current local authority; a later call after Service Worker recreation SHALL reconnect and use the same session-backed record.
 
-The first accepted strict remote SESSION SHALL bind exact `user.id` and `joinedAt` to its source and `presenceId` in the observer ledger and record the current `name`/`avatar` projection. A SESSION with missing, malformed, non-finite, fractional, unsafe, or negative `joinedAt` SHALL fail closed before binding; a later SESSION for the same accepted generation SHALL accept a changed projection only when `user.id` and `joinedAt` match, while an equal projection is idempotent. A different `user.id` or `joinedAt` SHALL be rejected source-locally. Every rejected SESSION SHALL leave prior accepted binding, membership, projection, history, and notices unchanged; it SHALL create no fallback timestamp, user-visible notice, or global recovery. Projection refresh SHALL change no logical membership or notice eligibility. For one committed local generation, a remote generation SHALL be eligible for an observer-local join only when its accepted `joinedAt` is strictly greater than local `joinedAt` and that user transitions from zero active logical generations to one. Equal or earlier time SHALL be historical snapshot convergence even when both peer discovery and SESSION occur only after local commit. Peer discovery and `baselinePeerIds` MAY retain physical catch-up bookkeeping but SHALL NOT decide logical order. A later remote SESSION received during a provisional local attempt SHALL remain attempt-owned and invisible until that attempt commits; rollback or supersession SHALL emit nothing. Physical `PeerLeft` SHALL not produce a logical leave. A valid SESSION_END SHALL produce one observer-local leave only when the user transitions from one active generation to zero. On graceful final local release, Session SHALL replace the active lease with an in-flight final-end identity, send SESSION_END, durably remove that identity after settlement, and only then allow Connection to leave the Chat room. The departing local client need not persist its own leave.
+The first accepted strict remote SESSION SHALL bind exact `user.id` and `joinedAt` to its source and `presenceId` in the observer ledger and record the current `name`/`avatar` projection. A SESSION with missing, malformed, non-finite, fractional, unsafe, or negative `joinedAt` SHALL fail closed before binding. A later SESSION for the same accepted generation SHALL accept a changed projection only when `user.id` and `joinedAt` match, while an equal projection is idempotent. A different `user.id` or `joinedAt` SHALL reject source-locally. Every rejected SESSION SHALL leave prior accepted binding, membership, projection, History, pending leave, and notices unchanged; it SHALL create no fallback timestamp, user-visible notice, or global recovery.
 
-The local self-join notice SHALL be generation-scoped, persist immediately after successful new-generation join without waiting for history, and consume only Runtime private join provenance. Reconnect/recovery/host replacement SHALL not create a candidate; later true return SHALL use a later stable generation event time and produce a distinct notice. All SystemNotice records SHALL remain observer-local: they SHALL never be encoded or sent on the peer wire, included in a history request/response, or replayed from another peer's history. Sender-asserted `joinedAt` SHALL be authoritative only for observer-local notice ordering after strict source binding and SHALL NOT authorize identity, routing, resource admission, or a globally trusted total order under arbitrary clock skew.
+For one committed local generation, a remote generation SHALL be eligible for an observer-local join only when its accepted `joinedAt` is strictly greater than local `joinedAt` and that user transitions from zero displayed logical generations to one. Equal or earlier time SHALL be historical snapshot convergence even when both peer discovery and SESSION occur only after local commit. Peer discovery and `baselinePeerIds` MAY retain physical catch-up bookkeeping but SHALL NOT decide logical order. A later remote SESSION received during a provisional local attempt SHALL remain attempt-owned and invisible until that attempt commits; rollback or supersession SHALL emit nothing.
+
+When PeerLeave removes the last current physical source bound to an accepted remote `presenceId`, Session SHALL start exactly one five-second pending-leave deadline for that presence and SHALL retain the generation in every online snapshot throughout the deadline. Another current physical source for the same presence prevents pending leave. Duplicate PeerLeave facts SHALL be idempotent and SHALL NOT restart or extend the deadline. A valid SESSION that rebinds the same `presenceId`, `user.id`, and `joinedAt` before expiry SHALL cancel the pending leave, fence its stale timer, preserve the current projection, and emit no leave or join. On expiry, if no current source has rebound that presence, Session SHALL remove only that generation and mark it ended in the bounded observer ledger. It SHALL persist one observer-local leave only when the user then has no other active or grace-preserved presence; otherwise it SHALL emit no leave. A SESSION for an expired generation SHALL NOT resurrect it.
+
+On graceful local release, Session SHALL remove its private active-generation record and allow Connection to leave the Chat room through the local release owner without sending a peer lifecycle message or creating a final-end transaction. The departing local client need not persist its own leave.
+
+The local self-join notice SHALL be generation-scoped, persist immediately after successful new-generation join without waiting for History, and consume only Runtime private join provenance. Reconnect/recovery/host replacement SHALL not create a candidate; later true return SHALL use a later stable generation event time and produce a distinct notice. All SystemNotice records SHALL remain observer-local: they SHALL never be encoded or sent on the peer wire, included in History Pull/Push, or replayed from another peer's History. Sender-asserted `joinedAt` SHALL be authoritative only for observer-local notice ordering after strict source binding and SHALL NOT authorize identity, routing, resource admission, or a globally trusted total order under arbitrary clock skew.
 
 #### Scenario: Chrome Offscreen mounts with background-owned durability
 
@@ -939,9 +936,9 @@ The local self-join notice SHALL be generation-scoped, persist immediately after
 
 #### Scenario: Six-timepoint A/B/C/D lifecycle
 
-- **GIVEN** independent actual Runtime Server/Session/Wire stacks use deterministic in-repo transport, A is an existing observer, B is a new local user, C is an additional physical session for B's generation, and D is B's replacement Runtime host
-- **WHEN** the control executes preparation baseline, B first join, duplicate/C publication, transient B loss/D recovery, D final release, and B later return
-- **THEN** B and A SHALL each persist one join for the first logical transition; duplicate/C/loss/recovery SHALL add no notice; A SHALL persist one leave on final end; and later return SHALL persist one fresh self join plus one fresh observer join
+- **GIVEN** independent actual Runtime Server/Session/Connection stacks use deterministic in-repo transport, A is an existing observer, B is a new local user, C is an additional physical source for B's generation, and D is B's replacement Runtime host
+- **WHEN** the control executes preparation baseline, B first join, duplicate/C publication, transient B loss/D same-presence recovery inside grace, D physical departure with grace expiry, and B later return
+- **THEN** B and A SHALL each persist one join for the first logical transition; duplicate/C/loss/recovery SHALL add no notice; A SHALL keep B online during leave grace and persist one leave only on expiry; and later return SHALL persist one fresh self join plus one fresh observer join
 
 #### Scenario: Delayed discovery uses logical join order
 
@@ -951,27 +948,27 @@ The local self-join notice SHALL be generation-scoped, persist immediately after
 
 #### Scenario: A-before-B is invariant across delivery timing
 
-- **GIVEN** A's accepted logical generation began before B's and remains active
+- **GIVEN** A's accepted logical generation began before B's and remains displayed
 - **WHEN** B receives A discovery and the strict historical SESSION before B commit, split across B commit in either order, or both only after B commit
 - **THEN** B SHALL converge membership with exactly `[B joined]`, A SHALL converge with exactly `[A joined, B joined]`, and no delivery order or receiver clock SHALL create an `A joined` notice for B
 
 #### Scenario: Equal logical time is not later
 
-- **GIVEN** B has committed its local logical generation and has no active generation for remote A
+- **GIVEN** B has committed its local logical generation and has no displayed generation for remote A
 - **WHEN** B first accepts A's strict SESSION with `joinedAt` equal to B's local `joinedAt`
 - **THEN** B SHALL converge A as historical snapshot state without an A join notice
 
 #### Scenario: Missing or invalid logical time cannot create membership
 
-- **GIVEN** a source sends a v3 SESSION with missing or invalid `joinedAt`, or mutates `joinedAt` after its generation was accepted
-- **WHEN** the Runtime validates or applies that frame
+- **GIVEN** a source sends a v5 SESSION with missing or invalid `joinedAt`, or mutates `joinedAt` after its generation was accepted
+- **WHEN** the Runtime parses or applies that frame
 - **THEN** it SHALL reject the complete SESSION source-locally, preserve every prior accepted fact, synthesize no receiver-local replacement time, persist no SystemNotice, and leave other sources operational
 
 #### Scenario: Later zero-to-one generation creates one local notice only
 
-- **GIVEN** B is committed and no logical generation for remote C is active
-- **WHEN** B accepts C's strict SESSION with `joinedAt` greater than B's local time and C transitions from zero active generations to one
-- **THEN** B SHALL persist exactly one observer-local `C joined` SystemNotice, duplicates and physical recovery SHALL add none, and that notice SHALL never enter peer wire or history exchange
+- **GIVEN** B is committed and no active or grace-preserved generation for remote C is displayed
+- **WHEN** B accepts C's strict SESSION with `joinedAt` greater than B's local time and C transitions from zero displayed generations to one
+- **THEN** B SHALL persist exactly one observer-local `C joined` SystemNotice, duplicates and physical recovery SHALL add none, and that notice SHALL never enter peer wire or History exchange
 
 #### Scenario: Provisional later join becomes visible only on commit
 
@@ -981,13 +978,37 @@ The local self-join notice SHALL be generation-scoped, persist immediately after
 
 #### Scenario: Physical loss remains provisional
 
-- **WHEN** a bound peer leaves transport without a valid final generation end and later republishes the same generation from reconnect, recovery, host replacement, or rejected-final-end replacement recovery
-- **THEN** Session SHALL publish snapshots only and preserve the logical observer state without a leave/join pair
+- **WHEN** a bound presence loses its last physical source and later republishes the same generation within five seconds
+- **THEN** Session SHALL keep the presence displayed throughout, cancel the pending leave on the valid rebind, and emit no leave/join pair
 
 #### Scenario: Duplicate and late lifecycle facts
 
-- **WHEN** SESSION or SESSION_END is duplicated, an accepted generation changes `user.id` or `joinedAt`, or an ended generation's SESSION arrives late
-- **THEN** Session SHALL apply the accepted generation/end at most once, reject mutation or resurrection of the generation, and persist no duplicate notice
+- **WHEN** PeerLeave is duplicated, an unbound source leaves, a SESSION is duplicated, an accepted generation changes identity, or an expired generation republishes
+- **THEN** Session SHALL start or cancel at most one matching deadline, reject mutation or resurrection, preserve every unrelated presence, and persist no duplicate notice
+
+#### Scenario: PeerLeave keeps the user online during grace
+
+- **GIVEN** a bound remote presence has lost its last current physical source
+- **WHEN** fewer than five seconds have elapsed and no valid same-presence SESSION has rebound
+- **THEN** every online snapshot SHALL continue to display that presence and user, and Session SHALL emit no leave
+
+#### Scenario: Same-presence recovery cancels leave
+
+- **GIVEN** a bound remote presence is pending physical-leave expiry
+- **WHEN** a current source publishes a valid SESSION with the same `presenceId`, `user.id`, and `joinedAt` before five seconds elapse
+- **THEN** Session SHALL cancel the pending leave, fence the old deadline, preserve membership, and emit neither leave nor join
+
+#### Scenario: Grace expiry removes only the affected presence
+
+- **GIVEN** a remote presence remains without a current source through its full five-second leave grace
+- **WHEN** the pending-leave deadline expires
+- **THEN** Session SHALL remove that presence exactly once and persist one leave only if the user has no other active or grace-preserved presence
+
+#### Scenario: Another presence suppresses final-user leave
+
+- **GIVEN** one user's presence is expiring while that user has another active or grace-preserved presence
+- **WHEN** the first presence reaches its leave deadline
+- **THEN** Session SHALL remove only the expired presence, keep the user displayed online, and emit no leave or compensating join
 
 ### Requirement: Invalid records are isolated at send, receive, and retained-load boundaries
 
@@ -1325,7 +1346,7 @@ The background coordinator SHALL own one current host-to-tabs registry for physi
 
 Physical `tabId`, internal document generation, and logical `sessionId`/`presenceId`/`joinedAt` SHALL remain separate identities. Tab id SHALL route and own the physical browser tab; document generation SHALL fence reload and real-navigation responses; logical identity SHALL own membership and notice time. Tab id SHALL not replace logical session identity, and a random page id SHALL not replace browser tab ownership. Multiple tabs in the same Runtime domain SHALL remain distinct physical owners of the same shared domain connection and logical presence rather than creating one logical generation per tab.
 
-Only a trusted browser tab-removal fact, navigation outside content eligibility, or navigation to another Runtime domain SHALL release the old domain tab binding. Inactive, hidden, frozen, discarded, ping-missing, heartbeat-missing, or Port-disconnected state SHALL not release physical tab ownership, start last-tab grace, delete membership, or publish SESSION_END. Connectivity loss MAY only start or join the current bounded ClientLease recovery.
+Only a trusted browser tab-removal fact, navigation outside content eligibility, or navigation to another Runtime domain SHALL release the old domain tab binding. Inactive, hidden, frozen, discarded, ping-missing, heartbeat-missing, or Port-disconnected state SHALL not release physical tab ownership, start last-tab grace, delete membership, or publish a lifecycle-end value. Connectivity loss MAY only start or join the current bounded ClientLease recovery.
 
 Hash-only navigation SHALL retain the current tab, document generation, page attachment, and logical presence. Reload or same-domain eligible document navigation SHALL replace document generation and idempotently reattach the same tab and logical presence. After supported background or Runtime host replacement, the coordinator SHALL reconstruct one registry from still-existing eligible tabs and trusted reattachments, without a false logical join/leave, duplicate lease, origin-wide response route, or parallel Runtime lifecycle owner.
 
@@ -1333,7 +1354,7 @@ Hash-only navigation SHALL retain the current tab, document generation, page att
 
 - **GIVEN** an eligible tab is registered to the current host and owns a logical presence
 - **WHEN** the tab becomes inactive, hidden, frozen, or discarded, or its page ping, heartbeat, or Port disappears
-- **THEN** the background SHALL retain the tab owner and logical presence, MAY enter bounded connectivity recovery, and SHALL emit no domain release, SESSION_END, leave notice, or replacement logical join
+- **THEN** the background SHALL retain the tab owner and logical presence, MAY enter bounded connectivity recovery, and SHALL emit no domain release, lifecycle-end value, leave notice, or replacement logical join
 
 #### Scenario: Trusted close releases exactly once
 
@@ -1345,7 +1366,7 @@ Hash-only navigation SHALL retain the current tab, document generation, page att
 
 - **GIVEN** one host owns two eligible tabs in the same Runtime domain
 - **WHEN** both attach and either non-last tab closes
-- **THEN** the registry SHALL retain two distinct physical tab owners before close and one after close, while Runtime retains one shared logical presence and emits no extra join, leave, SESSION_END, or lifecycle notice
+- **THEN** the registry SHALL retain two distinct physical tab owners before close and one after close, while Runtime retains one shared logical presence and emits no extra join, leave, lifecycle-end value, or lifecycle notice
 
 #### Scenario: Navigation changes the owned domain boundary
 
@@ -1357,7 +1378,7 @@ Hash-only navigation SHALL retain the current tab, document generation, page att
 
 - **GIVEN** an eligible tab owns a current logical presence for one Runtime domain
 - **WHEN** that tab reloads or performs a same-domain eligible document navigation
-- **THEN** a new document generation SHALL rebind to the same tab and logical presence, every old-document response SHALL be inert, and no join, leave, SESSION_END, duplicate lease, or lifecycle notice SHALL result
+- **THEN** a new document generation SHALL rebind to the same tab and logical presence, every old-document response SHALL be inert, and no join, leave, lifecycle-end value, duplicate lease, or lifecycle notice SHALL result
 
 #### Scenario: Host replacement reconstructs multiple tabs
 

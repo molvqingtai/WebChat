@@ -197,18 +197,25 @@ Chat wire SHALL be exactly `ChatRoomMessage = SessionMessage | ChatMessage | His
 - **WHEN** a peer sends a reaction message
 - **THEN** it SHALL carry `userId` and `active: boolean` plus the documented target/reaction/HLC/id fields
 
-### Requirement: Chat presence uses causal generation and final-end facts
+### Requirement: Chat presence uses causal generation and physical leave facts
 
-Every `SessionMessage` SHALL carry a required opaque `presenceId` identifying one logical online generation independently of physical `sessionId` and transport `sourcePeerId`, plus required `joinedAt` identifying when that logical generation began. Session SHALL allocate and persist this finite safe non-negative integer with a new local generation and project that exact value to every SESSION. A reconnect, refresh, recovery, reattach, duplicate publication, additional physical session, or supported Runtime host replacement SHALL reuse the active generation's exact `{presenceId, joinedAt}`. Only an initial join or a return after the prior generation ended SHALL allocate a new generation and a later local logical time. `SessionEndMessage` SHALL carry exactly `type:'session-end'` and that generation's `presenceId`; its strict schema SHALL reject missing or unknown fields. No receiver observation/discovery time, `clock.now()` substitution, old SESSION decoder, optional-field fallback, alias, dual schema, or compatibility bridge SHALL exist.
+Every `SessionMessage` SHALL carry a required opaque `presenceId` identifying one logical online generation independently of physical `sessionId` and transport `sourcePeerId`, plus required `joinedAt` identifying when that generation began. Session SHALL allocate and persist the exact finite safe non-negative `{presenceId, joinedAt}` for an initial join or true return after completed local release. Reconnect, refresh, recovery, reattach, duplicate publication, an additional physical session, or supported Runtime host replacement SHALL reuse the active generation.
 
-The first accepted remote SESSION SHALL bind exact `user.id` and `joinedAt` to that source and `presenceId` and record the current `{name, avatar}` projection. A duplicate or replacement SESSION for the same accepted generation with the same `user.id` and `joinedAt` SHALL replace a changed `name` or `avatar` projection, while an equal projection SHALL be idempotent; neither case creates a logical lifecycle or chat/history event. A different `user.id` or `joinedAt` SHALL be rejected source-locally and SHALL not mutate the accepted binding, membership, history, or observer notices. Receiver observation time SHALL remain local metadata and SHALL not substitute for the remote logical time. For one committed local generation, a remote generation SHALL be eligible for an observer-local join only when its accepted `joinedAt` is strictly greater than the local generation's `joinedAt` and the remote user transitions from zero active logical generations to one. Equal or earlier remote time SHALL converge as historical snapshot state without a join notice even if discovery and SESSION both occur only after local commit. The sender-asserted time SHALL be used only for observer-local notice eligibility; it SHALL NOT authorize identity, routing, admission, persistence, or a globally trusted order under arbitrary clock skew.
+The Chat protocol SHALL contain no end message, end schema, end union member, end alias, or receiver end handler. Physical peer departure is trusted provider lifecycle context and SHALL NOT be encoded as peer data. The strict Chat schema SHALL reject `session-end` and every other unknown type. Runtime logical membership, five-second leave grace, same-presence recovery, and user-level final-leave classification are specified by `webrtc-runtime`.
 
-A graceful final release SHALL first durably replace the private active lease with the same generation's unsettled final-end identity, then publish the end fact on the source-ordered Wire lane. Retirement persistence rejection SHALL send no end and preserve the active generation plus physical membership. The durable identity SHALL remain present throughout every unsettled first or retry send. Explicit end-send rejection SHALL durably mark that generation retryable; a same-host retry SHALL durably mark the same identity in flight again before resending the idempotent end. A same-user replacement that loads either unsettled marker SHALL continue that exact END transaction with the same `presenceId`; it SHALL NOT expose the generation as a successful active join or let it carry live messages. Successful send settlement SHALL durably replace the unsettled marker with private settled-cleanup ownership before removing the marker. A replacement that loads settled-cleanup ownership SHALL only retry marker removal and SHALL publish neither SESSION nor SESSION_END. Only successful marker removal may physically leave the Chat room. A failed transition or cleanup SHALL retain a safe durable identity and physical membership still owned by that host. Complete cleanup SHALL leave no persistent retry marker. Receivers SHALL apply duplicate SESSION and SESSION_END facts idempotently, reject SESSION after its accepted end, and classify logical joins/leaves from generation, logical join time, and end facts rather than debounce, transport loss, `sourcePeerId`, physical `sessionId`, discovery order, or receiver observation time. `ChatMessage`, history, and World shapes remain unchanged.
+The first accepted remote SESSION SHALL bind exact `user.id` and `joinedAt` to its source and `presenceId` and record the current `{name, avatar}` projection. A duplicate or replacement SESSION for the same accepted generation with the same `user.id` and `joinedAt` SHALL update only a changed projection and otherwise remain idempotent. A different `user.id` or `joinedAt` SHALL reject source-locally without changing the accepted binding, membership, History, or observer notices. Receiver observation time SHALL remain local metadata and SHALL not substitute for remote logical time.
+
+For one committed local generation, a remote generation SHALL be eligible for an observer-local join only when its accepted `joinedAt` is strictly greater than the local generation's `joinedAt` and the remote user transitions from zero displayed logical generations to one. Equal or earlier remote time SHALL converge as historical snapshot state without a join notice. Sender time SHALL serve only observer-local notice eligibility and SHALL NOT authorize identity, routing, admission, persistence, or a globally trusted order.
 
 #### Scenario: Transport recovery reuses a generation
 
-- **WHEN** one logical user loses and restores a physical transport, refreshes, reattaches, or replaces a supported Runtime host without a final generation end
-- **THEN** every replacement SESSION SHALL carry the same `presenceId` and `joinedAt`, and receivers SHALL not classify a new logical join or leave
+- **WHEN** one logical user loses and restores a physical transport, refreshes, reattaches, or replaces a supported Runtime host while its generation remains current
+- **THEN** every replacement SESSION SHALL carry the same `presenceId` and `joinedAt`, and a same-presence recovery inside the Runtime leave grace SHALL create no logical leave or join
+
+#### Scenario: Removed end type is rejected
+
+- **WHEN** a current Chat peer receives a decoded value whose `type` is `session-end`
+- **THEN** the current closed Chat schema SHALL reject the complete value as unknown before Session, persistence, projection, or notice behavior
 
 #### Scenario: Delayed historical session creates no join notice
 
@@ -218,50 +225,28 @@ A graceful final release SHALL first durably replace the private active lease wi
 
 #### Scenario: Invalid session cannot acquire a receiver timestamp
 
-- **WHEN** a v3 SESSION is missing valid `joinedAt` or changes the accepted `joinedAt` for its `presenceId`
+- **WHEN** a v5 SESSION is missing valid `joinedAt` or changes the accepted `joinedAt` for its `presenceId`
 - **THEN** the receiver SHALL reject the complete source-local frame, SHALL preserve prior accepted binding and membership, and SHALL not substitute observation time, discovery order, `baselinePeerIds`, or `clock.now()` for notice classification
 
 #### Scenario: Later logical generation creates one join notice
 
-- **GIVEN** a committed local generation and no active logical generation for a remote user
+- **GIVEN** a committed local generation and no displayed logical generation for a remote user
 - **WHEN** a valid remote SESSION first binds a `presenceId` whose `joinedAt` is strictly later than the local generation
-- **THEN** the receiver SHALL classify one observer-local join when that user transitions zero-to-one and SHALL classify no duplicate for repeated publication
+- **THEN** the receiver SHALL classify one observer-local join on that user's zero-to-one transition and no duplicate for repeated publication
 
 #### Scenario: Same generation refreshes its user projection
 
 - **WHEN** a source republishes an accepted `presenceId` with the same `user.id` and `joinedAt` but a changed `name` or `avatar`
-- **THEN** the receiver SHALL accept the current projection idempotently without changing membership count or logical generation and without emitting a chat/history event or observer notice
+- **THEN** the receiver SHALL accept the current projection idempotently without changing membership count or logical generation and without emitting a Chat, History, join, or leave event
 
 #### Scenario: Same generation cannot change its identity binding
 
 - **WHEN** a source republishes an accepted `presenceId` with a different `user.id` or `joinedAt`
 - **THEN** the receiver SHALL reject that source-local SESSION without changing membership, notice state, or the original generation binding
 
-#### Scenario: Final end is ordered and idempotent
-
-- **WHEN** the last local owner gracefully releases a generation and each external stage succeeds
-- **THEN** it SHALL durably retire the private active lease while retaining the generation identity, settle exactly the strict `SessionEndMessage`, durably record settled-cleanup ownership, remove that marker, then physically leave the room, and receivers SHALL classify at most one final logical leave even if the end fact is duplicated
-
-#### Scenario: Final end is fenced by an external rejection
-
-- **WHEN** private retirement persistence, an END-state transition, SESSION_END send, or post-settlement cleanup rejects
-- **THEN** the peer SHALL NOT physically leave or publish a false local lifecycle end; retirement rejection SHALL retain the same active lease, while every later rejection SHALL retain a recoverable final-end identity for the already-retired generation
-
-#### Scenario: Unsettled end survives host replacement
-
-- **GIVEN** durable retirement succeeded and the first or retry SESSION_END is unsettled or explicitly rejected
-- **WHEN** the Runtime host is replaced before END settlement
-- **THEN** the replacement SHALL physically rebind the retained `presenceId` only to continue the same idempotent END transaction, SHALL expose no successful active join or live-message authority, and SHALL produce at most one observer leave while clearing every private final-end marker
-
-#### Scenario: Settled cleanup survives host replacement
-
-- **GIVEN** receivers accepted SESSION_END and the durable record contains settled-cleanup ownership because marker removal is incomplete
-- **WHEN** the Runtime host is replaced
-- **THEN** the replacement SHALL remove that marker without joining Chat or World, publishing SESSION or SESSION_END, reviving the ended generation, or changing the observer's exactly-once leave
-
 #### Scenario: Later return uses a fresh generation
 
-- **WHEN** the same user returns after its accepted final generation end
+- **WHEN** the same user returns after completed local release and a later physical connection begins
 - **THEN** its SESSION SHALL use a different `presenceId` and a later local `joinedAt`, and receivers SHALL classify one fresh logical join when the strict later-than rule holds
 
 ### Requirement: History wire shapes are bounded and reference-complete

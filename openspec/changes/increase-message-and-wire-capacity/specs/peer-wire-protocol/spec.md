@@ -2,7 +2,7 @@
 
 ### Requirement: Current v6 peer wire is a clean capacity generation
 
-The current peer protocol SHALL use exact v6 Chat and World physical namespaces. It SHALL retain the exact current strict message fields, discriminants, History Pull/Push structures, and codec representation while replacing the capacity contract in this change. Current clients SHALL join and publish only v6. They SHALL not join, advertise, decode, publish, bridge, or fall back to v1-v5 rooms. The namespace cut SHALL prevent a v5 peer from appearing compatible and then failing only when a frame exceeds the old budgets.
+The current peer protocol SHALL use exact v6 Chat and World physical namespaces. It SHALL retain the exact current strict message fields, discriminants, History Pull/Push structures, codec representation, Session `{presenceId, joinedAt}` semantics, and provider-PeerLeave lifecycle while replacing only the capacity contract in this change. Physical departure SHALL remain trusted provider context outside peer data, and no Chat lifecycle-end value SHALL exist. Current clients SHALL join and publish only v6. They SHALL not join, advertise, decode, publish, bridge, or fall back to v1-v5 rooms. The namespace cut SHALL prevent a v5 peer from appearing compatible and then failing only when a frame exceeds the old budgets.
 
 #### Scenario: Current peers use v6 only
 
@@ -13,6 +13,11 @@ The current peer protocol SHALL use exact v6 Chat and World physical namespaces.
 
 - **WHEN** a peer presents `type:'session-end'` or another removed Chat lifecycle value
 - **THEN** the strict v6 Chat schema SHALL reject it as unknown, and no current client SHALL join an older room to interpret it
+
+#### Scenario: Physical leave lifecycle survives the capacity cut
+
+- **WHEN** a current v6 source physically departs or rebinds the same logical generation during Session's five-second leave grace
+- **THEN** the provider PeerLeave fact and Session binding SHALL remain the sole lifecycle path, `{presenceId, joinedAt}` SHALL retain its current meaning, and no lifecycle-end wire value, compatibility decoder, or capacity-specific alternate path SHALL run
 
 #### Scenario: History bytes use only the replacement shapes
 
