@@ -6,7 +6,7 @@
   "additionalProperties": false,
   "required": ["schema_version", "diagram_type", "meta", "components"],
   "properties": {
-    "schema_version": { "const": 2 },
+    "schema_version": { "const": 1 },
     "diagram_type": { "const": "architecture" },
     "meta": {
       "type": "object",
@@ -77,9 +77,9 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["type", "label", "wraps"],
+        "required": ["kind", "label", "wraps"],
         "properties": {
-          "type": { "enum": ["region", "security-group"] },
+          "kind": { "enum": ["region", "security-group"] },
           "label": { "type": "string", "minLength": 1 },
           "wraps": {
             "type": "array",

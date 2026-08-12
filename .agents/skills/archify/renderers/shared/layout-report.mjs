@@ -17,7 +17,7 @@ export function componentBox(c) {
 
 export function boundaryBox(b) {
   return {
-    type: b.type,
+    kind: b.kind,
     label: b.label,
     x: Math.round(b.x),
     y: Math.round(b.y),

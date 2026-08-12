@@ -48,7 +48,7 @@ if (svgMatches.length === 1) {
   addCheck(
     'orthogonal_arrows',
     diagonal.length === 0,
-    diagonal.map((arrow) => `${arrow.lineType} ${arrow.index}: ${arrow.raw}`)
+    diagonal.map((arrow) => `${arrow.kind} ${arrow.index}: ${arrow.raw}`)
   )
 
   if (legendStart >= 0) {
@@ -58,7 +58,7 @@ if (svgMatches.length === 1) {
     addCheck(
       'legend_clearance',
       collisions.length === 0,
-      collisions.map((hit) => `${hit.arrow.lineType} ${hit.arrow.index} crosses legend ${hit.box.label}`)
+      collisions.map((hit) => `${hit.arrow.kind} ${hit.arrow.index} crosses legend ${hit.box.label}`)
     )
   } else {
     addCheck('legend_clearance', true, ['no legend marker found'])
@@ -79,7 +79,7 @@ function collectArrows(fragment) {
     if (!/\bmarker-end=/.test(raw)) continue
     const attrs = parseAttrs(raw)
     const segments = tag[1].toLowerCase() === 'line' ? lineSegments(attrs) : pathSegments(attrs.d || '')
-    arrows.push({ lineType: tag[1].toLowerCase(), index: (index += 1), raw, segments })
+    arrows.push({ kind: tag[1].toLowerCase(), index: (index += 1), raw, segments })
   }
 
   return arrows

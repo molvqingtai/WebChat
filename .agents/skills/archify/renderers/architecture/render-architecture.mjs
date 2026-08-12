@@ -109,7 +109,7 @@ const legendY = () => viewBox[1] - 16
 // ---- Validation: mechanical correctness, never layout taste -----------------
 function validateArchitecture() {
   const problems = []
-  if (arch.schema_version !== 2) problems.push('Architecture files must set "schema_version": 2.')
+  if (arch.schema_version !== 1) problems.push('Architecture files must set "schema_version": 1.')
   if (arch.diagram_type !== 'architecture') problems.push('Architecture files must set "diagram_type": "architecture".')
   if (!arch.meta?.title) problems.push('Architecture files must include meta.title.')
   if (!Array.isArray(arch.components) || arch.components.length < 1) {
@@ -301,9 +301,9 @@ function pathFor(conn) {
 
 // ---- Rendering ---------------------------------------------------------------
 function renderBoundary(b) {
-  const cls = b.type === 'security-group' ? 'c-security-group' : 'c-region'
-  const labelCls = b.type === 'security-group' ? 't-security' : 't-cloud'
-  const rx = b.type === 'security-group' ? 8 : 12
+  const cls = b.kind === 'security-group' ? 'c-security-group' : 'c-region'
+  const labelCls = b.kind === 'security-group' ? 't-security' : 't-cloud'
+  const rx = b.kind === 'security-group' ? 8 : 12
   return `        <rect x="${b.x}" y="${b.y}" width="${b.width}" height="${b.height}" rx="${rx}" class="${cls}" stroke-width="1"/>
         <text x="${b.x + 8}" y="${b.y + 18}" class="${labelCls}" font-size="9" font-weight="600">${esc(b.label)}</text>`
 }

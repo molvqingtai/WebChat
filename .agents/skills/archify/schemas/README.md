@@ -24,17 +24,11 @@ in generated HTML. Omit it, or set `"none"`, for the default static output.
 
 ## schema_version policy
 
-`schema_version` pins the IR contract: a file that validates today keeps
-rendering identically on every 2.x release. A breaking change to any IR shape
-bumps the constant; renderers then reject older-version files with a clear
-schema error instead of misrendering them. Additive, backwards-compatible
-fields do not bump the version.
-
-The **architecture** schema is currently **v2** (`"const": 2`): it replaced
-the boundary discriminator with `type` as an intentionally incompatible clean
-cut, so all v1 architecture IR is deliberately rejected. The other four
-diagram schemas (`workflow`, `sequence`, `dataflow`, `lifecycle`) remain
-**v1** (`"const": 1`) and are unchanged.
+`schema_version` is `"const": 1`. The constant pins the IR contract: a file
+that validates today keeps rendering identically on every 2.x release. A
+breaking change to any IR shape bumps the constant to `2`; renderers will then
+reject version-1 files with a clear schema error instead of misrendering them.
+Additive, backwards-compatible fields do not bump the version.
 
 ## Shared definitions (common.schema.json)
 

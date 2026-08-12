@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 1,
   "diagram_type": "architecture",
   "meta": {
     "title": "Sample Web App",
@@ -85,11 +85,11 @@
   ],
   "boundaries": [
     {
-      "type": "region",
+      "kind": "region",
       "label": "AWS Region: us-west-2",
       "wraps": ["cdn", "lb", "api", "cache", "db", "s3", "queue", "worker"]
     },
-    { "type": "security-group", "label": "sg-api :443/:8000", "wraps": ["lb", "api"] }
+    { "kind": "security-group", "label": "sg-api :443/:8000", "wraps": ["lb", "api"] }
   ],
   "connections": [
     { "from": "users", "to": "cdn", "label": "HTTPS", "variant": "emphasis" },

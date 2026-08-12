@@ -215,7 +215,7 @@ Architecture has the same read-schema-then-render loop as the other modes — pr
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 1,
   "diagram_type": "architecture",
   "meta": { "title": "Sample Web App", "subtitle": "3-tier SaaS on AWS", "output": "web-app.html" },
   "components": [
@@ -223,7 +223,7 @@ Architecture has the same read-schema-then-render loop as the other modes — pr
     { "id": "api", "type": "backend", "label": "API Server", "sublabel": "FastAPI :8000", "pos": [460, 300] },
     { "id": "db", "type": "database", "label": "PostgreSQL", "sublabel": ":5432", "pos": [680, 300] }
   ],
-  "boundaries": [{ "type": "region", "label": "AWS us-west-2", "wraps": ["api", "db"] }],
+  "boundaries": [{ "kind": "region", "label": "AWS us-west-2", "wraps": ["api", "db"] }],
   "connections": [
     { "from": "users", "to": "api", "label": "HTTPS", "variant": "emphasis" },
     { "from": "api", "to": "db", "label": "SQL" }

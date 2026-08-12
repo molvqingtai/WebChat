@@ -34,14 +34,14 @@ export function writeDiagram({ outPath, template, meta, footerLabel, svg, cards 
 }
 
 // Accessible name for the generated diagram SVG.
-export function svgRootAttrs(meta, type) {
+export function svgRootAttrs(meta, kind) {
   const name = meta.subtitle ? `${meta.title} — ${meta.subtitle}` : meta.title
   const animation = meta.animation === 'trace' ? ' data-animation="trace"' : ''
-  return `role="img" aria-label="${esc(`${name} (${type})`)}"${animation}`
+  return `role="img" aria-label="${esc(`${name} (${kind})`)}"${animation}`
 }
 
-export function animateAttr(meta, type, step) {
+export function animateAttr(meta, kind, step) {
   if (meta.animation !== 'trace') return ''
   const safeStep = Number.isFinite(step) && step >= 0 ? Math.floor(step) : 0
-  return ` data-animate="${type}" style="--step:${safeStep}"`
+  return ` data-animate="${kind}" style="--step:${safeStep}"`
 }

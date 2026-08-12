@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 1,
   "diagram_type": "architecture",
   "meta": {
     "title": "WebChat Remesh DDD + CQRS Architecture",
@@ -299,7 +299,7 @@
   ],
   "boundaries": [
     {
-      "type": "region",
+      "kind": "region",
       "label": "Page / Origin Contexts",
       "wraps": [
         "content-ui",
@@ -316,7 +316,7 @@
       ]
     },
     {
-      "type": "region",
+      "kind": "region",
       "label": "Browser Extension Boundary",
       "wraps": [
         "content-ui",
@@ -353,7 +353,7 @@
       "pad": 44
     },
     {
-      "type": "security-group",
+      "kind": "security-group",
       "label": "Headless Remesh DDD + CQRS Runtime",
       "wraps": [
         "lifecycle-domain",
@@ -366,17 +366,17 @@
       ]
     },
     {
-      "type": "security-group",
+      "kind": "security-group",
       "label": "Strict Public Peer Contract",
       "wraps": ["wire-protocol", "wire-codec"]
     },
     {
-      "type": "security-group",
+      "kind": "security-group",
       "label": "Private Provider Boundary",
       "wraps": ["transport-extern", "artico"]
     },
     {
-      "type": "security-group",
+      "kind": "security-group",
       "label": "Disjoint Background Service RPC",
       "wraps": ["notification-rpc", "notification-provider", "app-action-rpc", "app-action-provider"]
     }
