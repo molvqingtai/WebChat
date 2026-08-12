@@ -383,7 +383,10 @@ const ConnectionDomain = Remesh.domain({
             ? [wireDomain.command.LeaveRoomCommand({ roomId: attempt.roomId, preservePending: false })]
             : []),
           ...(committed.length === 0 && !hasOtherAttempt
-            ? [wireDomain.command.LeaveRoomCommand({ roomId: getWorldRoomId(), preservePending: false })]
+            ? [
+                wireDomain.command.LeaveRoomCommand({ roomId: getWorldRoomId(), preservePending: false }),
+                worldDomain.command.DepartRoomCommand()
+              ]
             : []),
           ...(attempt.mode === 'reconnect' ? [lifecycleDomain.command.FinishReconnectCommand(attempt.domain)] : []),
           ...(attempt.operationId

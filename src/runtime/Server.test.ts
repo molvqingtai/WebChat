@@ -1788,6 +1788,47 @@ describe('RuntimeServer lifecycle', () => {
     expect(world.localPresence).toBeUndefined()
     disposeServer(server)
   })
+
+  it('retains live remote World presence across ordinary same-domain supersession', async () => {
+    const clock = new FakeClock()
+    const fake = createFakeTransport({ physicalReady: false })
+    const server = createServer({ transport: fake.transport, clock, codec: jsonCodec })
+    const roomId = getChatRoomId(DOMAIN)
+    const worldRoomId = getWorldRoomId()
+    await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
+
+    // Hold the first cold join's Chat publication after the physical World peer joined.
+    fake.plantPeer(roomId, 'chat-peer')
+    fake.hangSendsTo(roomId)
+    const firstJoin = server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE }).then(
+      () => null,
+      (error: Error) => error
+    )
+    await fake.waitForDesiredRooms(2)
+    fake.open()
+    await fake.waitForSendAttempt(roomId)
+
+    // A live remote World presence arrives while the first join is provisional.
+    emitRemoteWorldPresence(fake)
+    await settle()
+    expect((await server.getSnapshot()).world.presences.map((item) => item.sourcePeerId)).toContain('remote-peer')
+
+    // Supersede with a new same-domain join; the physical World owner stays live throughout.
+    const refreshedUser = { ...USER, name: 'Refreshed' }
+    const secondJoin = server.joinChatRoom({ domain: DOMAIN, user: refreshedUser, site: SITE })
+    await expect(firstJoin).resolves.toBeNull()
+
+    fake.releaseSends()
+    const snapshot = await secondJoin
+    if (!snapshot) throw new Error('Join was cancelled')
+
+    expect(snapshot.domains[0]).toMatchObject({ domain: DOMAIN, chatRoomJoined: true })
+    expect(fake.joined.has(worldRoomId)).toBe(true)
+    expect((await server.getSnapshot()).world.presences).toEqual([
+      expect.objectContaining({ sourcePeerId: 'remote-peer' })
+    ])
+    disposeServer(server)
+  })
 })
 
 describe('RuntimeServer provisional recovery races', () => {

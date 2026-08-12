@@ -463,18 +463,10 @@ const WorldDomain = Remesh.domain({
         const nextStage = remainingStages.find((item) => !item.publicationPending)
         const revision = get(PublicationRevisionState()) + (aborted.publicationPending ? 1 : 0)
         if (!Number.isSafeInteger(revision)) return ErrorEvent(new Error('World publication revision exhausted'))
-        // A deferred staged registration was allowed to keep the World projection alive for its
-        // follow-up snapshot; when that last owner aborts and no committed registration, remaining
-        // stage, pending final publication, or release continuation still owns World, settle the
-        // same terminal truth as final World departure.
-        const worldOrphaned =
-          remainingStages.length === 0 &&
-          get(RegistrationsState()).length === 0 &&
-          get(PendingFinalPublicationState()) === null &&
-          get(LiveReleaseContinuationsState()).length === 0
+        // Supersession aborts the predecessor's stage while the same physical World owner stays
+        // live for the successor: the projection is cleared only on actual physical departure.
         return [
           StagedRegistrationsState().new(remainingStages),
-          ...(worldOrphaned ? [JoinedState().new(false), PresencesState().new([]), RecoveryState().new(null)] : []),
           ...(aborted.publicationPending ? [PublicationRevisionState().new(revision)] : []),
           ...(nextStage && !remainingStages.some((item) => item.publicationPending)
             ? [PublishStagedCommand(nextStage.attemptId)]
@@ -482,6 +474,14 @@ const WorldDomain = Remesh.domain({
           ...(aborted.publicationPending ? [EnsureFullPublicationCommand()] : [])
         ]
       }
+    })
+
+    // The physical World owner departed with no remaining owner: settle the same terminal truth as
+    // final World departure. Intentional physical leaves drive this; attempt supersession never
+    // does, because a live successor keeps the World owner joined.
+    const DepartRoomCommand = domain.command({
+      name: 'World.DepartRoomCommand',
+      impl: () => [JoinedState().new(false), PresencesState().new([]), RecoveryState().new(null)]
     })
 
     const PublishCurrentCommand = domain.command({
@@ -782,6 +782,7 @@ const WorldDomain = Remesh.domain({
         PublishStagedCommand,
         CommitStagedCommand,
         AbortStagedCommand,
+        DepartRoomCommand,
         PublishCurrentCommand,
         ReleaseDomainCommand,
         PeerJoinedCommand,
