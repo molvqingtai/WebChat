@@ -463,8 +463,18 @@ const WorldDomain = Remesh.domain({
         const nextStage = remainingStages.find((item) => !item.publicationPending)
         const revision = get(PublicationRevisionState()) + (aborted.publicationPending ? 1 : 0)
         if (!Number.isSafeInteger(revision)) return ErrorEvent(new Error('World publication revision exhausted'))
+        // A deferred staged registration was allowed to keep the World projection alive for its
+        // follow-up snapshot; when that last owner aborts and no committed registration, remaining
+        // stage, pending final publication, or release continuation still owns World, settle the
+        // same terminal truth as final World departure.
+        const worldOrphaned =
+          remainingStages.length === 0 &&
+          get(RegistrationsState()).length === 0 &&
+          get(PendingFinalPublicationState()) === null &&
+          get(LiveReleaseContinuationsState()).length === 0
         return [
           StagedRegistrationsState().new(remainingStages),
+          ...(worldOrphaned ? [JoinedState().new(false), PresencesState().new([]), RecoveryState().new(null)] : []),
           ...(aborted.publicationPending ? [PublicationRevisionState().new(revision)] : []),
           ...(nextStage && !remainingStages.some((item) => item.publicationPending)
             ? [PublishStagedCommand(nextStage.attemptId)]
