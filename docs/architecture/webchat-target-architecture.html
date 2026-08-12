@@ -973,13 +973,14 @@
         <rect x="2390" y="300" width="205" height="76" rx="6" class="c-mask"/>
         <rect x="2390" y="300" width="205" height="76" rx="6" class="c-security" stroke-width="1.5"/>
         <text x="2492.5" y="336" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">RoomTransportExtern</text>
-        <text x="2492.5" y="352" class="t-muted" font-size="9" text-anchor="middle">private provider capability</text>
+        <text x="2492.5" y="352" class="t-muted" font-size="9" text-anchor="middle">private scope-keyed provider capability</text>
         <text x="2492.5" y="368" class="t-security" font-size="7" text-anchor="middle">Wire only</text>
 
         <rect x="2630" y="300" width="205" height="76" rx="6" class="c-mask"/>
         <rect x="2630" y="300" width="205" height="76" rx="6" class="c-cloud" stroke-width="1.5"/>
         <text x="2732.5" y="336" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Artico Provider Impl</text>
-        <text x="2732.5" y="352" class="t-muted" font-size="9" text-anchor="middle">replaceable WebRTC adapter</text>
+        <text x="2732.5" y="352" class="t-muted" font-size="9" text-anchor="middle">scoped peer owners per room scope</text>
+        <text x="2732.5" y="368" class="t-cloud" font-size="7" text-anchor="middle">World peer + per-domain Chat peers</text>
 
         <rect x="2630" y="20" width="205" height="68" rx="6" class="c-mask"/>
         <rect x="2630" y="20" width="205" height="68" rx="6" class="c-external" stroke-width="1.5"/>
@@ -989,7 +990,7 @@
         <rect x="2630" y="710" width="205" height="72" rx="6" class="c-mask"/>
         <rect x="2630" y="710" width="205" height="72" rx="6" class="c-external" stroke-width="1.5"/>
         <text x="2732.5" y="744" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Remote v2 Peers</text>
-        <text x="2732.5" y="760" class="t-muted" font-size="9" text-anchor="middle">isolated World / Chat rooms</text>
+        <text x="2732.5" y="760" class="t-muted" font-size="9" text-anchor="middle">isolated World / per-domain Chat rooms</text>
 
         <!-- Connection labels -->
         <rect x="149.6" y="206" width="38.8" height="14" rx="3" class="c-mask"/>
@@ -1103,7 +1104,7 @@
         </div>
         <ul>
           <li>&bull; Lifecycle: domain leases/grace; Connection: join/leave/reconnect/generation</li>
-          <li>&bull; Session: committed sessions/snapshot/id/HLC; World: presence</li>
+          <li>&bull; Session: committed sessions/snapshot/id/HLC; World: presence; release completion gates rebuild</li>
           <li>&bull; History owns requesters, providers, cutoffs, cursors, and batches; Delivery owns sequence, un-ACK, and replay</li>
           <li>&bull; Session validates live Chat before Delivery; History queries Session binding</li>
           <li>&bull; Wire: trusted room/source, immutable protocol translation, queues, provider callbacks</li>
@@ -1137,6 +1138,8 @@
           <li>&bull; Wire is the anti-corruption boundary: trusted source, strict validation, ordered queues</li>
           <li>&bull; RoomTransportExtern is Runtime-private and visible only to Wire</li>
           <li>&bull; Artico is one provider implementation; fake and Artico run the same contract suite</li>
+          <li>&bull; One dedicated World peer plus one Chat peer per domain; no host-wide shared peer</li>
+          <li>&bull; Reconnect stops the old Chat peer before its replacement joins with a fresh peerId</li>
         </ul>
       </div>
     </div>

@@ -90,6 +90,12 @@ const WorldDomain = Remesh.domain({
       name: 'World.LiveReleaseContinuationsState',
       default: []
     })
+    // A final-site release still owes the World room one empty `sites: []` snapshot before the
+    // release owner may close; the removed registration's identity is retained for that publication.
+    const PendingFinalPublicationState = domain.state<{ user: ChatUser } | null>({
+      name: 'World.PendingFinalPublicationState',
+      default: null
+    })
     const PublicationRevisionState = domain.state<number>({
       name: 'World.PublicationRevisionState',
       default: 0
@@ -122,9 +128,23 @@ const WorldDomain = Remesh.domain({
         return presenceFor(prospective, options.sessionId)
       }
     })
+    // Exact World ownership/demand: any committed registration, staged attempt (other than one
+    // being aborted by the caller), pending final publication, or live release continuation keeps
+    // the physical World room a live owner. The physical departure decision must never be derived
+    // from Session/attempt facts alone.
+    const WorldDemandQuery = domain.query({
+      name: 'World.WorldDemandQuery',
+      impl: ({ get }, ignoredAttemptId?: string) =>
+        get(RegistrationsState()).length > 0 ||
+        get(StagedRegistrationsState()).some((item) => item.attemptId !== ignoredAttemptId) ||
+        get(PendingFinalPublicationState()) !== null ||
+        get(LiveReleaseContinuationsState()).length > 0
+    })
     const PublicationPresenceQuery = domain.query({
       name: 'World.PublicationPresenceQuery',
       impl: ({ get }) => {
+        const pendingFinal = get(PendingFinalPublicationState())
+        if (pendingFinal) return { sessionId: options.sessionId, user: pendingFinal.user, sites: [] }
         const staged = get(StagedRegistrationsState()).find((item) => item.publicationPending)
         const registrations = staged
           ? replaceBy(get(RegistrationsState()), (item) => item.domain === staged.domain, staged)
@@ -134,6 +154,9 @@ const WorldDomain = Remesh.domain({
     })
 
     const StagedEvent = domain.event<{ attemptId: string }>({ name: 'World.StagedEvent' })
+    // Emitted when a settled final-removal publication deferred a staged registration: the
+    // follow-up full snapshot containing the staged site starts from this signal.
+    const StagedPublicationDeferredEvent = domain.event({ name: 'World.StagedPublicationDeferredEvent' })
     const StagedPublishedEvent = domain.event<{ attemptId: string; presence: WorldRoomMessage }>({
       name: 'World.StagedPublishedEvent'
     })
@@ -165,24 +188,42 @@ const WorldDomain = Remesh.domain({
       const staged = get(StagedRegistrationsState()).find((item) => item.publicationPending)
       const recovery = get(RecoveryState())
       const released = get(LiveReleaseContinuationsState())
+      const pendingFinal = get(PendingFinalPublicationState())
+      // A final-removal publication settles only the release facts its empty payload represents: a
+      // staged registration observed during it earns a follow-up full snapshot containing its own
+      // site before it may publish-accept.
+      const stagedDeferred = pendingFinal !== null && staged !== undefined
+      const deferredRevision = get(PublicationRevisionState()) + 1
+      if (stagedDeferred && !Number.isSafeInteger(deferredRevision)) {
+        return [FullPublicationState().new(null), ErrorEvent(new Error('World publication revision exhausted'))]
+      }
       return [
         FullPublicationState().new(null),
+        ...(pendingFinal
+          ? [
+              PendingFinalPublicationState().new(null),
+              ...(stagedDeferred ? [] : [JoinedState().new(false), PresencesState().new([]), RecoveryState().new(null)])
+            ]
+          : []),
         ...(released.length > 0
           ? [
               LiveReleaseContinuationsState().new([]),
               ...released.map((runtimeDomain) => DomainReleasedEvent(runtimeDomain))
             ]
           : []),
-        ...(staged ? [StagedPublishedEvent({ attemptId: staged.attemptId, presence: publication.presence })] : []),
+        ...(staged && !stagedDeferred
+          ? [StagedPublishedEvent({ attemptId: staged.attemptId, presence: publication.presence })]
+          : []),
+        ...(stagedDeferred ? [PublicationRevisionState().new(deferredRevision), StagedPublicationDeferredEvent()] : []),
         ...(recovery?.publicationPending
           ? [RecoveryPublishedEvent({ requestId: recovery.requestId, presence: publication.presence })]
           : []),
         ...(!staged && !recovery?.publicationPending && get(JoinedState())
           ? [
               PresenceChangedEvent({
-                sourcePeerId: get(wireDomain.query.PeerIdQuery()),
+                sourcePeerId: get(wireDomain.query.PeerIdQuery(worldRoomId)),
                 presence: {
-                  sourcePeerId: get(wireDomain.query.PeerIdQuery()),
+                  sourcePeerId: get(wireDomain.query.PeerIdQuery(worldRoomId)),
                   presence: publication.presence
                 }
               })
@@ -217,8 +258,11 @@ const WorldDomain = Remesh.domain({
         if (!presence) return existing ? [FullPublicationState().new(null)] : null
         const staged = get(StagedRegistrationsState()).find((item) => item.publicationPending)
         const recovery = get(RecoveryState())
-        const stagedAttemptId = staged?.attemptId ?? null
-        const recoveryRequestId = recovery?.publicationPending ? recovery.requestId : null
+        const pendingFinal = get(PendingFinalPublicationState())
+        // A final-removal publication carries only release facts; a staged registration pending
+        // during it earns its own follow-up snapshot after the release publication settles.
+        const stagedAttemptId = pendingFinal ? null : (staged?.attemptId ?? null)
+        const recoveryRequestId = pendingFinal ? null : recovery?.publicationPending ? recovery.requestId : null
         // Freeze the current physical Room membership as this revision's distinct targets.
         const targets = [...new Set(transport.peers(worldRoomId))]
         if (targets.length === 0) {
@@ -395,8 +439,8 @@ const WorldDomain = Remesh.domain({
           ...(presence
             ? [
                 PresenceChangedEvent({
-                  sourcePeerId: get(wireDomain.query.PeerIdQuery()),
-                  presence: { sourcePeerId: get(wireDomain.query.PeerIdQuery()), presence }
+                  sourcePeerId: get(wireDomain.query.PeerIdQuery(worldRoomId)),
+                  presence: { sourcePeerId: get(wireDomain.query.PeerIdQuery(worldRoomId)), presence }
                 })
               ]
             : []),
@@ -431,6 +475,8 @@ const WorldDomain = Remesh.domain({
         const nextStage = remainingStages.find((item) => !item.publicationPending)
         const revision = get(PublicationRevisionState()) + (aborted.publicationPending ? 1 : 0)
         if (!Number.isSafeInteger(revision)) return ErrorEvent(new Error('World publication revision exhausted'))
+        // Supersession aborts the predecessor's stage while the same physical World owner stays
+        // live for the successor: the projection is cleared only on actual physical departure.
         return [
           StagedRegistrationsState().new(remainingStages),
           ...(aborted.publicationPending ? [PublicationRevisionState().new(revision)] : []),
@@ -440,6 +486,14 @@ const WorldDomain = Remesh.domain({
           ...(aborted.publicationPending ? [EnsureFullPublicationCommand()] : [])
         ]
       }
+    })
+
+    // The physical World owner departed with no remaining owner: settle the same terminal truth as
+    // final World departure. Intentional physical leaves drive this; attempt supersession never
+    // does, because a live successor keeps the World owner joined.
+    const DepartRoomCommand = domain.command({
+      name: 'World.DepartRoomCommand',
+      impl: () => [JoinedState().new(false), PresencesState().new([]), RecoveryState().new(null)]
     })
 
     const PublishCurrentCommand = domain.command({
@@ -495,6 +549,7 @@ const WorldDomain = Remesh.domain({
       impl: ({ get }, runtimeDomain: string) => {
         const registrations = get(RegistrationsState())
         const stages = get(StagedRegistrationsState())
+        const removed = registrations.find((item) => item.domain === runtimeDomain)
         const next = registrations.filter((item) => item.domain !== runtimeDomain)
         const remainingStages = stages.filter((item) => item.domain !== runtimeDomain)
         if (next.length === registrations.length && remainingStages.length === stages.length) return null
@@ -505,18 +560,19 @@ const WorldDomain = Remesh.domain({
         const revision = get(PublicationRevisionState()) + (publicationChanged ? 1 : 0)
         if (!Number.isSafeInteger(revision)) return ErrorEvent(new Error('World publication revision exhausted'))
         const nextStage = remainingStages.find((item) => !item.publicationPending)
-        const continuationNeeded = publicationChanged && next.length > 0
+        const finalSite = next.length === 0 && remainingStages.length === 0 && removed
+        // Even the final site owes the World room its removal snapshot (empty `sites`) before the
+        // release owner may close; the continuation survives a zero-page state and retries only the
+        // remaining publication step at the bounded cadence.
+        const continuationNeeded = publicationChanged && (next.length > 0 || Boolean(finalSite))
         return [
           RegistrationsState().new(next),
           StagedRegistrationsState().new(remainingStages),
+          ...(finalSite ? [PendingFinalPublicationState().new({ user: removed.user })] : []),
           ...(continuationNeeded
             ? [LiveReleaseContinuationsState().new(appendUnique(get(LiveReleaseContinuationsState()), runtimeDomain))]
             : []),
           ...(publicationChanged ? [PublicationRevisionState().new(revision)] : []),
-          ...(next.length === 0 && remainingStages.length === 0
-            ? [JoinedState().new(false), PresencesState().new([])]
-            : []),
-          ...(next.length === 0 && remainingStages.length === 0 ? [RecoveryState().new(null)] : []),
           ...(nextStage && !activeAfter ? [PublishStagedCommand(nextStage.attemptId)] : []),
           ...(publicationChanged ? [EnsureFullPublicationCommand()] : []),
           ...(continuationNeeded ? [] : [DomainReleasedEvent(runtimeDomain)])
@@ -658,8 +714,8 @@ const WorldDomain = Remesh.domain({
           RecoveryState().new(null),
           JoinedState().new(true),
           PresenceChangedEvent({
-            sourcePeerId: get(wireDomain.query.PeerIdQuery()),
-            presence: { sourcePeerId: get(wireDomain.query.PeerIdQuery()), presence }
+            sourcePeerId: get(wireDomain.query.PeerIdQuery(worldRoomId)),
+            presence: { sourcePeerId: get(wireDomain.query.PeerIdQuery(worldRoomId)), presence }
           }),
           ...recovery.missedPeerIds.map((sourcePeerId) =>
             wireDomain.command.SendMessageCommand({
@@ -677,6 +733,11 @@ const WorldDomain = Remesh.domain({
       name: 'World.AbortRecoveryCommand',
       impl: ({ get }, requestId: string) =>
         get(RecoveryState())?.requestId === requestId ? [RecoveryState().new(null), JoinedState().new(false)] : null
+    })
+
+    domain.effect({
+      name: 'World.StagedPublicationDeferredEffect',
+      impl: ({ fromEvent }) => fromEvent(StagedPublicationDeferredEvent).pipe(map(() => EnsureFullPublicationCommand()))
     })
 
     domain.effect({
@@ -727,12 +788,20 @@ const WorldDomain = Remesh.domain({
     })
 
     return {
-      query: { RegistrationsQuery, JoinedQuery, PresencesQuery, LocalPresenceQuery, StagedPresenceQuery },
+      query: {
+        RegistrationsQuery,
+        JoinedQuery,
+        PresencesQuery,
+        LocalPresenceQuery,
+        StagedPresenceQuery,
+        WorldDemandQuery
+      },
       command: {
         StageDomainCommand,
         PublishStagedCommand,
         CommitStagedCommand,
         AbortStagedCommand,
+        DepartRoomCommand,
         PublishCurrentCommand,
         ReleaseDomainCommand,
         PeerJoinedCommand,

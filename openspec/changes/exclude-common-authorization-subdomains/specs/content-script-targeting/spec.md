@@ -1,31 +1,24 @@
 ## ADDED Requirements
 
-### Requirement: Common dedicated authorization hosts do not receive WebChat
+### Requirement: The content script uses one exact exclusion set
 
-The WebChat content script SHALL preserve its current HTTPS inclusion rule and existing exclusions, and SHALL additionally exclude every URL on exactly these ten hostnames:
+The WebChat content script SHALL keep its HTTPS inclusion rule and SHALL exclude exactly these three host-wide patterns:
 
-- `accounts.google.com`
-- `login.microsoftonline.com`
-- `login.live.com`
-- `appleid.apple.com`
-- `openauth.alipay.com`
-- `auth.alipay.com`
-- `wx.tenpay.com`
-- `pay.weixin.qq.com`
-- `checkout.stripe.com`
-- `pay.google.com`
+- `*://localhost/*`
+- `*://127.0.0.1/*`
+- `*://accounts.google.com/*`
 
-Each hostname SHALL be excluded across all paths. The exclusion SHALL use the exact hostname: it SHALL NOT include its parent domain, child or sibling subdomains, generic `www` subdomains, provider-wide wildcards, enterprise IdP tenant domains, or any host not listed above. The system SHALL NOT add path, query, redirect, or runtime URL filtering for this behavior.
+Each hostname SHALL be excluded across all paths. The exclusion SHALL use the exact hostname: it SHALL NOT include a parent domain, child or sibling subdomain, generic `www` subdomain, provider-wide wildcard, CSDN host, other account provider, payment provider, or any host not listed above. The system SHALL NOT add path, query, redirect, or runtime URL filtering for this behavior.
 
 #### Scenario: Every path on a selected account host is excluded
 
-- **GIVEN** an HTTPS page whose hostname is exactly `accounts.google.com`
+- **GIVEN** a page whose hostname is exactly `accounts.google.com`
 - **WHEN** the browser evaluates content-script eligibility for any path on that host
 - **THEN** WebChat SHALL be excluded from the page
 
-#### Scenario: Every path on a selected payment host is excluded
+#### Scenario: Local development hosts are excluded
 
-- **GIVEN** an HTTPS page whose hostname is exactly `checkout.stripe.com`
+- **GIVEN** a page whose hostname is exactly `localhost` or `127.0.0.1`
 - **WHEN** the browser evaluates content-script eligibility for any path on that host
 - **THEN** WebChat SHALL be excluded from the page
 
@@ -35,14 +28,8 @@ Each hostname SHALL be excluded across all paths. The exclusion SHALL use the ex
 - **WHEN** no existing exclusion applies
 - **THEN** the new authorization-host rule SHALL NOT exclude WebChat from the page
 
-#### Scenario: Removed providers remain outside the exclusion list
+#### Scenario: Other providers remain outside the exclusion list
 
-- **GIVEN** an otherwise eligible HTTPS page on a provider host omitted from the final common-host list
+- **GIVEN** an otherwise eligible HTTPS page on a CSDN, account-provider, or payment-provider host other than `accounts.google.com`
 - **WHEN** no existing exclusion applies
-- **THEN** the new authorization-host rule SHALL NOT exclude WebChat from the page
-
-#### Scenario: Existing exclusions remain effective
-
-- **GIVEN** a URL covered by an existing localhost, loopback, or CSDN exclusion
-- **WHEN** the ten authorization hosts are added
-- **THEN** that existing exclusion SHALL remain unchanged and effective
+- **THEN** the exact exclusion set SHALL NOT exclude WebChat from the page

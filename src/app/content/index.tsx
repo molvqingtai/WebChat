@@ -257,22 +257,7 @@ export default defineContentScript({
   cssInjectionMode: 'ui',
   runAt: 'document_idle',
   matches: ['https://*/*'],
-  excludeMatches: [
-    '*://localhost/*',
-    '*://127.0.0.1/*',
-    '*://*.csdn.net/*',
-    '*://*.csdn.com/*',
-    'https://accounts.google.com/*',
-    'https://login.microsoftonline.com/*',
-    'https://login.live.com/*',
-    'https://appleid.apple.com/*',
-    'https://openauth.alipay.com/*',
-    'https://auth.alipay.com/*',
-    'https://wx.tenpay.com/*',
-    'https://pay.weixin.qq.com/*',
-    'https://checkout.stripe.com/*',
-    'https://pay.google.com/*'
-  ],
+  excludeMatches: ['*://localhost/*', '*://127.0.0.1/*', '*://accounts.google.com/*'],
   async main(ctx) {
     // Page lifecycle registration happens before any UI/Runtime initialization can run or suspend, so
     // an early failure still has exactly one cleanup owner (never a second lease authority).

@@ -1,6 +1,7 @@
 /** Trusted source metadata is supplied by the physical Artico room/call. */
 export interface RoomTransport {
-  readonly peerId: string
+  /** The current physical peer identity of the exact room's owner, or '' when the room has none. */
+  readonly peerIdOf: (roomId: string) => string
   /** Resolves only after the provider has created the physical room. */
   join: (roomId: string) => Promise<void>
   leave: (roomId: string) => void
@@ -18,6 +19,7 @@ export interface RoomTransport {
   onPeerJoin: (callback: (roomId: string, peerId: string) => void) => () => void
   onPeerLeave: (callback: (roomId: string, peerId: string) => void) => () => void
   onRoomClose: (callback: (roomId: string) => void) => () => void
-  onError: (callback: (error: Error) => void) => () => void
+  /** Provider errors always carry their exact room scope; retired owners never emit. */
+  onError: (callback: (error: Error, roomId: string) => void) => () => void
   dispose: () => void
 }

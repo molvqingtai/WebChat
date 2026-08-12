@@ -36,7 +36,7 @@ const createFixture = (options?: { failNextEncode?: () => boolean }) => {
   }
   let messageListener: ((roomId: string, sourcePeerId: string, rawPayload: string) => void) | null = null
   const transport: RoomTransport = {
-    peerId: 'local-peer',
+    peerIdOf: () => 'local-peer',
     join: async () => {},
     leave: async () => {},
     peers: () => [...joinedPeers],

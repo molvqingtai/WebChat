@@ -6,7 +6,7 @@ Task #422 added one uncommitted diagnostic test on `develop@d7fa3d386250aee22a74
 
 - an unresolved browser Presence tail yields one projected local user while page completion and loading remain pending;
 - unresolved callback registration, replay, or replay persistence each yields zero users and no physical connection request while page completion and loading remain pending; and
-- a reopen inside five seconds reuses the physical Chat and World rooms, while a post-grace reopen joins new rooms after release.
+- a reopen inside five seconds reuses the domain Chat peer and dedicated World owner, while a post-grace reopen creates a new domain Chat peer and obtains or reuses the World owner according to current site demand.
 
 The evidence does not identify which of the three zero-user requests hangs in the field. It also does not prove that `pageId` metadata or provider callback re-registration is the repair.
 
@@ -53,17 +53,17 @@ Alternative rejected: accept the snapshot before replay. The trace proves where 
 
 ### 3. Post-commit active Presence persistence does not own page success
 
-Once the current Runtime generation has physically accepted the required Chat and World publications, committed the domain, and can return a snapshot containing the local session, page connection success SHALL settle from that committed fact. Any active Presence persistence remaining after commit SHALL continue under Runtime persistence ownership and SHALL not be awaited by the page join completion, reopen application loading, or reverse the committed snapshot solely because it is slow.
+Once the current Runtime generation has physically accepted the required Chat publication and World site contribution, committed the domain, and can return a snapshot containing the local session, page connection success SHALL settle from that committed fact. Any active Presence persistence remaining after commit SHALL continue under Runtime persistence ownership and SHALL not be awaited by the page join completion, reopen application loading, or reverse the committed snapshot solely because it is slow.
 
 Active Presence persistence still requires a finite failure/timeout owner. Its per-domain queue SHALL release or supersede an unresolved predecessor so later current-generation persistence and final release are not permanently serialized behind it. A late old completion SHALL not overwrite, retire, or report success for a newer Presence generation. Failure SHALL use the existing Runtime error path; it SHALL not add or modify Toast behavior or create a second page request.
 
-This decision applies only to active post-commit persistence. Final release SHALL retain one local release owner: it removes the private active-generation authority, releases the domain State, and physically departs Chat/World without an outbound lifecycle message. No in-flight end, retryable end, end-send settlement, or settled-cleanup phase exists. A required local active-record cleanup failure remains a release failure and is not converted into success by this change, but physical departure SHALL wait on no peer end signal.
+This decision applies only to active post-commit persistence. Final release SHALL retain one local release owner: it removes the private active-generation authority, releases the domain State, physically departs the domain Chat peer, and removes that domain's World contribution without an outbound lifecycle message. The dedicated World peer departs only after its final site is removed. No in-flight end, retryable end, end-send settlement, or settled-cleanup phase exists. A required local active-record cleanup failure remains a release failure and is not converted into success by this change, but physical departure SHALL wait on no peer end signal.
 
 Alternative rejected: keep the page request attached to the Presence tail and merely add a longer loading duration. A non-settling Promise has no finite duration and continues to poison later domain work.
 
 ### 4. Page replacement and the five-second lifecycle remain connection truth
 
-An ordinary page-context refresh while the authoritative physical tab binding remains SHALL start no grace, retain the current physical Chat and World rooms, and give the replacement page an independent connection attempt. A page returning during an actual five-second domain grace SHALL cancel that grace, reuse the same committed physical rooms, and independently settle from the current Runtime snapshot. Neither replacement SHALL inherit the prior page's pending operation or loading owner. After grace expires and release completes, a later page SHALL create new physical rooms through the existing join path.
+An ordinary page-context refresh while the authoritative physical tab binding remains SHALL start no grace, retain the current domain Chat peer plus dedicated World owner and contribution, and give the replacement page an independent connection attempt. A page returning during an actual five-second domain grace SHALL cancel that grace, reuse those same committed scoped peers, and independently settle from the current Runtime snapshot. Neither replacement SHALL inherit the prior page's pending operation or loading owner. After grace expires and release completes, a later page SHALL create one new domain Chat peer and SHALL reuse the dedicated World peer when another site retains it or create a new World peer when no site retains World demand.
 
 The repair SHALL not start grace for an ordinary page-context refresh while the authoritative physical tab binding remains, change the grace duration, or weaken generation fencing and current local release ownership.
 

@@ -11,16 +11,16 @@
 - [x] 2.1 Add the minimum focused regression proving a non-settling post-commit active Presence save projects the local user but cannot retain page completion/loading.
 - [x] 2.2 Add focused regressions proving non-settling callback registration, replay, and replay-record persistence each terminate the matching zero-user page attempt before physical join.
 - [x] 2.3 Prove timeout, page detach, host replacement, and supersession dispose or fence partial prerequisite work and let a later attempt start without waiting for the stale Promise.
-- [x] 2.4 Preserve controls proving an ordinary refresh starts no grace, a page returning during grace reuses the same Chat/World rooms, and a post-grace page joins new rooms after completed release.
+- [ ] 2.4 Preserve controls proving an ordinary refresh starts no grace, a page returning during grace reuses its domain Chat peer and dedicated World owner, and a post-grace page creates a new domain Chat peer after completed release while obtaining or reusing World according to current site demand.
 - [x] 2.5 Prefer existing focused suites and reusable fixtures; do not ship the diagnostic trace wholesale or add production observability unless it removes more code or proves a required boundary.
 
 ## 3. Terminal Settlement Repair
 
 - [x] 3.1 Give one page connection attempt a finite deadline/cancellation owner across callback registration, replay, replay persistence, Runtime join, and current snapshot acceptance.
 - [x] 3.2 Make failed/cancelled prerequisite work clear only its matching application request, dispose partial callbacks/resources, abort Database work where supported, and reject stale late results.
-- [x] 3.3 Complete page success from the current committed Chat/World snapshot containing the local session; keep active post-commit Presence persistence outside the page completion Promise.
+- [x] 3.3 Complete page success from the current committed domain Chat connection plus World contribution and snapshot containing the local session; keep active post-commit Presence persistence outside the page completion Promise.
 - [x] 3.4 Bound and recover the per-domain active Presence persistence tail so an unresolved predecessor cannot strand later current-generation persistence or final release and a late old completion cannot replace the current generation.
-- [ ] 3.5 Preserve local active-generation cleanup, application request-ID fencing, five-second domain grace, room reuse/release, and the exact current public `ChatRoom`/protocol/schema/version/UI contracts; retain no Chat end send, retry, settlement, cleanup record, or physical-departure gate.
+- [ ] 3.5 Preserve local active-generation cleanup, application request-ID fencing, five-second domain grace, scoped Chat-peer and dedicated World contribution reuse/release, and the exact current public `ChatRoom`/protocol/schema/version/UI contracts; retain no Chat end send, retry, settlement, cleanup record, or peer-signal departure gate.
 
 ## 4. Exact-Bound Verification
 
