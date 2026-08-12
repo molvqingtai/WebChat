@@ -293,9 +293,13 @@ const ConnectionDomain = Remesh.domain({
       name: 'Connection.DestroyDomainConnectionCommand',
       impl: ({ get }, payload: { domain: string; operationId: string }) => {
         const runtime = get(sessionDomain.query.DomainQuery(payload.domain))
-        if (!runtime) return null
+        const retainedSeed = get(sessionDomain.query.RetainedLocalSeedQuery(payload.domain))
+        // A retry after a failed reset persistence still re-honors the clear save: the Session
+        // reset is idempotent and re-emits the correlated persistence even when the committed
+        // aggregate is already gone (only the retained local seed remains).
+        if (!runtime && !retainedSeed) return null
         return [
-          wireDomain.command.LeaveRoomCommand({ roomId: runtime.roomId, preservePending: false }),
+          ...(runtime ? [wireDomain.command.LeaveRoomCommand({ roomId: runtime.roomId, preservePending: false })] : []),
           sessionDomain.command.ResetDomainConnectionCommand({
             domain: payload.domain,
             requestId: payload.operationId

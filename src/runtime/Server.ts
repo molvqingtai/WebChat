@@ -302,17 +302,19 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   store.subscribeEvent(connectionDomain.event.ConnectionLeftEvent, (event) => {
     refreshIdentity.delete(event.domain)
   })
-  const resetDomainConnection = async (
-    domain: string,
-    operationId: string
-  ): Promise<{ ok: boolean; user?: ChatUser; site?: ChatSite }> => {
+  /** One shared in-flight reset settlement per domain: concurrent refreshes join the same owner. */
+  const inFlightResets = new Map<string, Promise<{ ok: boolean; user?: ChatUser; site?: ChatSite }>>()
+  const performReset = async (domain: string, operationId: string) => {
     const runtime = store.query(sessionDomain.query.DomainQuery(domain))
-    if (!runtime) {
+    const retainedSeed = store.query(sessionDomain.query.RetainedLocalSeedQuery(domain))
+
+    if (!runtime && !retainedSeed) {
+      // Released domain with nothing to destroy: the canonical attempt is a no-op.
       return { ok: true, ...refreshIdentity.get(domain) }
     }
-    const user = runtime.user
-    const site = runtime.site
-    refreshIdentity.set(domain, { user, site })
+    if (runtime) refreshIdentity.set(domain, { user: runtime.user, site: runtime.site })
+    // A retry after a failed persistence must re-honor the clear save even though the committed
+    // aggregate is already gone; the destruction is idempotent and re-emits the correlated save.
     const persistence = new Promise<boolean>((resolve) => {
       const subscription = store.subscribeEvent(sessionDomain.event.PresencePersistenceSettledEvent, (event) => {
         if (event.requestId !== operationId) return
@@ -322,13 +324,30 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     })
     store.send(connectionDomain.command.DestroyDomainConnectionCommand({ domain, operationId }))
     const settled = await persistence
+
     if (!settled) return { ok: false }
     // Active History supplies/jobs physically settle through their abort callbacks; the
-    // replacement may bind new History work only after every old owner is gone.
+    // replacement may bind new History work only after every old owner is gone. Yielding on the
+    // macrotask queue lets abort callbacks and timers run; no busy loop is introduced.
     while (!store.query(historyDomain.query.DomainCleanupSettledQuery(domain))) {
-      await new Promise<void>((resolve) => queueMicrotask(resolve))
+      await new Promise<void>((resolve) => setTimeout(resolve, 0))
     }
-    return { ok: true, user, site }
+    return { ok: true, ...refreshIdentity.get(domain) }
+  }
+  const resetDomainConnection = (
+    domain: string,
+    operationId: string
+  ): Promise<{ ok: boolean; user?: ChatUser; site?: ChatSite }> => {
+    const existing = inFlightResets.get(domain)
+    if (existing) return existing
+    const task = performReset(domain, operationId)
+    inFlightResets.set(domain, task)
+    task
+      .catch(() => {})
+      .finally(() => {
+        if (inFlightResets.get(domain) === task) inFlightResets.delete(domain)
+      })
+    return task
   }
 
   const completeInterruptedRelease = (domain: string): Promise<void> => {
