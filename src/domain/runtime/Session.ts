@@ -93,6 +93,12 @@ interface PendingChatSend {
 interface LiveRelease {
   domain: string
   roomId: string
+  /**
+   * Whether the awaited active-record cleanup write has already settled successfully for this
+   * release. A late release request replays only an unsettled cleanup; a settled one is owned
+   * entirely by the live release's remaining World step.
+   */
+  cleanupSettled: boolean
 }
 
 export interface SessionOperationSucceeded {
@@ -809,6 +815,10 @@ const SessionDomain = Remesh.domain({
       impl: ({ get }, runtimeDomain: string) => {
         const existing = get(LiveReleasesState()).find((item) => item.domain === runtimeDomain)
         if (existing) {
+          // The cleanup write already settled for this live release: its remaining World step is
+          // owned by the current release, so a late request attaches without replaying cleanup or
+          // re-publishing the Chat departure.
+          if (existing.cleanupSettled) return null
           // A release is already fenced (its cleanup write was rejected earlier): a later
           // request retries only the cleanup (re-fencing the observer deadlines), and no state
           // may advance before it succeeds.
@@ -825,7 +835,7 @@ const SessionDomain = Remesh.domain({
         const prepared = get(PreparedSessionsState()).find((item) => item.runtime.domain === runtimeDomain)
         const current = runtime ?? prepared?.runtime
         if (!current) return ReleaseCompletedEvent({ domain: runtimeDomain })
-        const release: LiveRelease = { domain: runtimeDomain, roomId: current.roomId }
+        const release: LiveRelease = { domain: runtimeDomain, roomId: current.roomId, cleanupSettled: false }
         // Fence every domain-owned observer deadline BEFORE the awaited cleanup write: a grace
         // expiry can never queue a stale pre-release record behind the cleanup, while the fenced
         // records still close live/History authority until the release resolves.
@@ -876,9 +886,18 @@ const SessionDomain = Remesh.domain({
       impl: ({ get }, runtimeDomain: string) => {
         const release = get(LiveReleasesState()).find((item) => item.domain === runtimeDomain)
         if (!release) return null
+        // A duplicate in-flight cleanup write may settle after the first one advanced the release;
+        // only the first completion removes State and publishes the Chat departure.
+        if (release.cleanupSettled) return null
         // Only the fenced release owner advances: remove every domain-owned State (including any
         // observer pending-leave deadlines) and emit the event that advances World/Chat departure.
         return [
+          LiveReleasesState().new(
+            replaceBy(get(LiveReleasesState()), (item) => item.domain === runtimeDomain, {
+              ...release,
+              cleanupSettled: true
+            })
+          ),
           DomainsState().new(removeBy(get(DomainsState()), (item) => item.domain === runtimeDomain)),
           PreparedSessionsState().new(
             removeBy(get(PreparedSessionsState()), (item) => item.runtime.domain === runtimeDomain)

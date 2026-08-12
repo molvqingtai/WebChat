@@ -130,8 +130,11 @@ const ChatRoomDomain = Remesh.domain({
         const next = SessionsState().new(sessions)
         // One current-generation commit terminal: when the domain commits after the original
         // public attempt already reported its exact failure, the retained join input completes the
-        // page join instead of leaving it logically unjoined.
-        if (get(JoinIsFinishedQuery()) || get(ConnectionRequestState())) return next
+        // page join instead of leaving it logically unjoined. The synthesized completion yields to
+        // both request owners: a live connection or reconnect/retry request keeps its own terminal.
+        if (get(JoinIsFinishedQuery()) || get(ConnectionRequestState()) || get(ReconnectRequestState())) {
+          return next
+        }
         const input = get(JoinInputState())
         if (!input) return next
         if (!sessions.some((session) => session.user.id === input.user.id)) return next

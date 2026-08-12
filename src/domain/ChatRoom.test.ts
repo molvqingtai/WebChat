@@ -511,6 +511,30 @@ describe('ChatRoomDomain exact application port', () => {
     fixture.store.discard()
   })
 
+  it('keeps a pending manual retry unfinished when a committed local-session projection arrives', async () => {
+    const fixture = createFixture()
+    vi.mocked(fixture.chat.joinRoom).mockRejectedValueOnce(new Error('first join failed'))
+    fixture.store.send(fixture.room.command.JoinRoomCommand())
+    await vi.waitFor(() => expect(fixture.store.query(fixture.room.query.ReconnectAvailableQuery())).toBe(true))
+    expect(fixture.store.query(fixture.room.query.JoinIsFinishedQuery())).toBe(false)
+
+    // Start a manual retry whose Runtime task stays unsettled.
+    const retryJoin = deferred()
+    vi.mocked(fixture.chat.joinRoom).mockReturnValueOnce(retryJoin.promise)
+    fixture.store.send(fixture.room.command.ReconnectCommand())
+    await vi.waitFor(() => expect(fixture.chat.joinRoom).toHaveBeenCalledTimes(2))
+    expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).not.toBeNull()
+
+    // A committed local-session projection must not complete the live retry owner early.
+    fixture.emitSessions([SELF_SESSION])
+    expect(fixture.store.query(fixture.room.query.JoinIsFinishedQuery())).toBe(false)
+
+    // Only the retry's own success terminal completes the join.
+    retryJoin.resolve()
+    await vi.waitFor(() => expect(fixture.store.query(fixture.room.query.JoinIsFinishedQuery())).toBe(true))
+    fixture.store.discard()
+  })
+
   it('completes the page join when a committed local session projects after the public attempt failed', async () => {
     const fixture = createFixture()
     const failure = new Error('first join failed')

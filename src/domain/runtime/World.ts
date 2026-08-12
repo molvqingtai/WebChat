@@ -142,6 +142,9 @@ const WorldDomain = Remesh.domain({
     })
 
     const StagedEvent = domain.event<{ attemptId: string }>({ name: 'World.StagedEvent' })
+    // Emitted when a settled final-removal publication deferred a staged registration: the
+    // follow-up full snapshot containing the staged site starts from this signal.
+    const StagedPublicationDeferredEvent = domain.event({ name: 'World.StagedPublicationDeferredEvent' })
     const StagedPublishedEvent = domain.event<{ attemptId: string; presence: WorldRoomMessage }>({
       name: 'World.StagedPublishedEvent'
     })
@@ -174,14 +177,20 @@ const WorldDomain = Remesh.domain({
       const recovery = get(RecoveryState())
       const released = get(LiveReleaseContinuationsState())
       const pendingFinal = get(PendingFinalPublicationState())
+      // A final-removal publication settles only the release facts its empty payload represents: a
+      // staged registration observed during it earns a follow-up full snapshot containing its own
+      // site before it may publish-accept.
+      const stagedDeferred = pendingFinal !== null && staged !== undefined
+      const deferredRevision = get(PublicationRevisionState()) + 1
+      if (stagedDeferred && !Number.isSafeInteger(deferredRevision)) {
+        return [FullPublicationState().new(null), ErrorEvent(new Error('World publication revision exhausted'))]
+      }
       return [
         FullPublicationState().new(null),
         ...(pendingFinal
           ? [
               PendingFinalPublicationState().new(null),
-              JoinedState().new(false),
-              PresencesState().new([]),
-              RecoveryState().new(null)
+              ...(stagedDeferred ? [] : [JoinedState().new(false), PresencesState().new([]), RecoveryState().new(null)])
             ]
           : []),
         ...(released.length > 0
@@ -190,7 +199,10 @@ const WorldDomain = Remesh.domain({
               ...released.map((runtimeDomain) => DomainReleasedEvent(runtimeDomain))
             ]
           : []),
-        ...(staged ? [StagedPublishedEvent({ attemptId: staged.attemptId, presence: publication.presence })] : []),
+        ...(staged && !stagedDeferred
+          ? [StagedPublishedEvent({ attemptId: staged.attemptId, presence: publication.presence })]
+          : []),
+        ...(stagedDeferred ? [PublicationRevisionState().new(deferredRevision), StagedPublicationDeferredEvent()] : []),
         ...(recovery?.publicationPending
           ? [RecoveryPublishedEvent({ requestId: recovery.requestId, presence: publication.presence })]
           : []),
@@ -234,8 +246,11 @@ const WorldDomain = Remesh.domain({
         if (!presence) return existing ? [FullPublicationState().new(null)] : null
         const staged = get(StagedRegistrationsState()).find((item) => item.publicationPending)
         const recovery = get(RecoveryState())
-        const stagedAttemptId = staged?.attemptId ?? null
-        const recoveryRequestId = recovery?.publicationPending ? recovery.requestId : null
+        const pendingFinal = get(PendingFinalPublicationState())
+        // A final-removal publication carries only release facts; a staged registration pending
+        // during it earns its own follow-up snapshot after the release publication settles.
+        const stagedAttemptId = pendingFinal ? null : (staged?.attemptId ?? null)
+        const recoveryRequestId = pendingFinal ? null : recovery?.publicationPending ? recovery.requestId : null
         // Freeze the current physical Room membership as this revision's distinct targets.
         const targets = [...new Set(transport.peers(worldRoomId))]
         if (targets.length === 0) {
@@ -696,6 +711,11 @@ const WorldDomain = Remesh.domain({
       name: 'World.AbortRecoveryCommand',
       impl: ({ get }, requestId: string) =>
         get(RecoveryState())?.requestId === requestId ? [RecoveryState().new(null), JoinedState().new(false)] : null
+    })
+
+    domain.effect({
+      name: 'World.StagedPublicationDeferredEffect',
+      impl: ({ fromEvent }) => fromEvent(StagedPublicationDeferredEvent).pipe(map(() => EnsureFullPublicationCommand()))
     })
 
     domain.effect({

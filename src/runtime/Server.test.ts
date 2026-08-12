@@ -1606,16 +1606,69 @@ describe('RuntimeServer lifecycle', () => {
     expect(rejectedC).toBeUndefined()
     expect(fake.joined.has(roomId)).toBe(false)
 
+    // The release closed Chat(A) exactly once; the waiting leases never replay its cleanup.
+    expect(fake.operationLog.filter((entry) => entry === `leave:${roomId}`)).toHaveLength(1)
+
     fake.releaseSends()
     const [snapshotB, snapshotC] = await Promise.all([joinB, joinC])
     expect(rejectedB).toBeUndefined()
     expect(rejectedC).toBeUndefined()
     expect(snapshotB?.domains[0]).toMatchObject({ domain: DOMAIN, chatRoomJoined: true })
     expect(snapshotC?.domains[0]).toMatchObject({ domain: DOMAIN, chatRoomJoined: true })
-    // Exactly one fresh physical rebuild served both coalesced leases.
+    // Exactly one fresh physical rebuild served both coalesced leases, and still exactly one
+    // Chat(A) physical exit overall.
     expect(fake.physicalJoinCalls.filter((id) => id === roomId)).toHaveLength(2)
     expect(fake.physicalJoinCalls.filter((id) => id === getWorldRoomId())).toHaveLength(2)
+    expect(fake.operationLog.filter((entry) => entry === `leave:${roomId}`)).toHaveLength(1)
     expect((await server.getSnapshot()).domains[0].pageIds.slice().sort()).toEqual(['page-b', 'page-c'])
+  })
+
+  it('commits a staged cross-domain join only from a World snapshot containing its own site', async () => {
+    const { clock, fake, server, roomId } = await setup()
+    const worldRoomId = getWorldRoomId()
+    emitRemoteWorldPresence(fake)
+    fake.hangSendsTo(worldRoomId)
+
+    // A's final-site release closes Chat(A) and then holds the empty final World publication.
+    await server.detachPage({ domain: DOMAIN, pageId: 'page-a' })
+    clock.advance(RUNTIME_DOMAIN_GRACE_MS + 1)
+    await vi.waitFor(() => expect(fake.joined.has(roomId)).toBe(false))
+    await vi.waitFor(() => expect(fake.sendAttempts.some((attempt) => attempt.roomId === worldRoomId)).toBe(true))
+
+    // B stages on a different domain while the empty final publication is still in flight.
+    await server.attachPage({ domain: OTHER_DOMAIN, pageId: 'page-b' })
+    let rejectedB: unknown
+    const joinB = server
+      .joinChatRoom({ domain: OTHER_DOMAIN, user: USER, site: { origin: OTHER_DOMAIN } })
+      .catch((error: unknown) => {
+        rejectedB = error
+        return null
+      })
+    await settle()
+    await settle()
+    // B must not become ready from the pending empty snapshot.
+    expect(rejectedB).toBeUndefined()
+    expect(
+      (await server.getSnapshot()).domains.find((item) => item.domain === OTHER_DOMAIN)?.chatRoomJoined ?? false
+    ).toBe(false)
+
+    fake.releaseSends()
+    const snapshotB = await joinB
+    expect(rejectedB).toBeUndefined()
+    expect(snapshotB?.domains.find((item) => item.domain === OTHER_DOMAIN)).toMatchObject({
+      chatRoomJoined: true
+    })
+
+    // The wire publication that accepted B carries B's own site; the empty final snapshot only
+    // settled A's release facts.
+    const publications = fake.messages(worldRoomId).filter(isWorldPresence)
+    const emptyFinalIndex = publications.findIndex((message) => message.sites.length === 0)
+    const acceptingIndex = publications.findIndex((message) =>
+      message.sites.some((site) => site.origin === OTHER_DOMAIN)
+    )
+    expect(emptyFinalIndex).toBeGreaterThanOrEqual(0)
+    expect(acceptingIndex).toBeGreaterThan(emptyFinalIndex)
+    expect(acceptingIndex).toBe(publications.length - 1)
   })
 })
 
