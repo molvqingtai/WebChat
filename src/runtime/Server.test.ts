@@ -126,7 +126,26 @@ vi.mock('@rtco/client', () => {
     close() {}
   }
 
-  return { Artico: FakeArtico }
+  return {
+    Artico: FakeArtico,
+    SocketSignaling: class {
+      readonly id = 'fake-signaling'
+      readonly state = 'ready'
+      connect() {}
+      disconnect() {}
+      signal() {}
+      join() {}
+      on() {
+        return this
+      }
+      off() {
+        return this
+      }
+      emit() {
+        return this
+      }
+    }
+  }
 })
 
 type TestWireMessage = ChatRoomMessage | (WorldRoomMessage & { type?: never })
