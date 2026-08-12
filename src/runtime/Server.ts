@@ -323,8 +323,9 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       })
     })
     store.send(connectionDomain.command.DestroyDomainConnectionCommand({ domain, operationId }))
+    console.log('DEBUG-destroy-sent', domain, operationId.slice(0, 6))
     const settled = await persistence
-
+    console.log('DEBUG-persist-settled', domain, settled)
     if (!settled) return { ok: false }
     // Active History supplies/jobs physically settle through their abort callbacks; the
     // replacement may bind new History work only after every old owner is gone. Yielding on the
@@ -435,6 +436,41 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     }
   }
 
+  /** One shared in-flight reconnect settlement per domain: a concurrent refresh joins the whole
+   * operation (destruction through the replacement commit/failure/cancel) instead of running a
+   * second destructive reset against an in-flight replacement. */
+  const inFlightReconnects = new Map<string, Promise<undefined | null>>()
+  const performReconnect = async (domain: string, operationId: string): Promise<undefined | null> => {
+    // Phase 1: correlated destruction of the complete current-domain connection aggregate. The
+    // cleared-observer persistence must settle and the domain's History work must physically
+    // settle before the replacement may prepare; a persistence rejection fails the request
+    // retryably without committing a mixed old/new snapshot.
+    const reset = await resetDomainConnection(domain, operationId)
+    if (!reset.ok) {
+      return runConnectionOperation(
+        operationId,
+        connectionDomain.command.FailOperationCommand({
+          operationId,
+          error: new Error('Domain connection reset persistence failed')
+        }),
+        () => undefined,
+        () => null
+      )
+    }
+    // Phase 2: the canonical replacement attempt, seeded with the captured local identity.
+    return runConnectionOperation(
+      operationId,
+      connectionDomain.command.ReconnectDomainCommand({
+        operationId,
+        domain,
+        user: reset.user,
+        site: reset.site
+      }),
+      () => undefined,
+      () => null
+    )
+  }
+
   const server: RuntimeServer = {
     attachPage: async (payload) => {
       store.send(lifecycleDomain.command.AttachPageCommand(payload))
@@ -498,36 +534,18 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       store.send(deliveryDomain.command.AckInboundCommand(payload))
     },
     replayInbound: async (payload) => store.query(deliveryDomain.query.BufferedEventsQuery(payload)),
-    reconnectDomain: async (payload) => {
+    reconnectDomain: (payload) => {
+      const existing = inFlightReconnects.get(payload.domain)
+      if (existing) return existing
       const operationId = nanoid()
-      // Phase 1: correlated destruction of the complete current-domain connection aggregate. The
-      // cleared-observer persistence must settle and the domain's History work must physically
-      // settle before the replacement may prepare; a persistence rejection fails the request
-      // retryably without committing a mixed old/new snapshot.
-      const reset = await resetDomainConnection(payload.domain, operationId)
-      if (!reset.ok) {
-        return runConnectionOperation(
-          operationId,
-          connectionDomain.command.FailOperationCommand({
-            operationId,
-            error: new Error('Domain connection reset persistence failed')
-          }),
-          () => undefined,
-          () => null
-        )
-      }
-      // Phase 2: the canonical replacement attempt, seeded with the captured local identity.
-      return runConnectionOperation(
-        operationId,
-        connectionDomain.command.ReconnectDomainCommand({
-          operationId,
-          domain: payload.domain,
-          user: reset.user,
-          site: reset.site
-        }),
-        () => undefined,
-        () => null
-      )
+      const task = performReconnect(payload.domain, operationId)
+      inFlightReconnects.set(payload.domain, task)
+      task
+        .catch(() => {})
+        .finally(() => {
+          if (inFlightReconnects.get(payload.domain) === task) inFlightReconnects.delete(payload.domain)
+        })
+      return task
     },
     onInbound: async (payload, callback) => pagePort.onInbound(payload.pageId, callback),
     onSessionEvent: async (payload, callback) => pagePort.onSessionEvent(payload.pageId, callback),
