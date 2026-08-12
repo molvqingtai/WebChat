@@ -158,7 +158,7 @@ class DeterministicNetwork {
     }
 
     return {
-      peerId,
+      peerIdOf: () => peerId,
       join: async (roomId) => {
         endpoint.rooms.add(roomId)
       },

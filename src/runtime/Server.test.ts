@@ -229,6 +229,7 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
   const joined = new Set<string>()
   const joinCalls: string[] = []
   const physicalJoinCalls: string[] = []
+  const operationLog: string[] = []
   const sent: { roomId: string; payload: string; to?: string | string[] }[] = []
   const sendAttempts: { roomId: string; payload: string; to?: string | string[] }[] = []
   const sendAttemptWaiters: {
@@ -247,6 +248,7 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
   const joinListeners = new Set<(roomId: string, peerId: string) => void>()
   const leaveListeners = new Set<(roomId: string, peerId: string) => void>()
   const closeListeners = new Set<(roomId: string) => void>()
+  const errorListeners = new Set<(error: Error, roomId: string) => void>()
   let sendError: Error | null = null
   let sendErrorRoomId: string | null = null
   let blockedSendRoomId: string | null = null
@@ -285,7 +287,7 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
   }
 
   const transport: RoomTransport = {
-    peerId: 'local-peer',
+    peerIdOf: (roomId) => (roomId === getWorldRoomId() ? 'local-peer' : `local-peer:${roomId}`),
     join: (roomId) => {
       joinCalls.push(roomId)
       resolveJoinCallWaiters()
@@ -308,6 +310,7 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
       return pending.promise
     },
     leave: (roomId) => {
+      operationLog.push(`leave:${roomId}`)
       desired.delete(roomId)
       joined.delete(roomId)
       pendingJoins.get(roomId)?.reject(new Error(`Room "${roomId}" join cancelled`))
@@ -327,6 +330,7 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
       if (!joined.has(roomId)) throw new Error(`Room "${roomId}" not joined`)
       if (sendError && (!sendErrorRoomId || sendErrorRoomId === roomId)) throw sendError
       sent.push(attempt)
+      operationLog.push(`send:${roomId}`)
       if (sendGate && roomId === blockedSendRoomId) await sendGate
       const message = JSON.parse(payload) as TestWireMessage
       if (!('type' in message) || message.type !== MESSAGE_TYPE.HISTORY_MESSAGES_PUSH) return
@@ -355,7 +359,10 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
       closeListeners.add(callback)
       return () => closeListeners.delete(callback)
     },
-    onError: () => () => {},
+    onError: (callback) => {
+      errorListeners.add(callback)
+      return () => errorListeners.delete(callback)
+    },
     dispose: () => {
       disposeCount += 1
       desired.clear()
@@ -372,6 +379,7 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
       joinListeners.clear()
       leaveListeners.clear()
       closeListeners.clear()
+      errorListeners.clear()
     }
   }
 
@@ -381,6 +389,7 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
     joined,
     joinCalls,
     physicalJoinCalls,
+    operationLog,
     sent,
     sendAttempts,
     waitForSendAttempt: (roomId?: string) =>
@@ -472,6 +481,9 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
     roomClose: (roomId: string) => {
       joined.delete(roomId)
       closeListeners.forEach((listener) => listener(roomId))
+    },
+    emitError: (error: Error, roomId: string) => {
+      errorListeners.forEach((listener) => listener(error, roomId))
     },
     messages: (roomId: string) =>
       sent.filter((item) => item.roomId === roomId).map((item) => JSON.parse(item.payload) as TestWireMessage)
@@ -1373,6 +1385,105 @@ describe('RuntimeServer lifecycle', () => {
     expect(failures).toHaveLength(1)
   })
 
+  it('retries a failed initial domain join at the bounded cadence with its preserved typed input', async () => {
+    const clock = new FakeClock()
+    const fake = createFakeTransport()
+    const server = createServer({ transport: fake.transport, clock, codec: jsonCodec })
+    await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
+    const chatRoomId = getChatRoomId(DOMAIN)
+    fake.failNextJoin(chatRoomId)
+
+    await expect(server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })).rejects.toThrow()
+    const joinsBefore = fake.joinCalls.filter((roomId) => roomId === chatRoomId).length
+
+    await vi.advanceTimersByTimeAsync(5000)
+    await settle()
+
+    const joinsAfter = fake.joinCalls.filter((roomId) => roomId === chatRoomId).length
+    expect(joinsAfter).toBeGreaterThan(joinsBefore)
+    expect((await server.getSnapshot()).domains[0]).toMatchObject({
+      domain: DOMAIN,
+      chatRoomJoined: true,
+      localSession: { user: USER }
+    })
+    disposeServer(server)
+  })
+
+  it('retries a failed initial World step at the same bounded cadence', async () => {
+    const clock = new FakeClock()
+    const fake = createFakeTransport()
+    const server = createServer({ transport: fake.transport, clock, codec: jsonCodec })
+    await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
+    const worldRoomId = getWorldRoomId()
+    fake.failNextJoin(worldRoomId)
+
+    await expect(server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })).rejects.toThrow()
+    const worldJoinsBefore = fake.joinCalls.filter((roomId) => roomId === worldRoomId).length
+
+    await vi.advanceTimersByTimeAsync(5000)
+    await settle()
+
+    const worldJoinsAfter = fake.joinCalls.filter((roomId) => roomId === worldRoomId).length
+    expect(worldJoinsAfter).toBeGreaterThan(worldJoinsBefore)
+    expect((await server.getSnapshot()).world.joined).toBe(true)
+    disposeServer(server)
+  })
+
+  it('leaves the released Chat peer physically before publishing its World removal', async () => {
+    const { clock, fake, server, roomId } = await setup()
+    const worldRoomId = getWorldRoomId()
+    fake.plantPeer(worldRoomId, 'remote-peer')
+    await server.attachPage({ domain: OTHER_DOMAIN, pageId: 'page-b' })
+    await server.joinChatRoom({ domain: OTHER_DOMAIN, user: USER, site: { origin: OTHER_DOMAIN } })
+    await settle()
+    fake.operationLog.length = 0
+
+    await server.detachPage({ domain: DOMAIN, pageId: 'page-a' })
+    clock.advance(RUNTIME_DOMAIN_GRACE_MS + 1)
+    await vi.waitFor(() => expect(fake.joined.has(roomId)).toBe(false))
+
+    const chatLeaveIndex = fake.operationLog.indexOf(`leave:${roomId}`)
+    const worldRemovalIndex = fake.operationLog.indexOf(`send:${worldRoomId}`)
+    expect(chatLeaveIndex).toBeGreaterThanOrEqual(0)
+    expect(worldRemovalIndex).toBeGreaterThan(chatLeaveIndex)
+    expect((await server.getSnapshot()).domains.map((item) => item.domain)).toEqual([OTHER_DOMAIN])
+  })
+
+  it('publishes the empty World snapshot before the final-site release owner closes', async () => {
+    const { clock, fake, server } = await setup()
+    const worldRoomId = getWorldRoomId()
+    fake.plantPeer(worldRoomId, 'remote-peer')
+    await settle()
+
+    await server.detachPage({ domain: DOMAIN, pageId: 'page-a' })
+    clock.advance(RUNTIME_DOMAIN_GRACE_MS + 1)
+    await vi.waitFor(() => expect(fake.joined.has(worldRoomId)).toBe(false))
+
+    const finalSnapshot = fake.messages(worldRoomId).filter(isWorldPresence).at(-1)
+    expect(finalSnapshot?.sites).toEqual([])
+    expect(fake.operationLog.indexOf(`leave:${worldRoomId}`)).toBeGreaterThan(
+      fake.operationLog.lastIndexOf(`send:${worldRoomId}`)
+    )
+    expect((await server.getSnapshot()).world.joined).toBe(false)
+  })
+
+  it("routes a Chat-domain provider error only to that domain's pages", async () => {
+    const { fake, server, roomId } = await setup()
+    await server.attachPage({ domain: OTHER_DOMAIN, pageId: 'page-b' })
+    await server.joinChatRoom({ domain: OTHER_DOMAIN, user: USER, site: { origin: OTHER_DOMAIN } })
+    await settle()
+    const failuresA: string[] = []
+    const failuresB: string[] = []
+    await server.onError({ pageId: 'page-a' }, (event) => failuresA.push(event.message))
+    await server.onError({ pageId: 'page-b' }, (event) => failuresB.push(event.message))
+
+    fake.emitError(new Error('chat-a signaling failed'), roomId)
+    await settle()
+
+    expect(failuresA).toEqual(['chat-a signaling failed'])
+    expect(failuresB).toEqual([])
+  })
+
   it("routes a domain-scoped failure only to that domain's current pages", async () => {
     const { fake, server, roomId } = await setup()
     await server.attachPage({ domain: OTHER_DOMAIN, pageId: 'page-b' })
@@ -1407,6 +1518,346 @@ describe('RuntimeServer lifecycle', () => {
     )
     diagnostic.mockRestore()
   })
+
+  it("routes a provisional domain's provider error only to its joining page", async () => {
+    const { fake, server } = await setup()
+    const roomIdB = getChatRoomId(OTHER_DOMAIN)
+    await server.attachPage({ domain: OTHER_DOMAIN, pageId: 'page-b' })
+    // Keep Chat(B) provisional: the physical room joined but its session broadcast stays hung
+    // before the domain commits.
+    fake.plantPeer(roomIdB, 'chat-peer-b')
+    fake.hangSendsTo(roomIdB)
+    const joinB = server.joinChatRoom({ domain: OTHER_DOMAIN, user: USER, site: { origin: OTHER_DOMAIN } })
+    await fake.waitForSendAttempt(roomIdB)
+    await settle()
+
+    const failuresA: string[] = []
+    const failuresB: string[] = []
+    await server.onError({ pageId: 'page-a' }, (event) => failuresA.push(event.message))
+    await server.onError({ pageId: 'page-b' }, (event) => failuresB.push(event.message))
+    fake.emitError(new Error('chat-b provisional signaling failed'), roomIdB)
+    await settle()
+
+    expect(failuresB).toEqual(['chat-b provisional signaling failed'])
+    expect(failuresA).toEqual([])
+
+    fake.releaseSends()
+    await joinB
+  })
+
+  it("routes a releasing domain's provider error away from unrelated domains", async () => {
+    const { clock, fake, server, roomId } = await setup()
+    await server.attachPage({ domain: OTHER_DOMAIN, pageId: 'page-b' })
+    await server.joinChatRoom({ domain: OTHER_DOMAIN, user: USER, site: { origin: OTHER_DOMAIN } })
+    await settle()
+    const failuresB: string[] = []
+    await server.onError({ pageId: 'page-b' }, (event) => failuresB.push(event.message))
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    emitRemoteWorldPresence(fake)
+    fake.hangSendsTo(getWorldRoomId())
+    await server.detachPage({ domain: DOMAIN, pageId: 'page-a' })
+    clock.advance(RUNTIME_DOMAIN_GRACE_MS + 1)
+    // The release closes Chat(A) and holds the final World publication, so Chat(A) stays in the
+    // live-release record without any committed or prepared state.
+    await vi.waitFor(() => expect(fake.joined.has(roomId)).toBe(false))
+
+    fake.emitError(new Error('chat-a closing leave failed'), roomId)
+    await settle()
+
+    expect(failuresB).toEqual([])
+    expect(diagnostic).toHaveBeenCalledWith(
+      '[WebChat] Runtime failure without a current affected page:',
+      expect.objectContaining({ message: 'chat-a closing leave failed' })
+    )
+
+    diagnostic.mockRestore()
+    fake.releaseSends()
+    await settle()
+  })
+
+  it('coalesces overlapping finalizing-release leases into one fresh committed generation', async () => {
+    const { clock, fake, server, roomId } = await setup()
+    emitRemoteWorldPresence(fake)
+    fake.hangSendsTo(getWorldRoomId())
+
+    await server.detachPage({ domain: DOMAIN, pageId: 'page-a' })
+    clock.advance(RUNTIME_DOMAIN_GRACE_MS + 1)
+    // The release closes Chat(A) and then holds the final World publication.
+    await vi.waitFor(() => expect(fake.joined.has(roomId)).toBe(false))
+
+    await server.attachPage({ domain: DOMAIN, pageId: 'page-b' })
+    await server.attachPage({ domain: DOMAIN, pageId: 'page-c' })
+    let rejectedB: unknown
+    let rejectedC: unknown
+    const joinB = server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE }).catch((error: unknown) => {
+      rejectedB = error
+      return null
+    })
+    const joinC = server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE }).catch((error: unknown) => {
+      rejectedC = error
+      return null
+    })
+    await settle()
+    await settle()
+
+    // Both leases wait behind the single closing release; neither is rejected mid-release.
+    expect(rejectedB).toBeUndefined()
+    expect(rejectedC).toBeUndefined()
+    expect(fake.joined.has(roomId)).toBe(false)
+
+    // The release closed Chat(A) exactly once; the waiting leases never replay its cleanup.
+    expect(fake.operationLog.filter((entry) => entry === `leave:${roomId}`)).toHaveLength(1)
+
+    fake.releaseSends()
+    const [snapshotB, snapshotC] = await Promise.all([joinB, joinC])
+    expect(rejectedB).toBeUndefined()
+    expect(rejectedC).toBeUndefined()
+    expect(snapshotB?.domains[0]).toMatchObject({ domain: DOMAIN, chatRoomJoined: true })
+    expect(snapshotC?.domains[0]).toMatchObject({ domain: DOMAIN, chatRoomJoined: true })
+    // Exactly one fresh physical rebuild served both coalesced leases, and still exactly one
+    // Chat(A) physical exit overall.
+    expect(fake.physicalJoinCalls.filter((id) => id === roomId)).toHaveLength(2)
+    expect(fake.physicalJoinCalls.filter((id) => id === getWorldRoomId())).toHaveLength(2)
+    expect(fake.operationLog.filter((entry) => entry === `leave:${roomId}`)).toHaveLength(1)
+    expect((await server.getSnapshot()).domains[0].pageIds.slice().sort()).toEqual(['page-b', 'page-c'])
+  })
+
+  it('commits a staged cross-domain join only from a World snapshot containing its own site', async () => {
+    const { clock, fake, server, roomId } = await setup()
+    const worldRoomId = getWorldRoomId()
+    emitRemoteWorldPresence(fake)
+    fake.hangSendsTo(worldRoomId)
+
+    // A's final-site release closes Chat(A) and then holds the empty final World publication.
+    await server.detachPage({ domain: DOMAIN, pageId: 'page-a' })
+    clock.advance(RUNTIME_DOMAIN_GRACE_MS + 1)
+    await vi.waitFor(() => expect(fake.joined.has(roomId)).toBe(false))
+    await vi.waitFor(() => expect(fake.sendAttempts.some((attempt) => attempt.roomId === worldRoomId)).toBe(true))
+
+    // B stages on a different domain while the empty final publication is still in flight.
+    await server.attachPage({ domain: OTHER_DOMAIN, pageId: 'page-b' })
+    let rejectedB: unknown
+    const joinB = server
+      .joinChatRoom({ domain: OTHER_DOMAIN, user: USER, site: { origin: OTHER_DOMAIN } })
+      .catch((error: unknown) => {
+        rejectedB = error
+        return null
+      })
+    await settle()
+    await settle()
+    // B must not become ready from the pending empty snapshot.
+    expect(rejectedB).toBeUndefined()
+    expect(
+      (await server.getSnapshot()).domains.find((item) => item.domain === OTHER_DOMAIN)?.chatRoomJoined ?? false
+    ).toBe(false)
+
+    fake.releaseSends()
+    const snapshotB = await joinB
+    expect(rejectedB).toBeUndefined()
+    expect(snapshotB?.domains.find((item) => item.domain === OTHER_DOMAIN)).toMatchObject({
+      chatRoomJoined: true
+    })
+
+    // The wire publication that accepted B carries B's own site; the empty final snapshot only
+    // settled A's release facts.
+    const publications = fake.messages(worldRoomId).filter(isWorldPresence)
+    const emptyFinalIndex = publications.findIndex((message) => message.sites.length === 0)
+    const acceptingIndex = publications.findIndex((message) =>
+      message.sites.some((site) => site.origin === OTHER_DOMAIN)
+    )
+    expect(emptyFinalIndex).toBeGreaterThanOrEqual(0)
+    expect(acceptingIndex).toBeGreaterThan(emptyFinalIndex)
+    expect(acceptingIndex).toBe(publications.length - 1)
+  })
+
+  it('attaches a late lease to a pending cleanup without a redundant write or false failure', async () => {
+    const clock = new FakeClock()
+    const fake = createFakeTransport()
+    const values: Record<string, unknown> = {}
+    let cleanupWrites = 0
+    const cleanupStarted = deferred<void>()
+    const releaseCleanup = deferred<void>()
+    const presenceStore = createBrowserPresenceStore({
+      get: async (key) => ({ [key]: values[key] }),
+      set: async (items) => {
+        const record = Object.values(items)[0] as { local?: unknown } | undefined
+        // The release cleanup save carries no local record; active-record saves always do.
+        if (record && typeof record === 'object' && !('local' in record)) {
+          cleanupWrites += 1
+          if (cleanupWrites === 1) {
+            cleanupStarted.resolve()
+            await releaseCleanup.promise
+          } else {
+            throw new Error('redundant cleanup failed')
+          }
+        }
+        Object.assign(values, items)
+      }
+    })
+    const server = createServer({ transport: fake.transport, clock, codec: jsonCodec, presenceStore })
+    const roomId = getChatRoomId(DOMAIN)
+    await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
+    await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
+    await settle()
+    emitRemoteWorldPresence(fake)
+    fake.hangSendsTo(getWorldRoomId())
+
+    await server.detachPage({ domain: DOMAIN, pageId: 'page-a' })
+    clock.advance(RUNTIME_DOMAIN_GRACE_MS + 1)
+    // The release's authoritative cleanup write is in flight (held).
+    await cleanupStarted.promise
+
+    // A late same-domain lease attaches behind the pending cleanup without re-issuing it.
+    await server.attachPage({ domain: DOMAIN, pageId: 'page-b' })
+    let rejectedB: unknown
+    const joinB = server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE }).catch((error: unknown) => {
+      rejectedB = error
+      return null
+    })
+    await settle()
+    await settle()
+    expect(cleanupWrites).toBe(1)
+
+    // The authoritative cleanup succeeds; the World removal stays held.
+    releaseCleanup.resolve()
+    await vi.waitFor(() => expect(fake.joined.has(roomId)).toBe(false))
+    await settle()
+    expect(cleanupWrites).toBe(1)
+    expect(rejectedB).toBeUndefined()
+
+    fake.releaseSends()
+    const snapshotB = await joinB
+    expect(rejectedB).toBeUndefined()
+    expect(snapshotB?.domains[0]).toMatchObject({ domain: DOMAIN, chatRoomJoined: true })
+    expect(cleanupWrites).toBe(1)
+    disposeServer(server)
+  })
+
+  it('rolls back the World projection when a deferred follow-up publication aborts', async () => {
+    const clock = new FakeClock()
+    const fake = createFakeTransport()
+    let failFollowUpEncode = false
+    const codec: WireCodec = {
+      encode: async (value) => {
+        const message = value as { sites?: { origin: string }[] }
+        if (failFollowUpEncode && message.sites?.some((site) => site.origin === OTHER_DOMAIN)) {
+          throw new Error('follow-up encode failed')
+        }
+        return JSON.stringify(value)
+      },
+      decode: async (payload) => JSON.parse(payload)
+    }
+    const server = createServer({ transport: fake.transport, clock, codec })
+    const roomId = getChatRoomId(DOMAIN)
+    const worldRoomId = getWorldRoomId()
+    await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
+    await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
+    await settle()
+    emitRemoteWorldPresence(fake)
+    fake.hangSendsTo(worldRoomId)
+
+    // A's final-site release closes Chat(A) and holds the empty final World publication.
+    await server.detachPage({ domain: DOMAIN, pageId: 'page-a' })
+    clock.advance(RUNTIME_DOMAIN_GRACE_MS + 1)
+    await vi.waitFor(() => expect(fake.joined.has(roomId)).toBe(false))
+    await vi.waitFor(() => expect(fake.sendAttempts.some((attempt) => attempt.roomId === worldRoomId)).toBe(true))
+
+    // B stages on a different domain; its follow-up snapshot will fail before any provider send.
+    await server.attachPage({ domain: OTHER_DOMAIN, pageId: 'page-b' })
+    let rejectedB: unknown
+    const joinB = server
+      .joinChatRoom({ domain: OTHER_DOMAIN, user: USER, site: { origin: OTHER_DOMAIN } })
+      .catch((error: unknown) => {
+        rejectedB = error
+        return null
+      })
+    await settle()
+    await settle()
+    failFollowUpEncode = true
+    fake.releaseSends()
+
+    await joinB
+    expect(rejectedB).toEqual(new Error('follow-up encode failed'))
+    await vi.waitFor(() => expect(fake.joined.has(worldRoomId)).toBe(false))
+    // The abort was the last World owner: the projection settles the same terminal truth as final
+    // World departure instead of a false joined state with stale remote presences.
+    const world = (await server.getSnapshot()).world
+    expect(world.joined).toBe(false)
+    expect(world.presences).toEqual([])
+    expect(world.localPresence).toBeUndefined()
+    disposeServer(server)
+  })
+
+  it('retains live remote World presence across ordinary same-domain supersession', async () => {
+    const clock = new FakeClock()
+    const fake = createFakeTransport({ physicalReady: false })
+    const server = createServer({ transport: fake.transport, clock, codec: jsonCodec })
+    const roomId = getChatRoomId(DOMAIN)
+    const worldRoomId = getWorldRoomId()
+    await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
+
+    // Hold the first cold join's Chat publication after the physical World peer joined.
+    fake.plantPeer(roomId, 'chat-peer')
+    fake.hangSendsTo(roomId)
+    const firstJoin = server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE }).then(
+      () => null,
+      (error: Error) => error
+    )
+    await fake.waitForDesiredRooms(2)
+    fake.open()
+    await fake.waitForSendAttempt(roomId)
+
+    // A live remote World presence arrives while the first join is provisional.
+    emitRemoteWorldPresence(fake)
+    await settle()
+    expect((await server.getSnapshot()).world.presences.map((item) => item.sourcePeerId)).toContain('remote-peer')
+
+    // Supersede with a new same-domain join; the physical World owner stays live throughout.
+    const refreshedUser = { ...USER, name: 'Refreshed' }
+    const secondJoin = server.joinChatRoom({ domain: DOMAIN, user: refreshedUser, site: SITE })
+    await expect(firstJoin).resolves.toBeNull()
+
+    fake.releaseSends()
+    const snapshot = await secondJoin
+    if (!snapshot) throw new Error('Join was cancelled')
+
+    expect(snapshot.domains[0]).toMatchObject({ domain: DOMAIN, chatRoomJoined: true })
+    expect(fake.joined.has(worldRoomId)).toBe(true)
+    expect((await server.getSnapshot()).world.presences).toEqual([
+      expect.objectContaining({ sourcePeerId: 'remote-peer' })
+    ])
+    disposeServer(server)
+  })
+
+  it('retains another domain live final release World ownership across a provisional Chat failure', async () => {
+    const { clock, fake, server, roomId } = await setup()
+    const worldRoomId = getWorldRoomId()
+    emitRemoteWorldPresence(fake)
+    fake.hangSendsTo(worldRoomId)
+
+    // A's final-site release closes Chat(A) and holds the empty final World publication.
+    await server.detachPage({ domain: DOMAIN, pageId: 'page-a' })
+    clock.advance(RUNTIME_DOMAIN_GRACE_MS + 1)
+    await vi.waitFor(() => expect(fake.joined.has(roomId)).toBe(false))
+    await vi.waitFor(() => expect(fake.sendAttempts.some((attempt) => attempt.roomId === worldRoomId)).toBe(true))
+
+    // B's independent provisional Chat join fails while A's release continuation and pending
+    // final publication still own the physical World owner.
+    await server.attachPage({ domain: OTHER_DOMAIN, pageId: 'page-b' })
+    fake.failNextJoin(getChatRoomId(OTHER_DOMAIN))
+    const joinB = server.joinChatRoom({ domain: OTHER_DOMAIN, user: USER, site: { origin: OTHER_DOMAIN } })
+    await expect(joinB).rejects.toThrow(`Room "${getChatRoomId(OTHER_DOMAIN)}" join failed`)
+    await settle()
+
+    // The departure decision must respect exact World demand: A's live release keeps the room.
+    expect(fake.joined.has(worldRoomId)).toBe(true)
+
+    fake.releaseSends()
+    await vi.waitFor(() => expect(fake.joined.has(worldRoomId)).toBe(false))
+    expect(fake.messages(worldRoomId).filter(isWorldPresence).at(-1)?.sites).toEqual([])
+    disposeServer(server)
+  })
 })
 
 describe('RuntimeServer provisional recovery races', () => {
@@ -1423,7 +1874,7 @@ describe('RuntimeServer provisional recovery races', () => {
       localSessions.push(event)
     })
     await server.onWorldPresence({ pageId: 'page-a' }, (event) => {
-      if (event.sourcePeerId === fake.transport.peerId) localPresences.push(event)
+      if (event.sourcePeerId === fake.transport.peerIdOf(getWorldRoomId())) localPresences.push(event)
     })
     // A pre-existing Chat member makes the session publication block on the wire gate, keeping the
     // staged World publication pending while a remote World member lands.
@@ -1597,7 +2048,7 @@ describe('RuntimeServer provisional recovery races', () => {
     expect(sentToPeer(fake, worldRoomId, 'remote-peer')).toEqual([currentPresence])
     const localPresenceEvents: WorldPresenceEvent[] = []
     await server.onWorldPresence({ pageId: 'page-a' }, (event) => {
-      if (event.sourcePeerId === fake.transport.peerId) localPresenceEvents.push(event)
+      if (event.sourcePeerId === fake.transport.peerIdOf(getWorldRoomId())) localPresenceEvents.push(event)
     })
     fake.makeNotReady()
 
@@ -1624,8 +2075,8 @@ describe('RuntimeServer provisional recovery races', () => {
     expect(sentToPeer(fake, worldRoomId, 'missed-peer')).toEqual([currentPresence])
     expect(localPresenceEvents).toEqual([
       {
-        sourcePeerId: fake.transport.peerId,
-        presence: { sourcePeerId: fake.transport.peerId, presence: currentPresence }
+        sourcePeerId: fake.transport.peerIdOf(getWorldRoomId()),
+        presence: { sourcePeerId: fake.transport.peerIdOf(getWorldRoomId()), presence: currentPresence }
       }
     ])
   })
@@ -1827,9 +2278,9 @@ describe('RuntimeServer World presence', () => {
     await server.joinChatRoom({ domain: OTHER_DOMAIN, user: USER, site: { origin: OTHER_DOMAIN } })
     await settle()
 
-    const localEvents = events.filter((event) => event.sourcePeerId === fake.transport.peerId)
+    const localEvents = events.filter((event) => event.sourcePeerId === fake.transport.peerIdOf(getWorldRoomId()))
     expect(localEvents).toHaveLength(1)
-    expect(localEvents[0]?.presence?.sourcePeerId).toBe(fake.transport.peerId)
+    expect(localEvents[0]?.presence?.sourcePeerId).toBe(fake.transport.peerIdOf(getWorldRoomId()))
     expect(localEvents[0]?.presence?.presence.user).toEqual(USER)
     expect(Object.keys(localEvents[0]?.presence?.presence.user ?? {})).toEqual(['id', 'name', 'avatar'])
     expect(localEvents[0]?.presence?.presence.sites).toEqual([SITE, { origin: OTHER_DOMAIN }])
@@ -1858,7 +2309,7 @@ describe('RuntimeServer World presence', () => {
 
     expect(snapshot.domains.map((domain) => domain.domain)).toEqual([DOMAIN, OTHER_DOMAIN])
     expect(failures).toEqual(['world send failed'])
-    const localEvents = events.filter((event) => event.sourcePeerId === fake.transport.peerId)
+    const localEvents = events.filter((event) => event.sourcePeerId === fake.transport.peerIdOf(getWorldRoomId()))
     expect(localEvents.at(-1)?.presence?.presence.sites).toEqual([SITE, { origin: OTHER_DOMAIN }])
   })
 
@@ -1912,7 +2363,7 @@ describe('RuntimeServer concurrent World registration convergence', () => {
     let releaseJoinGate = () => {}
     let primed = false
     const transport: RoomTransport = {
-      peerId: 'local-peer',
+      peerIdOf: () => 'local-peer',
       join: async (roomId) => {
         joinCalls.push(roomId)
         if (joinGate) await joinGate

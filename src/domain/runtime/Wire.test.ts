@@ -39,7 +39,7 @@ const fixture = (
   let onRoomClose: Parameters<RoomTransport['onRoomClose']>[0] = () => {}
   let onError: Parameters<RoomTransport['onError']>[0] = () => {}
   const transport: RoomTransport = {
-    peerId: 'local-peer',
+    peerIdOf: () => 'local-peer',
     join: (roomId) => join(roomId),
     leave: vi.fn(),
     peers: () => [],
@@ -95,7 +95,7 @@ const fixture = (
     peerJoin: (roomId: string, sourcePeerId: string) => onPeerJoin(roomId, sourcePeerId),
     peerLeave: (roomId: string, sourcePeerId: string) => onPeerLeave(roomId, sourcePeerId),
     close: (roomId: string) => onRoomClose(roomId),
-    fail: (error: Error) => onError(error),
+    fail: (error: Error, roomId: string) => onError(error, roomId),
     event
   }
 }

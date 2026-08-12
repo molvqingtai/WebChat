@@ -93,6 +93,12 @@ interface PendingChatSend {
 interface LiveRelease {
   domain: string
   roomId: string
+  /**
+   * Phase of the awaited active-record cleanup write. A late release request attaches without
+   * emitting cleanup while a write is `pending`, retries only an observed `failed` write, and
+   * never replays a `settled` one (its remaining World step is owned by the live release).
+   */
+  cleanup: 'pending' | 'failed' | 'settled'
 }
 
 export interface SessionOperationSucceeded {
@@ -281,6 +287,11 @@ const SessionDomain = Remesh.domain({
       name: 'Session.ReleasingDomainQuery',
       impl: ({ get }, runtimeDomain: string) => get(LiveReleasesState()).some((item) => item.domain === runtimeDomain)
     })
+    const ReleaseRoomQuery = domain.query({
+      name: 'Session.ReleaseRoomQuery',
+      impl: ({ get }, runtimeDomain: string) =>
+        get(LiveReleasesState()).find((item) => item.domain === runtimeDomain)?.roomId ?? null
+    })
     // Message authority ends as soon as release starts or a durable finalization marker is restored.
     const FinalizingPresenceQuery = domain.query({
       name: 'Session.FinalizingPresenceQuery',
@@ -288,7 +299,16 @@ const SessionDomain = Remesh.domain({
     })
     const RoomDomainQuery = domain.query({
       name: 'Session.RoomDomainQuery',
-      impl: ({ get }, roomId: string) => get(DomainsState()).find((item) => item.roomId === roomId)?.domain ?? null
+      impl: ({ get }, roomId: string) => {
+        // The exact room→domain authority stays valid through committed membership, a prepared
+        // attempt, and live-release teardown until the physical cleanup settles; a provider error
+        // must never fall back to global delivery merely because committed state is absent.
+        const committed = get(DomainsState()).find((item) => item.roomId === roomId)?.domain
+        if (committed) return committed
+        const prepared = get(PreparedSessionsState()).find((item) => item.runtime.roomId === roomId)?.runtime.domain
+        if (prepared) return prepared
+        return get(LiveReleasesState()).find((item) => item.roomId === roomId)?.domain ?? null
+      }
     })
     const BindingQuery = domain.query({
       name: 'Session.BindingQuery',
@@ -795,10 +815,19 @@ const SessionDomain = Remesh.domain({
       impl: ({ get }, runtimeDomain: string) => {
         const existing = get(LiveReleasesState()).find((item) => item.domain === runtimeDomain)
         if (existing) {
-          // A release is already fenced (its cleanup write was rejected earlier): a later
-          // request retries only the cleanup (re-fencing the observer deadlines), and no state
-          // may advance before it succeeds.
+          // A cleanup write is already pending or has already settled for this live release: the
+          // current owner drives the remaining phases, so a late request attaches without
+          // emitting another cleanup write or re-publishing the Chat departure.
+          if (existing.cleanup !== 'failed') return null
+          // Only an observed failed cleanup is retried: re-fence the observer deadlines, mark the
+          // phase pending again, and re-issue exactly one cleanup write.
           return [
+            LiveReleasesState().new(
+              replaceBy(get(LiveReleasesState()), (item) => item.domain === runtimeDomain, {
+                ...existing,
+                cleanup: 'pending' as const
+              })
+            ),
             PendingLeavesState().new(
               get(PendingLeavesState()).map((item) =>
                 item.domain === runtimeDomain ? { ...item, fenced: true } : item
@@ -811,7 +840,7 @@ const SessionDomain = Remesh.domain({
         const prepared = get(PreparedSessionsState()).find((item) => item.runtime.domain === runtimeDomain)
         const current = runtime ?? prepared?.runtime
         if (!current) return ReleaseCompletedEvent({ domain: runtimeDomain })
-        const release: LiveRelease = { domain: runtimeDomain, roomId: current.roomId }
+        const release: LiveRelease = { domain: runtimeDomain, roomId: current.roomId, cleanup: 'pending' }
         // Fence every domain-owned observer deadline BEFORE the awaited cleanup write: a grace
         // expiry can never queue a stale pre-release record behind the cleanup, while the fenced
         // records still close live/History authority until the release resolves.
@@ -821,6 +850,26 @@ const SessionDomain = Remesh.domain({
             get(PendingLeavesState()).map((item) => (item.domain === runtimeDomain ? { ...item, fenced: true } : item))
           ),
           ClearActivePresenceRequestedEvent({ domain: runtimeDomain })
+        ]
+      }
+    })
+
+    const FailReleaseCleanupCommand = domain.command({
+      name: 'Session.FailReleaseCleanupCommand',
+      impl: ({ get }, payload: { domain: string; error: Error }) => {
+        const release = get(LiveReleasesState()).find((item) => item.domain === payload.domain)
+        // Only the pending phase's own failure marks the phase and surfaces the exact error; a
+        // stale failure from a superseded write must not fail an already-advanced release.
+        if (!release || release.cleanup !== 'pending') return null
+        return [
+          LiveReleasesState().new(
+            replaceBy(get(LiveReleasesState()), (item) => item.domain === payload.domain, {
+              ...release,
+              cleanup: 'failed' as const
+            })
+          ),
+          DomainReleaseFailedEvent({ domain: payload.domain, error: payload.error }),
+          RestorePendingLeavesCommand(payload.domain)
         ]
       }
     })
@@ -862,9 +911,18 @@ const SessionDomain = Remesh.domain({
       impl: ({ get }, runtimeDomain: string) => {
         const release = get(LiveReleasesState()).find((item) => item.domain === runtimeDomain)
         if (!release) return null
+        // A duplicate in-flight cleanup write may settle after the first one advanced the release;
+        // only the pending phase's completion removes State and publishes the Chat departure.
+        if (release.cleanup !== 'pending') return null
         // Only the fenced release owner advances: remove every domain-owned State (including any
         // observer pending-leave deadlines) and emit the event that advances World/Chat departure.
         return [
+          LiveReleasesState().new(
+            replaceBy(get(LiveReleasesState()), (item) => item.domain === runtimeDomain, {
+              ...release,
+              cleanup: 'settled' as const
+            })
+          ),
           DomainsState().new(removeBy(get(DomainsState()), (item) => item.domain === runtimeDomain)),
           PreparedSessionsState().new(
             removeBy(get(PreparedSessionsState()), (item) => item.runtime.domain === runtimeDomain)
@@ -1749,7 +1807,7 @@ const SessionDomain = Remesh.domain({
               // The authoritative active record was not removed: surface the exact failure,
               // retain the current fence and physical membership, restore the observer deadline
               // ownership (re-armed), and allow a later retry.
-              return [DomainReleaseFailedEvent({ domain, error: error as Error }), RestorePendingLeavesCommand(domain)]
+              return FailReleaseCleanupCommand({ domain, error: error as Error })
             }
           })
         )
@@ -1827,7 +1885,8 @@ const SessionDomain = Remesh.domain({
         ReleasingDomainQuery,
         FinalizingPresenceQuery,
         RoomDomainQuery,
-        BindingQuery
+        BindingQuery,
+        ReleaseRoomQuery
       },
       command: {
         HydratePresenceCommand,

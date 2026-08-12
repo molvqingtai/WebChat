@@ -324,6 +324,56 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     return task
   }
 
+  /** One shared in-flight join settlement per domain: overlapping same-domain joins coalesce. */
+  const inFlightJoins = new Map<string, Promise<Awaited<ReturnType<typeof snapshot>> | null>>()
+
+  const joinChatRoomSettled = async (payload: Parameters<RuntimeServer['joinChatRoom']>[0]) => {
+    // Typed ChatUser/ChatSite values pass through unchanged; the application-to-protocol
+    // mapping already happened before the value was narrowed to the schema-owned type.
+    const recovery = beginPresenceRecovery(payload.domain)
+    let recovered = false
+    try {
+      const connect = () => {
+        const operationId = nanoid()
+        return runConnectionOperation(
+          operationId,
+          connectionDomain.command.JoinDomainCommand({ operationId, ...payload }),
+          () => true,
+          () => false
+        )
+      }
+      while (true) {
+        const presenceState = await acquireCurrentPresence(payload.domain, payload.user.id)
+        if (presenceState === 'finalizing') {
+          // A lease observed after the release fence started never bypasses the shared release:
+          // it waits for the one live release owner to close, then starts fresh through the loop.
+          if (store.query(sessionDomain.query.ReleasingDomainQuery(payload.domain))) {
+            await completeInterruptedRelease(payload.domain)
+            continue
+          }
+          if (!store.query(sessionDomain.query.DomainQuery(payload.domain))) {
+            if (!(await connect())) return null
+            continue
+          }
+          await completeInterruptedRelease(payload.domain)
+          continue
+        }
+        if (store.query(sessionDomain.query.FinalizingPresenceQuery(payload.domain))) {
+          await completeInterruptedRelease(payload.domain)
+          continue
+        }
+        if (presenceState === 'active' && !store.query(sessionDomain.query.DomainQuery(payload.domain))) {
+          continue
+        }
+        if (!(await connect())) return null
+        recovered = true
+        return snapshot()
+      }
+    } finally {
+      finishPresenceRecovery(payload.domain, recovery, recovered)
+    }
+  }
+
   const server: RuntimeServer = {
     attachPage: async (payload) => {
       store.send(lifecycleDomain.command.AttachPageCommand(payload))
@@ -334,45 +384,22 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       store.send(lifecycleDomain.command.DetachPageCommand(payload))
     },
     getSnapshot: async () => snapshot(),
-    joinChatRoom: async (payload) => {
-      // Typed ChatUser/ChatSite values pass through unchanged; the application-to-protocol
-      // mapping already happened before the value was narrowed to the schema-owned type.
-      const recovery = beginPresenceRecovery(payload.domain)
-      let recovered = false
-      try {
-        const connect = () => {
-          const operationId = nanoid()
-          return runConnectionOperation(
-            operationId,
-            connectionDomain.command.JoinDomainCommand({ operationId, ...payload }),
-            () => true,
-            () => false
-          )
-        }
-        while (true) {
-          const presenceState = await acquireCurrentPresence(payload.domain, payload.user.id)
-          if (presenceState === 'finalizing') {
-            if (!store.query(sessionDomain.query.DomainQuery(payload.domain))) {
-              if (!(await connect())) return null
-              continue
-            }
-            await completeInterruptedRelease(payload.domain)
-            continue
-          }
-          if (store.query(sessionDomain.query.FinalizingPresenceQuery(payload.domain))) {
-            await completeInterruptedRelease(payload.domain)
-            continue
-          }
-          if (presenceState === 'active' && !store.query(sessionDomain.query.DomainQuery(payload.domain))) {
-            continue
-          }
-          if (!(await connect())) return null
-          recovered = true
-          return snapshot()
-        }
-      } finally {
-        finishPresenceRecovery(payload.domain, recovery, recovered)
+    joinChatRoom: (payload) => {
+      // Overlapping same-domain joins observed while the domain's release is closing coalesce into
+      // one shared settlement; fresh cold joins keep the existing newest-generation supersession.
+      if (store.query(sessionDomain.query.ReleasingDomainQuery(payload.domain))) {
+        const existing = inFlightJoins.get(payload.domain)
+        if (existing) return existing
+        const task = joinChatRoomSettled(payload)
+        inFlightJoins.set(payload.domain, task)
+        task
+          .catch(() => {})
+          .finally(() => {
+            if (inFlightJoins.get(payload.domain) === task) inFlightJoins.delete(payload.domain)
+          })
+        return task
       }
+      return joinChatRoomSettled(payload)
     },
     leaveChatRoom: async ({ domain }) => {
       // The leave resolves only after physical departure and rejects with the exact

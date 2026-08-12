@@ -105,7 +105,10 @@ const WireDomain = Remesh.domain({
     const QueueSequenceState = domain.state<number>({ name: 'Wire.QueueSequenceState', default: 0 })
     const DropRecordsState = domain.state<DropRecord[]>({ name: 'Wire.DropRecordsState', default: [] })
 
-    const PeerIdQuery = domain.query({ name: 'Wire.PeerIdQuery', impl: () => transport.peerId })
+    const PeerIdQuery = domain.query({
+      name: 'Wire.PeerIdQuery',
+      impl: (_, roomId: string) => transport.peerIdOf(roomId)
+    })
     const TrustedRoomsQuery = domain.query({
       name: 'Wire.TrustedRoomsQuery',
       impl: ({ get }) => get(TrustedRoomsState())
@@ -130,7 +133,7 @@ const WireDomain = Remesh.domain({
     })
     const PeerLeftEvent = domain.event<{ roomId: string; sourcePeerId: string }>({ name: 'Wire.PeerLeftEvent' })
     const RoomClosedEvent = domain.event<{ roomId: string }>({ name: 'Wire.RoomClosedEvent' })
-    const ErrorEvent = domain.event<Error>({ name: 'Wire.ErrorEvent' })
+    const ErrorEvent = domain.event<{ error: Error; roomId: string }>({ name: 'Wire.ErrorEvent' })
     const ProtocolDropEvent = domain.event<{ sourcePeerId: string; reason: string; error?: unknown }>({
       name: 'Wire.ProtocolDropEvent'
     })
@@ -632,8 +635,8 @@ const WireDomain = Remesh.domain({
     domain.effect({
       name: 'Wire.ProviderErrorEffect',
       impl: () =>
-        fromEventPattern<Error>(
-          (handler) => transport.onError(handler),
+        fromEventPattern<{ error: Error; roomId: string }>(
+          (handler) => transport.onError((error, roomId) => handler({ error, roomId })),
           (_handler, dispose) => dispose()
         ).pipe(map(ErrorEvent))
     })

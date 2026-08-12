@@ -10,7 +10,7 @@ export const WireCodecExtern = Remesh.extern<WireCodec>({ default: NativeWireCod
 
 export const RoomTransportExtern = Remesh.extern<RoomTransport>({
   default: {
-    peerId: '',
+    peerIdOf: notImplemented('peerIdOf'),
     join: notImplemented('join'),
     leave: notImplemented('leave'),
     peers: notImplemented('peers'),
