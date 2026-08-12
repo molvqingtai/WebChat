@@ -382,7 +382,7 @@ const ConnectionDomain = Remesh.domain({
           ...(attempt.roomId && (attempt.mode !== 'join' || !committed.some((item) => item.domain === attempt.domain))
             ? [wireDomain.command.LeaveRoomCommand({ roomId: attempt.roomId, preservePending: false })]
             : []),
-          ...(committed.length === 0 && !hasOtherAttempt
+          ...(committed.length === 0 && !hasOtherAttempt && !get(worldDomain.query.WorldDemandQuery(attempt.attemptId))
             ? [
                 wireDomain.command.LeaveRoomCommand({ roomId: getWorldRoomId(), preservePending: false }),
                 worldDomain.command.DepartRoomCommand()

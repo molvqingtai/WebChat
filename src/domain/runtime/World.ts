@@ -128,6 +128,18 @@ const WorldDomain = Remesh.domain({
         return presenceFor(prospective, options.sessionId)
       }
     })
+    // Exact World ownership/demand: any committed registration, staged attempt (other than one
+    // being aborted by the caller), pending final publication, or live release continuation keeps
+    // the physical World room a live owner. The physical departure decision must never be derived
+    // from Session/attempt facts alone.
+    const WorldDemandQuery = domain.query({
+      name: 'World.WorldDemandQuery',
+      impl: ({ get }, ignoredAttemptId?: string) =>
+        get(RegistrationsState()).length > 0 ||
+        get(StagedRegistrationsState()).some((item) => item.attemptId !== ignoredAttemptId) ||
+        get(PendingFinalPublicationState()) !== null ||
+        get(LiveReleaseContinuationsState()).length > 0
+    })
     const PublicationPresenceQuery = domain.query({
       name: 'World.PublicationPresenceQuery',
       impl: ({ get }) => {
@@ -776,7 +788,14 @@ const WorldDomain = Remesh.domain({
     })
 
     return {
-      query: { RegistrationsQuery, JoinedQuery, PresencesQuery, LocalPresenceQuery, StagedPresenceQuery },
+      query: {
+        RegistrationsQuery,
+        JoinedQuery,
+        PresencesQuery,
+        LocalPresenceQuery,
+        StagedPresenceQuery,
+        WorldDemandQuery
+      },
       command: {
         StageDomainCommand,
         PublishStagedCommand,

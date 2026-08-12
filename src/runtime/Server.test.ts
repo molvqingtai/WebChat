@@ -1829,6 +1829,35 @@ describe('RuntimeServer lifecycle', () => {
     ])
     disposeServer(server)
   })
+
+  it('retains another domain live final release World ownership across a provisional Chat failure', async () => {
+    const { clock, fake, server, roomId } = await setup()
+    const worldRoomId = getWorldRoomId()
+    emitRemoteWorldPresence(fake)
+    fake.hangSendsTo(worldRoomId)
+
+    // A's final-site release closes Chat(A) and holds the empty final World publication.
+    await server.detachPage({ domain: DOMAIN, pageId: 'page-a' })
+    clock.advance(RUNTIME_DOMAIN_GRACE_MS + 1)
+    await vi.waitFor(() => expect(fake.joined.has(roomId)).toBe(false))
+    await vi.waitFor(() => expect(fake.sendAttempts.some((attempt) => attempt.roomId === worldRoomId)).toBe(true))
+
+    // B's independent provisional Chat join fails while A's release continuation and pending
+    // final publication still own the physical World owner.
+    await server.attachPage({ domain: OTHER_DOMAIN, pageId: 'page-b' })
+    fake.failNextJoin(getChatRoomId(OTHER_DOMAIN))
+    const joinB = server.joinChatRoom({ domain: OTHER_DOMAIN, user: USER, site: { origin: OTHER_DOMAIN } })
+    await expect(joinB).rejects.toThrow(`Room "${getChatRoomId(OTHER_DOMAIN)}" join failed`)
+    await settle()
+
+    // The departure decision must respect exact World demand: A's live release keeps the room.
+    expect(fake.joined.has(worldRoomId)).toBe(true)
+
+    fake.releaseSends()
+    await vi.waitFor(() => expect(fake.joined.has(worldRoomId)).toBe(false))
+    expect(fake.messages(worldRoomId).filter(isWorldPresence).at(-1)?.sites).toEqual([])
+    disposeServer(server)
+  })
 })
 
 describe('RuntimeServer provisional recovery races', () => {
