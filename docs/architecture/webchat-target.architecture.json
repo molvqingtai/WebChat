@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "diagram_type": "architecture",
   "meta": {
     "title": "WebChat Remesh DDD + CQRS Architecture",

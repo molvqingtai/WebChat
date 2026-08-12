@@ -1132,10 +1132,10 @@ describe('Chrome native action lifecycle diagnostic', () => {
         expectedOutcome: 'mounted'
       }
     ] as const
-    const eventKinds = ['target-created', 'target-changed', 'target-attached'] as const
+    const eventTypes = ['target-created', 'target-changed', 'target-attached'] as const
 
     for (const targetCase of targetCases) {
-      for (const type of eventKinds) {
+      for (const type of eventTypes) {
         const target: ChromeLifecycleTarget = {
           targetId: `${type}-${targetCase.name}-target`,
           type: targetCase.type,
@@ -1147,9 +1147,9 @@ describe('Chrome native action lifecycle diagnostic', () => {
         const adapter = prepareAdapter([...targetBoundSteps(), contextCreated(), event, { advanceMs: 1 }])
 
         const result = await diagnoseChromeNativeActionLifecycle(adapter, context)
-        const evidence = result.timeline.find(({ type: entryKind, detail }) => {
+        const evidence = result.timeline.find(({ type: entryType, detail }) => {
           const fields = detail as Record<string, unknown> | undefined
-          return entryKind === `event:${type}` && fields?.targetId === target.targetId
+          return entryType === `event:${type}` && fields?.targetId === target.targetId
         })
         const detail = evidence?.detail as Record<string, unknown> | undefined
 

@@ -200,14 +200,14 @@ function formatDelta(n) {
 }
 
 /** Actionable hint when an edge label rect hits a node/component box (#7). */
-export function suggestLabelObstacleFix(labelRect, lx, ly, obstacle, obstacleKind = 'component') {
+export function suggestLabelObstacleFix(labelRect, lx, ly, obstacle, obstacleType = 'component') {
   const lxR = Math.round(lx)
   const lyR = Math.round(ly)
   const belowY = Math.round(obstacle.y + obstacle.height + 14)
   const aboveY = Math.round(obstacle.y - 4)
   return [
     `  label rect: ${formatRect(labelRect)}`,
-    `  ${obstacleKind} "${obstacle.id}" rect: ${formatRect(obstacle)}`,
+    `  ${obstacleType} "${obstacle.id}" rect: ${formatRect(obstacle)}`,
     `  Suggested fix: labelAt [${lxR}, ${belowY}] or labelDy ${formatDelta(belowY - lyR)} (below); or labelAt [${lxR}, ${aboveY}] or labelDy ${formatDelta(aboveY - lyR)} (above)`
   ].join('\n')
 }

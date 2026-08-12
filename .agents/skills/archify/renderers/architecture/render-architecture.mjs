@@ -109,7 +109,7 @@ const legendY = () => viewBox[1] - 16
 // ---- Validation: mechanical correctness, never layout taste -----------------
 function validateArchitecture() {
   const problems = []
-  if (arch.schema_version !== 1) problems.push('Architecture files must set "schema_version": 1.')
+  if (arch.schema_version !== 2) problems.push('Architecture files must set "schema_version": 2.')
   if (arch.diagram_type !== 'architecture') problems.push('Architecture files must set "diagram_type": "architecture".')
   if (!arch.meta?.title) problems.push('Architecture files must include meta.title.')
   if (!Array.isArray(arch.components) || arch.components.length < 1) {

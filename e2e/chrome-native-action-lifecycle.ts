@@ -873,7 +873,7 @@ const privacySafeEventEvidence = (event: ChromeLifecycleEvent): JsonObject => {
         contextId: event.contextId,
         frameId: event.frameId,
         type: event.type,
-        originKind: event.origin.startsWith('chrome-extension://') ? 'extension' : 'other',
+        originType: event.origin.startsWith('chrome-extension://') ? 'extension' : 'other',
         sessionId: event.sessionId,
         targetId: event.targetId,
         world: event.world
