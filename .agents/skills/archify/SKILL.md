@@ -215,7 +215,7 @@ Architecture has the same read-schema-then-render loop as the other modes — pr
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "diagram_type": "architecture",
   "meta": { "title": "Sample Web App", "subtitle": "3-tier SaaS on AWS", "output": "web-app.html" },
   "components": [
