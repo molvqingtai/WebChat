@@ -9,6 +9,16 @@ The current peer protocol SHALL use exact v6 Chat and World physical namespaces.
 - **WHEN** a current client joins Chat and World
 - **THEN** it SHALL select exact v6 namespace inputs and SHALL not join, advertise, or publish to a v1, v2, v3, v4, or v5 room
 
+#### Scenario: Removed Chat lifecycle type stays outside v6
+
+- **WHEN** a peer presents `type:'session-end'` or another removed Chat lifecycle value
+- **THEN** the strict v6 Chat schema SHALL reject it as unknown, and no current client SHALL join an older room to interpret it
+
+#### Scenario: History bytes use only the replacement shapes
+
+- **WHEN** the same peer begins History synchronization under v6
+- **THEN** it SHALL exchange only `history-messages-pull` and `history-messages-push` pages and SHALL emit no v3 `history-request`, `history-response`, `before`, or `HistoryCursor` value
+
 #### Scenario: v5 capacity peers are physically isolated
 
 - **WHEN** a v5 peer using the 48KiB message-like, 64KiB final-frame, and 256KiB decompressed limits is present in the same signaling environment as a current peer
@@ -90,7 +100,7 @@ No application fragmentation/reassembly, alternate envelope, capacity negotiatio
 - **WHEN** current frames enter the Runtime decode pipeline
 - **THEN** each source SHALL remain bounded to 8 queued frames and 256KiB aggregate wire bytes, so one full-size frame MAY occupy that source's complete byte queue without changing another source or the room
 
-#### Scenario: Opaque message IDs remain page-bounded
+#### Scenario: Opaque message IDs remain aggregate-bounded
 
 - **WHEN** a History Pull carries message IDs with any string content or individual length
 - **THEN** the schema SHALL apply no per-ID regex, NanoID-length rule, or independent string ceiling, while the complete Pull page SHALL remain within the 256KiB codec bounds and the current attempt lifecycle
@@ -123,7 +133,7 @@ The schemas SHALL continue to accept only `history-messages-pull`/`history-messa
 - **WHEN** two current v6 peers synchronize one direction
 - **THEN** the requester SHALL send continuous bounded `history-messages-pull` inventory pages through one final `done: true` page, after which the provider SHALL send continuous bounded `history-messages-push` missing-record pages through one final `done: true` page using the same `syncId`; no third peer type or body request SHALL participate
 
-#### Scenario: One connection cannot synchronize twice in one direction
+#### Scenario: A current connection cannot synchronize twice in one direction
 
 - **GIVEN** one current source incarnation and direction has bound its sole `syncId`
 - **WHEN** that synchronization completes, is canceled, or fails and a later page uses either the same or a different `syncId`
@@ -195,8 +205,8 @@ The current peer protocol SHALL NOT bridge, translate, negotiate, or interoperat
 
 ## REMOVED Requirements
 
-### Requirement: Current v3 peer wire is a clean generation cut
+### Requirement: Current v5 peer wire is a clean generation cut
 
-**Reason**: The current capacity contract advances the clean peer generation to v6, so the canonical v3 requirement must not remain a second current-generation authority.
+**Reason**: The current capacity contract advances the clean peer generation from v5 to v6, so the canonical v5 requirement must not remain a second current-generation authority.
 
 **Migration**: None. Current clients join only v6 Chat and World namespaces under the added v6 requirement; no runtime compatibility, room bridge, fallback, or data migration path exists.
