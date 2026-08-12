@@ -1885,7 +1885,7 @@ describe('RuntimeServer lifecycle', () => {
     await vi.waitFor(() => expect(failures).toEqual([`Room "${roomId}" join failed`]))
     expect(fake.joined.has(roomId)).toBe(false)
 
-    await vi.advanceTimersByTimeAsync(5000)
+    await vi.advanceTimersByTimeAsync(10000)
     await settle()
 
     expect(fake.joined.has(roomId)).toBe(true)
@@ -1905,7 +1905,7 @@ describe('RuntimeServer lifecycle', () => {
     await vi.waitFor(() => expect(failures).toEqual([`Room "${worldRoomId}" join failed`]))
     expect((await server.getSnapshot()).world.joined).toBe(false)
 
-    await vi.advanceTimersByTimeAsync(5000)
+    await vi.advanceTimersByTimeAsync(10000)
     await settle()
 
     expect((await server.getSnapshot()).world.joined).toBe(true)
@@ -1923,7 +1923,7 @@ describe('RuntimeServer lifecycle', () => {
     await expect(server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })).rejects.toThrow()
     const joinsBefore = fake.joinCalls.filter((roomId) => roomId === chatRoomId).length
 
-    await vi.advanceTimersByTimeAsync(5000)
+    await vi.advanceTimersByTimeAsync(10000)
     await settle()
 
     const joinsAfter = fake.joinCalls.filter((roomId) => roomId === chatRoomId).length
@@ -1947,7 +1947,7 @@ describe('RuntimeServer lifecycle', () => {
     await expect(server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })).rejects.toThrow()
     const worldJoinsBefore = fake.joinCalls.filter((roomId) => roomId === worldRoomId).length
 
-    await vi.advanceTimersByTimeAsync(5000)
+    await vi.advanceTimersByTimeAsync(10000)
     await settle()
 
     const worldJoinsAfter = fake.joinCalls.filter((roomId) => roomId === worldRoomId).length

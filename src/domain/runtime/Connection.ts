@@ -64,7 +64,7 @@ export interface RuntimeFailure {
 }
 
 const PHYSICAL_ROOM_JOIN_TIMEOUT_MS = 10000
-export const ROOM_RECOVERY_RETRY_INTERVAL_MS = 5000
+export const ROOM_RECOVERY_RETRY_INTERVAL_MS = 10000
 const replaceBy = <T>(items: T[], predicate: (item: T) => boolean, next: T): T[] =>
   items.some(predicate) ? items.map((item) => (predicate(item) ? next : item)) : [...items, next]
 const worldJoinRequestId = (requestId: string) => `connection:world:${requestId}`
