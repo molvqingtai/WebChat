@@ -25,7 +25,7 @@ Alternative considered: introduce named or shared configuration. Rejected becaus
 
 ### Synchronize only existing network-retry timer expectations
 
-Mechanically update existing elapsed-time expectations whose value directly includes either changed network-retry wait. Existing close-recovery, Domain recovery, and World recovery controls must prove that no replacement or retry begins before `10_000ms` and exactly one begins when the boundary is reached. Do not add test cases or restructure timer setup. Existing tests already exercise immediate fresh-demand repair, stale callback fencing, cancellation, disposal, single replacement, failed initial joins, and failed active-room recovery; this change only aligns those controls with the new cadence. ClientLease expectations remain unchanged.
+Mechanically replace only the existing elapsed-time expectations whose value directly includes either changed network-retry wait from `5_000` to `10_000`. Do not add a pre-boundary negative assertion, an extra exactly-once assertion, a test case, or a test abstraction, and do not restructure timer setup. Existing tests already exercise immediate fresh-demand repair, stale callback fencing, cancellation, disposal, single replacement, failed initial joins, and failed active-room recovery; this change only aligns their existing boundary values with the new cadence. ClientLease expectations remain unchanged.
 
 Alternative considered: add dedicated cadence suites. Rejected because that would expand test structure beyond the authorized change.
 

@@ -10,9 +10,9 @@
 
 ## 3. Mechanical Test Synchronization
 
-- [ ] 3.1 Update only existing Artico timer expectations made stale by the `10_000` wait, including a pre-boundary assertion in an existing close-recovery control; add no test case or test abstraction.
+- [ ] 3.1 Mechanically update only existing Artico timer values made stale by the `10_000` wait; add no pre-boundary or exactly-once assertion, test case, test abstraction, or setup restructuring.
 - [x] 3.2 Update only existing ClientLease timer expectations made stale by the `1_000` wait; add no test case or test abstraction.
-- [ ] 3.3 Update only existing failed initial/active Chat and World recovery timer expectations made stale by the `10_000` wait, including pre-boundary assertions; add no test case or test abstraction.
+- [ ] 3.3 Mechanically update only existing failed initial/active Chat and World recovery timer values made stale by the `10_000` wait; add no pre-boundary or exactly-once assertion, test case, test abstraction, or setup restructuring.
 
 ## 4. Verification And Delivery
 
