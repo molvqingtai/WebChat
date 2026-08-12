@@ -839,55 +839,64 @@ describe('RuntimeServer lifecycle', () => {
     }
   })
 
-  it('accepts a lawful rebind after page reattach and through a grace return', async () => {
+  it('accepts a lawful rebind after page reattach', async () => {
     vi.useFakeTimers()
     try {
       const user1 = { id: 'user-1', name: 'User 1', avatar: '' }
-      const memberCount = async (server: Awaited<ReturnType<typeof setup>>['server']) => {
+      const { fake, server, roomId } = await setup()
+      const memberCount = async () => {
         const domain = (await server.getSnapshot()).domains[0]
         return new Set(domain.sessions.map((item) => item.user.id)).size + (domain.localSession ? 1 : 0)
       }
+      fake.peerJoin(roomId, 'peer-1')
+      fake.receive(roomId, 'peer-1', { ...session(user1), sessionId: 'session-user-1' })
+      await settle()
+      fake.peerLeave(roomId, 'peer-1')
+      await vi.advanceTimersByTimeAsync(PENDING_LEAVE_GRACE_MS)
+      await settle()
+      expect(await memberCount()).toBe(1)
+      // The page detaches and attaches again immediately; the domain ledger (including the ended
+      // observation) survives, and the lawful rebind is accepted.
+      await server.detachPage({ domain: DOMAIN, pageId: 'page-a' })
+      await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
+      await settle()
+      fake.peerJoin(roomId, 'peer-1')
+      fake.receive(roomId, 'peer-1', { ...session(user1), sessionId: 'session-user-1-reattach' })
+      await settle()
+      expect(await memberCount()).toBe(2)
+      disposeServer(server)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 
-      // Page reattach: the page detaches and attaches again immediately; the domain ledger
-      // (including the ended observation) survives, and the lawful rebind is accepted.
-      {
-        const { fake, server, roomId } = await setup()
-        fake.peerJoin(roomId, 'peer-1')
-        fake.receive(roomId, 'peer-1', { ...session(user1), sessionId: 'session-user-1' })
-        await settle()
-        fake.peerLeave(roomId, 'peer-1')
-        await vi.advanceTimersByTimeAsync(PENDING_LEAVE_GRACE_MS)
-        await settle()
-        await server.detachPage({ domain: DOMAIN, pageId: 'page-a' })
-        await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
-        await settle()
-        fake.peerJoin(roomId, 'peer-1')
-        fake.receive(roomId, 'peer-1', { ...session(user1), sessionId: 'session-user-1-reattach' })
-        await settle()
-        expect(await memberCount(server)).toBe(2)
-        disposeServer(server)
+  it('accepts a lawful rebind through a grace return', async () => {
+    vi.useFakeTimers()
+    try {
+      const user1 = { id: 'user-1', name: 'User 1', avatar: '' }
+      const { clock, fake, server, roomId } = await setup()
+      const memberCount = async () => {
+        const domain = (await server.getSnapshot()).domains[0]
+        return new Set(domain.sessions.map((item) => item.user.id)).size + (domain.localSession ? 1 : 0)
       }
-
-      // Grace return: the page returns near the end of the grace window; the ledger survives and
-      // the lawful rebind is accepted.
-      {
-        const { clock, fake, server, roomId } = await setup()
-        fake.peerJoin(roomId, 'peer-1')
-        fake.receive(roomId, 'peer-1', { ...session(user1), sessionId: 'session-user-1' })
-        await settle()
-        fake.peerLeave(roomId, 'peer-1')
-        await vi.advanceTimersByTimeAsync(PENDING_LEAVE_GRACE_MS)
-        await settle()
-        await server.detachPage({ domain: DOMAIN, pageId: 'page-a' })
-        clock.advance(RUNTIME_DOMAIN_GRACE_MS - 1)
-        await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
-        await settle()
-        fake.peerJoin(roomId, 'peer-1')
-        fake.receive(roomId, 'peer-1', { ...session(user1), sessionId: 'session-user-1-grace-return' })
-        await settle()
-        expect(await memberCount(server)).toBe(2)
-        disposeServer(server)
-      }
+      fake.peerJoin(roomId, 'peer-1')
+      fake.receive(roomId, 'peer-1', { ...session(user1), sessionId: 'session-user-1' })
+      await settle()
+      fake.peerLeave(roomId, 'peer-1')
+      await vi.advanceTimersByTimeAsync(PENDING_LEAVE_GRACE_MS)
+      await settle()
+      expect(await memberCount()).toBe(1)
+      // The page returns near the end of the grace window; the ledger survives and the lawful
+      // rebind is accepted.
+      await server.detachPage({ domain: DOMAIN, pageId: 'page-a' })
+      clock.advance(RUNTIME_DOMAIN_GRACE_MS - 1)
+      await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
+      await settle()
+      fake.peerJoin(roomId, 'peer-1')
+      fake.receive(roomId, 'peer-1', { ...session(user1), sessionId: 'session-user-1-grace-return' })
+      await settle()
+      expect(await memberCount()).toBe(2)
+      disposeServer(server)
     } finally {
       vi.useRealTimers()
     }

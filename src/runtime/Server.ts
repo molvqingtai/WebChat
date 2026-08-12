@@ -323,9 +323,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       })
     })
     store.send(connectionDomain.command.DestroyDomainConnectionCommand({ domain, operationId }))
-    console.log('DEBUG-destroy-sent', domain, operationId.slice(0, 6))
     const settled = await persistence
-    console.log('DEBUG-persist-settled', domain, settled)
     if (!settled) return { ok: false }
     // Active History supplies/jobs physically settle through their abort callbacks; the
     // replacement may bind new History work only after every old owner is gone. Yielding on the
