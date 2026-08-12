@@ -1,3 +1,19 @@
+## [2.4.8](https://github.com/molvqingtai/WebChat/compare/v2.4.7...v2.4.8) (2026-08-12)
+
+### Bug Fixes
+
+- **runtime:** align content URL eligibility ([8f8303a](https://github.com/molvqingtai/WebChat/commit/8f8303a11df1a31b11896e1d022fda4ac0d82dd1))
+- **runtime:** complete per-room repair round four ([e5794da](https://github.com/molvqingtai/WebChat/commit/e5794dac52a735a7083e54139b3b7b95fcb69f77))
+- **runtime:** complete per-room repair round three ([20f466d](https://github.com/molvqingtai/WebChat/commit/20f466dc2390fc37b594bac0a0dc300f00397254))
+- **runtime:** complete per-room repair round two ([e080d63](https://github.com/molvqingtai/WebChat/commit/e080d63813d3a05d442ff79d1fc47575f1899254))
+- **runtime:** derive physical World departure from exact World demand ([a25d4c5](https://github.com/molvqingtai/WebChat/commit/a25d4c55c25ec011b6fa265c856b00222b3d39a3))
+- **runtime:** settle release order, retry ownership, and scoped peer restart ([7b6dbd5](https://github.com/molvqingtai/WebChat/commit/7b6dbd5eebbb17e77483291e53fd73d27dd28dd4))
+- **runtime:** tie World projection clearing to physical departure ([0417202](https://github.com/molvqingtai/WebChat/commit/0417202f5e29ebb8ac1c3759ed7c192e85bb6d18))
+
+### Performance Improvements
+
+- **content:** narrow excluded hosts ([53e17cb](https://github.com/molvqingtai/WebChat/commit/53e17cb63750d9a973b4b64df2b40315586c1bef))
+
 ## [2.4.7](https://github.com/molvqingtai/WebChat/compare/v2.4.6...v2.4.7) (2026-08-10)
 
 ### Performance Improvements
