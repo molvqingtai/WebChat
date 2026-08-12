@@ -490,6 +490,21 @@ const HistoryDomain = Remesh.domain({
       }
     })
 
+    // True only when every domain-owned History connection fact (requester/provider attempts,
+    // successors, active/waiting supplies, jobs, and feedback owners) has physically settled.
+    // Manual refresh waits on this before the replacement may bind new History work.
+    const DomainCleanupSettledQuery = domain.query({
+      name: 'History.DomainCleanupSettledQuery',
+      impl: ({ get }, runtimeDomain: string) =>
+        !get(RequesterAttemptsState()).some((item) => item.domain === runtimeDomain) &&
+        !get(ProviderAttemptsState()).some((item) => item.domain === runtimeDomain) &&
+        !get(ProviderSupplySuccessorsState()).some((item) => item.domain === runtimeDomain) &&
+        !get(ActiveSuppliesState()).some((item) => item.domain === runtimeDomain) &&
+        !get(WaitingSuppliesState()).some((item) => item.domain === runtimeDomain) &&
+        !get(ProviderSupplyJobsState()).some((item) => item.domain === runtimeDomain) &&
+        !get(FeedbackOwnersState()).some((item) => item.domain === runtimeDomain)
+    })
+
     const CleanupProviderSlotsCommand = domain.command({
       name: 'History.CleanupProviderSlotsCommand',
       impl: ({ get }, payload: { domain: string; sourcePeerId: string }) => {
@@ -2117,7 +2132,7 @@ const HistoryDomain = Remesh.domain({
     })
 
     return {
-      query: { RequesterAttemptsQuery, ProviderAttemptsQuery, ProviderSupplyJobsQuery },
+      query: { RequesterAttemptsQuery, ProviderAttemptsQuery, ProviderSupplyJobsQuery, DomainCleanupSettledQuery },
       command: {
         StartRequesterCommand,
         ResetHistoryForSessionCommand,

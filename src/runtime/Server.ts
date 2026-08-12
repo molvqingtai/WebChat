@@ -13,6 +13,7 @@ import { PresenceStoreExtern, type PresenceStore } from '@/domain/runtime/extern
 import { RoomTransportExtern, WireCodecExtern } from '@/domain/runtime/externs/RoomTransport'
 import type { RoomTransport } from '@/runtime/RoomTransport'
 import { NativeWireCodec, type WireCodec } from '@/protocol'
+import type { ChatSite, ChatUser } from '@/protocol'
 import type { RuntimeServer, RuntimeSnapshot } from '@/runtime/Contract'
 import { MAX_HISTORY_SESSION_BYTES, MAX_HISTORY_SESSION_MESSAGES } from '@/constants/config'
 import { PagePort, createPagePortImpl } from '@/runtime/PagePort'
@@ -85,6 +86,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   const deliveryDomain = store.getDomain(deliveryAction)
   const sessionDomain = store.getDomain(sessionAction)
   const worldDomain = store.getDomain(worldAction)
+  const historyDomain = store.getDomain(historyAction)
   const connectionDomain = store.getDomain(connectionAction)
   store.send(lifecycleDomain.command.HostReadyCommand())
 
@@ -289,6 +291,64 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   /** One shared in-flight settlement per domain: overlapping release requests share it. */
   const inFlightReleases = new Map<string, Promise<void>>()
 
+  /**
+   * Manual-refresh destruction phase: destroys the complete current-domain connection aggregate,
+   * awaits the cleared-observer persistence settlement, then awaits the domain's History work
+   * physically settling. Returns the captured local identity for the replacement attempt.
+   */
+  // The active local logical identity captured at reset time; reused by a retry after a failed
+  // reset persistence (the committed aggregate is already gone), and retired on full release.
+  const refreshIdentity = new Map<string, { user: ChatUser; site: ChatSite }>()
+  store.subscribeEvent(connectionDomain.event.ConnectionLeftEvent, (event) => {
+    refreshIdentity.delete(event.domain)
+  })
+  /** One shared in-flight reset settlement per domain: concurrent refreshes join the same owner. */
+  const inFlightResets = new Map<string, Promise<{ ok: boolean; user?: ChatUser; site?: ChatSite }>>()
+  const performReset = async (domain: string, operationId: string) => {
+    const runtime = store.query(sessionDomain.query.DomainQuery(domain))
+    const retainedSeed = store.query(sessionDomain.query.RetainedLocalSeedQuery(domain))
+
+    if (!runtime && !retainedSeed) {
+      // Released domain with nothing to destroy: the canonical attempt is a no-op.
+      return { ok: true, ...refreshIdentity.get(domain) }
+    }
+    if (runtime) refreshIdentity.set(domain, { user: runtime.user, site: runtime.site })
+    // A retry after a failed persistence must re-honor the clear save even though the committed
+    // aggregate is already gone; the destruction is idempotent and re-emits the correlated save.
+    const persistence = new Promise<boolean>((resolve) => {
+      const subscription = store.subscribeEvent(sessionDomain.event.PresencePersistenceSettledEvent, (event) => {
+        if (event.requestId !== operationId) return
+        subscription.unsubscribe()
+        resolve(event.error === undefined)
+      })
+    })
+    store.send(connectionDomain.command.DestroyDomainConnectionCommand({ domain, operationId }))
+    const settled = await persistence
+    if (!settled) return { ok: false }
+    // Active History supplies/jobs physically settle through their abort callbacks; the
+    // replacement may bind new History work only after every old owner is gone. Yielding on the
+    // macrotask queue lets abort callbacks and timers run; no busy loop is introduced.
+    while (!store.query(historyDomain.query.DomainCleanupSettledQuery(domain))) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    }
+    return { ok: true, ...refreshIdentity.get(domain) }
+  }
+  const resetDomainConnection = (
+    domain: string,
+    operationId: string
+  ): Promise<{ ok: boolean; user?: ChatUser; site?: ChatSite }> => {
+    const existing = inFlightResets.get(domain)
+    if (existing) return existing
+    const task = performReset(domain, operationId)
+    inFlightResets.set(domain, task)
+    task
+      .catch(() => {})
+      .finally(() => {
+        if (inFlightResets.get(domain) === task) inFlightResets.delete(domain)
+      })
+    return task
+  }
+
   const completeInterruptedRelease = (domain: string): Promise<void> => {
     // Idempotent completed release: no runtime, no join attempt, and no current fence.
     if (
@@ -374,6 +434,41 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     }
   }
 
+  /** One shared in-flight reconnect settlement per domain: a concurrent refresh joins the whole
+   * operation (destruction through the replacement commit/failure/cancel) instead of running a
+   * second destructive reset against an in-flight replacement. */
+  const inFlightReconnects = new Map<string, Promise<undefined | null>>()
+  const performReconnect = async (domain: string, operationId: string): Promise<undefined | null> => {
+    // Phase 1: correlated destruction of the complete current-domain connection aggregate. The
+    // cleared-observer persistence must settle and the domain's History work must physically
+    // settle before the replacement may prepare; a persistence rejection fails the request
+    // retryably without committing a mixed old/new snapshot.
+    const reset = await resetDomainConnection(domain, operationId)
+    if (!reset.ok) {
+      return runConnectionOperation(
+        operationId,
+        connectionDomain.command.FailOperationCommand({
+          operationId,
+          error: new Error('Domain connection reset persistence failed')
+        }),
+        () => undefined,
+        () => null
+      )
+    }
+    // Phase 2: the canonical replacement attempt, seeded with the captured local identity.
+    return runConnectionOperation(
+      operationId,
+      connectionDomain.command.ReconnectDomainCommand({
+        operationId,
+        domain,
+        user: reset.user,
+        site: reset.site
+      }),
+      () => undefined,
+      () => null
+    )
+  }
+
   const server: RuntimeServer = {
     attachPage: async (payload) => {
       store.send(lifecycleDomain.command.AttachPageCommand(payload))
@@ -437,14 +532,18 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       store.send(deliveryDomain.command.AckInboundCommand(payload))
     },
     replayInbound: async (payload) => store.query(deliveryDomain.query.BufferedEventsQuery(payload)),
-    reconnectDomain: async (payload) => {
+    reconnectDomain: (payload) => {
+      const existing = inFlightReconnects.get(payload.domain)
+      if (existing) return existing
       const operationId = nanoid()
-      return runConnectionOperation(
-        operationId,
-        connectionDomain.command.ReconnectDomainCommand({ operationId, ...payload }),
-        () => undefined,
-        () => null
-      )
+      const task = performReconnect(payload.domain, operationId)
+      inFlightReconnects.set(payload.domain, task)
+      task
+        .catch(() => {})
+        .finally(() => {
+          if (inFlightReconnects.get(payload.domain) === task) inFlightReconnects.delete(payload.domain)
+        })
+      return task
     },
     onInbound: async (payload, callback) => pagePort.onInbound(payload.pageId, callback),
     onSessionEvent: async (payload, callback) => pagePort.onSessionEvent(payload.pageId, callback),

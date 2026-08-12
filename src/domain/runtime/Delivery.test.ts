@@ -80,6 +80,39 @@ describe('DeliveryDomain resource and batch ACK boundaries', () => {
     expect(completed).toHaveBeenCalledOnce()
   })
 
+  it('drops domain batch acknowledgement keys on release so a later same-batchId generation starts fresh', () => {
+    const { store, delivery } = setup()
+    const completed = vi.fn()
+    store.subscribeEvent(delivery.event.HistoryBatchAckedEvent, completed)
+    // A partial batch records `inserted: true` for its batchId.
+    store.send(
+      delivery.command.AcceptInboundBatchCommand({
+        domain: DOMAIN,
+        records: [record(1), record(2)],
+        source: 'history',
+        batchId: 'shared-batch'
+      })
+    )
+    store.send(delivery.command.AckInboundCommand({ domain: DOMAIN, sequence: 1, inserted: true }))
+    expect(completed).not.toHaveBeenCalled()
+
+    // Release clears the domain's batch acknowledgement keys as well as its buffer.
+    store.send(delivery.command.ReleaseDomainCommand(DOMAIN))
+
+    // A new generation reuses the same batchId: its completion must not inherit `inserted: true`.
+    store.send(
+      delivery.command.AcceptInboundBatchCommand({
+        domain: DOMAIN,
+        records: [record(1), record(2)],
+        source: 'history',
+        batchId: 'shared-batch'
+      })
+    )
+    store.send(delivery.command.AckInboundCommand({ domain: DOMAIN, sequence: 1 }))
+    store.send(delivery.command.AckInboundCommand({ domain: DOMAIN, sequence: 2 }))
+    expect(completed).toHaveBeenCalledWith({ domain: DOMAIN, batchId: 'shared-batch', inserted: false })
+  })
+
   it('keeps buffered delivery alive after one page emit rejection', async () => {
     const emitAttempts: string[] = []
     const pagePort: PagePortContract = {
