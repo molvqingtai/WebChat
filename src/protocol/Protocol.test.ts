@@ -38,9 +38,9 @@ const text = () => ({
 
 describe('public protocol schema contract', () => {
   it('exports the five independently enforced resource budgets', () => {
-    expect(MAX_WIRE_BYTES).toBe(64 * 1024)
-    expect(MAX_DECODED_JSON_BYTES).toBe(256 * 1024)
-    expect(MAX_CHAT_EVENT_BYTES).toBe(48 * 1024)
+    expect(MAX_WIRE_BYTES).toBe(256 * 1024)
+    expect(MAX_DECODED_JSON_BYTES).toBe(1024 * 1024)
+    expect(MAX_CHAT_EVENT_BYTES).toBe(192 * 1024)
     expect(MAX_USER_BYTES).toBe(8 * 1024)
     expect(MAX_HISTORY_RESPONSE_MESSAGES).toBe(100)
   })

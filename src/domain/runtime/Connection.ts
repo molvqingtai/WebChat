@@ -13,8 +13,6 @@ export interface ConnectionOptions {
   [key: string]: string | number | undefined
   hostId: string
   worldSessionId: string
-  historySessionBytes?: number
-  historySessionMessages?: number
 }
 
 interface JoinAttempt {
@@ -78,12 +76,7 @@ const ConnectionDomain = Remesh.domain({
     const sessionDomain = domain.getDomain(SessionDomain())
     const worldDomain = domain.getDomain(WorldDomain({ sessionId: options.worldSessionId }))
     const deliveryDomain = domain.getDomain(DeliveryDomain())
-    const historyDomain = domain.getDomain(
-      HistoryDomain({
-        historySessionBytes: options.historySessionBytes,
-        historySessionMessages: options.historySessionMessages
-      })
-    )
+    const historyDomain = domain.getDomain(HistoryDomain())
 
     const AttemptsState = domain.state<JoinAttempt[]>({ name: 'Connection.AttemptsState', default: [] })
     const GenerationsState = domain.state<DomainGeneration[]>({

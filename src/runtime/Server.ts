@@ -15,7 +15,6 @@ import type { RoomTransport } from '@/runtime/RoomTransport'
 import { NativeWireCodec, type WireCodec } from '@/protocol'
 import type { ChatSite, ChatUser } from '@/protocol'
 import type { RuntimeServer, RuntimeSnapshot } from '@/runtime/Contract'
-import { MAX_HISTORY_SESSION_BYTES, MAX_HISTORY_SESSION_MESSAGES } from '@/constants/config'
 import { PagePort, createPagePortImpl } from '@/runtime/PagePort'
 import { createBoundedPresenceStore, createMemoryPresenceStore } from '@/runtime/PresenceStore'
 
@@ -23,8 +22,6 @@ export interface ServerConfig {
   transport: RoomTransport
   clock?: Clock
   codec?: WireCodec
-  historySessionBytes?: number
-  historySessionMessages?: number
   presenceStore?: PresenceStore
 }
 
@@ -40,14 +37,9 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     ? createBoundedPresenceStore(config.presenceStore)
     : createMemoryPresenceStore()
   const worldSessionId = nanoid()
-  const historyOptions = {
-    historySessionBytes: config.historySessionBytes ?? MAX_HISTORY_SESSION_BYTES,
-    historySessionMessages: config.historySessionMessages ?? MAX_HISTORY_SESSION_MESSAGES
-  }
   const connectionOptions = {
     hostId: nanoid(),
-    worldSessionId,
-    ...historyOptions
+    worldSessionId
   }
 
   const store: RemeshStore = Remesh.store({
@@ -65,7 +57,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   const deliveryAction = DeliveryDomain()
   const sessionAction = SessionDomain()
   const worldAction = WorldDomain({ sessionId: worldSessionId })
-  const historyAction = HistoryDomain(historyOptions)
+  const historyAction = HistoryDomain()
   const connectionAction = ConnectionDomain(connectionOptions)
   store.subscribeDomain(lifecycleAction)
   store.subscribeDomain(wireAction)
