@@ -3472,9 +3472,11 @@ describe('RuntimeServer history', () => {
       decode: async (value) => JSON.parse(value)
     }
     const { fake, server, roomId } = await setup(DOMAIN, NOW, sizeLimited)
+    // 1000 ids of ~300 bytes total about 300KiB, so the real 256KiB codec bound still splits
+    // them across multiple pages while keeping the throw-closes-bucket encoding cost small.
     const manyIds = Array.from(
-      { length: 9000 },
-      (_, index) => `id-${index.toString(36).padStart(6, '0')}${'x'.repeat(22)}`
+      { length: 1000 },
+      (_, index) => `id-${index.toString(36).padStart(6, '0')}${'x'.repeat(292)}`
     )
     const records = manyIds.map((id, index) => textRecord(id, NOW - index))
     await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, async () => ({
