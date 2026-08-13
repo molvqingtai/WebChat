@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Clock } from '@/domain/runtime/externs/Clock'
-import type { RoomTransport } from '@/runtime/RoomTransport'
 import { ChatRoom } from '@/domain/impls/runtime/ChatRoom'
 import { createMemoryMessageDatabase } from '@/domain/impls/database/Memory'
 import { createMessageStore } from '@/domain/MessageStore'
@@ -37,13 +36,7 @@ class FakeClock implements Clock {
 beforeEach(() => vi.useFakeTimers())
 afterEach(() => vi.useRealTimers())
 
-interface TransportEvidence {
-  transport: RoomTransport
-  sentFrames: { roomId: string; payload: string; to?: string | string[] }[]
-  messageListener: () => ((roomId: string, sourcePeerId: string, rawPayload: string) => void) | undefined
-}
-
-const createTransport = (peerId: string): TransportEvidence => {
+const createTransport = (peerId: string) => {
   const sentFrames: { roomId: string; payload: string; to?: string | string[] }[] = []
   let messageListener: ((roomId: string, sourcePeerId: string, rawPayload: string) => void) | undefined
   return {
@@ -52,10 +45,10 @@ const createTransport = (peerId: string): TransportEvidence => {
       join: async () => {},
       leave: () => {},
       peers: () => [],
-      send: async (roomId, payload, to) => {
+      send: async (roomId: string, payload: string, to?: string | string[]) => {
         sentFrames.push({ roomId, payload, to })
       },
-      onMessage: (callback) => {
+      onMessage: (callback: (roomId: string, sourcePeerId: string, rawPayload: string) => void) => {
         messageListener = callback
         return () => {
           messageListener = undefined
@@ -81,7 +74,7 @@ const createCoordinatorFixture = () => {
   let destroyedDocuments = 0
   let hostNumber = 0
   let currentServer: RuntimeServer | null = null
-  let currentTransport: TransportEvidence | null = null
+  let currentTransport: ReturnType<typeof createTransport> | null = null
   const tabs = new Map([[1, { id: 1, url: PAGE_URL }]])
 
   const coordinator = new Coordinator({
