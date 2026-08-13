@@ -2,7 +2,7 @@
 
 See `proposal.md` for motivation. The current public protocol defines message interfaces/unions before their Valibot schemas, then completes validation through exported predicates and repeated caller checks. The repeated checks currently appear at peer receive, local record load, local identity/message production, send, clock adoption, History supply, and intermediate Runtime consumption.
 
-Protocol validation exists exactly at peer receive, outbound send, and local persistence load, uses the same pure static Schema, and adds no handwritten validator. Receive/load failures are silently discarded without a Toast; outbound failure sends and persists nothing. The same current contract removes the unreliable Chat end variant, makes Artico physical departure the sole remote leave input, and isolates the resulting wire through v5 Chat and World namespaces.
+Protocol validation exists exactly at peer receive, outbound send, and local persistence load, uses the same pure static Schema, and adds no handwritten validator. Receive/load failures are silently discarded without a Toast; outbound failure sends and persists nothing. The cumulative current contract removes complete-object guards and the unreliable Chat end variant, keeps editor-session `blob:<id>` locators outside protocol data, makes Artico physical departure the sole remote leave input, and isolates the resulting wire through v6 Chat and World namespaces.
 
 ## Goals / Non-Goals
 
@@ -14,11 +14,11 @@ Protocol validation exists exactly at peer receive, outbound send, and local per
 - Remove duplicate protocol checks and partially validated values from every other path.
 - Remove `SessionEndMessage` and every final-end state/effect so one physical lifecycle signal owns remote leave classification.
 - Preserve stable online presence across a bounded five-second PeerLeave grace and classify one user leave only after the last presence expires.
-- Make the breaking wire change through one v5 Chat/World namespace cut with no compatibility path.
+- Make the breaking wire change through one v6 Chat/World namespace cut with no compatibility path.
 
 **Non-Goals:**
 
-- Changing retained SESSION, text, reaction, History, or World payload fields; History behavior, codec representation, origin-database format, and UI copy remain current.
+- Changing retained SESSION, text, reaction, History, or World payload fields, the origin-database format, or UI copy beyond the cumulative v6 capacity contract. That contract changes only the static body ceiling, codec resource ceilings, History cumulative-budget behavior, and editor Blob-locator implementation described here.
 - Applying schema-first rules to extension page/content/background/offscreen control-plane messages.
 - Removing non-protocol authorization, ownership, queue, or scheduling decisions unrelated to final-end deletion and PeerLeave grace.
 - Adding a dependency, compatibility path, data migration, or user-facing validation feedback.
@@ -61,6 +61,8 @@ Alternative rejected: add validation before or after the three unified boundarie
 
 `NativeWireCodec` keeps strict Base64 canonicality, bounded deflate streaming, fatal UTF-8, JSON decode/encode, and encoded/decompressed resource ceilings because those steps are required to safely produce or consume a frame. It returns decoded `unknown` and never inspects a message discriminator, property, relationship, or protocol semantic. Message validation begins only at the selected complete schema.
 
+The current v6 codec ceilings are exactly 256KiB for the final Base64 frame and 1MiB for decompressed JSON. The static Chat `body` field ceiling is 192 × 1024 JavaScript string/UTF-16 code units. No `MAX_CHAT_MESSAGE_BYTES`, `isChatMessageWithinBudget`, `isChatUserWithinBudget`, `utf8ByteLength`, or equivalent complete-object helper sits before, after, or beside those owners.
+
 Alternative rejected: move compressed-frame safety into message schemas. A message schema cannot safely inspect a value until frame decoding has completed, so this would remove the resource boundary needed to reach schema parsing.
 
 ### 5. PeerLeave owns remote leave classification
@@ -77,11 +79,17 @@ Local domain release retains the existing page-owned five-second Lifecycle grace
 
 Alternative rejected: retain private final-end persistence while deleting only the wire variant. Without an end frame, those records and gates own no externally observable fact and only prolong physical departure.
 
-### 7. v5 is one clean current generation
+### 7. v6 is one clean current generation
 
-`ChatRoomMessage` is exactly `SessionMessage | ChatMessage | HistoryMessagesPull | HistoryMessagesPush`. The strict Chat schema rejects `session-end` as an unknown type. Both Chat and World select v5 physical namespace inputs so no v1-v4 peer shares membership or payload traffic with the current presence model. No decoder alias, dual publication, bridge, translator, fallback, or capability negotiation exists.
+`ChatRoomMessage` is exactly `SessionMessage | ChatMessage | HistoryMessagesPull | HistoryMessagesPush`. The strict Chat schema rejects `session-end` as an unknown type. Both Chat and World select v6 physical namespace inputs so no v1-v5 peer shares membership or payload traffic with the current presence and capacity model. No decoder alias, dual publication, bridge, translator, fallback, or capability negotiation exists.
 
-Every retained accepted payload preserves its current field structure and codec representation. The origin message database and version remain unchanged; obsolete private final-end records are deleted rather than migrated or interpreted.
+Every retained accepted payload preserves its current field structure. The v6 body/codec limits replace the v5 capacity values in place. The origin message database and version remain unchanged; obsolete private final-end records are deleted rather than migrated or interpreted.
+
+### 8. Blob ids are editor-session locators, not protocol values
+
+Image insertion generates one opaque id with `crypto.randomUUID()`, stores the compressed Blob in an editor-owned session-only `Map<string, Blob>`, and writes exact `![Image](blob:<id>)` into the textarea. The editor creates no object URL. At send, it resolves the currently referenced ids and converts their Blobs to data URLs in a temporary candidate before that candidate reaches the unified outbound Schema boundary and codec. Only the resulting data URLs may enter wire, History, or persistence.
+
+Missing ids, Blob conversion failure, Schema failure, or codec failure reject the entire send and preserve the current draft. Successful older asynchronous work must not clear edits made after that send started, but this contract requires only that result and no particular generation-fence abstraction. Final-reference removal, explicit clear, successful send when no longer referenced, and unmount delete the relevant map entries. No object URL, persistence, fallback, compatibility path, compensation state, or additional lifecycle framework exists.
 
 ## Risks / Trade-offs
 
@@ -92,11 +100,11 @@ Every retained accepted payload preserves its current field structure and codec 
 - [Manually corrupted local rows disappear from results] -> Discard before projection and preserve all valid rows; do not repair, coerce, migrate, or surface a Toast.
 - [A transport replacement looks like a user departure] -> Keep the accepted presence online for exactly five seconds and cancel only on a valid same-presence rebind.
 - [Two physical sources or presences belong to one user] -> Expire only the affected presence and emit leave only on the user's final active-or-pending transition to zero.
-- [An older client would still send `session-end`] -> Isolate v5 Chat and World namespaces and retain no compatibility decoder.
+- [An older client would still send `session-end` or use v5 capacity] -> Isolate v6 Chat and World namespaces and retain no compatibility decoder or capacity fallback.
 
 ## Migration Plan
 
-1. Land the corrected docs authority, declarative schema/type refactor, History Pull/Push rename, three boundary integrations, SessionEnd deletion, PeerLeave grace, v5 namespace cut, duplicate-path deletion, and replacement tests on one requirement branch and Draft PR.
-2. Delete obsolete final-end state and all v1-v4 compatibility inputs in the same exact; no data migration or cross-version bridge exists.
+1. Land the corrected cumulative docs authority, declarative schema/type refactor, History Pull/Push rename, three boundary integrations, complete-object guard deletion, editor Blob-id replacement, SessionEnd deletion, PeerLeave grace, v6 namespace cut, and duplicate-path deletion on the existing requirement branch and Draft PR.
+2. Delete obsolete final-end and complete-object guard state plus all v1-v5 compatibility inputs in the same exact; no data migration or cross-version bridge exists.
 3. Obtain fresh architecture-first review of the complete branch diff and verify all final gates on one exact.
 4. Roll back by reverting the complete requirement PR; the unchanged origin database requires no separate reversal.

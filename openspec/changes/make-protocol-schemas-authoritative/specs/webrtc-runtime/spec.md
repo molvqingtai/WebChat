@@ -6,7 +6,9 @@ The Runtime SHALL validate protocol messages at exactly three boundaries: once w
 
 The local record schema SHALL use no callback, custom schema, transform, contextual schema factory, or post-parse predicate. It SHALL validate only declaratively expressible structure. Relationships among a database key, nested message ID, nested user ID, or other local/protocol identities SHALL not be validated and SHALL have no handwritten fallback.
 
-No local producer before the outbound boundary, persistence write after it, History supplier, clock adoption, Session/History consumer, or intermediate Runtime path SHALL parse or manually revalidate an already typed protocol value. Non-protocol authorization, ownership, lifecycle, resource scheduling, and codec representation decisions remain outside this rule, but SHALL NOT inspect message properties to recreate protocol validation.
+No local producer before the outbound boundary, persistence write after it, History supplier, clock adoption, Session/History consumer, or intermediate Runtime path SHALL parse or manually revalidate an already typed protocol value. Non-protocol authorization, ownership, lifecycle, resource scheduling, and codec representation decisions remain outside this rule, but SHALL NOT inspect message properties to recreate protocol validation. `MAX_CHAT_MESSAGE_BYTES`, `isChatMessageWithinBudget`, `isChatUserWithinBudget`, `utf8ByteLength`, their call/drop branches, and equivalent complete-object guards SHALL NOT exist.
+
+The editor MAY keep exact `![Image](blob:<id>)` locators in its textarea while drafting, but each id SHALL come from `crypto.randomUUID()` and resolve only through that editor session's `Map<string, Blob>`. It SHALL create no object URL. Before the unified outbound boundary, the editor SHALL convert every referenced Blob to a data URL in a temporary candidate; neither locator nor map SHALL enter Runtime protocol State, wire, History, or persistence. Missing ids, conversion failure, Schema failure, or codec failure SHALL reject the whole send and preserve the draft; completion of older asynchronous work SHALL NOT clear newer edits. Final-reference removal, explicit clear, successful send when no longer referenced, and unmount SHALL delete the corresponding map entries without an additional lifecycle abstraction.
 
 #### Scenario: Invalid inbound peer value is discarded once
 
@@ -224,7 +226,7 @@ The local self-join notice SHALL be generation-scoped, persist immediately after
 
 #### Scenario: Missing or invalid logical time cannot create membership
 
-- **GIVEN** a source sends a v5 SESSION with missing or invalid `joinedAt`, or mutates `joinedAt` after its generation was accepted
+- **GIVEN** a source sends a v6 SESSION with missing or invalid `joinedAt`, or mutates `joinedAt` after its generation was accepted
 - **WHEN** the Runtime parses or applies that frame
 - **THEN** it SHALL reject the complete SESSION source-locally, preserve every prior accepted fact, synthesize no receiver-local replacement time, persist no SystemNotice, and leave other sources operational
 

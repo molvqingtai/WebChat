@@ -11,7 +11,8 @@ The current Chat protocol also carries a best-effort `SessionEndMessage` even th
 - Validate protocol values through the same pure static Schema at exactly three boundaries: accepting a decoded peer message, outbound send before codec/persistence write, and loading a message from local persistence. A failed receive/load parse is discarded before application or projection and produces no Toast; a failed outbound parse sends and persists nothing.
 - Remove protocol validation from local production before the outbound boundary, persistence write after it, History supply, and intermediate Runtime paths while preserving non-protocol ownership and lifecycle decisions.
 - **BREAKING (protocol source API)**: Remove handwritten protocol interfaces/unions and standalone parse/check/boolean validator exports. Public types become schema-derived aliases; rename `HistoryMessagesRequest`/`HistoryMessagesRequestSchema` to `HistoryMessagesPull`/`HistoryMessagesPullSchema` and `HistoryMessagesResponse`/`HistoryMessagesResponseSchema` to `HistoryMessagesPush`/`HistoryMessagesPushSchema`, with no old-name alias.
-- **BREAKING (peer protocol generation)**: Delete `SessionEndMessage`, its schema, public export, and Chat union member. `session-end` becomes an unknown Chat type. Advance both Chat and World to isolated v5 room namespaces; current clients neither join nor interpret v1-v4 traffic, and no compatibility path exists.
+- **BREAKING (peer protocol generation)**: Delete `SessionEndMessage`, its schema, public export, and Chat union member. `session-end` becomes an unknown Chat type. Advance both Chat and World to isolated v6 room namespaces with the current 192 × 1024-code-unit body field, 256KiB final-frame, and 1MiB decompressed limits; current clients neither join nor interpret v1-v5 traffic, and no compatibility path exists.
+- Keep image draft locators outside the protocol graph: the textarea contains exact `![Image](blob:<id>)`, backed only by an editor-session `Map<string, Blob>` whose ids come from `crypto.randomUUID()`. Outbound composition converts referenced Blobs to data URLs before the unified Schema boundary; no object URL, draft locator, or Blob map enters wire, History, or persistence.
 - Make Artico `PeerLeave` the only remote leave authority. The last physical source loss for a bound `presenceId` starts one five-second observer grace during which that presence remains online. Recovery of the same `presenceId` cancels the pending leave without a leave/join event; expiry removes the presence and emits one leave only when the user has no other active or grace-preserved presence.
 - Delete final-end persistence, send, retry, receive, settlement, cleanup, and release gates. Local release still follows the existing domain lifecycle grace and local cleanup, but physical Chat/World departure never waits for a protocol end message.
 
@@ -23,12 +24,12 @@ None.
 
 ### Modified Capabilities
 
-- `peer-wire-protocol`: Make schemas the only protocol data and validation authority, derive every exported protocol data type from them, remove the Chat end variant, and define the v5 clean generation.
-- `webrtc-runtime`: Limit protocol validation to peer receive, outbound send, and local persistence load through the same pure static Schema; replace final-end lifecycle ownership with PeerLeave-owned observer grace.
+- `peer-wire-protocol`: Make schemas the only protocol data and validation authority, derive every exported protocol data type from them, remove the Chat end variant and complete-object guards, and define the v6 clean generation.
+- `webrtc-runtime`: Limit protocol validation to peer receive, outbound send, and local persistence load through the same pure static Schema; keep session-only Blob locators outside protocol data; and replace final-end lifecycle ownership with PeerLeave-owned observer grace.
 
 ## Impact
 
 - Affected protocol modules: `src/protocol/{Session,ChatRoom,WorldRoom}.ts`, the public `src/protocol/index.ts` exports, and Chat/World room namespace inputs.
-- Affected consumers: inbound Wire parsing, outbound Wire send, local `MessageStore` reads, duplicate protocol checks, Session physical-leave classification, Connection release, and obsolete final-end storage/send/retry paths.
-- Affected tests: protocol schema/type authority, declarative-only residue, receive/load rejection, absence of unsupported validation, Push/Pull naming, v5 isolation, strict `session-end` rejection, PeerLeave grace, same-presence recovery, multi-presence expiry, and silent parse-failure coverage.
-- No new dependency, origin-database migration, permission, UI copy, or extension control-plane contract is introduced.
+- Affected consumers: inbound Wire parsing, outbound Wire send, local `MessageStore` reads, duplicate protocol and complete-object checks, Footer Blob draft resolution, Session physical-leave classification, Connection release, and obsolete final-end storage/send/retry paths.
+- Affected existing tests: protocol schema/type authority, declarative-only residue, receive/load/send rejection, absence of unsupported validation and object-budget helpers, Push/Pull naming, v6 isolation, Blob-locator residue, strict `session-end` rejection, PeerLeave grace, same-presence recovery, multi-presence expiry, and silent parse-failure coverage. No new test case or test abstraction is introduced.
+- No new dependency, object URL, origin-database migration, permission, UI copy, or extension control-plane contract is introduced.
