@@ -2,11 +2,13 @@
 
 ### Requirement: Protocol validation occurs at exactly three boundaries
 
-The Runtime SHALL validate protocol data at exactly three boundaries. Peer receive SHALL parse a decoded payload once through the complete static Chat or World schema selected from trusted room context. Locally authored `ChatMessage` delivery SHALL parse the complete message once through `ChatMessageSchema` before both local persistence and peer codec encoding/send. Local persistence load SHALL parse each stored message once through a declarative local record schema that composes `ChatMessageSchema` with local-only structural fields. A peer-receive or local-load parse failure SHALL discard the value before it changes Runtime state, persistence projection, unread state, notifications, system notices, History progress, or page output and SHALL produce no Toast or other user-visible feedback. A local-`ChatMessage` parse failure SHALL persist nothing and encode or send nothing.
+The Runtime SHALL validate protocol data at exactly three boundaries. Peer receive SHALL parse a decoded payload once through the complete static Chat or World schema selected from trusted room context. Locally authored `ChatMessage` delivery SHALL parse the complete message once through `ChatMessageSchema` before both local persistence and peer codec encoding/send. Local persistence load SHALL parse each stored message once through a declarative local record schema that composes `ChatMessageSchema` with local-only structural fields. A peer-receive or local-load parse failure SHALL discard the value before it changes Runtime state, persistence projection, unread state, notifications, system notices, History progress, or page output and SHALL produce no Toast or other user-visible feedback. A local-`ChatMessage` parse failure SHALL persist nothing, encode or send nothing, preserve the sending draft, and show only `Invalid message.`; raw Schema issues SHALL NOT be user-visible.
+
+Before the locally authored Text message exists, Footer SHALL own one separate local user capacity gate. It SHALL compute `getTextByteSize(JSON.stringify({ body, mentions }))` after draft transformation and before command dispatch. A value greater than `MAX_CHAT_EVENT_BYTES = 192KiB` SHALL show exactly `Message size cannot exceed 192KiB.`, preserve the draft, and dispatch no command, so allocation, Schema parsing, wire, and persistence SHALL not run. This gate SHALL NOT parse or inspect a typed protocol value and SHALL NOT count as a fourth protocol validation boundary.
 
 The local record schema SHALL use no callback, custom schema, transform, contextual schema factory, or post-parse predicate. It SHALL validate only declaratively expressible structure. Relationships among a database key, nested message ID, nested user ID, or other local/protocol identities SHALL not be validated and SHALL have no handwritten fallback.
 
-SESSION, History Pull/Push, World publication, `ChatMessage` allocation and production before its delivery boundary, Footer, persistence write and codec encoding after the boundary, clock adoption, Session/History consumers, and intermediate Runtime paths SHALL NOT parse or manually revalidate an already typed protocol value. Non-protocol authorization, ownership, lifecycle, resource scheduling, and codec representation decisions remain outside this rule, but SHALL NOT inspect message properties to recreate protocol validation.
+SESSION, History Pull/Push, World publication, `ChatMessage` allocation and production before its delivery boundary, persistence write and codec encoding after the boundary, clock adoption, Session/History consumers, and intermediate Runtime paths SHALL NOT parse or manually revalidate an already typed protocol value. Footer SHALL perform only the exact capacity gate above and no protocol parse or revalidation. Non-protocol authorization, ownership, lifecycle, resource scheduling, and codec representation decisions remain outside this rule, but SHALL NOT inspect message properties to recreate protocol validation.
 
 #### Scenario: Invalid inbound peer value is discarded once
 
@@ -23,10 +25,15 @@ SESSION, History Pull/Push, World publication, `ChatMessage` allocation and prod
 - **WHEN** a stored row is structurally valid but a database key or local identity differs from a nested message or user identity
 - **THEN** schema parsing SHALL NOT reject it through a callback, post-parse predicate, or other fallback relationship check
 
+#### Scenario: Local user Text capacity gate rejects before protocol validation
+
+- **WHEN** the user submits a transformed Text draft whose `getTextByteSize(JSON.stringify({ body, mentions }))` is greater than `192KiB`
+- **THEN** Footer SHALL show exactly `Message size cannot exceed 192KiB.`, preserve the draft, and dispatch no command, Schema parse, wire send, or persistence write
+
 #### Scenario: Locally authored ChatMessage uses ChatMessageSchema once
 
-- **WHEN** local code submits a complete locally authored `ChatMessage` for local persistence and peer transport
-- **THEN** the Chat delivery owner SHALL parse it once through `ChatMessageSchema` before both persistence and peer codec encoding/send, reject without either side effect when parsing fails, and allocation, producers, Footer, later persistence code, and codec code SHALL add no other parse or manual field/resource validation
+- **WHEN** local code submits a complete locally authored `ChatMessage` for local persistence and peer transport after any applicable user Text capacity gate has accepted
+- **THEN** the Chat delivery owner SHALL parse it once through `ChatMessageSchema` before both persistence and peer codec encoding/send; on failure it SHALL show only `Invalid message.`, expose no raw issues to the user, preserve the draft, and reject without either side effect; allocation, producers, Footer, later persistence code, and codec code SHALL add no other parse or manual field/resource validation
 
 #### Scenario: Accepted values are not revalidated
 

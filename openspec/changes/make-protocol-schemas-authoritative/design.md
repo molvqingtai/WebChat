@@ -2,7 +2,7 @@
 
 See `proposal.md` for motivation. The current public protocol defines message interfaces/unions before their Valibot schemas, then completes validation through exported predicates and repeated caller checks. The repeated checks currently appear at peer receive, local record load, local identity/message production, send, clock adoption, History supply, and intermediate Runtime consumption.
 
-Protocol validation exists at exactly three Runtime boundaries: peer receive uses the static Chat or World schema selected from trusted room context; locally authored `ChatMessage` delivery uses `ChatMessageSchema` once before both peer encoding/send and local persistence; and local persistence load uses a declarative record schema that composes `ChatMessageSchema`. No handwritten validator exists. Receive/load failures are silently discarded without a Toast; local-`ChatMessage` failure performs neither side effect. The same current contract removes the unreliable Chat end variant, makes Artico physical departure the sole remote leave input, and isolates the resulting wire through v5 Chat and World namespaces.
+Protocol validation exists at exactly three Runtime boundaries: peer receive uses the static Chat or World schema selected from trusted room context; locally authored `ChatMessage` delivery uses `ChatMessageSchema` once before both peer encoding/send and local persistence; and local persistence load uses a declarative record schema that composes `ChatMessageSchema`. No handwritten protocol validator exists. Receive/load failures are silently discarded without a Toast; local-`ChatMessage` failure performs neither side effect and shows only `Invalid message.` to the sending user. Before that Schema boundary, Footer owns one separate local user Text capacity preflight over the serialized `{ body, mentions }` command payload; it is not a protocol parse or a fourth validation boundary. The same current contract removes the unreliable Chat end variant, makes Artico physical departure the sole remote leave input, and isolates the resulting wire through v5 Chat and World namespaces.
 
 ## Goals / Non-Goals
 
@@ -18,10 +18,10 @@ Protocol validation exists at exactly three Runtime boundaries: peer receive use
 
 **Non-Goals:**
 
-- Changing retained SESSION, text, reaction, History, or World payload fields; History behavior, codec representation, origin-database format, and UI copy remain current.
+- Changing retained SESSION, text, reaction, History, or World payload fields; History behavior, codec representation, and origin-database format remain current. User-visible validation copy changes only to the two exact messages specified below.
 - Applying schema-first rules to extension page/content/background/offscreen control-plane messages.
 - Removing non-protocol authorization, ownership, queue, or scheduling decisions unrelated to final-end deletion and PeerLeave grace.
-- Adding a dependency, compatibility path, data migration, or user-facing validation feedback.
+- Adding a dependency, compatibility path, data migration, or user-facing validation feedback beyond the two exact local-send messages specified below.
 
 ## Decisions
 
@@ -41,7 +41,7 @@ Protocol schemas use only declarative Valibot primitives and combinators such as
 
 `v.check`, `v.partialCheck`, `v.rawCheck`, `v.custom`, `v.transform`, user-provided callbacks, and equivalent executable predicates or transforms are forbidden. The Chat and World schemas are static and receive no contextual `now`, clock, URL parser, byte counter, Set, reference map, or other JavaScript validation input. No `is*`, `check*`, schema factory, or post-parse helper may finish validation after parsing.
 
-Whole-value canonical JSON byte size, mention ranges relative to `body`, future HLC relative to receiver time, origin-only URL semantics, uniqueness, History user/message reference completeness, and local record identity relationships are therefore not validated. Their former callback tests are deleted. Structural keys, discriminants, primitive types, safe non-negative integer shape, field/array ceilings, and other rules directly expressible by declarative built-ins remain.
+Protocol schemas and post-parse helpers do not validate complete-message canonical JSON byte size, mention ranges relative to `body`, future HLC relative to receiver time, origin-only URL semantics, uniqueness, History user/message reference completeness, or local record identity relationships. Their former callback tests are deleted. Structural keys, discriminants, primitive types, safe non-negative integer shape, field/array ceilings, and other rules directly expressible by declarative built-ins remain. The sole local user Text Footer preflight is a UI capacity gate over exactly `JSON.stringify({ body, mentions })`, not a protocol schema rule or complete-`ChatMessage` validator.
 
 Alternative rejected: hide a JavaScript callback inside `v.pipe` and call it schema-native. The callback is still handwritten validation and violates the pure-Schema boundary.
 
@@ -49,11 +49,13 @@ Alternative rejected: hide a JavaScript callback inside `v.pipe` and call it sch
 
 At peer receive, Wire first uses trusted transport context to select the static World or Chat protocol schema and safe-parses the decoded `unknown` once. Failure emits no typed message and reaches no Session, History, persistence, notification, unread, or page behavior. It creates no Toast.
 
-For a locally authored `ChatMessage`, the Chat delivery owner parses the complete value once through `ChatMessageSchema` before both local persistence and peer codec encoding/send. Failure performs neither side effect. Message allocation and production plus the Footer do not add their own parse or handwritten validation.
+For a local user Text send, Footer first transforms the draft and computes `getTextByteSize(JSON.stringify({ body, mentions }))`. A value greater than `192KiB` shows exactly `Message size cannot exceed 192KiB.`, preserves the draft, and dispatches no command, so allocation, Schema parsing, wire, and persistence do not run. This preflight neither parses nor inspects a typed protocol value.
+
+After that capacity gate accepts, the Chat delivery owner parses the complete locally authored `ChatMessage` once through `ChatMessageSchema` before both local persistence and peer codec encoding/send. Failure performs neither side effect, preserves the draft, and shows only `Invalid message.`; raw Schema issues are not user-visible. Message allocation and production plus the Footer add no other parse or handwritten protocol validation.
 
 At local load, the declarative local record schema composes `ChatMessageSchema` with its local-only structural fields. Each unknown stored item is parsed once as it enters the typed query result. Failure omits the item from the returned result and every projection, with no Toast. Database-key/message/user relationships that need a callback are not validated.
 
-SESSION, History Pull/Push, World publication, local `ChatMessage` allocation/production before its boundary, Footer, persistence write and codec encoding after it, clock adoption, and downstream Session/History consumers trust their TypeScript inputs and do not add another parse or inspect message fields for protocol validity. Existing non-protocol identity authorization, operation ownership, lifecycle fencing, and bounded scheduling remain where they are.
+SESSION, History Pull/Push, World publication, local `ChatMessage` allocation/production before its boundary, persistence write and codec encoding after it, clock adoption, and downstream Session/History consumers trust their TypeScript inputs and do not add another parse or inspect message fields for protocol validity. Footer performs only the exact pre-dispatch Text capacity preflight above and no protocol parse or revalidation. Existing non-protocol identity authorization, operation ownership, lifecycle fencing, and bounded scheduling remain where they are.
 
 Alternative rejected: add validation before or after the three exclusive boundaries as defense in depth. Extra checks would recreate path-dependent behavior.
 
@@ -87,7 +89,8 @@ Every retained accepted payload preserves its current field structure and codec 
 
 - [A callback is hidden inside a schema pipeline] -> Ban every callback/custom/transform API and add residue controls over the full protocol schema graph and local-load schema.
 - [An unsupported former rule is assumed to remain enforced] -> Name the removed byte, cross-field, time, URL, uniqueness, reference, and record-identity checks explicitly and delete their rejection tests.
-- [A locally authored invalid `ChatMessage` reaches its delivery boundary] -> Parse it once through `ChatMessageSchema` before both local persistence and peer codec encoding/send; add no producer-specific validation.
+- [A local user Text command exceeds the authored capacity] -> Reject only at the exact Footer preflight, preserve the draft, show `Message size cannot exceed 192KiB.`, and perform no allocation, Schema parse, wire, or persistence.
+- [A locally authored invalid `ChatMessage` reaches its delivery boundary] -> Parse it once through `ChatMessageSchema` before both local persistence and peer codec encoding/send; preserve the draft, show only `Invalid message.`, expose no raw issues to the user, and add no other producer-specific validation.
 - [A previously enforced rule is unsupported by the schema API] -> Remove the rule and its tests exactly as authorized; do not retain a fallback or imply the rule remains enforced.
 - [Manually corrupted local rows disappear from results] -> Discard before projection and preserve all valid rows; do not repair, coerce, migrate, or surface a Toast.
 - [A transport replacement looks like a user departure] -> Keep the accepted presence online for exactly five seconds and cancel only on a valid same-presence rebind.

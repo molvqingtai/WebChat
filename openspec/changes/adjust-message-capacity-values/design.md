@@ -1,6 +1,6 @@
 ## Context
 
-The implementation has separate owners for the declarative Text body ceiling, final wire representation, decoded JSON materialization, History page construction, decode admission, and inbound delivery admission. The final capacity contract keeps those owners and their control flow intact while removing the duplicate producer-side/footer whole-value authored-message preflight.
+The implementation has separate owners for the declarative Text body ceiling, the local user Text capacity preflight, final wire representation, decoded JSON materialization, History page construction, decode admission, and inbound delivery admission. The final capacity contract keeps those owners and their control flow intact while permitting exactly one user-facing Footer preflight before the existing Schema boundary.
 
 ## Goals / Non-Goals
 
@@ -15,13 +15,13 @@ The implementation has separate owners for the declarative Text body ceiling, fi
 
 - No Blob, hash, object URL, UUID, Map, image conversion, or editor lifecycle work.
 - No schema, validation-boundary, namespace, protocol-shape, History-phase, persistence, or delivery refactor.
-- No compatibility, migration, negotiation, fragmentation, fallback, new guard, test case, test abstraction, or shared capacity abstraction.
+- No compatibility, migration, negotiation, fragmentation, fallback, resource guard beyond the exact Footer preflight, test case, test abstraction, or shared capacity abstraction.
 
 ## Decisions
 
 ### 1. Capacity values have one owner each
 
-`MAX_CHAT_EVENT_BYTES` is `192 * 1024`, `MAX_WIRE_BYTES` is `256 * 1024`, and `MAX_DECODED_JSON_BYTES` is `1024 * 1024`. The static Text schema alone consumes `MAX_CHAT_EVENT_BYTES`; codec encode and decode retain their respective representation limits. No producer, footer, outbound, persistence-write, or History-supply path computes or enforces a whole-value authored-message budget.
+`MAX_CHAT_EVENT_BYTES` is `192 * 1024`, `MAX_WIRE_BYTES` is `256 * 1024`, and `MAX_DECODED_JSON_BYTES` is `1024 * 1024`. The static Text schema and the sole local user Text Footer preflight consume `MAX_CHAT_EVENT_BYTES`; codec encode and decode retain their respective representation limits. Footer transforms the draft, constructs exactly `{ body, mentions }`, and computes `getTextByteSize(JSON.stringify({ body, mentions }))` before command dispatch. A value greater than `192KiB` shows `Message size cannot exceed 192KiB.`, preserves the draft, and performs no Schema parse, wire send, or persistence write. A value within the limit proceeds to the existing `ChatMessageSchema.safeParse` boundary; failure there shows only `Invalid message.`, exposes no raw issues to the user, preserves the draft, and performs neither wire nor persistence. No other producer, outbound, persistence-write, History-supply, or codec path computes or enforces an authored-message budget.
 
 The existing `500` JavaScript-unit text limit and `30KiB` per-image compression target remain independent. Several images may fit in a Text body below the `192KiB` declarative ceiling, but there is no fixed image-count promise; the Text schema and final-wire codec boundary remain the deciding limits.
 
@@ -37,7 +37,7 @@ The fixed 180-day snapshots and bounded pages continue until data exhaustion and
 
 ### 4. Synchronize existing evidence mechanically
 
-Existing literals, fixture sizes, assertions, names, and copy reflect the final capacity values and the absence of a History session-wide cumulative limit. Verification uses the existing cases without a standalone capacity test, browser test, helper, abstraction, or fallback path.
+Existing literals, fixture sizes, assertions, names, and copy reflect the final capacity values, the sole Footer preflight, and the absence of a History session-wide cumulative limit. Verification uses the existing cases without a standalone capacity test, browser test, helper, abstraction, or fallback path.
 
 ## Risks / Trade-offs
 
