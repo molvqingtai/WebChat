@@ -2802,7 +2802,9 @@ describe('RuntimeServer send reliability', () => {
     expect(failures).toEqual([])
 
     // The Chat delivery boundary rejects a schema-invalid locally authored message before the
-    // wire: the send rejects and adds zero wire frames, so the caller never persists it.
+    // wire: the send rejects and zero wire frames are added. The caller persists a local record
+    // only after a send resolves (established elsewhere), so the rejected send yields no record
+    // to persist.
     const invalid = { ...record.message, body: 'x'.repeat(192 * 1024 + 1) }
     await expect(server.sendChatMessage({ domain: DOMAIN, event: invalid })).rejects.toThrow(
       'Chat message does not match the protocol schema'
