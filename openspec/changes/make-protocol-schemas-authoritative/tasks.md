@@ -7,12 +7,13 @@
 - [x] 1.5 Remove every `v.check`, `v.partialCheck`, `v.rawCheck`, `v.custom`, `v.transform`, user callback, and equivalent executable predicate/transform from protocol and local-load schema graphs; do not replace them with renamed or caller-side JavaScript.
 - [x] 1.6 Delete `SessionEndMessage`, `SessionEndMessageSchema`, their exports and union member, every `session-end` fixture, and every compatibility alias; the strict Chat schema SHALL reject `session-end` as unknown.
 
-## 2. Enforce Exactly Two Validation Boundaries
+## 2. Enforce Exactly Three Validation Boundaries
 
 - [x] 2.1 At peer receive, select one static complete Chat or World schema from trusted room context, safe-parse the decoded `unknown` once, and discard rejection before any typed event or user-visible feedback.
-- [x] 2.2 At local persistence load, compose the protocol child schema into a declarative local record schema, parse each unknown database item once, and omit declaratively rejected rows from every result and projection with no Toast.
-- [x] 2.3 Delete protocol parsing and manual message-property/resource checks from local identity/message production, outbound send, persistence write, History supply, HLC adoption, and downstream Session/History/intermediate Runtime consumption.
-- [x] 2.4 Preserve non-protocol authorization, ownership, lifecycle, queue, and scheduling decisions plus bounded codec representation mechanics without letting any of them recreate protocol validation; omit whole-value bytes, cross-field ranges, HLC-now, URL-origin, uniqueness, reference, and record-identity rules that declarative schemas cannot express.
+- [ ] 2.2 At outbound send, parse each complete typed protocol value once through the same selected static Schema before codec encoding and persistence write; reject without sending or persisting when it fails.
+- [x] 2.3 At local persistence load, compose the protocol child schema into a declarative local record schema, parse each unknown database item once, and omit declaratively rejected rows from every result and projection with no Toast.
+- [ ] 2.4 Delete protocol parsing and manual message-property/resource checks from local identity/message production before the outbound boundary, persistence write after it, History supply, HLC adoption, and downstream Session/History/intermediate Runtime consumption.
+- [ ] 2.5 Preserve non-protocol authorization, ownership, lifecycle, queue, and scheduling decisions plus bounded codec representation mechanics without letting any of them recreate protocol validation; omit whole-value bytes, cross-field ranges, HLC-now, URL-origin, uniqueness, reference, and record-identity rules that declarative schemas cannot express.
 
 ## 3. Replace Final End With PeerLeave Grace
 
@@ -28,7 +29,7 @@
 - [x] 4.2 Prove static Chat, World, and local-record schemas directly accept/reject only retained declarative strict-key, union, primitive, safe-integer, field, tuple, and array cases, including complete `session-end` rejection.
 - [x] 4.3 Prove values that violate only removed whole-value byte, mention/body, HLC-now, origin-only, uniqueness, History-reference, or local-record identity rules are not rejected by a hidden fallback.
 - [x] 4.4 Prove one declaratively invalid peer value and one declaratively invalid local row are each discarded at their sole boundary, change no Runtime/page state, and produce no Toast or other user-visible feedback.
-- [x] 4.5 Prove locally produced/stored/supplied/sent typed values are not protocol-validated and that schema-accepted receive/load values are not revalidated downstream.
+- [ ] 4.5 Mechanically update the existing outbound-path expectation so typed values use the same complete static Schema exactly once and producers/suppliers plus schema-accepted receive/send/load values are not revalidated downstream; add no new test case.
 - [x] 4.6 Prove v5 Chat/World namespace isolation, retained current payload/codec behavior, unchanged origin storage version/format, and Pull/Push-only public History symbols.
 - [x] 4.7 Prove online display throughout PeerLeave grace, same-presence cancellation without notice, stale-deadline fencing, expiry removal, multi-source/multi-presence user counting, exactly-once final-user leave, and local release without any end transaction.
 

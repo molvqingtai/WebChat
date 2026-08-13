@@ -1,12 +1,12 @@
 ## ADDED Requirements
 
-### Requirement: Protocol validation occurs at exactly two boundaries
+### Requirement: Protocol validation occurs at exactly three boundaries
 
-The Runtime SHALL parse protocol messages at exactly two boundaries: once when accepting a decoded peer payload and once when loading a message from local persistence. Both boundaries SHALL use the complete static declarative schema exported by `src/protocol`; a declarative local record schema MAY compose that protocol schema with local-only structural fields. A parse failure at either boundary SHALL discard the value before it changes Runtime state, persistence projection, unread state, notifications, system notices, History progress, or page output. The failure SHALL produce no Toast or other user-visible feedback.
+The Runtime SHALL validate protocol messages at exactly three boundaries: once when accepting a decoded peer payload, once at outbound send before codec encoding and persistence write, and once when loading a message from local persistence. All three boundaries SHALL use the same complete static declarative Schema exported by `src/protocol`; a declarative local record Schema MAY compose that protocol Schema with local-only structural fields. A receive/load parse failure SHALL discard the value before it changes Runtime state, persistence projection, unread state, notifications, system notices, History progress, or page output and SHALL produce no Toast. An outbound parse failure SHALL send and persist nothing.
 
 The local record schema SHALL use no callback, custom schema, transform, contextual schema factory, or post-parse predicate. It SHALL validate only declaratively expressible structure. Relationships among a database key, nested message ID, nested user ID, or other local/protocol identities SHALL not be validated and SHALL have no handwritten fallback.
 
-No local producer, outbound send, persistence write, History supplier, clock adoption, Session/History consumer, or intermediate Runtime path SHALL parse or manually revalidate an already typed protocol value. Non-protocol authorization, ownership, lifecycle, resource scheduling, and codec representation decisions remain outside this rule, but SHALL NOT inspect message properties to recreate protocol validation.
+No local producer before the outbound boundary, persistence write after it, History supplier, clock adoption, Session/History consumer, or intermediate Runtime path SHALL parse or manually revalidate an already typed protocol value. Non-protocol authorization, ownership, lifecycle, resource scheduling, and codec representation decisions remain outside this rule, but SHALL NOT inspect message properties to recreate protocol validation.
 
 #### Scenario: Invalid inbound peer value is discarded once
 
@@ -23,14 +23,14 @@ No local producer, outbound send, persistence write, History supplier, clock ado
 - **WHEN** a stored row is structurally valid but a database key or local identity differs from a nested message or user identity
 - **THEN** schema parsing SHALL NOT reject it through a callback, post-parse predicate, or other fallback relationship check
 
-#### Scenario: Outbound production does not validate protocol shape
+#### Scenario: Outbound send uses the same pure Schema once
 
-- **WHEN** local code constructs, stores, supplies, or sends a typed protocol message
-- **THEN** those paths SHALL perform no protocol schema parse, post-parse predicate, or manual field/resource validation; the receiving peer remains responsible for its own inbound parse
+- **WHEN** local code sends a typed protocol message for peer transport and persistence
+- **THEN** the unified outbound owner SHALL parse it once through the same complete static Schema before codec encoding and persistence write, and local producers, Footer, History suppliers, and later persistence code SHALL add no other parse or manual field/resource validation
 
 #### Scenario: Accepted values are not revalidated
 
-- **WHEN** Wire emits a typed schema-accepted peer message or `MessageStore` returns a typed schema-accepted record
+- **WHEN** Wire emits a typed schema-accepted peer message, completes an outbound Schema parse, or `MessageStore` returns a typed schema-accepted record
 - **THEN** Session, History, persistence, projection, and delivery paths SHALL consume that value without another protocol validation stage
 
 ### Requirement: Local domain release uses one five-second lifecycle grace
@@ -103,7 +103,7 @@ Remote logical leave is independent: Artico physical departure starts the observ
 
 `WireDomain` SHALL terminate every protocol DTO at one typed accepted-message Event and SHALL NOT expose raw provider callbacks, decoded unknown values, or a shared mutable wire model. `SessionMessage` SHALL enter Session binding/generation commit Commands. `TextMessage` and `ReactionMessage` SHALL enter Session source/user validation and then Delivery admission. `HistoryMessagesPull` and `HistoryMessagesPush` SHALL enter History Commands; History SHALL verify the current trusted source/session binding through a Session Query before its requester/provider transition, with accepted Push batches entering Delivery atomically. `WorldRoomMessage` SHALL enter World source-snapshot replacement. Provider peer-ready/leave and room-close/error facts SHALL enter Connection transitions; a trusted PeerLeave for a bound Chat source SHALL reach Session's physical-source departure Command, while Connection requests World/History cleanup through their named Commands rather than mutating those Domains.
 
-Outbound `SessionMessage` SHALL originate from Session after an accepted Connection generation. No outbound Chat lifecycle-end value exists. Outbound Text/Reaction SHALL use Session-owned id/HLC allocation and a Wire send Command. History Pull/Push SHALL originate from History State and page-supply outcomes. `WorldRoomMessage` SHALL originate from World's current full snapshot only after Connection acceptance. All outbound values SHALL use the strict current schemas and codec algorithm.
+Outbound `SessionMessage` SHALL originate from Session after an accepted Connection generation. No outbound Chat lifecycle-end value exists. Outbound Text/Reaction SHALL use Session-owned id/HLC allocation and a Wire send Command. History Pull/Push SHALL originate from History State and page-supply outcomes. `WorldRoomMessage` SHALL originate from World's current full snapshot only after Connection acceptance. The unified outbound owner SHALL parse every outbound value once through the same strict current Schema before the codec and persistence write.
 
 #### Scenario: Chat message crosses one trust and delivery path
 

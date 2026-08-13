@@ -72,7 +72,7 @@ For one committed local generation, a remote generation SHALL be eligible for an
 
 The code-level public module `src/protocol/index.ts` SHALL be the third-party-facing peer contract without introducing a package, publishing flow, or SDK. Its wire structures SHALL be exactly the Owner-frozen `ChatUser`, `ChatSession`, `HLC`, `MentionedUser`, `SessionMessage`, `TextMessage`, `ReactionType`, `ReactionMessage`, `ChatMessage`, `HistoryMessagesPull`, `HistoryMessagesPush`, `ChatRoomMessage`, `ChatSite`, and `WorldRoomMessage` contracts. It SHALL export only their authoritative static declarative schemas, schema-inferred TypeScript types, public limits/constants, and the public codec surface (`WireCodec`, `NativeWireCodec` reference implementation, `WireCodecError`). It SHALL NOT export a standalone parse/check/boolean validator, schema factory, handwritten duplicate message declaration, structural alias, compatibility DTO, optional/open metadata bag, or session-end surface. Declarative schema validation SHALL cover closed-union and unknown-key rejection, primitive and literal shape, field/array ceilings, tuples, required SESSION `joinedAt`, and safe non-negative integer fields. It SHALL NOT validate whole-value canonical byte size, mention/body relationships, future HLC relative to receiver time, origin-only URL semantics, uniqueness, or History user/message references. The `NativeWireCodec` SHALL own only the fixed codec/security algorithm; the public protocol SHALL NOT export local persistence/UI models, projections, ordering implementations, Runtime lifecycle or page-host RPC contracts, WirePipeline queue/drop/apply/flush types, or application orchestration.
 
-`src/protocol/**` SHALL NOT depend on `domain/runtime`, `service`, `app`, UI, storage, comctx, browser-extension APIs/globals (`chrome.*`/`browser.*`), DOM/window/document, host lifecycle APIs, or app configuration. The public `NativeWireCodec` MAY use the standard Web codec APIs it implements (`CompressionStream`, `DecompressionStream`, `Blob`, `ReadableStream`, `TextEncoder`, and `TextDecoder`) and exactly the two scoped `core-js` imports; no whole-package polyfill is permitted. Protocol-owned limits and pure byte utilities SHALL be defined within the protocol boundary. Runtime and Domain code SHALL depend on the public protocol one way; the protocol SHALL NOT import Runtime or Domain code.
+`src/protocol/**` SHALL NOT depend on `domain/runtime`, `service`, `app`, UI, storage, comctx, browser-extension APIs/globals (`chrome.*`/`browser.*`), DOM/window/document, host lifecycle APIs, or app configuration. The public `NativeWireCodec` MAY use the standard Web codec APIs it implements (`CompressionStream`, `DecompressionStream`, `Blob`, `ReadableStream`, `TextEncoder`, and `TextDecoder`) and exactly the two scoped `core-js` imports; no whole-package polyfill is permitted. Codec-owned frame limits and their byte utilities SHALL be defined within the protocol boundary. Runtime and Domain code SHALL depend on the public protocol one way; the protocol SHALL NOT import Runtime or Domain code.
 
 The inferred schema outputs SHALL remain byte-for-byte equivalent to these structural declarations; the declarations below document wire shape and SHALL NOT be duplicated as handwritten source types:
 
@@ -153,47 +153,6 @@ interface WorldRoomMessage extends ChatSession {
 
 - **WHEN** the protocol dependency graph is inspected
 - **THEN** every protocol dependency SHALL remain cross-target compatible, and no reverse import from protocol into Runtime, Domain, storage, service, app, UI, comctx, browser-extension APIs/globals, DOM/window/document, host lifecycle APIs, or app configuration SHALL exist; standard Web codec APIs used by `NativeWireCodec` are allowed
-
-### Requirement: Wire messages are strict closed unions with limits
-
-The public protocol SHALL define authoritative closed declarative schemas and pure limits. At peer receive, `WireDomain` SHALL select and parse exactly one static complete schema using trusted transport context and MAY apply source-local operational policies after rejection, but it SHALL NOT compose a separate validator. Queue/drop/apply/flush scheduling, rate-limited diagnostics, reconnect behavior, page sequencing, attempt budgets, and delivery admission are not public protocol semantics.
-
-Chat wire messages SHALL form a strict, closed discriminated union keyed by `type`; World wire payloads SHALL use one strict schema selected by trusted v5 `roomId` and SHALL NOT carry a payload `type`. The codec SHALL enforce `MAX_WIRE_BYTES = 64KiB` for final encoded frames and `MAX_DECODED_JSON_BYTES = 256KiB` for streaming decompressed JSON before parse. Declarative schemas SHALL enforce explicit built-in field and array ceilings, including at most 100 messages in one History Push page. Each `messageIds[]` element SHALL remain an opaque string with no standalone length or format rule and SHALL be bounded only by the containing codec frame and Runtime attempt budgets. SESSION `joinedAt`, HLC timestamp, HLC counter, and History `page` SHALL be finite safe non-negative integers. Unknown types including `session-end`, unknown keys, forbidden envelope/context fields, missing or invalid required values, and declaratively expressible limit violations SHALL fail the complete schema parse. Whole-value `ChatUser`, `ChatMessage`, and History page canonical byte sizes SHALL not be computed or validated. Malformed/non-canonical Base64, invalid UTF-8/JSON/deflate, and encoded/decompressed frame bounds SHALL remain codec representation failures before message schema parsing.
-
-#### Scenario: Unknown or oversized message
-
-- **WHEN** a decoded value has an unknown type or violates a declarative field or array limit at peer receive or local persistence load
-- **THEN** the complete schema parse SHALL fail before any Runtime application, without a second validator or partial output
-
-#### Scenario: Session end has no compatibility path
-
-- **WHEN** a decoded Chat value carries `type:'session-end'` in a current v5 room
-- **THEN** the complete Chat schema SHALL reject it as an unknown type, and no end handler, projection, notice, fallback, or compatibility branch SHALL run
-
-#### Scenario: Decompression and field resource limits
-
-- **WHEN** a frame exceeds an encoded/decompressed codec bound or a decoded value exceeds a declarative field or array ceiling
-- **THEN** the codec SHALL stop unsafe frame materialization or the static schema SHALL reject the declarative field/array violation; neither layer SHALL compute or validate canonical whole-value `ChatUser` or `ChatMessage` byte size
-
-#### Scenario: Opaque message IDs remain aggregate-bounded
-
-- **WHEN** a History Pull carries message IDs with any string content or individual length
-- **THEN** the schema SHALL apply no per-ID regex, NanoID-length rule, or independent string ceiling, while the complete request frame SHALL still satisfy the encoded/decompressed frame limits and Runtime SHALL still enforce its total inventory budgets
-
-#### Scenario: Redundant envelope fields
-
-- **WHEN** any wire type is defined
-- **THEN** its strict schema SHALL reject a frame carrying room, sender peerId, version, sentAt, receivedAt, or any other forbidden envelope/context field; `receivedAt` exists only as receiver-local metadata and no field SHALL be stripped or tolerated
-
-#### Scenario: Invalid logical join time
-
-- **WHEN** a SESSION omits `joinedAt`, adds an unknown key, or supplies a negative, fractional, non-finite, or unsafe integer value
-- **THEN** the strict schema SHALL reject the complete frame before Session binding, membership mutation, or notice classification
-
-#### Scenario: Invalid History page number
-
-- **WHEN** a History page omits `page`, adds an unknown key, or supplies a negative, fractional, non-finite, or unsafe page value
-- **THEN** the strict schema SHALL reject the complete frame before History attempt mutation, persistence, or feedback
 
 ### Requirement: HLC is strictly validated
 

@@ -1,40 +1,35 @@
 ## ADDED Requirements
 
-### Requirement: Editor images use owned Blob references only while drafting
+### Requirement: Editor images use session-owned Blob locators only while drafting
 
-The application/page Domain SHALL retain ownership of the message draft and editor image lifecycle. Visible text input SHALL remain limited to 500 JavaScript string/UTF-16 code units. Inserting an image SHALL compress it toward the unchanged 30KiB target, create an object URL owned by that editor instance, and insert exact literal Markdown `![Image](blob:...)` into the existing textarea. The textarea SHALL continue to display Markdown text and SHALL add no thumbnail or rich preview UI.
+The application/page Domain SHALL retain ownership of the message draft and editor image lifecycle. Visible text input SHALL remain limited to 500 JavaScript string/UTF-16 code units. Inserting an image SHALL compress it toward the unchanged 30KiB target, generate one opaque editor-session id through the platform `crypto.randomUUID()` API, store the resulting Blob under that id in an editor-owned `Map<string, Blob>`, and insert exact literal Markdown `![Image](blob:<id>)` into the existing textarea. The textarea SHALL continue to display Markdown text and SHALL add no thumbnail or rich preview UI. The `blob:<id>` value SHALL be only an editor locator, not a browser object URL or fetch target.
 
-The editor SHALL retain only lightweight ownership/liveness tracking for object URLs it created; this tracker MAY be a Set or equivalent reference-aware lifecycle structure but SHALL NOT retain a hash-to-image-content map. Image insertion SHALL allocate no image NanoID, perform no immediate Blob-to-data-URL conversion, and create no `hash:` placeholder. Old `hash:` draft syntax SHALL receive no parser, compatibility read, or migration.
+The editor SHALL create no object URL and add no dependency. Its session-only map SHALL store the Blob itself and SHALL never enter persistence or another context. It SHALL store no Base64 or data-URL image content. Image insertion SHALL allocate no image NanoID, perform no immediate Blob-to-data-URL conversion, and create no `hash:` placeholder. Old `hash:` draft syntax SHALL receive no parser, compatibility read, or migration.
 
-At send, only currently referenced, live object URLs owned by the current editor may resolve. The editor SHALL read each referenced Blob, convert it to a data URL, replace the draft reference in a temporary complete message candidate, keep mention ranges consistent through the existing composition owner, and complete the 192KiB canonical `ChatMessage` plus 256KiB final-frame preflights before transport/persistence. Sent, locally persisted, remotely persisted, and History-replayed message Markdown SHALL contain data URLs only; a `blob:` URL SHALL never enter wire, IndexedDB, History, or another persistent message value.
+At send, only currently referenced `blob:<id>` tokens that resolve through the current editor map may proceed. The editor SHALL read each Blob, convert it to a data URL, replace the locators in a temporary message candidate, keep mention ranges consistent through the existing composition owner, and submit the candidate through the unified outbound Schema boundary and codec. The Footer SHALL add no separate Schema parse, complete-message byte preflight, duplicate object guard, compatibility path, or defensive validation layer. Sent, locally persisted, remotely persisted, and History-replayed message Markdown SHALL contain data URLs only; a `blob:<id>` token SHALL never enter wire, IndexedDB, History, or another persistent message value.
 
-An invalid, unowned, or revoked reference, Blob read/conversion failure, message-budget failure, or wire-budget failure SHALL reject the entire send, preserve the draft, and keep every still-referenced owned URL live. Successful send SHALL clear the draft and revoke its owned URLs. Explicit draft clear and component unmount SHALL revoke all owned URLs. Editing away the last occurrence of one URL SHALL revoke it; duplicate occurrences SHALL keep one URL live until its final reference disappears. A stale asynchronous send completion SHALL not revoke or transmit a URL now owned by a newer draft generation.
+A missing id/Blob, Blob read/conversion failure, Schema failure, or codec failure SHALL reject the send and preserve the draft plus its still-referenced entries. Successful send SHALL clear only the draft it started from; edits made while Blob conversion is running and their referenced entries SHALL remain. Explicit draft clear and component unmount SHALL delete all entries. Editing away the last occurrence of one id SHALL delete that entry; duplicate occurrences SHALL keep it until the final reference disappears. Deletion SHALL make the Blob garbage-collectable; `URL.createObjectURL` and `URL.revokeObjectURL` SHALL NOT be used. No fallback, compatibility path, compensating state, or additional lifecycle abstraction SHALL be introduced.
 
 #### Scenario: Image insertion stores only a local draft reference
 
 - **WHEN** image compression succeeds in the current editor
-- **THEN** the draft SHALL receive `![Image](blob:...)`, the URL SHALL be registered as live and editor-owned, and no data URL, image NanoID, `hash:` token, or hash-to-content entry SHALL be created at insertion time
+- **THEN** the draft SHALL receive `![Image](blob:<id>)`, the id SHALL resolve to the compressed Blob in the current editor's session map, and no object URL, data URL, image NanoID, `hash:` token, Base64 entry, or dependency SHALL be created at insertion time
 
 #### Scenario: Successful send resolves to persistent data URLs
 
-- **WHEN** every referenced Blob remains live and owned and the expanded message passes its 192KiB message and 256KiB wire preflights
-- **THEN** the application SHALL send and persist only the data-URL-expanded message, clear the successful draft, and revoke all URLs owned by that sent draft
+- **WHEN** every referenced id maps to its Blob and the expanded message passes the unified outbound Schema boundary and common codec
+- **THEN** the application SHALL send and persist only the data-URL-expanded message, clear only the draft it started from, preserve edits made while conversion was running, and delete only entries no longer referenced by the current draft
 
 #### Scenario: Failed send preserves the complete draft
 
-- **WHEN** one reference is unowned/revoked, conversion fails, or the expanded candidate exceeds either byte budget
-- **THEN** no partial message SHALL be sent or persisted, the literal draft SHALL remain unchanged, and every still-referenced owned URL SHALL remain valid for correction or retry
+- **WHEN** one id is missing, conversion fails, or the expanded candidate fails the Schema or codec
+- **THEN** no partial message SHALL be sent or persisted, the current literal draft SHALL remain unchanged, and every still-referenced owned map entry SHALL remain valid for correction or retry
 
-#### Scenario: Duplicate references revoke only after the final removal
+#### Scenario: Duplicate references release only after the final removal
 
-- **GIVEN** the same owned object URL occurs more than once in one draft
+- **GIVEN** the same owned `blob:<id>` occurs more than once in one draft
 - **WHEN** editing removes one occurrence but retains another
-- **THEN** the editor SHALL keep the URL live, and SHALL revoke it only after the final reference disappears or the owning draft succeeds, clears, or unmounts
-
-#### Scenario: Blob URLs cannot escape the draft boundary
-
-- **WHEN** a command, canonical message, local record, wire value, or History Push is about to cross its owner boundary
-- **THEN** any remaining `blob:` image reference SHALL fail closed before that crossing, with no compatibility conversion outside the editor send owner
+- **THEN** the editor SHALL keep the id-to-Blob entry, and SHALL delete it only after the final reference disappears or the owning draft succeeds, clears, or unmounts
 
 ## MODIFIED Requirements
 
@@ -135,11 +130,11 @@ The existing constant-size terminal binding SHALL continue to prevent another sy
 
 `DeliveryDomain` SHALL continue to maintain its short-term per-domain event sequence and volatile inbound un-ACK buffer bounded to 512 records and 8MiB. An event SHALL be cleared once at least one page acknowledges durable persistence. One History Push page SHALL be admitted atomically or rejected as a whole when it would exceed either bound; rejection SHALL apply none of the page, cancel only the local History attempt, and request no continuation. Page reconnect replay, domain-grace discard, browser-kill loss, and absence of a peer ACK/outbox/recovery mechanism SHALL remain unchanged.
 
-These bounds SHALL remain independent from the removed History cumulative 10,000-entry/8MiB session budgets. They constrain only current unacknowledged memory. Raising the legal canonical message to 192KiB SHALL not change 512 or 8MiB; near-limit messages may therefore reach the byte bound before the record-count bound.
+These bounds SHALL remain independent from the removed History cumulative 10,000-entry/8MiB session budgets. They constrain only current unacknowledged memory. Raising the declarative body field and codec limits SHALL not change 512 or 8MiB; larger typed records may therefore reach the byte bound before the record-count bound.
 
 #### Scenario: Large messages consume the unchanged byte buffer
 
-- **WHEN** admitted records are near the 192KiB canonical message budget
+- **WHEN** admitted typed records contain large bodies and data URLs
 - **THEN** Delivery SHALL continue counting their actual canonical bytes toward the unchanged 8MiB bound and MAY reach that byte bound with fewer than 512 records
 
 #### Scenario: Removing cumulative History caps does not bypass atomic admission

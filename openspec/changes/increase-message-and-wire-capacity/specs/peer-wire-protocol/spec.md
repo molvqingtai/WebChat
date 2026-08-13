@@ -29,48 +29,43 @@ The current peer protocol SHALL use exact v6 Chat and World physical namespaces.
 - **WHEN** a v5 peer using the 48KiB message-like, 64KiB final-frame, and 256KiB decompressed limits is present in the same signaling environment as a current peer
 - **THEN** the two generations SHALL share no Chat or World physical membership, and no capacity negotiation, compatibility send, decoder fallback, or bridge SHALL run
 
-### Requirement: Canonical object resource guards complement structural schemas
+### Requirement: Pure Schema validation remains at exactly three boundaries
 
-Static declarative Valibot schemas SHALL remain the sole authority for public protocol data structure, schema-derived TypeScript types, discriminants, unknown keys, primitive shape, and declaratively expressible field/array limits. They SHALL receive no byte counter, callback, transform, clock, Set, reference map, or dynamic context.
+Static declarative Valibot schemas SHALL remain the sole application authority for public protocol data structure, schema-derived TypeScript types, discriminants, unknown keys, primitive shape, and declaratively expressible field/array limits. They SHALL receive no byte counter, callback, transform, clock, Set, reference map, or dynamic context. The same complete pure Schema SHALL validate protocol values exactly once at peer receive, exactly once at outbound send, and exactly once when unknown local persistence records enter a typed load result. The codec SHALL separately own only its physical final-frame and streaming decompression limits.
 
-The public protocol SHALL additionally own narrowly scoped pure resource guards that measure the UTF-8 byte length of the canonical `JSON.stringify` representation of one complete `ChatMessage` and one complete `ChatUser`. A complete canonical `ChatMessage` SHALL be no larger than 192KiB, including its discriminator, ID, HLC, user/target fields, body with every expanded image data URL, mentions, avatars, ranges, and every other variant field. A complete canonical `ChatUser` SHALL be no larger than 8KiB, including `id`, `name`, and `avatar`. These guards SHALL return acceptance/failure without transforming data, applying semantic relationships, or exposing a general callback validator surface.
+The public protocol SHALL define no complete-object JSON or UTF-8 budget for `ChatMessage` or `ChatUser`. `MAX_CHAT_MESSAGE_BYTES`, `isChatMessageWithinBudget`, `isChatUserWithinBudget`, `utf8ByteLength`, and any equivalent helper SHALL be absent. The three validation boundaries SHALL use only their complete static Schema. Local production before the unified send boundary, Footer, persistence write after that boundary, Session, UserInfo, ChatRoom, Server, World, History supply, Delivery, profile, allocation, join, mention, and downstream paths SHALL add no extra parse, caller-side complete-object guard, or corresponding defensive drop branch.
 
-The complete-object guards SHALL run for a locally produced user/message before transport or persistence and after the existing one complete structural parse at peer receive or local persistence load before application/projection. A locally produced user SHALL be guarded before join/publication or profile persistence; each parsed containing SESSION, World, mention, History, or local-record value SHALL apply the user guard to every nested `ChatUser`. An accepted typed value SHALL not be reparsed or repeatedly remeasured in intermediate Runtime, History supply, Delivery, or persistence paths. This resource exception narrowly supersedes earlier active statements that no whole-value `ChatMessage` or `ChatUser` canonical byte size may be computed; it does not weaken schema-owned structure, the declarative-only schema rule, or the existing two unknown-input parse boundaries.
+The static wire `body` field SHALL allow at most 192 × 1024 JavaScript string/UTF-16 code units, the static `ChatUser.avatar` field SHALL allow at most 8 × 1024 code units, and all retained field/array rules SHALL continue to use built-in Schema operations at the three validation boundaries. Independently, every encoded or decoded frame SHALL pass the real codec's physical limits. If a message rule cannot be expressed by static Schema, the protocol SHALL not validate it elsewhere.
 
-#### Scenario: Complete message includes expanded images and mentions
+#### Scenario: Complete-object byte guards are absent
 
-- **WHEN** a locally produced or structurally parsed `ChatMessage` contains text, data URL images, mentions, avatars, ranges, and ordinary message fields whose complete canonical UTF-8 JSON is at most 192KiB
-- **THEN** the pure message resource guard SHALL accept the complete object without changing it, while a value one byte over the budget SHALL fail before transport, persistence, or Runtime application
+- **WHEN** a `ChatMessage` or `ChatUser` reaches peer receive, outbound send, or local persistence load, or is already typed inside another application path
+- **THEN** no helper or caller SHALL serialize it to measure a complete-object byte budget; the three owning boundaries SHALL use only the same static Schema, and other typed internal paths SHALL not revalidate it
 
-#### Scenario: Complete user budget is not an avatar string ceiling
+#### Scenario: Field units remain explicit
 
-- **WHEN** a locally produced or structurally parsed `ChatUser` has a complete canonical UTF-8 JSON representation at most 8KiB
-- **THEN** the pure user resource guard SHALL accept it, and SHALL reject a complete user one byte over 8KiB even when its avatar field alone is shorter than 8KiB
+- **WHEN** public capacity constants and schemas are inspected
+- **THEN** the 192 × 1024 `body` and 8 × 1024 `avatar` ceilings SHALL be named and applied as JavaScript string/UTF-16 code-unit field limits, never as complete-message or complete-user byte budgets
 
-#### Scenario: Resource guards do not become semantic validators
+#### Scenario: Outbound typed data uses the unified Schema boundary
 
-- **WHEN** protocol authority is inspected
-- **THEN** schemas SHALL remain static/declarative and the pure object guards SHALL perform only deterministic canonical UTF-8 byte measurement, with no mention/body, HLC/time, URL, uniqueness, reference, identity, coercion, transform, or migration rule
-
-#### Scenario: Typed values are not repeatedly validated
-
-- **WHEN** one value has passed its owning structural parse and complete-object resource guard or was locally produced and guarded
-- **THEN** intermediate Runtime, History supply, Delivery, and persistence paths SHALL trust that typed value and SHALL NOT add another parse, relationship validator, or duplicate object-budget stage
+- **WHEN** an already typed local value is sent for peer transport or local persistence
+- **THEN** the unified outbound owner SHALL parse it once through the same complete static Schema before codec encoding and persistence write, with no Footer parse, object-level byte guard, or other validation layer
 
 ## MODIFIED Requirements
 
 ### Requirement: Wire messages are strict closed unions with limits
 
-The public protocol SHALL define closed static declarative schemas, pure complete-object resource guards, and public constants whose names and units match their actual behavior. `WireDomain` SHALL parse the room-selected schema once at peer acceptance and apply the complete-object guards before typed application. Queue/drop/apply/flush scheduling, rate-limited logging, reconnect behavior, page sequencing, History lifecycle, and Delivery admission are not public protocol semantics.
+The public protocol SHALL define closed static declarative schemas and public constants whose names and units match their actual behavior. `WireDomain` SHALL parse the room-selected schema once at peer acceptance, the unified outbound owner SHALL parse once before send/persistence write, and local persistence load SHALL parse each unknown stored record once through its complete declarative record schema. No other application path SHALL parse protocol values or add a post-parse complete-object budget guard. Queue/drop/apply/flush scheduling, rate-limited logging, reconnect behavior, page sequencing, History lifecycle, and Delivery admission are not public protocol semantics.
 
-Chat wire messages SHALL form the existing strict closed discriminated union keyed by `type`; World wire payloads SHALL use the existing strict schema selected by trusted v6 `roomId` and SHALL NOT carry a payload `type`. The codec SHALL enforce exactly 256KiB for one final Base64 wire frame and exactly 1MiB for streaming decompressed JSON before UTF-8 decode/JSON parse. The protocol SHALL enforce exactly 192KiB UTF-8 for one complete canonical `ChatMessage`, exactly 8KiB UTF-8 for one complete canonical `ChatUser`, and at most 100 messages in one History Push page. Declarative schemas SHALL retain their existing explicit built-in field and array ceilings except that the expanded wire `body` field ceiling SHALL be exactly 192 \* 1024 JavaScript string/UTF-16 code units so send-time data URLs are structurally representable. That field rule SHALL be named and treated separately from the complete-message UTF-8 byte budget. Unknown types, unknown keys, forbidden envelope/context fields, missing or invalid required values, declaratively expressible limit violations, complete-object byte violations, non-canonical/malformed Base64, invalid UTF-8/JSON/deflate, and encoded/decompressed bound violations SHALL reject the complete value before application.
+Chat wire messages SHALL form the existing strict closed discriminated union keyed by `type`; World wire payloads SHALL use the existing strict schema selected by trusted v6 `roomId` and SHALL NOT carry a payload `type`. The codec SHALL enforce exactly 256KiB for one final Base64 wire frame and exactly 1MiB for streaming decompressed JSON before UTF-8 decode/JSON parse. Declarative schemas SHALL enforce exactly 192 × 1024 JavaScript string/UTF-16 code units for the expanded wire `body` field, exactly 8 × 1024 code units for `ChatUser.avatar`, at most 100 messages in one History Push page, and every other retained built-in field/array ceiling. Unknown types, unknown keys, forbidden envelope/context fields, missing or invalid required values, declaratively expressible limit violations, non-canonical/malformed Base64, invalid UTF-8/JSON/deflate, and encoded/decompressed bound violations SHALL reject the complete value before application.
 
 The exact layered constants are:
 
 - final encoded frame: 256KiB;
 - streaming decompressed JSON: 1MiB;
-- complete canonical `ChatMessage`: 192KiB UTF-8;
-- complete canonical `ChatUser`: 8KiB UTF-8; and
+- wire `body`: 192 × 1024 JavaScript string/UTF-16 code units;
+- `ChatUser.avatar`: 8 × 1024 JavaScript string/UTF-16 code units; and
 - History Push count: at most 100 messages.
 
 No application fragmentation/reassembly, alternate envelope, capacity negotiation, or compatibility limit SHALL exist.
@@ -82,22 +77,22 @@ No application fragmentation/reassembly, alternate envelope, capacity negotiatio
 
 #### Scenario: Unknown or oversized message
 
-- **WHEN** peer input has an unknown type, violates a declarative field/array ceiling or complete-object byte budget, or exceeds the 256KiB encoded codec frame bound
-- **THEN** the room-selected schema, pure resource guard, or codec SHALL reject the complete input before any Runtime application, without specifying queue, retry, reconnect, or logging behavior
+- **WHEN** peer input has an unknown type, violates a declarative field/array ceiling, or exceeds the 256KiB encoded codec frame bound
+- **THEN** the room-selected Schema or codec SHALL reject the complete input before any Runtime application, without specifying queue, retry, reconnect, or logging behavior
 
 #### Scenario: Decompression and field resource limits
 
-- **WHEN** decompression would produce more than 1MiB, one complete canonical `ChatUser` exceeds 8KiB UTF-8, one complete canonical `ChatMessage` exceeds 192KiB UTF-8, or a decoded value violates a retained declarative field/array ceiling
-- **THEN** the codec SHALL stop unsafe materialization or the owning schema/resource guard SHALL reject the complete value before application, without adding a callback-backed schema rule or semantic validator
+- **WHEN** decompression would produce more than 1MiB or a decoded value violates a retained declarative field/array ceiling such as `body` or `avatar`
+- **THEN** the codec SHALL stop unsafe materialization or the owning static Schema SHALL reject the complete value before application, without adding a callback-backed rule, object-byte helper, or caller-side validator
 
-#### Scenario: One canonical message reaches the wire only within both budgets
+#### Scenario: One typed message uses the unified send boundary and common codec
 
-- **WHEN** one complete canonical `ChatMessage` is at most 192KiB UTF-8 and its containing current wire value encodes to at most 256KiB
-- **THEN** it MAY be sent as one unfragmented frame, while violation of either bound SHALL reject the complete send/input without a partial frame
+- **WHEN** one typed `ChatMessage` is placed in a current wire value that satisfies the same complete static Schema and encodes to at most 256KiB while decoding to at most 1MiB
+- **THEN** the outbound owner SHALL parse it once and MAY send it as one unfragmented frame, while the receiving peer SHALL independently parse the decoded unknown value through that same static Schema
 
 #### Scenario: Oversize input is source-local
 
-- **WHEN** a peer supplies a malformed, over-256KiB final frame, over-1MiB decompressed value, or over-budget complete `ChatMessage`/`ChatUser`
+- **WHEN** a peer supplies a malformed value, over-256KiB final frame, over-1MiB decompressed value, or value rejected by the static Schema
 - **THEN** the complete source-local value SHALL be rejected before application and the capacity failure SHALL NOT require room disconnect, peer recreation, fallback decoding, or a compatibility retry
 
 #### Scenario: Unchanged operational queue bounds
@@ -127,7 +122,7 @@ No application fragmentation/reassembly, alternate envelope, capacity negotiatio
 
 ### Requirement: History wire shapes are bounded and reference-complete
 
-The public peer protocol SHALL retain the exact current `HistoryMessagesPull` and `HistoryMessagesPush` structures, one synchronization per connection/direction, continuous page rules, fixed current type strings/keys, and no old History variants or compatibility aliases. Every Pull and Push page SHALL be no larger than the common 256KiB final Base64 wire-frame ceiling after the exact current codec representation. Each Push SHALL carry at most 100 messages. The provider SHALL shrink a candidate page until the real codec accepts it, and one legal 192KiB canonical `ChatMessage` plus its required user and Push envelope SHALL remain replayable in one page. A Push with no individually legal sendable record SHALL fail that source-local History attempt rather than emit an empty non-final page or silently drop the record.
+The public peer protocol SHALL retain the exact current `HistoryMessagesPull` and `HistoryMessagesPush` structures, one synchronization per connection/direction, continuous page rules, fixed current type strings/keys, and no old History variants or compatibility aliases. Every Pull and Push page SHALL be no larger than the common 256KiB final Base64 wire-frame ceiling after the exact current codec representation. The provider SHALL construct each Push with at most 100 typed messages, pass it once through the unified outbound Schema boundary, and shrink a candidate page until the real codec accepts it. If one typed record from the persistence-load boundary plus its required authors and Push envelope cannot fit, that source-local History attempt SHALL fail rather than emit an empty non-final page, silently drop the record, or add a separate per-message object guard.
 
 The provider SHALL retain the existing producer responsibility to include exactly one `ChatUser` for every distinct `messages[].userId`, no duplicate or unrelated users, and no users when messages are empty. Static schemas SHALL not validate those cross-array relationships. Pull ID elements remain opaque strings governed by the complete page codec bound and Runtime lifecycle rather than a standalone ID rule or a cumulative 10,000-entry/8MiB protocol budget.
 
@@ -154,15 +149,15 @@ The schemas SHALL continue to accept only `history-messages-pull`/`history-messa
 - **WHEN** the requester inventory is empty or the provider computes no missing records
 - **THEN** the corresponding phase SHALL still send exactly one `page: 0, done: true` page with an empty `messageIds` array or empty `users` and `messages` arrays
 
-#### Scenario: Full-size legal live message remains replayable
+#### Scenario: One-record page still uses the real codec
 
-- **WHEN** a legal canonical message near 192KiB is the next missing History record
-- **THEN** the provider SHALL construct one Push page within the common 256KiB final-frame ceiling containing that message and required author/envelope, rather than applying an obsolete 64KiB History cap
+- **WHEN** one typed missing record and its required author/envelope fit within the common 256KiB final-frame ceiling
+- **THEN** the provider SHALL send it in one Push page rather than applying an obsolete 64KiB or separate per-message cap; if that complete page cannot fit, the source-local attempt SHALL fail
 
 #### Scenario: History page count and wire bounds both apply
 
-- **WHEN** a History Push candidate contains more than 100 messages or its exact final encoded frame exceeds 256KiB
-- **THEN** the schema or real codec preflight SHALL reject/shrink the candidate before send, and no page SHALL partially cross the peer boundary
+- **WHEN** a provider builds a History Push candidate whose count would exceed 100 or whose exact final encoded frame exceeds 256KiB
+- **THEN** the provider SHALL cap the count, the unified outbound owner SHALL parse the candidate once, and the real codec preflight SHALL drive page shrinking before send
 
 #### Scenario: Pull inventory has no cumulative protocol cap
 
@@ -181,8 +176,8 @@ The schemas SHALL continue to accept only `history-messages-pull`/`history-messa
 
 #### Scenario: History response wire limits
 
-- **WHEN** a History Push exceeds its declarative 100-message count rule or its exact final frame exceeds 256KiB
-- **THEN** the static schema or real codec preflight SHALL reject or shrink the complete page before Runtime application/send, without prescribing retry, supplier, timeout, queue, or peer-state behavior
+- **WHEN** a provider constructs a History Push or a peer receives one
+- **THEN** the provider SHALL retain at most 100 typed messages and use the real codec preflight for the 256KiB frame, while the receiving peer SHALL independently apply the static Schema after decode
 
 #### Scenario: Old and ambiguous history keys reject
 
@@ -191,7 +186,7 @@ The schemas SHALL continue to accept only `history-messages-pull`/`history-messa
 
 ### Requirement: No old-protocol compatibility
 
-The current peer protocol SHALL NOT bridge, translate, negotiate, or interoperate with released v1-v5 peers, including v5 peers that retain the old 48KiB message-like, 64KiB final-frame, or 256KiB decompressed limits. The new v6 192KiB complete-message, 256KiB final-frame, and 1MiB decompressed contract SHALL replace those values in one current-only delivery. v1-v6 SHALL use isolated Chat and World room namespaces. No old decoder, fallback limit, dual publication, dual read/write, room bridge, translator, capability bit, migration, or conditional compatibility path SHALL exist. Retained structural message fields remain current; capacity incompatibility SHALL not be hidden by a second path.
+The current peer protocol SHALL NOT bridge, translate, negotiate, or interoperate with released v1-v5 peers, including v5 peers that retain the old 48KiB body-field, 64KiB final-frame, or 256KiB decompressed limits. The new v6 192 × 1024-code-unit body-field, 256KiB final-frame, and 1MiB decompressed contract SHALL replace those values in one current-only delivery. v1-v6 SHALL use isolated Chat and World room namespaces. No old decoder, fallback limit, dual publication, dual read/write, room bridge, translator, capability bit, migration, or conditional compatibility path SHALL exist. Retained structural message fields remain current; capacity incompatibility SHALL not be hidden by a second path.
 
 #### Scenario: Old-capacity peer has no compatibility route
 
@@ -200,8 +195,8 @@ The current peer protocol SHALL NOT bridge, translate, negotiate, or interoperat
 
 #### Scenario: Current peer exposes one capacity truth
 
-- **WHEN** current public constants, codec checks, Footer preflight, History paging, documentation, and existing affected expectations are inspected
-- **THEN** they SHALL describe only 192KiB complete message, 256KiB final frame, and 1MiB decompressed JSON limits, with no reachable old-value branch
+- **WHEN** current public constants, Schema checks, codec checks, History paging, documentation, and existing affected expectations are inspected
+- **THEN** they SHALL describe only the 192 × 1024-code-unit body field, retained static user fields, 256KiB final frame, and 1MiB decompressed JSON limits, with no complete-object byte guard or reachable old-value branch
 
 #### Scenario: v1/v2 cross-traffic
 
