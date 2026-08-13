@@ -19,7 +19,8 @@ import {
   type MentionedUser,
   type ChatSite,
   type ChatUser,
-  isChatMessageWithinBudget
+  isChatMessageWithinBudget,
+  isChatUserWithinBudget
 } from '@/protocol'
 import {
   MESSAGE_RECORD_TYPE,
@@ -1066,6 +1067,18 @@ const SessionDomain = Remesh.domain({
           userId: runtime.user.id,
           body: payload.body,
           mentions: payload.mentions
+        }
+        // Local production boundary: the complete message, the local record user, and every
+        // nested mention user must fit their canonical budgets before anything is allocated.
+        if (
+          !isChatMessageWithinBudget(candidate) ||
+          !isChatUserWithinBudget(runtime.user) ||
+          payload.mentions.some((user) => !isChatUserWithinBudget(user))
+        ) {
+          return OperationFailedEvent({
+            operationId: payload.operationId,
+            error: new Error('Chat message exceeds the canonical size budget')
+          })
         }
         const record: TextMessageRecord = {
           type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE,

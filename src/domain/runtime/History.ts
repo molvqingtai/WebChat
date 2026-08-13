@@ -1,5 +1,5 @@
 import { Remesh, type RemeshCommandOutput } from 'remesh'
-import { catchError, defer, filter, from, map, mergeMap, Observable, of } from 'rxjs'
+import { catchError, defer, filter, from, map, mergeMap, Observable, of, switchMap } from 'rxjs'
 import DeliveryDomain from '@/domain/runtime/Delivery'
 import SessionDomain, { observeHlc } from '@/domain/runtime/Session'
 import WireDomain, { type WireFailureStage, type WireMessageEvent } from '@/domain/runtime/Wire'
@@ -1878,7 +1878,10 @@ const HistoryDomain = Remesh.domain({
       name: 'History.RequestTimeoutEffect',
       impl: ({ fromEvent }) =>
         fromEvent(HistoryTimeoutArmedEvent).pipe(
-          mergeMap(
+          // Replacement semantics: each valid progress arm cancels the previous no-progress
+          // deadline for this attempt, so real progress never ends the sync early and the
+          // sync is terminalized only after 10s without any progress.
+          switchMap(
             (payload) =>
               new Observable<HistoryAttemptKey>((observer) => {
                 const timerId = globalThis.setTimeout(() => {
@@ -2028,7 +2031,9 @@ const HistoryDomain = Remesh.domain({
       name: 'History.ProviderTimeoutEffect',
       impl: ({ fromEvent }) =>
         fromEvent(ProviderTimeoutArmedEvent).pipe(
-          mergeMap(
+          // Replacement semantics: each valid arm replaces the previous no-progress deadline,
+          // so continued provider progress never terminalizes early; only a 10s stall does.
+          switchMap(
             (payload) =>
               new Observable<HistoryAttemptKey>((observer) => {
                 const timerId = globalThis.setTimeout(() => {

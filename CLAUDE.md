@@ -85,16 +85,16 @@ The content pages are UI/comctx clients. They do not own peer rooms or duplicate
 
 `src/protocol/` is the third-party-facing peer boundary:
 
-- Chat v2 is the closed union `session | text | reaction | history-request | history-response`.
-- World v2 has no message `type`; trusted room context selects its strict `{sessionId,user,sites}` shape.
+- Chat v6 is the closed union `session | text | reaction | history-messages-pull | history-messages-push`; there is no `session-end` and no old `history-request`/`history-response` wire type.
+- World v6 has no message `type`; trusted room context selects its strict `{sessionId,user,sites}` shape.
 - Peer frames use the fixed `base64(deflate(UTF8(JSON)))` codec and strict schemas. Payload identity never replaces the transport-provided source identity.
 
 **Connection Flow**:
 
 1. A content page registers its `{ domain, pageId }` lease and attaches to the shared Runtime through comctx.
-2. The Runtime joins the v2 World room and the origin-derived v2 Chat room, then projects trusted snapshots and events to attached pages.
+2. The Runtime joins the v6 World room and the origin-derived v6 Chat room, then projects trusted snapshots and events to attached pages.
 3. The Runtime allocates event IDs/HLC values centrally; the page persists the canonical local record before transport is attempted.
-4. History is pulled recent-first with exclusive `(hlc, id)` cursors and settles into the requesting page's origin store.
+4. History is pulled recent-first with exclusive `(hlc, id)` cursors and settles into the requesting page's origin store; the requester sends `history-messages-pull` inventory pages and the provider answers with atomic `history-messages-push` pages.
 5. Detaching the last page starts that origin domain's five-second grace period. Reconnecting during the grace period retains that domain. Expiry releases only its origin Chat room, World presence contribution, sessions, and history/delivery state; the shared Runtime host and all other active or grace-period domains remain alive.
 
 ### Storage Strategy
@@ -122,7 +122,7 @@ Key storage keys in `src/constants/storage.ts`:
 - Each provider independently freezes `providerNow - 180 days` at supply-session admission. Page failover, later cursors, and successor promotion retain that admitted cutoff.
 - Cutoffs are not sent on the wire and do not need to match. Provider filtering is non-destructive; the requester remains final acceptance authority.
 - Both sides accept an event exactly at their own cutoff and exclude or reject only earlier events. Clock skew may omit a boundary candidate but cannot expand the requester's window.
-- A history session is recent-first and bounded to 10,000 events or 8MiB with a 10-second timeout. Provider admission allows at most 4 active jobs, 32 admitted jobs including dormant successors, and 8KiB of queued metadata. Each page supply has a five-second physical cancellation boundary.
+- A history session is recent-first with no whole-session event/byte cumulative budget; it ends on the 180-day window, exhaustion/`done`, disconnect/cancel/error, or a 10-second no-progress timeout, and each page is bounded by the real codec's 256KiB final-frame ceiling. Provider admission allows at most 4 active jobs, 32 admitted jobs including dormant successors, and 8KiB of queued metadata. Each page supply has a five-second physical cancellation boundary.
 
 ## Code Organization
 
@@ -167,10 +167,10 @@ Application and Runtime constants in `src/constants/config.ts`:
 
 Public limits in `src/protocol/Limits.ts` are deliberately separate:
 
-- A wire frame is at most 64KiB; a history response must be strictly less than 64KiB.
-- Decoded JSON is at most 256KiB.
-- A canonical chat event is at most 48KiB; a `User` value is at most 8KiB.
-- A history response contains at most 100 events.
+- A wire frame is at most 256KiB; a history page must be strictly less than 256KiB.
+- Decoded JSON is at most 1MiB.
+- A complete canonical chat message is at most 192KiB UTF-8; the expanded wire `body` field is at most 192 * 1024 code units; a complete `User` value is at most 8KiB.
+- A history push page contains at most 100 messages.
 
 ## Browser Extension Specifics
 

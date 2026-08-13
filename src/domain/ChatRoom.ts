@@ -15,6 +15,7 @@ import { SendLifecycleExtern } from '@/domain/externs/SendLifecycle'
 import { MESSAGE_TYPE, REACTION_TYPE, type ChatMessage, type MentionedUser } from '@/protocol/ChatRoom'
 import type { ChatUser } from '@/protocol/Session'
 import type { ChatSession } from '@/protocol/Session'
+import { isChatUserWithinBudget } from '@/protocol/Limits'
 import { MESSAGE_RECORD_TYPE, NOTICE_TYPE, type SystemNoticeRecord, type TextMessageRecord } from '@/domain/Message'
 import { projectTextRecord } from '@/domain/MessageProjection'
 import { getSiteMeta, stringToHex } from '@/utils'
@@ -165,6 +166,9 @@ const ChatRoomDomain = Remesh.domain({
         // Application-to-protocol boundary: the broader UserInfo model is explicitly mapped to
         // the schema-owned ChatUser shape here; downstream consumers pass it through unchanged.
         const wireUser: ChatUser = { id: user.id, name: user.name, avatar: user.avatar }
+        if (!isChatUserWithinBudget(wireUser)) {
+          return OnErrorEvent(new Error('User identity exceeds the canonical size budget'))
+        }
         return [
           JoinStatus.command.SetLoadingCommand(),
           StartConnectionCommand({ input: { user: wireUser, site: getSiteMeta() }, mode: 'join' })

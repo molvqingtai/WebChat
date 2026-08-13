@@ -9,6 +9,7 @@ import MessageInputDomain from '@/domain/MessageInput'
 import { MESSAGE_IMAGE_TARGET_SIZE, MESSAGE_MAX_LENGTH } from '@/constants/config'
 import { MAX_CHAT_MESSAGE_BYTES } from '@/protocol/Limits'
 import ChatRoomDomain from '@/domain/ChatRoom'
+import type { MentionedUser } from '@/protocol'
 import useCursorPosition from '@/hooks/useCursorPosition'
 import useShareRef from '@/hooks/useShareRef'
 import useThrottle from '@/hooks/useThrottle'
@@ -58,6 +59,8 @@ const Footer: FC = () => {
    */
   const atUserRecord = useRef<Map<string, Set<[number, number]>>>(new Map())
   const ownedImageUrls = useRef<Set<string>>(new Set())
+  /** Monotonic draft revision; every InputCommand bumps it so async send resolution can fence stale completions. */
+  const draftGeneration = useRef(0)
 
   const updateAtUserAtRecord = useMemo(
     () => (message: string, start: number, end: number, offset: number, atUserId?: string) => {
@@ -113,12 +116,18 @@ const Footer: FC = () => {
 
   const selectedUser = autoCompleteList.find((_, index) => index === selectedUserIndex)!
 
-  // Resolve the editor's owned blob references into data URLs in a temporary send candidate;
-  // only currently referenced, live object URLs owned by this editor may resolve. The literal
-  // draft itself stays untouched so a failed send preserves it for correction or retry.
-  const resolveImageDraft = async (draft: string) => {
+  // Resolve the editor's owned blob references into data URLs inside a temporary send
+  // candidate: the expanded text and its shifted mention ranges are derived only in local
+  // state, so the visible draft and its live mention map are never polluted unless the whole
+  // send succeeds. Only currently referenced, live object URLs owned by this editor resolve.
+  const resolveImageDraft = async (
+    draft: string,
+    ranges: Map<string, Set<[number, number]>>
+  ): Promise<{ expanded: string; mentions: MentionedUser[] }> => {
     let expanded = draft
-    const matchList = [...draft.matchAll(/!\[Image\]\(blob:([^\s)]+)\)/g)]
+    let working = new Map<string, Set<[number, number]>>()
+    ranges.forEach((value, key) => working.set(key, new Set(value)))
+    const matchList = [...draft.matchAll(/!\[Image\]\((blob:[^\s)]+)\)/g)]
     for (const match of matchList) {
       const url = match[1]
       if (!ownedImageUrls.current.has(url)) throw new Error('Image reference is no longer owned by this editor')
@@ -127,11 +136,29 @@ const Footer: FC = () => {
       const dataSyntax = `![Image](${dataUrl})`
       const blobSyntax = match[0]
       const startIndex = match.index
-      const endIndex = startIndex + dataSyntax.length - blobSyntax.length
+      const delta = dataSyntax.length - blobSyntax.length
       expanded = expanded.replace(blobSyntax, dataSyntax)
-      updateAtUserAtRecord(expanded, startIndex, endIndex, 0)
+      const shifted = new Map<string, Set<[number, number]>>()
+      working.forEach((positionList, userId) => {
+        const positionListNext = [...positionList].map<[number, number]>((item) => {
+          const inBefore = startIndex <= item[1]
+          return inBefore ? [item[0] + delta, item[1] + delta] : item
+        })
+        const filtered = positionListNext.filter((item) => {
+          const name = expanded.slice(item[0], item[1] + 1)
+          return name === `@${userList.find((user) => user.id === userId)?.name}`
+        })
+        if (filtered.length) shifted.set(userId, new Set(filtered))
+      })
+      working = shifted
     }
-    return expanded
+    const mentions = [...working]
+      .map(([userId, positionList]) => {
+        const user = userList.find((user) => user.id === userId)
+        return (user ? { ...user, ranges: [...positionList] } : undefined)!
+      })
+      .filter(Boolean)
+    return { expanded, mentions }
   }
 
   const handleSendMessage = async () => {
@@ -139,36 +166,39 @@ const Footer: FC = () => {
       inputRef.current?.focus()
       return
     }
-    let transformedMessage: string
+    const snapshot = message
+    const generation = draftGeneration.current
+    let expanded: string
+    let mentions: MentionedUser[]
     try {
-      transformedMessage = await resolveImageDraft(message)
+      const resolved = await resolveImageDraft(snapshot, atUserRecord.current)
+      expanded = resolved.expanded
+      mentions = resolved.mentions
     } catch (error) {
-      // Reject the whole send and preserve the literal draft; every still-referenced owned URL
-      // stays live for correction or retry.
+      // A stale async completion (the draft was edited, cleared, or a reference was removed
+      // while reading) is ignored: the current draft owns the send lane and stays untouched.
+      if (generation !== draftGeneration.current) return
       send(toastDomain.command.ErrorCommand((error as Error).message))
       return
     }
-    const mentions = [...atUserRecord.current]
-      .map(([userId, ranges]) => {
-        const user = userList.find((user) => user.id === userId)
-        return (user ? { ...user, ranges: [...ranges] } : undefined)!
-      })
-      .filter(Boolean)
+    // Fence the whole conversion: nothing is sent unless the captured draft revision is still
+    // current after every await.
+    if (generation !== draftGeneration.current) return
 
-    const newMessage = { body: transformedMessage, mentions }
-    const byteSize = getTextByteSize(JSON.stringify(newMessage))
+    const candidate = { body: expanded, mentions }
+    const byteSize = getTextByteSize(JSON.stringify(candidate))
 
     if (byteSize > MAX_CHAT_MESSAGE_BYTES) {
       return send(toastDomain.command.WarningCommand('Message size cannot exceed 192KiB.'))
     }
 
-    send(chatRoomDomain.command.SendTextMessageCommand({ body: transformedMessage, mentions }))
+    send(chatRoomDomain.command.SendTextMessageCommand({ body: expanded, mentions }))
   }
 
   // Revoke every owned blob URL whose final draft reference disappeared (edit, clear, or send
   // success), and revoke all owned URLs when the editor unmounts.
   useEffect(() => {
-    const referenced = new Set([...message.matchAll(/!\[Image\]\(blob:([^\s)]+)\)/g)].map((match) => match[1]))
+    const referenced = new Set([...message.matchAll(/!\[Image\]\((blob:[^\s)]+)\)/g)].map((match) => match[1]))
     ownedImageUrls.current.forEach((url) => {
       if (!referenced.has(url)) {
         URL.revokeObjectURL(url)
@@ -260,6 +290,7 @@ const Footer: FC = () => {
 
     updateAtUserAtRecord(currentMessage, start, end, 0)
 
+    draftGeneration.current += 1
     send(messageInputDomain.command.InputCommand(currentMessage))
   }
 
@@ -283,6 +314,7 @@ const Footer: FC = () => {
 
     updateAtUserAtRecord(newMessage, start, end, 0)
 
+    draftGeneration.current += 1
     send(messageInputDomain.command.InputCommand(newMessage))
 
     requestIdleCallback(() => {
@@ -302,12 +334,16 @@ const Footer: FC = () => {
 
       const url = URL.createObjectURL(blob)
       ownedImageUrls.current.add(url)
-      const newMessage = `${message.slice(0, selectionEnd)}![Image](blob:${url})${message.slice(selectionEnd)}`
+      // URL.createObjectURL already returns a blob: URL; the Markdown reference must be the
+      // actual object URL, never a doubled blob:blob: form.
+      const newMessage = `${message.slice(0, selectionEnd)}![Image](${url})${message.slice(selectionEnd)}`
 
       const start = selectionStart
       const end = selectionEnd + newMessage.length - message.length
 
       updateAtUserAtRecord(newMessage, start, end, 0)
+
+      draftGeneration.current += 1
       send(messageInputDomain.command.InputCommand(newMessage))
 
       requestIdleCallback(() => {
@@ -343,6 +379,7 @@ const Footer: FC = () => {
 
     updateAtUserAtRecord(newMessage, ...atUserPosition, offset, selectedUser.id)
 
+    draftGeneration.current += 1
     send(messageInputDomain.command.InputCommand(newMessage))
     requestIdleCallback(() => {
       inputRef.current!.setSelectionRange(end, end)

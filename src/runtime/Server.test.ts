@@ -3455,24 +3455,27 @@ describe('RuntimeServer history', () => {
     expect(types).not.toContain('history-response')
   })
 
-  it('slices inventory pages by the encoded 64KiB frame cap, never by the phase count', async () => {
+  it('slices inventory pages by the encoded 256KiB frame cap, never by the phase count', async () => {
     // A size-limited codec that throws on an oversized frame exactly like NativeWireCodec, while
     // staying JSON-transport compatible so the fake can carry it. This proves the throw-closes-bucket
     // paging and the single-unpageable-ID cancel paths against a real codec-size boundary.
     const sizeLimited: WireCodec = {
-      // NativeWireCodec accepts a general frame of exactly 65,536 bytes; History requires strictly
+      // NativeWireCodec accepts a general frame of exactly 262,144 bytes; History requires strictly
       // below. Throwing only above the cap makes the strict predicate the bucket-closing boundary.
       encode: async (value) => {
         const json = JSON.stringify(value)
-        if (new TextEncoder().encode(json).byteLength > 64 * 1024) {
-          throw new Error('Wire frame exceeds 65536 bytes')
+        if (new TextEncoder().encode(json).byteLength > 256 * 1024) {
+          throw new Error('Wire frame exceeds 262144 bytes')
         }
         return json
       },
       decode: async (value) => JSON.parse(value)
     }
     const { fake, server, roomId } = await setup(DOMAIN, NOW, sizeLimited)
-    const manyIds = Array.from({ length: 9000 }, (_, index) => `id-${index.toString(36).padStart(6, '0')}`)
+    const manyIds = Array.from(
+      { length: 9000 },
+      (_, index) => `id-${index.toString(36).padStart(6, '0')}${'x'.repeat(22)}`
+    )
     const records = manyIds.map((id, index) => textRecord(id, NOW - index))
     await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, async () => ({
       records,
@@ -3484,9 +3487,9 @@ describe('RuntimeServer history', () => {
       expect(pages.length).toBeGreaterThan(1)
     })
     const pages = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)
-    // Every page stays strictly below 64KiB after the codec's own size boundary.
+    // Every page stays strictly below 256KiB after the codec's own size boundary.
     for (const page of pages) {
-      expect(new TextEncoder().encode(JSON.stringify(page)).byteLength).toBeLessThan(64 * 1024)
+      expect(new TextEncoder().encode(JSON.stringify(page)).byteLength).toBeLessThan(256 * 1024)
     }
     expect(pages[pages.length - 1]).toMatchObject({ done: true })
     const covered = pages.flatMap((p) => (p as { messageIds: string[] }).messageIds)
@@ -3623,19 +3626,19 @@ describe('RuntimeServer history', () => {
 
   it('cancels the attempt when a single opaque inventory id cannot form a valid page', async () => {
     const sizeLimited: WireCodec = {
-      // NativeWireCodec accepts a general frame of exactly 65,536 bytes; History requires strictly
+      // NativeWireCodec accepts a general frame of exactly 262,144 bytes; History requires strictly
       // below. Throwing only above the cap makes the strict predicate the bucket-closing boundary.
       encode: async (value) => {
         const json = JSON.stringify(value)
-        if (new TextEncoder().encode(json).byteLength > 64 * 1024) {
-          throw new Error('Wire frame exceeds 65536 bytes')
+        if (new TextEncoder().encode(json).byteLength > 256 * 1024) {
+          throw new Error('Wire frame exceeds 262144 bytes')
         }
         return json
       },
       decode: async (value) => JSON.parse(value)
     }
     const { fake, server, roomId } = await setup(DOMAIN, NOW, sizeLimited)
-    const hugeId = 'x'.repeat(70 * 1024)
+    const hugeId = 'x'.repeat(300 * 1024)
     await registerInventoryProvider(server, [textRecord(hugeId, NOW)])
     fake.receive(roomId, 'peer-a', session())
     await settle()
