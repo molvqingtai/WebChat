@@ -1,12 +1,12 @@
 ## Context
 
-The implementation has separate owners for authored-message size, final wire representation, decoded JSON materialization, History page construction, decode admission, and inbound delivery admission. The final capacity contract keeps those owners and their control flow intact.
+The implementation has separate owners for the declarative Text body ceiling, final wire representation, decoded JSON materialization, History page construction, decode admission, and inbound delivery admission. The final capacity contract keeps those owners and their control flow intact while removing the duplicate producer-side/footer whole-value authored-message preflight.
 
 ## Goals / Non-Goals
 
 **Goals:**
 
-- Set `MAX_CHAT_EVENT_BYTES` to `192KiB`, `MAX_WIRE_BYTES` to `256KiB`, and `MAX_DECODED_JSON_BYTES` to `1MiB` at their existing constants and consumers.
+- Set `MAX_CHAT_EVENT_BYTES` to `192KiB` as the static declarative Text body ceiling, `MAX_WIRE_BYTES` to `256KiB`, and `MAX_DECODED_JSON_BYTES` to `1MiB` at their owning boundaries.
 - Keep History pages on the shared final `256KiB` wire boundary with at most 100 messages per Push.
 - Keep History free of any session-wide cumulative message-count or canonical-content-byte limit while retaining all completion and failure termination.
 - Keep every unchanged value explicit so implementation cannot silently expand adjacent buffers or UI behavior.
@@ -19,11 +19,11 @@ The implementation has separate owners for authored-message size, final wire rep
 
 ## Decisions
 
-### 1. Capacity values stay at their existing owners
+### 1. Capacity values have one owner each
 
-`MAX_CHAT_EVENT_BYTES` is `192 * 1024`, `MAX_WIRE_BYTES` is `256 * 1024`, and `MAX_DECODED_JSON_BYTES` is `1024 * 1024`. Authoring, declarative field, codec encode, and codec decode consumers keep their responsibilities; validation stays at those boundaries without duplication.
+`MAX_CHAT_EVENT_BYTES` is `192 * 1024`, `MAX_WIRE_BYTES` is `256 * 1024`, and `MAX_DECODED_JSON_BYTES` is `1024 * 1024`. The static Text schema alone consumes `MAX_CHAT_EVENT_BYTES`; codec encode and decode retain their respective representation limits. No producer, footer, outbound, persistence-write, or History-supply path computes or enforces a whole-value authored-message budget.
 
-The existing `500` JavaScript-unit text limit and `30KiB` per-image compression target remain independent. Several images may fit in a `192KiB` authored payload, but there is no fixed image-count promise; the existing authored-message and final-wire checks remain the deciding boundaries.
+The existing `500` JavaScript-unit text limit and `30KiB` per-image compression target remain independent. Several images may fit in a Text body below the `192KiB` declarative ceiling, but there is no fixed image-count promise; the Text schema and final-wire codec boundary remain the deciding limits.
 
 ### 2. History pages continue to use the shared wire value
 

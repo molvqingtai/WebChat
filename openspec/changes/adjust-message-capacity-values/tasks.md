@@ -5,13 +5,13 @@
 
 ## 2. Apply The Final Values
 
-- [ ] 2.1 Set `MAX_CHAT_EVENT_BYTES = 192 * 1024`, `MAX_WIRE_BYTES = 256 * 1024`, and `MAX_DECODED_JSON_BYTES = 1024 * 1024` without changing their owners or call paths.
+- [ ] 2.1 Set `MAX_CHAT_EVENT_BYTES = 192 * 1024` at the static Text schema, `MAX_WIRE_BYTES = 256 * 1024`, and `MAX_DECODED_JSON_BYTES = 1024 * 1024` at their codec owners; remove the producer-side/footer whole-value authored-message preflight without adding another validation path.
 - [ ] 2.2 Ensure History has no session-wide cumulative message-count or canonical-content-byte constants, options, counters, truncation, fail-closed branches, or substitute aggregate guard, without changing History structure.
-- [ ] 2.3 Set the footer warning to `192KiB`; keep the 500-unit text limit, `30KiB` image target, and editor behavior unchanged.
+- [ ] 2.3 Remove the footer whole-value size warning/preflight; keep the 500-unit text input limit, `30KiB` image target, draft/send lifecycle, and other editor behavior unchanged.
 
 ## 3. Synchronize Existing Evidence
 
-- [ ] 3.1 Mechanically align only existing exact-value, codec-limit, field-ceiling, and footer expectations with the final values; add no test case or test abstraction.
+- [ ] 3.1 Mechanically align only existing exact-value, codec-limit, declarative field-ceiling, and removed-footer-preflight expectations with the final contract; add no test case or test abstraction.
 - [ ] 3.2 Mechanically align only existing History fixtures and expectations with the no-session-wide-cumulative-limit contract; add no test case or helper.
 - [x] 3.3 Synchronize this delta and the currently active OpenSpec numeric, aggregate, and timeout wording without expanding product scope.
 
