@@ -1,5 +1,5 @@
 import { Remesh, type RemeshCommandOutput } from 'remesh'
-import { catchError, defer, filter, from, map, mergeMap, of, Subject, type Observable } from 'rxjs'
+import { Observable, catchError, defer, filter, from, map, mergeMap, of } from 'rxjs'
 import DeliveryDomain from '@/domain/runtime/Delivery'
 import SessionDomain, { observeHlc } from '@/domain/runtime/Session'
 import WireDomain, { type WireFailureStage, type WireMessageEvent } from '@/domain/runtime/Wire'
@@ -159,12 +159,27 @@ const HistoryDomain = Remesh.domain({
     const clock = domain.getExtern(ClockExtern)
     const pagePort = domain.getExtern(PagePortExtern)
     const codec = domain.getExtern(WireCodecExtern)
-    // Per-attempt no-progress deadlines: one replaceable timer per exact attempt identity, so
-    // progress for one attempt never cancels or extends another attempt's deadline.
+    // Per-attempt no-progress deadlines: one replaceable timer per exact stable attempt
+    // identity (the four HistoryAttemptKey fields only), so progress for one attempt never
+    // cancels or extends another attempt's deadline and re-arming the same attempt replaces
+    // its own previous deadline even while mutable progress fields change.
     const requesterDeadlineTimers = new Map<string, ReturnType<typeof globalThis.setTimeout>>()
     const providerDeadlineTimers = new Map<string, ReturnType<typeof globalThis.setTimeout>>()
-    const requesterDeadlineFired = new Subject<HistoryAttemptKey>()
-    const providerDeadlineFired = new Subject<HistoryAttemptKey>()
+    const deadlineKey = (key: HistoryAttemptKey): string =>
+      JSON.stringify([key.sourcePeerId, key.domain, key.syncId, key.syncToken])
+    const clearDeadlinesForSession = (
+      timers: Map<string, ReturnType<typeof globalThis.setTimeout>>,
+      session: { sourcePeerId: string; domain: string }
+    ): void => {
+      const prefix = JSON.stringify([session.sourcePeerId, session.domain]).slice(0, -1)
+      for (const key of Array.from(timers.keys())) {
+        if (key.startsWith(prefix)) {
+          const timerId = timers.get(key)
+          if (timerId !== undefined) globalThis.clearTimeout(timerId)
+          timers.delete(key)
+        }
+      }
+    }
     const wireDomain = domain.getDomain(WireDomain())
     const deliveryDomain = domain.getDomain(DeliveryDomain())
     const sessionDomain = domain.getDomain(SessionDomain())
@@ -344,6 +359,8 @@ const HistoryDomain = Remesh.domain({
           (item) => item.sourcePeerId === payload.sourcePeerId && item.domain === payload.domain
         )
         if (!current) return null
+        // Terminal: the requester's no-progress deadline must not outlive its attempt.
+        clearDeadlinesForSession(requesterDeadlineTimers, payload)
         return [
           TerminateSyncBindingCommand({
             sourcePeerId: payload.sourcePeerId,
@@ -372,6 +389,9 @@ const HistoryDomain = Remesh.domain({
     const FinishCurrentRequesterCommand = domain.command({
       name: 'History.FinishCurrentRequesterCommand',
       impl: ({ get }, payload: HistoryAttemptKey) => {
+        // Terminal (timeout or finish-current): the matching deadline is cleared regardless of
+        // whether the attempt is still live, so a stale timer can never target a replacement.
+        clearDeadlinesForSession(requesterDeadlineTimers, payload)
         const current = get(RequesterAttemptsState()).find((item) => matchesSync(item, payload))
         return current ? FinishRequestedEvent({ domain: payload.domain, sourcePeerId: payload.sourcePeerId }) : null
       }
@@ -549,7 +569,10 @@ const HistoryDomain = Remesh.domain({
         )
         // Source replacement ends the old connection's synchronization: working and terminal
         // bindings are cleared for the source+domain, and the replacement connection starts its
-        // one independent synchronization with a fresh id.
+        // one independent synchronization with a fresh id. Every deadline of the old generation
+        // is cleared so it cannot terminate the replacement.
+        clearDeadlinesForSession(requesterDeadlineTimers, payload)
+        clearDeadlinesForSession(providerDeadlineTimers, payload)
         return [
           RequesterAttemptsState().new(
             requesters.filter((item) => item.sourcePeerId !== payload.sourcePeerId || item.domain !== payload.domain)
@@ -768,9 +791,10 @@ const HistoryDomain = Remesh.domain({
                   )
                 : [...successors, nextSuccessor]
             ),
-            // The successor attempt timeout is armed from page zero, not only after done. The
-            // first valid successor page zero is the new connection's sole provider syncId and
-            // binds it for the source+domain+provider direction.
+            // The successor attempt deadline is armed on page zero and re-armed on every later
+            // admitted progress page (replacement semantics), so continued progress keeps the
+            // 10s no-progress window open. The first valid successor page zero binds this
+            // connection's sole provider syncId for the source+domain+provider direction.
             ...(successor
               ? []
               : [
@@ -779,9 +803,9 @@ const HistoryDomain = Remesh.domain({
                     domain: binding.domain,
                     direction: 'provider',
                     syncId: payload.message.syncId
-                  }),
-                  ProviderTimeoutArmedEvent(key)
-                ])
+                  })
+                ]),
+            ProviderTimeoutArmedEvent(key)
           ]
         }
 
@@ -913,9 +937,11 @@ const HistoryDomain = Remesh.domain({
                   domain: binding.domain,
                   direction: 'provider',
                   syncId: payload.message.syncId
-                }),
-                ProviderTimeoutArmedEvent(key)
+                })
               ]),
+          // Every admitted valid inventory page (page zero and later progress) re-arms the
+          // provider's own 10s no-progress deadline.
+          ProviderTimeoutArmedEvent(key),
           AdmitProviderSupplyCommand({
             ...key,
             queueBytes: next.inventoryBytes,
@@ -1023,6 +1049,8 @@ const HistoryDomain = Remesh.domain({
     const CancelProviderAttemptCommand = domain.command({
       name: 'History.CancelProviderAttemptCommand',
       impl: ({ get }, key: HistoryAttemptKey) => {
+        // Terminal: the provider's no-progress deadline must not outlive its attempt.
+        clearDeadlinesForSession(providerDeadlineTimers, key)
         const providers = get(ProviderAttemptsState())
         const owners = get(FeedbackOwnersState())
         const current = providers.find((item) => matchesSync(item, key))
@@ -1882,21 +1910,29 @@ const HistoryDomain = Remesh.domain({
     })
     domain.effect({
       name: 'History.RequestTimeoutEffect',
-      impl: ({ fromEvent }) => {
-        fromEvent(HistoryTimeoutArmedEvent).subscribe((payload) => {
-          // Replacement per attempt identity: re-arming an attempt replaces only its own
-          // previous deadline; other attempts keep their independent 10s no-progress window.
-          const key = JSON.stringify(payload)
-          const previous = requesterDeadlineTimers.get(key)
-          if (previous !== undefined) globalThis.clearTimeout(previous)
-          const timerId = globalThis.setTimeout(() => {
-            requesterDeadlineTimers.delete(key)
-            requesterDeadlineFired.next(payload)
-          }, HISTORY_REQUEST_TIMEOUT_MS)
-          requesterDeadlineTimers.set(key, timerId)
-        })
-        return requesterDeadlineFired.pipe(map(FinishCurrentRequesterCommand))
-      }
+      impl: ({ fromEvent }) =>
+        new Observable<HistoryAttemptKey>((observer) => {
+          const subscription = fromEvent(HistoryTimeoutArmedEvent).subscribe((payload) => {
+            // Replacement per stable attempt identity: re-arming the same attempt replaces only
+            // its own previous deadline; other attempts keep independent 10s no-progress windows.
+            const key = deadlineKey(payload)
+            const previous = requesterDeadlineTimers.get(key)
+            if (previous !== undefined) globalThis.clearTimeout(previous)
+            const timerId = globalThis.setTimeout(() => {
+              requesterDeadlineTimers.delete(key)
+              observer.next(payload)
+            }, HISTORY_REQUEST_TIMEOUT_MS)
+            requesterDeadlineTimers.set(key, timerId)
+          })
+          // Effect-owned teardown: when the domain is disposed, the arm listener is
+          // unsubscribed and every remaining requester deadline is cleared, so a discarded
+          // domain generation can never terminate a later same-identity attempt.
+          return () => {
+            subscription.unsubscribe()
+            requesterDeadlineTimers.forEach((timerId) => globalThis.clearTimeout(timerId))
+            requesterDeadlineTimers.clear()
+          }
+        }).pipe(map(FinishCurrentRequesterCommand))
     })
     domain.effect({
       name: 'History.ProviderSupplyEffect',
@@ -2033,21 +2069,29 @@ const HistoryDomain = Remesh.domain({
     })
     domain.effect({
       name: 'History.ProviderTimeoutEffect',
-      impl: ({ fromEvent }) => {
-        fromEvent(ProviderTimeoutArmedEvent).subscribe((payload) => {
-          // Replacement per attempt identity: each valid provider arm replaces only that
-          // attempt's own previous deadline; only a 10s stall of that attempt terminalizes it.
-          const key = JSON.stringify(payload)
-          const previous = providerDeadlineTimers.get(key)
-          if (previous !== undefined) globalThis.clearTimeout(previous)
-          const timerId = globalThis.setTimeout(() => {
-            providerDeadlineTimers.delete(key)
-            providerDeadlineFired.next(payload)
-          }, HISTORY_REQUEST_TIMEOUT_MS)
-          providerDeadlineTimers.set(key, timerId)
-        })
-        return providerDeadlineFired.pipe(map(CancelProviderAttemptCommand))
-      }
+      impl: ({ fromEvent }) =>
+        new Observable<HistoryAttemptKey>((observer) => {
+          const subscription = fromEvent(ProviderTimeoutArmedEvent).subscribe((payload) => {
+            // Replacement per stable attempt identity: each valid provider progress arm
+            // replaces only that attempt's own previous deadline; only a 10s stall of that
+            // attempt terminalizes it.
+            const key = deadlineKey(payload)
+            const previous = providerDeadlineTimers.get(key)
+            if (previous !== undefined) globalThis.clearTimeout(previous)
+            const timerId = globalThis.setTimeout(() => {
+              providerDeadlineTimers.delete(key)
+              observer.next(payload)
+            }, HISTORY_REQUEST_TIMEOUT_MS)
+            providerDeadlineTimers.set(key, timerId)
+          })
+          // Effect-owned teardown: dispose unsubscribes the arm listener and clears every
+          // remaining provider deadline for this domain generation.
+          return () => {
+            subscription.unsubscribe()
+            providerDeadlineTimers.forEach((timerId) => globalThis.clearTimeout(timerId))
+            providerDeadlineTimers.clear()
+          }
+        }).pipe(map(CancelProviderAttemptCommand))
     })
     domain.effect({
       name: 'History.BatchAckEffect',
