@@ -44,7 +44,7 @@ Records arriving after either snapshot are not spliced into that snapshot. Live 
 
 ### 4. Shared frame and page bounds constrain each transfer
 
-Public encoding uses the strict 256KiB frame ceiling and 100-message response-page ceiling. History has no cumulative entry or canonical-content budget across the fixed snapshot. Every non-final page contains at least one entry; only a phase's sole page may be the explicit empty `page: 0, done: true` representation. The fixed 180-day snapshot continues across bounded pages until exhaustion and `done`, disconnection, cancellation, error, or the existing 10-second no-progress timeout.
+Public encoding uses the strict 256KiB frame ceiling and 100-message response-page ceiling. History has no cumulative entry or canonical-content budget across the fixed snapshot. Every non-final page contains at least one entry; only a phase's sole page may be the explicit empty `page: 0, done: true` representation. The fixed 180-day snapshot continues across bounded pages until exhaustion and `done`, disconnection, cancellation, error, or the fixed 10-second operational timeout.
 
 Individual `messageIds` remain opaque strings with no NanoID regex or standalone string ceiling. Their containing frame is the resource boundary. Duplicate IDs remain harmless set input and still consume space in their page.
 
@@ -56,7 +56,7 @@ The requester atomically admits each response page through Delivery, then proces
 
 ### 6. Connection-bound synchronization is one-shot and terminal
 
-Working State is volatile and keyed by current domain, source incarnation, direction, generation, `syncId`, and a unique local token. Each directional synchronization retains the existing 10-second no-progress timeout under that complete identity and re-arms it on accepted progress. Leave, replacement, timeout, invalid input, supplier failure, insertion failure, or lifecycle cleanup terminates that owner, aborts queued work, and discards both snapshots. Late work must match the complete active identity before it can mutate State or feedback.
+Working State is volatile and keyed by current domain, source incarnation, direction, generation, `syncId`, and a unique local token. Each directional synchronization uses a fixed 10-second operational timeout at its established arm points with complete-identity fencing; accepted progress does not re-arm or replace the timer. Leave, replacement, timeout, invalid input, supplier failure, insertion failure, or lifecycle cleanup terminates that owner, aborts queued work, and discards both snapshots. Late work must match the complete active identity before it can mutate State or feedback.
 
 Success, cancellation, and failure keep one constant-size terminal binding for that source incarnation and direction; no timer, new ID, repeated page zero, or later SESSION may restart it. Source replacement or domain release clears the complete binding. A newly established replacement connection waits for old physical supplier work to settle, generates a fresh `syncId`, reads current storage, and starts its one independent synchronization without knowing or continuing any prior page, snapshot, cursor, or progress. This is a new connection lifecycle, not retry or recovery machinery.
 
