@@ -83,6 +83,11 @@ const UserInfoDomain = Remesh.domain({
     const SyncToStateCommand = domain.command({
       name: 'UserInfo.SyncToStateCommand',
       impl: (_, userInfo: UserInfo | null) => {
+        // Storage get/watch can inject a stored profile without the explicit update command; the
+        // same complete-user budget applies so an over-8KiB stored profile never becomes state.
+        if (userInfo && !isChatUserWithinBudget({ id: userInfo.id, name: userInfo.name, avatar: userInfo.avatar })) {
+          return []
+        }
         return [
           UserInfoState().new(userInfo),
           UpdateUserInfoEvent(),

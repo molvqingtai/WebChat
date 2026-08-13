@@ -129,7 +129,7 @@ Key storage keys in `src/constants/storage.ts`:
 ```
 src/
 ├── app/              # WXT applications (content, background, offscreen, options)
-├── protocol/         # Public v2 peer types, strict schemas, limits, and fixed codec
+├── protocol/         # Public v6 peer types, strict schemas, limits, and fixed codec
 ├── domain/           # Application/page Remesh domains and local models
 │   ├── externs/      # Application dependency interfaces
 │   ├── impls/        # Page-side adapters and origin-owned persistence
@@ -169,7 +169,7 @@ Public limits in `src/protocol/Limits.ts` are deliberately separate:
 
 - A wire frame is at most 256KiB; a history page must be strictly less than 256KiB.
 - Decoded JSON is at most 1MiB.
-- A complete canonical chat message is at most 192KiB UTF-8; the expanded wire `body` field is at most 192 * 1024 code units; a complete `User` value is at most 8KiB.
+- A complete canonical chat message is at most 192KiB UTF-8; the expanded wire `body` field is at most 192 \* 1024 code units; a complete `User` value is at most 8KiB.
 - A history push page contains at most 100 messages.
 
 ## Browser Extension Specifics

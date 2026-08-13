@@ -1131,6 +1131,14 @@ const SessionDomain = Remesh.domain({
           reaction: payload.reaction,
           active: payload.active
         }
+        // Local production boundary: the complete reaction message and the local record user
+        // must fit their canonical budgets before anything is allocated.
+        if (!isChatMessageWithinBudget(candidate) || !isChatUserWithinBudget(runtime.user)) {
+          return OperationFailedEvent({
+            operationId: payload.operationId,
+            error: new Error('Chat message exceeds the canonical size budget')
+          })
+        }
         const record: ReactionMessageRecord = {
           type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE,
           id: candidate.id,

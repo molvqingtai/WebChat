@@ -125,6 +125,7 @@ const Footer: FC = () => {
     ranges: Map<string, Set<[number, number]>>
   ): Promise<{ expanded: string; mentions: MentionedUser[] }> => {
     let expanded = draft
+    let runningDelta = 0
     let working = new Map<string, Set<[number, number]>>()
     ranges.forEach((value, key) => working.set(key, new Set(value)))
     const matchList = [...draft.matchAll(/!\[Image\]\((blob:[^\s)]+)\)/g)]
@@ -135,9 +136,12 @@ const Footer: FC = () => {
       const dataUrl = await blobToBase64(blob)
       const dataSyntax = `![Image](${dataUrl})`
       const blobSyntax = match[0]
-      const startIndex = match.index
+      // Original-draft match positions are corrected by the cumulative expansion offset so
+      // later replacements never re-shift intermediate mention ranges.
+      const startIndex = match.index + runningDelta
       const delta = dataSyntax.length - blobSyntax.length
       expanded = expanded.replace(blobSyntax, dataSyntax)
+      runningDelta += delta
       const shifted = new Map<string, Set<[number, number]>>()
       working.forEach((positionList, userId) => {
         const positionListNext = [...positionList].map<[number, number]>((item) => {
@@ -193,11 +197,17 @@ const Footer: FC = () => {
     }
 
     send(chatRoomDomain.command.SendTextMessageCommand({ body: expanded, mentions }))
+    // The draft revision advances with the send itself: any conversion that captured the
+    // previous revision is now stale, even before the external clear lands.
+    draftGeneration.current += 1
   }
 
   // Revoke every owned blob URL whose final draft reference disappeared (edit, clear, or send
   // success), and revoke all owned URLs when the editor unmounts.
   useEffect(() => {
+    // Every actual draft revision advances the generation, including clears performed through
+    // the external MessageInput.ClearCommand, so stale async completions are always fenced.
+    draftGeneration.current += 1
     const referenced = new Set([...message.matchAll(/!\[Image\]\((blob:[^\s)]+)\)/g)].map((match) => match[1]))
     ownedImageUrls.current.forEach((url) => {
       if (!referenced.has(url)) {
@@ -324,6 +334,7 @@ const Footer: FC = () => {
   }
 
   const handleInjectImage = async (file: File) => {
+    const generation = draftGeneration.current
     try {
       setInputLoading(true)
 
@@ -331,6 +342,9 @@ const Footer: FC = () => {
         targetSize: MESSAGE_IMAGE_TARGET_SIZE,
         outputType: file.size > MESSAGE_IMAGE_TARGET_SIZE ? 'image/webp' : undefined
       })
+      // The draft changed while compressing: the insertion would derive from stale render
+      // state, so it is abandoned and the owned-URL set stays untouched.
+      if (generation !== draftGeneration.current) return
 
       const url = URL.createObjectURL(blob)
       ownedImageUrls.current.add(url)

@@ -585,6 +585,16 @@ const WireDomain = Remesh.domain({
                 RecordDropCommand({ sourcePeerId: payload.sourcePeerId, reason: 'complete message over budget' })
               ]
             }
+            if (
+              message.messages.some(
+                (item) => 'mentions' in item && item.mentions.some((user) => !isChatUserWithinBudget(user))
+              )
+            ) {
+              return [
+                ...queueOutput,
+                RecordDropCommand({ sourcePeerId: payload.sourcePeerId, reason: 'complete user over budget' })
+              ]
+            }
           }
         }
         return [
