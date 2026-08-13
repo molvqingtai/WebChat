@@ -250,7 +250,7 @@ describe('Runtime host recovery and coordinator liveness', () => {
     })
 
     await expect(room.sendMessage({ type: 'text', body: 'x'.repeat(192 * 1024 + 1), mentions: [] })).rejects.toThrow(
-      'Chat message does not match the protocol schema'
+      'Invalid message.'
     )
     await vi.waitFor(async () => {
       expect(fixture.currentTransport().sentFrames.length).toBe(baseline + 1)

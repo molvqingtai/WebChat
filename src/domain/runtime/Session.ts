@@ -1155,7 +1155,7 @@ const SessionDomain = Remesh.domain({
         if (!parsed.success) {
           return OperationFailedEvent({
             operationId: payload.operationId,
-            error: new Error('Chat message does not match the protocol schema')
+            error: new Error('Invalid message.')
           })
         }
         const adopted = adoptHlc(get(HlcState()), event.hlc)

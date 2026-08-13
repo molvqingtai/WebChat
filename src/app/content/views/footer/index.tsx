@@ -7,6 +7,7 @@ import EmojiButton from '../../components/emoji-button'
 import { Button } from '@/components/ui/button'
 import MessageInputDomain from '@/domain/MessageInput'
 import { MESSAGE_IMAGE_TARGET_SIZE, MESSAGE_MAX_LENGTH } from '@/constants/config'
+import { MAX_CHAT_EVENT_BYTES } from '@/protocol/Limits'
 import ChatRoomDomain from '@/domain/ChatRoom'
 import useCursorPosition from '@/hooks/useCursorPosition'
 import useShareRef from '@/hooks/useShareRef'
@@ -18,7 +19,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import type { VirtuosoHandle } from 'react-virtuoso'
 import { Virtuoso } from 'react-virtuoso'
 import UserInfoDomain from '@/domain/UserInfo'
-import { blobToBase64, cn, getTextSimilarity } from '@/utils'
+import { blobToBase64, cn, getTextByteSize, getTextSimilarity } from '@/utils'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { AvatarImage } from '@radix-ui/react-avatar'
 import ToastDomain from '@/domain/Toast'
@@ -143,6 +144,13 @@ const Footer: FC = () => {
         return (user ? { ...user, ranges: [...ranges] } : undefined)!
       })
       .filter(Boolean)
+
+    const newMessage = { body: transformedMessage, mentions }
+    const byteSize = getTextByteSize(JSON.stringify(newMessage))
+
+    if (byteSize > MAX_CHAT_EVENT_BYTES) {
+      return send(toastDomain.command.WarningCommand('Message size cannot exceed 192KiB.'))
+    }
 
     send(chatRoomDomain.command.SendTextMessageCommand({ body: transformedMessage, mentions }))
   }
