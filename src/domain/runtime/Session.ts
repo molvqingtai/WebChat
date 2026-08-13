@@ -19,9 +19,10 @@ import {
   type MentionedUser,
   type ChatSite,
   type ChatUser,
-  isChatMessageWithinBudget,
-  isChatUserWithinBudget
+  ReactionMessageSchema,
+  TextMessageSchema
 } from '@/protocol'
+import * as v from 'valibot'
 import {
   MESSAGE_RECORD_TYPE,
   type ChatMessageRecord,
@@ -1068,18 +1069,6 @@ const SessionDomain = Remesh.domain({
           body: payload.body,
           mentions: payload.mentions
         }
-        // Local production boundary: the complete message, the local record user, and every
-        // nested mention user must fit their canonical budgets before anything is allocated.
-        if (
-          !isChatMessageWithinBudget(candidate) ||
-          !isChatUserWithinBudget(runtime.user) ||
-          payload.mentions.some((user) => !isChatUserWithinBudget(user))
-        ) {
-          return OperationFailedEvent({
-            operationId: payload.operationId,
-            error: new Error('Chat message exceeds the canonical size budget')
-          })
-        }
         const record: TextMessageRecord = {
           type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE,
           id: candidate.id,
@@ -1131,14 +1120,6 @@ const SessionDomain = Remesh.domain({
           reaction: payload.reaction,
           active: payload.active
         }
-        // Local production boundary: the complete reaction message and the local record user
-        // must fit their canonical budgets before anything is allocated.
-        if (!isChatMessageWithinBudget(candidate) || !isChatUserWithinBudget(runtime.user)) {
-          return OperationFailedEvent({
-            operationId: payload.operationId,
-            error: new Error('Chat message exceeds the canonical size budget')
-          })
-        }
         const record: ReactionMessageRecord = {
           type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE,
           id: candidate.id,
@@ -1167,10 +1148,16 @@ const SessionDomain = Remesh.domain({
             error: new Error('Chat message does not match the active local session')
           })
         }
-        if (!isChatMessageWithinBudget(event)) {
+        // Unified outbound Schema boundary: the locally produced complete message is parsed
+        // once through the same static Schema before persistence write and codec encoding.
+        const parsed =
+          event.type === MESSAGE_TYPE.TEXT
+            ? v.safeParse(TextMessageSchema, event)
+            : v.safeParse(ReactionMessageSchema, event)
+        if (!parsed.success) {
           return OperationFailedEvent({
             operationId: payload.operationId,
-            error: new Error('Chat message exceeds the canonical size budget')
+            error: new Error('Chat message does not match the protocol schema')
           })
         }
         const adopted = adoptHlc(get(HlcState()), event.hlc)

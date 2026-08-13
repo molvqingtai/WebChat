@@ -13,7 +13,6 @@ import { PresenceStoreExtern, type PresenceStore } from '@/domain/runtime/extern
 import { RoomTransportExtern, WireCodecExtern } from '@/domain/runtime/externs/RoomTransport'
 import type { RoomTransport } from '@/runtime/RoomTransport'
 import { NativeWireCodec, type WireCodec } from '@/protocol'
-import { isChatUserWithinBudget } from '@/protocol/Limits'
 import type { ChatSite, ChatUser } from '@/protocol'
 import type { RuntimeServer, RuntimeSnapshot } from '@/runtime/Contract'
 
@@ -474,10 +473,6 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     },
     getSnapshot: async () => snapshot(),
     joinChatRoom: (payload) => {
-      // The locally produced user must fit its complete canonical budget before join/publication.
-      if (!isChatUserWithinBudget(payload.user)) {
-        return Promise.reject(new Error('User exceeds the canonical size budget'))
-      }
       // Overlapping same-domain joins observed while the domain's release is closing coalesce into
       // one shared settlement; fresh cold joins keep the existing newest-generation supersession.
       if (store.query(sessionDomain.query.ReleasingDomainQuery(payload.domain))) {

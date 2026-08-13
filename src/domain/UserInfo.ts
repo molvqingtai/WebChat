@@ -3,7 +3,6 @@ import { BrowserSyncStorageExtern } from '@/domain/externs/Storage'
 import StorageEffect from '@/domain/modules/StorageEffect'
 import StatusModule from './modules/Status'
 import { USER_INFO_STORAGE_KEY } from '@/constants/storage'
-import { isChatUserWithinBudget } from '@/protocol/Limits'
 
 export interface UserInfo {
   id: string
@@ -47,12 +46,6 @@ const UserInfoDomain = Remesh.domain({
     const UpdateUserInfoCommand = domain.command({
       name: 'UserInfo.UpdateUserInfoCommand',
       impl: (_, userInfo: UserInfo | null) => {
-        // Local production boundary: the complete canonical user derived from the profile must
-        // fit its 8KiB budget before the profile is accepted or persisted. Rejection is
-        // fail-closed: nothing is stored, joined, or published.
-        if (userInfo && !isChatUserWithinBudget({ id: userInfo.id, name: userInfo.name, avatar: userInfo.avatar })) {
-          return []
-        }
         return [
           UserInfoState().new(userInfo),
           UpdateUserInfoEvent(),
@@ -83,11 +76,6 @@ const UserInfoDomain = Remesh.domain({
     const SyncToStateCommand = domain.command({
       name: 'UserInfo.SyncToStateCommand',
       impl: (_, userInfo: UserInfo | null) => {
-        // Storage get/watch can inject a stored profile without the explicit update command; the
-        // same complete-user budget applies so an over-8KiB stored profile never becomes state.
-        if (userInfo && !isChatUserWithinBudget({ id: userInfo.id, name: userInfo.name, avatar: userInfo.avatar })) {
-          return []
-        }
         return [
           UserInfoState().new(userInfo),
           UpdateUserInfoEvent(),

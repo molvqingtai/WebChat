@@ -169,7 +169,7 @@ Public limits in `src/protocol/Limits.ts` are deliberately separate:
 
 - A wire frame is at most 256KiB; a history page must be strictly less than 256KiB.
 - Decoded JSON is at most 1MiB.
-- A complete canonical chat message is at most 192KiB UTF-8; the expanded wire `body` field is at most 192 \* 1024 code units; a complete `User` value is at most 8KiB.
+- The expanded wire `body` field is at most 192 \* 1024 code units; the `ChatUser.avatar` field is at most 8 \* 1024 code units; the codec owns no message-shape validation.
 - A history push page contains at most 100 messages.
 
 ## Browser Extension Specifics

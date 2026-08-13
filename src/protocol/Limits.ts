@@ -18,44 +18,11 @@ export const MAX_WIRE_BYTES = 256 * 1024
  */
 export const MAX_DECODED_JSON_BYTES = 1024 * 1024
 
-/**
- * One complete canonical ChatMessage (including its discriminator, ID, HLC,
- * user/target fields, body with every expanded image data URL, mentions,
- * avatars, ranges, and every other variant field) SHALL be no larger than
- * 192KiB of UTF-8 JSON. The pure complete-object guard measures exactly this;
- * the structural schema additionally bounds the wire body field to
- * 192 * 1024 UTF-16 code units so send-time data URLs are representable.
- */
-export const MAX_CHAT_MESSAGE_BYTES = 192 * 1024
 /** The expanded wire `body` field ceiling in JavaScript string/UTF-16 code units. */
 export const MAX_CHAT_BODY_CODE_UNITS = 192 * 1024
 
-/** Per-object limits prevent one ChatMessage or ChatUser snapshot from consuming a whole frame. */
+/** Per-object field ceiling for `ChatUser.avatar` in JavaScript string/UTF-16 code units. */
 export const MAX_USER_BYTES = 8 * 1024
 
 /** Count and encoded-byte limits jointly bound responses containing many small messages. */
 export const MAX_HISTORY_RESPONSE_MESSAGES = 100
-
-import type { ChatMessage } from './ChatRoom'
-import type { ChatUser } from './Session'
-
-/** Pure UTF-8 byte measurement of a string; no dependency on app utilities. */
-const utf8ByteLength = (value: string): number => new TextEncoder().encode(value).length
-
-/**
- * Pure complete-object resource guard: the canonical UTF-8 JSON byte length of
- * one complete ChatMessage must be at most MAX_CHAT_MESSAGE_BYTES. It performs
- * only deterministic byte measurement and never transforms, parses, or
- * semantically validates the value.
- */
-export const isChatMessageWithinBudget = (message: ChatMessage): boolean =>
-  utf8ByteLength(JSON.stringify(message)) <= MAX_CHAT_MESSAGE_BYTES
-
-/**
- * Pure complete-object resource guard: the canonical UTF-8 JSON byte length of
- * one complete ChatUser must be at most MAX_USER_BYTES. A complete user is
- * rejected when its canonical representation is over budget even if the avatar
- * field alone is shorter than the ceiling.
- */
-export const isChatUserWithinBudget = (user: ChatUser): boolean =>
-  utf8ByteLength(JSON.stringify(user)) <= MAX_USER_BYTES

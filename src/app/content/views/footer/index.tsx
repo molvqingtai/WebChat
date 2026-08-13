@@ -7,7 +7,6 @@ import EmojiButton from '../../components/emoji-button'
 import { Button } from '@/components/ui/button'
 import MessageInputDomain from '@/domain/MessageInput'
 import { MESSAGE_IMAGE_TARGET_SIZE, MESSAGE_MAX_LENGTH } from '@/constants/config'
-import { MAX_CHAT_MESSAGE_BYTES } from '@/protocol/Limits'
 import ChatRoomDomain from '@/domain/ChatRoom'
 import type { MentionedUser } from '@/protocol'
 import useCursorPosition from '@/hooks/useCursorPosition'
@@ -20,7 +19,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import type { VirtuosoHandle } from 'react-virtuoso'
 import { Virtuoso } from 'react-virtuoso'
 import UserInfoDomain from '@/domain/UserInfo'
-import { blobToBase64, cn, getTextByteSize, getTextSimilarity } from '@/utils'
+import { blobToBase64, cn, getTextSimilarity } from '@/utils'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { AvatarImage } from '@radix-ui/react-avatar'
 import ToastDomain from '@/domain/Toast'
@@ -58,7 +57,8 @@ const Footer: FC = () => {
    * When inserting a username using the @ syntax, record the username's position information and the mapping relationship between the position information and userId to distinguish between users with the same name.
    */
   const atUserRecord = useRef<Map<string, Set<[number, number]>>>(new Map())
-  const ownedImageUrls = useRef<Set<string>>(new Set())
+  /** Editor-session-only Blob locators: `blob:<id>` in the draft resolves through this map. */
+  const ownedImageBlobs = useRef<Map<string, Blob>>(new Map())
   /** Monotonic draft revision; every InputCommand bumps it so async send resolution can fence stale completions. */
   const draftGeneration = useRef(0)
 
@@ -130,9 +130,9 @@ const Footer: FC = () => {
     ranges.forEach((value, key) => working.set(key, new Set(value)))
     const matchList = [...draft.matchAll(/!\[Image\]\((blob:[^\s)]+)\)/g)]
     for (const match of matchList) {
-      const url = match[1]
-      if (!ownedImageUrls.current.has(url)) throw new Error('Image reference is no longer owned by this editor')
-      const blob = await (await fetch(url)).blob()
+      const id = match[1]
+      const blob = ownedImageBlobs.current.get(id)
+      if (!blob) throw new Error('Image reference is no longer owned by this editor')
       const dataUrl = await blobToBase64(blob)
       const dataSyntax = `![Image](${dataUrl})`
       const blobSyntax = match[0]
@@ -189,13 +189,6 @@ const Footer: FC = () => {
     // current after every await.
     if (generation !== draftGeneration.current) return
 
-    const candidate = { body: expanded, mentions }
-    const byteSize = getTextByteSize(JSON.stringify(candidate))
-
-    if (byteSize > MAX_CHAT_MESSAGE_BYTES) {
-      return send(toastDomain.command.WarningCommand('Message size cannot exceed 192KiB.'))
-    }
-
     send(chatRoomDomain.command.SendTextMessageCommand({ body: expanded, mentions }))
     // The draft revision advances with the send itself: any conversion that captured the
     // previous revision is now stale, even before the external clear lands.
@@ -209,18 +202,14 @@ const Footer: FC = () => {
     // the external MessageInput.ClearCommand, so stale async completions are always fenced.
     draftGeneration.current += 1
     const referenced = new Set([...message.matchAll(/!\[Image\]\((blob:[^\s)]+)\)/g)].map((match) => match[1]))
-    ownedImageUrls.current.forEach((url) => {
-      if (!referenced.has(url)) {
-        URL.revokeObjectURL(url)
-        ownedImageUrls.current.delete(url)
-      }
+    ownedImageBlobs.current.forEach((_blob, id) => {
+      if (!referenced.has(id)) ownedImageBlobs.current.delete(id)
     })
   }, [message])
 
   useEffect(
     () => () => {
-      ownedImageUrls.current.forEach((url) => URL.revokeObjectURL(url))
-      ownedImageUrls.current.clear()
+      ownedImageBlobs.current.clear()
     },
     []
   )
@@ -343,14 +332,12 @@ const Footer: FC = () => {
         outputType: file.size > MESSAGE_IMAGE_TARGET_SIZE ? 'image/webp' : undefined
       })
       // The draft changed while compressing: the insertion would derive from stale render
-      // state, so it is abandoned and the owned-URL set stays untouched.
+      // state, so it is abandoned and the owned map stays untouched.
       if (generation !== draftGeneration.current) return
 
-      const url = URL.createObjectURL(blob)
-      ownedImageUrls.current.add(url)
-      // URL.createObjectURL already returns a blob: URL; the Markdown reference must be the
-      // actual object URL, never a doubled blob:blob: form.
-      const newMessage = `${message.slice(0, selectionEnd)}![Image](${url})${message.slice(selectionEnd)}`
+      const id = crypto.randomUUID()
+      ownedImageBlobs.current.set(id, blob)
+      const newMessage = `${message.slice(0, selectionEnd)}![Image](blob:${id})${message.slice(selectionEnd)}`
 
       const start = selectionStart
       const end = selectionEnd + newMessage.length - message.length
