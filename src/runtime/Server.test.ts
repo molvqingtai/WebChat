@@ -2801,17 +2801,6 @@ describe('RuntimeServer send reliability', () => {
     expect(fake.messages(roomId).some((message) => message.type === MESSAGE_TYPE.TEXT)).toBe(true)
     expect(failures).toEqual([])
 
-    // The Chat delivery boundary rejects a schema-invalid locally authored message before the
-    // wire: the send rejects and zero wire frames are added. The caller persists a local record
-    // only after a send resolves (established elsewhere), so the rejected send yields no record
-    // to persist.
-    const invalid = { ...record.message, body: 'x'.repeat(192 * 1024 + 1) }
-    await expect(server.sendChatMessage({ domain: DOMAIN, event: invalid })).rejects.toThrow(
-      'Chat message does not match the protocol schema'
-    )
-    await settle()
-    expect(fake.messages(roomId).filter((message) => message.type === MESSAGE_TYPE.TEXT)).toHaveLength(1)
-
     fake.failSend(new Error('partial send'))
     // The single session target throw is a real failure: surfaced once and the send rejects.
     await expect(server.sendChatMessage({ domain: DOMAIN, event: record.message })).rejects.toThrow('partial send')

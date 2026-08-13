@@ -163,8 +163,9 @@ describe('Runtime host recovery and coordinator liveness', () => {
       get: (target, property: keyof RuntimeServer) => {
         if (property !== 'sendChatMessage') return target[property]
         return async (payload: { domain: string; event: ChatMessage }) => {
+          const result = await target.sendChatMessage(payload)
           sentIds.push(payload.event.id)
-          return target.sendChatMessage(payload)
+          return result
         }
       }
     })
@@ -204,6 +205,25 @@ describe('Runtime host recovery and coordinator liveness', () => {
     expect(fixture.coordinator.snapshotForTest().generation).toBe(2)
     expect(hostPhases).toContain('connecting')
     expect(hostPhases.at(-1)).toBe('ready')
+
+    // The Chat delivery boundary on the recovered host: one valid local send reaches the wire
+    // once and persists once, and one schema-invalid local send adds zero wire deliveries and
+    // zero persisted records (the delivery rejects before either side effect).
+    const valid = await room.sendMessage({ type: 'text', body: 'hello', mentions: [] })
+    await vi.waitFor(async () => {
+      expect(sentIds).toEqual([valid.id])
+      const persisted = await messageStore.query({ type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE })
+      expect(persisted.map((record) => record.id)).toEqual([valid.id])
+    })
+
+    await expect(room.sendMessage({ type: 'text', body: 'x'.repeat(192 * 1024 + 1), mentions: [] })).rejects.toThrow(
+      'Chat message does not match the protocol schema'
+    )
+    await vi.waitFor(async () => {
+      expect(sentIds).toEqual([valid.id])
+      const persisted = await messageStore.query({ type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE })
+      expect(persisted.map((record) => record.id)).toEqual([valid.id])
+    })
   })
 
   it('restores persisted coordinator lease and host generation without duplicate pages', async () => {
