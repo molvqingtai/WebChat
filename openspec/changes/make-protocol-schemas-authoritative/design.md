@@ -2,7 +2,7 @@
 
 See `proposal.md` for motivation. The current public protocol defines message interfaces/unions before their Valibot schemas, then completes validation through exported predicates and repeated caller checks. The repeated checks currently appear at peer receive, local record load, local identity/message production, send, clock adoption, History supply, and intermediate Runtime consumption.
 
-Protocol validation exists only at peer receive and local persistence load, uses schemas exclusively, and silently discards failures without a Toast. The same current contract removes the unreliable Chat end variant, makes Artico physical departure the sole remote leave input, and isolates the resulting wire through v5 Chat and World namespaces.
+Protocol validation exists exactly at peer receive, local send, and local persistence load, uses the same pure static schema, and adds no handwritten validator. Receive/load failures are silently discarded without a Toast; local-send failure persists and sends nothing. The same current contract removes the unreliable Chat end variant, makes Artico physical departure the sole remote leave input, and isolates the resulting wire through v5 Chat and World namespaces.
 
 ## Goals / Non-Goals
 
@@ -10,7 +10,7 @@ Protocol validation exists only at peer receive and local persistence load, uses
 
 - Establish one schema-owned definition graph for every public protocol data type.
 - Retain only protocol rules expressible through declarative Valibot primitives and combinators.
-- Give peer receive and local persistence load exclusive ownership of protocol parsing.
+- Give peer receive, local send, and local persistence load exclusive ownership of protocol validation.
 - Remove duplicate protocol checks and partially validated values from every other path.
 - Remove `SessionEndMessage` and every final-end state/effect so one physical lifecycle signal owns remote leave classification.
 - Preserve stable online presence across a bounded five-second PeerLeave grace and classify one user leave only after the last presence expires.
@@ -45,17 +45,19 @@ Whole-value canonical JSON byte size, mention ranges relative to `body`, future 
 
 Alternative rejected: hide a JavaScript callback inside `v.pipe` and call it schema-native. The callback is still handwritten validation and violates the pure-Schema boundary.
 
-### 3. Only peer receive and local load parse protocol values
+### 3. Peer receive, local send, and local load share one schema authority
 
 At peer receive, Wire first uses trusted transport context to select the static World or Chat protocol schema and safe-parses the decoded `unknown` once. Failure emits no typed message and reaches no Session, History, persistence, notification, unread, or page behavior. It creates no Toast.
 
+At local send, the send owner parses the complete typed value once through the same static World or Chat protocol schema before either persistence or codec encoding. Failure persists nothing and encodes or sends nothing. Local producers and the Footer do not add their own parse or handwritten validation.
+
 At local load, the declarative local record schema composes the authoritative protocol child schema with its local-only structural fields. Each unknown stored item is parsed once as it enters the typed query result. Failure omits the item from the returned result and every projection, with no Toast. Database-key/message/user relationships that need a callback are not validated.
 
-Local producers, outbound send, persistence write, History supply, clock adoption, and downstream Session/History consumers trust their TypeScript inputs and do not parse or inspect message fields for protocol validity. Existing non-protocol identity authorization, operation ownership, lifecycle fencing, and bounded scheduling remain where they are.
+Local producers before the send boundary, persistence write and codec encoding after it, History supply, clock adoption, and downstream Session/History consumers trust their TypeScript inputs and do not add another parse or inspect message fields for protocol validity. Existing non-protocol identity authorization, operation ownership, lifecycle fencing, and bounded scheduling remain where they are.
 
-Alternative rejected: validate before persistence or send as defense in depth. The Owner selected two exclusive validation boundaries; extra checks would recreate path-dependent behavior.
+Alternative rejected: add validation before or after the three unified boundaries as defense in depth. Extra checks would recreate path-dependent behavior.
 
-### 4. Codec safety is representation work, not a third message validator
+### 4. Codec safety is representation work, not another message validator
 
 `NativeWireCodec` keeps strict Base64 canonicality, bounded deflate streaming, fatal UTF-8, JSON decode/encode, and encoded/decompressed resource ceilings because those steps are required to safely produce or consume a frame. It returns decoded `unknown` and never inspects a message discriminator, property, relationship, or protocol semantic. Message validation begins only at the selected complete schema.
 
@@ -85,7 +87,7 @@ Every retained accepted payload preserves its current field structure and codec 
 
 - [A callback is hidden inside a schema pipeline] -> Ban every callback/custom/transform API and add residue controls over the full protocol schema graph and local-load schema.
 - [An unsupported former rule is assumed to remain enforced] -> Name the removed byte, cross-field, time, URL, uniqueness, reference, and record-identity checks explicitly and delete their rejection tests.
-- [A locally produced invalid typed value reaches encode/send] -> This is intentional: producers do not validate protocol shape, and the receiving boundary is authoritative.
+- [A locally produced invalid typed value reaches the send boundary] -> Parse it once through the same pure static schema before either persistence or codec encoding; add no producer-specific validation.
 - [A previously enforced rule is unsupported by the schema API] -> Remove the rule and its tests exactly as authorized; do not retain a fallback or imply the rule remains enforced.
 - [Manually corrupted local rows disappear from results] -> Discard before projection and preserve all valid rows; do not repair, coerce, migrate, or surface a Toast.
 - [A transport replacement looks like a user departure] -> Keep the accepted presence online for exactly five seconds and cancel only on a valid same-presence rebind.
@@ -94,7 +96,7 @@ Every retained accepted payload preserves its current field structure and codec 
 
 ## Migration Plan
 
-1. Land the corrected docs authority, declarative schema/type refactor, History Pull/Push rename, two boundary integrations, SessionEnd deletion, PeerLeave grace, v5 namespace cut, duplicate-path deletion, and replacement tests on one requirement branch and Draft PR.
+1. Land the corrected docs authority, declarative schema/type refactor, History Pull/Push rename, three boundary integrations, SessionEnd deletion, PeerLeave grace, v5 namespace cut, duplicate-path deletion, and replacement tests on one requirement branch and Draft PR.
 2. Delete obsolete final-end state and all v1-v4 compatibility inputs in the same exact; no data migration or cross-version bridge exists.
 3. Obtain fresh architecture-first review of the complete branch diff and verify all final gates on one exact.
 4. Roll back by reverting the complete requirement PR; the unchanged origin database requires no separate reversal.
