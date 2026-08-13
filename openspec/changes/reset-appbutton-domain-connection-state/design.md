@@ -49,7 +49,7 @@ Alternative rejected: preserve the entire durable presence record. That record i
 
 Once destruction settlement is acknowledged, the current reconnect request starts the existing current-domain replacement attempt. Normal scoped transport join, SESSION publication/receive validation, attempt-owned inbound processing, new History work, new volatile Delivery state, and atomic commit remain authoritative. The implementation will not introduce a special member fetch, forced replay, delayed tombstone expiry, or parallel synchronization path.
 
-This keeps old peers compatible and ensures a valid existing SESSION is sufficient to rebuild membership. Existing operation IDs and generation checks fence delayed cleanup or callbacks so prior work cannot mutate or settle the new attempt.
+This reuses the current v6 peer protocol and ensures a current valid SESSION is sufficient to rebuild membership. Existing operation IDs and generation checks fence delayed cleanup or callbacks so prior work cannot mutate or settle the new attempt.
 
 Alternative rejected: call the complete last-tab release implementation and immediately rejoin. Full release owns durable retirement, World site removal, page lease/grace, and queued demand semantics that Refresh must preserve.
 
