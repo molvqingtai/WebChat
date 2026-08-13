@@ -49,9 +49,9 @@ Alternative rejected: remove all current ignore entries. That turns this focused
 
 ### 3. Treat loop syntax as an exception, not a heuristic permission
 
-The local rule reports every `ForStatement`, `ForOfStatement`, `ForInStatement`, `WhileStatement`, and `DoWhileStatement` by default. A retained statement uses one dedicated functional-iteration justification annotation immediately adjacent to that statement, with a concise reason that names its required `break`, `continue`, early return, or condition-driven process. The rule consumes that annotation directly; a generic Oxlint/ESLint disable directive is not the exception mechanism. The command-level comment check rejects generic and functional-rule disable directives, `--disable-nested-config` prevents directory configuration waivers, and Oxlint reports unused directives.
+The local rule reports every `ForStatement`, `ForOfStatement`, `ForInStatement`, `WhileStatement`, and `DoWhileStatement` by default. A retained statement uses one dedicated functional-iteration justification annotation immediately adjacent to that statement. A control-flow reason names its required `break`, `continue`, early return, or condition-driven process. An owner-commit reason is valid only for `for...of` and names the ordered per-item external effect and absence of an existing bulk primitive; when the source collection is live, it also names the observable membership behavior that a snapshot would change. The rule consumes that annotation directly; a generic Oxlint/ESLint disable directive is not the exception mechanism. The command-level comment check rejects generic and functional-rule disable directives, `--disable-nested-config` prevents directory configuration waivers, and Oxlint reports unused directives.
 
-The rule verifies that an annotation is statement-local and names a structurally present control-flow form, but it cannot prove semantic necessity: a loop containing `break` might still be expressible by `find`, and a condition-driven loop might still be a spelling workaround. Structural enforcement therefore creates an explicit review point; fresh Inspector review decides whether each annotation satisfies the specification.
+The rule verifies that an annotation is statement-local and names a structurally eligible form, but it cannot prove semantic necessity: a loop containing `break` might still be expressible by `find`, and an alleged owner commit might already have a bulk primitive, expose more than per-item effects, or snapshot a live collection. Structural enforcement therefore creates an explicit review point; fresh Inspector review decides whether each annotation satisfies the specification.
 
 Alternative rejected: automatically allow any loop containing `break` or `continue`. That would accept gratuitous loops and miss direct `some`/`find` replacements.
 
@@ -67,13 +67,14 @@ Source migration proceeds by semantic category rather than by token replacement:
 - one aggregate or immutable state uses `reduce`;
 - boolean or first-match questions use `some`, `every`, `find`, or `findIndex`;
 - copied order/edit transforms use `toSorted`, `toReversed`, or `toSpliced`;
-- side-effect traversal computes an immutable owner-specific plan first, then submits it through one explicit owner-level commit invocation.
+- side-effect traversal computes an immutable owner-specific plan first, then submits it through one explicit owner-level commit invocation when an existing bulk primitive can preserve behavior;
+- an explicit owner commit with only ordered per-item external effects may retain one annotated `for...of` when no existing bulk primitive can preserve the behavior; a live source collection remains live rather than being snapshotted.
 
-No callback may mutate its input, its accumulator, or outer state; notify listeners; write storage/DOM; dispose resources; or merely return a mutated receiver to satisfy a rule. If a current public API inherently exposes per-item effects, migration must compute an immutable owner-specific plan and submit that plan through one explicit owner-level commit invocation without changing notification order or exception semantics. The commit boundary may execute the planned sequence through an existing owner/batch primitive; it must not hide the same traversal in `map`, `reduce`, or a new generic helper. Structural rules reject mechanically provable callback effects, and fresh Inspector review covers semantic purity that syntax alone cannot prove.
+No callback may mutate its input, its accumulator, or outer state; notify listeners; write storage/DOM; dispose resources; or merely return a mutated receiver to satisfy a rule. When an existing owner/batch primitive can preserve behavior, migration must compute an immutable owner-specific plan and submit that plan through one explicit owner-level commit invocation without changing notification order or exception semantics. When the owner exposes only per-item effects and no existing bulk primitive can preserve the behavior, that explicit owner commit instead retains one statement-local annotated `for...of`. If membership changes during a live `Set`, `Map`, or equivalent iteration affect the current pass, the loop traverses that collection directly because converting it to an array would change behavior. It must not hide the traversal in `map`, `reduce`, recursion, or a new generic helper. Structural rules reject mechanically provable callback effects, and fresh Inspector review covers semantic purity and every owner-commit claim that syntax alone cannot prove.
 
 Alternative rejected: mechanical `forEach` to `map`. It allocates an unused array and misrepresents side effects as a transformation.
 
-Alternative rejected: use `reduce` as universal syntax. A reducer that mutates external state is only `forEach` in disguise.
+Alternative rejected: use `reduce` as universal syntax. A reducer that mutates external state is only `forEach` in disguise, while spreading a live `Set` or `Map` before reducing creates a snapshot and changes how same-pass additions and removals are observed.
 
 ### 5. Preserve sequential and mutation semantics exactly
 
@@ -85,7 +86,7 @@ Alternative rejected: prohibit every mutating method absolutely. The Owner's exa
 
 ### 6. Use one clean-cut implementation layer
 
-The top stacked PR removes all disallowed existing constructs in one repository-wide source candidate and adds no compatibility path, fallback, or staged allowlist. Focused fail-before fixtures first prove the new rule rejects representative `forEach`, ordinary loops, broad disables, and derived-copy mutation while accepting narrowly justified control-flow loops and exact generated exclusion.
+The top stacked PR removes all disallowed existing constructs in one repository-wide source candidate and adds no compatibility path, fallback, or staged allowlist. Focused fail-before fixtures first prove the new rule rejects representative `forEach`, ordinary loops, broad disables, derived-copy mutation, and disguised callback effects while accepting narrowly justified control-flow loops, one per-item owner-commit `for...of`, and the exact generated exclusion.
 
 Existing tests and fixtures may be mechanically synchronized, but no new product scenario or test abstraction is introduced. The final exact must pass the local rule fixtures, the functional-pass scope fixture, zero-residue structural scans, the complete existing test suite, typecheck, format/lint, both production builds, OpenSpec strict validation, and exact CI.
 
@@ -93,6 +94,7 @@ Existing tests and fixtures may be mechanically synchronized, but no new product
 
 - [Callbacks hide effects under functional syntax] -> Review callback bodies and require pure computation plus one explicit owner commit; treat unused `map`/mutating reducers as blockers.
 - [A loop suppression becomes a permanent loophole] -> Require a statement-local reason, reject broad disables, report unused directives, and review every retained exception on the final exact.
+- [An owner-commit label disguises ordinary traversal] -> Require proof of an explicit ordered per-item effect boundary and no existing bulk primitive; reject derived-result work, and separately prove that any live source collection is not snapshotted.
 - [Sequential work becomes concurrent] -> Preserve await order, backpressure, cancellation, and first-error behavior; do not introduce `Promise.all` without pre-existing concurrency semantics.
 - [Ported numerical code changes output] -> Include ported source, preserve operation order and random-call order, and run existing avatar/product gates; a behavior-changing algebraic rewrite is out of scope.
 - [Previously ignored files reveal unrelated lint debt] -> Keep the general pass and ignores unchanged; apply only the dedicated functional rules through the second Oxlint configuration.
@@ -103,7 +105,7 @@ Existing tests and fixtures may be mechanically synchronized, but no new product
 
 1. Publish this four-file docs authority as the bottom Draft PR from exact `10801251a7a6b744fd246960daed01eef323c868`; lock parent/tree/head/CI and obtain fresh Inspector review.
 2. From the reviewed docs exact, create the top Draft PR. Add focused structural fail-before fixtures, the local Oxlint plugin, the functional-only second-pass configuration, and the exact generated-file exclusion.
-3. Refactor every in-scope violation by semantic category while preserving ordering, random-call order, sequential async behavior, errors, cleanup, and product output. Add only necessary statement-local loop justifications.
+3. Refactor every in-scope violation by semantic category while preserving ordering, live collection behavior, random-call order, sequential async behavior, errors, cleanup, and product output. Add only necessary statement-local control-flow or per-item owner-commit justifications.
 4. Run focused rule fixtures, structural zero-residue scans, full existing tests, typecheck, format/lint, Chrome/Firefox builds, OpenSpec gates, and same-exact hosted CI. Obtain fresh Inspector review of the top increment and cumulative stack.
 5. Keep both PRs Draft. No Ready, merge, deployment, release, or change to PR #126 occurs without separate Owner authority.
 
