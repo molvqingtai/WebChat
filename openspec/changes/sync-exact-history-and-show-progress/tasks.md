@@ -8,7 +8,7 @@
 
 - [x] 2.1 Delete the cursor/full-window requester/provider state machine and make each accepted room connection trigger exactly one outgoing requester synchronization with a fixed 180-day ID snapshot, independent `syncId`, and paged inventory output.
 - [x] 2.2 Bind the first valid incoming page zero as that connection's sole provider `syncId`, wait for the complete inventory, freeze one 180-day record snapshot, filter the exact ID set, and stream recent-first missing-record pages with exact per-page authors.
-- [x] 2.3 Enforce phase-zero start, continuous ordering, explicit empty completion, active identical-replay idempotency, changed replay/gap/post-done rejection, 10,000-entry/8MiB phase budgets, the existing 10-second operational timeout, source-local cancellation, and a constant-size terminal ID fence that rejects both same- and different-ID restarts.
+- [x] 2.3 Enforce phase-zero start, continuous ordering, explicit empty completion, active identical-replay idempotency, changed replay/gap/post-done rejection, no cumulative entry/byte phase budget, the existing 10-second no-progress timeout, source-local cancellation, and a constant-size terminal ID fence that rejects both same- and different-ID restarts.
 - [x] 2.4 Preserve page-supplier `supplyId`/AbortSignal physical settlement, four-active/32-admitted/8KiB admission, dormant replacement isolation, and local-send-only provider progression without a peer ACK.
 - [x] 2.5 On completion, timeout, invalid input, supplier failure, local processing failure, or cancellation, discard working State but retain that connection direction's terminal ID fence; clear all fences only on source replacement/domain release, and let the next room connection start one independent synchronization with no retry, resume, or prior progress.
 
@@ -21,8 +21,8 @@
 
 ## 4. Replace Regression Coverage And Remove Residue
 
-- [ ] 4.1 Replace protocol fixtures and tests with exact current structures, declarative limits, opaque-ID aggregate bounds, old-shape and `session-end` rejection, v5 isolation, retained payload/codec controls, and no callback-backed author-reference rejection.
-- [x] 4.2 Replace History runtime tests with both directional flows, fixed 180-day snapshots, exact filtering, empty phases, ordering/replay/caps, supplier cancellation, local send semantics, response serialization, exactly one synchronization per connection/direction, terminal same/different-ID rejection, domain-release fence cleanup, and an independent next-connection synchronization with no continued progress.
+- [ ] 4.1 Replace protocol fixtures and tests with exact current structures, declarative limits, opaque-ID frame bounds, old-shape and `session-end` rejection, v5 isolation, retained payload/codec controls, and no callback-backed author-reference rejection.
+- [x] 4.2 Replace History runtime tests with both directional flows, fixed 180-day snapshots, exact filtering, empty phases, ordering/replay/page bounds, supplier cancellation, local send semantics, response serialization, exactly one synchronization per connection/direction, terminal same/different-ID rejection, domain-release fence cleanup, and an independent next-connection synchronization with no continued progress.
 - [x] 4.3 Prove live, multi-peer, and same-domain-page insert races; one activation per `syncId`; same-domain fan-out; new-page projection; terminal/cancellation dismissal; concurrent-owner isolation; and zero-insert silence through the real persistence boundary.
 - [x] 4.4 Delete old cursor/full-window implementation, tests, fixtures, names, room inputs, compatibility branches, body-request/ACK proposals, and behavior assertions rather than retaining them behind aliases or fallbacks.
 
