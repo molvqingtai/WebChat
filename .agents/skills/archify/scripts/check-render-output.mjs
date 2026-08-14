@@ -152,8 +152,7 @@ function textBox(attrs, text) {
 }
 
 function estimatedTextWidth(text, fontSize) {
-  let units = 0
-  for (const char of text) units += char.charCodeAt(0) > 255 ? 1.8 : 0.62
+  const units = [...text].reduce((total, char) => total + (char.charCodeAt(0) > 255 ? 1.8 : 0.62), 0)
   return Math.max(fontSize, units * fontSize)
 }
 
@@ -281,9 +280,7 @@ function padBox(box, padding) {
 }
 
 function parseAttrs(tag) {
-  const attrs = {}
-  for (const match of tag.matchAll(/([\w:-]+)\s*=\s*"([^"]*)"/g)) attrs[match[1]] = match[2]
-  return attrs
+  return Object.fromEntries([...tag.matchAll(/([\w:-]+)\s*=\s*"([^"]*)"/g)].map((match) => [match[1], match[2]]))
 }
 
 function numberAttr(attrs, name) {

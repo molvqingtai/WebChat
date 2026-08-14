@@ -30,15 +30,15 @@ export class MessageListenerRegistry {
   }
 
   dispose() {
-    let firstError: unknown
-    this.disposers.forEach((dispose) => {
+    const errors = [...this.disposers].flatMap((dispose) => {
       try {
         dispose()
+        return []
       } catch (error) {
-        firstError ??= error
+        return [error]
       }
     })
-    if (firstError) throw firstError
+    if (errors.length > 0) throw errors[0]
   }
 }
 

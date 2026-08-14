@@ -245,18 +245,25 @@ function routeVia(flow, from, to, start, end) {
   }
 }
 
-const pathCache = new Map()
-
-function pathFor(flow) {
-  if (pathCache.has(flow)) return pathCache.get(flow)
+function computeRoute(flow) {
   const from = nodes.get(flow.from)
   const to = nodes.get(flow.to)
   const start = anchor(from, chosenSide(flow.fromSide, defaultFromSide(from, to)))
   const end = anchor(to, chosenSide(flow.toSide, defaultToSide(from, to)))
   const points = [start, ...routeVia(flow, from, to, start, end), end]
-  const routed = { d: polylinePath(points), points }
-  pathCache.set(flow, routed)
-  return routed
+  return { d: polylinePath(points), points }
+}
+
+// Routes are precomputed once as a fresh result map over the flows whose endpoints exist —
+// the same set the lazy cache would have computed — and every lookup is a pure read.
+const routes = new Map(
+  asArray(dataflow.flows)
+    .filter((flow) => nodes.has(flow.from) && nodes.has(flow.to))
+    .map((flow) => [flow, computeRoute(flow)])
+)
+
+function pathFor(flow) {
+  return routes.get(flow)
 }
 
 function renderStage(stage, index) {

@@ -310,21 +310,28 @@ function routeVia(transition, from, to, start, end) {
   }
 }
 
-const pathCache = new Map()
-
-function pathFor(transition) {
-  if (pathCache.has(transition)) return pathCache.get(transition)
+function computeRoute(transition) {
   const from = states.get(transition.from)
   const to = states.get(transition.to)
   const start = anchor(from, chosenSide(transition.fromSide, defaultFromSide(from, to)))
   const end = anchor(to, chosenSide(transition.toSide, defaultToSide(from, to)))
   const points = [start, ...routeVia(transition, from, to, start, end), end]
-  const routed = {
+  return {
     d: roundedPath(points, transition.cornerRadius ?? 10),
     points
   }
-  pathCache.set(transition, routed)
-  return routed
+}
+
+// Routes are precomputed once as a fresh result map over the items whose endpoints exist —
+// the same set the lazy cache would have computed — and every lookup is a pure read.
+const routes = new Map(
+  asArray(lifecycle.transitions)
+    .filter((transition) => states.has(transition.from) && states.has(transition.to))
+    .map((transition) => [transition, computeRoute(transition)])
+)
+
+function pathFor(transition) {
+  return routes.get(transition)
 }
 
 function bandTitles() {

@@ -440,18 +440,23 @@ function routeVia(edge, from, to, start, end) {
   }
 }
 
-const pathCache = new Map()
-
-function pathFor(edge) {
-  if (pathCache.has(edge)) return pathCache.get(edge)
+function computeRoute(edge) {
   const from = nodes.get(edge.from)
   const to = nodes.get(edge.to)
   const start = anchor(from, chosenSide(edge.fromSide, defaultFromSide(from, to)))
   const end = anchor(to, chosenSide(edge.toSide, defaultToSide(from, to)))
   const points = [start, ...routeVia(edge, from, to, start, end), end]
-  const routed = { d: polylinePath(points), points }
-  pathCache.set(edge, routed)
-  return routed
+  return { d: polylinePath(points), points }
+}
+
+// Routes are precomputed once as a fresh result map over the items whose endpoints exist —
+// the same set the lazy cache would have computed — and every lookup is a pure read.
+const routes = new Map(
+  workflow.edges.filter((edge) => nodes.has(edge.from) && nodes.has(edge.to)).map((edge) => [edge, computeRoute(edge)])
+)
+
+function pathFor(edge) {
+  return routes.get(edge)
 }
 
 function renderLane(lane, index) {

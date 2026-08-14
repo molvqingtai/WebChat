@@ -82,21 +82,21 @@ const ARRAY_FIELDS = {
   architecture: ['components', 'boundaries', 'connections', 'cards']
 }
 
-for (const [mode, fields] of Object.entries(ARRAY_FIELDS)) {
-  for (const field of fields) {
+Object.entries(ARRAY_FIELDS).forEach(([mode, fields]) => {
+  fields.forEach((field) => {
     test(`${mode}: ${field} as a string fails friendly`, () => {
       const doc = JSON.parse(fs.readFileSync(path.join(skillRoot, 'examples', EXAMPLES[mode]), 'utf8'))
       if (!(field in doc)) return // optional field absent in this example
       doc[field] = 'oops'
       assertFriendlyFailure(mode, doc, `${mode}.${field}`)
     })
-  }
+  })
   test(`${mode}: scalar meta fails friendly`, () => {
     const doc = JSON.parse(fs.readFileSync(path.join(skillRoot, 'examples', EXAMPLES[mode]), 'utf8'))
     doc.meta = 42
     assertFriendlyFailure(mode, doc, `${mode}.meta`)
   })
-}
+})
 
 // ---- missing-coordinate fields must not yield NaN coordinates ----
 test('workflow: node missing col never writes NaN', () => {

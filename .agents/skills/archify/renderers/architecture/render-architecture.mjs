@@ -299,18 +299,25 @@ function routeVia(conn, from, to, start, end) {
   }
 }
 
-const pathCache = new Map()
-
-function pathFor(conn) {
-  if (pathCache.has(conn)) return pathCache.get(conn)
+function computeRoute(conn) {
   const from = components.get(conn.from)
   const to = components.get(conn.to)
   const start = anchor(from, chosenSide(conn.fromSide, defaultFromSide(from, to)))
   const end = anchor(to, chosenSide(conn.toSide, defaultToSide(from, to)))
   const points = [start, ...routeVia(conn, from, to, start, end), end]
-  const routed = { d: roundedPath(points, 8), points }
-  pathCache.set(conn, routed)
-  return routed
+  return { d: roundedPath(points, 8), points }
+}
+
+// Routes are precomputed once as a fresh result map over the items whose endpoints exist —
+// the same set the lazy cache would have computed — and every lookup is a pure read.
+const routes = new Map(
+  asArray(arch.connections)
+    .filter((conn) => components.has(conn.from) && components.has(conn.to))
+    .map((conn) => [conn, computeRoute(conn)])
+)
+
+function pathFor(conn) {
+  return routes.get(conn)
 }
 
 // ---- Rendering ---------------------------------------------------------------
