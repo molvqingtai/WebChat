@@ -124,11 +124,13 @@ async function commandDoctor() {
   // The existence facts come from statement-level directory listings (Node 18 compatible and
   // platform-neutral), then the doctor entries derive purely with no I/O inside any callback.
   const listDirectory = (directory) => (fs.existsSync(directory) ? fs.readdirSync(directory) : [])
-  const rendererFiles = new Set(
-    ['architecture', 'workflow', 'sequence', 'dataflow', 'lifecycle'].flatMap((type) =>
-      listDirectory(path.join(skillRoot, 'renderers', type)).map((file) => `${type}/${file}`)
-    )
-  )
+  const rendererFiles = new Set([
+    ...listDirectory(path.join(skillRoot, 'renderers', 'architecture')).map((file) => `architecture/${file}`),
+    ...listDirectory(path.join(skillRoot, 'renderers', 'workflow')).map((file) => `workflow/${file}`),
+    ...listDirectory(path.join(skillRoot, 'renderers', 'sequence')).map((file) => `sequence/${file}`),
+    ...listDirectory(path.join(skillRoot, 'renderers', 'dataflow')).map((file) => `dataflow/${file}`),
+    ...listDirectory(path.join(skillRoot, 'renderers', 'lifecycle')).map((file) => `lifecycle/${file}`)
+  ])
   const schemaFiles = new Set(listDirectory(path.join(skillRoot, 'schemas')))
   const exampleFiles = new Set(listDirectory(path.join(skillRoot, 'examples')))
   const typeChecks = [...TYPES].map((type) => {

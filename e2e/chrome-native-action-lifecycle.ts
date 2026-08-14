@@ -233,7 +233,15 @@ const assertJson = (value: unknown, seen = new Set<object>()): JsonValue => {
   if (Array.isArray(value)) {
     if (seen.has(value)) throw new Error('JSON value must not contain cycles')
     seen.add(value)
-    const result = value.map((entry) => assertJson(entry, seen))
+    // The fresh accumulator owns both the result array and the cycle set: the callback only
+    // mutates state created for this invocation, and sparse holes are skipped by map semantics.
+    const result = value.reduce(
+      (acc, entry) => {
+        acc.result.push(assertJson(entry, acc.seen))
+        return acc
+      },
+      { result: [] as JsonValue[], seen }
+    ).result
     seen.delete(value)
     return result
   }
@@ -241,11 +249,15 @@ const assertJson = (value: unknown, seen = new Set<object>()): JsonValue => {
   if (typeof value === 'object') {
     if (seen.has(value)) throw new Error('JSON value must not contain cycles')
     seen.add(value)
-    const result: Record<string, JsonValue> = Object.fromEntries(
-      Object.keys(value)
-        .toSorted()
-        .map((key) => [key, assertJson((value as Record<string, unknown>)[key], seen)])
-    )
+    const result = Object.keys(value)
+      .toSorted()
+      .reduce(
+        (acc, key) => {
+          acc.result[key] = assertJson((value as Record<string, unknown>)[key], acc.seen)
+          return acc
+        },
+        { result: {} as Record<string, JsonValue>, seen }
+      ).result
     seen.delete(value)
     return result
   }
@@ -438,12 +450,13 @@ const normalizeEvidence = (value: unknown, depth = 0, seen = new Set<object>()):
     if (keys.length > MAX_VALUE_ITEMS) {
       throw new EvidenceLimitError(`Evidence object exceeds ${MAX_VALUE_ITEMS} keys`)
     }
-    return Object.fromEntries(
-      keys.map((key) => [
-        boundedString(key),
-        normalizeEvidence((value as Record<string, unknown>)[key], depth + 1, seen)
-      ])
-    )
+    return keys.reduce(
+      (acc, key) => {
+        acc.result[boundedString(key)] = normalizeEvidence((value as Record<string, unknown>)[key], depth + 1, acc.seen)
+        return acc
+      },
+      { result: {} as Record<string, JsonValue>, seen }
+    ).result
   } finally {
     seen.delete(value)
   }
