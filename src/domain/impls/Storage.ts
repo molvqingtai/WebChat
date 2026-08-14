@@ -64,17 +64,17 @@ const browserSyncStorage = createStorage({
 
 const clearVersionManagedLocalConfiguration = async () => {
   const keys = await localStorage.getKeys()
-  await Promise.all(
-    keys
-      .filter(
-        (key) =>
-          key !== APP_OPEN_STORAGE_KEY &&
-          key !== APP_POSITION_STORAGE_KEY &&
-          key !== APP_UNREAD_STORAGE_KEY &&
-          key !== APP_MESSAGE_AUTHOR_STORAGE_KEY
-      )
-      .map((key) => localStorage.removeItem(key))
+  const removable = keys.filter(
+    (key) =>
+      key !== APP_OPEN_STORAGE_KEY &&
+      key !== APP_POSITION_STORAGE_KEY &&
+      key !== APP_UNREAD_STORAGE_KEY &&
+      key !== APP_MESSAGE_AUTHOR_STORAGE_KEY
   )
+  // functional-loop: owner-commit — ordered per-key storage removal with no bulk primitive
+  for (const key of removable) {
+    await localStorage.removeItem(key)
+  }
 }
 
 export const prepareLocalConfigurationStorage = (coordinator?: PreparationLockCoordinator): Promise<void> =>

@@ -70,11 +70,14 @@ const connectionSteps = asArray(arch.connections).flatMap((conn, index) => {
     : [[conn.to, index + 1]]
   return [...fromStep, ...toStep]
 })
-const componentSteps = new Map(connectionSteps)
-// functional-loop: owner-commit — ordered per-component fallback step assignment
-for (const [index, c] of asArray(arch.components).entries()) {
-  if (!componentSteps.has(c.id)) componentSteps.set(c.id, index)
-}
+// Component steps: connection-derived steps win, then remaining components fill by index —
+// a non-mutating fold keeps each assignment visible to the next entry.
+const componentSteps = asArray(arch.components).reduce((steps, c, index) => {
+  if (steps.has(c.id)) return steps
+  const next = new Map(steps)
+  next.set(c.id, index)
+  return next
+}, new Map(connectionSteps))
 
 // ---- Boundaries computed from the `wraps` id list ---------------------------
 function boundaryRect(boundary) {
@@ -128,107 +131,110 @@ function validateArchitecture() {
   if (grid) {
     validateGridPlacement(arch, grid, problems)
   } else {
-    // functional-loop: owner-commit — ordered per-component validation with no bulk primitive
-    for (const c of asArray(arch.components)) {
-      if (!Array.isArray(c.pos) || c.pos.length !== 2) {
-        problems.push(`Component "${c.id}" must include pos [x, y] when layout.mode is omitted (free placement).`)
-      }
-    }
+    const posProblems = asArray(arch.components).flatMap((c) =>
+      !Array.isArray(c.pos) || c.pos.length !== 2
+        ? [`Component "${c.id}" must include pos [x, y] when layout.mode is omitted (free placement).`]
+        : []
+    )
+    problems.push(...posProblems)
   }
 
-  // functional-loop: continue — later validation checks skip components that already failed
-  for (const c of components.values()) {
+  // Components that fail an earlier check skip the later checks: the fold returns as soon as a
+  // component is rejected, matching the skip-on-failure semantics without owner-style pushes.
+  const componentShapeProblems = [...components.values()].reduce((acc, c) => {
     if (!isFinitePoint(c.x, c.y, c.width, c.height)) {
-      problems.push(`Component "${c.id}" has non-finite pos/size — pos and size must be [number, number].`)
-      continue
+      return [...acc, `Component "${c.id}" has non-finite pos/size — pos and size must be [number, number].`]
     }
     if (c.width <= 0 || c.height <= 0) {
-      problems.push(
+      return [
+        ...acc,
         `Component "${c.id}" has invalid size ${c.width}x${c.height} — width and height must be greater than 0.`
-      )
-      continue
+      ]
     }
+    const local = []
     if (c.x < 0 || c.y < 0 || c.x + c.width > viewBox[0] || c.y + c.height > viewBox[1]) {
-      problems.push(
+      local.push(
         `Component "${c.id}" falls outside the viewBox ${viewBox[0]}x${viewBox[1]} — adjust pos/size or set a larger meta.viewBox.`
       )
     }
     const estLabelW = textUnits(c.label) * 6.6
     if (estLabelW > c.width + 8) {
-      problems.push(
+      local.push(
         `Label "${c.label}" (~${Math.round(estLabelW)}px) is wider than component "${c.id}" (${c.width}px) — shorten the label, move detail to sublabel, or widen size.`
       )
     }
-  }
+    return [...acc, ...local]
+  }, [])
+  problems.push(...componentShapeProblems)
 
   // Component overlap — the highest-traffic hand-placement failure mode.
   const list = [...components.values()]
-  // functional-loop: owner-commit — ordered pairwise overlap checks over index pairs
-  for (const i of Array.from({ length: list.length }, (_, index) => index)) {
-    // functional-loop: owner-commit — ordered per-pair overlap checks over the upper triangle
-    for (const j of Array.from({ length: list.length }, (_, index) => index).slice(i + 1)) {
-      if (rectsOverlap(list[i], list[j], 8)) {
-        problems.push(
-          `Components "${list[i].id}" and "${list[j].id}" are less than 8px apart — move one or shrink its size.\n${suggestComponentSeparation(list[i], list[j], 8)}`
-        )
-      }
-    }
-  }
+  const componentPairProblems = list.flatMap((componentA, i) =>
+    list
+      .slice(i + 1)
+      .flatMap((componentB) =>
+        rectsOverlap(componentA, componentB, 8)
+          ? [
+              `Components "${componentA.id}" and "${componentB.id}" are less than 8px apart — move one or shrink its size.\n${suggestComponentSeparation(componentA, componentB, 8)}`
+            ]
+          : []
+      )
+  )
+  problems.push(...componentPairProblems)
 
   // Boundaries: every wrapped id must exist; the computed box must stay in view.
-  // functional-loop: owner-commit — ordered per-boundary member validation with no bulk primitive
-  for (const boundary of asArray(arch.boundaries)) {
-    // functional-loop: owner-commit — ordered per-member reference validation
-    for (const id of asArray(boundary.wraps)) {
-      if (!components.has(id)) problems.push(`Boundary "${boundary.label}" wraps unknown component "${id}".`)
-    }
-  }
-  // functional-loop: owner-commit — ordered per-boundary viewBox validation with no bulk primitive
-  for (const b of boundaries) {
-    if (b.x < 0 || b.y < 0 || b.x + b.width > viewBox[0] || b.y + b.height > viewBox[1]) {
-      problems.push(
-        `Boundary "${b.label}" extends outside the viewBox — its members sit too close to the canvas edge; add margin or enlarge meta.viewBox.`
-      )
-    }
-  }
+  const boundaryMemberProblems = asArray(arch.boundaries).flatMap((boundary) =>
+    asArray(boundary.wraps).flatMap((id) =>
+      components.has(id) ? [] : [`Boundary "${boundary.label}" wraps unknown component "${id}".`]
+    )
+  )
+  problems.push(...boundaryMemberProblems)
+  const boundaryBoxProblems = boundaries.flatMap((b) =>
+    b.x < 0 || b.y < 0 || b.x + b.width > viewBox[0] || b.y + b.height > viewBox[1]
+      ? [
+          `Boundary "${b.label}" extends outside the viewBox — its members sit too close to the canvas edge; add margin or enlarge meta.viewBox.`
+        ]
+      : []
+  )
+  problems.push(...boundaryBoxProblems)
 
-  // functional-loop: owner-commit — ordered per-connection validation with no bulk primitive
-  for (const conn of asArray(arch.connections)) {
+  const connectionProblems = asArray(arch.connections).flatMap((conn) => {
+    const local = []
     if (!components.has(conn.from))
-      problems.push(`Connection "${conn.label || conn.from}" references unknown source "${conn.from}".`)
+      local.push(`Connection "${conn.label || conn.from}" references unknown source "${conn.from}".`)
     if (!components.has(conn.to))
-      problems.push(`Connection "${conn.label || conn.to}" references unknown target "${conn.to}".`)
+      local.push(`Connection "${conn.label || conn.to}" references unknown target "${conn.to}".`)
     if (components.has(conn.from) && components.has(conn.to)) {
       const routed = pathFor(conn)
       const [start, end] = [routed.points[0], routed.points[routed.points.length - 1]]
       const distance = Math.hypot(end[0] - start[0], end[1] - start[1])
       if (distance < 24)
-        problems.push(
+        local.push(
           `Connection "${conn.label || `${conn.from}->${conn.to}`}" is too short (${Math.round(distance)}px; minimum 24px) — place its components farther apart.`
         )
     }
-  }
+    return local
+  })
+  problems.push(...connectionProblems)
 
   // Connection labels must not land on top of components.
-  const labelRects = []
-  // functional-loop: continue — skip unlabeled or broken connections while collecting label boxes
-  for (const conn of asArray(arch.connections)) {
-    if (!conn.label || !components.has(conn.from) || !components.has(conn.to)) continue
-    const [lx, ly] = labelPoint(conn, pathFor(conn).points)
-    const w = Math.max(30, textUnits(conn.label) * 4.8 + 10)
-    labelRects.push({ label: conn.label, x: lx - w / 2, y: ly - 10, width: w, height: 14, lx, ly })
-  }
-  // functional-loop: owner-commit — ordered per-label overlap checks with no bulk primitive
-  for (const rect of labelRects) {
-    // functional-loop: owner-commit — ordered per-component overlap checks
-    for (const c of components.values()) {
-      if (rectsOverlap(rect, c, -2)) {
-        problems.push(
-          `Label "${rect.label}" overlaps component "${c.id}" — adjust labelDx/labelDy/labelSegment or set labelAt.\n${suggestLabelObstacleFix(rect, rect.lx, rect.ly, c)}`
-        )
-      }
-    }
-  }
+  const labelRects = asArray(arch.connections)
+    .filter((conn) => conn.label && components.has(conn.from) && components.has(conn.to))
+    .map((conn) => {
+      const [lx, ly] = labelPoint(conn, pathFor(conn).points)
+      const w = Math.max(30, textUnits(conn.label) * 4.8 + 10)
+      return { label: conn.label, x: lx - w / 2, y: ly - 10, width: w, height: 14, lx, ly }
+    })
+  const labelComponentProblems = labelRects.flatMap((rect) =>
+    [...components.values()].flatMap((c) =>
+      rectsOverlap(rect, c, -2)
+        ? [
+            `Label "${rect.label}" overlaps component "${c.id}" — adjust labelDx/labelDy/labelSegment or set labelAt.\n${suggestLabelObstacleFix(rect, rect.lx, rect.ly, c)}`
+          ]
+        : []
+    )
+  )
+  problems.push(...labelComponentProblems)
 
   if (problems.length) {
     throw new Error(`Architecture layout validation failed:\n- ${problems.join('\n- ')}`)
@@ -236,21 +242,20 @@ function validateArchitecture() {
 }
 
 function buildLayoutReport() {
-  const labels = []
-  // functional-loop: owner-commit — ordered per-connection label collection
-  for (const conn of asArray(arch.connections)) {
-    if (!conn.label || !components.has(conn.from) || !components.has(conn.to)) continue
-    const [lx, ly] = labelPoint(conn, pathFor(conn).points)
-    const w = Math.max(30, textUnits(conn.label) * 4.8 + 10)
-    labels.push({
-      text: conn.label,
-      x: Math.round(lx - w / 2),
-      y: Math.round(ly - 10),
-      width: Math.round(w),
-      height: 14,
-      labelAt: [Math.round(lx), Math.round(ly)]
+  const labels = asArray(arch.connections)
+    .filter((conn) => conn.label && components.has(conn.from) && components.has(conn.to))
+    .map((conn) => {
+      const [lx, ly] = labelPoint(conn, pathFor(conn).points)
+      const w = Math.max(30, textUnits(conn.label) * 4.8 + 10)
+      return {
+        text: conn.label,
+        x: Math.round(lx - w / 2),
+        y: Math.round(ly - 10),
+        width: Math.round(w),
+        height: 14,
+        labelAt: [Math.round(lx), Math.round(ly)]
+      }
     })
-  }
   return {
     ok: true,
     diagram_type: 'architecture',
@@ -378,16 +383,24 @@ function renderLegend() {
     { seen: new Set(), used: [] }
   ).used
   const y = legendY()
-  let x = layout.margin
-  const parts = [`        <text x="${x}" y="${y - 13}" class="t-primary" font-size="9" font-weight="600">Legend</text>`]
-  // functional-loop: owner-commit — ordered per-type legend emission with running x advance
-  for (const type of used) {
-    parts.push(
-      `        <rect x="${x}" y="${y - 8}" width="14" height="9" rx="2" class="${componentFill[type] || 'c-external'}" stroke-width="1"/>`
-    )
-    parts.push(`        <text x="${x + 20}" y="${y}" class="t-muted" font-size="8">${TYPE_LABELS[type] || type}</text>`)
-    x += 30 + (textUnits(TYPE_LABELS[type] || type) * 5 + 28)
-  }
+  // The running x advance depends on each prior entry, so the legend is a non-mutating fold
+  // over the used types: each step returns the next parts array plus the next x position.
+  const { parts } = used.reduce(
+    (acc, type) => {
+      const rect = `        <rect x="${acc.x}" y="${y - 8}" width="14" height="9" rx="2" class="${componentFill[type] || 'c-external'}" stroke-width="1"/>`
+      const text = `        <text x="${acc.x + 20}" y="${y}" class="t-muted" font-size="8">${TYPE_LABELS[type] || type}</text>`
+      return {
+        parts: [...acc.parts, rect, text],
+        x: acc.x + 30 + (textUnits(TYPE_LABELS[type] || type) * 5 + 28)
+      }
+    },
+    {
+      parts: [
+        `        <text x="${layout.margin}" y="${y - 13}" class="t-primary" font-size="9" font-weight="600">Legend</text>`
+      ],
+      x: layout.margin
+    }
+  )
   return parts.join('\n')
 }
 

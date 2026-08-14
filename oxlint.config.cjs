@@ -15,6 +15,7 @@ module.exports = {
     'unicorn/no-array-for-each': 'error',
     'functional-plugin/loop-annotation': 'error',
     'functional-plugin/derived-mutation': 'error',
-    'functional-plugin/disguised-for-each': 'error'
+    'functional-plugin/disguised-for-each': 'error',
+    'functional-plugin/effectful-callback': 'error'
   }
 }

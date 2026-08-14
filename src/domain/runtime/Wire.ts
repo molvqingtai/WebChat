@@ -584,7 +584,13 @@ const WireDomain = Remesh.domain({
         fromEvent(JoinRoomsRequestedEvent).pipe(
           mergeMap(async (request) => {
             try {
-              await Promise.all(request.rooms.map(({ roomId }) => transport.join(roomId)))
+              const joins: Promise<unknown>[] = []
+              // functional-loop: owner-commit — ordered per-room transport join submission with
+              // no bulk primitive; the submitted joins settle concurrently under one bulk await
+              for (const { roomId } of request.rooms) {
+                joins.push(transport.join(roomId))
+              }
+              await Promise.all(joins)
               return CompleteJoinRoomsCommand(request)
             } catch (error) {
               return RoomsJoinFailedEvent({ requestId: request.requestId, error: error as Error })

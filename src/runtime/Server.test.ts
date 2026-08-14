@@ -598,7 +598,13 @@ const articoMessagesTo = (room: RuntimeArticoRoom, peerId: string) =>
 
 const createArticoTestServer = async (roomIds: string[], codec: WireCodec = jsonCodec) => {
   const transport = createArticoRoomTransport()
-  await Promise.all(roomIds.map((roomId) => transport.join(roomId)))
+  const joins: Promise<unknown>[] = []
+  // functional-loop: owner-commit — ordered per-room transport join submission with no bulk
+  // primitive; the submitted joins settle concurrently under one bulk await
+  for (const roomId of roomIds) {
+    joins.push(transport.join(roomId))
+  }
+  await Promise.all(joins)
   return createServer({ transport, clock: new FakeClock(), codec })
 }
 

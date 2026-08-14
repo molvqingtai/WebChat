@@ -65,11 +65,10 @@ function validateSequence() {
   }
   if (sequence.cards !== undefined && !Array.isArray(sequence.cards))
     problems.push('Sequence "cards" must be an array.')
-  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
-  for (const arr of ['segments', 'activations']) {
-    if (sequence[arr] !== undefined && !Array.isArray(sequence[arr]))
-      problems.push(`Sequence "${arr}" must be an array.`)
-  }
+  const shapeProblems = ['segments', 'activations'].flatMap((arr) =>
+    sequence[arr] !== undefined && !Array.isArray(sequence[arr]) ? [`Sequence "${arr}" must be an array.`] : []
+  )
+  problems.push(...shapeProblems)
 
   if (layout.lifelineBottom - layout.lifelineTop < 120) {
     problems.push(
@@ -77,36 +76,38 @@ function validateSequence() {
     )
   }
 
-  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
-  for (const participant of participants.values()) {
+  const participantProblems = [...participants.values()].flatMap((participant) => {
     const estLabelW = textUnits(participant.label) * 6.8
-    if (estLabelW > layout.participantW + 6) {
-      problems.push(
-        `Label "${participant.label}" (~${Math.round(estLabelW)}px) is wider than the ${layout.participantW}px participant box — shorten it or move detail to sublabel.`
-      )
-    }
-  }
+    return estLabelW > layout.participantW + 6
+      ? [
+          `Label "${participant.label}" (~${Math.round(estLabelW)}px) is wider than the ${layout.participantW}px participant box — shorten it or move detail to sublabel.`
+        ]
+      : []
+  })
+  problems.push(...participantProblems)
 
-  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
-  for (const message of asArray(sequence.messages)) {
+  const messageProblems = asArray(sequence.messages).flatMap((message) => {
+    const local = []
     if (!participants.has(message.from))
-      problems.push(`Message "${message.label}" references unknown source "${message.from}".`)
+      local.push(`Message "${message.label}" references unknown source "${message.from}".`)
     if (!participants.has(message.to))
-      problems.push(`Message "${message.label}" references unknown target "${message.to}".`)
-    if (typeof message.y !== 'number') problems.push(`Message "${message.label}" must provide a numeric y.`)
+      local.push(`Message "${message.label}" references unknown target "${message.to}".`)
+    if (typeof message.y !== 'number') local.push(`Message "${message.label}" must provide a numeric y.`)
     if (message.y < layout.lifelineTop + 18 || message.y > layout.lifelineBottom - 18) {
-      problems.push(
+      local.push(
         `Message "${message.label}" sits outside the readable timeline — keep y between ${layout.lifelineTop + 18} and ${layout.lifelineBottom - 18}.`
       )
     }
     if (participants.has(message.from) && participants.has(message.to)) {
       const distance = Math.abs(participants.get(message.to).cx - participants.get(message.from).cx)
       if (distance < 60)
-        problems.push(
+        local.push(
           `Message "${message.label}" spans ${Math.round(distance)}px (minimum 60px) — give its participants more column distance.`
         )
     }
-  }
+    return local
+  })
+  problems.push(...messageProblems)
 
   // Vertical crowding only matters when the arrows share horizontal space;
   // disjoint arrows may legitimately run in parallel rows.
@@ -119,18 +120,27 @@ function validateSequence() {
       x2: Math.max(participants.get(m.from).cx, participants.get(m.to).cx)
     }))
     .toSorted((a, b) => a.y - b.y)
-  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
-  for (const i of Array.from({ length: placed.length }, (_, index) => index)) {
-    // functional-loop: break — the vertical separation window ends the scan
-    for (const j of Array.from({ length: placed.length }, (_, index) => index).slice(i + 1)) {
-      if (!(placed[j].y - placed[i].y < 28)) break
-      if (placed[i].x1 < placed[j].x2 && placed[j].x1 < placed[i].x2) {
-        problems.push(
-          `Messages "${placed[i].label}" and "${placed[j].label}" are less than 28px apart and share horizontal space — spread their y values.`
-        )
-      }
-    }
-  }
+  // Messages are sorted by y; the inner scan stops at the first pair whose vertical
+  // separation reaches 28, so each outer message only needs its nearby successors. A pure
+  // flatMap with a slice of the remaining rows reproduces that window exactly.
+  const crowdingProblems = placed.flatMap((placedA, i) =>
+    placed
+      .slice(i + 1)
+      .slice(
+        0,
+        placed.slice(i + 1).findIndex((placedB) => !(placedB.y - placedA.y < 28)) === -1
+          ? placed.length - i - 1
+          : placed.slice(i + 1).findIndex((placedB) => !(placedB.y - placedA.y < 28))
+      )
+      .flatMap((placedB) =>
+        placedA.x1 < placedB.x2 && placedB.x1 < placedA.x2
+          ? [
+              `Messages "${placedA.label}" and "${placedB.label}" are less than 28px apart and share horizontal space — spread their y values.`
+            ]
+          : []
+      )
+  )
+  problems.push(...crowdingProblems)
 
   // Label masks can extend well past the arrow span, so check the actual
   // label rectangles too — tangent arrows with long labels still collide.
@@ -142,41 +152,46 @@ function validateSequence() {
       const width = Math.max(34, textUnits(m.label) * 5.2 + 12)
       return { label: m.label, x: (x1 + x2) / 2 - width / 2, y: m.y - 20, width, height: layout.labelH }
     })
-  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
-  for (const i of Array.from({ length: labelRects.length }, (_, index) => index)) {
-    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
-    for (const j of Array.from({ length: labelRects.length }, (_, index) => index).slice(i + 1)) {
-      if (rectsOverlap(labelRects[i], labelRects[j], -2)) {
-        problems.push(
-          `Labels "${labelRects[i].label}" and "${labelRects[j].label}" overlap — spread their message y values or shorten the labels.`
-        )
-      }
-    }
-  }
+  const labelPairProblems = labelRects.flatMap((rectA, i) =>
+    labelRects
+      .slice(i + 1)
+      .flatMap((rectB) =>
+        rectsOverlap(rectA, rectB, -2)
+          ? [
+              `Labels "${rectA.label}" and "${rectB.label}" overlap — spread their message y values or shorten the labels.`
+            ]
+          : []
+      )
+  )
+  problems.push(...labelPairProblems)
 
-  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
-  for (const segment of asArray(sequence.segments)) {
+  const segmentProblems = asArray(sequence.segments).flatMap((segment) => {
+    const local = []
     if (segment.to <= segment.from) {
-      problems.push(
+      local.push(
         `Segment "${segment.label}" has invalid y range (from ${segment.from} to ${segment.to}) — "to" must be greater than "from".`
       )
     }
     if (segment.from < layout.topY || segment.to > layout.lifelineBottom + 20) {
-      problems.push(
+      local.push(
         `Segment "${segment.label}" extends outside the canvas — keep its y range between ${layout.topY} and ${layout.lifelineBottom + 20}.`
       )
     }
-  }
+    return local
+  })
+  problems.push(...segmentProblems)
 
-  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
-  for (const activation of asArray(sequence.activations)) {
+  const activationProblems = asArray(sequence.activations).flatMap((activation) => {
+    const local = []
     if (!participants.has(activation.participant))
-      problems.push(`Activation references unknown participant "${activation.participant}".`)
+      local.push(`Activation references unknown participant "${activation.participant}".`)
     if (activation.to <= activation.from)
-      problems.push(
+      local.push(
         `Activation for "${activation.participant}" has invalid time range — "to" must be greater than "from".`
       )
-  }
+    return local
+  })
+  problems.push(...activationProblems)
 
   const lastParticipant = asArray(sequence.participants)[asArray(sequence.participants).length - 1]
   if (lastParticipant && participants.get(lastParticipant.id).cx + layout.participantW / 2 > viewBox[0] - 40) {

@@ -164,34 +164,48 @@ export class Coordinator {
     return url !== null && isSameNavigation(url, binding.url)
   }
 
+  private async reconcileOneTab(binding: PhysicalTab) {
+    try {
+      const url = await this.currentNavigation(binding)
+      if (!url) {
+        await this.removeCurrentTab(binding.tabId)
+        return
+      }
+      if (url === binding.url) return
+      const current = this.tabs.get(binding.tabId)
+      if (current?.pageId !== binding.pageId) return
+      this.tabs.set(binding.tabId, { ...current, url })
+      await this.persist()
+    } catch {
+      // best-effort reconciliation: a failed tab must not block the remaining tabs
+    }
+  }
+
   private async reconcileTabs() {
-    await Promise.allSettled(
-      this.currentTabs().map(async (binding) => {
-        const url = await this.currentNavigation(binding)
-        if (!url) {
-          await this.removeCurrentTab(binding.tabId)
-          return
-        }
-        if (url === binding.url) return
-        const current = this.tabs.get(binding.tabId)
-        if (current?.pageId !== binding.pageId) return
-        this.tabs.set(binding.tabId, { ...current, url })
-        await this.persist()
-      })
-    )
+    const reconciliations: Promise<void>[] = []
+    // functional-loop: owner-commit — ordered per-tab reconciliation submission with live
+    // tab-state mutation; the submissions settle under one bulk allSettled await
+    for (const binding of this.currentTabs()) {
+      reconciliations.push(this.reconcileOneTab(binding))
+    }
+    await Promise.allSettled(reconciliations)
   }
 
   private async rebuildTabs() {
     await this.reconcileTabs()
-    await Promise.allSettled(
-      this.currentTabs().map((binding) =>
+    const attachments: Promise<unknown>[] = []
+    // functional-loop: owner-commit — ordered per-tab page attachment submission with a
+    // deadline; the submissions settle under one bulk allSettled await
+    for (const binding of this.currentTabs()) {
+      attachments.push(
         withDeadline(
           this.options.attachPage({ domain: binding.domain, pageId: binding.pageId }),
           COORDINATOR_RPC_TIMEOUT_MS,
           'Runtime page attachment timed out'
         )
       )
-    )
+    }
+    await Promise.allSettled(attachments)
   }
 
   async ensureHost(): Promise<RuntimeHostStatus> {

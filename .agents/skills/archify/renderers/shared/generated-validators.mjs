@@ -4,7 +4,8 @@
   const len = str.length;
   let length = 0;
   let pos = 0;
-  while (pos < len) {
+    // functional-loop: condition-driven — ordered per-item emission with no bulk primitive
+    while (pos < len) {
     length += 1;
     const value = str.charCodeAt(pos++);
     if (value >= 0xd800 && value <= 0xdbff && pos < len

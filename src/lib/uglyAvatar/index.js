@@ -325,7 +325,7 @@ function createAvatarSvg() {
       <g id="hairs">
         ${data.hairs
           .map(
-            (_hair, _index) => `
+            (hair, _index) => `
           <polyline points="${hair.join(' ')}" fill="none" stroke="${data.hairColor}" stroke-width="${0.5 + Math.random() * 2.5}" stroke-linejoin="round" filter="url(#fuzzy)" />
         `
           )

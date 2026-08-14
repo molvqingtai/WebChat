@@ -183,6 +183,173 @@ module.exports = {
         }
       }
     },
+    'effectful-callback': {
+      meta: {
+        type: 'problem',
+        docs: { description: 'map/filter/flatMap callbacks must compute their result without external effects' }
+      },
+      create(context) {
+        // A callback may only touch its parameters and its own locals; a call that reaches
+        // outside that scope — a mutator method on an outer object, a member call on `this`,
+        // or a known effectful global — is mechanically provable as an external effect.
+        // Pure namespaces are excluded: their methods compute values without external effects.
+        const PURE_NAMESPACES = new Set(['Math', 'JSON', 'path'])
+        // Any member call on these globals is an effect (console included; storage reads below
+        // are exempted because getItem only observes).
+        const EFFECTFUL_GLOBALS = new Set([
+          'document',
+          'window',
+          'self',
+          'navigator',
+          'chrome',
+          'browser',
+          'location',
+          'history',
+          'indexedDB',
+          'console',
+          'process',
+          'performance'
+        ])
+        const STORAGE_MUTATORS = new Set(['setItem', 'removeItem', 'clear'])
+        const MUTATOR_METHODS = new Set([
+          'set',
+          'add',
+          'delete',
+          'clear',
+          'push',
+          'pop',
+          'shift',
+          'unshift',
+          'splice',
+          'sort',
+          'reverse',
+          'append',
+          'prepend',
+          'assign',
+          'defineProperty',
+          'addEventListener',
+          'removeEventListener',
+          'dispatchEvent',
+          'join',
+          'leave',
+          'persist',
+          'listener',
+          'listen',
+          'send',
+          'post',
+          'publish',
+          'write',
+          'remove',
+          'open',
+          'close',
+          'start',
+          'stop',
+          'connect',
+          'disconnect',
+          'enqueue',
+          'dequeue',
+          'flush',
+          'commit',
+          'broadcast',
+          'emit',
+          'notify',
+          'register',
+          'subscribe',
+          'unsubscribe',
+          'reload',
+          'replace',
+          'submit',
+          'click',
+          'focus',
+          'blur'
+        ])
+        const collectBindings = (node, bound) => {
+          if (!node || typeof node !== 'object') return
+          if (node.type === 'Identifier') {
+            bound.add(node.name)
+            return
+          }
+          // functional-loop: owner-commit — ordered per-node key walk with no bulk primitive
+          for (const key of Object.keys(node)) {
+            if (key === 'parent' || key === 'loc' || key === 'range' || key === 'body') continue
+            const value = node[key]
+            if (Array.isArray(value)) {
+              // functional-loop: owner-commit — ordered per-child binding collection with no bulk primitive
+              for (const item of value) {
+                if (typeof item === 'object' && item !== null) collectBindings(item, bound)
+              }
+            } else if (typeof value === 'object' && value !== null) {
+              collectBindings(value, bound)
+            }
+          }
+        }
+        const containsEffectCall = (node, bound) => {
+          if (!node || typeof node !== 'object') return false
+          if (node.type === 'CallExpression') {
+            const callee = node.callee
+            if (callee && callee.type === 'MemberExpression') {
+              if (callee.object && callee.object.type === 'ThisExpression') return true
+              if (callee.object && callee.object.type === 'Identifier' && !callee.computed) {
+                const objectName = callee.object.name
+                const methodName = callee.property && callee.property.name
+                if (bound.has(objectName) || PURE_NAMESPACES.has(objectName)) return false
+                if (EFFECTFUL_GLOBALS.has(objectName)) return true
+                if (
+                  (objectName === 'localStorage' || objectName === 'sessionStorage') &&
+                  STORAGE_MUTATORS.has(methodName)
+                )
+                  return true
+                if (MUTATOR_METHODS.has(methodName)) return true
+              }
+            }
+            if (callee && callee.type === 'Identifier') {
+              if (callee.name === 'fetch' && !bound.has(callee.name)) return true
+            }
+          }
+          // functional-loop: early-return — a matching effect call stops the object walk
+          for (const key of Object.keys(node)) {
+            if (key === 'parent' || key === 'loc' || key === 'range') continue
+            const value = node[key]
+            if (Array.isArray(value)) {
+              if (value.some((item) => typeof item === 'object' && item !== null && containsEffectCall(item, bound)))
+                return true
+            } else if (typeof value === 'object' && value !== null) {
+              if (containsEffectCall(value, bound)) return true
+            }
+          }
+          return false
+        }
+        const check = (node) => {
+          const callback = node.arguments && node.arguments[0]
+          if (!callback || (callback.type !== 'ArrowFunctionExpression' && callback.type !== 'FunctionExpression'))
+            return
+          const bound = new Set()
+          // functional-loop: owner-commit — ordered per-parameter binding collection with no bulk primitive
+          for (const param of callback.params) collectBindings(param, bound)
+          if (callback.body && callback.body.type === 'BlockStatement') {
+            // functional-loop: early-return — only variable declarations introduce bindings
+            for (const statement of callback.body.body) {
+              if (statement.type === 'VariableDeclaration') {
+                // functional-loop: early-return — each declarator adds one binding and the walk ends
+                for (const declarator of statement.declarations) collectBindings(declarator.id, bound)
+              }
+            }
+          }
+          if (containsEffectCall(callback.body, bound)) {
+            context.report({
+              node,
+              message:
+                'map/filter/flatMap callback performs an externally observable effect: compute the result without side effects'
+            })
+          }
+        }
+        return {
+          "CallExpression[callee.property.name='map']": check,
+          "CallExpression[callee.property.name='filter']": check,
+          "CallExpression[callee.property.name='flatMap']": check
+        }
+      }
+    },
     'derived-mutation': {
       meta: {
         type: 'problem',

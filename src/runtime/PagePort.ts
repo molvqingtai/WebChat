@@ -96,18 +96,17 @@ export class PagePort implements PagePortContract {
     payload: T
   ): Promise<string[]> {
     const deadPageIds: string[] = []
-    await Promise.all(
-      pageIds.map(async (pageId) => {
-        const listener = listeners.get(pageId)
-        if (!listener) return
-        try {
-          await listener(payload)
-        } catch {
-          this.removePage(pageId)
-          deadPageIds.push(pageId)
-        }
-      })
-    )
+    // functional-loop: owner-commit — ordered per-page listener delivery with failure cleanup
+    for (const pageId of pageIds) {
+      const listener = listeners.get(pageId)
+      if (!listener) continue
+      try {
+        await listener(payload)
+      } catch {
+        this.removePage(pageId)
+        deadPageIds.push(pageId)
+      }
+    }
     return deadPageIds
   }
 

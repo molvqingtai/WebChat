@@ -586,11 +586,13 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
         if (isCurrent()) this.emit('historyFeedback', event)
       })
 
-    await Promise.all(
-      (['inbound', 'session', 'error', 'history', 'historyFeedback'] as const).map((key) =>
-        this.register(attachment, key)
-      )
-    )
+    const registrations: Promise<unknown>[] = []
+    // functional-loop: owner-commit — ordered per-channel registration submission with no bulk
+    // primitive; the submitted registrations settle concurrently under one bulk await
+    for (const key of ['inbound', 'session', 'error', 'history', 'historyFeedback'] as const) {
+      registrations.push(this.register(attachment, key))
+    }
+    await Promise.all(registrations)
     assertCurrent()
 
     const replay = await raceWithSignal(

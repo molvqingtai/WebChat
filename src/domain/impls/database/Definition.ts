@@ -53,13 +53,12 @@ const assertPlainValue = (value: unknown, seen: Set<object>): void => {
   seen.add(value)
   try {
     if (Array.isArray(value)) {
-      // functional-loop: owner-commit — ordered per-item validation that throws on the first
-      // non-dense entry with no bulk primitive
-      for (const element of value) {
-        assertPlainValue(element, seen)
-      }
-      if (value.some((_element, index) => !Object.prototype.hasOwnProperty.call(value, index))) {
-        throw new TypeError('Database values require dense arrays')
+      // functional-loop: early-return — a non-dense index must throw before any value is read
+      for (let index = 0; index < value.length; index += 1) {
+        if (!Object.prototype.hasOwnProperty.call(value, index)) {
+          throw new TypeError('Database values require dense arrays')
+        }
+        assertPlainValue(value[index], seen)
       }
       if (
         Reflect.ownKeys(value).some(

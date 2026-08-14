@@ -165,17 +165,15 @@ afterEach(async () => {
   vi.unstubAllGlobals()
   await Promise.all([...databases].map((database) => database.close()))
   databases.clear()
-  await Promise.all(
-    [...names].map(
-      (name) =>
-        new Promise<void>((resolve) => {
-          const request = indexedDB.deleteDatabase(name)
-          request.addEventListener('success', () => resolve(), { once: true })
-          request.addEventListener('error', () => resolve(), { once: true })
-          request.addEventListener('blocked', () => resolve(), { once: true })
-        })
-    )
-  )
+  // functional-loop: owner-commit — ordered per-database deletion with no bulk primitive
+  for (const name of names) {
+    await new Promise<void>((resolve) => {
+      const request = indexedDB.deleteDatabase(name)
+      request.addEventListener('success', () => resolve(), { once: true })
+      request.addEventListener('error', () => resolve(), { once: true })
+      request.addEventListener('blocked', () => resolve(), { once: true })
+    })
+  }
   names.clear()
 })
 

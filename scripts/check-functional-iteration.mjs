@@ -17,6 +17,7 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
+import { createScanner } from 'typescript/unstable/ast'
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 const FILE_EXTS = /\.(?:[cm]?[jt]s|[jt]sx)$/
@@ -29,8 +30,9 @@ const manifest = () => {
   return out.filter((file) => FILE_EXTS.test(file) && !GENERATED_PATHS.has(file))
 }
 
-const DISABLE_PATTERN =
-  /(?:eslint-disable(?:-next-line)?|oxlint-disable(?:-next-line)?)[^\n]*(?:functional-iteration|functional-plugin|loop-annotation|derived-mutation|no-array-for-each)/u
+// Every disable directive is rejected in the functional scope: the general lint pass owns its
+// own ignore policy, while this pass has no whole-file, directory, or directive waiver.
+const DISABLE_PATTERN = /^\s*(?:eslint-disable(?:-next-line)?|oxlint-disable(?:-next-line)?)\b/u
 
 const violations = []
 // functional-loop: owner-commit — ordered per-file waiver collection with no bulk primitive
@@ -41,52 +43,23 @@ for (const file of manifest()) {
   } catch {
     continue
   }
-  // Comment-trivia waiver precheck: a real lexer tracks strings and templates so directive-like
-  // text inside a string literal is ignored, while every actual line/block comment is checked.
-  const comments = []
-  let index = 0
-  // functional-loop: condition-driven — the lexer advances token by token until the source ends
-  while (index < source.length) {
-    const ch = source[index]
-    if (ch === '/' && source[index + 1] === '/') {
-      const end = source.indexOf('\n', index)
-      comments.push(source.slice(index, end === -1 ? source.length : end))
-      index = end === -1 ? source.length : end + 1
-      continue
-    }
-    if (ch === '/' && source[index + 1] === '*') {
-      const end = source.indexOf('*/', index + 2)
-      comments.push(source.slice(index, end === -1 ? source.length : end + 2))
-      index = end === -1 ? source.length : end + 2
-      continue
-    }
-    if (ch === '"' || ch === "'") {
-      let end = index + 1
-      // functional-loop: condition-driven — scan forward to the closing quote
-      while (end < source.length && source[end] !== ch) {
-        if (source[end] === '\\') end += 1
-        end += 1
+  // Comment-trivia waiver precheck: the installed TypeScript scanner yields every single-line
+  // and multi-line comment token, including comments inside template expressions, while
+  // directive-like text inside string literals is not a comment and is ignored.
+  const scanner = createScanner(false)
+  scanner.setText(source)
+  let token
+  // functional-loop: condition-driven — token scanning until the end of the file
+  while ((token = scanner.scan()) !== 1) {
+    if (token === 2 || token === 3) {
+      const comment = scanner.getTokenText()
+      const body = comment.startsWith('//')
+        ? comment.slice(2)
+        : comment.slice(2, comment.endsWith('*/') ? -2 : undefined)
+      if (DISABLE_PATTERN.test(body)) {
+        const line = source.slice(0, scanner.getTokenStart()).split('\n').length
+        violations.push(`${file}:${line}:1  functional-iteration disable directive is forbidden`)
       }
-      index = Math.min(source.length, end + 1)
-      continue
-    }
-    if (ch === '`') {
-      let end = index + 1
-      // functional-loop: condition-driven — scan forward to the closing backtick
-      while (end < source.length && source[end] !== '`') {
-        if (source[end] === '\\') end += 1
-        end += 1
-      }
-      index = Math.min(source.length, end + 1)
-      continue
-    }
-    index += 1
-  }
-  // functional-loop: owner-commit — ordered per-comment waiver reporting with no bulk primitive
-  for (const comment of comments) {
-    if (DISABLE_PATTERN.test(comment)) {
-      const line = source.slice(0, source.indexOf(comment)).split('\n').length
-      violations.push(`${file}:${line}:1  functional-iteration disable directive is forbidden`)
     }
   }
 }

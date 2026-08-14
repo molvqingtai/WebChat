@@ -70,20 +70,18 @@ console.log(JSON.stringify({ ok, file: htmlPath, checks }, null, 2))
 process.exit(ok ? 0 : 1)
 
 function collectArrows(fragment) {
-  const arrows = []
-  let index = 0
-
-  // functional-loop: continue — the loop must skip the guarded item and keep processing
-  for (const tag of fragment.matchAll(/<(path|line)\b[^>]*>/gi)) {
-    const raw = tag[0]
-    if (!/\bclass="[^"]*\ba-(?:default|emphasis|security|dashed)\b/.test(raw)) continue
-    if (!/\bmarker-end=/.test(raw)) continue
-    const attrs = parseAttrs(raw)
-    const segments = tag[1].toLowerCase() === 'line' ? lineSegments(attrs) : pathSegments(attrs.d || '')
-    arrows.push({ kind: tag[1].toLowerCase(), index: (index += 1), raw, segments })
-  }
-
-  return arrows
+  // Arrows are derived with filter + map; the map's own index supplies each arrow's 1-based
+  // position, replacing the running counter without external mutation.
+  return [...fragment.matchAll(/<(path|line)\b[^>]*>/gi)]
+    .filter(
+      (tag) => /\bclass="[^"]*\ba-(?:default|emphasis|security|dashed)\b/.test(tag[0]) && /\bmarker-end=/.test(tag[0])
+    )
+    .map((tag, index) => {
+      const raw = tag[0]
+      const attrs = parseAttrs(raw)
+      const segments = tag[1].toLowerCase() === 'line' ? lineSegments(attrs) : pathSegments(attrs.d || '')
+      return { kind: tag[1].toLowerCase(), index: index + 1, raw, segments }
+    })
 }
 
 function lineSegments(attrs) {
@@ -106,45 +104,32 @@ function isTwoPointDiagonal(arrow) {
 }
 
 function collectLegendBoxes(fragment) {
-  const boxes = []
-
-  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
-  for (const match of fragment.matchAll(/<rect\b[^>]*>/gi)) {
+  // Legend boxes are derived with flatMap: each rect/text tag contributes zero or one box.
+  const rectBoxes = [...fragment.matchAll(/<rect\b[^>]*>/gi)].flatMap((match) => {
     const attrs = parseAttrs(match[0])
     const x = numberAttr(attrs, 'x')
     const y = numberAttr(attrs, 'y')
     const width = numberAttr(attrs, 'width')
     const height = numberAttr(attrs, 'height')
-    if ([x, y, width, height].every(Number.isFinite)) {
-      boxes.push({ x1: x, y1: y, x2: x + width, y2: y + height, label: `rect@${x},${y}` })
-    }
-  }
-
-  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
-  for (const match of fragment.matchAll(/<text\b([^>]*)>([\s\S]*?)<\/text>/gi)) {
+    return [x, y, width, height].every(Number.isFinite)
+      ? [{ x1: x, y1: y, x2: x + width, y2: y + height, label: `rect@${x},${y}` }]
+      : []
+  })
+  const textBoxes = [...fragment.matchAll(/<text\b([^>]*)>([\s\S]*?)<\/text>/gi)].flatMap((match) => {
     const attrs = parseAttrs(match[1])
     const box = textBox(attrs, stripTags(match[2]).trim())
-    if (box) boxes.push(box)
-  }
-
-  return boxes
+    return box ? [box] : []
+  })
+  return [...rectBoxes, ...textBoxes]
 }
 
 function collectLegendCollisions(arrows, boxes) {
-  const collisions = []
-  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
-  for (const arrow of arrows) {
-    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
-    for (const segment of arrow.segments) {
-      // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
-      for (const box of boxes) {
-        if (segmentIntersectsBox(segment, padBox(box, 2))) {
-          collisions.push({ arrow, box })
-        }
-      }
-    }
-  }
-  return collisions
+  // Collisions are derived with nested flatMaps: each arrow segment reports the boxes it hits.
+  return arrows.flatMap((arrow) =>
+    arrow.segments.flatMap((segment) =>
+      boxes.flatMap((box) => (segmentIntersectsBox(segment, padBox(box, 2)) ? [{ arrow, box }] : []))
+    )
+  )
 }
 
 function textBox(attrs, text) {
