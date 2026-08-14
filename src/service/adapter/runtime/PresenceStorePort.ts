@@ -118,9 +118,9 @@ export class PresenceStoreProviderPortAdapter implements Adapter {
   private detach(binding: PortBinding, disconnect: boolean) {
     binding.port.onMessage.removeListener(binding.onMessage)
     binding.port.onDisconnect.removeListener(binding.onDisconnect)
-    for (const [id, requestPort] of this.requestPorts) {
+    this.requestPorts.forEach((requestPort, id) => {
       if (requestPort === binding) this.requestPorts.delete(id)
-    }
+    })
     if (this.active === binding) this.active = undefined
     if (disconnect) {
       try {

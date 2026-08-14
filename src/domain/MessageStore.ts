@@ -327,15 +327,17 @@ export const createMessageStore = (database: Database<MessageDatabaseSchema>): M
     const { type, signal } = validateMessageQuery(input)
     signal?.throwIfAborted()
     const items = await database.read(['records'], (transaction) => transaction.scan('records'), signal)
-    const records: MessageRecord[] = []
-    const invalidRecords: InvalidStoredRecord[] = []
-    for (const item of items) {
-      signal?.throwIfAborted()
-      const decoded = safeDecodeMessageRecord(item)
-      if (decoded.success) records.push(decoded.record)
-      else invalidRecords.push({ item, error: decoded.error })
-      signal?.throwIfAborted()
-    }
+    const { records, invalidRecords } = items.reduce(
+      (acc, item) => {
+        signal?.throwIfAborted()
+        const decoded = safeDecodeMessageRecord(item)
+        if (decoded.success) acc.records.push(decoded.record)
+        else acc.invalidRecords.push({ item, error: decoded.error })
+        signal?.throwIfAborted()
+        return acc
+      },
+      { records: [] as MessageRecord[], invalidRecords: [] as InvalidStoredRecord[] }
+    )
     if (invalidRecords.length > 0) {
       try {
         await retainInvalidRecordDiagnostics(database, invalidRecords, signal)

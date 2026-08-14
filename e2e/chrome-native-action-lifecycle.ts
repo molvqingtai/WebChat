@@ -233,11 +233,7 @@ const assertJson = (value: unknown, seen = new Set<object>()): JsonValue => {
   if (Array.isArray(value)) {
     if (seen.has(value)) throw new Error('JSON value must not contain cycles')
     seen.add(value)
-    const result = []
-    // cycle-tracking set, which must reflect the in-progress membership at each step
-    for (const entry of value) {
-      result.push(assertJson(entry, seen))
-    }
+    const result = value.map((entry) => assertJson(entry, seen))
     seen.delete(value)
     return result
   }
@@ -245,10 +241,11 @@ const assertJson = (value: unknown, seen = new Set<object>()): JsonValue => {
   if (typeof value === 'object') {
     if (seen.has(value)) throw new Error('JSON value must not contain cycles')
     seen.add(value)
-    const result: Record<string, JsonValue> = {}
-    for (const key of Object.keys(value).toSorted()) {
-      result[key] = assertJson((value as Record<string, unknown>)[key], seen)
-    }
+    const result: Record<string, JsonValue> = Object.fromEntries(
+      Object.keys(value)
+        .toSorted()
+        .map((key) => [key, assertJson((value as Record<string, unknown>)[key], seen)])
+    )
     seen.delete(value)
     return result
   }
@@ -434,23 +431,19 @@ const normalizeEvidence = (value: unknown, depth = 0, seen = new Set<object>()):
       if (value.length > MAX_VALUE_ITEMS) {
         throw new EvidenceLimitError(`Evidence array exceeds ${MAX_VALUE_ITEMS} items`)
       }
-      const normalized = []
-      // cycle-tracking set, which must reflect the in-progress membership at each step
-      for (const entry of value) {
-        normalized.push(normalizeEvidence(entry, depth + 1, seen))
-      }
-      return normalized
+      return value.map((entry) => normalizeEvidence(entry, depth + 1, seen))
     }
 
     const keys = Object.keys(value).toSorted()
     if (keys.length > MAX_VALUE_ITEMS) {
       throw new EvidenceLimitError(`Evidence object exceeds ${MAX_VALUE_ITEMS} keys`)
     }
-    const result: Record<string, JsonValue> = {}
-    for (const key of keys) {
-      result[boundedString(key)] = normalizeEvidence((value as Record<string, unknown>)[key], depth + 1, seen)
-    }
-    return result
+    return Object.fromEntries(
+      keys.map((key) => [
+        boundedString(key),
+        normalizeEvidence((value as Record<string, unknown>)[key], depth + 1, seen)
+      ])
+    )
   } finally {
     seen.delete(value)
   }
