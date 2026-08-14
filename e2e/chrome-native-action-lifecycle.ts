@@ -232,34 +232,24 @@ const assertJson = (value: unknown, seen = new Set<object>()): JsonValue => {
 
   if (Array.isArray(value)) {
     if (seen.has(value)) throw new Error('JSON value must not contain cycles')
-    seen.add(value)
-    // The fresh accumulator owns both the result array and the cycle set: the callback only
-    // mutates state created for this invocation, and sparse holes are skipped by map semantics.
-    const result = value.reduce(
-      (acc, entry) => {
-        acc.result.push(assertJson(entry, acc.seen))
-        return acc
-      },
-      { result: [] as JsonValue[], seen }
-    ).result
-    seen.delete(value)
-    return result
+    // The cycle state is per-path: each level derives a fresh child set, so no callback or
+    // recursive callee mutates shared state, and map preserves sparse holes exactly.
+    const childSeen = new Set([...seen, value])
+    return value.map((entry) => assertJson(entry, childSeen))
   }
 
   if (typeof value === 'object') {
     if (seen.has(value)) throw new Error('JSON value must not contain cycles')
-    seen.add(value)
-    const result = Object.keys(value)
+    const childSeen = new Set([...seen, value])
+    return Object.keys(value)
       .toSorted()
       .reduce(
         (acc, key) => {
-          acc.result[key] = assertJson((value as Record<string, unknown>)[key], acc.seen)
+          acc[key] = assertJson((value as Record<string, unknown>)[key], childSeen)
           return acc
         },
-        { result: {} as Record<string, JsonValue>, seen }
-      ).result
-    seen.delete(value)
-    return result
+        {} as Record<string, JsonValue>
+      )
   }
 
   throw new Error(`Unsupported JSON value: ${typeof value}`)
@@ -436,30 +426,26 @@ const normalizeEvidence = (value: unknown, depth = 0, seen = new Set<object>()):
   if (typeof value === 'function') return boundedString(`[function ${value.name || 'anonymous'}]`)
 
   if (seen.has(value)) throw new EvidenceLimitError('Evidence contains a cycle')
-  seen.add(value)
 
-  try {
-    if (Array.isArray(value)) {
-      if (value.length > MAX_VALUE_ITEMS) {
-        throw new EvidenceLimitError(`Evidence array exceeds ${MAX_VALUE_ITEMS} items`)
-      }
-      return value.map((entry) => normalizeEvidence(entry, depth + 1, seen))
+  const childSeen = new Set([...seen, value])
+  if (Array.isArray(value)) {
+    if (value.length > MAX_VALUE_ITEMS) {
+      throw new EvidenceLimitError(`Evidence array exceeds ${MAX_VALUE_ITEMS} items`)
     }
-
-    const keys = Object.keys(value).toSorted()
-    if (keys.length > MAX_VALUE_ITEMS) {
-      throw new EvidenceLimitError(`Evidence object exceeds ${MAX_VALUE_ITEMS} keys`)
-    }
-    return keys.reduce(
-      (acc, key) => {
-        acc.result[boundedString(key)] = normalizeEvidence((value as Record<string, unknown>)[key], depth + 1, acc.seen)
-        return acc
-      },
-      { result: {} as Record<string, JsonValue>, seen }
-    ).result
-  } finally {
-    seen.delete(value)
+    return value.map((entry) => normalizeEvidence(entry, depth + 1, childSeen))
   }
+
+  const keys = Object.keys(value).toSorted()
+  if (keys.length > MAX_VALUE_ITEMS) {
+    throw new EvidenceLimitError(`Evidence object exceeds ${MAX_VALUE_ITEMS} keys`)
+  }
+  return keys.reduce(
+    (acc, key) => {
+      acc[boundedString(key)] = normalizeEvidence((value as Record<string, unknown>)[key], depth + 1, childSeen)
+      return acc
+    },
+    {} as Record<string, JsonValue>
+  )
 }
 
 const assertBoundedEvidence = (value: unknown): void => {
