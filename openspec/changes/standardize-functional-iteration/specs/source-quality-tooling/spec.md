@@ -156,6 +156,25 @@ History loading SHALL remain manually dismissible. Manual dismissal SHALL change
 - **AND** no page SHALL become invalid merely because it arrived after loading closed or after the ten-second deadline
 - **AND** the user SHALL retain the existing ability to dismiss only the loading UI without cancelling synchronization
 
+### Requirement: Exact-History candidate window is 30 days through one six-file replacement
+
+The unified source child SHALL replace the exact-History requester/provider candidate window from 180 days to 30 days as one mechanical `+15/-15` subchange touching exactly these six files: `src/constants/config.ts`; `CLAUDE.md`; `openspec/changes/sync-exact-history-and-show-progress/design.md`; `openspec/changes/sync-exact-history-and-show-progress/specs/webrtc-runtime/spec.md`; `openspec/changes/sync-exact-history-and-show-progress/tasks.md`; and `openspec/specs/webrtc-runtime/spec.md`.
+
+`src/constants/config.ts` SHALL set `HISTORY_WINDOW_DAYS = 30`. The five active or canonical documentation files SHALL replace only the matching `180-day` constant descriptions, requester/provider snapshot wording, requirement text, scenarios, and completed historical task wording with their `30-day` equivalents. Requester and provider cutoff ownership, the wall-clock instant at which each cutoff freezes, eligibility exactly at the cutoff, rejection only before the cutoff, pagination, ordering, budgets, timeouts, protocol, storage, and every other History behavior SHALL remain unchanged. This subchange SHALL modify no archive or test file and SHALL add no test, fixture, helper, tool, dependency, compatibility path, migration, or send-failure handling.
+
+#### Scenario: Apply the exact six-file mechanical replacement
+
+- **GIVEN** the existing exact-History implementation and active/canonical authority use a 180-day requester/provider candidate window
+- **WHEN** the unified source child applies the approved retention-window correction
+- **THEN** `HISTORY_WINDOW_DAYS` and every matching active/canonical occurrence in the exact six-file scope SHALL use 30 days through a `+15/-15` subdiff
+- **AND** no archive, test, dependency, lock, protocol, storage, or other file SHALL change for this retention-window subchange
+
+#### Scenario: Preserve cutoff and pagination semantics
+
+- **GIVEN** requester and provider cutoffs freeze independently and records exactly at either cutoff remain eligible
+- **WHEN** their window length changes from 180 days to 30 days
+- **THEN** only the duration SHALL change; cutoff ownership and timing, inclusive boundaries, pagination, ordering, budgets, timeouts, and all other History behavior SHALL remain identical
+
 ### Requirement: Functional-iteration cleanup uses only existing repository tooling
 
 The cleanup SHALL use Oxfmt as the sole formatter, Oxlint as the sole linter, and TypeScript as the type-analysis gate. The existing Oxlint configuration MAY enable a built-in rule already shipped by the installed toolchain when it exactly enforces part of this standard. The implementation MUST NOT add, register, load, generate, or depend on an Oxlint plugin, local rule plugin, parser, second linter, new package, custom semantic scanner, committed scan script, source enforcement module, or dependency change.
@@ -164,7 +183,7 @@ No `owner-commit`, `functional-loop`, lint-disable, or other new waiver annotati
 
 The cleanup SHALL add no test case, assertion, test abstraction, fixture, mock capability, or coverage requirement. Existing test, fixture, and harness files SHALL remain in authored scope and MAY receive only the minimum behavior-equivalent iteration or private-state ownership edits required by the same standard, plus minimum expectation synchronization for the explicitly changed Artico and History behavior. An existing private fixture owner MAY replace its complete internal state once when that removes repeated external mutation, but its exposed object and behavior MUST remain equivalent. Test scenarios, inputs, timing, ordering, public fixture contracts, and coverage SHALL remain unchanged.
 
-Except for the exact Artico delegation, target-intent, and bounded multi-provider History corrections above, every source rewrite SHALL preserve evaluation and iteration order, call multiplicity, synchronous or asynchronous execution and concurrency, return values, thrown and rejected errors, object identity, mutation visibility, event and timer ordering, DOM behavior, storage and database operations, wire payloads and persistence behavior, generated output, product behavior, public interfaces, extension permissions, protocols, and dependencies.
+Except for the exact Artico delegation, target-intent, bounded multi-provider History settlement, and exact six-file 30-day candidate-window corrections above, every source rewrite SHALL preserve evaluation and iteration order, call multiplicity, synchronous or asynchronous execution and concurrency, return values, thrown and rejected errors, object identity, mutation visibility, event and timer ordering, DOM behavior, storage and database operations, wire payloads and persistence behavior, generated output, product behavior, public interfaces, extension permissions, protocols, and dependencies.
 
 #### Scenario: Inspect the authored manifest
 
@@ -185,7 +204,7 @@ Except for the exact Artico delegation, target-intent, and bounded multi-provide
 #### Scenario: Verify the scoped source
 
 - **WHEN** the immutable source candidate runs the repository's existing format, lint, typecheck, test, build, generated-artifact, OpenSpec, and cleanliness gates and receives fresh independent review
-- **THEN** all gates SHALL pass with only the authorized Artico/History success-path behavior changed, with dependencies unchanged and without any other product, protocol, persistence, generated-output, or observable behavior change
+- **THEN** all gates SHALL pass with only the authorized Artico/History success-path and exact 30-day candidate-window behavior changed, with dependencies unchanged and without any other product, protocol, persistence, generated-output, or observable behavior change
 
 #### Scenario: Hold delivery boundaries
 

@@ -28,17 +28,19 @@ The Artico send path exposes a separate owner-approved correction discovered dur
 - Delegate each Artico send once with its original optional target intent.
 - Broadcast ordinary Chat, normal Session/World publications, and one History request without manufacturing recipient targets; keep Session/World current-state catch-up and History responses targeted.
 - Merge every valid History response under one correlated multi-provider request regardless of arrival time, and close loading on full settlement or the existing ten-second deadline without stopping that merge.
-- Preserve exact behavior outside those Owner-approved transport and History corrections while applying the same iteration rule to production, test, harness, configuration, and tracked tool source.
+- Replace the exact-History requester/provider candidate window from 180 days to 30 days as one exact six-file mechanical subchange while preserving its cutoff and pagination semantics.
+- Preserve exact behavior outside those Owner-approved transport, History settlement, and 30-day candidate-window corrections while applying the same iteration rule to production, test, harness, configuration, and tracked tool source.
 - Verify the result with only existing repository tools and independent source review.
 
 **Non-Goals:**
 
-- No product feature, protocol, persistence, DOM, storage, wire-payload, or public-interface change beyond the closed Artico delegation and History request/settlement corrections below.
+- No product feature, protocol, persistence, DOM, storage, wire-payload, or public-interface change beyond the closed Artico delegation, History request/settlement, and exact 30-day candidate-window corrections below.
 - No source minification or preference for fewer characters when it obscures intent or changes evaluation.
 - No custom Oxlint plugin, local plugin, parser, second linter, new package, committed scan script, generated rule table, semantic-analysis module, or dependency change. The existing `@rtco/client` version and lock resolution remain unchanged.
 - No send-failure behavior change. This correction assumes each delegated `room.send` succeeds; handling a send failure requires separate authority.
 - No `owner-commit`, `functional-loop`, lint-disable, or other annotation that turns a nonconforming loop or callback into an exception.
 - No new test case, parameter row, assertion, fixture, mock capability, test helper abstraction, or coverage requirement. Existing expectations may receive only the minimum synchronization required by the explicitly changed transport and History behavior.
+- No archive rewrite, test-file change, compatibility path, migration, or broader retention-policy edit for the 30-day replacement.
 - No hand edit to the generated Archify validator and no expansion of the generated-file exclusion.
 
 ## Decisions
@@ -117,13 +119,15 @@ The History loading owner remains manually dismissible. Manual dismissal changes
 
 This correction assumes each delegated `room.send` returns successfully. The source child keeps `@rtco/client` and its lock resolution unchanged and adds no send-failure handling. Handling a send failure remains outside this change and requires separate authority.
 
-### 5. The migration is one authored-source pass with two closed behavior corrections
+### 5. The migration is one authored-source pass with three closed behavior corrections
 
 The implementation manifest is fixed from clean `develop`: all tracked `*.js`, `*.jsx`, `*.ts`, `*.tsx`, `*.mjs`, and `*.cjs` files, minus only `.agents/skills/archify/renderers/shared/generated-validators.mjs`. The manifest contains exactly 304 authored files. Ignore patterns used by formatter or linter configuration do not remove a tracked authored file from this cleanup.
 
+Within the unified source child, the retention-window subchange is exactly six files and `+15/-15`: `src/constants/config.ts`; `CLAUDE.md`; `openspec/changes/sync-exact-history-and-show-progress/design.md`; `openspec/changes/sync-exact-history-and-show-progress/specs/webrtc-runtime/spec.md`; `openspec/changes/sync-exact-history-and-show-progress/tasks.md`; and `openspec/specs/webrtc-runtime/spec.md`. It replaces the constant and matching active/canonical `180-day` wording with `30-day` wording only. Requester and provider cutoff ownership, wall-clock freezing points, inclusive cutoff eligibility, pagination, budgets, timeouts, protocol, persistence, and every other History rule remain unchanged. Archives and test files are not modified for this subchange.
+
 The generated validator remains byte-identical and is verified through its existing generator controls. Its generator is authored source and remains in scope. No other file may claim generated, vendored, test, fixture, harness, configuration, or tool status as an exclusion.
 
-Except for the target delegation, broadcast classification, and bounded multi-provider History settlement defined above, every rewrite must preserve evaluation order, iteration order, call count, synchronous or asynchronous settlement, concurrency, return values, thrown and rejected errors, object identity, mutation visibility, event order, timers, storage and database operations, network/wire behavior, DOM behavior, and generated output. A shorter expression is acceptable only when it is behavior-equivalent.
+Except for the target delegation, broadcast classification, bounded multi-provider History settlement, and exact six-file 30-day candidate-window replacement defined above, every rewrite must preserve evaluation order, iteration order, call count, synchronous or asynchronous settlement, concurrency, return values, thrown and rejected errors, object identity, mutation visibility, event order, timers, storage and database operations, network/wire behavior, DOM behavior, and generated output. A shorter expression is acceptable only when it is behavior-equivalent.
 
 Existing tests, fixtures, and harnesses may receive only the minimum behavior-equivalent iteration or private-state ownership edits necessary to satisfy the same authored-source rule, plus minimum expectation synchronization for the closed transport and History corrections. An existing private fixture owner may replace its complete internal state once when that removes repeated external mutation, but its exposed object and behavior must remain equivalent. Test names, scenarios, inputs, timing, mocks, public fixture contracts, and coverage remain unchanged; no new test, fixture, or test abstraction is part of this cleanup.
 
@@ -145,6 +149,7 @@ Semantic decisions that the existing toolchain cannot express are verified by th
 - **An omitted target is expanded back into WebChat recipients** -> Require one `room.send(payload, undefined)` call for broadcasts and keep membership snapshots separate from send intent.
 - **Send-failure behavior expands back into this source correction** -> Keep the current Artico dependency unchanged and implement only the assumed-success send path; make no send-failure behavior change without separate authority.
 - **A broadcast History request keeps loading open forever or loses later history** -> Race full provider settlement against the existing ten-second deadline for the loading UI only, while every valid associated page continues to merge regardless of arrival time, provider connectivity, or room generation.
+- **The 30-day replacement expands into another retention rewrite** -> Require the exact six-file `+15/-15` mechanical subdiff; keep archives, tests, cutoff ownership, inclusive boundaries, pagination, protocol, storage, and all other History behavior unchanged.
 - **A new peer misses current Session/World state** -> Preserve the targeted current-state catch-up; do not convert it into a duplicate room broadcast.
 - **Generated code dominates structural scans** -> Exclude only the exact generated validator path and keep its generator in scope.
 - **Existing Oxlint cannot encode the semantic rule** -> Use its existing built-in coverage where exact, then rely on source review rather than adding another parser or linter.
@@ -154,8 +159,8 @@ Semantic decisions that the existing toolchain cannot express are verified by th
 
 1. Freeze this docs-only authority as one sole child of clean `develop@10801251a7a6b744fd246960daed01eef323c868`, validate it, and obtain fresh independent docs review.
 2. From the reviewed authority exact, record the 304-file authored manifest and a read-only baseline inventory of traversal and send forms before editing product source.
-3. Produce one WebChat source child that applies the functional-iteration standard, direct optional-target delegation, intent-based broadcast/target classification, bounded multi-provider History synchronization, generated exclusion, assumed-success send scope, and no-new-test policy without adding an enforcement layer.
-4. Verify the exact source diff with existing format, lint, typecheck, test, build, generated-artifact, OpenSpec, and repository-cleanliness gates; confirm the original `assembleURL` implementation and dependency resolution are unchanged.
+3. Produce one WebChat source child that applies the functional-iteration standard, direct optional-target delegation, intent-based broadcast/target classification, bounded multi-provider History synchronization, exact six-file 30-day replacement, generated exclusion, assumed-success send scope, and no-new-test policy without adding an enforcement layer.
+4. Verify the exact source diff with existing format, lint, typecheck, test, build, generated-artifact, OpenSpec, and repository-cleanliness gates; confirm the 30-day subdiff is exactly six files and `+15/-15`, and that the original `assembleURL` implementation and dependency resolution are unchanged.
 5. Obtain fresh independent source review of the immutable exact without the reviewer running local tests or automation. Keep both pull requests Draft and do not mark Ready, merge, run browser acceptance, deploy, release, or change production without separate Owner authority.
 
-Rollback is source-only: revert the cleanup, the closed transport/History correction, and any built-in Oxlint configuration change. There is no dependency, schema, persistence, data, or deployment migration.
+Rollback is source-only: revert the cleanup, the closed transport/History corrections, the exact six-file 30-day replacement, and any built-in Oxlint configuration change. There is no dependency, schema, persistence, data, or deployment migration.
