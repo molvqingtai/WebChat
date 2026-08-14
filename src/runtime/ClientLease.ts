@@ -104,13 +104,19 @@ export class ClientLease {
     if (this.hostPhase === phase) return
     this.hostPhase = phase
     if (this.snapshotValue) this.snapshotValue = { ...this.snapshotValue, hostPhase: phase }
-    this.hostPhaseCallbacks.forEach((callback) => callback(phase))
+    // functional-loop: owner-commit — ordered per-callback notification with no bulk primitive
+    for (const callback of this.hostPhaseCallbacks) {
+      callback(phase)
+    }
   }
 
   private emitFailure(error: unknown) {
     const failure = error instanceof Error ? error : new Error(String(error))
     this.logError(failure)
-    this.failureCallbacks.forEach((callback) => callback(failure))
+    // functional-loop: owner-commit — ordered per-callback notification with no bulk primitive
+    for (const callback of this.failureCallbacks) {
+      callback(failure)
+    }
   }
 
   /** Callback delivery rejections are diagnostic only; error content never controls the lease lifecycle. */
@@ -120,6 +126,7 @@ export class ClientLease {
 
   private async registerWithinBudget(lifecycle: AbortController, deadline: number): Promise<RuntimePageRegistration> {
     let lastError: unknown = new Error('Runtime registration failed')
+    // functional-loop: condition-driven — registration retries until the budget deadline expires
     for (;;) {
       lifecycle.signal.throwIfAborted()
       const remaining = deadline - Date.now()
@@ -150,7 +157,10 @@ export class ClientLease {
     this.coordinatorGeneration = registration.generation
     this.ready = true
     this.setHostPhase(registration.snapshot.hostPhase)
-    this.readyCallbacks.forEach((callback) => callback())
+    // functional-loop: owner-commit — ordered per-callback notification with no bulk primitive
+    for (const callback of this.readyCallbacks) {
+      callback()
+    }
     return registration.snapshot
   }
 

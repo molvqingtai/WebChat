@@ -173,6 +173,7 @@ describe('MediaPreview ownership and settlement', () => {
       naturalHeight: { configurable: true, value: 1000 }
     })
     fireEvent.load(firstImage)
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (const name of ['Zoom out', 'Zoom in', 'Reset zoom', 'Close preview']) {
       const control = screen.getByRole('button', { name })
       expect(control.getAttribute('title')).toBe(name)
@@ -227,6 +228,7 @@ describe('MediaPreview ownership and settlement', () => {
     const zoomIn = screen.getByRole('button', { name: 'Zoom in' }) as HTMLButtonElement
 
     expect(zoomOut.disabled).toBe(false)
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (let index = 0; index < 3; index += 1) fireEvent.click(zoomOut)
     expect(image().style.transform).toBe('translate3d(0px, 0px, 0) scale(0.25)')
     expect(zoomOut.disabled).toBe(true)
@@ -243,6 +245,7 @@ describe('MediaPreview ownership and settlement', () => {
 
     fireEvent.keyDown(dialog, { key: '0' })
     expect(image().style.transform).toBe('translate3d(0px, 0px, 0) scale(1)')
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (let index = 0; index < 20; index += 1) fireEvent.keyDown(dialog, { key: '+' })
     expect(image().style.transform).toContain('scale(4)')
     expect(zoomIn.disabled).toBe(true)
@@ -639,7 +642,7 @@ describe('MediaPreview View Transition fallback', () => {
     await act(async () => Promise.resolve())
     transitions[1]!.operation()
 
-    const [first, second] = order === 'open first' ? transitions : [...transitions].reverse()
+    const [first, second] = order === 'open first' ? transitions : [...transitions].toReversed()
     first!.finished.resolve()
     await act(async () => Promise.resolve())
     second!.finished.resolve()

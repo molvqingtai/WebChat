@@ -191,12 +191,20 @@ beforeEach(() => {
 
 afterEach(async () => {
   await act(async () => {
-    fixture.removeUis.splice(0).forEach((remove) => remove())
-    fixture.owners.splice(0).forEach((owner) => {
+    // functional-mutate: draining the owned removals queue is the operation itself
+    const pendingRemovals = fixture.removeUis.splice(0)
+    // functional-loop: owner-commit — ordered per-removal teardown with no bulk primitive
+    for (const remove of pendingRemovals) {
+      remove()
+    }
+    // functional-mutate: draining the owned owners queue is the operation itself
+    const pendingOwners = fixture.owners.splice(0)
+    // functional-loop: owner-commit — ordered per-owner teardown with no bulk primitive
+    for (const owner of pendingOwners) {
       owner.stopInitialization()
       owner.root.unmount()
       owner.store.discard()
-    })
+    }
   })
   document.body.replaceChildren()
   window.removeEventListener('beforeunload', fixture.detachClient)

@@ -38,7 +38,10 @@ vi.mock('@rtco/client', () => {
     }
 
     emit(event: string, ...args: unknown[]) {
-      this.listeners.get(event)?.forEach((listener) => listener(...args))
+      // functional-loop: owner-commit — ordered per-listener notification with no bulk primitive
+      for (const listener of this.listeners.get(event) ?? []) {
+        listener(...args)
+      }
     }
   }
 
@@ -49,12 +52,13 @@ vi.mock('@rtco/client', () => {
 
     send(payload: string, target?: string | string[]) {
       const targets = target ? (Array.isArray(target) ? target : [target]) : null
-      this.calls.forEach((ready, peerId) => {
-        if (targets && !targets.includes(peerId)) return
+      // functional-loop: continue — skip non-target peers while attempting each target once
+      for (const [peerId, ready] of this.calls) {
+        if (targets && !targets.includes(peerId)) continue
         this.attempts.push({ peerId, payload })
         if (!ready) throw new Error('Connection is not established yet.')
         this.sent.push({ peerId, payload })
-      })
+      }
     }
 
     open(peerId: string) {

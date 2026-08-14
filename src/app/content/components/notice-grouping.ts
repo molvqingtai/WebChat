@@ -16,6 +16,7 @@ export const messageRowKey = (message: GroupedMessage): string => {
 
 export const groupAdjacentNotices = <T extends Message>(messages: readonly T[]): GroupedMessage<T>[] => {
   const grouped: GroupedMessage<T>[] = []
+  // functional-loop: continue — text messages pass through while adjacent notice runs group by index
   for (let index = 0; index < messages.length; ) {
     const message = messages[index]
     if (message.type === 'text') {
@@ -25,6 +26,7 @@ export const groupAdjacentNotices = <T extends Message>(messages: readonly T[]):
     }
 
     const notices: SystemNoticeMessage[] = []
+    // functional-loop: condition-driven — the notice run ends at the next text message
     while (index < messages.length && messages[index].type !== 'text') {
       notices.push(messages[index] as SystemNoticeMessage)
       index += 1

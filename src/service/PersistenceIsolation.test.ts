@@ -39,8 +39,12 @@ const statusFieldKeys = [
   APP_UNREAD_STORAGE_KEY,
   APP_MESSAGE_AUTHOR_STORAGE_KEY
 ]
-const writeStatusFields = (storage: Storage, value: string) =>
-  statusFieldKeys.forEach((key) => storage.setItem(localKey(key), value))
+const writeStatusFields = (storage: Storage, value: string) => {
+  // functional-loop: owner-commit — ordered per-item external effects with no bulk primitive
+  for (const key of statusFieldKeys) {
+    storage.setItem(localKey(key), value)
+  }
+}
 const readStatusFields = (storage: Storage) => statusFieldKeys.map((key) => storage.getItem(localKey(key)))
 
 const createBrowserArea = (initial: Record<string, unknown>) => {
@@ -54,7 +58,10 @@ const createBrowserArea = (initial: Record<string, unknown>) => {
       Object.assign(values, items)
     }),
     clear: vi.fn(async () => {
-      Object.keys(values).forEach((key) => delete values[key])
+      // functional-loop: owner-commit — ordered per-key deletion with no bulk primitive
+      for (const key of Object.keys(values)) {
+        delete values[key]
+      }
     })
   }
 }
@@ -70,6 +77,7 @@ const prepareBrowserSync = async (storage?: ReturnType<typeof createBrowserArea>
       )
     },
     sendMessage: vi.fn(async (message: unknown) => {
+      // functional-loop: early-return — the first listener response wins and must stop the walk
       for (const listener of listeners) {
         const response = listener(message)
         if (response) return response

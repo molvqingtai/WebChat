@@ -27,7 +27,10 @@ class FakeWebSocket {
   }
 
   emit(type: string, event: FakeEvent = {}): void {
-    this.listeners.get(type)?.forEach((listener) => listener(event))
+    // functional-loop: owner-commit — ordered per-listener notification with no bulk primitive
+    for (const listener of this.listeners.get(type) ?? []) {
+      listener(event)
+    }
   }
 
   send(message: string): void {

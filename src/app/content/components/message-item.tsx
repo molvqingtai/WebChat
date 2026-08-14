@@ -28,12 +28,11 @@ const MessageItem: FC<MessageItemProps> = memo((props) => {
     )
 
     // Replace from back to front according to position to avoid affecting previous indices
-    mentionRanges
-      .sort((a, b) => b.position[0] - a.position[0])
-      .forEach(({ position, name }) => {
-        const [start, end] = position
-        content = `${content.slice(0, start)} **@${name}** ${content.slice(end + 1)}`
-      })
+    const orderedRanges = mentionRanges.toSorted((a, b) => b.position[0] - a.position[0])
+    content = orderedRanges.reduce((acc, { position, name }) => {
+      const [start, end] = position
+      return `${acc.slice(0, start)} **@${name}** ${acc.slice(end + 1)}`
+    }, content)
   }
 
   return (

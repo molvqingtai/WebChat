@@ -13,8 +13,13 @@ const useShareRef = <T>(...refs: (Ref<T> | undefined)[]) => {
   return useCallback(
     (node: T) => {
       const cleanups = refs.map((ref) => setRef(ref, node))
-      return () =>
-        cleanups.forEach((cleanup, index) => (typeof cleanup === 'function' ? cleanup() : setRef(refs[index], null)))
+      return () => {
+        // functional-loop: owner-commit — ordered per-ref cleanup or restore with no bulk primitive
+        for (const [index, cleanup] of cleanups.entries()) {
+          if (typeof cleanup === 'function') cleanup()
+          else setRef(refs[index], null)
+        }
+      }
     },
     [...refs]
   )

@@ -48,6 +48,7 @@ const GOLDEN = [
   ['architecture', 'web-app.architecture.json', 'web-app-rendered.html']
 ]
 
+// functional-loop: owner-commit — ordered per-item emission with no bulk primitive
 for (const [mode, input, golden] of GOLDEN) {
   const out = path.join(tmp, golden)
   try {
@@ -171,6 +172,7 @@ const template = fs.readFileSync(path.join(skillRoot, 'assets/template.html'), '
 const webApp = fs.readFileSync(path.join(examplesRoot, 'web-app-rendered.html'), 'utf8')
 // <style> and <script> blocks pass through applyTemplate untouched, so the
 // architecture-mode example must contain them verbatim or it has drifted.
+// functional-loop: owner-commit — ordered per-item emission with no bulk primitive
 for (const tag of ['style', 'script']) {
   const t = blocks(template, tag).filter((b) => !b.includes('[PROJECT NAME]'))
   const w = blocks(webApp, tag).filter((b) => !b.includes('Sample Web App'))

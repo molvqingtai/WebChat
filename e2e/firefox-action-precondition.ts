@@ -77,6 +77,7 @@ const fail = (code: FirefoxActionPreconditionErrorCode, message: string): never 
 }
 
 const assertContext = (context: FirefoxActionContext): void => {
+  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
   for (const key of contextKeys) {
     if (context[key].trim() === '') {
       fail('invalid-context', `Firefox action ${key} must not be empty`)
@@ -110,6 +111,9 @@ const assertBeforeNativeAction = async (adapter: FirefoxActionPreconditionAdapte
 const assertUniqueTabs = (tabs: readonly FirefoxActionTab[]): void => {
   const identities = new Set<string>()
 
+  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
+
+  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
   for (const tab of tabs) {
     if (typeof tab.identity !== 'string' || tab.identity.trim() === '' || identities.has(tab.identity)) {
       fail('invalid-binding', 'Firefox action tabs require unique physical identities')
@@ -143,7 +147,7 @@ const requireIdentity = (
 const physicalInventory = (tabs: readonly FirefoxActionTab[]) =>
   tabs
     .map(({ identity, url, type, testOwned }) => ({ identity, url, type, testOwned }))
-    .sort((left, right) => left.identity.localeCompare(right.identity))
+    .toSorted((left, right) => left.identity.localeCompare(right.identity))
 
 const hasSamePhysicalInventory = (
   before: ReturnType<typeof physicalInventory>,
@@ -271,6 +275,9 @@ const findReadyContent = async (
 ): Promise<FirefoxActionTab | undefined> => {
   const accepted = tabs.filter((tab) => isAcceptedContent(tab, context))
 
+  // functional-loop: early-return — the loop must exit the enclosing function on the guarded item
+
+  // functional-loop: early-return — the loop must exit the enclosing function on the guarded item
   for (const tab of accepted) {
     const current = await consumeCurrentHandle(
       adapter,
@@ -479,6 +486,7 @@ export async function assertFirefoxActionBinding(
   binding: FirefoxActionBinding,
   context: FirefoxActionContext
 ): Promise<void> {
+  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
   for (const key of contextKeys) {
     if (binding[key] !== context[key]) {
       fail('invalid-binding', `Firefox action binding has a mismatched ${key}`)

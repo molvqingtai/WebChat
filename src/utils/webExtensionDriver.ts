@@ -12,11 +12,13 @@ const webExtensionDriver: (opts: WebExtensionDriverOptions) => Driver = defineDr
   }
 
   const _storageListener: (changes: Browser.storage.StorageChange) => void = (changes) => {
-    Object.entries(changes).forEach(([key, { newValue }]) => {
-      _listeners.forEach((callback) => {
+    // functional-loop: owner-commit — ordered per-change notification with no bulk primitive
+    for (const [key, { newValue }] of Object.entries(changes)) {
+      // functional-loop: owner-commit — ordered per-listener notification with no bulk primitive
+      for (const callback of _listeners) {
         callback(newValue ? 'update' : 'remove', key)
-      })
-    })
+      }
+    }
   }
   const _listeners = new Set<WatchCallback>()
 

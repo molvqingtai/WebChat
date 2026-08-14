@@ -31,7 +31,10 @@ const createFixture = (initial: Record<string, unknown>) => {
       Object.assign(values, items)
     }),
     clear: vi.fn(async () => {
-      Object.keys(values).forEach((key) => delete values[key])
+      // functional-loop: owner-commit — ordered per-key deletion with no bulk primitive
+      for (const key of Object.keys(values)) {
+        delete values[key]
+      }
     })
   }
   const runtime = {
@@ -45,6 +48,7 @@ const createFixture = (initial: Record<string, unknown>) => {
       )
     },
     sendMessage: vi.fn(async (message: unknown) => {
+      // functional-loop: early-return — the loop must exit the enclosing function on the guarded item
       for (const listener of messageListeners) {
         const response = listener(message)
         if (response) return response
@@ -153,7 +157,10 @@ describe('browser sync configuration preparation', () => {
     fixture.storage.clear.mockImplementationOnce(async () => {
       clearStarted.resolve()
       await releaseClear.promise
-      Object.keys(fixture.values).forEach((key) => delete fixture.values[key])
+      // functional-loop: owner-commit — ordered per-key deletion with no bulk primitive
+      for (const key of Object.keys(fixture.values)) {
+        delete fixture.values[key]
+      }
     })
     registerBrowserSyncStoragePreparation(fixture.runtime, fixture.storage)
 

@@ -51,6 +51,7 @@ function render(mode, doc) {
 
 function hash(s) {
   let h = 0
+  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
   for (let i = 0; i < s.length; i += 1) h = (h * 31 + s.charCodeAt(i)) | 0
   return h
 }
@@ -233,6 +234,7 @@ const CASES = [
   ]
 ]
 
+// functional-loop: owner-commit — ordered per-item emission with no bulk primitive
 for (const [name, mode, mutate, expected] of CASES) {
   test(name, () => {
     const doc = load(mode)
@@ -240,6 +242,7 @@ for (const [name, mode, mutate, expected] of CASES) {
     const { code, stderr } = render(mode, doc)
     assert.notEqual(code, 0, `expected non-zero exit; stderr:\n${stderr}`)
     assert.doesNotMatch(stderr, /TypeError|is not a function|Cannot read/, `crashed instead of reporting:\n${stderr}`)
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (const sub of expected) {
       assert.ok(stderr.includes(sub), `expected "${sub}" in stderr:\n${stderr}`)
     }

@@ -154,6 +154,7 @@ function validateWorkflow() {
     problems.push('Group ids must be unique.')
   }
 
+  // functional-loop: continue — the loop must skip the guarded item and keep processing
   for (const node of nodes.values()) {
     if (!laneIds.has(node.lane)) {
       problems.push(`Node "${node.id}" uses unknown lane "${node.lane}".`)
@@ -189,6 +190,7 @@ function validateWorkflow() {
     }
   }
 
+  // functional-loop: continue — the loop must skip the guarded item and keep processing
   for (const phase of asArray(workflow.phases)) {
     if (!Number.isInteger(phase.fromCol) || !Number.isInteger(phase.toCol)) {
       problems.push(`Phase "${phase.id}" must use integer fromCol/toCol values.`)
@@ -208,6 +210,7 @@ function validateWorkflow() {
     }
   }
 
+  // functional-loop: continue — the loop must skip the guarded item and keep processing
   for (const group of asArray(workflow.groups)) {
     if (!laneIds.has(group.lane)) {
       problems.push(`Group "${group.id}" uses unknown lane "${group.lane}".`)
@@ -233,11 +236,15 @@ function validateWorkflow() {
   }
 
   const byLane = new Map()
+  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
   for (const node of nodes.values()) {
     byLane.set(node.lane, [...(byLane.get(node.lane) || []), node])
   }
+  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
   for (const [lane, laneNodes] of byLane) {
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (let i = 0; i < laneNodes.length; i += 1) {
+      // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
       for (let j = i + 1; j < laneNodes.length; j += 1) {
         if (rectsOverlap(laneNodes[i], laneNodes[j], 8)) {
           problems.push(
@@ -248,6 +255,7 @@ function validateWorkflow() {
     }
   }
 
+  // functional-loop: continue — the loop must skip the guarded item and keep processing
   for (const edge of workflow.edges) {
     if (!nodes.has(edge.from))
       problems.push(`Edge "${edge.label || edge.from}" references unknown source "${edge.from}".`)
@@ -264,9 +272,11 @@ function validateWorkflow() {
         }
       }
       const segments = []
+      // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
       for (let i = 1; i < routed.points.length; i += 1) {
         segments.push({ start: routed.points[i - 1], end: routed.points[i] })
       }
+      // functional-loop: continue — the loop must skip the guarded item and keep processing
       for (const node of nodes.values()) {
         if (node.id === edge.from || node.id === edge.to) continue
         if (segments.some((segment) => segmentIntersectsRect(segment, node, 2))) {
@@ -279,11 +289,13 @@ function validateWorkflow() {
   }
 
   if (Array.isArray(workflow.mainPath)) {
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (const id of workflow.mainPath) {
       if (!nodes.has(id)) {
         problems.push(`mainPath references unknown node "${id}".`)
       }
     }
+    // functional-loop: continue — the loop must skip the guarded item and keep processing
     for (let i = 0; i < workflow.mainPath.length - 1; i += 1) {
       const fromId = workflow.mainPath[i]
       const toId = workflow.mainPath[i + 1]
@@ -305,13 +317,16 @@ function validateWorkflow() {
   }
 
   const labelRects = []
+  // functional-loop: continue — the loop must skip the guarded item and keep processing
   for (const edge of workflow.edges) {
     if (!edge.label || !nodes.has(edge.from) || !nodes.has(edge.to)) continue
     const [lx, ly] = labelPoint(edge, pathFor(edge).points)
     const width = Math.max(30, textUnits(edge.label) * 4.8 + 10)
     labelRects.push({ label: edge.label, x: lx - width / 2, y: ly - 10, width, height: 14, lx, ly })
   }
+  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
   for (const rect of labelRects) {
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (const node of nodes.values()) {
       if (rectsOverlap(rect, node, -2)) {
         problems.push(
@@ -320,7 +335,9 @@ function validateWorkflow() {
       }
     }
   }
+  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
   for (let i = 0; i < labelRects.length; i += 1) {
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (let j = i + 1; j < labelRects.length; j += 1) {
       if (rectsOverlap(labelRects[i], labelRects[j], -2)) {
         problems.push(

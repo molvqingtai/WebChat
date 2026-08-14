@@ -80,6 +80,7 @@ const createFixture = () => {
 const phase = (fixture: ReturnType<typeof createFixture>) => fixture.store.query(fixture.domain.query.PhaseQuery())
 
 const flushMicrotasks = async () => {
+  // functional-loop: early-return — the loop must exit the enclosing function on the guarded item
   for (let index = 0; index < 20; index += 1) await Promise.resolve()
 }
 
@@ -96,7 +97,10 @@ const start = (fixture: ReturnType<typeof createFixture>, timeoutMs = 1000) => {
 }
 
 afterEach(() => {
-  started.forEach((stop) => stop())
+  // functional-loop: owner-commit — ordered per-item external effects with no bulk primitive
+  for (const stop of started) {
+    stop()
+  }
   started.clear()
   vi.useRealTimers()
   vi.restoreAllMocks()
@@ -120,10 +124,11 @@ describe('initialization lifecycle ownership', () => {
 
     await vi.waitFor(() => expect(fixture.dependencies[stage]).toHaveBeenCalledOnce())
     expect(phase(fixture)).toBe('connecting')
-    stages.forEach((name, index) => {
+    // functional-loop: owner-commit — ordered per-stage assertion with no bulk primitive
+    for (const [index, name] of stages.entries()) {
       if (index <= stageIndex) expect(fixture.dependencies[name]).toHaveBeenCalledOnce()
       else expect(fixture.dependencies[name]).not.toHaveBeenCalled()
-    })
+    }
     expect(fixture.activateApplicationDependencies).not.toHaveBeenCalled()
 
     work.reject(new Error(`${stage} unavailable`))

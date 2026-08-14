@@ -37,6 +37,7 @@ export function validateGridPlacement(arch, grid, problems) {
     return
   }
   const seen = new Map()
+  // functional-loop: continue — the loop must skip the guarded item and keep processing
   for (const c of arch.components ?? []) {
     const hasPos = Array.isArray(c.pos) && c.pos.length === 2
     const hasCell = Number.isInteger(c.row) && Number.isInteger(c.col)

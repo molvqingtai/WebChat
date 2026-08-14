@@ -82,7 +82,9 @@ const ARRAY_FIELDS = {
   architecture: ['components', 'boundaries', 'connections', 'cards']
 }
 
+// functional-loop: early-return — the loop must exit the enclosing function on the guarded item
 for (const [mode, fields] of Object.entries(ARRAY_FIELDS)) {
+  // functional-loop: early-return — the loop must exit the enclosing function on the guarded item
   for (const field of fields) {
     test(`${mode}: ${field} as a string fails friendly`, () => {
       const doc = JSON.parse(fs.readFileSync(path.join(skillRoot, 'examples', EXAMPLES[mode]), 'utf8'))
@@ -123,13 +125,16 @@ function mulberry32(seed) {
 }
 
 test('property: shuffling node/state order still renders (order-independence)', () => {
+  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
   for (const mode of ['workflow', 'dataflow', 'lifecycle']) {
     const arrKey = mode === 'lifecycle' ? 'states' : 'nodes'
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (let seed = 1; seed <= 8; seed += 1) {
       const doc = JSON.parse(fs.readFileSync(path.join(skillRoot, 'examples', EXAMPLES[mode]), 'utf8'))
       const rng = mulberry32(seed)
       // Fisher–Yates with the seeded PRNG.
       const a = doc[arrKey]
+      // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
       for (let i = a.length - 1; i > 0; i -= 1) {
         const j = Math.floor(rng() * (i + 1))
         ;[a[i], a[j]] = [a[j], a[i]]
@@ -152,6 +157,7 @@ test('installed skill rejects unknown fields without node_modules', () => {
   assert.doesNotMatch(stderr, /ajv is not installed|skipping JSON-schema validation/)
 })
 
+// functional-loop: owner-commit — ordered per-item emission with no bulk primitive
 for (const mode of Object.keys(EXAMPLES)) {
   test(`installed skill retains full ${mode} schema without node_modules`, () => {
     const doc = JSON.parse(fs.readFileSync(path.join(skillRoot, 'examples', EXAMPLES[mode]), 'utf8'))

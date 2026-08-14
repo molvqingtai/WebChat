@@ -20,6 +20,7 @@ const ajv = new Ajv2020({
 ajv.addSchema(JSON.parse(fs.readFileSync(path.join(schemasDir, 'common.schema.json'), 'utf8')))
 
 const schemaIds = {}
+// functional-loop: owner-commit — ordered per-item emission with no bulk primitive
 for (const type of diagramTypes) {
   const schema = JSON.parse(fs.readFileSync(path.join(schemasDir, `${type}.schema.json`), 'utf8'))
   ajv.addSchema(schema)
@@ -32,7 +33,8 @@ const inlineUcs2Length = `function ucs2length(str) {
   const len = str.length;
   let length = 0;
   let pos = 0;
-  while (pos < len) {
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
+    while (pos < len) {
     length += 1;
     const value = str.charCodeAt(pos++);
     if (value >= 0xd800 && value <= 0xdbff && pos < len

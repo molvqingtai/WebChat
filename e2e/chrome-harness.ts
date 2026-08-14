@@ -58,6 +58,7 @@ export const waitFor = async <T>(
 ): Promise<T> => {
   const startedAt = Date.now()
   let lastError: unknown
+  // functional-loop: condition-driven — polling until the check succeeds or the deadline expires
   while (Date.now() - startedAt < timeoutMs) {
     try {
       const value = await check()
@@ -149,13 +150,17 @@ export class CdpClient {
         else waiter.resolve(message.result)
         return
       }
-      this.handlers.forEach((handler) => handler(message))
+      // functional-loop: owner-commit — ordered per-item external effects with no bulk primitive
+      for (const handler of this.handlers) {
+        handler(message)
+      }
     })
     this.socket.addEventListener('close', () => {
-      this.pending.forEach(({ reject, timer }) => {
+      // functional-loop: owner-commit — ordered per-pending rejection during live Map iteration
+      for (const [, { reject, timer }] of this.pending) {
         clearTimeout(timer)
         reject(new Error('CDP connection closed'))
-      })
+      }
       this.pending.clear()
     })
   }
@@ -217,6 +222,7 @@ export const terminateOwnedProcesses = async (options: CleanupOptions): Promise<
   const waitUntilSettled = async (timeoutMs: number): Promise<CleanupState> => {
     const deadline = Date.now() + timeoutMs
     let state = snapshot()
+    // functional-loop: condition-driven — polling until the state settles or the deadline expires
     while (!isSettled(state) && Date.now() < deadline) {
       await sleep(pollIntervalMs)
       state = snapshot()
@@ -225,9 +231,10 @@ export const terminateOwnedProcesses = async (options: CleanupOptions): Promise<
   }
   const signalOwned = (signal: NodeJS.Signals, state: CleanupState): void => {
     if (rootPid) signalProcessGroup(rootPid, signal)
-    state.residualProcesses.forEach(({ pid }) => {
+    // functional-loop: owner-commit — ordered per-process signalling with no bulk primitive
+    for (const { pid } of state.residualProcesses) {
       if (pid !== rootPid) signalProcess(pid, signal)
-    })
+    }
   }
 
   let state = snapshot()

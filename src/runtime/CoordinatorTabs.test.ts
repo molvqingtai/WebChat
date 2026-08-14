@@ -85,10 +85,15 @@ const createFixture = () => {
     resolveNextDetach: (pageId: string) => {
       const index = pendingDetaches.findIndex((pending) => pending.pageId === pageId)
       if (index < 0) throw new Error(`No delayed detach for ${pageId}`)
+      // functional-mutate: removing the resolved detach from the owned queue is the operation itself
       pendingDetaches.splice(index, 1)[0]!.resolve()
     },
     resolveDetaches: (pageId: string) => {
-      pendingDetaches.filter((pending) => pending.pageId === pageId).forEach((pending) => pending.resolve())
+      // functional-loop: owner-commit — ordered per-detach resolution with no bulk primitive
+      for (const pending of pendingDetaches.filter((pending) => pending.pageId === pageId)) {
+        pending.resolve()
+      }
+      // functional-mutate: draining the owned detaches queue is the operation itself
       pendingDetaches.splice(
         0,
         pendingDetaches.length,

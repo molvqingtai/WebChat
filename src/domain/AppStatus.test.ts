@@ -130,10 +130,30 @@ const createFixture = ({
     set,
     watch,
     browserGet,
-    emitMessage: (message: ChatMessage) => messageListeners.forEach((listener) => listener(message)),
-    emitSessions: (sessions: readonly ChatSession[]) => sessionListeners.forEach((listener) => listener(sessions)),
-    emitJoin: (session: ChatSession) => joinListeners.forEach((listener) => listener(session)),
-    emitLeave: (session: ChatSession) => leaveListeners.forEach((listener) => listener(session)),
+    emitMessage: (message: ChatMessage) => {
+      // functional-loop: owner-commit — ordered per-listener notification with no bulk primitive
+      for (const listener of messageListeners) {
+        listener(message)
+      }
+    },
+    emitSessions: (sessions: readonly ChatSession[]) => {
+      // functional-loop: owner-commit — ordered per-listener notification with no bulk primitive
+      for (const listener of sessionListeners) {
+        listener(sessions)
+      }
+    },
+    emitJoin: (session: ChatSession) => {
+      // functional-loop: owner-commit — ordered per-listener notification with no bulk primitive
+      for (const listener of joinListeners) {
+        listener(session)
+      }
+    },
+    emitLeave: (session: ChatSession) => {
+      // functional-loop: owner-commit — ordered per-listener notification with no bulk primitive
+      for (const listener of leaveListeners) {
+        listener(session)
+      }
+    },
     messageListeners,
     sessionListeners
   }
@@ -161,15 +181,29 @@ const createSharedStatusStorage = (
 
   return {
     writes,
-    clearWrites: () => writes.splice(0),
+    clearWrites: () => {
+      // functional-mutate: draining the owned writes queue is the operation itself
+      writes.splice(0)
+    },
     synchronize: <Value extends StorageValue>(key: StatusStorageKey, value: Value) => {
       values.set(key, value)
-      watchers.forEach((callbacks) => callbacks.forEach((callback) => callback()))
+      // functional-loop: owner-commit — ordered per-item external effects with no bulk primitive
+      for (const callbacks of watchers.values()) {
+        // functional-loop: owner-commit — ordered per-listener notification with no bulk primitive
+        for (const callback of callbacks) {
+          callback()
+        }
+      }
     },
     pause: (tabId: string) => pausedTabs.add(tabId),
     resume: (tabId: string) => {
       pausedTabs.delete(tabId)
-      watchers.get(tabId)?.forEach((callback) => callback())
+      {
+        // functional-loop: owner-commit — ordered per-listener notification with no bulk primitive
+        for (const callback of watchers.get(tabId) ?? []) {
+          callback()
+        }
+      }
     },
     holdNextRead: (tabId: string, key: StatusStorageKey) => {
       const captured = deferred<void>()
@@ -200,11 +234,15 @@ const createSharedStatusStorage = (
           if (!values.has(statusKey) || Object.is(values.get(statusKey), value)) return
           values.set(statusKey, value)
           writes.push({ tabId, key: statusKey, value })
-          watchers.forEach((callbacks, candidateId) => {
+          // functional-loop: owner-commit — ordered per-watcher notification during live Map iteration
+          for (const [candidateId, callbacks] of watchers) {
             if (candidateId !== tabId && !pausedTabs.has(candidateId)) {
-              callbacks.forEach((callback) => callback())
+              // functional-loop: owner-commit — ordered per-item external effects with no bulk primitive
+              for (const callback of callbacks) {
+                callback()
+              }
             }
-          })
+          }
         },
         watch: async (callback) => {
           tabWatchers.add(callback)
@@ -253,21 +291,23 @@ type Fixture = ReturnType<typeof createFixture>
 
 const prepareDelivery = async (...fixtures: Fixture[]) => {
   await vi.waitFor(() => {
-    fixtures.forEach((fixture) => {
+    // functional-loop: owner-commit — ordered per-fixture readiness assertions with no bulk primitive
+    for (const fixture of fixtures) {
       expect(fixture.store.query(fixture.domain.query.StatusLoadIsFinishedQuery())).toBe(true)
       expect(fixture.store.query(fixture.userInfoDomain.query.UserInfoQuery())).not.toBeNull()
       expect(fixture.messageListeners.size).toBe(1)
       expect(fixture.sessionListeners.size).toBe(1)
-    })
+    }
   })
-  fixtures.forEach((fixture) => {
+  // functional-loop: owner-commit — ordered per-fixture session emission with no bulk primitive
+  for (const fixture of fixtures) {
     fixture.emitSessions([
       { sessionId: 'local-session', user: SELF },
       { sessionId: 'remote-session', user: OTHER },
       { sessionId: 'alpha-session', user: ALPHA },
       { sessionId: 'beta-session', user: BETA }
     ])
-  })
+  }
 }
 
 const statusOf = (fixture: Fixture) => ({
@@ -279,7 +319,10 @@ const statusOf = (fixture: Fixture) => ({
 const authorOf = (fixture: Fixture) => fixture.store.query(fixture.domain.query.AppButtonAuthorQuery())
 
 afterEach(() => {
-  activeStores.forEach((store) => store.discard())
+  // functional-loop: owner-commit — ordered per-item external effects with no bulk primitive
+  for (const store of activeStores) {
+    store.discard()
+  }
   activeStores.clear()
   vi.useRealTimers()
   vi.restoreAllMocks()
@@ -290,7 +333,7 @@ describe('AppStatus shared domain status', () => {
   it('exposes only the shell queries, commands, and events used by production consumers', () => {
     const fixture = createFixture()
 
-    expect(Object.keys(fixture.domain.query).sort()).toEqual(
+    expect(Object.keys(fixture.domain.query).toSorted()).toEqual(
       [
         'AppButtonAuthorQuery',
         'HasUnreadQuery',
@@ -299,16 +342,16 @@ describe('AppStatus shared domain status', () => {
         'PositionQuery',
         'ReadyQuery',
         'StatusLoadIsFinishedQuery'
-      ].sort()
+      ].toSorted()
     )
-    expect(Object.keys(fixture.domain.command).sort()).toEqual(
+    expect(Object.keys(fixture.domain.command).toSorted()).toEqual(
       [
         'MarkReadyCommand',
         'MarkUnavailableCommand',
         'RetryCommand',
         'UpdateOpenCommand',
         'UpdatePositionCommand'
-      ].sort()
+      ].toSorted()
     )
     expect(Object.keys(fixture.domain.event)).toEqual(['RetryRequestedEvent'])
   })

@@ -68,8 +68,14 @@ class FakeFirefoxAdapter implements FirefoxActionPreconditionAdapter {
 
   constructor(tabs: readonly FirefoxActionTab[], readyHandles: readonly string[] = []) {
     this.tabs = tabs.map((tab) => ({ ...tab }))
-    this.tabs.forEach((tab) => this.baseHandles.set(tab.identity, tab.identity.replace(/^physical:/, '')))
-    readyHandles.forEach((handle) => this.runtimeReadyIdentities.add(`physical:${handle}`))
+    // functional-loop: owner-commit — ordered per-item external effects with no bulk primitive
+    for (const tab of this.tabs) {
+      this.baseHandles.set(tab.identity, tab.identity.replace(/^physical:/, ''))
+    }
+    // functional-loop: owner-commit — ordered per-handle registration with no bulk primitive
+    for (const handle of readyHandles) {
+      this.runtimeReadyIdentities.add(`physical:${handle}`)
+    }
   }
 
   async listTabs() {
@@ -522,6 +528,9 @@ describe('Firefox action precondition', () => {
       { acceptedTarget: 'https://example.com/other' }
     ]
 
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
+
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (const mismatch of mismatches) {
       await expectCode(assertFirefoxActionBinding(adapter, binding, { ...context, ...mismatch }), 'invalid-binding')
     }
@@ -579,6 +588,9 @@ describe('Firefox action precondition', () => {
       ['physical:content', 'physical:unrelated-options']
     ] as const
 
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
+
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (const activeIdentities of invalidActiveSets) {
       const adapter = new FakeFirefoxAdapter(
         [
@@ -687,6 +699,9 @@ describe('Firefox action precondition', () => {
     const generations = ['initial', 'restart-1', 'restart-2'] as const
     const records = []
 
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
+
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (const generationId of generations) {
       const generationContext = { ...context, generationId }
       const adapter = new FakeFirefoxAdapter(

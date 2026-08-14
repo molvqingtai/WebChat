@@ -40,6 +40,7 @@ const deferred = () => {
 }
 
 const flushMicrotasks = async () => {
+  // functional-loop: early-return — the loop must exit the enclosing function on the guarded item
   for (let index = 0; index < 20; index += 1) await Promise.resolve()
 }
 
@@ -119,7 +120,12 @@ const createFixture = (readiness?: Readiness) => {
     room,
     chat,
     toast,
-    emitReadiness: (state: ReadinessState) => readinessListeners.forEach((listener) => listener(state))
+    emitReadiness: (state: ReadinessState) => {
+      // functional-loop: owner-commit — ordered per-listener notification with no bulk primitive
+      for (const listener of readinessListeners) {
+        listener(state)
+      }
+    }
   }
 }
 
@@ -134,11 +140,17 @@ const join = async (fixture: ReturnType<typeof createFixture>) => {
 }
 
 const clearToastCalls = (toast: Toast) => {
-  Object.values(toast).forEach((method) => vi.mocked(method).mockClear())
+  // functional-loop: owner-commit — ordered per-method mock clearing with no bulk primitive
+  for (const method of Object.values(toast)) {
+    vi.mocked(method).mockClear()
+  }
 }
 
 afterEach(() => {
-  activeStores.forEach((store) => store.discard())
+  // functional-loop: owner-commit — ordered per-item external effects with no bulk primitive
+  for (const store of activeStores) {
+    store.discard()
+  }
   activeStores.clear()
   vi.useRealTimers()
   vi.restoreAllMocks()

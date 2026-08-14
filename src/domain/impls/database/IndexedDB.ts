@@ -67,17 +67,19 @@ const openDatabase = <Schema extends DatabaseSchema<Schema>>(
         const database = request.result
         const transaction = request.transaction
         if (!transaction) throw new Error('IndexedDB upgrade transaction is unavailable')
-        Object.entries(definition.stores).forEach(([storeName, rawStore]) => {
+        // functional-loop: owner-commit — ordered per-store creation during the upgrade transaction
+        for (const [storeName, rawStore] of Object.entries(definition.stores)) {
           const storeDefinition = rawStore as StoreDefinition<Schema[StoreName<Schema>]>
           const store = database.objectStoreNames.contains(storeName)
             ? transaction.objectStore(storeName)
             : database.createObjectStore(storeName)
-          Object.entries(storeDefinition.indexes).forEach(([indexName, indexDefinition]) => {
+          // functional-loop: owner-commit — ordered per-index creation during the upgrade transaction
+          for (const [indexName, indexDefinition] of Object.entries(storeDefinition.indexes)) {
             if (indexDefinition.introducedIn <= definition.version && !store.indexNames.contains(indexName)) {
               store.createIndex(indexName, indexDefinition.keyPath)
             }
-          })
-        })
+          }
+        }
       },
       { once: true }
     )
@@ -404,12 +406,13 @@ export class IndexedDBDatabase<Schema extends DatabaseSchema<Schema>> implements
 
   private notify(stores: readonly string[]) {
     if (this.closed) return
-    this.watchers.forEach((watcher) => {
-      if (!stores.some((store) => watcher.stores.has(store))) return
+    // functional-loop: owner-commit — ordered per-watcher notification with no bulk primitive
+    for (const watcher of this.watchers) {
+      if (!stores.some((store) => watcher.stores.has(store))) continue
       try {
         watcher.listener()
       } catch {}
-    })
+    }
   }
 
   private execute<Stores extends readonly [StoreName<Schema>, ...StoreName<Schema>[]], Result>(

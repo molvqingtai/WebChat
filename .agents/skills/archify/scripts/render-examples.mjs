@@ -17,6 +17,7 @@ const TARGETS = [
   ['architecture', 'web-app.architecture.json', 'web-app-rendered.html']
 ]
 
+// functional-loop: owner-commit — ordered per-item emission with no bulk primitive
 for (const [mode, input, output] of TARGETS) {
   execFileSync(
     process.execPath,

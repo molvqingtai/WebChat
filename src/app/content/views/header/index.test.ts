@@ -46,6 +46,7 @@ const sites = [
 ]
 
 beforeEach(() => {
+  // functional-mutate: resetting the owned queries queue is the operation itself
   queries.splice(0, queries.length, [], sites)
   lists.length = 0
 })

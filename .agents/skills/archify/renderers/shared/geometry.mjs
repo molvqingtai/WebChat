@@ -117,6 +117,7 @@ export function roundedPath(points, radius) {
   }
 
   const commands = [`M ${points[0][0]} ${points[0][1]}`]
+  // functional-loop: continue — the loop must skip the guarded item and keep processing
   for (let i = 1; i < points.length - 1; i += 1) {
     const [px, py] = points[i - 1]
     const [cx, cy] = points[i]

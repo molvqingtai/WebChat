@@ -31,10 +31,11 @@ export const createSendLifecycle = (): SendLifecycle => {
       }
     },
     cancelActiveSends: () => {
-      tokens.forEach((result, token) => {
+      // functional-loop: owner-commit — ordered per-token cancellation during live Map iteration
+      for (const [token, result] of tokens) {
         // Mark active invocations cancelled; they are removed when the owning invocation reads them.
         if (result === 'active') tokens.set(token, 'cancelled')
-      })
+      }
     }
   }
 }

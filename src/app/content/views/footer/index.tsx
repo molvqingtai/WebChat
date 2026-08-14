@@ -68,13 +68,14 @@ const Footer: FC = () => {
       // "@user" => "E@user"
       // "@user" => "@useEr"
       // "@user" => "@user @user"
-      atUserRecord.current.forEach((item, userId) => {
+      // functional-loop: owner-commit — ordered per-user range rewriting into the live Map
+      for (const [userId, item] of atUserRecord.current) {
         const positionList = [...item].map<[number, number]>((item) => {
           const inBefore = Math.min(start, end) <= item[1]
           return inBefore ? [item[0] + offset + (end - start), item[1] + offset + (end - start)] : item
         })
         atUserRecord.current.set(userId, new Set(positionList))
-      })
+      }
 
       // Insert a new @user record
       if (atUserId) {
@@ -83,7 +84,8 @@ const Footer: FC = () => {
 
       // After moving, check if the @user in the message matches the saved position record. If not, it means the @user has been edited, so delete that record.
       // Filter out records where the stored position does not match the actual position.
-      atUserRecord.current.forEach((item, userId) => {
+      // functional-loop: owner-commit — per-user range validation and deletion during live Map iteration
+      for (const [userId, item] of atUserRecord.current) {
         // Pre-calculate the offset after InputCommand
         const positionList = [...item].filter((item) => {
           const name = message.slice(item[0], item[1] + 1)
@@ -94,7 +96,7 @@ const Footer: FC = () => {
         } else {
           atUserRecord.current.delete(userId)
         }
-      })
+      }
     },
     [userList]
   )
@@ -118,7 +120,8 @@ const Footer: FC = () => {
   const transformMessage = async (message: string) => {
     let newMessage = message
     const matchList = [...message.matchAll(/!\[Image\]\(hash:([^\s)]+)\)/g)]
-    matchList?.forEach((match) => {
+    // functional-loop: owner-commit — ordered per-image hash expansion into the draft candidate
+    for (const match of matchList ?? []) {
       const base64 = imageRecord.current.get(match[1])
       if (base64) {
         const base64Syntax = `![Image](${base64})`
@@ -128,7 +131,7 @@ const Footer: FC = () => {
         newMessage = newMessage.replace(hashSyntax, base64Syntax)
         updateAtUserAtRecord(newMessage, startIndex, endIndex, 0)
       }
-    })
+    }
     return newMessage
   }
 

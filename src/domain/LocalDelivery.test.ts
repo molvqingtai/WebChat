@@ -146,8 +146,18 @@ const createPage = (database: Database<MessageDatabaseSchema>, nextId: () => str
     room,
     list,
     messageStore,
-    emitMessage: (message: ChatMessage) => listeners.message.forEach((listener) => listener(message)),
-    emitSessions: (sessions: readonly ChatSession[]) => listeners.sessions.forEach((listener) => listener(sessions))
+    emitMessage: (message: ChatMessage) => {
+      // functional-loop: owner-commit — ordered per-listener notification with no bulk primitive
+      for (const listener of listeners.message) {
+        listener(message)
+      }
+    },
+    emitSessions: (sessions: readonly ChatSession[]) => {
+      // functional-loop: owner-commit — ordered per-listener notification with no bulk primitive
+      for (const listener of listeners.sessions) {
+        listener(sessions)
+      }
+    }
   }
 }
 
@@ -195,7 +205,10 @@ describe.each(backends)('$name causal local send projection', (backend) => {
     await vi.waitFor(() => expect(projected).toEqual(['local-message']))
     expect(page.store.query(page.list.query.RecordListQuery())).toEqual([])
     expect(remote).toEqual([])
-    notify.forEach((listener) => listener())
+    // functional-loop: owner-commit — ordered per-item external effects with no bulk primitive
+    for (const listener of notify) {
+      listener()
+    }
     notify.clear()
     await vi.waitFor(() => expect(page.store.query(page.list.query.RecordListQuery())).toHaveLength(1))
     expect(projected).toEqual(['local-message'])

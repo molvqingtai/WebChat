@@ -101,10 +101,12 @@ function measureState(state) {
 
 const states = new Map(asArray(lifecycle.states).map((state) => [state.id, measureState(state)]))
 const stateSteps = new Map()
+// functional-loop: owner-commit — ordered per-item emission with no bulk primitive
 for (const [index, transition] of asArray(lifecycle.transitions).entries()) {
   if (!stateSteps.has(transition.from)) stateSteps.set(transition.from, index)
   if (!stateSteps.has(transition.to)) stateSteps.set(transition.to, index + 1)
 }
+// functional-loop: owner-commit — ordered per-item emission with no bulk primitive
 for (const [index, state] of asArray(lifecycle.states).entries()) {
   if (!stateSteps.has(state.id)) stateSteps.set(state.id, index)
 }
@@ -139,6 +141,7 @@ function validateLifecycle() {
     )
   }
 
+  // functional-loop: continue — the loop must skip the guarded item and keep processing
   for (const state of states.values()) {
     if (!laneIds.has(state.lane)) {
       problems.push(`State "${state.id}" uses unknown lane "${state.lane}".`)
@@ -180,7 +183,9 @@ function validateLifecycle() {
   // All non-main/non-terminal lanes share the same y band, so the overlap
   // check must run across lanes — not per-lane.
   const allStates = [...states.values()]
+  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
   for (let i = 0; i < allStates.length; i += 1) {
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (let j = i + 1; j < allStates.length; j += 1) {
       if (rectsOverlap(allStates[i], allStates[j], 10)) {
         problems.push(
@@ -190,6 +195,7 @@ function validateLifecycle() {
     }
   }
 
+  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
   for (const transition of asArray(lifecycle.transitions)) {
     if (!states.has(transition.from))
       problems.push(
@@ -209,6 +215,7 @@ function validateLifecycle() {
   }
 
   const labelRects = []
+  // functional-loop: continue — the loop must skip the guarded item and keep processing
   for (const transition of asArray(lifecycle.transitions)) {
     if (!transition.label || !states.has(transition.from) || !states.has(transition.to)) continue
     const [lx, ly] = labelPoint(transition, pathFor(transition).points)
@@ -217,7 +224,9 @@ function validateLifecycle() {
     const height = transition.note ? 27 : 16
     labelRects.push({ label: transition.label, x: lx - width / 2, y: ly - 11, width, height, lx, ly })
   }
+  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
   for (const rect of labelRects) {
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (const state of states.values()) {
       if (rectsOverlap(rect, state, -2)) {
         problems.push(
@@ -226,7 +235,9 @@ function validateLifecycle() {
       }
     }
   }
+  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
   for (let i = 0; i < labelRects.length; i += 1) {
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (let j = i + 1; j < labelRects.length; j += 1) {
       if (rectsOverlap(labelRects[i], labelRects[j], -2)) {
         problems.push(

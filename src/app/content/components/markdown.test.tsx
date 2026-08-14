@@ -79,6 +79,9 @@ describe('message image rendering', () => {
     expect(images.map((image) => image.getAttribute('src'))).toEqual(['blob:webchat-cat', 'blob:webchat-diagram'])
     expect(createObjectURL).toHaveBeenCalledTimes(2)
 
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
+
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (const image of images) {
       expect(image.style.maxInlineSize).toBe('70cqi')
       expect(image.style.maxBlockSize).toBe('70cqi')

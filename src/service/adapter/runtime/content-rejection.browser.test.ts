@@ -21,7 +21,12 @@ describe('content Runtime rejection ownership', () => {
           type: 'pong',
           sender: { type: 'provider' }
         }
-        queueMicrotask(() => listeners.forEach((listener) => listener(response)))
+        queueMicrotask(() => {
+          // functional-loop: owner-commit — ordered per-listener notification with no bulk primitive
+          for (const listener of listeners) {
+            listener(response)
+          }
+        })
         return Promise.resolve()
       }),
       onMessage: {
@@ -101,7 +106,12 @@ describe('content Runtime rejection ownership', () => {
           sender: { type: 'provider' },
           data: message.type === 'apply' ? { phase: 'ready', generation: 1, snapshot } : undefined
         }
-        queueMicrotask(() => listeners.forEach((listener) => listener(response)))
+        queueMicrotask(() => {
+          // functional-loop: owner-commit — ordered per-listener notification with no bulk primitive
+          for (const listener of listeners) {
+            listener(response)
+          }
+        })
         return Promise.resolve()
       }),
       onMessage: {

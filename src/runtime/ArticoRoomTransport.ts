@@ -50,23 +50,39 @@ export const createArticoRoomTransport = (): RoomTransport => {
     const isCurrent = () =>
       owners.get(owner.roomId) === owner && !owner.disposed && owner.peer === peer && owner.room === room
     room.on('message', (rawPayload, sourcePeerId) => {
-      if (isCurrent()) messageListeners.forEach((listener) => listener(owner.roomId, sourcePeerId, rawPayload))
+      if (isCurrent()) {
+        // functional-loop: owner-commit — ordered per-listener notification with no bulk primitive
+        for (const listener of messageListeners) {
+          listener(owner.roomId, sourcePeerId, rawPayload)
+        }
+      }
     })
     room.on('join', (joinedPeerId) => {
       if (!isCurrent()) return
       owner.readyPeers.add(joinedPeerId)
-      joinListeners.forEach((listener) => listener(owner.roomId, joinedPeerId))
+      // functional-loop: owner-commit — ordered per-listener notification with no bulk primitive
+      for (const listener of joinListeners) {
+        listener(owner.roomId, joinedPeerId)
+      }
     })
     room.on('leave', (leftPeerId) => {
       if (!isCurrent()) return
       owner.readyPeers.delete(leftPeerId)
-      leaveListeners.forEach((listener) => listener(owner.roomId, leftPeerId))
+      // functional-loop: owner-commit — ordered per-listener notification with no bulk primitive
+      for (const listener of leaveListeners) {
+        listener(owner.roomId, leftPeerId)
+      }
     })
     room.on('close', () => {
       if (!isCurrent()) return
       owner.room = undefined
       owner.readyPeers.clear()
-      if (!owner.disposed) closeListeners.forEach((listener) => listener(owner.roomId))
+      if (!owner.disposed) {
+        // functional-loop: owner-commit — ordered per-listener notification with no bulk primitive
+        for (const listener of closeListeners) {
+          listener(owner.roomId)
+        }
+      }
     })
   }
 
@@ -118,7 +134,10 @@ export const createArticoRoomTransport = (): RoomTransport => {
       // the physical restart path below is the only structural self-healing mechanism. A retired or
       // disposed owner can never leak an error outside its exact room scope.
       if (owner.disposed || owners.get(owner.roomId) !== owner || owner.peer !== nextPeer) return
-      errorListeners.forEach((listener) => listener(error, owner.roomId))
+      // functional-loop: owner-commit — ordered per-listener notification with no bulk primitive
+      for (const listener of errorListeners) {
+        listener(error, owner.roomId)
+      }
     })
     nextPeer.on('close', () => {
       if (owner.disposed || owners.get(owner.roomId) !== owner || owner.peer !== nextPeer || owner.restartTimer) return
@@ -169,7 +188,10 @@ export const createArticoRoomTransport = (): RoomTransport => {
       try {
         room.leave()
       } catch (error) {
-        errorListeners.forEach((listener) => listener(error as Error, owner.roomId))
+        // functional-loop: owner-commit — ordered per-listener notification with no bulk primitive
+        for (const listener of errorListeners) {
+          listener(error as Error, owner.roomId)
+        }
       }
     }
     try {
@@ -205,14 +227,15 @@ export const createArticoRoomTransport = (): RoomTransport => {
       if (!owner || !room) throw new Error(`Room "${roomId}" not joined`)
       const targets = new Set(typeof to === 'string' ? [to] : (to ?? owner.readyPeers))
       let firstError: Error | null = null
-      targets.forEach((target) => {
+      // functional-loop: owner-commit — ordered per-target sends attempt each target exactly once
+      for (const target of targets) {
         try {
           room.send(payload, target)
         } catch (error) {
           // Every target is attempted exactly once; the first genuine throw surfaces after the rest ran.
           firstError ??= error as Error
         }
-      })
+      }
       if (firstError) throw firstError
     },
     onMessage: (callback) => {
@@ -236,7 +259,10 @@ export const createArticoRoomTransport = (): RoomTransport => {
       return () => errorListeners.delete(callback)
     },
     dispose: () => {
-      ;[...owners.values()].forEach(dropOwner)
+      // functional-loop: owner-commit — ordered per-owner disposal with no bulk primitive
+      for (const owner of Array.from(owners.values())) {
+        dropOwner(owner)
+      }
       messageListeners.clear()
       joinListeners.clear()
       leaveListeners.clear()

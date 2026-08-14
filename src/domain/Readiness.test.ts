@@ -33,7 +33,10 @@ const createFixture = (initial: ReadinessState) => {
     observedStates,
     emit: (state: ReadinessState) => {
       current = state
-      listeners.forEach((listener) => listener(state))
+      // functional-loop: owner-commit — ordered per-item external effects with no bulk primitive
+      for (const listener of listeners) {
+        listener(state)
+      }
     },
     discard: () => {
       querySubscription.unsubscribe()
@@ -45,6 +48,9 @@ const createFixture = (initial: ReadinessState) => {
   }
 }
 
+// functional-loop: owner-commit — ordered per-item emission with no bulk primitive
+
+// functional-loop: owner-commit — ordered per-item emission with no bulk primitive
 for (const initial of ['connecting', 'ready', 'unavailable'] as const) {
   it(`immediately replays ${initial} without treating an equal input as another transition`, () => {
     const fixture = createFixture(initial)

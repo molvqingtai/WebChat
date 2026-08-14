@@ -15,9 +15,10 @@ const names = new Set<string>()
 
 const trackWebChatDatabases = async () => {
   const databases = (await indexedDB.databases()).filter((database) => database.name?.startsWith(STORAGE_NAME))
-  databases.forEach((database) => {
+  // functional-loop: owner-commit — ordered per-database name tracking with no bulk primitive
+  for (const database of databases) {
     if (database.name) names.add(database.name)
-  })
+  }
   return databases
 }
 

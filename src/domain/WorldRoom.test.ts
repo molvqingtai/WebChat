@@ -28,8 +28,18 @@ const createFixture = (initial: WorldState) => {
     store,
     room,
     port,
-    emitState: (state: WorldState) => stateListeners.forEach((listener) => listener(state)),
-    emitError: (error: Error) => errorListeners.forEach((listener) => listener(error))
+    emitState: (state: WorldState) => {
+      // functional-loop: owner-commit — ordered per-listener notification with no bulk primitive
+      for (const listener of stateListeners) {
+        listener(state)
+      }
+    },
+    emitError: (error: Error) => {
+      // functional-loop: owner-commit — ordered per-listener notification with no bulk primitive
+      for (const listener of errorListeners) {
+        listener(error)
+      }
+    }
   }
 }
 

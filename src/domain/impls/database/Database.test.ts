@@ -391,6 +391,9 @@ describe.each(backends)('$name Database contract', (backend) => {
       database.read(['records'], (transaction) => transaction.scan('records', { unexpected: true } as never))
     ).rejects.toThrow('unknown field')
 
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
+
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (const value of [undefined, Number.POSITIVE_INFINITY, 1n, new Date(), new Map(), sparse, cyclic]) {
       await expect(
         database.write(['records'], (transaction) => transaction.insert('records', 'invalid', value))

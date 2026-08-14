@@ -28,6 +28,7 @@ const readLimited = async (stream: ReadableStream<Uint8Array>, limit: number): P
   const chunks: Uint8Array[] = []
   let byteLength = 0
   try {
+    // functional-loop: condition-driven — streaming reads until the payload ends or the limit trips
     for (;;) {
       const { done, value } = await reader.read()
       if (done) break
@@ -43,10 +44,11 @@ const readLimited = async (stream: ReadableStream<Uint8Array>, limit: number): P
   }
   const result = new Uint8Array(byteLength)
   let offset = 0
-  chunks.forEach((chunk) => {
+  // functional-loop: owner-commit — ordered per-chunk copy into the assembled buffer
+  for (const chunk of chunks) {
     result.set(chunk, offset)
     offset += chunk.byteLength
-  })
+  }
   return result
 }
 

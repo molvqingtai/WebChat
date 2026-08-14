@@ -29,6 +29,7 @@ const getCursorPosition = (target: HTMLInputElement | HTMLTextAreaElement) => {
 
         const copyStyle = getComputedStyle(target)
 
+        // functional-loop: owner-commit — ordered per-property style copy with no bulk primitive
         for (const key of copyStyle) {
           Reflect.set(copyInput.style, key, copyStyle[key as keyof CSSStyleDeclaration])
         }

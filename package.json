@@ -15,8 +15,8 @@
     "pack:firefox": "wxt zip -b firefox",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
-    "lint": "oxlint --fix .",
-    "lint:check": "oxlint .",
+    "lint": "oxlint --fix . && node scripts/check-functional-iteration.mjs",
+    "lint:check": "oxlint . && node scripts/check-functional-iteration.mjs",
     "clear": "rimraf .output node_modules",
     "test": "vitest run",
     "test:e2e:chrome": "cross-env NODE_ENV=production pnpm build:chrome && node e2e/chrome-runtime.ts",
@@ -139,12 +139,14 @@
     "vite-plugin-svgr": "^5.2.0",
     "vitest": "^4.1.10",
     "vitest-browser-react": "^2.2.0",
-    "wxt": "^0.20.27"
+    "wxt": "^0.20.27",
+    "webchat-oxlint-functional-plugin": "file:./oxlint/functional-plugin"
   },
   "lint-staged": {
     "*.{js,jsx,ts,tsx}": [
       "oxfmt --write",
-      "oxlint --fix"
+      "oxlint --fix",
+      "node scripts/check-functional-iteration.mjs"
     ]
   },
   "engines": {

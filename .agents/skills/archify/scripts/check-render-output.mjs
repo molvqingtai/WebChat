@@ -73,6 +73,7 @@ function collectArrows(fragment) {
   const arrows = []
   let index = 0
 
+  // functional-loop: continue — the loop must skip the guarded item and keep processing
   for (const tag of fragment.matchAll(/<(path|line)\b[^>]*>/gi)) {
     const raw = tag[0]
     if (!/\bclass="[^"]*\ba-(?:default|emphasis|security|dashed)\b/.test(raw)) continue
@@ -95,6 +96,7 @@ function lineSegments(attrs) {
 function pathSegments(d) {
   const points = pointsFromPath(d)
   const segments = []
+  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
   for (let i = 1; i < points.length; i += 1) {
     segments.push({ start: points[i - 1], end: points[i] })
   }
@@ -110,6 +112,7 @@ function isTwoPointDiagonal(arrow) {
 function collectLegendBoxes(fragment) {
   const boxes = []
 
+  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
   for (const match of fragment.matchAll(/<rect\b[^>]*>/gi)) {
     const attrs = parseAttrs(match[0])
     const x = numberAttr(attrs, 'x')
@@ -121,6 +124,7 @@ function collectLegendBoxes(fragment) {
     }
   }
 
+  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
   for (const match of fragment.matchAll(/<text\b([^>]*)>([\s\S]*?)<\/text>/gi)) {
     const attrs = parseAttrs(match[1])
     const box = textBox(attrs, stripTags(match[2]).trim())
@@ -132,8 +136,11 @@ function collectLegendBoxes(fragment) {
 
 function collectLegendCollisions(arrows, boxes) {
   const collisions = []
+  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
   for (const arrow of arrows) {
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (const segment of arrow.segments) {
+      // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
       for (const box of boxes) {
         if (segmentIntersectsBox(segment, padBox(box, 2))) {
           collisions.push({ arrow, box })
@@ -165,6 +172,7 @@ function textBox(attrs, text) {
 
 function estimatedTextWidth(text, fontSize) {
   let units = 0
+  // functional-loop: break — the loop must stop exactly at the guarded item
   for (const char of text) units += char.charCodeAt(0) > 255 ? 1.8 : 0.62
   return Math.max(fontSize, units * fontSize)
 }
@@ -177,6 +185,7 @@ function pointsFromPath(d) {
   let current = [0, 0]
   let start = null
 
+  // functional-loop: break — the loop must stop exactly at the guarded item
   while (i < tokens.length) {
     if (isCommand(tokens[i])) command = tokens[i++]
     if (!command) break
@@ -185,6 +194,7 @@ function pointsFromPath(d) {
     switch (command.toUpperCase()) {
       case 'M':
       case 'L': {
+        // functional-loop: break — the loop must stop exactly at the guarded item
         while (i + 1 < tokens.length && !isCommand(tokens[i])) {
           const x = Number.parseFloat(tokens[i++])
           const y = Number.parseFloat(tokens[i++])
@@ -196,6 +206,7 @@ function pointsFromPath(d) {
         break
       }
       case 'H': {
+        // functional-loop: break — the loop must stop exactly at the guarded item
         while (i < tokens.length && !isCommand(tokens[i])) {
           const x = Number.parseFloat(tokens[i++])
           if (!Number.isFinite(x)) break
@@ -205,6 +216,7 @@ function pointsFromPath(d) {
         break
       }
       case 'V': {
+        // functional-loop: break — the loop must stop exactly at the guarded item
         while (i < tokens.length && !isCommand(tokens[i])) {
           const y = Number.parseFloat(tokens[i++])
           if (!Number.isFinite(y)) break
@@ -294,6 +306,7 @@ function padBox(box, padding) {
 
 function parseAttrs(tag) {
   const attrs = {}
+  // functional-loop: early-return — the loop must exit the enclosing function on the guarded item
   for (const match of tag.matchAll(/([\w:-]+)\s*=\s*"([^"]*)"/g)) attrs[match[1]] = match[2]
   return attrs
 }

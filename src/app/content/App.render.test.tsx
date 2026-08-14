@@ -65,7 +65,7 @@ vi.mock('@/domain/Danmaku', () => ({
     command: {
       MountCommand: (binding: { container: HTMLElement; onOpen: () => void }) => {
         fixture.onDanmakuClick = binding.onOpen
-        fixture.danmakuMountKeys = Object.keys(binding).sort()
+        fixture.danmakuMountKeys = Object.keys(binding).toSorted()
         return 'mount-danmaku'
       },
       UnmountCommand: () => 'unmount-danmaku'

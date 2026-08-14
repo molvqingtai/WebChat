@@ -212,6 +212,9 @@ describe.each(backends)('$name MessageStore contract', (backend) => {
     const { database, messageStore } = create(backend)
     await messageStore.insert(textRecord('bounded', 'first'))
 
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
+
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (let index = 0; index < 6; index += 1) {
       await messageStore.insert(textRecord('bounded', `conflict-${index}`))
     }
@@ -240,6 +243,9 @@ describe.each(backends)('$name MessageStore contract', (backend) => {
       }
     ]
 
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
+
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (const item of invalid) {
       const { database, messageStore } = create(backend)
       const valid = textRecord(`valid-${item.key}`)
@@ -261,6 +267,7 @@ describe.each(backends)('$name MessageStore contract', (backend) => {
       { key: 'outer-mismatch', value: { ...textRecord('outer-mismatch'), id: 'other' } },
       { key: 'user-mismatch', value: { ...textRecord('user-mismatch'), user: { ...USER, id: 'other-user' } } }
     ]
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (const { key, value } of equalityRows) {
       const { database: db, messageStore: store } = create(backend)
       await db.write(['records'], (transaction) => transaction.insert('records', key, value))
@@ -303,6 +310,9 @@ describe.each(backends)('$name MessageStore contract', (backend) => {
       receivedAt: 1
     }
 
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
+
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (const input of [prefixedButUntyped, { id: 'missing-fields' }]) {
       await expect(messageStore.insert(input as unknown as MessageRecord)).resolves.toEqual({ inserted: true })
     }
@@ -359,6 +369,9 @@ describe.each(backends)('$name MessageStore contract', (backend) => {
     const listener = vi.fn()
     const unsubscribe = messageStore.watch(listener)
 
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
+
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (let version = 0; version < 6; version += 1) {
       await database.write(['records'], (transaction) =>
         transaction.put('records', 'legacy-record', { legacy: true, version })
@@ -393,6 +406,9 @@ describe.each(backends)('$name MessageStore contract', (backend) => {
       { signal: {} }
     ]
 
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
+
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (const query of invalid) {
       await expect(messageStore.query(query as MessageQuery)).rejects.toThrow(TypeError)
     }

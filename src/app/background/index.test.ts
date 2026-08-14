@@ -133,6 +133,9 @@ describe.each([
 it('registers one current listener across repeated Firefox background generations', async () => {
   const generations = [createAction(), createAction(), createAction()]
 
+  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
+
+  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
   for (const [index, generation] of generations.entries()) {
     const { unusedRead } = usePlatform(true, generation.namespace)
 

@@ -262,6 +262,9 @@ describe('WireDomain anti-corruption boundary', () => {
       accepted.push(sourcePeerId)
     )
 
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
+
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (let index = 0; index <= MAX_DECODE_QUEUE_FRAMES; index += 1) {
       runtime.receive(ROOM, 'peer-a', `frame-${index}`)
     }
@@ -283,6 +286,9 @@ describe('WireDomain anti-corruption boundary', () => {
     runtime.store.subscribeEvent(runtime.wire.event.ProtocolDropEvent, ({ reason }) => drops.push(reason))
     const frame = 'x'.repeat(MAX_DECODE_QUEUE_BYTES / 4)
 
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
+
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (let index = 0; index < 4; index += 1) runtime.receive(ROOM, 'peer-a', frame)
     runtime.receive(ROOM, 'peer-a', 'x')
 

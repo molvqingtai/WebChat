@@ -145,14 +145,15 @@ const makeRecord = (message: ChatMessage, user: ChatUser, receivedAt: number): C
 })
 
 const usersForRecords = (records: ChatMessageRecord[]): ChatUser[] => {
-  const snapshots: { user: ChatUser; message: ChatMessage }[] = []
-  records.forEach((record) => {
-    const index = snapshots.findIndex((item) => item.user.id === record.user.id)
-    if (index === -1) snapshots.push({ user: record.user, message: record.message })
-    else if (compareEventPosition(snapshots[index].message, record.message) < 0) {
-      snapshots[index] = { user: record.user, message: record.message }
+  const snapshots = records.reduce<{ user: ChatUser; message: ChatMessage }[]>((acc, record) => {
+    const index = acc.findIndex((item) => item.user.id === record.user.id)
+    if (index === -1) return [...acc, { user: record.user, message: record.message }]
+    const current = acc[index]
+    if (compareEventPosition(current.message, record.message) < 0) {
+      return acc.map((item, i) => (i === index ? { user: record.user, message: record.message } : item))
     }
-  })
+    return acc
+  }, [])
   return snapshots.map(({ user }) => user)
 }
 
@@ -465,10 +466,8 @@ const HistoryDomain = Remesh.domain({
       name: 'History.ClearSyncBindingsCommand',
       impl: ({ get }, payload: { sourcePeerId: string; domain: string }) => {
         const bindings = get(HistorySyncBindingsState())
-        const updated = new Map(bindings)
-        for (const key of bindings.keys()) {
-          if (key.startsWith(`${payload.sourcePeerId}\u0000${payload.domain}\u0000`)) updated.delete(key)
-        }
+        const prefix = `${payload.sourcePeerId}\u0000${payload.domain}\u0000`
+        const updated = new Map([...bindings].filter(([key]) => !key.startsWith(prefix)))
         return HistorySyncBindingsState().new(updated)
       }
     })
@@ -477,15 +476,11 @@ const HistoryDomain = Remesh.domain({
       name: 'History.ClearDomainSyncBindingsCommand',
       impl: ({ get }, runtimeDomain: string) => {
         const bindings = get(HistorySyncBindingsState())
-        const updated = new Map(bindings)
-        for (const key of bindings.keys()) {
-          if (
-            key.endsWith(`\u0000${runtimeDomain}\u0000provider`) ||
-            key.endsWith(`\u0000${runtimeDomain}\u0000requester`)
-          ) {
-            updated.delete(key)
-          }
-        }
+        const providerSuffix = `\u0000${runtimeDomain}\u0000provider`
+        const requesterSuffix = `\u0000${runtimeDomain}\u0000requester`
+        const updated = new Map(
+          [...bindings].filter(([key]) => !key.endsWith(providerSuffix) && !key.endsWith(requesterSuffix))
+        )
         return HistorySyncBindingsState().new(updated)
       }
     })
@@ -1492,17 +1487,18 @@ const HistoryDomain = Remesh.domain({
         const page = prepared.page
         const expectedHlc = get(sessionDomain.query.HlcQuery())
         let hlc = expectedHlc
-        let decodedBytes = current.responseBytes
-        let messageCount = current.responseCount
-        for (const event of page.messages) {
-          const messageBytes = getTextByteSize(JSON.stringify(event))
-          if (messageCount + 1 > historySessionMessages || decodedBytes + messageBytes > historySessionBytes) {
-            return FinishRequestedEvent({ domain: binding.domain, sourcePeerId: payload.sourcePeerId })
-          }
-          messageCount += 1
-          decodedBytes += messageBytes
+        const pageBytes = page.messages.reduce((total, event) => total + getTextByteSize(JSON.stringify(event)), 0)
+        if (
+          current.responseCount + page.messages.length > historySessionMessages ||
+          current.responseBytes + pageBytes > historySessionBytes
+        ) {
+          return FinishRequestedEvent({ domain: binding.domain, sourcePeerId: payload.sourcePeerId })
         }
+        const decodedBytes = current.responseBytes + pageBytes
+        const messageCount = current.responseCount + page.messages.length
         const records: ChatMessageRecord[] = []
+        // functional-loop: early-return — a cutoff-violating event must reject the whole page
+        // before any record is built, and observeHlc threads ordered per-item clock state
         for (const event of page.messages) {
           if (event.hlc.timestamp < current.cutoff) {
             return FinishRequestedEvent({ domain: binding.domain, sourcePeerId: payload.sourcePeerId })
@@ -1588,22 +1584,16 @@ const HistoryDomain = Remesh.domain({
             const page = prepared.page
             const expectedHlc = get(sessionDomain.query.HlcQuery())
             let hlc = expectedHlc
-            let decodedBytes = next.responseBytes
-            let messageCount = next.responseCount
-            let budgetOk = true
-            for (const event of page.messages) {
-              const messageBytes = getTextByteSize(JSON.stringify(event))
-              if (messageCount + 1 > historySessionMessages || decodedBytes + messageBytes > historySessionBytes) {
-                budgetOk = false
-                break
-              }
-              messageCount += 1
-              decodedBytes += messageBytes
-            }
-            if (!budgetOk) {
+            const pageBytes = page.messages.reduce((total, event) => total + getTextByteSize(JSON.stringify(event)), 0)
+            const decodedBytes = next.responseBytes + pageBytes
+            const messageCount = next.responseCount + page.messages.length
+            const overBudget = messageCount > historySessionMessages || decodedBytes > historySessionBytes
+            if (overBudget) {
               output.push(FinishRequestedEvent({ domain: current.domain, sourcePeerId: current.sourcePeerId }))
             } else {
               const records: ChatMessageRecord[] = []
+              // functional-loop: break — a cutoff-violating event must stop the page immediately,
+              // and continue skips events observeHlc rejects while threading ordered clock state
               for (const event of page.messages) {
                 if (event.hlc.timestamp < next.cutoff) {
                   output.push(FinishRequestedEvent({ domain: current.domain, sourcePeerId: current.sourcePeerId }))
@@ -1773,6 +1763,8 @@ const HistoryDomain = Remesh.domain({
                 ...(failedPageIds.length > 0 ? [DeadPagesEvent(failedPageIds)] : []),
                 FinishCurrentRequestedEvent(key)
               ]
+              // functional-loop: break — the per-page deadline must stop page selection and
+              // fail over after each ordered physical settlement
               for (const pageId of pageIds) {
                 const remainingMs = supplyDeadline - clock.now()
                 if (remainingMs <= 0) break
@@ -1837,6 +1829,8 @@ const HistoryDomain = Remesh.domain({
                 await codec.encode(frame)
                 return frame
               }
+              // functional-loop: owner-commit — sequential async codec probe per candidate page
+              // with throw-closes-bucket semantics and no bulk primitive
               for (const id of inventoryIds) {
                 const candidate = [...bucket, id]
                 let fits = true
@@ -1985,6 +1979,8 @@ const HistoryDomain = Remesh.domain({
               const known = attempt.inventory
               const eligible: { record: ChatMessageRecord; bytes: number }[] = []
               let decodedBytes = 0
+              // functional-loop: continue — per-record admission filters skip known and
+              // pre-cutoff records, and break stops once the session budget is reached
               for (const record of supplied.records) {
                 if (known.has(record.message.id)) continue
                 if (eligible.length >= historySessionMessages || decodedBytes >= historySessionBytes) break
@@ -2035,6 +2031,8 @@ const HistoryDomain = Remesh.domain({
                 cutoff: currentProvider.cutoff,
                 mode: 'provider' as const
               }
+              // functional-loop: early-return — a live-attempt invalidation must abandon the
+              // remaining ordered page selections immediately
               for (const pageId of pageIds) {
                 // Re-check the complete live attempt before selecting another page: a
                 // cleanup-invalidated attempt stops the old pipeline without starting a query.

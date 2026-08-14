@@ -65,7 +65,10 @@ describe('Runtime browser adapters', () => {
     adapter.onMessage(received)
 
     const request = providerMessage('request', { sender: { type: 'injector' }, meta: {} })
-    listeners.forEach((listener) => listener(request, { tab: { id: 7, url: 'https://example.com/' } } as never))
+    // functional-loop: owner-commit — ordered per-listener delivery with no bulk primitive
+    for (const listener of listeners) {
+      listener(request, { tab: { id: 7, url: 'https://example.com/' } } as never)
+    }
     adapter.sendMessage(providerMessage('response'), [])
 
     expect(received).toHaveBeenCalledWith({
@@ -77,7 +80,10 @@ describe('Runtime browser adapters', () => {
       sender: { type: 'injector' },
       meta: {}
     })
-    listeners.forEach((listener) => listener(backgroundRequest, { url: 'chrome-extension://test/background.js' }))
+    // functional-loop: owner-commit — ordered per-listener delivery with no bulk primitive
+    for (const listener of listeners) {
+      listener(backgroundRequest, { url: 'chrome-extension://test/background.js' })
+    }
     expect(received).toHaveBeenLastCalledWith(backgroundRequest)
     expect(sendMessage).toHaveBeenCalledWith(providerMessage('response'))
 
@@ -103,7 +109,10 @@ describe('Runtime browser adapters', () => {
     })
     const trustedTab = { id: 7, url: 'https://example.com/' }
 
-    listeners.forEach((listener) => listener(request, { tab: trustedTab } as never))
+    // functional-loop: owner-commit — ordered per-listener delivery with no bulk primitive
+    for (const listener of listeners) {
+      listener(request, { tab: trustedTab } as never)
+    }
 
     expect(received).toHaveBeenCalledWith({
       ...request,
@@ -175,6 +184,9 @@ describe('Runtime browser adapters', () => {
     const content = { url: 'https://example.com/' } as never
     const malformedMessages: unknown[] = [null, 'raw', 0, false, [], {}, { sender: { type: 'provider' } }]
 
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
+
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (const message of malformedMessages) {
       expect(() => listener(message, offscreen)).not.toThrow()
       expect(() => listener(message, content)).not.toThrow()
@@ -298,9 +310,15 @@ describe('Runtime browser adapters', () => {
       providerMessage('invalid-schema', { id: '' })
     ]
     const dispatch = (message: unknown, sender: unknown) => {
-      listeners.forEach((listener) => listener(message, sender))
+      // functional-loop: owner-commit — ordered per-item external effects with no bulk primitive
+      for (const listener of listeners) {
+        listener(message, sender)
+      }
     }
 
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
+
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (const message of malformedMessages) {
       expect(() => dispatch(message, offscreen)).not.toThrow()
       expect(() => dispatch(message, content)).not.toThrow()

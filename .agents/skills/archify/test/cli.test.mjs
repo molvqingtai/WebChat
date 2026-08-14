@@ -97,6 +97,7 @@ test('cli: examples renders from an installed skill', () => {
   })
 
   assert.equal(result.status, 0, result.stderr)
+  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
   for (const output of [
     'workflow-agent-tool-call-rendered.html',
     'sequence-cache-miss-request.html',

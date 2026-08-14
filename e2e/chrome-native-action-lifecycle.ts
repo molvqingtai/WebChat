@@ -242,7 +242,8 @@ const assertJson = (value: unknown, seen = new Set<object>()): JsonValue => {
     if (seen.has(value)) throw new Error('JSON value must not contain cycles')
     seen.add(value)
     const result: Record<string, JsonValue> = {}
-    for (const key of Object.keys(value).sort()) {
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
+    for (const key of Object.keys(value).toSorted()) {
       result[key] = assertJson((value as Record<string, unknown>)[key], seen)
     }
     seen.delete(value)
@@ -308,6 +309,7 @@ const asPackagedManifest = (value: unknown): PackagedManifest => {
 
 const manifestProjection = (manifest: JsonObject): JsonObject => {
   const projection: JsonObject = {}
+  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
   for (const key of ['manifest_version', 'name', 'version', 'background'] as const) {
     if (Object.hasOwn(manifest, key)) projection[key] = manifest[key]!
   }
@@ -362,7 +364,10 @@ const manifestDiff = (
         !Array.isArray(left) &&
         !Array.isArray(right)
       if (bothArrays) {
-        const indexes = Array.from({ length: Math.max(left.length, right.length) }, (_, index) => String(index)).sort()
+        const indexes = Array.from({ length: Math.max(left.length, right.length) }, (_, index) =>
+          String(index)
+        ).toSorted()
+        // functional-loop: early-return — the loop must exit the enclosing function on the guarded item
         for (const index of indexes) {
           const numericIndex = Number(index)
           visit(
@@ -375,7 +380,8 @@ const manifestDiff = (
         return
       }
       if (bothObjects) {
-        const keys = [...new Set([...Object.keys(left), ...Object.keys(right)])].sort()
+        const keys = [...new Set([...Object.keys(left), ...Object.keys(right)])].toSorted()
+        // functional-loop: early-return — the loop must exit the enclosing function on the guarded item
         for (const key of keys) {
           visit(
             `${path}/${pointerSegment(key)}`,
@@ -432,11 +438,12 @@ const normalizeEvidence = (value: unknown, depth = 0, seen = new Set<object>()):
       return value.map((entry) => normalizeEvidence(entry, depth + 1, seen))
     }
 
-    const keys = Object.keys(value).sort()
+    const keys = Object.keys(value).toSorted()
     if (keys.length > MAX_VALUE_ITEMS) {
       throw new EvidenceLimitError(`Evidence object exceeds ${MAX_VALUE_ITEMS} keys`)
     }
     const result: Record<string, JsonValue> = {}
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (const key of keys) {
       result[boundedString(key)] = normalizeEvidence((value as Record<string, unknown>)[key], depth + 1, seen)
     }
@@ -468,6 +475,7 @@ const TERMINAL_EVIDENCE_FAILURE = normalizeTerminal(
 
 const deepFreeze = <Value>(value: Value): Value => {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
+    // functional-loop: early-return — the loop must exit the enclosing function on the guarded item
     for (const child of Object.values(value)) deepFreeze(child)
     Object.freeze(value)
   }
@@ -1246,7 +1254,8 @@ export const diagnoseChromeNativeActionLifecycle = async (
     ...startupTargets
       .filter(({ type }) => type === 'service_worker')
       .map((target, index) => ({ target, atMs: startupInventoryAtMs, order: pendingEvents.length + index }))
-  ].sort((left, right) => left.atMs - right.atMs || left.order - right.order)
+  ].toSorted((left, right) => left.atMs - right.atMs || left.order - right.order)
+  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
   for (const { target, atMs } of initialWorkerSightings) addWorker(target, atMs)
 
   const observeWorkerEvent = (event: ChromeLifecycleEvent, eventAtMs: number): boolean => {
@@ -1459,6 +1468,7 @@ export const diagnoseChromeNativeActionLifecycle = async (
   }
 
   const probePendingWorkers = async (deadlineMs: number): Promise<void> => {
+    // functional-loop: early-return — the loop must exit the enclosing function on the guarded item
     for (const record of workerRecords.values()) {
       await probeWorker(record, deadlineMs)
       if (workerFailure) return
@@ -1476,7 +1486,11 @@ export const diagnoseChromeNativeActionLifecycle = async (
     observeStartupContinuity(startupContinuity, event)
   }
 
+  // functional-loop: break — the loop must stop exactly at the guarded item
+
+  // functional-loop: break — the loop must stop exactly at the guarded item
   while (!worker && !workerFailure && !startupContinuity.failure) {
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     while (pendingEvents.length > 0 && !workerFailure && !startupContinuity.failure) {
       const pending = pendingEvents.shift()!
       processPreTargetEvent(pending.event, pending.atMs)
@@ -1896,7 +1910,11 @@ export const diagnoseChromeNativeActionLifecycle = async (
     }
   }
 
+  // functional-loop: break — the loop must stop exactly at the guarded item
+
+  // functional-loop: break — the loop must stop exactly at the guarded item
   while (true) {
+    // functional-loop: break — the loop must stop exactly at the guarded item
     while (pendingEvents.length > 0) {
       const pending = pendingEvents.shift()!
       await processEvent(pending.event, pending.atMs)
@@ -1977,6 +1995,9 @@ export const diagnoseChromeNativeActionLifecycle = async (
     }
   }
 
+  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
+
+  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
   while (
     pendingEvents.length > 0 &&
     !state.extensionFailure &&

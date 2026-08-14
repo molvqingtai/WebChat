@@ -76,12 +76,16 @@ class DeterministicNetwork {
     const frames = this.heldFrames.filter(
       (frame) => frame.sourcePeerId === sourcePeerId && frame.targetPeerId === targetPeerId
     )
+    // functional-mutate: draining the owned held-frames queue is the operation itself
     this.heldFrames.splice(
       0,
       this.heldFrames.length,
       ...this.heldFrames.filter((frame) => frame.sourcePeerId !== sourcePeerId || frame.targetPeerId !== targetPeerId)
     )
-    frames.forEach((frame) => this.deliver(frame))
+    // functional-loop: owner-commit — ordered per-item external effects with no bulk primitive
+    for (const frame of frames) {
+      this.deliver(frame)
+    }
   }
 
   lastSession(sourcePeerId: string) {
@@ -115,15 +119,20 @@ class DeterministicNetwork {
   disconnectPeer(peerId: string) {
     const endpoint = this.endpoints.get(peerId)
     if (!endpoint) return
-    ;[...endpoint.rooms].forEach((roomId) => {
+    // functional-loop: owner-commit — ordered per-room teardown during live Set iteration
+    for (const roomId of Array.from(endpoint.rooms)) {
       endpoint.rooms.delete(roomId)
-      this.endpoints.forEach((other, otherPeerId) => {
+      // functional-loop: owner-commit — ordered per-endpoint notification with no bulk primitive
+      for (const [otherPeerId, other] of this.endpoints) {
         if (otherPeerId !== peerId && other.rooms.has(roomId)) {
           this.announcedPairs.delete(this.pairKey(roomId, peerId, otherPeerId))
-          other.leaves.forEach((listener) => listener(roomId, peerId))
+          // functional-loop: owner-commit — ordered per-item external effects with no bulk primitive
+          for (const listener of other.leaves) {
+            listener(roomId, peerId)
+          }
         }
-      })
-    })
+      }
+    }
     this.endpoints.delete(peerId)
   }
 
@@ -163,21 +172,23 @@ class DeterministicNetwork {
         endpoint.rooms.add(roomId)
       },
       peers: (roomId) => {
-        const members: string[] = []
-        this.endpoints.forEach((other, otherPeerId) => {
-          if (otherPeerId !== peerId && other.rooms.has(roomId)) members.push(otherPeerId)
-        })
-        return members
+        return [...this.endpoints].flatMap(([otherPeerId, other]) =>
+          otherPeerId !== peerId && other.rooms.has(roomId) ? [otherPeerId] : []
+        )
       },
       leave: (roomId) => {
         if (!endpoint.rooms.delete(roomId)) return
         this.recordLifecycle(`physical-leave:${peerId}:${roomId}`)
-        this.endpoints.forEach((other, otherPeerId) => {
+        // functional-loop: owner-commit — ordered per-endpoint notification with no bulk primitive
+        for (const [otherPeerId, other] of this.endpoints) {
           if (otherPeerId !== peerId && other.rooms.has(roomId)) {
             this.announcedPairs.delete(this.pairKey(roomId, peerId, otherPeerId))
-            other.leaves.forEach((listener) => listener(roomId, peerId))
+            // functional-loop: owner-commit — ordered per-item external effects with no bulk primitive
+            for (const listener of other.leaves) {
+              listener(roomId, peerId)
+            }
           }
-        })
+        }
       },
       send: async (roomId, payload, to) => {
         const selected = to === undefined ? null : new Set(Array.isArray(to) ? to : [to])
@@ -190,13 +201,15 @@ class DeterministicNetwork {
           this.releaseOnSessionSend.delete(peerId)
           this.releaseSession(release.sourcePeerId, release.targetPeerId)
         }
-        this.endpoints.forEach((target, targetPeerId) => {
-          if (targetPeerId === peerId || !target.rooms.has(roomId) || (selected && !selected.has(targetPeerId))) return
+        // functional-loop: continue — skip non-target endpoints while delivering each frame once
+        for (const [targetPeerId, target] of this.endpoints) {
+          if (targetPeerId === peerId || !target.rooms.has(roomId) || (selected && !selected.has(targetPeerId)))
+            continue
           const frame = { roomId, sourcePeerId: peerId, targetPeerId, payload }
           const route = `${peerId}->${targetPeerId}`
           if (parsed.type === MESSAGE_TYPE.SESSION && this.heldRoutes.has(route)) this.heldFrames.push(frame)
           else this.deliver(frame)
-        })
+        }
       },
       onMessage: (listener) => subscribe(endpoint.messages, listener),
       onPeerJoin: (listener) => subscribe(endpoint.joins, listener),
@@ -204,13 +217,18 @@ class DeterministicNetwork {
       onRoomClose: (listener) => subscribe(endpoint.closes, listener),
       onError: () => () => {},
       dispose: () => {
-        ;[...endpoint.rooms].forEach((roomId) => {
-          this.endpoints.forEach((other, otherPeerId) => {
+        // functional-loop: owner-commit — ordered per-room teardown during live Set iteration
+        for (const roomId of Array.from(endpoint.rooms)) {
+          // functional-loop: owner-commit — ordered per-endpoint notification with no bulk primitive
+          for (const [otherPeerId, other] of this.endpoints) {
             if (otherPeerId !== peerId && other.rooms.has(roomId)) {
-              other.leaves.forEach((listener) => listener(roomId, peerId))
+              // functional-loop: owner-commit — ordered per-item external effects with no bulk primitive
+              for (const listener of other.leaves) {
+                listener(roomId, peerId)
+              }
             }
-          })
-        })
+          }
+        }
         this.endpoints.delete(peerId)
       }
     }
@@ -219,12 +237,13 @@ class DeterministicNetwork {
   private discover(roomId: string, peerId: string) {
     const endpoint = this.endpoints.get(peerId)
     if (!endpoint) return
-    this.endpoints.forEach((other, otherPeerId) => {
-      if (otherPeerId === peerId || !other.rooms.has(roomId)) return
+    // functional-loop: early-return — skip non-members and held discoveries while announcing once
+    for (const [otherPeerId, other] of this.endpoints) {
+      if (otherPeerId === peerId || !other.rooms.has(roomId)) continue
       const pair = this.pairKey(roomId, peerId, otherPeerId)
-      if (this.heldDiscoveries.has(pair)) return
+      if (this.heldDiscoveries.has(pair)) continue
       this.announce(roomId, peerId, otherPeerId)
-    })
+    }
   }
 
   private announce(roomId: string, leftPeerId: string, rightPeerId: string) {
@@ -233,19 +252,26 @@ class DeterministicNetwork {
     const pair = this.pairKey(roomId, leftPeerId, rightPeerId)
     if (!left?.rooms.has(roomId) || !right?.rooms.has(roomId) || this.announcedPairs.has(pair)) return
     this.announcedPairs.add(pair)
-    left.joins.forEach((listener) => listener(roomId, rightPeerId))
-    right.joins.forEach((listener) => listener(roomId, leftPeerId))
+    // functional-loop: owner-commit — ordered per-item external effects with no bulk primitive
+    for (const listener of left.joins) {
+      listener(roomId, rightPeerId)
+    }
+    // functional-loop: owner-commit — ordered per-item external effects with no bulk primitive
+    for (const listener of right.joins) {
+      listener(roomId, leftPeerId)
+    }
   }
 
   private pairKey(roomId: string, leftPeerId: string, rightPeerId: string) {
-    return `${roomId}:${[leftPeerId, rightPeerId].sort().join(':')}`
+    return `${roomId}:${[leftPeerId, rightPeerId].toSorted().join(':')}`
   }
 
   private deliver(frame: HeldFrame) {
     this.deliveredFrames.push(frame)
-    this.endpoints
-      .get(frame.targetPeerId)
-      ?.messages.forEach((listener) => listener(frame.roomId, frame.sourcePeerId, frame.payload))
+    // functional-loop: owner-commit — ordered per-listener notification with no bulk primitive
+    for (const listener of this.endpoints.get(frame.targetPeerId)?.messages ?? []) {
+      listener(frame.roomId, frame.sourcePeerId, frame.payload)
+    }
   }
 }
 
@@ -410,7 +436,9 @@ beforeEach(() => {
 })
 
 afterEach(async () => {
-  await Promise.all(stacks.splice(0).map((stack) => stack.dispose()))
+  // functional-mutate: draining the owned stacks queue is the operation itself
+  const stacksToDispose = stacks.splice(0)
+  await Promise.all(stacksToDispose.map((stack) => stack.dispose()))
   vi.unstubAllGlobals()
 })
 
@@ -743,6 +771,7 @@ describe('single live release owner', () => {
       network.disconnectPeer('prepared-rebind-peer-b')
       b.crash()
       // Let the reconnect reach its prepared phase (its SESSION publication stays held).
+      // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
       for (let flush = 0; flush < 20; flush += 1) await vi.advanceTimersByTimeAsync(0)
       // B's valid same-presence SESSION arrives during A's prepared phase.
       network.redeliverLastSession('prepared-rebind-peer-b', 'prepared-rebind-peer-a')

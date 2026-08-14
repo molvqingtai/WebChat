@@ -57,6 +57,7 @@ export class PagePort implements PagePortContract {
     // Replacing a provider cancels its work but resolves null after physical settlement so the caller may fail over.
     const previous = this.historyProviders.get(pageId)
     if (previous) {
+      // functional-loop: continue — skip unrelated pages while cancelling replaced work in order
       for (const [supplyId, pending] of this.pendingHistory) {
         if (pending.pageId !== pageId) continue
         this.requestHistoryCancellation(supplyId, 'replacement', previous.callback)
@@ -76,6 +77,7 @@ export class PagePort implements PagePortContract {
     this.runtimeErrors.delete(pageId)
     this.historyFeedbacks.delete(pageId)
     const historyProvider = this.historyProviders.get(pageId)
+    // functional-loop: continue — skip unrelated pages while deleting and cancelling in order
     for (const [supplyId, pending] of this.pendingHistory) {
       if (pending.pageId !== pageId) continue
       this.pendingHistory.delete(supplyId)
@@ -223,7 +225,10 @@ export class PagePort implements PagePortContract {
       ...this.historyFeedbacks.keys(),
       ...this.historyProviders.keys()
     ])
-    pageIds.forEach((pageId) => this.removePage(pageId))
+    // functional-loop: owner-commit — ordered per-page removal with no bulk primitive
+    for (const pageId of pageIds) {
+      this.removePage(pageId)
+    }
   }
 }
 

@@ -21,6 +21,7 @@ const createBus = () => {
       const message = args.at(-1) as Message
       messages.push(structuredClone(message))
       const sender = args.length === 2 ? { tab: { id: 7, url: 'https://example.com/' } } : {}
+      // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
       for (const listener of listeners) listener(message, sender)
     },
     onMessage: {

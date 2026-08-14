@@ -30,20 +30,20 @@ const useTriggerAway = <T extends Element = Element, E extends Event = Event>(
       if (handleRef.current) {
         const rootNode = handleRef.current.getRootNode()
         const isInShadow = rootNode instanceof ShadowRoot
-        events.forEach(() => {
-          for (const eventName of events) {
-            document.removeEventListener(eventName, handler)
-            isInShadow && rootNode.removeEventListener(eventName, handler)
-          }
-        })
+        // functional-loop: owner-commit — ordered per-event listener removal with no bulk primitive
+        for (const eventName of events) {
+          document.removeEventListener(eventName, handler)
+          isInShadow && rootNode.removeEventListener(eventName, handler)
+        }
       }
       if (node) {
         const rootNode = node.getRootNode()
         const isInShadow = rootNode instanceof ShadowRoot
-        events.forEach((eventName) => {
+        // functional-loop: owner-commit — ordered per-event listener registration with no bulk primitive
+        for (const eventName of events) {
           document.addEventListener(eventName, handler)
           isInShadow && rootNode.addEventListener(eventName, handler)
-        })
+        }
       }
       handleRef.current = node
     },

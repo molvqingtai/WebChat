@@ -6,6 +6,7 @@ function annotatePath(instancePath, data) {
   if (!instancePath) return '/'
   let node = data
   let hint = null
+  // functional-loop: break — the loop must stop exactly at the guarded item
   for (const seg of instancePath.split('/').slice(1)) {
     if (node == null || typeof node !== 'object') break
     node = node[/^\d+$/.test(seg) ? Number(seg) : seg]

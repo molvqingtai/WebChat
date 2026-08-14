@@ -41,6 +41,7 @@ test('static output omits animation attributes', () => {
   assert.doesNotMatch(svg, /data-animate=/)
 })
 
+// functional-loop: owner-commit — ordered per-item emission with no bulk primitive
 for (const [mode, example] of Object.entries(CASES)) {
   test(`${mode}: trace animation annotates svg, edges, and nodes`, () => {
     const svg = svgBlock(render(mode, example))

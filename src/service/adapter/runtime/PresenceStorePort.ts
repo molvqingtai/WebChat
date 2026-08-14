@@ -64,6 +64,7 @@ const dispatch = (
   message: Message,
   onError: (error: unknown) => void
 ) => {
+  // functional-loop: owner-commit — ordered per-callback dispatch with per-item error handling
   for (const callback of callbacks) {
     try {
       Promise.resolve(callback(message)).catch(onError)
@@ -118,6 +119,7 @@ export class PresenceStoreProviderPortAdapter implements Adapter {
   private detach(binding: PortBinding, disconnect: boolean) {
     binding.port.onMessage.removeListener(binding.onMessage)
     binding.port.onDisconnect.removeListener(binding.onDisconnect)
+    // functional-loop: owner-commit — per-item Map deletion during live iteration has no bulk primitive
     for (const [id, requestPort] of this.requestPorts) {
       if (requestPort === binding) this.requestPorts.delete(id)
     }
@@ -219,6 +221,7 @@ export class PresenceStoreInjectPortAdapter implements Adapter {
   }
 
   private releaseGenerationResponses(generation: InjectorGeneration) {
+    // functional-loop: owner-commit — per-item Set deletion during live iteration has no bulk primitive
     for (const preparation of this.preparations) {
       if (preparation.generation === generation) this.callbacks.delete(preparation.response)
     }
@@ -238,6 +241,8 @@ export class PresenceStoreInjectPortAdapter implements Adapter {
   }
 
   private rejectBindingPending(binding: PortBinding, reason: string) {
+    // functional-loop: continue — skip bindings that do not match, deleting the rejected entry
+    // from the live Map while dispatching its failure exactly once
     for (const [id, pending] of this.pending) {
       if (pending.binding !== binding) continue
       this.pending.delete(id)
@@ -259,10 +264,12 @@ export class PresenceStoreInjectPortAdapter implements Adapter {
   }
 
   private rejectAllPending(reason: string) {
+    // functional-loop: owner-commit — ordered per-binding rejection with no bulk primitive
     for (const { binding } of new Set(this.pending.values())) this.rejectBindingPending(binding, reason)
   }
 
   private takePreparation() {
+    // functional-loop: condition-driven — queue drain until an eligible preparation is found
     while (this.preparations.length > 0) {
       const preparation = this.preparations.shift()!
       if (!preparation.pending) continue
@@ -272,8 +279,7 @@ export class PresenceStoreInjectPortAdapter implements Adapter {
   }
 
   private acknowledgeHeartbeat(message: Message) {
-    const callbacks = new Set(this.callbacks)
-    for (const preparation of this.preparations) callbacks.add(preparation.response)
+    const callbacks = new Set([...this.callbacks, ...this.preparations.map((preparation) => preparation.response)])
     dispatch(
       callbacks,
       {
@@ -333,6 +339,7 @@ export class PresenceStoreInjectPortAdapter implements Adapter {
       if (!preparation.pending) return
       preparation.pending = false
       const index = this.preparations.indexOf(preparation)
+      // functional-mutate: removing the preparation from the owned queue is the operation itself
       if (index >= 0) this.preparations.splice(index, 1)
     }
   }
@@ -342,6 +349,7 @@ export class PresenceStoreInjectPortAdapter implements Adapter {
     this.disposed = true
     const reason = 'PresenceStore Offscreen adapter disposed'
     if (this.current) this.current.terminalReason ??= reason
+    // functional-loop: owner-commit — ordered per-item terminal-reason assignment has no bulk primitive
     for (const preparation of this.preparations) preparation.generation.terminalReason ??= reason
     if (this.active) this.detach(this.active, true)
     this.rejectAllPending(reason)

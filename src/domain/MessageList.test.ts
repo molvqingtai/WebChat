@@ -203,6 +203,7 @@ describe('MessageList Database-backed pipeline', () => {
     )
     expect(notices).toHaveLength(1)
     expect(notices[0]?.id).toBe(fallbackId(3))
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (const harness of [firstPage, secondPage, reloadedPage]) {
       expect(harness.store.query(harness.domain.query.RecordListQuery())).toEqual(records)
       harness.errorSubscription.unsubscribe()

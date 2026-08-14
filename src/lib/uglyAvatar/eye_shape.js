@@ -20,9 +20,6 @@ function generateEyeParameters(width) {
     let offset_upper_right_randY = Math.random();
     let P0_upper = [-width / 2 + P0_upper_randX * width / 16, P0_upper_randY * height_upper / 16];
     let P3_upper = [width / 2 + P3_upper_randX * width / 16, P3_upper_randY * height_upper / 16];
-    let P0_lower = P0_upper;// Starting at the same point as the upper eyelid
-    let P3_lower = P3_upper;// Ending at the same point as the upper eyelid
-    let eye_true_width = P3_upper[0] - P0_upper[0];
 
     let offset_upper_left_x = randomFromInterval(-eye_true_width / 10.0, eye_true_width / 2.3);// Upper eyelid control point offset to create asymmetry
     let offset_upper_right_x = randomFromInterval(-eye_true_width / 10.0, eye_true_width / 2.3);// Upper eyelid control point offset to create asymmetry
@@ -67,9 +64,6 @@ export function generateEyePoints(rands, width = 50) {
 
     let P0_upper = [-width / 2 + rands.P0_upper_randX * width / 16, rands.P0_upper_randY * rands.height_upper / 16];
     let P3_upper = [width / 2 + rands.P3_upper_randX * width / 16, rands.P3_upper_randY * rands.height_upper / 16];
-    let P0_lower = P0_upper;// Starting at the same point as the upper eyelid
-    let P3_lower = P3_upper;// Ending at the same point as the upper eyelid
-    let eye_true_width = P3_upper[0] - P0_upper[0];
 
     // Upper eyelid control points
     let P1_upper = [P0_upper[0] + rands.offset_upper_left_x, P0_upper[1] + rands.offset_upper_left_y];  // First control point
@@ -86,17 +80,19 @@ export function generateEyePoints(rands, width = 50) {
     let upper_eyelid_points_right_control = [];
     let upper_eyelid_left_control_point = [P0_upper[0] * (1 - rands.left_converge0) + P1_lower[0] * rands.left_converge0, P0_upper[1] * (1 - rands.left_converge0) + P1_lower[1] * rands.left_converge0];
     let upper_eyelid_right_control_point = [P3_upper[0] * (1 - rands.right_converge0) + P2_lower[0] * rands.right_converge0, P3_upper[1] * (1 - rands.right_converge0) + P2_lower[1] * rands.right_converge0];
-    for (let t = 0; t < 100; t++) {
-        upper_eyelid_points.push(cubicBezier(P0_upper, P1_upper, P2_upper, P3_upper, t / 100));
-        upper_eyelid_points_left_control.push(cubicBezier(upper_eyelid_left_control_point, P0_upper, P1_upper, P2_upper, t / 100));
-        upper_eyelid_points_right_control.push(cubicBezier(P1_upper, P2_upper, P3_upper, upper_eyelid_right_control_point, t / 100));
-    }
+    upper_eyelid_points = Array.from({ length: 100 }, (_, t) => cubicBezier(P0_upper, P1_upper, P2_upper, P3_upper, t / 100));
+    upper_eyelid_points_left_control = Array.from({ length: 100 }, (_, t) => cubicBezier(upper_eyelid_left_control_point, P0_upper, P1_upper, P2_upper, t / 100));
+    upper_eyelid_points_right_control = Array.from({ length: 100 }, (_, t) => cubicBezier(P1_upper, P2_upper, P3_upper, upper_eyelid_right_control_point, t / 100));
 
-    for (let i = 0; i < 75; i++) {
-        let weight = ((75.0 - i) / 75.0) ** 2
-        upper_eyelid_points[i] = [upper_eyelid_points[i][0] * (1 - weight) + upper_eyelid_points_left_control[i + 25][0] * weight, upper_eyelid_points[i][1] * (1 - weight) + upper_eyelid_points_left_control[i + 25][1] * weight]
-        upper_eyelid_points[i + 25] = [upper_eyelid_points[i + 25][0] * weight + upper_eyelid_points_right_control[i][0] * (1 - weight), upper_eyelid_points[i + 25][1] * weight + upper_eyelid_points_right_control[i][1] * (1 - weight)]
-    }
+    upper_eyelid_points = upper_eyelid_points.map((point, i) => {
+        if (i < 75) {
+            let weight = ((75.0 - i) / 75.0) ** 2
+            return [point[0] * (1 - weight) + upper_eyelid_points_left_control[i + 25][0] * weight, point[1] * (1 - weight) + upper_eyelid_points_left_control[i + 25][1] * weight]
+        }
+        let j = i - 25
+        let weight = ((75.0 - j) / 75.0) ** 2
+        return [point[0] * weight + upper_eyelid_points_right_control[j][0] * (1 - weight), point[1] * weight + upper_eyelid_points_right_control[j][1] * (1 - weight)]
+    });
 
 
     // now we generate the points for the upper eyelid
@@ -105,31 +101,26 @@ export function generateEyePoints(rands, width = 50) {
     let lower_eyelid_points_right_control = [];
     let lower_eyelid_left_control_point = [P0_lower[0] * (1 - rands.left_converge0) + P1_upper[0] * rands.left_converge0, P0_lower[1] * (1 - rands.left_converge0) + P1_upper[1] * rands.left_converge0];
     let lower_eyelid_right_control_point = [P3_lower[0] * (1 - rands.right_converge1) + P2_upper[0] * rands.right_converge1, P3_lower[1] * (1 - rands.right_converge1) + P2_upper[1] * rands.right_converge1];
-    for (let t = 0; t < 100; t++) {
-        lower_eyelid_points.push(cubicBezier(P0_lower, P1_lower, P2_lower, P3_lower, t / 100));
-        lower_eyelid_points_left_control.push(cubicBezier(lower_eyelid_left_control_point, P0_lower, P1_lower, P2_lower, t / 100));
-        lower_eyelid_points_right_control.push(cubicBezier(P1_lower, P2_lower, P3_lower, lower_eyelid_right_control_point, t / 100));
-    }
+    lower_eyelid_points = Array.from({ length: 100 }, (_, t) => cubicBezier(P0_lower, P1_lower, P2_lower, P3_lower, t / 100));
+    lower_eyelid_points_left_control = Array.from({ length: 100 }, (_, t) => cubicBezier(lower_eyelid_left_control_point, P0_lower, P1_lower, P2_lower, t / 100));
+    lower_eyelid_points_right_control = Array.from({ length: 100 }, (_, t) => cubicBezier(P1_lower, P2_lower, P3_lower, lower_eyelid_right_control_point, t / 100));
 
-    for (let i = 0; i < 75; i++) {
-        let weight = ((75.0 - i) / 75.0) ** 2
-        lower_eyelid_points[i] = [lower_eyelid_points[i][0] * (1 - weight) + lower_eyelid_points_left_control[i + 25][0] * weight, lower_eyelid_points[i][1] * (1 - weight) + lower_eyelid_points_left_control[i + 25][1] * weight]
-        lower_eyelid_points[i + 25] = [lower_eyelid_points[i + 25][0] * weight + lower_eyelid_points_right_control[i][0] * (1 - weight), lower_eyelid_points[i + 25][1] * weight + lower_eyelid_points_right_control[i][1] * (1 - weight)]
-    }
-    for (let i = 0; i < 100; i++) {
-        lower_eyelid_points[i][1] = -lower_eyelid_points[i][1]
-        upper_eyelid_points[i][1] = -upper_eyelid_points[i][1]
-    }
+    lower_eyelid_points = lower_eyelid_points.map((point, i) => {
+        if (i < 75) {
+            let weight = ((75.0 - i) / 75.0) ** 2
+            return [point[0] * (1 - weight) + lower_eyelid_points_left_control[i + 25][0] * weight, point[1] * (1 - weight) + lower_eyelid_points_left_control[i + 25][1] * weight]
+        }
+        let j = i - 25
+        let weight = ((75.0 - j) / 75.0) ** 2
+        return [point[0] * weight + lower_eyelid_points_right_control[j][0] * (1 - weight), point[1] * weight + lower_eyelid_points_right_control[j][1] * (1 - weight)]
+    });
+    lower_eyelid_points = lower_eyelid_points.map(([x, y]) => [x, -y])
+    upper_eyelid_points = upper_eyelid_points.map(([x, y]) => [x, -y])
 
     let eyeCenter = [upper_eyelid_points[50][0] / 2.0 + lower_eyelid_points[50][0] / 2.0, upper_eyelid_points[50][1] / 2.0 + lower_eyelid_points[50][1] / 2.0];
 
-    for (let i = 0; i < 100; i++) {
-        // translate to center
-        lower_eyelid_points[i][0] -= eyeCenter[0]
-        lower_eyelid_points[i][1] -= eyeCenter[1]
-        upper_eyelid_points[i][0] -= eyeCenter[0]
-        upper_eyelid_points[i][1] -= eyeCenter[1]
-    }
+    lower_eyelid_points = lower_eyelid_points.map(([x, y]) => [x - eyeCenter[0], y - eyeCenter[1]])
+    upper_eyelid_points = upper_eyelid_points.map(([x, y]) => [x - eyeCenter[0], y - eyeCenter[1]])
     eyeCenter = [0, 0];
 
     // we switch the upper and lower eyelid points because in svg the bottom is y+ and top is y-
@@ -141,23 +132,21 @@ export function generateBothEyes(width = 50) {
     // Create a shallow copy of the object
     let rands_right = { ...rands_left };
 
-    // Iterate over the object's keys
-    for (let key in rands_right) {
-        // Check if the property value is a number
-        if (typeof rands_right[key] === 'number') {
-            // Add a random value to the number, for example, between -5 and 5
-            rands_right[key] += randomFromInterval(-rands_right[key] / 2.0, rands_right[key] / 2.0);
+    // Iterate over the object's keys, deriving a perturbed copy without mutation
+    rands_right = Object.fromEntries(Object.entries(rands_right).map(([key, value]) => {
+        if (typeof value === 'number') {
+            return [key, value + randomFromInterval(-value / 2.0, value / 2.0)]
         }
-    }
+        return [key, value]
+    }))
     let left_eye = generateEyePoints(rands_left, width)
     let right_eye = generateEyePoints(rands_right, width)
 
-    for (let key in left_eye) {
-        if (typeof left_eye[key] === 'object') {
-            for (let i = 0; i < left_eye[key].length; i++) {
-                left_eye[key][i][0] = -left_eye[key][i][0]
-            }
+    const mirroredLeft = Object.fromEntries(Object.entries(left_eye).map(([key, value]) => {
+        if (typeof value === 'object') {
+            return [key, value.map(([x, y]) => [-x, y])]
         }
-    }
-    return { left: left_eye, right: right_eye }
+        return [key, value]
+    }))
+    return { left: mirroredLeft, right: right_eye }
 }

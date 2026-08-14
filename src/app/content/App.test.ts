@@ -9,7 +9,7 @@ describe('application status ownership', () => {
       import('@/domain/Toast')
     ])
 
-    expect(modules.map((module) => Object.keys(module).sort())).toEqual([
+    expect(modules.map((module) => Object.keys(module).toSorted())).toEqual([
       ['startInitializationLifecycle'],
       ['default'],
       ['default'],

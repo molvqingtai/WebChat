@@ -36,8 +36,10 @@ describe('Runtime production host boundaries', () => {
   it('disposes every comctx provider listener owned by a host adapter', () => {
     const listeners = new MessageListenerRegistry()
     const activeListeners = new Set(['runtime-provider', 'runtime-callback'])
-    activeListeners.forEach((listener) => listeners.add(() => activeListeners.delete(listener)))
-
+    // functional-loop: owner-commit — ordered per-item external effects with no bulk primitive
+    for (const listener of activeListeners) {
+      listeners.add(() => activeListeners.delete(listener))
+    }
     listeners.dispose()
 
     expect(activeListeners.size).toBe(0)

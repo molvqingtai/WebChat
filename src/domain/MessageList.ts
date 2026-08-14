@@ -21,6 +21,7 @@ const isEquivalentTypedNotice = (record: MessageRecord, expected: SystemNoticeRe
   record.user.avatar === expected.user.avatar
 
 const persistNotice = async (messageStore: MessageStore, record: SystemNoticeRecord) => {
+  // functional-loop: condition-driven — slot probing until the insert wins has no bounded range
   for (let slot = 0; ; slot += 1) {
     const candidate = noticeAtSlot(record, slot)
     const result = await messageStore.insert(candidate)

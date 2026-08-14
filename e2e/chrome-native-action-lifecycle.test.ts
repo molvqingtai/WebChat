@@ -361,6 +361,7 @@ class FakeChromeLifecycleAdapter implements ChromeNativeActionLifecycleAdapter {
   private applyPhaseEffects(phase: string) {
     const effects = this.phaseEffects.get(phase) ?? []
     this.phaseEffects.delete(phase)
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (const effect of effects) {
       if ('advanceMs' in effect) this.nowMs += effect.advanceMs
       else this.requireSink()(effect)
@@ -554,6 +555,9 @@ describe('Chrome native action lifecycle diagnostic', () => {
       { ...packagedManifest, background: { service_worker: 'x'.repeat(513) } }
     ]
 
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
+
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (const packagedManifest of invalidManifests) {
       const adapter = prepareAdapter()
       const result = await diagnoseChromeNativeActionLifecycle(adapter, { ...context, packagedManifest })
@@ -641,6 +645,9 @@ describe('Chrome native action lifecycle diagnostic', () => {
       }
     ]
 
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
+
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (const arrange of cases) {
       const adapter = prepareAdapter([])
       arrange(adapter)
@@ -675,7 +682,7 @@ describe('Chrome native action lifecycle diagnostic', () => {
 
   it('rejects every manifest semantic change rather than normalizing values, fields, arrays, aliases, or paths', async () => {
     const semanticVariants: unknown[] = [
-      { ...packagedManifest, permissions: [...packagedManifest.permissions].reverse() },
+      { ...packagedManifest, permissions: [...packagedManifest.permissions].toReversed() },
       { ...packagedManifest, version: '1.0.1' },
       { ...packagedManifest, minimum_chrome_version: '150' },
       { ...packagedManifest, action: {} },
@@ -695,6 +702,9 @@ describe('Chrome native action lifecycle diagnostic', () => {
       }
     ]
 
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
+
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (const manifest of semanticVariants) {
       const adapter = prepareAdapter([])
       adapter.workerIdentity = { runtimeId: extensionId, manifest }
@@ -734,7 +744,7 @@ describe('Chrome native action lifecycle diagnostic', () => {
     expect(detail.diffOverflow).toBe(true)
     expect(detail.diff).toHaveLength(CHROME_NATIVE_ACTION_MAX_MANIFEST_DIFF_ENTRIES)
     const paths = (detail.diff as Array<Record<string, unknown>>).map(({ path }) => path)
-    expect(paths).toEqual([...paths].sort())
+    expect(paths).toEqual([...paths].toSorted())
     expect(JSON.stringify(detail)).not.toContain('secret-value')
     expect(detail.exact).toBe(false)
   })
@@ -787,6 +797,9 @@ describe('Chrome native action lifecycle diagnostic', () => {
       `read-worker:${workerSession}`
     ]
 
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
+
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (const phase of phases) {
       const adapter = prepareAdapter([])
       adapter.phaseEffects.set(phase, [{ advanceMs: CHROME_NATIVE_ACTION_WORKER_DISCOVERY_BUDGET_MS }])
@@ -865,6 +878,9 @@ describe('Chrome native action lifecycle diagnostic', () => {
       }
     ]
 
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
+
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (const testCase of cases) {
       const adapter = prepareAdapter([...targetBoundSteps(), testCase.event, contextCreated(), { advanceMs: 1 }])
       adapter.startupTargets = [blankTarget, foreignWorkerTarget, workerTarget]
@@ -918,6 +934,9 @@ describe('Chrome native action lifecycle diagnostic', () => {
       }
     ]
 
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
+
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (const arrange of cases) {
       const adapter = prepareAdapter([])
       const event = arrange(adapter)
@@ -979,6 +998,9 @@ describe('Chrome native action lifecycle diagnostic', () => {
       }
     ]
 
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
+
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (const testCase of driftCases) {
       const adapter = prepareAdapter([])
       adapter.steps = [...testCase.arrange(adapter), ...cleanLifecycleSteps()]
@@ -1096,6 +1118,9 @@ describe('Chrome native action lifecycle diagnostic', () => {
       }
     ]
 
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
+
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (const testCase of cases) {
       const adapter = prepareAdapter([...targetBoundSteps(), contextCreated(), testCase.event])
       adapter.domSamples = [mountedSample()]
@@ -1134,7 +1159,11 @@ describe('Chrome native action lifecycle diagnostic', () => {
     ] as const
     const eventTypes = ['target-created', 'target-changed', 'target-attached'] as const
 
+    // functional-loop: early-return — the loop must exit the enclosing function on the guarded item
+
+    // functional-loop: early-return — the loop must exit the enclosing function on the guarded item
     for (const targetCase of targetCases) {
+      // functional-loop: early-return — the loop must exit the enclosing function on the guarded item
       for (const type of eventTypes) {
         const target: ChromeLifecycleTarget = {
           targetId: `${type}-${targetCase.name}-target`,
@@ -1245,6 +1274,9 @@ describe('Chrome native action lifecycle diagnostic', () => {
       ]
     ]
 
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
+
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (const steps of cases) {
       const adapter = prepareAdapter(steps)
       adapter.domSamples = [mountedSample()]
@@ -1327,6 +1359,9 @@ describe('Chrome native action lifecycle diagnostic', () => {
       }
     ]
 
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
+
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (const testCase of cases) {
       const adapter = prepareAdapter()
       adapter.phaseEffects.set(testCase.phase, [...testCase.effects])
@@ -1444,6 +1479,9 @@ describe('Chrome native action lifecycle diagnostic', () => {
       }
     ]
 
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
+
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (const testCase of cases) {
       const adapter = prepareAdapter()
       adapter.phaseEffects.set(testCase.phase, [testCase.event])

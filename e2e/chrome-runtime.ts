@@ -304,8 +304,10 @@ try {
         flatten: true
       })
       const { targetInfos } = await client.send<{ targetInfos: TargetInfo[] }>('Target.getTargets')
-      targetInfos.forEach((targetInfo) => targets.set(targetInfo.targetId, targetInfo))
-
+      // functional-loop: owner-commit — ordered per-item external effects with no bulk primitive
+      for (const targetInfo of targetInfos) {
+        targets.set(targetInfo.targetId, targetInfo)
+      }
       const sessionForTarget = async (targetInfo: TargetInfo, label: string): Promise<TargetSession> => {
         let current = [...sessions.entries()].find(
           ([sessionId, target]) => enabledSessions.has(sessionId) && target.targetId === targetInfo.targetId
@@ -560,6 +562,7 @@ try {
         message('relay-check-valid-apply'),
         message('relay-check-valid-callback', { type: 'callback', path: ['onInbound'], data: [] })
       ]
+      // functional-loop: early-return — the loop must exit the enclosing function on the guarded item
       for (const [index, item] of validMessages.entries()) {
         await evaluate(offscreenSession[0], `chrome.runtime.sendMessage(${JSON.stringify(item)})`)
         try {
@@ -576,6 +579,7 @@ try {
       }
 
       const rawBoundaryMessages = [null, 'raw-runtime-message']
+      // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
       for (const item of rawBoundaryMessages) {
         await evaluateRuntimeMessage((expression) => evaluate(offscreenSession[0], expression), item)
         await evaluateRuntimeMessage((expression) => evaluate(pageSession[0], expression, contentContext.id), item)

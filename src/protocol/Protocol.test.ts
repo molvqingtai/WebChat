@@ -46,6 +46,7 @@ describe('public protocol schema contract', () => {
   })
 
   it('uses closed unions and rejects every self-reported or redundant envelope field', () => {
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (const forbidden of ['peerId', 'room', 'roomId', 'sender', 'version', 'sentAt', 'receivedAt']) {
       expect(parseChat({ ...text(), [forbidden]: 'self-reported' })).toBeNull()
     }
@@ -63,6 +64,7 @@ describe('public protocol schema contract', () => {
     }
 
     expect(parseChat(session)).toEqual(session)
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (const joinedAt of [undefined, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1]) {
       expect(parseChat({ ...session, joinedAt })).toBeNull()
     }
@@ -85,12 +87,15 @@ describe('public protocol schema contract', () => {
     expect(parseChat(pull)).toEqual(pull)
     // Every safe-integer field is directly covered for non-finite values: page, and HLC
     // timestamp/counter inside text and reaction messages.
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (const page of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1]) {
       expect(parseChat({ ...pull, page })).toBeNull()
     }
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (const timestamp of [Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1]) {
       expect(parseChat({ ...text(), hlc: { timestamp, counter: 0 } })).toBeNull()
     }
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (const counter of [Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1]) {
       expect(parseChat({ ...text(), hlc: { timestamp: 1, counter } })).toBeNull()
     }
@@ -199,7 +204,7 @@ describe('public protocol schema contract', () => {
   it('exports exactly the declarative schemas, inferred types surface, limits, constants, and codec', () => {
     // The public entry exposes only the schema-owned data authority: schemas, constants/limits,
     // and the codec surface; no standalone validator, factory, or duplicate alias exists.
-    expect(Object.keys(protocol).sort()).toEqual(
+    expect(Object.keys(protocol).toSorted()).toEqual(
       [
         'ChatMessageSchema',
         'ChatRoomMessageSchema',
@@ -224,11 +229,12 @@ describe('public protocol schema contract', () => {
         'TextMessageSchema',
         'WireCodecError',
         'WorldRoomMessageSchema'
-      ].sort()
+      ].toSorted()
     )
   })
 
   it('does not export standalone validators, schema factories, handwritten duplicates, or legacy names', () => {
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (const name of [
       'parseChatRoomMessage',
       'SessionEndMessage',

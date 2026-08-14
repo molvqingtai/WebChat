@@ -48,7 +48,7 @@ describe('public protocol source boundary', () => {
   it('contains only the third-party peer contract modules', async () => {
     const files = (await readdir(PROTOCOL_ROOT))
       .filter((file) => file.endsWith('.ts') && !file.endsWith('.test.ts'))
-      .sort()
+      .toSorted()
     expect(files).toEqual(PUBLIC_FILES)
   })
 
@@ -57,6 +57,9 @@ describe('public protocol source boundary', () => {
       PUBLIC_FILES.map(async (file) => [file, await readFile(path.join(PROTOCOL_ROOT, file), 'utf8')] as const)
     )
 
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
+
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (const [file, source] of sources) {
       expect(source, `${file} has an internal absolute import`).not.toMatch(/from ['"]@\//)
       expect(source, `${file} has a host dependency`).not.toMatch(
@@ -64,12 +67,14 @@ describe('public protocol source boundary', () => {
       )
       expect(source, `${file} reads a hidden wall clock`).not.toContain('Date.now')
       const dependencies = [...source.matchAll(/(?:from\s+|import\s+)['"]([^'"]+)['"]/g)].map((match) => match[1]!)
+      // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
       for (const dependency of dependencies) {
         expect(
           dependency.startsWith('.') || ALLOWED_DEPENDENCIES.has(dependency),
           `${file} imports unsupported dependency ${dependency}`
         ).toBe(true)
       }
+      // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
       for (const symbol of FORBIDDEN_SYMBOLS) {
         expect(source, `${file} contains private symbol ${symbol}`).not.toContain(symbol)
       }
@@ -80,6 +85,9 @@ describe('public protocol source boundary', () => {
     const limits = await readFile(path.join(PROTOCOL_ROOT, 'Limits.ts'), 'utf8')
     const config = await readFile(CONFIG_PATH, 'utf8')
 
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
+
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (const name of PUBLIC_LIMITS) {
       expect(limits).toMatch(new RegExp(`export const ${name} =`))
       expect(config).not.toContain(name)
@@ -90,6 +98,7 @@ describe('public protocol source boundary', () => {
     const sources = await Promise.all(
       PUBLIC_FILES.map(async (file) => [file, await readFile(path.join(PROTOCOL_ROOT, file), 'utf8')] as const)
     )
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (const [file, source] of sources) {
       // No handwritten interface or standalone structural type may describe a protocol value
       // (WireCodec is an ordinary non-message API declaration, not a protocol data type).
@@ -102,6 +111,7 @@ describe('public protocol source boundary', () => {
       )
       // No post-parse validator, output cast, schema factory, or executable callback may finish
       // validation after schema parsing (declarative Valibot primitives only).
+      // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
       for (const validator of FORBIDDEN_VALIDATORS) {
         expect(source, `${file} retains validator ${validator}`).not.toContain(validator)
       }
@@ -147,8 +157,10 @@ describe('public protocol source boundary', () => {
       'session-end',
       'SessionEnd'
     ]
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (const file of runtimeFiles) {
       const source = await readFile(path.resolve(import.meta.dirname, `../../${file}`), 'utf8')
+      // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
       for (const pattern of forbidden) {
         expect(source, `${file} retains forbidden caller-side check ${pattern}`).not.toContain(pattern)
       }

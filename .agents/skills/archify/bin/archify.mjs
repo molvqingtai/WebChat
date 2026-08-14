@@ -121,6 +121,7 @@ async function commandDoctor() {
     lifecycle: 'agent-run.lifecycle.json'
   }
 
+  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
   for (const type of TYPES) {
     const required = [
       path.join(skillRoot, 'renderers', type, `render-${type}.mjs`),
@@ -136,6 +137,7 @@ async function commandDoctor() {
   }
 
   console.log('Archify doctor\n')
+  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
   for (const check of checks) {
     console.log(`[${check.ok ? 'ok' : check.failureLabel || 'missing'}] ${check.label}`)
   }

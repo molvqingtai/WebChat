@@ -172,6 +172,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     domain: string,
     userId: string
   ): Promise<'active' | 'acquired' | 'finalizing'> => {
+    // functional-loop: condition-driven — presence acquisition retries until disposed or settled
     while (!disposed) {
       const acquired = await acquirePresence(domain, userId)
       if (store.query(sessionDomain.query.FinalizingPresenceQuery(domain))) return 'finalizing'
@@ -328,6 +329,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     // Active History supplies/jobs physically settle through their abort callbacks; the
     // replacement may bind new History work only after every old owner is gone. Yielding on the
     // macrotask queue lets abort callbacks and timers run; no busy loop is introduced.
+    // functional-loop: condition-driven — yielding until every old History owner settles
     while (!store.query(historyDomain.query.DomainCleanupSettledQuery(domain))) {
       await new Promise<void>((resolve) => setTimeout(resolve, 0))
     }
@@ -402,6 +404,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
           () => false
         )
       }
+      // functional-loop: condition-driven — presence acquisition loops until the domain is joined
       while (true) {
         const presenceState = await acquireCurrentPresence(payload.domain, payload.user.id)
         if (presenceState === 'finalizing') {
@@ -559,9 +562,15 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
 
   serverDisposers.set(server, () => {
     disposed = true
-    presenceRecoveries.forEach((recovery) => recovery.resolve())
+    // functional-loop: owner-commit — ordered per-recovery settlement with no bulk primitive
+    for (const [, recovery] of presenceRecoveries) {
+      recovery.resolve()
+    }
     presenceRecoveries.clear()
-    pageBridges.forEach((subscription) => subscription.unsubscribe())
+    // functional-loop: owner-commit — ordered per-bridge unsubscription with no bulk primitive
+    for (const subscription of pageBridges) {
+      subscription.unsubscribe()
+    }
     try {
       store.discard()
     } finally {

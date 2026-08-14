@@ -67,10 +67,12 @@ function measureNode(node) {
 
 const nodes = new Map(asArray(dataflow.nodes).map((node) => [node.id, measureNode(node)]))
 const nodeSteps = new Map()
+// functional-loop: owner-commit — ordered per-item emission with no bulk primitive
 for (const [index, flow] of asArray(dataflow.flows).entries()) {
   if (!nodeSteps.has(flow.from)) nodeSteps.set(flow.from, index)
   if (!nodeSteps.has(flow.to)) nodeSteps.set(flow.to, index + 1)
 }
+// functional-loop: owner-commit — ordered per-item emission with no bulk primitive
 for (const [index, node] of asArray(dataflow.nodes).entries()) {
   if (!nodeSteps.has(node.id)) nodeSteps.set(node.id, index)
 }
@@ -92,6 +94,7 @@ function validateDataflow() {
   if (nodes.size !== asArray(dataflow.nodes).length) problems.push('Node ids must be unique.')
 
   const stageCount = asArray(dataflow.stages).length
+  // functional-loop: continue — the loop must skip the guarded item and keep processing
   for (const node of nodes.values()) {
     if (typeof node.stage !== 'number' || node.stage < 0 || node.stage >= stageCount) {
       problems.push(`Node "${node.id}" uses invalid stage ${node.stage} — valid stages are 0..${stageCount - 1}.`)
@@ -124,7 +127,9 @@ function validateDataflow() {
   }
 
   const nodeList = asArray(dataflow.nodes)
+  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
   for (let i = 0; i < nodeList.length; i += 1) {
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (let j = i + 1; j < nodeList.length; j += 1) {
       const a = nodes.get(nodeList[i].id)
       const b = nodes.get(nodeList[j].id)
@@ -136,6 +141,7 @@ function validateDataflow() {
     }
   }
 
+  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
   for (const flow of asArray(dataflow.flows)) {
     if (!nodes.has(flow.from))
       problems.push(`Flow "${flow.label || flow.from}" references unknown source "${flow.from}".`)
@@ -153,6 +159,7 @@ function validateDataflow() {
   }
 
   const labelRects = []
+  // functional-loop: continue — the loop must skip the guarded item and keep processing
   for (const flow of asArray(dataflow.flows)) {
     if (!flow.label || !nodes.has(flow.from) || !nodes.has(flow.to)) continue
     const [lx, ly] = labelPoint(flow, pathFor(flow).points)
@@ -161,7 +168,9 @@ function validateDataflow() {
     const height = flow.classification ? 27 : layout.labelH
     labelRects.push({ label: flow.label, x: lx - width / 2, y: ly - 11, width, height, lx, ly })
   }
+  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
   for (const rect of labelRects) {
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (const node of nodes.values()) {
       if (rectsOverlap(rect, node, -2)) {
         problems.push(
@@ -170,7 +179,9 @@ function validateDataflow() {
       }
     }
   }
+  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
   for (let i = 0; i < labelRects.length; i += 1) {
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (let j = i + 1; j < labelRects.length; j += 1) {
       if (rectsOverlap(labelRects[i], labelRects[j], -2)) {
         problems.push(

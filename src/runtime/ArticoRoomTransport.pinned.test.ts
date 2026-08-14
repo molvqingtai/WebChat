@@ -33,7 +33,10 @@ class FakeSignaling {
   }
 
   emit(event: string, ...args: unknown[]) {
-    this.listeners.get(event)?.forEach((listener) => listener(...args))
+    // functional-loop: owner-commit — ordered per-listener notification with no bulk primitive
+    for (const listener of this.listeners.get(event) ?? []) {
+      listener(...args)
+    }
     return true
   }
 
@@ -102,10 +105,11 @@ describe('pinned Artico ready-to-closing behavior', () => {
 
     signaling.emit('join', 'room-a', 'closing-peer')
     signaling.emit('join', 'room-a', 'ready-peer')
-    channels.forEach((channel) => {
+    // functional-loop: owner-commit — ordered per-channel opening with no bulk primitive
+    for (const channel of channels) {
       channel.readyState = 'open'
       channel.onopen?.()
-    })
+    }
     channels[0].readyState = 'closing'
 
     expect(() => room.send('batched', ['closing-peer', 'ready-peer'])).toThrow('Connection is not established yet.')

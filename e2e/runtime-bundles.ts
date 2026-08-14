@@ -45,9 +45,11 @@ const [chromeHost, chromeContent, firefoxContent] = await Promise.all([
   Promise.all(firefoxContentEntries.map((entry) => readFile(join(firefoxRoot, entry), 'utf8')))
 ])
 assert(!chromeHost.includes('tabs.query'), 'Chrome Offscreen host must not contain tabs.query')
+// functional-loop: owner-commit — ordered per-item emission with no bulk primitive
 for (const marker of ['this.tabs.get', 'this.tabs.sendMessage']) {
   assert(firefoxBackground.includes(marker), `Firefox background provider must retain ${marker}`)
 }
+// functional-loop: owner-commit — ordered per-item emission with no bulk primitive
 for (const relayMarker of ['Dropped Offscreen Runtime relay:', 'untrusted-source', 'target-mismatch']) {
   assert(
     !firefoxBackground.includes(relayMarker),
@@ -70,23 +72,29 @@ const codecPolyfillMarkers = [
   'toHex',
   'setFromHex'
 ]
+// functional-loop: owner-commit — ordered per-item emission with no bulk primitive
 for (const [target, bundles] of [
   ['Chrome content', chromeContent],
   ['Firefox content', firefoxContent]
 ] as const) {
+  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
   for (const [index, bundle] of bundles.entries()) {
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (const marker of codecPolyfillMarkers) {
       assert(!bundle.includes(marker), `${target} entry ${index} must not contain codec polyfill marker ${marker}`)
     }
   }
 }
+// functional-loop: owner-commit — ordered per-item emission with no bulk primitive
 for (const [target, bundle] of [
   ['Chrome host', chromeHost],
   ['Firefox background', firefoxBackground]
 ] as const) {
+  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
   for (const marker of ['fromBase64', 'toBase64', 'lastChunkHandling']) {
     assert(bundle.includes(marker), `${target} must contain ${marker}`)
   }
+  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
   for (const residue of ['setFromBase64', 'fromHex', 'toHex', 'setFromHex', 'atob(', 'btoa(']) {
     assert(!bundle.includes(residue), `${target} must not contain unrelated Base64/hex residue ${residue}`)
   }

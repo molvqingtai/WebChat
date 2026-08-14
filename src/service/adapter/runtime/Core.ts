@@ -31,6 +31,7 @@ export class MessageListenerRegistry {
 
   dispose() {
     let firstError: unknown
+    // functional-loop: owner-commit — ordered per-disposer cleanup with per-item error capture
     for (const dispose of this.disposers) {
       try {
         dispose()

@@ -104,13 +104,19 @@ describe('origin-local configuration preparation', () => {
     const versionKey = `${STORAGE_NAME}:${CONFIG_STORE_VERSION_KEY}`
     const versionManagedKey = `${STORAGE_NAME}:VERSION_MANAGED_SETTING`
     localStorage.setItem('HOST_PAGE_KEY', 'preserved')
-    statusKeys.forEach((key, index) => localStorage.setItem(key, `status-${index}`))
+    // functional-loop: owner-commit — ordered per-key seed writes with no bulk primitive
+    for (const [index, key] of statusKeys.entries()) {
+      localStorage.setItem(key, `status-${index}`)
+    }
 
     await prepareLocalConfigurationStorage()
     expect(statusKeys.map((key) => localStorage.getItem(key))).toEqual(['status-0', 'status-1', 'status-2', 'status-3'])
     expect(localStorage.getItem(versionKey)).toBe('1')
 
-    statusKeys.forEach((key, index) => localStorage.setItem(key, `current-${index}`))
+    // functional-loop: owner-commit — ordered per-key seed writes with no bulk primitive
+    for (const [index, key] of statusKeys.entries()) {
+      localStorage.setItem(key, `current-${index}`)
+    }
     await prepareLocalConfigurationStorage()
     expect(statusKeys.map((key) => localStorage.getItem(key))).toEqual([
       'current-0',
@@ -245,13 +251,19 @@ describe('origin-local configuration preparation', () => {
       APP_MESSAGE_AUTHOR_STORAGE_KEY
     ].map((key) => `${STORAGE_NAME}:${key}`)
     const versionKey = `${STORAGE_NAME}:${CONFIG_STORE_VERSION_KEY}`
-    statusKeys.forEach((key) => localStorage.setItem(key, 'old-generation'))
+    // functional-loop: owner-commit — ordered per-item external effects with no bulk primitive
+    for (const key of statusKeys) {
+      localStorage.setItem(key, 'old-generation')
+    }
     localStorage.setItem(versionKey, '7')
 
     const first = firstRealm()
     const second = secondRealm()
     await first
-    statusKeys.forEach((key) => localStorage.setItem(key, 'new-generation'))
+    // functional-loop: owner-commit — ordered per-item external effects with no bulk primitive
+    for (const key of statusKeys) {
+      localStorage.setItem(key, 'new-generation')
+    }
     secondGrant.resolve()
     await second
 

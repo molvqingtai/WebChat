@@ -138,10 +138,13 @@ const renderStatus = (storage: Storage, dependencies: InitializationDependencies
 const shell = () => screen.getByTestId('shell')
 
 afterEach(() => {
-  active.splice(0).forEach(({ stop, store }) => {
+  // functional-mutate: draining the owned active fixtures queue is the operation itself
+  const activeToDispose = active.splice(0)
+  // functional-loop: owner-commit — ordered per-fixture teardown with no bulk primitive
+  for (const { stop, store } of activeToDispose) {
     stop()
     store.discard()
-  })
+  }
   cleanup()
   vi.restoreAllMocks()
 })

@@ -59,6 +59,9 @@ describe('NativeWireCodec public reference implementation', () => {
       }
     ]
 
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
+
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (const { value, json, frame } of golden) {
       expect(JSON.stringify(value)).toBe(json)
       await expect(NativeWireCodec.encode(value)).resolves.toBe(frame)
@@ -77,6 +80,7 @@ describe('NativeWireCodec public reference implementation', () => {
   it('accepts only the one canonical padded Base64 spelling', async () => {
     let frame = ''
     let value: unknown
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (let length = 0; length < 32 && !frame.endsWith('='); length += 1) {
       value = { value: 'x'.repeat(length) }
       frame = await NativeWireCodec.encode(value)
@@ -103,6 +107,9 @@ describe('NativeWireCodec public reference implementation', () => {
       nonZeroPaddingBits
     ]
 
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
+
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (const candidate of malformed) {
       await expect(NativeWireCodec.decode(candidate)).rejects.toThrow('Malformed base64 frame')
     }

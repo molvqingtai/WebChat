@@ -204,11 +204,7 @@ const canonicalContent = (record: MessageRecord): unknown =>
 const canonicalJson = (record: MessageRecord): string => JSON.stringify(canonicalContent(record))
 
 const hashString = (value: string): string => {
-  let hash = 2166136261
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index)
-    hash = Math.imul(hash, 16777619)
-  }
+  const hash = value.split('').reduce((acc, char) => Math.imul(acc ^ char.charCodeAt(0), 16777619), 2166136261)
   return (hash >>> 0).toString(16).padStart(8, '0')
 }
 
@@ -246,12 +242,12 @@ const retainInvalidRecordDiagnostics = async (
       const existing = await transaction.scan('conflicts')
       let total = existing.length
       const keys = new Set(existing.map(({ key }) => key))
-      const counts = new Map<string, number>()
-      for (const { value } of existing) {
-        if (typeof value !== 'object' || value === null) continue
+      const counts = existing.reduce<Map<string, number>>((acc, { value }) => {
+        if (typeof value !== 'object' || value === null) return acc
         const eventId = (value as { eventId?: unknown }).eventId
-        if (typeof eventId === 'string') counts.set(eventId, (counts.get(eventId) ?? 0) + 1)
-      }
+        return typeof eventId === 'string' ? acc.set(eventId, (acc.get(eventId) ?? 0) + 1) : acc
+      }, new Map())
+      // functional-loop: early-return — the stored-conflict cap must stop the persistence walk
       for (const { item, error } of invalidRecords) {
         signal?.throwIfAborted()
         if (total >= MAX_STORED_CONFLICTS) return
@@ -330,6 +326,7 @@ export const createMessageStore = (database: Database<MessageDatabaseSchema>): M
     const items = await database.read(['records'], (transaction) => transaction.scan('records'), signal)
     const records: MessageRecord[] = []
     const invalidRecords: InvalidStoredRecord[] = []
+    // functional-loop: owner-commit — ordered per-item decode with abort checks and no bulk primitive
     for (const item of items) {
       signal?.throwIfAborted()
       const decoded = safeDecodeMessageRecord(item)

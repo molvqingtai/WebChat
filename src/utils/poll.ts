@@ -24,6 +24,7 @@ const wait = (delayMs: number, signal?: AbortSignal) =>
 
 const poll = async <T>(attempt: () => Promise<T>, options: PollOptions): Promise<T> => {
   const deadline = Date.now() + options.timeoutMs
+  // functional-loop: condition-driven — polling retries until the attempt succeeds or the deadline expires
   for (;;) {
     options.signal?.throwIfAborted()
     try {

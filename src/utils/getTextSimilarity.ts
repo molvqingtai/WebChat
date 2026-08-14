@@ -10,7 +10,9 @@ const getTextLCS = (a: string, b: string): number => {
   const dp: number[][] = Array.from({ length: a.length + 1 }, () => Array(b.length + 1).fill(0))
 
   // Fill the dp array
+  // functional-loop: owner-commit — ordered per-row in-place DP table updates
   for (let i = 1; i <= a.length; i++) {
+    // functional-loop: owner-commit — ordered per-column in-place DP table updates
     for (let j = 1; j <= b.length; j++) {
       // If characters match, increment the length of the LCS found so far
       if (a[i - 1] === b[j - 1]) {

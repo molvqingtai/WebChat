@@ -31,6 +31,7 @@ const SELF: UserInfo = {
 }
 
 const flushMicrotasks = async () => {
+  // functional-loop: early-return — the loop must exit the enclosing function on the guarded item
   for (let index = 0; index < 20; index += 1) await Promise.resolve()
 }
 
@@ -102,7 +103,10 @@ const persistedEvent = (type: 'pagehide' | 'pageshow') => {
 
 describe('Content document-lifecycle owner composed parent control', () => {
   afterEach(() => {
-    activeStores.forEach((store) => store.discard())
+    // functional-loop: owner-commit — ordered per-item external effects with no bulk primitive
+    for (const store of activeStores) {
+      store.discard()
+    }
     activeStores.clear()
   })
 

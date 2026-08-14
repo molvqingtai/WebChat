@@ -156,6 +156,7 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
   const clearGestures = useCallback(() => {
     const overlay = overlayRef.current
     if (overlay) {
+      // functional-loop: owner-commit — ordered per-pointer release during live Set iteration
       for (const pointerId of pointersRef.current.keys()) {
         if (overlay.hasPointerCapture(pointerId)) overlay.releasePointerCapture(pointerId)
       }
@@ -531,8 +532,10 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
       const focalPoint = { x: event.clientX - center.x, y: event.clientY - center.y }
       changeZoom(stateRef.current.transform.zoom - event.deltaY * 0.0025, focalPoint)
     }
+    // functional-loop: owner-commit — ordered per-surface listener registration with no bulk primitive
     for (const surface of surfaces) surface.addEventListener('wheel', handleWheel, { passive: false })
     return () => {
+      // functional-loop: owner-commit — ordered per-surface listener removal with no bulk primitive
       for (const surface of surfaces) surface.removeEventListener('wheel', handleWheel)
     }
   }, [changeZoom, previewOpen])

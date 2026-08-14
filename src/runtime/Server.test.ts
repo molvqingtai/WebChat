@@ -68,7 +68,10 @@ vi.mock('@rtco/client', () => {
     }
 
     emit(event: string, ...args: unknown[]) {
-      this.listeners.get(event)?.forEach((listener) => listener(...args))
+      // functional-loop: owner-commit — ordered per-listener notification with no bulk primitive
+      for (const listener of this.listeners.get(event) ?? []) {
+        listener(...args)
+      }
     }
   }
 
@@ -79,12 +82,13 @@ vi.mock('@rtco/client', () => {
 
     send(payload: string, target?: string | string[]) {
       const targets = target ? (Array.isArray(target) ? target : [target]) : null
-      this.peers.forEach((ready, peerId) => {
-        if (targets && !targets.includes(peerId)) return
+      // functional-loop: early-return — skip non-target peers while attempting each target once
+      for (const [peerId, ready] of this.peers) {
+        if (targets && !targets.includes(peerId)) continue
         this.attempts.push({ peerId, payload })
         if (!ready) throw new Error('Connection is not established yet.')
         this.sent.push({ peerId, payload })
-      })
+      }
     }
 
     open(peerId: string) {
@@ -116,8 +120,14 @@ vi.mock('@rtco/client', () => {
       runtimeArticoFixture.nextJoins.delete(roomId)
       if (plan) {
         void Promise.resolve().then(() => {
-          plan.peers.forEach((peerId) => room.open(peerId))
-          plan.closing.forEach((peerId) => room.loseReadiness(peerId))
+          // functional-loop: owner-commit — ordered per-item external effects with no bulk primitive
+          for (const peerId of plan.peers) {
+            room.open(peerId)
+          }
+          // functional-loop: owner-commit — ordered per-item external effects with no bulk primitive
+          for (const peerId of plan.closing) {
+            room.loseReadiness(peerId)
+          }
         })
       }
       return room
@@ -183,12 +193,15 @@ const registerSessionObservers = async (server: RuntimeServer, pageId: string, o
   observers.registered = true
   await server.onSessionEvent({ pageId }, async (event: RuntimeSessionEvent) => {
     if (event.type === 'snapshot' && event.snapshot.localSession) {
+      // functional-loop: owner-commit — ordered per-listener delivery with no bulk primitive
       for (const listener of observers.local) {
         await listener({ domain: event.domain, session: event.snapshot.localSession })
       }
     }
     const sessions = event.type === 'replace' || event.type === 'join' ? [event.session] : []
+    // functional-loop: owner-commit — ordered per-session delivery with no bulk primitive
     for (const session of sessions) {
+      // functional-loop: owner-commit — ordered per-listener delivery with no bulk primitive
       for (const listener of observers.remote) await listener({ domain: event.domain, session })
     }
   })
@@ -289,15 +302,19 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
     return { promise, resolve, reject }
   }
   const resolveDesiredWaiters = () => {
-    desiredWaiters.forEach((waiter) => {
+    // functional-loop: owner-commit — ordered per-waiter resolution with no bulk primitive
+    for (const waiter of desiredWaiters) {
       if (desired.size >= waiter.count) waiter.resolve()
-    })
+    }
+    // functional-mutate: draining the owned waiters queue is the operation itself
     desiredWaiters.splice(0, desiredWaiters.length, ...desiredWaiters.filter((waiter) => desired.size < waiter.count))
   }
   const resolveJoinCallWaiters = () => {
-    joinCallWaiters.forEach((waiter) => {
+    // functional-loop: owner-commit — ordered per-waiter resolution with no bulk primitive
+    for (const waiter of joinCallWaiters) {
       if (joinCalls.length >= waiter.count) waiter.resolve()
-    })
+    }
+    // functional-mutate: draining the owned waiters queue is the operation itself
     joinCallWaiters.splice(
       0,
       joinCallWaiters.length,
@@ -319,8 +336,15 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
         physicalJoinCalls.push(roomId)
         const members = [...(peersByRoom.get(roomId) ?? [])]
         queueMicrotask(() => {
-          if (joined.has(roomId))
-            members.forEach((peerId) => joinListeners.forEach((listener) => listener(roomId, peerId)))
+          if (joined.has(roomId)) {
+            // functional-loop: owner-commit — ordered per-item external effects with no bulk primitive
+            for (const peerId of members) {
+              // functional-loop: owner-commit — ordered per-listener notification with no bulk primitive
+              for (const listener of joinListeners) {
+                listener(roomId, peerId)
+              }
+            }
+          }
         })
         return Promise.resolve()
       }
@@ -340,12 +364,16 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
       const attempt = { roomId, payload, to }
       sendAttempts.push(attempt)
       const matchingWaiters = sendAttemptWaiters.filter((waiter) => !waiter.roomId || waiter.roomId === roomId)
+      // functional-mutate: draining the owned waiters queue is the operation itself
       sendAttemptWaiters.splice(
         0,
         sendAttemptWaiters.length,
         ...sendAttemptWaiters.filter((waiter) => !matchingWaiters.includes(waiter))
       )
-      matchingWaiters.forEach((waiter) => waiter.resolve(attempt))
+      // functional-loop: owner-commit — ordered per-item external effects with no bulk primitive
+      for (const waiter of matchingWaiters) {
+        waiter.resolve(attempt)
+      }
       if (!joined.has(roomId)) throw new Error(`Room "${roomId}" not joined`)
       if (sendError && (!sendErrorRoomId || sendErrorRoomId === roomId)) throw sendError
       sent.push(attempt)
@@ -386,13 +414,26 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
       disposeCount += 1
       desired.clear()
       joined.clear()
-      pendingJoins.forEach((pending, roomId) => pending.reject(new Error(`Room "${roomId}" join cancelled`)))
+      // functional-loop: owner-commit — ordered per-join rejection during live Map iteration
+      for (const [roomId, pending] of pendingJoins) {
+        pending.reject(new Error(`Room "${roomId}" join cancelled`))
+      }
       pendingJoins.clear()
       releaseSendGate()
       sendGate = null
       blockedSendRoomId = null
-      desiredWaiters.splice(0).forEach((waiter) => waiter.resolve())
-      joinCallWaiters.splice(0).forEach((waiter) => waiter.resolve())
+      // functional-mutate: draining the owned waiters queue is the operation itself
+      const pendingDesired = desiredWaiters.splice(0)
+      // functional-loop: owner-commit — ordered per-waiter resolution with no bulk primitive
+      for (const waiter of pendingDesired) {
+        waiter.resolve()
+      }
+      // functional-mutate: draining the owned waiters queue is the operation itself
+      const pendingJoinCalls = joinCallWaiters.splice(0)
+      // functional-loop: owner-commit — ordered per-waiter resolution with no bulk primitive
+      for (const waiter of pendingJoinCalls) {
+        waiter.resolve()
+      }
       sendAttemptWaiters.length = 0
       messageListeners.clear()
       joinListeners.clear()
@@ -423,17 +464,25 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
         : new Promise<void>((resolve) => joinCallWaiters.push({ count, resolve })),
     open: () => {
       physicalReady = true
-      desired.forEach((roomId) => {
+      // functional-loop: owner-commit — ordered per-room opening with no bulk primitive
+      for (const roomId of desired) {
         if (!joined.has(roomId)) physicalJoinCalls.push(roomId)
         joined.add(roomId)
         pendingJoins.get(roomId)?.resolve()
         pendingJoins.delete(roomId)
         const members = [...(peersByRoom.get(roomId) ?? [])]
         queueMicrotask(() => {
-          if (joined.has(roomId))
-            members.forEach((peerId) => joinListeners.forEach((listener) => listener(roomId, peerId)))
+          if (joined.has(roomId)) {
+            // functional-loop: owner-commit — ordered per-item external effects with no bulk primitive
+            for (const peerId of members) {
+              // functional-loop: owner-commit — ordered per-listener notification with no bulk primitive
+              for (const listener of joinListeners) {
+                listener(roomId, peerId)
+              }
+            }
+          }
         })
-      })
+      }
     },
     makeNotReady: () => {
       physicalReady = false
@@ -474,7 +523,10 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
       const peers = peersByRoom.get(roomId) ?? new Set<string>()
       peers.add(sourcePeerId)
       peersByRoom.set(roomId, peers)
-      messageListeners.forEach((listener) => listener(roomId, sourcePeerId, JSON.stringify(message)))
+      // functional-loop: owner-commit — ordered per-item external effects with no bulk primitive
+      for (const listener of messageListeners) {
+        listener(roomId, sourcePeerId, JSON.stringify(message))
+      }
     },
     /** Plants a pre-existing room member without a fresh join announcement. */
     plantPeer: (roomId: string, peerId: string) => {
@@ -490,19 +542,31 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
       } else {
         peers.add(peerId)
         peersByRoom.set(roomId, peers)
-        joinListeners.forEach((listener) => listener(roomId, peerId))
+        // functional-loop: owner-commit — ordered per-item external effects with no bulk primitive
+        for (const listener of joinListeners) {
+          listener(roomId, peerId)
+        }
       }
     },
     peerLeave: (roomId: string, peerId: string) => {
       peersByRoom.get(roomId)?.delete(peerId)
-      leaveListeners.forEach((listener) => listener(roomId, peerId))
+      // functional-loop: owner-commit — ordered per-item external effects with no bulk primitive
+      for (const listener of leaveListeners) {
+        listener(roomId, peerId)
+      }
     },
     roomClose: (roomId: string) => {
       joined.delete(roomId)
-      closeListeners.forEach((listener) => listener(roomId))
+      // functional-loop: owner-commit — ordered per-item external effects with no bulk primitive
+      for (const listener of closeListeners) {
+        listener(roomId)
+      }
     },
     emitError: (error: Error, roomId: string) => {
-      errorListeners.forEach((listener) => listener(error, roomId))
+      // functional-loop: owner-commit — ordered per-item external effects with no bulk primitive
+      for (const listener of errorListeners) {
+        listener(error, roomId)
+      }
     },
     messages: (roomId: string) =>
       sent.filter((item) => item.roomId === roomId).map((item) => JSON.parse(item.payload) as TestWireMessage)
@@ -674,7 +738,10 @@ describe('RuntimeServer lifecycle', () => {
         fake.peerJoin(roomId, peerId)
         fake.receive(roomId, peerId, { ...session(user), sessionId })
       }
-      remoteUsers.forEach((user, index) => announce(`peer-${index + 1}`, user, `session-${user.id}`))
+      // functional-loop: owner-commit — ordered per-user announcement with no bulk primitive
+      for (const [index, user] of remoteUsers.entries()) {
+        announce(`peer-${index + 1}`, user, `session-${user.id}`)
+      }
       await settle()
       expect(await memberCount()).toBe(4)
 
@@ -689,9 +756,10 @@ describe('RuntimeServer lifecycle', () => {
       // survives the released reconnect, so the count remains three).
       await server.reconnectDomain({ domain: DOMAIN })
       await settle()
-      remoteUsers.forEach((user, index) => {
+      // functional-loop: owner-commit — ordered per-user re-announcement with no bulk primitive
+      for (const [index, user] of remoteUsers.entries()) {
         fake.receive(roomId, `peer-${index + 1}`, { ...session(user), sessionId: `session-${user.id}-fresh` })
-      })
+      }
       await settle()
       expect(await memberCount()).toBe(4)
 
@@ -702,9 +770,10 @@ describe('RuntimeServer lifecycle', () => {
       await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
       await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
       await settle()
-      remoteUsers.forEach((user, index) => {
+      // functional-loop: owner-commit — ordered per-user re-announcement with no bulk primitive
+      for (const [index, user] of remoteUsers.entries()) {
         fake.receive(roomId, `peer-${index + 1}`, { ...session(user), sessionId: `session-${user.id}-reopen` })
-      })
+      }
       await settle()
       expect(await memberCount()).toBe(4)
       disposeServer(server)
@@ -2166,7 +2235,7 @@ describe('RuntimeServer lifecycle', () => {
     expect(fake.physicalJoinCalls.filter((id) => id === roomId)).toHaveLength(2)
     expect(fake.physicalJoinCalls.filter((id) => id === getWorldRoomId())).toHaveLength(2)
     expect(fake.operationLog.filter((entry) => entry === `leave:${roomId}`)).toHaveLength(1)
-    expect((await server.getSnapshot()).domains[0].pageIds.slice().sort()).toEqual(['page-b', 'page-c'])
+    expect((await server.getSnapshot()).domains[0].pageIds.slice().toSorted()).toEqual(['page-b', 'page-c'])
   })
 
   it('commits a staged cross-domain join only from a World snapshot containing its own site', async () => {
@@ -2497,9 +2566,10 @@ describe('RuntimeServer provisional recovery races', () => {
     // The superseded attempt never commits, so the peer can only receive the replacement identity.
     const staleChatSessions = sentToPeer(fake, roomId, 'stale-peer')
     expect(staleChatSessions.length).toBeGreaterThanOrEqual(0)
-    staleChatSessions.forEach((message) => {
+    // functional-loop: owner-commit — ordered per-message assertion with no bulk primitive
+    for (const message of staleChatSessions) {
       expect(message).toEqual(expect.objectContaining({ user: expect.objectContaining({ name: 'Refreshed' }) }))
-    })
+    }
     // The superseded attempt never commits, so the peer can only receive the replacement identity,
     // exactly once, as a current World Room target.
     expect(sentToPeer(fake, worldRoomId, 'stale-peer')).toEqual([
@@ -2729,6 +2799,7 @@ describe('RuntimeServer trusted delivery', () => {
       done: true
     }
     const dualResponse = { ...legacyResponse, syncId: 'current-sync', messages: legacyResponse.events }
+    // functional-loop: owner-commit — ordered per-invalid rejection probe with no bulk primitive
     for (const invalid of [legacyMention, dualMention, legacyRequest, dualRequest, legacyResponse, dualResponse]) {
       fake.receive(roomId, 'peer-a', invalid as unknown as TestWireMessage)
     }
@@ -2938,7 +3009,10 @@ describe('RuntimeServer concurrent World registration convergence', () => {
       dispose: vi.fn()
     }
     const flush = async () => {
-      for (let index = 0; index < 20; index += 1) await Promise.resolve()
+      await Array.from({ length: 20 }).reduce<Promise<unknown>>(
+        (acc) => acc.then(() => Promise.resolve()),
+        Promise.resolve()
+      )
     }
     const server = createServer({ transport, codec: jsonCodec, clock: new FakeClock() })
     return {
@@ -3041,6 +3115,7 @@ describe('RuntimeServer concurrent World registration convergence', () => {
     const domainC = 'https://c.example'
     fixture.pauseJoins()
     let primed = false
+    // functional-loop: owner-commit — ordered per-page registration with no bulk primitive
     for (const [domain, pageId] of [
       [domainA, 'page-a'],
       [domainC, 'page-c']
@@ -3485,6 +3560,7 @@ describe('RuntimeServer history', () => {
     })
     const pages = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)
     // Every page stays strictly below 64KiB after the codec's own size boundary.
+    // functional-loop: owner-commit — ordered per-page assertion with no bulk primitive
     for (const page of pages) {
       expect(new TextEncoder().encode(JSON.stringify(page)).byteLength).toBeLessThan(64 * 1024)
     }
@@ -3617,7 +3693,7 @@ describe('RuntimeServer history', () => {
     })
     const sent = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH)
     const ids = sent.flatMap((m) => (m as { messages: { id: string }[] }).messages.map((x) => x.id))
-    expect(ids.sort()).toEqual(['keep-1', 'keep-2'])
+    expect(ids.toSorted()).toEqual(['keep-1', 'keep-2'])
     expect(sent.every((m) => (m as { messages: unknown[] }).messages.length > 0 || sent.length === 1)).toBe(true)
   })
 
@@ -3707,6 +3783,7 @@ describe('RuntimeServer history', () => {
     fake.receive(roomId, 'peer-a', session())
     await settle()
     // Many peers send partial (non-final) inventories: each occupies admission from page zero.
+    // functional-loop: owner-commit — ordered per-peer setup with no bulk primitive
     for (let peer = 0; peer < 5; peer += 1) {
       const peerId = `peer-${peer}`
       fake.receive(roomId, peerId, session())
@@ -3944,6 +4021,7 @@ describe('RuntimeServer history', () => {
         })
       })
     })
+    // functional-loop: owner-commit — ordered per-peer setup with no bulk primitive
     for (let peer = 0; peer < 5; peer += 1) {
       const peerId = `peer-${peer}`
       fake.receive(roomId, peerId, session({ id: `user-${peer}`, name: `User ${peer}`, avatar: '' }))
@@ -5579,6 +5657,7 @@ describe('RuntimeServer history', () => {
       })
       return { records: [], done: true }
     })
+    // functional-loop: owner-commit — ordered per-peer delivery with no bulk primitive
     for (let peer = 0; peer < 4; peer += 1) {
       fake.receive(roomId, `peer-${peer}`, session({ id: `user-${peer}`, name: `User ${peer}`, avatar: '' }))
       await settle()
@@ -5673,6 +5752,7 @@ describe('RuntimeServer history', () => {
       done: true
     })
     await vi.waitFor(() => expect(started).toEqual(['lc-active']))
+    // functional-loop: owner-commit — ordered per-peer delivery with no bulk primitive
     for (let peer = 0; peer < 31; peer += 1) {
       const peerId = `peer-${peer}`
       fake.receive(roomId, peerId, session({ id: `lc-user-${peer}`, name: `LC ${peer}`, avatar: '' }))
@@ -5688,6 +5768,7 @@ describe('RuntimeServer history', () => {
     }
     // All 31 partial peers leave: cleanup must remove their canonical jobs IMMEDIATELY (no
     // physical settlement callback exists for them), so fresh unrelated work is admitted at once.
+    // functional-loop: owner-commit — ordered per-peer delivery with no bulk primitive
     for (let peer = 0; peer < 31; peer += 1) {
       fake.peerLeave(roomId, `peer-${peer}`)
     }
@@ -5715,6 +5796,7 @@ describe('RuntimeServer history', () => {
       return { records: [], done: true }
     })
     fake.hangHistoryResponseSends()
+    // functional-loop: owner-commit — ordered per-peer delivery with no bulk primitive
     for (let peer = 0; peer < 4; peer += 1) {
       fake.receive(roomId, `peer-${peer}`, session({ id: `hs-user-${peer}`, name: `HS ${peer}`, avatar: '' }))
       await settle()
@@ -5762,6 +5844,7 @@ describe('RuntimeServer history', () => {
       return { records: [], done: true }
     })
     fake.hangHistoryResponseSends()
+    // functional-loop: owner-commit — ordered per-peer delivery with no bulk primitive
     for (let peer = 0; peer < 4; peer += 1) {
       fake.receive(roomId, `peer-${peer}`, session({ id: `tc-user-${peer}`, name: `TC ${peer}`, avatar: '' }))
       await settle()
@@ -6121,6 +6204,7 @@ describe('RuntimeServer history', () => {
     })
     // 32 peers submit partial inventories: exactly 32 canonical jobs are admitted but none are
     // ready, so no supplier pipeline starts (observable: no starts, no responses).
+    // functional-loop: owner-commit — ordered per-peer delivery with no bulk primitive
     for (let peer = 0; peer < 32; peer += 1) {
       const peerId = `peer-${peer}`
       fake.receive(roomId, peerId, session({ id: `sat-user-${peer}`, name: `Sat ${peer}`, avatar: '' }))

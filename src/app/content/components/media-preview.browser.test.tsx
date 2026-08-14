@@ -379,6 +379,7 @@ describe('MediaPreview production browser boundary', () => {
 
     const backdropLayer = Number.parseInt(getComputedStyle(backdrop).zIndex, 10)
     const dialogLayer = Number.parseInt(getComputedStyle(dialog).zIndex, 10)
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (const surface of [panel, launcher.parentElement!, danmaku]) {
       const shellLayer = Number.parseInt(getComputedStyle(surface).zIndex, 10)
       expect(backdropLayer).toBeLessThan(shellLayer)
@@ -729,6 +730,7 @@ describe('MediaPreview production browser boundary', () => {
         ({ viewportWidth, viewportHeight }) => viewportWidth === 500 && viewportHeight === 400
       )
       expect(resizedFrames.length).toBeGreaterThan(0)
+      // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
       for (const rect of resizedFrames) {
         expect(rect.left).toBeLessThanOrEqual(rect.interactionLeft + 0.5)
         expect(rect.right).toBeGreaterThanOrEqual(rect.interactionRight - 0.5)

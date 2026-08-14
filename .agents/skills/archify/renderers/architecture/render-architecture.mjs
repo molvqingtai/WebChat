@@ -57,11 +57,14 @@ function measureComponent(c) {
 }
 
 const components = new Map(asArray(arch.components).map((c) => [c.id, measureComponent(c)]))
-const componentSteps = new Map()
-for (const [index, conn] of asArray(arch.connections).entries()) {
-  if (!componentSteps.has(conn.from)) componentSteps.set(conn.from, index)
-  if (!componentSteps.has(conn.to)) componentSteps.set(conn.to, index + 1)
-}
+const componentSteps = asArray(arch.connections)
+  .entries()
+  .reduce((acc, [index, conn]) => {
+    if (!acc.has(conn.from)) acc.set(conn.from, index)
+    if (!acc.has(conn.to)) acc.set(conn.to, index + 1)
+    return acc
+  }, new Map())
+// functional-loop: owner-commit — ordered per-component fallback step assignment
 for (const [index, c] of asArray(arch.components).entries()) {
   if (!componentSteps.has(c.id)) componentSteps.set(c.id, index)
 }
@@ -90,16 +93,10 @@ const boundaries = asArray(arch.boundaries).map(boundaryRect).filter(Boolean)
 
 // ---- Auto viewBox: fit all geometry + a legend row --------------------------
 function autoViewBox() {
-  let maxX = 0
-  let maxY = 0
-  for (const c of components.values()) {
-    maxX = Math.max(maxX, c.x + c.width)
-    maxY = Math.max(maxY, c.y + c.height)
-  }
-  for (const b of boundaries) {
-    maxX = Math.max(maxX, b.x + b.width)
-    maxY = Math.max(maxY, b.y + b.height)
-  }
+  const componentMaxX = [...components.values()].reduce((acc, c) => Math.max(acc, c.x + c.width), 0)
+  const componentMaxY = [...components.values()].reduce((acc, c) => Math.max(acc, c.y + c.height), 0)
+  const maxX = boundaries.reduce((acc, b) => Math.max(acc, b.x + b.width), componentMaxX)
+  const maxY = boundaries.reduce((acc, b) => Math.max(acc, b.y + b.height), componentMaxY)
   return [Math.ceil(maxX + layout.margin), Math.ceil(maxY + layout.margin + layout.legendH)]
 }
 
@@ -124,6 +121,7 @@ function validateArchitecture() {
   if (grid) {
     validateGridPlacement(arch, grid, problems)
   } else {
+    // functional-loop: owner-commit — ordered per-component validation with no bulk primitive
     for (const c of asArray(arch.components)) {
       if (!Array.isArray(c.pos) || c.pos.length !== 2) {
         problems.push(`Component "${c.id}" must include pos [x, y] when layout.mode is omitted (free placement).`)
@@ -131,6 +129,7 @@ function validateArchitecture() {
     }
   }
 
+  // functional-loop: continue — later validation checks skip components that already failed
   for (const c of components.values()) {
     if (!isFinitePoint(c.x, c.y, c.width, c.height)) {
       problems.push(`Component "${c.id}" has non-finite pos/size — pos and size must be [number, number].`)
@@ -157,7 +156,9 @@ function validateArchitecture() {
 
   // Component overlap — the highest-traffic hand-placement failure mode.
   const list = [...components.values()]
+  // functional-loop: owner-commit — ordered pairwise overlap checks over index pairs
   for (let i = 0; i < list.length; i += 1) {
+    // functional-loop: owner-commit — ordered per-pair overlap checks over the upper triangle
     for (let j = i + 1; j < list.length; j += 1) {
       if (rectsOverlap(list[i], list[j], 8)) {
         problems.push(
@@ -168,11 +169,14 @@ function validateArchitecture() {
   }
 
   // Boundaries: every wrapped id must exist; the computed box must stay in view.
+  // functional-loop: owner-commit — ordered per-boundary member validation with no bulk primitive
   for (const boundary of asArray(arch.boundaries)) {
+    // functional-loop: owner-commit — ordered per-member reference validation
     for (const id of asArray(boundary.wraps)) {
       if (!components.has(id)) problems.push(`Boundary "${boundary.label}" wraps unknown component "${id}".`)
     }
   }
+  // functional-loop: owner-commit — ordered per-boundary viewBox validation with no bulk primitive
   for (const b of boundaries) {
     if (b.x < 0 || b.y < 0 || b.x + b.width > viewBox[0] || b.y + b.height > viewBox[1]) {
       problems.push(
@@ -181,6 +185,7 @@ function validateArchitecture() {
     }
   }
 
+  // functional-loop: owner-commit — ordered per-connection validation with no bulk primitive
   for (const conn of asArray(arch.connections)) {
     if (!components.has(conn.from))
       problems.push(`Connection "${conn.label || conn.from}" references unknown source "${conn.from}".`)
@@ -199,13 +204,16 @@ function validateArchitecture() {
 
   // Connection labels must not land on top of components.
   const labelRects = []
+  // functional-loop: continue — skip unlabeled or broken connections while collecting label boxes
   for (const conn of asArray(arch.connections)) {
     if (!conn.label || !components.has(conn.from) || !components.has(conn.to)) continue
     const [lx, ly] = labelPoint(conn, pathFor(conn).points)
     const w = Math.max(30, textUnits(conn.label) * 4.8 + 10)
     labelRects.push({ label: conn.label, x: lx - w / 2, y: ly - 10, width: w, height: 14, lx, ly })
   }
+  // functional-loop: owner-commit — ordered per-label overlap checks with no bulk primitive
   for (const rect of labelRects) {
+    // functional-loop: owner-commit — ordered per-component overlap checks
     for (const c of components.values()) {
       if (rectsOverlap(rect, c, -2)) {
         problems.push(
@@ -222,6 +230,7 @@ function validateArchitecture() {
 
 function buildLayoutReport() {
   const labels = []
+  // functional-loop: owner-commit — ordered per-connection label collection
   for (const conn of asArray(arch.connections)) {
     if (!conn.label || !components.has(conn.from) || !components.has(conn.to)) continue
     const [lx, ly] = labelPoint(conn, pathFor(conn).points)
@@ -351,17 +360,20 @@ const TYPE_LABELS = {
   external: 'External'
 }
 function renderLegend() {
-  const used = []
-  const seen = new Set()
-  for (const c of components.values()) {
-    if (!seen.has(c.type)) {
-      seen.add(c.type)
-      used.push(c.type)
-    }
-  }
+  const used = [...components.values()].reduce(
+    (acc, c) => {
+      if (!acc.seen.has(c.type)) {
+        acc.seen.add(c.type)
+        acc.used.push(c.type)
+      }
+      return acc
+    },
+    { seen: new Set(), used: [] }
+  ).used
   const y = legendY()
   let x = layout.margin
   const parts = [`        <text x="${x}" y="${y - 13}" class="t-primary" font-size="9" font-weight="600">Legend</text>`]
+  // functional-loop: owner-commit — ordered per-type legend emission with running x advance
   for (const type of used) {
     parts.push(
       `        <rect x="${x}" y="${y - 8}" width="14" height="9" rx="2" class="${componentFill[type] || 'c-external'}" stroke-width="1"/>`

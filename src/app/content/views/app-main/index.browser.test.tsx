@@ -16,7 +16,10 @@ const fixture = vi.hoisted(() => {
 
   const update = (next: Partial<typeof state>) => {
     state = { ...state, ...next }
-    listeners.forEach((listener) => listener())
+    // functional-loop: owner-commit — ordered per-item external effects with no bulk primitive
+    for (const listener of listeners) {
+      listener()
+    }
   }
 
   const send = vi.fn((command: unknown) => {

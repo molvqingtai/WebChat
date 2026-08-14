@@ -65,6 +65,7 @@ function validateSequence() {
   }
   if (sequence.cards !== undefined && !Array.isArray(sequence.cards))
     problems.push('Sequence "cards" must be an array.')
+  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
   for (const arr of ['segments', 'activations']) {
     if (sequence[arr] !== undefined && !Array.isArray(sequence[arr]))
       problems.push(`Sequence "${arr}" must be an array.`)
@@ -76,6 +77,7 @@ function validateSequence() {
     )
   }
 
+  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
   for (const participant of participants.values()) {
     const estLabelW = textUnits(participant.label) * 6.8
     if (estLabelW > layout.participantW + 6) {
@@ -85,6 +87,7 @@ function validateSequence() {
     }
   }
 
+  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
   for (const message of asArray(sequence.messages)) {
     if (!participants.has(message.from))
       problems.push(`Message "${message.label}" references unknown source "${message.from}".`)
@@ -115,8 +118,10 @@ function validateSequence() {
       x1: Math.min(participants.get(m.from).cx, participants.get(m.to).cx),
       x2: Math.max(participants.get(m.from).cx, participants.get(m.to).cx)
     }))
-    .sort((a, b) => a.y - b.y)
+    .toSorted((a, b) => a.y - b.y)
+  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
   for (let i = 0; i < placed.length; i += 1) {
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (let j = i + 1; j < placed.length && placed[j].y - placed[i].y < 28; j += 1) {
       if (placed[i].x1 < placed[j].x2 && placed[j].x1 < placed[i].x2) {
         problems.push(
@@ -136,7 +141,9 @@ function validateSequence() {
       const width = Math.max(34, textUnits(m.label) * 5.2 + 12)
       return { label: m.label, x: (x1 + x2) / 2 - width / 2, y: m.y - 20, width, height: layout.labelH }
     })
+  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
   for (let i = 0; i < labelRects.length; i += 1) {
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (let j = i + 1; j < labelRects.length; j += 1) {
       if (rectsOverlap(labelRects[i], labelRects[j], -2)) {
         problems.push(
@@ -146,6 +153,7 @@ function validateSequence() {
     }
   }
 
+  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
   for (const segment of asArray(sequence.segments)) {
     if (segment.to <= segment.from) {
       problems.push(
@@ -159,6 +167,7 @@ function validateSequence() {
     }
   }
 
+  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
   for (const activation of asArray(sequence.activations)) {
     if (!participants.has(activation.participant))
       problems.push(`Activation references unknown participant "${activation.participant}".`)

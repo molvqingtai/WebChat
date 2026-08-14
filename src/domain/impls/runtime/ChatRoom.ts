@@ -146,6 +146,7 @@ const persistSelfJoinNotice = async (
   session: Pick<RuntimeSession, 'user' | 'joinedAt'>,
   signal: AbortSignal
 ): Promise<void> => {
+  // functional-loop: condition-driven — slot probing until the insert wins has no bounded range
   for (let slot = 0; ; slot += 1) {
     signal.throwIfAborted()
     const candidate = selfJoinNotice(session, slot)
@@ -407,9 +408,11 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
     const retryTimers = new Set<ReturnType<typeof globalThis.setTimeout>>()
     const activeHistorySupplies = new Map<string, AbortController>()
     const cleanup = () => {
+      // functional-loop: owner-commit — ordered per-timer cleanup with no bulk primitive
       for (const timer of retryTimers) globalThis.clearTimeout(timer)
       retryTimers.clear()
       retryingInbound.clear()
+      // functional-loop: owner-commit — ordered per-controller abort with no bulk primitive
       for (const controller of activeHistorySupplies.values()) {
         controller.abort(signal.reason ?? abortError('Runtime attachment cancelled'))
       }

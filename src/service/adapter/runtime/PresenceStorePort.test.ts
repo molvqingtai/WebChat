@@ -84,15 +84,24 @@ const createPortBus = () => {
         ports.delete(client)
         ports.delete(provider)
         providerPorts.delete(provider)
-        clientDisconnects.listeners.forEach((listener) => listener())
-        providerDisconnects.listeners.forEach((listener) => listener())
+        // functional-loop: owner-commit — ordered per-listener notification with no bulk primitive
+        for (const listener of clientDisconnects.listeners) {
+          listener()
+        }
+        // functional-loop: owner-commit — ordered per-listener notification with no bulk primitive
+        for (const listener of providerDisconnects.listeners) {
+          listener()
+        }
       }
       const client: PresenceStorePort = {
         name,
         postMessage: (message) => {
           if (disconnected) throw new Error('Port disconnected')
           queueMicrotask(() => {
-            if (!disconnected) providerMessages.listeners.forEach((listener) => listener(message))
+            // functional-loop: owner-commit — ordered per-listener notification with no bulk primitive
+            for (const listener of providerMessages.listeners) {
+              if (!disconnected) listener(message)
+            }
           })
         },
         disconnect,
@@ -105,7 +114,10 @@ const createPortBus = () => {
         postMessage: (message) => {
           if (disconnected) throw new Error('Port disconnected')
           queueMicrotask(() => {
-            if (!disconnected) clientMessages.listeners.forEach((listener) => listener(message))
+            // functional-loop: owner-commit — ordered per-listener notification with no bulk primitive
+            for (const listener of clientMessages.listeners) {
+              if (!disconnected) listener(message)
+            }
           })
         },
         disconnect,
@@ -115,7 +127,12 @@ const createPortBus = () => {
       ports.add(client)
       ports.add(provider)
       providerPorts.add(provider)
-      queueMicrotask(() => connections.listeners.forEach((listener) => listener(provider)))
+      queueMicrotask(() => {
+        // functional-loop: owner-commit — ordered per-listener notification with no bulk primitive
+        for (const listener of connections.listeners) {
+          listener(provider)
+        }
+      })
       return client
     },
     onConnect: connections.event
@@ -123,9 +140,18 @@ const createPortBus = () => {
 
   return {
     runtime,
-    sendRuntimeMessage: (message: unknown, sender: PresenceStorePortSender) =>
-      runtimeMessages.listeners.forEach((listener) => listener(message, sender)),
-    sendPortMessage: (message: unknown) => providerPorts.forEach((port) => port.postMessage(message)),
+    sendRuntimeMessage: (message: unknown, sender: PresenceStorePortSender) => {
+      // functional-loop: owner-commit — ordered per-listener notification with no bulk primitive
+      for (const listener of runtimeMessages.listeners) {
+        listener(message, sender)
+      }
+    },
+    sendPortMessage: (message: unknown) => {
+      // functional-loop: owner-commit — ordered per-port message delivery with no bulk primitive
+      for (const port of providerPorts) {
+        port.postMessage(message)
+      }
+    },
     runtimeMessageListenerCount: () => runtimeMessages.listeners.size,
     connectionListenerCount: () => connections.listeners.size,
     activePortCount: () => ports.size,
@@ -159,7 +185,10 @@ const createProviderEndpoint = (namespace: string, sender: PresenceStorePortSend
     disconnect: () => {
       if (closed) return
       closed = true
-      disconnected.listeners.forEach((listener) => listener())
+      // functional-loop: owner-commit — ordered per-listener notification with no bulk primitive
+      for (const listener of disconnected.listeners) {
+        listener()
+      }
     },
     onMessage: inbound.event,
     onDisconnect: disconnected.event
@@ -167,8 +196,18 @@ const createProviderEndpoint = (namespace: string, sender: PresenceStorePortSend
   return {
     port,
     outbound,
-    receive: (message: unknown) => inbound.listeners.forEach((listener) => listener(message)),
-    drop: () => disconnected.listeners.forEach((listener) => listener())
+    receive: (message: unknown) => {
+      // functional-loop: owner-commit — ordered per-listener notification with no bulk primitive
+      for (const listener of inbound.listeners) {
+        listener(message)
+      }
+    },
+    drop: () => {
+      // functional-loop: owner-commit — ordered per-listener notification with no bulk primitive
+      for (const listener of disconnected.listeners) {
+        listener()
+      }
+    }
   }
 }
 
@@ -186,7 +225,10 @@ const createInjectorEndpoint = (namespace: string) => {
     disconnect: () => {
       if (closed) return
       closed = true
-      disconnected.listeners.forEach((listener) => listener())
+      // functional-loop: owner-commit — ordered per-listener notification with no bulk primitive
+      for (const listener of disconnected.listeners) {
+        listener()
+      }
     },
     onMessage: inbound.event,
     onDisconnect: disconnected.event
@@ -194,7 +236,12 @@ const createInjectorEndpoint = (namespace: string) => {
   return {
     port,
     outbound,
-    receive: (message: unknown) => inbound.listeners.forEach((listener) => listener(message)),
+    receive: (message: unknown) => {
+      // functional-loop: owner-commit — ordered per-listener notification with no bulk primitive
+      for (const listener of inbound.listeners) {
+        listener(message)
+      }
+    },
     drop: () => port.disconnect()
   }
 }
@@ -297,12 +344,18 @@ describe('PresenceStore authenticated port', () => {
     provider.onMessage(() => {})
 
     const oldBinding = createProviderEndpoint(namespace, { id: EXTENSION_ID, url: OFFSCREEN_URL })
-    connections.listeners.forEach((listener) => listener(oldBinding.port))
+    // functional-loop: owner-commit — ordered per-listener notification with no bulk primitive
+    for (const listener of connections.listeners) {
+      listener(oldBinding.port)
+    }
     oldBinding.receive(injectorMessage('old-request', namespace))
     oldBinding.drop()
 
     const replacement = createProviderEndpoint(namespace, { id: EXTENSION_ID, url: OFFSCREEN_URL })
-    connections.listeners.forEach((listener) => listener(replacement.port))
+    // functional-loop: owner-commit — ordered per-listener notification with no bulk primitive
+    for (const listener of connections.listeners) {
+      listener(replacement.port)
+    }
     provider.sendMessage(providerMessage('old-request', namespace), [])
     expect(replacement.outbound).toEqual([])
 
@@ -325,7 +378,13 @@ describe('PresenceStore authenticated port', () => {
         terminalPosts += 1
         if (terminalPosts === 2) throw new Error('Attempting to use a disconnected port object')
       },
-      disconnect: () => queueMicrotask(() => terminalDisconnects.listeners.forEach((listener) => listener())),
+      disconnect: () =>
+        queueMicrotask(() => {
+          // functional-loop: owner-commit — ordered per-listener notification with no bulk primitive
+          for (const listener of terminalDisconnects.listeners) {
+            listener()
+          }
+        }),
       onMessage: terminalMessages.event,
       onDisconnect: terminalDisconnects.event
     }
@@ -339,10 +398,18 @@ describe('PresenceStore authenticated port', () => {
         const message = rawMessage as Message
         healthyPosts.push(message)
         queueMicrotask(() => {
-          healthyMessages.listeners.forEach((listener) => listener(providerMessage(message.id, namespace)))
+          // functional-loop: owner-commit — ordered per-listener notification with no bulk primitive
+          for (const listener of healthyMessages.listeners) {
+            listener(providerMessage(message.id, namespace))
+          }
         })
       },
-      disconnect: () => healthyDisconnects.listeners.forEach((listener) => listener()),
+      disconnect: () => {
+        // functional-loop: owner-commit — ordered per-listener notification with no bulk primitive
+        for (const listener of healthyDisconnects.listeners) {
+          listener()
+        }
+      },
       onMessage: healthyMessages.event,
       onDisconnect: healthyDisconnects.event
     }

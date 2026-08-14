@@ -238,6 +238,7 @@ const setup = async (
 ) => {
   const server = serverFixture()
   const messageStore = createMessageStore(database)
+  // functional-loop: early-return — the loop must exit the enclosing function on the guarded item
   for (const record of records) await messageStore.insert(record)
   let snapshot = domainSnapshot()
   const room = new ChatRoom({

@@ -110,6 +110,7 @@ const stage = (fixture: ReturnType<typeof createFixture>, attemptId: string, ori
 }
 
 const settleAll = async () => {
+  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
   for (let index = 0; index < 20; index += 1) await Promise.resolve()
 }
 

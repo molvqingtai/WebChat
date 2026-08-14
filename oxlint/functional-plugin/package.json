@@ -1,0 +1,6 @@
+{
+  "name": "webchat-oxlint-functional-plugin",
+  "version": "0.0.0",
+  "private": true,
+  "main": "functional-plugin.cjs"
+}

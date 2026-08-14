@@ -35,13 +35,15 @@ export class WorldRoom extends EventHub {
 
   private replaceSource(sourcePeerId: string, presence: WorldRoomMessage, activeKeys?: Set<string>) {
     const nextOrigins = new Set(presence.sites.map((site) => site.origin))
-    this.contributions.forEach((contribution, key) => {
+    // functional-loop: owner-commit — per-item Map deletion during live iteration has no bulk primitive
+    for (const [key, contribution] of this.contributions) {
       if (contribution.sourcePeerId === sourcePeerId && !nextOrigins.has(contribution.site.origin)) {
         this.contributions.delete(key)
       }
-    })
+    }
 
-    presence.sites.forEach((site) => {
+    // functional-loop: owner-commit — ordered per-site contribution writes into the live map
+    for (const site of presence.sites) {
       const key = contributionKey(sourcePeerId, site.origin)
       activeKeys?.add(key)
       const current = this.contributions.get(key)
@@ -51,17 +53,17 @@ export class WorldRoom extends EventHub {
         user: presence.user,
         order: current?.order ?? this.nextOrder++
       })
-    })
+    }
   }
 
   private state(): WorldState {
-    const groups = new Map<string, ChatSite & { users: ChatUser[] }>()
     const ordered = [...this.contributions.values()].toSorted((left, right) => left.order - right.order)
-    ordered.forEach(({ site, user }) => {
-      const current = groups.get(site.origin)
-      if (current) current.users.push(user)
-      else groups.set(site.origin, { ...site, users: [user] })
-    })
+    const groups = ordered.reduce<Map<string, ChatSite & { users: ChatUser[] }>>((acc, { site, user }) => {
+      const current = acc.get(site.origin)
+      return current
+        ? acc.set(site.origin, { ...current, users: [...current.users, user] })
+        : acc.set(site.origin, { ...site, users: [user] })
+    }, new Map())
     return [...groups.values()]
   }
 
@@ -72,24 +74,27 @@ export class WorldRoom extends EventHub {
   private applyPresence(event: WorldPresenceEvent) {
     if (event.presence) this.replaceSource(event.sourcePeerId, event.presence.presence)
     else {
-      this.contributions.forEach((contribution, key) => {
+      // functional-loop: owner-commit — per-item Map deletion during live iteration has no bulk primitive
+      for (const [key, contribution] of this.contributions) {
         if (contribution.sourcePeerId === event.sourcePeerId) this.contributions.delete(key)
-      })
+      }
     }
     this.emitState()
   }
 
   private applySnapshot(snapshot: RuntimeSnapshot) {
     const activeKeys = new Set<string>()
-    snapshot.world.presences.forEach(({ sourcePeerId, presence }) =>
+    // functional-loop: owner-commit — ordered per-presence replacement commits with no bulk primitive
+    for (const { sourcePeerId, presence } of snapshot.world.presences) {
       this.replaceSource(sourcePeerId, presence, activeKeys)
-    )
+    }
     if (snapshot.world.localPresence) {
       this.replaceSource(snapshot.peerId, snapshot.world.localPresence, activeKeys)
     }
-    this.contributions.forEach((_contribution, key) => {
+    // functional-loop: owner-commit — per-item Map deletion during live iteration has no bulk primitive
+    for (const key of this.contributions.keys()) {
       if (!activeKeys.has(key)) this.contributions.delete(key)
-    })
+    }
     this.emitState()
   }
 
@@ -111,8 +116,9 @@ export class WorldRoom extends EventHub {
     }
 
     this.applySnapshot(snapshot)
-    for (let index = 0; index < bufferedEvents.length; index += 1) {
-      this.applyPresence(bufferedEvents[index])
+    // functional-loop: owner-commit — ordered per-event presence application with no bulk primitive
+    for (const event of bufferedEvents) {
+      this.applyPresence(event)
     }
     bufferedEvents.length = 0
     isLive = true

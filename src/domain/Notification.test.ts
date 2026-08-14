@@ -113,10 +113,14 @@ const createFixture = (user: UserInfo, userInfoBeforeNotification = false) => {
     notification,
     room,
     emitMessage: (message: ProjectedTextMessage) => {
-      sessionListeners.forEach((listener) =>
+      // functional-loop: owner-commit — ordered per-listener notification with no bulk primitive
+      for (const listener of sessionListeners) {
         listener([{ sessionId: `session-${message.author.id}`, user: message.author }])
-      )
-      messageListeners.forEach((listener) => listener(message))
+      }
+      // functional-loop: owner-commit — ordered per-item external effects with no bulk primitive
+      for (const listener of messageListeners) {
+        listener(message)
+      }
     },
     dispose: async () => {
       store.discard()
@@ -128,7 +132,9 @@ const createFixture = (user: UserInfo, userInfoBeforeNotification = false) => {
 const fixtures: Array<ReturnType<typeof createFixture>> = []
 
 afterEach(async () => {
-  await Promise.all(fixtures.splice(0).map((fixture) => fixture.dispose()))
+  // functional-mutate: draining the owned fixtures queue is the operation itself
+  const fixturesToDispose = fixtures.splice(0)
+  await Promise.all(fixturesToDispose.map((fixture) => fixture.dispose()))
   vi.restoreAllMocks()
 })
 

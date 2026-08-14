@@ -82,7 +82,7 @@ export class Coordinator {
   constructor(private readonly options: CoordinatorOptions) {}
 
   private currentTabs() {
-    return [...this.tabs.values()].sort((left, right) => left.tabId - right.tabId)
+    return [...this.tabs.values()].toSorted((left, right) => left.tabId - right.tabId)
   }
 
   private async persist() {
@@ -378,7 +378,8 @@ export class Coordinator {
       this.generation = Number.isSafeInteger(candidate.generation) ? candidate.generation! : 0
       this.hostId = typeof candidate.hostId === 'string' && candidate.hostId ? candidate.hostId : null
       if (Array.isArray(candidate.tabs)) {
-        candidate.tabs.forEach((tab) => {
+        // functional-loop: owner-commit — ordered per-tab restoration with no bulk primitive
+        for (const tab of candidate.tabs) {
           if (
             tab &&
             Number.isSafeInteger(tab.tabId) &&
@@ -389,7 +390,7 @@ export class Coordinator {
           ) {
             this.tabs.set(tab.tabId, tab)
           }
-        })
+        }
       }
     }
     await this.persist()

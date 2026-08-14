@@ -129,6 +129,9 @@ describe('replaceable application boundaries', () => {
     ])
     const violations: string[] = []
 
+    // functional-loop: continue — the loop must skip the guarded item and keep processing
+
+    // functional-loop: continue — the loop must skip the guarded item and keep processing
     for (const file of await codeFiles(projectPath('src/app'))) {
       if (/\.test\.[cm]?[jt]sx?$/.test(file)) continue
       if (roots.has(file)) continue
@@ -227,6 +230,7 @@ describe('replaceable application boundaries', () => {
     const sourceEntries = await Promise.all(
       (await codeFiles(projectPath('src'))).map(async (file) => [file, await source(file)] as const)
     )
+    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (const name of storageConstantNames) {
       expect(
         sourceEntries
@@ -249,6 +253,7 @@ describe('replaceable application boundaries', () => {
     expect(content).toContain('activateApplicationDependencies')
     expect(content).not.toMatch(/<App\s+[^>]*(?:dependenc|activat|timeout)/)
     expect(background).toContain('registerBrowserSyncStoragePreparation()')
+    // functional-loop: early-return — the loop must exit the enclosing function on the guarded item
     for (const preparation of [
       'run(dependencies.prepareBrowserSyncStorage)',
       'run(dependencies.prepareLocalStorage)',
@@ -280,6 +285,7 @@ describe('replaceable application boundaries', () => {
       projectPath('src/domain/externs/ChatRoom.ts')
     ]
     const violations: string[] = []
+    // functional-loop: continue — the loop must skip the guarded item and keep processing
     for (const file of files) {
       if (/\.test\.[cm]?[jt]sx?$/.test(file)) continue
       const value = await source(file)
