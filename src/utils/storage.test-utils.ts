@@ -5,7 +5,11 @@ export const createTestLocalStorage = () => {
       get: () => Object.keys(storage).length
     },
     clear: {
-      value: () => Object.keys(storage).forEach((key) => delete (storage as unknown as Record<string, string>)[key])
+      value: () => {
+        Object.keys(storage).forEach((key) => {
+          delete (storage as unknown as Record<string, string>)[key]
+        })
+      }
     },
     getItem: {
       value: (key: string) => (Object.prototype.hasOwnProperty.call(storage, key) ? storage[key] : null)

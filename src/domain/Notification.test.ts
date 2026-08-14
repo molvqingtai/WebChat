@@ -113,10 +113,12 @@ const createFixture = (user: UserInfo, userInfoBeforeNotification = false) => {
     notification,
     room,
     emitMessage: (message: ProjectedTextMessage) => {
-      sessionListeners.forEach((listener) =>
+      sessionListeners.forEach((listener) => {
         listener([{ sessionId: `session-${message.author.id}`, user: message.author }])
-      )
-      messageListeners.forEach((listener) => listener(message))
+      })
+      messageListeners.forEach((listener) => {
+        listener(message)
+      })
     },
     dispose: async () => {
       store.discard()
@@ -128,7 +130,8 @@ const createFixture = (user: UserInfo, userInfoBeforeNotification = false) => {
 const fixtures: Array<ReturnType<typeof createFixture>> = []
 
 afterEach(async () => {
-  await Promise.all(fixtures.splice(0).map((fixture) => fixture.dispose()))
+  const fixturesToDispose = fixtures.splice(0)
+  await Promise.all(fixturesToDispose.map((fixture) => fixture.dispose()))
   vi.restoreAllMocks()
 })
 

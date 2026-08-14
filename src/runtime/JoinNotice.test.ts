@@ -81,7 +81,9 @@ class DeterministicNetwork {
       this.heldFrames.length,
       ...this.heldFrames.filter((frame) => frame.sourcePeerId !== sourcePeerId || frame.targetPeerId !== targetPeerId)
     )
-    frames.forEach((frame) => this.deliver(frame))
+    frames.forEach((frame) => {
+      this.deliver(frame)
+    })
   }
 
   lastSession(sourcePeerId: string) {
@@ -115,15 +117,15 @@ class DeterministicNetwork {
   disconnectPeer(peerId: string) {
     const endpoint = this.endpoints.get(peerId)
     if (!endpoint) return
-    ;[...endpoint.rooms].forEach((roomId) => {
+    for (const roomId of Array.from(endpoint.rooms)) {
       endpoint.rooms.delete(roomId)
-      this.endpoints.forEach((other, otherPeerId) => {
+      for (const [otherPeerId, other] of this.endpoints) {
         if (otherPeerId !== peerId && other.rooms.has(roomId)) {
           this.announcedPairs.delete(this.pairKey(roomId, peerId, otherPeerId))
           other.leaves.forEach((listener) => listener(roomId, peerId))
         }
-      })
-    })
+      }
+    }
     this.endpoints.delete(peerId)
   }
 
@@ -163,21 +165,21 @@ class DeterministicNetwork {
         endpoint.rooms.add(roomId)
       },
       peers: (roomId) => {
-        const members: string[] = []
-        this.endpoints.forEach((other, otherPeerId) => {
-          if (otherPeerId !== peerId && other.rooms.has(roomId)) members.push(otherPeerId)
-        })
-        return members
+        return [...this.endpoints].flatMap(([otherPeerId, other]) =>
+          otherPeerId !== peerId && other.rooms.has(roomId) ? [otherPeerId] : []
+        )
       },
       leave: (roomId) => {
         if (!endpoint.rooms.delete(roomId)) return
         this.recordLifecycle(`physical-leave:${peerId}:${roomId}`)
-        this.endpoints.forEach((other, otherPeerId) => {
+        for (const [otherPeerId, other] of this.endpoints) {
           if (otherPeerId !== peerId && other.rooms.has(roomId)) {
             this.announcedPairs.delete(this.pairKey(roomId, peerId, otherPeerId))
-            other.leaves.forEach((listener) => listener(roomId, peerId))
+            other.leaves.forEach((listener) => {
+              listener(roomId, peerId)
+            })
           }
-        })
+        }
       },
       send: async (roomId, payload, to) => {
         const selected = to === undefined ? null : new Set(Array.isArray(to) ? to : [to])
@@ -190,13 +192,14 @@ class DeterministicNetwork {
           this.releaseOnSessionSend.delete(peerId)
           this.releaseSession(release.sourcePeerId, release.targetPeerId)
         }
-        this.endpoints.forEach((target, targetPeerId) => {
-          if (targetPeerId === peerId || !target.rooms.has(roomId) || (selected && !selected.has(targetPeerId))) return
+        for (const [targetPeerId, target] of this.endpoints) {
+          if (targetPeerId === peerId || !target.rooms.has(roomId) || (selected && !selected.has(targetPeerId)))
+            continue
           const frame = { roomId, sourcePeerId: peerId, targetPeerId, payload }
           const route = `${peerId}->${targetPeerId}`
           if (parsed.type === MESSAGE_TYPE.SESSION && this.heldRoutes.has(route)) this.heldFrames.push(frame)
           else this.deliver(frame)
-        })
+        }
       },
       onMessage: (listener) => subscribe(endpoint.messages, listener),
       onPeerJoin: (listener) => subscribe(endpoint.joins, listener),
@@ -204,13 +207,13 @@ class DeterministicNetwork {
       onRoomClose: (listener) => subscribe(endpoint.closes, listener),
       onError: () => () => {},
       dispose: () => {
-        ;[...endpoint.rooms].forEach((roomId) => {
-          this.endpoints.forEach((other, otherPeerId) => {
+        for (const roomId of Array.from(endpoint.rooms)) {
+          for (const [otherPeerId, other] of this.endpoints) {
             if (otherPeerId !== peerId && other.rooms.has(roomId)) {
               other.leaves.forEach((listener) => listener(roomId, peerId))
             }
-          })
-        })
+          }
+        }
         this.endpoints.delete(peerId)
       }
     }
@@ -219,12 +222,12 @@ class DeterministicNetwork {
   private discover(roomId: string, peerId: string) {
     const endpoint = this.endpoints.get(peerId)
     if (!endpoint) return
-    this.endpoints.forEach((other, otherPeerId) => {
-      if (otherPeerId === peerId || !other.rooms.has(roomId)) return
+    for (const [otherPeerId, other] of this.endpoints) {
+      if (otherPeerId === peerId || !other.rooms.has(roomId)) continue
       const pair = this.pairKey(roomId, peerId, otherPeerId)
-      if (this.heldDiscoveries.has(pair)) return
+      if (this.heldDiscoveries.has(pair)) continue
       this.announce(roomId, peerId, otherPeerId)
-    })
+    }
   }
 
   private announce(roomId: string, leftPeerId: string, rightPeerId: string) {
@@ -233,19 +236,23 @@ class DeterministicNetwork {
     const pair = this.pairKey(roomId, leftPeerId, rightPeerId)
     if (!left?.rooms.has(roomId) || !right?.rooms.has(roomId) || this.announcedPairs.has(pair)) return
     this.announcedPairs.add(pair)
-    left.joins.forEach((listener) => listener(roomId, rightPeerId))
-    right.joins.forEach((listener) => listener(roomId, leftPeerId))
+    left.joins.forEach((listener) => {
+      listener(roomId, rightPeerId)
+    })
+    right.joins.forEach((listener) => {
+      listener(roomId, leftPeerId)
+    })
   }
 
   private pairKey(roomId: string, leftPeerId: string, rightPeerId: string) {
-    return `${roomId}:${[leftPeerId, rightPeerId].sort().join(':')}`
+    return `${roomId}:${[leftPeerId, rightPeerId].toSorted().join(':')}`
   }
 
   private deliver(frame: HeldFrame) {
     this.deliveredFrames.push(frame)
-    this.endpoints
-      .get(frame.targetPeerId)
-      ?.messages.forEach((listener) => listener(frame.roomId, frame.sourcePeerId, frame.payload))
+    ;(this.endpoints.get(frame.targetPeerId)?.messages ?? []).forEach((listener) => {
+      listener(frame.roomId, frame.sourcePeerId, frame.payload)
+    })
   }
 }
 
@@ -410,7 +417,8 @@ beforeEach(() => {
 })
 
 afterEach(async () => {
-  await Promise.all(stacks.splice(0).map((stack) => stack.dispose()))
+  const stacksToDispose = stacks.splice(0)
+  await Promise.all(stacksToDispose.map((stack) => stack.dispose()))
   vi.unstubAllGlobals()
 })
 
@@ -743,7 +751,7 @@ describe('single live release owner', () => {
       network.disconnectPeer('prepared-rebind-peer-b')
       b.crash()
       // Let the reconnect reach its prepared phase (its SESSION publication stays held).
-      for (let flush = 0; flush < 20; flush += 1) await vi.advanceTimersByTimeAsync(0)
+      for (const _flush of Array.from({ length: 20 }, (_, index) => index)) await vi.advanceTimersByTimeAsync(0)
       // B's valid same-presence SESSION arrives during A's prepared phase.
       network.redeliverLastSession('prepared-rebind-peer-b', 'prepared-rebind-peer-a')
       await vi.advanceTimersByTimeAsync(0)

@@ -88,7 +88,11 @@ const createFixture = () => {
       pendingDetaches.splice(index, 1)[0]!.resolve()
     },
     resolveDetaches: (pageId: string) => {
-      pendingDetaches.filter((pending) => pending.pageId === pageId).forEach((pending) => pending.resolve())
+      pendingDetaches
+        .filter((pending) => pending.pageId === pageId)
+        .forEach((pending) => {
+          pending.resolve()
+        })
       pendingDetaches.splice(
         0,
         pendingDetaches.length,

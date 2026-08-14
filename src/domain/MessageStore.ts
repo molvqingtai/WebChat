@@ -204,11 +204,7 @@ const canonicalContent = (record: MessageRecord): unknown =>
 const canonicalJson = (record: MessageRecord): string => JSON.stringify(canonicalContent(record))
 
 const hashString = (value: string): string => {
-  let hash = 2166136261
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index)
-    hash = Math.imul(hash, 16777619)
-  }
+  const hash = value.split('').reduce((acc, char) => Math.imul(acc ^ char.charCodeAt(0), 16777619), 2166136261)
   return (hash >>> 0).toString(16).padStart(8, '0')
 }
 
@@ -246,12 +242,15 @@ const retainInvalidRecordDiagnostics = async (
       const existing = await transaction.scan('conflicts')
       let total = existing.length
       const keys = new Set(existing.map(({ key }) => key))
-      const counts = new Map<string, number>()
-      for (const { value } of existing) {
-        if (typeof value !== 'object' || value === null) continue
+      const eventIds = existing.flatMap(({ value }) => {
+        if (typeof value !== 'object' || value === null) return []
         const eventId = (value as { eventId?: unknown }).eventId
-        if (typeof eventId === 'string') counts.set(eventId, (counts.get(eventId) ?? 0) + 1)
-      }
+        return typeof eventId === 'string' ? [eventId] : []
+      })
+      const counts = eventIds.reduce<Map<string, number>>((acc, eventId) => {
+        const current = acc.get(eventId) ?? 0
+        return new Map([...acc, [eventId, current + 1]])
+      }, new Map())
       for (const { item, error } of invalidRecords) {
         signal?.throwIfAborted()
         if (total >= MAX_STORED_CONFLICTS) return

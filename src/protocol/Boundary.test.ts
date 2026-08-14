@@ -64,15 +64,15 @@ describe('public protocol source boundary', () => {
       )
       expect(source, `${file} reads a hidden wall clock`).not.toContain('Date.now')
       const dependencies = [...source.matchAll(/(?:from\s+|import\s+)['"]([^'"]+)['"]/g)].map((match) => match[1]!)
-      for (const dependency of dependencies) {
+      dependencies.forEach((dependency) => {
         expect(
           dependency.startsWith('.') || ALLOWED_DEPENDENCIES.has(dependency),
           `${file} imports unsupported dependency ${dependency}`
         ).toBe(true)
-      }
-      for (const symbol of FORBIDDEN_SYMBOLS) {
+      })
+      FORBIDDEN_SYMBOLS.forEach((symbol) => {
         expect(source, `${file} contains private symbol ${symbol}`).not.toContain(symbol)
-      }
+      })
     }
   })
 
@@ -80,17 +80,17 @@ describe('public protocol source boundary', () => {
     const limits = await readFile(path.join(PROTOCOL_ROOT, 'Limits.ts'), 'utf8')
     const config = await readFile(CONFIG_PATH, 'utf8')
 
-    for (const name of PUBLIC_LIMITS) {
+    PUBLIC_LIMITS.forEach((name) => {
       expect(limits).toMatch(new RegExp(`export const ${name} =`))
       expect(config).not.toContain(name)
-    }
+    })
   })
 
   it('derives every public type from its owning schema with no handwritten duplicate', async () => {
     const sources = await Promise.all(
       PUBLIC_FILES.map(async (file) => [file, await readFile(path.join(PROTOCOL_ROOT, file), 'utf8')] as const)
     )
-    for (const [file, source] of sources) {
+    sources.forEach(([file, source]) => {
       // No handwritten interface or standalone structural type may describe a protocol value
       // (WireCodec is an ordinary non-message API declaration, not a protocol data type).
       if (file !== 'WireCodec.ts') {
@@ -102,16 +102,16 @@ describe('public protocol source boundary', () => {
       )
       // No post-parse validator, output cast, schema factory, or executable callback may finish
       // validation after schema parsing (declarative Valibot primitives only).
-      for (const validator of FORBIDDEN_VALIDATORS) {
+      FORBIDDEN_VALIDATORS.forEach((validator) => {
         expect(source, `${file} retains validator ${validator}`).not.toContain(validator)
-      }
+      })
       expect(source, `${file} uses an executable callback predicate`).not.toMatch(
         /v\.(?:check|partialCheck|rawCheck|custom|transform)\b/
       )
       expect(source, `${file} casts schema output`).not.toMatch(
         /as (?:ChatRoomMessage|ChatMessage|WorldRoomMessage|ChatUser|ChatSession|HLC)\b/
       )
-    }
+    })
   })
 
   it('has no caller-side protocol revalidation or output casts in the runtime graph', async () => {

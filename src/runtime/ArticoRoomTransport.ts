@@ -50,23 +50,35 @@ export const createArticoRoomTransport = (): RoomTransport => {
     const isCurrent = () =>
       owners.get(owner.roomId) === owner && !owner.disposed && owner.peer === peer && owner.room === room
     room.on('message', (rawPayload, sourcePeerId) => {
-      if (isCurrent()) messageListeners.forEach((listener) => listener(owner.roomId, sourcePeerId, rawPayload))
+      if (isCurrent()) {
+        messageListeners.forEach((listener) => {
+          listener(owner.roomId, sourcePeerId, rawPayload)
+        })
+      }
     })
     room.on('join', (joinedPeerId) => {
       if (!isCurrent()) return
       owner.readyPeers.add(joinedPeerId)
-      joinListeners.forEach((listener) => listener(owner.roomId, joinedPeerId))
+      joinListeners.forEach((listener) => {
+        listener(owner.roomId, joinedPeerId)
+      })
     })
     room.on('leave', (leftPeerId) => {
       if (!isCurrent()) return
       owner.readyPeers.delete(leftPeerId)
-      leaveListeners.forEach((listener) => listener(owner.roomId, leftPeerId))
+      leaveListeners.forEach((listener) => {
+        listener(owner.roomId, leftPeerId)
+      })
     })
     room.on('close', () => {
       if (!isCurrent()) return
       owner.room = undefined
       owner.readyPeers.clear()
-      if (!owner.disposed) closeListeners.forEach((listener) => listener(owner.roomId))
+      if (!owner.disposed) {
+        closeListeners.forEach((listener) => {
+          listener(owner.roomId)
+        })
+      }
     })
   }
 
@@ -118,7 +130,9 @@ export const createArticoRoomTransport = (): RoomTransport => {
       // the physical restart path below is the only structural self-healing mechanism. A retired or
       // disposed owner can never leak an error outside its exact room scope.
       if (owner.disposed || owners.get(owner.roomId) !== owner || owner.peer !== nextPeer) return
-      errorListeners.forEach((listener) => listener(error, owner.roomId))
+      errorListeners.forEach((listener) => {
+        listener(error, owner.roomId)
+      })
     })
     nextPeer.on('close', () => {
       if (owner.disposed || owners.get(owner.roomId) !== owner || owner.peer !== nextPeer || owner.restartTimer) return
@@ -169,7 +183,9 @@ export const createArticoRoomTransport = (): RoomTransport => {
       try {
         room.leave()
       } catch (error) {
-        errorListeners.forEach((listener) => listener(error as Error, owner.roomId))
+        errorListeners.forEach((listener) => {
+          listener(error as Error, owner.roomId)
+        })
       }
     }
     try {
@@ -205,14 +221,14 @@ export const createArticoRoomTransport = (): RoomTransport => {
       if (!owner || !room) throw new Error(`Room "${roomId}" not joined`)
       const targets = new Set(typeof to === 'string' ? [to] : (to ?? owner.readyPeers))
       let firstError: Error | null = null
-      targets.forEach((target) => {
+      for (const target of targets) {
         try {
           room.send(payload, target)
         } catch (error) {
           // Every target is attempted exactly once; the first genuine throw surfaces after the rest ran.
           firstError ??= error as Error
         }
-      })
+      }
       if (firstError) throw firstError
     },
     onMessage: (callback) => {
@@ -236,7 +252,9 @@ export const createArticoRoomTransport = (): RoomTransport => {
       return () => errorListeners.delete(callback)
     },
     dispose: () => {
-      ;[...owners.values()].forEach(dropOwner)
+      Array.from(owners.values()).forEach((owner) => {
+        dropOwner(owner)
+      })
       messageListeners.clear()
       joinListeners.clear()
       leaveListeners.clear()

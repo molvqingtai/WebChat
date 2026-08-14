@@ -79,7 +79,7 @@ describe('message image rendering', () => {
     expect(images.map((image) => image.getAttribute('src'))).toEqual(['blob:webchat-cat', 'blob:webchat-diagram'])
     expect(createObjectURL).toHaveBeenCalledTimes(2)
 
-    for (const image of images) {
+    images.forEach((image) => {
       expect(image.style.maxInlineSize).toBe('70cqi')
       expect(image.style.maxBlockSize).toBe('70cqi')
       expect(image.style.inlineSize).toBe('auto')
@@ -87,7 +87,7 @@ describe('message image rendering', () => {
       expect(image.style.objectFit).toBe('contain')
       expect(image.getAttribute('part')).toBe(MEDIA_PREVIEW_TRANSITION_PART)
       expect(image.closest('button')).not.toBeNull()
-    }
+    })
   })
 
   it('reuses one message-image Blob URL across StrictMode, rerender, and preview, then revokes it exactly once', async () => {

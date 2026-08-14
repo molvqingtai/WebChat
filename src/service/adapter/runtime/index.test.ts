@@ -65,7 +65,9 @@ describe('Runtime browser adapters', () => {
     adapter.onMessage(received)
 
     const request = providerMessage('request', { sender: { type: 'injector' }, meta: {} })
-    listeners.forEach((listener) => listener(request, { tab: { id: 7, url: 'https://example.com/' } } as never))
+    listeners.forEach((listener) => {
+      listener(request, { tab: { id: 7, url: 'https://example.com/' } } as never)
+    })
     adapter.sendMessage(providerMessage('response'), [])
 
     expect(received).toHaveBeenCalledWith({
@@ -77,7 +79,9 @@ describe('Runtime browser adapters', () => {
       sender: { type: 'injector' },
       meta: {}
     })
-    listeners.forEach((listener) => listener(backgroundRequest, { url: 'chrome-extension://test/background.js' }))
+    listeners.forEach((listener) => {
+      listener(backgroundRequest, { url: 'chrome-extension://test/background.js' })
+    })
     expect(received).toHaveBeenLastCalledWith(backgroundRequest)
     expect(sendMessage).toHaveBeenCalledWith(providerMessage('response'))
 
@@ -103,7 +107,9 @@ describe('Runtime browser adapters', () => {
     })
     const trustedTab = { id: 7, url: 'https://example.com/' }
 
-    listeners.forEach((listener) => listener(request, { tab: trustedTab } as never))
+    listeners.forEach((listener) => {
+      listener(request, { tab: trustedTab } as never)
+    })
 
     expect(received).toHaveBeenCalledWith({
       ...request,
@@ -175,10 +181,10 @@ describe('Runtime browser adapters', () => {
     const content = { url: 'https://example.com/' } as never
     const malformedMessages: unknown[] = [null, 'raw', 0, false, [], {}, { sender: { type: 'provider' } }]
 
-    for (const message of malformedMessages) {
+    malformedMessages.forEach((message) => {
       expect(() => listener(message, offscreen)).not.toThrow()
       expect(() => listener(message, content)).not.toThrow()
-    }
+    })
     listener(providerMessage('valid'), offscreen)
     listener(providerMessage('forged'), { url: 'chrome-extension://test-extension/options.html' } as never)
     listener(providerMessage('namespace', { namespace: 'UNKNOWN' }), offscreen)
@@ -298,13 +304,15 @@ describe('Runtime browser adapters', () => {
       providerMessage('invalid-schema', { id: '' })
     ]
     const dispatch = (message: unknown, sender: unknown) => {
-      listeners.forEach((listener) => listener(message, sender))
+      listeners.forEach((listener) => {
+        listener(message, sender)
+      })
     }
 
-    for (const message of malformedMessages) {
+    malformedMessages.forEach((message) => {
       expect(() => dispatch(message, offscreen)).not.toThrow()
       expect(() => dispatch(message, content)).not.toThrow()
-    }
+    })
 
     expect(providerReceived).not.toHaveBeenCalled()
     expect(injectReceived).not.toHaveBeenCalled()

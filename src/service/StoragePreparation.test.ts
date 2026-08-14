@@ -31,7 +31,9 @@ const createFixture = (initial: Record<string, unknown>) => {
       Object.assign(values, items)
     }),
     clear: vi.fn(async () => {
-      Object.keys(values).forEach((key) => delete values[key])
+      Object.keys(values).forEach((key) => {
+        delete values[key]
+      })
     })
   }
   const runtime = {
@@ -153,7 +155,9 @@ describe('browser sync configuration preparation', () => {
     fixture.storage.clear.mockImplementationOnce(async () => {
       clearStarted.resolve()
       await releaseClear.promise
-      Object.keys(fixture.values).forEach((key) => delete fixture.values[key])
+      Object.keys(fixture.values).forEach((key) => {
+        delete fixture.values[key]
+      })
     })
     registerBrowserSyncStoragePreparation(fixture.runtime, fixture.storage)
 

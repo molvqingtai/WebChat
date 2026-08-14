@@ -22,25 +22,35 @@ const reactionKey = (record: ReactionMessageRecord): string =>
   `${record.message.targetId}\u0000${record.message.userId}\u0000${record.message.reaction}`
 
 export const projectRecords = (records: readonly MessageRecord[]): DisplayMessage[] => {
-  const reactionWinners = new Map<string, ReactionMessageRecord>()
-  records.forEach((record) => {
-    if (!isChatMessageRecord(record) || !isReactionMessageRecord(record)) return
+  const reactionWinners = records.reduce<Map<string, ReactionMessageRecord>>((acc, record) => {
+    if (!isChatMessageRecord(record) || !isReactionMessageRecord(record)) return acc
     const reactionRecord = record
     const key = reactionKey(reactionRecord)
-    const current = reactionWinners.get(key)
-    if (!current || compareEventPosition(current.message, reactionRecord.message) < 0) {
-      reactionWinners.set(key, reactionRecord)
-    }
-  })
+    const current = acc.get(key)
+    const next =
+      !current || compareEventPosition(current.message, reactionRecord.message) < 0 ? reactionRecord : current
+    return new Map([...acc, [key, next]])
+  }, new Map())
 
-  const reactionsByTarget = new Map<string, { likes: ChatUser[]; hates: ChatUser[] }>()
-  reactionWinners.forEach((record) => {
-    if (!record.message.active) return
-    const reactions = reactionsByTarget.get(record.message.targetId) ?? { likes: [], hates: [] }
-    if (record.message.reaction === REACTION_TYPE.LIKE) reactions.likes.push(record.user)
-    if (record.message.reaction === REACTION_TYPE.HATE) reactions.hates.push(record.user)
-    reactionsByTarget.set(record.message.targetId, reactions)
-  })
+  const reactionRows = [...reactionWinners.values()].flatMap(
+    (record): { targetId: string; user: ChatUser; kind: 'like' | 'hate' }[] => {
+      if (!record.message.active) return []
+      const key = record.message.targetId
+      return record.message.reaction === REACTION_TYPE.LIKE
+        ? [{ targetId: key, user: record.user, kind: 'like' }]
+        : record.message.reaction === REACTION_TYPE.HATE
+          ? [{ targetId: key, user: record.user, kind: 'hate' }]
+          : []
+    }
+  )
+  const reactionsByTarget = reactionRows.reduce<Map<string, { likes: ChatUser[]; hates: ChatUser[] }>>((acc, row) => {
+    const current = acc.get(row.targetId) ?? { likes: [], hates: [] }
+    const next =
+      row.kind === 'like'
+        ? { ...current, likes: [...current.likes, row.user] }
+        : { ...current, hates: [...current.hates, row.user] }
+    return new Map([...acc, [row.targetId, next]])
+  }, new Map())
 
   return records.flatMap((record): DisplayMessage[] => {
     if (record.type === MESSAGE_RECORD_TYPE.SYSTEM_NOTICE) {

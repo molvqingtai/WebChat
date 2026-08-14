@@ -33,7 +33,9 @@ class FakeSignaling {
   }
 
   emit(event: string, ...args: unknown[]) {
-    this.listeners.get(event)?.forEach((listener) => listener(...args))
+    ;(this.listeners.get(event) ?? []).forEach((listener) => {
+      listener(...args)
+    })
     return true
   }
 

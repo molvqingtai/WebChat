@@ -123,22 +123,26 @@ function mulberry32(seed) {
 }
 
 test('property: shuffling node/state order still renders (order-independence)', () => {
-  for (const mode of ['workflow', 'dataflow', 'lifecycle']) {
+  ;['workflow', 'dataflow', 'lifecycle'].forEach((mode) => {
     const arrKey = mode === 'lifecycle' ? 'states' : 'nodes'
-    for (let seed = 1; seed <= 8; seed += 1) {
+    Array.from({ length: 8 }, (_, index) => index + 1).forEach((seed) => {
       const doc = JSON.parse(fs.readFileSync(path.join(skillRoot, 'examples', EXAMPLES[mode]), 'utf8'))
       const rng = mulberry32(seed)
-      // Fisher–Yates with the seeded PRNG.
+      // Fisher–Yates with the seeded PRNG over a fresh per-seed array.
       const a = doc[arrKey]
-      for (let i = a.length - 1; i > 0; i -= 1) {
-        const j = Math.floor(rng() * (i + 1))
-        ;[a[i], a[j]] = [a[j], a[i]]
-      }
+      doc[arrKey] = Array.from({ length: a.length - 1 }, (_, index) => a.length - 1 - index).reduce(
+        (acc, i) => {
+          const j = Math.floor(rng() * (i + 1))
+          ;[acc[i], acc[j]] = [acc[j], acc[i]]
+          return acc
+        },
+        [...a]
+      )
       const { code, html } = render(mode, doc)
       assert.equal(code, 0, `${mode} seed ${seed}: valid shuffle should render (exit 0)`)
       assert.doesNotMatch(html, /NaN|undefined>/, `${mode} seed ${seed}: NaN in output`)
-    }
-  }
+    })
+  })
 })
 
 test('installed skill rejects unknown fields without node_modules', () => {
@@ -152,7 +156,7 @@ test('installed skill rejects unknown fields without node_modules', () => {
   assert.doesNotMatch(stderr, /ajv is not installed|skipping JSON-schema validation/)
 })
 
-for (const mode of Object.keys(EXAMPLES)) {
+Object.keys(EXAMPLES).forEach((mode) => {
   test(`installed skill retains full ${mode} schema without node_modules`, () => {
     const doc = JSON.parse(fs.readFileSync(path.join(skillRoot, 'examples', EXAMPLES[mode]), 'utf8'))
     doc.unknownField = true
@@ -161,6 +165,6 @@ for (const mode of Object.keys(EXAMPLES)) {
     assert.match(stderr, new RegExp(`${mode} schema validation failed`))
     assert.match(stderr, /"additionalProperty":"unknownField"/)
   })
-}
+})
 
 process.on('exit', () => fs.rmSync(tmp, { recursive: true, force: true }))

@@ -71,6 +71,7 @@ const assertPlainValue = (value: unknown, seen: Set<object>): void => {
     if (Object.getPrototypeOf(value) !== Object.prototype) {
       throw new TypeError('Database values require plain objects')
     }
+    // invalid descriptor with no bulk primitive
     for (const key of Reflect.ownKeys(value)) {
       if (typeof key !== 'string') throw new TypeError('Database object keys must be strings')
       const descriptor = Object.getOwnPropertyDescriptor(value, key)
@@ -104,25 +105,22 @@ export const compareDatabaseKeys = (left: DatabaseKey, right: DatabaseKey): numb
   return left < right ? -1 : 1
 }
 
-export const getPathValue = (value: unknown, keyPath: string): unknown => {
-  let current = value
-  for (const part of keyPath.split('.')) {
+export const getPathValue = (value: unknown, keyPath: string): unknown =>
+  keyPath.split('.').reduce<unknown>((current, part) => {
     if (typeof current !== 'object' || current === null || !Object.prototype.hasOwnProperty.call(current, part)) {
       return undefined
     }
-    current = (current as Record<string, unknown>)[part]
-  }
-  return current
-}
+    return (current as Record<string, unknown>)[part]
+  }, value)
 
 export const validateStoreValue = <Schema extends StoreSchema>(
   definition: StoreDefinition<Schema>,
   value: Schema['value']
 ): void => {
   assertCanonicalValue(value)
-  for (const index of Object.values(definition.indexes) as IndexDefinition<DatabaseKey>[]) {
+  ;(Object.values(definition.indexes) as IndexDefinition<DatabaseKey>[]).forEach((index) => {
     assertDatabaseKey(getPathValue(value, index.keyPath), index.key)
-  }
+  })
 }
 
 export const validateScope = <Schema extends DatabaseSchema<Schema>>(
@@ -132,11 +130,11 @@ export const validateScope = <Schema extends DatabaseSchema<Schema>>(
   if (stores.length === 0) throw new TypeError('Database transaction scope must not be empty')
   if (new Set(stores).size !== stores.length)
     throw new TypeError('Database transaction scope must not contain duplicates')
-  stores.forEach((store) => {
+  for (const store of stores) {
     if (!Object.prototype.hasOwnProperty.call(definition.stores, store)) {
       throw new TypeError(`Unknown database store: ${store}`)
     }
-  })
+  }
   return [...stores]
 }
 

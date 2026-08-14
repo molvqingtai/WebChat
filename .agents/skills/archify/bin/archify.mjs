@@ -121,24 +121,31 @@ async function commandDoctor() {
     lifecycle: 'agent-run.lifecycle.json'
   }
 
+  // Each type contributes one doctor entry; the existence checks are ordered per-file I/O
+  // inside the loop, and the derived entries join the shared list once.
+  const typeChecks = []
   for (const type of TYPES) {
     const required = [
       path.join(skillRoot, 'renderers', type, `render-${type}.mjs`),
       path.join(skillRoot, 'schemas', `${type}.schema.json`),
       path.join(skillRoot, 'examples', examples[type])
     ]
-    const missing = required.filter((file) => !fs.existsSync(file)).length
-    checks.push({
+    const missingFiles = []
+    for (const file of required) {
+      if (!fs.existsSync(file)) missingFiles.push(file)
+    }
+    typeChecks.push({
       label: `${type} renderer, schema, and example`,
-      ok: missing === 0,
-      missing
+      ok: missingFiles.length === 0,
+      missing: missingFiles.length
     })
   }
+  checks.push(...typeChecks)
 
   console.log('Archify doctor\n')
-  for (const check of checks) {
+  checks.forEach((check) => {
     console.log(`[${check.ok ? 'ok' : check.failureLabel || 'missing'}] ${check.label}`)
-  }
+  })
 
   const nodeFailed = checks[0].ok ? 0 : 1
   const missingFiles = checks.reduce((count, check) => count + check.missing, 0)

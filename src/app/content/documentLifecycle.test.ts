@@ -102,7 +102,9 @@ const persistedEvent = (type: 'pagehide' | 'pageshow') => {
 
 describe('Content document-lifecycle owner composed parent control', () => {
   afterEach(() => {
-    activeStores.forEach((store) => store.discard())
+    activeStores.forEach((store) => {
+      store.discard()
+    })
     activeStores.clear()
   })
 

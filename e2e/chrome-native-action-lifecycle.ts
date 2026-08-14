@@ -233,7 +233,11 @@ const assertJson = (value: unknown, seen = new Set<object>()): JsonValue => {
   if (Array.isArray(value)) {
     if (seen.has(value)) throw new Error('JSON value must not contain cycles')
     seen.add(value)
-    const result = value.map((entry) => assertJson(entry, seen))
+    const result = []
+    // cycle-tracking set, which must reflect the in-progress membership at each step
+    for (const entry of value) {
+      result.push(assertJson(entry, seen))
+    }
     seen.delete(value)
     return result
   }
@@ -242,7 +246,7 @@ const assertJson = (value: unknown, seen = new Set<object>()): JsonValue => {
     if (seen.has(value)) throw new Error('JSON value must not contain cycles')
     seen.add(value)
     const result: Record<string, JsonValue> = {}
-    for (const key of Object.keys(value).sort()) {
+    for (const key of Object.keys(value).toSorted()) {
       result[key] = assertJson((value as Record<string, unknown>)[key], seen)
     }
     seen.delete(value)
@@ -306,13 +310,12 @@ const asPackagedManifest = (value: unknown): PackagedManifest => {
   }
 }
 
-const manifestProjection = (manifest: JsonObject): JsonObject => {
-  const projection: JsonObject = {}
-  for (const key of ['manifest_version', 'name', 'version', 'background'] as const) {
-    if (Object.hasOwn(manifest, key)) projection[key] = manifest[key]!
-  }
-  return projection
-}
+const manifestProjection = (manifest: JsonObject): JsonObject =>
+  Object.fromEntries(
+    (['manifest_version', 'name', 'version', 'background'] as const)
+      .filter((key) => Object.hasOwn(manifest, key))
+      .map((key) => [key, manifest[key]!])
+  )
 
 const pointerSegment = (value: string): string => value.replaceAll('~', '~0').replaceAll('/', '~1')
 
@@ -362,7 +365,9 @@ const manifestDiff = (
         !Array.isArray(left) &&
         !Array.isArray(right)
       if (bothArrays) {
-        const indexes = Array.from({ length: Math.max(left.length, right.length) }, (_, index) => String(index)).sort()
+        const indexes = Array.from({ length: Math.max(left.length, right.length) }, (_, index) =>
+          String(index)
+        ).toSorted()
         for (const index of indexes) {
           const numericIndex = Number(index)
           visit(
@@ -375,7 +380,7 @@ const manifestDiff = (
         return
       }
       if (bothObjects) {
-        const keys = [...new Set([...Object.keys(left), ...Object.keys(right)])].sort()
+        const keys = [...new Set([...Object.keys(left), ...Object.keys(right)])].toSorted()
         for (const key of keys) {
           visit(
             `${path}/${pointerSegment(key)}`,
@@ -429,10 +434,15 @@ const normalizeEvidence = (value: unknown, depth = 0, seen = new Set<object>()):
       if (value.length > MAX_VALUE_ITEMS) {
         throw new EvidenceLimitError(`Evidence array exceeds ${MAX_VALUE_ITEMS} items`)
       }
-      return value.map((entry) => normalizeEvidence(entry, depth + 1, seen))
+      const normalized = []
+      // cycle-tracking set, which must reflect the in-progress membership at each step
+      for (const entry of value) {
+        normalized.push(normalizeEvidence(entry, depth + 1, seen))
+      }
+      return normalized
     }
 
-    const keys = Object.keys(value).sort()
+    const keys = Object.keys(value).toSorted()
     if (keys.length > MAX_VALUE_ITEMS) {
       throw new EvidenceLimitError(`Evidence object exceeds ${MAX_VALUE_ITEMS} keys`)
     }
@@ -1246,8 +1256,8 @@ export const diagnoseChromeNativeActionLifecycle = async (
     ...startupTargets
       .filter(({ type }) => type === 'service_worker')
       .map((target, index) => ({ target, atMs: startupInventoryAtMs, order: pendingEvents.length + index }))
-  ].sort((left, right) => left.atMs - right.atMs || left.order - right.order)
-  for (const { target, atMs } of initialWorkerSightings) addWorker(target, atMs)
+  ].toSorted((left, right) => left.atMs - right.atMs || left.order - right.order)
+  initialWorkerSightings.forEach(({ target, atMs }) => addWorker(target, atMs))
 
   const observeWorkerEvent = (event: ChromeLifecycleEvent, eventAtMs: number): boolean => {
     if (event.type === 'target-created' || event.type === 'target-changed' || event.type === 'target-attached') {

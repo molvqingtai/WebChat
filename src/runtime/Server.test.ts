@@ -2729,9 +2729,9 @@ describe('RuntimeServer trusted delivery', () => {
       done: true
     }
     const dualResponse = { ...legacyResponse, syncId: 'current-sync', messages: legacyResponse.events }
-    for (const invalid of [legacyMention, dualMention, legacyRequest, dualRequest, legacyResponse, dualResponse]) {
+    ;[legacyMention, dualMention, legacyRequest, dualRequest, legacyResponse, dualResponse].forEach((invalid) => {
       fake.receive(roomId, 'peer-a', invalid as unknown as TestWireMessage)
-    }
+    })
     fake.receive(roomId, 'peer-a', text('valid-after-rejections'))
     await settle()
 
@@ -3485,9 +3485,9 @@ describe('RuntimeServer history', () => {
     })
     const pages = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)
     // Every page stays strictly below 64KiB after the codec's own size boundary.
-    for (const page of pages) {
+    pages.forEach((page) => {
       expect(new TextEncoder().encode(JSON.stringify(page)).byteLength).toBeLessThan(64 * 1024)
-    }
+    })
     expect(pages[pages.length - 1]).toMatchObject({ done: true })
     const covered = pages.flatMap((p) => (p as { messageIds: string[] }).messageIds)
     expect(new Set(covered).size).toBe(manyIds.length)
@@ -5688,9 +5688,9 @@ describe('RuntimeServer history', () => {
     }
     // All 31 partial peers leave: cleanup must remove their canonical jobs IMMEDIATELY (no
     // physical settlement callback exists for them), so fresh unrelated work is admitted at once.
-    for (let peer = 0; peer < 31; peer += 1) {
-      fake.peerLeave(roomId, `peer-${peer}`)
-    }
+    Array.from({ length: 31 }, (_, peer) => `peer-${peer}`).forEach((peerId) => {
+      fake.peerLeave(roomId, peerId)
+    })
     await settle()
     // A fresh peer at the (now released) cap is admitted and its ready job starts immediately.
     fake.receive(roomId, 'peer-33', session({ id: 'lc-user-33', name: 'LC 33', avatar: '' }))

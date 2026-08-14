@@ -561,7 +561,9 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     disposed = true
     presenceRecoveries.forEach((recovery) => recovery.resolve())
     presenceRecoveries.clear()
-    pageBridges.forEach((subscription) => subscription.unsubscribe())
+    pageBridges.forEach((subscription) => {
+      subscription.unsubscribe()
+    })
     try {
       store.discard()
     } finally {

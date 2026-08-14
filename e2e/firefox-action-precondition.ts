@@ -143,7 +143,7 @@ const requireIdentity = (
 const physicalInventory = (tabs: readonly FirefoxActionTab[]) =>
   tabs
     .map(({ identity, url, type, testOwned }) => ({ identity, url, type, testOwned }))
-    .sort((left, right) => left.identity.localeCompare(right.identity))
+    .toSorted((left, right) => left.identity.localeCompare(right.identity))
 
 const hasSamePhysicalInventory = (
   before: ReturnType<typeof physicalInventory>,

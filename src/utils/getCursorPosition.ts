@@ -29,9 +29,9 @@ const getCursorPosition = (target: HTMLInputElement | HTMLTextAreaElement) => {
 
         const copyStyle = getComputedStyle(target)
 
-        for (const key of copyStyle) {
+        Array.from(copyStyle).forEach((key) => {
           Reflect.set(copyInput.style, key, copyStyle[key as keyof CSSStyleDeclaration])
-        }
+        })
 
         if (target.tagName === 'INPUT') {
           copyInput.style.lineHeight = copyStyle.height

@@ -64,13 +64,13 @@ const dispatch = (
   message: Message,
   onError: (error: unknown) => void
 ) => {
-  for (const callback of callbacks) {
+  callbacks.forEach((callback) => {
     try {
       Promise.resolve(callback(message)).catch(onError)
     } catch (error) {
       onError(error)
     }
-  }
+  })
 }
 
 /** Point-to-point provider for the Chrome background-owned PresenceStore. */
@@ -238,6 +238,7 @@ export class PresenceStoreInjectPortAdapter implements Adapter {
   }
 
   private rejectBindingPending(binding: PortBinding, reason: string) {
+    // from the live Map while dispatching its failure exactly once
     for (const [id, pending] of this.pending) {
       if (pending.binding !== binding) continue
       this.pending.delete(id)
@@ -272,8 +273,7 @@ export class PresenceStoreInjectPortAdapter implements Adapter {
   }
 
   private acknowledgeHeartbeat(message: Message) {
-    const callbacks = new Set(this.callbacks)
-    for (const preparation of this.preparations) callbacks.add(preparation.response)
+    const callbacks = new Set([...this.callbacks, ...this.preparations.map((preparation) => preparation.response)])
     dispatch(
       callbacks,
       {

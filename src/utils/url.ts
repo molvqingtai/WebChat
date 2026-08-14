@@ -15,12 +15,10 @@ export const isAbsoluteURL = (url: string) => {
  * Add params to the URL
  */
 export const assembleURL = (url: string, params: Record<string, string>) => {
-  return Object.entries(params)
-    .reduce((url, [key, value]) => {
-      url.searchParams.append(key, value)
-      return url
-    }, new URL(url))
-    .toString()
+  const target = new URL(url)
+  const merged = new URLSearchParams([...target.searchParams.entries(), ...Object.entries(params)])
+  target.search = merged.toString()
+  return target.toString()
 }
 
 /**

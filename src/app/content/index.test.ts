@@ -191,8 +191,12 @@ beforeEach(() => {
 
 afterEach(async () => {
   await act(async () => {
-    fixture.removeUis.splice(0).forEach((remove) => remove())
-    fixture.owners.splice(0).forEach((owner) => {
+    const pendingRemovals = fixture.removeUis.splice(0)
+    pendingRemovals.forEach((remove) => {
+      remove()
+    })
+    const pendingOwners = fixture.owners.splice(0)
+    pendingOwners.forEach((owner) => {
       owner.stopInitialization()
       owner.root.unmount()
       owner.store.discard()

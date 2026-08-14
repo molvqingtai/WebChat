@@ -102,8 +102,12 @@ const createFixture = (danmakuEnabled: boolean) => {
       store.send(userInfo.command.UpdateUserInfoCommand(user))
     },
     emitMessage: (id: string) => {
-      sessionListeners.forEach((listener) => listener([{ sessionId: 'remote-session', user: REMOTE }]))
-      messageListeners.forEach((listener) => listener({ ...MESSAGE, id }))
+      sessionListeners.forEach((listener) => {
+        listener([{ sessionId: 'remote-session', user: REMOTE }])
+      })
+      messageListeners.forEach((listener) => {
+        listener({ ...MESSAGE, id })
+      })
     },
     dispose: async () => {
       store.discard()
@@ -120,7 +124,8 @@ beforeEach(() => {
 })
 
 afterEach(async () => {
-  await Promise.all(fixtures.splice(0).map((fixture) => fixture.dispose()))
+  const fixturesToDispose = fixtures.splice(0)
+  await Promise.all(fixturesToDispose.map((fixture) => fixture.dispose()))
   vi.restoreAllMocks()
 })
 
@@ -130,7 +135,7 @@ describe('DanmakuDomain consumer surface', () => {
     fixtures.push(fixture)
 
     expect(Object.keys(fixture.danmaku)).toEqual(['command'])
-    expect(Object.keys(fixture.danmaku.command).sort()).toEqual(['MountCommand', 'UnmountCommand'])
+    expect(Object.keys(fixture.danmaku.command).toSorted()).toEqual(['MountCommand', 'UnmountCommand'])
   })
 
   it('keeps same-domain document admissions independent without changing either lifecycle', async () => {

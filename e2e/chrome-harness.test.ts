@@ -27,7 +27,9 @@ class FakeWebSocket {
   }
 
   emit(type: string, event: FakeEvent = {}): void {
-    this.listeners.get(type)?.forEach((listener) => listener(event))
+    ;(this.listeners.get(type) ?? []).forEach((listener) => {
+      listener(event)
+    })
   }
 
   send(message: string): void {

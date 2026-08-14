@@ -144,11 +144,11 @@ class MemoryTransaction<
       if (typeof queryKey !== 'string' && typeof queryKey !== 'number') return []
       return keyInRange(queryKey, query.range) ? [{ key, value, queryKey }] : []
     })
-    items.sort((left, right) => {
+    const sorted = items.toSorted((left, right) => {
       const order = compareDatabaseKeys(left.queryKey, right.queryKey) || compareDatabaseKeys(left.key, right.key)
       return query.direction === 'desc' ? -order : order
     })
-    const selected = query.limit === undefined ? items : items.slice(0, query.limit)
+    const selected = query.limit === undefined ? sorted : sorted.slice(0, query.limit)
     this.idle()
     return selected.map(({ key, value }) => ({
       key: key as Schema[Store]['key'],
@@ -162,13 +162,12 @@ class MemoryTransaction<
     const indexDefinition = query.index
       ? (definition.indexes as Record<string, { keyPath: string }>)[query.index]
       : undefined
-    let count = 0
-    data.forEach((value, key) => {
+    const count = [...data].reduce((acc, [key, value]) => {
       const queryKey = indexDefinition ? getPathValue(value, indexDefinition.keyPath) : key
-      if ((typeof queryKey === 'string' || typeof queryKey === 'number') && keyInRange(queryKey, query.range)) {
-        count += 1
-      }
-    })
+      return (typeof queryKey === 'string' || typeof queryKey === 'number') && keyInRange(queryKey, query.range)
+        ? acc + 1
+        : acc
+    }, 0)
     this.idle()
     return count
   }
@@ -285,7 +284,9 @@ export class MemoryDatabase<Schema extends DatabaseSchema<Schema>> implements Da
             transaction.mutated.forEach((store) => {
               this.state.stores.set(store, working.get(store) ?? new Map())
             })
-            this.state.instances.forEach((instance) => instance.notify([...transaction.mutated]))
+            this.state.instances.forEach((instance) => {
+              instance.notify([...transaction.mutated])
+            })
           }
           return result
         } finally {
@@ -332,12 +333,12 @@ export class MemoryDatabase<Schema extends DatabaseSchema<Schema>> implements Da
 
   notify(stores: readonly string[]): void {
     if (this.closed) return
-    this.watchers.forEach((watcher) => {
-      if (!stores.some((store) => watcher.stores.has(store))) return
+    for (const watcher of this.watchers) {
+      if (!stores.some((store) => watcher.stores.has(store))) continue
       try {
         watcher.listener()
       } catch {}
-    })
+    }
   }
 
   close(): Promise<void> {

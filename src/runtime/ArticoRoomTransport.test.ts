@@ -38,7 +38,9 @@ vi.mock('@rtco/client', () => {
     }
 
     emit(event: string, ...args: unknown[]) {
-      this.listeners.get(event)?.forEach((listener) => listener(...args))
+      ;(this.listeners.get(event) ?? []).forEach((listener) => {
+        listener(...args)
+      })
     }
   }
 
@@ -49,12 +51,12 @@ vi.mock('@rtco/client', () => {
 
     send(payload: string, target?: string | string[]) {
       const targets = target ? (Array.isArray(target) ? target : [target]) : null
-      this.calls.forEach((ready, peerId) => {
-        if (targets && !targets.includes(peerId)) return
+      for (const [peerId, ready] of this.calls) {
+        if (targets && !targets.includes(peerId)) continue
         this.attempts.push({ peerId, payload })
         if (!ready) throw new Error('Connection is not established yet.')
         this.sent.push({ peerId, payload })
-      })
+      }
     }
 
     open(peerId: string) {

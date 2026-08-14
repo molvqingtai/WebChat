@@ -68,13 +68,13 @@ const Footer: FC = () => {
       // "@user" => "E@user"
       // "@user" => "@useEr"
       // "@user" => "@user @user"
-      atUserRecord.current.forEach((item, userId) => {
+      for (const [userId, item] of atUserRecord.current) {
         const positionList = [...item].map<[number, number]>((item) => {
           const inBefore = Math.min(start, end) <= item[1]
           return inBefore ? [item[0] + offset + (end - start), item[1] + offset + (end - start)] : item
         })
         atUserRecord.current.set(userId, new Set(positionList))
-      })
+      }
 
       // Insert a new @user record
       if (atUserId) {
@@ -83,7 +83,7 @@ const Footer: FC = () => {
 
       // After moving, check if the @user in the message matches the saved position record. If not, it means the @user has been edited, so delete that record.
       // Filter out records where the stored position does not match the actual position.
-      atUserRecord.current.forEach((item, userId) => {
+      for (const [userId, item] of atUserRecord.current) {
         // Pre-calculate the offset after InputCommand
         const positionList = [...item].filter((item) => {
           const name = message.slice(item[0], item[1] + 1)
@@ -94,7 +94,7 @@ const Footer: FC = () => {
         } else {
           atUserRecord.current.delete(userId)
         }
-      })
+      }
     },
     [userList]
   )
@@ -116,20 +116,24 @@ const Footer: FC = () => {
 
   // Replace the hash URL in ![Image](hash:${hash}) with base64 and update the atUserRecord.
   const transformMessage = async (message: string) => {
-    let newMessage = message
     const matchList = [...message.matchAll(/!\[Image\]\(hash:([^\s)]+)\)/g)]
-    matchList?.forEach((match) => {
-      const base64 = imageRecord.current.get(match[1])
-      if (base64) {
+    const transformed = matchList.reduce(
+      ({ text, updates }, match) => {
+        const base64 = imageRecord.current.get(match[1])
+        if (!base64) return { text, updates }
         const base64Syntax = `![Image](${base64})`
         const hashSyntax = match[0]
         const startIndex = match.index
         const endIndex = startIndex + base64Syntax.length - hashSyntax.length
-        newMessage = newMessage.replace(hashSyntax, base64Syntax)
-        updateAtUserAtRecord(newMessage, startIndex, endIndex, 0)
-      }
+        const nextText = text.replace(hashSyntax, base64Syntax)
+        return { text: nextText, updates: [...updates, { text: nextText, startIndex, endIndex }] }
+      },
+      { text: message, updates: [] as { text: string; startIndex: number; endIndex: number }[] }
+    )
+    transformed.updates.forEach(({ text, startIndex, endIndex }) => {
+      updateAtUserAtRecord(text, startIndex, endIndex, 0)
     })
-    return newMessage
+    return transformed.text
   }
 
   const handleSendMessage = async () => {

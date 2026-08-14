@@ -200,13 +200,36 @@ const createFixture = (options: { delayRecordWatch?: boolean; user?: UserInfo | 
     chat,
     records: () => messageStore.query(),
     persistRecord: (record: MessageRecord) => messageStore.insert(record),
-    emitMessage: (message: ChatMessage) => listeners.message.forEach((listener) => listener(message)),
-    emitJoin: (session: ChatSession) => listeners.join.forEach((listener) => listener(session)),
-    emitLeave: (session: ChatSession) => listeners.leave.forEach((listener) => listener(session)),
-    emitSessions: (sessions: readonly ChatSession[]) => listeners.sessions.forEach((listener) => listener(sessions)),
-    emitError: (error: Error) => listeners.error.forEach((listener) => listener(error)),
-    emitReadiness: (state: 'connecting' | 'ready' | 'unavailable') =>
-      readinessListeners.forEach((listener) => listener(state)),
+    emitMessage: (message: ChatMessage) => {
+      listeners.message.forEach((listener) => {
+        listener(message)
+      })
+    },
+    emitJoin: (session: ChatSession) => {
+      listeners.join.forEach((listener) => {
+        listener(session)
+      })
+    },
+    emitLeave: (session: ChatSession) => {
+      listeners.leave.forEach((listener) => {
+        listener(session)
+      })
+    },
+    emitSessions: (sessions: readonly ChatSession[]) => {
+      listeners.sessions.forEach((listener) => {
+        listener(sessions)
+      })
+    },
+    emitError: (error: Error) => {
+      listeners.error.forEach((listener) => {
+        listener(error)
+      })
+    },
+    emitReadiness: (state: 'connecting' | 'ready' | 'unavailable') => {
+      readinessListeners.forEach((listener) => {
+        listener(state)
+      })
+    },
     setLifecycleResult: (result: ConnectionLifecycleResult) => {
       lifecycleResult = result
     },

@@ -17,7 +17,7 @@ const TARGETS = [
   ['architecture', 'web-app.architecture.json', 'web-app-rendered.html']
 ]
 
-for (const [mode, input, output] of TARGETS) {
+TARGETS.forEach(([mode, input, output]) => {
   execFileSync(
     process.execPath,
     [
@@ -27,4 +27,4 @@ for (const [mode, input, output] of TARGETS) {
     ],
     { stdio: 'inherit' }
   )
-}
+})
