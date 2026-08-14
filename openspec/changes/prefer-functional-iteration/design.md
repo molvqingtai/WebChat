@@ -21,7 +21,7 @@ This change is stacked independently of PR #126: the bottom Draft PR contains on
 - Reformatting or applying every unrelated Oxlint rule to previously ignored copied UI/ported source.
 - Treating `Promise.all` as a universal replacement for sequential async work.
 - Rewriting generated validator output by hand.
-- Adding new product test cases or shared test abstractions; existing fixtures and expectations change only when mechanically necessary to preserve coverage.
+- Adding test cases, test abstractions, or fixture files, or changing existing test scenarios, expectations, or coverage. Existing test and E2E files may change only for the same behavior-preserving mechanical iteration rewrite applied to other authored source.
 
 ## Decisions
 
@@ -29,7 +29,7 @@ This change is stacked independently of PR #126: the bottom Draft PR contains on
 
 Add a small local JS plugin and a functional-only Oxlint configuration. The plugin owns the structural rules needed for forbidden loop syntax, narrow loop exceptions, and prohibited collection-transform patterns; the repository command owns broad-waiver detection. Enable native `unicorn/no-array-for-each` where it precisely matches the contract, and keep repository-specific semantics in the local plugin rather than adding another parser or linter dependency.
 
-The plugin is executable source and follows its own final rules. Its rules receive focused valid/invalid fixtures through Oxlint's installed `RuleTester` surface, and the functional command receives an invocation-level scope fixture. Because a generic `oxlint-disable` comment suppresses plugin diagnostics too, the same repository-owned command uses the installed TypeScript scanner only to inspect comment trivia and reject generic or functional-rule disable directives before invoking Oxlint with `--no-ignore --disable-nested-config`. This adds no parser dependency or second linter. The functional pass is always read-only: `lint` and lint-staged may run the existing general fix pass first, but they then run the functional check without `--fix`, so `unicorn/no-array-for-each` cannot auto-rewrite one prohibited construct into another. The canonical `lint`, `lint:check`, lint-staged, CI, and CD entry points each invoke both passes.
+The plugin is executable source and follows its own final rules. This change adds no `RuleTester`, scope, comment, or other test/fixture files. Before cleanup, the new read-only pass runs against the real tracked-source manifest and records fail-before evidence from representative existing violations; after cleanup, the same full manifest, structural residue scans, the unchanged existing test suite, and fresh Inspector review form the acceptance evidence. Because a generic `oxlint-disable` comment suppresses plugin diagnostics too, the same repository-owned command uses the installed TypeScript scanner only to inspect comment trivia and reject generic or functional-rule disable directives before invoking Oxlint with `--no-ignore --disable-nested-config`. This adds no parser dependency or second linter. The functional pass is always read-only: `lint` and lint-staged may run the existing general fix pass first, but they then run the functional check without `--fix`, so `unicorn/no-array-for-each` cannot auto-rewrite one prohibited construct into another. The canonical `lint`, `lint:check`, lint-staged, CI, and CD entry points each invoke both passes.
 
 Alternative rejected: depend on ambient `ast-grep`. It was suitable for the baseline inventory, but it is not a declared project dependency and would create a second CI toolchain.
 
@@ -86,9 +86,9 @@ Alternative rejected: prohibit every mutating method absolutely. The Owner's exa
 
 ### 6. Use one clean-cut implementation layer
 
-The top stacked PR removes all disallowed existing constructs in one repository-wide source candidate and adds no compatibility path, fallback, or staged allowlist. Focused fail-before fixtures first prove the new rule rejects representative `forEach`, ordinary loops, broad disables, derived-copy mutation, and disguised callback effects while accepting narrowly justified control-flow loops, one per-item owner-commit `for...of`, and the exact generated exclusion.
+The top stacked PR removes all disallowed existing constructs in one repository-wide source candidate and adds no compatibility path, fallback, or staged allowlist. Before cleanup, the new read-only functional pass runs on the exact real tracked-source manifest and must fail on representative existing violations. The implementation and fresh Inspector review cover the rule branches, narrowly justified control-flow loops, one per-item owner-commit `for...of`, broad-waiver rejection, and the exact generated exclusion without adding synthetic tests or fixtures.
 
-Existing tests and fixtures may be mechanically synchronized, but no new product scenario or test abstraction is introduced. The final exact must pass the local rule fixtures, the functional-pass scope fixture, zero-residue structural scans, the complete existing test suite, typecheck, format/lint, both production builds, OpenSpec strict validation, and exact CI.
+Existing test and E2E source may receive only behavior-preserving mechanical iteration rewrites; test cases, assertions, expected values, coverage, abstractions, and fixture files remain unchanged. The final exact must pass the functional pass over the exact tracked-source manifest, zero-residue structural scans, the complete existing test suite, typecheck, format/lint, both production builds, OpenSpec strict validation, and exact CI.
 
 ## Risks / Trade-offs
 
@@ -104,9 +104,9 @@ Existing tests and fixtures may be mechanically synchronized, but no new product
 ## Migration Plan
 
 1. Publish this four-file docs authority as the bottom Draft PR from exact `10801251a7a6b744fd246960daed01eef323c868`; lock parent/tree/head/CI and obtain fresh Inspector review.
-2. From the reviewed docs exact, create the top Draft PR. Add focused structural fail-before fixtures, the local Oxlint plugin, the functional-only second-pass configuration, and the exact generated-file exclusion.
+2. From the reviewed docs exact, create the top Draft PR. Add the local Oxlint plugin, the functional-only second-pass configuration, and the exact generated-file exclusion; record fail-before evidence from the real tracked-source baseline without adding test or fixture files.
 3. Refactor every in-scope violation by semantic category while preserving ordering, live collection behavior, random-call order, sequential async behavior, errors, cleanup, and product output. Add only necessary statement-local control-flow or per-item owner-commit justifications.
-4. Run focused rule fixtures, structural zero-residue scans, full existing tests, typecheck, format/lint, Chrome/Firefox builds, OpenSpec gates, and same-exact hosted CI. Obtain fresh Inspector review of the top increment and cumulative stack.
+4. Run the functional pass on the exact tracked-source manifest, structural zero-residue scans, full existing tests, typecheck, format/lint, Chrome/Firefox builds, OpenSpec gates, and same-exact hosted CI. Obtain fresh Inspector review of the top increment and cumulative stack.
 5. Keep both PRs Draft. No Ready, merge, deployment, release, or change to PR #126 occurs without separate Owner authority.
 
 Rollback is code-only: revert the top implementation PR, then the bottom authority PR. No protocol, storage, data, permission, or user migration exists.

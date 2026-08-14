@@ -73,6 +73,8 @@ The repository SHALL enforce this contract through repository-owned structural r
 
 The structural rules SHALL reject every `forEach`, reject loop statements that lack an approved control-flow, condition-driven, or per-item owner-commit need, reject prohibited collection mutation used to derive a value, reject mechanically provable effectful functional callbacks, and expose each retained loop exception for review. An exception SHALL use the rule's dedicated statement-local justification annotation and include a concise reason naming the required control flow or, for `for...of`, the ordered owner effect and missing bulk primitive plus any observable live-iteration behavior; generic lint-disable directives SHALL NOT authorize exceptions. The functional command SHALL inspect parsed comment trivia to reject generic or functional-rule Oxlint/ESLint disable directives before invoking Oxlint with ignore processing and nested configuration discovery disabled. Whole-file, directory-wide, global, or rule-disable waivers for the functional-iteration rules SHALL be forbidden. Callback purity and the legitimacy of retained side effects or loop exceptions SHALL receive fresh source review in addition to the mechanical gate.
 
+The implementation SHALL add no test case, test abstraction, `RuleTester` fixture, scope fixture, comment fixture, or other fixture file. Existing test and E2E files SHALL remain in the functional-pass manifest and MAY change only for behavior-preserving mechanical iteration rewrites; their scenarios, assertions, expected values, coverage, and test-owned behavior SHALL remain unchanged. Before cleanup, the read-only functional pass SHALL run against the real tracked-source manifest and record fail-before evidence from representative existing violations rather than synthetic fixtures.
+
 #### Scenario: Prohibited traversal enters the repository
 
 - **WHEN** an in-scope file adds `forEach` or a loop without an authorized control-flow, condition-driven, or per-item owner-commit exception
@@ -102,6 +104,16 @@ The structural rules SHALL reject every `forEach`, reject loop statements that l
 
 - **WHEN** a path is excluded from the existing general Oxlint pass because it contains unrelated historical lint debt
 - **THEN** the functional-only Oxlint pass SHALL still evaluate that path using only the functional-iteration rules without enabling the unrelated general rules there
+
+#### Scenario: Existing tests receive the source-only clean cut
+
+- **WHEN** a tracked test or E2E file contains traversal prohibited by the functional-iteration contract
+- **THEN** only an equivalent mechanical iteration rewrite MAY change that file, while its cases, assertions, expected values, coverage, abstractions, and fixtures SHALL remain unchanged
+
+#### Scenario: Enforcement is proven without test fixtures
+
+- **WHEN** the functional plugin and command are introduced before the repository-wide cleanup
+- **THEN** the read-only pass SHALL fail on representative violations in the real tracked-source baseline, and the implementation SHALL add no RuleTester, scope, comment, or other test/fixture file
 
 #### Scenario: Generated source remains exact-scoped
 
