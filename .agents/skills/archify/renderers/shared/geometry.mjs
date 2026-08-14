@@ -116,26 +116,23 @@ export function roundedPath(points, radius) {
     return polylinePath(points)
   }
 
-  const commands = [`M ${points[0][0]} ${points[0][1]}`]
-  for (let i = 1; i < points.length - 1; i += 1) {
+  const interior = points.slice(1, -1).flatMap((point, index) => {
+    const i = index + 1
     const [px, py] = points[i - 1]
-    const [cx, cy] = points[i]
+    const [cx, cy] = point
     const [nx, ny] = points[i + 1]
     const prevLen = Math.hypot(cx - px, cy - py)
     const nextLen = Math.hypot(nx - cx, ny - cy)
     const r = Math.min(radius, prevLen / 2, nextLen / 2)
     if (r < 1) {
-      commands.push(`L ${cx} ${cy}`)
-      continue
+      return [`L ${cx} ${cy}`]
     }
     const before = [cx - ((cx - px) / prevLen) * r, cy - ((cy - py) / prevLen) * r]
     const after = [cx + ((nx - cx) / nextLen) * r, cy + ((ny - cy) / nextLen) * r]
-    commands.push(`L ${before[0]} ${before[1]}`)
-    commands.push(`Q ${cx} ${cy} ${after[0]} ${after[1]}`)
-  }
+    return [`L ${before[0]} ${before[1]}`, `Q ${cx} ${cy} ${after[0]} ${after[1]}`]
+  })
   const [endX, endY] = points[points.length - 1]
-  commands.push(`L ${endX} ${endY}`)
-  return commands.join(' ')
+  return [`M ${points[0][0]} ${points[0][1]}`, ...interior, `L ${endX} ${endY}`].join(' ')
 }
 
 // Shared by edges/flows/transitions: all carry the same optional

@@ -149,9 +149,9 @@ describe('public protocol source boundary', () => {
     ]
     for (const file of runtimeFiles) {
       const source = await readFile(path.resolve(import.meta.dirname, `../../${file}`), 'utf8')
-      for (const pattern of forbidden) {
+      forbidden.forEach((pattern) => {
         expect(source, `${file} retains forbidden caller-side check ${pattern}`).not.toContain(pattern)
-      }
+      })
     }
   })
 

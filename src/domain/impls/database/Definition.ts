@@ -71,15 +71,14 @@ const assertPlainValue = (value: unknown, seen: Set<object>): void => {
     if (Object.getPrototypeOf(value) !== Object.prototype) {
       throw new TypeError('Database values require plain objects')
     }
-    // invalid descriptor with no bulk primitive
-    for (const key of Reflect.ownKeys(value)) {
+    Reflect.ownKeys(value).forEach((key) => {
       if (typeof key !== 'string') throw new TypeError('Database object keys must be strings')
       const descriptor = Object.getOwnPropertyDescriptor(value, key)
       if (!descriptor?.enumerable || !('value' in descriptor)) {
         throw new TypeError('Database values require enumerable data properties')
       }
       assertPlainValue(descriptor.value, seen)
-    }
+    })
   } finally {
     seen.delete(value)
   }

@@ -64,11 +64,11 @@ export function applyTemplate(template, { title, subtitle, footer, svg, cards })
   if (!CARDS_SLOT_RE.test(template)) {
     throw new Error('applyTemplate: template missing ARCHIFY:CARDS_SLOT sentinel')
   }
-  for (const ph of TEMPLATE_PLACEHOLDERS) {
+  TEMPLATE_PLACEHOLDERS.forEach((ph) => {
     if (!template.includes(ph)) {
       throw new Error(`applyTemplate: template missing placeholder ${JSON.stringify(ph)}`)
     }
-  }
+  })
   // Function replacers: a literal `$&`, `$'`, `$\`` or `$$` in titles, labels,
   // or rendered SVG must not be interpreted as a replacement pattern.
   return template

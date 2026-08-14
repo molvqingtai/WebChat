@@ -121,8 +121,9 @@ async function commandDoctor() {
     lifecycle: 'agent-run.lifecycle.json'
   }
 
-  // The existence facts are read as a synchronous action first; the doctor entries then
-  // derive purely from those facts with no I/O inside the result callbacks.
+  // The existence facts are read with plain loop statements: a compliant forEach cannot
+  // construct the facts map, so the read loop remains the legal carrier. The doctor entries
+  // then derive purely from those facts with no I/O inside the result callbacks.
   const requiredByType = [...TYPES].map((type) => [
     type,
     [
@@ -132,11 +133,11 @@ async function commandDoctor() {
     ]
   ])
   const existence = new Map()
-  requiredByType.forEach(([, required]) => {
-    required.forEach((file) => {
+  for (const [, required] of requiredByType) {
+    for (const file of required) {
       existence.set(file, fs.existsSync(file))
-    })
-  })
+    }
+  }
   const typeChecks = requiredByType.map(([type, required]) => {
     const missingFiles = required.filter((file) => !existence.get(file))
     return {

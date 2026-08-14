@@ -219,9 +219,9 @@ export class PresenceStoreInjectPortAdapter implements Adapter {
   }
 
   private releaseGenerationResponses(generation: InjectorGeneration) {
-    for (const preparation of this.preparations) {
+    this.preparations.forEach((preparation) => {
       if (preparation.generation === generation) this.callbacks.delete(preparation.response)
-    }
+    })
   }
 
   private detach(binding: PortBinding, disconnect: boolean) {
@@ -260,7 +260,7 @@ export class PresenceStoreInjectPortAdapter implements Adapter {
   }
 
   private rejectAllPending(reason: string) {
-    for (const { binding } of new Set(this.pending.values())) this.rejectBindingPending(binding, reason)
+    new Set(this.pending.values()).forEach(({ binding }) => this.rejectBindingPending(binding, reason))
   }
 
   private takePreparation() {
@@ -342,7 +342,9 @@ export class PresenceStoreInjectPortAdapter implements Adapter {
     this.disposed = true
     const reason = 'PresenceStore Offscreen adapter disposed'
     if (this.current) this.current.terminalReason ??= reason
-    for (const preparation of this.preparations) preparation.generation.terminalReason ??= reason
+    this.preparations.forEach((preparation) => {
+      preparation.generation.terminalReason ??= reason
+    })
     if (this.active) this.detach(this.active, true)
     this.rejectAllPending(reason)
     this.preparations.length = 0
