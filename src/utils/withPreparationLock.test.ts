@@ -85,7 +85,7 @@ describe('persistence preparation lock coordinator', () => {
     await new Promise((resolve) => setTimeout(resolve, 10))
     // Both generations are granted only after the first was superseded.
     const grantsToRun = grants.splice(0)
-    for (const grant of grantsToRun) grant()
+    grantsToRun.forEach((grant) => grant())
 
     await expect(second).resolves.toBeUndefined()
     await expect(first).resolves.toBeUndefined()

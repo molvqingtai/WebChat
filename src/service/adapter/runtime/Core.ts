@@ -30,15 +30,17 @@ export class MessageListenerRegistry {
   }
 
   dispose() {
-    const errors = [...this.disposers].flatMap((dispose) => {
+    let firstError: unknown
+    // The live disposer Set is iterated directly: a disposer registered during disposal joins
+    // the same pass, and the first truthy error is retained, matching the frozen semantics.
+    for (const dispose of this.disposers) {
       try {
         dispose()
-        return []
       } catch (error) {
-        return [error]
+        firstError ??= error
       }
-    })
-    if (errors.length > 0) throw errors[0]
+    }
+    if (firstError) throw firstError
   }
 }
 

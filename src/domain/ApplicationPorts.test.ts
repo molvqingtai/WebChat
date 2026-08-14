@@ -249,18 +249,18 @@ describe('replaceable application boundaries', () => {
     expect(content).toContain('activateApplicationDependencies')
     expect(content).not.toMatch(/<App\s+[^>]*(?:dependenc|activat|timeout)/)
     expect(background).toContain('registerBrowserSyncStoragePreparation()')
-    for (const preparation of [
+    ;[
       'run(dependencies.prepareBrowserSyncStorage)',
       'run(dependencies.prepareLocalStorage)',
       'run(dependencies.prepareMessageDatabase)'
-    ]) {
+    ].forEach((preparation) => {
       expect(initialization.indexOf(preparation)).toBeLessThan(
         initialization.indexOf('return dependencies.initializeRuntime()')
       )
       expect(initialization.indexOf(preparation)).toBeLessThan(
         initialization.lastIndexOf('activateApplicationDependencies()')
       )
-    }
+    })
     expect(options.indexOf('await requestBrowserSyncStoragePreparation()')).toBeLessThan(
       options.indexOf('Remesh.store(')
     )

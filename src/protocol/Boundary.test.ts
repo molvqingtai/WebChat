@@ -57,7 +57,7 @@ describe('public protocol source boundary', () => {
       PUBLIC_FILES.map(async (file) => [file, await readFile(path.join(PROTOCOL_ROOT, file), 'utf8')] as const)
     )
 
-    for (const [file, source] of sources) {
+    sources.forEach(([file, source]) => {
       expect(source, `${file} has an internal absolute import`).not.toMatch(/from ['"]@\//)
       expect(source, `${file} has a host dependency`).not.toMatch(
         /(?:from ['"](?:comctx|remesh)|\b(?:chrome|browser)\.|\b(?:window|document)\b)/
@@ -73,7 +73,7 @@ describe('public protocol source boundary', () => {
       FORBIDDEN_SYMBOLS.forEach((symbol) => {
         expect(source, `${file} contains private symbol ${symbol}`).not.toContain(symbol)
       })
-    }
+    })
   })
 
   it('owns every public resource limit instead of importing app configuration', async () => {

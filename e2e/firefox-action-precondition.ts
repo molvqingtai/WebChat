@@ -77,11 +77,11 @@ const fail = (code: FirefoxActionPreconditionErrorCode, message: string): never 
 }
 
 const assertContext = (context: FirefoxActionContext): void => {
-  for (const key of contextKeys) {
+  contextKeys.forEach((key) => {
     if (context[key].trim() === '') {
       fail('invalid-context', `Firefox action ${key} must not be empty`)
     }
-  }
+  })
 
   let isHttpsTarget = false
 
@@ -110,13 +110,13 @@ const assertBeforeNativeAction = async (adapter: FirefoxActionPreconditionAdapte
 const assertUniqueTabs = (tabs: readonly FirefoxActionTab[]): void => {
   const identities = new Set<string>()
 
-  for (const tab of tabs) {
+  tabs.forEach((tab) => {
     if (typeof tab.identity !== 'string' || tab.identity.trim() === '' || identities.has(tab.identity)) {
       fail('invalid-binding', 'Firefox action tabs require unique physical identities')
     }
 
     identities.add(tab.identity)
-  }
+  })
 }
 
 const readTabs = async (adapter: FirefoxActionPreconditionAdapter): Promise<FirefoxActionTab[]> => {
@@ -479,11 +479,11 @@ export async function assertFirefoxActionBinding(
   binding: FirefoxActionBinding,
   context: FirefoxActionContext
 ): Promise<void> {
-  for (const key of contextKeys) {
+  contextKeys.forEach((key) => {
     if (binding[key] !== context[key]) {
       fail('invalid-binding', `Firefox action binding has a mismatched ${key}`)
     }
-  }
+  })
 
   assertContext(context)
 
