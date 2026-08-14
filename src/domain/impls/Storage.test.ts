@@ -104,17 +104,13 @@ describe('origin-local configuration preparation', () => {
     const versionKey = `${STORAGE_NAME}:${CONFIG_STORE_VERSION_KEY}`
     const versionManagedKey = `${STORAGE_NAME}:VERSION_MANAGED_SETTING`
     localStorage.setItem('HOST_PAGE_KEY', 'preserved')
-    statusKeys.forEach((key, index) => {
-      localStorage.setItem(key, `status-${index}`)
-    })
+    statusKeys.forEach((key, index) => localStorage.setItem(key, `status-${index}`))
 
     await prepareLocalConfigurationStorage()
     expect(statusKeys.map((key) => localStorage.getItem(key))).toEqual(['status-0', 'status-1', 'status-2', 'status-3'])
     expect(localStorage.getItem(versionKey)).toBe('1')
 
-    statusKeys.forEach((key, index) => {
-      localStorage.setItem(key, `current-${index}`)
-    })
+    statusKeys.forEach((key, index) => localStorage.setItem(key, `current-${index}`))
     await prepareLocalConfigurationStorage()
     expect(statusKeys.map((key) => localStorage.getItem(key))).toEqual([
       'current-0',
@@ -249,17 +245,13 @@ describe('origin-local configuration preparation', () => {
       APP_MESSAGE_AUTHOR_STORAGE_KEY
     ].map((key) => `${STORAGE_NAME}:${key}`)
     const versionKey = `${STORAGE_NAME}:${CONFIG_STORE_VERSION_KEY}`
-    statusKeys.forEach((key) => {
-      localStorage.setItem(key, 'old-generation')
-    })
+    statusKeys.forEach((key) => localStorage.setItem(key, 'old-generation'))
     localStorage.setItem(versionKey, '7')
 
     const first = firstRealm()
     const second = secondRealm()
     await first
-    statusKeys.forEach((key) => {
-      localStorage.setItem(key, 'new-generation')
-    })
+    statusKeys.forEach((key) => localStorage.setItem(key, 'new-generation'))
     secondGrant.resolve()
     await second
 

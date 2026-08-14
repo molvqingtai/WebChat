@@ -116,7 +116,7 @@ const DeliveryDomain = Remesh.domain({
           DeliveriesState().new(
             current ? deliveries.map((item) => (item.domain === payload.domain ? next : item)) : [...deliveries, next]
           ),
-          ...events.map((event) => InboundAcceptedEvent(event))
+          ...events.map(InboundAcceptedEvent)
         ]
       }
     })
@@ -169,7 +169,7 @@ const DeliveryDomain = Remesh.domain({
     const ReplayCommand = domain.command({
       name: 'Delivery.ReplayCommand',
       impl: ({ get }, payload: { domain: string; after: number }) =>
-        get(BufferedEventsQuery(payload)).map((event) => InboundReplayedEvent(event))
+        get(BufferedEventsQuery(payload)).map(InboundReplayedEvent)
     })
 
     const ReleaseDomainCommand = domain.command({
