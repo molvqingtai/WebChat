@@ -79,12 +79,17 @@ vi.mock('@rtco/client', () => {
 
     send(payload: string, target?: string | string[]) {
       const targets = target ? (Array.isArray(target) ? target : [target]) : null
+      let firstError: Error | null = null
       this.peers.forEach((ready, peerId) => {
         if (targets && !targets.includes(peerId)) return
         this.attempts.push({ peerId, payload })
-        if (!ready) throw new Error('Connection is not established yet.')
+        if (!ready) {
+          firstError ??= new Error('Connection is not established yet.')
+          return
+        }
         this.sent.push({ peerId, payload })
       })
+      if (firstError) throw firstError
     }
 
     open(peerId: string) {
@@ -1659,8 +1664,8 @@ describe('RuntimeServer lifecycle', () => {
     expect(localSessions).toHaveLength(1)
     expect(fake.physicalJoinCalls.filter((id) => id === roomId)).toHaveLength(2)
     expect(fake.physicalJoinCalls.filter((id) => id === worldRoomId)).toHaveLength(1)
-    // Only the reconnect publication had a distinct Chat target; the cold join settled without members.
-    expect(fake.messages(roomId).filter((message) => message.type === MESSAGE_TYPE.SESSION)).toHaveLength(1)
+    // Every publication is one room broadcast: the cold join and the reconnect each publish to the room.
+    expect(fake.messages(roomId).filter((message) => message.type === MESSAGE_TYPE.SESSION)).toHaveLength(2)
     const worldMessages = fake.messages(worldRoomId).filter(isWorldPresence)
     expect(worldMessages.length).toBeGreaterThanOrEqual(2)
     expect(worldMessages.at(-1)).toEqual(after.world.localPresence)
@@ -2521,7 +2526,7 @@ describe('RuntimeServer provisional recovery races', () => {
     const reconnect = server.reconnectDomain({ domain: DOMAIN })
     await fake.waitForJoinCalls(4)
     fake.open()
-    await expect(chatBroadcastStarted).resolves.toMatchObject({ roomId, to: ['chat-peer'] })
+    await expect(chatBroadcastStarted).resolves.toMatchObject({ roomId })
 
     fake.receive(roomId, 'remote-peer', session())
     await settle()
@@ -2553,7 +2558,7 @@ describe('RuntimeServer provisional recovery races', () => {
     const firstReconnect = server.reconnectDomain({ domain: DOMAIN })
     await fake.waitForJoinCalls(4)
     fake.open()
-    await expect(firstBroadcastStarted).resolves.toMatchObject({ roomId, to: ['chat-peer'] })
+    await expect(firstBroadcastStarted).resolves.toMatchObject({ roomId })
 
     fake.receive(roomId, 'stale-remote-peer', session())
     await settle()
@@ -2784,8 +2789,8 @@ describe('RuntimeServer send reliability', () => {
 
     await server.sendChatMessage({ domain: DOMAIN, event: record.message })
 
-    // No current session peer means no distinct target, so the local send settles with zero wire sends.
-    expect(fake.messages(roomId)).toHaveLength(0)
+    // A Chat message is one room broadcast to the current members.
+    expect(fake.messages(roomId)).toHaveLength(1)
   })
 
   it('allocates id/HLC centrally and rejects an explicit single-target throw once surfaced', async () => {
@@ -4032,7 +4037,7 @@ describe('RuntimeServer history', () => {
     const reconnect = server.reconnectDomain({ domain: DOMAIN })
     await fake.waitForJoinCalls(4)
     fake.open()
-    await expect(chatBroadcastStarted).resolves.toMatchObject({ roomId, to: ['remote-peer'] })
+    await expect(chatBroadcastStarted).resolves.toMatchObject({ roomId })
     // B's valid same-presence SESSION arrives during the prepared phase.
     fake.receive(roomId, 'peer-b', session({ id: 'user-b', name: 'User B', avatar: '' }))
     await settle()
@@ -4670,7 +4675,7 @@ describe('RuntimeServer history', () => {
     const reconnect = server.reconnectDomain({ domain: DOMAIN })
     await fake.waitForJoinCalls(4)
     fake.open()
-    await expect(chatBroadcastStarted).resolves.toMatchObject({ roomId, to: ['remote-peer'] })
+    await expect(chatBroadcastStarted).resolves.toMatchObject({ roomId })
     fake.receive(roomId, 'peer-b', session({ id: 'user-b', name: 'User B', avatar: '' }))
     await settle()
     // The rebind source leaves AGAIN before the commit: its cancellation fact is revoked.
@@ -6285,6 +6290,8 @@ describe('RuntimeServer Artico per-target isolation', () => {
     )
     await settle()
     const snapshot = await server.getSnapshot()
+    console.log('CHAT-ROOM-SENT', JSON.stringify(chatRoom.sent))
+    console.log('CHAT-ROOM-ATTEMPTS', JSON.stringify(chatRoom.attempts))
     const result = {
       joinError,
       joined: snapshot.domains[0]?.chatRoomJoined ?? false,

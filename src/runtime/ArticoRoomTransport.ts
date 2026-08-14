@@ -219,17 +219,7 @@ export const createArticoRoomTransport = (): RoomTransport => {
       const owner = owners.get(roomId)
       const room = owner?.room
       if (!owner || !room) throw new Error(`Room "${roomId}" not joined`)
-      const targets = new Set(typeof to === 'string' ? [to] : (to ?? owner.readyPeers))
-      let firstError: Error | null = null
-      targets.forEach((target) => {
-        try {
-          room.send(payload, target)
-        } catch (error) {
-          // Every target is attempted exactly once; the first genuine throw surfaces after the rest ran.
-          firstError ??= error as Error
-        }
-      })
-      if (firstError) throw firstError
+      room.send(payload, to)
     },
     onMessage: (callback) => {
       messageListeners.add(callback)

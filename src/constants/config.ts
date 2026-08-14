@@ -193,7 +193,7 @@ export const MESSAGE_IMAGE_TARGET_SIZE = 30 * 1024
  */
 export const MAX_AVATAR_SIZE = 5120 as const
 
-export const HISTORY_WINDOW_DAYS = 180 as const
+export const HISTORY_WINDOW_DAYS = 30 as const
 
 /** Per-source async decode admission; overflow drops only that source's new frame. */
 export const MAX_DECODE_QUEUE_FRAMES = 8

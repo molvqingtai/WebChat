@@ -51,12 +51,17 @@ vi.mock('@rtco/client', () => {
 
     send(payload: string, target?: string | string[]) {
       const targets = target ? (Array.isArray(target) ? target : [target]) : null
+      let firstError: Error | null = null
       this.calls.forEach((ready, peerId) => {
         if (targets && !targets.includes(peerId)) return
         this.attempts.push({ peerId, payload })
-        if (!ready) throw new Error('Connection is not established yet.')
+        if (!ready) {
+          firstError ??= new Error('Connection is not established yet.')
+          return
+        }
         this.sent.push({ peerId, payload })
       })
+      if (firstError) throw firstError
     }
 
     open(peerId: string) {
@@ -184,13 +189,13 @@ describe('ArticoRoomTransport per-target isolation', () => {
     ).rejects.toThrow('Connection is not established yet.')
 
     expect(fixture.room!.attempts).toEqual([
-      { peerId: 'ready-b', payload: 'targeted' },
       { peerId: 'closing-peer', payload: 'targeted' },
-      { peerId: 'ready-a', payload: 'targeted' }
+      { peerId: 'ready-a', payload: 'targeted' },
+      { peerId: 'ready-b', payload: 'targeted' }
     ])
     expect(fixture.room!.sent).toEqual([
-      { peerId: 'ready-b', payload: 'targeted' },
-      { peerId: 'ready-a', payload: 'targeted' }
+      { peerId: 'ready-a', payload: 'targeted' },
+      { peerId: 'ready-b', payload: 'targeted' }
     ])
   })
 

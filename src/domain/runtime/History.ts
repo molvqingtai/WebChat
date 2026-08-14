@@ -594,7 +594,6 @@ const HistoryDomain = Remesh.domain({
           wireDomain.command.SendMessageCommand({
             requestId,
             roomId: runtime.roomId,
-            targetPeerIds: [payload.sourcePeerId],
             message: page
           })
         ]

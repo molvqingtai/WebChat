@@ -1,6 +1,6 @@
 ## Context
 
-See `proposal.md` for motivation and the two delta specs for normative behavior. The current v3 History path is requester-driven cursor pagination: every new peer session repeatedly requests the provider's eligible 180-day window and relies on receiver-side `insert-if-absent` to discard overlap. The replacement must preserve the existing application-owned database, page-supplier cancellation, local Delivery ACK, strict Wire boundary, and source-local resource isolation while deleting that complete cursor state machine.
+See `proposal.md` for motivation and the two delta specs for normative behavior. The current v3 History path is requester-driven cursor pagination: every new peer session repeatedly requests the provider's eligible 30-day window and relies on receiver-side `insert-if-absent` to discard overlap. The replacement must preserve the existing application-owned database, page-supplier cancellation, local Delivery ACK, strict Wire boundary, and source-local resource isolation while deleting that complete cursor state machine.
 
 The new peer contract has exactly two variants. Request pages carry the requester's fixed message-ID inventory; response pages carry only provider records absent from the complete inventory. There is no peer ACK, missing-body request, cursor, recovery record, or third protocol phase. Toast truth depends on the local insert result and attempt termination, not on peer activity.
 
@@ -10,7 +10,7 @@ The new peer contract has exactly two variants. Request pages carry the requeste
 
 - Replace the complete History subprotocol and state machine with one exact inventory-difference design.
 - Start exactly one independent synchronization per room connection and direction, with no retry or progress continuation.
-- Keep requester/provider 180-day snapshots fixed, bounded, ordered, and source-local.
+- Keep requester/provider 30-day snapshots fixed, bounded, ordered, and source-local.
 - Process missing-record pages serially and retain atomic `insert-if-absent` as the final concurrency boundary.
 - Give each incoming `syncId` one operation-owned loading identity projected to all current same-domain pages.
 - Delete every obsolete type, branch, state, test, and namespace input rather than wrapping the old path.
@@ -36,7 +36,7 @@ Joining the room with one current source incarnation is the only History trigger
 
 Request and response page counters each start at zero. The provider cannot query/filter or emit a response until it accepts the final request page. An explicit empty page terminates an empty phase. While the synchronization remains active, identical page replay is idempotent; changed replay, gaps, out-of-order pages, response-before-inventory, or data after `done` terminate only that direction. Completion, cancellation, and failure retain only the bound `syncId` plus one terminal bit, so neither the same nor a different `syncId` can restart History before that source incarnation ends.
 
-### 3. The two 180-day snapshots freeze at their owning boundaries
+### 3. The two 30-day snapshots freeze at their owning boundaries
 
 The requester freezes its cutoff and one settled snapshot of canonical Chat record IDs before sending page zero. The provider freezes its separate cutoff and one settled canonical Chat-record snapshot only after the complete remote inventory arrives. The provider converts inventory entries to a set, filters its snapshot, keeps canonical recent-first order, and derives response pages whose `users` array is exactly the distinct author set of that page.
 
