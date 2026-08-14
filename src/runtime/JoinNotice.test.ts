@@ -117,15 +117,15 @@ class DeterministicNetwork {
   disconnectPeer(peerId: string) {
     const endpoint = this.endpoints.get(peerId)
     if (!endpoint) return
-    for (const roomId of Array.from(endpoint.rooms)) {
+    ;[...endpoint.rooms].forEach((roomId) => {
       endpoint.rooms.delete(roomId)
-      for (const [otherPeerId, other] of this.endpoints) {
+      this.endpoints.forEach((other, otherPeerId) => {
         if (otherPeerId !== peerId && other.rooms.has(roomId)) {
           this.announcedPairs.delete(this.pairKey(roomId, peerId, otherPeerId))
           other.leaves.forEach((listener) => listener(roomId, peerId))
         }
-      }
-    }
+      })
+    })
     this.endpoints.delete(peerId)
   }
 
@@ -172,14 +172,14 @@ class DeterministicNetwork {
       leave: (roomId) => {
         if (!endpoint.rooms.delete(roomId)) return
         this.recordLifecycle(`physical-leave:${peerId}:${roomId}`)
-        for (const [otherPeerId, other] of this.endpoints) {
+        this.endpoints.forEach((other, otherPeerId) => {
           if (otherPeerId !== peerId && other.rooms.has(roomId)) {
             this.announcedPairs.delete(this.pairKey(roomId, peerId, otherPeerId))
             other.leaves.forEach((listener) => {
               listener(roomId, peerId)
             })
           }
-        }
+        })
       },
       send: async (roomId, payload, to) => {
         const selected = to === undefined ? null : new Set(Array.isArray(to) ? to : [to])
@@ -192,14 +192,13 @@ class DeterministicNetwork {
           this.releaseOnSessionSend.delete(peerId)
           this.releaseSession(release.sourcePeerId, release.targetPeerId)
         }
-        for (const [targetPeerId, target] of this.endpoints) {
-          if (targetPeerId === peerId || !target.rooms.has(roomId) || (selected && !selected.has(targetPeerId)))
-            continue
+        this.endpoints.forEach((target, targetPeerId) => {
+          if (targetPeerId === peerId || !target.rooms.has(roomId) || (selected && !selected.has(targetPeerId))) return
           const frame = { roomId, sourcePeerId: peerId, targetPeerId, payload }
           const route = `${peerId}->${targetPeerId}`
           if (parsed.type === MESSAGE_TYPE.SESSION && this.heldRoutes.has(route)) this.heldFrames.push(frame)
           else this.deliver(frame)
-        }
+        })
       },
       onMessage: (listener) => subscribe(endpoint.messages, listener),
       onPeerJoin: (listener) => subscribe(endpoint.joins, listener),
@@ -207,13 +206,13 @@ class DeterministicNetwork {
       onRoomClose: (listener) => subscribe(endpoint.closes, listener),
       onError: () => () => {},
       dispose: () => {
-        for (const roomId of Array.from(endpoint.rooms)) {
-          for (const [otherPeerId, other] of this.endpoints) {
+        ;[...endpoint.rooms].forEach((roomId) => {
+          this.endpoints.forEach((other, otherPeerId) => {
             if (otherPeerId !== peerId && other.rooms.has(roomId)) {
               other.leaves.forEach((listener) => listener(roomId, peerId))
             }
-          }
-        }
+          })
+        })
         this.endpoints.delete(peerId)
       }
     }
@@ -222,12 +221,12 @@ class DeterministicNetwork {
   private discover(roomId: string, peerId: string) {
     const endpoint = this.endpoints.get(peerId)
     if (!endpoint) return
-    for (const [otherPeerId, other] of this.endpoints) {
-      if (otherPeerId === peerId || !other.rooms.has(roomId)) continue
+    this.endpoints.forEach((other, otherPeerId) => {
+      if (otherPeerId === peerId || !other.rooms.has(roomId)) return
       const pair = this.pairKey(roomId, peerId, otherPeerId)
-      if (this.heldDiscoveries.has(pair)) continue
+      if (this.heldDiscoveries.has(pair)) return
       this.announce(roomId, peerId, otherPeerId)
-    }
+    })
   }
 
   private announce(roomId: string, leftPeerId: string, rightPeerId: string) {

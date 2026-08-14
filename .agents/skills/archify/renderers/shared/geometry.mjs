@@ -116,10 +116,11 @@ export function roundedPath(points, radius) {
     return polylinePath(points)
   }
 
-  const interior = points.slice(1, -1).flatMap((point, index) => {
-    const i = index + 1
+  // Iterate indices so a sparse interior slot is visited and throws on destructuring, exactly
+  // like the parent counted loop; slice/flatMap would silently skip the hole.
+  const interior = Array.from({ length: points.length - 2 }, (_, index) => index + 1).flatMap((i) => {
     const [px, py] = points[i - 1]
-    const [cx, cy] = point
+    const [cx, cy] = points[i]
     const [nx, ny] = points[i + 1]
     const prevLen = Math.hypot(cx - px, cy - py)
     const nextLen = Math.hypot(nx - cx, ny - cy)

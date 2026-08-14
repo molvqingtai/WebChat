@@ -121,25 +121,18 @@ async function commandDoctor() {
     lifecycle: 'agent-run.lifecycle.json'
   }
 
-  // The existence facts are read with plain loop statements: a compliant forEach cannot
-  // construct the facts map, so the read loop remains the legal carrier. The doctor entries
-  // then derive purely from those facts with no I/O inside the result callbacks.
-  const requiredByType = [...TYPES].map((type) => [
-    type,
-    [
-      path.join(skillRoot, 'renderers', type, `render-${type}.mjs`),
-      path.join(skillRoot, 'schemas', `${type}.schema.json`),
-      path.join(skillRoot, 'examples', examples[type])
+  // The existence facts come from one bulk directory listing per kind of file, then the
+  // doctor entries derive purely with no per-file I/O inside any callback.
+  const listDirectory = (directory, options) => (fs.existsSync(directory) ? fs.readdirSync(directory, options) : [])
+  const rendererFiles = new Set(listDirectory(path.join(skillRoot, 'renderers'), { recursive: true }))
+  const schemaFiles = new Set(listDirectory(path.join(skillRoot, 'schemas')))
+  const exampleFiles = new Set(listDirectory(path.join(skillRoot, 'examples')))
+  const typeChecks = [...TYPES].map((type) => {
+    const missingFiles = [
+      ...(rendererFiles.has(`${type}/render-${type}.mjs`) ? [] : [`renderers/${type}/render-${type}.mjs`]),
+      ...(schemaFiles.has(`${type}.schema.json`) ? [] : [`schemas/${type}.schema.json`]),
+      ...(exampleFiles.has(examples[type]) ? [] : [`examples/${examples[type]}`])
     ]
-  ])
-  const existence = new Map()
-  for (const [, required] of requiredByType) {
-    for (const file of required) {
-      existence.set(file, fs.existsSync(file))
-    }
-  }
-  const typeChecks = requiredByType.map(([type, required]) => {
-    const missingFiles = required.filter((file) => !existence.get(file))
     return {
       label: `${type} renderer, schema, and example`,
       ok: missingFiles.length === 0,
