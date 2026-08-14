@@ -333,12 +333,12 @@ export class MemoryDatabase<Schema extends DatabaseSchema<Schema>> implements Da
 
   notify(stores: readonly string[]): void {
     if (this.closed) return
-    for (const watcher of this.watchers) {
-      if (!stores.some((store) => watcher.stores.has(store))) continue
+    this.watchers.forEach((watcher) => {
+      if (!stores.some((store) => watcher.stores.has(store))) return
       try {
         watcher.listener()
       } catch {}
-    }
+    })
   }
 
   close(): Promise<void> {

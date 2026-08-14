@@ -31,10 +31,10 @@ export const createSendLifecycle = (): SendLifecycle => {
       }
     },
     cancelActiveSends: () => {
-      for (const [token, result] of tokens) {
+      tokens.forEach((result, token) => {
         // Mark active invocations cancelled; they are removed when the owning invocation reads them.
         if (result === 'active') tokens.set(token, 'cancelled')
-      }
+      })
     }
   }
 }

@@ -24,11 +24,11 @@
 ## 4. Preserve Existing Evidence And Behavior
 
 - [x] 4.1 Apply only the minimum behavior-equivalent iteration or private-state ownership edits to existing tests, fixtures, and harnesses while preserving every public fixture contract, test name, scenario, input, assertion, expectation, timing, and coverage boundary.
-- [x] 4.2 Confirm evaluation order, iteration order, call count, sync/async concurrency, return/error behavior, object identity, mutation visibility, event/timer order, DOM, storage/database, wire/persistence, generated output, and public interfaces are unchanged.
-- [x] 4.3 Confirm the final authored source contains no result-producing or async-dropping `forEach`, replaceable `for` variant, collection-style `while`/`do...while`, outer mutable traversal accumulator, result-callback external effect, ignored operation result, or migration waiver annotation.
+- [ ] 4.2 Confirm evaluation order, iteration order, call count, sync/async concurrency, return/error behavior, object identity, mutation visibility, event/timer order, DOM, storage/database, wire/persistence, generated output, and public interfaces are unchanged.
+- [ ] 4.3 Confirm the final authored source contains no result-producing or async-dropping `forEach`, replaceable `for` variant, collection-style `while`/`do...while`, outer mutable traversal accumulator, result-callback external effect, ignored operation result, or migration waiver annotation.
 
 ## 5. Verify And Review Independently
 
 - [x] 5.1 Run the repository's existing Oxfmt, Oxlint, TypeScript, full test, Chrome/Firefox build, generated-artifact, OpenSpec, and cleanliness gates without introducing another enforcement tool.
-- [x] 5.2 Inspect the exact diff against the 304-file manifest and prove the sole generated exclusion, original `assembleURL`, dependency graph, tests' behavioral evidence, protocols, persistence, and product behavior remain unchanged.
-- [x] 5.3 Freeze one immutable source exact and obtain fresh independent review. Keep the docs and source pull requests Draft; do not run browser acceptance, mark Ready, merge, deploy, release, or change production without separate Owner authority.
+- [ ] 5.2 Inspect the exact diff against the 304-file manifest and prove the sole generated exclusion, original `assembleURL`, dependency graph, tests' behavioral evidence, protocols, persistence, and product behavior remain unchanged.
+- [ ] 5.3 Freeze one immutable source exact and obtain fresh independent review. Keep the docs and source pull requests Draft; do not run browser acceptance, mark Ready, merge, deploy, release, or change production without separate Owner authority.

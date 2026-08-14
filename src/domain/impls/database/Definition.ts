@@ -130,11 +130,11 @@ export const validateScope = <Schema extends DatabaseSchema<Schema>>(
   if (stores.length === 0) throw new TypeError('Database transaction scope must not be empty')
   if (new Set(stores).size !== stores.length)
     throw new TypeError('Database transaction scope must not contain duplicates')
-  for (const store of stores) {
+  stores.forEach((store) => {
     if (!Object.prototype.hasOwnProperty.call(definition.stores, store)) {
       throw new TypeError(`Unknown database store: ${store}`)
     }
-  }
+  })
   return [...stores]
 }
 

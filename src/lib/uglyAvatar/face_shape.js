@@ -4,34 +4,25 @@ function randomFromInterval(min, max) {
 }
 export function getEggShapePoints(a, b, k, segment_points) {
   // the function is x^2/a^2 * (1 + ky) + y^2/b^2 = 1
-  //   var pointString = "";
-  const positiveUpper = Array.from({ length: segment_points }, (_, i) => {
-    const degree = (Math.PI / 2 / segment_points) * i + randomFromInterval(-Math.PI / 1.1 / segment_points, Math.PI / 1.1 / segment_points)
-    const y = Math.sin(degree) * b
-    const x = Math.sqrt(((1 - (y * y) / (b * b)) / (1 + k * y)) * a * a) + randomFromInterval(-a / 200.0, a / 200.0)
-    return [x, y]
-  })
-  const negativeUpper = Array.from({ length: segment_points }, (_, index) => {
-    const i = segment_points - index
-    const degree = (Math.PI / 2 / segment_points) * i + randomFromInterval(-Math.PI / 1.1 / segment_points, Math.PI / 1.1 / segment_points)
-    const y = Math.sin(degree) * b
-    const x = -Math.sqrt(((1 - (y * y) / (b * b)) / (1 + k * y)) * a * a) + randomFromInterval(-a / 200.0, a / 200.0)
-    return [x, y]
-  })
-  const negativeLower = Array.from({ length: segment_points }, (_, i) => {
-    const degree = (Math.PI / 2 / segment_points) * i + randomFromInterval(-Math.PI / 1.1 / segment_points, Math.PI / 1.1 / segment_points)
-    const y = -Math.sin(degree) * b
-    const x = -Math.sqrt(((1 - (y * y) / (b * b)) / (1 + k * y)) * a * a) + randomFromInterval(-a / 200.0, a / 200.0)
-    return [x, y]
-  })
-  const positiveLower = Array.from({ length: segment_points }, (_, index) => {
-    const i = segment_points - index
-    const degree = (Math.PI / 2 / segment_points) * i + randomFromInterval(-Math.PI / 1.1 / segment_points, Math.PI / 1.1 / segment_points)
-    const y = -Math.sin(degree) * b
-    const x = Math.sqrt(((1 - (y * y) / (b * b)) / (1 + k * y)) * a * a) + randomFromInterval(-a / 200.0, a / 200.0)
-    return [x, y]
-  })
-  return [...positiveUpper, ...negativeUpper, ...negativeLower, ...positiveLower]
+  const eggPoint = (i, signX, signY) => {
+    var degree =
+      (Math.PI / 2 / segment_points) * i +
+      randomFromInterval(
+        -Math.PI / 1.1 / segment_points,
+        Math.PI / 1.1 / segment_points,
+      );
+    var y = signY * Math.sin(degree) * b;
+    var x =
+      signX * Math.sqrt(((1 - (y * y) / (b * b)) / (1 + k * y)) * a * a) +
+      randomFromInterval(-a / 200.0, a / 200.0);
+    return [x, y];
+  };
+  return [
+    ...Array.from({ length: segment_points }, (_, i) => eggPoint(i, 1, 1)),
+    ...Array.from({ length: segment_points }, (_, index) => eggPoint(segment_points - index, -1, 1)),
+    ...Array.from({ length: segment_points }, (_, i) => eggPoint(i, -1, -1)),
+    ...Array.from({ length: segment_points }, (_, index) => eggPoint(segment_points - index, 1, -1)),
+  ];
 }
 
 function findIntersectionPoints(radian, a, b) {
@@ -65,29 +56,22 @@ function findIntersectionPoints(radian, a, b) {
 export function generateRectangularFaceContourPoints(a, b, segment_points) {
   // a is width, b is height, segment_points is the number of points
 
-  const q1 = Array.from({ length: segment_points }, (_, i) => {
-    const degree = (Math.PI / 2 / segment_points) * i + randomFromInterval(-Math.PI / 11 / segment_points, Math.PI / 11 / segment_points)
-    const intersection = findIntersectionPoints(degree, a, b)
-    return [intersection.x, intersection.y]
-  })
-  const q2 = Array.from({ length: segment_points }, (_, index) => {
-    const i = segment_points - index
-    const degree = (Math.PI / 2 / segment_points) * i + randomFromInterval(-Math.PI / 11 / segment_points, Math.PI / 11 / segment_points)
-    const intersection = findIntersectionPoints(degree, a, b)
-    return [-intersection.x, intersection.y]
-  })
-  const q3 = Array.from({ length: segment_points }, (_, i) => {
-    const degree = (Math.PI / 2 / segment_points) * i + randomFromInterval(-Math.PI / 11 / segment_points, Math.PI / 11 / segment_points)
-    const intersection = findIntersectionPoints(degree, a, b)
-    return [-intersection.x, -intersection.y]
-  })
-  const q4 = Array.from({ length: segment_points }, (_, index) => {
-    const i = segment_points - index
-    const degree = (Math.PI / 2 / segment_points) * i + randomFromInterval(-Math.PI / 11 / segment_points, Math.PI / 11 / segment_points)
-    const intersection = findIntersectionPoints(degree, a, b)
-    return [intersection.x, -intersection.y]
-  })
-  return [...q1, ...q2, ...q3, ...q4]
+  const rectPoint = (i, signX, signY) => {
+    var degree =
+      (Math.PI / 2 / segment_points) * i +
+      randomFromInterval(
+        -Math.PI / 11 / segment_points,
+        Math.PI / 11 / segment_points,
+      );
+    var intersection = findIntersectionPoints(degree, a, b);
+    return [signX * intersection.x, signY * intersection.y];
+  };
+  return [
+    ...Array.from({ length: segment_points }, (_, i) => rectPoint(i, 1, 1)),
+    ...Array.from({ length: segment_points }, (_, index) => rectPoint(segment_points - index, -1, 1)),
+    ...Array.from({ length: segment_points }, (_, i) => rectPoint(i, -1, -1)),
+    ...Array.from({ length: segment_points }, (_, index) => rectPoint(segment_points - index, 1, -1)),
+  ];
 }
 
 export function generateFaceCountourPoints(numPoints = 100) {
@@ -114,25 +98,33 @@ export function generateFaceCountourPoints(numPoints = 100) {
   var results1 = eggOrRect1
     ? getEggShapePoints(faceSizeX1, faceSizeY1, faceK1, numPoints)
     : generateRectangularFaceContourPoints(faceSizeX1, faceSizeY1, numPoints);
-  const shifted0 = results0.map(([x, y]) => [x + face0TranslateX, y + face0TranslateY])
-  const shifted1 = results1.map(([x, y]) => [x + face1TranslateX, y + face1TranslateY])
-  const results = shifted0.map(([x0, y0], i) => [
-    x0 * 0.7 + shifted1[(i + shifted0.length / 4) % shifted0.length][1] * 0.3,
-    y0 * 0.7 - shifted1[(i + shifted0.length / 4) % shifted0.length][0] * 0.3,
-  ])
-  const center = [
-    results.reduce((sum, [x]) => sum + x, 0) / results.length,
-    results.reduce((sum, [, y]) => sum + y, 0) / results.length,
-  ]
+  const translated0 = results0.map(([x, y]) => [x + face0TranslateX, y + face0TranslateY]);
+  const translated1 = results1.map(([x, y]) => [x + face1TranslateX, y + face1TranslateY]);
+  const blended = translated0.map((point, i) => [
+    point[0] * 0.7 +
+      translated1[(i + translated0.length / 4) % translated0.length][1] * 0.3,
+    point[1] * 0.7 -
+      translated1[(i + translated0.length / 4) % translated0.length][0] * 0.3,
+  ]);
+  const center = blended.reduce(
+    (acc, point) => {
+      acc[0] += point[0];
+      acc[1] += point[1];
+      return acc;
+    },
+    [0, 0]
+  );
+  center[0] /= blended.length;
+  center[1] /= blended.length;
   // center the face
-  const centered = results.map(([x, y]) => [x - center[0], y - center[1]])
+  var results = blended.map(([x, y]) => [x - center[0], y - center[1]]);
 
-  let width = centered[0][0] - centered[centered.length / 2][0];
+  let width = results[0][0] - results[results.length / 2][0];
   let height =
-    centered[centered.length / 4][1] - centered[(centered.length * 3) / 4][1];
+    results[results.length / 4][1] - results[(results.length * 3) / 4][1];
   // add the first point to the end to close the shape
-  centered.push(centered[0]);
-  centered.push(centered[1]);
+  results.push(results[0]);
+  results.push(results[1]);
   // console.log(results);
-  return { face: centered, width: width, height: height, center: [0, 0] };
+  return { face: results, width: width, height: height, center: [0, 0] };
 }

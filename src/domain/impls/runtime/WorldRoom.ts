@@ -35,13 +35,13 @@ export class WorldRoom extends EventHub {
 
   private replaceSource(sourcePeerId: string, presence: WorldRoomMessage, activeKeys?: Set<string>) {
     const nextOrigins = new Set(presence.sites.map((site) => site.origin))
-    for (const [key, contribution] of this.contributions) {
+    this.contributions.forEach((contribution, key) => {
       if (contribution.sourcePeerId === sourcePeerId && !nextOrigins.has(contribution.site.origin)) {
         this.contributions.delete(key)
       }
-    }
+    })
 
-    for (const site of presence.sites) {
+    presence.sites.forEach((site) => {
       const key = contributionKey(sourcePeerId, site.origin)
       activeKeys?.add(key)
       const current = this.contributions.get(key)
@@ -51,16 +51,16 @@ export class WorldRoom extends EventHub {
         user: presence.user,
         order: current?.order ?? this.nextOrder++
       })
-    }
+    })
   }
 
   private state(): WorldState {
     const ordered = [...this.contributions.values()].toSorted((left, right) => left.order - right.order)
-    const groupRows = ordered.map(({ site, user }) => [site.origin, { site, user }] as const)
-    const groups = groupRows.reduce<Map<string, ChatSite & { users: ChatUser[] }>>((acc, [origin, row]) => {
-      const current = acc.get(origin)
-      const next = current ? { ...current, users: [...current.users, row.user] } : { ...row.site, users: [row.user] }
-      return new Map([...acc, [origin, next]])
+    const groups = ordered.reduce<Map<string, ChatSite & { users: ChatUser[] }>>((acc, { site, user }) => {
+      const current = acc.get(site.origin)
+      if (current) current.users.push(user)
+      else acc.set(site.origin, { ...site, users: [user] })
+      return acc
     }, new Map())
     return [...groups.values()]
   }

@@ -211,10 +211,10 @@ function createAvatarSvg() {
   let right = eyes.right
   data.eyeRightUpper = right.upper
   data.eyeRightLower = right.lower
-  data.eyeRightCountour = right.upper.slice(10, 90).concat(right.lower.slice(10, 90).toReversed())
+  data.eyeRightCountour = right.upper.slice(10, 90).concat(right.lower.slice(10, 90).reverse())
   data.eyeLeftUpper = left.upper
   data.eyeLeftLower = left.lower
-  data.eyeLeftCountour = left.upper.slice(10, 90).concat(left.lower.slice(10, 90).toReversed())
+  data.eyeLeftCountour = left.upper.slice(10, 90).concat(left.lower.slice(10, 90).reverse())
   data.distanceBetweenEyes = randomFromInterval(data.faceWidth / 4.5, data.faceWidth / 4)
   data.eyeHeightOffset = randomFromInterval(data.faceHeight / 8, data.faceHeight / 6)
   data.leftEyeOffsetX = randomFromInterval(-data.faceWidth / 20, data.faceWidth / 10)
@@ -239,8 +239,11 @@ function createAvatarSvg() {
   data.leftPupilShiftX = left.upper[leftInd0][0] * leftLerp + left.lower[leftInd1][0] * (1 - leftLerp)
   data.rightPupilShiftX = right.upper[rightInd0][0] * rightLerp + right.lower[rightInd1][0] * (1 - rightLerp)
 
+  var numHairLines = []
   var numHairMethods = 4
-  const numHairLines = Array.from({ length: numHairMethods }, () => Math.floor(randomFromInterval(0, 50)))
+  for (var i = 0; i < numHairMethods; i++) {
+    numHairLines.push(Math.floor(randomFromInterval(0, 50)))
+  }
   data.hairs = []
   if (Math.random() > 0.3) {
     data.hairs = generateHairLines0(data.computedFacePoints, numHairLines[0] * 1 + 10)
@@ -279,10 +282,10 @@ function createAvatarSvg() {
     <svg viewBox="-100 -100 200 200" xmlns="http://www.w3.org/2000/svg" width="500" height="500" id="face-svg">
       <defs>
         <clipPath id="leftEyeClipPath">
-          <polyline points="${data.eyeLeftUpper.concat(data.eyeLeftLower.toReversed()).join(' ')}" />
+          <polyline points="${data.eyeLeftUpper.concat(data.eyeLeftLower.reverse()).join(' ')}" />
         </clipPath>
         <clipPath id="rightEyeClipPath">
-          <polyline points="${data.eyeRightUpper.concat(data.eyeRightLower.toReversed()).join(' ')}" />
+          <polyline points="${data.eyeRightUpper.concat(data.eyeRightLower.reverse()).join(' ')}" />
         </clipPath>
         <filter id="fuzzy">
           <feTurbulence id="turbulence" baseFrequency="0.05" numOctaves="3" type="turbulence" result="noise" />
@@ -297,17 +300,17 @@ function createAvatarSvg() {
       <rect x="-100" y="-100" width="100%" height="100%" fill="${data.backgroundColors[Math.floor(Math.random() * data.backgroundColors.length)]}" />
       <polyline id="faceContour" points="${data.computedFacePoints.join(' ')}" fill="#ffc9a9" stroke="black" stroke-width="${3.0 / data.faceScale}" stroke-linejoin="round" filter="url(#fuzzy)" />
       <g transform="translate(${data.center[0] + data.distanceBetweenEyes + data.rightEyeOffsetX} ${-(-data.center[1] + data.eyeHeightOffset + data.rightEyeOffsetY)})">
-        <polyline id="rightCountour" points="${data.eyeRightUpper.concat(data.eyeRightLower.toReversed()).join(' ')}" fill="white" stroke="white" stroke-width="${0.0 / data.faceScale}" stroke-linejoin="round" filter="url(#fuzzy)" />
+        <polyline id="rightCountour" points="${data.eyeRightUpper.concat(data.eyeRightLower.reverse()).join(' ')}" fill="white" stroke="white" stroke-width="${0.0 / data.faceScale}" stroke-linejoin="round" filter="url(#fuzzy)" />
       </g>
       <g transform="translate(${-(data.center[0] + data.distanceBetweenEyes + data.leftEyeOffsetX)} ${-(-data.center[1] + data.eyeHeightOffset + data.leftEyeOffsetY)})">
-        <polyline id="leftCountour" points="${data.eyeLeftUpper.concat(data.eyeLeftLower.toReversed()).join(' ')}" fill="white" stroke="white" stroke-width="${0.0 / data.faceScale}" stroke-linejoin="round" filter="url(#fuzzy)" />
+        <polyline id="leftCountour" points="${data.eyeLeftUpper.concat(data.eyeLeftLower.reverse()).join(' ')}" fill="white" stroke="white" stroke-width="${0.0 / data.faceScale}" stroke-linejoin="round" filter="url(#fuzzy)" />
       </g>
       <g transform="translate(${data.center[0] + data.distanceBetweenEyes + data.rightEyeOffsetX} ${-(-data.center[1] + data.eyeHeightOffset + data.rightEyeOffsetY)})">
         <polyline id="rightUpper" points="${data.eyeRightUpper.join(' ')}" fill="none" stroke="black" stroke-width="${(data.haventSleptForDays ? 5.0 : 3.0) / data.faceScale}" stroke-linejoin="round" stroke-linecap="round" filter="url(#fuzzy)" />
         <polyline id="rightLower" points="${data.eyeRightLower.join(' ')}" fill="none" stroke="black" stroke-width="${(data.haventSleptForDays ? 5.0 : 3.0) / data.faceScale}" stroke-linejoin="round" stroke-linecap="round" filter="url(#fuzzy)" />
         ${Array.from(
           { length: 10 },
-          (_unused, _i) => `
+          (_, i) => `
           <circle r="${Math.random() * 2 + 3.0}" cx="${data.rightPupilShiftX + Math.random() * 5 - 2.5}" cy="${data.rightPupilShiftY + Math.random() * 5 - 2.5}" stroke="black" fill="none" stroke-width="${1.0 + Math.random() * 0.5}" filter="url(#fuzzy)" clip-path="url(#rightEyeClipPath)" />
         `
         ).join('')}
@@ -317,7 +320,7 @@ function createAvatarSvg() {
         <polyline id="leftLower" points="${data.eyeLeftLower.join(' ')}" fill="none" stroke="black" stroke-width="${(data.haventSleptForDays ? 5.0 : 3.0) / data.faceScale}" stroke-linejoin="round" filter="url(#fuzzy)" />
         ${Array.from(
           { length: 10 },
-          (_unused, _i) => `
+          (_, i) => `
           <circle r="${Math.random() * 2 + 3.0}" cx="${data.leftPupilShiftX + Math.random() * 5 - 2.5}" cy="${data.leftPupilShiftY + Math.random() * 5 - 2.5}" stroke="black" fill="none" stroke-width="${1.0 + Math.random() * 0.5}" filter="url(#fuzzy)" clip-path="url(#leftEyeClipPath)" />
         `
         ).join('')}
@@ -325,7 +328,7 @@ function createAvatarSvg() {
       <g id="hairs">
         ${data.hairs
           .map(
-            (hair, _index) => `
+            (hair, index) => `
           <polyline points="${hair.join(' ')}" fill="none" stroke="${data.hairColor}" stroke-width="${0.5 + Math.random() * 2.5}" stroke-linejoin="round" filter="url(#fuzzy)" />
         `
           )

@@ -64,7 +64,7 @@ const connectionSteps = asArray(arch.connections).flatMap((conn, index) => {
     ? []
     : [[conn.from, index]]
   const toStep = asArray(arch.connections)
-    .slice(0, index + 1)
+    .slice(0, index)
     .some((prior) => prior.from === conn.to || prior.to === conn.to)
     ? []
     : [[conn.to, index + 1]]
@@ -73,10 +73,8 @@ const connectionSteps = asArray(arch.connections).flatMap((conn, index) => {
 // Component steps: connection-derived steps win, then remaining components fill by index —
 // a non-mutating fold keeps each assignment visible to the next entry.
 const componentSteps = asArray(arch.components).reduce((steps, c, index) => {
-  if (steps.has(c.id)) return steps
-  const next = new Map(steps)
-  next.set(c.id, index)
-  return next
+  if (!steps.has(c.id)) steps.set(c.id, index)
+  return steps
 }, new Map(connectionSteps))
 
 // ---- Boundaries computed from the `wraps` id list ---------------------------

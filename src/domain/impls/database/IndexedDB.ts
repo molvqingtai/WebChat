@@ -404,12 +404,12 @@ export class IndexedDBDatabase<Schema extends DatabaseSchema<Schema>> implements
 
   private notify(stores: readonly string[]) {
     if (this.closed) return
-    for (const watcher of this.watchers) {
-      if (!stores.some((store) => watcher.stores.has(store))) continue
+    this.watchers.forEach((watcher) => {
+      if (!stores.some((store) => watcher.stores.has(store))) return
       try {
         watcher.listener()
       } catch {}
-    }
+    })
   }
 
   private execute<Stores extends readonly [StoreName<Schema>, ...StoreName<Schema>[]], Result>(

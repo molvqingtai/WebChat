@@ -96,9 +96,7 @@ const createPortBus = () => {
         postMessage: (message) => {
           if (disconnected) throw new Error('Port disconnected')
           queueMicrotask(() => {
-            providerMessages.listeners.forEach((listener) => {
-              if (!disconnected) listener(message)
-            })
+            if (!disconnected) providerMessages.listeners.forEach((listener) => listener(message))
           })
         },
         disconnect,
@@ -111,9 +109,7 @@ const createPortBus = () => {
         postMessage: (message) => {
           if (disconnected) throw new Error('Port disconnected')
           queueMicrotask(() => {
-            clientMessages.listeners.forEach((listener) => {
-              if (!disconnected) listener(message)
-            })
+            if (!disconnected) clientMessages.listeners.forEach((listener) => listener(message))
           })
         },
         disconnect,
