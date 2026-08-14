@@ -156,7 +156,7 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
   const clearGestures = useCallback(() => {
     const overlay = overlayRef.current
     if (overlay) {
-      pointersRef.current.keys().forEach((pointerId) => {
+      pointersRef.current.forEach((_value, pointerId) => {
         if (overlay.hasPointerCapture(pointerId)) overlay.releasePointerCapture(pointerId)
       })
     }
