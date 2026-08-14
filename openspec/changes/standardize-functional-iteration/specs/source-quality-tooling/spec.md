@@ -108,13 +108,11 @@ The existing `assembleURL` implementation SHALL remain unchanged: its `new URL(u
 
 ### Requirement: Artico targeting preserves message intent and History settlement is bounded
 
-`RoomTransport.send(roomId, payload, to?: string | string[])` SHALL preserve its optional target type. After confirming that the room is joined, the WebChat adapter SHALL call `room.send(payload, to)` exactly once. It SHALL NOT manufacture recipients from room membership, maintain or consult a parallel `readyPeers` set, loop over recipients, catch per-recipient errors, or aggregate a first error locally.
+`RoomTransport.send(roomId, payload, to?: string | string[])` SHALL preserve its optional target type. After confirming that the room is joined, the WebChat adapter SHALL call `room.send(payload, to)` exactly once. It SHALL NOT manufacture recipients from room membership, maintain or consult a parallel `readyPeers` set, or loop over recipients.
 
 Target intent SHALL be exact: `undefined` means room broadcast; `string` means one peer; `string[]` means the selected peer subset without duplicate delivery to the same room peer; and `[]` means no recipients. An empty array SHALL NOT become broadcast. Ordinary Chat messages, normal Session publications, normal World publications, and History requests SHALL omit the target. History responses SHALL target the actual requester. Session/World current-state catch-up for a peer that joined or reconnected after the original publication SHALL remain targeted to that peer and SHALL NOT become a duplicate room broadcast.
 
-The implementation SHALL consume a published `@rtco/client` version whose `Room.send` broadcast and selected-array paths attempt every eligible room call once in provider order even if an earlier stale or closing call throws. After all eligible calls have been attempted, the provider SHALL rethrow the first synchronous error thrown by an eligible room call unchanged; it SHALL return normally only when no eligible room call threw. WebChat SHALL NOT reproduce this behavior through a local provider patch, recipient loop, membership filter, result-oriented callback, reducer, wrapper, or first-error accumulator. The current fail-fast `@rtco/client@0.3.6` SHALL NOT satisfy this prerequisite.
-
-A History inventory-page send failure SHALL be classified by delivery phase. A preflight or codec failure before provider delivery begins MAY terminate the requester. Once the fixed Artico provider has attempted every eligible room call for the page, its first-error rejection SHALL still be reported through the existing error contract but SHALL NOT cancel the request identity, response collection, or any provider lane on that basis. The requester SHALL treat the current page as attempted, SHALL NOT retry it, and SHALL broadcast each later inventory page exactly once. Every valid response already delivered or received later SHALL remain associated with that request and continue through pagination validation, message-identity deduplication, and merge.
+This correction SHALL assume that each delegated `room.send` completes successfully. The implementation SHALL keep the existing `@rtco/client` version and lock resolution unchanged and SHALL NOT add send-failure handling. Handling a send failure SHALL remain outside this change and require separate authority.
 
 One History synchronization SHALL allocate one request identity and broadcast each paginated inventory-request page exactly once without a target. Current room membership at request start SHALL be a loading-settlement snapshot only, not the send target. Response page order and bounds SHALL be validated independently by `(syncId, sourcePeerId)`, while completion, failure, and departure SHALL settle that provider only for loading. One provider's invalid page, failure, or departure SHALL NOT cancel another provider or erase otherwise valid History received later. Every response page associated with the known request identity and accepted by the existing pagination validation SHALL have its valid records retained and merged through the existing message-identity deduplication regardless of arrival time, loading visibility, provider connectivity, or room generation changes. `syncId` and `sourcePeerId` SHALL only correlate and validate pages; elapsed time and generation changes SHALL NOT discard an otherwise valid page.
 
@@ -134,13 +132,6 @@ History loading SHALL remain manually dismissible. Manual dismissal SHALL change
 - **THEN** it SHALL omit the target and SHALL NOT build per-peer pending send state
 - **BUT** a Session/World current-state snapshot required by one peer that joined or reconnected after the original publication SHALL target only that peer
 
-#### Scenario: Continue a provider room send after one stale peer fails
-
-- **GIVEN** a provider broadcast or selected-array send whose earlier eligible call is stale or closing and throws
-- **WHEN** the fixed Artico `Room.send` performs the operation
-- **THEN** every later eligible room call SHALL still be attempted exactly once before the first synchronous error thrown by an eligible room call is rethrown unchanged
-- **AND** WebChat SHALL contain no local recipient loop, `readyPeers` filter, first-error accumulator, or provider patch for that behavior
-
 #### Scenario: Broadcast one History request and merge every provider
 
 - **GIVEN** a History request-start membership snapshot containing multiple peers
@@ -148,13 +139,12 @@ History loading SHALL remain manually dismissible. Manual dismissal SHALL change
 - **THEN** each request page SHALL be one no-target room broadcast, while each response SHALL target the requester
 - **AND** valid response lanes SHALL be tracked independently by `(syncId, sourcePeerId)` and their records SHALL be deduplicated and merged without one provider failure cancelling another
 
-#### Scenario: Continue History pagination after a post-attempt rejection
+#### Scenario: Keep send-failure behavior outside this correction
 
-- **GIVEN** a paginated History inventory request and a fixed Artico broadcast that has attempted every eligible room call for the current page
-- **WHEN** that broadcast rejects with the first room-call error after those attempts
-- **THEN** the rejection SHALL follow the existing error-reporting contract without cancelling the request identity, response collection, or any provider lane on that basis
-- **AND** the requester SHALL NOT retry the current page, SHALL broadcast each later page exactly once, and SHALL continue accepting every valid associated response
-- **BUT** a preflight or codec failure before provider delivery begins MAY terminate the request
+- **GIVEN** the adapter delegates one optional-target send
+- **WHEN** this source correction is implemented
+- **THEN** the send SHALL be treated as successful and the existing `@rtco/client` version and lock resolution SHALL remain unchanged
+- **AND** the source SHALL add no send-failure handling
 
 #### Scenario: Close History loading on settlement or timeout
 
@@ -168,13 +158,13 @@ History loading SHALL remain manually dismissible. Manual dismissal SHALL change
 
 ### Requirement: Functional-iteration cleanup uses only existing repository tooling
 
-The cleanup SHALL use Oxfmt as the sole formatter, Oxlint as the sole linter, and TypeScript as the type-analysis gate. The existing Oxlint configuration MAY enable a built-in rule already shipped by the installed toolchain when it exactly enforces part of this standard. The implementation MUST NOT add, register, load, generate, or depend on an Oxlint plugin, local rule plugin, parser, second linter, new package, custom semantic scanner, committed scan script, or source enforcement module. Only the minimum published `@rtco/client` version update that satisfies the room-send prerequisite and its lockfile resolution MAY alter dependencies.
+The cleanup SHALL use Oxfmt as the sole formatter, Oxlint as the sole linter, and TypeScript as the type-analysis gate. The existing Oxlint configuration MAY enable a built-in rule already shipped by the installed toolchain when it exactly enforces part of this standard. The implementation MUST NOT add, register, load, generate, or depend on an Oxlint plugin, local rule plugin, parser, second linter, new package, custom semantic scanner, committed scan script, source enforcement module, or dependency change.
 
 No `owner-commit`, `functional-loop`, lint-disable, or other new waiver annotation SHALL make a nonconforming loop or callback acceptable. Semantic boundaries not expressible by existing tools SHALL remain source-review requirements rather than creating a second enforcement path.
 
 The cleanup SHALL add no test case, assertion, test abstraction, fixture, mock capability, or coverage requirement. Existing test, fixture, and harness files SHALL remain in authored scope and MAY receive only the minimum behavior-equivalent iteration or private-state ownership edits required by the same standard, plus minimum expectation synchronization for the explicitly changed Artico and History behavior. An existing private fixture owner MAY replace its complete internal state once when that removes repeated external mutation, but its exposed object and behavior MUST remain equivalent. Test scenarios, inputs, timing, ordering, public fixture contracts, and coverage SHALL remain unchanged.
 
-Except for the exact Artico delegation, target-intent, provider failure-isolation, and bounded multi-provider History corrections above, every source rewrite SHALL preserve evaluation and iteration order, call multiplicity, synchronous or asynchronous execution and concurrency, return values, thrown and rejected errors, object identity, mutation visibility, event and timer ordering, DOM behavior, storage and database operations, wire payloads and persistence behavior, generated output, product behavior, public interfaces, extension permissions, protocols, and dependencies.
+Except for the exact Artico delegation, target-intent, and bounded multi-provider History corrections above, every source rewrite SHALL preserve evaluation and iteration order, call multiplicity, synchronous or asynchronous execution and concurrency, return values, thrown and rejected errors, object identity, mutation visibility, event and timer ordering, DOM behavior, storage and database operations, wire payloads and persistence behavior, generated output, product behavior, public interfaces, extension permissions, protocols, and dependencies.
 
 #### Scenario: Inspect the authored manifest
 
@@ -185,7 +175,7 @@ Except for the exact Artico delegation, target-intent, provider failure-isolatio
 
 - **WHEN** the implementation diff and dependency graph are inspected
 - **THEN** they SHALL contain no new plugin, parser, linter, package, scanner, enforcement module, waiver convention, local provider patch, or hand edit to the generated validator
-- **AND** the sole dependency delta MAY be the published fixed `@rtco/client` version and its lockfile resolution
+- **AND** the dependency graph and lock resolution SHALL remain unchanged
 
 #### Scenario: Preserve existing test evidence without expanding it
 
@@ -195,7 +185,7 @@ Except for the exact Artico delegation, target-intent, provider failure-isolatio
 #### Scenario: Verify the scoped source
 
 - **WHEN** the immutable source candidate runs the repository's existing format, lint, typecheck, test, build, generated-artifact, OpenSpec, and cleanliness gates and receives fresh independent review
-- **THEN** all gates SHALL pass with only the authorized Artico/History behavior and existing dependency version changed, and without any other product, protocol, persistence, generated-output, dependency, or observable behavior change
+- **THEN** all gates SHALL pass with only the authorized Artico/History success-path behavior changed, with dependencies unchanged and without any other product, protocol, persistence, generated-output, or observable behavior change
 
 #### Scenario: Hold delivery boundaries
 

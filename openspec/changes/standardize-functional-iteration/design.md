@@ -13,7 +13,7 @@ Current traversal has several distinct shapes that must not be treated as interc
 
 The desired style is the shortest behavior-equivalent expression with the fewest necessary variables. This is not a request to mechanically replace one syntax with another. In particular, changing an effectful `forEach` to `for...of` preserves the same external mutation while adding syntax, and changing a valid private reducer accumulator to repeated immutable cloning adds work and behavioral risk without removing an external side effect.
 
-The Artico send path exposes a separate owner-approved correction discovered during this cleanup. `Room.send` already accepts `target?: string | string[]`, but WebChat currently expands an omitted target into its join-to-leave `readyPeers` membership and sends once per peer. That set is not a data-channel readiness filter. The pinned provider also stops its room traversal when one stale or closing call throws, so merely delegating broadcast or array delivery to that version would starve later peers. At the protocol layer, ordinary Chat and normal Session/World publications are room broadcasts, while the History requester currently repeats a logically room-wide request per peer. These behaviors require one closed transport and History repair rather than another callback carrier.
+The Artico send path exposes a separate owner-approved correction discovered during this cleanup. `Room.send` already accepts `target?: string | string[]`, but WebChat currently expands an omitted target into its join-to-leave `readyPeers` membership and sends once per peer. That set is not a data-channel readiness filter. At the protocol layer, ordinary Chat and normal Session/World publications are room broadcasts, while the History requester currently repeats a logically room-wide request per peer. These behaviors require one closed transport and History repair rather than another callback carrier.
 
 ## Goals / Non-Goals
 
@@ -25,7 +25,7 @@ The Artico send path exposes a separate owner-approved correction discovered dur
 - Keep result-producing callbacks free of external mutation and external commits, while making synchronous and concurrent effect traversal explicit and fully consumed.
 - Preserve a consumed direct `map` for an indivisible synchronous mixed effect-and-result owner operation without opening a general effectful-callback exception.
 - Preserve valid local mutation of a fresh, exclusive, non-escaping reducer accumulator.
-- Delegate each Artico send once with its original optional target intent, after consuming a provider version whose broadcast and selected-array paths continue after a stale or closing peer failure.
+- Delegate each Artico send once with its original optional target intent.
 - Broadcast ordinary Chat, normal Session/World publications, and one History request without manufacturing recipient targets; keep Session/World current-state catch-up and History responses targeted.
 - Merge every valid History response under one correlated multi-provider request regardless of arrival time, and close loading on full settlement or the existing ten-second deadline without stopping that merge.
 - Preserve exact behavior outside those Owner-approved transport and History corrections while applying the same iteration rule to production, test, harness, configuration, and tracked tool source.
@@ -35,7 +35,8 @@ The Artico send path exposes a separate owner-approved correction discovered dur
 
 - No product feature, protocol, persistence, DOM, storage, wire-payload, or public-interface change beyond the closed Artico delegation and History request/settlement corrections below.
 - No source minification or preference for fewer characters when it obscures intent or changes evaluation.
-- No custom Oxlint plugin, local plugin, parser, second linter, new package, committed scan script, generated rule table, or semantic-analysis module. The only dependency change permitted is the minimum published `@rtco/client` version update that supplies the required room-send behavior, plus its lockfile resolution.
+- No custom Oxlint plugin, local plugin, parser, second linter, new package, committed scan script, generated rule table, semantic-analysis module, or dependency change. The existing `@rtco/client` version and lock resolution remain unchanged.
+- No send-failure behavior change. This correction assumes each delegated `room.send` succeeds; handling a send failure requires separate authority.
 - No `owner-commit`, `functional-loop`, lint-disable, or other annotation that turns a nonconforming loop or callback into an exception.
 - No new test case, parameter row, assertion, fixture, mock capability, test helper abstraction, or coverage requirement. Existing expectations may receive only the minimum synchronization required by the explicitly changed transport and History behavior.
 - No hand edit to the generated Archify validator and no expansion of the generated-file exclusion.
@@ -99,7 +100,7 @@ The existing `assembleURL` implementation satisfies this rule: `new URL(url)` cr
 
 ### 4. Message intent controls Artico targeting and History settlement
 
-`RoomTransport.send(roomId, payload, to?: string | string[])` keeps its optional target type. After confirming the room exists, the adapter calls `room.send(payload, to)` exactly once. It does not create a target set, read or filter `readyPeers`, loop over recipients, catch per-recipient errors, or aggregate a first error locally.
+`RoomTransport.send(roomId, payload, to?: string | string[])` keeps its optional target type. After confirming the room exists, the adapter calls `room.send(payload, to)` exactly once. It does not create a target set, read or filter `readyPeers`, or loop over recipients.
 
 Target meaning is closed:
 
@@ -114,9 +115,7 @@ One History synchronization allocates one request identity and broadcasts each p
 
 The History loading owner remains manually dismissible. Manual dismissal changes only the UI and does not cancel response collection. Otherwise loading closes when either every snapshotted provider has completed, failed, or left, or the existing absolute `HISTORY_REQUEST_TIMEOUT_MS` ten-second deadline from request start expires. This is the semantic equivalent of racing `Promise.allSettled(providerHistories)` against the timeout for the loading owner only, not awaiting the timeout inside `Promise.all` and not cancelling the losing provider work. Loading closure, timeout, provider failure or departure, and room generation changes must not cause an otherwise valid associated History page to be discarded; whenever such a page arrives, its valid records continue through deduplication and merge.
 
-Direct delegation is gated on a published Artico client whose `Room.send` broadcast and selected-array paths attempt every eligible room call once in provider order even when an earlier stale or closing call throws. After all eligible calls have been attempted, the provider rethrows the first synchronous error thrown by an eligible room call unchanged; it returns normally only when no eligible room call threw. WebChat must not recreate this behavior with a local loop, `readyPeers` filter, reducer, first-error accumulator, wrapper, or provider patch. A source child cannot complete against the current fail-fast `@rtco/client@0.3.6` implementation.
-
-Each History inventory-page send has a closed failure boundary. A preflight or codec failure before provider delivery begins may terminate the requester because no room call has been attempted. Once the fixed Artico provider has attempted every eligible room call, its first-error rejection is post-attempt and still follows the existing error-reporting contract, but it does not cancel the request identity, response collection, or any provider lane on that basis. The requester treats that page as attempted, does not retry it, and broadcasts each later inventory page exactly once. Any valid response already delivered or received later remains associated with the same request and continues through validation, deduplication, and merge.
+This correction assumes each delegated `room.send` returns successfully. The source child keeps `@rtco/client` and its lock resolution unchanged and adds no send-failure handling. Handling a send failure remains outside this change and requires separate authority.
 
 ### 5. The migration is one authored-source pass with two closed behavior corrections
 
@@ -124,7 +123,7 @@ The implementation manifest is fixed from clean `develop`: all tracked `*.js`, `
 
 The generated validator remains byte-identical and is verified through its existing generator controls. Its generator is authored source and remains in scope. No other file may claim generated, vendored, test, fixture, harness, configuration, or tool status as an exclusion.
 
-Except for the target delegation, broadcast classification, provider failure isolation, and bounded multi-provider History settlement defined above, every rewrite must preserve evaluation order, iteration order, call count, synchronous or asynchronous settlement, concurrency, return values, thrown and rejected errors, object identity, mutation visibility, event order, timers, storage and database operations, network/wire behavior, DOM behavior, and generated output. A shorter expression is acceptable only when it is behavior-equivalent.
+Except for the target delegation, broadcast classification, and bounded multi-provider History settlement defined above, every rewrite must preserve evaluation order, iteration order, call count, synchronous or asynchronous settlement, concurrency, return values, thrown and rejected errors, object identity, mutation visibility, event order, timers, storage and database operations, network/wire behavior, DOM behavior, and generated output. A shorter expression is acceptable only when it is behavior-equivalent.
 
 Existing tests, fixtures, and harnesses may receive only the minimum behavior-equivalent iteration or private-state ownership edits necessary to satisfy the same authored-source rule, plus minimum expectation synchronization for the closed transport and History corrections. An existing private fixture owner may replace its complete internal state once when that removes repeated external mutation, but its exposed object and behavior must remain equivalent. Test names, scenarios, inputs, timing, mocks, public fixture contracts, and coverage remain unchanged; no new test, fixture, or test abstraction is part of this cleanup.
 
@@ -144,7 +143,7 @@ Semantic decisions that the existing toolchain cannot express are verified by th
 - **A loop is retained for sequential or live behavior that a shorter form changes** -> Keep it only after confirming `forEach`, `Promise.all`, direct result methods, and existing bulk operations are not equivalent.
 - **A local reducer mutation is mistaken for an external side effect** -> Apply the fresh, exclusive, non-escaping test; keep `assembleURL` unchanged.
 - **An omitted target is expanded back into WebChat recipients** -> Require one `room.send(payload, undefined)` call for broadcasts and keep membership snapshots separate from send intent.
-- **A stale Artico call starves later room peers or later History pages** -> Consume a published provider fix that attempts later peers and then rethrows the first room-call error unchanged; treat a History inventory-page rejection after those attempts as non-terminal for request state and later pages, without retrying that page or restoring a WebChat target loop or error accumulator.
+- **Send-failure behavior expands back into this source correction** -> Keep the current Artico dependency unchanged and implement only the assumed-success send path; make no send-failure behavior change without separate authority.
 - **A broadcast History request keeps loading open forever or loses later history** -> Race full provider settlement against the existing ten-second deadline for the loading UI only, while every valid associated page continues to merge regardless of arrival time, provider connectivity, or room generation.
 - **A new peer misses current Session/World state** -> Preserve the targeted current-state catch-up; do not convert it into a duplicate room broadcast.
 - **Generated code dominates structural scans** -> Exclude only the exact generated validator path and keep its generator in scope.
@@ -154,10 +153,9 @@ Semantic decisions that the existing toolchain cannot express are verified by th
 ## Migration Plan
 
 1. Freeze this docs-only authority as one sole child of clean `develop@10801251a7a6b744fd246960daed01eef323c868`, validate it, and obtain fresh independent docs review.
-2. Repair and release Artico's room broadcast/array failure isolation with attempt-all and unchanged first-room-call-error propagation, then pin the exact published client version as the source child's prerequisite; do not patch or fork the provider inside WebChat.
-3. From the reviewed authority exact, record the 304-file authored manifest and a read-only baseline inventory of traversal and send forms before editing product source.
-4. Produce one WebChat source child that applies the functional-iteration standard, direct optional-target delegation, intent-based broadcast/target classification, bounded multi-provider History synchronization, generated exclusion, and no-new-test policy without adding an enforcement layer.
-5. Verify the exact source diff with existing format, lint, typecheck, test, build, generated-artifact, OpenSpec, and repository-cleanliness gates; confirm the original `assembleURL` implementation is unchanged and the fixed Artico version is resolved.
-6. Obtain fresh independent source review of the immutable exact without the reviewer running local tests or automation. Keep both pull requests Draft and do not mark Ready, merge, run browser acceptance, deploy, release, or change production without separate Owner authority.
+2. From the reviewed authority exact, record the 304-file authored manifest and a read-only baseline inventory of traversal and send forms before editing product source.
+3. Produce one WebChat source child that applies the functional-iteration standard, direct optional-target delegation, intent-based broadcast/target classification, bounded multi-provider History synchronization, generated exclusion, assumed-success send scope, and no-new-test policy without adding an enforcement layer.
+4. Verify the exact source diff with existing format, lint, typecheck, test, build, generated-artifact, OpenSpec, and repository-cleanliness gates; confirm the original `assembleURL` implementation and dependency resolution are unchanged.
+5. Obtain fresh independent source review of the immutable exact without the reviewer running local tests or automation. Keep both pull requests Draft and do not mark Ready, merge, run browser acceptance, deploy, release, or change production without separate Owner authority.
 
-Rollback is source-only: revert the cleanup, the closed transport/History correction, the Artico version update, and any built-in Oxlint configuration change. There is no schema, persistence, data, or deployment migration.
+Rollback is source-only: revert the cleanup, the closed transport/History correction, and any built-in Oxlint configuration change. There is no dependency, schema, persistence, data, or deployment migration.
