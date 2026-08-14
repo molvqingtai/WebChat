@@ -771,8 +771,8 @@ describe('single live release owner', () => {
       network.disconnectPeer('prepared-rebind-peer-b')
       b.crash()
       // Let the reconnect reach its prepared phase (its SESSION publication stays held).
-      // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
-      for (let flush = 0; flush < 20; flush += 1) await vi.advanceTimersByTimeAsync(0)
+      // functional-loop: owner-commit — ordered per-flush timer settlement with no bulk primitive
+      for (const _flush of Array.from({ length: 20 }, (_, index) => index)) await vi.advanceTimersByTimeAsync(0)
       // B's valid same-presence SESSION arrives during A's prepared phase.
       network.redeliverLastSession('prepared-rebind-peer-b', 'prepared-rebind-peer-a')
       await vi.advanceTimersByTimeAsync(0)

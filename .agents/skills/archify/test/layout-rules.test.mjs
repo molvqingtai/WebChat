@@ -50,10 +50,7 @@ function render(mode, doc) {
 }
 
 function hash(s) {
-  let h = 0
-  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
-  for (let i = 0; i < s.length; i += 1) h = (h * 31 + s.charCodeAt(i)) | 0
-  return h
+  return s.split('').reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) | 0, 0)
 }
 
 // [name, mode, mutate(doc), expectedSubstrings[]] — every mutation introduces

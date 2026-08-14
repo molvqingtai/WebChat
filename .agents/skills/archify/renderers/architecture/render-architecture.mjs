@@ -57,13 +57,20 @@ function measureComponent(c) {
 }
 
 const components = new Map(asArray(arch.components).map((c) => [c.id, measureComponent(c)]))
-const componentSteps = asArray(arch.connections)
-  .entries()
-  .reduce((acc, [index, conn]) => {
-    if (!acc.has(conn.from)) acc.set(conn.from, index)
-    if (!acc.has(conn.to)) acc.set(conn.to, index + 1)
-    return acc
-  }, new Map())
+const connectionSteps = asArray(arch.connections).flatMap((conn, index) => {
+  const fromStep = asArray(arch.connections)
+    .slice(0, index)
+    .some((prior) => prior.from === conn.from || prior.to === conn.from)
+    ? []
+    : [[conn.from, index]]
+  const toStep = asArray(arch.connections)
+    .slice(0, index + 1)
+    .some((prior) => prior.from === conn.to || prior.to === conn.to)
+    ? []
+    : [[conn.to, index + 1]]
+  return [...fromStep, ...toStep]
+})
+const componentSteps = new Map(connectionSteps)
 // functional-loop: owner-commit — ordered per-component fallback step assignment
 for (const [index, c] of asArray(arch.components).entries()) {
   if (!componentSteps.has(c.id)) componentSteps.set(c.id, index)
@@ -157,9 +164,9 @@ function validateArchitecture() {
   // Component overlap — the highest-traffic hand-placement failure mode.
   const list = [...components.values()]
   // functional-loop: owner-commit — ordered pairwise overlap checks over index pairs
-  for (let i = 0; i < list.length; i += 1) {
+  for (const i of Array.from({ length: list.length }, (_, index) => index)) {
     // functional-loop: owner-commit — ordered per-pair overlap checks over the upper triangle
-    for (let j = i + 1; j < list.length; j += 1) {
+    for (const j of Array.from({ length: list.length }, (_, index) => index).slice(i + 1)) {
       if (rectsOverlap(list[i], list[j], 8)) {
         problems.push(
           `Components "${list[i].id}" and "${list[j].id}" are less than 8px apart — move one or shrink its size.\n${suggestComponentSeparation(list[i], list[j], 8)}`

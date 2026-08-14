@@ -54,12 +54,17 @@ export function generateHairLines1(faceCountour, numHairLines = 100) {
   return Array.from({ length: numHairLines }, () => {
     const numHairPoints = 20 + Math.floor(randomFromInterval(-5, 5));
     // we generate some hair lines
-    const hairPoints = Array.from({ length: numHairPoints }, () => {
-      const indexStart = Math.floor(randomFromInterval(20, 160));
-      const point = faceCountourCopy[(faceCountourCopy.length - indexStart) % faceCountourCopy.length];
-      return { x: point[0], y: point[1] };
-    });
-    return computeBezierCurve(hairPoints, numHairPoints);
+    const seedStart = Math.floor(randomFromInterval(20, 160))
+    const seed = faceCountourCopy[(faceCountourCopy.length - seedStart) % faceCountourCopy.length]
+    const hairPoints = [
+      { x: seed[0], y: seed[1] },
+      ...Array.from({ length: numHairPoints }, () => {
+        const indexStart = Math.floor(randomFromInterval(20, 160))
+        const point = faceCountourCopy[(faceCountourCopy.length - indexStart) % faceCountourCopy.length]
+        return { x: point[0], y: point[1] }
+      })
+    ]
+    return computeBezierCurve(hairPoints, numHairPoints)
   });
 }
 

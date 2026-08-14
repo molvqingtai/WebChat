@@ -242,10 +242,14 @@ const retainInvalidRecordDiagnostics = async (
       const existing = await transaction.scan('conflicts')
       let total = existing.length
       const keys = new Set(existing.map(({ key }) => key))
-      const counts = existing.reduce<Map<string, number>>((acc, { value }) => {
-        if (typeof value !== 'object' || value === null) return acc
+      const eventIds = existing.flatMap(({ value }) => {
+        if (typeof value !== 'object' || value === null) return []
         const eventId = (value as { eventId?: unknown }).eventId
-        return typeof eventId === 'string' ? acc.set(eventId, (acc.get(eventId) ?? 0) + 1) : acc
+        return typeof eventId === 'string' ? [eventId] : []
+      })
+      const counts = eventIds.reduce<Map<string, number>>((acc, eventId) => {
+        const current = acc.get(eventId) ?? 0
+        return new Map([...acc, [eventId, current + 1]])
       }, new Map())
       // functional-loop: early-return — the stored-conflict cap must stop the persistence walk
       for (const { item, error } of invalidRecords) {

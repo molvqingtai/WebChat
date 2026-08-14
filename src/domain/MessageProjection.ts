@@ -27,22 +27,30 @@ export const projectRecords = (records: readonly MessageRecord[]): DisplayMessag
     const reactionRecord = record
     const key = reactionKey(reactionRecord)
     const current = acc.get(key)
-    return !current || compareEventPosition(current.message, reactionRecord.message) < 0
-      ? acc.set(key, reactionRecord)
-      : acc
+    const next =
+      !current || compareEventPosition(current.message, reactionRecord.message) < 0 ? reactionRecord : current
+    return new Map([...acc, [key, next]])
   }, new Map())
 
-  const reactionsByTarget = [...reactionWinners.values()].reduce<Map<string, { likes: ChatUser[]; hates: ChatUser[] }>>(
-    (acc, record) => {
-      if (!record.message.active) return acc
-      const reactions = acc.get(record.message.targetId) ?? { likes: [], hates: [] }
-      const next = { ...reactions }
-      if (record.message.reaction === REACTION_TYPE.LIKE) next.likes = [...next.likes, record.user]
-      if (record.message.reaction === REACTION_TYPE.HATE) next.hates = [...next.hates, record.user]
-      return acc.set(record.message.targetId, next)
-    },
-    new Map()
+  const reactionRows = [...reactionWinners.values()].flatMap(
+    (record): { targetId: string; user: ChatUser; kind: 'like' | 'hate' }[] => {
+      if (!record.message.active) return []
+      const key = record.message.targetId
+      return record.message.reaction === REACTION_TYPE.LIKE
+        ? [{ targetId: key, user: record.user, kind: 'like' }]
+        : record.message.reaction === REACTION_TYPE.HATE
+          ? [{ targetId: key, user: record.user, kind: 'hate' }]
+          : []
+    }
   )
+  const reactionsByTarget = reactionRows.reduce<Map<string, { likes: ChatUser[]; hates: ChatUser[] }>>((acc, row) => {
+    const current = acc.get(row.targetId) ?? { likes: [], hates: [] }
+    const next =
+      row.kind === 'like'
+        ? { ...current, likes: [...current.likes, row.user] }
+        : { ...current, hates: [...current.hates, row.user] }
+    return new Map([...acc, [row.targetId, next]])
+  }, new Map())
 
   return records.flatMap((record): DisplayMessage[] => {
     if (record.type === MESSAGE_RECORD_TYPE.SYSTEM_NOTICE) {

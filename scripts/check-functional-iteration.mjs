@@ -41,22 +41,53 @@ for (const file of manifest()) {
   } catch {
     continue
   }
-  // Comment-trivia waiver precheck: directive-like text inside strings is not a comment and is
-  // ignored by this plain-text pass; the plugin rules below are AST-based.
+  // Comment-trivia waiver precheck: a real lexer tracks strings and templates so directive-like
+  // text inside a string literal is ignored, while every actual line/block comment is checked.
+  const comments = []
   let index = 0
-  // functional-loop: condition-driven — the comment scan advances to the next comment occurrence
+  // functional-loop: condition-driven — the lexer advances token by token until the source ends
   while (index < source.length) {
-    const slash = source.indexOf('//', index)
-    const block = source.indexOf('/*', index)
-    const candidate = slash === -1 ? block : block === -1 ? slash : Math.min(slash, block)
-    if (candidate === -1) break
-    const end = source[candidate + 1] === '*' ? source.indexOf('*/', candidate + 2) : source.indexOf('\n', candidate)
-    const commentEnd = end === -1 ? source.length : end
-    if (DISABLE_PATTERN.test(source.slice(candidate, commentEnd))) {
-      const line = source.slice(0, candidate).split('\n').length
+    const ch = source[index]
+    if (ch === '/' && source[index + 1] === '/') {
+      const end = source.indexOf('\n', index)
+      comments.push(source.slice(index, end === -1 ? source.length : end))
+      index = end === -1 ? source.length : end + 1
+      continue
+    }
+    if (ch === '/' && source[index + 1] === '*') {
+      const end = source.indexOf('*/', index + 2)
+      comments.push(source.slice(index, end === -1 ? source.length : end + 2))
+      index = end === -1 ? source.length : end + 2
+      continue
+    }
+    if (ch === '"' || ch === "'") {
+      let end = index + 1
+      // functional-loop: condition-driven — scan forward to the closing quote
+      while (end < source.length && source[end] !== ch) {
+        if (source[end] === '\\') end += 1
+        end += 1
+      }
+      index = Math.min(source.length, end + 1)
+      continue
+    }
+    if (ch === '`') {
+      let end = index + 1
+      // functional-loop: condition-driven — scan forward to the closing backtick
+      while (end < source.length && source[end] !== '`') {
+        if (source[end] === '\\') end += 1
+        end += 1
+      }
+      index = Math.min(source.length, end + 1)
+      continue
+    }
+    index += 1
+  }
+  // functional-loop: owner-commit — ordered per-comment waiver reporting with no bulk primitive
+  for (const comment of comments) {
+    if (DISABLE_PATTERN.test(comment)) {
+      const line = source.slice(0, source.indexOf(comment)).split('\n').length
       violations.push(`${file}:${line}:1  functional-iteration disable directive is forbidden`)
     }
-    index = commentEnd
   }
 }
 

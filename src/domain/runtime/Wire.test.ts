@@ -265,7 +265,7 @@ describe('WireDomain anti-corruption boundary', () => {
     // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
 
     // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
-    for (let index = 0; index <= MAX_DECODE_QUEUE_FRAMES; index += 1) {
+    for (const index of Array.from({ length: MAX_DECODE_QUEUE_FRAMES + 1 }, (_, i) => i)) {
       runtime.receive(ROOM, 'peer-a', `frame-${index}`)
     }
     runtime.receive(ROOM, 'peer-b', JSON.stringify(message))
@@ -288,8 +288,8 @@ describe('WireDomain anti-corruption boundary', () => {
 
     // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
 
-    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
-    for (let index = 0; index < 4; index += 1) runtime.receive(ROOM, 'peer-a', frame)
+    // functional-loop: owner-commit — ordered per-frame delivery with no bulk primitive
+    for (const _index of Array.from({ length: 4 }, (_, i) => i)) runtime.receive(ROOM, 'peer-a', frame)
     runtime.receive(ROOM, 'peer-a', 'x')
 
     await vi.waitFor(() => expect(drops).toContain('queue-overflow'))

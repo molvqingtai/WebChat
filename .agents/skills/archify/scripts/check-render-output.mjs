@@ -95,11 +95,7 @@ function lineSegments(attrs) {
 
 function pathSegments(d) {
   const points = pointsFromPath(d)
-  const segments = []
-  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
-  for (let i = 1; i < points.length; i += 1) {
-    segments.push({ start: points[i - 1], end: points[i] })
-  }
+  const segments = points.slice(1).map((_point, index) => ({ start: points[index], end: points[index + 1] }))
   return segments
 }
 
@@ -185,7 +181,7 @@ function pointsFromPath(d) {
   let current = [0, 0]
   let start = null
 
-  // functional-loop: break — the loop must stop exactly at the guarded item
+  // functional-loop: condition-driven — the loop must stop exactly at the guarded item
   while (i < tokens.length) {
     if (isCommand(tokens[i])) command = tokens[i++]
     if (!command) break
@@ -194,7 +190,7 @@ function pointsFromPath(d) {
     switch (command.toUpperCase()) {
       case 'M':
       case 'L': {
-        // functional-loop: break — the loop must stop exactly at the guarded item
+        // functional-loop: condition-driven — the loop must stop exactly at the guarded item
         while (i + 1 < tokens.length && !isCommand(tokens[i])) {
           const x = Number.parseFloat(tokens[i++])
           const y = Number.parseFloat(tokens[i++])
@@ -206,7 +202,7 @@ function pointsFromPath(d) {
         break
       }
       case 'H': {
-        // functional-loop: break — the loop must stop exactly at the guarded item
+        // functional-loop: condition-driven — the loop must stop exactly at the guarded item
         while (i < tokens.length && !isCommand(tokens[i])) {
           const x = Number.parseFloat(tokens[i++])
           if (!Number.isFinite(x)) break
@@ -216,7 +212,7 @@ function pointsFromPath(d) {
         break
       }
       case 'V': {
-        // functional-loop: break — the loop must stop exactly at the guarded item
+        // functional-loop: condition-driven — the loop must stop exactly at the guarded item
         while (i < tokens.length && !isCommand(tokens[i])) {
           const y = Number.parseFloat(tokens[i++])
           if (!Number.isFinite(y)) break

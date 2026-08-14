@@ -3784,7 +3784,7 @@ describe('RuntimeServer history', () => {
     await settle()
     // Many peers send partial (non-final) inventories: each occupies admission from page zero.
     // functional-loop: owner-commit — ordered per-peer setup with no bulk primitive
-    for (let peer = 0; peer < 5; peer += 1) {
+    for (const peer of Array.from({ length: 5 }, (_, index) => index)) {
       const peerId = `peer-${peer}`
       fake.receive(roomId, peerId, session())
       await settle()
@@ -4022,7 +4022,7 @@ describe('RuntimeServer history', () => {
       })
     })
     // functional-loop: owner-commit — ordered per-peer setup with no bulk primitive
-    for (let peer = 0; peer < 5; peer += 1) {
+    for (const peer of Array.from({ length: 5 }, (_, index) => index)) {
       const peerId = `peer-${peer}`
       fake.receive(roomId, peerId, session({ id: `user-${peer}`, name: `User ${peer}`, avatar: '' }))
       await settle()
@@ -5658,7 +5658,7 @@ describe('RuntimeServer history', () => {
       return { records: [], done: true }
     })
     // functional-loop: owner-commit — ordered per-peer delivery with no bulk primitive
-    for (let peer = 0; peer < 4; peer += 1) {
+    for (const peer of Array.from({ length: 4 }, (_, index) => index)) {
       fake.receive(roomId, `peer-${peer}`, session({ id: `user-${peer}`, name: `User ${peer}`, avatar: '' }))
       await settle()
       fake.receive(roomId, `peer-${peer}`, {
@@ -5753,7 +5753,7 @@ describe('RuntimeServer history', () => {
     })
     await vi.waitFor(() => expect(started).toEqual(['lc-active']))
     // functional-loop: owner-commit — ordered per-peer delivery with no bulk primitive
-    for (let peer = 0; peer < 31; peer += 1) {
+    for (const peer of Array.from({ length: 31 }, (_, index) => index)) {
       const peerId = `peer-${peer}`
       fake.receive(roomId, peerId, session({ id: `lc-user-${peer}`, name: `LC ${peer}`, avatar: '' }))
       await settle()
@@ -5769,7 +5769,7 @@ describe('RuntimeServer history', () => {
     // All 31 partial peers leave: cleanup must remove their canonical jobs IMMEDIATELY (no
     // physical settlement callback exists for them), so fresh unrelated work is admitted at once.
     // functional-loop: owner-commit — ordered per-peer delivery with no bulk primitive
-    for (let peer = 0; peer < 31; peer += 1) {
+    for (const peer of Array.from({ length: 31 }, (_, index) => index)) {
       fake.peerLeave(roomId, `peer-${peer}`)
     }
     await settle()
@@ -5797,7 +5797,7 @@ describe('RuntimeServer history', () => {
     })
     fake.hangHistoryResponseSends()
     // functional-loop: owner-commit — ordered per-peer delivery with no bulk primitive
-    for (let peer = 0; peer < 4; peer += 1) {
+    for (const peer of Array.from({ length: 4 }, (_, index) => index)) {
       fake.receive(roomId, `peer-${peer}`, session({ id: `hs-user-${peer}`, name: `HS ${peer}`, avatar: '' }))
       await settle()
       fake.receive(roomId, `peer-${peer}`, {
@@ -5845,7 +5845,7 @@ describe('RuntimeServer history', () => {
     })
     fake.hangHistoryResponseSends()
     // functional-loop: owner-commit — ordered per-peer delivery with no bulk primitive
-    for (let peer = 0; peer < 4; peer += 1) {
+    for (const peer of Array.from({ length: 4 }, (_, index) => index)) {
       fake.receive(roomId, `peer-${peer}`, session({ id: `tc-user-${peer}`, name: `TC ${peer}`, avatar: '' }))
       await settle()
       fake.receive(roomId, `peer-${peer}`, {
@@ -6205,7 +6205,7 @@ describe('RuntimeServer history', () => {
     // 32 peers submit partial inventories: exactly 32 canonical jobs are admitted but none are
     // ready, so no supplier pipeline starts (observable: no starts, no responses).
     // functional-loop: owner-commit — ordered per-peer delivery with no bulk primitive
-    for (let peer = 0; peer < 32; peer += 1) {
+    for (const peer of Array.from({ length: 32 }, (_, index) => index)) {
       const peerId = `peer-${peer}`
       fake.receive(roomId, peerId, session({ id: `sat-user-${peer}`, name: `Sat ${peer}`, avatar: '' }))
       await settle()

@@ -1488,9 +1488,9 @@ export const diagnoseChromeNativeActionLifecycle = async (
 
   // functional-loop: break — the loop must stop exactly at the guarded item
 
-  // functional-loop: break — the loop must stop exactly at the guarded item
+  // functional-loop: condition-driven — the loop must stop exactly at the guarded item
   while (!worker && !workerFailure && !startupContinuity.failure) {
-    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
+    // functional-loop: condition-driven — ordered per-item emission with no bulk primitive
     while (pendingEvents.length > 0 && !workerFailure && !startupContinuity.failure) {
       const pending = pendingEvents.shift()!
       processPreTargetEvent(pending.event, pending.atMs)
@@ -1912,9 +1912,9 @@ export const diagnoseChromeNativeActionLifecycle = async (
 
   // functional-loop: break — the loop must stop exactly at the guarded item
 
-  // functional-loop: break — the loop must stop exactly at the guarded item
+  // functional-loop: condition-driven — the loop must stop exactly at the guarded item
   while (true) {
-    // functional-loop: break — the loop must stop exactly at the guarded item
+    // functional-loop: condition-driven — the loop must stop exactly at the guarded item
     while (pendingEvents.length > 0) {
       const pending = pendingEvents.shift()!
       await processEvent(pending.event, pending.atMs)
@@ -1997,7 +1997,7 @@ export const diagnoseChromeNativeActionLifecycle = async (
 
   // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
 
-  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
+  // functional-loop: condition-driven — ordered per-item emission with no bulk primitive
   while (
     pendingEvents.length > 0 &&
     !state.extensionFailure &&

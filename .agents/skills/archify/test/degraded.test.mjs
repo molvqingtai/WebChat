@@ -128,14 +128,14 @@ test('property: shuffling node/state order still renders (order-independence)', 
   // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
   for (const mode of ['workflow', 'dataflow', 'lifecycle']) {
     const arrKey = mode === 'lifecycle' ? 'states' : 'nodes'
-    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
-    for (let seed = 1; seed <= 8; seed += 1) {
+    // functional-loop: owner-commit — ordered per-seed rendering with no bulk primitive
+    for (const seed of Array.from({ length: 8 }, (_, index) => index + 1)) {
       const doc = JSON.parse(fs.readFileSync(path.join(skillRoot, 'examples', EXAMPLES[mode]), 'utf8'))
       const rng = mulberry32(seed)
       // Fisher–Yates with the seeded PRNG.
       const a = doc[arrKey]
-      // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
-      for (let i = a.length - 1; i > 0; i -= 1) {
+      // functional-loop: owner-commit — ordered per-slot swap of the owned shuffle
+      for (const i of Array.from({ length: a.length - 1 }, (_, index) => a.length - 1 - index)) {
         const j = Math.floor(rng() * (i + 1))
         ;[a[i], a[j]] = [a[j], a[i]]
       }

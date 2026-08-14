@@ -243,9 +243,9 @@ function validateWorkflow() {
   // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
   for (const [lane, laneNodes] of byLane) {
     // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
-    for (let i = 0; i < laneNodes.length; i += 1) {
+    for (const i of Array.from({ length: laneNodes.length }, (_, index) => index)) {
       // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
-      for (let j = i + 1; j < laneNodes.length; j += 1) {
+      for (const j of Array.from({ length: laneNodes.length }, (_, index) => index).slice(i + 1)) {
         if (rectsOverlap(laneNodes[i], laneNodes[j], 8)) {
           problems.push(
             `Nodes "${laneNodes[i].id}" and "${laneNodes[j].id}" are less than 8px apart in lane "${lane}" — move one to another col, adjust yOffset, or reduce width/height.`
@@ -272,10 +272,7 @@ function validateWorkflow() {
         }
       }
       const segments = []
-      // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
-      for (let i = 1; i < routed.points.length; i += 1) {
-        segments.push({ start: routed.points[i - 1], end: routed.points[i] })
-      }
+      // functional-loop: owner-commit — ordered per-item emission with no bulk primitiveconst segments = routed.points.length.slice(1).map((point, index) => { start: routed.points[index], end: routed.points[index + 1] })
       // functional-loop: continue — the loop must skip the guarded item and keep processing
       for (const node of nodes.values()) {
         if (node.id === edge.from || node.id === edge.to) continue
@@ -336,9 +333,9 @@ function validateWorkflow() {
     }
   }
   // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
-  for (let i = 0; i < labelRects.length; i += 1) {
+  for (const i of Array.from({ length: labelRects.length }, (_, index) => index)) {
     // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
-    for (let j = i + 1; j < labelRects.length; j += 1) {
+    for (const j of Array.from({ length: labelRects.length }, (_, index) => index).slice(i + 1)) {
       if (rectsOverlap(labelRects[i], labelRects[j], -2)) {
         problems.push(
           `Labels "${labelRects[i].label}" and "${labelRects[j].label}" overlap — adjust labelDx/labelDy or remove one label.\n${suggestLabelPairFix(labelRects[i], labelRects[j])}`

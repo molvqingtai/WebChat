@@ -228,8 +228,8 @@ describe('MediaPreview ownership and settlement', () => {
     const zoomIn = screen.getByRole('button', { name: 'Zoom in' }) as HTMLButtonElement
 
     expect(zoomOut.disabled).toBe(false)
-    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
-    for (let index = 0; index < 3; index += 1) fireEvent.click(zoomOut)
+    // functional-loop: owner-commit — ordered per-click emission with no bulk primitive
+    for (const _index of Array.from({ length: 3 }, (_, i) => i)) fireEvent.click(zoomOut)
     expect(image().style.transform).toBe('translate3d(0px, 0px, 0) scale(0.25)')
     expect(zoomOut.disabled).toBe(true)
 
@@ -245,8 +245,8 @@ describe('MediaPreview ownership and settlement', () => {
 
     fireEvent.keyDown(dialog, { key: '0' })
     expect(image().style.transform).toBe('translate3d(0px, 0px, 0) scale(1)')
-    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
-    for (let index = 0; index < 20; index += 1) fireEvent.keyDown(dialog, { key: '+' })
+    // functional-loop: owner-commit — ordered per-keypress emission with no bulk primitive
+    for (const _index of Array.from({ length: 20 }, (_, i) => i)) fireEvent.keyDown(dialog, { key: '+' })
     expect(image().style.transform).toContain('scale(4)')
     expect(zoomIn.disabled).toBe(true)
 

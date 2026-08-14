@@ -80,7 +80,7 @@ describe('NativeWireCodec public reference implementation', () => {
   it('accepts only the one canonical padded Base64 spelling', async () => {
     let frame = ''
     let value: unknown
-    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
+    // functional-loop: condition-driven — probing lengths until the canonical padded spelling appears
     for (let length = 0; length < 32 && !frame.endsWith('='); length += 1) {
       value = { value: 'x'.repeat(length) }
       frame = await NativeWireCodec.encode(value)

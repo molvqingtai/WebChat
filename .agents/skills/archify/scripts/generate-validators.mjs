@@ -33,7 +33,7 @@ const inlineUcs2Length = `function ucs2length(str) {
   const len = str.length;
   let length = 0;
   let pos = 0;
-    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
+    // functional-loop: condition-driven — ordered per-item emission with no bulk primitive
     while (pos < len) {
     length += 1;
     const value = str.charCodeAt(pos++);

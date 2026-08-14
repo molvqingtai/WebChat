@@ -22,32 +22,44 @@ module.exports = {
           }
           return windowBegin
         }
+        const KINDS = {
+          ForStatement: new Set(['break', 'continue', 'early-return', 'condition-driven']),
+          ForOfStatement: new Set(['break', 'continue', 'early-return', 'condition-driven', 'owner-commit']),
+          ForInStatement: new Set(['break', 'continue', 'early-return']),
+          WhileStatement: new Set(['condition-driven']),
+          DoWhileStatement: new Set(['condition-driven'])
+        }
         return {
           ForStatement(node) {
-            check(node)
+            check(node, 'ForStatement')
           },
           ForOfStatement(node) {
-            check(node)
+            check(node, 'ForOfStatement')
           },
           ForInStatement(node) {
-            check(node)
+            check(node, 'ForInStatement')
           },
           WhileStatement(node) {
-            check(node)
+            check(node, 'WhileStatement')
           },
           DoWhileStatement(node) {
-            check(node)
+            check(node, 'DoWhileStatement')
           }
         }
-        function check(node) {
+        function check(node, nodeType) {
           const before = node.range ? source.slice(0, node.range[0]) : ''
           const windowText = before.slice(commentWindowStart(before, node.range ? node.range[0] : 0))
-          if (
-            !/functional-loop:\s*(break|continue|early-return|condition-driven|owner-commit)\s*—\s*\S+/u.test(
-              windowText
-            )
-          ) {
+          const match =
+            /functional-loop:\s*(break|continue|early-return|condition-driven|owner-commit)\s*—\s*\S+/u.exec(windowText)
+          if (!match) {
             context.report({ node, message: 'loop lacks a statement-local functional-loop justification annotation' })
+            return
+          }
+          if (!KINDS[nodeType].has(match[1])) {
+            context.report({
+              node,
+              message: `loop kind '${match[1]}' is not permitted for this loop statement`
+            })
           }
         }
       }
@@ -69,6 +81,55 @@ module.exports = {
               if (value.some((item) => typeof item === 'object' && item !== null && usesName(item, name))) return true
             } else if (typeof value === 'object' && value !== null) {
               if (usesName(value, name)) return true
+            }
+          }
+          return false
+        }
+        const MUTATOR_METHODS = new Set([
+          'set',
+          'add',
+          'delete',
+          'clear',
+          'push',
+          'pop',
+          'shift',
+          'unshift',
+          'splice',
+          'sort',
+          'reverse',
+          'append',
+          'setItem',
+          'removeItem',
+          'assign'
+        ])
+        const containsAccumulatorMutation = (node, accName) => {
+          if (!node || typeof node !== 'object') return false
+          if (
+            node.type === 'CallExpression' &&
+            node.callee &&
+            node.callee.type === 'MemberExpression' &&
+            node.callee.object &&
+            node.callee.object.type === 'Identifier' &&
+            node.callee.object.name === accName &&
+            node.callee.property &&
+            node.callee.property.type === 'Identifier' &&
+            MUTATOR_METHODS.has(node.callee.property.name)
+          ) {
+            return true
+          }
+          // functional-loop: early-return — a matching mutator call stops the object walk
+          for (const key of Object.keys(node)) {
+            if (key === 'parent' || key === 'loc' || key === 'range') continue
+            const value = node[key]
+            if (Array.isArray(value)) {
+              if (
+                value.some(
+                  (item) => typeof item === 'object' && item !== null && containsAccumulatorMutation(item, accName)
+                )
+              )
+                return true
+            } else if (typeof value === 'object' && value !== null) {
+              if (containsAccumulatorMutation(value, accName)) return true
             }
           }
           return false
@@ -102,12 +163,20 @@ module.exports = {
             const accParam = params.length >= 1 ? params[0] : null
             if (!accParam || accParam.type !== 'Identifier') return
             const accUsed = usesName(callback.body, accParam.name)
-            if (accUsed) return
-            if (containsEffectCall(callback.body)) {
+            if (!accUsed) {
+              if (containsEffectCall(callback.body)) {
+                context.report({
+                  node,
+                  message:
+                    'reduce callback performs an external effect without using the accumulator: a disguised forEach'
+                })
+              }
+              return
+            }
+            if (containsAccumulatorMutation(callback.body, accParam.name)) {
               context.report({
                 node,
-                message:
-                  'reduce callback performs an external effect without using the accumulator: a disguised forEach'
+                message: 'reduce callback mutates the accumulator through a method call: use a non-mutating fold'
               })
             }
           }

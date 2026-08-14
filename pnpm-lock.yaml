@@ -273,9 +273,6 @@ importers:
       vitest-browser-react:
         specifier: ^2.2.0
         version: 2.2.0(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(vitest@4.1.10)
-      webchat-oxlint-functional-plugin:
-        specifier: file:./oxlint/functional-plugin
-        version: file:oxlint/functional-plugin
       wxt:
         specifier: ^0.20.27
         version: 0.20.27(@types/node@26.1.1)(eslint@9.39.5(jiti@2.7.0)(supports-color@7.2.0))(jiti@2.7.0)(rolldown@1.1.5)(rollup@4.52.3)(supports-color@7.2.0)(yaml@2.9.0)
@@ -6054,9 +6051,6 @@ packages:
 
   web-worker@1.5.0:
     resolution: {integrity: sha512-RiMReJrTAiA+mBjGONMnjVDP2u3p9R1vkcGz6gDIrOMT3oGuYwX2WRMYI9ipkphSuE5XKEhydbhNEJh4NY9mlw==}
-
-  webchat-oxlint-functional-plugin@file:oxlint/functional-plugin:
-    resolution: {directory: oxlint/functional-plugin, type: directory}
 
   webpack-virtual-modules@0.6.2:
     resolution: {integrity: sha512-66/V2i5hQanC51vBQKPH4aI8NMAcBW59FVBs+rC7eGHupMyfn34q7rZIE+ETlJ+XTevqfUhVVBgSUNSW2flEUQ==}
@@ -12130,8 +12124,6 @@ snapshots:
       - supports-color
 
   web-worker@1.5.0: {}
-
-  webchat-oxlint-functional-plugin@file:oxlint/functional-plugin: {}
 
   webpack-virtual-modules@0.6.2: {}
 

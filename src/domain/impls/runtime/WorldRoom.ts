@@ -58,11 +58,11 @@ export class WorldRoom extends EventHub {
 
   private state(): WorldState {
     const ordered = [...this.contributions.values()].toSorted((left, right) => left.order - right.order)
-    const groups = ordered.reduce<Map<string, ChatSite & { users: ChatUser[] }>>((acc, { site, user }) => {
-      const current = acc.get(site.origin)
-      return current
-        ? acc.set(site.origin, { ...current, users: [...current.users, user] })
-        : acc.set(site.origin, { ...site, users: [user] })
+    const groupRows = ordered.map(({ site, user }) => [site.origin, { site, user }] as const)
+    const groups = groupRows.reduce<Map<string, ChatSite & { users: ChatUser[] }>>((acc, [origin, row]) => {
+      const current = acc.get(origin)
+      const next = current ? { ...current, users: [...current.users, row.user] } : { ...row.site, users: [row.user] }
+      return new Map([...acc, [origin, next]])
     }, new Map())
     return [...groups.values()]
   }

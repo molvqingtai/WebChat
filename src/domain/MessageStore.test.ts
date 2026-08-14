@@ -215,7 +215,7 @@ describe.each(backends)('$name MessageStore contract', (backend) => {
     // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
 
     // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
-    for (let index = 0; index < 6; index += 1) {
+    for (const index of Array.from({ length: 6 }, (_, index) => index)) {
       await messageStore.insert(textRecord('bounded', `conflict-${index}`))
     }
 
@@ -372,7 +372,7 @@ describe.each(backends)('$name MessageStore contract', (backend) => {
     // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
 
     // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
-    for (let version = 0; version < 6; version += 1) {
+    for (const version of Array.from({ length: 6 }, (_, index) => index)) {
       await database.write(['records'], (transaction) =>
         transaction.put('records', 'legacy-record', { legacy: true, version })
       )

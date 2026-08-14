@@ -184,9 +184,9 @@ function validateLifecycle() {
   // check must run across lanes — not per-lane.
   const allStates = [...states.values()]
   // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
-  for (let i = 0; i < allStates.length; i += 1) {
+  for (const i of Array.from({ length: allStates.length }, (_, index) => index)) {
     // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
-    for (let j = i + 1; j < allStates.length; j += 1) {
+    for (const j of Array.from({ length: allStates.length }, (_, index) => index).slice(i + 1)) {
       if (rectsOverlap(allStates[i], allStates[j], 10)) {
         problems.push(
           `States "${allStates[i].id}" and "${allStates[j].id}" are less than 10px apart — move one to another col or separate them with yOffset (lanes other than "main"/"terminal" share one band).`
@@ -236,9 +236,9 @@ function validateLifecycle() {
     }
   }
   // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
-  for (let i = 0; i < labelRects.length; i += 1) {
+  for (const i of Array.from({ length: labelRects.length }, (_, index) => index)) {
     // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
-    for (let j = i + 1; j < labelRects.length; j += 1) {
+    for (const j of Array.from({ length: labelRects.length }, (_, index) => index).slice(i + 1)) {
       if (rectsOverlap(labelRects[i], labelRects[j], -2)) {
         problems.push(
           `Labels "${labelRects[i].label}" and "${labelRects[j].label}" overlap — adjust labelDx/labelDy.\n${suggestLabelPairFix(labelRects[i], labelRects[j])}`

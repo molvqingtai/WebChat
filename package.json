@@ -139,8 +139,7 @@
     "vite-plugin-svgr": "^5.2.0",
     "vitest": "^4.1.10",
     "vitest-browser-react": "^2.2.0",
-    "wxt": "^0.20.27",
-    "webchat-oxlint-functional-plugin": "file:./oxlint/functional-plugin"
+    "wxt": "^0.20.27"
   },
   "lint-staged": {
     "*.{js,jsx,ts,tsx}": [

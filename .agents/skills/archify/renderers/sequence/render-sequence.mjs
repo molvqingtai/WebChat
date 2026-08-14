@@ -120,9 +120,10 @@ function validateSequence() {
     }))
     .toSorted((a, b) => a.y - b.y)
   // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
-  for (let i = 0; i < placed.length; i += 1) {
-    // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
-    for (let j = i + 1; j < placed.length && placed[j].y - placed[i].y < 28; j += 1) {
+  for (const i of Array.from({ length: placed.length }, (_, index) => index)) {
+    // functional-loop: break — the vertical separation window ends the scan
+    for (const j of Array.from({ length: placed.length }, (_, index) => index).slice(i + 1)) {
+      if (!(placed[j].y - placed[i].y < 28)) break
       if (placed[i].x1 < placed[j].x2 && placed[j].x1 < placed[i].x2) {
         problems.push(
           `Messages "${placed[i].label}" and "${placed[j].label}" are less than 28px apart and share horizontal space — spread their y values.`
@@ -142,9 +143,9 @@ function validateSequence() {
       return { label: m.label, x: (x1 + x2) / 2 - width / 2, y: m.y - 20, width, height: layout.labelH }
     })
   // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
-  for (let i = 0; i < labelRects.length; i += 1) {
+  for (const i of Array.from({ length: labelRects.length }, (_, index) => index)) {
     // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
-    for (let j = i + 1; j < labelRects.length; j += 1) {
+    for (const j of Array.from({ length: labelRects.length }, (_, index) => index).slice(i + 1)) {
       if (rectsOverlap(labelRects[i], labelRects[j], -2)) {
         problems.push(
           `Labels "${labelRects[i].label}" and "${labelRects[j].label}" overlap — spread their message y values or shorten the labels.`

@@ -128,9 +128,9 @@ function validateDataflow() {
 
   const nodeList = asArray(dataflow.nodes)
   // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
-  for (let i = 0; i < nodeList.length; i += 1) {
+  for (const i of Array.from({ length: nodeList.length }, (_, index) => index)) {
     // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
-    for (let j = i + 1; j < nodeList.length; j += 1) {
+    for (const j of Array.from({ length: nodeList.length }, (_, index) => index).slice(i + 1)) {
       const a = nodes.get(nodeList[i].id)
       const b = nodes.get(nodeList[j].id)
       if (rectsOverlap(a, b, 10)) {
@@ -180,9 +180,9 @@ function validateDataflow() {
     }
   }
   // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
-  for (let i = 0; i < labelRects.length; i += 1) {
+  for (const i of Array.from({ length: labelRects.length }, (_, index) => index)) {
     // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
-    for (let j = i + 1; j < labelRects.length; j += 1) {
+    for (const j of Array.from({ length: labelRects.length }, (_, index) => index).slice(i + 1)) {
       if (rectsOverlap(labelRects[i], labelRects[j], -2)) {
         problems.push(
           `Labels "${labelRects[i].label}" and "${labelRects[j].label}" overlap — adjust labelDx/labelDy.\n${suggestLabelPairFix(labelRects[i], labelRects[j])}`

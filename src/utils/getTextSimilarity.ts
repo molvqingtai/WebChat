@@ -6,23 +6,17 @@
  * @see https://en.wikipedia.org/wiki/Longest_common_subsequence
  */
 const getTextLCS = (a: string, b: string): number => {
-  // Create a 2D array to store the lengths of longest common subsequences
-  const dp: number[][] = Array.from({ length: a.length + 1 }, () => Array(b.length + 1).fill(0))
-
-  // Fill the dp array
-  // functional-loop: owner-commit — ordered per-row in-place DP table updates
-  for (let i = 1; i <= a.length; i++) {
-    // functional-loop: owner-commit — ordered per-column in-place DP table updates
-    for (let j = 1; j <= b.length; j++) {
-      // If characters match, increment the length of the LCS found so far
-      if (a[i - 1] === b[j - 1]) {
-        dp[i][j] = dp[i - 1][j - 1] + 1
-      } else {
-        // If characters do not match, take the maximum length from the previous computations
-        dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1])
-      }
-    }
-  }
+  // Rows derive from the previous row only; each row is a pure reduce over the columns.
+  const dp = Array.from({ length: a.length + 1 }, () => 0).reduce<number[][]>((rows, _, i) => {
+    if (i === 0) return [Array(b.length + 1).fill(0)]
+    const previous = rows[i - 1]
+    const row = Array.from({ length: b.length + 1 }, () => 0).reduce<number[]>((current, _zero, j) => {
+      if (j === 0) return [0]
+      const value = a[i - 1] === b[j - 1] ? previous[j - 1] + 1 : Math.max(previous[j], current[j - 1])
+      return [...current, value]
+    }, [])
+    return [...rows, row]
+  }, [])
 
   // The length of the longest common subsequence is found in the bottom-right cell of the dp array
   return dp[a.length][b.length]

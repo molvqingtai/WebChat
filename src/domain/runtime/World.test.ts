@@ -110,8 +110,10 @@ const stage = (fixture: ReturnType<typeof createFixture>, attemptId: string, ori
 }
 
 const settleAll = async () => {
-  // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
-  for (let index = 0; index < 20; index += 1) await Promise.resolve()
+  await Array.from({ length: 20 }).reduce<Promise<unknown>>(
+    (acc) => acc.then(() => Promise.resolve()),
+    Promise.resolve()
+  )
 }
 
 describe('WorldDomain single per-target publication iterator', () => {
