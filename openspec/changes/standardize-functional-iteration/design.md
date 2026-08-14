@@ -5,8 +5,8 @@ The clean `develop` tree tracks 305 files with JavaScript or TypeScript extensio
 Current traversal has several distinct shapes that must not be treated as interchangeable:
 
 - result construction that declares an outer `let`, array, object, map, set, or other temporary and changes it from a loop or callback;
-- `forEach` used only to perform callback effects and discard the method result;
-- an imperative loop whose observable behavior depends on a genuine `break`, `continue`, or function early return;
+- `forEach` used only for explicit synchronous per-item actions where no equivalent bulk operation exists;
+- an imperative loop whose observable behavior depends on irreducible `break`, `continue`, function early return, sequential `await`, or live collection membership;
 - a condition-driven `while` or `do...while` whose termination is not collection exhaustion; and
 - a reduction that mutates only a fresh accumulator which is private to that reduction.
 
@@ -18,8 +18,8 @@ The desired style is the shortest behavior-equivalent expression with the fewest
 
 - Express collection-derived results directly with the standard operation that names the intent.
 - Eliminate avoidable outer mutable temporaries and single-use traversal scaffolding.
-- Remove every authored `forEach` and every `for` statement that lacks irreducible control flow.
-- Keep functional callbacks free of external mutation and external commits.
+- Remove result-producing `forEach` and retain effect-only `forEach` only when it is the shortest synchronous form and no existing bulk operation is equivalent.
+- Keep result-producing callbacks free of external mutation and external commits, while making synchronous and concurrent effect traversal explicit and fully consumed.
 - Preserve valid local mutation of a fresh, exclusive, non-escaping reducer accumulator.
 - Preserve exact behavior while applying the same rule to production, test, harness, configuration, and tracked tool source.
 - Verify the result with only existing repository tools and independent source review.
@@ -43,6 +43,7 @@ Choose the standard operation by observable intent:
 - `filter` for selection;
 - `flatMap` for mapping with zero or multiple outputs;
 - `find` for the first matching value;
+- `findIndex` for the index of the first matching value;
 - `some` or `every` for a predicate with short-circuiting;
 - `reduce` for a scalar, grouped, indexed, or otherwise accumulated result; and
 - `Object.entries`, `Object.values`, `Object.keys`, `Object.fromEntries`, and existing collection constructors when they remove manual object traversal.
@@ -51,23 +52,23 @@ The chosen operation should be returned or assigned directly. Do not declare an 
 
 "Shortest" means the most direct repository-formatted expression among behavior-equivalent implementations. It does not authorize minification, compressed names, duplicated work, eager materialization, changed iteration order, or a longer chain that conceals semantics.
 
-Alternative rejected: use `forEach` with an outer `let`, `push`, `set`, assignment, or deletion. It makes the callback's result `undefined`, hides the actual result in external mutation, and requires extra mutable state.
+Alternative rejected: use `forEach` with an outer `let`, array, object, map, set, assignment, or other accumulator to construct a result. It hides the actual result in external mutation and requires extra mutable state.
 
-Alternative rejected: replace `forEach` with `for...of`. It does not achieve direct result production or fewer variables and all `for` variants are governed by the same exception rule.
+Alternative rejected: replace a result-producing or effect-only `forEach` mechanically with `for...of`. It does not achieve direct result production or fewer variables, can make an already minimal synchronous action longer, and all `for` variants are governed by the same exception rule.
 
-### 2. Every `for` variant requires irreducible control flow
+### 2. Every `for` variant requires a behavior-equivalence exception
 
-`for`, `for...of`, `for await...of`, and `for...in` are all `for` statements. Syntax, iterator type, asynchronous iteration, live collection membership, ordered effects, or the absence of a convenient bulk API is not by itself an exception.
+`for`, `for...of`, `for await...of`, and `for...in` are all `for` statements. Syntax or iterator type is never an exception by itself.
 
-A `for` statement may remain only when its actual body needs `break`, `continue`, or a function early return and replacing that behavior with `find`, `some`, `every`, or another direct operation would not be equivalent. Merely adding or retaining a control-flow keyword does not qualify if a standard short-circuiting method expresses the same behavior directly.
+A `for` statement may remain only when no direct result operation, existing bulk operation, synchronous effect-only `forEach`, or concurrent `Promise.all(...map(...))` expression is behavior-equivalent because the actual traversal requires irreducible `break`, `continue`, function early return, sequential `await`, or live-collection membership behavior. Merely adding or retaining a control-flow keyword, using an asynchronous iterator, ordering effects, or lacking a convenient bulk API does not qualify when one of those shorter forms preserves the same behavior.
 
 `while` and `do...while` may remain for condition-driven algorithms whose changing condition is the termination contract. They must not replace indexed or iterable collection traversal that a direct operation can express.
 
 No comment, annotation, ownership label, or lint suppression can legalize a loop that does not meet these semantics. A valid remaining loop is justified by its code and behavior, not by a waiver string.
 
-### 3. Functional callbacks do not commit outside themselves
+### 3. Result callbacks derive values and effect callbacks are explicit
 
-A callback passed to `map`, `filter`, `flatMap`, `find`, `some`, `every`, `reduce`, sorting, object-entry transformation, or another result-oriented collection method must derive its returned value without an external side effect.
+A callback passed to `map`, `filter`, `flatMap`, `find`, `findIndex`, `some`, `every`, `reduce`, sorting, object-entry transformation, or another result-oriented collection method must derive its returned value without an external side effect.
 
 External side effects include:
 
@@ -76,7 +77,12 @@ External side effects include:
 - invoking DOM, browser, storage, database, wire, persistence, event-dispatch, timer, logging, or other I/O/effect APIs; and
 - using a result-oriented method only as an iteration carrier while ignoring the created result.
 
-If existing code needs a repeated external commit, the source owner must use an existing bulk operation or reorganize ownership so the traversal creates a local replacement followed by one explicit commit outside the traversal. It must not hide the same repeated effect inside `forEach`, `map`, `reduce`, or another callback, and it must not move the effect to another forbidden loop statement.
+There are two explicit effect-only callback forms:
+
+- Synchronous per-item actions use `forEach` when no existing bulk operation is behavior-equivalent and `forEach` is the shortest equivalent expression. The traversal must not construct a result or update an outer accumulator that is read as its result, and it must not start asynchronous work whose Promise is discarded. Existing call order, multiplicity, synchronous error behavior, membership semantics, and externally visible effects remain unchanged.
+- Concurrent per-item actions use one `Promise.all(items.map(...))` expression when each `map` callback directly returns the operation Promise and the complete mapped result is immediately consumed by the returned or awaited `Promise.all`. The rewrite must preserve the existing concurrency, result ordering, and rejection behavior.
+
+Use an existing bulk operation instead when one is behavior-equivalent. Do not move repeated effects into a result-producing callback, an ignored-result method, or a forbidden loop statement. The original one-line `src/utils/storage.test-utils.ts` clear operation using `Object.keys(storage).forEach((key) => delete ...)` is already the shortest synchronous effect-only form and remains unchanged.
 
 This boundary distinguishes external effects from private reduction mechanics. A reducer may mutate an accumulator when the accumulator is created for the current invocation, exclusively owned by that reduction, not reachable through an input or outer/shared state, and unable to escape before the reduction completes. The callback must return that accumulator for the next step, and only the completed result may leave the reduction.
 
@@ -101,8 +107,10 @@ Semantic decisions that the existing toolchain cannot express are verified by th
 ## Risks / Trade-offs
 
 - **A shorter expression changes order or concurrency** -> Compare observable ordering and settlement at each site; retain semantics even when that requires a slightly longer direct expression.
-- **A result-oriented method hides an external effect** -> Reject the rewrite and move ownership to an existing bulk operation or a local replacement followed by one explicit commit outside the traversal.
+- **A result-oriented method hides an external effect** -> Reject the rewrite unless it is the complete `map` input to a returned or awaited `Promise.all`; otherwise use an equivalent bulk operation or explicit synchronous effect-only `forEach`.
+- **An effect-only `forEach` constructs a hidden result or drops Promises** -> Replace result construction with the direct result method, or consume concurrent operation Promises with one `Promise.all`.
 - **A loop contains a nominal control keyword but has a direct equivalent** -> Use the direct short-circuiting method; the keyword alone is not an exception.
+- **A loop is retained for sequential or live behavior that a shorter form changes** -> Keep it only after confirming `forEach`, `Promise.all`, direct result methods, and existing bulk operations are not equivalent.
 - **A local reducer mutation is mistaken for an external side effect** -> Apply the fresh, exclusive, non-escaping test; keep `assembleURL` unchanged.
 - **Generated code dominates structural scans** -> Exclude only the exact generated validator path and keep its generator in scope.
 - **Existing Oxlint cannot encode the semantic rule** -> Use its existing built-in coverage where exact, then rely on source review rather than adding another parser or linter.
@@ -112,7 +120,7 @@ Semantic decisions that the existing toolchain cannot express are verified by th
 
 1. Freeze this docs-only authority as one sole child of clean `develop@10801251a7a6b744fd246960daed01eef323c868`, validate it, and obtain fresh independent docs review.
 2. From the reviewed authority exact, record the 304-file authored manifest and a read-only baseline inventory of traversal forms before editing product source.
-3. Produce one source child that applies the direct-result rule, external-effect boundary, valid control-flow exceptions, generated exclusion, and no-test policy without adding an enforcement layer.
+3. Produce one source child that applies the direct-result rule, explicit synchronous and concurrent action forms, result-callback external-effect boundary, valid `for` exceptions, generated exclusion, and no-test policy without adding an enforcement layer.
 4. Verify the exact source diff with existing format, lint, typecheck, test, build, generated-artifact, OpenSpec, and repository-cleanliness gates; confirm the original `assembleURL` implementation is unchanged.
 5. Obtain fresh independent source review of the immutable exact. Keep both pull requests Draft and do not mark Ready, merge, run browser acceptance, deploy, release, or change production without separate Owner authority.
 

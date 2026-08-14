@@ -2,13 +2,13 @@
 
 ### Requirement: Authored iteration expresses results directly with minimal state
 
-Every manually maintained tracked JavaScript and TypeScript file SHALL express collection traversal with the shortest behavior-equivalent standard operation and the fewest necessary variables. A traversal that maps, filters, flattens, finds, tests, groups, indexes, or accumulates a result SHALL return or assign that direct result instead of declaring an outer mutable temporary and updating it during traversal.
+Every manually maintained tracked JavaScript and TypeScript file SHALL express collection traversal with the shortest behavior-equivalent standard operation and the fewest necessary variables. A traversal that maps, filters, flattens, finds a value with `find`, finds an index with `findIndex`, tests, groups, indexes, or accumulates a result SHALL return or assign that direct result instead of declaring an outer mutable temporary and updating it during traversal.
 
 The clean authority base contains 305 tracked files matching `*.js`, `*.jsx`, `*.ts`, `*.tsx`, `*.mjs`, or `*.cjs`. Exactly `.agents/skills/archify/renderers/shared/generated-validators.mjs` SHALL be excluded because it is generated and marked not to be edited by hand; the other 304 files SHALL comprise the complete authored scope. Tests, fixtures, harnesses, configuration, tracked tools, formatter/linter ignore patterns, and the generated validator's source generator SHALL NOT create additional exclusions.
 
-Authored source SHALL contain no `forEach`. It SHALL NOT replace `forEach` mechanically with another loop or use a value-producing method only for iteration while discarding its result.
+Authored source SHALL use `forEach` only as the shortest behavior-equivalent form for explicit synchronous per-item actions when no existing bulk operation is equivalent. Such a traversal SHALL NOT construct a result, update an outer traversal accumulator that is read as its result, start asynchronous work whose Promise is discarded, or be replaced mechanically with a longer loop. Result-producing traversal SHALL use and consume its direct result instead.
 
-`for`, `for...of`, `for await...of`, and `for...in` SHALL all be treated as `for` statements. A `for` statement MAY remain only when its behavior requires a genuine `break`, `continue`, or function early return that `find`, `some`, `every`, or another direct operation cannot express equivalently. Syntax variant, asynchronous iteration, live collection membership, ordered effects, or lack of a convenient bulk API SHALL NOT by itself permit a `for` statement. A control-flow keyword SHALL NOT permit a loop when a direct short-circuiting method remains equivalent.
+`for`, `for...of`, `for await...of`, and `for...in` SHALL all be treated as `for` statements. A `for` statement MAY remain only when no direct result operation, existing bulk operation, synchronous `forEach`, or concurrent `Promise.all(...map(...))` expression is behavior-equivalent because the traversal requires irreducible `break`, `continue`, function early return, sequential `await`, or live-collection membership behavior. Syntax variant, iterator type, a control-flow keyword, ordered effects, or lack of a convenient bulk API SHALL NOT by itself permit a `for` statement when a shorter form remains equivalent.
 
 A condition-driven `while` or `do...while` MAY remain only when its changing termination condition is the behavior being modeled. It SHALL NOT be used as an alternate spelling of indexed or iterable collection traversal.
 
@@ -20,25 +20,31 @@ A condition-driven `while` or `do...while` MAY remain only when its changing ter
 
 #### Scenario: Return a direct collection transformation
 
-- **GIVEN** authored code builds a mapped, filtered, flattened, grouped, indexed, matching, or predicate result through manual traversal
+- **GIVEN** authored code builds a mapped, filtered, flattened, grouped, indexed, `find`/`findIndex` matching, or predicate result through manual traversal
 - **WHEN** a standard collection or object-entry operation expresses the same order, multiplicity, and return behavior
 - **THEN** the code SHALL use and directly return or assign that operation without avoidable intermediate traversal variables
 
-#### Scenario: Reject a mechanical forEach rewrite
+#### Scenario: Replace a result-producing forEach without a mechanical loop rewrite
 
-- **GIVEN** a `forEach` callback updates external state or invokes repeated effects
+- **GIVEN** a `forEach` callback updates an outer accumulator to construct a traversal result
 - **WHEN** the iteration is standardized
-- **THEN** it SHALL NOT become `for...of`, another `for` variant, or an ignored-result `map` or `reduce`; the owner SHALL instead use an existing bulk operation or build a local replacement and commit it once
+- **THEN** it SHALL become the direct consumed result operation and SHALL NOT become `for...of`, another `for` variant, or an ignored-result `map` or `reduce`
 
-#### Scenario: Preserve only irreducible for control flow
+#### Scenario: Preserve the shortest synchronous per-item action
 
-- **GIVEN** a `for` statement uses `break`, `continue`, or a function early return
-- **WHEN** no direct standard operation preserves its actual control flow and observable behavior
+- **GIVEN** a `forEach` performs only explicit synchronous per-item actions, constructs no traversal result, updates no outer result accumulator, discards no Promise, and has no behavior-equivalent bulk operation
+- **WHEN** `forEach` is the shortest behavior-equivalent expression
+- **THEN** it SHALL remain, including the original one-line `src/utils/storage.test-utils.ts` storage clear, and SHALL NOT be expanded into a `for` statement
+
+#### Scenario: Preserve only behaviorally irreducible for traversal
+
+- **GIVEN** a `for` statement uses irreducible control flow or must preserve sequential-`await` or live-collection behavior
+- **WHEN** no direct result operation, existing bulk operation, synchronous `forEach`, or concurrent `Promise.all` expression preserves its observable behavior
 - **THEN** that loop MAY remain without a waiver annotation
 
 #### Scenario: A for syntax variant does not create an exception
 
-- **GIVEN** authored traversal uses `for...of`, `for await...of`, or `for...in` without irreducible `break`, `continue`, or function early-return behavior
+- **GIVEN** authored traversal uses `for...of`, `for await...of`, or `for...in` without irreducible control flow, sequential-`await`, or live-collection behavior
 - **WHEN** the final source is inspected
 - **THEN** the traversal SHALL be replaced by a direct behavior-equivalent operation just like an ordinary `for` statement
 
@@ -48,9 +54,13 @@ A condition-driven `while` or `do...while` MAY remain only when its changing ter
 - **WHEN** no direct collection expression preserves that condition-driven behavior
 - **THEN** the loop MAY remain, while collection-style uses SHALL be replaced
 
-### Requirement: Functional callbacks do not create external side effects
+### Requirement: Result callbacks avoid external effects and action callbacks are explicit
 
 A callback passed to a result-oriented collection or object-entry operation SHALL derive and return its result without mutating an input, outer binding, shared collection, singleton, cache, or other externally reachable object. It SHALL NOT perform DOM, browser, storage, database, wire, persistence, event-dispatch, timer, logging, or other I/O or external commit behavior. A result-oriented method SHALL NOT be used only as a carrier for ignored callback effects.
+
+A `forEach` callback MAY perform explicit synchronous per-item actions only under the boundary above. It SHALL NOT construct a traversal result or start unconsumed asynchronous work. Existing call order, multiplicity, synchronous error behavior, membership semantics, and externally visible effects SHALL remain unchanged.
+
+Concurrent per-item actions MAY use `Promise.all(items.map(...))` only when every `map` callback directly returns its operation Promise and the complete mapped result is immediately consumed by that returned or awaited `Promise.all`. The expression SHALL preserve existing concurrency, result ordering, and rejection behavior. Any equivalent existing bulk operation SHALL take precedence over repeated per-item effects.
 
 A `reduce` callback MAY mutate its accumulator only when the accumulator is created for the current invocation, is exclusively owned by that reduction, is not reachable through an input or outer/shared state, and cannot escape before the reduction completes. The callback SHALL return that accumulator for the next reduction step. This local accumulator mutation SHALL NOT be classified as an external side effect.
 
@@ -58,15 +68,21 @@ The existing `assembleURL` implementation SHALL remain unchanged: its `new URL(u
 
 #### Scenario: Reject mutation of an outer binding
 
-- **GIVEN** a functional callback assigns, increments, pushes into, deletes from, or otherwise changes a value declared outside that callback
+- **GIVEN** a result-producing callback assigns, increments, pushes into, deletes from, or otherwise changes a value declared outside that callback
 - **WHEN** the callback is evaluated against this standard
 - **THEN** it SHALL be rejected as an external side effect and the traversal result SHALL be expressed directly
 
 #### Scenario: Reject mutation of reachable state
 
-- **GIVEN** a functional callback mutates an input, closed-over object, shared collection, storage owner, DOM owner, event owner, persistence owner, or another externally reachable value
+- **GIVEN** a result-producing callback mutates an input, closed-over object, shared collection, storage owner, DOM owner, event owner, persistence owner, or another externally reachable value
 - **WHEN** the final source is inspected
-- **THEN** the callback SHALL be rejected even when the traversal method returns a value
+- **THEN** the callback SHALL be rejected and SHALL NOT use the result method as an effect carrier
+
+#### Scenario: Consume concurrent per-item operations
+
+- **GIVEN** independent per-item operations already execute concurrently and no equivalent bulk operation exists
+- **WHEN** the iteration is expressed with `map`
+- **THEN** each callback SHALL directly return its operation Promise and one returned or awaited `Promise.all` SHALL immediately consume the complete mapped result without changing concurrency, result ordering, or rejection behavior
 
 #### Scenario: Allow a private reducer accumulator
 
