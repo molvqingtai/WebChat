@@ -175,6 +175,30 @@ The unified source child SHALL replace the exact-History requester/provider cand
 - **WHEN** their window length changes from 180 days to 30 days
 - **THEN** only the duration SHALL change; cutoff ownership and timing, inclusive boundaries, pagination, ordering, budgets, timeouts, and all other History behavior SHALL remain identical
 
+### Requirement: Source authority and task truth remain synchronized
+
+The unified source child SHALL carry the reviewed `proposal.md`, `design.md`, and `specs/source-quality-tooling/spec.md` text without replacing any artifact with an earlier contract. It SHALL carry the same `tasks.md` row identifiers, wording, and order. Only checkbox markers MAY change, and a row SHALL be checked only when every clause in that row is true on the same immutable source exact.
+
+A failed, abandoned, or superseded candidate SHALL NOT supply completion evidence to a repair child. When source inspection or fresh review contradicts any clause in a checked row, that row SHALL remain unchecked on the next candidate. The docs-only authority SHALL complete its phase 1 freeze rows; phase 2 inventory, phase 3 implementation, phase 4 preservation, and phase 5 verification/review rows SHALL remain unchecked until their complete work is performed and proven on the current source exact. This synchronization SHALL preserve the retained success-only Artico delegation, broadcast/target classification, multi-provider History settlement, 304-file clean cut, and exact six-file `+15/-15` retention replacement without adding a second authority or enforcement surface.
+
+#### Scenario: Reject a stale authority mirror
+
+- **GIVEN** a source candidate carries an earlier proposal, design, specification, or task-row set that omits any retained transport, History, 30-day, or authored-scope obligation
+- **WHEN** the cumulative source authority is inspected
+- **THEN** that candidate SHALL fail authority synchronization even if its hosted gates are green
+
+#### Scenario: Reject inherited or partial task completion
+
+- **GIVEN** a task row is checked from a failed or superseded candidate, or only some clauses of the row are true on the current source exact
+- **WHEN** the repair candidate synchronizes task truth
+- **THEN** the row SHALL be unchecked and SHALL NOT inherit completion from the earlier exact
+
+#### Scenario: Carry one reviewed contract into source
+
+- **GIVEN** the docs-only authority has completed phase 1 while source inventory, implementation, preservation, verification, and review remain unfinished
+- **WHEN** the unified source child is created
+- **THEN** it SHALL carry the reviewed three authority texts and complete task-row set, with only current-exact checkbox updates and no restoration of provider, rejection, attempt-all, preflight, first-error, or send-failure obligations
+
 ### Requirement: Functional-iteration cleanup uses only existing repository tooling
 
 The cleanup SHALL use Oxfmt as the sole formatter, Oxlint as the sole linter, and TypeScript as the type-analysis gate. The existing Oxlint configuration MAY enable a built-in rule already shipped by the installed toolchain when it exactly enforces part of this standard. The implementation MUST NOT add, register, load, generate, or depend on an Oxlint plugin, local rule plugin, parser, second linter, new package, custom semantic scanner, committed scan script, source enforcement module, or dependency change.

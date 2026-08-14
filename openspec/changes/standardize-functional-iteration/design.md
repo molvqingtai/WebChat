@@ -137,6 +137,12 @@ Oxfmt remains the sole formatter, Oxlint remains the sole linter, and TypeScript
 
 Semantic decisions that the existing toolchain cannot express are verified by the implementation diff, read-only source inspection, existing tests, typechecking, builds, and fresh independent review. No committed scanner or second enforcement path is introduced to approximate them. The final source must not contain a new waiver comment or rule-specific annotation for this migration.
 
+### 7. Authority mirrors and task state are exact-local
+
+The unified source child carries the reviewed `proposal.md`, `design.md`, and `specs/source-quality-tooling/spec.md` text without replacing any of them with an earlier behavior-neutral version. Its `tasks.md` carries the same row identifiers, wording, and order. Only checkbox markers may change, and a row is complete only when every clause in that row is true on the same immutable source exact.
+
+Evidence from a failed, abandoned, or superseded candidate does not complete a repair child. If source inspection or fresh review contradicts any clause in a checked row, that row is unchecked in the next candidate rather than inheriting the prior claim. The docs-only authority freezes phase 1; phases 2 through 5 remain incomplete until the unified source child performs and proves their inventory, implementation, preservation, verification, and independent-review work. This keeps the retained transport, History, 30-day, and 304-file contract inseparable from its task truth without creating a second authority surface.
+
 ## Risks / Trade-offs
 
 - **A shorter expression changes order or concurrency** -> Compare observable ordering and settlement at each site; retain semantics even when that requires a slightly longer direct expression.
@@ -154,12 +160,13 @@ Semantic decisions that the existing toolchain cannot express are verified by th
 - **Generated code dominates structural scans** -> Exclude only the exact generated validator path and keep its generator in scope.
 - **Existing Oxlint cannot encode the semantic rule** -> Use its existing built-in coverage where exact, then rely on source review rather than adding another parser or linter.
 - **Existing test edits accidentally change evidence** -> Limit iteration edits to behavior-equivalent code and closed transport/History edits to minimum existing-expectation synchronization; reject any new scenario, assertion, fixture contract, helper abstraction, timing, or coverage behavior.
+- **A source child carries stale authority or overclaims task completion** -> Require the reviewed proposal, design, specification, and complete task-row set on the same exact; change only task checkboxes proven by that exact, and reset every row contradicted by a failed or superseded candidate.
 
 ## Migration Plan
 
 1. Freeze this docs-only authority as one sole child of clean `develop@10801251a7a6b744fd246960daed01eef323c868`, validate it, and obtain fresh independent docs review.
 2. From the reviewed authority exact, record the 304-file authored manifest and a read-only baseline inventory of traversal and send forms before editing product source.
-3. Produce one WebChat source child that applies the functional-iteration standard, direct optional-target delegation, intent-based broadcast/target classification, bounded multi-provider History synchronization, exact six-file 30-day replacement, generated exclusion, assumed-success send scope, and no-new-test policy without adding an enforcement layer.
+3. Produce one WebChat source child that carries the reviewed four-artifact authority set and applies the functional-iteration standard, direct optional-target delegation, intent-based broadcast/target classification, bounded multi-provider History synchronization, exact six-file 30-day replacement, generated exclusion, assumed-success send scope, and no-new-test policy without adding an enforcement layer. Update only task checkboxes whose full rows are true on that exact.
 4. Verify the exact source diff with existing format, lint, typecheck, test, build, generated-artifact, OpenSpec, and repository-cleanliness gates; confirm the 30-day subdiff is exactly six files and `+15/-15`, and that the original `assembleURL` implementation and dependency resolution are unchanged.
 5. Obtain fresh independent source review of the immutable exact without the reviewer running local tests or automation. Keep both pull requests Draft and do not mark Ready, merge, run browser acceptance, deploy, release, or change production without separate Owner authority.
 

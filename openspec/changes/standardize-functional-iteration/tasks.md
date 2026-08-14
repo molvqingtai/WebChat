@@ -2,10 +2,11 @@
 
 - [x] 1.1 Lock the clean `develop@10801251a7a6b744fd246960daed01eef323c868` manifest at 305 tracked JavaScript/TypeScript files and identify the exact generated Archify validator as the sole exclusion, leaving 304 authored files.
 - [x] 1.2 Freeze the Owner's goal as the shortest behavior-equivalent iteration expression with the fewest necessary variables: direct results replace outer mutable temporaries and discarded-result traversal.
-- [ ] 1.3 Freeze all `for` variants under one behavior-equivalence exception, condition-driven `while`/`do...while`, externally side-effect-free result callbacks, the narrow consumed `map` allowance for a returned item expression containing exactly one indivisible synchronous mixed effect-and-result owner call and otherwise only pure subexpressions, explicit synchronous/concurrent action forms, and the fresh exclusive reducer-accumulator allowance.
+- [x] 1.3 Freeze all `for` variants under one behavior-equivalence exception, condition-driven `while`/`do...while`, externally side-effect-free result callbacks, the narrow consumed `map` allowance for a returned item expression containing exactly one indivisible synchronous mixed effect-and-result owner call and otherwise only pure subexpressions, explicit synchronous/concurrent action forms, and the fresh exclusive reducer-accumulator allowance.
 - [x] 1.4 Record that the original `assembleURL` reducer is conforming and must remain unchanged.
 - [x] 1.5 Freeze the existing-toolchain-only, no-new-test, generated-file, Draft-only, and no-delivery boundaries; all source remains behavior-neutral except the exact Owner-approved Artico, History settlement, and 30-day candidate-window corrections.
-- [ ] 1.6 Freeze optional-target delegation, message-intent classification, the assumed-success `room.send` scope with no provider failure-path correction, one broadcast History request with per-provider loading settlement and arrival-time-independent valid-response merge, targeted state catch-up/responses, and the UI-only manual/full-settlement/ten-second loading-close behavior.
+- [x] 1.6 Freeze optional-target delegation, message-intent classification, the assumed-success `room.send` scope with no provider failure-path correction, one broadcast History request with per-provider loading settlement and arrival-time-independent valid-response merge, targeted state catch-up/responses, and the UI-only manual/full-settlement/ten-second loading-close behavior.
+- [x] 1.7 Freeze the four-artifact synchronization rule: the source child carries the reviewed proposal, design, and specification plus the identical task rows and wording; only current-exact checkbox truth may change, and failed or superseded candidates supply no completion evidence.
 
 ## 2. Inventory The Authored Source
 
@@ -25,6 +26,7 @@
 - [ ] 3.7 Replace adapter recipient construction and per-peer send scaffolding with one `room.send(payload, to)` call; broadcast ordinary Chat, normal Session/World publications, and one History request, while preserving targeted Session/World current-state catch-up and targeted History responses.
 - [ ] 3.8 Replace per-peer History request fan-out with one request-start loading-settlement snapshot, one request identity whose paginated inventory-request pages each use one no-target broadcast, independent `(syncId, sourcePeerId)` pagination validation, deduplicated all-provider merge regardless of arrival time/connectivity/generation, and a UI-only full-settlement-versus-absolute-ten-second loading race; assume each page send succeeds and add no send-failure continuation or retry branch.
 - [ ] 3.9 Apply the exact six-file `+15/-15` mechanical retention-window replacement: set `HISTORY_WINDOW_DAYS` from 180 to 30 in `src/constants/config.ts` and update only the matching active/canonical wording in `CLAUDE.md`, `openspec/changes/sync-exact-history-and-show-progress/design.md`, `openspec/changes/sync-exact-history-and-show-progress/specs/webrtc-runtime/spec.md`, `openspec/changes/sync-exact-history-and-show-progress/tasks.md`, and `openspec/specs/webrtc-runtime/spec.md`; modify no archive or test file and preserve every other History rule.
+- [ ] 3.10 Carry the reviewed proposal, design, specification, and complete task-row set into the unified source child; modify no authority wording or row order, and check only rows whose every clause is true on that immutable exact.
 
 ## 4. Preserve Existing Evidence And Behavior
 
@@ -32,6 +34,7 @@
 - [ ] 4.2 Confirm evaluation order, iteration order, call count, sync/async concurrency, return/error behavior, object identity, mutation visibility, event/timer order, DOM, storage/database, wire payloads, persistence, generated output, and public interfaces are unchanged outside the exact Artico/History settlement and 30-day candidate-window corrections.
 - [ ] 4.3 Confirm the final authored source contains no result-producing or async-dropping `forEach`, replaceable `for` variant, collection-style `while`/`do...while`, outer mutable traversal accumulator, result-callback external effect outside the narrow indivisible-owner boundary, ignored operation result, or migration waiver annotation.
 - [ ] 4.4 Confirm `undefined|string|string[]|[]` target semantics, successful single-delegation scope with no provider failure-path correction, broadcast/target call-site classification, all-provider History merge regardless of response arrival time/connectivity/generation, and UI-only manual dismissal/ten-second timeout match the reviewed authority exactly.
+- [ ] 4.5 Confirm no failed, abandoned, or superseded candidate contributes a checked row, and reset every row contradicted by source inspection or fresh review.
 
 ## 5. Verify And Review Independently
 
@@ -39,3 +42,4 @@
 - [ ] 5.2 Inspect the exact diff against the 304-file manifest and prove the sole generated exclusion, original `assembleURL`, dependency graph and lock resolution, tests' behavioral evidence, wire payloads, persistence, and every non-authorized product behavior remain unchanged.
 - [ ] 5.3 Verify the retention-window subdiff is exactly the named six files and `+15/-15`, uses 30 days in the constant and every matching active/canonical occurrence, leaves archives and tests unchanged, and preserves cutoff ownership/timing, inclusive boundaries, pagination, ordering, budgets, timeouts, protocol, storage, dependencies, lock resolution, and send-failure scope.
 - [ ] 5.4 Freeze one immutable source exact and obtain fresh independent review without the reviewer running local tests or automation. Keep the docs and source pull requests Draft; do not run browser acceptance, mark Ready, merge, deploy, release, or change production without separate Owner authority.
+- [ ] 5.5 Verify the source exact carries the reviewed proposal/design/specification text and identical task-row set, with no stale authority mirror and no checkbox claim unsupported by that exact.
