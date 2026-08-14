@@ -311,10 +311,7 @@ function routeVia(transition, from, to, start, end) {
   }
 }
 
-const pathCache = new Map()
-
 function pathFor(transition) {
-  if (pathCache.has(transition)) return pathCache.get(transition)
   const from = states.get(transition.from)
   const to = states.get(transition.to)
   const start = anchor(from, chosenSide(transition.fromSide, defaultFromSide(from, to)))
@@ -324,7 +321,6 @@ function pathFor(transition) {
     d: roundedPath(points, transition.cornerRadius ?? 10),
     points
   }
-  pathCache.set(transition, routed)
   return routed
 }
 

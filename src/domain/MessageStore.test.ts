@@ -88,17 +88,27 @@ const noticeRecord = (id: string): SystemNoticeRecord => ({
 })
 
 afterEach(async () => {
-  await Promise.all([...opened].map((database) => database.close()))
-  opened.clear()
-  // functional-loop: owner-commit — ordered per-database deletion with no bulk primitive
-  for (const name of names) {
-    await new Promise<void>((resolve) => {
-      const request = indexedDB.deleteDatabase(name)
-      request.addEventListener('success', () => resolve(), { once: true })
-      request.addEventListener('error', () => resolve(), { once: true })
-      request.addEventListener('blocked', () => resolve(), { once: true })
-    })
+  const closes: Promise<void>[] = []
+  // functional-loop: owner-commit — ordered per-database close submission with no bulk primitive
+  for (const database of opened) {
+    closes.push(database.close())
   }
+  await Promise.all(closes)
+  opened.clear()
+  const deletions: Promise<void>[] = []
+  // functional-loop: owner-commit — ordered per-database deletion submission with no bulk
+  // primitive; the submitted deletions settle concurrently under one bulk await
+  for (const name of names) {
+    deletions.push(
+      new Promise<void>((resolve) => {
+        const request = indexedDB.deleteDatabase(name)
+        request.addEventListener('success', () => resolve(), { once: true })
+        request.addEventListener('error', () => resolve(), { once: true })
+        request.addEventListener('blocked', () => resolve(), { once: true })
+      })
+    )
+  }
+  await Promise.all(deletions)
   names.clear()
 })
 

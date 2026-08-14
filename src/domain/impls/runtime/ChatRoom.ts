@@ -600,7 +600,12 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
       signal
     )
     assertCurrent()
-    await Promise.all(replay.map((event) => persistInbound(event, true)))
+    const persists: Promise<void>[] = []
+    // functional-loop: owner-commit — ordered per-event persistence submission with no bulk primitive
+    for (const event of replay) {
+      persists.push(persistInbound(event, true))
+    }
+    await Promise.all(persists)
     assertCurrent()
   }
 

@@ -8,16 +8,14 @@ const source = (file: string) => readFile(path.isAbsolute(file) ? file : project
 
 const codeFiles = async (directory: string): Promise<string[]> => {
   const entries = await readdir(directory, { withFileTypes: true })
-  return (
-    await Promise.all(
-      entries.map((entry) => {
-        const entryPath = path.join(directory, entry.name)
-        return entry.isDirectory() ? codeFiles(entryPath) : [entryPath]
-      })
-    )
-  )
-    .flat()
-    .filter((file) => /\.[cm]?[jt]sx?$/.test(file))
+  const walks: Promise<string[]>[] = []
+  // functional-loop: owner-commit — ordered per-entry directory walk submission with no bulk primitive
+  for (const entry of entries) {
+    const entryPath = path.join(directory, entry.name)
+    walks.push(entry.isDirectory() ? codeFiles(entryPath) : Promise.resolve([entryPath]))
+  }
+  const collected = await Promise.all(walks)
+  return collected.flat().filter((file) => /\.[cm]?[jt]sx?$/.test(file))
 }
 
 describe('replaceable application boundaries', () => {
@@ -91,9 +89,12 @@ describe('replaceable application boundaries', () => {
   })
 
   it('keeps the UI projection free of the obsolete local record alias', async () => {
-    const projectionSources = await Promise.all(
-      ['src/domain/Message.ts', 'src/domain/MessageList.ts', 'src/domain/MessageProjection.ts'].map(source)
-    )
+    const projectionLoads: Promise<string>[] = []
+    // functional-loop: owner-commit — ordered per-file read submission with no bulk primitive
+    for (const file of ['src/domain/Message.ts', 'src/domain/MessageList.ts', 'src/domain/MessageProjection.ts']) {
+      projectionLoads.push(source(file))
+    }
+    const projectionSources = await Promise.all(projectionLoads)
 
     expect(projectionSources.join('\n')).not.toMatch(/\bLocalMessage\b/)
   })
@@ -227,9 +228,12 @@ describe('replaceable application boundaries', () => {
       'CONFIG_STORE_VERSION',
       'CONFIG_STORE_VERSION_KEY'
     ]
-    const sourceEntries = await Promise.all(
-      (await codeFiles(projectPath('src'))).map(async (file) => [file, await source(file)] as const)
-    )
+    const sourceLoads: Promise<readonly [string, string]>[] = []
+    // functional-loop: owner-commit — ordered per-file read submission with no bulk primitive
+    for (const file of await codeFiles(projectPath('src'))) {
+      sourceLoads.push((async () => [file, await source(file)] as const)())
+    }
+    const sourceEntries = await Promise.all(sourceLoads)
     // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (const name of storageConstantNames) {
       expect(

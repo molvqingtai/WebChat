@@ -1696,7 +1696,7 @@ const HistoryDomain = Remesh.domain({
           ...uniqueSources.map((item) => CleanupProviderSlotsCommand(item)),
           ClearDomainSyncBindingsCommand(runtimeDomain),
           ...owners.flatMap((item) => dismissFeedback(get, item) ?? []),
-          ...sourceIds.map(FinishRequestedEvent)
+          ...sourceIds.map((sourceId) => FinishRequestedEvent(sourceId))
         ]
       }
     })

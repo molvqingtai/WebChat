@@ -261,8 +261,8 @@ function buildLayoutReport() {
     diagram_type: 'architecture',
     layout: grid ? { mode: 'grid', ...grid } : { mode: 'free' },
     viewBox,
-    components: [...components.values()].map(componentBox),
-    boundaries: boundaries.map(boundaryBox),
+    components: [...components.values()].map((component) => componentBox(component)),
+    boundaries: boundaries.map((boundary) => boundaryBox(boundary)),
     connections: asArray(arch.connections)
       .filter((conn) => components.has(conn.from) && components.has(conn.to))
       .map((conn) => {
@@ -307,16 +307,13 @@ function routeVia(conn, from, to, start, end) {
   }
 }
 
-const pathCache = new Map()
 function pathFor(conn) {
-  if (pathCache.has(conn)) return pathCache.get(conn)
   const from = components.get(conn.from)
   const to = components.get(conn.to)
   const start = anchor(from, chosenSide(conn.fromSide, defaultFromSide(from, to)))
   const end = anchor(to, chosenSide(conn.toSide, defaultToSide(from, to)))
   const points = [start, ...routeVia(conn, from, to, start, end), end]
   const routed = { d: roundedPath(points, 8), points }
-  pathCache.set(conn, routed)
   return routed
 }
 

@@ -142,7 +142,7 @@
     "wxt": "^0.20.27"
   },
   "lint-staged": {
-    "*.{js,jsx,ts,tsx}": [
+    "*.{js,jsx,ts,tsx,mjs,cjs,mts,cts}": [
       "oxfmt --write",
       "oxlint --fix",
       "node scripts/check-functional-iteration.mjs"

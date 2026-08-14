@@ -63,15 +63,20 @@ beforeEach(() => {
 
 afterEach(async () => {
   vi.restoreAllMocks()
-  // functional-loop: owner-commit — ordered per-database deletion with no bulk primitive
+  const deletions: Promise<void>[] = []
+  // functional-loop: owner-commit — ordered per-database deletion submission with no bulk
+  // primitive; the submitted deletions settle concurrently under one bulk await
   for (const name of names) {
-    await new Promise<void>((resolve) => {
-      const request = indexedDB.deleteDatabase(name)
-      request.addEventListener('success', () => resolve(), { once: true })
-      request.addEventListener('error', () => resolve(), { once: true })
-      request.addEventListener('blocked', () => resolve(), { once: true })
-    })
+    deletions.push(
+      new Promise<void>((resolve) => {
+        const request = indexedDB.deleteDatabase(name)
+        request.addEventListener('success', () => resolve(), { once: true })
+        request.addEventListener('error', () => resolve(), { once: true })
+        request.addEventListener('blocked', () => resolve(), { once: true })
+      })
+    )
   }
+  await Promise.all(deletions)
   names.clear()
   vi.unstubAllGlobals()
 })

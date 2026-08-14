@@ -41,8 +41,22 @@ assert(chromeContentEntries.length > 0, 'Expected at least one production Chrome
 assert(firefoxContentEntries.length > 0, 'Expected at least one production Firefox content entry')
 const [chromeHost, chromeContent, firefoxContent] = await Promise.all([
   readFile(join(chromeRoot, 'chunks', chromeHostChunk), 'utf8'),
-  Promise.all(chromeContentEntries.map((entry) => readFile(join(chromeRoot, entry), 'utf8'))),
-  Promise.all(firefoxContentEntries.map((entry) => readFile(join(firefoxRoot, entry), 'utf8')))
+  (async () => {
+    const loads: Promise<string>[] = []
+    // functional-loop: owner-commit — ordered per-chunk read submission with no bulk primitive
+    for (const entry of chromeContentEntries) {
+      loads.push(readFile(join(chromeRoot, entry), 'utf8'))
+    }
+    return Promise.all(loads)
+  })(),
+  (async () => {
+    const loads: Promise<string>[] = []
+    // functional-loop: owner-commit — ordered per-chunk read submission with no bulk primitive
+    for (const entry of firefoxContentEntries) {
+      loads.push(readFile(join(firefoxRoot, entry), 'utf8'))
+    }
+    return Promise.all(loads)
+  })()
 ])
 assert(!chromeHost.includes('tabs.query'), 'Chrome Offscreen host must not contain tabs.query')
 // functional-loop: owner-commit — ordered per-item emission with no bulk primitive

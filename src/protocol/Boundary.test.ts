@@ -53,9 +53,12 @@ describe('public protocol source boundary', () => {
   })
 
   it('has no application, Runtime orchestration, host, or hidden-clock dependencies', async () => {
-    const sources = await Promise.all(
-      PUBLIC_FILES.map(async (file) => [file, await readFile(path.join(PROTOCOL_ROOT, file), 'utf8')] as const)
-    )
+    const sourceLoads: Promise<readonly [string, string]>[] = []
+    // functional-loop: owner-commit — ordered per-file read submission with no bulk primitive
+    for (const file of PUBLIC_FILES) {
+      sourceLoads.push((async () => [file, await readFile(path.join(PROTOCOL_ROOT, file), 'utf8')] as const)())
+    }
+    const sources = await Promise.all(sourceLoads)
 
     // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
 
@@ -95,9 +98,12 @@ describe('public protocol source boundary', () => {
   })
 
   it('derives every public type from its owning schema with no handwritten duplicate', async () => {
-    const sources = await Promise.all(
-      PUBLIC_FILES.map(async (file) => [file, await readFile(path.join(PROTOCOL_ROOT, file), 'utf8')] as const)
-    )
+    const sourceLoads: Promise<readonly [string, string]>[] = []
+    // functional-loop: owner-commit — ordered per-file read submission with no bulk primitive
+    for (const file of PUBLIC_FILES) {
+      sourceLoads.push((async () => [file, await readFile(path.join(PROTOCOL_ROOT, file), 'utf8')] as const)())
+    }
+    const sources = await Promise.all(sourceLoads)
     // functional-loop: owner-commit — ordered per-item emission with no bulk primitive
     for (const [file, source] of sources) {
       // No handwritten interface or standalone structural type may describe a protocol value

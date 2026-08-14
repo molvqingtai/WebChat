@@ -96,17 +96,20 @@ export class PagePort implements PagePortContract {
     payload: T
   ): Promise<string[]> {
     const deadPageIds: string[] = []
-    // functional-loop: owner-commit — ordered per-page listener delivery with failure cleanup
+    const deliveries: Promise<void>[] = []
+    // functional-loop: owner-commit — ordered per-page listener start submission with failure
+    // cleanup; every listener starts before the single bulk await settles them concurrently
     for (const pageId of pageIds) {
       const listener = listeners.get(pageId)
       if (!listener) continue
-      try {
-        await listener(payload)
-      } catch {
-        this.removePage(pageId)
-        deadPageIds.push(pageId)
-      }
+      deliveries.push(
+        Promise.resolve(listener(payload)).catch(() => {
+          this.removePage(pageId)
+          deadPageIds.push(pageId)
+        })
+      )
     }
+    await Promise.all(deliveries)
     return deadPageIds
   }
 

@@ -234,14 +234,9 @@ class FakeFirefoxAdapter implements FirefoxActionPreconditionAdapter {
   }
 
   acceptedContentHandles(target = context.acceptedTarget) {
-    const handles: ReturnType<FakeFirefoxAdapter['requireBaseHandle']>[] = []
-    // functional-loop: owner-commit — ordered per-tab handle requirement with no bulk primitive
-    for (const tab of this.tabs) {
-      if (tab.type === 'ordinary' && tab.url === target) {
-        handles.push(this.requireBaseHandle(tab.identity))
-      }
-    }
-    return handles
+    return this.tabs
+      .filter((tab) => tab.type === 'ordinary' && tab.url === target)
+      .map((tab) => this.requireBaseHandle(tab.identity))
   }
 
   private applyOperationSideEffect(operation: HandleOperation) {

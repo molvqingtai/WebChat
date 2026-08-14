@@ -246,17 +246,13 @@ function routeVia(flow, from, to, start, end) {
   }
 }
 
-const pathCache = new Map()
-
 function pathFor(flow) {
-  if (pathCache.has(flow)) return pathCache.get(flow)
   const from = nodes.get(flow.from)
   const to = nodes.get(flow.to)
   const start = anchor(from, chosenSide(flow.fromSide, defaultFromSide(from, to)))
   const end = anchor(to, chosenSide(flow.toSide, defaultToSide(from, to)))
   const points = [start, ...routeVia(flow, from, to, start, end), end]
   const routed = { d: polylinePath(points), points }
-  pathCache.set(flow, routed)
   return routed
 }
 

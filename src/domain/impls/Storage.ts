@@ -71,10 +71,13 @@ const clearVersionManagedLocalConfiguration = async () => {
       key !== APP_UNREAD_STORAGE_KEY &&
       key !== APP_MESSAGE_AUTHOR_STORAGE_KEY
   )
-  // functional-loop: owner-commit — ordered per-key storage removal with no bulk primitive
+  const removals: Promise<unknown>[] = []
+  // functional-loop: owner-commit — ordered per-key storage removal submission with no bulk
+  // primitive; the submitted removals settle concurrently under one bulk await
   for (const key of removable) {
-    await localStorage.removeItem(key)
+    removals.push(localStorage.removeItem(key))
   }
+  await Promise.all(removals)
 }
 
 export const prepareLocalConfigurationStorage = (coordinator?: PreparationLockCoordinator): Promise<void> =>

@@ -440,17 +440,13 @@ function routeVia(edge, from, to, start, end) {
   }
 }
 
-const pathCache = new Map()
-
 function pathFor(edge) {
-  if (pathCache.has(edge)) return pathCache.get(edge)
   const from = nodes.get(edge.from)
   const to = nodes.get(edge.to)
   const start = anchor(from, chosenSide(edge.fromSide, defaultFromSide(from, to)))
   const end = anchor(to, chosenSide(edge.toSide, defaultToSide(from, to)))
   const points = [start, ...routeVia(edge, from, to, start, end), end]
   const routed = { d: polylinePath(points), points }
-  pathCache.set(edge, routed)
   return routed
 }
 
@@ -545,13 +541,13 @@ ${asArray(workflow.phases).map(renderPhase).join('\n')}
 ${asArray(workflow.groups).map(renderGroup).join('\n')}
 
         <!-- Edge paths -->
-${workflow.edges.map(renderEdgePath).join('\n')}
+${workflow.edges.map((edge) => renderEdgePath(edge)).join('\n')}
 
         <!-- Nodes -->
 ${[...nodes.values()].map(renderNode).join('\n\n')}
 
         <!-- Edge labels -->
-${workflow.edges.map(renderEdgeLabel).join('\n')}
+${workflow.edges.map((edge) => renderEdgeLabel(edge)).join('\n')}
 
         <!-- Legend -->
 ${renderLegend()}

@@ -233,7 +233,12 @@ const assertJson = (value: unknown, seen = new Set<object>()): JsonValue => {
   if (Array.isArray(value)) {
     if (seen.has(value)) throw new Error('JSON value must not contain cycles')
     seen.add(value)
-    const result = value.map((entry) => assertJson(entry, seen))
+    const result = []
+    // functional-loop: owner-commit — ordered per-entry validation over the live
+    // cycle-tracking set, which must reflect the in-progress membership at each step
+    for (const entry of value) {
+      result.push(assertJson(entry, seen))
+    }
     seen.delete(value)
     return result
   }
@@ -435,7 +440,13 @@ const normalizeEvidence = (value: unknown, depth = 0, seen = new Set<object>()):
       if (value.length > MAX_VALUE_ITEMS) {
         throw new EvidenceLimitError(`Evidence array exceeds ${MAX_VALUE_ITEMS} items`)
       }
-      return value.map((entry) => normalizeEvidence(entry, depth + 1, seen))
+      const normalized = []
+      // functional-loop: owner-commit — ordered per-entry normalization over the live
+      // cycle-tracking set, which must reflect the in-progress membership at each step
+      for (const entry of value) {
+        normalized.push(normalizeEvidence(entry, depth + 1, seen))
+      }
+      return normalized
     }
 
     const keys = Object.keys(value).toSorted()
