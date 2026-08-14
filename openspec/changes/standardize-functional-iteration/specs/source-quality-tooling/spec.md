@@ -58,6 +58,8 @@ A condition-driven `while` or `do...while` MAY remain only when its changing ter
 
 A callback passed to a result-oriented collection or object-entry operation SHALL derive and return its result without mutating an input, outer binding, shared collection, singleton, cache, or other externally reachable object. It SHALL NOT perform DOM, browser, storage, database, wire, persistence, event-dispatch, timer, logging, or other I/O or external commit behavior. A result-oriented method SHALL NOT be used only as a carrier for ignored callback effects.
 
+As the sole synchronous result-producing exception, a `map` callback MAY itself be, or MAY directly return, one owner API call when no behavior-equivalent bulk operation exists, the same indivisible invocation inherently performs the item's only external effect and returns the item's result, and separating those responsibilities is not behavior-equivalent. The complete mapped result SHALL be returned, assigned, or otherwise consumed. The callback SHALL NOT mutate an outer binding or accumulator, perform an additional effect, add traversal scaffolding around the owner call, or discard its returned result. Callback arguments, call order, multiplicity, synchronous error behavior, and returned-value ordering SHALL remain unchanged. `Session.ts` allocation through `identity.nextId()` and `useShareRef` registration through `refs.map(setRef)` SHALL conform as examples of this general boundary rather than file-level waivers.
+
 A `forEach` callback MAY perform explicit synchronous per-item actions only under the boundary above. It SHALL NOT construct a traversal result or start unconsumed asynchronous work. Existing call order, multiplicity, synchronous error behavior, membership semantics, and externally visible effects SHALL remain unchanged.
 
 Concurrent per-item actions MAY use `Promise.all(items.map(...))` only when every `map` callback directly returns its operation Promise and the complete mapped result is immediately consumed by that returned or awaited `Promise.all`. The expression SHALL preserve existing concurrency, result ordering, and rejection behavior. Any equivalent existing bulk operation SHALL take precedence over repeated per-item effects.
@@ -83,6 +85,14 @@ The existing `assembleURL` implementation SHALL remain unchanged: its `new URL(u
 - **GIVEN** independent per-item operations already execute concurrently and no equivalent bulk operation exists
 - **WHEN** the iteration is expressed with `map`
 - **THEN** each callback SHALL directly return its operation Promise and one returned or awaited `Promise.all` SHALL immediately consume the complete mapped result without changing concurrency, result ordering, or rejection behavior
+
+#### Scenario: Consume an indivisible mixed effect-and-result owner operation
+
+- **GIVEN** a synchronous owner API inherently performs the item's only external effect and returns the item's result in the same invocation
+- **AND** splitting the effect from result construction would not preserve behavior
+- **AND** no behavior-equivalent bulk operation exists
+- **WHEN** the operation is applied across a collection
+- **THEN** a consumed `map` MAY use that owner operation directly, with no outer mutation, second effect, ignored result, or file-level waiver
 
 #### Scenario: Allow a private reducer accumulator
 

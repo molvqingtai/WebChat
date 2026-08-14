@@ -8,6 +8,7 @@ Current traversal has several distinct shapes that must not be treated as interc
 - `forEach` used only for explicit synchronous per-item actions where no equivalent bulk operation exists;
 - an imperative loop whose observable behavior depends on irreducible `break`, `continue`, function early return, sequential `await`, or live collection membership;
 - a condition-driven `while` or `do...while` whose termination is not collection exhaustion; and
+- a synchronous owner operation whose single call inherently performs the item's only effect and returns the item's result, so separating the effect from result construction would change behavior; and
 - a reduction that mutates only a fresh accumulator which is private to that reduction.
 
 The desired style is the shortest behavior-equivalent expression with the fewest necessary variables. This is not a request to mechanically replace one syntax with another. In particular, changing an effectful `forEach` to `for...of` preserves the same external mutation while adding syntax, and changing a valid private reducer accumulator to repeated immutable cloning adds work and behavioral risk without removing an external side effect.
@@ -20,6 +21,7 @@ The desired style is the shortest behavior-equivalent expression with the fewest
 - Eliminate avoidable outer mutable temporaries and single-use traversal scaffolding.
 - Remove result-producing `forEach` and retain effect-only `forEach` only when it is the shortest synchronous form and no existing bulk operation is equivalent.
 - Keep result-producing callbacks free of external mutation and external commits, while making synchronous and concurrent effect traversal explicit and fully consumed.
+- Preserve a consumed direct `map` for an indivisible synchronous mixed effect-and-result owner operation without opening a general effectful-callback exception.
 - Preserve valid local mutation of a fresh, exclusive, non-escaping reducer accumulator.
 - Preserve exact behavior while applying the same rule to production, test, harness, configuration, and tracked tool source.
 - Verify the result with only existing repository tools and independent source review.
@@ -77,6 +79,8 @@ External side effects include:
 - invoking DOM, browser, storage, database, wire, persistence, event-dispatch, timer, logging, or other I/O/effect APIs; and
 - using a result-oriented method only as an iteration carrier while ignoring the created result.
 
+There is one narrow synchronous result-producing exception. When no behavior-equivalent bulk operation exists, a `map` callback may itself be, or may directly return, one owner API call when that call is indivisible: the same invocation inherently performs the item's only external effect and returns the item's result, and splitting those responsibilities is not behavior-equivalent. The mapped result must be returned, assigned, or otherwise consumed. The callback must not mutate an outer binding or accumulator, perform an additional effect, wrap the call in traversal scaffolding, or discard the returned result. Callback arguments, call order, multiplicity, synchronous error behavior, and returned-value ordering must remain unchanged. `Session.ts` allocation through `identity.nextId()` and `useShareRef` registration through `refs.map(setRef)` satisfy this boundary; they are examples of the general owner-operation rule, not file-level waivers.
+
 There are two explicit effect-only callback forms:
 
 - Synchronous per-item actions use `forEach` when no existing bulk operation is behavior-equivalent and `forEach` is the shortest equivalent expression. The traversal must not construct a result or update an outer accumulator that is read as its result, and it must not start asynchronous work whose Promise is discarded. Existing call order, multiplicity, synchronous error behavior, membership semantics, and externally visible effects remain unchanged.
@@ -108,6 +112,7 @@ Semantic decisions that the existing toolchain cannot express are verified by th
 
 - **A shorter expression changes order or concurrency** -> Compare observable ordering and settlement at each site; retain semantics even when that requires a slightly longer direct expression.
 - **A result-oriented method hides an external effect** -> Reject the rewrite unless it is the complete `map` input to a returned or awaited `Promise.all`; otherwise use an equivalent bulk operation or explicit synchronous effect-only `forEach`.
+- **A synchronous owner API cannot separate its effect from its returned result** -> Permit only a consumed `map` whose callback is or directly returns that single owner call, with no outer mutation or second effect; reject broader effectful result callbacks.
 - **An effect-only `forEach` constructs a hidden result or drops Promises** -> Replace result construction with the direct result method, or consume concurrent operation Promises with one `Promise.all`.
 - **A loop contains a nominal control keyword but has a direct equivalent** -> Use the direct short-circuiting method; the keyword alone is not an exception.
 - **A loop is retained for sequential or live behavior that a shorter form changes** -> Keep it only after confirming `forEach`, `Promise.all`, direct result methods, and existing bulk operations are not equivalent.
@@ -120,8 +125,8 @@ Semantic decisions that the existing toolchain cannot express are verified by th
 
 1. Freeze this docs-only authority as one sole child of clean `develop@10801251a7a6b744fd246960daed01eef323c868`, validate it, and obtain fresh independent docs review.
 2. From the reviewed authority exact, record the 304-file authored manifest and a read-only baseline inventory of traversal forms before editing product source.
-3. Produce one source child that applies the direct-result rule, explicit synchronous and concurrent action forms, result-callback external-effect boundary, valid `for` exceptions, generated exclusion, and no-test policy without adding an enforcement layer.
+3. Produce one source child that applies the direct-result rule, narrow indivisible mixed effect-and-result `map` boundary, explicit synchronous and concurrent action forms, result-callback external-effect boundary, valid `for` exceptions, generated exclusion, and no-test policy without adding an enforcement layer.
 4. Verify the exact source diff with existing format, lint, typecheck, test, build, generated-artifact, OpenSpec, and repository-cleanliness gates; confirm the original `assembleURL` implementation is unchanged.
-5. Obtain fresh independent source review of the immutable exact. Keep both pull requests Draft and do not mark Ready, merge, run browser acceptance, deploy, release, or change production without separate Owner authority.
+5. Obtain fresh independent source review of the immutable exact without the reviewer running local tests or automation. Keep both pull requests Draft and do not mark Ready, merge, run browser acceptance, deploy, release, or change production without separate Owner authority.
 
 Rollback is source-only: revert the behavior-neutral cleanup and any built-in Oxlint configuration change. There is no protocol, schema, persistence, data, or deployment migration.
