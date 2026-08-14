@@ -1487,15 +1487,16 @@ const HistoryDomain = Remesh.domain({
         const page = prepared.page
         const expectedHlc = get(sessionDomain.query.HlcQuery())
         let hlc = expectedHlc
-        const pageBytes = page.messages.reduce((total, event) => total + getTextByteSize(JSON.stringify(event)), 0)
-        if (
-          current.responseCount + page.messages.length > historySessionMessages ||
-          current.responseBytes + pageBytes > historySessionBytes
-        ) {
-          return FinishRequestedEvent({ domain: binding.domain, sourcePeerId: payload.sourcePeerId })
+        let decodedBytes = current.responseBytes
+        let messageCount = current.responseCount
+        for (const event of page.messages) {
+          const messageBytes = getTextByteSize(JSON.stringify(event))
+          if (messageCount + 1 > historySessionMessages || decodedBytes + messageBytes > historySessionBytes) {
+            return FinishRequestedEvent({ domain: binding.domain, sourcePeerId: payload.sourcePeerId })
+          }
+          messageCount += 1
+          decodedBytes += messageBytes
         }
-        const decodedBytes = current.responseBytes + pageBytes
-        const messageCount = current.responseCount + page.messages.length
         const records: ChatMessageRecord[] = []
         // before any record is built, and observeHlc threads ordered per-item clock state
         for (const event of page.messages) {
@@ -1583,11 +1584,19 @@ const HistoryDomain = Remesh.domain({
             const page = prepared.page
             const expectedHlc = get(sessionDomain.query.HlcQuery())
             let hlc = expectedHlc
-            const pageBytes = page.messages.reduce((total, event) => total + getTextByteSize(JSON.stringify(event)), 0)
-            const decodedBytes = next.responseBytes + pageBytes
-            const messageCount = next.responseCount + page.messages.length
-            const overBudget = messageCount > historySessionMessages || decodedBytes > historySessionBytes
-            if (overBudget) {
+            let decodedBytes = next.responseBytes
+            let messageCount = next.responseCount
+            let budgetOk = true
+            for (const event of page.messages) {
+              const messageBytes = getTextByteSize(JSON.stringify(event))
+              if (messageCount + 1 > historySessionMessages || decodedBytes + messageBytes > historySessionBytes) {
+                budgetOk = false
+                break
+              }
+              messageCount += 1
+              decodedBytes += messageBytes
+            }
+            if (!budgetOk) {
               output.push(FinishRequestedEvent({ domain: current.domain, sourcePeerId: current.sourcePeerId }))
             } else {
               const records: ChatMessageRecord[] = []

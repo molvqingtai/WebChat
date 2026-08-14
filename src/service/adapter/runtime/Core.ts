@@ -31,13 +31,13 @@ export class MessageListenerRegistry {
 
   dispose() {
     let firstError: unknown
-    for (const dispose of this.disposers) {
+    this.disposers.forEach((dispose) => {
       try {
         dispose()
       } catch (error) {
         firstError ??= error
       }
-    }
+    })
     if (firstError) throw firstError
   }
 }

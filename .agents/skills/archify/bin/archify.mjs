@@ -121,25 +121,25 @@ async function commandDoctor() {
     lifecycle: 'agent-run.lifecycle.json'
   }
 
-  // Each type contributes one doctor entry; the existence checks are ordered per-file I/O
-  // inside the loop, and the derived entries join the shared list once.
+  // Each type contributes one doctor entry; the per-file existence checks are synchronous
+  // actions, and the derived entries join the shared list once.
   const typeChecks = []
-  for (const type of TYPES) {
+  TYPES.forEach((type) => {
     const required = [
       path.join(skillRoot, 'renderers', type, `render-${type}.mjs`),
       path.join(skillRoot, 'schemas', `${type}.schema.json`),
       path.join(skillRoot, 'examples', examples[type])
     ]
     const missingFiles = []
-    for (const file of required) {
+    required.forEach((file) => {
       if (!fs.existsSync(file)) missingFiles.push(file)
-    }
+    })
     typeChecks.push({
       label: `${type} renderer, schema, and example`,
       ok: missingFiles.length === 0,
       missing: missingFiles.length
     })
-  }
+  })
   checks.push(...typeChecks)
 
   console.log('Archify doctor\n')

@@ -68,13 +68,13 @@ const Footer: FC = () => {
       // "@user" => "E@user"
       // "@user" => "@useEr"
       // "@user" => "@user @user"
-      for (const [userId, item] of atUserRecord.current) {
+      atUserRecord.current.forEach((item, userId) => {
         const positionList = [...item].map<[number, number]>((item) => {
           const inBefore = Math.min(start, end) <= item[1]
           return inBefore ? [item[0] + offset + (end - start), item[1] + offset + (end - start)] : item
         })
         atUserRecord.current.set(userId, new Set(positionList))
-      }
+      })
 
       // Insert a new @user record
       if (atUserId) {
@@ -83,7 +83,7 @@ const Footer: FC = () => {
 
       // After moving, check if the @user in the message matches the saved position record. If not, it means the @user has been edited, so delete that record.
       // Filter out records where the stored position does not match the actual position.
-      for (const [userId, item] of atUserRecord.current) {
+      atUserRecord.current.forEach((item, userId) => {
         // Pre-calculate the offset after InputCommand
         const positionList = [...item].filter((item) => {
           const name = message.slice(item[0], item[1] + 1)
@@ -94,7 +94,7 @@ const Footer: FC = () => {
         } else {
           atUserRecord.current.delete(userId)
         }
-      }
+      })
     },
     [userList]
   )

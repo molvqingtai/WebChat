@@ -72,24 +72,24 @@ export class WorldRoom extends EventHub {
   private applyPresence(event: WorldPresenceEvent) {
     if (event.presence) this.replaceSource(event.sourcePeerId, event.presence.presence)
     else {
-      for (const [key, contribution] of this.contributions) {
+      this.contributions.forEach((contribution, key) => {
         if (contribution.sourcePeerId === event.sourcePeerId) this.contributions.delete(key)
-      }
+      })
     }
     this.emitState()
   }
 
   private applySnapshot(snapshot: RuntimeSnapshot) {
     const activeKeys = new Set<string>()
-    for (const { sourcePeerId, presence } of snapshot.world.presences) {
+    snapshot.world.presences.forEach(({ sourcePeerId, presence }) => {
       this.replaceSource(sourcePeerId, presence, activeKeys)
-    }
+    })
     if (snapshot.world.localPresence) {
       this.replaceSource(snapshot.peerId, snapshot.world.localPresence, activeKeys)
     }
-    for (const key of this.contributions.keys()) {
+    this.contributions.forEach((_contribution, key) => {
       if (!activeKeys.has(key)) this.contributions.delete(key)
-    }
+    })
     this.emitState()
   }
 

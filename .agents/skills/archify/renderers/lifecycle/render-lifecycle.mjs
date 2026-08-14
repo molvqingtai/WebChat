@@ -102,18 +102,17 @@ function measureState(state) {
 const states = new Map(asArray(lifecycle.states).map((state) => [state.id, measureState(state)]))
 // State steps are derived from transitions first, then from remaining states: a non-mutating
 // fold keeps each step assignment visible to the next entry without owner-style side effects.
+// State steps are derived from transitions first, then from remaining states: a fresh,
+// exclusive accumulator fold keeps each first-seen assignment in linear time.
 const stateSteps = asArray(lifecycle.states).reduce(
   (steps, state, index) => {
-    if (steps.has(state.id)) return steps
-    const next = new Map(steps)
-    next.set(state.id, index)
-    return next
+    if (!steps.has(state.id)) steps.set(state.id, index)
+    return steps
   },
   asArray(lifecycle.transitions).reduce((steps, transition, index) => {
-    const next = new Map(steps)
-    if (!steps.has(transition.from)) next.set(transition.from, index)
-    if (!steps.has(transition.to)) next.set(transition.to, index + 1)
-    return next
+    if (!steps.has(transition.from)) steps.set(transition.from, index)
+    if (!steps.has(transition.to)) steps.set(transition.to, index + 1)
+    return steps
   }, new Map())
 )
 
@@ -311,7 +310,10 @@ function routeVia(transition, from, to, start, end) {
   }
 }
 
+const pathCache = new Map()
+
 function pathFor(transition) {
+  if (pathCache.has(transition)) return pathCache.get(transition)
   const from = states.get(transition.from)
   const to = states.get(transition.to)
   const start = anchor(from, chosenSide(transition.fromSide, defaultFromSide(from, to)))
@@ -321,6 +323,7 @@ function pathFor(transition) {
     d: roundedPath(points, transition.cornerRadius ?? 10),
     points
   }
+  pathCache.set(transition, routed)
   return routed
 }
 

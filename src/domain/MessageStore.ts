@@ -248,8 +248,8 @@ const retainInvalidRecordDiagnostics = async (
         return typeof eventId === 'string' ? [eventId] : []
       })
       const counts = eventIds.reduce<Map<string, number>>((acc, eventId) => {
-        const current = acc.get(eventId) ?? 0
-        return new Map([...acc, [eventId, current + 1]])
+        acc.set(eventId, (acc.get(eventId) ?? 0) + 1)
+        return acc
       }, new Map())
       for (const { item, error } of invalidRecords) {
         signal?.throwIfAborted()

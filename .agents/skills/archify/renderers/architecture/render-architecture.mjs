@@ -57,25 +57,19 @@ function measureComponent(c) {
 }
 
 const components = new Map(asArray(arch.components).map((c) => [c.id, measureComponent(c)]))
-const connectionSteps = asArray(arch.connections).flatMap((conn, index) => {
-  const fromStep = asArray(arch.connections)
-    .slice(0, index)
-    .some((prior) => prior.from === conn.from || prior.to === conn.from)
-    ? []
-    : [[conn.from, index]]
-  const toStep = asArray(arch.connections)
-    .slice(0, index)
-    .some((prior) => prior.from === conn.to || prior.to === conn.to)
-    ? []
-    : [[conn.to, index + 1]]
-  return [...fromStep, ...toStep]
-})
 // Component steps: connection-derived steps win, then remaining components fill by index —
-// a non-mutating fold keeps each assignment visible to the next entry.
-const componentSteps = asArray(arch.components).reduce((steps, c, index) => {
-  if (!steps.has(c.id)) steps.set(c.id, index)
-  return steps
-}, new Map(connectionSteps))
+// a fresh, exclusive accumulator fold keeps each first-seen assignment in linear time.
+const componentSteps = asArray(arch.components).reduce(
+  (steps, c, index) => {
+    if (!steps.has(c.id)) steps.set(c.id, index)
+    return steps
+  },
+  asArray(arch.connections).reduce((steps, conn, index) => {
+    if (!steps.has(conn.from)) steps.set(conn.from, index)
+    if (!steps.has(conn.to)) steps.set(conn.to, index + 1)
+    return steps
+  }, new Map())
+)
 
 // ---- Boundaries computed from the `wraps` id list ---------------------------
 function boundaryRect(boundary) {
@@ -305,13 +299,17 @@ function routeVia(conn, from, to, start, end) {
   }
 }
 
+const pathCache = new Map()
+
 function pathFor(conn) {
+  if (pathCache.has(conn)) return pathCache.get(conn)
   const from = components.get(conn.from)
   const to = components.get(conn.to)
   const start = anchor(from, chosenSide(conn.fromSide, defaultFromSide(from, to)))
   const end = anchor(to, chosenSide(conn.toSide, defaultToSide(from, to)))
   const points = [start, ...routeVia(conn, from, to, start, end), end]
   const routed = { d: roundedPath(points, 8), points }
+  pathCache.set(conn, routed)
   return routed
 }
 

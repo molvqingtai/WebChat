@@ -68,18 +68,17 @@ function measureNode(node) {
 const nodes = new Map(asArray(dataflow.nodes).map((node) => [node.id, measureNode(node)]))
 // Node steps are derived from flows first, then from remaining nodes: a non-mutating fold
 // keeps each step assignment visible to the next entry without owner-style side effects.
+// Node steps are derived from flows first, then from remaining nodes: a fresh, exclusive
+// accumulator fold keeps each first-seen assignment in linear time.
 const nodeSteps = asArray(dataflow.nodes).reduce(
   (steps, node, index) => {
-    if (steps.has(node.id)) return steps
-    const next = new Map(steps)
-    next.set(node.id, index)
-    return next
+    if (!steps.has(node.id)) steps.set(node.id, index)
+    return steps
   },
   asArray(dataflow.flows).reduce((steps, flow, index) => {
-    const next = new Map(steps)
-    if (!steps.has(flow.from)) next.set(flow.from, index)
-    if (!steps.has(flow.to)) next.set(flow.to, index + 1)
-    return next
+    if (!steps.has(flow.from)) steps.set(flow.from, index)
+    if (!steps.has(flow.to)) steps.set(flow.to, index + 1)
+    return steps
   }, new Map())
 )
 
@@ -246,13 +245,17 @@ function routeVia(flow, from, to, start, end) {
   }
 }
 
+const pathCache = new Map()
+
 function pathFor(flow) {
+  if (pathCache.has(flow)) return pathCache.get(flow)
   const from = nodes.get(flow.from)
   const to = nodes.get(flow.to)
   const start = anchor(from, chosenSide(flow.fromSide, defaultFromSide(from, to)))
   const end = anchor(to, chosenSide(flow.toSide, defaultToSide(from, to)))
   const points = [start, ...routeVia(flow, from, to, start, end), end]
   const routed = { d: polylinePath(points), points }
+  pathCache.set(flow, routed)
   return routed
 }
 
