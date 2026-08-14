@@ -2,7 +2,7 @@
 
 - [x] 1.1 Lock the clean `develop@10801251a7a6b744fd246960daed01eef323c868` manifest at 305 tracked JavaScript/TypeScript files and identify the exact generated Archify validator as the sole exclusion, leaving 304 authored files.
 - [x] 1.2 Freeze the Owner's goal as the shortest behavior-equivalent iteration expression with the fewest necessary variables: direct results replace outer mutable temporaries and discarded-result traversal.
-- [x] 1.3 Freeze all `for` variants under one behavior-equivalence exception, condition-driven `while`/`do...while`, externally side-effect-free result callbacks, the narrow consumed `map` allowance for a returned item expression containing exactly one indivisible synchronous mixed effect-and-result owner call and otherwise only pure subexpressions, explicit synchronous/concurrent action forms, and the fresh exclusive reducer-accumulator allowance.
+- [ ] 1.3 Freeze all `for` variants under one behavior-equivalence exception, condition-driven `while`/`do...while`, externally side-effect-free result callbacks, the narrow consumed `map` allowance for a returned item expression containing exactly one indivisible synchronous mixed effect-and-result owner call and otherwise only pure subexpressions, explicit synchronous/concurrent action forms, and the fresh exclusive reducer-accumulator allowance.
 - [x] 1.4 Record that the original `assembleURL` reducer is conforming and must remain unchanged.
 - [x] 1.5 Freeze the existing-toolchain-only, no-new-test, generated-file, behavior-neutral, Draft-only, and no-delivery boundaries.
 

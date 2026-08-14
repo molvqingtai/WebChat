@@ -8,7 +8,7 @@ Current traversal has several distinct shapes that must not be treated as interc
 - `forEach` used only for explicit synchronous per-item actions where no equivalent bulk operation exists;
 - an imperative loop whose observable behavior depends on irreducible `break`, `continue`, function early return, sequential `await`, or live collection membership;
 - a condition-driven `while` or `do...while` whose termination is not collection exhaustion; and
-- a synchronous owner operation whose single call inherently performs the item's only effect and returns the item's result, so separating the effect from result construction would change behavior; and
+- a synchronous owner operation whose single call inherently performs the item's only effect and returns a value used in the item's result, so separating the effect from result construction would change behavior; and
 - a reduction that mutates only a fresh accumulator which is private to that reduction.
 
 The desired style is the shortest behavior-equivalent expression with the fewest necessary variables. This is not a request to mechanically replace one syntax with another. In particular, changing an effectful `forEach` to `for...of` preserves the same external mutation while adding syntax, and changing a valid private reducer accumulator to repeated immutable cloning adds work and behavioral risk without removing an external side effect.

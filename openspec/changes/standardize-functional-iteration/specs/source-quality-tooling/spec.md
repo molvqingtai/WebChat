@@ -88,7 +88,7 @@ The existing `assembleURL` implementation SHALL remain unchanged: its `new URL(u
 
 #### Scenario: Consume an indivisible mixed effect-and-result owner operation
 
-- **GIVEN** a synchronous owner API inherently performs the item's only external effect and returns the item's result in the same invocation
+- **GIVEN** a synchronous owner API inherently performs the item's only external effect and returns a value used in the item's result in the same invocation
 - **AND** splitting the effect from result construction would not preserve behavior
 - **AND** no behavior-equivalent bulk operation exists
 - **WHEN** the operation is applied across a collection
