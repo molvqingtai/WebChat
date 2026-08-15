@@ -534,9 +534,8 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       // itself is admissible (a committed runtime or retained seed); pre-ready Retry never reaches
       // here and starts no World replacement.
       if (
-        process.env.DISABLE_WORLD_REFRESH !== '1' &&
-        (store.query(sessionDomain.query.DomainQuery(payload.domain)) ||
-          store.query(sessionDomain.query.RetainedLocalSeedQuery(payload.domain)))
+        store.query(sessionDomain.query.DomainQuery(payload.domain)) ||
+        store.query(sessionDomain.query.RetainedLocalSeedQuery(payload.domain))
       ) {
         store.send(connectionDomain.command.RefreshWorldCommand())
       }

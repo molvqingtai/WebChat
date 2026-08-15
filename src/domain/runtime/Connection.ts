@@ -264,11 +264,11 @@ const ConnectionDomain = Remesh.domain({
         ) {
           return null
         }
-        // Another in-flight Domain attempt captured the World generation for its combined join,
-        // and a retained-seed retry has no committed Domain to settle a fresh generation yet: the
-        // manual replacement defers (never dropped) until every attempt settles and demand exists,
-        // so its generation change never invalidates an unrelated provisional join.
-        if (get(AttemptsState()).length > 0 || get(sessionDomain.query.DomainsQuery()).length === 0) {
+        // Another in-flight Domain attempt captured the World generation for its combined join:
+        // the manual replacement defers (never dropped) until every attempt settles, so its
+        // generation change never invalidates an unrelated provisional join. A temporarily absent
+        // committed Domain never defers it — preserved demand settles the recovery independently.
+        if (get(AttemptsState()).length > 0) {
           return PendingWorldRefreshState().new(true)
         }
         return startManualWorldReplacement(get)
@@ -282,7 +282,7 @@ const ConnectionDomain = Remesh.domain({
         // An in-flight operation (automatic recovery or a recovery started by the settling attempt
         // itself) already is the replacement: the deferred manual child is subsumed.
         if (get(WorldRecoveryAttemptState())) return [PendingWorldRefreshState().new(false)]
-        if (get(sessionDomain.query.DomainsQuery()).length === 0) return null
+        if (get(worldDomain.query.LocalPresenceQuery()) === null) return null
         return [PendingWorldRefreshState().new(false), ...startManualWorldReplacement(get)]
       }
     })
@@ -600,7 +600,9 @@ const ConnectionDomain = Remesh.domain({
         if (get(lifecycleDomain.query.HostGenerationQuery()) !== payload.hostGeneration) return null
         if (get(WorldRecoveryGenerationState()) !== payload.generation) return null
         if (get(WorldRecoveryAttemptState())) return null
-        if (get(sessionDomain.query.DomainsQuery()).length === 0) return null
+        // Recovery proceeds from preserved World demand (active registrations/local presence), never
+        // from transient committed-Domain presence.
+        if (get(worldDomain.query.LocalPresenceQuery()) === null) return null
         return [...startWorldRecovery(get)]
       }
     })
@@ -613,7 +615,9 @@ const ConnectionDomain = Remesh.domain({
           !recovery ||
           recovery.requestId !== payload.requestId ||
           recovery.hostGeneration !== get(lifecycleDomain.query.HostGenerationQuery()) ||
-          get(sessionDomain.query.DomainsQuery()).length === 0
+          // The completion gate is preserved World registration/demand and exact recovery identity:
+          // a Domain reset's zero-committed-Domain interval never strands a settled World child.
+          get(worldDomain.query.LocalPresenceQuery()) === null
         ) {
           return null
         }

@@ -34,6 +34,9 @@ interface FullPublication {
   presence: WorldRoomMessage
   stagedAttemptId: string | null
   recoveryRequestId: string | null
+  /** True only when the publication belongs to an AppButton manual World replacement: its failure
+   * stays out of page UI/Toast. */
+  manual?: boolean
 }
 
 interface PendingPresenceSend {
@@ -254,7 +257,8 @@ const WorldDomain = Remesh.domain({
           revision: currentRevision,
           presence,
           stagedAttemptId,
-          recoveryRequestId
+          recoveryRequestId,
+          ...(recoveryRequestId && recovery?.manual ? { manual: true } : {})
         }
         // A normal World publication is one room broadcast; the transport fans it out.
         return [
@@ -347,9 +351,9 @@ const WorldDomain = Remesh.domain({
               : [])
           ]
         }
-        // A provider throw is surfaced once; the publication then settles.
-        const failure = ErrorEvent(payload.error)
-        return [failure, ...settlePublication(get, publication)]
+        // A provider throw settles the publication; a manual AppButton replacement keeps that
+        // failure out of page UI/Toast while automatic recovery retains its diagnostics.
+        return [...(publication.manual ? [] : [ErrorEvent(payload.error)]), ...settlePublication(get, publication)]
       }
     })
 
@@ -460,10 +464,15 @@ const WorldDomain = Remesh.domain({
         ),
         PresenceChangedEvent({ sourcePeerId: get(wireDomain.query.PeerIdQuery(worldRoomId)), presence: null }),
         PresencesState().new([]),
-        // Prior room membership and every pending presence send lose authority with the old
-        // generation; fresh work re-registers under the replacement's send generation.
+        // Prior room membership, every pending presence send, and every connection-scoped
+        // full-publication owner/continuation lose authority with the old generation; an already
+        // invoked old provider send then settles against no live slot, and fresh work re-registers
+        // under the replacement's send generation.
         RoomMembersState().new([]),
         PendingPresenceSendsState().new([]),
+        FullPublicationState().new(null),
+        LiveReleaseContinuationsState().new([]),
+        PendingFinalPublicationState().new(null),
         WorldSendGenerationState().new(get(WorldSendGenerationState()) + 1),
         RecoveryState().new(null)
       ]
