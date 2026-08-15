@@ -232,21 +232,24 @@ const assertJson = (value: unknown, seen = new Set<object>()): JsonValue => {
 
   if (Array.isArray(value)) {
     if (seen.has(value)) throw new Error('JSON value must not contain cycles')
-    seen.add(value)
-    const result = value.map((entry) => assertJson(entry, seen))
-    seen.delete(value)
-    return result
+    // The cycle state is per-path: each level derives a fresh child set, so no callback or
+    // recursive callee mutates shared state, and map preserves sparse holes exactly.
+    const childSeen = new Set([...seen, value])
+    return value.map((entry) => assertJson(entry, childSeen))
   }
 
   if (typeof value === 'object') {
     if (seen.has(value)) throw new Error('JSON value must not contain cycles')
-    seen.add(value)
-    const result: Record<string, JsonValue> = {}
-    for (const key of Object.keys(value).sort()) {
-      result[key] = assertJson((value as Record<string, unknown>)[key], seen)
-    }
-    seen.delete(value)
-    return result
+    const childSeen = new Set([...seen, value])
+    return Object.keys(value)
+      .toSorted()
+      .reduce(
+        (acc, key) => {
+          acc[key] = assertJson((value as Record<string, unknown>)[key], childSeen)
+          return acc
+        },
+        {} as Record<string, JsonValue>
+      )
   }
 
   throw new Error(`Unsupported JSON value: ${typeof value}`)
@@ -306,13 +309,12 @@ const asPackagedManifest = (value: unknown): PackagedManifest => {
   }
 }
 
-const manifestProjection = (manifest: JsonObject): JsonObject => {
-  const projection: JsonObject = {}
-  for (const key of ['manifest_version', 'name', 'version', 'background'] as const) {
-    if (Object.hasOwn(manifest, key)) projection[key] = manifest[key]!
-  }
-  return projection
-}
+const manifestProjection = (manifest: JsonObject): JsonObject =>
+  Object.fromEntries(
+    (['manifest_version', 'name', 'version', 'background'] as const)
+      .filter((key) => Object.hasOwn(manifest, key))
+      .map((key) => [key, manifest[key]!])
+  )
 
 const pointerSegment = (value: string): string => value.replaceAll('~', '~0').replaceAll('/', '~1')
 
@@ -362,7 +364,9 @@ const manifestDiff = (
         !Array.isArray(left) &&
         !Array.isArray(right)
       if (bothArrays) {
-        const indexes = Array.from({ length: Math.max(left.length, right.length) }, (_, index) => String(index)).sort()
+        const indexes = Array.from({ length: Math.max(left.length, right.length) }, (_, index) =>
+          String(index)
+        ).toSorted()
         for (const index of indexes) {
           const numericIndex = Number(index)
           visit(
@@ -375,7 +379,7 @@ const manifestDiff = (
         return
       }
       if (bothObjects) {
-        const keys = [...new Set([...Object.keys(left), ...Object.keys(right)])].sort()
+        const keys = [...new Set([...Object.keys(left), ...Object.keys(right)])].toSorted()
         for (const key of keys) {
           visit(
             `${path}/${pointerSegment(key)}`,
@@ -422,28 +426,26 @@ const normalizeEvidence = (value: unknown, depth = 0, seen = new Set<object>()):
   if (typeof value === 'function') return boundedString(`[function ${value.name || 'anonymous'}]`)
 
   if (seen.has(value)) throw new EvidenceLimitError('Evidence contains a cycle')
-  seen.add(value)
 
-  try {
-    if (Array.isArray(value)) {
-      if (value.length > MAX_VALUE_ITEMS) {
-        throw new EvidenceLimitError(`Evidence array exceeds ${MAX_VALUE_ITEMS} items`)
-      }
-      return value.map((entry) => normalizeEvidence(entry, depth + 1, seen))
+  const childSeen = new Set([...seen, value])
+  if (Array.isArray(value)) {
+    if (value.length > MAX_VALUE_ITEMS) {
+      throw new EvidenceLimitError(`Evidence array exceeds ${MAX_VALUE_ITEMS} items`)
     }
-
-    const keys = Object.keys(value).sort()
-    if (keys.length > MAX_VALUE_ITEMS) {
-      throw new EvidenceLimitError(`Evidence object exceeds ${MAX_VALUE_ITEMS} keys`)
-    }
-    const result: Record<string, JsonValue> = {}
-    for (const key of keys) {
-      result[boundedString(key)] = normalizeEvidence((value as Record<string, unknown>)[key], depth + 1, seen)
-    }
-    return result
-  } finally {
-    seen.delete(value)
+    return value.map((entry) => normalizeEvidence(entry, depth + 1, childSeen))
   }
+
+  const keys = Object.keys(value).toSorted()
+  if (keys.length > MAX_VALUE_ITEMS) {
+    throw new EvidenceLimitError(`Evidence object exceeds ${MAX_VALUE_ITEMS} keys`)
+  }
+  return keys.reduce(
+    (acc, key) => {
+      acc[boundedString(key)] = normalizeEvidence((value as Record<string, unknown>)[key], depth + 1, childSeen)
+      return acc
+    },
+    {} as Record<string, JsonValue>
+  )
 }
 
 const assertBoundedEvidence = (value: unknown): void => {
@@ -468,7 +470,7 @@ const TERMINAL_EVIDENCE_FAILURE = normalizeTerminal(
 
 const deepFreeze = <Value>(value: Value): Value => {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
-    for (const child of Object.values(value)) deepFreeze(child)
+    Object.values(value).forEach(deepFreeze)
     Object.freeze(value)
   }
   return value
@@ -1246,8 +1248,8 @@ export const diagnoseChromeNativeActionLifecycle = async (
     ...startupTargets
       .filter(({ type }) => type === 'service_worker')
       .map((target, index) => ({ target, atMs: startupInventoryAtMs, order: pendingEvents.length + index }))
-  ].sort((left, right) => left.atMs - right.atMs || left.order - right.order)
-  for (const { target, atMs } of initialWorkerSightings) addWorker(target, atMs)
+  ].toSorted((left, right) => left.atMs - right.atMs || left.order - right.order)
+  initialWorkerSightings.forEach(({ target, atMs }) => addWorker(target, atMs))
 
   const observeWorkerEvent = (event: ChromeLifecycleEvent, eventAtMs: number): boolean => {
     if (event.type === 'target-created' || event.type === 'target-changed' || event.type === 'target-attached') {

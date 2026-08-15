@@ -6,21 +6,19 @@
  * @see https://en.wikipedia.org/wiki/Longest_common_subsequence
  */
 const getTextLCS = (a: string, b: string): number => {
-  // Create a 2D array to store the lengths of longest common subsequences
-  const dp: number[][] = Array.from({ length: a.length + 1 }, () => Array(b.length + 1).fill(0))
-
-  // Fill the dp array
-  for (let i = 1; i <= a.length; i++) {
-    for (let j = 1; j <= b.length; j++) {
-      // If characters match, increment the length of the LCS found so far
-      if (a[i - 1] === b[j - 1]) {
-        dp[i][j] = dp[i - 1][j - 1] + 1
-      } else {
-        // If characters do not match, take the maximum length from the previous computations
-        dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1])
-      }
-    }
-  }
+  // The dp table is a fresh, exclusively owned accumulator: nested folds fill each cell in
+  // place, keeping the linear row-by-column work of the original nested loop.
+  const dp = Array.from({ length: a.length }, () => 0).reduce<number[][]>(
+    (rows, _unused, rowIndex) => {
+      const i = rowIndex + 1
+      return Array.from({ length: b.length }, () => 0).reduce((table, _zero, columnIndex) => {
+        const j = columnIndex + 1
+        table[i][j] = a[i - 1] === b[j - 1] ? table[i - 1][j - 1] + 1 : Math.max(table[i - 1][j], table[i][j - 1])
+        return table
+      }, rows)
+    },
+    Array.from({ length: a.length + 1 }, () => Array(b.length + 1).fill(0))
+  )
 
   // The length of the longest common subsequence is found in the bottom-right cell of the dp array
   return dp[a.length][b.length]

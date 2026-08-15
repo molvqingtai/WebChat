@@ -45,15 +45,15 @@ const [chromeHost, chromeContent, firefoxContent] = await Promise.all([
   Promise.all(firefoxContentEntries.map((entry) => readFile(join(firefoxRoot, entry), 'utf8')))
 ])
 assert(!chromeHost.includes('tabs.query'), 'Chrome Offscreen host must not contain tabs.query')
-for (const marker of ['this.tabs.get', 'this.tabs.sendMessage']) {
+;['this.tabs.get', 'this.tabs.sendMessage'].forEach((marker) =>
   assert(firefoxBackground.includes(marker), `Firefox background provider must retain ${marker}`)
-}
-for (const relayMarker of ['Dropped Offscreen Runtime relay:', 'untrusted-source', 'target-mismatch']) {
+)
+;['Dropped Offscreen Runtime relay:', 'untrusted-source', 'target-mismatch'].forEach((relayMarker) =>
   assert(
     !firefoxBackground.includes(relayMarker),
     `Firefox background must not contain Chrome relay marker ${relayMarker}`
   )
-}
+)
 
 const expectedCoreJsImports = ['core-js/actual/typed-array/from-base64', 'core-js/actual/typed-array/to-base64']
 const coreJsImports = [...wireCodecSource.matchAll(/^import '([^']*core-js[^']*)'$/gm)].map((match) => match[1])
@@ -70,27 +70,31 @@ const codecPolyfillMarkers = [
   'toHex',
   'setFromHex'
 ]
-for (const [target, bundles] of [
-  ['Chrome content', chromeContent],
-  ['Firefox content', firefoxContent]
-] as const) {
-  for (const [index, bundle] of bundles.entries()) {
-    for (const marker of codecPolyfillMarkers) {
+;(
+  [
+    ['Chrome content', chromeContent],
+    ['Firefox content', firefoxContent]
+  ] as const
+).forEach(([target, bundles]) =>
+  bundles.forEach((bundle, index) =>
+    codecPolyfillMarkers.forEach((marker) =>
       assert(!bundle.includes(marker), `${target} entry ${index} must not contain codec polyfill marker ${marker}`)
-    }
-  }
-}
-for (const [target, bundle] of [
-  ['Chrome host', chromeHost],
-  ['Firefox background', firefoxBackground]
-] as const) {
-  for (const marker of ['fromBase64', 'toBase64', 'lastChunkHandling']) {
+    )
+  )
+)
+;(
+  [
+    ['Chrome host', chromeHost],
+    ['Firefox background', firefoxBackground]
+  ] as const
+).forEach(([target, bundle]) => {
+  ;['fromBase64', 'toBase64', 'lastChunkHandling'].forEach((marker) =>
     assert(bundle.includes(marker), `${target} must contain ${marker}`)
-  }
-  for (const residue of ['setFromBase64', 'fromHex', 'toHex', 'setFromHex', 'atob(', 'btoa(']) {
+  )
+  ;['setFromBase64', 'fromHex', 'toHex', 'setFromHex', 'atob(', 'btoa('].forEach((residue) =>
     assert(!bundle.includes(residue), `${target} must not contain unrelated Base64/hex residue ${residue}`)
-  }
-}
+  )
+})
 
 console.log(
   JSON.stringify({

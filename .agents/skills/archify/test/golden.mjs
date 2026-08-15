@@ -48,7 +48,7 @@ const GOLDEN = [
   ['architecture', 'web-app.architecture.json', 'web-app-rendered.html']
 ]
 
-for (const [mode, input, golden] of GOLDEN) {
+GOLDEN.forEach(([mode, input, golden]) => {
   const out = path.join(tmp, golden)
   try {
     render(mode, path.join(examplesRoot, input), out)
@@ -62,7 +62,7 @@ for (const [mode, input, golden] of GOLDEN) {
   } catch (err) {
     check(`${mode}: ${golden}`, false, String(err.stderr || err.message).slice(0, 300))
   }
-}
+})
 
 // ---------------------------------------------------------------------------
 console.log('schema enforcement (invalid JSON must fail with a path-prefixed message)')
@@ -171,7 +171,7 @@ const template = fs.readFileSync(path.join(skillRoot, 'assets/template.html'), '
 const webApp = fs.readFileSync(path.join(examplesRoot, 'web-app-rendered.html'), 'utf8')
 // <style> and <script> blocks pass through applyTemplate untouched, so the
 // architecture-mode example must contain them verbatim or it has drifted.
-for (const tag of ['style', 'script']) {
+;['style', 'script'].forEach((tag) => {
   const t = blocks(template, tag).filter((b) => !b.includes('[PROJECT NAME]'))
   const w = blocks(webApp, tag).filter((b) => !b.includes('Sample Web App'))
   check(
@@ -179,7 +179,7 @@ for (const tag of ['style', 'script']) {
     JSON.stringify(t) === JSON.stringify(w),
     'examples/web-app-rendered.html was generated from a stale template — re-derive it'
   )
-}
+})
 
 // ---------------------------------------------------------------------------
 console.log('version sync')

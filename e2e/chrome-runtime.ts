@@ -305,7 +305,6 @@ try {
       })
       const { targetInfos } = await client.send<{ targetInfos: TargetInfo[] }>('Target.getTargets')
       targetInfos.forEach((targetInfo) => targets.set(targetInfo.targetId, targetInfo))
-
       const sessionForTarget = async (targetInfo: TargetInfo, label: string): Promise<TargetSession> => {
         let current = [...sessions.entries()].find(
           ([sessionId, target]) => enabledSessions.has(sessionId) && target.targetId === targetInfo.targetId

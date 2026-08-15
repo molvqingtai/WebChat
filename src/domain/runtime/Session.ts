@@ -12,7 +12,16 @@ import {
   type PresenceDomainRecord
 } from '@/domain/runtime/externs/PresenceStore'
 import { CHAT_ROOM_NAMESPACE_V5, PENDING_LEAVE_GRACE_MS } from '@/constants/config'
-import { MESSAGE_TYPE, type ChatMessage, type HLC, type MentionedUser, type ChatSite, type ChatUser } from '@/protocol'
+import {
+  ChatMessageSchema,
+  MESSAGE_TYPE,
+  type ChatMessage,
+  type HLC,
+  type MentionedUser,
+  type ChatSite,
+  type ChatUser
+} from '@/protocol'
+import * as v from 'valibot'
 import {
   MESSAGE_RECORD_TYPE,
   type ChatMessageRecord,
@@ -50,8 +59,6 @@ interface PreparedSession {
   /** Unprotected same-source bindings this attempt displaced (rollback/supersession transfers none). */
   displacedBindings: SessionBinding[]
   publishRequestId?: string
-  /** Frozen distinct publication targets still awaiting their single send. */
-  publishPendingTargets: string[]
   missedPeerIds: string[]
   baselinePeerIds: string[]
 }
@@ -85,9 +92,6 @@ interface PendingChatSend {
   roomId: string
   message: ChatMessage
   /** Frozen distinct per-target send requests still awaiting their single provider call. */
-  pendingTargets: string[]
-  /** Count of targets whose provider call accepted; drives settled success/failure semantics. */
-  accepted: number
 }
 
 interface LiveRelease {
@@ -206,12 +210,8 @@ const makeRecord = (message: ChatMessage, user: ChatUser, receivedAt: number): C
 })
 
 const initialRequestId = (attemptId: string) => `session:initial:${attemptId}`
-const publishTargetRequestId = (requestId: string, target: string) => `${requestId}:${target}`
-const publishedTarget = (prepared: { publishRequestId?: string }, requestId: string) =>
-  requestId.slice(`${prepared.publishRequestId}:`.length)
 const catchUpRequestId = (attemptId: string, sourcePeerId: string) => `session:catch-up:${attemptId}:${sourcePeerId}`
 const chatRequestId = (operationId: string) => `session:chat:${operationId}`
-const chatTargetRequestId = (requestId: string, target: string) => `${requestId}:${target}`
 /** Extracts the exact domain from identity/catch-up send request ids, when structurally present. */
 const backgroundSendDomain = (requestId: string): string | undefined => {
   if (requestId.startsWith('session:peer:')) {
@@ -233,7 +233,7 @@ const SessionDomain = Remesh.domain({
   name: 'SessionDomain',
   impl: (domain) => {
     const clock = domain.getExtern(ClockExtern)
-    const roomTransport = domain.getExtern(RoomTransportExtern)
+    domain.getExtern(RoomTransportExtern)
     const identity = domain.getExtern(IdentityExtern)
     const presenceStore = domain.getExtern(PresenceStoreExtern)
     const wireDomain = domain.getDomain(WireDomain())
@@ -496,7 +496,6 @@ const SessionDomain = Remesh.domain({
           isNewPresence: !current && local.status === 'pending',
           reboundBindings: priorPrepared?.reboundBindings ?? [],
           displacedBindings: priorPrepared?.displacedBindings ?? [],
-          publishPendingTargets: [],
           missedPeerIds: [],
           baselinePeerIds: []
         }
@@ -524,87 +523,36 @@ const SessionDomain = Remesh.domain({
           joinedAt: prepared.runtime.joinedAt,
           user: prepared.runtime.user
         } as const
-        // Freeze the current physical Room membership as this publication's distinct targets.
-        const targets = [...new Set(roomTransport.peers(prepared.runtime.roomId))]
+        // A regular Session publication is one room broadcast; the transport fans it out.
         const pending = {
           ...prepared,
-          publishRequestId: requestId,
-          publishPendingTargets: targets
+          publishRequestId: requestId
         }
-        const first = targets[0]
         return [
           PreparedSessionsState().new(
             replaceBy(get(PreparedSessionsState()), (item) => item.attemptId === attemptId, pending)
           ),
-          ...(first
-            ? [
-                wireDomain.command.SendMessageCommand({
-                  requestId: publishTargetRequestId(requestId, first),
-                  roomId: prepared.runtime.roomId,
-                  targetPeerIds: [first],
-                  message
-                })
-              ]
-            : [PreparedPublishedEvent({ attemptId })])
+          wireDomain.command.SendMessageCommand({
+            requestId,
+            roomId: prepared.runtime.roomId,
+            message
+          })
         ]
       }
     })
 
-    const advancePreparedPublish = (
-      get: Parameters<Parameters<typeof domain.command>[0]['impl']>[0]['get'],
-      prepared: PreparedSession,
-      settled: string
-    ) => {
-      const remaining = prepared.publishPendingTargets.filter((item) => item !== settled)
-      const advanced = { ...prepared, publishPendingTargets: remaining }
-      const next = remaining[0]
-      return [
-        PreparedSessionsState().new(
-          replaceBy(get(PreparedSessionsState()), (item) => item.attemptId === prepared.attemptId, advanced)
-        ),
-        ...(next
-          ? [
-              wireDomain.command.SendMessageCommand({
-                requestId: publishTargetRequestId(prepared.publishRequestId!, next),
-                roomId: prepared.runtime.roomId,
-                targetPeerIds: [next],
-                message: {
-                  type: MESSAGE_TYPE.SESSION,
-                  sessionId: prepared.runtime.sessionId,
-                  presenceId: prepared.runtime.presenceId,
-                  joinedAt: prepared.runtime.joinedAt,
-                  user: prepared.runtime.user
-                }
-              })
-            ]
-          : [PreparedPublishedEvent({ attemptId: prepared.attemptId })])
-      ]
-    }
-
     const CompletePreparedPublishCommand = domain.command({
       name: 'Session.CompletePreparedPublishCommand',
       impl: ({ get }, requestId: string) => {
-        const prepared = get(PreparedSessionsState()).find(
-          (item) =>
-            item.publishRequestId !== undefined &&
-            item.publishPendingTargets.some(
-              (target) => publishTargetRequestId(item.publishRequestId!, target) === requestId
-            )
-        )
-        return prepared ? advancePreparedPublish(get, prepared, publishedTarget(prepared, requestId)) : null
+        const prepared = get(PreparedSessionsState()).find((item) => item.publishRequestId === requestId)
+        return prepared ? PreparedPublishedEvent({ attemptId: prepared.attemptId }) : null
       }
     })
 
     const FailPreparedPublishCommand = domain.command({
       name: 'Session.FailPreparedPublishCommand',
       impl: ({ get }, payload: { requestId: string; error: Error; stage?: WireFailureStage }) => {
-        const prepared = get(PreparedSessionsState()).find(
-          (item) =>
-            item.publishRequestId !== undefined &&
-            item.publishPendingTargets.some(
-              (target) => publishTargetRequestId(item.publishRequestId!, target) === payload.requestId
-            )
-        )
+        const prepared = get(PreparedSessionsState()).find((item) => item.publishRequestId === payload.requestId)
         if (!prepared) return null
         // Owner loss (leave/supersede invalidates the queue) cancels the publish quietly.
         if (payload.stage === 'cancelled') return null
@@ -612,10 +560,10 @@ const SessionDomain = Remesh.domain({
         if (payload.stage === 'preflight') {
           return PreparedPublishFailedEvent({ attemptId: prepared.attemptId, error: payload.error })
         }
-        // A genuine target failure is surfaced once and never retried; remaining targets still run.
+        // A genuine broadcast failure is surfaced once; the publication is complete.
         return [
           ErrorEvent({ error: payload.error, domain: prepared.runtime.domain }),
-          ...advancePreparedPublish(get, prepared, publishedTarget(prepared, payload.requestId))
+          PreparedPublishedEvent({ attemptId: prepared.attemptId })
         ]
       }
     })
@@ -1132,10 +1080,21 @@ const SessionDomain = Remesh.domain({
         }
         const runtime = get(DomainsState()).find((item) => item.domain === payload.domain)
         const event = payload.event
-        if (!runtime || (event.type !== MESSAGE_TYPE.TEXT && event.type !== MESSAGE_TYPE.REACTION)) {
+        if (!runtime) {
           return OperationFailedEvent({
             operationId: payload.operationId,
-            error: new Error('Chat message does not match the active local session')
+            error: new Error('Runtime is not ready for this site')
+          })
+        }
+        // The Chat delivery boundary: a locally authored ChatMessage is parsed once through the
+        // same static ChatMessageSchema before local persistence and peer codec encoding/send;
+        // failure performs neither side effect. The schema owns the type discriminant; no
+        // pre-Schema allow-list or second validation branch exists here.
+        const parsed = v.safeParse(ChatMessageSchema, event)
+        if (!parsed.success) {
+          return OperationFailedEvent({
+            operationId: payload.operationId,
+            error: new Error('Invalid message.')
           })
         }
         const adopted = adoptHlc(get(HlcState()), event.hlc)
@@ -1146,15 +1105,12 @@ const SessionDomain = Remesh.domain({
           })
         }
         const requestId = chatRequestId(payload.operationId)
-        const targets = [...new Set(runtime.sessions.map((session) => session.sourcePeerId))]
         const pending: PendingChatSend = {
           operationId: payload.operationId,
           requestId,
           domain: payload.domain,
           roomId: runtime.roomId,
-          message: event,
-          pendingTargets: targets,
-          accepted: 0
+          message: event
         }
         return [
           HlcState().new(adopted),
@@ -1162,39 +1118,22 @@ const SessionDomain = Remesh.domain({
             ...get(PendingChatSendsState()).filter((item) => item.operationId !== payload.operationId),
             pending
           ]),
-          ...(targets.length > 0
-            ? [sendChatTarget(pending)]
-            : [OperationSucceededEvent({ operationId: payload.operationId })])
+          // An ordinary Chat message is one room broadcast; the transport fans it out.
+          wireDomain.command.SendMessageCommand({
+            requestId,
+            roomId: runtime.roomId,
+            message: event
+          })
         ]
       }
     })
-
-    const sendChatTarget = (pending: PendingChatSend) =>
-      wireDomain.command.SendMessageCommand({
-        requestId: chatTargetRequestId(pending.requestId, pending.pendingTargets[0]),
-        roomId: pending.roomId,
-        targetPeerIds: [pending.pendingTargets[0]],
-        message: pending.message
-      })
 
     const CompleteChatSendCommand = domain.command({
       name: 'Session.CompleteChatSendCommand',
       impl: ({ get }, requestId: string) => {
         const state = get(PendingChatSendsState())
-        const pending = state.find((item) =>
-          item.pendingTargets.some((target) => chatTargetRequestId(item.requestId, target) === requestId)
-        )
+        const pending = state.find((item) => item.requestId === requestId)
         if (!pending) return null
-        const remaining = pending.pendingTargets.filter(
-          (target) => chatTargetRequestId(pending.requestId, target) !== requestId
-        )
-        const next = { ...pending, pendingTargets: remaining, accepted: pending.accepted + 1 }
-        if (remaining.length > 0) {
-          return [
-            PendingChatSendsState().new(replaceBy(state, (item) => item.operationId === pending.operationId, next)),
-            sendChatTarget(next)
-          ]
-        }
         return [
           PendingChatSendsState().new(removeBy(state, (item) => item.operationId === pending.operationId)),
           OperationSucceededEvent({ operationId: pending.operationId })
@@ -1206,35 +1145,13 @@ const SessionDomain = Remesh.domain({
       name: 'Session.FailChatSendCommand',
       impl: ({ get }, payload: { requestId: string; error: Error; stage?: WireFailureStage }) => {
         const state = get(PendingChatSendsState())
-        const pending = state.find((item) =>
-          item.pendingTargets.some((target) => chatTargetRequestId(item.requestId, target) === payload.requestId)
-        )
+        const pending = state.find((item) => item.requestId === payload.requestId)
         if (!pending) return null
-        const settle = (accepted: number) => {
-          const clear = [
-            PendingChatSendsState().new(removeBy(state, (item) => item.operationId === pending.operationId))
-          ]
-          // A send settles as success only when at least one target accepted; a wholly-failed or
-          // explicit-single-target send rejects so a real send failure is never recorded as success.
-          return accepted > 0
-            ? [...clear, OperationSucceededEvent({ operationId: pending.operationId })]
-            : [...clear, OperationFailedEvent({ operationId: pending.operationId, error: payload.error })]
-        }
-        // Owner loss cancels the remaining targets; success only if some target had already accepted.
-        if (payload.stage === 'cancelled') return settle(pending.accepted)
-        const remaining = pending.pendingTargets.filter(
-          (target) => chatTargetRequestId(pending.requestId, target) !== payload.requestId
-        )
-        const next = { ...pending, pendingTargets: remaining }
+        const clear = [PendingChatSendsState().new(removeBy(state, (item) => item.operationId === pending.operationId))]
+        // Owner loss cancels the send quietly.
+        if (payload.stage === 'cancelled') return clear
         const failure = ErrorEvent({ error: payload.error, domain: pending.domain })
-        if (remaining.length > 0) {
-          return [
-            failure,
-            PendingChatSendsState().new(replaceBy(state, (item) => item.operationId === pending.operationId, next)),
-            sendChatTarget(next)
-          ]
-        }
-        return [failure, ...settle(pending.accepted)]
+        return [...clear, failure, OperationFailedEvent({ operationId: pending.operationId, error: payload.error })]
       }
     })
 

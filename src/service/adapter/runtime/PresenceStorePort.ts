@@ -64,13 +64,13 @@ const dispatch = (
   message: Message,
   onError: (error: unknown) => void
 ) => {
-  for (const callback of callbacks) {
+  callbacks.forEach((callback) => {
     try {
       Promise.resolve(callback(message)).catch(onError)
     } catch (error) {
       onError(error)
     }
-  }
+  })
 }
 
 /** Point-to-point provider for the Chrome background-owned PresenceStore. */
@@ -118,9 +118,9 @@ export class PresenceStoreProviderPortAdapter implements Adapter {
   private detach(binding: PortBinding, disconnect: boolean) {
     binding.port.onMessage.removeListener(binding.onMessage)
     binding.port.onDisconnect.removeListener(binding.onDisconnect)
-    for (const [id, requestPort] of this.requestPorts) {
+    this.requestPorts.forEach((requestPort, id) => {
       if (requestPort === binding) this.requestPorts.delete(id)
-    }
+    })
     if (this.active === binding) this.active = undefined
     if (disconnect) {
       try {
@@ -219,9 +219,9 @@ export class PresenceStoreInjectPortAdapter implements Adapter {
   }
 
   private releaseGenerationResponses(generation: InjectorGeneration) {
-    for (const preparation of this.preparations) {
+    this.preparations.forEach((preparation) => {
       if (preparation.generation === generation) this.callbacks.delete(preparation.response)
-    }
+    })
   }
 
   private detach(binding: PortBinding, disconnect: boolean) {
@@ -238,8 +238,9 @@ export class PresenceStoreInjectPortAdapter implements Adapter {
   }
 
   private rejectBindingPending(binding: PortBinding, reason: string) {
-    for (const [id, pending] of this.pending) {
-      if (pending.binding !== binding) continue
+    // from the live Map while dispatching its failure exactly once
+    this.pending.forEach((pending, id) => {
+      if (pending.binding !== binding) return
       this.pending.delete(id)
       dispatch(
         this.callbacks,
@@ -255,11 +256,11 @@ export class PresenceStoreInjectPortAdapter implements Adapter {
         },
         () => {}
       )
-    }
+    })
   }
 
   private rejectAllPending(reason: string) {
-    for (const { binding } of new Set(this.pending.values())) this.rejectBindingPending(binding, reason)
+    new Set(this.pending.values()).forEach(({ binding }) => this.rejectBindingPending(binding, reason))
   }
 
   private takePreparation() {
@@ -272,8 +273,7 @@ export class PresenceStoreInjectPortAdapter implements Adapter {
   }
 
   private acknowledgeHeartbeat(message: Message) {
-    const callbacks = new Set(this.callbacks)
-    for (const preparation of this.preparations) callbacks.add(preparation.response)
+    const callbacks = new Set([...this.callbacks, ...this.preparations.map((preparation) => preparation.response)])
     dispatch(
       callbacks,
       {
@@ -342,7 +342,7 @@ export class PresenceStoreInjectPortAdapter implements Adapter {
     this.disposed = true
     const reason = 'PresenceStore Offscreen adapter disposed'
     if (this.current) this.current.terminalReason ??= reason
-    for (const preparation of this.preparations) preparation.generation.terminalReason ??= reason
+    this.preparations.forEach((preparation) => (preparation.generation.terminalReason ??= reason))
     if (this.active) this.detach(this.active, true)
     this.rejectAllPending(reason)
     this.preparations.length = 0

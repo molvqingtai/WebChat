@@ -260,14 +260,14 @@ const prepareDelivery = async (...fixtures: Fixture[]) => {
       expect(fixture.sessionListeners.size).toBe(1)
     })
   })
-  fixtures.forEach((fixture) => {
+  fixtures.forEach((fixture) =>
     fixture.emitSessions([
       { sessionId: 'local-session', user: SELF },
       { sessionId: 'remote-session', user: OTHER },
       { sessionId: 'alpha-session', user: ALPHA },
       { sessionId: 'beta-session', user: BETA }
     ])
-  })
+  )
 }
 
 const statusOf = (fixture: Fixture) => ({

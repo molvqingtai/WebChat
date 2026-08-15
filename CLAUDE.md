@@ -117,12 +117,12 @@ Key storage keys in `src/constants/storage.ts`:
 
 ### History Synchronization
 
-- `HISTORY_WINDOW_DAYS = 180` is a peer-history candidate window, not a local durable-retention or deletion policy.
-- The requester freezes `requesterNow - 180 days` once at sync start. Retries, pagination, and provider failover do not reread its injected clock.
-- Each provider independently freezes `providerNow - 180 days` at supply-session admission. Page failover, later cursors, and successor promotion retain that admitted cutoff.
+- `HISTORY_WINDOW_DAYS = 30` is a peer-history candidate window, not a local durable-retention or deletion policy.
+- The requester freezes `requesterNow - 30 days` once at sync start. Retries, pagination, and provider failover do not reread its injected clock.
+- Each provider independently freezes `providerNow - 30 days` at supply-session admission. Page failover, later cursors, and successor promotion retain that admitted cutoff.
 - Cutoffs are not sent on the wire and do not need to match. Provider filtering is non-destructive; the requester remains final acceptance authority.
 - Both sides accept an event exactly at their own cutoff and exclude or reject only earlier events. Clock skew may omit a boundary candidate but cannot expand the requester's window.
-- A history session is recent-first and bounded to 10,000 events or 8MiB with a 10-second timeout. Provider admission allows at most 4 active jobs, 32 admitted jobs including dormant successors, and 8KiB of queued metadata. Each page supply has a five-second physical cancellation boundary.
+- A history session is recent-first with no whole-session cumulative event-count or byte budget and a fixed 10-second no-progress timeout. Provider admission allows at most 4 active jobs, 32 admitted jobs including dormant successors, and 8KiB of queued metadata. Each page supply has a five-second physical cancellation boundary.
 
 ## Code Organization
 
@@ -162,14 +162,14 @@ Application and Runtime constants in `src/constants/config.ts`:
 - `MESSAGE_MAX_LENGTH = 500` - Maximum visible draft length
 - `MESSAGE_IMAGE_TARGET_SIZE = 30 * 1024` - Image-compression target; canonical event size remains authoritative
 - `MAX_AVATAR_SIZE = 5120` - Maximum avatar size in browser sync storage
-- `HISTORY_WINDOW_DAYS = 180` - Frozen peer-history candidate window
+- `HISTORY_WINDOW_DAYS = 30` - Frozen peer-history candidate window
 - `RUNTIME_DOMAIN_GRACE_MS = 5000` - Per-domain last-page detach grace; it is not the shared host lifetime
 
 Public limits in `src/protocol/Limits.ts` are deliberately separate:
 
-- A wire frame is at most 64KiB; a history response must be strictly less than 64KiB.
-- Decoded JSON is at most 256KiB.
-- A canonical chat event is at most 48KiB; a `User` value is at most 8KiB.
+- A wire frame is at most 256KiB; a history response must be strictly less than 256KiB.
+- Decoded JSON is at most 1MiB.
+- The static declarative Text body ceiling is at most 192KiB; a `User` value is at most 8KiB.
 - A history response contains at most 100 events.
 
 ## Browser Extension Specifics

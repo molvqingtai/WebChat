@@ -1,12 +1,18 @@
 ## ADDED Requirements
 
-### Requirement: Manual Refresh rebuilds current-domain connection state from a clean baseline
+### Requirement: Manual Refresh rebuilds current-domain and World connection state from clean baselines
 
 An accepted AppButton Refresh SHALL fully destroy all connection state owned by the current domain before its replacement can synchronize or commit. This destruction SHALL include the domain's physical Chat transport owner and peer; trusted room membership; Connection attempt, generation, phase/readiness, retry, and recovery work; committed and provisional Session state; remote presence observations including active or ended records; pending leaves; History requester/provider work and synchronization bindings; volatile Delivery buffer, sequence, batch, and acknowledgement state; member snapshots; baseline and catch-up facts; send/decode queues; and every domain-scoped timer, cache, callback, operation, or fence. No destroyed fact SHALL seed the replacement snapshot, reject an otherwise valid current SESSION, replay an old delivery, publish an old result, or settle current work.
 
 After the reset settles, Refresh SHALL use the same canonical current-domain join, SESSION exchange, validation, and member-snapshot commit path used by a clean domain connection. It SHALL rotate physical `peerId` and `sessionId` while retaining the active local logical `presenceId` and `joinedAt`; preserving that logical identity SHALL neither preserve a remote observation nor generate a false logical leave or join. Every page currently attached to that domain SHALL converge to the replacement's committed snapshot.
 
-The destruction SHALL be scoped to the current domain's connection state. The current domain's page lease SHALL remain attached, but no prior connection phase or readiness result SHALL satisfy the replacement; readiness SHALL be re-established only by the canonical clean attempt. Persistent message history, configured user identity and settings, the current page and its page-owned state, the shared World peer, World state for all sites, and every other domain's Chat connection, sessions, presence, messages, member snapshot, History/Delivery work, and recovery state SHALL remain unchanged. Refresh SHALL re-publish the current domain's presence through the existing flow. It SHALL NOT change peer wire messages or schemas, codec or version, protocol namespaces, room identifiers, peer compatibility, persistence schemas, or the public `ChatRoom` interface, and SHALL add no alternate refresh-only synchronization path, fallback, migration, or compatibility layer.
+The current-Domain destruction SHALL remain scoped to that Domain's connection state. The current Domain's page lease SHALL remain attached, but no prior connection phase or readiness result SHALL satisfy the replacement; readiness SHALL be re-established only by the canonical clean attempt. Persistent message history, configured user identity and settings, the current page and its page-owned state, and every other Domain's Chat connection, sessions, presence, messages, member snapshot, History/Delivery work, and recovery state SHALL remain unchanged. Refresh SHALL re-publish the current Domain's presence through the existing flow.
+
+The same accepted ready-state AppButton Refresh SHALL independently destroy the singleton World connection's physical transport owner and peer, trusted membership, room-member and remote-presence projection, connection/recovery generation, pending or staged connection-scoped publication, send/decode queue, timer, callback, and stale completion authority. Active World Domain registrations, user/site values, desired World demand, and the current complete local presence snapshot SHALL survive this physical cleanup. The old World owner SHALL physically leave and settle before a canonical World join establishes a fresh physical generation. Only after that join is trusted SHALL World publish exactly one current full presence snapshot and rebuild its projected remote list from current-generation facts. Manual refresh SHALL NOT remove a Domain registration, publish an artificial empty-registry snapshot, or let an old World fact mutate, settle, or reject the replacement.
+
+One ready-state AppButton activation SHALL start the current-Domain and World operations without awaiting either before starting the other. The existing current-Domain reconnect request SHALL remain the sole owner of AppButton availability, disabled/loading state, accessible label, completion, and error presentation. Domain settlement SHALL restore the button without waiting for World. World loading, progress, completion, and error SHALL be absent from the UI and SHALL NOT change the Domain result; Domain settlement SHALL NOT cancel World. A manual World child that overlaps current automatic World recovery or a prior manual World replacement SHALL join that one current in-flight operation instead of creating another physical owner. Before application readiness, the AppButton slot SHALL retain only the existing initialization Retry behavior and SHALL NOT manually refresh World.
+
+Refresh SHALL NOT change peer wire messages or schemas, codec or version, protocol namespaces, room identifiers, peer compatibility, persistence schemas, the public `ChatRoom` interface, or the projected `WorldRoomExtern` interface, and SHALL add no alternate refresh-only synchronization path, fallback, migration, compatibility layer, or new UI control.
 
 #### Scenario: Ended remote observation cannot survive Refresh
 
@@ -32,17 +38,47 @@ The destruction SHALL be scoped to the current domain's connection state. The cu
 - **WHEN** one page activates AppButton Refresh
 - **THEN** the Runtime SHALL perform one current-domain clean replacement and every attached same-domain page SHALL converge to its one committed member snapshot without retaining or replaying the old snapshot
 
+#### Scenario: One click starts two real room replacements
+
+- **GIVEN** the application is ready with a current Domain connection and a joined singleton World connection
+- **WHEN** the user activates AppButton Refresh once
+- **THEN** the Runtime SHALL start the current-Domain and World refresh operations without serializing their starts, each old physical owner SHALL leave and settle before its own replacement joins, and neither operation SHALL substitute a data-only reload for physical room replacement
+
+#### Scenario: World rebuild preserves demand but not old connection facts
+
+- **GIVEN** active Domain registrations produce a complete local World snapshot while the current World generation has trusted membership, remote presence, pending work, queues, timers, callbacks, or recovery facts
+- **WHEN** the World child of AppButton Refresh replaces that connection
+- **THEN** the active registrations, desired sites, user values, and World demand SHALL remain, every listed old-generation connection fact SHALL lose authority before rejoin, and the fresh generation SHALL publish one current full snapshot and rebuild the projected list only from current-generation presence
+
+#### Scenario: Domain alone owns Refresh presentation and result
+
+- **GIVEN** the Domain and World children complete in either order or exactly one child fails
+- **WHEN** AppButton Refresh is observed through application UI
+- **THEN** only the Domain child SHALL control the disabled/loading state, accessible label, completion, and error presentation; Domain settlement SHALL restore the button without waiting for World, and World status SHALL produce no UI state or Toast and SHALL not alter the Domain result
+
+#### Scenario: Manual activation shares the current World replacement
+
+- **GIVEN** automatic World recovery or a prior manual World replacement remains in flight when the AppButton is available
+- **WHEN** the user activates AppButton Refresh again
+- **THEN** the newly accepted Domain refresh SHALL start its own current operation while the World child SHALL join the one existing World replacement, with no second World leave, peer, join, publication, or stale completion authority
+
+#### Scenario: Pre-ready Retry does not become a World refresh
+
+- **GIVEN** application initialization has not reached ready state
+- **WHEN** the user activates the AppButton Retry slot
+- **THEN** only the existing initialization Retry SHALL run, no manual World disconnect/rejoin SHALL start, and the existing initialization presentation SHALL remain unchanged
+
 #### Scenario: Volatile History and Delivery work does not cross Refresh
 
 - **GIVEN** the current domain owns active History synchronization, pending supply or feedback work, buffered inbound deliveries, batch acknowledgement state, and old-generation send or decode queues
 - **WHEN** AppButton Refresh destroys the domain connection state
 - **THEN** all such current-domain work SHALL be cancelled or discarded before replacement, no old record or terminal SHALL be replayed into the new generation, and persistent message records already stored by the page SHALL remain unchanged
 
-#### Scenario: Preserved data and unrelated network scopes are unchanged
+#### Scenario: Preserved data and unrelated Domain scopes are unchanged
 
-- **GIVEN** the current domain has persistent messages and page state while the shared World peer and another domain's Chat connection are active
-- **WHEN** AppButton Refresh rebuilds the current domain
-- **THEN** the messages, configured identity and settings, current page, shared World peer, World site state, and other domain's Chat peer, sessions, presence, messages, member snapshot, and recovery work SHALL remain unchanged
+- **GIVEN** the current Domain has persistent messages and page state while active World registrations and another Domain's Chat connection exist
+- **WHEN** AppButton Refresh rebuilds the current Domain and World connections
+- **THEN** the messages, configured identity and settings, current page, page lease, active World registrations and desired sites, and the other Domain's Chat peer, sessions, presence, messages, member snapshot, and recovery work SHALL remain unchanged, while only the World physical generation and connection-derived projection are replaced
 
 #### Scenario: Refresh uses the existing external contract
 
@@ -53,7 +89,7 @@ The destruction SHALL be scoped to the current domain's connection state. The cu
 
 - **GIVEN** the current page remains attached and the current local logical presence is active
 - **WHEN** AppButton Refresh resets connection state
-- **THEN** it SHALL obtain the member-recovery result of a clean domain connection without deleting persistent data, waiting for the last-tab grace, removing the current page lease, retiring the logical presence, or rebuilding the shared World peer
+- **THEN** it SHALL obtain the member-recovery result of a clean Domain connection and a clean World physical replacement without deleting persistent data, waiting for last-tab grace, removing the current page lease, retiring the logical presence, removing World registrations, or changing World demand
 
 #### Scenario: Common SESSION guard is audited across lifecycle entries
 

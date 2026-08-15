@@ -165,31 +165,37 @@ export class Coordinator {
   }
 
   private async reconcileTabs() {
-    await Promise.allSettled(
+    await Promise.all(
       this.currentTabs().map(async (binding) => {
-        const url = await this.currentNavigation(binding)
-        if (!url) {
-          await this.removeCurrentTab(binding.tabId)
-          return
+        try {
+          const url = await this.currentNavigation(binding)
+          if (!url) {
+            await this.removeCurrentTab(binding.tabId)
+            return
+          }
+          if (url === binding.url) return
+          const current = this.tabs.get(binding.tabId)
+          if (current?.pageId !== binding.pageId) return
+          this.tabs.set(binding.tabId, { ...current, url })
+          await this.persist()
+        } catch {
+          // best-effort reconciliation: a failed tab must not block the remaining tabs
         }
-        if (url === binding.url) return
-        const current = this.tabs.get(binding.tabId)
-        if (current?.pageId !== binding.pageId) return
-        this.tabs.set(binding.tabId, { ...current, url })
-        await this.persist()
       })
     )
   }
 
   private async rebuildTabs() {
     await this.reconcileTabs()
-    await Promise.allSettled(
+    await Promise.all(
       this.currentTabs().map((binding) =>
         withDeadline(
           this.options.attachPage({ domain: binding.domain, pageId: binding.pageId }),
           COORDINATOR_RPC_TIMEOUT_MS,
           'Runtime page attachment timed out'
-        )
+        ).catch(() => {
+          // best-effort attachment: a failed tab must not block the remaining tabs
+        })
       )
     )
   }

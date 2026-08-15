@@ -52,8 +52,7 @@ const imageDataUrlToBlob = (source: string) => {
       return new Blob([decodeURIComponent(encoded)], { type: mediaType })
     }
     const decoded = atob(encoded)
-    const bytes = new Uint8Array(decoded.length)
-    for (let index = 0; index < decoded.length; index += 1) bytes[index] = decoded.charCodeAt(index)
+    const bytes = Uint8Array.from(decoded, (char) => char.charCodeAt(0))
     return new Blob([bytes], { type: mediaType })
   } catch {
     return null

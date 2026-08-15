@@ -138,7 +138,8 @@ const renderStatus = (storage: Storage, dependencies: InitializationDependencies
 const shell = () => screen.getByTestId('shell')
 
 afterEach(() => {
-  active.splice(0).forEach(({ stop, store }) => {
+  const activeToDispose = active.splice(0)
+  activeToDispose.forEach(({ stop, store }) => {
     stop()
     store.discard()
   })

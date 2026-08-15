@@ -31,6 +31,9 @@ export class MessageListenerRegistry {
 
   dispose() {
     let firstError: unknown
+    // The live disposer Set is iterated directly: a disposer registered during disposal joins
+    // the same pass, and the first non-nullish thrown value is retained, then thrown only if
+    // it is truthy, matching the frozen semantics.
     for (const dispose of this.disposers) {
       try {
         dispose()

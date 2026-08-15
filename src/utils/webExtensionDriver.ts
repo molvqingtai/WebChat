@@ -12,11 +12,9 @@ const webExtensionDriver: (opts: WebExtensionDriverOptions) => Driver = defineDr
   }
 
   const _storageListener: (changes: Browser.storage.StorageChange) => void = (changes) => {
-    Object.entries(changes).forEach(([key, { newValue }]) => {
-      _listeners.forEach((callback) => {
-        callback(newValue ? 'update' : 'remove', key)
-      })
-    })
+    Object.entries(changes).forEach(([key, { newValue }]) =>
+      _listeners.forEach((callback) => callback(newValue ? 'update' : 'remove', key))
+    )
   }
   const _listeners = new Set<WatchCallback>()
 

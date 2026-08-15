@@ -15,7 +15,6 @@ import type { RoomTransport } from '@/runtime/RoomTransport'
 import { NativeWireCodec, type WireCodec } from '@/protocol'
 import type { ChatSite, ChatUser } from '@/protocol'
 import type { RuntimeServer, RuntimeSnapshot } from '@/runtime/Contract'
-import { MAX_HISTORY_SESSION_BYTES, MAX_HISTORY_SESSION_MESSAGES } from '@/constants/config'
 import { PagePort, createPagePortImpl } from '@/runtime/PagePort'
 import { createBoundedPresenceStore, createMemoryPresenceStore } from '@/runtime/PresenceStore'
 
@@ -23,8 +22,6 @@ export interface ServerConfig {
   transport: RoomTransport
   clock?: Clock
   codec?: WireCodec
-  historySessionBytes?: number
-  historySessionMessages?: number
   presenceStore?: PresenceStore
 }
 
@@ -40,14 +37,9 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     ? createBoundedPresenceStore(config.presenceStore)
     : createMemoryPresenceStore()
   const worldSessionId = nanoid()
-  const historyOptions = {
-    historySessionBytes: config.historySessionBytes ?? MAX_HISTORY_SESSION_BYTES,
-    historySessionMessages: config.historySessionMessages ?? MAX_HISTORY_SESSION_MESSAGES
-  }
   const connectionOptions = {
     hostId: nanoid(),
-    worldSessionId,
-    ...historyOptions
+    worldSessionId
   }
 
   const store: RemeshStore = Remesh.store({
@@ -65,7 +57,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   const deliveryAction = DeliveryDomain()
   const sessionAction = SessionDomain()
   const worldAction = WorldDomain({ sessionId: worldSessionId })
-  const historyAction = HistoryDomain(historyOptions)
+  const historyAction = HistoryDomain()
   const connectionAction = ConnectionDomain(connectionOptions)
   store.subscribeDomain(lifecycleAction)
   store.subscribeDomain(wireAction)
@@ -535,6 +527,18 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     reconnectDomain: (payload) => {
       const existing = inFlightReconnects.get(payload.domain)
       if (existing) return existing
+      // An accepted ready-state activation also starts the independently fenced World replacement
+      // alongside the Domain child: it is never awaited, never changes the Domain result or the
+      // button/loading/completion/error UI, and coalesces into the one current World operation
+      // (automatic recovery or a prior manual replacement). It fires only when the Domain refresh
+      // itself is admissible (a committed runtime or retained seed); pre-ready Retry never reaches
+      // here and starts no World replacement.
+      if (
+        store.query(sessionDomain.query.DomainQuery(payload.domain)) ||
+        store.query(sessionDomain.query.RetainedLocalSeedQuery(payload.domain))
+      ) {
+        store.send(connectionDomain.command.RefreshWorldCommand())
+      }
       const operationId = nanoid()
       const task = performReconnect(payload.domain, operationId)
       inFlightReconnects.set(payload.domain, task)

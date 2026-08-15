@@ -116,20 +116,24 @@ const Footer: FC = () => {
 
   // Replace the hash URL in ![Image](hash:${hash}) with base64 and update the atUserRecord.
   const transformMessage = async (message: string) => {
-    let newMessage = message
     const matchList = [...message.matchAll(/!\[Image\]\(hash:([^\s)]+)\)/g)]
-    matchList?.forEach((match) => {
-      const base64 = imageRecord.current.get(match[1])
-      if (base64) {
+    const transformed = matchList.reduce(
+      (acc, match) => {
+        const base64 = imageRecord.current.get(match[1])
+        if (!base64) return acc
         const base64Syntax = `![Image](${base64})`
         const hashSyntax = match[0]
         const startIndex = match.index
         const endIndex = startIndex + base64Syntax.length - hashSyntax.length
-        newMessage = newMessage.replace(hashSyntax, base64Syntax)
-        updateAtUserAtRecord(newMessage, startIndex, endIndex, 0)
-      }
-    })
-    return newMessage
+        const nextText = acc.text.replace(hashSyntax, base64Syntax)
+        acc.text = nextText
+        acc.updates.push({ text: nextText, startIndex, endIndex })
+        return acc
+      },
+      { text: message, updates: [] as { text: string; startIndex: number; endIndex: number }[] }
+    )
+    transformed.updates.forEach(({ text, startIndex, endIndex }) => updateAtUserAtRecord(text, startIndex, endIndex, 0))
+    return transformed.text
   }
 
   const handleSendMessage = async () => {
@@ -149,7 +153,7 @@ const Footer: FC = () => {
     const byteSize = getTextByteSize(JSON.stringify(newMessage))
 
     if (byteSize > MAX_CHAT_EVENT_BYTES) {
-      return send(toastDomain.command.WarningCommand('Message size cannot exceed 48KiB.'))
+      return send(toastDomain.command.WarningCommand('Message size cannot exceed 192KiB.'))
     }
 
     send(chatRoomDomain.command.SendTextMessageCommand({ body: transformedMessage, mentions }))

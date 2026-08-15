@@ -254,13 +254,21 @@ const WireDomain = Remesh.domain({
         const current = queues.find((item) => item.roomId === request.roomId)
         if (current?.requests[0]?.sequence !== request.sequence) return null
         const requests = current.requests.slice(1)
+        const nextHead = requests[0]
+        // The next request starts only when its room is trusted and its generation is current;
+        // otherwise the tail stays suspended for a lawful join transition instead of reaching the
+        // provider after a logical leave or going stale across a generation boundary.
+        const canStartNext =
+          nextHead !== undefined &&
+          get(TrustedRoomsState()).includes(request.roomId) &&
+          generationFor(get(RoomGenerationsState()), request.roomId) === nextHead.generation
         const nextQueues =
           requests.length === 0
             ? queues.filter((item) => item.roomId !== request.roomId)
             : replaceBy(queues, (item) => item.roomId === request.roomId, {
                 roomId: request.roomId,
                 requestCount: requests.length,
-                suspended: false,
+                suspended: !canStartNext,
                 headInvoked: false,
                 requests
               })
@@ -269,7 +277,9 @@ const WireDomain = Remesh.domain({
           : MessageSentEvent({ requestId: request.requestId })
         return requests.length === 0
           ? [SendQueuesState().new(nextQueues), result]
-          : [SendQueuesState().new(nextQueues), result, SendRequestedEvent(requests[0])]
+          : canStartNext
+            ? [SendQueuesState().new(nextQueues), result, SendRequestedEvent(nextHead)]
+            : [SendQueuesState().new(nextQueues), result]
       }
     })
 
@@ -289,18 +299,16 @@ const WireDomain = Remesh.domain({
         const resumed = roomIds.flatMap((roomId) => {
           if (roomId === worldRoomId) return []
           const queue = sendQueues.find((item) => item.roomId === roomId)
-          // Only work never given to the provider may move into the next join generation; an already
-          // invoked head settles its own result and is never re-sent here.
-          return queue?.suspended && !queue.headInvoked && queue.requests[0]
-            ? [{ roomId, queue, head: queue.requests[0] }]
-            : []
+          // Every suspended owner moves into the new join generation so no tail is stranded stale,
+          // but only a never-invoked head is re-sent here; an already invoked head keeps settling
+          // its own physical result and is never re-sent.
+          return queue?.suspended && queue.requests[0] ? [{ roomId, queue, head: queue.requests[0] }] : []
         })
         const nextQueues = resumed.reduce(
           (queues, { roomId, queue }) =>
             replaceBy(queues, (item) => item.roomId === roomId, {
               ...queue,
               suspended: false,
-              headInvoked: false,
               requests: queue.requests.map((request) => ({ ...request, generation: current(roomId) }))
             }),
           sendQueues
@@ -312,7 +320,9 @@ const WireDomain = Remesh.domain({
             requestId: payload.requestId,
             roomIds
           }),
-          ...resumed.map(({ head, roomId }) => SendRequestedEvent({ ...head, generation: current(roomId) }))
+          ...resumed
+            .filter(({ queue }) => !queue.headInvoked)
+            .map(({ head, roomId }) => SendRequestedEvent({ ...head, generation: current(roomId) }))
         ]
       }
     })
@@ -324,9 +334,15 @@ const WireDomain = Remesh.domain({
         const generations = get(RoomGenerationsState())
         const generation = generationFor(generations, roomId) + 1
         const sendQueues = get(SendQueuesState())
+        const current = sendQueues.find((item) => item.roomId === roomId)
+        // An already-invoked head still awaits the actual transport.send() Promise: logical leave
+        // suppresses the queue's logical output but never impersonates that physical settlement,
+        // so exact ownership (one suspended queue holding only the invoked head) settles with the
+        // real Promise instead of a synthetic cancellation.
+        const invokedHead = payload.preservePending || !current?.headInvoked ? undefined : current.requests[0]
         const invalidated = payload.preservePending
           ? []
-          : (sendQueues.find((item) => item.roomId === roomId)?.requests ?? [])
+          : (current?.requests ?? []).filter((request) => request !== invokedHead)
         return [
           RoomGenerationsState().new(replaceBy(generations, (item) => item.roomId === roomId, { roomId, generation })),
           TrustedRoomsState().new(get(TrustedRoomsState()).filter((item) => item !== roomId)),
@@ -337,7 +353,17 @@ const WireDomain = Remesh.domain({
                   sendQueues.map((item) => (item.roomId === roomId ? { ...item, suspended: true } : item))
                 )
               ]
-            : [SendQueuesState().new(sendQueues.filter((item) => item.roomId !== roomId))]),
+            : invokedHead && current
+              ? [
+                  SendQueuesState().new(
+                    replaceBy(sendQueues, (item) => item.roomId === roomId, {
+                      ...current,
+                      suspended: true,
+                      requests: [invokedHead]
+                    })
+                  )
+                ]
+              : [SendQueuesState().new(sendQueues.filter((item) => item.roomId !== roomId))]),
           DecodeQueuesState().new(get(DecodeQueuesState()).filter((item) => item.frames[0]?.roomId !== roomId)),
           ...invalidated.map((request) =>
             MessageSendFailedEvent({
@@ -380,7 +406,9 @@ const WireDomain = Remesh.domain({
             roomId: request.roomId,
             requestCount: requests.length,
             suspended: current?.suspended ?? !trusted,
-            headInvoked: false,
+            // Appending a tail never changes the existing head's physical stage: an already
+            // invoked head keeps its exact ownership marker.
+            headInvoked: current?.headInvoked ?? false,
             requests
           })
         )

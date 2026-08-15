@@ -36,27 +36,35 @@ export function validateGridPlacement(arch, grid, problems) {
     problems.push('layout.mode must be "grid" when layout is set (free placement omits layout entirely).')
     return
   }
-  const seen = new Map()
-  for (const c of arch.components ?? []) {
-    const hasPos = Array.isArray(c.pos) && c.pos.length === 2
-    const hasCell = Number.isInteger(c.row) && Number.isInteger(c.col)
-    if (hasPos) continue // pos wins; row/col are optional hints only
-    if (!hasPos && !hasCell) {
-      problems.push(`Component "${c.id}" needs pos [x,y] or grid row/col when layout.mode is "grid".`)
-      continue
-    }
-    if (c.row < 0 || c.col < 0) {
-      problems.push(`Component "${c.id}" row/col must be non-negative integers.`)
-      continue
-    }
-    if (c.col >= grid.cols) {
-      problems.push(`Component "${c.id}" col ${c.col} exceeds layout.cols ${grid.cols} (valid: 0..${grid.cols - 1}).`)
-    }
-    const key = `${c.row},${c.col}`
-    if (seen.has(key)) {
-      problems.push(`Components "${seen.get(key)}" and "${c.id}" share grid cell row ${c.row} col ${c.col}.`)
-    } else {
-      seen.set(key, c.id)
-    }
-  }
+  // Grid placement folds over a fresh, exclusively owned accumulator: the seen map and the
+  // problem list are mutated in place and returned, keeping the scan linear.
+  const gridProblems = (arch.components ?? []).reduce(
+    (acc, c) => {
+      const hasPos = Array.isArray(c.pos) && c.pos.length === 2
+      const hasCell = Number.isInteger(c.row) && Number.isInteger(c.col)
+      if (hasPos) return acc // pos wins; row/col are optional hints only
+      if (!hasPos && !hasCell) {
+        acc.problems.push(`Component "${c.id}" needs pos [x,y] or grid row/col when layout.mode is "grid".`)
+        return acc
+      }
+      if (c.row < 0 || c.col < 0) {
+        acc.problems.push(`Component "${c.id}" row/col must be non-negative integers.`)
+        return acc
+      }
+      if (c.col >= grid.cols) {
+        acc.problems.push(
+          `Component "${c.id}" col ${c.col} exceeds layout.cols ${grid.cols} (valid: 0..${grid.cols - 1}).`
+        )
+      }
+      const key = `${c.row},${c.col}`
+      if (acc.seen.has(key)) {
+        acc.problems.push(`Components "${acc.seen.get(key)}" and "${c.id}" share grid cell row ${c.row} col ${c.col}.`)
+      } else {
+        acc.seen.set(key, c.id)
+      }
+      return acc
+    },
+    { seen: new Map(), problems: [] }
+  )
+  problems.push(...gridProblems.problems)
 }

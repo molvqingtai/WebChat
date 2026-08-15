@@ -116,8 +116,9 @@ export function roundedPath(points, radius) {
     return polylinePath(points)
   }
 
-  const commands = [`M ${points[0][0]} ${points[0][1]}`]
-  for (let i = 1; i < points.length - 1; i += 1) {
+  // Iterate indices so a sparse interior slot is visited and throws on destructuring, exactly
+  // like the parent counted loop; slice/flatMap would silently skip the hole.
+  const interior = Array.from({ length: points.length - 2 }, (_, index) => index + 1).flatMap((i) => {
     const [px, py] = points[i - 1]
     const [cx, cy] = points[i]
     const [nx, ny] = points[i + 1]
@@ -125,17 +126,14 @@ export function roundedPath(points, radius) {
     const nextLen = Math.hypot(nx - cx, ny - cy)
     const r = Math.min(radius, prevLen / 2, nextLen / 2)
     if (r < 1) {
-      commands.push(`L ${cx} ${cy}`)
-      continue
+      return [`L ${cx} ${cy}`]
     }
     const before = [cx - ((cx - px) / prevLen) * r, cy - ((cy - py) / prevLen) * r]
     const after = [cx + ((nx - cx) / nextLen) * r, cy + ((ny - cy) / nextLen) * r]
-    commands.push(`L ${before[0]} ${before[1]}`)
-    commands.push(`Q ${cx} ${cy} ${after[0]} ${after[1]}`)
-  }
+    return [`L ${before[0]} ${before[1]}`, `Q ${cx} ${cy} ${after[0]} ${after[1]}`]
+  })
   const [endX, endY] = points[points.length - 1]
-  commands.push(`L ${endX} ${endY}`)
-  return commands.join(' ')
+  return [`M ${points[0][0]} ${points[0][1]}`, ...interior, `L ${endX} ${endY}`].join(' ')
 }
 
 // Shared by edges/flows/transitions: all carry the same optional

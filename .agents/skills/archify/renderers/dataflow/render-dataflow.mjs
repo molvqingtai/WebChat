@@ -66,119 +66,133 @@ function measureNode(node) {
 }
 
 const nodes = new Map(asArray(dataflow.nodes).map((node) => [node.id, measureNode(node)]))
-const nodeSteps = new Map()
-for (const [index, flow] of asArray(dataflow.flows).entries()) {
-  if (!nodeSteps.has(flow.from)) nodeSteps.set(flow.from, index)
-  if (!nodeSteps.has(flow.to)) nodeSteps.set(flow.to, index + 1)
-}
-for (const [index, node] of asArray(dataflow.nodes).entries()) {
-  if (!nodeSteps.has(node.id)) nodeSteps.set(node.id, index)
-}
+// Node steps are derived from flows first, then from remaining nodes: a non-mutating fold
+// keeps each step assignment visible to the next entry without owner-style side effects.
+// Node steps are derived from flows first, then from remaining nodes: a fresh, exclusive
+// accumulator fold keeps each first-seen assignment in linear time.
+const nodeSteps = asArray(dataflow.nodes).reduce(
+  (steps, node, index) => {
+    if (!steps.has(node.id)) steps.set(node.id, index)
+    return steps
+  },
+  asArray(dataflow.flows).reduce((steps, flow, index) => {
+    if (!steps.has(flow.from)) steps.set(flow.from, index)
+    if (!steps.has(flow.to)) steps.set(flow.to, index + 1)
+    return steps
+  }, new Map())
+)
 
 function validateDataflow() {
-  const problems = []
-  if (dataflow.schema_version !== 1) problems.push('Data-flow files must set "schema_version": 1.')
-  if (dataflow.diagram_type !== 'dataflow') problems.push('Data-flow files must set "diagram_type": "dataflow".')
-  if (!dataflow.meta?.title) problems.push('Data-flow files must include meta.title.')
-  if (!Array.isArray(dataflow.stages) || dataflow.stages.length < 2) {
-    problems.push('Data-flow diagrams need at least two stages.')
-  }
-  if (!Array.isArray(dataflow.nodes) || dataflow.nodes.length < 2) {
-    problems.push('Data-flow diagrams need at least two nodes.')
-  }
-  if (!Array.isArray(dataflow.flows)) problems.push('Data-flow diagrams must include a flows array.')
-  if (dataflow.cards !== undefined && !Array.isArray(dataflow.cards))
-    problems.push('Data-flow "cards" must be an array.')
-  if (nodes.size !== asArray(dataflow.nodes).length) problems.push('Node ids must be unique.')
+  const problems = [
+    ...(dataflow.schema_version !== 1 ? ['Data-flow files must set "schema_version": 1.'] : []),
+    ...(dataflow.diagram_type !== 'dataflow' ? ['Data-flow files must set "diagram_type": "dataflow".'] : []),
+    ...(!dataflow.meta?.title ? ['Data-flow files must include meta.title.'] : []),
+    ...(!Array.isArray(dataflow.stages) || dataflow.stages.length < 2
+      ? ['Data-flow diagrams need at least two stages.']
+      : []),
+    ...(!Array.isArray(dataflow.nodes) || dataflow.nodes.length < 2
+      ? ['Data-flow diagrams need at least two nodes.']
+      : []),
+    ...(!Array.isArray(dataflow.flows) ? ['Data-flow diagrams must include a flows array.'] : []),
+    ...(dataflow.cards !== undefined && !Array.isArray(dataflow.cards) ? ['Data-flow "cards" must be an array.'] : []),
+    ...(nodes.size !== asArray(dataflow.nodes).length ? ['Node ids must be unique.'] : [])
+  ]
 
   const stageCount = asArray(dataflow.stages).length
-  for (const node of nodes.values()) {
+  const nodeProblems = [...nodes.values()].reduce((acc, node) => {
     if (typeof node.stage !== 'number' || node.stage < 0 || node.stage >= stageCount) {
-      problems.push(`Node "${node.id}" uses invalid stage ${node.stage} — valid stages are 0..${stageCount - 1}.`)
+      acc.push(`Node "${node.id}" uses invalid stage ${node.stage} — valid stages are 0..${stageCount - 1}.`)
     }
     if (typeof node.row !== 'number' || node.row < 0 || node.row >= layout.rowYs.length) {
-      problems.push(`Node "${node.id}" uses invalid row ${node.row} — valid rows are 0..${layout.rowYs.length - 1}.`)
+      acc.push(`Node "${node.id}" uses invalid row ${node.row} — valid rows are 0..${layout.rowYs.length - 1}.`)
     }
     if (!isFinitePoint(node.x, node.y, node.cx, node.cy)) {
-      problems.push(
+      acc.push(
         `Node "${node.id}" produced non-finite coordinates — check stage, row, width, height, and yOffset are numbers.`
       )
-      continue
+      return acc
     }
     if (node.x < 24 || node.x + node.width > viewBox[0] - 24) {
-      problems.push(
+      acc.push(
         `Node "${node.id}" exceeds the horizontal bounds of the viewBox — reduce node.width or increase meta.viewBox[0].`
       )
     }
     if (node.y < layout.stageY + layout.stageH + 22 || node.y + node.height > viewBox[1] - layout.stageBottomPad) {
-      problems.push(
+      acc.push(
         `Node "${node.id}" exceeds the readable diagram area — keep y between ${layout.stageY + layout.stageH + 22} and ${viewBox[1] - layout.stageBottomPad} (adjust row/yOffset or increase meta.viewBox[1]).`
       )
     }
     const estLabelW = textUnits(node.label) * 6.2
     if (estLabelW > node.width + 6) {
-      problems.push(
+      acc.push(
         `Label "${node.label}" (~${Math.round(estLabelW)}px) is wider than node "${node.id}" (${node.width}px) — shorten the label, move detail to sublabel, or increase node.width.`
       )
     }
-  }
+    return acc
+  }, [])
+  problems.push(...nodeProblems)
 
   const nodeList = asArray(dataflow.nodes)
-  for (let i = 0; i < nodeList.length; i += 1) {
-    for (let j = i + 1; j < nodeList.length; j += 1) {
-      const a = nodes.get(nodeList[i].id)
-      const b = nodes.get(nodeList[j].id)
-      if (rectsOverlap(a, b, 10)) {
-        problems.push(
-          `Nodes "${a.id}" and "${b.id}" are less than 10px apart — move one to another stage/row or adjust yOffset.`
-        )
-      }
-    }
-  }
+  const pairProblems = nodeList.flatMap((nodeA, i) =>
+    nodeList.slice(i + 1).flatMap((nodeB) => {
+      const a = nodes.get(nodeA.id)
+      const b = nodes.get(nodeB.id)
+      return rectsOverlap(a, b, 10)
+        ? [`Nodes "${a.id}" and "${b.id}" are less than 10px apart — move one to another stage/row or adjust yOffset.`]
+        : []
+    })
+  )
+  problems.push(...pairProblems)
 
-  for (const flow of asArray(dataflow.flows)) {
-    if (!nodes.has(flow.from))
-      problems.push(`Flow "${flow.label || flow.from}" references unknown source "${flow.from}".`)
-    if (!nodes.has(flow.to)) problems.push(`Flow "${flow.label || flow.to}" references unknown target "${flow.to}".`)
-    if (!flow.label) problems.push(`Flow "${flow.from}" -> "${flow.to}" must include a short data label.`)
+  const flowProblems = asArray(dataflow.flows).flatMap((flow) => {
+    const local = []
+    if (!nodes.has(flow.from)) local.push(`Flow "${flow.label || flow.from}" references unknown source "${flow.from}".`)
+    if (!nodes.has(flow.to)) local.push(`Flow "${flow.label || flow.to}" references unknown target "${flow.to}".`)
+    if (!flow.label) local.push(`Flow "${flow.from}" -> "${flow.to}" must include a short data label.`)
     if (nodes.has(flow.from) && nodes.has(flow.to)) {
       const routed = pathFor(flow)
       const [start, end] = [routed.points[0], routed.points[routed.points.length - 1]]
       const distance = Math.hypot(end[0] - start[0], end[1] - start[1])
       if (distance < 34)
-        problems.push(
+        local.push(
           `Flow "${flow.label}" is too short (${Math.round(distance)}px; minimum 34px) — route it through a channel or spread its nodes.`
         )
     }
-  }
+    return local
+  })
+  problems.push(...flowProblems)
 
-  const labelRects = []
-  for (const flow of asArray(dataflow.flows)) {
-    if (!flow.label || !nodes.has(flow.from) || !nodes.has(flow.to)) continue
-    const [lx, ly] = labelPoint(flow, pathFor(flow).points)
-    const longestLine = Math.max(textUnits(flow.label), textUnits(flow.classification || ''))
-    const width = Math.max(34, longestLine * 4.9 + 12)
-    const height = flow.classification ? 27 : layout.labelH
-    labelRects.push({ label: flow.label, x: lx - width / 2, y: ly - 11, width, height, lx, ly })
-  }
-  for (const rect of labelRects) {
-    for (const node of nodes.values()) {
-      if (rectsOverlap(rect, node, -2)) {
-        problems.push(
-          `Label "${rect.label}" overlaps node "${node.id}" — adjust labelDx/labelDy/labelSegment or set labelAt.\n${suggestLabelObstacleFix(rect, rect.lx, rect.ly, node, 'node')}`
-        )
-      }
-    }
-  }
-  for (let i = 0; i < labelRects.length; i += 1) {
-    for (let j = i + 1; j < labelRects.length; j += 1) {
-      if (rectsOverlap(labelRects[i], labelRects[j], -2)) {
-        problems.push(
-          `Labels "${labelRects[i].label}" and "${labelRects[j].label}" overlap — adjust labelDx/labelDy.\n${suggestLabelPairFix(labelRects[i], labelRects[j])}`
-        )
-      }
-    }
-  }
+  const labelRects = asArray(dataflow.flows)
+    .filter((flow) => flow.label && nodes.has(flow.from) && nodes.has(flow.to))
+    .map((flow) => {
+      const [lx, ly] = labelPoint(flow, pathFor(flow).points)
+      const longestLine = Math.max(textUnits(flow.label), textUnits(flow.classification || ''))
+      const width = Math.max(34, longestLine * 4.9 + 12)
+      const height = flow.classification ? 27 : layout.labelH
+      return { label: flow.label, x: lx - width / 2, y: ly - 11, width, height, lx, ly }
+    })
+  const labelNodeProblems = labelRects.flatMap((rect) =>
+    [...nodes.values()].flatMap((node) =>
+      rectsOverlap(rect, node, -2)
+        ? [
+            `Label "${rect.label}" overlaps node "${node.id}" — adjust labelDx/labelDy/labelSegment or set labelAt.\n${suggestLabelObstacleFix(rect, rect.lx, rect.ly, node, 'node')}`
+          ]
+        : []
+    )
+  )
+  problems.push(...labelNodeProblems)
+  const labelPairProblems = labelRects.flatMap((rectA, i) =>
+    labelRects
+      .slice(i + 1)
+      .flatMap((rectB) =>
+        rectsOverlap(rectA, rectB, -2)
+          ? [
+              `Labels "${rectA.label}" and "${rectB.label}" overlap — adjust labelDx/labelDy.\n${suggestLabelPairFix(rectA, rectB)}`
+            ]
+          : []
+      )
+  )
+  problems.push(...labelPairProblems)
 
   const lastStageX = stageX(asArray(dataflow.stages).length - 1)
   if (lastStageX + layout.stageW / 2 > viewBox[0] - 24) {
@@ -230,18 +244,25 @@ function routeVia(flow, from, to, start, end) {
   }
 }
 
-const pathCache = new Map()
-
-function pathFor(flow) {
-  if (pathCache.has(flow)) return pathCache.get(flow)
+function computeRoute(flow) {
   const from = nodes.get(flow.from)
   const to = nodes.get(flow.to)
   const start = anchor(from, chosenSide(flow.fromSide, defaultFromSide(from, to)))
   const end = anchor(to, chosenSide(flow.toSide, defaultToSide(from, to)))
   const points = [start, ...routeVia(flow, from, to, start, end), end]
-  const routed = { d: polylinePath(points), points }
-  pathCache.set(flow, routed)
-  return routed
+  return { d: polylinePath(points), points }
+}
+
+// Routes are precomputed once as a fresh result map over the flows whose endpoints exist —
+// the same set the lazy cache would have computed — and every lookup is a pure read.
+const routes = new Map(
+  asArray(dataflow.flows)
+    .filter((flow) => nodes.has(flow.from) && nodes.has(flow.to))
+    .map((flow) => [flow, computeRoute(flow)])
+)
+
+function pathFor(flow) {
+  return routes.get(flow)
 }
 
 function renderStage(stage, index) {

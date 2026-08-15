@@ -1,12 +1,14 @@
 ## ADDED Requirements
 
-### Requirement: Protocol validation occurs at exactly two boundaries
+### Requirement: Protocol validation occurs at exactly three boundaries
 
-The Runtime SHALL parse protocol messages at exactly two boundaries: once when accepting a decoded peer payload and once when loading a message from local persistence. Both boundaries SHALL use the complete static declarative schema exported by `src/protocol`; a declarative local record schema MAY compose that protocol schema with local-only structural fields. A parse failure at either boundary SHALL discard the value before it changes Runtime state, persistence projection, unread state, notifications, system notices, History progress, or page output. The failure SHALL produce no Toast or other user-visible feedback.
+The Runtime SHALL validate protocol data at exactly three boundaries. Peer receive SHALL parse a decoded payload once through the complete static Chat or World schema selected from trusted room context. Locally authored `ChatMessage` delivery SHALL parse the complete message once through `ChatMessageSchema` before both local persistence and peer codec encoding/send. Local persistence load SHALL parse each stored message once through a declarative local record schema that composes `ChatMessageSchema` with local-only structural fields. A peer-receive or local-load parse failure SHALL discard the value before it changes Runtime state, persistence projection, unread state, notifications, system notices, History progress, or page output and SHALL produce no Toast or other user-visible feedback. A local-`ChatMessage` parse failure SHALL persist nothing, encode or send nothing, preserve the sending draft, and show only `Invalid message.`; raw Schema issues SHALL NOT be user-visible.
+
+Before the locally authored Text message exists, Footer SHALL own one separate local user capacity gate. It SHALL compute `getTextByteSize(JSON.stringify({ body, mentions }))` after draft transformation and before command dispatch. A value greater than `MAX_CHAT_EVENT_BYTES = 192KiB` SHALL show exactly `Message size cannot exceed 192KiB.`, preserve the draft, and dispatch no command, so allocation, Schema parsing, wire, and persistence SHALL not run. This gate SHALL NOT parse or inspect a typed protocol value and SHALL NOT count as a fourth protocol validation boundary.
 
 The local record schema SHALL use no callback, custom schema, transform, contextual schema factory, or post-parse predicate. It SHALL validate only declaratively expressible structure. Relationships among a database key, nested message ID, nested user ID, or other local/protocol identities SHALL not be validated and SHALL have no handwritten fallback.
 
-No local producer, outbound send, persistence write, History supplier, clock adoption, Session/History consumer, or intermediate Runtime path SHALL parse or manually revalidate an already typed protocol value. Non-protocol authorization, ownership, lifecycle, resource scheduling, and codec representation decisions remain outside this rule, but SHALL NOT inspect message properties to recreate protocol validation.
+SESSION, History Pull/Push, World publication, `ChatMessage` allocation and production before its delivery boundary, persistence write and codec encoding after the boundary, clock adoption, Session/History consumers, and intermediate Runtime paths SHALL NOT parse or manually revalidate an already typed protocol value. Footer SHALL perform only the exact capacity gate above and no protocol parse or revalidation. Non-protocol authorization, ownership, lifecycle, resource scheduling, and codec representation decisions remain outside this rule, but SHALL NOT inspect message properties to recreate protocol validation.
 
 #### Scenario: Invalid inbound peer value is discarded once
 
@@ -23,14 +25,19 @@ No local producer, outbound send, persistence write, History supplier, clock ado
 - **WHEN** a stored row is structurally valid but a database key or local identity differs from a nested message or user identity
 - **THEN** schema parsing SHALL NOT reject it through a callback, post-parse predicate, or other fallback relationship check
 
-#### Scenario: Outbound production does not validate protocol shape
+#### Scenario: Local user Text capacity gate rejects before protocol validation
 
-- **WHEN** local code constructs, stores, supplies, or sends a typed protocol message
-- **THEN** those paths SHALL perform no protocol schema parse, post-parse predicate, or manual field/resource validation; the receiving peer remains responsible for its own inbound parse
+- **WHEN** the user submits a transformed Text draft whose `getTextByteSize(JSON.stringify({ body, mentions }))` is greater than `192KiB`
+- **THEN** Footer SHALL show exactly `Message size cannot exceed 192KiB.`, preserve the draft, and dispatch no command, Schema parse, wire send, or persistence write
+
+#### Scenario: Locally authored ChatMessage uses ChatMessageSchema once
+
+- **WHEN** local code submits a complete locally authored `ChatMessage` for local persistence and peer transport after any applicable user Text capacity gate has accepted
+- **THEN** the Chat delivery owner SHALL parse it once through `ChatMessageSchema` before both persistence and peer codec encoding/send; on failure it SHALL show only `Invalid message.`, expose no raw issues to the user, preserve the draft, and reject without either side effect; allocation, producers, Footer, later persistence code, and codec code SHALL add no other parse or manual field/resource validation
 
 #### Scenario: Accepted values are not revalidated
 
-- **WHEN** Wire emits a typed schema-accepted peer message or `MessageStore` returns a typed schema-accepted record
+- **WHEN** Wire emits a typed schema-accepted peer message, the local `ChatMessage` delivery boundary accepts a message, or `MessageStore` returns a typed schema-accepted record
 - **THEN** Session, History, persistence, projection, and delivery paths SHALL consume that value without another protocol validation stage
 
 ### Requirement: Local domain release uses one five-second lifecycle grace
@@ -56,7 +63,7 @@ Remote logical leave is independent: Artico physical departure starts the observ
 
 - **GIVEN** the application Reconnect Effect retains the frozen `leaveRoom()` then `joinRoom(command)` composition
 - **WHEN** the Runtime ChatRoom implementation executes that composition for an active domain
-- **THEN** `leaveRoom()` SHALL invoke current-domain Runtime reconnect rather than local final release, the replacement physical Chat session SHALL reuse the same `presenceId`, World SHALL remain physically joined, and a remote PeerLeave followed by the same presence within five seconds SHALL produce neither a confirmed leave nor another join
+- **THEN** `leaveRoom()` SHALL invoke current-domain Runtime reconnect rather than local final release, the replacement physical Chat session SHALL reuse the same `presenceId`, and a remote PeerLeave followed by the same presence within five seconds SHALL produce neither a confirmed leave nor another join; the Domain child SHALL NOT mutate the World registration registry, while the same ready-state AppButton action SHALL independently run the separately fenced World replacement defined by the manual Refresh contract
 
 #### Scenario: Local active-generation cleanup rejects
 
@@ -97,7 +104,383 @@ Remote logical leave is independent: Artico physical departure starts the observ
 - **WHEN** an inbound event targets a domain that is unregistered or past its local-domain grace
 - **THEN** the system SHALL discard the event because no persistence location exists for it
 
+### Requirement: Peer wire protocol is replaced with v5 without compatibility
+
+The peer-to-peer wire protocol SHALL use the v5 contract defined by the `peer-wire-protocol` capability. The system SHALL NOT bridge, translate, or interoperate with v1, v2, v3, or v4 protocols. All five generations SHALL be isolated by both Chat and World room namespaces so no generation parses another's traffic or advertises an incompatible peer.
+
+#### Scenario: v1 through v5 isolation
+
+- **WHEN** clients from v1, v2, v3, v4, and v5 operate in a shared physical environment
+- **THEN** only matching v5 clients SHALL share the current Chat or World room namespaces, and no compatibility fallback SHALL exist
+
+#### Scenario: Old protocol removal remains complete
+
+- **WHEN** the release candidate is inspected
+- **THEN** old protocol schemas, the JSONR interop adapter, page-side message routing, reaction toggle, history upsert, HLC-only history cursor, and v1-v4 active namespace inputs SHALL be absent
+
 ## MODIFIED Requirements
+
+### Requirement: Application/page Domain owns local records and projections
+
+Each domain's existing origin database SHALL remain the only message-history and local tab-synchronization mechanism. The application/page Domain/model layer SHALL own `MessageRecord`, `ChatMessageRecord`, `SystemNoticeRecord`, projected UI models, internal record helpers/codecs, and projection adapters. It SHALL directly consume protocol `ChatMessage` values and SHALL NOT define a second public/local `TextMessage` or `ReactionMessage` DTO with the same wire names. `MessageProjection` SHALL remain outside `src/protocol` and SHALL own reaction LWW winner calculation, record-to-UI message projection, and notification/danmaku projection. No headless Runtime Domain SHALL maintain a history copy or expose a writable application read-model replica. Designated Runtime/application persistence modules MAY use the injected Database through the internal concrete MessageStore; Chat/UI and the public ChatRoom extern SHALL NOT name stores, indexes, ranges, transactions, `DatabaseItem`, or adapters.
+
+The application/page Domain SHALL define this exact clean-cut record contract:
+
+```ts
+export const MESSAGE_RECORD_TYPE = {
+  CHAT_MESSAGE: 'chat-message',
+  SYSTEM_NOTICE: 'system-notice'
+} as const
+
+export interface ChatMessageRecord<Message extends ChatMessage = ChatMessage> {
+  readonly type: typeof MESSAGE_RECORD_TYPE.CHAT_MESSAGE
+  readonly id: string
+  readonly message: Message
+  readonly user: ChatUser
+  readonly receivedAt: number
+}
+
+export type TextMessageRecord = ChatMessageRecord<TextMessage>
+export type ReactionMessageRecord = ChatMessageRecord<ReactionMessage>
+
+export interface Notice {
+  readonly id: string
+  readonly hlc: HLC
+  readonly type: NoticeType
+  readonly body: string
+}
+
+export interface SystemNoticeRecord {
+  readonly type: typeof MESSAGE_RECORD_TYPE.SYSTEM_NOTICE
+  readonly id: string
+  readonly notice: Notice
+  readonly user: ChatUser
+  readonly receivedAt: number
+}
+
+export type MessageRecord = ChatMessageRecord | SystemNoticeRecord
+```
+
+A static strict local-record schema SHALL choose the closed variant only through outer `record.type`; it SHALL NOT infer record type from `DatabaseItem.key`, an id/key prefix or shape, or the presence of `message`/`notice`. It SHALL validate only the declarative structure of the record value. A database key differing from `record.id`, a Chat `record.id` differing from `record.message.id`, a Chat `record.user.id` differing from `record.message.userId`, or a notice `record.id` differing from `record.notice.id` SHALL NOT cause schema rejection through a callback, post-parse predicate, or handwritten fallback. Chat and notice ids SHALL occupy one globally unique record-id space so atomic first-value-wins cannot collide across variants. `Notice.type` remains the independent `join | leave | info` reason; outer `record.type` remains only the `chat-message | system-notice` storage/Domain category. SystemNotice identity SHALL be deterministic and it SHALL never enter peer wire or History. `receivedAt` is finite local first-acceptance/creation time, not an HLC, peer timestamp, or delivery state. Record ordering helpers SHALL use `(record.message.hlc, record.id)` for Chat and `(record.notice.hlc, record.id)` for SystemNotice; reaction LWW SHALL continue to use `(message.hlc, message.id)`, and UI reaction aggregation remains projection-only. There SHALL be no standalone `SYSTEM_NOTICE`, old outer notice `hlc`/`body`/`noticeType`, `LocalRecord`, `DurableEventRecord`, outer `event` alias, property-presence guard, key-based discriminator, `RecordStatus`, pending/sent/received state, mark method, outbox metadata, compatibility alias, or dual-read path.
+
+The only host-replaceable persistence extern SHALL be `Database<Schema>`. IndexedDB and Memory SHALL implement it for one private `MessageDatabaseSchema` and private logical database name/version/store/index configuration. A future backend is compatible only after running the same public contract suite. The single internal concrete MessageStore SHALL be Database-backed and expose only `insert(record): Promise<InsertMessageResult>`, `query(query?: MessageQuery)`, `clear`, and `watch`; it SHALL NOT expose `list` or a compatibility alias and SHALL NOT be a Remesh extern, public-barrel export, host injection point, or independently replaceable backend. Its internal helpers SHALL strictly decode each MessageRecord value with the static local-record schema, derive message/notice keys and HLCs, distinguish same-id canonical replay from different-content conflict, and keep the first value without overwrite. They SHALL NOT validate relationships between the physical database key and nested record/message/user identities. `InsertMessageResult` SHALL be the readonly inserted/existing Domain union and SHALL NOT reuse Database's result type.
+
+The canonical per-origin IndexedDB identity SHALL remain stable, including its existing v2 database name. Private `MESSAGE_STORE_VERSION = 2` colocated with the native upgrade callback SHALL name the existing schema authority. This abstraction and record cleanup SHALL NOT itself advance the version or add an upgrade. The version SHALL advance only with an implemented compatible store/index/key/value migration; ordered IndexedDB upgrade transactions SHALL preserve canonical records and bounded conflict diagnostics. App/wire versions and ordinary fixes SHALL NOT clear, rename, or delete the database. Old unstorage data remains unread, unconverted, and uncleared.
+
+The headless Runtime SHALL own only network/History orchestration around the application-owned store: `HistoryDomain` owns requester/provider State, candidate-window and page scheduling, supplier selection/failover, page cancellation, and physical settlement; `WireDomain` owns protocol scheduling/queues; the page-host boundary owns internal RPC. Shared models consumed by both pages and Runtime SHALL remain defined by an application Domain/model module rather than by any Runtime owner or the public protocol.
+
+#### Scenario: Application persistence boundary
+
+- **WHEN** a page persists, projects, or synchronizes local records
+- **THEN** the Database-backed application persistence boundary SHALL own that work, the headless Runtime Domains SHALL own no History read model, and Chat/UI SHALL receive only schema-decoded Domain records/projections rather than storage primitives
+
+#### Scenario: Unsupported local record identities remain accepted
+
+- **WHEN** a structurally valid stored row has a database key, record id, nested message or notice id, or nested user id that differs from another identity in that row
+- **THEN** the static local-record schema SHALL NOT reject it through a callback, post-parse predicate, or handwritten fallback, and later non-validation ownership/conflict behavior SHALL remain outside the schema boundary
+
+### Requirement: Application ports are exact, minimal, and replaceable
+
+`RuntimeServer` and `PagePort` SHALL remain internal page-host boundaries and MAY retain private Runtime contracts. Their adapter SHALL terminate trusted `sourcePeerId`, local/remote provenance, host gating, snapshots, replay, transient operation state, history supply, callback cleanup, timers, and storage detail before application Domains receive values. Runtime-to-page session delivery SHALL converge through one internal session-event path capable of carrying local self convergence, remote live changes, live leaves, and replacement snapshots with private provenance; separate `onLocalSession`/`onSession`/`onSessionLeave` public or adapter-facing paths SHALL be removed. This internal path SHALL NOT be exported from an extern.
+
+The application `ChatRoom` extern SHALL directly type-import the exact public protocol `ChatUser`, `ChatSession`, `ChatSite`, `ChatMessage`, and `MentionedUser` structures. Its entire public contract SHALL be exactly:
+
+```ts
+interface JoinRoomCommand {
+  user: ChatUser
+  site: ChatSite
+}
+interface SendTextCommand {
+  type: 'text'
+  body: string
+  mentions: MentionedUser[]
+}
+interface SendReactionCommand {
+  type: 'reaction'
+  targetId: string
+  reaction: 'like' | 'hate'
+  active: boolean
+}
+type SendMessageCommand = SendTextCommand | SendReactionCommand
+type Unsubscribe = () => void
+interface ChatRoom {
+  joinRoom(command: JoinRoomCommand): Promise<void>
+  leaveRoom(): Promise<void>
+  sendMessage(command: SendMessageCommand): Promise<ChatMessage>
+  onMessage(listener: (message: ChatMessage) => void): Unsubscribe
+  onJoinRoom(listener: (session: ChatSession) => void): Unsubscribe
+  onLeaveRoom(listener: (session: ChatSession) => void): Unsubscribe
+  onSessions(listener: (sessions: readonly ChatSession[]) => void): Unsubscribe
+  onError(listener: (error: Error) => void): Unsubscribe
+}
+```
+
+No alias, compatibility field, overload, extra method, generic metadata bag, Runtime type, or peer/source/joinedAt/timer/IDB/host/page/lease/retry field SHALL extend this contract without explicit Owner intervention. `joinRoom` SHALL use the caller-supplied user/site and `impls` SHALL create `sessionId`. `leaveRoom` SHALL operate on the currently joined room instance. `sendMessage` SHALL accept only the frozen business commands; `impls` SHALL create `id`, `hlc`, and `userId`, complete transport acceptance, and call local `MessageStore.insert`. Only after that insert operation successfully settles SHALL it resolve with the exact `ChatMessage` allocated and transported by that call. It SHALL NOT return or expose an insert result, same-id existing winner, `MessageRecord`, delivery status, or Runtime provenance.
+
+`onSessions` SHALL be the only application session-state truth. For a normal accepted live change, the implementation SHALL publish the updated immutable session snapshot before the corresponding `onJoinRoom` or `onLeaveRoom` fact. Initialization, first join, hydration, refresh, reconnect, host replacement, and replay SHALL publish snapshots only, with no synthetic live delta. `onMessage` SHALL publish only a first durably accepted remote live `ChatMessage`; it SHALL exclude `SessionMessage`, history request/response/control traffic, history messages/replay, initial IDB reads, local sends, duplicate/conflicting inserts, and store-watch replay. Chat and World session instances SHALL remain distinct; same-origin pages share one Runtime logical Chat view, while separate browsers/devices maintain local views that converge.
+
+Only explicit composition roots SHALL select and inject concrete `impls`. Application Domains and externs SHALL NOT import concrete `impls` or Runtime contracts. Application readiness SHALL retain immediate replay of `connecting | ready | unavailable`. `WorldRoomExtern` SHALL remain separately projected and source-free as specified by `world-room-presence`.
+
+`Unsubscribe = () => void` SHALL be a neutral Domain type. The only replaceable persistence extern SHALL have this exact complete surface:
+
+```ts
+type DatabaseKey = string | number
+interface StoreSchema {
+  key: DatabaseKey
+  value: unknown
+  indexes: Record<string, DatabaseKey>
+}
+type DatabaseSchema<S> = { [Store in keyof S]: StoreSchema }
+type StoreName<S> = keyof S & string
+type Scope<Name extends string> = readonly [Name, ...Name[]]
+type LowerBound<T> = { lower?: never; lowerOpen?: never } | { lower: T; lowerOpen?: boolean }
+type UpperBound<T> = { upper?: never; upperOpen?: never } | { upper: T; upperOpen?: boolean }
+type DatabaseRange<T> = LowerBound<T> & UpperBound<T>
+type PrimaryQuery<S extends StoreSchema> = {
+  index?: never
+  range?: DatabaseRange<S['key']>
+}
+type IndexQuery<S extends StoreSchema> = {
+  [Index in keyof S['indexes'] & string]: {
+    index: Index
+    range?: DatabaseRange<S['indexes'][Index]>
+  }
+}[keyof S['indexes'] & string]
+type QueryOptions<S extends StoreSchema> = PrimaryQuery<S> | IndexQuery<S>
+type ScanOptions<S extends StoreSchema> = QueryOptions<S> & {
+  direction?: 'asc' | 'desc'
+  limit?: number
+}
+interface DatabaseItem<Key, Value> {
+  readonly key: Key
+  readonly value: Value
+}
+type InsertResult<Value> = { readonly inserted: true } | { readonly inserted: false; readonly existing: Value }
+interface ReadTransaction<Schema extends DatabaseSchema<Schema>, Allowed extends StoreName<Schema>> {
+  get<Store extends Allowed>(store: Store, key: Schema[Store]['key']): Promise<Schema[Store]['value'] | undefined>
+  scan<Store extends Allowed>(
+    store: Store,
+    options?: ScanOptions<Schema[Store]>
+  ): Promise<readonly DatabaseItem<Schema[Store]['key'], Schema[Store]['value']>[]>
+  count<Store extends Allowed>(store: Store, options?: QueryOptions<Schema[Store]>): Promise<number>
+}
+interface WriteTransaction<
+  Schema extends DatabaseSchema<Schema>,
+  Allowed extends StoreName<Schema>
+> extends ReadTransaction<Schema, Allowed> {
+  insert<Store extends Allowed>(
+    store: Store,
+    key: Schema[Store]['key'],
+    value: Schema[Store]['value']
+  ): Promise<InsertResult<Schema[Store]['value']>>
+  put<Store extends Allowed>(store: Store, key: Schema[Store]['key'], value: Schema[Store]['value']): Promise<void>
+  delete<Store extends Allowed>(store: Store, key: Schema[Store]['key']): Promise<void>
+  clear<Store extends Allowed>(store: Store): Promise<void>
+}
+interface Database<Schema extends DatabaseSchema<Schema>> {
+  read<const Stores extends Scope<StoreName<Schema>>, Result>(
+    stores: Stores,
+    operation: (transaction: ReadTransaction<Schema, Stores[number]>) => Promise<Result>,
+    signal?: AbortSignal
+  ): Promise<Result>
+  write<const Stores extends Scope<StoreName<Schema>>, Result>(
+    stores: Stores,
+    operation: (transaction: WriteTransaction<Schema, Stores[number]>) => Promise<Result>,
+    signal?: AbortSignal
+  ): Promise<Result>
+  watch<const Stores extends Scope<StoreName<Schema>>>(stores: Stores, listener: () => void): Unsubscribe
+  close(): Promise<void>
+}
+```
+
+`DatabaseKey` deliberately supports only strings and finite numbers; arbitrary IndexedDB Date/array/binary keys are outside the contract. A schema SHALL statically associate each store with its primary-key, value, index names, and index-key types, and a transaction SHALL reject any store not enlisted in its non-empty, duplicate-free scope. Primary scans order by primary key. Index scans order by index key and then primary key as a deterministic tie-break; `desc` reverses both. Bounds are inclusive unless their corresponding open flag is true. An open flag without its bound, a reversed bound, an unknown store/index, a non-finite key, or a limit that is not a finite non-negative safe integer SHALL reject deterministically; an equal bound with either side open yields an empty range.
+
+A read SHALL observe one consistent transaction snapshot. A write SHALL be atomic across its enlisted stores and SHALL never automatically retry its callback. The callback MAY await only promises created by that same transaction and SHALL NOT await network, timers, or arbitrary external promises. Callback throw/rejection or signal abort before commit SHALL abort the physical transaction, reject, persist nothing, and emit no watch notification. A successful commit linearized before a later abort SHALL remain successful. An atomic insert collision SHALL not abort the transaction; it SHALL return the exact same-key existing winner from that operation. `inserted:false` itself is not a mutation. Database failures, decode failures, and aborts SHALL reject rather than masquerade as collisions.
+
+`get` and `scan` SHALL return by-value-isolated snapshots: reassigning readonly item fields or mutating a returned nested object SHALL NOT mutate persistence; only an explicit `put` can write a replacement. Memory SHALL clone/isolate values to match IndexedDB. Canonical Message database values are limited to null, booleans, strings, finite numbers, dense arrays, and plain string-keyed objects; undefined, non-finite numbers, bigint, functions, symbols, Date, Map, Set, binary values, sparse arrays, cycles, and implementation-specific objects SHALL reject. TypeScript schema types do not replace strict runtime decoding.
+
+`watch` SHALL register synchronously for a non-empty store scope and act only as invalidation. Every relevant successful write commit after registration SHALL produce at most one notification per Database instance/context; rollback and failed writes SHALL produce none. Same-logical-database notifications SHALL cross supported same-origin contexts, listener exceptions SHALL be isolated, and unsubscribe SHALL be idempotent and prevent later callbacks. Conservative notification for an explicit delete/clear/put that makes no observable value change MAY occur, but no state-changing commit may be permanently missed. `close` SHALL be idempotent, stop new read/write/watch calls and this instance's callbacks immediately, allow already-started transactions to drain to their normal settlement, then release database and cross-context resources.
+
+The one internal concrete facade SHALL have this exact shape:
+
+```ts
+type InsertMessageResult = { readonly inserted: true } | { readonly inserted: false; readonly existing: MessageRecord }
+type MessageQuery = Readonly<{
+  type?: MessageRecord['type']
+  signal?: AbortSignal
+}>
+interface MessageStore {
+  insert(record: MessageRecord): Promise<InsertMessageResult>
+  query(query?: MessageQuery): Promise<readonly MessageRecord[]>
+  clear(): Promise<void>
+  watch(listener: () => void): Unsubscribe
+}
+```
+
+MessageStore SHALL have one Database-backed implementation and no Remesh extern, public-barrel export, host injection, Memory-specific implementation, or fake replacement. It SHALL map Database's insert result into its own Domain result; parse each physical record value independently with the static declarative local-record schema; retain every invalid raw row without publication; record bounded, per-key deduplicated diagnostics in the existing private conflicts store without notifying canonical-record watchers; perform no equality validation between `DatabaseItem.key`, `record.id`, nested message/notice ids, or nested user ids; preserve the first canonical value; retain bounded conflict diagnostics for same-id different-content input; and classify same-content replay without overwrite. Key/id prefixes, property presence, the removed standalone `SYSTEM_NOTICE`, and compatibility aliases SHALL NOT participate in decode or dispatch. `query()` SHALL return every schema-valid record in physical primary-scan order even when other physical rows are invalid. `query({type})` SHALL return only schema-valid records whose exact outer discriminator equals that type, after independently attempting to parse every physically read value before applying the type filter. `query({signal})` SHALL gate the physical read transaction and all subsequent parse/filter work. The optional query object SHALL contain only `type` and `signal`; an unknown field or a type outside the exact outer discriminator union SHALL reject deterministically. It SHALL expose no id, range, order, limit, cursor, or syncId criterion. The type filter SHALL add no physical index, schema migration, or version bump; private `MESSAGE_STORE_VERSION = 2` remains the schema authority. `clear` SHALL run only for an explicit user/application clear command and SHALL atomically clear canonical records plus conflicts; startup, app-version checks, and compatibility code SHALL NOT call it. `watch` SHALL observe canonical-record invalidation; a conflict-only diagnostic write need not invalidate visible query results. Neither Database nor MessageStore SHALL own History wire DTOs, `syncId`, cursor, cutoff, limit, response `messages`, or `done`; History cutoff/pagination/projection remains in its Runtime/application owner. No `list` alias or test-only conflict-count API is exposed.
+
+Default IndexedDB and Memory implementations SHALL use the same private `MessageDatabaseSchema` plus private logical name/version/store/index definition and run one unchanged backend contract suite; this requirement SHALL NOT add a public generic adapter factory. Type-negative tests SHALL reject wrong stores, keys, values, indexes, ranges, scopes, MessageQuery fields, and MessageQuery discriminator values. Separate parity tests SHALL cover Database transactions/abort/insert/order/watch/close/value isolation, MessageStore replay/conflict/decode/query-default/query-type/query-abort/clear/watch, and static imports proving Chat/UI/public ChatRoom do not import Database items, transactions, schemas, or concrete adapters. Residue scans SHALL reject the removed MessageStore `list` member, call sites, aliases, and dual paths without treating ordinary UI list nouns as compatibility APIs. If implementation proves any frozen field, method, or semantic insufficient, work on that boundary SHALL stop and the implementer SHALL send the exact gap, earliest blocked call chain, and minimum decision only to `@PM`. PM SHALL independently verify it and, when Owner input is required, ask `@molvqingtai` the one minimum decision. No implementation may add an alias, field, method, overload, fallback, or relaxed behavior autonomously.
+
+#### Scenario: Atomic Database commit and cancellation
+
+- **WHEN** a scoped read/write callback completes, throws, rejects, or receives an AbortSignal before or after physical commit
+- **THEN** IndexedDB and Memory SHALL agree on snapshot visibility, all-or-nothing settlement, no callback retry, pre-commit rollback/no-watch, post-commit success, and rejection of scope-external access
+
+#### Scenario: Atomic existing-winner insert
+
+- **WHEN** concurrent writers insert the same primary key with the same or different canonical value
+- **THEN** exactly one first value SHALL persist, every loser SHALL receive an isolated exact existing snapshot without aborting its transaction, and the internal MessageStore SHALL classify replay or bounded conflict without overwrite
+
+#### Scenario: Deterministic primary and index scan
+
+- **WHEN** a primary or secondary-index scan applies bounds, direction, duplicate index keys, and a limit
+- **THEN** both backends SHALL return readonly DatabaseItems in the same index-then-primary order, preserve the primary key in each item, and reject every invalid store/index/range/key/limit combination identically
+
+#### Scenario: Cross-context committed-write invalidation
+
+- **WHEN** an enlisted store is mutated, rolled back, closed, or watched from another supported same-origin context
+- **THEN** each relevant successful commit SHALL cause at most one invalidation per context, rollback SHALL cause none, listener failure SHALL not affect commit, unsubscribe/close SHALL stop callbacks, and no state-changing commit SHALL be permanently missed
+
+#### Scenario: Strict MessageRecord boundary
+
+- **WHEN** DatabaseItems are inserted, queried with default or exact-type criteria, replayed, conflicted, cleared, or observed through MessageStore
+- **THEN** MessageStore SHALL accept only values matching the exact static outer-type MessageRecord union; perform no equality validation among the database key, outer record id, nested message/notice id, or nested user id; reject key/property-presence discrimination and every old shape; keep SystemNotice local-only; expose only its four methods; and never expose Database primitives or History protocol values
+
+#### Scenario: Default-all typed MessageStore query
+
+- **WHEN** a caller invokes `query()` with no object, with one exact outer `type`, with an AbortSignal, or with an invalid field/discriminator
+- **THEN** the facade SHALL respectively return all valid strictly decoded canonical records while isolating invalid rows, return only that type after independently decoding the complete scan, honor cancellation through read/decode/diagnostic/filter settlement, or reject deterministically; it SHALL preserve primary-scan order, expose no `list` alias or history criteria, and introduce no physical index, migration, or version change
+
+#### Scenario: Frozen definition proves insufficient
+
+- **WHEN** implementation or parity testing cannot satisfy a required behavior with the exact frozen Database, MessageRecord, MessageStore, or ChatRoom definitions
+- **THEN** the implementer SHALL stop that work and report only to `@PM`; PM SHALL verify the exact gap and earliest blocked call chain before asking `@molvqingtai` for any contract extension or fallback decision
+
+Production Runtime/application adapters SHALL use `globalThis.setTimeout` and `globalThis.clearTimeout`; naked timer functions SHALL NOT be constructor dependencies or extern capabilities. Tests SHALL use Vitest fake timers. Timer callbacks SHALL still validate attempt/generation identity, and cleanup SHALL cancel owned handles without letting a stale callback mutate current state.
+
+#### Scenario: Exact ChatRoom surface
+
+- **WHEN** the ChatRoom extern, its imports, or a fake replacement is inspected
+- **THEN** only the exact frozen commands, protocol values, eight methods, and `Unsubscribe` SHALL exist; `join`, `sendText`, `sendReaction`, `onRecord`, `onMembership`, `reconnect`, Runtime snapshots, source metadata, aliases, and compatibility members SHALL be absent
+
+#### Scenario: One internal session path and ordered application events
+
+- **WHEN** local convergence, a remote live join/leave, initialization, refresh, reconnect, host replacement, or replay changes session state
+- **THEN** one private Runtime session-event path SHALL feed the implementation; a normal live change SHALL deliver the new `onSessions` snapshot before its one join/leave fact, while initialization/recovery/replay SHALL deliver snapshots only and no Runtime provenance SHALL escape
+
+#### Scenario: Natural live message callback
+
+- **WHEN** a remote live Chat message, history response, local send, duplicate, conflict, initial store read, or store replay is processed
+- **THEN** `onMessage` SHALL fire exactly once only for the first durably accepted remote live `ChatMessage` and SHALL remain silent for every excluded path
+
+#### Scenario: Exact command allocation and send-first persistence
+
+- **WHEN** `sendMessage` accepts `SendTextCommand` or `SendReactionCommand`
+- **THEN** the caller SHALL provide none of `id`, `hlc`, `userId`, or `sessionId`; `impls` SHALL allocate them, complete transport acceptance, then call `MessageStore.insert`, and only after that operation successfully settles resolve with the exact allocated-and-transported `ChatMessage`, even when same-id handling retains an existing canonical winner; it SHALL return neither that winner nor a status/result DTO and SHALL add no hidden callback or retry
+
+#### Scenario: Causal local send projection
+
+- **WHEN** local text sends race store-watch refresh, another tab sends the same body/mentions, or a same-id collision retains another canonical winner
+- **THEN** the application SHALL derive exactly one local success projection from the `ChatMessage` returned by that call, never visible-record diff, body/mention matching, `onMessage`, or a hidden side channel; transport or MessageStore rejection SHALL return no message, preserve the draft, and emit no local success projection
+
+#### Scenario: Database and MessageStore exclude history protocol
+
+- **WHEN** the Database extern, internal MessageStore, and their implementation imports are inventoried
+- **THEN** only Database SHALL be replaceable; MessageStore SHALL remain the one concrete four-method facade; neither SHALL expose history request/response/cursor/cutoff/limit/done projection or a test-only count API, while the outside owner retains cancellable physical history selection and projection
+
+#### Scenario: Duplicate delivery and conflict convergence
+
+- **WHEN** multiple pages/deliveries attempt one message id or a history value conflicts
+- **THEN** one atomic insert SHALL win, the first canonical message SHALL remain, same-content replay SHALL be idempotent, different-content conflict SHALL not overwrite it, and side effects SHALL fire at most once
+
+#### Scenario: Global timer ownership
+
+- **WHEN** retry, timeout, grace, or cleanup behavior is constructed and tested
+- **THEN** production SHALL call `globalThis` timers directly, tests SHALL control them with fake timers, no timer dependency SHALL be injected, and stale/cancelled callbacks SHALL fail their current-attempt identity check
+
+#### Scenario: No concrete implementation bypass
+
+- **WHEN** application imports are scanned
+- **THEN** only composition roots SHALL wire concrete implementations; Domains SHALL depend on extern contracts and public protocol types, never `impls` or Runtime contracts
+
+#### Scenario: Runtime unavailable and accepted send-first loss window
+
+- **WHEN** a send begins before readiness, transport rejects, or transport succeeds but local insertion later fails or never starts because the browser exits
+- **THEN** unavailable/rejected input SHALL preserve the draft, write no normal local record, return no `ChatMessage`, and emit no local success projection, while the post-handoff local-loss window SHALL remain accepted with no status, outbox, same-id crash retry, or hidden fallback
+
+#### Scenario: No Runtime history copy
+
+- **WHEN** Runtime and persistence ownership are inspected
+- **THEN** the headless Runtime Domains SHALL keep no history replica, Database SHALL remain the only replaceable persistence extern, and the one internal MessageStore SHALL own no peer-history protocol orchestration
+
+### Requirement: Runtime Chat session lifecycle
+
+The headless Runtime SHALL bind each Chat source to a session identity and logical generation. A join SHALL send strict `session {sessionId, user, presenceId, joinedAt}` before live text, reaction, or history traffic. `joinedAt` SHALL be allocated and persisted by Session with a new local logical generation, projected unchanged to wire, and remain unchanged with its `presenceId` across physical session replacement. It SHALL NOT be synthesized from receiver observation, discovery order, `baselinePeerIds`, or `clock.now()`. A bound `sessionId` SHALL not change its `user.id`; an accepted `presenceId` SHALL not change its bound `user.id` or `joinedAt`; live event `userId` SHALL match the transport-bound session user. `name` and `avatar` SHALL remain mutable projection fields: a SESSION for the same accepted identity binding SHALL update that current projection across attached pages without changing logical membership or notices. A new physical incarnation SHALL retire the old source binding and old history sync, and SHALL trigger exactly one fresh history request for the replacement without running it concurrently with unsettled old source work. Reconnect of the same logical generation SHALL not become a new observer join.
+
+#### Scenario: Session binding and replacement
+
+- **WHEN** a source joins Chat, republishes a bound logical generation, sends changed `user.id` or logical time for an accepted generation, or reconnects with a new physical incarnation
+- **THEN** the Runtime SHALL require the session message first, reject a `user.id` change for the same `sessionId`, reject a `user.id` or `joinedAt` change for the same accepted `presenceId`, reject live events whose `userId` does not match the bound user, retire the old source binding/sync for a new incarnation, and issue exactly one fresh history request for the replacement
+
+#### Scenario: Same logical presence refreshes its user projection
+
+- **GIVEN** a source and `presenceId` retain the same `user.id` and `joinedAt`
+- **WHEN** a later accepted SESSION changes `name` or `avatar`, or repeats the current values
+- **THEN** every attached same-domain page SHALL converge to the current projection idempotently without changing membership count, allocating a generation, emitting a chat/history event, or emitting a join/leave notice
+
+#### Scenario: Future HLC does not advance Runtime clock
+
+- **WHEN** the static protocol schema parses a finite safe non-negative HLC without receiver clock input, including a value more than five minutes ahead of the receiver clock
+- **THEN** schema validation itself SHALL neither advance the Runtime clock nor reject through a receiver-time predicate, and subsequent Domain clock adoption SHALL consume the accepted value through the same path as every other schema-accepted HLC
+
+### Requirement: Runtime WirePipeline and internal RPC contracts stay inside Runtime boundaries
+
+`WireDomain` SHALL own per-room send serialization, per-source decode queues bounded to at most 8 frames and 256KiB of wire data, and source-local drop/apply/flush behavior. `HistoryDomain` SHALL own history concurrency admission and resource scheduling. The page-host boundary SHALL own the internal comctx RPC contracts/namespace. Malformed frames and queue overflow SHALL be dropped only for the affected source, logged with rate limiting, and SHALL NOT reconnect the room. Those contracts SHALL not be exported from `src/protocol/index.ts`; queue/drop types SHALL live with `WireDomain`, history admission types with `HistoryDomain`, and RPC types with the page-host boundary rather than the codec or public protocol module. `compareHLC` and `compareEventPosition` implementations SHALL live in the application/page Domain/model layer, or in a shared Domain/model module when both pages and Runtime consume them, while the public protocol defines only the canonical `(hlc, id)` ordering rule. The static protocol HLC Schema SHALL receive no clock input; application or shared Domain/model clock adoption SHALL consume only schema-accepted HLC values without revalidation.
+
+#### Scenario: Internal Runtime ownership
+
+- **WHEN** queue/drop/pipeline scheduling, ordering implementation, or page-host RPC contracts are inspected
+- **THEN** queue/drop/pipeline scheduling and page-host RPC contracts SHALL be defined under headless Runtime owners, while ordering implementations SHALL be defined under application/page Domain/model owners or a shared Domain/model module; none SHALL be exported from `@/protocol` or imported by protocol code
+
+#### Scenario: Source-local decode overflow
+
+- **WHEN** one source exceeds 8 queued frames or 256KiB of queued wire data, or sends a malformed frame
+- **THEN** the Runtime SHALL drop only that source-local frame/work, rate-limit the diagnostic, preserve other sources, and SHALL NOT reconnect the room
+
+#### Scenario: Final send settlement releases source slot
+
+- **WHEN** a provider's final history response send settles and an old timeout/token later fires
+- **THEN** the Runtime SHALL release the source slot immediately after send settlement, and the old timer/token SHALL fail its identity check without delaying or closing a newer domain/request
+
+### Requirement: One-shot migration without dual architecture
+
+The change SHALL be delivered as one candidate that includes the hosts, exact eight-method ChatRoom port, state-free Runtime client, clean-cut internal comctx surface, uniquely owned Lifecycle/Connection/Session/World/History/Delivery/Wire Domain graph, private RoomTransport Extern/provider composition, message delivery, reconnect entry, current v5 peer protocol, exact typed Database extern/default adapters, internal concrete MessageStore, canonical outer-type/outer-id `MessageRecord` with `ChatMessageRecord.message` and `SystemNoticeRecord.notice`, send-first persistence, and complete removal of page-owned WebRTC, v1-v4 active protocol paths, stateful ChatRoom authority, catch-all Network ownership, and old WireExtern/provider route. Persistence and Runtime authority SHALL be complete clean-cut structural replacements rather than minimal repairs; no compatibility wrapper, alias, dual path, dead facade, hidden state channel, provider leak, or test-only accommodation may retain an obsolete owner/record/Store/outbox architecture. No intermediate release SHALL ship multiple architectures or protocol generations. Existing local message history SHALL NOT be imported, migrated, or retained by the canonical database.
+
+#### Scenario: Single-candidate completeness
+
+- **WHEN** the release candidate is inspected
+- **THEN** it SHALL contain the full Remesh DDD + CQRS Runtime architecture and current v5 protocol, and SHALL NOT contain any active page-owned WebRTC path, v1-v4 protocol room path, stateful ChatRoom recovery authority, catch-all Network owner, old WireExtern route, or dual writable fact
+
+#### Scenario: No data migration
+
+- **WHEN** the extension upgrades with old unstorage message data present
+- **THEN** the old data SHALL be left unread and unconverted, and no migration code, marker, or reaction conversion SHALL exist
+
+### Requirement: Verification coverage protects runtime boundaries
+
+Contract tests for peer wire behavior SHALL import only from `@/protocol` or the documented public entry. Type-negative and unchanged-backend suites SHALL cover Database typing, transactions, cancellation, ordering, insertion, watch, close, and value isolation on IndexedDB and Memory. Application and page Domain tests SHALL cover strict declarative `MessageRecord` structure, schema/load acceptance when a physical database key, outer record id, nested message or notice id, or nested user id differs from another identity in the row, cross-variant first-value-wins conflict behavior outside validation, MessageStore replay/conflict/query/abort/clear/watch behavior, send-first success/failure/loss behavior, causal local projection, and ordering. Headless Runtime tests SHALL cover each unique owner, provisional connection generations, sessions, World presence, history, delivery replay, Wire queues, trusted provider translation, and internal RPC contracts.
+
+Dependency, export, and residue checks SHALL prove that public protocol code has no reverse application or Runtime dependencies; Chat and UI do not import concrete Runtime, provider, Database, or adapter primitives; MessageStore remains internal; provider imports remain composition-only; and removed owners, aliases, fallback paths, status/outbox/retry state, cross-identity schema/load rejection, and old Wire routes do not return. Reconnect controls SHALL continue covering immediate request-owned dispatch, pending button state, mounted and absent Toast behavior, stale fencing, request-local cleanup, original Toaster parameters, and the absence of a second readiness/result surface.
+
+#### Scenario: Product boundaries remain testable
+
+- **WHEN** the runtime, persistence, protocol, or reconnect implementation changes
+- **THEN** the affected contract suites and structural checks SHALL detect owner leakage, public-boundary widening, obsolete architecture residue, hidden cross-identity validation, or feedback-state duplication
+
+#### Scenario: Runtime verification uses production boundaries
+
+- **WHEN** browser Runtime behavior is accepted for release
+- **THEN** verification SHALL use the built extension and real controls rather than treating `pnpm dev`, isolated Toaster mounting, synthetic clicks, or source call order alone as product evidence
 
 ### Requirement: Immutable peer values terminate in explicit Domain mappings
 
@@ -275,6 +658,12 @@ The local self-join notice SHALL be generation-scoped, persist immediately after
 - **THEN** Session SHALL start or cancel at most one matching deadline, reject mutation or resurrection, preserve every unrelated presence, and persist no duplicate notice
 
 ## REMOVED Requirements
+
+### Requirement: Peer wire protocol is replaced with v3 without compatibility
+
+**Reason**: The current peer protocol is v5. Retaining v3 as a current Runtime requirement contradicts the peer-wire protocol and active source authority.
+
+**Migration**: `Peer wire protocol is replaced with v5 without compatibility` is the sole current protocol requirement. v1 through v4 remain isolated and no compatibility path exists.
 
 ### Requirement: Unified five-second lifecycle grace
 

@@ -21,7 +21,7 @@ const createBus = () => {
       const message = args.at(-1) as Message
       messages.push(structuredClone(message))
       const sender = args.length === 2 ? { tab: { id: 7, url: 'https://example.com/' } } : {}
-      for (const listener of listeners) listener(message, sender)
+      listeners.forEach((listener) => listener(message, sender))
     },
     onMessage: {
       addListener: (listener: (...args: unknown[]) => unknown) => listeners.add(listener),

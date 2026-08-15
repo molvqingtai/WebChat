@@ -30,7 +30,6 @@ const fakeTransport = () => {
     peerIdOf: () => 'local-peer',
     join: async () => {},
     leave: () => {},
-    peers: () => [],
     send: async () => {},
     onMessage: (callback) => {
       messageListener = callback
@@ -155,7 +154,7 @@ describe('HistoryDomain connection-binding lifecycle', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(store.query(history.query.ProviderAttemptsQuery())).toHaveLength(0)
     // Requester direction: start, complete through the real response input path, and verify the
-    // terminal start is blocked.
+    // loading-close settlement retains the completed collection while a fresh request starts freely.
     store.send(history.command.StartRequesterCommand({ domain: DOMAIN, sourcePeerId: 'peer-a' }))
     const requester = store.query(history.query.RequesterAttemptsQuery()).find((item) => item.sourcePeerId === 'peer-a')
     expect(requester).toBeDefined()
@@ -167,10 +166,17 @@ describe('HistoryDomain connection-binding lifecycle', () => {
       messages: [],
       done: true
     })
-    await vi.waitFor(() => expect(store.query(history.query.RequesterAttemptsQuery())).toHaveLength(0))
+    await vi.waitFor(() =>
+      expect(store.query(history.query.RequesterAttemptsQuery()).every((item) => item.loadingSettled)).toBe(true)
+    )
+    // A repeated start on the same incarnation is inert (its requester binding persists); only
+    // the real replacement lifecycle retires the old owner into a retained collection and admits
+    // a fresh request identity while the old one still accepts late pages.
     store.send(history.command.StartRequesterCommand({ domain: DOMAIN, sourcePeerId: 'peer-a' }))
     await new Promise((resolve) => setTimeout(resolve, 0))
-    expect(store.query(history.query.RequesterAttemptsQuery())).toHaveLength(0)
+    expect(store.query(history.query.RequesterAttemptsQuery())).toHaveLength(1)
+    store.send(history.command.ResetHistoryForSessionCommand({ domain: DOMAIN, sourcePeerId: 'peer-a' }))
+    await vi.waitFor(() => expect(store.query(history.query.RequesterAttemptsQuery())).toHaveLength(2))
     // Domain release must clear BOTH directional bindings itself: only then can the same ids
     // bind again and start fresh synchronization work (a stale terminal binding would block both).
     store.send(history.command.ReleaseDomainCommand(DOMAIN))

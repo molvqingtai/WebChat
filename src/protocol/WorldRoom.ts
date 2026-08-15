@@ -1,13 +1,11 @@
 import * as v from 'valibot'
 import { ChatSessionSchema } from './Session'
 
-const boundedString = (maxLength: number) => v.pipe(v.string(), v.maxLength(maxLength))
-
 export const ChatSiteSchema = v.strictObject({
-  origin: boundedString(2048),
-  title: v.optional(boundedString(512)),
-  icon: v.optional(boundedString(16 * 1024)),
-  description: v.optional(boundedString(2048))
+  origin: v.pipe(v.string(), v.maxLength(2048)),
+  title: v.optional(v.pipe(v.string(), v.maxLength(512))),
+  icon: v.optional(v.pipe(v.string(), v.maxLength(16 * 1024))),
+  description: v.optional(v.pipe(v.string(), v.maxLength(2048)))
 })
 export type ChatSite = v.InferOutput<typeof ChatSiteSchema>
 

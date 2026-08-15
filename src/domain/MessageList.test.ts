@@ -203,12 +203,12 @@ describe('MessageList Database-backed pipeline', () => {
     )
     expect(notices).toHaveLength(1)
     expect(notices[0]?.id).toBe(fallbackId(3))
-    for (const harness of [firstPage, secondPage, reloadedPage]) {
+    ;[firstPage, secondPage, reloadedPage].forEach((harness) => {
       expect(harness.store.query(harness.domain.query.RecordListQuery())).toEqual(records)
       harness.errorSubscription.unsubscribe()
       harness.domainSubscription.unsubscribe()
       harness.store.discardDomain(harness.action)
-    }
+    })
   })
 
   it('keeps a later notice projected after a delayed recovery reload', async () => {

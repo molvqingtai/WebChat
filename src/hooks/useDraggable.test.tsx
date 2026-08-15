@@ -22,7 +22,7 @@ let frames: Map<number, FrameRequestCallback>
 const flushAnimationFrame = () => {
   const pending = [...frames.values()]
   frames.clear()
-  act(() => pending.forEach((callback) => callback(performance.now())))
+  pending.forEach((callback) => act(() => callback(performance.now())))
 }
 
 beforeEach(() => {

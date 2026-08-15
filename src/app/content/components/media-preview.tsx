@@ -156,9 +156,9 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
   const clearGestures = useCallback(() => {
     const overlay = overlayRef.current
     if (overlay) {
-      for (const pointerId of pointersRef.current.keys()) {
+      pointersRef.current.forEach((_value, pointerId) => {
         if (overlay.hasPointerCapture(pointerId)) overlay.releasePointerCapture(pointerId)
-      }
+      })
     }
     pointersRef.current.clear()
     panGestureRef.current = null
@@ -531,9 +531,9 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
       const focalPoint = { x: event.clientX - center.x, y: event.clientY - center.y }
       changeZoom(stateRef.current.transform.zoom - event.deltaY * 0.0025, focalPoint)
     }
-    for (const surface of surfaces) surface.addEventListener('wheel', handleWheel, { passive: false })
+    surfaces.forEach((surface) => surface.addEventListener('wheel', handleWheel, { passive: false }))
     return () => {
-      for (const surface of surfaces) surface.removeEventListener('wheel', handleWheel)
+      surfaces.forEach((surface) => surface.removeEventListener('wheel', handleWheel))
     }
   }, [changeZoom, previewOpen])
 

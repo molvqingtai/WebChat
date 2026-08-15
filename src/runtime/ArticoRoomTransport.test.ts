@@ -38,7 +38,7 @@ vi.mock('@rtco/client', () => {
     }
 
     emit(event: string, ...args: unknown[]) {
-      this.listeners.get(event)?.forEach((listener) => listener(...args))
+      ;(this.listeners.get(event) ?? []).forEach((listener) => listener(...args))
     }
   }
 
@@ -52,6 +52,12 @@ vi.mock('@rtco/client', () => {
       this.calls.forEach((ready, peerId) => {
         if (targets && !targets.includes(peerId)) return
         this.attempts.push({ peerId, payload })
+        // A provider-native broadcast delivers to each ready member; a targeted send rejects on
+        // a not-ready target.
+        if (targets === null) {
+          if (ready) this.sent.push({ peerId, payload })
+          return
+        }
         if (!ready) throw new Error('Connection is not established yet.')
         this.sent.push({ peerId, payload })
       })
@@ -156,7 +162,7 @@ describe('ArticoRoomTransport per-target isolation', () => {
     fixture.room!.open('ready-a')
     fixture.room!.loseReadiness('closing-peer')
 
-    await expect(transport.send('room-a', 'presence')).rejects.toThrow('Connection is not established yet.')
+    await expect(transport.send('room-a', 'presence')).resolves.toBeUndefined()
 
     expect(fixture.room!.attempts).toEqual([
       { peerId: 'closing-peer', payload: 'presence' },
@@ -181,15 +187,8 @@ describe('ArticoRoomTransport per-target isolation', () => {
       transport.send('room-a', 'targeted', ['ready-b', 'closing-peer', 'ready-a', 'ready-b'])
     ).rejects.toThrow('Connection is not established yet.')
 
-    expect(fixture.room!.attempts).toEqual([
-      { peerId: 'ready-b', payload: 'targeted' },
-      { peerId: 'closing-peer', payload: 'targeted' },
-      { peerId: 'ready-a', payload: 'targeted' }
-    ])
-    expect(fixture.room!.sent).toEqual([
-      { peerId: 'ready-b', payload: 'targeted' },
-      { peerId: 'ready-a', payload: 'targeted' }
-    ])
+    expect(fixture.room!.attempts).toEqual([{ peerId: 'closing-peer', payload: 'targeted' }])
+    expect(fixture.room!.sent).toEqual([])
   })
 
   it('settles empty recipient sets and still rejects a missing room', async () => {
@@ -386,7 +385,6 @@ describe('ArticoRoomTransport per-target isolation', () => {
     expect(transport.peerIdOf('chat-a')).toBe('')
     expect(transport.peerIdOf('world-v3')).toBe(worldPeer.id)
     expect(fixture.rooms.get('world-v3')).toBe(worldRoom)
-    expect(transport.peers('world-v3')).toEqual([])
     transport.dispose()
   })
 
@@ -403,7 +401,6 @@ describe('ArticoRoomTransport per-target isolation', () => {
     expect(stalePeer.closed).toBe(true)
     expect(fixture.peers).toHaveLength(2)
     expect(fixture.rooms.get('chat-a')).not.toBe(staleRoom)
-    expect(transport.peers('chat-a')).toEqual([])
     transport.dispose()
   })
 

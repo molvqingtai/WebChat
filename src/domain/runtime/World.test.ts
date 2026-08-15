@@ -39,7 +39,6 @@ const createFixture = (options?: { failNextEncode?: () => boolean }) => {
     peerIdOf: () => 'local-peer',
     join: async () => {},
     leave: async () => {},
-    peers: () => [...joinedPeers],
     send: async (roomId, payload, targetPeerIds) => {
       if (roomId !== getWorldRoomId()) return
       const settle = deferred<void>()
@@ -123,9 +122,11 @@ describe('WorldDomain single per-target publication iterator', () => {
     })
 
     stage(fixture, 'attempt-a', 'https://a.example')
+    // A normal publication is one room broadcast even when the room currently has no members.
+    await vi.waitFor(() => expect(fixture.attempts).toHaveLength(1))
+    expect(fixture.attempts[0].targetPeerIds).toBeUndefined()
+    fixture.attempts[0].settle.resolve()
     await vi.waitFor(() => expect(published).toBe(true))
-
-    expect(fixture.attempts).toEqual([])
     fixture.store.discard()
   })
 
@@ -144,15 +145,12 @@ describe('WorldDomain single per-target publication iterator', () => {
 
     stage(fixture, 'attempt-a', 'https://a.example')
     await vi.waitFor(() => expect(fixture.attempts).toHaveLength(1))
-    expect(fixture.attempts[0].targetPeerIds).toEqual(['peer-1'])
+    expect(fixture.attempts[0].targetPeerIds).toBeUndefined()
     fixture.attempts[0].settle.reject(new Error('target one exploded'))
-    await vi.waitFor(() => expect(fixture.attempts).toHaveLength(2))
-    expect(fixture.attempts[1].targetPeerIds).toEqual(['peer-2'])
-    fixture.attempts[1].settle.resolve()
     await vi.waitFor(() => expect(published).toBe(true))
 
     expect(errors.map((error) => error.message)).toEqual(['target one exploded'])
-    expect(fixture.attempts).toHaveLength(2)
+    expect(fixture.attempts).toHaveLength(1)
     fixture.store.discard()
   })
 
@@ -170,38 +168,33 @@ describe('WorldDomain single per-target publication iterator', () => {
     stage(fixture, 'attempt-a', 'https://a.example')
     await vi.waitFor(() => expect(fixture.attempts).toHaveLength(1))
     fixture.attempts[0].settle.resolve()
-    await vi.waitFor(() => expect(fixture.attempts).toHaveLength(2))
-    fixture.attempts[1].settle.resolve()
     await vi.waitFor(() => expect(published).toEqual(['attempt-a']))
     fixture.store.send(fixture.world.command.CommitStagedCommand('attempt-a'))
 
     stage(fixture, 'attempt-b', 'https://b.example')
-    await vi.waitFor(() => expect(fixture.attempts).toHaveLength(3))
-    expect(fixture.attempts[2].message.sites.map(({ origin }) => origin).toSorted()).toEqual([
+    await vi.waitFor(() => expect(fixture.attempts).toHaveLength(2))
+    expect(fixture.attempts[1].message.sites.map(({ origin }) => origin).toSorted()).toEqual([
       'https://a.example',
       'https://b.example'
     ])
 
-    // A release supersedes the in-flight revision: the old iterator stops, the newest revision
-    // publishes through the same owner without re-sending the superseded revision's targets.
+    // A release supersedes the in-flight revision: the old publication stops, the newest revision
+    // publishes through the same owner as one fresh room broadcast.
     fixture.store.send(fixture.world.command.ReleaseDomainCommand('https://b.example'))
-    // The superseded in-flight target settles late; its stale completion cannot disturb the new revision.
-    fixture.attempts[2].settle.resolve()
-    await vi.waitFor(() => expect(fixture.attempts).toHaveLength(4))
-    expect(fixture.attempts[3].message.sites.map(({ origin }) => origin)).toEqual(['https://a.example'])
+    // The superseded in-flight publication settles late; its stale completion cannot disturb the new revision.
+    fixture.attempts[1].settle.resolve()
+    await vi.waitFor(() => expect(fixture.attempts).toHaveLength(3))
+    expect(fixture.attempts[2].message.sites.map(({ origin }) => origin)).toEqual(['https://a.example'])
 
     await settleAll()
-    expect(fixture.attempts).toHaveLength(4)
+    expect(fixture.attempts).toHaveLength(3)
 
-    fixture.attempts[3].settle.resolve()
-    await vi.waitFor(() => expect(fixture.attempts).toHaveLength(5))
-    expect(fixture.attempts[4].message.sites.map(({ origin }) => origin)).toEqual(['https://a.example'])
-    fixture.attempts[4].settle.resolve()
+    fixture.attempts[2].settle.resolve()
     await settleAll()
 
     expect(errors).toEqual([])
     expect(published).toEqual(['attempt-a'])
-    expect(fixture.attempts).toHaveLength(5)
+    expect(fixture.attempts).toHaveLength(3)
     fixture.store.discard()
   })
 
