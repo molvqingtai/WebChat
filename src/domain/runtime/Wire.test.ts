@@ -421,15 +421,11 @@ describe('WireDomain anti-corruption boundary', () => {
       staleProvider.resolve()
       await staleProvider.promise
       await vi.waitFor(() => expect(sent).toContain('current-provider'))
-      if (transition === 'leave') {
-        expect(providerPayloads).toEqual([JSON.stringify(stale), JSON.stringify(current)])
-        expect(sent).not.toContain('stale-provider')
-        expect(failed).toEqual(['stale-provider'])
-      } else {
-        expect(providerPayloads).toEqual([JSON.stringify(stale), JSON.stringify(current)])
-        expect(sent).toEqual(['stale-provider', 'current-provider'])
-        expect(failed).toEqual([])
-      }
+      // The invoked head keeps exact ownership through every transition and settles only with the
+      // real transport.send() Promise; the replacement queue unblocks right after it.
+      expect(providerPayloads).toEqual([JSON.stringify(stale), JSON.stringify(current)])
+      expect(sent).toEqual(['stale-provider', 'current-provider'])
+      expect(failed).toEqual([])
     }
   )
 

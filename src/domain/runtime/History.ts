@@ -300,6 +300,7 @@ const HistoryDomain = Remesh.domain({
     const RequesterSupplyStartedEvent = domain.event<HistoryAttemptKey>({
       name: 'History.RequesterSupplyStartedEvent'
     })
+    const CancelRequesterSuppliesEvent = domain.event<string[]>({ name: 'History.CancelRequesterSuppliesEvent' })
     const SyncCompletedEvent = domain.event<{ domain: string; sourcePeerId: string }>({
       name: 'History.SyncCompletedEvent'
     })
@@ -650,19 +651,19 @@ const HistoryDomain = Remesh.domain({
         const jobs = get(RequesterSupplyJobsState())
         // Job-aware retirement: a dormant successor is removed without starting (its dependency on
         // the unsettled predecessor is preserved by admission order, never by the removed job); a
-        // live page supply is cancelled so its own terminal finish releases the job after physical
-        // settlement; a send-stage job keeps its in-flight send and releases only at that wire
-        // settlement, so the replacement never starts over still-active old physical work.
+        // live page supply is cancelled on one awaited settlement path so its own terminal finish
+        // releases the job after physical settlement; a send-stage job keeps its in-flight send
+        // and releases only at that wire settlement, so the replacement never starts over
+        // still-active old physical work.
         const dormantTokens = new Set(
           retiredRequesters
             .map((item) => jobs.find((job) => matchesSync(job, item)))
             .filter((job) => job?.dormant)
             .map((job) => job!.syncToken)
         )
-        retiredRequesters.forEach((item) => {
+        const cancelSupplyIds = retiredRequesters.flatMap((item) => {
           const job = jobs.find((candidate) => matchesSync(candidate, item))
-          if (job && !job.dormant && job.supplyId && job.supplyId !== 'send')
-            void pagePort.cancelHistorySupply(job.supplyId)
+          return job && !job.dormant && job.supplyId && job.supplyId !== 'send' ? [job.supplyId] : []
         })
         return [
           ...(retained.some((item, index) => item !== requesters[index])
@@ -671,6 +672,7 @@ const HistoryDomain = Remesh.domain({
           ...(dormantTokens.size > 0
             ? [RequesterSupplyJobsState().new(removeBy(jobs, (item) => dormantTokens.has(item.syncToken)))]
             : []),
+          ...(cancelSupplyIds.length > 0 ? [CancelRequesterSuppliesEvent(cancelSupplyIds)] : []),
           ClearSyncBindingsCommand(payload),
           CleanupProviderSlotsCommand(payload),
           ...dismissedOwners.flatMap((item) => dismissFeedback(get, item) ?? []),
@@ -2031,19 +2033,17 @@ const HistoryDomain = Remesh.domain({
           ...new Map([...providerSources, ...successorSources].map((item) => [item.sourcePeerId, item])).values()
         ]
         const owners = get(FeedbackOwnersState()).filter((item) => item.domain === runtimeDomain)
-        // Job-aware release: a live page supply is cancelled so its own terminal finish releases
-        // the job after physical settlement (the cleanup wait observes this); dormant successors
-        // are removed without starting; send-stage jobs are released with their pending sends
-        // because teardown abandons the wire output — no settlement event will drive them later.
+        // Job-aware release: a dormant successor is removed without starting; a live page supply
+        // is cancelled on one awaited settlement path so its own terminal finish releases the job
+        // after physical settlement (the cleanup wait observes this); a send-stage job keeps its
+        // job and pending send — the invoked wire send still settles through the real
+        // transport.send() Promise and only that settlement releases it, never the logical leave.
         const jobs = get(RequesterSupplyJobsState())
         const domainJobs = jobs.filter((item) => item.domain === runtimeDomain)
-        const immediateTokens = new Set(
-          domainJobs.filter((item) => item.dormant || item.supplyId === 'send').map((item) => item.syncToken)
+        const dormantTokens = new Set(domainJobs.filter((item) => item.dormant).map((item) => item.syncToken))
+        const cancelSupplyIds = domainJobs.flatMap((item) =>
+          !item.dormant && item.supplyId && item.supplyId !== 'send' ? [item.supplyId] : []
         )
-        domainJobs.forEach((item) => {
-          if (!item.dormant && item.supplyId && item.supplyId !== 'send')
-            void pagePort.cancelHistorySupply(item.supplyId)
-        })
         // Domain release unconditionally releases the requester state: the domain is being torn
         // down, so a later fresh synchronization may bind again. Loading settlement is the only
         // non-destructive path; release is not.
@@ -2051,17 +2051,10 @@ const HistoryDomain = Remesh.domain({
           RequesterAttemptsState().new(
             removeBy(get(RequesterAttemptsState()), (item) => item.domain === runtimeDomain)
           ),
-          ...(immediateTokens.size > 0
-            ? [
-                RequesterSupplyJobsState().new(removeBy(jobs, (item) => immediateTokens.has(item.syncToken))),
-                PendingWireSendsState().new(
-                  removeBy(
-                    get(PendingWireSendsState()),
-                    (item) => item.type === 'inventory' && immediateTokens.has(item.syncToken)
-                  )
-                )
-              ]
+          ...(dormantTokens.size > 0
+            ? [RequesterSupplyJobsState().new(removeBy(jobs, (item) => dormantTokens.has(item.syncToken)))]
             : []),
+          ...(cancelSupplyIds.length > 0 ? [CancelRequesterSuppliesEvent(cancelSupplyIds)] : []),
           ...uniqueSources.map(CleanupProviderSlotsCommand),
           ClearDomainSyncBindingsCommand(runtimeDomain),
           ...owners.flatMap((item) => dismissFeedback(get, item) ?? [])
@@ -2112,6 +2105,22 @@ const HistoryDomain = Remesh.domain({
     domain.effect({
       name: 'History.RequesterSupplyAdmissionEffect',
       impl: ({ fromEvent }) => fromEvent(SyncStartedEvent).pipe(map(AdmitRequesterSupplyCommand))
+    })
+    domain.effect({
+      name: 'History.CancelRequesterSuppliesEffect',
+      impl: ({ fromEvent }) =>
+        fromEvent(CancelRequesterSuppliesEvent).pipe(
+          mergeMap((supplyIds) =>
+            // One awaited settlement path: every referenced page supply confirms its physical exit
+            // with the same ordering, error, and lifecycle behavior as the retired/released
+            // owners; no cancellation Promise is discarded. Each owner's own terminal stage still
+            // releases its job independently.
+            from(Promise.all(supplyIds.map((supplyId) => pagePort.cancelHistorySupply(supplyId)))).pipe(
+              map(() => []),
+              catchError(() => of([]))
+            )
+          )
+        )
     })
     domain.effect({
       name: 'History.RequesterInventorySupplyEffect',

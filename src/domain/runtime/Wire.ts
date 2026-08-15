@@ -324,9 +324,15 @@ const WireDomain = Remesh.domain({
         const generations = get(RoomGenerationsState())
         const generation = generationFor(generations, roomId) + 1
         const sendQueues = get(SendQueuesState())
+        const current = sendQueues.find((item) => item.roomId === roomId)
+        // An already-invoked head still awaits the actual transport.send() Promise: logical leave
+        // suppresses the queue's logical output but never impersonates that physical settlement,
+        // so exact ownership (one suspended queue holding only the invoked head) settles with the
+        // real Promise instead of a synthetic cancellation.
+        const invokedHead = payload.preservePending || !current?.headInvoked ? undefined : current.requests[0]
         const invalidated = payload.preservePending
           ? []
-          : (sendQueues.find((item) => item.roomId === roomId)?.requests ?? [])
+          : (current?.requests ?? []).filter((request) => request !== invokedHead)
         return [
           RoomGenerationsState().new(replaceBy(generations, (item) => item.roomId === roomId, { roomId, generation })),
           TrustedRoomsState().new(get(TrustedRoomsState()).filter((item) => item !== roomId)),
@@ -337,7 +343,17 @@ const WireDomain = Remesh.domain({
                   sendQueues.map((item) => (item.roomId === roomId ? { ...item, suspended: true } : item))
                 )
               ]
-            : [SendQueuesState().new(sendQueues.filter((item) => item.roomId !== roomId))]),
+            : invokedHead && current
+              ? [
+                  SendQueuesState().new(
+                    replaceBy(sendQueues, (item) => item.roomId === roomId, {
+                      ...current,
+                      suspended: true,
+                      requests: [invokedHead]
+                    })
+                  )
+                ]
+              : [SendQueuesState().new(sendQueues.filter((item) => item.roomId !== roomId))]),
           DecodeQueuesState().new(get(DecodeQueuesState()).filter((item) => item.frames[0]?.roomId !== roomId)),
           ...invalidated.map((request) =>
             MessageSendFailedEvent({
