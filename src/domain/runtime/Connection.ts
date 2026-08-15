@@ -1,5 +1,5 @@
 import { Remesh } from 'remesh'
-import { map, mergeMap, Observable } from 'rxjs'
+import { filter, map, mergeMap, Observable } from 'rxjs'
 import HistoryDomain from '@/domain/runtime/History'
 import LifecycleDomain from '@/domain/runtime/Lifecycle'
 import DeliveryDomain from '@/domain/runtime/Delivery'
@@ -39,6 +39,9 @@ interface WorldRecoveryAttempt {
   generation: number
   hostGeneration: number
   joinRequestId: string
+  /** True only for an AppButton manual World replacement: its failure stays out of page UI/Toast
+   * while automatic recovery keeps its existing diagnostics. */
+  manual?: boolean
 }
 
 export interface ConnectionOperationSucceeded {
@@ -240,23 +243,47 @@ const ConnectionDomain = Remesh.domain({
             })
     })
 
+    const PendingWorldRefreshState = domain.state<boolean>({
+      name: 'Connection.PendingWorldRefreshState',
+      default: false
+    })
+
     const RefreshWorldCommand = domain.command({
       name: 'Connection.RefreshWorldCommand',
       impl: ({ get }) => {
-        // One shared World replacement: an in-flight automatic recovery or prior manual
-        // replacement already is the current operation, so a later manual child joins it instead
-        // of creating a second physical owner.
-        if (get(WorldRecoveryAttemptState())) return null
+        // One shared World replacement: an in-flight operation or an already deferred manual child
+        // is the current operation; a later manual child joins it instead of creating a second
+        // physical owner.
+        if (get(WorldRecoveryAttemptState()) || get(PendingWorldRefreshState())) return null
+        // World demand comes from a committed Domain or the preserved registration/presence truth
+        // (a retained local seed after a reset failure keeps it); without either there is nothing
+        // to replace.
+        if (
+          get(sessionDomain.query.DomainsQuery()).length === 0 &&
+          get(worldDomain.query.LocalPresenceQuery()) === null
+        ) {
+          return null
+        }
+        // Another in-flight Domain attempt captured the World generation for its combined join,
+        // and a retained-seed retry has no committed Domain to settle a fresh generation yet: the
+        // manual replacement defers (never dropped) until every attempt settles and demand exists,
+        // so its generation change never invalidates an unrelated provisional join.
+        if (get(AttemptsState()).length > 0 || get(sessionDomain.query.DomainsQuery()).length === 0) {
+          return PendingWorldRefreshState().new(true)
+        }
+        return startManualWorldReplacement(get)
+      }
+    })
+
+    const ApplyPendingWorldRefreshCommand = domain.command({
+      name: 'Connection.ApplyPendingWorldRefreshCommand',
+      impl: ({ get }) => {
+        if (!get(PendingWorldRefreshState())) return null
+        // An in-flight operation (automatic recovery or a recovery started by the settling attempt
+        // itself) already is the replacement: the deferred manual child is subsumed.
+        if (get(WorldRecoveryAttemptState())) return [PendingWorldRefreshState().new(false)]
         if (get(sessionDomain.query.DomainsQuery()).length === 0) return null
-        // The old singleton World owner physically leaves and its connection/projection facts lose
-        // authority before the canonical fresh-generation join publishes one current full
-        // snapshot. Active Domain registrations, user/site values, desired World demand, and the
-        // complete local presence are preserved outside this physical cleanup.
-        return [
-          wireDomain.command.LeaveRoomCommand({ roomId: getWorldRoomId(), preservePending: false }),
-          worldDomain.command.DepartRoomCommand(),
-          ...startWorldRecovery(get)
-        ]
+        return [PendingWorldRefreshState().new(false), ...startManualWorldReplacement(get)]
       }
     })
 
@@ -504,22 +531,26 @@ const ConnectionDomain = Remesh.domain({
       }
     })
 
-    const startWorldRecovery = (get: Parameters<Parameters<typeof domain.command>[0]['impl']>[0]['get']) => {
+    const startWorldRecovery = (
+      get: Parameters<Parameters<typeof domain.command>[0]['impl']>[0]['get'],
+      manual = false
+    ) => {
       const generation = get(WorldRecoveryGenerationState()) + 1
       if (!Number.isSafeInteger(generation)) {
         return [ErrorEvent({ error: new Error('World recovery generation exhausted') })]
       }
-      const requestId = `world-recovery:${generation}`
+      const requestId = manual ? `world-manual-recovery:${generation}` : `world-recovery:${generation}`
       const recovery: WorldRecoveryAttempt = {
         requestId,
         generation,
         hostGeneration: get(lifecycleDomain.query.HostGenerationQuery()),
-        joinRequestId: worldJoinRequestId(requestId)
+        joinRequestId: worldJoinRequestId(requestId),
+        ...(manual ? { manual: true } : {})
       }
       return [
         WorldRecoveryGenerationState().new(generation),
         WorldRecoveryAttemptState().new(recovery),
-        worldDomain.command.BeginRecoveryCommand(requestId),
+        worldDomain.command.BeginRecoveryCommand({ requestId, manual }),
         wireDomain.command.JoinRoomsCommand({
           requestId: recovery.joinRequestId,
           roomIds: [getWorldRoomId()]
@@ -527,6 +558,17 @@ const ConnectionDomain = Remesh.domain({
         WorldRecoveryTimeoutArmedEvent({ requestId, joinRequestId: recovery.joinRequestId })
       ]
     }
+
+    // One real stop-before-start manual World replacement: projection/connection facts of the old
+    // generation lose authority first, the old singleton owner physically leaves, then the
+    // canonical fresh-generation join publishes one current full snapshot. The replacement is
+    // UI-silent and preserves registrations, user/site values, demand, and the complete local
+    // presence.
+    const startManualWorldReplacement = (get: Parameters<Parameters<typeof domain.command>[0]['impl']>[0]['get']) => [
+      worldDomain.command.DepartRoomCommand(),
+      wireDomain.command.LeaveRoomCommand({ roomId: getWorldRoomId(), preservePending: false }),
+      ...startWorldRecovery(get, true)
+    ]
 
     const RetryDomainRecoveryCommand = domain.command({
       name: 'Connection.RetryDomainRecoveryCommand',
@@ -588,7 +630,9 @@ const ConnectionDomain = Remesh.domain({
           WorldRecoveryAttemptState().new(null),
           worldDomain.command.AbortRecoveryCommand(payload.requestId),
           wireDomain.command.LeaveRoomCommand({ roomId: getWorldRoomId(), preservePending: false }),
-          ErrorEvent({ error: payload.error }),
+          // A manual AppButton World replacement keeps its failure out of page UI/Toast; automatic
+          // recovery retains its existing diagnostics contract.
+          ...(recovery.manual ? [] : [ErrorEvent({ error: payload.error })]),
           WorldRecoveryAbortedEvent({
             requestId: recovery.requestId,
             generation: recovery.generation,
@@ -903,6 +947,14 @@ const ConnectionDomain = Remesh.domain({
               site: attempt.site
             })
           )
+        )
+    })
+    domain.effect({
+      name: 'Connection.PendingWorldRefreshEffect',
+      impl: ({ fromQuery }) =>
+        fromQuery(AttemptsQuery()).pipe(
+          filter((attempts) => attempts.length === 0),
+          map(() => ApplyPendingWorldRefreshCommand())
         )
     })
     domain.effect({
