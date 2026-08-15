@@ -202,7 +202,6 @@ export const createArticoRoomTransport = (): RoomTransport => {
      * @see https://github.com/matallui/artico/blob/8a4f1a185be9355f893120e9492151f1785e59fa/packages/client/src/room.ts#L114
      * @see https://github.com/matallui/artico/blob/8a4f1a185be9355f893120e9492151f1785e59fa/packages/peer/src/peer.ts#L281
      */
-    peers: (roomId) => [...(owners.get(roomId)?.readyPeers ?? [])],
     send: async (roomId, payload, to) => {
       const owner = owners.get(roomId)
       const room = owner?.room

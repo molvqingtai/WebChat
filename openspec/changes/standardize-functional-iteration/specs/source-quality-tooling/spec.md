@@ -58,6 +58,8 @@ A condition-driven `while` or `do...while` MAY remain only when its changing ter
 
 A callback passed to a result-oriented collection or object-entry operation SHALL derive and return its result without mutating an input, outer binding, shared collection, singleton, cache, or other externally reachable object. It SHALL NOT perform DOM, browser, storage, database, wire, persistence, event-dispatch, timer, logging, or other I/O or external commit behavior. A result-oriented method SHALL NOT be used only as a carrier for ignored callback effects.
 
+As the sole synchronous result-producing exception, a `map` callback MAY return an item expression containing exactly one owner API call when no behavior-equivalent bulk operation exists, the same indivisible invocation inherently performs the item's only external effect and returns a value used in that item result, and separating those responsibilities is not behavior-equivalent. The complete mapped result SHALL be returned, assigned, or otherwise consumed. Every other subexpression in the returned item SHALL be pure. The callback SHALL NOT mutate an outer binding or accumulator, perform an additional effect, add separate traversal scaffolding, or discard the owner call's returned value. Callback arguments, evaluation and call order, multiplicity, synchronous error behavior, and returned-value ordering SHALL remain unchanged. The `Session.ts` item object whose `armedId` field consumes `identity.nextId()` and `useShareRef` registration whose whole item is `setRef(ref, node)` SHALL conform as examples of this general boundary rather than file-level waivers.
+
 A `forEach` callback MAY perform explicit synchronous per-item actions only under the boundary above. It SHALL NOT construct a traversal result or start unconsumed asynchronous work. Existing call order, multiplicity, synchronous error behavior, membership semantics, and externally visible effects SHALL remain unchanged.
 
 Concurrent per-item actions MAY use `Promise.all(items.map(...))` only when every `map` callback directly returns its operation Promise and the complete mapped result is immediately consumed by that returned or awaited `Promise.all`. The expression SHALL preserve existing concurrency, result ordering, and rejection behavior. Any equivalent existing bulk operation SHALL take precedence over repeated per-item effects.
@@ -84,6 +86,14 @@ The existing `assembleURL` implementation SHALL remain unchanged: its `new URL(u
 - **WHEN** the iteration is expressed with `map`
 - **THEN** each callback SHALL directly return its operation Promise and one returned or awaited `Promise.all` SHALL immediately consume the complete mapped result without changing concurrency, result ordering, or rejection behavior
 
+#### Scenario: Consume an indivisible mixed effect-and-result owner operation
+
+- **GIVEN** a synchronous owner API inherently performs the item's only external effect and returns a value used in the item's result in the same invocation
+- **AND** splitting the effect from result construction would not preserve behavior
+- **AND** no behavior-equivalent bulk operation exists
+- **WHEN** the operation is applied across a collection
+- **THEN** a consumed `map` MAY return an item expression containing exactly one such owner call whose value contributes to the item, while every other subexpression remains pure and there is no outer mutation, second effect, ignored owner result, or file-level waiver
+
 #### Scenario: Allow a private reducer accumulator
 
 - **GIVEN** a reduction creates a fresh accumulator for that invocation and the accumulator cannot be reached or observed outside the reduction while it runs
@@ -96,15 +106,108 @@ The existing `assembleURL` implementation SHALL remain unchanged: its `new URL(u
 - **WHEN** the iteration cleanup is implemented
 - **THEN** that reducer SHALL remain byte-for-byte unchanged and SHALL NOT be rewritten as an external-side-effect fix
 
+### Requirement: Artico targeting preserves message intent and History settlement is bounded
+
+`RoomTransport.send(roomId, payload, to?: string | string[])` SHALL preserve its optional target type. After confirming that the room is joined, the WebChat adapter SHALL call `room.send(payload, to)` exactly once. It SHALL NOT manufacture recipients from room membership, maintain or consult a parallel `readyPeers` set, or loop over recipients.
+
+Target intent SHALL be exact: `undefined` means room broadcast; `string` means one peer; `string[]` means the selected peer subset without duplicate delivery to the same room peer; and `[]` means no recipients. An empty array SHALL NOT become broadcast. Ordinary Chat messages, normal Session publications, normal World publications, and History requests SHALL omit the target. History responses SHALL target the actual requester. Session/World current-state catch-up for a peer that joined or reconnected after the original publication SHALL remain targeted to that peer and SHALL NOT become a duplicate room broadcast.
+
+This correction SHALL assume that each delegated `room.send` completes successfully. The implementation SHALL keep the existing `@rtco/client` version and lock resolution unchanged and SHALL NOT add send-failure handling. Handling a send failure SHALL remain outside this change and require separate authority.
+
+One History synchronization SHALL allocate one request identity and broadcast each paginated inventory-request page exactly once without a target. Current room membership at request start SHALL be a loading-settlement snapshot only, not the send target. Response page order and bounds SHALL be validated independently by `(syncId, sourcePeerId)`, while completion, failure, and departure SHALL settle that provider only for loading. One provider's invalid page, failure, or departure SHALL NOT cancel another provider or erase otherwise valid History received later. Every response page associated with the known request identity and accepted by the existing pagination validation SHALL have its valid records retained and merged through the existing message-identity deduplication regardless of arrival time, loading visibility, provider connectivity, or room generation changes. `syncId` and `sourcePeerId` SHALL only correlate and validate pages; elapsed time and generation changes SHALL NOT discard an otherwise valid page.
+
+History loading SHALL remain manually dismissible. Manual dismissal SHALL change only the UI and SHALL NOT cancel response collection. Otherwise loading SHALL close when every snapshotted provider is completed, failed, or departed, or when the existing absolute ten-second `HISTORY_REQUEST_TIMEOUT_MS` deadline from request start expires, whichever occurs first. This SHALL have the loading-only settlement semantics of racing `Promise.allSettled(providerHistories)` against the timeout; it SHALL NOT await the timeout as a member of `Promise.all` or cancel the losing provider work. Loading closure, timeout, provider failure or departure, and room generation changes SHALL NOT cause an otherwise valid associated History page to be discarded. Whenever such a page arrives, its records SHALL continue through pagination validation, message-identity deduplication, and merge.
+
+#### Scenario: Delegate one optional-target send
+
+- **GIVEN** a joined Artico room and `to` equal to `undefined`, one peer id, a peer-id array, or an empty array
+- **WHEN** the adapter sends a payload
+- **THEN** it SHALL invoke `room.send(payload, to)` exactly once with the original value and SHALL NOT enumerate, filter, deduplicate, or retry recipients itself
+- **AND** `undefined` SHALL broadcast, a string SHALL address one peer, an array SHALL address that selected subset once per matching room peer, and `[]` SHALL send to nobody
+
+#### Scenario: Distinguish publications from current-state catch-up
+
+- **GIVEN** an ordinary Chat message or normal Session/World publication with no request-specific recipient
+- **WHEN** it is sent to the room
+- **THEN** it SHALL omit the target and SHALL NOT build per-peer pending send state
+- **BUT** a Session/World current-state snapshot required by one peer that joined or reconnected after the original publication SHALL target only that peer
+
+#### Scenario: Broadcast one History request and merge every provider
+
+- **GIVEN** a History request-start membership snapshot containing multiple peers
+- **WHEN** the requester sends the paginated inventory-request pages for that identity and providers respond
+- **THEN** each request page SHALL be one no-target room broadcast, while each response SHALL target the requester
+- **AND** valid response lanes SHALL be tracked independently by `(syncId, sourcePeerId)` and their records SHALL be deduplicated and merged without one provider failure cancelling another
+
+#### Scenario: Keep send-failure behavior outside this correction
+
+- **GIVEN** the adapter delegates one optional-target send
+- **WHEN** this source correction is implemented
+- **THEN** the send SHALL be treated as successful and the existing `@rtco/client` version and lock resolution SHALL remain unchanged
+- **AND** the source SHALL add no send-failure handling
+
+#### Scenario: Close History loading on settlement or timeout
+
+- **GIVEN** History loading is visible and one or more snapshotted providers may complete, fail, leave, or remain incomplete
+- **WHEN** all provider lanes settle before ten seconds
+- **THEN** loading SHALL close immediately without waiting for the deadline
+- **WHEN** the ten-second deadline occurs first
+- **THEN** loading SHALL close and already merged records SHALL remain, while every later valid page associated with the request SHALL continue to merge regardless of provider connectivity or room generation changes
+- **AND** no page SHALL become invalid merely because it arrived after loading closed or after the ten-second deadline
+- **AND** the user SHALL retain the existing ability to dismiss only the loading UI without cancelling synchronization
+
+### Requirement: Exact-History candidate window is 30 days through one six-file replacement
+
+The unified source child SHALL replace the exact-History requester/provider candidate window from 180 days to 30 days as one mechanical `+15/-15` subchange touching exactly these six files: `src/constants/config.ts`; `CLAUDE.md`; `openspec/changes/sync-exact-history-and-show-progress/design.md`; `openspec/changes/sync-exact-history-and-show-progress/specs/webrtc-runtime/spec.md`; `openspec/changes/sync-exact-history-and-show-progress/tasks.md`; and `openspec/specs/webrtc-runtime/spec.md`.
+
+`src/constants/config.ts` SHALL set `HISTORY_WINDOW_DAYS = 30`. The five active or canonical documentation files SHALL replace only the matching `180-day` constant descriptions, requester/provider snapshot wording, requirement text, scenarios, and completed historical task wording with their `30-day` equivalents. Requester and provider cutoff ownership, the wall-clock instant at which each cutoff freezes, eligibility exactly at the cutoff, rejection only before the cutoff, pagination, ordering, budgets, timeouts, protocol, storage, and every other History behavior SHALL remain unchanged. This subchange SHALL modify no archive or test file and SHALL add no test, fixture, helper, tool, dependency, compatibility path, migration, or send-failure handling.
+
+#### Scenario: Apply the exact six-file mechanical replacement
+
+- **GIVEN** the existing exact-History implementation and active/canonical authority use a 180-day requester/provider candidate window
+- **WHEN** the unified source child applies the approved retention-window correction
+- **THEN** `HISTORY_WINDOW_DAYS` and every matching active/canonical occurrence in the exact six-file scope SHALL use 30 days through a `+15/-15` subdiff
+- **AND** no archive, test, dependency, lock, protocol, storage, or other file SHALL change for this retention-window subchange
+
+#### Scenario: Preserve cutoff and pagination semantics
+
+- **GIVEN** requester and provider cutoffs freeze independently and records exactly at either cutoff remain eligible
+- **WHEN** their window length changes from 180 days to 30 days
+- **THEN** only the duration SHALL change; cutoff ownership and timing, inclusive boundaries, pagination, ordering, budgets, timeouts, and all other History behavior SHALL remain identical
+
+### Requirement: Source authority and task truth remain synchronized
+
+The unified source child SHALL carry the reviewed `proposal.md`, `design.md`, and `specs/source-quality-tooling/spec.md` text without replacing any artifact with an earlier contract. It SHALL carry the same `tasks.md` row identifiers, wording, and order. Only checkbox markers MAY change, and a row SHALL be checked only when every clause in that row is true on the same immutable source exact.
+
+A failed, abandoned, or superseded candidate SHALL NOT supply completion evidence to a repair child. When source inspection or fresh review contradicts any clause in a checked row, that row SHALL remain unchecked on the next candidate. The docs-only authority SHALL complete its phase 1 freeze rows; phase 2 inventory, phase 3 implementation, phase 4 preservation, and phase 5 verification/review rows SHALL remain unchecked until their complete work is performed and proven on the current source exact. This synchronization SHALL preserve the retained success-only Artico delegation, broadcast/target classification, multi-provider History settlement, 304-file clean cut, and exact six-file `+15/-15` retention replacement without adding a second authority or enforcement surface.
+
+#### Scenario: Reject a stale authority mirror
+
+- **GIVEN** a source candidate carries an earlier proposal, design, specification, or task-row set that omits any retained transport, History, 30-day, or authored-scope obligation
+- **WHEN** the cumulative source authority is inspected
+- **THEN** that candidate SHALL fail authority synchronization even if its hosted gates are green
+
+#### Scenario: Reject inherited or partial task completion
+
+- **GIVEN** a task row is checked from a failed or superseded candidate, or only some clauses of the row are true on the current source exact
+- **WHEN** the repair candidate synchronizes task truth
+- **THEN** the row SHALL be unchecked and SHALL NOT inherit completion from the earlier exact
+
+#### Scenario: Carry one reviewed contract into source
+
+- **GIVEN** the docs-only authority has completed phase 1 while source inventory, implementation, preservation, verification, and review remain unfinished
+- **WHEN** the unified source child is created
+- **THEN** it SHALL carry the reviewed three authority texts and complete task-row set, with only current-exact checkbox updates and no restoration of provider, rejection, attempt-all, preflight, first-error, or send-failure obligations
+
 ### Requirement: Functional-iteration cleanup uses only existing repository tooling
 
-The cleanup SHALL use Oxfmt as the sole formatter, Oxlint as the sole linter, and TypeScript as the type-analysis gate. The existing Oxlint configuration MAY enable a built-in rule already shipped by the installed toolchain when it exactly enforces part of this standard. The implementation MUST NOT add, register, load, generate, or depend on an Oxlint plugin, local rule plugin, parser, second linter, dependency, custom semantic scanner, committed scan script, or source enforcement module.
+The cleanup SHALL use Oxfmt as the sole formatter, Oxlint as the sole linter, and TypeScript as the type-analysis gate. The existing Oxlint configuration MAY enable a built-in rule already shipped by the installed toolchain when it exactly enforces part of this standard. The implementation MUST NOT add, register, load, generate, or depend on an Oxlint plugin, local rule plugin, parser, second linter, new package, custom semantic scanner, committed scan script, source enforcement module, or dependency change.
 
 No `owner-commit`, `functional-loop`, lint-disable, or other new waiver annotation SHALL make a nonconforming loop or callback acceptable. Semantic boundaries not expressible by existing tools SHALL remain source-review requirements rather than creating a second enforcement path.
 
-The cleanup SHALL add no test case, test abstraction, fixture, assertion, mock capability, or coverage requirement. Existing test, fixture, and harness files SHALL remain in authored scope and MAY receive only the minimum behavior-equivalent iteration or private-state ownership edits required by the same standard. An existing private fixture owner MAY replace its complete internal state once when that removes repeated external mutation, but its exposed object and behavior SHALL remain equivalent. Test scenarios, inputs, expectations, timing, ordering, public fixture contracts, and coverage SHALL remain unchanged.
+The cleanup SHALL add no test case, assertion, test abstraction, fixture, mock capability, or coverage requirement. Existing test, fixture, and harness files SHALL remain in authored scope and MAY receive only the minimum behavior-equivalent iteration or private-state ownership edits required by the same standard, plus minimum expectation synchronization for the explicitly changed Artico and History behavior. An existing private fixture owner MAY replace its complete internal state once when that removes repeated external mutation, but its exposed object and behavior MUST remain equivalent. Test scenarios, inputs, timing, ordering, public fixture contracts, and coverage SHALL remain unchanged.
 
-Every source rewrite SHALL preserve evaluation and iteration order, call multiplicity, synchronous or asynchronous execution and concurrency, return values, thrown and rejected errors, object identity, mutation visibility, event and timer ordering, DOM behavior, storage and database operations, wire and persistence behavior, generated output, product behavior, public interfaces, extension permissions, protocols, and dependencies.
+Except for the exact Artico delegation, target-intent, bounded multi-provider History settlement, and exact six-file 30-day candidate-window corrections above, every source rewrite SHALL preserve evaluation and iteration order, call multiplicity, synchronous or asynchronous execution and concurrency, return values, thrown and rejected errors, object identity, mutation visibility, event and timer ordering, DOM behavior, storage and database operations, wire payloads and persistence behavior, generated output, product behavior, public interfaces, extension permissions, protocols, and dependencies.
 
 #### Scenario: Inspect the authored manifest
 
@@ -114,17 +217,18 @@ Every source rewrite SHALL preserve evaluation and iteration order, call multipl
 #### Scenario: Inspect enforcement changes
 
 - **WHEN** the implementation diff and dependency graph are inspected
-- **THEN** they SHALL contain no new plugin, parser, linter, dependency, scanner, enforcement module, waiver convention, or hand edit to the generated validator
+- **THEN** they SHALL contain no new plugin, parser, linter, package, scanner, enforcement module, waiver convention, local provider patch, or hand edit to the generated validator
+- **AND** the dependency graph and lock resolution SHALL remain unchanged
 
 #### Scenario: Preserve existing test evidence without expanding it
 
-- **WHEN** an existing test, fixture, or harness file requires iteration or private-state ownership cleanup
-- **THEN** only the minimum behavior-equivalent implementation MAY change, while its public fixture contract, scenario, input, assertion, expected value, timing, ordering, mock capability, abstraction boundary, and coverage SHALL remain identical
+- **WHEN** an existing test, fixture, or harness file requires iteration cleanup or synchronization with the closed transport/History correction
+- **THEN** only the minimum implementation and expectation MAY change, while its public fixture contract, scenario, input, timing, ordering, mock capability, abstraction boundary, and coverage SHALL remain identical
 
-#### Scenario: Verify behavior-neutral source
+#### Scenario: Verify the scoped source
 
 - **WHEN** the immutable source candidate runs the repository's existing format, lint, typecheck, test, build, generated-artifact, OpenSpec, and cleanliness gates and receives fresh independent review
-- **THEN** all gates SHALL pass without product, protocol, persistence, generated-output, dependency, or observable behavior change
+- **THEN** all gates SHALL pass with only the authorized Artico/History success-path and exact 30-day candidate-window behavior changed, with dependencies unchanged and without any other product, protocol, persistence, generated-output, or observable behavior change
 
 #### Scenario: Hold delivery boundaries
 

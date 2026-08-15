@@ -239,8 +239,8 @@ export class PresenceStoreInjectPortAdapter implements Adapter {
 
   private rejectBindingPending(binding: PortBinding, reason: string) {
     // from the live Map while dispatching its failure exactly once
-    for (const [id, pending] of this.pending) {
-      if (pending.binding !== binding) continue
+    this.pending.forEach((pending, id) => {
+      if (pending.binding !== binding) return
       this.pending.delete(id)
       dispatch(
         this.callbacks,
@@ -256,7 +256,7 @@ export class PresenceStoreInjectPortAdapter implements Adapter {
         },
         () => {}
       )
-    }
+    })
   }
 
   private rejectAllPending(reason: string) {

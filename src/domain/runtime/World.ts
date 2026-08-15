@@ -62,7 +62,7 @@ const WorldDomain = Remesh.domain({
   name: 'WorldDomain',
   impl: (domain, options: WorldOptions) => {
     const wireDomain = domain.getDomain(WireDomain())
-    const transport = domain.getExtern(RoomTransportExtern)
+    domain.getExtern(RoomTransportExtern)
 
     const RegistrationsState = domain.state<WorldDomainRegistration[]>({
       name: 'World.RegistrationsState',
@@ -74,6 +74,8 @@ const WorldDomain = Remesh.domain({
     })
     const JoinedState = domain.state<boolean>({ name: 'World.JoinedState', default: false })
     const PresencesState = domain.state<WorldPresenceRecord[]>({ name: 'World.PresencesState', default: [] })
+    /** Current physical Room members, tracked from the join/leave events this domain owns. */
+    const RoomMembersState = domain.state<string[]>({ name: 'World.RoomMembersState', default: [] })
     const RecoveryState = domain.state<RecoveryState | null>({ name: 'World.RecoveryState', default: null })
     const PendingPresenceSendsState = domain.state<PendingPresenceSend[]>({
       name: 'World.PendingPresenceSendsState',
@@ -558,7 +560,7 @@ const WorldDomain = Remesh.domain({
           // A presence from a peer outside the current Room generation still earns one targeted reply;
           // current Room peers are already covered by the iterator or join catch-up.
           ...(current === undefined &&
-          !transport.peers(worldRoomId).includes(payload.sourcePeerId) &&
+          !get(RoomMembersState()).includes(payload.sourcePeerId) &&
           get(JoinedState()) &&
           get(RegistrationsState()).length > 0 &&
           !get(StagedRegistrationsState()).some((item) => item.publicationPending) &&
@@ -578,6 +580,8 @@ const WorldDomain = Remesh.domain({
       name: 'World.PeerJoinedCommand',
       impl: ({ get }, payload: { roomId: string; sourcePeerId: string }) => {
         if (payload.roomId !== worldRoomId) return null
+        const members = get(RoomMembersState())
+        const nextMembers = members.includes(payload.sourcePeerId) ? members : [...members, payload.sourcePeerId]
         const stages = get(StagedRegistrationsState())
         const changed = stages.map((stage) =>
           stage.publicationPending
@@ -588,13 +592,21 @@ const WorldDomain = Remesh.domain({
         const nextRecovery = recovery?.publicationPending
           ? { ...recovery, missedPeerIds: appendUnique(recovery.missedPeerIds, payload.sourcePeerId) }
           : recovery
+        const memberUpdate = nextMembers === members ? [] : [RoomMembersState().new(nextMembers)]
         if (stages.some((stage) => stage.publicationPending) || recovery) {
-          return [StagedRegistrationsState().new(changed), ...(nextRecovery ? [RecoveryState().new(nextRecovery)] : [])]
+          return [
+            ...memberUpdate,
+            StagedRegistrationsState().new(changed),
+            ...(nextRecovery ? [RecoveryState().new(nextRecovery)] : [])
+          ]
         }
-        return PublishCurrentCommand({
-          requestId: `world:peer:${payload.sourcePeerId}`,
-          targetPeerIds: [payload.sourcePeerId]
-        })
+        return [
+          ...memberUpdate,
+          PublishCurrentCommand({
+            requestId: `world:peer:${payload.sourcePeerId}`,
+            targetPeerIds: [payload.sourcePeerId]
+          })
+        ]
       }
     })
 
@@ -602,6 +614,9 @@ const WorldDomain = Remesh.domain({
       name: 'World.PeerLeftCommand',
       impl: ({ get }, payload: { roomId: string; sourcePeerId: string }) => {
         if (payload.roomId !== worldRoomId) return null
+        const memberRemoval = get(RoomMembersState()).includes(payload.sourcePeerId)
+          ? [RoomMembersState().new(get(RoomMembersState()).filter((item) => item !== payload.sourcePeerId))]
+          : []
         const stages = get(StagedRegistrationsState()).map((stage) => ({
           ...stage,
           missedPeerIds: stage.missedPeerIds.filter((item) => item !== payload.sourcePeerId)
@@ -610,6 +625,7 @@ const WorldDomain = Remesh.domain({
         const presences = get(PresencesState())
         const hasPresence = presences.some((item) => item.sourcePeerId === payload.sourcePeerId)
         return [
+          ...memberRemoval,
           StagedRegistrationsState().new(stages),
           ...(recovery
             ? [

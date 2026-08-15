@@ -8,7 +8,6 @@ export interface RoomTransport {
   /**
    * Current physical members of a joined room, regardless of call readiness.
    */
-  peers: (roomId: string) => string[]
   /**
    * Passes the selected targets to the provider directly; an omitted or empty target means the
    * provider's own room broadcast. The provider's send settlement or rejection is surfaced as-is.

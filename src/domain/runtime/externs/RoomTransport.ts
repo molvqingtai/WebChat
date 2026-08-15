@@ -13,7 +13,6 @@ export const RoomTransportExtern = Remesh.extern<RoomTransport>({
     peerIdOf: notImplemented('peerIdOf'),
     join: notImplemented('join'),
     leave: notImplemented('leave'),
-    peers: notImplemented('peers'),
     send: notImplemented('send'),
     onMessage: notImplemented('onMessage'),
     onPeerJoin: notImplemented('onPeerJoin'),

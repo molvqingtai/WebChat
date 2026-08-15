@@ -341,7 +341,6 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
       pendingJoins.get(roomId)?.reject(new Error(`Room "${roomId}" join cancelled`))
       pendingJoins.delete(roomId)
     },
-    peers: (roomId) => [...(peersByRoom.get(roomId) ?? [])],
     send: async (roomId, payload, to) => {
       // A broadcast records its actual recipients: the room's current members at send time.
       const recipients = to === undefined ? [...(peersByRoom.get(roomId) ?? [])] : to
@@ -2915,7 +2914,6 @@ describe('RuntimeServer concurrent World registration convergence', () => {
     let closeListener: ((roomId: string) => void) | null = null
     let joinGate: Promise<void> | null = null
     let releaseJoinGate = () => {}
-    let primed = false
     const transport: RoomTransport = {
       peerIdOf: () => 'local-peer',
       join: async (roomId) => {
@@ -2933,7 +2931,6 @@ describe('RuntimeServer concurrent World registration convergence', () => {
         accepted.push(message)
       },
       onMessage: () => () => {},
-      peers: () => (primed ? ['remote-peer'] : []),
       onPeerJoin: () => () => {},
       onPeerLeave: () => () => {},
       onRoomClose: (callback) => {
@@ -2966,9 +2963,8 @@ describe('RuntimeServer concurrent World registration convergence', () => {
         releaseJoinGate()
         joinGate = null
       },
-      /** Establishes one known remote World peer so each revision iterator has one distinct target. */
+      /** Establishes one known remote World peer so each publication has one live member. */
       primeTarget: async () => {
-        primed = true
         await flush()
       }
     }

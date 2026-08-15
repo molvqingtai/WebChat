@@ -1984,7 +1984,7 @@ const HistoryDomain = Remesh.domain({
     })
     domain.effect({
       name: 'History.RequestTimeoutEffect',
-      impl: ({ fromEvent }) =>
+      impl: ({ fromEvent, get }) =>
         fromEvent(HistoryTimeoutArmedEvent).pipe(
           mergeMap(
             (payload) =>
@@ -1996,7 +1996,15 @@ const HistoryDomain = Remesh.domain({
                 return () => globalThis.clearTimeout(timerId)
               })
           ),
-          map(FinishCurrentRequesterCommand)
+          // The request timeout only terminates the loading feedback: the synchronization stays
+          // alive and keeps accepting and merging every provider's valid pages.
+          mergeMap(
+            (key) =>
+              defer(async () => {
+                const current = get(RequesterAttemptsState()).find((item) => matchesSync(item, key))
+                return current ? (dismissFeedback(get, current) ?? []) : []
+              }) as unknown as Observable<never>
+          )
         )
     })
     domain.effect({

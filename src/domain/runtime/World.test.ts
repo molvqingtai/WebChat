@@ -39,7 +39,6 @@ const createFixture = (options?: { failNextEncode?: () => boolean }) => {
     peerIdOf: () => 'local-peer',
     join: async () => {},
     leave: async () => {},
-    peers: () => [...joinedPeers],
     send: async (roomId, payload, targetPeerIds) => {
       if (roomId !== getWorldRoomId()) return
       const settle = deferred<void>()

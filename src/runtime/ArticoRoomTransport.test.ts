@@ -385,7 +385,6 @@ describe('ArticoRoomTransport per-target isolation', () => {
     expect(transport.peerIdOf('chat-a')).toBe('')
     expect(transport.peerIdOf('world-v3')).toBe(worldPeer.id)
     expect(fixture.rooms.get('world-v3')).toBe(worldRoom)
-    expect(transport.peers('world-v3')).toEqual([])
     transport.dispose()
   })
 
@@ -402,7 +401,6 @@ describe('ArticoRoomTransport per-target isolation', () => {
     expect(stalePeer.closed).toBe(true)
     expect(fixture.peers).toHaveLength(2)
     expect(fixture.rooms.get('chat-a')).not.toBe(staleRoom)
-    expect(transport.peers('chat-a')).toEqual([])
     transport.dispose()
   })
 

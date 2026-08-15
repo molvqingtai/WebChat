@@ -7,10 +7,13 @@ Current traversal has several distinct shapes that must not be treated as interc
 - result construction that declares an outer `let`, array, object, map, set, or other temporary and changes it from a loop or callback;
 - `forEach` used only for explicit synchronous per-item actions where no equivalent bulk operation exists;
 - an imperative loop whose observable behavior depends on irreducible `break`, `continue`, function early return, sequential `await`, or live collection membership;
-- a condition-driven `while` or `do...while` whose termination is not collection exhaustion; and
+- a condition-driven `while` or `do...while` whose termination is not collection exhaustion;
+- a synchronous owner operation whose single call inherently performs the item's only effect and returns a value used in the item's result, so separating the effect from result construction would change behavior; and
 - a reduction that mutates only a fresh accumulator which is private to that reduction.
 
 The desired style is the shortest behavior-equivalent expression with the fewest necessary variables. This is not a request to mechanically replace one syntax with another. In particular, changing an effectful `forEach` to `for...of` preserves the same external mutation while adding syntax, and changing a valid private reducer accumulator to repeated immutable cloning adds work and behavioral risk without removing an external side effect.
+
+The Artico send path exposes a separate owner-approved correction discovered during this cleanup. `Room.send` already accepts `target?: string | string[]`, but WebChat currently expands an omitted target into its join-to-leave `readyPeers` membership and sends once per peer. That set is not a data-channel readiness filter. At the protocol layer, ordinary Chat and normal Session/World publications are room broadcasts, while the History requester currently repeats a logically room-wide request per peer. These behaviors require one closed transport and History repair rather than another callback carrier.
 
 ## Goals / Non-Goals
 
@@ -20,17 +23,24 @@ The desired style is the shortest behavior-equivalent expression with the fewest
 - Eliminate avoidable outer mutable temporaries and single-use traversal scaffolding.
 - Remove result-producing `forEach` and retain effect-only `forEach` only when it is the shortest synchronous form and no existing bulk operation is equivalent.
 - Keep result-producing callbacks free of external mutation and external commits, while making synchronous and concurrent effect traversal explicit and fully consumed.
+- Preserve a consumed direct `map` for an indivisible synchronous mixed effect-and-result owner operation without opening a general effectful-callback exception.
 - Preserve valid local mutation of a fresh, exclusive, non-escaping reducer accumulator.
-- Preserve exact behavior while applying the same rule to production, test, harness, configuration, and tracked tool source.
+- Delegate each Artico send once with its original optional target intent.
+- Broadcast ordinary Chat, normal Session/World publications, and one History request without manufacturing recipient targets; keep Session/World current-state catch-up and History responses targeted.
+- Merge every valid History response under one correlated multi-provider request regardless of arrival time, and close loading on full settlement or the existing ten-second deadline without stopping that merge.
+- Replace the exact-History requester/provider candidate window from 180 days to 30 days as one exact six-file mechanical subchange while preserving its cutoff and pagination semantics.
+- Preserve exact behavior outside those Owner-approved transport, History settlement, and 30-day candidate-window corrections while applying the same iteration rule to production, test, harness, configuration, and tracked tool source.
 - Verify the result with only existing repository tools and independent source review.
 
 **Non-Goals:**
 
-- No product feature, bug fix, performance redesign, concurrency redesign, protocol, persistence, DOM, storage, wire, or public-interface change.
+- No product feature, protocol, persistence, DOM, storage, wire-payload, or public-interface change beyond the closed Artico delegation, History request/settlement, and exact 30-day candidate-window corrections below.
 - No source minification or preference for fewer characters when it obscures intent or changes evaluation.
-- No custom Oxlint plugin, local plugin, parser, second linter, dependency, committed scan script, generated rule table, or semantic-analysis module.
+- No custom Oxlint plugin, local plugin, parser, second linter, new package, committed scan script, generated rule table, semantic-analysis module, or dependency change. The existing `@rtco/client` version and lock resolution remain unchanged.
+- No send-failure behavior change. This correction assumes each delegated `room.send` succeeds; handling a send failure requires separate authority.
 - No `owner-commit`, `functional-loop`, lint-disable, or other annotation that turns a nonconforming loop or callback into an exception.
-- No new test case, parameter row, assertion, fixture, mock capability, test helper abstraction, or coverage requirement.
+- No new test case, parameter row, assertion, fixture, mock capability, test helper abstraction, or coverage requirement. Existing expectations may receive only the minimum synchronization required by the explicitly changed transport and History behavior.
+- No archive rewrite, test-file change, compatibility path, migration, or broader retention-policy edit for the 30-day replacement.
 - No hand edit to the generated Archify validator and no expansion of the generated-file exclusion.
 
 ## Decisions
@@ -77,6 +87,8 @@ External side effects include:
 - invoking DOM, browser, storage, database, wire, persistence, event-dispatch, timer, logging, or other I/O/effect APIs; and
 - using a result-oriented method only as an iteration carrier while ignoring the created result.
 
+There is one narrow synchronous result-producing exception. When no behavior-equivalent bulk operation exists, a `map` callback may return an item expression containing exactly one indivisible owner API call: the same invocation inherently performs the item's only external effect and returns a value that contributes to that item result, and splitting those responsibilities is not behavior-equivalent. The complete mapped result must be returned, assigned, or otherwise consumed. Every other subexpression in the returned item must be pure; the callback must not mutate an outer binding or accumulator, perform an additional effect, add separate traversal scaffolding, or discard the owner call's returned value. Callback arguments, evaluation and call order, multiplicity, synchronous error behavior, and returned-value ordering must remain unchanged. The `Session.ts` item object whose `armedId` field consumes `identity.nextId()` and `useShareRef` registration whose whole item is `setRef(ref, node)` satisfy this boundary; they are examples of the general owner-operation rule, not file-level waivers.
+
 There are two explicit effect-only callback forms:
 
 - Synchronous per-item actions use `forEach` when no existing bulk operation is behavior-equivalent and `forEach` is the shortest equivalent expression. The traversal must not construct a result or update an outer accumulator that is read as its result, and it must not start asynchronous work whose Promise is discarded. Existing call order, multiplicity, synchronous error behavior, membership semantics, and externally visible effects remain unchanged.
@@ -88,40 +100,74 @@ This boundary distinguishes external effects from private reduction mechanics. A
 
 The existing `assembleURL` implementation satisfies this rule: `new URL(url)` creates the reduction-owned accumulator, `searchParams.append` mutates only that fresh object, and the object does not escape before `.toString()`. Rewriting it is outside scope and would risk query ordering or encoding behavior without removing an external side effect.
 
-### 4. The migration is one behavior-neutral authored-source pass
+### 4. Message intent controls Artico targeting and History settlement
+
+`RoomTransport.send(roomId, payload, to?: string | string[])` keeps its optional target type. After confirming the room exists, the adapter calls `room.send(payload, to)` exactly once. It does not create a target set, read or filter `readyPeers`, or loop over recipients.
+
+Target meaning is closed:
+
+- `to === undefined` is one room broadcast. Ordinary Chat messages, normal Session publications, normal World publications, and History requests use this form and do not enumerate room peers first.
+- `to: string` addresses one peer. History responses use the actual requester's peer id. Session/World current-state catch-up for a peer that joined or reconnected after the original publication remains targeted to that peer.
+- `to: string[]` addresses one already selected subset without changing the meaning to broadcast; duplicates do not create duplicate delivery attempts for the same room peer.
+- `to: []` is an explicit no-op and never falls back to broadcast.
+
+The adapter may expose provider room membership where another owner genuinely needs a snapshot, but it must not maintain a parallel join-to-leave set or use membership to rewrite send intent. In particular, the History requester snapshots current room members only as its expected settlement set. That snapshot is not passed as the send target.
+
+One History synchronization allocates one request identity and broadcasts each paginated inventory-request page exactly once without a target. Every peer in the request-start membership snapshot may provide a targeted response. Response page order and bounds are validated independently by `(syncId, sourcePeerId)`, while completion, failure, and departure settle that provider only for loading. One provider's invalid page, failure, or departure must not cancel another provider or erase otherwise valid History received later. Every response page associated with the known request identity and accepted by the existing pagination validation is retained and merged through the existing message-identity deduplication regardless of arrival time, loading visibility, provider connectivity, or room generation changes. `syncId` and `sourcePeerId` only correlate and validate pages; elapsed time and generation changes do not discard an otherwise valid page.
+
+The History loading owner remains manually dismissible. Manual dismissal changes only the UI and does not cancel response collection. Otherwise loading closes when either every snapshotted provider has completed, failed, or left, or the existing absolute `HISTORY_REQUEST_TIMEOUT_MS` ten-second deadline from request start expires. This is the semantic equivalent of racing `Promise.allSettled(providerHistories)` against the timeout for the loading owner only, not awaiting the timeout inside `Promise.all` and not cancelling the losing provider work. Loading closure, timeout, provider failure or departure, and room generation changes must not cause an otherwise valid associated History page to be discarded; whenever such a page arrives, its valid records continue through deduplication and merge.
+
+This correction assumes each delegated `room.send` returns successfully. The source child keeps `@rtco/client` and its lock resolution unchanged and adds no send-failure handling. Handling a send failure remains outside this change and requires separate authority.
+
+### 5. The migration is one authored-source pass with three closed behavior corrections
 
 The implementation manifest is fixed from clean `develop`: all tracked `*.js`, `*.jsx`, `*.ts`, `*.tsx`, `*.mjs`, and `*.cjs` files, minus only `.agents/skills/archify/renderers/shared/generated-validators.mjs`. The manifest contains exactly 304 authored files. Ignore patterns used by formatter or linter configuration do not remove a tracked authored file from this cleanup.
 
+Within the unified source child, the retention-window subchange is exactly six files and `+15/-15`: `src/constants/config.ts`; `CLAUDE.md`; `openspec/changes/sync-exact-history-and-show-progress/design.md`; `openspec/changes/sync-exact-history-and-show-progress/specs/webrtc-runtime/spec.md`; `openspec/changes/sync-exact-history-and-show-progress/tasks.md`; and `openspec/specs/webrtc-runtime/spec.md`. It replaces the constant and matching active/canonical `180-day` wording with `30-day` wording only. Requester and provider cutoff ownership, wall-clock freezing points, inclusive cutoff eligibility, pagination, budgets, timeouts, protocol, persistence, and every other History rule remain unchanged. Archives and test files are not modified for this subchange.
+
 The generated validator remains byte-identical and is verified through its existing generator controls. Its generator is authored source and remains in scope. No other file may claim generated, vendored, test, fixture, harness, configuration, or tool status as an exclusion.
 
-Every rewrite must preserve evaluation order, iteration order, call count, synchronous or asynchronous settlement, concurrency, return values, thrown and rejected errors, object identity, mutation visibility, event order, timers, storage and database operations, network/wire behavior, DOM behavior, and generated output. A shorter expression is acceptable only when it is behavior-equivalent.
+Except for the target delegation, broadcast classification, bounded multi-provider History settlement, and exact six-file 30-day candidate-window replacement defined above, every rewrite must preserve evaluation order, iteration order, call count, synchronous or asynchronous settlement, concurrency, return values, thrown and rejected errors, object identity, mutation visibility, event order, timers, storage and database operations, network/wire behavior, DOM behavior, and generated output. A shorter expression is acceptable only when it is behavior-equivalent.
 
-Existing tests, fixtures, and harnesses may receive only the minimum behavior-equivalent iteration or private-state ownership edits necessary to satisfy the same authored-source rule. An existing private fixture owner may replace its complete internal state once when that removes repeated external mutation, but its exposed object and behavior must remain equivalent. Test names, scenarios, inputs, assertions, expected values, timing, mocks, public fixture contracts, and coverage remain unchanged. No new test, fixture, or test abstraction is part of this cleanup.
+Existing tests, fixtures, and harnesses may receive only the minimum behavior-equivalent iteration or private-state ownership edits necessary to satisfy the same authored-source rule, plus minimum expectation synchronization for the closed transport and History corrections. An existing private fixture owner may replace its complete internal state once when that removes repeated external mutation, but its exposed object and behavior must remain equivalent. Test names, scenarios, inputs, timing, mocks, public fixture contracts, and coverage remain unchanged; no new test, fixture, or test abstraction is part of this cleanup.
 
-### 5. Existing tooling provides the complete implementation surface
+### 6. Existing tooling provides the complete implementation surface
 
 Oxfmt remains the sole formatter, Oxlint remains the sole linter, and TypeScript remains the type-analysis gate. The existing Oxlint configuration may enable a built-in rule already shipped by the installed Oxlint/plugins when that rule exactly enforces a syntactic part of this standard. It must not register, load, generate, or depend on a new plugin, parser, linter, runtime module, rule implementation, or package.
 
 Semantic decisions that the existing toolchain cannot express are verified by the implementation diff, read-only source inspection, existing tests, typechecking, builds, and fresh independent review. No committed scanner or second enforcement path is introduced to approximate them. The final source must not contain a new waiver comment or rule-specific annotation for this migration.
 
+### 7. Authority mirrors and task state are exact-local
+
+The unified source child carries the reviewed `proposal.md`, `design.md`, and `specs/source-quality-tooling/spec.md` text without replacing any of them with an earlier behavior-neutral version. Its `tasks.md` carries the same row identifiers, wording, and order. Only checkbox markers may change, and a row is complete only when every clause in that row is true on the same immutable source exact.
+
+Evidence from a failed, abandoned, or superseded candidate does not complete a repair child. If source inspection or fresh review contradicts any clause in a checked row, that row is unchecked in the next candidate rather than inheriting the prior claim. The docs-only authority freezes phase 1; phases 2 through 5 remain incomplete until the unified source child performs and proves their inventory, implementation, preservation, verification, and independent-review work. This keeps the retained transport, History, 30-day, and 304-file contract inseparable from its task truth without creating a second authority surface.
+
 ## Risks / Trade-offs
 
 - **A shorter expression changes order or concurrency** -> Compare observable ordering and settlement at each site; retain semantics even when that requires a slightly longer direct expression.
-- **A result-oriented method hides an external effect** -> Reject the rewrite unless it is the complete `map` input to a returned or awaited `Promise.all`; otherwise use an equivalent bulk operation or explicit synchronous effect-only `forEach`.
+- **A result-oriented method hides an external effect** -> Reject the rewrite unless it satisfies the narrow consumed synchronous mixed effect-and-result item boundary or is the complete `map` input to a returned or awaited `Promise.all`; otherwise use an equivalent bulk operation or explicit synchronous effect-only `forEach`.
+- **A synchronous owner API cannot separate its effect from its returned result** -> Permit only a consumed `map` whose returned item expression contains exactly one such owner call, uses its returned value in that item, and keeps every other subexpression pure, with no outer mutation or second effect; reject broader effectful result callbacks.
 - **An effect-only `forEach` constructs a hidden result or drops Promises** -> Replace result construction with the direct result method, or consume concurrent operation Promises with one `Promise.all`.
 - **A loop contains a nominal control keyword but has a direct equivalent** -> Use the direct short-circuiting method; the keyword alone is not an exception.
 - **A loop is retained for sequential or live behavior that a shorter form changes** -> Keep it only after confirming `forEach`, `Promise.all`, direct result methods, and existing bulk operations are not equivalent.
 - **A local reducer mutation is mistaken for an external side effect** -> Apply the fresh, exclusive, non-escaping test; keep `assembleURL` unchanged.
+- **An omitted target is expanded back into WebChat recipients** -> Require one `room.send(payload, undefined)` call for broadcasts and keep membership snapshots separate from send intent.
+- **Send-failure behavior expands back into this source correction** -> Keep the current Artico dependency unchanged and implement only the assumed-success send path; make no send-failure behavior change without separate authority.
+- **A broadcast History request keeps loading open forever or loses later history** -> Race full provider settlement against the existing ten-second deadline for the loading UI only, while every valid associated page continues to merge regardless of arrival time, provider connectivity, or room generation.
+- **The 30-day replacement expands into another retention rewrite** -> Require the exact six-file `+15/-15` mechanical subdiff; keep archives, tests, cutoff ownership, inclusive boundaries, pagination, protocol, storage, and all other History behavior unchanged.
+- **A new peer misses current Session/World state** -> Preserve the targeted current-state catch-up; do not convert it into a duplicate room broadcast.
 - **Generated code dominates structural scans** -> Exclude only the exact generated validator path and keep its generator in scope.
 - **Existing Oxlint cannot encode the semantic rule** -> Use its existing built-in coverage where exact, then rely on source review rather than adding another parser or linter.
-- **Existing test edits accidentally change evidence** -> Limit edits to behavior-equivalent iteration or private-state ownership and reject any new or changed scenario, assertion, fixture contract, helper abstraction, timing, or coverage behavior.
+- **Existing test edits accidentally change evidence** -> Limit iteration edits to behavior-equivalent code and closed transport/History edits to minimum existing-expectation synchronization; reject any new scenario, assertion, fixture contract, helper abstraction, timing, or coverage behavior.
+- **A source child carries stale authority or overclaims task completion** -> Require the reviewed proposal, design, specification, and complete task-row set on the same exact; change only task checkboxes proven by that exact, and reset every row contradicted by a failed or superseded candidate.
 
 ## Migration Plan
 
 1. Freeze this docs-only authority as one sole child of clean `develop@10801251a7a6b744fd246960daed01eef323c868`, validate it, and obtain fresh independent docs review.
-2. From the reviewed authority exact, record the 304-file authored manifest and a read-only baseline inventory of traversal forms before editing product source.
-3. Produce one source child that applies the direct-result rule, explicit synchronous and concurrent action forms, result-callback external-effect boundary, valid `for` exceptions, generated exclusion, and no-test policy without adding an enforcement layer.
-4. Verify the exact source diff with existing format, lint, typecheck, test, build, generated-artifact, OpenSpec, and repository-cleanliness gates; confirm the original `assembleURL` implementation is unchanged.
-5. Obtain fresh independent source review of the immutable exact. Keep both pull requests Draft and do not mark Ready, merge, run browser acceptance, deploy, release, or change production without separate Owner authority.
+2. From the reviewed authority exact, record the 304-file authored manifest and a read-only baseline inventory of traversal and send forms before editing product source.
+3. Produce one WebChat source child that carries the reviewed four-artifact authority set and applies the functional-iteration standard, direct optional-target delegation, intent-based broadcast/target classification, bounded multi-provider History synchronization, exact six-file 30-day replacement, generated exclusion, assumed-success send scope, and no-new-test policy without adding an enforcement layer. Update only task checkboxes whose full rows are true on that exact.
+4. Verify the exact source diff with existing format, lint, typecheck, test, build, generated-artifact, OpenSpec, and repository-cleanliness gates; confirm the 30-day subdiff is exactly six files and `+15/-15`, and that the original `assembleURL` implementation and dependency resolution are unchanged.
+5. Obtain fresh independent source review of the immutable exact without the reviewer running local tests or automation. Keep both pull requests Draft and do not mark Ready, merge, run browser acceptance, deploy, release, or change production without separate Owner authority.
 
-Rollback is source-only: revert the behavior-neutral cleanup and any built-in Oxlint configuration change. There is no protocol, schema, persistence, data, or deployment migration.
+Rollback is source-only: revert the cleanup, the closed transport/History corrections, the exact six-file 30-day replacement, and any built-in Oxlint configuration change. There is no dependency, schema, persistence, data, or deployment migration.

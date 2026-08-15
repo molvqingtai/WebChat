@@ -162,11 +162,6 @@ class DeterministicNetwork {
       join: async (roomId) => {
         endpoint.rooms.add(roomId)
       },
-      peers: (roomId) => {
-        return [...this.endpoints].flatMap(([otherPeerId, other]) =>
-          otherPeerId !== peerId && other.rooms.has(roomId) ? [otherPeerId] : []
-        )
-      },
       leave: (roomId) => {
         if (!endpoint.rooms.delete(roomId)) return
         this.recordLifecycle(`physical-leave:${peerId}:${roomId}`)

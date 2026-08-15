@@ -30,7 +30,6 @@ const fakeTransport = () => {
     peerIdOf: () => 'local-peer',
     join: async () => {},
     leave: () => {},
-    peers: () => [],
     send: async () => {},
     onMessage: (callback) => {
       messageListener = callback
