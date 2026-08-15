@@ -1,3 +1,15 @@
+## [2.4.9](https://github.com/molvqingtai/WebChat/compare/v2.4.8...v2.4.9) (2026-08-15)
+
+### Bug Fixes
+
+- **runtime:** clean domain refresh and lawful presence rebinding ([42c4c7c](https://github.com/molvqingtai/WebChat/commit/42c4c7cb74fc3c76cf8bba439a871e3394d18ef7))
+- **runtime:** decouple lifecycle evidence and drop reset debug logs ([3de4b37](https://github.com/molvqingtai/WebChat/commit/3de4b371876878b0a29bf7d8420ebe298acbf606))
+- **runtime:** own concurrent resets and settle cleanup without a busy loop ([347cd6f](https://github.com/molvqingtai/WebChat/commit/347cd6f2d4569e6d457b956c8d4508531965f413))
+- **runtime:** own the whole reconnect operation and split lifecycle evidence ([a5245ef](https://github.com/molvqingtai/WebChat/commit/a5245ef440ac6966d07baea7c9befda8fea0c20b))
+- **runtime:** pin the Artico signaling endpoint to the owned server ([627440c](https://github.com/molvqingtai/WebChat/commit/627440c79a66e11a81196d7a0f010463973e98c3))
+- **runtime:** settle refresh destruction and prove current source admission ([a06967b](https://github.com/molvqingtai/WebChat/commit/a06967bd7cad34fdadf40aebba6a397844a689a4))
+- **runtime:** wait ten seconds for both network auto-recovery timers ([7b0ad7b](https://github.com/molvqingtai/WebChat/commit/7b0ad7b828aea8cdfeb1cbd74d34aed29cd230ac))
+
 ## [2.4.8](https://github.com/molvqingtai/WebChat/compare/v2.4.7...v2.4.8) (2026-08-12)
 
 ### Bug Fixes
