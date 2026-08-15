@@ -14,7 +14,6 @@ interface PeerOwner {
   peerId: string
   peer: Artico
   room?: Room
-  readyPeers: Set<string>
   pendingJoin?: PendingJoin
   restartTimer: ReturnType<typeof globalThis.setTimeout> | null
   disposed: boolean
@@ -50,24 +49,19 @@ export const createArticoRoomTransport = (): RoomTransport => {
     const isCurrent = () =>
       owners.get(owner.roomId) === owner && !owner.disposed && owner.peer === peer && owner.room === room
     room.on('message', (rawPayload, sourcePeerId) => {
-      if (isCurrent()) {
-        messageListeners.forEach((listener) => listener(owner.roomId, sourcePeerId, rawPayload))
-      }
+      if (isCurrent()) messageListeners.forEach((listener) => listener(owner.roomId, sourcePeerId, rawPayload))
     })
     room.on('join', (joinedPeerId) => {
       if (!isCurrent()) return
-      owner.readyPeers.add(joinedPeerId)
       joinListeners.forEach((listener) => listener(owner.roomId, joinedPeerId))
     })
     room.on('leave', (leftPeerId) => {
       if (!isCurrent()) return
-      owner.readyPeers.delete(leftPeerId)
       leaveListeners.forEach((listener) => listener(owner.roomId, leftPeerId))
     })
     room.on('close', () => {
       if (!isCurrent()) return
       owner.room = undefined
-      owner.readyPeers.clear()
       if (!owner.disposed) {
         closeListeners.forEach((listener) => listener(owner.roomId))
       }
@@ -96,7 +90,6 @@ export const createArticoRoomTransport = (): RoomTransport => {
   const retirePeer = (owner: PeerOwner) => {
     const stale = owner.peer
     owner.room = undefined
-    owner.readyPeers.clear()
     try {
       stale?.close()
     } catch {}
@@ -147,7 +140,6 @@ export const createArticoRoomTransport = (): RoomTransport => {
       roomId,
       peerId: nanoid(),
       peer: undefined as unknown as Artico,
-      readyPeers: new Set(),
       restartTimer: null,
       disposed: false
     }
@@ -168,7 +160,6 @@ export const createArticoRoomTransport = (): RoomTransport => {
     owner.pendingJoin = undefined
     const room = owner.room
     owner.room = undefined
-    owner.readyPeers.clear()
     if (room) {
       try {
         room.leave()

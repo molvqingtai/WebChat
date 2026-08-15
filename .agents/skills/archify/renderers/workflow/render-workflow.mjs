@@ -160,16 +160,14 @@ function validateWorkflow() {
       return acc
     }
     if (!Number.isInteger(node.col) || node.col < 0 || node.col >= layout.colXs.length) {
-      return [
-        ...acc,
+      acc.push(
         `Node "${node.id}" uses column ${node.col}, but valid columns are integers 0..${layout.colXs.length - 1}.`
-      ]
+      )
+      return acc
     }
     if (!isFinitePoint(node.x, node.y, node.cx, node.cy)) {
-      return [
-        ...acc,
-        `Node "${node.id}" produced non-finite coordinates — check col, width, height, and yOffset are numbers.`
-      ]
+      acc.push(`Node "${node.id}" produced non-finite coordinates — check col, width, height, and yOffset are numbers.`)
+      return acc
     }
     const local = []
     const estLabelW = textUnits(node.label) * 6.8

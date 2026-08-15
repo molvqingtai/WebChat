@@ -202,12 +202,7 @@ const WorldDomain = Remesh.domain({
               ...(stagedDeferred ? [] : [JoinedState().new(false), PresencesState().new([]), RecoveryState().new(null)])
             ]
           : []),
-        ...(released.length > 0
-          ? [
-              LiveReleaseContinuationsState().new([]),
-              ...released.map((runtimeDomain) => DomainReleasedEvent(runtimeDomain))
-            ]
-          : []),
+        ...(released.length > 0 ? [LiveReleaseContinuationsState().new([]), ...released.map(DomainReleasedEvent)] : []),
         ...(staged && !stagedDeferred
           ? [StagedPublishedEvent({ attemptId: staged.attemptId, presence: publication.presence })]
           : []),
