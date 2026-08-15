@@ -18,7 +18,6 @@ export const REACTION_TYPE = {
 export const ReactionTypeSchema = v.picklist([REACTION_TYPE.LIKE, REACTION_TYPE.HATE])
 export type ReactionType = v.InferOutput<typeof ReactionTypeSchema>
 
-const boundedString = (maxLength: number) => v.pipe(v.string(), v.maxLength(maxLength))
 const OpaquePresenceIdSchema = v.pipe(v.string(), v.minLength(1), v.maxLength(128))
 const safeNonNegativeInteger = v.pipe(v.number(), v.safeInteger(), v.minValue(0))
 
@@ -44,20 +43,20 @@ export type SessionMessage = v.InferOutput<typeof SessionMessageSchema>
 
 export const TextMessageSchema = v.strictObject({
   type: v.literal(MESSAGE_TYPE.TEXT),
-  id: boundedString(128),
+  id: v.pipe(v.string(), v.maxLength(128)),
   hlc: HLCSchema,
-  userId: boundedString(128),
-  body: boundedString(MAX_CHAT_EVENT_BYTES),
+  userId: v.pipe(v.string(), v.maxLength(128)),
+  body: v.pipe(v.string(), v.maxLength(MAX_CHAT_EVENT_BYTES)),
   mentions: v.pipe(v.array(MentionedUserSchema), v.maxLength(100))
 })
 export type TextMessage = v.InferOutput<typeof TextMessageSchema>
 
 export const ReactionMessageSchema = v.strictObject({
   type: v.literal(MESSAGE_TYPE.REACTION),
-  id: boundedString(128),
+  id: v.pipe(v.string(), v.maxLength(128)),
   hlc: HLCSchema,
-  targetId: boundedString(128),
-  userId: boundedString(128),
+  targetId: v.pipe(v.string(), v.maxLength(128)),
+  userId: v.pipe(v.string(), v.maxLength(128)),
   reaction: ReactionTypeSchema,
   active: v.boolean()
 })
@@ -68,7 +67,7 @@ export type ChatMessage = v.InferOutput<typeof ChatMessageSchema>
 
 export const HistoryMessagesPullSchema = v.strictObject({
   type: v.literal(MESSAGE_TYPE.HISTORY_MESSAGES_PULL),
-  syncId: boundedString(128),
+  syncId: v.pipe(v.string(), v.maxLength(128)),
   page: safeNonNegativeInteger,
   // Each element is an opaque string bounded only by the containing codec frame and Runtime
   // attempt budgets; no standalone length or format rule applies.
@@ -79,7 +78,7 @@ export type HistoryMessagesPull = v.InferOutput<typeof HistoryMessagesPullSchema
 
 export const HistoryMessagesPushSchema = v.strictObject({
   type: v.literal(MESSAGE_TYPE.HISTORY_MESSAGES_PUSH),
-  syncId: boundedString(128),
+  syncId: v.pipe(v.string(), v.maxLength(128)),
   page: safeNonNegativeInteger,
   users: v.pipe(v.array(ChatUserSchema), v.maxLength(200)),
   messages: v.pipe(v.array(ChatMessageSchema), v.maxLength(MAX_HISTORY_RESPONSE_MESSAGES)),

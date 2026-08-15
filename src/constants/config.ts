@@ -203,9 +203,6 @@ export const MAX_DECODE_QUEUE_BYTES = 256 * 1024
 export const MAX_INBOUND_BUFFER_EVENTS = 512
 export const MAX_INBOUND_BUFFER_BYTES = 8 * 1024 * 1024
 
-/** One history session budget, separate from each response's public wire limits. */
-export const MAX_HISTORY_SESSION_BYTES = 8 * 1024 * 1024
-export const MAX_HISTORY_SESSION_MESSAGES = 10000
 export const HISTORY_REQUEST_TIMEOUT_MS = 10000
 
 /** Global provider admission bounds started jobs, dormant successors, and queued metadata together. */

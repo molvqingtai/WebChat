@@ -153,7 +153,7 @@ const Footer: FC = () => {
     const byteSize = getTextByteSize(JSON.stringify(newMessage))
 
     if (byteSize > MAX_CHAT_EVENT_BYTES) {
-      return send(toastDomain.command.WarningCommand('Message size cannot exceed 48KiB.'))
+      return send(toastDomain.command.WarningCommand('Message size cannot exceed 192KiB.'))
     }
 
     send(chatRoomDomain.command.SendTextMessageCommand({ body: transformedMessage, mentions }))

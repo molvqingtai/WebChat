@@ -42,11 +42,11 @@ The requester freezes its cutoff and one settled snapshot of canonical Chat reco
 
 Records arriving after either snapshot are not spliced into that snapshot. Live delivery continues normally, and a later independent room connection observes current storage through its own new synchronization. This is smaller and more deterministic than a mutable scan cursor and closes page drift without persisting a snapshot ID.
 
-### 4. Aggregate budgets and nonempty continuation pages bound work
+### 4. Shared frame and page bounds constrain each transfer
 
-Public encoding retains the strict 64KiB frame ceiling and 100-message response-page ceiling. Runtime attempt admission additionally tracks at most 10,000 inventory entries, 10,000 response records, and 8MiB of canonical content per phase. Every non-final page contains at least one entry; only a phase's sole page may be the explicit empty `page: 0, done: true` representation. Entry budgets therefore also bound page counts without another configurable pagination policy.
+Public encoding uses the strict 256KiB frame ceiling and 100-message response-page ceiling. History has no cumulative entry or canonical-content budget across the fixed snapshot. Every non-final page contains at least one entry; only a phase's sole page may be the explicit empty `page: 0, done: true` representation. The fixed 30-day snapshot continues across bounded pages until exhaustion and `done`, disconnection, cancellation, error, or the fixed 10-second operational timeout.
 
-Individual `messageIds` remain opaque strings with no NanoID regex or standalone string ceiling. Their containing frame and aggregate inventory budgets are the resource boundary. Duplicate IDs remain harmless set input but still consume entry/byte budget.
+Individual `messageIds` remain opaque strings with no NanoID regex or standalone string ceiling. Their containing frame is the resource boundary. Duplicate IDs remain harmless set input and still consume space in their page.
 
 ### 5. Local send settlement advances output; local processing advances input
 
@@ -56,7 +56,7 @@ The requester atomically admits each response page through Delivery, then proces
 
 ### 6. Connection-bound synchronization is one-shot and terminal
 
-Working State is volatile and keyed by current domain, source incarnation, direction, generation, `syncId`, and a unique local token. Each directional synchronization retains the existing 10-second operational timeout under that complete identity. Leave, replacement, timeout, invalid input, budget rejection, supplier failure, insertion failure, or lifecycle cleanup terminates that owner, aborts queued work, and discards both snapshots. Late work must match the complete active identity before it can mutate State or feedback.
+Working State is volatile and keyed by current domain, source incarnation, direction, generation, `syncId`, and a unique local token. Each directional synchronization uses a fixed 10-second operational timeout at its established arm points with complete-identity fencing; accepted progress does not re-arm or replace the timer. Leave, replacement, timeout, invalid input, supplier failure, insertion failure, or lifecycle cleanup terminates that owner, aborts queued work, and discards both snapshots. Late work must match the complete active identity before it can mutate State or feedback.
 
 Success, cancellation, and failure keep one constant-size terminal binding for that source incarnation and direction; no timer, new ID, repeated page zero, or later SESSION may restart it. Source replacement or domain release clears the complete binding. A newly established replacement connection waits for old physical supplier work to settle, generates a fresh `syncId`, reads current storage, and starts its one independent synchronization without knowing or continuing any prior page, snapshot, cursor, or progress. This is a new connection lifecycle, not retry or recovery machinery.
 
@@ -74,13 +74,13 @@ Delivery continues to admit each History response page as one atomic batch withi
 
 ### 9. Regression coverage replaces rather than extends old behavior
 
-Protocol tests must prove exact current shapes, declarative unknown-key/old-type/count rejection, v5 isolation, `session-end` rejection, and opaque-ID aggregate bounds. They must not claim schema rejection for History user/message reference completeness or another rule requiring a callback. Runtime tests must prove both directional flows, snapshot timing, exact filtering, producer-created page authors, empty phases, ordering/replay rejection, serial insertion, budgets, exactly one synchronization per connection and direction, terminal rejection of the same and different IDs, timeout/leave/replacement cleanup, and an independent next-connection synchronization with no continued progress. Toast tests must cross the real insert-result and final-page/cancellation boundaries, including live and same-domain races plus same-domain fan-out.
+Protocol tests must prove exact current shapes, declarative unknown-key/old-type/count rejection, v5 isolation, `session-end` rejection, and opaque-ID frame bounds. They must not claim schema rejection for History user/message reference completeness or another rule requiring a callback. Runtime tests must prove both directional flows, snapshot timing, exact filtering, producer-created page authors, empty phases, ordering/replay rejection, serial insertion, exactly one synchronization per connection and direction, terminal rejection of the same and different IDs, timeout/leave/replacement cleanup, and an independent next-connection synchronization with no continued progress. Toast tests must cross the real insert-result and final-page/cancellation boundaries, including live and same-domain races plus same-domain fan-out.
 
 Old cursor/full-window fixtures and tests are deleted. No test may retain an old path as a fallback or describe an intermediate migration state as product behavior.
 
 ## Risks / Trade-offs
 
-- [The first missing body waits for the complete inventory] -> Inventory pages are much denser than message bodies and remain byte/count bounded; exact filtering avoids retransmitting structurally high overlap.
+- [The first missing body waits for the complete inventory] -> Inventory pages remain frame-bounded and cover one fixed 30-day snapshot; exact filtering avoids retransmitting structurally high overlap.
 - [Provider pages can outrun remote processing without peer ACK] -> Local sends remain bounded and serial; remote gap/overflow terminates this connection's synchronization, while a later independent connection computes from then-current persisted IDs.
 - [Live or another page inserts after the requester snapshot] -> Atomic `insert-if-absent` remains the final truth; all-existing pages stay silent and do not repeat feedback.
 - [Several peer syncs overlap] -> Each complete attempt identity owns its own Toast and terminal dismissal; source/generation checks make old completion inert.

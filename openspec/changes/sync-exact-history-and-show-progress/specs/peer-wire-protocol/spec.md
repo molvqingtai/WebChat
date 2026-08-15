@@ -110,7 +110,7 @@ interface WorldRoomMessage extends ChatSession {
 
 The public protocol SHALL define closed static declarative schemas and pure limits. `WireDomain` SHALL parse the room-selected schema once at peer acceptance and MAY apply source-local operational policies after rejection, but queue/drop/apply/flush scheduling, rate-limited logging, reconnect behavior, page sequencing, attempt budgets, and delivery admission are not public protocol semantics.
 
-Chat wire messages SHALL form a strict, closed discriminated union keyed by `type`; World wire payloads SHALL use one strict schema selected by trusted v5 `roomId` and SHALL NOT carry a payload `type`. The codec SHALL enforce `MAX_WIRE_BYTES = 64KiB` for final encoded frames and `MAX_DECODED_JSON_BYTES = 256KiB` for streaming decompressed JSON before parse. Declarative schemas SHALL enforce explicit built-in field and array ceilings, including at most 100 messages in one History Push page. Each `messageIds[]` element SHALL remain an opaque string with no standalone length or format rule and SHALL be bounded only by the containing codec frame and Runtime attempt budgets. SESSION `joinedAt`, HLC timestamp, HLC counter, and History `page` SHALL be finite safe non-negative integers. Unknown types including `session-end`, unknown keys, forbidden envelope/context fields, missing or invalid required values, and declaratively expressible limit violations SHALL fail schema parsing. Whole-value `ChatUser`, `ChatMessage`, and History page canonical byte sizes SHALL not be computed or validated. Non-canonical or malformed Base64, invalid UTF-8/JSON/deflate, and encoded/decompressed bounds SHALL remain codec representation failures before schema parsing.
+Chat wire messages SHALL form a strict, closed discriminated union keyed by `type`; World wire payloads SHALL use one strict schema selected by trusted v5 `roomId` and SHALL NOT carry a payload `type`. The codec SHALL enforce `MAX_WIRE_BYTES = 256KiB` for final encoded frames and `MAX_DECODED_JSON_BYTES = 1MiB` for streaming decompressed JSON before parse. `MAX_CHAT_EVENT_BYTES = 192KiB` SHALL remain only the static declarative Text body ceiling; no producer, footer, outbound, persistence-write, or History-supply path SHALL compute or enforce a whole-value authored-message budget. Declarative schemas SHALL enforce explicit built-in field and array ceilings, including at most 100 messages in one History Push page. Each `messageIds[]` element SHALL remain an opaque string with no standalone length or format rule and SHALL be bounded only by the containing codec frame. SESSION `joinedAt`, HLC timestamp, HLC counter, and History `page` SHALL be finite safe non-negative integers. Unknown types including `session-end`, unknown keys, forbidden envelope/context fields, missing or invalid required values, and declaratively expressible limit violations SHALL fail schema parsing. Whole-value `ChatUser`, `ChatMessage`, and History page canonical byte sizes SHALL not be computed or validated. Non-canonical or malformed Base64, invalid UTF-8/JSON/deflate, and encoded/decompressed bounds SHALL remain codec representation failures before schema parsing.
 
 #### Scenario: Unknown or oversized message
 
@@ -119,13 +119,13 @@ Chat wire messages SHALL form a strict, closed discriminated union keyed by `typ
 
 #### Scenario: Decompression and field resource limits
 
-- **WHEN** decompression would produce more than `MAX_DECODED_JSON_BYTES = 256KiB` or a decoded value violates a declarative field or array ceiling
+- **WHEN** decompression would produce more than `MAX_DECODED_JSON_BYTES = 1MiB` or a decoded value violates a declarative field or array ceiling
 - **THEN** the codec SHALL stop unsafe materialization or the static schema SHALL reject the declarative field/array violation before application; neither layer SHALL compute or validate canonical whole-value `ChatUser` or `ChatMessage` byte size
 
-#### Scenario: Opaque message IDs remain aggregate-bounded
+#### Scenario: Opaque message IDs remain frame-bounded
 
 - **WHEN** a History Pull carries message IDs with any string content or individual length
-- **THEN** the schema SHALL apply no per-ID regex, NanoID-length rule, or independent string ceiling, while the complete request frame SHALL still satisfy the encoded/decompressed frame limits and Runtime SHALL still enforce its total inventory budgets
+- **THEN** the schema SHALL apply no per-ID regex, NanoID-length rule, or independent string ceiling, while every complete request frame SHALL still satisfy the encoded/decompressed frame limits
 
 #### Scenario: Redundant envelope fields
 
@@ -179,7 +179,7 @@ Chat wire SHALL be exactly `ChatRoomMessage = SessionMessage | ChatMessage | His
 
 The public peer protocol SHALL define only this exact History wire contract: `HistoryMessagesPull = {type:'history-messages-pull', syncId, page, messageIds, done}` and `HistoryMessagesPush = {type:'history-messages-push', syncId, page, users, messages, done}`. One `syncId` SHALL identify the sole synchronization for one current room connection and one direction; the opposite direction SHALL use another `syncId`. Establishing that connection and joining the room SHALL be the only synchronization trigger. The first valid Pull page zero SHALL bind the sole incoming `syncId` for that source incarnation. While active, pages using that ID MAY progress or replay only as specified below. After either direction succeeds, is canceled, or fails, neither the same nor a different `syncId` SHALL start another synchronization on that connection. Source replacement or domain release SHALL end the binding; a later connection SHALL use a fresh ID for a new independent synchronization and SHALL NOT retry, resume, or carry progress from the prior one. Pull and Push `page` values SHALL each start at zero and advance continuously within their own phase. Pull `done` SHALL identify the final inventory page. Push `done` SHALL identify the final missing-record page.
 
-Every Pull and Push page SHALL remain strictly below `MAX_WIRE_BYTES = 64KiB` after canonical encoding. Each Push SHALL carry at most 100 messages. The provider SHALL create its `users` array with exactly one `ChatUser` for every distinct `messages[].userId`, no duplicate or unrelated users, and no users when `messages` is empty. This remains a producer contract; the static schema and receiver SHALL NOT validate uniqueness or user/message reference completeness.
+Every Pull and Push page SHALL remain strictly below `MAX_WIRE_BYTES = 256KiB` after canonical encoding. Each Push SHALL carry at most 100 messages. The provider SHALL create its `users` array with exactly one `ChatUser` for every distinct `messages[].userId`, no duplicate or unrelated users, and no users when `messages` is empty. This remains a producer contract; the static schema and receiver SHALL NOT validate uniqueness or user/message reference completeness.
 
 The schemas SHALL accept only the two replacement type strings and exact replacement keys. `HistoryCursor`, `HistoryRequestMessage`, `HistoryResponseMessage`, `history-request`, `history-response`, `before`, `requestId`, response `events`, `snapshotId`, `nextBefore`, acknowledgement variants, compatibility aliases, and old/new key pairs SHALL be absent. No dual-read, fallback, translator, capability negotiation, or compatibility path SHALL exist.
 
@@ -216,7 +216,7 @@ The schemas SHALL accept only the two replacement type strings and exact replace
 
 #### Scenario: History response wire limits
 
-- **WHEN** a History Push exceeds its declarative 100-message count rule or a History page is greater than or equal to `MAX_WIRE_BYTES = 64KiB` after canonical encoding
+- **WHEN** a History Push exceeds its declarative 100-message count rule or a History page is greater than or equal to `MAX_WIRE_BYTES = 256KiB` after canonical encoding
 - **THEN** the static schema or codec SHALL reject the page before Runtime application, without prescribing retry, supplier, timeout, queue, or peer-state behavior
 
 #### Scenario: Old and ambiguous history keys reject

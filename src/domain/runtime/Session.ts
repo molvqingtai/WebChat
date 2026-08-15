@@ -12,7 +12,16 @@ import {
   type PresenceDomainRecord
 } from '@/domain/runtime/externs/PresenceStore'
 import { CHAT_ROOM_NAMESPACE_V5, PENDING_LEAVE_GRACE_MS } from '@/constants/config'
-import { MESSAGE_TYPE, type ChatMessage, type HLC, type MentionedUser, type ChatSite, type ChatUser } from '@/protocol'
+import {
+  ChatMessageSchema,
+  MESSAGE_TYPE,
+  type ChatMessage,
+  type HLC,
+  type MentionedUser,
+  type ChatSite,
+  type ChatUser
+} from '@/protocol'
+import * as v from 'valibot'
 import {
   MESSAGE_RECORD_TYPE,
   type ChatMessageRecord,
@@ -1071,10 +1080,21 @@ const SessionDomain = Remesh.domain({
         }
         const runtime = get(DomainsState()).find((item) => item.domain === payload.domain)
         const event = payload.event
-        if (!runtime || (event.type !== MESSAGE_TYPE.TEXT && event.type !== MESSAGE_TYPE.REACTION)) {
+        if (!runtime) {
           return OperationFailedEvent({
             operationId: payload.operationId,
-            error: new Error('Chat message does not match the active local session')
+            error: new Error('Runtime is not ready for this site')
+          })
+        }
+        // The Chat delivery boundary: a locally authored ChatMessage is parsed once through the
+        // same static ChatMessageSchema before local persistence and peer codec encoding/send;
+        // failure performs neither side effect. The schema owns the type discriminant; no
+        // pre-Schema allow-list or second validation branch exists here.
+        const parsed = v.safeParse(ChatMessageSchema, event)
+        if (!parsed.success) {
+          return OperationFailedEvent({
+            operationId: payload.operationId,
+            error: new Error('Invalid message.')
           })
         }
         const adopted = adoptHlc(get(HlcState()), event.hlc)
