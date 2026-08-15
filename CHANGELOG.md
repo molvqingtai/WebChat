@@ -1,3 +1,41 @@
+# [2.5.0](https://github.com/molvqingtai/WebChat/compare/v2.4.9...v2.5.0) (2026-08-15)
+
+### Bug Fixes
+
+- admit replacement history syncs, keep departure non-destructive, finish the clean cut ([dc360ef](https://github.com/molvqingtai/WebChat/commit/dc360efeda91219a90a31d036258bb95cb75486b))
+- admit requester supply jobs into the shared supplier-to-send pool ([e34e4a7](https://github.com/molvqingtai/WebChat/commit/e34e4a7f057ebbef8aeb3f41a345692d7c9bc450))
+- align capacity authority to 30 days and restore recovery test ownership ([4e93ad7](https://github.com/molvqingtai/WebChat/commit/4e93ad7bd33f7d605ec0a2d786de0fa5507ed839))
+- chain source-local history supply jobs through final send settlement ([bc8d491](https://github.com/molvqingtai/WebChat/commit/bc8d49193351f6355f448f1cb6a81e063ee4ce1a))
+- complete history lifetime, remove the adapter membership set, and sync the authority mirror ([186be34](https://github.com/molvqingtai/WebChat/commit/186be34ef1da4b8f516e77442071ed4a9bdd7e57))
+- complete history settlement, remove the adapter membership set, and clean residues ([9058ccc](https://github.com/molvqingtai/WebChat/commit/9058ccc563c275e5f1d6f68aa42a18792afc4772))
+- complete the authored clean cut and correct the disposal comment ([e26b176](https://github.com/molvqingtai/WebChat/commit/e26b176a30dd543655b64bdf96285019fe8b5a91))
+- complete the manual World replacement's generation reset and isolation ([23731a4](https://github.com/molvqingtai/WebChat/commit/23731a4a7b1ba5f86e2e365e6f4cc42b56a49790))
+- finish the iteration clean cut without shared-cache mutation ([479f32e](https://github.com/molvqingtai/WebChat/commit/479f32e9f7c4c57d4db260393880f62543f0399b))
+- finish the loop clean cut with direct facts and live fixture semantics ([e5a497b](https://github.com/molvqingtai/WebChat/commit/e5a497b21c58acb7a314fc77581123a2bc57e4ab))
+- keep cycle state inside fresh accumulators and list directories plainly ([5d21d61](https://github.com/molvqingtai/WebChat/commit/5d21d610eef3a4a8bfb0047e83e1b93275f89b2a))
+- keep lawful shortest direct forms ([9efd1ab](https://github.com/molvqingtai/WebChat/commit/9efd1abf657e7043ad6ce5cf87a6193b375b3bb1))
+- make cycle state per-path and preserve sparse and assignment semantics ([1d4c5b8](https://github.com/molvqingtai/WebChat/commit/1d4c5b830cdb53ff57330700c16629209c54e993))
+- migrate live release continuations through a manual World departure ([f84c7d7](https://github.com/molvqingtai/WebChat/commit/f84c7d7ecee79831af321ab8759fb61abf7a38e6))
+- preserve invoked-head ownership across tail enqueue and join transitions ([610eafc](https://github.com/molvqingtai/WebChat/commit/610eafca4558c5f21bd8e658da20fc1f709b6502))
+- preserve live-set disposal and finish the loop clean cut ([6b7091a](https://github.com/molvqingtai/WebChat/commit/6b7091a31513032bd3647b1ed4d1c96c4f03d3e2))
+- remove Iterator Helpers usage and finish the carrier corrections ([b14dca4](https://github.com/molvqingtai/WebChat/commit/b14dca4b0a7ae8c8d00ae97911b0803221dd862a)), closes [Map#forEach](https://github.com/Map/issues/forEach)
+- restore early-stop budgets and linear grouping, shorten replaceable loops ([f8e1834](https://github.com/molvqingtai/WebChat/commit/f8e1834ee8b3d2f128667d69278a18a114af50c9))
+- restore frozen behavior and close iteration-contract gaps ([c43a4f4](https://github.com/molvqingtai/WebChat/commit/c43a4f4b5433f74154da081221f6613759688751))
+- restore sparse-map parity, fold decode results, and platform-safe listings ([6fb8f14](https://github.com/molvqingtai/WebChat/commit/6fb8f14732b85e7fcb5a907e9642951fb8abdb81))
+- scope history finish by request identity, retire replaced inventory, restore clean cut ([ad9fdc6](https://github.com/molvqingtai/WebChat/commit/ad9fdc6af1caa8ea05381ee2063648bcd33869d1))
+- settle history loading on the request-start snapshot and clean reducers ([5b18849](https://github.com/molvqingtai/WebChat/commit/5b18849343f912326feca9d1cfce3fe3e7f8d821))
+- settle invoked wire sends through their real transport promise ([614ccd5](https://github.com/molvqingtai/WebChat/commit/614ccd50587789a1afd00b16fa2e90e8663fada8))
+- settle manual World recovery from preserved demand and fence old publication ownership ([a512ce6](https://github.com/molvqingtai/WebChat/commit/a512ce6d11af580b20bf080ac37540e196a3b3a6))
+- split history loading settlement from outgoing retirement ([996de31](https://github.com/molvqingtai/WebChat/commit/996de312e47c82ba836b6a72f2098bb890d0a8b0))
+
+### Features
+
+- apply the retained transport, broadcast, merge, and history-window authority ([3b22ead](https://github.com/molvqingtai/WebChat/commit/3b22ead90eba17c46a533fcb0af0285416af30d3))
+- apply the retained transport, iteration, and history-window authority ([e1d56ab](https://github.com/molvqingtai/WebChat/commit/e1d56ab2892b2ef93184030b19a0b90da1b08213))
+- raise message capacity values and drop history session budgets ([4c894a5](https://github.com/molvqingtai/WebChat/commit/4c894a522796130e792be00113dec2c74c441918))
+- refresh the World connection alongside the AppButton Domain refresh ([a5e32cc](https://github.com/molvqingtai/WebChat/commit/a5e32cc6e3592e6f10d2ea3f00e4532e8c1b251e))
+- refresh the World connection alongside the AppButton Domain refresh ([74fe8bb](https://github.com/molvqingtai/WebChat/commit/74fe8bbc0ad61d25bb498e48d64a06620c553efd))
+
 ## [2.4.9](https://github.com/molvqingtai/WebChat/compare/v2.4.8...v2.4.9) (2026-08-15)
 
 ### Bug Fixes
