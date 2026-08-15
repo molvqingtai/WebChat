@@ -147,42 +147,42 @@ function validateLifecycle() {
   }
 
   const stateProblems = [...states.values()].reduce((acc, state) => {
-    const local = []
     if (!laneIds.has(state.lane)) {
-      return [...acc, `State "${state.id}" uses unknown lane "${state.lane}".`]
+      acc.push(`State "${state.id}" uses unknown lane "${state.lane}".`)
+      return acc
     }
     const band = bandFor(state.lane)
     const maxCol =
       band === 'phase' ? layout.phaseXs.length : band === 'outcome' ? layout.outcomeXs.length : layout.eventXs.length
     if (!Number.isInteger(state.col) || state.col < 0 || state.col >= maxCol) {
-      return [
-        ...acc,
+      acc.push(
         `State "${state.id}" uses invalid column ${state.col} — the ${band} band has integer columns 0..${maxCol - 1}.`
-      ]
+      )
+      return acc
     }
     if (!isFinitePoint(state.x, state.y, state.cx, state.cy)) {
-      return [
-        ...acc,
+      acc.push(
         `State "${state.id}" produced non-finite coordinates — check col, width, height, and yOffset are numbers.`
-      ]
+      )
+      return acc
     }
     if (state.x < 32 || state.x + state.width > viewBox[0] - 32) {
-      local.push(
+      acc.push(
         `State "${state.id}" exceeds the horizontal bounds of the diagram — reduce state.width or increase meta.viewBox[0].`
       )
     }
     if (state.y < 64 || state.y + state.height > legendY() - 24) {
-      local.push(
+      acc.push(
         `State "${state.id}" exceeds the vertical lifecycle area — keep y between 64 and ${legendY() - 24} (adjust yOffset or increase meta.viewBox[1]).`
       )
     }
     const estLabelW = textUnits(state.label) * 6.2
     if (estLabelW > state.width + 6) {
-      local.push(
+      acc.push(
         `Label "${state.label}" (~${Math.round(estLabelW)}px) is wider than state "${state.id}" (${state.width}px) — shorten the label, move detail to sublabel, or increase state.width.`
       )
     }
-    return [...acc, ...local]
+    return acc
   }, [])
   problems.push(...stateProblems)
 

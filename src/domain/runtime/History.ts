@@ -70,9 +70,11 @@ interface RequesterAttemptState extends HistoryAttemptKey {
   inventoryPages: HistoryMessagesPull[]
   nextInventoryPage: number
   feedbackActive: boolean
-  /** Providers expected at request start; the synchronization settles only when every one of
-   * their response lanes completes. */
+  /** Providers expected at request start; the loading settles only when every one of them has
+   * completed, failed, or departed. */
   expectedProviders: string[]
+  /** Snapshotted providers that have already completed, failed, or departed. */
+  settledProviders: string[]
   /** True once the loading has settled; the requester persists to accept and merge late pages. */
   completed: boolean
   /** Per-provider response lanes keyed by the provider's sourcePeerId. */
@@ -185,6 +187,9 @@ const matchesSync = (item: HistoryAttemptKey, key: HistoryAttemptKey) =>
   item.domain === key.domain &&
   item.syncId === key.syncId &&
   item.syncToken === key.syncToken
+
+const allExpectedSettled = (state: RequesterAttemptState) =>
+  state.expectedProviders.every((provider) => state.settledProviders.includes(provider))
 
 const HistoryDomain = Remesh.domain({
   name: 'HistoryDomain',
@@ -347,6 +352,7 @@ const HistoryDomain = Remesh.domain({
           nextInventoryPage: 0,
           feedbackActive: false,
           expectedProviders: [...new Set(runtime.sessions.map((session) => session.sourcePeerId))],
+          settledProviders: [],
           providers: {},
           completed: false
         }
@@ -365,61 +371,61 @@ const HistoryDomain = Remesh.domain({
       }
     })
 
+    // Loading closure, idempotent: the synchronization completes (loading dismissed + completion
+    // event) exactly once while the requester persists to accept and merge valid late pages. It
+    // never deletes the request or terminalizes response collection.
+    const SettleLoadingCommand = domain.command({
+      name: 'History.SettleLoadingCommand',
+      impl: ({ get }, key: HistoryAttemptKey) => {
+        const requesters = get(RequesterAttemptsState())
+        const current = requesters.find((item) => matchesSync(item, key))
+        if (!current || current.completed) return null
+        const settled: RequesterAttemptState = { ...current, completed: true }
+        return [
+          RequesterAttemptsState().new(replaceBy(requesters, (item) => matchesSync(item, current), settled)),
+          ...(dismissFeedback(get, current) ?? []),
+          SyncCompletedEvent({ domain: key.domain, sourcePeerId: key.sourcePeerId })
+        ]
+      }
+    })
+
     const FinishRequesterCommand = domain.command({
       name: 'History.FinishRequesterCommand',
       impl: ({ get }, payload: { domain: string; sourcePeerId: string }) => {
         const requesters = get(RequesterAttemptsState())
         const current = requesters.find((item) => item.domain === payload.domain)
         if (!current) return null
-        // A provider lane closes on its own terminal; the domain synchronization finishes only
-        // when every expected provider's lane has completed.
+        // A provider lane closes on its own terminal: that snapshotted provider settles, and the
+        // loading closes once every request-start provider has completed, failed, or departed.
         const lane = current.providers[payload.sourcePeerId]
-        const closedLane = lane
-          ? { ...lane, responseDone: true, awaitingBatchId: undefined, pendingResponsePages: [] }
-          : lane
-        const withClosed: RequesterAttemptState = closedLane
-          ? { ...current, providers: { ...current.providers, [payload.sourcePeerId]: closedLane } }
-          : current
-        // The loading settles once every provider lane that has responded is complete; the
-        // requester persists afterward so a valid late page still merges.
-        const lanes = Object.values(withClosed.providers)
-        const allDone = lanes.every((providerLane) => providerLane.responseDone)
-        if (!allDone) {
-          return [RequesterAttemptsState().new(replaceBy(requesters, (item) => matchesSync(item, current), withClosed))]
+        const next: RequesterAttemptState = {
+          ...current,
+          providers: lane
+            ? {
+                ...current.providers,
+                [payload.sourcePeerId]: {
+                  ...lane,
+                  responseDone: true,
+                  awaitingBatchId: undefined,
+                  pendingResponsePages: []
+                }
+              }
+            : current.providers,
+          settledProviders: [...new Set([...current.settledProviders, payload.sourcePeerId])]
         }
-        // A full settlement removes the synchronization; only the loading-close timeout keeps a
-        // completed requester alive for late pages.
-        return [
-          TerminateSyncBindingCommand({
-            sourcePeerId: payload.sourcePeerId,
-            domain: payload.domain,
-            direction: 'requester',
-            syncId: current.syncId
-          }),
-          RequesterAttemptsState().new(removeBy(requesters, (item) => item.domain === payload.domain)),
+        const actions: RemeshCommandOutput[] = [
+          RequesterAttemptsState().new(replaceBy(requesters, (item) => matchesSync(item, current), next)),
           PendingWireSendsState().new(
             removeBy(
               get(PendingWireSendsState()),
               (item) => item.domain === payload.domain && item.type === 'inventory'
             )
-          ),
-          ...(dismissFeedback(get, withClosed) ?? []),
-          SyncCompletedEvent(payload)
+          )
         ]
-      }
-    })
-
-    // The loading-close completion: the sync completes (loading dismissed + completion event)
-    // while the requester persists to accept and merge valid late pages.
-    const CompleteLoadingCommand = domain.command({
-      name: 'History.CompleteLoadingCommand',
-      impl: ({ get }, key: HistoryAttemptKey) => {
-        const current = get(RequesterAttemptsState()).find((item) => matchesSync(item, key))
-        if (!current) return null
-        return [
-          ...(dismissFeedback(get, current) ?? []),
-          SyncCompletedEvent({ domain: key.domain, sourcePeerId: key.sourcePeerId })
-        ]
+        // Loading closure never deletes or terminalizes the request: the requester persists so a
+        // valid late associated page still merges.
+        if (allExpectedSettled(next) && !next.completed) actions.push(SettleLoadingCommand(current))
+        return actions
       }
     })
 
@@ -592,18 +598,14 @@ const HistoryDomain = Remesh.domain({
     const ResetHistoryForSessionCommand = domain.command({
       name: 'History.ResetHistoryForSessionCommand',
       impl: ({ get }, payload: { domain: string; sourcePeerId: string }) => {
-        const requesters = get(RequesterAttemptsState())
         const owners = get(FeedbackOwnersState())
         const dismissedOwners = owners.filter(
           (item) => item.sourcePeerId === payload.sourcePeerId && item.domain === payload.domain
         )
-        // Source replacement ends the old connection's synchronization: working and terminal
-        // bindings are cleared for the source+domain, and the replacement connection starts its
-        // one independent synchronization with a fresh id.
+        // Source replacement clears the old connection's protocol bindings for the source+domain,
+        // but the known request identity and its collection persist across the generation change:
+        // a valid late page from the old synchronization still merges by its request identity.
         return [
-          RequesterAttemptsState().new(
-            requesters.filter((item) => item.sourcePeerId !== payload.sourcePeerId || item.domain !== payload.domain)
-          ),
           ClearSyncBindingsCommand(payload),
           CleanupProviderSlotsCommand(payload),
           ...dismissedOwners.flatMap((item) => dismissFeedback(get, item) ?? []),
@@ -1585,8 +1587,7 @@ const HistoryDomain = Remesh.domain({
             records,
             source: 'history',
             batchId
-          }),
-          HistoryTimeoutArmedEvent(next)
+          })
         ]
       }
     })
@@ -1624,7 +1625,6 @@ const HistoryDomain = Remesh.domain({
         }
         const output: RemeshCommandOutput[] = [
           RequesterAttemptsState().new(replaceBy(requesters, (item) => matchesSync(item, current), next)),
-          HistoryTimeoutArmedEvent(next),
           ...(activation ? (activateFeedback(get, current) ?? []) : []),
           ...(lane.finalBatch ? [FinishRequestedEvent({ domain: current.domain, sourcePeerId: providerId })] : [])
         ]
@@ -1637,7 +1637,7 @@ const HistoryDomain = Remesh.domain({
           }
           const prepared = prepareResponsePage(next, nextLane, {
             roomId: '',
-            sourcePeerId: current.sourcePeerId,
+            sourcePeerId: providerId,
             message: queued
           })
           if (!prepared.ok) {
@@ -1704,8 +1704,7 @@ const HistoryDomain = Remesh.domain({
                     records,
                     source: 'history',
                     batchId
-                  }),
-                  HistoryTimeoutArmedEvent(applied)
+                  })
                 )
               }
             }
@@ -1736,25 +1735,35 @@ const HistoryDomain = Remesh.domain({
       impl: ({ get }, payload: { domain: string; sourcePeerId: string }) => {
         const requesters = get(RequesterAttemptsState())
         const owners = get(FeedbackOwnersState())
-        // A departing provider only ends its own response lane: the domain synchronization keeps
-        // accepting and merging every other provider's valid pages.
+        // A departing provider settles its snapshot seat without dropping its already-collected
+        // lane: every other provider's valid pages keep merging, and the loading closes once this
+        // departure completes the request-start snapshot.
         const requester = requesters.find((item) => item.domain === payload.domain)
-        const updatedRequester =
-          requester && requester.providers[payload.sourcePeerId]
+        const lane = requester?.providers[payload.sourcePeerId]
+        const next =
+          requester && requester.expectedProviders.includes(payload.sourcePeerId)
             ? {
                 ...requester,
-                providers: Object.fromEntries(
-                  Object.entries(requester.providers).filter(([id]) => id !== payload.sourcePeerId)
-                )
+                providers: lane
+                  ? {
+                      ...requester.providers,
+                      [payload.sourcePeerId]: {
+                        ...lane,
+                        responseDone: true,
+                        awaitingBatchId: undefined,
+                        pendingResponsePages: []
+                      }
+                    }
+                  : requester.providers,
+                settledProviders: [...new Set([...requester.settledProviders, payload.sourcePeerId])]
               }
             : requester
         return [
-          ...(requester && updatedRequester && updatedRequester !== requester
-            ? [
-                RequesterAttemptsState().new(
-                  replaceBy(requesters, (item) => matchesSync(item, requester), updatedRequester)
-                )
-              ]
+          ...(requester && next
+            ? [RequesterAttemptsState().new(replaceBy(requesters, (item) => matchesSync(item, requester), next))]
+            : []),
+          ...(requester && next && allExpectedSettled(next) && !next.completed
+            ? [SettleLoadingCommand(requester)]
             : []),
           CleanupProviderSlotsCommand(payload),
           ClearSyncBindingsCommand(payload),
@@ -1768,9 +1777,6 @@ const HistoryDomain = Remesh.domain({
     const ReleaseDomainCommand = domain.command({
       name: 'History.ReleaseDomainCommand',
       impl: ({ get }, runtimeDomain: string) => {
-        const sourceIds = get(RequesterAttemptsState())
-          .filter((item) => item.domain === runtimeDomain)
-          .map((item) => ({ domain: runtimeDomain, sourcePeerId: item.sourcePeerId }))
         const providerSources = get(ProviderAttemptsState())
           .filter((item) => item.domain === runtimeDomain)
           .map((item) => ({ domain: runtimeDomain, sourcePeerId: item.sourcePeerId }))
@@ -1781,11 +1787,16 @@ const HistoryDomain = Remesh.domain({
           ...new Map([...providerSources, ...successorSources].map((item) => [item.sourcePeerId, item])).values()
         ]
         const owners = get(FeedbackOwnersState()).filter((item) => item.domain === runtimeDomain)
+        // Domain release unconditionally releases the requester state: the domain is being torn
+        // down, so a later fresh synchronization may bind again. Loading settlement is the only
+        // non-destructive path; release is not.
         return [
+          RequesterAttemptsState().new(
+            removeBy(get(RequesterAttemptsState()), (item) => item.domain === runtimeDomain)
+          ),
           ...uniqueSources.map(CleanupProviderSlotsCommand),
           ClearDomainSyncBindingsCommand(runtimeDomain),
-          ...owners.flatMap((item) => dismissFeedback(get, item) ?? []),
-          ...sourceIds.map(FinishRequestedEvent)
+          ...owners.flatMap((item) => dismissFeedback(get, item) ?? [])
         ]
       }
     })
@@ -2019,7 +2030,7 @@ const HistoryDomain = Remesh.domain({
     })
     domain.effect({
       name: 'History.RequestTimeoutEffect',
-      impl: ({ fromEvent, get }) =>
+      impl: ({ fromEvent }) =>
         fromEvent(HistoryTimeoutArmedEvent).pipe(
           mergeMap(
             (payload) =>
@@ -2031,12 +2042,9 @@ const HistoryDomain = Remesh.domain({
                 return () => globalThis.clearTimeout(timerId)
               })
           ),
-          // The request timeout completes the loading only: the sync completes and the
-          // requester keeps accepting and merging every provider's valid late pages.
-          mergeMap((key) => {
-            const current = get(RequesterAttemptsState()).find((item) => matchesSync(item, key))
-            return current ? [CompleteLoadingCommand(key)] : []
-          })
+          // The request timeout closes the loading once; the requester keeps accepting and
+          // merging every provider's valid late pages. The command guards and is idempotent.
+          map(SettleLoadingCommand)
         )
     })
     domain.effect({

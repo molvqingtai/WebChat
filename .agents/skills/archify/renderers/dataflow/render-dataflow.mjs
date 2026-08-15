@@ -100,36 +100,35 @@ function validateDataflow() {
 
   const stageCount = asArray(dataflow.stages).length
   const nodeProblems = [...nodes.values()].reduce((acc, node) => {
-    const local = []
     if (typeof node.stage !== 'number' || node.stage < 0 || node.stage >= stageCount) {
-      local.push(`Node "${node.id}" uses invalid stage ${node.stage} — valid stages are 0..${stageCount - 1}.`)
+      acc.push(`Node "${node.id}" uses invalid stage ${node.stage} — valid stages are 0..${stageCount - 1}.`)
     }
     if (typeof node.row !== 'number' || node.row < 0 || node.row >= layout.rowYs.length) {
-      local.push(`Node "${node.id}" uses invalid row ${node.row} — valid rows are 0..${layout.rowYs.length - 1}.`)
+      acc.push(`Node "${node.id}" uses invalid row ${node.row} — valid rows are 0..${layout.rowYs.length - 1}.`)
     }
     if (!isFinitePoint(node.x, node.y, node.cx, node.cy)) {
-      local.push(
+      acc.push(
         `Node "${node.id}" produced non-finite coordinates — check stage, row, width, height, and yOffset are numbers.`
       )
-      return [...acc, ...local]
+      return acc
     }
     if (node.x < 24 || node.x + node.width > viewBox[0] - 24) {
-      local.push(
+      acc.push(
         `Node "${node.id}" exceeds the horizontal bounds of the viewBox — reduce node.width or increase meta.viewBox[0].`
       )
     }
     if (node.y < layout.stageY + layout.stageH + 22 || node.y + node.height > viewBox[1] - layout.stageBottomPad) {
-      local.push(
+      acc.push(
         `Node "${node.id}" exceeds the readable diagram area — keep y between ${layout.stageY + layout.stageH + 22} and ${viewBox[1] - layout.stageBottomPad} (adjust row/yOffset or increase meta.viewBox[1]).`
       )
     }
     const estLabelW = textUnits(node.label) * 6.2
     if (estLabelW > node.width + 6) {
-      local.push(
+      acc.push(
         `Label "${node.label}" (~${Math.round(estLabelW)}px) is wider than node "${node.id}" (${node.width}px) — shorten the label, move detail to sublabel, or increase node.width.`
       )
     }
-    return [...acc, ...local]
+    return acc
   }, [])
   problems.push(...nodeProblems)
 

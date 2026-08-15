@@ -154,7 +154,7 @@ describe('HistoryDomain connection-binding lifecycle', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(store.query(history.query.ProviderAttemptsQuery())).toHaveLength(0)
     // Requester direction: start, complete through the real response input path, and verify the
-    // terminal start is blocked.
+    // loading-close settlement keeps the requester alive for late pages and blocks a duplicate start.
     store.send(history.command.StartRequesterCommand({ domain: DOMAIN, sourcePeerId: 'peer-a' }))
     const requester = store.query(history.query.RequesterAttemptsQuery()).find((item) => item.sourcePeerId === 'peer-a')
     expect(requester).toBeDefined()
@@ -166,10 +166,12 @@ describe('HistoryDomain connection-binding lifecycle', () => {
       messages: [],
       done: true
     })
-    await vi.waitFor(() => expect(store.query(history.query.RequesterAttemptsQuery())).toHaveLength(0))
+    await vi.waitFor(() =>
+      expect(store.query(history.query.RequesterAttemptsQuery()).every((item) => item.completed)).toBe(true)
+    )
     store.send(history.command.StartRequesterCommand({ domain: DOMAIN, sourcePeerId: 'peer-a' }))
     await new Promise((resolve) => setTimeout(resolve, 0))
-    expect(store.query(history.query.RequesterAttemptsQuery())).toHaveLength(0)
+    expect(store.query(history.query.RequesterAttemptsQuery())).toHaveLength(1)
     // Domain release must clear BOTH directional bindings itself: only then can the same ids
     // bind again and start fresh synchronization work (a stale terminal binding would block both).
     store.send(history.command.ReleaseDomainCommand(DOMAIN))
