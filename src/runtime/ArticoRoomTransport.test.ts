@@ -9,6 +9,7 @@ const fixture = vi.hoisted(() => ({
     emit(event: string, ...args: unknown[]): void
   }[],
   joinShouldThrow: undefined as (() => Error) | undefined,
+  leaveShouldThrow: undefined as (() => Error) | undefined,
   room: null as null | {
     open(peerId: string): void
     loseReadiness(peerId: string): void
@@ -73,6 +74,7 @@ vi.mock('@rtco/client', () => {
     }
 
     leave() {
+      if (fixture.leaveShouldThrow) throw fixture.leaveShouldThrow()
       this.emit('close')
     }
   }
@@ -132,10 +134,30 @@ beforeEach(() => {
   fixture.room = null
   fixture.rooms.clear()
   fixture.joinShouldThrow = undefined
+  fixture.leaveShouldThrow = undefined
 })
 afterEach(() => vi.useRealTimers())
 
 describe('ArticoRoomTransport per-target isolation', () => {
+  it('routes a diagnostic-only physical leave failure directly without a transport error event', async () => {
+    const transport = createArticoRoomTransport()
+    await transport.join('room-a')
+    const failure = new Error('manual physical leave failed')
+    fixture.leaveShouldThrow = () => failure
+    const errors: Error[] = []
+    transport.onError((error) => errors.push(error))
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    transport.leave('room-a', { diagnosticOnly: true })
+
+    expect(errors).toEqual([])
+    expect(diagnostic).toHaveBeenCalledOnce()
+    expect(diagnostic).toHaveBeenCalledWith(failure)
+    expect(transport.peerIdOf('room-a')).toBe('')
+    diagnostic.mockRestore()
+    transport.dispose()
+  })
+
   it('converges initial and later full broadcasts without entering never-ready calls', async () => {
     const transport = createArticoRoomTransport()
     await transport.join('room-a')

@@ -8,9 +8,9 @@
 
 ## 2. Source And Regression Coverage
 
-- [ ] 2.1 Set unavailable state and publish the same-ID error containing exactly the original `error.message` in one genuine current-page failure settlement, with no preceding cancel or decorated/replacement copy; route no-page/no-impact failure to direct `console.error(error)` without a Toast.
+- [x] 2.1 Set unavailable state and publish the same-ID error containing exactly the original `error.message` in one genuine current-page failure settlement, with no preceding cancel or decorated/replacement copy; route no-page/no-impact failure to direct `console.error(error)` without a Toast.
 - [x] 2.2 Keep success, abort, unmount, and supersession behavior unchanged.
-- [ ] 2.3 Cover initial failure, Retry failure, success, repeated failure, deferred feedback publication, stale generations, exact original-message current-page routing, and no-page/no-impact direct-console behavior through final-result tests.
+- [x] 2.3 Cover initial failure, Retry failure, success, repeated failure, deferred feedback publication, stale generations, exact original-message current-page routing, and no-page/no-impact direct-console behavior through final-result tests.
 
 ## 3. Delivery Gates
 

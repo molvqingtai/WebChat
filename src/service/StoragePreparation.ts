@@ -23,32 +23,19 @@ interface RuntimeApi {
 
 const prepareConfigurationStorage = (identity: string, storage: StorageArea): Promise<void> =>
   withPreparationLock(`configuration:${identity}`, async (lock) => {
-    try {
-      const values = await lock.read(storage.get(CONFIG_STORE_VERSION_KEY))
-      if (!Object.prototype.hasOwnProperty.call(values, CONFIG_STORE_VERSION_KEY)) {
-        await lock.write(() => storage.set({ [CONFIG_STORE_VERSION_KEY]: CONFIG_STORE_VERSION }))
-        lock.checkpoint()
-        return
-      }
-      if (values[CONFIG_STORE_VERSION_KEY] === CONFIG_STORE_VERSION) return
-
-      await lock.write(() => storage.clear())
-      lock.checkpoint()
+    const values = await lock.read(storage.get(CONFIG_STORE_VERSION_KEY))
+    if (!Object.prototype.hasOwnProperty.call(values, CONFIG_STORE_VERSION_KEY)) {
       await lock.write(() => storage.set({ [CONFIG_STORE_VERSION_KEY]: CONFIG_STORE_VERSION }))
       lock.checkpoint()
-    } catch (error) {
-      if (lock.signal.aborted) throw error
-      // Install-time preparation has no current page: keep the original provider Error as the
-      // direct diagnostic instead of replacing it with a generic message.
-      console.error(error)
-      throw error
+      return
     }
-  })
+    if (values[CONFIG_STORE_VERSION_KEY] === CONFIG_STORE_VERSION) return
 
-/** The preparation promise already records its own failure; this named observer only keeps the
- * fire-and-forget install listener from becoming an unhandled rejection, recording nothing
- * further for the same Error. */
-const observeDerivedRejection = () => undefined
+    await lock.write(() => storage.clear())
+    lock.checkpoint()
+    await lock.write(() => storage.set({ [CONFIG_STORE_VERSION_KEY]: CONFIG_STORE_VERSION }))
+    lock.checkpoint()
+  })
 
 const runtimeApi = () => browser.runtime as unknown as RuntimeApi
 const syncStorage = () => browser.storage.sync as unknown as StorageArea
@@ -59,30 +46,26 @@ export const registerBrowserSyncStoragePreparation = (
 ) => {
   const prepare = () => prepareConfigurationStorage(`browser-sync:${runtime.id}`, storage)
 
-  runtime.onInstalled.addListener(() => prepare().catch(observeDerivedRejection))
+  runtime.onInstalled.addListener(async () => {
+    try {
+      await prepare()
+    } catch (error) {
+      // Installation has no current page route, so it owns one direct diagnostic.
+      console.error(error)
+    }
+  })
   runtime.onMessage.addListener((message) => {
     if (message !== PREPARE_BROWSER_SYNC_STORAGE) return undefined
-    return prepare().then(
-      () => ({ ready: true }),
-      () => ({ ready: false })
-    )
+    return prepare().then(() => ({ ready: true }))
   })
 }
 
 export const requestBrowserSyncStoragePreparation = async (runtime: RuntimeApi = runtimeApi()): Promise<void> => {
-  let response: unknown
-  try {
-    response = await runtime.sendMessage(PREPARE_BROWSER_SYNC_STORAGE)
-  } catch {
-    console.error('[WebChat] Browser sync configuration preparation unavailable')
-    throw new Error('Browser sync configuration preparation unavailable')
-  }
+  const response = await runtime.sendMessage(PREPARE_BROWSER_SYNC_STORAGE)
 
   if (typeof response === 'object' && response !== null && 'ready' in response) {
     if ((response as { ready: unknown }).ready === true) return
-    throw new Error('Browser sync configuration preparation failed')
   }
 
-  console.error('[WebChat] Browser sync configuration preparation unavailable')
   throw new Error('Browser sync configuration preparation unavailable')
 }

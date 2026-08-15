@@ -25,6 +25,8 @@ const createFixture = () => {
     [2, { id: 2, url: `${DOMAIN_A}/other` }]
   ])
   const detachFailures = new Map<string, number>()
+  const tabLookupFailures = new Map<number, Error>()
+  let persistFailure: Error | null = null
   const delayedDetaches = new Set<string>()
   const pendingDetaches: Array<{ pageId: string; resolve: () => void }> = []
   const attachPage = vi.fn(async ({ domain, pageId }: { domain: string; pageId: string }) => {
@@ -44,7 +46,15 @@ const createFixture = () => {
     releasedPageIds.push(pageId)
   })
   const coordinator = new Coordinator({
-    storage: { get: async () => ({}), set: async () => {} },
+    storage: {
+      get: async () => ({}),
+      set: async () => {
+        if (!persistFailure) return
+        const error = persistFailure
+        persistFailure = null
+        throw error
+      }
+    },
     ensureHostDocument: async () => {
       const created = replacementPending
       replacementPending = false
@@ -56,6 +66,8 @@ const createFixture = () => {
     detachPage,
     tabs: {
       get: async (tabId: number) => {
+        const lookupFailure = tabLookupFailures.get(tabId)
+        if (lookupFailure) throw lookupFailure
         const tab = tabs.get(tabId)
         if (!tab) throw new Error('No tab')
         return tab
@@ -81,6 +93,12 @@ const createFixture = () => {
     events,
     releasedPageIds,
     failDetach: (pageId: string) => detachFailures.set(pageId, 1),
+    failTabLookup: (tabId: number, error: Error) => tabLookupFailures.set(tabId, error),
+    clearTabLookupFailure: (tabId: number) => tabLookupFailures.delete(tabId),
+    failNextPersist: (error: Error) => {
+      persistFailure = error
+    },
+    reconcileTabs: () => (coordinator as unknown as { reconcileTabs: () => Promise<void> }).reconcileTabs(),
     delayDetach: (pageId: string) => delayedDetaches.add(pageId),
     resolveNextDetach: (pageId: string) => {
       const index = pendingDetaches.findIndex((pending) => pending.pageId === pageId)
@@ -130,6 +148,68 @@ describe('Coordinator trusted Tabs lifecycle', () => {
     expect(fixture.coordinator.snapshotForTest().tabs).toContainEqual(
       expect.objectContaining({ tabId: 1, pageId: 'document-a' })
     )
+    diagnostic.mockRestore()
+  })
+
+  it('keeps a lookup failure diagnostic while reconciling independent tabs', async () => {
+    const fixture = createFixture()
+    await fixture.register(DOMAIN_A, 'document-a', 1, `${DOMAIN_A}/topic#first`)
+    await fixture.register(DOMAIN_A, 'document-b', 2, `${DOMAIN_A}/other`)
+    const failure = new Error('tab lookup failed')
+    fixture.failTabLookup(1, failure)
+    fixture.tabs.set(2, { id: 2, url: `${DOMAIN_A}/updated#fragment` })
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    await fixture.reconcileTabs()
+
+    expect(diagnostic).toHaveBeenCalledWith(failure)
+    expect(fixture.coordinator.snapshotForTest().tabs).toContainEqual(
+      expect.objectContaining({ tabId: 1, pageId: 'document-a' })
+    )
+    expect(fixture.coordinator.snapshotForTest().tabs).toContainEqual(
+      expect.objectContaining({ tabId: 2, url: `${DOMAIN_A}/updated` })
+    )
+    diagnostic.mockRestore()
+  })
+
+  it('retains and retries a navigation update whose persistence fails', async () => {
+    const fixture = createFixture()
+    await fixture.register(DOMAIN_A, 'document-a', 1, `${DOMAIN_A}/topic#first`)
+    fixture.tabs.set(1, { id: 1, url: `${DOMAIN_A}/updated#fragment` })
+    const failure = new Error('reconciliation persistence failed')
+    fixture.failNextPersist(failure)
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    await fixture.reconcileTabs()
+    expect(diagnostic).toHaveBeenCalledWith(failure)
+    expect(fixture.coordinator.snapshotForTest().tabs).toContainEqual(
+      expect.objectContaining({ tabId: 1, url: `${DOMAIN_A}/topic` })
+    )
+
+    await fixture.reconcileTabs()
+    expect(fixture.coordinator.snapshotForTest().tabs).toContainEqual(
+      expect.objectContaining({ tabId: 1, url: `${DOMAIN_A}/updated` })
+    )
+    diagnostic.mockRestore()
+  })
+
+  it('retains and reconciles a confirmed removal whose persistence fails', async () => {
+    const fixture = createFixture()
+    await fixture.register(DOMAIN_A, 'document-a', 1, `${DOMAIN_A}/topic#first`)
+    const failure = new Error('removal persistence failed')
+    fixture.failNextPersist(failure)
+
+    await expect(fixture.removeTab(1)).rejects.toBe(failure)
+    expect(fixture.coordinator.snapshotForTest().tabs).toContainEqual(
+      expect.objectContaining({ tabId: 1, pageId: 'document-a' })
+    )
+
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+    await fixture.reconcileTabs()
+
+    expect(fixture.coordinator.snapshotForTest().tabs).toEqual([])
+    expect(fixture.detachPage).toHaveBeenCalledTimes(2)
+    expect(diagnostic).not.toHaveBeenCalled()
     diagnostic.mockRestore()
   })
 

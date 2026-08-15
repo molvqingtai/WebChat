@@ -156,7 +156,9 @@ const WireDomain = Remesh.domain({
       requestId: string
       rooms: { roomId: string; generation: number }[]
     }>({ name: 'Wire.JoinRoomsRequestedEvent' })
-    const LeaveRoomRequestedEvent = domain.event<string>({ name: 'Wire.LeaveRoomRequestedEvent' })
+    const LeaveRoomRequestedEvent = domain.event<{ roomId: string; diagnosticOnly?: boolean }>({
+      name: 'Wire.LeaveRoomRequestedEvent'
+    })
     const SendRequestedEvent = domain.event<QueuedSendRequest>({ name: 'Wire.SendRequestedEvent' })
     const ProviderSendRequestedEvent = domain.event<EncodedSend>({ name: 'Wire.ProviderSendRequestedEvent' })
     const RawFrameAdmittedEvent = domain.event<RawFrame>({ name: 'Wire.RawFrameAdmittedEvent' })
@@ -329,7 +331,7 @@ const WireDomain = Remesh.domain({
 
     const LeaveRoomCommand = domain.command({
       name: 'Wire.LeaveRoomCommand',
-      impl: ({ get }, payload: { roomId: string; preservePending: boolean }) => {
+      impl: ({ get }, payload: { roomId: string; preservePending: boolean; diagnosticOnly?: boolean }) => {
         const { roomId } = payload
         const generations = get(RoomGenerationsState())
         const generation = generationFor(generations, roomId) + 1
@@ -372,7 +374,7 @@ const WireDomain = Remesh.domain({
               stage: 'cancelled'
             })
           ),
-          LeaveRoomRequestedEvent(roomId)
+          LeaveRoomRequestedEvent({ roomId, ...(payload.diagnosticOnly ? { diagnosticOnly: true } : {}) })
         ]
       }
     })
@@ -625,8 +627,8 @@ const WireDomain = Remesh.domain({
       name: 'Wire.LeaveRoomEffect',
       impl: ({ fromEvent }) =>
         fromEvent(LeaveRoomRequestedEvent).pipe(
-          map((roomId) => {
-            transport.leave(roomId)
+          map(({ roomId, diagnosticOnly }) => {
+            transport.leave(roomId, { diagnosticOnly })
             return null
           })
         )

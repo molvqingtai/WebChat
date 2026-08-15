@@ -182,15 +182,14 @@ describe('Runtime host recovery and coordinator liveness', () => {
     let pageJoinTask = Promise.resolve()
     const joinRejections: unknown[] = []
     client.whenReady(() => {
-      pageJoinTask = pageJoinTask
-        .catch((error: unknown) => {
-          // The retry chain may only ever observe the dead-host window's host-unavailable
-          // rejection; anything else fails this test here.
-          expect(error instanceof Error && error.message.startsWith('Runtime host unavailable')).toBe(true)
-          joinRejections.push(error)
-        })
-        .then(() => room.joinRoom({ user: USER, site: SITE }))
-      void pageJoinTask.catch((error: unknown) => joinRejections.push(error))
+      const joinAfterTail = () => room.joinRoom({ user: USER, site: SITE })
+      pageJoinTask = pageJoinTask.then(joinAfterTail, (error: unknown) => {
+        // The prior attempt remains caller-owned; only this exact transient permits the serialized
+        // recovery tail to continue.
+        expect(error).toEqual(new Error('Runtime host unavailable: connecting'))
+        joinRejections.push(error)
+        return joinAfterTail()
+      })
     })
 
     const firstSnapshot = await client.init()
@@ -209,14 +208,13 @@ describe('Runtime host recovery and coordinator liveness', () => {
       expect(recoveredSessions).toEqual([[{ sessionId: expect.any(String), user: USER }]])
       await expect(messageStore.query({ type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE })).resolves.toEqual([])
     })
+    await pageJoinTask
     expect(fixture.coordinator.snapshotForTest().generation).toBe(2)
     expect(hostPhases).toContain('connecting')
     expect(hostPhases.at(-1)).toBe('ready')
     // The healthy recovery flow emits no page errors and no unexpected join rejections.
     expect(roomErrors).toEqual([])
-    for (const rejection of joinRejections) {
-      expect(rejection instanceof Error && rejection.message.startsWith('Runtime host unavailable')).toBe(true)
-    }
+    expect(joinRejections).toEqual([])
   })
 
   it('restores persisted coordinator lease and host generation without duplicate pages', async () => {

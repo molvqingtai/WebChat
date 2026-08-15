@@ -152,7 +152,7 @@ export const createArticoRoomTransport = (): RoomTransport => {
     return owner
   }
 
-  const dropOwner = (owner: PeerOwner) => {
+  const dropOwner = (owner: PeerOwner, diagnosticOnly = false) => {
     if (owner.disposed) return
     owner.disposed = true
     owners.delete(owner.roomId)
@@ -168,7 +168,8 @@ export const createArticoRoomTransport = (): RoomTransport => {
       try {
         room.leave()
       } catch (error) {
-        errorListeners.forEach((listener) => listener(error as Error, owner.roomId))
+        if (diagnosticOnly) console.error(error)
+        else errorListeners.forEach((listener) => listener(error as Error, owner.roomId))
       }
     }
     try {
@@ -191,10 +192,10 @@ export const createArticoRoomTransport = (): RoomTransport => {
       joinNow(owner)
       return pending.promise
     },
-    leave: (roomId) => {
+    leave: (roomId, options) => {
       const owner = owners.get(roomId)
       if (!owner) return
-      dropOwner(owner)
+      dropOwner(owner, options?.diagnosticOnly)
     },
     send: async (roomId, payload, to) => {
       const owner = owners.get(roomId)
@@ -223,7 +224,7 @@ export const createArticoRoomTransport = (): RoomTransport => {
       return () => errorListeners.delete(callback)
     },
     dispose: () => {
-      Array.from(owners.values()).forEach(dropOwner)
+      Array.from(owners.values()).forEach((owner) => dropOwner(owner))
       messageListeners.clear()
       joinListeners.clear()
       leaveListeners.clear()

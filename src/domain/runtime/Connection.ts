@@ -566,7 +566,11 @@ const ConnectionDomain = Remesh.domain({
     // presence.
     const startManualWorldReplacement = (get: Parameters<Parameters<typeof domain.command>[0]['impl']>[0]['get']) => [
       worldDomain.command.DepartRoomCommand(),
-      wireDomain.command.LeaveRoomCommand({ roomId: getWorldRoomId(), preservePending: false }),
+      wireDomain.command.LeaveRoomCommand({
+        roomId: getWorldRoomId(),
+        preservePending: false,
+        diagnosticOnly: true
+      }),
       ...startWorldRecovery(get, true)
     ]
 
@@ -636,7 +640,11 @@ const ConnectionDomain = Remesh.domain({
         return [
           WorldRecoveryAttemptState().new(null),
           worldDomain.command.AbortRecoveryCommand(payload.requestId),
-          wireDomain.command.LeaveRoomCommand({ roomId: getWorldRoomId(), preservePending: false }),
+          wireDomain.command.LeaveRoomCommand({
+            roomId: getWorldRoomId(),
+            preservePending: false,
+            ...(recovery.manual ? { diagnosticOnly: true } : {})
+          }),
           // A manual AppButton World replacement keeps its failure out of page UI/Toast; automatic
           // recovery retains its existing diagnostics contract.
           ...(recovery.manual ? [] : [ErrorEvent({ error: payload.error })]),

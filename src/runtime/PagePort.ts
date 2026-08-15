@@ -105,7 +105,10 @@ export class PagePort implements PagePortContract {
         if (!listener) return
         try {
           await listener(payload)
-        } catch {
+        } catch (error) {
+          // Error delivery cannot recursively create another page error; retain the original
+          // callback failure as a direct diagnostic and continue removing independent dead pages.
+          console.error(error)
           this.removePage(pageId)
           deadPageIds.push(pageId)
         }
@@ -174,7 +177,11 @@ export class PagePort implements PagePortContract {
       pending.cancelMode = mode
       try {
         callback?.({ type: 'cancel', supplyId })
-      } catch {
+      } catch (error) {
+        console.error(error)
+        // This provider callback is already known dead; do not invoke it again while removing the
+        // page and settling its remaining supplies.
+        this.historyProviders.delete(pending.pageId)
         this.removePage(pending.pageId)
       }
     }

@@ -204,6 +204,47 @@ describe.each(backends)('$name Database contract', (backend) => {
     expect(listener).not.toHaveBeenCalled()
   })
 
+  it('keeps the callback failure primary while retaining a distinct settlement diagnostic', async () => {
+    const database = create(backend)
+    const failure = new Error('callback primary failure')
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    await expect(
+      database.write(['records'], async (transaction) => {
+        await transaction.insert('records', 'record-1', record('first'))
+        throw failure
+      })
+    ).rejects.toBe(failure)
+
+    if (backend.name === 'IndexedDB') {
+      expect(diagnostic).toHaveBeenCalledOnce()
+      const settlementError = diagnostic.mock.calls[0]?.[0]
+      expect(settlementError).not.toBe(failure)
+      expect(settlementError).toEqual(new Error('IndexedDB transaction failed'))
+    } else {
+      expect(diagnostic).not.toHaveBeenCalled()
+    }
+    diagnostic.mockRestore()
+  })
+
+  it('preserves a callback primary when IndexedDB abort cleanup also fails', async () => {
+    if (backend.name !== 'IndexedDB') return
+    const database = create(backend)
+    const primary = new Error('callback primary failure')
+    const cleanup = new Error('transaction abort cleanup failed')
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const abort = vi.spyOn(IDBTransaction.prototype, 'abort').mockImplementationOnce(() => {
+      throw cleanup
+    })
+
+    await expect(database.write(['records'], async () => Promise.reject(primary))).rejects.toBe(primary)
+
+    expect(diagnostic).toHaveBeenCalledOnce()
+    expect(diagnostic).toHaveBeenCalledWith(cleanup)
+    abort.mockRestore()
+    diagnostic.mockRestore()
+  })
+
   it('commits multi-store writes atomically and rolls callback failures back', async () => {
     const database = create(backend)
 
@@ -478,6 +519,39 @@ describe.each(backends)('$name Database contract', (backend) => {
     // exactly once, and the later watcher still runs on both backends.
     expect(reported).toEqual([failure])
     expect(later).toHaveBeenCalledOnce()
+  })
+
+  it('isolates a throwing watcher reporter from the committed write and later watchers', async () => {
+    const name = `database-watch-reporter-failure-${backend.name}-${databaseId++}`
+    names.add(name)
+    const watcherFailure = new Error('watcher exploded')
+    const reporterFailure = new Error('watcher reporter exploded')
+    const reporter = vi.fn(() => {
+      throw reporterFailure
+    })
+    const database =
+      backend.name === 'Memory'
+        ? createMemoryMessageDatabase(name, { onWatcherError: reporter })
+        : createIndexedDBDatabase(createMessageDatabaseDefinition(name, 2), { onWatcherError: reporter })
+    opened.add(database)
+    const later = vi.fn()
+    database.watch(['records'], () => {
+      throw watcherFailure
+    })
+    database.watch(['records'], later)
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    await expect(
+      database.write(['records'], (transaction) => transaction.insert('records', 'record-1', record('first')))
+    ).resolves.toEqual({ inserted: true })
+
+    expect(reporter).toHaveBeenCalledOnce()
+    expect(reporter).toHaveBeenCalledWith(watcherFailure)
+    expect(diagnostic).toHaveBeenCalledOnce()
+    expect(diagnostic).toHaveBeenCalledWith(reporterFailure)
+    expect(later).toHaveBeenCalledOnce()
+    await expect(database.read(['records'], (transaction) => transaction.count('records'))).resolves.toBe(1)
+    diagnostic.mockRestore()
   })
 
   it('closes idempotently, drains started work, and rejects new operations and watches', async () => {

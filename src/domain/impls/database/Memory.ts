@@ -54,11 +54,6 @@ const getState = <Schema extends DatabaseSchema<Schema>>(definition: DatabaseDef
 
 const abortError = (signal: AbortSignal): unknown => signal.reason ?? new DOMException('Aborted', 'AbortError')
 
-/** The original returned/emitted Promise remains the sole product owner of its rejection; this
- * named observer only settles a derived side branch so it can never become an unhandled
- * rejection, and it intentionally records nothing further for the same Error. */
-const observeDerivedRejection = () => undefined
-
 class MemoryTransaction<
   Schema extends DatabaseSchema<Schema>,
   Allowed extends StoreName<Schema>
@@ -246,9 +241,9 @@ export class MemoryDatabase<Schema extends DatabaseSchema<Schema>> implements Da
 
   private track<Result>(operation: Promise<Result>): Promise<Result> {
     this.inFlight.add(operation)
-    // The returned operation stays the sole failure owner; the derived branch only maintains the
-    // in-flight set, and its rejection is observed so it cannot become an unhandled rejection.
-    void operation.finally(() => this.inFlight.delete(operation)).catch(observeDerivedRejection)
+    const releaseOwnership = () => this.inFlight.delete(operation)
+    // The returned operation owns its result; both side outcomes perform only in-flight cleanup.
+    void operation.then(releaseOwnership, releaseOwnership)
     return operation
   }
 
@@ -346,8 +341,17 @@ export class MemoryDatabase<Schema extends DatabaseSchema<Schema>> implements Da
       } catch (error) {
         // A watcher failure never rolls back the committed write and never stops later listeners;
         // the composition-owned reporter (or direct console fallback) keeps the original Error.
-        if (this.onWatcherError) this.onWatcherError(error)
-        else console.error(error)
+        if (!this.onWatcherError) {
+          console.error(error)
+          return
+        }
+        try {
+          this.onWatcherError(error)
+        } catch (reporterError) {
+          // Error delivery failure is independently diagnostic and cannot affect the committed
+          // write or later watchers.
+          console.error(reporterError)
+        }
       }
     })
   }

@@ -10,7 +10,7 @@
 
 - [x] 2.1 Inject one preparation coordinator into origin-local configuration and canonical message-database preparation.
 - [x] 2.2 Keep Firefox free of Web Locks execution while Chrome owns Web Locks arbitration.
-- [ ] 2.3 Cover direct/Web Locks selection, concurrent convergence, abort generations, blocked deadline settlement, and Retry through final-result tests; prove a genuine current-page failure directly replaces same-ID loading with the original `error.message` and no preceding cancel or decorated/replacement copy, while no-page/no-impact failure uses direct `console.error(error)`.
+- [x] 2.3 Cover direct/Web Locks selection, concurrent convergence, abort generations, blocked deadline settlement, and Retry through final-result tests; prove a genuine current-page failure directly replaces same-ID loading with the original `error.message` and no preceding cancel or decorated/replacement copy, while no-page/no-impact failure uses direct `console.error(error)`.
 
 ## 3. Delivery Gates
 

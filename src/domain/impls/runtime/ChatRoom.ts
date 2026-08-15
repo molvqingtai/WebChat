@@ -53,6 +53,7 @@ interface RuntimeAttachment {
   controller: AbortController
   ownerAttemptId: number | null
   state: 'pending' | 'ready' | 'failed'
+  error?: unknown
   task: Promise<void>
   registrations: Partial<Record<RegistrationKey, () => Promise<void>>>
   repairs: Set<RegistrationKey>
@@ -67,11 +68,6 @@ interface PageConnectionAttempt {
 }
 
 const PAGE_CONNECTION_ATTEMPT_TIMEOUT_MS = 10000
-
-/** The original returned/emitted Promise remains the sole product owner of its rejection; this
- * named observer only settles a derived side branch so it can never become an unhandled
- * rejection, and it intentionally records nothing further for the same Error. */
-const observeDerivedRejection = () => undefined
 
 const abortError = (message: string): DOMException => new DOMException(message, 'AbortError')
 
@@ -262,17 +258,15 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
         attachment.state = 'ready'
       })
       .catch((error) => {
+        const failure = error instanceof Error ? error : new Error(String(error))
         attachment.state = 'failed'
-        if (!controller.signal.aborted) controller.abort(error)
+        attachment.error = failure
+        if (!controller.signal.aborted) controller.abort(failure)
         if (!this.disposed && attachment.ownerAttemptId === null && this.attachment === attachment) {
-          this.emit('error', error as Error)
+          this.emit('error', failure)
         }
-        throw error
       })
       .finally(() => globalThis.clearTimeout(timeout))
-    // The catch above already emitted and rethrew this rejection to its owner; this observer only
-    // keeps the shared task from becoming an unhandled rejection.
-    void attachment.task.catch(observeDerivedRejection)
     return attachment
   }
 
@@ -337,6 +331,7 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
 
     try {
       await raceWithSignal(attachment.task, attempt.controller.signal)
+      if (attachment.error !== undefined) throw attachment.error
     } catch (error) {
       if (this.attachment === attachment && attachment.ownerAttemptId === attempt.id) {
         this.cancelAttachment(attachment, error)
@@ -373,13 +368,12 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
     const registration = attachment.registrations[key]
     if (!registration) throw new Error(`Missing Runtime ${key} registration`)
     const physical = Promise.resolve().then(registration)
-    void physical
-      .finally(() => {
-        if (!this.isAttachmentCurrent(attachment)) this.repairRegistration(key)
-      })
-      // raceWithSignal returns the physical result to its caller; this branch only performs the
-      // registration repair and observes the derived rejection so it stays handled.
-      .catch(observeDerivedRejection)
+    const repairIfOwnershipMoved = () => {
+      if (!this.isAttachmentCurrent(attachment)) this.repairRegistration(key)
+    }
+    // raceWithSignal owns the physical result; this side branch performs only the same
+    // post-settlement registration repair on both outcomes.
+    void physical.then(repairIfOwnershipMoved, repairIfOwnershipMoved)
     return raceWithSignal(physical, attachment.controller.signal)
   }
 

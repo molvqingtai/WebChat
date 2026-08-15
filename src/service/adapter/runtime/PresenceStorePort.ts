@@ -203,7 +203,7 @@ export class PresenceStoreInjectPortAdapter implements Adapter {
         const pending = this.pending.get(rawMessage.id)
         if (!pending || pending.binding !== binding) return
         this.pending.delete(rawMessage.id)
-        dispatch(this.callbacks, rawMessage, () => {})
+        dispatch(this.callbacks, rawMessage, (error) => console.error(error))
       },
       onDisconnect: () => {
         binding.disconnected = true
@@ -262,7 +262,7 @@ export class PresenceStoreInjectPortAdapter implements Adapter {
           namespace: pending.request.namespace,
           timeStamp: Date.now()
         },
-        () => {}
+        (error) => console.error(error)
       )
     })
   }
@@ -293,7 +293,7 @@ export class PresenceStoreInjectPortAdapter implements Adapter {
         namespace: message.namespace,
         timeStamp: Date.now()
       },
-      () => {}
+      (error) => console.error(error)
     )
   }
 

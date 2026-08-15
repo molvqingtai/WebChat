@@ -81,9 +81,6 @@ export const createBoundedPresenceStore = (store: PresenceStore): PresenceStore 
   const existing = boundedStores.get(store)
   if (existing) return existing
   const states = new Map<string, TailState>()
-  // Each tail task remains the sole owner of its own rejection; the next link only preserves
-  // serialization order and intentionally records nothing further for that same Error.
-  const observeDerivedRejection = () => undefined
   const stateFor = (domain: string): TailState => {
     let state = states.get(domain)
     if (!state) {
@@ -94,16 +91,15 @@ export const createBoundedPresenceStore = (store: PresenceStore): PresenceStore 
   }
 
   const bounded: PresenceStore = {
-    load: async (domain) => {
-      await stateFor(domain).tail.catch(observeDerivedRejection)
-      return withDeadline(Promise.resolve().then(() => store.load(domain)))
+    load: (domain) => {
+      const loadAfterTail = () => withDeadline(Promise.resolve().then(() => store.load(domain)))
+      return stateFor(domain).tail.then(loadAfterTail, loadAfterTail)
     },
     save: async (record) => {
       // Typed save trusts its input; no protocol parse happens on the persistence-write path.
       const value = clone(record)
-      const task = stateFor(record.domain)
-        .tail.catch(observeDerivedRejection)
-        .then(() => withDeadline(Promise.resolve().then(() => store.save(clone(value)))))
+      const saveAfterTail = () => withDeadline(Promise.resolve().then(() => store.save(clone(value))))
+      const task = stateFor(record.domain).tail.then(saveAfterTail, saveAfterTail)
       stateFor(record.domain).tail = task
       await task
     }
