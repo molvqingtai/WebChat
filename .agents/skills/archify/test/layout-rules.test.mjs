@@ -231,18 +231,16 @@ const CASES = [
   ]
 ]
 
-CASES.forEach(([name, mode, mutate, expected]) => {
+CASES.forEach(([name, mode, mutate, expected]) =>
   test(name, () => {
     const doc = load(mode)
     mutate(doc)
     const { code, stderr } = render(mode, doc)
     assert.notEqual(code, 0, `expected non-zero exit; stderr:\n${stderr}`)
     assert.doesNotMatch(stderr, /TypeError|is not a function|Cannot read/, `crashed instead of reporting:\n${stderr}`)
-    expected.forEach((sub) => {
-      assert.ok(stderr.includes(sub), `expected "${sub}" in stderr:\n${stderr}`)
-    })
+    expected.forEach((sub) => assert.ok(stderr.includes(sub), `expected "${sub}" in stderr:\n${stderr}`))
   })
-})
+)
 
 // ---- error-message contract: threshold + remediation, not just a path ----
 test('contract: short-edge message carries both the px minimum and a fix verb', () => {

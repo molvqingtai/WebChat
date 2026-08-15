@@ -103,9 +103,7 @@ test('cli: examples renders from an installed skill', () => {
     'dataflow-product-analytics.html',
     'lifecycle-agent-run.html',
     'web-app-rendered.html'
-  ].forEach((output) => {
-    assert.equal(fs.existsSync(path.join(installedRoot, 'examples', output)), true, output)
-  })
+  ].forEach((output) => assert.equal(fs.existsSync(path.join(installedRoot, 'examples', output)), true, output))
 })
 
 test('cli: demo creates a ready-to-open diagram in a chosen directory', () => {

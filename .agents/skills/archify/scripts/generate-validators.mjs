@@ -21,9 +21,9 @@ ajv.addSchema(JSON.parse(fs.readFileSync(path.join(schemasDir, 'common.schema.js
 
 // The schema load and AJV registration are synchronous per-type actions; the id map derives
 // from the deterministic schema $id of each type with no I/O inside the result callback.
-diagramTypes.forEach((type) => {
+diagramTypes.forEach((type) =>
   ajv.addSchema(JSON.parse(fs.readFileSync(path.join(schemasDir, `${type}.schema.json`), 'utf8')))
-})
+)
 const schemaIds = Object.fromEntries(
   diagramTypes.map((type) => [type, `https://github.com/tt-a1i/archify/schemas/${type}.schema.json`])
 )

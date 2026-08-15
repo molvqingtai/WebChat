@@ -197,13 +197,13 @@ class DeterministicNetwork {
       onRoomClose: (listener) => subscribe(endpoint.closes, listener),
       onError: () => () => {},
       dispose: () => {
-        ;[...endpoint.rooms].forEach((roomId) => {
+        ;[...endpoint.rooms].forEach((roomId) =>
           this.endpoints.forEach((other, otherPeerId) => {
             if (otherPeerId !== peerId && other.rooms.has(roomId)) {
               other.leaves.forEach((listener) => listener(roomId, peerId))
             }
           })
-        })
+        )
         this.endpoints.delete(peerId)
       }
     }

@@ -45,7 +45,7 @@ const createFixture = (initial: ReadinessState) => {
   }
 }
 
-;(['connecting', 'ready', 'unavailable'] as const).forEach((initial) => {
+;(['connecting', 'ready', 'unavailable'] as const).forEach((initial) =>
   it(`immediately replays ${initial} without treating an equal input as another transition`, () => {
     const fixture = createFixture(initial)
     const initialTransitions: ReadinessState[] = initial === 'connecting' ? [] : [initial]
@@ -62,7 +62,7 @@ const createFixture = (initial: ReadinessState) => {
 
     fixture.discard()
   })
-})
+)
 
 it('updates and emits exactly once for each actual readiness transition', () => {
   const fixture = createFixture('connecting')

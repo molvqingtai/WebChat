@@ -83,14 +83,14 @@ const ARRAY_FIELDS = {
 }
 
 Object.entries(ARRAY_FIELDS).forEach(([mode, fields]) => {
-  fields.forEach((field) => {
+  fields.forEach((field) =>
     test(`${mode}: ${field} as a string fails friendly`, () => {
       const doc = JSON.parse(fs.readFileSync(path.join(skillRoot, 'examples', EXAMPLES[mode]), 'utf8'))
       if (!(field in doc)) return // optional field absent in this example
       doc[field] = 'oops'
       assertFriendlyFailure(mode, doc, `${mode}.${field}`)
     })
-  })
+  )
   test(`${mode}: scalar meta fails friendly`, () => {
     const doc = JSON.parse(fs.readFileSync(path.join(skillRoot, 'examples', EXAMPLES[mode]), 'utf8'))
     doc.meta = 42
@@ -156,7 +156,7 @@ test('installed skill rejects unknown fields without node_modules', () => {
   assert.doesNotMatch(stderr, /ajv is not installed|skipping JSON-schema validation/)
 })
 
-Object.keys(EXAMPLES).forEach((mode) => {
+Object.keys(EXAMPLES).forEach((mode) =>
   test(`installed skill retains full ${mode} schema without node_modules`, () => {
     const doc = JSON.parse(fs.readFileSync(path.join(skillRoot, 'examples', EXAMPLES[mode]), 'utf8'))
     doc.unknownField = true
@@ -165,6 +165,6 @@ Object.keys(EXAMPLES).forEach((mode) => {
     assert.match(stderr, new RegExp(`${mode} schema validation failed`))
     assert.match(stderr, /"additionalProperty":"unknownField"/)
   })
-})
+)
 
 process.on('exit', () => fs.rmSync(tmp, { recursive: true, force: true }))

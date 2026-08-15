@@ -148,9 +148,7 @@ async function commandDoctor() {
   checks.push(...typeChecks)
 
   console.log('Archify doctor\n')
-  checks.forEach((check) => {
-    console.log(`[${check.ok ? 'ok' : check.failureLabel || 'missing'}] ${check.label}`)
-  })
+  checks.forEach((check) => console.log(`[${check.ok ? 'ok' : check.failureLabel || 'missing'}] ${check.label}`))
 
   const nodeFailed = checks[0].ok ? 0 : 1
   const missingFiles = checks.reduce((count, check) => count + check.missing, 0)

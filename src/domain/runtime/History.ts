@@ -42,6 +42,16 @@ interface HistoryAttemptKey {
   syncToken: string
 }
 
+/** One source-local supply job: a replacement supplier chains only onto the live predecessor of
+ * the SAME source and the job retains ownership through its final send settlement (or terminal
+ * finish), so superseded work never overlaps the admitted replacement across the full
+ * selection/snapshot/encode/send/final-release pipeline. */
+interface SourceSupplyJob {
+  key: HistoryAttemptKey
+  promise: Promise<void>
+  settle: () => void
+}
+
 /** Per-provider response lane inside one domain synchronization: independent pagination,
  * failure, and completion; records merge across providers through delivery insert-if-absent. */
 interface ProviderResponseState {
@@ -201,10 +211,23 @@ const HistoryDomain = Remesh.domain({
   name: 'HistoryDomain',
   impl: (domain, options: HistoryOptions = {}) => {
     const clock = domain.getExtern(ClockExtern)
-    // A replacement's fresh inventory supplier physically awaits the prior domain supply, and a
-    // retired requester's in-flight supply is aborted so the old work settles instead of overlapping.
+    // Supply-job tracking: a retired requester's in-flight page supply is aborted so the old work
+    // settles instead of overlapping, and each admitted supplier registers one source-local job
+    // keyed by request identity (chain map) and by sync token (exact settle map).
     const activeRequesterSupplyIds = new Map<string, string>()
-    const domainSupplyChain = new Map<string, Promise<void>>()
+    const sourceSupplyJobs = new Map<string, SourceSupplyJob>()
+    const sourceSupplyJobsByToken = new Map<string, SourceSupplyJob>()
+    const sourceJobKey = (key: HistoryAttemptKey) => `${key.domain}|${key.sourcePeerId}`
+    // Terminal release of one source-local job, matched by complete request identity so an older
+    // lifecycle can never settle a newer job already occupying the same source slot.
+    const settleSourceSupplyJob = (key: HistoryAttemptKey) => {
+      const job = sourceSupplyJobsByToken.get(key.syncToken)
+      if (!job || !matchesSync(job.key, key)) return
+      sourceSupplyJobsByToken.delete(key.syncToken)
+      const jobKey = sourceJobKey(key)
+      if (sourceSupplyJobs.get(jobKey) === job) sourceSupplyJobs.delete(jobKey)
+      job.settle()
+    }
     const pagePort = domain.getExtern(PagePortExtern)
     const codec = domain.getExtern(WireCodecExtern)
     const wireDomain = domain.getDomain(WireDomain())
@@ -426,6 +449,9 @@ const HistoryDomain = Remesh.domain({
     const FinishCurrentRequesterCommand = domain.command({
       name: 'History.FinishCurrentRequesterCommand',
       impl: ({ get }, payload: HistoryAttemptKey) => {
+        // Every no-send terminal exit converges here and releases the source-local supply job; a
+        // fully sent inventory instead releases at its final send settlement.
+        settleSourceSupplyJob(payload)
         const current = get(RequesterAttemptsState()).find((item) => matchesSync(item, payload))
         return current
           ? FinishRequestedEvent({ domain: payload.domain, syncId: payload.syncId, providerId: payload.sourcePeerId })
@@ -610,11 +636,14 @@ const HistoryDomain = Remesh.domain({
         )
         const retiredIds = new Set(retiredRequesters.map((item) => item.syncId))
         // Cancel each retired requester's physically in-flight inventory supply so the old work
-        // settles; the replacement's fresh supplier awaits that settlement via the domain chain.
-        for (const item of retiredRequesters) {
+        // settles (its own terminal finish then releases the source-local job). A retired
+        // requester with no active supply owns only already-purged or untracked output, so its
+        // source-local job is released here for the same-source replacement's fresh supplier.
+        retiredRequesters.forEach((item) => {
           const activeSupplyId = activeRequesterSupplyIds.get(item.syncToken)
           if (activeSupplyId) void pagePort.cancelHistorySupply(activeSupplyId)
-        }
+          else settleSourceSupplyJob(item)
+        })
         return [
           ...(retained.some((item, index) => item !== requesters[index])
             ? [RequesterAttemptsState().new(retained)]
@@ -639,8 +668,10 @@ const HistoryDomain = Remesh.domain({
       impl: ({ get }, payload: RequesterAttemptState) => {
         const runtime = get(sessionDomain.query.DomainQuery(payload.domain))
         if (!runtime) return FinishCurrentRequestedEvent(payload)
+        // A retired (superseded) requester never queues replacement inventory output: its response
+        // collection still merges late pages, but the outgoing lane belongs to the replacement.
         const current = get(RequesterAttemptsState()).find((item) => matchesSync(item, payload))
-        if (!current) return null
+        if (!current || current.retired) return null
         const page = current.inventoryPages[current.nextInventoryPage]
         if (!page) return FinishCurrentRequestedEvent(payload)
         const requestId = `history:inventory:${payload.syncToken}:${current.nextInventoryPage}`
@@ -676,6 +707,9 @@ const HistoryDomain = Remesh.domain({
         // Only a retired requester (real source replacement) stops broadcasting inventory; a
         // loading-settled one keeps sending so remaining providers still receive the request.
         if (!attempt || attempt.retired) return null
+        // The final (done) page's send settlement is this pipeline's final release: the
+        // source-local job ends here so a same-source replacement may start its own supply.
+        if (current.done) settleSourceSupplyJob(current)
         const next: RequesterAttemptState = {
           ...attempt,
           nextInventoryPage: attempt.nextInventoryPage + 1
@@ -1841,6 +1875,11 @@ const HistoryDomain = Remesh.domain({
           ...new Map([...providerSources, ...successorSources].map((item) => [item.sourcePeerId, item])).values()
         ]
         const owners = get(FeedbackOwnersState()).filter((item) => item.domain === runtimeDomain)
+        // Release every source-local supply job owned by this domain so teardown never leaves a
+        // same-source replacement chain waiting on released work.
+        sourceSupplyJobsByToken.forEach((job) => {
+          if (job.key.domain === runtimeDomain) settleSourceSupplyJob(job.key)
+        })
         // Domain release unconditionally releases the requester state: the domain is being torn
         // down, so a later fresh synchronization may bind again. Loading settlement is the only
         // non-destructive path; release is not.
@@ -1901,10 +1940,21 @@ const HistoryDomain = Remesh.domain({
         fromEvent(SyncStartedEvent).pipe(
           mergeMap((key) => {
             const failedPageIds: string[] = []
+            // Register this source-local job synchronously and chain only onto the SAME source's
+            // live predecessor: an unrelated source in the same domain never waits here, while a
+            // same-source replacement's fresh supplier physically awaits its own source's prior
+            // pipeline (selection, snapshot, encode, send, final release) before broadcasting.
+            const jobKey = sourceJobKey(key)
+            const prior = sourceSupplyJobs.get(jobKey)
+            let settle!: () => void
+            const promise = new Promise<void>((resolve) => {
+              settle = resolve
+            })
+            const job: SourceSupplyJob = { key, promise, settle }
+            sourceSupplyJobs.set(jobKey, job)
+            sourceSupplyJobsByToken.set(key.syncToken, job)
             const body = async () => {
-              // Physically settle any prior outgoing supply for this domain before the replacement
-              // broadcasts; the fresh supplier never overlaps unsettled old-source work.
-              await (domainSupplyChain.get(key.domain) ?? Promise.resolve())
+              await (prior?.promise ?? Promise.resolve())
               const current = get(RequesterAttemptsState()).find((item) => matchesSync(item, key))
               if (!current || current.retired || current.inventoryPages.length > 0) return []
               const pageIds = pagePort.historyPageIds(key.domain)
@@ -2030,30 +2080,39 @@ const HistoryDomain = Remesh.domain({
                 messageIds: bucket,
                 done: true
               })
-              const next: RequesterAttemptState = { ...attempt, inventoryIds, inventoryPages: pages }
+              // Revalidate the complete live request identity after the last await: a replacement
+              // admitted during the asynchronous encoding retires the live copy, and this older
+              // closure must never overwrite that retirement or re-queue the superseded inventory.
+              // The queued update derives only from the live object.
+              const live = get(RequesterAttemptsState()).find((item) => matchesSync(item, key))
+              if (!live || live.retired) {
+                return [
+                  ...(failedPageIds.length > 0 ? [DeadPagesEvent(failedPageIds)] : []),
+                  FinishCurrentRequestedEvent(key)
+                ]
+              }
+              const next: RequesterAttemptState = { ...live, inventoryIds, inventoryPages: pages }
               return [
                 ...(failedPageIds.length > 0 ? [DeadPagesEvent(failedPageIds)] : []),
                 RequesterAttemptsState().new(
-                  replaceBy(get(RequesterAttemptsState()), (item) => matchesSync(item, attempt), next)
+                  replaceBy(get(RequesterAttemptsState()), (item) => matchesSync(item, live), next)
                 ),
                 QueueInventoryPageCommand(next) as RemeshCommandOutput
               ]
             }
             return defer(() => {
-              const promise = body()
-              // Track this supply's physical settlement so a later domain replacement awaits it.
-              domainSupplyChain.set(
-                key.domain,
-                promise.then(
-                  () => {
-                    activeRequesterSupplyIds.delete(key.syncToken)
-                  },
-                  () => {
-                    activeRequesterSupplyIds.delete(key.syncToken)
-                  }
-                )
-              )
-              return promise
+              // Track the closure's supply-id ownership until it settles; an invocation that was
+              // never admitted (superseded or cleaned before starting) owns no pipeline work, so
+              // its source-local job releases immediately instead of holding the source slot.
+              return (async () => {
+                try {
+                  const outputs = await body()
+                  if (outputs.length === 0) settleSourceSupplyJob(key)
+                  return outputs
+                } finally {
+                  activeRequesterSupplyIds.delete(key.syncToken)
+                }
+              })()
             }).pipe(
               catchError(() => [
                 ...(failedPageIds.length > 0 ? [DeadPagesEvent(failedPageIds)] : []),

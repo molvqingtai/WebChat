@@ -41,13 +41,13 @@ test('static output omits animation attributes', () => {
   assert.doesNotMatch(svg, /data-animate=/)
 })
 
-Object.entries(CASES).forEach(([mode, example]) => {
+Object.entries(CASES).forEach(([mode, example]) =>
   test(`${mode}: trace animation annotates svg, edges, and nodes`, () => {
     const svg = svgBlock(render(mode, example))
     assert.match(svg, /<svg[^>]+data-animation="trace"/)
     assert.match(svg, /data-animate="edge" style="--step:0"/)
     assert.match(svg, /data-animate="node" style="--step:0"/)
   })
-})
+)
 
 process.on('exit', () => fs.rmSync(tmp, { recursive: true, force: true }))
