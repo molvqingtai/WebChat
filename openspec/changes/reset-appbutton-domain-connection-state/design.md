@@ -2,7 +2,7 @@
 
 See `proposal.md` for the product problem and `specs/webrtc-runtime/spec.md` for normative behavior.
 
-The Runtime replaces the current Domain's physical Chat peer through the existing application `leaveRoom()` / `joinRoom()` composition and the internal reconnect attempt. That attempt rotates physical identity and ultimately uses the normal room join and SESSION publication flow. Its complete reset boundary retains the current Domain's logical presence while rejecting stale connection-generation facts.
+The released Runtime already replaces the current domain's physical Chat peer through the existing application `leaveRoom()` / `joinRoom()` composition and the internal reconnect attempt. That attempt rotates physical identity and ultimately uses the normal room join and SESSION publication flow. Its session preparation, however, currently carries the domain's persisted remote observer ledger into the replacement. An observer entry can remain `ended` after a pending leave expires, and the SESSION receive guard rejects a valid same-generation message before it reaches the replacement member snapshot.
 
 The complete last-tab release does clear the domain's committed/prepared sessions, observer ledger, pending leaves, and baseline, but it also retires local logical presence, updates World demand, removes the page lease after grace, and releases broader domain ownership. AppButton Refresh must reuse only the clean connection-state boundary, not impersonate final domain release.
 
