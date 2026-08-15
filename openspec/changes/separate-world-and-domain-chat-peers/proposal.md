@@ -1,12 +1,12 @@
 ## Why
 
-An AppButton Refresh/current-domain reconnect or recovery must establish a completely new Chat transport without interrupting Chat on other domains or the user's World presence. The Runtime therefore needs one unambiguous physical peer owner for each network scope and one closed lifecycle for connection, replacement, and release.
+A current-domain reconnect or recovery must establish a completely new Chat transport without crossing into another Chat domain or deleting the user's World registration. A ready-state AppButton Refresh additionally replaces the World transport through a separate operation, so the Runtime needs one unambiguous physical peer owner for each network scope and independent closed lifecycles for connection, replacement, and release.
 
 ## What Changes
 
 - **BREAKING (internal transport ownership)**: Give the Runtime one dedicated World peer that joins only the World room and one dedicated Chat peer for each active domain that joins only that domain's Chat room. Same-domain pages share their domain's Chat peer; different domains never share a Chat peer.
 - Make an initial domain connection one repeatable atomic attempt: stage the domain's World site contribution and Chat candidate, commit both together, and apply provenance-owned rollback plus bounded retry when either side fails.
-- Make current-domain reconnect stop and await the old Chat peer's physical exit before a new generation creates and joins its replacement, while preserving logical `presenceId` and `joinedAt` and leaving the World peer and other domains untouched.
+- Make every current-domain replacement stop and await the old Chat peer's physical exit before a new generation creates and joins its replacement while preserving logical `presenceId` and `joinedAt`. Automatic Domain recovery and non-AppButton retry leave the World physical owner live; a ready-state AppButton Refresh independently starts the sibling World replacement defined by the active manual-refresh contract while preserving World registrations, demand, and every other Domain.
 - Treat connection commit as ready immediately. Each accepted source incarnation independently triggers History exactly once; History success, failure, or cancellation never gates ready or peer retry.
 - Preserve the five-second last-page grace. A lease during grace cancels release and reuses the current Chat peer; a lease after release starts waits until the old World site-removal publication completes and its release owner closes before a new generation rebuilds the domain.
 - Keep the external peer schema, codec, room identifiers, payloads, persistence, public `ChatRoom` port, and UI unchanged. The result contains only this ownership model, with no alternate peer path, compatibility layer, migration, fallback, or dual owner.

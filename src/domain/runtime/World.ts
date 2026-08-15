@@ -23,6 +23,9 @@ interface RecoveryState {
   requestId: string
   publicationPending: boolean
   missedPeerIds: string[]
+  /** True only for an AppButton manual World replacement: its catch-up work uses manual-scoped
+   * request ids so a failure never becomes page UI feedback. */
+  manual?: boolean
 }
 
 interface FullPublication {
@@ -31,6 +34,9 @@ interface FullPublication {
   presence: WorldRoomMessage
   stagedAttemptId: string | null
   recoveryRequestId: string | null
+  /** True only when the publication belongs to an AppButton manual World replacement: its failure
+   * stays out of page UI/Toast. */
+  manual?: boolean
 }
 
 interface PendingPresenceSend {
@@ -77,6 +83,9 @@ const WorldDomain = Remesh.domain({
     /** Current physical Room members, tracked from the join/leave events this domain owns. */
     const RoomMembersState = domain.state<string[]>({ name: 'World.RoomMembersState', default: [] })
     const RecoveryState = domain.state<RecoveryState | null>({ name: 'World.RecoveryState', default: null })
+    // Per-replacement send correlation: pending presence sends carry this generation in their
+    // request id, so an old-generation completion/failure can never settle a fresh marker.
+    const WorldSendGenerationState = domain.state<number>({ name: 'World.WorldSendGenerationState', default: 0 })
     const PendingPresenceSendsState = domain.state<PendingPresenceSend[]>({
       name: 'World.PendingPresenceSendsState',
       default: []
@@ -248,7 +257,8 @@ const WorldDomain = Remesh.domain({
           revision: currentRevision,
           presence,
           stagedAttemptId,
-          recoveryRequestId
+          recoveryRequestId,
+          ...(recoveryRequestId && recovery?.manual ? { manual: true } : {})
         }
         // A normal World publication is one room broadcast; the transport fans it out.
         return [
@@ -341,9 +351,9 @@ const WorldDomain = Remesh.domain({
               : [])
           ]
         }
-        // A provider throw is surfaced once; the publication then settles.
-        const failure = ErrorEvent(payload.error)
-        return [failure, ...settlePublication(get, publication)]
+        // A provider throw settles the publication; a manual AppButton replacement keeps that
+        // failure out of page UI/Toast while automatic recovery retains its diagnostics.
+        return [...(publication.manual ? [] : [ErrorEvent(payload.error)]), ...settlePublication(get, publication)]
       }
     })
 
@@ -444,7 +454,27 @@ const WorldDomain = Remesh.domain({
     // does, because a live successor keeps the World owner joined.
     const DepartRoomCommand = domain.command({
       name: 'World.DepartRoomCommand',
-      impl: () => [JoinedState().new(false), PresencesState().new([]), RecoveryState().new(null)]
+      impl: ({ get }) => [
+        JoinedState().new(false),
+        // The application projection resets to the replacement generation: every prior remote
+        // source and the prior local World peer id lose their projected contribution, so the
+        // projected list rebuilds only from current-generation facts.
+        ...get(PresencesState()).map((item) =>
+          PresenceChangedEvent({ sourcePeerId: item.sourcePeerId, presence: null })
+        ),
+        PresenceChangedEvent({ sourcePeerId: get(wireDomain.query.PeerIdQuery(worldRoomId)), presence: null }),
+        PresencesState().new([]),
+        // Prior room membership, every pending presence send, and the old full-publication REQUEST
+        // owner lose authority with the old generation (an already invoked old provider send then
+        // settles against no live slot). Live release continuations and any pending final
+        // publication are NOT discarded: they migrate to the fresh generation's current-snapshot
+        // publication, which settles each release exactly once.
+        RoomMembersState().new([]),
+        PendingPresenceSendsState().new([]),
+        FullPublicationState().new(null),
+        WorldSendGenerationState().new(get(WorldSendGenerationState()) + 1),
+        RecoveryState().new(null)
+      ]
     })
 
     const PublishCurrentCommand = domain.command({
@@ -562,7 +592,7 @@ const WorldDomain = Remesh.domain({
           !get(RecoveryState())?.publicationPending
             ? [
                 PublishCurrentCommand({
-                  requestId: `world:discovered:${payload.sourcePeerId}`,
+                  requestId: `world:discovered:${get(WorldSendGenerationState())}:${payload.sourcePeerId}`,
                   targetPeerIds: [payload.sourcePeerId]
                 })
               ]
@@ -598,7 +628,7 @@ const WorldDomain = Remesh.domain({
         return [
           ...memberUpdate,
           PublishCurrentCommand({
-            requestId: `world:peer:${payload.sourcePeerId}`,
+            requestId: `world:peer:${get(WorldSendGenerationState())}:${payload.sourcePeerId}`,
             targetPeerIds: [payload.sourcePeerId]
           })
         ]
@@ -644,9 +674,14 @@ const WorldDomain = Remesh.domain({
 
     const BeginRecoveryCommand = domain.command({
       name: 'World.BeginRecoveryCommand',
-      impl: (_, requestId: string) => [
+      impl: (_, payload: { requestId: string; manual?: boolean }) => [
         JoinedState().new(false),
-        RecoveryState().new({ requestId, publicationPending: false, missedPeerIds: [] })
+        RecoveryState().new({
+          requestId: payload.requestId,
+          publicationPending: false,
+          missedPeerIds: [],
+          manual: payload.manual
+        })
       ]
     })
 
@@ -684,7 +719,9 @@ const WorldDomain = Remesh.domain({
           }),
           ...recovery.missedPeerIds.map((sourcePeerId) =>
             wireDomain.command.SendMessageCommand({
-              requestId: `world:recovery-catch-up:${requestId}:${sourcePeerId}`,
+              requestId: recovery.manual
+                ? `world:manual-catch-up:${requestId}:${sourcePeerId}`
+                : `world:recovery-catch-up:${requestId}:${sourcePeerId}`,
               roomId: worldRoomId,
               targetPeerIds: [sourcePeerId],
               message: presence
@@ -746,7 +783,10 @@ const WorldDomain = Remesh.domain({
         fromEvent(wireDomain.event.MessageSendFailedEvent).pipe(
           filter(
             ({ requestId }) =>
-              requestId.startsWith('world:catch-up:') || requestId.startsWith('world:recovery-catch-up:')
+              // A manual AppButton replacement's catch-up failure stays out of page UI; automatic
+              // recovery and ordinary join catch-up retain their diagnostics.
+              (requestId.startsWith('world:catch-up:') || requestId.startsWith('world:recovery-catch-up:')) &&
+              !requestId.startsWith('world:manual-catch-up:')
           ),
           map(({ error }) => ErrorEvent(error))
         )
