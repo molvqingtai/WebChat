@@ -7,20 +7,20 @@
 **Goals:**
 
 - Make current initialization failure one atomic loading-to-error replacement.
-- Keep the normalized error visible for the generic Toast's default lifetime or until ordinary user dismissal/replacement.
+- Keep a genuine current-page failure's exact original-message error visible for the generic Toast's default lifetime or until ordinary user dismissal/replacement.
 - Preserve success cancellation and generation fencing.
 
 **Non-Goals:**
 
 - Adding another Toast identity, timer, renderer, presenter, state owner, error component, Retry control, or browser branch.
-- Changing initialization stage order, deadlines, error copy, shell composition, Toast styling, or Runtime/storage behavior.
+- Changing initialization stage order, deadlines, shell composition, Toast styling, or Runtime/storage behavior, or adding any decoration, mapping, normalization, or replacement to the original error copy.
 - Retaining errors from superseded, aborted, or unmounted attempts.
 
 ## Decisions
 
 ### 1. The stable descriptor identity represents the current attempt
 
-Initial execution and every Retry publish `Preparing WebChat` with ID `webchat-initialization`. The current terminal result settles that same identity. A successful attempt cancels its matching loading descriptor. A failed attempt publishes `WebChat unavailable` as an error descriptor with the same ID.
+Initial execution and every Retry publish `Preparing WebChat` with ID `webchat-initialization`. The current terminal result settles that same identity. A successful attempt cancels its matching loading descriptor. A genuine failed attempt owned by the current page publishes an error descriptor containing exactly the original `error.message` with the same ID. A failure with no current affected page/live route or no user impact calls `console.error(error)` directly and does not manufacture a Toast destination.
 
 ### 2. Failure replacement performs no preceding cancel
 
@@ -32,11 +32,11 @@ Only the active, non-aborted generation may publish success or error. Starting R
 
 ### 4. Generic Toast behavior remains the presentation boundary
 
-The error retains the existing copy, dismissibility, default lifetime, replacement behavior, and panel-owned Toaster. Initialization owns only operation settlement; it adds no timer, DOM observation, Toast acknowledgement, or presentation state.
+The error retains the exact original `error.message`, dismissibility, default lifetime, replacement behavior, and panel-owned Toaster. Initialization adds no prefix, suffix, wrapper, mapping, normalization, or replacement copy and owns only operation settlement; it adds no timer, DOM observation, Toast acknowledgement, or presentation state.
 
 ### 5. Verification exercises the real feedback boundary
 
-Controls cover an initial failure, failure after Retry, repeated current failures, success after Retry, abort/unmount, stale generations, and unrelated Toast identities. Browser-rendered coverage proves the same-ID error remains after the framework's deferred publish cycle.
+Controls cover an initial failure, failure after Retry, repeated current failures, success after Retry, abort/unmount, stale generations, unrelated Toast identities, exact original-message copy for current-page failure, and direct-console/no-Toast behavior for no-page or no-impact failure. Browser-rendered coverage proves the same-ID error remains after the framework's deferred publish cycle.
 
 ## Risks / Trade-offs
 

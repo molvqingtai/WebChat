@@ -7,7 +7,7 @@ Firefox content scripts cannot safely assimilate the Promise returned by the Web
 - Select persistence-preparation coordination at browser composition: Firefox runs the versioned preparation operation directly, while Chrome uses Web Locks arbitration.
 - Use the versioned message and configuration writes as the only persistence truth. Firefox has no second lock owner, background mutex, alternate storage path, or alternate format.
 - Bound an IndexedDB version-reset deletion that reports `blocked`: if it does not settle within five seconds, the current initialization attempt fails instead of waiting forever.
-- Route that terminal failure through the initialization state and generic error Toast so actions-menu Refresh can start a new current attempt.
+- Route a terminal failure owned by the current page through the existing initialization state and same-ID generic error Toast with exactly the original `error.message`, so actions-menu Refresh can start a new current attempt. A no-page or user-irrelevant failure calls `console.error(error)` directly instead of manufacturing a Toast destination.
 - Preserve the current storage identities, versions, reset semantics, public ports, browser permissions, Runtime behavior, and user data boundaries.
 
 ## Capabilities
@@ -24,5 +24,5 @@ None.
 
 - Affected behavior: content initialization that prepares local configuration and the IndexedDB message database in Firefox and Chrome.
 - Affected implementation: persistence coordinator composition, versioned storage preparation, and IndexedDB deletion settlement.
-- Affected verification: Firefox direct preparation, Chrome Web Locks preparation, concurrent convergence, blocked deletion, Retry, and browser-bound production initialization.
+- Affected verification: Firefox direct preparation, Chrome Web Locks preparation, concurrent convergence, blocked deletion, Retry, exact original-message current-page routing versus no-page/no-impact direct console diagnostics, and browser-bound production initialization.
 - Outside this change: stored schemas and identities, reset eligibility, protocol, message semantics, public APIs, dependencies, permissions, Runtime topology, and unrelated browser behavior.

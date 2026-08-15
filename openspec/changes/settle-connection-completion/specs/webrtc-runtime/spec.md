@@ -10,7 +10,7 @@ Once the current Runtime generation has physically accepted the required Chat an
 
 This active-persistence decoupling SHALL NOT weaken final release. Session SHALL remove the private local active-generation authority through the current release owner, release domain State, allow physical departure of the domain Chat peer, and remove that domain's World contribution without producing or waiting for a Chat lifecycle message. The dedicated World peer SHALL depart only when its final site contribution has been removed. No in-flight end, retryable end, end-send settlement, or settled-cleanup State SHALL exist. A required local active-record cleanup failure SHALL retain the current release failure semantics, but no peer signal SHALL gate departure. An ordinary page-context refresh while the authoritative physical tab binding remains SHALL start no grace, retain the current domain Chat peer plus dedicated World owner and contribution, and give the replacement page an independent attempt. The existing five-second Lifecycle grace SHALL remain unchanged: a current page returning during actual grace SHALL cancel grace, reuse those same committed scoped peers, and independently settle from the current snapshot. A page arriving after completed grace release SHALL join through one new domain Chat peer and SHALL reuse the dedicated World peer when another site retains it or create a new World peer when no site retains World demand.
 
-This requirement SHALL add no success Toast, copy/duration masking, readiness or panel state, protocol field, public `ChatRoom` method, database schema/version, stored record shape, browser-specific business branch, or compatibility path. It SHALL NOT require `pageId` transport metadata, Provider callback re-registration, or another specific mechanism unless later evidence independently requires such a change.
+This terminal-settlement requirement SHALL add no success Toast, error-copy selection, duration masking, readiness or panel state, protocol field, public `ChatRoom` method, database schema/version, stored record shape, browser-specific business branch, or compatibility path. It SHALL NOT require `pageId` transport metadata, Provider callback re-registration, or another specific mechanism unless later evidence independently requires such a change.
 
 #### Scenario: Projected local user is not held by active Presence persistence
 
@@ -78,23 +78,23 @@ Once the content script runs and receives the configured DOM anchor, it SHALL cr
 
 Each bootstrap attempt SHALL belong to one finite current generation. Before a prerequisite is ready, the application SHALL NOT ignite its dependent Domain, automatic Chat/World join, database read/write, callback, or other side effect. Bootstrap-independent shell controls SHALL remain usable. When the prerequisites for a Domain become ready, the same mounted root SHALL initialize that Domain and its application state exactly once; a Retry SHALL NOT create a duplicate store, Domain, listener, join, or UI root.
 
-A terminal bootstrap failure SHALL leave one visible generic unavailable state and one Retry action inside the mounted shell. The launcher SHALL remain focusable and named; the unavailable state and Retry SHALL be discernible to assistive technology, and Retry SHALL be keyboard-operable with an accessible current label. The raw exception remains diagnostic rather than detailed user-facing copy. If only Runtime fails after the normal application surface is ready, the existing `ReadinessDomain`, generic feedback, `Connection failed`, ready dismissal, and retry/reconnect behavior SHALL remain the sole Runtime state and feedback authority.
+A terminal bootstrap failure SHALL leave one visible generic unavailable state and one Retry action inside the mounted shell. The launcher SHALL remain focusable and named; the unavailable state and Retry SHALL be discernible to assistive technology, and Retry SHALL be keyboard-operable with an accessible current label. When a genuine failure is owned by the current page, the existing application error route SHALL present exactly the original `error.message` and SHALL add no prefix, suffix, wrapper, mapping, normalization, replacement copy, or structured routing detail. A failure with no current affected page/live route or no user impact SHALL call `console.error(error)` directly and SHALL NOT manufacture a Toast destination. If only Runtime fails after the normal application surface is ready, the existing `ReadinessDomain`, generic feedback, `Connection failed`, ready dismissal, and retry/reconnect behavior SHALL remain the sole Runtime state and feedback authority.
 
 One accepted Retry SHALL start one fresh bounded bootstrap generation, reuse an already valid dependency result only when that reuse preserves its ownership contract, and fence every late result from the failed generation. Success SHALL hydrate or recover the same shell in place and continue each newly available dependent flow once without requiring a document reload. Failure SHALL settle only the current Retry loading and return to the same accessible unavailable state without an infinite loading owner. A reload or genuine document replacement SHALL mount one fresh shell and generation; old work SHALL NOT mutate its shell, dependency state, or request result.
 
-This requirement changes no connection or persistence truth after its prerequisites are ready. It SHALL add no success feedback, second Runtime readiness or Toast owner, raw diagnostic detail, panel visual redesign, protocol/public-port/schema/version change, or weakened final release behavior.
+This requirement changes no connection or persistence truth after its prerequisites are ready. It SHALL add no success feedback, second Runtime readiness or Toast owner, decorated or replacement copy, structured diagnostic detail in user-facing text, panel visual redesign, protocol/public-port/schema/version change, or weakened final release behavior.
 
 #### Scenario: Storage preparation failure preserves the shell
 
 - **GIVEN** the content script has a body anchor and browser-sync/local configuration or MessageStore preparation rejects or reaches its current terminal
 - **WHEN** full application initialization cannot continue
-- **THEN** exactly one launcher and openable panel shell SHALL remain mounted with one accessible unavailable state and Retry, while no dependent storage Domain or side effect is ignited
+- **THEN** exactly one launcher and openable panel shell SHALL remain mounted with one accessible unavailable state and Retry, the existing current-page error route SHALL present exactly the original `error.message` without decorated/replacement copy, and no dependent storage Domain or side effect SHALL be ignited
 
 #### Scenario: Initial control-plane timeout preserves the shell
 
 - **GIVEN** the shell is mounted and initial Runtime registration never returns within the current bounded startup budget
 - **WHEN** the Runtime attempt settles unavailable with `Runtime control-plane request timed out`
-- **THEN** the shell and launcher SHALL remain usable, Runtime-dependent work SHALL remain unavailable, the current failure SHALL be visibly and accessibly recoverable, and no full blank or pre-mount return SHALL occur
+- **THEN** the shell and launcher SHALL remain usable, Runtime-dependent work SHALL remain unavailable, the current failure SHALL be visibly and accessibly recoverable through its exact original `error.message`, and no full blank, decorated/replacement copy, or pre-mount return SHALL occur
 
 #### Scenario: Unready dependencies cannot ignite application work
 
@@ -112,7 +112,7 @@ This requirement changes no connection or persistence truth after its prerequisi
 
 - **GIVEN** the shell is mounted in the unavailable state
 - **WHEN** the current Retry also reaches its bounded failure terminal
-- **THEN** only that Retry loading SHALL settle, the launcher and panel SHALL remain usable, the unavailable state and Retry SHALL remain accessibly discernible, and no infinite loading or shell unmount SHALL occur
+- **THEN** only that Retry loading SHALL settle, the launcher and panel SHALL remain usable, the unavailable state and Retry SHALL remain accessibly discernible, the matching current-page error SHALL retain exactly its original `error.message`, and no infinite loading, decorated/replacement copy, or shell unmount SHALL occur
 
 #### Scenario: Reload creates one fresh shell generation
 
