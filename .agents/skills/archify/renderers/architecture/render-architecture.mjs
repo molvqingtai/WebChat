@@ -387,10 +387,9 @@ function renderLegend() {
     (acc, type) => {
       const rect = `        <rect x="${acc.x}" y="${y - 8}" width="14" height="9" rx="2" class="${componentFill[type] || 'c-external'}" stroke-width="1"/>`
       const text = `        <text x="${acc.x + 20}" y="${y}" class="t-muted" font-size="8">${TYPE_LABELS[type] || type}</text>`
-      return {
-        parts: [...acc.parts, rect, text],
-        x: acc.x + 30 + (textUnits(TYPE_LABELS[type] || type) * 5 + 28)
-      }
+      acc.parts.push(rect, text)
+      acc.x += 30 + (textUnits(TYPE_LABELS[type] || type) * 5 + 28)
+      return acc
     },
     {
       parts: [

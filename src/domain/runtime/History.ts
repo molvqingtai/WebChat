@@ -172,10 +172,12 @@ const makeRecord = (message: ChatMessage, user: ChatUser, receivedAt: number): C
 const usersForRecords = (records: ChatMessageRecord[]): ChatUser[] => {
   const snapshots = records.reduce<{ user: ChatUser; message: ChatMessage }[]>((acc, record) => {
     const index = acc.findIndex((item) => item.user.id === record.user.id)
-    if (index === -1) return [...acc, { user: record.user, message: record.message }]
-    const current = acc[index]
-    if (compareEventPosition(current.message, record.message) < 0) {
-      return acc.map((item, i) => (i === index ? { user: record.user, message: record.message } : item))
+    if (index === -1) {
+      acc.push({ user: record.user, message: record.message })
+      return acc
+    }
+    if (compareEventPosition(acc[index].message, record.message) < 0) {
+      acc[index] = { user: record.user, message: record.message }
     }
     return acc
   }, [])
@@ -336,10 +338,11 @@ const HistoryDomain = Remesh.domain({
           bindingKeyFor({ sourcePeerId: payload.sourcePeerId, domain: payload.domain, direction: 'requester' })
         )
         if (requesterBinding?.terminal) return null
-        // One domain synchronization at a time: the requester broadcasts inventory pages and
-        // merges every provider's responses through independent per-provider response lanes.
+        // One active outgoing synchronization per domain: a retained (loading-settled) requester
+        // persists only to merge late pages by request identity and does not block the replacement
+        // connection's fresh request.
         const requesters = get(RequesterAttemptsState())
-        if (requesters.some((item) => item.domain === payload.domain)) return null
+        if (requesters.some((item) => item.domain === payload.domain && !item.completed)) return null
         const allocated = nextTokens(get, 2)
         const state: RequesterAttemptState = {
           sourcePeerId: payload.sourcePeerId,
@@ -598,14 +601,23 @@ const HistoryDomain = Remesh.domain({
     const ResetHistoryForSessionCommand = domain.command({
       name: 'History.ResetHistoryForSessionCommand',
       impl: ({ get }, payload: { domain: string; sourcePeerId: string }) => {
+        const requesters = get(RequesterAttemptsState())
         const owners = get(FeedbackOwnersState())
         const dismissedOwners = owners.filter(
           (item) => item.sourcePeerId === payload.sourcePeerId && item.domain === payload.domain
         )
-        // Source replacement clears the old connection's protocol bindings for the source+domain,
-        // but the known request identity and its collection persist across the generation change:
-        // a valid late page from the old synchronization still merges by its request identity.
+        // Source replacement clears the old connection's protocol bindings for the source+domain
+        // and retires the old outgoing owner into a retained collection keyed by request identity:
+        // its valid late pages still merge, while the replacement connection starts a fresh request.
+        const retained = requesters.map((item) =>
+          item.sourcePeerId === payload.sourcePeerId && item.domain === payload.domain && !item.completed
+            ? { ...item, completed: true }
+            : item
+        )
         return [
+          ...(retained.some((item, index) => item !== requesters[index])
+            ? [RequesterAttemptsState().new(retained)]
+            : []),
           ClearSyncBindingsCommand(payload),
           CleanupProviderSlotsCommand(payload),
           ...dismissedOwners.flatMap((item) => dismissFeedback(get, item) ?? []),
@@ -1474,8 +1486,8 @@ const HistoryDomain = Remesh.domain({
         }
 
         const requesters = get(RequesterAttemptsState())
-        const current = requesters.find((item) => item.domain === domain)
-        if (!current || current.syncId !== payload.message.syncId) return null
+        const current = requesters.find((item) => item.domain === domain && item.syncId === payload.message.syncId)
+        if (!current) return null
         const binding = { domain }
         const provider = current.providers[payload.sourcePeerId] ?? newProviderResponseState()
         const withProvider = (lane: ProviderResponseState): RequesterAttemptState => ({
@@ -1735,26 +1747,15 @@ const HistoryDomain = Remesh.domain({
       impl: ({ get }, payload: { domain: string; sourcePeerId: string }) => {
         const requesters = get(RequesterAttemptsState())
         const owners = get(FeedbackOwnersState())
-        // A departing provider settles its snapshot seat without dropping its already-collected
-        // lane: every other provider's valid pages keep merging, and the loading closes once this
-        // departure completes the request-start snapshot.
-        const requester = requesters.find((item) => item.domain === payload.domain)
-        const lane = requester?.providers[payload.sourcePeerId]
+        // A departing provider settles only its request-start snapshot seat: it does not
+        // terminalize the lane, clear accepted queued pages, or make a later otherwise valid
+        // associated page ineligible. The loading closes once this departure completes the
+        // active snapshot.
+        const requester = requesters.find((item) => item.domain === payload.domain && !item.completed)
         const next =
           requester && requester.expectedProviders.includes(payload.sourcePeerId)
             ? {
                 ...requester,
-                providers: lane
-                  ? {
-                      ...requester.providers,
-                      [payload.sourcePeerId]: {
-                        ...lane,
-                        responseDone: true,
-                        awaitingBatchId: undefined,
-                        pendingResponsePages: []
-                      }
-                    }
-                  : requester.providers,
                 settledProviders: [...new Set([...requester.settledProviders, payload.sourcePeerId])]
               }
             : requester

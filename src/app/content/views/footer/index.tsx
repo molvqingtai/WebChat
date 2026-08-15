@@ -118,15 +118,17 @@ const Footer: FC = () => {
   const transformMessage = async (message: string) => {
     const matchList = [...message.matchAll(/!\[Image\]\(hash:([^\s)]+)\)/g)]
     const transformed = matchList.reduce(
-      ({ text, updates }, match) => {
+      (acc, match) => {
         const base64 = imageRecord.current.get(match[1])
-        if (!base64) return { text, updates }
+        if (!base64) return acc
         const base64Syntax = `![Image](${base64})`
         const hashSyntax = match[0]
         const startIndex = match.index
         const endIndex = startIndex + base64Syntax.length - hashSyntax.length
-        const nextText = text.replace(hashSyntax, base64Syntax)
-        return { text: nextText, updates: [...updates, { text: nextText, startIndex, endIndex }] }
+        const nextText = acc.text.replace(hashSyntax, base64Syntax)
+        acc.text = nextText
+        acc.updates.push({ text: nextText, startIndex, endIndex })
+        return acc
       },
       { text: message, updates: [] as { text: string; startIndex: number; endIndex: number }[] }
     )
