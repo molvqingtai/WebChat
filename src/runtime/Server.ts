@@ -527,6 +527,18 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     reconnectDomain: (payload) => {
       const existing = inFlightReconnects.get(payload.domain)
       if (existing) return existing
+      // An accepted ready-state activation also starts the independently fenced World replacement
+      // alongside the Domain child: it is never awaited, never changes the Domain result or the
+      // button/loading/completion/error UI, and coalesces into the one current World operation
+      // (automatic recovery or a prior manual replacement). It fires only when the Domain refresh
+      // itself is admissible (a committed runtime or retained seed); pre-ready Retry never reaches
+      // here and starts no World replacement.
+      if (
+        store.query(sessionDomain.query.DomainQuery(payload.domain)) ||
+        store.query(sessionDomain.query.RetainedLocalSeedQuery(payload.domain))
+      ) {
+        store.send(connectionDomain.command.RefreshWorldCommand())
+      }
       const operationId = nanoid()
       const task = performReconnect(payload.domain, operationId)
       inFlightReconnects.set(payload.domain, task)

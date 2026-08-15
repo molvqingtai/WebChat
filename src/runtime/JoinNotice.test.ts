@@ -627,6 +627,7 @@ describe('single live release owner', () => {
     expect(network.isJoined('reconnect-peer-b', getChatRoomId(DOMAIN))).toBe(true)
     expect(network.isJoined('reconnect-peer-b', getWorldRoomId())).toBe(true)
     expect(network.lifecycle().filter((event) => event.includes('reconnect-peer-b'))).toEqual([
+      `physical-leave:reconnect-peer-b:${getWorldRoomId()}`,
       `physical-leave:reconnect-peer-b:${getChatRoomId(DOMAIN)}`
     ])
     expect((await noticeUsers(a)).filter((id) => id === 'reconnect-user-b')).toHaveLength(1)

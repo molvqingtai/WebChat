@@ -17,7 +17,7 @@ WebChat mounts a local shell before browser-sync preparation, page-local configu
 
 - Changing the persisted AppStatus field-key identities or field semantics.
 - Changing initialization stage order, deadlines, cancellation, Runtime detach, or dependency activation.
-- Changing ChatRoom, WorldRoom, Runtime, protocol, public APIs, permissions, production dependencies, or visual design.
+- Changing automatic ChatRoom or WorldRoom recovery ownership, pre-ready Retry, Runtime/protocol/public APIs, permissions, production dependencies, or visual design.
 - Adding another app-status store, initialization-status owner, Retry control, Toaster, success Toast, Provider, controller, or dependency-injection surface.
 - Changing generic Toast lifetime, dismissal, or replacement behavior.
 
@@ -43,7 +43,7 @@ The lifecycle obtains `AppStatusDomain` from the store, sends its phase commands
 
 ### 4. Consumers use AppStatusDomain directly
 
-`App` reads the initialization-ready query before dispatching Runtime-dependent ChatRoom and WorldRoom operations. `AppButton` reads phase and sends Retry before ready, then uses the ChatRoom recovery contract after ready. `AppFeedbackDomain` reads readiness from `AppStatusDomain` before projecting Runtime feedback. The initialization lifecycle reads and updates the same Domain through the store.
+`App` reads the initialization-ready query before dispatching Runtime-dependent ChatRoom and WorldRoom operations. `AppButton` reads phase and sends Retry before ready, then dispatches the Domain-owned ready-state Refresh composition; the Domain request remains the only control and feedback owner when the active manual-refresh contract adds its independent World child. `AppFeedbackDomain` reads readiness from `AppStatusDomain` before projecting Runtime feedback. The initialization lifecycle reads and updates the same Domain through the store.
 
 Business components do not receive initialization functions, state bundles, ownership callbacks, or test-only timing controls as props. AppStatus tests drive the production public Domain and storage extern boundaries, then assert public projections instead of importing internal actions or state.
 
@@ -63,7 +63,7 @@ An active initialization attempt publishes one `Preparing WebChat` loading comma
 
 Before ready, the AppButton Refresh slot reflects the current initialization attempt: active is disabled and rotating; unavailable is enabled and static; activation starts one bounded Retry. It requires no configured user identity and does not dispatch ChatRoom or WorldRoom recovery.
 
-At ready, the same slot switches atomically to current-site ChatRoom retry/reconnect. This context retains its identity, join/rejoin scope, minimum loading interval, and WorldRoom exclusion. Initialization cannot regain control after the switch.
+At ready, the same slot switches atomically to the current-Domain retry/reconnect request. That Domain request retains its identity, join/rejoin result, minimum loading interval, control state, and feedback ownership. The same action starts the active manual-refresh contract's separately fenced World replacement, whose loading, completion, and failure remain excluded from this control. Initialization cannot regain control after the switch.
 
 ### 8. Current operation identity fences asynchronous work
 

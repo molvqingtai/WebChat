@@ -1,5 +1,5 @@
 schema: spec-driven
 created: 2026-08-12
-goal: Fully rebuild AppButton current-domain connection state and accept every
-  legitimate same-presence physical rebind without weakening stale-generation
-  rejection or changing external protocols.
+goal: Make one ready-state AppButton Refresh rebuild both the current Domain
+  connection and singleton World connection through their real leave/join
+  lifecycles while keeping World progress and failure out of the UI.

@@ -8,7 +8,7 @@ Any World or Chat failure before commit SHALL fail the same attempt and roll bac
 
 Commit SHALL make the current connection ready immediately. Each accepted remote Chat source incarnation SHALL independently trigger exactly one History synchronization after commit. History completion, failure, cancellation, or delayed local supplier settlement SHALL NOT retain or reverse ready, trigger a peer retry, or change the committed World contribution.
 
-Reconnect, automatic recovery, and concurrent retry for one committed domain SHALL share one domain-scoped single-flight generation. The current Chat peer SHALL enter reconnecting, stop, and reach physical exit before the next generation creates or joins a replacement Chat peer. The replacement SHALL use a new physical `peerId` and `sessionId` while preserving the current logical `presenceId` and `joinedAt`. The dedicated World peer, A's committed World site, and every other domain Chat peer SHALL remain live and unchanged. A failed replacement SHALL affect only A, and only the current generation may commit ready or publish current snapshots; stale callbacks, timers, sends, cleanup, and terminals SHALL have no current authority.
+Automatic recovery, concurrent retry, and the Domain child of ready-state AppButton Refresh for one committed domain SHALL share one domain-scoped single-flight generation. The current Chat peer SHALL enter reconnecting, stop, and reach physical exit before the next generation creates or joins a replacement Chat peer. The replacement SHALL use a new physical `peerId` and `sessionId` while preserving the current logical `presenceId` and `joinedAt`. Automatic Domain recovery and non-AppButton retry SHALL leave the dedicated World physical owner and A's committed World site live and unchanged. A ready-state AppButton action SHALL additionally start the independently fenced sibling World replacement defined by the manual Refresh contract without removing A's World registration or demand. Every other domain Chat peer SHALL remain live and unchanged. A failed Domain replacement SHALL affect only A and SHALL neither cancel nor settle a sibling World replacement; only the current generation for each scope may mutate or settle that scope, and stale callbacks, timers, sends, cleanup, and terminals SHALL have no current authority.
 
 When the last page lease for A leaves, the existing five-second grace SHALL begin while the current Chat peer and World contribution remain committed. A new lease during grace SHALL cancel that release and reuse the same Chat peer and generation. Once grace expires, release SHALL be considered started before the Runtime waits for Chat physical exit. A release started in this way SHALL NOT be canceled or superseded by a connection-attempt generation; every later lease SHALL queue behind that release.
 
@@ -30,15 +30,15 @@ This lifecycle SHALL use only the dedicated World peer and per-domain Chat peers
 
 #### Scenario: Replacement never overlaps Chat peers
 
-- **GIVEN** A is committed and a reconnect or automatic recovery replaces its Chat peer
+- **GIVEN** A is committed and automatic recovery or a ready-state AppButton Refresh replaces its Chat peer
 - **WHEN** the replacement generation starts
-- **THEN** the old Chat peer SHALL physically exit before the new Chat peer is created or joined, the replacement SHALL retain `presenceId` and `joinedAt` while rotating `peerId` and `sessionId`, and the World peer plus every other domain SHALL remain unchanged
+- **THEN** the old Chat peer SHALL physically exit before the new Chat peer is created or joined and the replacement SHALL retain `presenceId` and `joinedAt` while rotating `peerId` and `sessionId`; automatic recovery alone SHALL leave World physically unchanged, while AppButton SHALL own any World replacement only through its independent sibling operation, and every other Domain SHALL remain unchanged
 
 #### Scenario: Failed or stale replacement affects only its domain
 
 - **GIVEN** one A replacement fails or an older A generation completes after a newer generation owns the attempt
 - **WHEN** its failure, callback, timer, send, or cleanup settles
-- **THEN** only current A work MAY enter unavailable or commit ready, stale work SHALL be ignored, and the World peer plus all other domain Chat peers SHALL remain live and unchanged
+- **THEN** only current A work MAY enter unavailable or commit ready, stale work SHALL be ignored, A work SHALL neither cancel nor settle an independently owned AppButton World replacement, and all other Domain Chat peers SHALL remain live and unchanged
 
 #### Scenario: Lease during grace reuses the current peer
 
@@ -84,8 +84,8 @@ Every same-domain page SHALL share its domain's one Chat peer and committed Runt
 
 #### Scenario: World ownership is independent of Chat
 
-- **WHEN** one or more domain Chat peers are active, replaced, or released
-- **THEN** the one dedicated World peer SHALL remain joined only to World, publish the full current site snapshot, and share no physical peer identity or restart owner with any Chat domain
+- **WHEN** one or more Domain Chat peers are active, automatically replaced, released, or replaced as the Domain child of AppButton Refresh
+- **THEN** the dedicated World owner SHALL remain scoped only to World, publish the full current site snapshot through its current generation, and share no physical peer identity or restart owner with any Chat Domain; a ready-state AppButton action SHALL replace that World generation only through the independently fenced sibling operation defined by the manual Refresh contract
 
 ### Requirement: Artico room demand repairs a retained disconnected peer
 

@@ -240,6 +240,26 @@ const ConnectionDomain = Remesh.domain({
             })
     })
 
+    const RefreshWorldCommand = domain.command({
+      name: 'Connection.RefreshWorldCommand',
+      impl: ({ get }) => {
+        // One shared World replacement: an in-flight automatic recovery or prior manual
+        // replacement already is the current operation, so a later manual child joins it instead
+        // of creating a second physical owner.
+        if (get(WorldRecoveryAttemptState())) return null
+        if (get(sessionDomain.query.DomainsQuery()).length === 0) return null
+        // The old singleton World owner physically leaves and its connection/projection facts lose
+        // authority before the canonical fresh-generation join publishes one current full
+        // snapshot. Active Domain registrations, user/site values, desired World demand, and the
+        // complete local presence are preserved outside this physical cleanup.
+        return [
+          wireDomain.command.LeaveRoomCommand({ roomId: getWorldRoomId(), preservePending: false }),
+          worldDomain.command.DepartRoomCommand(),
+          ...startWorldRecovery(get)
+        ]
+      }
+    })
+
     const ReconnectDomainCommand = domain.command({
       name: 'Connection.ReconnectDomainCommand',
       impl: ({ get }, payload: { operationId: string; domain: string; user?: ChatUser; site?: ChatSite }) => {
@@ -911,6 +931,7 @@ const ConnectionDomain = Remesh.domain({
         JoinDomainCommand,
         LeaveDomainCommand,
         ReconnectDomainCommand,
+        RefreshWorldCommand,
         DestroyDomainConnectionCommand,
         FailOperationCommand
       },
