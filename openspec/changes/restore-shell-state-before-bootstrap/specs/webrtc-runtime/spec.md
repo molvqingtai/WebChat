@@ -190,7 +190,7 @@ Normal Runtime `connecting` MAY issue the stable loading command through `Toast.
 - **WHEN** the actions menu renders or another activation is attempted
 - **THEN** Refresh SHALL be disabled, the Domain SHALL admit no second request, and no concurrent `joinRoom()` or `leaveRoom()` composition SHALL start
 
-#### Scenario: Missing identity is not an executable ready-context recovery
+#### Scenario: Missing identity is not an executable recovery
 
 - **GIVEN** the ready application exists but required user identity is not configured
 - **WHEN** the actions menu renders Refresh
@@ -220,19 +220,19 @@ Normal Runtime `connecting` MAY issue the stable loading command through `Toast.
 - **WHEN** the actions menu derives Refresh availability
 - **THEN** availability SHALL depend on the recovery single-flight prerequisites rather than successful joined/readiness state, and an accepted request SHALL surface its real operation outcome through the existing request feedback
 
-#### Scenario: Button and generic Toast entry share one ready recovery request
+#### Scenario: Button and generic Toast entry share one reconnect request
 
 - **GIVEN** the ready application uses the `Toast.ts` capability and panel-owned Toaster
 - **WHEN** an enabled user activates retry/reconnect and the current-domain operation succeeds or fails
 - **THEN** one request identity SHALL immediately invoke the selected operation, disable and spin Refresh, and correlate one generic loading ID that is canceled on success or followed by the matching error on failure; the bounded request terminal SHALL stop only the matching spin, no success Toast SHALL be published, and neither Toast state nor the button SHALL create a second recovery state owner
 
-#### Scenario: Reconnect does not wait for Toast rendering
+#### Scenario: Reconnect does not wait for Toast presentation
 
 - **GIVEN** the Toast library defers its subscriber update or fails to render loading
 - **WHEN** an enabled ready-context user activates Refresh
 - **THEN** the selected join or leave/join ports SHALL be invoked immediately, the Refresh icon SHALL represent the same pending request, and no Toaster mount, paint, or Toast state SHALL delay or alter the operation terminal or strand the icon
 
-#### Scenario: Fast terminal reconnect respects the request interval
+#### Scenario: Fast terminal reconnect respects mounted feedback
 
 - **GIVEN** the join or leave/join ports settle before the request-owned 300ms minimum loading interval ends
 - **WHEN** the operation outcome reaches the shared request
@@ -244,7 +244,7 @@ Normal Runtime `connecting` MAY issue the stable loading command through `Toast.
 - **WHEN** delayed minimum-interval or terminal cleanup from the older request completes
 - **THEN** it SHALL NOT stop the newer Refresh spin, dismiss the newer loading or error Toast, emit a newer error, or alter the newer recovery operation
 
-#### Scenario: AppMain owns one generic Toaster
+#### Scenario: Original AppMain Toaster structure and visuals are preserved
 
 - **WHEN** the AppMain panel renders before or after ready capability activation
 - **THEN** its positioned `motion.div` SHALL contain exactly one generic Toaster after `Header`, `Main`, `Footer`, and conditional `Setup`, with `richColors`, current theme, `offset="70px"`, `visibleToasts={1}`, `position="top-center"`, and the existing dark Toast classes, without an initialization wrapper, panel sibling, portal, second renderer, or custom geometry/pointer styling
@@ -279,25 +279,25 @@ Normal Runtime `connecting` MAY issue the stable loading command through `Toast.
 - **WHEN** the ClientLease watchdog runs
 - **THEN** it SHALL retain the five-second lease/probe/snapshot checks and initiate recovery only for a real unavailable, generation, host-id, or page-attachment change; Readiness transition dedup SHALL NOT disable or delay that liveness behavior
 
-#### Scenario: Runtime ready dismisses only current loading without success replay
+#### Scenario: Runtime ready dismisses loading without success replay
 
 - **GIVEN** the Runtime readiness Toast uses stable ID `webchat-runtime-readiness`
 - **WHEN** readiness genuinely enters ready or feedback first reads the current ready Query
 - **THEN** application feedback SHALL cancel that ID only if the current feedback is matching loading, SHALL NOT publish `Ready to chat` or another success Toast, SHALL NOT actively dismiss a current error, and SHALL NOT dismiss unrelated Toasts
 
-#### Scenario: Runtime ready settlement cannot form a Toast loop
+#### Scenario: Runtime ready settlement cannot form a presentation loop
 
 - **GIVEN** the Runtime readiness loading ID was canceled or a prior Toast automatically closed
 - **WHEN** readiness remains ready without a later connecting or unavailable transition
 - **THEN** no Toast lifecycle fact SHALL republish a ready success Toast, while Runtime recovery, immediate-replay readiness truth, and request-local manual recovery outcome SHALL remain unchanged
 
-#### Scenario: Initialization status uses only Toast.ts and the AppMain Toaster
+#### Scenario: No independent readiness or bootstrap status view
 
 - **GIVEN** required application initialization has not reached ready
 - **WHEN** the current initial or retried attempt is active or has terminally failed
 - **THEN** the App/AppMain tree SHALL keep its normal composition without any independent loading, busy, unavailable, error, result, or Retry status component; an active attempt SHALL use one matching `Preparing WebChat` command through `Toast.ts`, terminal failure SHALL use its matching `WebChat unavailable` error command, and recovery SHALL use actions-menu Refresh
 
-#### Scenario: Closed panel retains operation ownership without an external Toaster
+#### Scenario: Closed-panel reconnect has no Toast prerequisite
 
 - **GIVEN** the main panel is collapsed and its panel-owned Toaster is not externally mounted
 - **WHEN** initialization fails or an enabled user activates initialization or ready-context Refresh
@@ -309,7 +309,7 @@ Normal Runtime `connecting` MAY issue the stable loading command through `Toast.
 - **WHEN** that request captures success or failure
 - **THEN** the request-correlated generic loading ID SHALL be canceled on success without `Ready to chat` or another success Toast and SHALL be followed by the matching error on failure, while Refresh SHALL expose no Ready text, success region, error region, result badge, or second result state
 
-#### Scenario: Panel remount does not replay terminal feedback
+#### Scenario: Active request may enter a newly mounted Toaster once
 
 - **GIVEN** initialization or ready-context recovery has already terminated and its generic Toast has been dismissed, expired, or replaced
 - **WHEN** the panel expands, collapses, or remounts the existing Toaster
@@ -321,7 +321,7 @@ Normal Runtime `connecting` MAY issue the stable loading command through `Toast.
 - **WHEN** the actions menu renders "Reconnect this site"
 - **THEN** the action SHALL be visibly disabled with an accessible state label, SHALL NOT dispatch activation, and SHALL NOT accept a click that silently produces neither feedback nor an operation
 
-#### Scenario: Panel state does not externalize Toast rendering
+#### Scenario: Panel state changes only Toast availability
 
 - **WHEN** the main plugin panel expands or collapses during initialization or ready-context recovery
 - **THEN** the same operation and matching Refresh projection SHALL continue without cancellation, replay, or restart, while the Toaster SHALL follow the AppMain panel lifecycle without hoisting or duplication
@@ -371,31 +371,31 @@ When a ready-context logical operation reaches ready, logically final failure, c
 - **WHEN** ready capabilities activate inside the already mounted normal shell
 - **THEN** initialization ownership SHALL terminate once, Refresh SHALL switch to existing ready-context eligibility without a success Toast, and late initialization results SHALL NOT regain control or dispatch ready operations
 
-#### Scenario: Toast loading and ready Refresh cannot diverge
+#### Scenario: Toast loading and Refresh control cannot diverge
 
 - **GIVEN** the ready-context fixed Runtime readiness owner's `Connected to the chat...` entry exists in `loading`
 - **WHEN** the existing Refresh control is rendered for any manual or direct/automatic Chat connection flow
 - **THEN** the button SHALL be disabled and its icon SHALL rotate for the complete same interval, with no owner transition that leaves loading Toast feedback beside an enabled or static Refresh control
 
-#### Scenario: Polling leaves ready Refresh unchanged
+#### Scenario: Polling leaves the Refresh control unchanged
 
 - **GIVEN** the ready-context Refresh control is mounted and no connection loading owner is active
 - **WHEN** polling or a health probe completes without promoting into an actual connect, join, attachment recovery, or host rebuild
 - **THEN** it SHALL create no Toast loading entry, SHALL not disable or rotate Refresh, and SHALL leave ordinary eligibility unchanged
 
-#### Scenario: Manual ready Refresh owns disabled rotation until loading ends
+#### Scenario: Manual Refresh owns disabled rotation until loading ends
 
 - **GIVEN** ready-context Refresh is ordinarily available and no connection operation is active
 - **WHEN** the user activates Refresh
 - **THEN** the button SHALL become disabled and its icon SHALL rotate from accepted dispatch through the same owner's complete Toast loading interval, including the accepted minimum dwell, and repeated activation SHALL start no parallel Refresh
 
-#### Scenario: Direct Chat connection projects the same ready control state
+#### Scenario: Direct Chat connection projects the same control state
 
 - **GIVEN** ready-context Refresh is mounted or becomes mounted while direct/automatic Chat connection or join is active
 - **WHEN** no Refresh click created that loading owner
 - **THEN** the button SHALL still be disabled and the refresh icon SHALL rotate continuously until the current direct connection owner terminates
 
-#### Scenario: Logical terminal connection failure restores ready retry
+#### Scenario: Logical terminal failure restores retry with exact copy
 
 - **GIVEN** a current ready connection loading owner has disabled and rotated Refresh
 - **WHEN** the logical connection operation truly terminates with no current automatic continuation, retry, or handoff capable of succeeding
