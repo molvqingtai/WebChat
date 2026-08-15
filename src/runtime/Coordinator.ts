@@ -164,25 +164,25 @@ export class Coordinator {
     return url !== null && isSameNavigation(url, binding.url)
   }
 
-  private async reconcileOneTab(binding: PhysicalTab) {
-    try {
-      const url = await this.currentNavigation(binding)
-      if (!url) {
-        await this.removeCurrentTab(binding.tabId)
-        return
-      }
-      if (url === binding.url) return
-      const current = this.tabs.get(binding.tabId)
-      if (current?.pageId !== binding.pageId) return
-      this.tabs.set(binding.tabId, { ...current, url })
-      await this.persist()
-    } catch {
-      // best-effort reconciliation: a failed tab must not block the remaining tabs
-    }
-  }
-
   private async reconcileTabs() {
-    await Promise.all(this.currentTabs().map((binding) => this.reconcileOneTab(binding)))
+    await Promise.all(
+      this.currentTabs().map(async (binding) => {
+        try {
+          const url = await this.currentNavigation(binding)
+          if (!url) {
+            await this.removeCurrentTab(binding.tabId)
+            return
+          }
+          if (url === binding.url) return
+          const current = this.tabs.get(binding.tabId)
+          if (current?.pageId !== binding.pageId) return
+          this.tabs.set(binding.tabId, { ...current, url })
+          await this.persist()
+        } catch {
+          // best-effort reconciliation: a failed tab must not block the remaining tabs
+        }
+      })
+    )
   }
 
   private async rebuildTabs() {

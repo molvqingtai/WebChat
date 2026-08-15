@@ -42,13 +42,9 @@ interface HistoryAttemptKey {
   syncToken: string
 }
 
-/** Outgoing requester: fixed ID snapshot, paged inventory, incoming response pages. */
-interface RequesterAttemptState extends HistoryAttemptKey {
-  cutoff: number
-  inventoryIds: string[]
-  /** Pre-built inventory pages (real codec encoded < 64KiB each); sent in order. */
-  inventoryPages: HistoryMessagesPull[]
-  nextInventoryPage: number
+/** Per-provider response lane inside one domain synchronization: independent pagination,
+ * failure, and completion; records merge across providers through delivery insert-if-absent. */
+interface ProviderResponseState {
   expectedResponsePage: number
   responseBytes: number
   responseCount: number
@@ -63,8 +59,30 @@ interface RequesterAttemptState extends HistoryAttemptKey {
   pendingResponsePages: HistoryMessagesPush[]
   /** Page number of the next expected queued page (pages queue continuously, not only N+1). */
   queuedResponseTail: number
-  feedbackActive: boolean
 }
+
+/** Outgoing requester: one domain synchronization broadcasting paged inventory requests and
+ * merging every provider's response pages through independent per-provider response lanes. */
+interface RequesterAttemptState extends HistoryAttemptKey {
+  cutoff: number
+  inventoryIds: string[]
+  /** Pre-built inventory pages (real codec encoded < 64KiB each); sent in order. */
+  inventoryPages: HistoryMessagesPull[]
+  nextInventoryPage: number
+  feedbackActive: boolean
+  /** Per-provider response lanes keyed by the provider's sourcePeerId. */
+  providers: Record<string, ProviderResponseState>
+}
+
+const newProviderResponseState = (): ProviderResponseState => ({
+  expectedResponsePage: 0,
+  responseBytes: 0,
+  responseCount: 0,
+  finalBatch: false,
+  responseDone: false,
+  pendingResponsePages: [],
+  queuedResponseTail: 0
+})
 
 /** Incoming provider: accumulated inventory, fixed record snapshot, outgoing response pages. */
 interface ProviderAttemptState extends HistoryAttemptKey {
@@ -162,9 +180,6 @@ const matchesSync = (item: HistoryAttemptKey, key: HistoryAttemptKey) =>
   item.domain === key.domain &&
   item.syncId === key.syncId &&
   item.syncToken === key.syncToken
-
-const sameSourceDomain = (item: HistoryAttemptKey, key: HistoryAttemptKey) =>
-  item.sourcePeerId === key.sourcePeerId && item.domain === key.domain
 
 const HistoryDomain = Remesh.domain({
   name: 'HistoryDomain',
@@ -311,9 +326,10 @@ const HistoryDomain = Remesh.domain({
           bindingKeyFor({ sourcePeerId: payload.sourcePeerId, domain: payload.domain, direction: 'requester' })
         )
         if (requesterBinding?.terminal) return null
-        // One requester attempt per domain + source: a source in two domains runs two independent attempts.
+        // One domain synchronization at a time: the requester broadcasts inventory pages and
+        // merges every provider's responses through independent per-provider response lanes.
         const requesters = get(RequesterAttemptsState())
-        if (requesters.some((item) => sameSourceDomain(item, { ...payload, syncId: '', syncToken: '' }))) return null
+        if (requesters.some((item) => item.domain === payload.domain)) return null
         const allocated = nextTokens(get, 2)
         const state: RequesterAttemptState = {
           sourcePeerId: payload.sourcePeerId,
@@ -324,14 +340,8 @@ const HistoryDomain = Remesh.domain({
           inventoryIds: [],
           inventoryPages: [],
           nextInventoryPage: 0,
-          expectedResponsePage: 0,
-          responseBytes: 0,
-          responseCount: 0,
-          finalBatch: false,
-          responseDone: false,
-          pendingResponsePages: [],
-          queuedResponseTail: 0,
-          feedbackActive: false
+          feedbackActive: false,
+          providers: {}
         }
         return [
           TokenState().new(allocated.next),
@@ -1368,6 +1378,7 @@ const HistoryDomain = Remesh.domain({
 
     const prepareResponsePage = (
       current: RequesterAttemptState,
+      provider: ProviderResponseState,
       payload: WireMessageEvent & { message: HistoryMessagesPush }
     ):
       | {
@@ -1375,7 +1386,7 @@ const HistoryDomain = Remesh.domain({
           action: ReturnType<typeof FinishRequestedEvent> | ReturnType<typeof wireDomain.command.DropProtocolCommand>
         }
       | { ok: true; page: HistoryMessagesPush } => {
-      if (current.responseDone) {
+      if (provider.responseDone) {
         return {
           ok: false,
           action: FinishRequestedEvent({ domain: current.domain, sourcePeerId: current.sourcePeerId })
@@ -1393,9 +1404,9 @@ const HistoryDomain = Remesh.domain({
           })
         }
       }
-      if (payload.message.messages.length > 0 && current.lastResponsePosition) {
+      if (payload.message.messages.length > 0 && provider.lastResponsePosition) {
         const newest = payload.message.messages[0]
-        if (compareEventPosition(current.lastResponsePosition, newest) <= 0) {
+        if (compareEventPosition(provider.lastResponsePosition, newest) <= 0) {
           return {
             ok: false,
             action: wireDomain.command.DropProtocolCommand({
@@ -1429,65 +1440,72 @@ const HistoryDomain = Remesh.domain({
         }
 
         const requesters = get(RequesterAttemptsState())
-        const current = requesters.find(
-          (item) => item.sourcePeerId === payload.sourcePeerId && item.domain === binding.domain
-        )
+        const current = requesters.find((item) => item.domain === binding.domain)
         if (!current || current.syncId !== payload.message.syncId) return null
-        if (current.awaitingBatchId) {
+        const provider = current.providers[payload.sourcePeerId] ?? newProviderResponseState()
+        const withProvider = (lane: ProviderResponseState): RequesterAttemptState => ({
+          ...current,
+          providers: { ...current.providers, [payload.sourcePeerId]: lane }
+        })
+        if (provider.awaitingBatchId) {
           // While a batch is pending: replay fingerprint matching runs FIRST, so an identical replay
           // of the accepted page or of any queued page (including a queued terminal page) is
           // idempotent and a changed replay cancels. Only then does the terminal fence reject any
           // post-done or post-queued-terminal page, and valid continuous pages (N+1, N+2, ...) join
           // the bounded serial queue in order.
           const fingerprint = JSON.stringify(payload.message)
-          const queued = current.pendingResponsePages
+          const queued = provider.pendingResponsePages
           const queuedMatch = queued.find((item) => item.page === payload.message.page)
           if (queuedMatch) {
             return JSON.stringify(queuedMatch) === fingerprint
               ? null
               : FinishRequestedEvent({ domain: binding.domain, sourcePeerId: payload.sourcePeerId })
           }
-          if (payload.message.page === current.expectedResponsePage - 1) {
-            return current.lastAppliedPageFingerprint === fingerprint
+          if (payload.message.page === provider.expectedResponsePage - 1) {
+            return provider.lastAppliedPageFingerprint === fingerprint
               ? null
               : FinishRequestedEvent({ domain: binding.domain, sourcePeerId: payload.sourcePeerId })
           }
-          if (current.responseDone || queued.some((item) => item.done)) {
+          if (provider.responseDone || queued.some((item) => item.done)) {
             return FinishRequestedEvent({ domain: binding.domain, sourcePeerId: payload.sourcePeerId })
           }
-          if (payload.message.page === current.queuedResponseTail) {
+          if (payload.message.page === provider.queuedResponseTail) {
             if (queued.length >= MAX_PENDING_RESPONSE_PAGES) {
               return FinishRequestedEvent({ domain: binding.domain, sourcePeerId: payload.sourcePeerId })
             }
             return RequesterAttemptsState().new(
-              replaceBy(requesters, (item) => matchesSync(item, current), {
-                ...current,
-                pendingResponsePages: [...queued, payload.message],
-                queuedResponseTail: current.queuedResponseTail + 1
-              })
+              replaceBy(
+                requesters,
+                (item) => matchesSync(item, current),
+                withProvider({
+                  ...provider,
+                  pendingResponsePages: [...queued, payload.message],
+                  queuedResponseTail: provider.queuedResponseTail + 1
+                })
+              )
             )
           }
           return FinishRequestedEvent({ domain: binding.domain, sourcePeerId: payload.sourcePeerId })
         }
-        if (payload.message.page !== current.expectedResponsePage) {
+        if (payload.message.page !== provider.expectedResponsePage) {
           // Identical replay of the last applied page is idempotent; anything else (gap,
           // out-of-order, changed replay) cancels the attempt.
           const fingerprint = JSON.stringify(payload.message)
           if (
-            payload.message.page === current.expectedResponsePage - 1 &&
-            current.lastAppliedPageFingerprint === fingerprint
+            payload.message.page === provider.expectedResponsePage - 1 &&
+            provider.lastAppliedPageFingerprint === fingerprint
           ) {
             return null
           }
           return FinishRequestedEvent({ domain: binding.domain, sourcePeerId: payload.sourcePeerId })
         }
-        const prepared = prepareResponsePage(current, payload)
+        const prepared = prepareResponsePage(current, provider, payload)
         if (!prepared.ok) return prepared.action
         const page = prepared.page
         const expectedHlc = get(sessionDomain.query.HlcQuery())
         let hlc = expectedHlc
-        let decodedBytes = current.responseBytes
-        let messageCount = current.responseCount
+        let decodedBytes = provider.responseBytes
+        let messageCount = provider.responseCount
         for (const event of page.messages) {
           const messageBytes = getTextByteSize(JSON.stringify(event))
           if (messageCount + 1 > historySessionMessages || decodedBytes + messageBytes > historySessionBytes) {
@@ -1513,18 +1531,18 @@ const HistoryDomain = Remesh.domain({
         const allocated = nextTokens(get, 1)
         const batchId = token('batch', allocated.values[0])
         const oldest = records.length > 0 ? records[records.length - 1].message : undefined
-        const next: RequesterAttemptState = {
-          ...current,
-          expectedResponsePage: current.expectedResponsePage + 1,
+        const next: RequesterAttemptState = withProvider({
+          ...provider,
+          expectedResponsePage: provider.expectedResponsePage + 1,
           responseBytes: decodedBytes,
           responseCount: messageCount,
-          lastResponsePosition: oldest ? { hlc: oldest.hlc, id: oldest.id } : current.lastResponsePosition,
+          lastResponsePosition: oldest ? { hlc: oldest.hlc, id: oldest.id } : provider.lastResponsePosition,
           awaitingBatchId: batchId,
           finalBatch: page.done,
           responseDone: page.done,
           lastAppliedPageFingerprint: JSON.stringify(page),
-          queuedResponseTail: Math.max(current.queuedResponseTail, current.expectedResponsePage + 1)
-        }
+          queuedResponseTail: Math.max(provider.queuedResponseTail, provider.expectedResponsePage + 1)
+        })
         return [
           TokenState().new(allocated.next),
           sessionDomain.command.UpdateHlcCommand({ expected: expectedHlc, next: hlc }),
@@ -1545,34 +1563,48 @@ const HistoryDomain = Remesh.domain({
       impl: ({ get }, payload: { domain: string; batchId: string; inserted: boolean }) => {
         const requesters = get(RequesterAttemptsState())
         const current = requesters.find(
-          (item) => item.domain === payload.domain && item.awaitingBatchId === payload.batchId
+          (item) =>
+            item.domain === payload.domain &&
+            Object.values(item.providers).some((lane) => lane.awaitingBatchId === payload.batchId)
         )
         if (!current) return null
-        const activation = payload.inserted && !current.feedbackActive
-        const queued = current.pendingResponsePages[0]
-        const next: RequesterAttemptState = {
+        const providerEntry = Object.entries(current.providers).find(
+          ([, lane]) => lane.awaitingBatchId === payload.batchId
+        )
+        if (!providerEntry) return null
+        const [providerId, lane] = providerEntry
+        const withLane = (nextLane: ProviderResponseState): RequesterAttemptState => ({
           ...current,
+          providers: { ...current.providers, [providerId]: nextLane }
+        })
+        const activation = payload.inserted && !current.feedbackActive
+        const queued = lane.pendingResponsePages[0]
+        const nextLane: ProviderResponseState = {
+          ...lane,
           awaitingBatchId: undefined,
-          feedbackActive: current.feedbackActive || payload.inserted,
-          pendingResponsePages: queued ? current.pendingResponsePages.slice(1) : [],
-          queuedResponseTail: queued ? current.queuedResponseTail : current.queuedResponseTail
+          pendingResponsePages: queued ? lane.pendingResponsePages.slice(1) : [],
+          queuedResponseTail: queued ? lane.queuedResponseTail : lane.queuedResponseTail
+        }
+        const next: RequesterAttemptState = {
+          ...withLane(nextLane),
+          feedbackActive: current.feedbackActive || payload.inserted
         }
         const output: RemeshCommandOutput[] = [
           RequesterAttemptsState().new(replaceBy(requesters, (item) => matchesSync(item, current), next)),
           HistoryTimeoutArmedEvent(next),
           ...(activation ? (activateFeedback(get, current) ?? []) : []),
-          ...(current.finalBatch
+          ...(lane.finalBatch
             ? [FinishRequestedEvent({ domain: current.domain, sourcePeerId: current.sourcePeerId })]
             : [])
         ]
-        if (!current.finalBatch && queued) {
+        if (!lane.finalBatch && queued) {
           // Dequeue must re-validate the page number: a stale or duplicated queued page that no
-          // longer matches the expected page cancels the attempt instead of being applied.
-          if (queued.page !== next.expectedResponsePage) {
+          // longer matches the expected page cancels the lane instead of being applied.
+          if (queued.page !== nextLane.expectedResponsePage) {
             output.push(FinishRequestedEvent({ domain: current.domain, sourcePeerId: current.sourcePeerId }))
             return output
           }
-          const prepared = prepareResponsePage(next, {
+          const prepared = prepareResponsePage(next, nextLane, {
             roomId: '',
             sourcePeerId: current.sourcePeerId,
             message: queued
@@ -1583,8 +1615,8 @@ const HistoryDomain = Remesh.domain({
             const page = prepared.page
             const expectedHlc = get(sessionDomain.query.HlcQuery())
             let hlc = expectedHlc
-            let decodedBytes = next.responseBytes
-            let messageCount = next.responseCount
+            let decodedBytes = nextLane.responseBytes
+            let messageCount = nextLane.responseCount
             let budgetOk = true
             for (const event of page.messages) {
               const messageBytes = getTextByteSize(JSON.stringify(event))
@@ -1617,16 +1649,20 @@ const HistoryDomain = Remesh.domain({
                 const allocated = nextTokens(get, 1)
                 const batchId = token('batch', allocated.values[0])
                 const oldest = records.length > 0 ? records[records.length - 1].message : undefined
-                const applied: RequesterAttemptState = {
-                  ...next,
-                  expectedResponsePage: next.expectedResponsePage + 1,
+                const appliedLane: ProviderResponseState = {
+                  ...nextLane,
+                  expectedResponsePage: nextLane.expectedResponsePage + 1,
                   responseBytes: decodedBytes,
                   responseCount: messageCount,
-                  lastResponsePosition: oldest ? { hlc: oldest.hlc, id: oldest.id } : next.lastResponsePosition,
+                  lastResponsePosition: oldest ? { hlc: oldest.hlc, id: oldest.id } : nextLane.lastResponsePosition,
                   awaitingBatchId: batchId,
                   finalBatch: page.done,
                   responseDone: page.done,
                   lastAppliedPageFingerprint: JSON.stringify(page)
+                }
+                const applied: RequesterAttemptState = {
+                  ...next,
+                  providers: { ...next.providers, [providerId]: appliedLane }
                 }
                 output.push(
                   TokenState().new(allocated.next),
@@ -1652,7 +1688,9 @@ const HistoryDomain = Remesh.domain({
       name: 'History.DiscardRequesterBatchCommand',
       impl: ({ get }, payload: { domain: string; batchId: string }) => {
         const current = get(RequesterAttemptsState()).find(
-          (item) => item.domain === payload.domain && item.awaitingBatchId === payload.batchId
+          (item) =>
+            item.domain === payload.domain &&
+            Object.values(item.providers).some((lane) => lane.awaitingBatchId === payload.batchId)
         )
         return current ? FinishRequestedEvent({ domain: current.domain, sourcePeerId: current.sourcePeerId }) : null
       }
@@ -1663,16 +1701,26 @@ const HistoryDomain = Remesh.domain({
       impl: ({ get }, payload: { domain: string; sourcePeerId: string }) => {
         const requesters = get(RequesterAttemptsState())
         const owners = get(FeedbackOwnersState())
-        const removedRequesters = requesters.filter(
-          (item) => item.sourcePeerId === payload.sourcePeerId && item.domain === payload.domain
-        )
+        // A departing provider only ends its own response lane: the domain synchronization keeps
+        // accepting and merging every other provider's valid pages.
+        const requester = requesters.find((item) => item.domain === payload.domain)
+        const updatedRequester =
+          requester && requester.providers[payload.sourcePeerId]
+            ? {
+                ...requester,
+                providers: Object.fromEntries(
+                  Object.entries(requester.providers).filter(([id]) => id !== payload.sourcePeerId)
+                )
+              }
+            : requester
         return [
-          ...(removedRequesters.length > 0
-            ? [FinishRequestedEvent({ domain: payload.domain, sourcePeerId: payload.sourcePeerId })]
+          ...(requester && updatedRequester && updatedRequester !== requester
+            ? [
+                RequesterAttemptsState().new(
+                  replaceBy(requesters, (item) => matchesSync(item, requester), updatedRequester)
+                )
+              ]
             : []),
-          RequesterAttemptsState().new(
-            requesters.filter((item) => item.sourcePeerId !== payload.sourcePeerId || item.domain !== payload.domain)
-          ),
           CleanupProviderSlotsCommand(payload),
           ClearSyncBindingsCommand(payload),
           ...owners
@@ -1699,10 +1747,10 @@ const HistoryDomain = Remesh.domain({
         ]
         const owners = get(FeedbackOwnersState()).filter((item) => item.domain === runtimeDomain)
         return [
-          ...uniqueSources.map((item) => CleanupProviderSlotsCommand(item)),
+          ...uniqueSources.map(CleanupProviderSlotsCommand),
           ClearDomainSyncBindingsCommand(runtimeDomain),
           ...owners.flatMap((item) => dismissFeedback(get, item) ?? []),
-          ...sourceIds.map((sourceId) => FinishRequestedEvent(sourceId))
+          ...sourceIds.map(FinishRequestedEvent)
         ]
       }
     })

@@ -192,9 +192,7 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => {
     const pendingRemovals = fixture.removeUis.splice(0)
-    pendingRemovals.forEach((remove) => {
-      remove()
-    })
+    pendingRemovals.forEach((remove) => remove())
     const pendingOwners = fixture.owners.splice(0)
     pendingOwners.forEach((owner) => {
       owner.stopInitialization()

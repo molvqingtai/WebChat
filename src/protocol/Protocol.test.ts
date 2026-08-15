@@ -46,9 +46,9 @@ describe('public protocol schema contract', () => {
   })
 
   it('uses closed unions and rejects every self-reported or redundant envelope field', () => {
-    ;['peerId', 'room', 'roomId', 'sender', 'version', 'sentAt', 'receivedAt'].forEach((forbidden) => {
+    ;['peerId', 'room', 'roomId', 'sender', 'version', 'sentAt', 'receivedAt'].forEach((forbidden) =>
       expect(parseChat({ ...text(), [forbidden]: 'self-reported' })).toBeNull()
-    })
+    )
     expect(parseChat({ ...text(), unknown: true })).toBeNull()
     expect(parseChat({ type: 'unknown' })).toBeNull()
   })
@@ -63,9 +63,9 @@ describe('public protocol schema contract', () => {
     }
 
     expect(parseChat(session)).toEqual(session)
-    ;[undefined, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1].forEach((joinedAt) => {
+    ;[undefined, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1].forEach((joinedAt) =>
       expect(parseChat({ ...session, joinedAt })).toBeNull()
-    })
+    )
     expect(parseChat({ ...session, generation: session.presenceId })).toBeNull()
     expect(parseChat({ ...session, presenceId: '' })).toBeNull()
     // The v5 Chat schema contains no end surface: `session-end` is rejected as an unknown type.
@@ -85,15 +85,15 @@ describe('public protocol schema contract', () => {
     expect(parseChat(pull)).toEqual(pull)
     // Every safe-integer field is directly covered for non-finite values: page, and HLC
     // timestamp/counter inside text and reaction messages.
-    ;[Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1].forEach((page) => {
+    ;[Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1].forEach((page) =>
       expect(parseChat({ ...pull, page })).toBeNull()
-    })
-    ;[Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1].forEach((timestamp) => {
+    )
+    ;[Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1].forEach((timestamp) =>
       expect(parseChat({ ...text(), hlc: { timestamp, counter: 0 } })).toBeNull()
-    })
-    ;[Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1].forEach((counter) => {
+    )
+    ;[Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1].forEach((counter) =>
       expect(parseChat({ ...text(), hlc: { timestamp: 1, counter } })).toBeNull()
-    })
+    )
     expect(parseChat({ ...pull, requestId: 'legacy' })).toBeNull()
     expect(parseChat({ type: pull.type, requestId: 'legacy' })).toBeNull()
     expect(parseChat({ type: pull.type })).toBeNull()
@@ -249,8 +249,6 @@ describe('public protocol schema contract', () => {
       'HistoryMessagesRequestSchema',
       'HistoryMessagesResponse',
       'HistoryMessagesResponseSchema'
-    ].forEach((name) => {
-      expect(protocol).not.toHaveProperty(name)
-    })
+    ].forEach((name) => expect(protocol).not.toHaveProperty(name))
   })
 })

@@ -36,37 +36,33 @@ export function validateGridPlacement(arch, grid, problems) {
     problems.push('layout.mode must be "grid" when layout is set (free placement omits layout entirely).')
     return
   }
-  // Grid placement is a fold: each component returns its problems and the next seen-cell map
-  // without mutating shared state; the derived problems join the shared list once, after the fold.
+  // Grid placement folds over a fresh, exclusively owned accumulator: the seen map and the
+  // problem list are mutated in place and returned, keeping the scan linear.
   const gridProblems = (arch.components ?? []).reduce(
     (acc, c) => {
       const hasPos = Array.isArray(c.pos) && c.pos.length === 2
       const hasCell = Number.isInteger(c.row) && Number.isInteger(c.col)
       if (hasPos) return acc // pos wins; row/col are optional hints only
       if (!hasPos && !hasCell) {
-        return {
-          seen: acc.seen,
-          problems: [...acc.problems, `Component "${c.id}" needs pos [x,y] or grid row/col when layout.mode is "grid".`]
-        }
+        acc.problems.push(`Component "${c.id}" needs pos [x,y] or grid row/col when layout.mode is "grid".`)
+        return acc
       }
       if (c.row < 0 || c.col < 0) {
-        return {
-          seen: acc.seen,
-          problems: [...acc.problems, `Component "${c.id}" row/col must be non-negative integers.`]
-        }
+        acc.problems.push(`Component "${c.id}" row/col must be non-negative integers.`)
+        return acc
       }
-      const local = []
       if (c.col >= grid.cols) {
-        local.push(`Component "${c.id}" col ${c.col} exceeds layout.cols ${grid.cols} (valid: 0..${grid.cols - 1}).`)
+        acc.problems.push(
+          `Component "${c.id}" col ${c.col} exceeds layout.cols ${grid.cols} (valid: 0..${grid.cols - 1}).`
+        )
       }
       const key = `${c.row},${c.col}`
-      const seen = new Map(acc.seen)
       if (acc.seen.has(key)) {
-        local.push(`Components "${acc.seen.get(key)}" and "${c.id}" share grid cell row ${c.row} col ${c.col}.`)
+        acc.problems.push(`Components "${acc.seen.get(key)}" and "${c.id}" share grid cell row ${c.row} col ${c.col}.`)
       } else {
-        seen.set(key, c.id)
+        acc.seen.set(key, c.id)
       }
-      return { seen, problems: [...acc.problems, ...local] }
+      return acc
     },
     { seen: new Map(), problems: [] }
   )

@@ -149,9 +149,7 @@ export class CdpClient {
         else waiter.resolve(message.result)
         return
       }
-      this.handlers.forEach((handler) => {
-        handler(message)
-      })
+      this.handlers.forEach((handler) => handler(message))
     })
     this.socket.addEventListener('close', () => {
       this.pending.forEach(({ reject, timer }) => {

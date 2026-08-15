@@ -96,9 +96,7 @@ const start = (fixture: ReturnType<typeof createFixture>, timeoutMs = 1000) => {
 }
 
 afterEach(() => {
-  started.forEach((stop) => {
-    stop()
-  })
+  started.forEach((stop) => stop())
   started.clear()
   vi.useRealTimers()
   vi.restoreAllMocks()

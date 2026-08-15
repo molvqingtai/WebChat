@@ -107,9 +107,7 @@ describe('Runtime browser adapters', () => {
     })
     const trustedTab = { id: 7, url: 'https://example.com/' }
 
-    listeners.forEach((listener) => {
-      listener(request, { tab: trustedTab } as never)
-    })
+    listeners.forEach((listener) => listener(request, { tab: trustedTab } as never))
 
     expect(received).toHaveBeenCalledWith({
       ...request,
@@ -304,9 +302,7 @@ describe('Runtime browser adapters', () => {
       providerMessage('invalid-schema', { id: '' })
     ]
     const dispatch = (message: unknown, sender: unknown) => {
-      listeners.forEach((listener) => {
-        listener(message, sender)
-      })
+      listeners.forEach((listener) => listener(message, sender))
     }
 
     malformedMessages.forEach((message) => {

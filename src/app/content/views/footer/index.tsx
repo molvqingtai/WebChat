@@ -130,9 +130,7 @@ const Footer: FC = () => {
       },
       { text: message, updates: [] as { text: string; startIndex: number; endIndex: number }[] }
     )
-    transformed.updates.forEach(({ text, startIndex, endIndex }) => {
-      updateAtUserAtRecord(text, startIndex, endIndex, 0)
-    })
+    transformed.updates.forEach(({ text, startIndex, endIndex }) => updateAtUserAtRecord(text, startIndex, endIndex, 0))
     return transformed.text
   }
 

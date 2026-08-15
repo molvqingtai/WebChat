@@ -262,9 +262,9 @@ describe('WireDomain anti-corruption boundary', () => {
       accepted.push(sourcePeerId)
     )
 
-    Array.from({ length: MAX_DECODE_QUEUE_FRAMES + 1 }, (_, i) => i).forEach((index) => {
+    Array.from({ length: MAX_DECODE_QUEUE_FRAMES + 1 }, (_, i) => i).forEach((index) =>
       runtime.receive(ROOM, 'peer-a', `frame-${index}`)
-    })
+    )
     runtime.receive(ROOM, 'peer-b', JSON.stringify(message))
 
     await vi.waitFor(() => expect(accepted).toEqual(['peer-b']))

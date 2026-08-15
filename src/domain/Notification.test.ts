@@ -113,12 +113,10 @@ const createFixture = (user: UserInfo, userInfoBeforeNotification = false) => {
     notification,
     room,
     emitMessage: (message: ProjectedTextMessage) => {
-      sessionListeners.forEach((listener) => {
+      sessionListeners.forEach((listener) =>
         listener([{ sessionId: `session-${message.author.id}`, user: message.author }])
-      })
-      messageListeners.forEach((listener) => {
-        listener(message)
-      })
+      )
+      messageListeners.forEach((listener) => listener(message))
     },
     dispose: async () => {
       store.discard()

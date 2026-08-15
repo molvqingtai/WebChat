@@ -33,9 +33,7 @@ const createFixture = (initial: ReadinessState) => {
     observedStates,
     emit: (state: ReadinessState) => {
       current = state
-      listeners.forEach((listener) => {
-        listener(state)
-      })
+      listeners.forEach((listener) => listener(state))
     },
     discard: () => {
       querySubscription.unsubscribe()

@@ -117,9 +117,9 @@ export const validateStoreValue = <Schema extends StoreSchema>(
   value: Schema['value']
 ): void => {
   assertCanonicalValue(value)
-  ;(Object.values(definition.indexes) as IndexDefinition<DatabaseKey>[]).forEach((index) => {
+  ;(Object.values(definition.indexes) as IndexDefinition<DatabaseKey>[]).forEach((index) =>
     assertDatabaseKey(getPathValue(value, index.keyPath), index.key)
-  })
+  )
 }
 
 export const validateScope = <Schema extends DatabaseSchema<Schema>>(

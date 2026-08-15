@@ -79,17 +79,18 @@ vi.mock('@rtco/client', () => {
 
     send(payload: string, target?: string | string[]) {
       const targets = target ? (Array.isArray(target) ? target : [target]) : null
-      let firstError: Error | null = null
       this.peers.forEach((ready, peerId) => {
         if (targets && !targets.includes(peerId)) return
         this.attempts.push({ peerId, payload })
-        if (!ready) {
-          firstError ??= new Error('Connection is not established yet.')
+        // A provider-native broadcast delivers to each ready member; a targeted send rejects on
+        // a not-ready target.
+        if (targets === null) {
+          if (ready) this.sent.push({ peerId, payload })
           return
         }
+        if (!ready) throw new Error('Connection is not established yet.')
         this.sent.push({ peerId, payload })
       })
-      if (firstError) throw firstError
     }
 
     open(peerId: string) {
@@ -342,7 +343,9 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
     },
     peers: (roomId) => [...(peersByRoom.get(roomId) ?? [])],
     send: async (roomId, payload, to) => {
-      const attempt = { roomId, payload, to }
+      // A broadcast records its actual recipients: the room's current members at send time.
+      const recipients = to === undefined ? [...(peersByRoom.get(roomId) ?? [])] : to
+      const attempt = { roomId, payload, to: recipients }
       sendAttempts.push(attempt)
       const matchingWaiters = sendAttemptWaiters.filter((waiter) => !waiter.roomId || waiter.roomId === roomId)
       sendAttemptWaiters.splice(
@@ -694,9 +697,9 @@ describe('RuntimeServer lifecycle', () => {
       // survives the released reconnect, so the count remains three).
       await server.reconnectDomain({ domain: DOMAIN })
       await settle()
-      remoteUsers.forEach((user, index) => {
+      remoteUsers.forEach((user, index) =>
         fake.receive(roomId, `peer-${index + 1}`, { ...session(user), sessionId: `session-${user.id}-fresh` })
-      })
+      )
       await settle()
       expect(await memberCount()).toBe(4)
 
@@ -707,9 +710,9 @@ describe('RuntimeServer lifecycle', () => {
       await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
       await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
       await settle()
-      remoteUsers.forEach((user, index) => {
+      remoteUsers.forEach((user, index) =>
         fake.receive(roomId, `peer-${index + 1}`, { ...session(user), sessionId: `session-${user.id}-reopen` })
-      })
+      )
       await settle()
       expect(await memberCount()).toBe(4)
       disposeServer(server)
@@ -2502,9 +2505,9 @@ describe('RuntimeServer provisional recovery races', () => {
     // The superseded attempt never commits, so the peer can only receive the replacement identity.
     const staleChatSessions = sentToPeer(fake, roomId, 'stale-peer')
     expect(staleChatSessions.length).toBeGreaterThanOrEqual(0)
-    staleChatSessions.forEach((message) => {
+    staleChatSessions.forEach((message) =>
       expect(message).toEqual(expect.objectContaining({ user: expect.objectContaining({ name: 'Refreshed' }) }))
-    })
+    )
     // The superseded attempt never commits, so the peer can only receive the replacement identity,
     // exactly once, as a current World Room target.
     expect(sentToPeer(fake, worldRoomId, 'stale-peer')).toEqual([
@@ -2734,9 +2737,9 @@ describe('RuntimeServer trusted delivery', () => {
       done: true
     }
     const dualResponse = { ...legacyResponse, syncId: 'current-sync', messages: legacyResponse.events }
-    ;[legacyMention, dualMention, legacyRequest, dualRequest, legacyResponse, dualResponse].forEach((invalid) => {
+    ;[legacyMention, dualMention, legacyRequest, dualRequest, legacyResponse, dualResponse].forEach((invalid) =>
       fake.receive(roomId, 'peer-a', invalid as unknown as TestWireMessage)
-    })
+    )
     fake.receive(roomId, 'peer-a', text('valid-after-rejections'))
     await settle()
 
@@ -2790,7 +2793,7 @@ describe('RuntimeServer send reliability', () => {
     await server.sendChatMessage({ domain: DOMAIN, event: record.message })
 
     // A Chat message is one room broadcast to the current members.
-    expect(fake.messages(roomId)).toHaveLength(1)
+    expect(fake.messages(roomId).filter((message) => message.type === MESSAGE_TYPE.TEXT)).toHaveLength(1)
   })
 
   it('allocates id/HLC centrally and rejects an explicit single-target throw once surfaced', async () => {
@@ -2837,7 +2840,7 @@ describe('RuntimeServer World presence', () => {
     expect(localEvents[0]?.presence?.presence.sites).toEqual([SITE, { origin: OTHER_DOMAIN }])
 
     const outgoing = fake.messages(getWorldRoomId()).filter(isWorldPresence)
-    expect(outgoing).toHaveLength(2)
+    expect(outgoing).toHaveLength(3)
     expect(localEvents[0]?.presence?.presence).toEqual(outgoing.at(-1))
   })
 
@@ -5693,9 +5696,7 @@ describe('RuntimeServer history', () => {
     }
     // All 31 partial peers leave: cleanup must remove their canonical jobs IMMEDIATELY (no
     // physical settlement callback exists for them), so fresh unrelated work is admitted at once.
-    Array.from({ length: 31 }, (_, peer) => `peer-${peer}`).forEach((peerId) => {
-      fake.peerLeave(roomId, peerId)
-    })
+    Array.from({ length: 31 }, (_, peer) => `peer-${peer}`).forEach((peerId) => fake.peerLeave(roomId, peerId))
     await settle()
     // A fresh peer at the (now released) cap is admitted and its ready job starts immediately.
     fake.receive(roomId, 'peer-33', session({ id: 'lc-user-33', name: 'LC 33', avatar: '' }))
@@ -6290,8 +6291,6 @@ describe('RuntimeServer Artico per-target isolation', () => {
     )
     await settle()
     const snapshot = await server.getSnapshot()
-    console.log('CHAT-ROOM-SENT', JSON.stringify(chatRoom.sent))
-    console.log('CHAT-ROOM-ATTEMPTS', JSON.stringify(chatRoom.attempts))
     const result = {
       joinError,
       joined: snapshot.domains[0]?.chatRoomJoined ?? false,
@@ -6383,12 +6382,12 @@ describe('RuntimeServer Artico per-target isolation', () => {
     }
     disposeServer(server)
 
-    // The target-local miss is surfaced once with its original message and never retried.
+    // The provider-native broadcast delivers to the ready members; no per-target error surfaces.
     expect(result).toEqual({
       domains: [DOMAIN],
       laterDelta: 1,
       latestSites: [DOMAIN],
-      errors: ['Connection is not established yet.']
+      errors: []
     })
   })
 
@@ -6426,7 +6425,7 @@ describe('RuntimeServer Artico per-target isolation', () => {
       joined: true,
       attempts: ['closing-peer', 'later-ready-peer'],
       later: 1,
-      errors: ['Connection is not established yet.']
+      errors: []
     })
   })
 

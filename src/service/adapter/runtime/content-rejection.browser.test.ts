@@ -22,9 +22,7 @@ describe('content Runtime rejection ownership', () => {
           sender: { type: 'provider' }
         }
         queueMicrotask(() => {
-          listeners.forEach((listener) => {
-            listener(response)
-          })
+          listeners.forEach((listener) => listener(response))
         })
         return Promise.resolve()
       }),
@@ -106,9 +104,7 @@ describe('content Runtime rejection ownership', () => {
           data: message.type === 'apply' ? { phase: 'ready', generation: 1, snapshot } : undefined
         }
         queueMicrotask(() => {
-          listeners.forEach((listener) => {
-            listener(response)
-          })
+          listeners.forEach((listener) => listener(response))
         })
         return Promise.resolve()
       }),

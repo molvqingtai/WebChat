@@ -281,12 +281,8 @@ export class MemoryDatabase<Schema extends DatabaseSchema<Schema>> implements Da
           signal?.throwIfAborted()
           transaction.finish()
           if (writable && transaction.mutated.size > 0) {
-            transaction.mutated.forEach((store) => {
-              this.state.stores.set(store, working.get(store) ?? new Map())
-            })
-            this.state.instances.forEach((instance) => {
-              instance.notify([...transaction.mutated])
-            })
+            transaction.mutated.forEach((store) => this.state.stores.set(store, working.get(store) ?? new Map()))
+            this.state.instances.forEach((instance) => instance.notify([...transaction.mutated]))
           }
           return result
         } finally {

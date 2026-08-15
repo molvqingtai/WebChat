@@ -72,12 +72,8 @@ describe('LifecycleDomain', () => {
       { domain: 'https://example.com', pageId: 'page-b' }
     ]
     const restarted = setup()
-    persisted.forEach((lease) => {
-      restarted.store.send(restarted.runtime.command.AttachPageCommand(lease))
-    })
-    persisted.forEach((lease) => {
-      restarted.store.send(restarted.runtime.command.AttachPageCommand(lease))
-    })
+    persisted.forEach((lease) => restarted.store.send(restarted.runtime.command.AttachPageCommand(lease)))
+    persisted.forEach((lease) => restarted.store.send(restarted.runtime.command.AttachPageCommand(lease)))
     const leases = restarted.store.query(restarted.runtime.query.DomainLeasesQuery())
     expect(leases).toHaveLength(1)
     expect(leases[0].pageIds).toEqual(['page-a', 'page-b'])

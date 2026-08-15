@@ -342,9 +342,7 @@ export class PresenceStoreInjectPortAdapter implements Adapter {
     this.disposed = true
     const reason = 'PresenceStore Offscreen adapter disposed'
     if (this.current) this.current.terminalReason ??= reason
-    this.preparations.forEach((preparation) => {
-      preparation.generation.terminalReason ??= reason
-    })
+    this.preparations.forEach((preparation) => (preparation.generation.terminalReason ??= reason))
     if (this.active) this.detach(this.active, true)
     this.rejectAllPending(reason)
     this.preparations.length = 0

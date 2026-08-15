@@ -83,9 +83,6 @@ interface PendingChatSend {
   roomId: string
   message: ChatMessage
   /** Frozen distinct per-target send requests still awaiting their single provider call. */
-  pendingTargets: string[]
-  /** Count of targets whose provider call accepted; drives settled success/failure semantics. */
-  accepted: number
 }
 
 interface LiveRelease {
@@ -206,7 +203,6 @@ const makeRecord = (message: ChatMessage, user: ChatUser, receivedAt: number): C
 const initialRequestId = (attemptId: string) => `session:initial:${attemptId}`
 const catchUpRequestId = (attemptId: string, sourcePeerId: string) => `session:catch-up:${attemptId}:${sourcePeerId}`
 const chatRequestId = (operationId: string) => `session:chat:${operationId}`
-const chatTargetRequestId = (requestId: string, target: string) => `${requestId}:${target}`
 /** Extracts the exact domain from identity/catch-up send request ids, when structurally present. */
 const backgroundSendDomain = (requestId: string): string | undefined => {
   if (requestId.startsWith('session:peer:')) {
@@ -1089,15 +1085,12 @@ const SessionDomain = Remesh.domain({
           })
         }
         const requestId = chatRequestId(payload.operationId)
-        const targets = [...new Set(runtime.sessions.map((session) => session.sourcePeerId))]
         const pending: PendingChatSend = {
           operationId: payload.operationId,
           requestId,
           domain: payload.domain,
           roomId: runtime.roomId,
-          message: event,
-          pendingTargets: targets,
-          accepted: 0
+          message: event
         }
         return [
           HlcState().new(adopted),
@@ -1105,39 +1098,22 @@ const SessionDomain = Remesh.domain({
             ...get(PendingChatSendsState()).filter((item) => item.operationId !== payload.operationId),
             pending
           ]),
-          ...(targets.length > 0
-            ? [sendChatTarget(pending)]
-            : [OperationSucceededEvent({ operationId: payload.operationId })])
+          // An ordinary Chat message is one room broadcast; the transport fans it out.
+          wireDomain.command.SendMessageCommand({
+            requestId,
+            roomId: runtime.roomId,
+            message: event
+          })
         ]
       }
     })
-
-    const sendChatTarget = (pending: PendingChatSend) =>
-      wireDomain.command.SendMessageCommand({
-        requestId: chatTargetRequestId(pending.requestId, pending.pendingTargets[0]),
-        roomId: pending.roomId,
-        targetPeerIds: [pending.pendingTargets[0]],
-        message: pending.message
-      })
 
     const CompleteChatSendCommand = domain.command({
       name: 'Session.CompleteChatSendCommand',
       impl: ({ get }, requestId: string) => {
         const state = get(PendingChatSendsState())
-        const pending = state.find((item) =>
-          item.pendingTargets.some((target) => chatTargetRequestId(item.requestId, target) === requestId)
-        )
+        const pending = state.find((item) => item.requestId === requestId)
         if (!pending) return null
-        const remaining = pending.pendingTargets.filter(
-          (target) => chatTargetRequestId(pending.requestId, target) !== requestId
-        )
-        const next = { ...pending, pendingTargets: remaining, accepted: pending.accepted + 1 }
-        if (remaining.length > 0) {
-          return [
-            PendingChatSendsState().new(replaceBy(state, (item) => item.operationId === pending.operationId, next)),
-            sendChatTarget(next)
-          ]
-        }
         return [
           PendingChatSendsState().new(removeBy(state, (item) => item.operationId === pending.operationId)),
           OperationSucceededEvent({ operationId: pending.operationId })
@@ -1149,35 +1125,13 @@ const SessionDomain = Remesh.domain({
       name: 'Session.FailChatSendCommand',
       impl: ({ get }, payload: { requestId: string; error: Error; stage?: WireFailureStage }) => {
         const state = get(PendingChatSendsState())
-        const pending = state.find((item) =>
-          item.pendingTargets.some((target) => chatTargetRequestId(item.requestId, target) === payload.requestId)
-        )
+        const pending = state.find((item) => item.requestId === payload.requestId)
         if (!pending) return null
-        const settle = (accepted: number) => {
-          const clear = [
-            PendingChatSendsState().new(removeBy(state, (item) => item.operationId === pending.operationId))
-          ]
-          // A send settles as success only when at least one target accepted; a wholly-failed or
-          // explicit-single-target send rejects so a real send failure is never recorded as success.
-          return accepted > 0
-            ? [...clear, OperationSucceededEvent({ operationId: pending.operationId })]
-            : [...clear, OperationFailedEvent({ operationId: pending.operationId, error: payload.error })]
-        }
-        // Owner loss cancels the remaining targets; success only if some target had already accepted.
-        if (payload.stage === 'cancelled') return settle(pending.accepted)
-        const remaining = pending.pendingTargets.filter(
-          (target) => chatTargetRequestId(pending.requestId, target) !== payload.requestId
-        )
-        const next = { ...pending, pendingTargets: remaining }
+        const clear = [PendingChatSendsState().new(removeBy(state, (item) => item.operationId === pending.operationId))]
+        // Owner loss cancels the send quietly.
+        if (payload.stage === 'cancelled') return clear
         const failure = ErrorEvent({ error: payload.error, domain: pending.domain })
-        if (remaining.length > 0) {
-          return [
-            failure,
-            PendingChatSendsState().new(replaceBy(state, (item) => item.operationId === pending.operationId, next)),
-            sendChatTarget(next)
-          ]
-        }
-        return [failure, ...settle(pending.accepted)]
+        return [...clear, failure, OperationFailedEvent({ operationId: pending.operationId, error: payload.error })]
       }
     })
 

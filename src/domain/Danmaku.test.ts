@@ -102,12 +102,8 @@ const createFixture = (danmakuEnabled: boolean) => {
       store.send(userInfo.command.UpdateUserInfoCommand(user))
     },
     emitMessage: (id: string) => {
-      sessionListeners.forEach((listener) => {
-        listener([{ sessionId: 'remote-session', user: REMOTE }])
-      })
-      messageListeners.forEach((listener) => {
-        listener({ ...MESSAGE, id })
-      })
+      sessionListeners.forEach((listener) => listener([{ sessionId: 'remote-session', user: REMOTE }]))
+      messageListeners.forEach((listener) => listener({ ...MESSAGE, id }))
     },
     dispose: async () => {
       store.discard()

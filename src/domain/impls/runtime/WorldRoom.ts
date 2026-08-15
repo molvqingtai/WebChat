@@ -81,9 +81,9 @@ export class WorldRoom extends EventHub {
 
   private applySnapshot(snapshot: RuntimeSnapshot) {
     const activeKeys = new Set<string>()
-    snapshot.world.presences.forEach(({ sourcePeerId, presence }) => {
+    snapshot.world.presences.forEach(({ sourcePeerId, presence }) =>
       this.replaceSource(sourcePeerId, presence, activeKeys)
-    })
+    )
     if (snapshot.world.localPresence) {
       this.replaceSource(snapshot.peerId, snapshot.world.localPresence, activeKeys)
     }
@@ -111,9 +111,7 @@ export class WorldRoom extends EventHub {
     }
 
     this.applySnapshot(snapshot)
-    bufferedEvents.forEach((event) => {
-      this.applyPresence(event)
-    })
+    bufferedEvents.forEach((event) => this.applyPresence(event))
     bufferedEvents.length = 0
     isLive = true
   }

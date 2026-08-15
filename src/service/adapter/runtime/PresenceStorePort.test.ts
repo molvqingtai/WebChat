@@ -84,12 +84,8 @@ const createPortBus = () => {
         ports.delete(client)
         ports.delete(provider)
         providerPorts.delete(provider)
-        clientDisconnects.listeners.forEach((listener) => {
-          listener()
-        })
-        providerDisconnects.listeners.forEach((listener) => {
-          listener()
-        })
+        clientDisconnects.listeners.forEach((listener) => listener())
+        providerDisconnects.listeners.forEach((listener) => listener())
       }
       const client: PresenceStorePort = {
         name,
@@ -120,9 +116,7 @@ const createPortBus = () => {
       ports.add(provider)
       providerPorts.add(provider)
       queueMicrotask(() => {
-        connections.listeners.forEach((listener) => {
-          listener(provider)
-        })
+        connections.listeners.forEach((listener) => listener(provider))
       })
       return client
     },
@@ -132,14 +126,10 @@ const createPortBus = () => {
   return {
     runtime,
     sendRuntimeMessage: (message: unknown, sender: PresenceStorePortSender) => {
-      runtimeMessages.listeners.forEach((listener) => {
-        listener(message, sender)
-      })
+      runtimeMessages.listeners.forEach((listener) => listener(message, sender))
     },
     sendPortMessage: (message: unknown) => {
-      providerPorts.forEach((port) => {
-        port.postMessage(message)
-      })
+      providerPorts.forEach((port) => port.postMessage(message))
     },
     runtimeMessageListenerCount: () => runtimeMessages.listeners.size,
     connectionListenerCount: () => connections.listeners.size,
@@ -174,9 +164,7 @@ const createProviderEndpoint = (namespace: string, sender: PresenceStorePortSend
     disconnect: () => {
       if (closed) return
       closed = true
-      disconnected.listeners.forEach((listener) => {
-        listener()
-      })
+      disconnected.listeners.forEach((listener) => listener())
     },
     onMessage: inbound.event,
     onDisconnect: disconnected.event
@@ -185,14 +173,10 @@ const createProviderEndpoint = (namespace: string, sender: PresenceStorePortSend
     port,
     outbound,
     receive: (message: unknown) => {
-      inbound.listeners.forEach((listener) => {
-        listener(message)
-      })
+      inbound.listeners.forEach((listener) => listener(message))
     },
     drop: () => {
-      disconnected.listeners.forEach((listener) => {
-        listener()
-      })
+      disconnected.listeners.forEach((listener) => listener())
     }
   }
 }
@@ -211,9 +195,7 @@ const createInjectorEndpoint = (namespace: string) => {
     disconnect: () => {
       if (closed) return
       closed = true
-      disconnected.listeners.forEach((listener) => {
-        listener()
-      })
+      disconnected.listeners.forEach((listener) => listener())
     },
     onMessage: inbound.event,
     onDisconnect: disconnected.event
@@ -222,9 +204,7 @@ const createInjectorEndpoint = (namespace: string) => {
     port,
     outbound,
     receive: (message: unknown) => {
-      inbound.listeners.forEach((listener) => {
-        listener(message)
-      })
+      inbound.listeners.forEach((listener) => listener(message))
     },
     drop: () => port.disconnect()
   }
@@ -328,16 +308,12 @@ describe('PresenceStore authenticated port', () => {
     provider.onMessage(() => {})
 
     const oldBinding = createProviderEndpoint(namespace, { id: EXTENSION_ID, url: OFFSCREEN_URL })
-    connections.listeners.forEach((listener) => {
-      listener(oldBinding.port)
-    })
+    connections.listeners.forEach((listener) => listener(oldBinding.port))
     oldBinding.receive(injectorMessage('old-request', namespace))
     oldBinding.drop()
 
     const replacement = createProviderEndpoint(namespace, { id: EXTENSION_ID, url: OFFSCREEN_URL })
-    connections.listeners.forEach((listener) => {
-      listener(replacement.port)
-    })
+    connections.listeners.forEach((listener) => listener(replacement.port))
     provider.sendMessage(providerMessage('old-request', namespace), [])
     expect(replacement.outbound).toEqual([])
 
@@ -362,9 +338,7 @@ describe('PresenceStore authenticated port', () => {
       },
       disconnect: () =>
         queueMicrotask(() => {
-          terminalDisconnects.listeners.forEach((listener) => {
-            listener()
-          })
+          terminalDisconnects.listeners.forEach((listener) => listener())
         }),
       onMessage: terminalMessages.event,
       onDisconnect: terminalDisconnects.event
@@ -379,15 +353,11 @@ describe('PresenceStore authenticated port', () => {
         const message = rawMessage as Message
         healthyPosts.push(message)
         queueMicrotask(() => {
-          healthyMessages.listeners.forEach((listener) => {
-            listener(providerMessage(message.id, namespace))
-          })
+          healthyMessages.listeners.forEach((listener) => listener(providerMessage(message.id, namespace)))
         })
       },
       disconnect: () => {
-        healthyDisconnects.listeners.forEach((listener) => {
-          listener()
-        })
+        healthyDisconnects.listeners.forEach((listener) => listener())
       },
       onMessage: healthyMessages.event,
       onDisconnect: healthyDisconnects.event

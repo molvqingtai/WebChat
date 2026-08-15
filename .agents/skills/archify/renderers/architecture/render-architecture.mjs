@@ -253,8 +253,8 @@ function buildLayoutReport() {
     diagram_type: 'architecture',
     layout: grid ? { mode: 'grid', ...grid } : { mode: 'free' },
     viewBox,
-    components: [...components.values()].map((component) => componentBox(component)),
-    boundaries: boundaries.map((boundary) => boundaryBox(boundary)),
+    components: [...components.values()].map(componentBox),
+    boundaries: boundaries.map(boundaryBox),
     connections: asArray(arch.connections)
       .filter((conn) => components.has(conn.from) && components.has(conn.to))
       .map((conn) => {

@@ -16,9 +16,7 @@ const fixture = vi.hoisted(() => {
 
   const update = (next: Partial<typeof state>) => {
     state = { ...state, ...next }
-    listeners.forEach((listener) => {
-      listener()
-    })
+    listeners.forEach((listener) => listener())
   }
 
   const send = vi.fn((command: unknown) => {

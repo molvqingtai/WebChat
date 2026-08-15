@@ -45,9 +45,9 @@ const [chromeHost, chromeContent, firefoxContent] = await Promise.all([
   Promise.all(firefoxContentEntries.map((entry) => readFile(join(firefoxRoot, entry), 'utf8')))
 ])
 assert(!chromeHost.includes('tabs.query'), 'Chrome Offscreen host must not contain tabs.query')
-;['this.tabs.get', 'this.tabs.sendMessage'].forEach((marker) => {
+;['this.tabs.get', 'this.tabs.sendMessage'].forEach((marker) =>
   assert(firefoxBackground.includes(marker), `Firefox background provider must retain ${marker}`)
-})
+)
 ;['Dropped Offscreen Runtime relay:', 'untrusted-source', 'target-mismatch'].forEach((relayMarker) => {
   assert(
     !firefoxBackground.includes(relayMarker),
@@ -88,9 +88,9 @@ const codecPolyfillMarkers = [
     ['Firefox background', firefoxBackground]
   ] as const
 ).forEach(([target, bundle]) => {
-  ;['fromBase64', 'toBase64', 'lastChunkHandling'].forEach((marker) => {
+  ;['fromBase64', 'toBase64', 'lastChunkHandling'].forEach((marker) =>
     assert(bundle.includes(marker), `${target} must contain ${marker}`)
-  })
+  )
   ;['setFromBase64', 'fromHex', 'toHex', 'setFromHex', 'atob(', 'btoa('].forEach((residue) => {
     assert(!bundle.includes(residue), `${target} must not contain unrelated Base64/hex residue ${residue}`)
   })

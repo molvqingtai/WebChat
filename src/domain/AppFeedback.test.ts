@@ -120,9 +120,7 @@ const createFixture = (readiness?: Readiness) => {
     chat,
     toast,
     emitReadiness: (state: ReadinessState) => {
-      readinessListeners.forEach((listener) => {
-        listener(state)
-      })
+      readinessListeners.forEach((listener) => listener(state))
     }
   }
 }
@@ -138,15 +136,11 @@ const join = async (fixture: ReturnType<typeof createFixture>) => {
 }
 
 const clearToastCalls = (toast: Toast) => {
-  Object.values(toast).forEach((method) => {
-    vi.mocked(method).mockClear()
-  })
+  Object.values(toast).forEach((method) => vi.mocked(method).mockClear())
 }
 
 afterEach(() => {
-  activeStores.forEach((store) => {
-    store.discard()
-  })
+  activeStores.forEach((store) => store.discard())
   activeStores.clear()
   vi.useRealTimers()
   vi.restoreAllMocks()

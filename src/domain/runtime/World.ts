@@ -31,10 +31,6 @@ interface FullPublication {
   presence: WorldRoomMessage
   stagedAttemptId: string | null
   recoveryRequestId: string | null
-  /** Frozen distinct targets; each is sent at most once and never retried. */
-  targets: string[]
-  pendingTargets: string[]
-  activeTarget?: string
 }
 
 interface PendingPresenceSend {
@@ -58,7 +54,6 @@ const presenceFor = (registrations: WorldDomainRegistration[], sessionId: string
 }
 
 const publicationRequestId = (sequence: number) => `world:publication:${sequence}`
-const publicationTargetRequestId = (requestId: string, target: string) => `${requestId}:${target}`
 // A release publication step that cannot reach the provider (preflight / encode, zero sends) retries
 // the un-attempted step at a bounded cadence while the release owner and Runtime generation are current.
 const WORLD_RELEASE_STEP_RETRY_MS = 1500
@@ -232,20 +227,6 @@ const WorldDomain = Remesh.domain({
       ]
     }
 
-    const sendNextPublicationTarget = (publication: FullPublication) => {
-      const next = publication.pendingTargets[0]
-      if (!next) return []
-      return [
-        FullPublicationState().new({ ...publication, activeTarget: next }),
-        wireDomain.command.SendMessageCommand({
-          requestId: publicationTargetRequestId(publication.requestId, next),
-          roomId: worldRoomId,
-          targetPeerIds: [next],
-          message: publication.presence
-        })
-      ]
-    }
-
     const EnsureFullPublicationCommand = domain.command({
       name: 'World.EnsureFullPublicationCommand',
       impl: ({ get }) => {
@@ -263,11 +244,6 @@ const WorldDomain = Remesh.domain({
         // during it earns its own follow-up snapshot after the release publication settles.
         const stagedAttemptId = pendingFinal ? null : (staged?.attemptId ?? null)
         const recoveryRequestId = pendingFinal ? null : recovery?.publicationPending ? recovery.requestId : null
-        // Freeze the current physical Room membership as this revision's distinct targets.
-        const targets = [...new Set(transport.peers(worldRoomId))]
-        if (targets.length === 0) {
-          return [...settlePublication(get, { presence, stagedAttemptId, recoveryRequestId })]
-        }
         const sequence = get(PublicationSequenceState()) + 1
         if (!Number.isSafeInteger(sequence)) return ErrorEvent(new Error('World publication sequence exhausted'))
         const publication: FullPublication = {
@@ -275,11 +251,18 @@ const WorldDomain = Remesh.domain({
           revision: currentRevision,
           presence,
           stagedAttemptId,
-          recoveryRequestId,
-          targets,
-          pendingTargets: targets
+          recoveryRequestId
         }
-        return [PublicationSequenceState().new(sequence), ...sendNextPublicationTarget(publication)]
+        // A normal World publication is one room broadcast; the transport fans it out.
+        return [
+          PublicationSequenceState().new(sequence),
+          FullPublicationState().new(publication),
+          wireDomain.command.SendMessageCommand({
+            requestId: publication.requestId,
+            roomId: worldRoomId,
+            message: publication.presence
+          })
+        ]
       }
     })
 
@@ -327,21 +310,8 @@ const WorldDomain = Remesh.domain({
       impl: ({ get }, requestId: string) => {
         const publication = get(FullPublicationState())
         if (!publication) return null
-        const target = publication.targets.find(
-          (item) => publicationTargetRequestId(publication.requestId, item) === requestId
-        )
-        if (!target) return null
-        if (publication.activeTarget !== target) return null
-        const advanced: FullPublication = {
-          ...publication,
-          activeTarget: undefined,
-          pendingTargets: publication.pendingTargets.filter((item) => item !== target)
-        }
-        // Settlement requires only that every frozen target was attempted, never acceptance or ACK.
-        if (advanced.pendingTargets.length > 0) {
-          return [FullPublicationState().new(advanced), ...sendNextPublicationTarget(advanced)]
-        }
-        return settlePublication(get, advanced)
+        if (publication.requestId !== requestId) return null
+        return settlePublication(get, publication)
       }
     })
 
@@ -350,10 +320,7 @@ const WorldDomain = Remesh.domain({
       impl: ({ get }, payload: { requestId: string; error: Error; stage?: WireFailureStage }) => {
         const publication = get(FullPublicationState())
         if (!publication) return null
-        const target = publication.targets.find(
-          (item) => publicationTargetRequestId(publication.requestId, item) === payload.requestId
-        )
-        if (!target) return null
+        if (publication.requestId !== payload.requestId) return null
         // Runtime/Room/World-owner loss invalidates the queue; that cancels the iterator quietly.
         if (payload.stage === 'cancelled' || !get(wireDomain.query.IsRoomTrustedQuery(worldRoomId))) {
           return [FullPublicationState().new(null)]
@@ -377,19 +344,9 @@ const WorldDomain = Remesh.domain({
               : [])
           ]
         }
-        if (publication.activeTarget !== target) return null
-        // A provider throw is surfaced once and never re-sends the same target (even under a live
-        // release continuation); the iterator advances to the remaining targets or settles.
-        const advanced: FullPublication = {
-          ...publication,
-          activeTarget: undefined,
-          pendingTargets: publication.pendingTargets.filter((item) => item !== target)
-        }
+        // A provider throw is surfaced once; the publication then settles.
         const failure = ErrorEvent(payload.error)
-        if (advanced.pendingTargets.length > 0) {
-          return [FullPublicationState().new(advanced), failure, ...sendNextPublicationTarget(advanced)]
-        }
-        return [failure, ...settlePublication(get, advanced)]
+        return [failure, ...settlePublication(get, publication)]
       }
     })
 
@@ -397,22 +354,19 @@ const WorldDomain = Remesh.domain({
       name: 'World.RetryPublicationStepCommand',
       impl: ({ get }, requestId: string) => {
         const publication = get(FullPublicationState())
-        const target = publication?.activeTarget
         const live = get(LiveReleaseContinuationsState()).length > 0
         if (
           !publication ||
           publication.requestId !== requestId ||
-          !target ||
           !live ||
           !get(wireDomain.query.IsRoomTrustedQuery(worldRoomId))
         ) {
           return null
         }
-        // Re-issue only the current un-attempted target (never a target already attempted).
+        // Re-issue the room broadcast for the live release continuation.
         return wireDomain.command.SendMessageCommand({
-          requestId: publicationTargetRequestId(requestId, target),
+          requestId,
           roomId: worldRoomId,
-          targetPeerIds: [target],
           message: publication.presence
         })
       }

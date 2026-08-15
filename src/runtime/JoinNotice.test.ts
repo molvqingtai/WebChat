@@ -81,9 +81,7 @@ class DeterministicNetwork {
       this.heldFrames.length,
       ...this.heldFrames.filter((frame) => frame.sourcePeerId !== sourcePeerId || frame.targetPeerId !== targetPeerId)
     )
-    frames.forEach((frame) => {
-      this.deliver(frame)
-    })
+    frames.forEach((frame) => this.deliver(frame))
   }
 
   lastSession(sourcePeerId: string) {
@@ -175,9 +173,7 @@ class DeterministicNetwork {
         this.endpoints.forEach((other, otherPeerId) => {
           if (otherPeerId !== peerId && other.rooms.has(roomId)) {
             this.announcedPairs.delete(this.pairKey(roomId, peerId, otherPeerId))
-            other.leaves.forEach((listener) => {
-              listener(roomId, peerId)
-            })
+            other.leaves.forEach((listener) => listener(roomId, peerId))
           }
         })
       },
@@ -235,12 +231,8 @@ class DeterministicNetwork {
     const pair = this.pairKey(roomId, leftPeerId, rightPeerId)
     if (!left?.rooms.has(roomId) || !right?.rooms.has(roomId) || this.announcedPairs.has(pair)) return
     this.announcedPairs.add(pair)
-    left.joins.forEach((listener) => {
-      listener(roomId, rightPeerId)
-    })
-    right.joins.forEach((listener) => {
-      listener(roomId, leftPeerId)
-    })
+    left.joins.forEach((listener) => listener(roomId, rightPeerId))
+    right.joins.forEach((listener) => listener(roomId, leftPeerId))
   }
 
   private pairKey(roomId: string, leftPeerId: string, rightPeerId: string) {
@@ -249,9 +241,9 @@ class DeterministicNetwork {
 
   private deliver(frame: HeldFrame) {
     this.deliveredFrames.push(frame)
-    ;(this.endpoints.get(frame.targetPeerId)?.messages ?? []).forEach((listener) => {
+    ;(this.endpoints.get(frame.targetPeerId)?.messages ?? []).forEach((listener) =>
       listener(frame.roomId, frame.sourcePeerId, frame.payload)
-    })
+    )
   }
 }
 

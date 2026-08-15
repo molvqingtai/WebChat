@@ -410,9 +410,9 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
       retryTimers.forEach((timer) => globalThis.clearTimeout(timer))
       retryTimers.clear()
       retryingInbound.clear()
-      activeHistorySupplies.forEach((controller) => {
+      activeHistorySupplies.forEach((controller) =>
         controller.abort(signal.reason ?? abortError('Runtime attachment cancelled'))
-      })
+      )
       activeHistorySupplies.clear()
     }
     signal.addEventListener('abort', cleanup, { once: true })

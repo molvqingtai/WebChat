@@ -131,24 +131,16 @@ const createFixture = ({
     watch,
     browserGet,
     emitMessage: (message: ChatMessage) => {
-      messageListeners.forEach((listener) => {
-        listener(message)
-      })
+      messageListeners.forEach((listener) => listener(message))
     },
     emitSessions: (sessions: readonly ChatSession[]) => {
-      sessionListeners.forEach((listener) => {
-        listener(sessions)
-      })
+      sessionListeners.forEach((listener) => listener(sessions))
     },
     emitJoin: (session: ChatSession) => {
-      joinListeners.forEach((listener) => {
-        listener(session)
-      })
+      joinListeners.forEach((listener) => listener(session))
     },
     emitLeave: (session: ChatSession) => {
-      leaveListeners.forEach((listener) => {
-        listener(session)
-      })
+      leaveListeners.forEach((listener) => listener(session))
     },
     messageListeners,
     sessionListeners
@@ -182,17 +174,13 @@ const createSharedStatusStorage = (
     },
     synchronize: <Value extends StorageValue>(key: StatusStorageKey, value: Value) => {
       values.set(key, value)
-      watchers.values().forEach((callbacks) => {
-        callbacks.forEach((callback) => callback())
-      })
+      watchers.values().forEach((callbacks) => callbacks.forEach((callback) => callback()))
     },
     pause: (tabId: string) => pausedTabs.add(tabId),
     resume: (tabId: string) => {
       pausedTabs.delete(tabId)
       {
-        ;(watchers.get(tabId) ?? []).forEach((callback) => {
-          callback()
-        })
+        ;(watchers.get(tabId) ?? []).forEach((callback) => callback())
       }
     },
     holdNextRead: (tabId: string, key: StatusStorageKey) => {
@@ -226,9 +214,7 @@ const createSharedStatusStorage = (
           writes.push({ tabId, key: statusKey, value })
           watchers.forEach((callbacks, candidateId) => {
             if (candidateId !== tabId && !pausedTabs.has(candidateId)) {
-              callbacks.forEach((callback) => {
-                callback()
-              })
+              callbacks.forEach((callback) => callback())
             }
           })
         },
@@ -305,9 +291,7 @@ const statusOf = (fixture: Fixture) => ({
 const authorOf = (fixture: Fixture) => fixture.store.query(fixture.domain.query.AppButtonAuthorQuery())
 
 afterEach(() => {
-  activeStores.forEach((store) => {
-    store.discard()
-  })
+  activeStores.forEach((store) => store.discard())
   activeStores.clear()
   vi.useRealTimers()
   vi.restoreAllMocks()

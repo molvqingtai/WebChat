@@ -70,9 +70,9 @@ describe('public protocol source boundary', () => {
           `${file} imports unsupported dependency ${dependency}`
         ).toBe(true)
       })
-      FORBIDDEN_SYMBOLS.forEach((symbol) => {
+      FORBIDDEN_SYMBOLS.forEach((symbol) =>
         expect(source, `${file} contains private symbol ${symbol}`).not.toContain(symbol)
-      })
+      )
     })
   })
 
@@ -102,9 +102,9 @@ describe('public protocol source boundary', () => {
       )
       // No post-parse validator, output cast, schema factory, or executable callback may finish
       // validation after schema parsing (declarative Valibot primitives only).
-      FORBIDDEN_VALIDATORS.forEach((validator) => {
+      FORBIDDEN_VALIDATORS.forEach((validator) =>
         expect(source, `${file} retains validator ${validator}`).not.toContain(validator)
-      })
+      )
       expect(source, `${file} uses an executable callback predicate`).not.toMatch(
         /v\.(?:check|partialCheck|rawCheck|custom|transform)\b/
       )
@@ -149,9 +149,9 @@ describe('public protocol source boundary', () => {
     ]
     for (const file of runtimeFiles) {
       const source = await readFile(path.resolve(import.meta.dirname, `../../${file}`), 'utf8')
-      forbidden.forEach((pattern) => {
+      forbidden.forEach((pattern) =>
         expect(source, `${file} retains forbidden caller-side check ${pattern}`).not.toContain(pattern)
-      })
+      )
     }
   })
 

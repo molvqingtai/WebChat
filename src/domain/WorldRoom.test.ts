@@ -29,14 +29,10 @@ const createFixture = (initial: WorldState) => {
     room,
     port,
     emitState: (state: WorldState) => {
-      stateListeners.forEach((listener) => {
-        listener(state)
-      })
+      stateListeners.forEach((listener) => listener(state))
     },
     emitError: (error: Error) => {
-      errorListeners.forEach((listener) => {
-        listener(error)
-      })
+      errorListeners.forEach((listener) => listener(error))
     }
   }
 }

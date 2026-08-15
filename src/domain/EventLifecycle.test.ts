@@ -62,9 +62,7 @@ describe('Page domain event lifecycle', () => {
     const firstEvents: Error[] = []
     const firstEventSubscription = store.subscribeEvent(domain.event.OnErrorEvent, (error) => firstEvents.push(error))
     const firstError = new Error('first')
-    listeners.error.forEach((listener) => {
-      listener(firstError)
-    })
+    listeners.error.forEach((listener) => listener(firstError))
     expect(firstEvents).toEqual([firstError])
 
     firstEventSubscription.unsubscribe()
@@ -80,9 +78,7 @@ describe('Page domain event lifecycle', () => {
     const nextEvents: Error[] = []
     const nextEventSubscription = store.subscribeEvent(domain.event.OnErrorEvent, (error) => nextEvents.push(error))
     const nextError = new Error('next')
-    listeners.error.forEach((listener) => {
-      listener(nextError)
-    })
+    listeners.error.forEach((listener) => listener(nextError))
     expect(nextEvents).toEqual([nextError])
 
     nextEventSubscription.unsubscribe()
@@ -121,9 +117,7 @@ describe('Page domain event lifecycle', () => {
     const events: Error[] = []
     const eventSubscription = store.subscribeEvent(domain.event.OnErrorEvent, (error) => events.push(error))
     const error = new Error('once')
-    listeners.error.forEach((listener) => {
-      listener(error)
-    })
+    listeners.error.forEach((listener) => listener(error))
     expect(events).toEqual([error])
 
     eventSubscription.unsubscribe()

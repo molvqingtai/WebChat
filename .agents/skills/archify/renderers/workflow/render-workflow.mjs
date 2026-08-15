@@ -156,7 +156,8 @@ function validateWorkflow() {
 
   const nodeProblems = [...nodes.values()].reduce((acc, node) => {
     if (!laneIds.has(node.lane)) {
-      return [...acc, `Node "${node.id}" uses unknown lane "${node.lane}".`]
+      acc.push(`Node "${node.id}" uses unknown lane "${node.lane}".`)
+      return acc
     }
     if (!Number.isInteger(node.col) || node.col < 0 || node.col >= layout.colXs.length) {
       return [
@@ -186,13 +187,15 @@ function validateWorkflow() {
     if (node.y < contentTop || node.y + node.height > top + layout.laneH) {
       local.push(`Node "${node.id}" collides with the title or boundary of lane "${node.lane}".`)
     }
-    return [...acc, ...local]
+    acc.push(...local)
+    return acc
   }, [])
   problems.push(...nodeProblems)
 
   const phaseProblems = asArray(workflow.phases).reduce((acc, phase) => {
     if (!Number.isInteger(phase.fromCol) || !Number.isInteger(phase.toCol)) {
-      return [...acc, `Phase "${phase.id}" must use integer fromCol/toCol values.`]
+      acc.push(`Phase "${phase.id}" must use integer fromCol/toCol values.`)
+      return acc
     }
     const local = []
     if (phase.fromCol < 0 || phase.toCol >= layout.colXs.length || phase.fromCol > phase.toCol) {
@@ -207,16 +210,19 @@ function validateWorkflow() {
         `Phase label "${phase.label}" (~${Math.round(estLabelW)}px) is wider than its ${Math.round(width)}px span — shorten the label or widen the phase range.`
       )
     }
-    return [...acc, ...local]
+    acc.push(...local)
+    return acc
   }, [])
   problems.push(...phaseProblems)
 
   const groupProblems = asArray(workflow.groups).reduce((acc, group) => {
     if (!laneIds.has(group.lane)) {
-      return [...acc, `Group "${group.id}" uses unknown lane "${group.lane}".`]
+      acc.push(`Group "${group.id}" uses unknown lane "${group.lane}".`)
+      return acc
     }
     if (!Number.isInteger(group.fromCol) || !Number.isInteger(group.toCol)) {
-      return [...acc, `Group "${group.id}" must use integer fromCol/toCol values.`]
+      acc.push(`Group "${group.id}" must use integer fromCol/toCol values.`)
+      return acc
     }
     const local = []
     if (group.fromCol < 0 || group.toCol >= layout.colXs.length || group.fromCol > group.toCol) {
@@ -232,16 +238,18 @@ function validateWorkflow() {
         `Group "${group.id}" does not contain any nodes — align its lane/columns with the parallel or branch work it frames.`
       )
     }
-    return [...acc, ...local]
+    acc.push(...local)
+    return acc
   }, [])
   problems.push(...groupProblems)
 
-  // Nodes are grouped per lane with a non-mutating fold, then pairs within each lane are
-  // checked with nested flatMaps — both are result derivations, not owner-side effects.
+  // Nodes are grouped per lane into a fresh, exclusively owned Map, then pairs within each
+  // lane are checked with nested flatMaps — the fold mutates only its own accumulator.
   const byLane = [...nodes.values()].reduce((acc, node) => {
-    const next = new Map(acc)
-    next.set(node.lane, [...(acc.get(node.lane) || []), node])
-    return next
+    const lane = acc.get(node.lane)
+    if (lane) lane.push(node)
+    else acc.set(node.lane, [node])
+    return acc
   }, new Map())
   const lanePairProblems = [...byLane.entries()].flatMap(([lane, laneNodes]) =>
     laneNodes.flatMap((nodeA, i) =>
@@ -550,13 +558,13 @@ ${asArray(workflow.phases).map(renderPhase).join('\n')}
 ${asArray(workflow.groups).map(renderGroup).join('\n')}
 
         <!-- Edge paths -->
-${workflow.edges.map((edge) => renderEdgePath(edge)).join('\n')}
+${workflow.edges.map(renderEdgePath).join('\n')}
 
         <!-- Nodes -->
 ${[...nodes.values()].map(renderNode).join('\n\n')}
 
         <!-- Edge labels -->
-${workflow.edges.map((edge) => renderEdgeLabel(edge)).join('\n')}
+${workflow.edges.map(renderEdgeLabel).join('\n')}
 
         <!-- Legend -->
 ${renderLegend()}
