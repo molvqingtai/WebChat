@@ -108,8 +108,8 @@ describe('NativeWireCodec public reference implementation', () => {
     }
   })
 
-  it('cancels decompression before parsing when decoded JSON exceeds 256KiB', async () => {
-    const bomb = await compressWithoutDecodedLimit(JSON.stringify({ value: 'x'.repeat(300 * 1024) }))
+  it('cancels decompression before parsing when decoded JSON exceeds 1MiB', async () => {
+    const bomb = await compressWithoutDecodedLimit(JSON.stringify({ value: 'x'.repeat(1100 * 1024) }))
     await expect(NativeWireCodec.decode(bomb)).rejects.toThrow('Decoded JSON exceeds')
   })
 

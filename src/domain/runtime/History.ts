@@ -8,8 +8,6 @@ import { PagePortExtern } from '@/domain/runtime/externs/PagePort'
 import {
   HISTORY_REQUEST_TIMEOUT_MS,
   HISTORY_WINDOW_DAYS,
-  MAX_HISTORY_SESSION_BYTES,
-  MAX_HISTORY_SESSION_MESSAGES,
   MAX_PROVIDER_SUPPLY_CONCURRENCY,
   MAX_PROVIDER_SUPPLY_QUEUE_BYTES,
   MAX_PROVIDER_SUPPLY_QUEUE_JOBS
@@ -27,12 +25,6 @@ import { WireCodecExtern } from '@/domain/runtime/externs/RoomTransport'
 import { compareEventPosition, type ChatMessageRecord } from '@/domain/Message'
 import type { HistorySupplyRequest, HistoryFeedbackEvent } from '@/runtime/Contract'
 import { getTextByteSize } from '@/utils/getTextByteSize'
-
-export interface HistoryOptions {
-  [key: string]: number | undefined
-  historySessionBytes?: number
-  historySessionMessages?: number
-}
 
 /** Complete identity of one directional attempt; late work must match every field. */
 interface HistoryAttemptKey {
@@ -61,8 +53,6 @@ interface RequesterSupplyJob extends HistoryAttemptKey {
  * failure, and completion; records merge across providers through delivery insert-if-absent. */
 interface ProviderResponseState {
   expectedResponsePage: number
-  responseBytes: number
-  responseCount: number
   /** Canonical position of the last applied response record, for cross-page recent-first continuity. */
   lastResponsePosition?: { hlc: HLC; id: string }
   awaitingBatchId?: string
@@ -81,7 +71,7 @@ interface ProviderResponseState {
 interface RequesterAttemptState extends HistoryAttemptKey {
   cutoff: number
   inventoryIds: string[]
-  /** Pre-built inventory pages (real codec encoded < 64KiB each); sent in order. */
+  /** Pre-built inventory pages (real codec encoded < 256KiB each); sent in order. */
   inventoryPages: HistoryMessagesPull[]
   nextInventoryPage: number
   feedbackActive: boolean
@@ -102,8 +92,6 @@ interface RequesterAttemptState extends HistoryAttemptKey {
 
 const newProviderResponseState = (): ProviderResponseState => ({
   expectedResponsePage: 0,
-  responseBytes: 0,
-  responseCount: 0,
   finalBatch: false,
   responseDone: false,
   pendingResponsePages: [],
@@ -124,8 +112,6 @@ interface ProviderAttemptState extends HistoryAttemptKey {
   inventoryDone: boolean
   snapshot: ChatMessageRecord[]
   nextResponsePage: number
-  responseBytes: number
-  responseCount: number
   responseDone: boolean
 }
 
@@ -160,8 +146,8 @@ interface PendingInventorySend extends HistoryAttemptKey {
 interface PendingProviderSend extends HistoryAttemptKey {
   type: 'provider'
   requestId: string
-  records: { record: ChatMessageRecord; bytes: number }[]
-  remaining: { record: ChatMessageRecord; bytes: number }[]
+  records: ChatMessageRecord[]
+  remaining: ChatMessageRecord[]
   terminal: boolean
   done: boolean
 }
@@ -220,15 +206,13 @@ const allExpectedSettled = (state: RequesterAttemptState) =>
 
 const HistoryDomain = Remesh.domain({
   name: 'HistoryDomain',
-  impl: (domain, options: HistoryOptions = {}) => {
+  impl: (domain) => {
     const clock = domain.getExtern(ClockExtern)
     const pagePort = domain.getExtern(PagePortExtern)
     const codec = domain.getExtern(WireCodecExtern)
     const wireDomain = domain.getDomain(WireDomain())
     const deliveryDomain = domain.getDomain(DeliveryDomain())
     const sessionDomain = domain.getDomain(SessionDomain())
-    const historySessionBytes = options.historySessionBytes ?? MAX_HISTORY_SESSION_BYTES
-    const historySessionMessages = options.historySessionMessages ?? MAX_HISTORY_SESSION_MESSAGES
 
     const TokenState = domain.state<number>({ name: 'History.TokenState', default: 0 })
     const RequesterAttemptsState = domain.state<RequesterAttemptState[]>({
@@ -966,14 +950,12 @@ const HistoryDomain = Remesh.domain({
             inventoryDone: false,
             snapshot: [],
             nextResponsePage: 0,
-            responseBytes: 0,
-            responseCount: 0,
             responseDone: false,
             queueBytes
           }
           const expectedPage = base.expectedRequestPage
           // Identical replay of the last applied page is idempotent; changed replay, gap,
-          // out-of-order, empty non-final, post-done, or budget overflow cancels and removes the
+          // out-of-order, empty non-final, or post-done input cancels and removes the
           // successor attempt under its complete token.
           if (payload.message.page === expectedPage - 1 && base.lastAppliedRequestPageFingerprint) {
             if (base.lastAppliedRequestPageFingerprint === JSON.stringify(payload.message)) {
@@ -991,9 +973,6 @@ const HistoryDomain = Remesh.domain({
           const inventory = new Set([...base.inventory, ...payload.message.messageIds])
           const inventoryCount = base.inventoryCount + payload.message.messageIds.length
           const inventoryBytes = base.inventoryBytes + queueBytes
-          if (inventoryCount > historySessionMessages || inventoryBytes > historySessionBytes) {
-            return CancelSuccessorCommand(key)
-          }
           const nextSuccessor: ProviderSupplySuccessorState = {
             ...base,
             inventory,
@@ -1123,9 +1102,6 @@ const HistoryDomain = Remesh.domain({
         const inventory = new Set([...(current?.inventory ?? []), ...payload.message.messageIds])
         const inventoryCount = (current?.inventoryCount ?? 0) + payload.message.messageIds.length
         const inventoryBytes = (current?.inventoryBytes ?? 0) + queueBytes
-        if (inventoryCount > historySessionMessages || inventoryBytes > historySessionBytes) {
-          return CancelProviderAttemptCommand(key)
-        }
         const next: ProviderAttemptState = current
           ? {
               ...current,
@@ -1147,8 +1123,6 @@ const HistoryDomain = Remesh.domain({
               inventoryDone: payload.message.done,
               snapshot: [],
               nextResponsePage: 0,
-              responseBytes: 0,
-              responseCount: 0,
               responseDone: false
             }
         return [
@@ -1478,8 +1452,8 @@ const HistoryDomain = Remesh.domain({
       impl: (
         { get },
         payload: HistoryAttemptKey & {
-          records: { record: ChatMessageRecord; bytes: number }[]
-          remaining: { record: ChatMessageRecord; bytes: number }[]
+          records: ChatMessageRecord[]
+          remaining: ChatMessageRecord[]
           terminal: boolean
         }
       ) => {
@@ -1496,8 +1470,8 @@ const HistoryDomain = Remesh.domain({
           type: MESSAGE_TYPE.HISTORY_MESSAGES_PUSH,
           syncId: payload.syncId,
           page: current.nextResponsePage,
-          users: usersForRecords(slice.map(({ record }) => record)),
-          messages: slice.map(({ record }) => record.message),
+          users: usersForRecords(slice),
+          messages: slice.map((record) => record.message),
           done: pageDone
         }
         const requestId = `history:provider:${payload.syncToken}:${current.nextResponsePage}`
@@ -1541,13 +1515,9 @@ const HistoryDomain = Remesh.domain({
           // canonical job exactly once.
           return [clear, ClearActiveSupplyIdCommand({ key: current }), CancelProviderAttemptCommand(current)]
         }
-        const decodedBytes = attempt.responseBytes + current.records.reduce((total, item) => total + item.bytes, 0)
-        const messageCount = attempt.responseCount + current.records.length
         const next: ProviderAttemptState = {
           ...attempt,
           nextResponsePage: attempt.nextResponsePage + 1,
-          responseBytes: decodedBytes,
-          responseCount: messageCount,
           responseDone: current.done
         }
         return [
@@ -1779,20 +1749,6 @@ const HistoryDomain = Remesh.domain({
         const page = prepared.page
         const expectedHlc = get(sessionDomain.query.HlcQuery())
         let hlc = expectedHlc
-        let decodedBytes = provider.responseBytes
-        let messageCount = provider.responseCount
-        for (const event of page.messages) {
-          const messageBytes = getTextByteSize(JSON.stringify(event))
-          if (messageCount + 1 > historySessionMessages || decodedBytes + messageBytes > historySessionBytes) {
-            return FinishRequestedEvent({
-              domain: current.domain,
-              syncId: current.syncId,
-              providerId: payload.sourcePeerId
-            })
-          }
-          messageCount += 1
-          decodedBytes += messageBytes
-        }
         const records: ChatMessageRecord[] = []
         // before any record is built, and observeHlc threads ordered per-item clock state
         for (const event of page.messages) {
@@ -1817,8 +1773,6 @@ const HistoryDomain = Remesh.domain({
         const next: RequesterAttemptState = withProvider({
           ...provider,
           expectedResponsePage: provider.expectedResponsePage + 1,
-          responseBytes: decodedBytes,
-          responseCount: messageCount,
           lastResponsePosition: oldest ? { hlc: oldest.hlc, id: oldest.id } : provider.lastResponsePosition,
           awaitingBatchId: batchId,
           finalBatch: page.done,
@@ -1896,67 +1850,49 @@ const HistoryDomain = Remesh.domain({
             const page = prepared.page
             const expectedHlc = get(sessionDomain.query.HlcQuery())
             let hlc = expectedHlc
-            let decodedBytes = nextLane.responseBytes
-            let messageCount = nextLane.responseCount
-            let budgetOk = true
+            const records: ChatMessageRecord[] = []
+            // and continue skips events observeHlc rejects while threading ordered clock state
             for (const event of page.messages) {
-              const messageBytes = getTextByteSize(JSON.stringify(event))
-              if (messageCount + 1 > historySessionMessages || decodedBytes + messageBytes > historySessionBytes) {
-                budgetOk = false
+              if (event.hlc.timestamp < next.cutoff) {
+                output.push(FinishRequestedEvent({ domain: current.domain, syncId: current.syncId, providerId }))
                 break
               }
-              messageCount += 1
-              decodedBytes += messageBytes
+              const user =
+                page.users.find((candidate) => candidate.id === event.userId) ??
+                ({ id: event.userId, name: event.userId, avatar: '' } satisfies ChatUser)
+              const observed = observeHlc(hlc, event.hlc, clock.now())
+              if (!observed) continue
+              hlc = observed
+              records.push(makeRecord(event, user, clock.now()))
             }
-            if (!budgetOk) {
-              output.push(FinishRequestedEvent({ domain: current.domain, syncId: current.syncId, providerId }))
-            } else {
-              const records: ChatMessageRecord[] = []
-              // and continue skips events observeHlc rejects while threading ordered clock state
-              for (const event of page.messages) {
-                if (event.hlc.timestamp < next.cutoff) {
-                  output.push(FinishRequestedEvent({ domain: current.domain, syncId: current.syncId, providerId }))
-                  break
-                }
-                const user =
-                  page.users.find((candidate) => candidate.id === event.userId) ??
-                  ({ id: event.userId, name: event.userId, avatar: '' } satisfies ChatUser)
-                const observed = observeHlc(hlc, event.hlc, clock.now())
-                if (!observed) continue
-                hlc = observed
-                records.push(makeRecord(event, user, clock.now()))
+            if (records.length === page.messages.length) {
+              const allocated = nextTokens(get, 1)
+              const batchId = token('batch', allocated.values[0])
+              const oldest = records.length > 0 ? records[records.length - 1].message : undefined
+              const appliedLane: ProviderResponseState = {
+                ...nextLane,
+                expectedResponsePage: nextLane.expectedResponsePage + 1,
+                lastResponsePosition: oldest ? { hlc: oldest.hlc, id: oldest.id } : nextLane.lastResponsePosition,
+                awaitingBatchId: batchId,
+                finalBatch: page.done,
+                responseDone: page.done,
+                lastAppliedPageFingerprint: JSON.stringify(page)
               }
-              if (records.length === page.messages.length) {
-                const allocated = nextTokens(get, 1)
-                const batchId = token('batch', allocated.values[0])
-                const oldest = records.length > 0 ? records[records.length - 1].message : undefined
-                const appliedLane: ProviderResponseState = {
-                  ...nextLane,
-                  expectedResponsePage: nextLane.expectedResponsePage + 1,
-                  responseBytes: decodedBytes,
-                  responseCount: messageCount,
-                  lastResponsePosition: oldest ? { hlc: oldest.hlc, id: oldest.id } : nextLane.lastResponsePosition,
-                  awaitingBatchId: batchId,
-                  finalBatch: page.done,
-                  responseDone: page.done,
-                  lastAppliedPageFingerprint: JSON.stringify(page)
-                }
-                const applied: RequesterAttemptState = {
-                  ...next,
-                  providers: { ...next.providers, [providerId]: appliedLane }
-                }
-                output.push(
-                  TokenState().new(allocated.next),
-                  sessionDomain.command.UpdateHlcCommand({ expected: expectedHlc, next: hlc }),
-                  RequesterAttemptsState().new(replaceBy(requesters, (item) => matchesSync(item, current), applied)),
-                  deliveryDomain.command.AcceptInboundBatchCommand({
-                    domain: current.domain,
-                    records,
-                    source: 'history',
-                    batchId
-                  })
-                )
+              const applied: RequesterAttemptState = {
+                ...next,
+                providers: { ...next.providers, [providerId]: appliedLane }
               }
+              output.push(
+                TokenState().new(allocated.next),
+                sessionDomain.command.UpdateHlcCommand({ expected: expectedHlc, next: hlc }),
+                RequesterAttemptsState().new(replaceBy(requesters, (item) => matchesSync(item, current), applied)),
+                deliveryDomain.command.AcceptInboundBatchCommand({
+                  domain: current.domain,
+                  records,
+                  source: 'history',
+                  batchId
+                })
+              )
             }
           }
         }
@@ -2201,10 +2137,9 @@ const HistoryDomain = Remesh.domain({
               }
               const inventoryIds = supplied.records
                 .filter((record) => record.message.hlc.timestamp >= attempt.cutoff)
-                .slice(0, historySessionMessages)
                 .map((record) => record.message.id)
               // Build inventory pages with the REAL production codec so every page is strictly below
-              // the final 64KiB encoded frame. NativeWireCodec throws on an oversized frame, so the
+              // the final 256KiB encoded frame. NativeWireCodec throws on an oversized frame, so the
               // throw closes the current bucket; only a single ID that cannot form a valid page by
               // itself cancels the attempt locally.
               const pages: HistoryMessagesPull[] = []
@@ -2373,21 +2308,14 @@ const HistoryDomain = Remesh.domain({
               const attempt = get(ProviderAttemptsState()).find((item) => matchesSync(item, request))
               if (!attempt) return cancelOutcome()
               const known = attempt.inventory
-              const eligible: { record: ChatMessageRecord; bytes: number }[] = []
-              let decodedBytes = 0
-              // pre-cutoff records, and break stops once the session budget is reached
-              for (const record of supplied.records) {
-                if (known.has(record.message.id)) continue
-                if (eligible.length >= historySessionMessages || decodedBytes >= historySessionBytes) break
-                if (record.message.hlc.timestamp < attempt.cutoff) continue
-                const bytes = getTextByteSize(JSON.stringify(record.message))
-                if (decodedBytes + bytes > historySessionBytes) break
-                decodedBytes += bytes
-                eligible.push({ record, bytes })
-              }
+              // Only pre-cutoff records and already-known IDs are skipped; no cumulative session
+              // budget applies beyond each page's public per-frame and per-page limits.
+              const eligible = supplied.records.filter(
+                (record) => !known.has(record.message.id) && record.message.hlc.timestamp >= attempt.cutoff
+              )
               const nextProvider: ProviderAttemptState = {
                 ...attempt,
-                snapshot: eligible.map(({ record }) => record)
+                snapshot: eligible
               }
               return [
                 sendStageMarker,
