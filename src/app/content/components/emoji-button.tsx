@@ -39,23 +39,15 @@ const EmojiButton: FC<EmojiButtonProps> = ({ onSelect }) => {
         onCloseAutoFocus={handleCloseAutoFocus}
       >
         <ScrollArea className="size-64 p-1">
-          {emojiGroups.map((group, index) => {
-            return (
-              <div key={index} className="grid grid-cols-6">
-                {group.map((emoji, index) => (
-                  <Button
-                    key={index}
-                    size="icon"
-                    className="text-xl"
-                    variant="ghost"
-                    onClick={() => handleSelect(emoji)}
-                  >
-                    {emoji}
-                  </Button>
-                ))}
-              </div>
-            )
-          })}
+          {emojiGroups.map((group, index) => (
+            <div key={index} className="grid grid-cols-6">
+              {group.map((emoji, index) => (
+                <Button key={index} size="icon" className="text-xl" variant="ghost" onClick={() => handleSelect(emoji)}>
+                  {emoji}
+                </Button>
+              ))}
+            </div>
+          ))}
         </ScrollArea>
       </PopoverContent>
     </Popover>

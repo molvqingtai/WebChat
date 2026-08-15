@@ -37,7 +37,6 @@ describe('Runtime production host boundaries', () => {
     const listeners = new MessageListenerRegistry()
     const activeListeners = new Set(['runtime-provider', 'runtime-callback'])
     activeListeners.forEach((listener) => listeners.add(() => activeListeners.delete(listener)))
-
     listeners.dispose()
 
     expect(activeListeners.size).toBe(0)

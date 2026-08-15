@@ -37,14 +37,11 @@ const rightmostMatchingTab = (window: BrowserWindow, origin: string) =>
   )
 
 const mostRecentlyAccessedMatch = (windows: BrowserWindow[], origin: string) => {
-  let selected: BrowserTab | null = null
-  for (const window of windows) {
-    for (const tab of matchingTabs(window, origin)) {
-      if (typeof tab.lastAccessed !== 'number' || !Number.isFinite(tab.lastAccessed)) continue
-      if (selected === null || tab.lastAccessed > selected.lastAccessed!) selected = tab
-    }
-  }
-  return selected
+  const candidates = windows.flatMap((window) => matchingTabs(window, origin))
+  return candidates.reduce<BrowserTab | null>((selected, tab) => {
+    if (typeof tab.lastAccessed !== 'number' || !Number.isFinite(tab.lastAccessed)) return selected
+    return selected === null || (tab.lastAccessed ?? 0) > (selected.lastAccessed ?? 0) ? tab : selected
+  }, null)
 }
 
 export class Notification implements NotificationExternType {

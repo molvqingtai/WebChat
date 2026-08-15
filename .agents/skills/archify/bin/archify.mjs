@@ -121,24 +121,34 @@ async function commandDoctor() {
     lifecycle: 'agent-run.lifecycle.json'
   }
 
-  for (const type of TYPES) {
-    const required = [
-      path.join(skillRoot, 'renderers', type, `render-${type}.mjs`),
-      path.join(skillRoot, 'schemas', `${type}.schema.json`),
-      path.join(skillRoot, 'examples', examples[type])
+  // The existence facts come from statement-level directory listings (Node 18 compatible and
+  // platform-neutral), then the doctor entries derive purely with no I/O inside any callback.
+  const listDirectory = (directory) => (fs.existsSync(directory) ? fs.readdirSync(directory) : [])
+  const rendererFiles = new Set([
+    ...listDirectory(path.join(skillRoot, 'renderers', 'architecture')).map((file) => `architecture/${file}`),
+    ...listDirectory(path.join(skillRoot, 'renderers', 'workflow')).map((file) => `workflow/${file}`),
+    ...listDirectory(path.join(skillRoot, 'renderers', 'sequence')).map((file) => `sequence/${file}`),
+    ...listDirectory(path.join(skillRoot, 'renderers', 'dataflow')).map((file) => `dataflow/${file}`),
+    ...listDirectory(path.join(skillRoot, 'renderers', 'lifecycle')).map((file) => `lifecycle/${file}`)
+  ])
+  const schemaFiles = new Set(listDirectory(path.join(skillRoot, 'schemas')))
+  const exampleFiles = new Set(listDirectory(path.join(skillRoot, 'examples')))
+  const typeChecks = [...TYPES].map((type) => {
+    const missingFiles = [
+      ...(rendererFiles.has(`${type}/render-${type}.mjs`) ? [] : [`renderers/${type}/render-${type}.mjs`]),
+      ...(schemaFiles.has(`${type}.schema.json`) ? [] : [`schemas/${type}.schema.json`]),
+      ...(exampleFiles.has(examples[type]) ? [] : [`examples/${examples[type]}`])
     ]
-    const missing = required.filter((file) => !fs.existsSync(file)).length
-    checks.push({
+    return {
       label: `${type} renderer, schema, and example`,
-      ok: missing === 0,
-      missing
-    })
-  }
+      ok: missingFiles.length === 0,
+      missing: missingFiles.length
+    }
+  })
+  checks.push(...typeChecks)
 
   console.log('Archify doctor\n')
-  for (const check of checks) {
-    console.log(`[${check.ok ? 'ok' : check.failureLabel || 'missing'}] ${check.label}`)
-  }
+  checks.forEach((check) => console.log(`[${check.ok ? 'ok' : check.failureLabel || 'missing'}] ${check.label}`))
 
   const nodeFailed = checks[0].ok ? 0 : 1
   const missingFiles = checks.reduce((count, check) => count + check.missing, 0)

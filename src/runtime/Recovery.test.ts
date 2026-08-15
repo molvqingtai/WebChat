@@ -41,7 +41,6 @@ const createTransport = (peerId: string): RoomTransport => ({
   peerIdOf: () => peerId,
   join: async () => {},
   leave: () => {},
-  peers: () => [],
   send: async () => {},
   onMessage: () => () => {},
   onPeerJoin: () => () => {},

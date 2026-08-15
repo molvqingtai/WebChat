@@ -162,13 +162,6 @@ class DeterministicNetwork {
       join: async (roomId) => {
         endpoint.rooms.add(roomId)
       },
-      peers: (roomId) => {
-        const members: string[] = []
-        this.endpoints.forEach((other, otherPeerId) => {
-          if (otherPeerId !== peerId && other.rooms.has(roomId)) members.push(otherPeerId)
-        })
-        return members
-      },
       leave: (roomId) => {
         if (!endpoint.rooms.delete(roomId)) return
         this.recordLifecycle(`physical-leave:${peerId}:${roomId}`)
@@ -204,13 +197,13 @@ class DeterministicNetwork {
       onRoomClose: (listener) => subscribe(endpoint.closes, listener),
       onError: () => () => {},
       dispose: () => {
-        ;[...endpoint.rooms].forEach((roomId) => {
+        ;[...endpoint.rooms].forEach((roomId) =>
           this.endpoints.forEach((other, otherPeerId) => {
             if (otherPeerId !== peerId && other.rooms.has(roomId)) {
               other.leaves.forEach((listener) => listener(roomId, peerId))
             }
           })
-        })
+        )
         this.endpoints.delete(peerId)
       }
     }
@@ -238,14 +231,14 @@ class DeterministicNetwork {
   }
 
   private pairKey(roomId: string, leftPeerId: string, rightPeerId: string) {
-    return `${roomId}:${[leftPeerId, rightPeerId].sort().join(':')}`
+    return `${roomId}:${[leftPeerId, rightPeerId].toSorted().join(':')}`
   }
 
   private deliver(frame: HeldFrame) {
     this.deliveredFrames.push(frame)
-    this.endpoints
-      .get(frame.targetPeerId)
-      ?.messages.forEach((listener) => listener(frame.roomId, frame.sourcePeerId, frame.payload))
+    ;(this.endpoints.get(frame.targetPeerId)?.messages ?? []).forEach((listener) =>
+      listener(frame.roomId, frame.sourcePeerId, frame.payload)
+    )
   }
 }
 
@@ -410,7 +403,8 @@ beforeEach(() => {
 })
 
 afterEach(async () => {
-  await Promise.all(stacks.splice(0).map((stack) => stack.dispose()))
+  const stacksToDispose = stacks.splice(0)
+  await Promise.all(stacksToDispose.map((stack) => stack.dispose()))
   vi.unstubAllGlobals()
 })
 
@@ -743,7 +737,7 @@ describe('single live release owner', () => {
       network.disconnectPeer('prepared-rebind-peer-b')
       b.crash()
       // Let the reconnect reach its prepared phase (its SESSION publication stays held).
-      for (let flush = 0; flush < 20; flush += 1) await vi.advanceTimersByTimeAsync(0)
+      for (const _flush of Array.from({ length: 20 }, (_, index) => index)) await vi.advanceTimersByTimeAsync(0)
       // B's valid same-presence SESSION arrives during A's prepared phase.
       network.redeliverLastSession('prepared-rebind-peer-b', 'prepared-rebind-peer-a')
       await vi.advanceTimersByTimeAsync(0)

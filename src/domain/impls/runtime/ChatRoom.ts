@@ -407,12 +407,12 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
     const retryTimers = new Set<ReturnType<typeof globalThis.setTimeout>>()
     const activeHistorySupplies = new Map<string, AbortController>()
     const cleanup = () => {
-      for (const timer of retryTimers) globalThis.clearTimeout(timer)
+      retryTimers.forEach((timer) => globalThis.clearTimeout(timer))
       retryTimers.clear()
       retryingInbound.clear()
-      for (const controller of activeHistorySupplies.values()) {
+      activeHistorySupplies.forEach((controller) =>
         controller.abort(signal.reason ?? abortError('Runtime attachment cancelled'))
-      }
+      )
       activeHistorySupplies.clear()
     }
     signal.addEventListener('abort', cleanup, { once: true })

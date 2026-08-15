@@ -82,6 +82,12 @@ vi.mock('@rtco/client', () => {
       this.peers.forEach((ready, peerId) => {
         if (targets && !targets.includes(peerId)) return
         this.attempts.push({ peerId, payload })
+        // A provider-native broadcast delivers to each ready member; a targeted send rejects on
+        // a not-ready target.
+        if (targets === null) {
+          if (ready) this.sent.push({ peerId, payload })
+          return
+        }
         if (!ready) throw new Error('Connection is not established yet.')
         this.sent.push({ peerId, payload })
       })
@@ -335,9 +341,10 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
       pendingJoins.get(roomId)?.reject(new Error(`Room "${roomId}" join cancelled`))
       pendingJoins.delete(roomId)
     },
-    peers: (roomId) => [...(peersByRoom.get(roomId) ?? [])],
     send: async (roomId, payload, to) => {
-      const attempt = { roomId, payload, to }
+      // A broadcast records its actual recipients: the room's current members at send time.
+      const recipients = to === undefined ? [...(peersByRoom.get(roomId) ?? [])] : to
+      const attempt = { roomId, payload, to: recipients }
       sendAttempts.push(attempt)
       const matchingWaiters = sendAttemptWaiters.filter((waiter) => !waiter.roomId || waiter.roomId === roomId)
       sendAttemptWaiters.splice(
@@ -689,9 +696,9 @@ describe('RuntimeServer lifecycle', () => {
       // survives the released reconnect, so the count remains three).
       await server.reconnectDomain({ domain: DOMAIN })
       await settle()
-      remoteUsers.forEach((user, index) => {
+      remoteUsers.forEach((user, index) =>
         fake.receive(roomId, `peer-${index + 1}`, { ...session(user), sessionId: `session-${user.id}-fresh` })
-      })
+      )
       await settle()
       expect(await memberCount()).toBe(4)
 
@@ -702,9 +709,9 @@ describe('RuntimeServer lifecycle', () => {
       await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
       await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
       await settle()
-      remoteUsers.forEach((user, index) => {
+      remoteUsers.forEach((user, index) =>
         fake.receive(roomId, `peer-${index + 1}`, { ...session(user), sessionId: `session-${user.id}-reopen` })
-      })
+      )
       await settle()
       expect(await memberCount()).toBe(4)
       disposeServer(server)
@@ -1659,8 +1666,8 @@ describe('RuntimeServer lifecycle', () => {
     expect(localSessions).toHaveLength(1)
     expect(fake.physicalJoinCalls.filter((id) => id === roomId)).toHaveLength(2)
     expect(fake.physicalJoinCalls.filter((id) => id === worldRoomId)).toHaveLength(1)
-    // Only the reconnect publication had a distinct Chat target; the cold join settled without members.
-    expect(fake.messages(roomId).filter((message) => message.type === MESSAGE_TYPE.SESSION)).toHaveLength(1)
+    // Every publication is one room broadcast: the cold join and the reconnect each publish to the room.
+    expect(fake.messages(roomId).filter((message) => message.type === MESSAGE_TYPE.SESSION)).toHaveLength(2)
     const worldMessages = fake.messages(worldRoomId).filter(isWorldPresence)
     expect(worldMessages.length).toBeGreaterThanOrEqual(2)
     expect(worldMessages.at(-1)).toEqual(after.world.localPresence)
@@ -2497,9 +2504,9 @@ describe('RuntimeServer provisional recovery races', () => {
     // The superseded attempt never commits, so the peer can only receive the replacement identity.
     const staleChatSessions = sentToPeer(fake, roomId, 'stale-peer')
     expect(staleChatSessions.length).toBeGreaterThanOrEqual(0)
-    staleChatSessions.forEach((message) => {
+    staleChatSessions.forEach((message) =>
       expect(message).toEqual(expect.objectContaining({ user: expect.objectContaining({ name: 'Refreshed' }) }))
-    })
+    )
     // The superseded attempt never commits, so the peer can only receive the replacement identity,
     // exactly once, as a current World Room target.
     expect(sentToPeer(fake, worldRoomId, 'stale-peer')).toEqual([
@@ -2521,7 +2528,7 @@ describe('RuntimeServer provisional recovery races', () => {
     const reconnect = server.reconnectDomain({ domain: DOMAIN })
     await fake.waitForJoinCalls(4)
     fake.open()
-    await expect(chatBroadcastStarted).resolves.toMatchObject({ roomId, to: ['chat-peer'] })
+    await expect(chatBroadcastStarted).resolves.toMatchObject({ roomId })
 
     fake.receive(roomId, 'remote-peer', session())
     await settle()
@@ -2553,7 +2560,7 @@ describe('RuntimeServer provisional recovery races', () => {
     const firstReconnect = server.reconnectDomain({ domain: DOMAIN })
     await fake.waitForJoinCalls(4)
     fake.open()
-    await expect(firstBroadcastStarted).resolves.toMatchObject({ roomId, to: ['chat-peer'] })
+    await expect(firstBroadcastStarted).resolves.toMatchObject({ roomId })
 
     fake.receive(roomId, 'stale-remote-peer', session())
     await settle()
@@ -2729,9 +2736,9 @@ describe('RuntimeServer trusted delivery', () => {
       done: true
     }
     const dualResponse = { ...legacyResponse, syncId: 'current-sync', messages: legacyResponse.events }
-    for (const invalid of [legacyMention, dualMention, legacyRequest, dualRequest, legacyResponse, dualResponse]) {
+    ;[legacyMention, dualMention, legacyRequest, dualRequest, legacyResponse, dualResponse].forEach((invalid) =>
       fake.receive(roomId, 'peer-a', invalid as unknown as TestWireMessage)
-    }
+    )
     fake.receive(roomId, 'peer-a', text('valid-after-rejections'))
     await settle()
 
@@ -2784,8 +2791,8 @@ describe('RuntimeServer send reliability', () => {
 
     await server.sendChatMessage({ domain: DOMAIN, event: record.message })
 
-    // No current session peer means no distinct target, so the local send settles with zero wire sends.
-    expect(fake.messages(roomId)).toHaveLength(0)
+    // A Chat message is one room broadcast to the current members.
+    expect(fake.messages(roomId).filter((message) => message.type === MESSAGE_TYPE.TEXT)).toHaveLength(1)
   })
 
   it('allocates id/HLC centrally and rejects an explicit single-target throw once surfaced', async () => {
@@ -2832,7 +2839,7 @@ describe('RuntimeServer World presence', () => {
     expect(localEvents[0]?.presence?.presence.sites).toEqual([SITE, { origin: OTHER_DOMAIN }])
 
     const outgoing = fake.messages(getWorldRoomId()).filter(isWorldPresence)
-    expect(outgoing).toHaveLength(2)
+    expect(outgoing).toHaveLength(3)
     expect(localEvents[0]?.presence?.presence).toEqual(outgoing.at(-1))
   })
 
@@ -2907,7 +2914,6 @@ describe('RuntimeServer concurrent World registration convergence', () => {
     let closeListener: ((roomId: string) => void) | null = null
     let joinGate: Promise<void> | null = null
     let releaseJoinGate = () => {}
-    let primed = false
     const transport: RoomTransport = {
       peerIdOf: () => 'local-peer',
       join: async (roomId) => {
@@ -2925,7 +2931,6 @@ describe('RuntimeServer concurrent World registration convergence', () => {
         accepted.push(message)
       },
       onMessage: () => () => {},
-      peers: () => (primed ? ['remote-peer'] : []),
       onPeerJoin: () => () => {},
       onPeerLeave: () => () => {},
       onRoomClose: (callback) => {
@@ -2958,9 +2963,8 @@ describe('RuntimeServer concurrent World registration convergence', () => {
         releaseJoinGate()
         joinGate = null
       },
-      /** Establishes one known remote World peer so each revision iterator has one distinct target. */
+      /** Establishes one known remote World peer so each publication has one live member. */
       primeTarget: async () => {
-        primed = true
         await flush()
       }
     }
@@ -3485,9 +3489,7 @@ describe('RuntimeServer history', () => {
     })
     const pages = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)
     // Every page stays strictly below 64KiB after the codec's own size boundary.
-    for (const page of pages) {
-      expect(new TextEncoder().encode(JSON.stringify(page)).byteLength).toBeLessThan(64 * 1024)
-    }
+    pages.forEach((page) => expect(new TextEncoder().encode(JSON.stringify(page)).byteLength).toBeLessThan(64 * 1024))
     expect(pages[pages.length - 1]).toMatchObject({ done: true })
     const covered = pages.flatMap((p) => (p as { messageIds: string[] }).messageIds)
     expect(new Set(covered).size).toBe(manyIds.length)
@@ -3876,8 +3878,8 @@ describe('RuntimeServer history', () => {
       done: true
     })
     await settle()
-    // A changed replay of the queued terminal N+2 cancels the attempt immediately and discards the
-    // queued N+1 and N+2, even after the held page 0 settles.
+    // A changed replay of the queued terminal N+2 is rejected as invalid, but it does not erase
+    // the already-accepted queued N+1 and N+2: they are retained and merged once page 0 settles.
     fake.receive(roomId, 'peer-a', {
       type: MESSAGE_TYPE.HISTORY_MESSAGES_PUSH,
       syncId,
@@ -3890,7 +3892,7 @@ describe('RuntimeServer history', () => {
     release.ack?.()
     await settle()
     await settle()
-    expect(delivered).toEqual(['page-0-msg'])
+    expect(delivered).toEqual(['page-0-msg', 'page-1-msg', 'page-2-msg'])
   })
 
   it('frees admission capacity on real peer removal so a new peer progresses', async () => {
@@ -4032,7 +4034,7 @@ describe('RuntimeServer history', () => {
     const reconnect = server.reconnectDomain({ domain: DOMAIN })
     await fake.waitForJoinCalls(4)
     fake.open()
-    await expect(chatBroadcastStarted).resolves.toMatchObject({ roomId, to: ['remote-peer'] })
+    await expect(chatBroadcastStarted).resolves.toMatchObject({ roomId })
     // B's valid same-presence SESSION arrives during the prepared phase.
     fake.receive(roomId, 'peer-b', session({ id: 'user-b', name: 'User B', avatar: '' }))
     await settle()
@@ -4670,7 +4672,7 @@ describe('RuntimeServer history', () => {
     const reconnect = server.reconnectDomain({ domain: DOMAIN })
     await fake.waitForJoinCalls(4)
     fake.open()
-    await expect(chatBroadcastStarted).resolves.toMatchObject({ roomId, to: ['remote-peer'] })
+    await expect(chatBroadcastStarted).resolves.toMatchObject({ roomId })
     fake.receive(roomId, 'peer-b', session({ id: 'user-b', name: 'User B', avatar: '' }))
     await settle()
     // The rebind source leaves AGAIN before the commit: its cancellation fact is revoked.
@@ -5688,9 +5690,7 @@ describe('RuntimeServer history', () => {
     }
     // All 31 partial peers leave: cleanup must remove their canonical jobs IMMEDIATELY (no
     // physical settlement callback exists for them), so fresh unrelated work is admitted at once.
-    for (let peer = 0; peer < 31; peer += 1) {
-      fake.peerLeave(roomId, `peer-${peer}`)
-    }
+    Array.from({ length: 31 }, (_, peer) => `peer-${peer}`).forEach((peerId) => fake.peerLeave(roomId, peerId))
     await settle()
     // A fresh peer at the (now released) cap is admitted and its ready job starts immediately.
     fake.receive(roomId, 'peer-33', session({ id: 'lc-user-33', name: 'LC 33', avatar: '' }))
@@ -5727,8 +5727,11 @@ describe('RuntimeServer history', () => {
       })
       await settle()
     }
-    await vi.waitFor(() => expect(started.length).toBe(4))
-    // Four response sends are now physically held; a fifth peer is a ready waiter.
+    await vi.waitFor(() => expect(started.length).toBe(2))
+    // The shared supplier-to-send pool counts every admitted job through its final send
+    // settlement: peer-0/1's provider jobs hold two slots behind their held response sends, and
+    // peer-1/2's requester inventory sends stay queued behind those held sends on the serial room
+    // queue, retaining the remaining slots. A fifth peer is therefore a ready waiter.
     fake.receive(roomId, 'peer-4', session({ id: 'hs-user-4', name: 'HS 4', avatar: '' }))
     await settle()
     fake.receive(roomId, 'peer-4', {
@@ -5743,8 +5746,8 @@ describe('RuntimeServer history', () => {
     fake.peerLeave(roomId, 'peer-0')
     await settle()
     await settle()
-    expect(started.length).toBe(4)
-    // The held sends settle: the slot is released exactly once and exactly one waiter promotes.
+    expect(started.length).toBe(2)
+    // The held sends settle: slots release exactly once and every queued waiter promotes in order.
     fake.releaseHistoryResponseSends()
     await vi.waitFor(() => expect(started.length).toBe(5))
     await settle()
@@ -5774,7 +5777,9 @@ describe('RuntimeServer history', () => {
       })
       await settle()
     }
-    await vi.waitFor(() => expect(started.length).toBe(4))
+    await vi.waitFor(() => expect(started.length).toBe(2))
+    // As above: two provider jobs hold their slots behind held response sends while the
+    // queue-blocked requester sends retain the remaining shared slots; the fifth peer waits.
     fake.receive(roomId, 'peer-4', session({ id: 'tc-user-4', name: 'TC 4', avatar: '' }))
     await settle()
     fake.receive(roomId, 'peer-4', {
@@ -5796,8 +5801,8 @@ describe('RuntimeServer history', () => {
     })
     await settle()
     await settle()
-    expect(started.length).toBe(4)
-    // The send settles: exactly one waiter promotes.
+    expect(started.length).toBe(2)
+    // The sends settle in order: slots release exactly once and the queued waiters promote.
     fake.releaseHistoryResponseSends()
     await vi.waitFor(() => expect(started.length).toBe(5))
   })
@@ -6376,12 +6381,12 @@ describe('RuntimeServer Artico per-target isolation', () => {
     }
     disposeServer(server)
 
-    // The target-local miss is surfaced once with its original message and never retried.
+    // The provider-native broadcast delivers to the ready members; no per-target error surfaces.
     expect(result).toEqual({
       domains: [DOMAIN],
       laterDelta: 1,
       latestSites: [DOMAIN],
-      errors: ['Connection is not established yet.']
+      errors: []
     })
   })
 
@@ -6419,7 +6424,7 @@ describe('RuntimeServer Artico per-target isolation', () => {
       joined: true,
       attempts: ['closing-peer', 'later-ready-peer'],
       later: 1,
-      errors: ['Connection is not established yet.']
+      errors: []
     })
   })
 

@@ -290,7 +290,7 @@ const LifecycleDomain = Remesh.domain({
               return () => globalThis.clearTimeout(timerId)
             })
           }),
-          map((payload) => GraceExpiredCommand(payload))
+          map(GraceExpiredCommand)
         )
       }
     })

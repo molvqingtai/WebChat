@@ -71,14 +71,14 @@ const assertPlainValue = (value: unknown, seen: Set<object>): void => {
     if (Object.getPrototypeOf(value) !== Object.prototype) {
       throw new TypeError('Database values require plain objects')
     }
-    for (const key of Reflect.ownKeys(value)) {
+    Reflect.ownKeys(value).forEach((key) => {
       if (typeof key !== 'string') throw new TypeError('Database object keys must be strings')
       const descriptor = Object.getOwnPropertyDescriptor(value, key)
       if (!descriptor?.enumerable || !('value' in descriptor)) {
         throw new TypeError('Database values require enumerable data properties')
       }
       assertPlainValue(descriptor.value, seen)
-    }
+    })
   } finally {
     seen.delete(value)
   }
@@ -104,25 +104,22 @@ export const compareDatabaseKeys = (left: DatabaseKey, right: DatabaseKey): numb
   return left < right ? -1 : 1
 }
 
-export const getPathValue = (value: unknown, keyPath: string): unknown => {
-  let current = value
-  for (const part of keyPath.split('.')) {
+export const getPathValue = (value: unknown, keyPath: string): unknown =>
+  keyPath.split('.').reduce<unknown>((current, part) => {
     if (typeof current !== 'object' || current === null || !Object.prototype.hasOwnProperty.call(current, part)) {
       return undefined
     }
-    current = (current as Record<string, unknown>)[part]
-  }
-  return current
-}
+    return (current as Record<string, unknown>)[part]
+  }, value)
 
 export const validateStoreValue = <Schema extends StoreSchema>(
   definition: StoreDefinition<Schema>,
   value: Schema['value']
 ): void => {
   assertCanonicalValue(value)
-  for (const index of Object.values(definition.indexes) as IndexDefinition<DatabaseKey>[]) {
+  ;(Object.values(definition.indexes) as IndexDefinition<DatabaseKey>[]).forEach((index) =>
     assertDatabaseKey(getPathValue(value, index.keyPath), index.key)
-  }
+  )
 }
 
 export const validateScope = <Schema extends DatabaseSchema<Schema>>(

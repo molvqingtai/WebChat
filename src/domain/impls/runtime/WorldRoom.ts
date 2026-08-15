@@ -55,13 +55,13 @@ export class WorldRoom extends EventHub {
   }
 
   private state(): WorldState {
-    const groups = new Map<string, ChatSite & { users: ChatUser[] }>()
     const ordered = [...this.contributions.values()].toSorted((left, right) => left.order - right.order)
-    ordered.forEach(({ site, user }) => {
-      const current = groups.get(site.origin)
+    const groups = ordered.reduce<Map<string, ChatSite & { users: ChatUser[] }>>((acc, { site, user }) => {
+      const current = acc.get(site.origin)
       if (current) current.users.push(user)
-      else groups.set(site.origin, { ...site, users: [user] })
-    })
+      else acc.set(site.origin, { ...site, users: [user] })
+      return acc
+    }, new Map())
     return [...groups.values()]
   }
 
@@ -111,9 +111,7 @@ export class WorldRoom extends EventHub {
     }
 
     this.applySnapshot(snapshot)
-    for (let index = 0; index < bufferedEvents.length; index += 1) {
-      this.applyPresence(bufferedEvents[index])
-    }
+    bufferedEvents.forEach((event) => this.applyPresence(event))
     bufferedEvents.length = 0
     isLive = true
   }

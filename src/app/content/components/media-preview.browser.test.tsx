@@ -379,12 +379,12 @@ describe('MediaPreview production browser boundary', () => {
 
     const backdropLayer = Number.parseInt(getComputedStyle(backdrop).zIndex, 10)
     const dialogLayer = Number.parseInt(getComputedStyle(dialog).zIndex, 10)
-    for (const surface of [panel, launcher.parentElement!, danmaku]) {
+    ;[panel, launcher.parentElement!, danmaku].forEach((surface) => {
       const shellLayer = Number.parseInt(getComputedStyle(surface).zIndex, 10)
       expect(backdropLayer).toBeLessThan(shellLayer)
       expect(dialogLayer).toBeGreaterThanOrEqual(shellLayer)
       expect(surface.compareDocumentPosition(dialog) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
-    }
+    })
 
     await vi.waitFor(() => expect(image.complete && image.naturalWidth > 0).toBe(true))
     const imageRect = image.getBoundingClientRect()
@@ -729,12 +729,12 @@ describe('MediaPreview production browser boundary', () => {
         ({ viewportWidth, viewportHeight }) => viewportWidth === 500 && viewportHeight === 400
       )
       expect(resizedFrames.length).toBeGreaterThan(0)
-      for (const rect of resizedFrames) {
+      resizedFrames.forEach((rect) => {
         expect(rect.left).toBeLessThanOrEqual(rect.interactionLeft + 0.5)
         expect(rect.right).toBeGreaterThanOrEqual(rect.interactionRight - 0.5)
         expect(rect.top).toBeLessThanOrEqual(rect.interactionTop + 0.5)
         expect(rect.bottom).toBeGreaterThanOrEqual(rect.interactionBottom - 0.5)
-      }
+      })
     } finally {
       cancelAnimationFrame(pendingSampleFrame)
       pendingSampleFrame = null

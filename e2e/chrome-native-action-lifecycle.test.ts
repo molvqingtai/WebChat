@@ -361,10 +361,10 @@ class FakeChromeLifecycleAdapter implements ChromeNativeActionLifecycleAdapter {
   private applyPhaseEffects(phase: string) {
     const effects = this.phaseEffects.get(phase) ?? []
     this.phaseEffects.delete(phase)
-    for (const effect of effects) {
+    effects.forEach((effect) => {
       if ('advanceMs' in effect) this.nowMs += effect.advanceMs
       else this.requireSink()(effect)
-    }
+    })
   }
 }
 
@@ -675,7 +675,7 @@ describe('Chrome native action lifecycle diagnostic', () => {
 
   it('rejects every manifest semantic change rather than normalizing values, fields, arrays, aliases, or paths', async () => {
     const semanticVariants: unknown[] = [
-      { ...packagedManifest, permissions: [...packagedManifest.permissions].reverse() },
+      { ...packagedManifest, permissions: [...packagedManifest.permissions].toReversed() },
       { ...packagedManifest, version: '1.0.1' },
       { ...packagedManifest, minimum_chrome_version: '150' },
       { ...packagedManifest, action: {} },
@@ -734,7 +734,7 @@ describe('Chrome native action lifecycle diagnostic', () => {
     expect(detail.diffOverflow).toBe(true)
     expect(detail.diff).toHaveLength(CHROME_NATIVE_ACTION_MAX_MANIFEST_DIFF_ENTRIES)
     const paths = (detail.diff as Array<Record<string, unknown>>).map(({ path }) => path)
-    expect(paths).toEqual([...paths].sort())
+    expect(paths).toEqual([...paths].toSorted())
     expect(JSON.stringify(detail)).not.toContain('secret-value')
     expect(detail.exact).toBe(false)
   })

@@ -100,14 +100,21 @@ function measureState(state) {
 }
 
 const states = new Map(asArray(lifecycle.states).map((state) => [state.id, measureState(state)]))
-const stateSteps = new Map()
-for (const [index, transition] of asArray(lifecycle.transitions).entries()) {
-  if (!stateSteps.has(transition.from)) stateSteps.set(transition.from, index)
-  if (!stateSteps.has(transition.to)) stateSteps.set(transition.to, index + 1)
-}
-for (const [index, state] of asArray(lifecycle.states).entries()) {
-  if (!stateSteps.has(state.id)) stateSteps.set(state.id, index)
-}
+// State steps are derived from transitions first, then from remaining states: a non-mutating
+// fold keeps each step assignment visible to the next entry without owner-style side effects.
+// State steps are derived from transitions first, then from remaining states: a fresh,
+// exclusive accumulator fold keeps each first-seen assignment in linear time.
+const stateSteps = asArray(lifecycle.states).reduce(
+  (steps, state, index) => {
+    if (!steps.has(state.id)) steps.set(state.id, index)
+    return steps
+  },
+  asArray(lifecycle.transitions).reduce((steps, transition, index) => {
+    if (!steps.has(transition.from)) steps.set(transition.from, index)
+    if (!steps.has(transition.to)) steps.set(transition.to, index + 1)
+    return steps
+  }, new Map())
+)
 
 function validateLifecycle() {
   const problems = []
@@ -139,102 +146,112 @@ function validateLifecycle() {
     )
   }
 
-  for (const state of states.values()) {
+  const stateProblems = [...states.values()].reduce((acc, state) => {
     if (!laneIds.has(state.lane)) {
-      problems.push(`State "${state.id}" uses unknown lane "${state.lane}".`)
-      continue
+      acc.push(`State "${state.id}" uses unknown lane "${state.lane}".`)
+      return acc
     }
     const band = bandFor(state.lane)
     const maxCol =
       band === 'phase' ? layout.phaseXs.length : band === 'outcome' ? layout.outcomeXs.length : layout.eventXs.length
     if (!Number.isInteger(state.col) || state.col < 0 || state.col >= maxCol) {
-      problems.push(
+      acc.push(
         `State "${state.id}" uses invalid column ${state.col} — the ${band} band has integer columns 0..${maxCol - 1}.`
       )
-      continue
+      return acc
     }
     if (!isFinitePoint(state.x, state.y, state.cx, state.cy)) {
-      problems.push(
+      acc.push(
         `State "${state.id}" produced non-finite coordinates — check col, width, height, and yOffset are numbers.`
       )
-      continue
+      return acc
     }
     if (state.x < 32 || state.x + state.width > viewBox[0] - 32) {
-      problems.push(
+      acc.push(
         `State "${state.id}" exceeds the horizontal bounds of the diagram — reduce state.width or increase meta.viewBox[0].`
       )
     }
     if (state.y < 64 || state.y + state.height > legendY() - 24) {
-      problems.push(
+      acc.push(
         `State "${state.id}" exceeds the vertical lifecycle area — keep y between 64 and ${legendY() - 24} (adjust yOffset or increase meta.viewBox[1]).`
       )
     }
     const estLabelW = textUnits(state.label) * 6.2
     if (estLabelW > state.width + 6) {
-      problems.push(
+      acc.push(
         `Label "${state.label}" (~${Math.round(estLabelW)}px) is wider than state "${state.id}" (${state.width}px) — shorten the label, move detail to sublabel, or increase state.width.`
       )
     }
-  }
+    return acc
+  }, [])
+  problems.push(...stateProblems)
 
   // All non-main/non-terminal lanes share the same y band, so the overlap
   // check must run across lanes — not per-lane.
   const allStates = [...states.values()]
-  for (let i = 0; i < allStates.length; i += 1) {
-    for (let j = i + 1; j < allStates.length; j += 1) {
-      if (rectsOverlap(allStates[i], allStates[j], 10)) {
-        problems.push(
-          `States "${allStates[i].id}" and "${allStates[j].id}" are less than 10px apart — move one to another col or separate them with yOffset (lanes other than "main"/"terminal" share one band).`
-        )
-      }
-    }
-  }
-
-  for (const transition of asArray(lifecycle.transitions)) {
-    if (!states.has(transition.from))
-      problems.push(
-        `Transition "${transition.label || transition.from}" references unknown source "${transition.from}".`
+  const statePairProblems = allStates.flatMap((stateA, i) =>
+    allStates
+      .slice(i + 1)
+      .flatMap((stateB) =>
+        rectsOverlap(stateA, stateB, 10)
+          ? [
+              `States "${stateA.id}" and "${stateB.id}" are less than 10px apart — move one to another col or separate them with yOffset (lanes other than "main"/"terminal" share one band).`
+            ]
+          : []
       )
+  )
+  problems.push(...statePairProblems)
+
+  const transitionProblems = asArray(lifecycle.transitions).flatMap((transition) => {
+    const local = []
+    if (!states.has(transition.from))
+      local.push(`Transition "${transition.label || transition.from}" references unknown source "${transition.from}".`)
     if (!states.has(transition.to))
-      problems.push(`Transition "${transition.label || transition.to}" references unknown target "${transition.to}".`)
+      local.push(`Transition "${transition.label || transition.to}" references unknown target "${transition.to}".`)
     if (states.has(transition.from) && states.has(transition.to)) {
       const routed = pathFor(transition)
       const [start, end] = [routed.points[0], routed.points[routed.points.length - 1]]
       const distance = Math.hypot(end[0] - start[0], end[1] - start[1])
       if (distance < 32)
-        problems.push(
+        local.push(
           `Transition "${transition.label || `${transition.from}->${transition.to}`}" is too short (${Math.round(distance)}px; minimum 32px) — route it through a channel or drop its label.`
         )
     }
-  }
+    return local
+  })
+  problems.push(...transitionProblems)
 
-  const labelRects = []
-  for (const transition of asArray(lifecycle.transitions)) {
-    if (!transition.label || !states.has(transition.from) || !states.has(transition.to)) continue
-    const [lx, ly] = labelPoint(transition, pathFor(transition).points)
-    const longestLine = Math.max(textUnits(transition.label), textUnits(transition.note || ''))
-    const width = Math.max(32, longestLine * 4.9 + 12)
-    const height = transition.note ? 27 : 16
-    labelRects.push({ label: transition.label, x: lx - width / 2, y: ly - 11, width, height, lx, ly })
-  }
-  for (const rect of labelRects) {
-    for (const state of states.values()) {
-      if (rectsOverlap(rect, state, -2)) {
-        problems.push(
-          `Label "${rect.label}" overlaps state "${state.id}" — adjust labelDx/labelDy/labelSegment or set labelAt.\n${suggestLabelObstacleFix(rect, rect.lx, rect.ly, state, 'state')}`
-        )
-      }
-    }
-  }
-  for (let i = 0; i < labelRects.length; i += 1) {
-    for (let j = i + 1; j < labelRects.length; j += 1) {
-      if (rectsOverlap(labelRects[i], labelRects[j], -2)) {
-        problems.push(
-          `Labels "${labelRects[i].label}" and "${labelRects[j].label}" overlap — adjust labelDx/labelDy.\n${suggestLabelPairFix(labelRects[i], labelRects[j])}`
-        )
-      }
-    }
-  }
+  const labelRects = asArray(lifecycle.transitions)
+    .filter((transition) => transition.label && states.has(transition.from) && states.has(transition.to))
+    .map((transition) => {
+      const [lx, ly] = labelPoint(transition, pathFor(transition).points)
+      const longestLine = Math.max(textUnits(transition.label), textUnits(transition.note || ''))
+      const width = Math.max(32, longestLine * 4.9 + 12)
+      const height = transition.note ? 27 : 16
+      return { label: transition.label, x: lx - width / 2, y: ly - 11, width, height, lx, ly }
+    })
+  const labelStateProblems = labelRects.flatMap((rect) =>
+    [...states.values()].flatMap((state) =>
+      rectsOverlap(rect, state, -2)
+        ? [
+            `Label "${rect.label}" overlaps state "${state.id}" — adjust labelDx/labelDy/labelSegment or set labelAt.\n${suggestLabelObstacleFix(rect, rect.lx, rect.ly, state, 'state')}`
+          ]
+        : []
+    )
+  )
+  problems.push(...labelStateProblems)
+  const labelPairProblems = labelRects.flatMap((rectA, i) =>
+    labelRects
+      .slice(i + 1)
+      .flatMap((rectB) =>
+        rectsOverlap(rectA, rectB, -2)
+          ? [
+              `Labels "${rectA.label}" and "${rectB.label}" overlap — adjust labelDx/labelDy.\n${suggestLabelPairFix(rectA, rectB)}`
+            ]
+          : []
+      )
+  )
+  problems.push(...labelPairProblems)
 
   if (problems.length) {
     throw new Error(`Lifecycle layout validation failed:\n- ${problems.join('\n- ')}`)
@@ -293,21 +310,28 @@ function routeVia(transition, from, to, start, end) {
   }
 }
 
-const pathCache = new Map()
-
-function pathFor(transition) {
-  if (pathCache.has(transition)) return pathCache.get(transition)
+function computeRoute(transition) {
   const from = states.get(transition.from)
   const to = states.get(transition.to)
   const start = anchor(from, chosenSide(transition.fromSide, defaultFromSide(from, to)))
   const end = anchor(to, chosenSide(transition.toSide, defaultToSide(from, to)))
   const points = [start, ...routeVia(transition, from, to, start, end), end]
-  const routed = {
+  return {
     d: roundedPath(points, transition.cornerRadius ?? 10),
     points
   }
-  pathCache.set(transition, routed)
-  return routed
+}
+
+// Routes are precomputed once as a fresh result map over the items whose endpoints exist —
+// the same set the lazy cache would have computed — and every lookup is a pure read.
+const routes = new Map(
+  asArray(lifecycle.transitions)
+    .filter((transition) => states.has(transition.from) && states.has(transition.to))
+    .map((transition) => [transition, computeRoute(transition)])
+)
+
+function pathFor(transition) {
+  return routes.get(transition)
 }
 
 function bandTitles() {

@@ -14,7 +14,6 @@ interface PeerOwner {
   peerId: string
   peer: Artico
   room?: Room
-  readyPeers: Set<string>
   pendingJoin?: PendingJoin
   restartTimer: ReturnType<typeof globalThis.setTimeout> | null
   disposed: boolean
@@ -54,19 +53,18 @@ export const createArticoRoomTransport = (): RoomTransport => {
     })
     room.on('join', (joinedPeerId) => {
       if (!isCurrent()) return
-      owner.readyPeers.add(joinedPeerId)
       joinListeners.forEach((listener) => listener(owner.roomId, joinedPeerId))
     })
     room.on('leave', (leftPeerId) => {
       if (!isCurrent()) return
-      owner.readyPeers.delete(leftPeerId)
       leaveListeners.forEach((listener) => listener(owner.roomId, leftPeerId))
     })
     room.on('close', () => {
       if (!isCurrent()) return
       owner.room = undefined
-      owner.readyPeers.clear()
-      if (!owner.disposed) closeListeners.forEach((listener) => listener(owner.roomId))
+      if (!owner.disposed) {
+        closeListeners.forEach((listener) => listener(owner.roomId))
+      }
     })
   }
 
@@ -92,7 +90,6 @@ export const createArticoRoomTransport = (): RoomTransport => {
   const retirePeer = (owner: PeerOwner) => {
     const stale = owner.peer
     owner.room = undefined
-    owner.readyPeers.clear()
     try {
       stale?.close()
     } catch {}
@@ -143,7 +140,6 @@ export const createArticoRoomTransport = (): RoomTransport => {
       roomId,
       peerId: nanoid(),
       peer: undefined as unknown as Artico,
-      readyPeers: new Set(),
       restartTimer: null,
       disposed: false
     }
@@ -164,7 +160,6 @@ export const createArticoRoomTransport = (): RoomTransport => {
     owner.pendingJoin = undefined
     const room = owner.room
     owner.room = undefined
-    owner.readyPeers.clear()
     if (room) {
       try {
         room.leave()
@@ -193,27 +188,11 @@ export const createArticoRoomTransport = (): RoomTransport => {
       if (!owner) return
       dropOwner(owner)
     },
-    /**
-     * One stale Artico call must not abort sends to later targets before its delayed Room "leave" event.
-     * @see https://github.com/matallui/artico/blob/8a4f1a185be9355f893120e9492151f1785e59fa/packages/client/src/room.ts#L114
-     * @see https://github.com/matallui/artico/blob/8a4f1a185be9355f893120e9492151f1785e59fa/packages/peer/src/peer.ts#L281
-     */
-    peers: (roomId) => [...(owners.get(roomId)?.readyPeers ?? [])],
     send: async (roomId, payload, to) => {
       const owner = owners.get(roomId)
       const room = owner?.room
       if (!owner || !room) throw new Error(`Room "${roomId}" not joined`)
-      const targets = new Set(typeof to === 'string' ? [to] : (to ?? owner.readyPeers))
-      let firstError: Error | null = null
-      targets.forEach((target) => {
-        try {
-          room.send(payload, target)
-        } catch (error) {
-          // Every target is attempted exactly once; the first genuine throw surfaces after the rest ran.
-          firstError ??= error as Error
-        }
-      })
-      if (firstError) throw firstError
+      room.send(payload, to)
     },
     onMessage: (callback) => {
       messageListeners.add(callback)
@@ -236,7 +215,7 @@ export const createArticoRoomTransport = (): RoomTransport => {
       return () => errorListeners.delete(callback)
     },
     dispose: () => {
-      ;[...owners.values()].forEach(dropOwner)
+      Array.from(owners.values()).forEach(dropOwner)
       messageListeners.clear()
       joinListeners.clear()
       leaveListeners.clear()

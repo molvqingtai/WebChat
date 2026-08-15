@@ -44,7 +44,7 @@ if (svgMatches.length === 1) {
   const legendStart = svg.indexOf('<!-- Legend -->')
   const beforeLegend = legendStart >= 0 ? svg.slice(0, legendStart) : svg
   const arrows = collectArrows(beforeLegend)
-  const diagonal = arrows.filter((arrow) => isTwoPointDiagonal(arrow))
+  const diagonal = arrows.filter(isTwoPointDiagonal)
   addCheck(
     'orthogonal_arrows',
     diagonal.length === 0,
@@ -70,19 +70,18 @@ console.log(JSON.stringify({ ok, file: htmlPath, checks }, null, 2))
 process.exit(ok ? 0 : 1)
 
 function collectArrows(fragment) {
-  const arrows = []
-  let index = 0
-
-  for (const tag of fragment.matchAll(/<(path|line)\b[^>]*>/gi)) {
-    const raw = tag[0]
-    if (!/\bclass="[^"]*\ba-(?:default|emphasis|security|dashed)\b/.test(raw)) continue
-    if (!/\bmarker-end=/.test(raw)) continue
-    const attrs = parseAttrs(raw)
-    const segments = tag[1].toLowerCase() === 'line' ? lineSegments(attrs) : pathSegments(attrs.d || '')
-    arrows.push({ kind: tag[1].toLowerCase(), index: (index += 1), raw, segments })
-  }
-
-  return arrows
+  // Arrows are derived with filter + map; the map's own index supplies each arrow's 1-based
+  // position, replacing the running counter without external mutation.
+  return [...fragment.matchAll(/<(path|line)\b[^>]*>/gi)]
+    .filter(
+      (tag) => /\bclass="[^"]*\ba-(?:default|emphasis|security|dashed)\b/.test(tag[0]) && /\bmarker-end=/.test(tag[0])
+    )
+    .map((tag, index) => {
+      const raw = tag[0]
+      const attrs = parseAttrs(raw)
+      const segments = tag[1].toLowerCase() === 'line' ? lineSegments(attrs) : pathSegments(attrs.d || '')
+      return { kind: tag[1].toLowerCase(), index: index + 1, raw, segments }
+    })
 }
 
 function lineSegments(attrs) {
@@ -94,10 +93,7 @@ function lineSegments(attrs) {
 
 function pathSegments(d) {
   const points = pointsFromPath(d)
-  const segments = []
-  for (let i = 1; i < points.length; i += 1) {
-    segments.push({ start: points[i - 1], end: points[i] })
-  }
+  const segments = points.slice(1).map((_point, index) => ({ start: points[index], end: points[index + 1] }))
   return segments
 }
 
@@ -108,40 +104,32 @@ function isTwoPointDiagonal(arrow) {
 }
 
 function collectLegendBoxes(fragment) {
-  const boxes = []
-
-  for (const match of fragment.matchAll(/<rect\b[^>]*>/gi)) {
+  // Legend boxes are derived with flatMap: each rect/text tag contributes zero or one box.
+  const rectBoxes = [...fragment.matchAll(/<rect\b[^>]*>/gi)].flatMap((match) => {
     const attrs = parseAttrs(match[0])
     const x = numberAttr(attrs, 'x')
     const y = numberAttr(attrs, 'y')
     const width = numberAttr(attrs, 'width')
     const height = numberAttr(attrs, 'height')
-    if ([x, y, width, height].every(Number.isFinite)) {
-      boxes.push({ x1: x, y1: y, x2: x + width, y2: y + height, label: `rect@${x},${y}` })
-    }
-  }
-
-  for (const match of fragment.matchAll(/<text\b([^>]*)>([\s\S]*?)<\/text>/gi)) {
+    return [x, y, width, height].every(Number.isFinite)
+      ? [{ x1: x, y1: y, x2: x + width, y2: y + height, label: `rect@${x},${y}` }]
+      : []
+  })
+  const textBoxes = [...fragment.matchAll(/<text\b([^>]*)>([\s\S]*?)<\/text>/gi)].flatMap((match) => {
     const attrs = parseAttrs(match[1])
     const box = textBox(attrs, stripTags(match[2]).trim())
-    if (box) boxes.push(box)
-  }
-
-  return boxes
+    return box ? [box] : []
+  })
+  return [...rectBoxes, ...textBoxes]
 }
 
 function collectLegendCollisions(arrows, boxes) {
-  const collisions = []
-  for (const arrow of arrows) {
-    for (const segment of arrow.segments) {
-      for (const box of boxes) {
-        if (segmentIntersectsBox(segment, padBox(box, 2))) {
-          collisions.push({ arrow, box })
-        }
-      }
-    }
-  }
-  return collisions
+  // Collisions are derived with nested flatMaps: each arrow segment reports the boxes it hits.
+  return arrows.flatMap((arrow) =>
+    arrow.segments.flatMap((segment) =>
+      boxes.flatMap((box) => (segmentIntersectsBox(segment, padBox(box, 2)) ? [{ arrow, box }] : []))
+    )
+  )
 }
 
 function textBox(attrs, text) {
@@ -164,8 +152,7 @@ function textBox(attrs, text) {
 }
 
 function estimatedTextWidth(text, fontSize) {
-  let units = 0
-  for (const char of text) units += char.charCodeAt(0) > 255 ? 1.8 : 0.62
+  const units = [...text].reduce((total, char) => total + (char.charCodeAt(0) > 255 ? 1.8 : 0.62), 0)
   return Math.max(fontSize, units * fontSize)
 }
 
@@ -293,9 +280,7 @@ function padBox(box, padding) {
 }
 
 function parseAttrs(tag) {
-  const attrs = {}
-  for (const match of tag.matchAll(/([\w:-]+)\s*=\s*"([^"]*)"/g)) attrs[match[1]] = match[2]
-  return attrs
+  return Object.fromEntries([...tag.matchAll(/([\w:-]+)\s*=\s*"([^"]*)"/g)].map((match) => [match[1], match[2]]))
 }
 
 function numberAttr(attrs, name) {

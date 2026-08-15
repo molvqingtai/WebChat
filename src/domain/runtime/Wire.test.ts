@@ -42,7 +42,6 @@ const fixture = (
     peerIdOf: () => 'local-peer',
     join: (roomId) => join(roomId),
     leave: vi.fn(),
-    peers: () => [],
     send: (roomId, payload, to) => send(roomId, payload, to),
     onMessage: (callback) => {
       onMessage = callback
@@ -262,9 +261,9 @@ describe('WireDomain anti-corruption boundary', () => {
       accepted.push(sourcePeerId)
     )
 
-    for (let index = 0; index <= MAX_DECODE_QUEUE_FRAMES; index += 1) {
+    Array.from({ length: MAX_DECODE_QUEUE_FRAMES + 1 }, (_, i) => i).forEach((index) =>
       runtime.receive(ROOM, 'peer-a', `frame-${index}`)
-    }
+    )
     runtime.receive(ROOM, 'peer-b', JSON.stringify(message))
 
     await vi.waitFor(() => expect(accepted).toEqual(['peer-b']))
@@ -283,7 +282,7 @@ describe('WireDomain anti-corruption boundary', () => {
     runtime.store.subscribeEvent(runtime.wire.event.ProtocolDropEvent, ({ reason }) => drops.push(reason))
     const frame = 'x'.repeat(MAX_DECODE_QUEUE_BYTES / 4)
 
-    for (let index = 0; index < 4; index += 1) runtime.receive(ROOM, 'peer-a', frame)
+    Array.from({ length: 4 }, (_, i) => i).forEach((_index) => runtime.receive(ROOM, 'peer-a', frame))
     runtime.receive(ROOM, 'peer-a', 'x')
 
     await vi.waitFor(() => expect(drops).toContain('queue-overflow'))
@@ -422,15 +421,11 @@ describe('WireDomain anti-corruption boundary', () => {
       staleProvider.resolve()
       await staleProvider.promise
       await vi.waitFor(() => expect(sent).toContain('current-provider'))
-      if (transition === 'leave') {
-        expect(providerPayloads).toEqual([JSON.stringify(stale), JSON.stringify(current)])
-        expect(sent).not.toContain('stale-provider')
-        expect(failed).toEqual(['stale-provider'])
-      } else {
-        expect(providerPayloads).toEqual([JSON.stringify(stale), JSON.stringify(current)])
-        expect(sent).toEqual(['stale-provider', 'current-provider'])
-        expect(failed).toEqual([])
-      }
+      // The invoked head keeps exact ownership through every transition and settles only with the
+      // real transport.send() Promise; the replacement queue unblocks right after it.
+      expect(providerPayloads).toEqual([JSON.stringify(stale), JSON.stringify(current)])
+      expect(sent).toEqual(['stale-provider', 'current-provider'])
+      expect(failed).toEqual([])
     }
   )
 

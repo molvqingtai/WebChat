@@ -239,11 +239,8 @@ function createAvatarSvg() {
   data.leftPupilShiftX = left.upper[leftInd0][0] * leftLerp + left.lower[leftInd1][0] * (1 - leftLerp)
   data.rightPupilShiftX = right.upper[rightInd0][0] * rightLerp + right.lower[rightInd1][0] * (1 - rightLerp)
 
-  var numHairLines = []
   var numHairMethods = 4
-  for (var i = 0; i < numHairMethods; i++) {
-    numHairLines.push(Math.floor(randomFromInterval(0, 50)))
-  }
+  var numHairLines = Array.from({ length: numHairMethods }, () => Math.floor(randomFromInterval(0, 50)))
   data.hairs = []
   if (Math.random() > 0.3) {
     data.hairs = generateHairLines0(data.computedFacePoints, numHairLines[0] * 1 + 10)

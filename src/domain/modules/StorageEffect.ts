@@ -30,7 +30,7 @@ export default class StorageEffect {
     this.domain.effect({
       name: 'FormStorageToStateEffect',
       impl: () => {
-        return from(this.storage.get<T>(this.key)).pipe(map((value) => callback(value)))
+        return from(this.storage.get<T>(this.key)).pipe(map(callback))
       }
     })
     return this

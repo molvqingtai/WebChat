@@ -25,7 +25,7 @@ const ReadinessDomain = Remesh.domain({
       name: 'Readiness.OnStateEffect',
       impl: () =>
         fromEventPattern<ReadinessState>(
-          (handler) => readiness.onState((state) => handler(state)),
+          (handler) => readiness.onState(handler),
           (_handler, dispose) => dispose()
         ).pipe(map(SetStateCommand))
     })

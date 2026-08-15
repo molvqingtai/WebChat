@@ -41,13 +41,14 @@ const readLimited = async (stream: ReadableStream<Uint8Array>, limit: number): P
   } finally {
     reader.releaseLock()
   }
-  const result = new Uint8Array(byteLength)
-  let offset = 0
-  chunks.forEach((chunk) => {
-    result.set(chunk, offset)
-    offset += chunk.byteLength
-  })
-  return result
+  return chunks.reduce(
+    (acc, chunk) => {
+      acc.buffer.set(chunk, acc.offset)
+      acc.offset += chunk.byteLength
+      return acc
+    },
+    { buffer: new Uint8Array(byteLength), offset: 0 }
+  ).buffer
 }
 
 export const NativeWireCodec: WireCodec = {

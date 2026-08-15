@@ -175,10 +175,10 @@ describe('Runtime browser adapters', () => {
     const content = { url: 'https://example.com/' } as never
     const malformedMessages: unknown[] = [null, 'raw', 0, false, [], {}, { sender: { type: 'provider' } }]
 
-    for (const message of malformedMessages) {
+    malformedMessages.forEach((message) => {
       expect(() => listener(message, offscreen)).not.toThrow()
       expect(() => listener(message, content)).not.toThrow()
-    }
+    })
     listener(providerMessage('valid'), offscreen)
     listener(providerMessage('forged'), { url: 'chrome-extension://test-extension/options.html' } as never)
     listener(providerMessage('namespace', { namespace: 'UNKNOWN' }), offscreen)
@@ -301,10 +301,10 @@ describe('Runtime browser adapters', () => {
       listeners.forEach((listener) => listener(message, sender))
     }
 
-    for (const message of malformedMessages) {
+    malformedMessages.forEach((message) => {
       expect(() => dispatch(message, offscreen)).not.toThrow()
       expect(() => dispatch(message, content)).not.toThrow()
-    }
+    })
 
     expect(providerReceived).not.toHaveBeenCalled()
     expect(injectReceived).not.toHaveBeenCalled()

@@ -204,11 +204,7 @@ const canonicalContent = (record: MessageRecord): unknown =>
 const canonicalJson = (record: MessageRecord): string => JSON.stringify(canonicalContent(record))
 
 const hashString = (value: string): string => {
-  let hash = 2166136261
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index)
-    hash = Math.imul(hash, 16777619)
-  }
+  const hash = value.split('').reduce((acc, char) => Math.imul(acc ^ char.charCodeAt(0), 16777619), 2166136261)
   return (hash >>> 0).toString(16).padStart(8, '0')
 }
 
@@ -246,12 +242,15 @@ const retainInvalidRecordDiagnostics = async (
       const existing = await transaction.scan('conflicts')
       let total = existing.length
       const keys = new Set(existing.map(({ key }) => key))
-      const counts = new Map<string, number>()
-      for (const { value } of existing) {
-        if (typeof value !== 'object' || value === null) continue
+      const eventIds = existing.flatMap(({ value }) => {
+        if (typeof value !== 'object' || value === null) return []
         const eventId = (value as { eventId?: unknown }).eventId
-        if (typeof eventId === 'string') counts.set(eventId, (counts.get(eventId) ?? 0) + 1)
-      }
+        return typeof eventId === 'string' ? [eventId] : []
+      })
+      const counts = eventIds.reduce<Map<string, number>>((acc, eventId) => {
+        acc.set(eventId, (acc.get(eventId) ?? 0) + 1)
+        return acc
+      }, new Map())
       for (const { item, error } of invalidRecords) {
         signal?.throwIfAborted()
         if (total >= MAX_STORED_CONFLICTS) return
@@ -328,15 +327,17 @@ export const createMessageStore = (database: Database<MessageDatabaseSchema>): M
     const { type, signal } = validateMessageQuery(input)
     signal?.throwIfAborted()
     const items = await database.read(['records'], (transaction) => transaction.scan('records'), signal)
-    const records: MessageRecord[] = []
-    const invalidRecords: InvalidStoredRecord[] = []
-    for (const item of items) {
-      signal?.throwIfAborted()
-      const decoded = safeDecodeMessageRecord(item)
-      if (decoded.success) records.push(decoded.record)
-      else invalidRecords.push({ item, error: decoded.error })
-      signal?.throwIfAborted()
-    }
+    const { records, invalidRecords } = items.reduce(
+      (acc, item) => {
+        signal?.throwIfAborted()
+        const decoded = safeDecodeMessageRecord(item)
+        if (decoded.success) acc.records.push(decoded.record)
+        else acc.invalidRecords.push({ item, error: decoded.error })
+        signal?.throwIfAborted()
+        return acc
+      },
+      { records: [] as MessageRecord[], invalidRecords: [] as InvalidStoredRecord[] }
+    )
     if (invalidRecords.length > 0) {
       try {
         await retainInvalidRecordDiagnostics(database, invalidRecords, signal)

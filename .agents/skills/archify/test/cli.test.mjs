@@ -97,15 +97,13 @@ test('cli: examples renders from an installed skill', () => {
   })
 
   assert.equal(result.status, 0, result.stderr)
-  for (const output of [
+  ;[
     'workflow-agent-tool-call-rendered.html',
     'sequence-cache-miss-request.html',
     'dataflow-product-analytics.html',
     'lifecycle-agent-run.html',
     'web-app-rendered.html'
-  ]) {
-    assert.equal(fs.existsSync(path.join(installedRoot, 'examples', output)), true, output)
-  }
+  ].forEach((output) => assert.equal(fs.existsSync(path.join(installedRoot, 'examples', output)), true, output))
 })
 
 test('cli: demo creates a ready-to-open diagram in a chosen directory', () => {

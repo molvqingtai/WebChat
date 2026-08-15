@@ -57,14 +57,19 @@ function measureComponent(c) {
 }
 
 const components = new Map(asArray(arch.components).map((c) => [c.id, measureComponent(c)]))
-const componentSteps = new Map()
-for (const [index, conn] of asArray(arch.connections).entries()) {
-  if (!componentSteps.has(conn.from)) componentSteps.set(conn.from, index)
-  if (!componentSteps.has(conn.to)) componentSteps.set(conn.to, index + 1)
-}
-for (const [index, c] of asArray(arch.components).entries()) {
-  if (!componentSteps.has(c.id)) componentSteps.set(c.id, index)
-}
+// Component steps: connection-derived steps win, then remaining components fill by index —
+// a fresh, exclusive accumulator fold keeps each first-seen assignment in linear time.
+const componentSteps = asArray(arch.components).reduce(
+  (steps, c, index) => {
+    if (!steps.has(c.id)) steps.set(c.id, index)
+    return steps
+  },
+  asArray(arch.connections).reduce((steps, conn, index) => {
+    if (!steps.has(conn.from)) steps.set(conn.from, index)
+    if (!steps.has(conn.to)) steps.set(conn.to, index + 1)
+    return steps
+  }, new Map())
+)
 
 // ---- Boundaries computed from the `wraps` id list ---------------------------
 function boundaryRect(boundary) {
@@ -90,16 +95,10 @@ const boundaries = asArray(arch.boundaries).map(boundaryRect).filter(Boolean)
 
 // ---- Auto viewBox: fit all geometry + a legend row --------------------------
 function autoViewBox() {
-  let maxX = 0
-  let maxY = 0
-  for (const c of components.values()) {
-    maxX = Math.max(maxX, c.x + c.width)
-    maxY = Math.max(maxY, c.y + c.height)
-  }
-  for (const b of boundaries) {
-    maxX = Math.max(maxX, b.x + b.width)
-    maxY = Math.max(maxY, b.y + b.height)
-  }
+  const componentMaxX = [...components.values()].reduce((acc, c) => Math.max(acc, c.x + c.width), 0)
+  const componentMaxY = [...components.values()].reduce((acc, c) => Math.max(acc, c.y + c.height), 0)
+  const maxX = boundaries.reduce((acc, b) => Math.max(acc, b.x + b.width), componentMaxX)
+  const maxY = boundaries.reduce((acc, b) => Math.max(acc, b.y + b.height), componentMaxY)
   return [Math.ceil(maxX + layout.margin), Math.ceil(maxY + layout.margin + layout.legendH)]
 }
 
@@ -124,96 +123,108 @@ function validateArchitecture() {
   if (grid) {
     validateGridPlacement(arch, grid, problems)
   } else {
-    for (const c of asArray(arch.components)) {
-      if (!Array.isArray(c.pos) || c.pos.length !== 2) {
-        problems.push(`Component "${c.id}" must include pos [x, y] when layout.mode is omitted (free placement).`)
-      }
-    }
+    const posProblems = asArray(arch.components).flatMap((c) =>
+      !Array.isArray(c.pos) || c.pos.length !== 2
+        ? [`Component "${c.id}" must include pos [x, y] when layout.mode is omitted (free placement).`]
+        : []
+    )
+    problems.push(...posProblems)
   }
 
-  for (const c of components.values()) {
+  // Components that fail an earlier check skip the later checks: the fold returns as soon as a
+  // component is rejected, matching the skip-on-failure semantics without owner-style pushes.
+  const componentShapeProblems = [...components.values()].reduce((acc, c) => {
     if (!isFinitePoint(c.x, c.y, c.width, c.height)) {
-      problems.push(`Component "${c.id}" has non-finite pos/size — pos and size must be [number, number].`)
-      continue
+      acc.push(`Component "${c.id}" has non-finite pos/size — pos and size must be [number, number].`)
+      return acc
     }
     if (c.width <= 0 || c.height <= 0) {
-      problems.push(
-        `Component "${c.id}" has invalid size ${c.width}x${c.height} — width and height must be greater than 0.`
-      )
-      continue
+      acc.push(`Component "${c.id}" has invalid size ${c.width}x${c.height} — width and height must be greater than 0.`)
+      return acc
     }
     if (c.x < 0 || c.y < 0 || c.x + c.width > viewBox[0] || c.y + c.height > viewBox[1]) {
-      problems.push(
+      acc.push(
         `Component "${c.id}" falls outside the viewBox ${viewBox[0]}x${viewBox[1]} — adjust pos/size or set a larger meta.viewBox.`
       )
     }
     const estLabelW = textUnits(c.label) * 6.6
     if (estLabelW > c.width + 8) {
-      problems.push(
+      acc.push(
         `Label "${c.label}" (~${Math.round(estLabelW)}px) is wider than component "${c.id}" (${c.width}px) — shorten the label, move detail to sublabel, or widen size.`
       )
     }
-  }
+    return acc
+  }, [])
+  problems.push(...componentShapeProblems)
 
   // Component overlap — the highest-traffic hand-placement failure mode.
   const list = [...components.values()]
-  for (let i = 0; i < list.length; i += 1) {
-    for (let j = i + 1; j < list.length; j += 1) {
-      if (rectsOverlap(list[i], list[j], 8)) {
-        problems.push(
-          `Components "${list[i].id}" and "${list[j].id}" are less than 8px apart — move one or shrink its size.\n${suggestComponentSeparation(list[i], list[j], 8)}`
-        )
-      }
-    }
-  }
+  const componentPairProblems = list.flatMap((componentA, i) =>
+    list
+      .slice(i + 1)
+      .flatMap((componentB) =>
+        rectsOverlap(componentA, componentB, 8)
+          ? [
+              `Components "${componentA.id}" and "${componentB.id}" are less than 8px apart — move one or shrink its size.\n${suggestComponentSeparation(componentA, componentB, 8)}`
+            ]
+          : []
+      )
+  )
+  problems.push(...componentPairProblems)
 
   // Boundaries: every wrapped id must exist; the computed box must stay in view.
-  for (const boundary of asArray(arch.boundaries)) {
-    for (const id of asArray(boundary.wraps)) {
-      if (!components.has(id)) problems.push(`Boundary "${boundary.label}" wraps unknown component "${id}".`)
-    }
-  }
-  for (const b of boundaries) {
-    if (b.x < 0 || b.y < 0 || b.x + b.width > viewBox[0] || b.y + b.height > viewBox[1]) {
-      problems.push(
-        `Boundary "${b.label}" extends outside the viewBox — its members sit too close to the canvas edge; add margin or enlarge meta.viewBox.`
-      )
-    }
-  }
+  const boundaryMemberProblems = asArray(arch.boundaries).flatMap((boundary) =>
+    asArray(boundary.wraps).flatMap((id) =>
+      components.has(id) ? [] : [`Boundary "${boundary.label}" wraps unknown component "${id}".`]
+    )
+  )
+  problems.push(...boundaryMemberProblems)
+  const boundaryBoxProblems = boundaries.flatMap((b) =>
+    b.x < 0 || b.y < 0 || b.x + b.width > viewBox[0] || b.y + b.height > viewBox[1]
+      ? [
+          `Boundary "${b.label}" extends outside the viewBox — its members sit too close to the canvas edge; add margin or enlarge meta.viewBox.`
+        ]
+      : []
+  )
+  problems.push(...boundaryBoxProblems)
 
-  for (const conn of asArray(arch.connections)) {
+  const connectionProblems = asArray(arch.connections).flatMap((conn) => {
+    const local = []
     if (!components.has(conn.from))
-      problems.push(`Connection "${conn.label || conn.from}" references unknown source "${conn.from}".`)
+      local.push(`Connection "${conn.label || conn.from}" references unknown source "${conn.from}".`)
     if (!components.has(conn.to))
-      problems.push(`Connection "${conn.label || conn.to}" references unknown target "${conn.to}".`)
+      local.push(`Connection "${conn.label || conn.to}" references unknown target "${conn.to}".`)
     if (components.has(conn.from) && components.has(conn.to)) {
       const routed = pathFor(conn)
       const [start, end] = [routed.points[0], routed.points[routed.points.length - 1]]
       const distance = Math.hypot(end[0] - start[0], end[1] - start[1])
       if (distance < 24)
-        problems.push(
+        local.push(
           `Connection "${conn.label || `${conn.from}->${conn.to}`}" is too short (${Math.round(distance)}px; minimum 24px) — place its components farther apart.`
         )
     }
-  }
+    return local
+  })
+  problems.push(...connectionProblems)
 
   // Connection labels must not land on top of components.
-  const labelRects = []
-  for (const conn of asArray(arch.connections)) {
-    if (!conn.label || !components.has(conn.from) || !components.has(conn.to)) continue
-    const [lx, ly] = labelPoint(conn, pathFor(conn).points)
-    const w = Math.max(30, textUnits(conn.label) * 4.8 + 10)
-    labelRects.push({ label: conn.label, x: lx - w / 2, y: ly - 10, width: w, height: 14, lx, ly })
-  }
-  for (const rect of labelRects) {
-    for (const c of components.values()) {
-      if (rectsOverlap(rect, c, -2)) {
-        problems.push(
-          `Label "${rect.label}" overlaps component "${c.id}" — adjust labelDx/labelDy/labelSegment or set labelAt.\n${suggestLabelObstacleFix(rect, rect.lx, rect.ly, c)}`
-        )
-      }
-    }
-  }
+  const labelRects = asArray(arch.connections)
+    .filter((conn) => conn.label && components.has(conn.from) && components.has(conn.to))
+    .map((conn) => {
+      const [lx, ly] = labelPoint(conn, pathFor(conn).points)
+      const w = Math.max(30, textUnits(conn.label) * 4.8 + 10)
+      return { label: conn.label, x: lx - w / 2, y: ly - 10, width: w, height: 14, lx, ly }
+    })
+  const labelComponentProblems = labelRects.flatMap((rect) =>
+    [...components.values()].flatMap((c) =>
+      rectsOverlap(rect, c, -2)
+        ? [
+            `Label "${rect.label}" overlaps component "${c.id}" — adjust labelDx/labelDy/labelSegment or set labelAt.\n${suggestLabelObstacleFix(rect, rect.lx, rect.ly, c)}`
+          ]
+        : []
+    )
+  )
+  problems.push(...labelComponentProblems)
 
   if (problems.length) {
     throw new Error(`Architecture layout validation failed:\n- ${problems.join('\n- ')}`)
@@ -221,20 +232,20 @@ function validateArchitecture() {
 }
 
 function buildLayoutReport() {
-  const labels = []
-  for (const conn of asArray(arch.connections)) {
-    if (!conn.label || !components.has(conn.from) || !components.has(conn.to)) continue
-    const [lx, ly] = labelPoint(conn, pathFor(conn).points)
-    const w = Math.max(30, textUnits(conn.label) * 4.8 + 10)
-    labels.push({
-      text: conn.label,
-      x: Math.round(lx - w / 2),
-      y: Math.round(ly - 10),
-      width: Math.round(w),
-      height: 14,
-      labelAt: [Math.round(lx), Math.round(ly)]
+  const labels = asArray(arch.connections)
+    .filter((conn) => conn.label && components.has(conn.from) && components.has(conn.to))
+    .map((conn) => {
+      const [lx, ly] = labelPoint(conn, pathFor(conn).points)
+      const w = Math.max(30, textUnits(conn.label) * 4.8 + 10)
+      return {
+        text: conn.label,
+        x: Math.round(lx - w / 2),
+        y: Math.round(ly - 10),
+        width: Math.round(w),
+        height: 14,
+        labelAt: [Math.round(lx), Math.round(ly)]
+      }
     })
-  }
   return {
     ok: true,
     diagram_type: 'architecture',
@@ -286,17 +297,25 @@ function routeVia(conn, from, to, start, end) {
   }
 }
 
-const pathCache = new Map()
-function pathFor(conn) {
-  if (pathCache.has(conn)) return pathCache.get(conn)
+function computeRoute(conn) {
   const from = components.get(conn.from)
   const to = components.get(conn.to)
   const start = anchor(from, chosenSide(conn.fromSide, defaultFromSide(from, to)))
   const end = anchor(to, chosenSide(conn.toSide, defaultToSide(from, to)))
   const points = [start, ...routeVia(conn, from, to, start, end), end]
-  const routed = { d: roundedPath(points, 8), points }
-  pathCache.set(conn, routed)
-  return routed
+  return { d: roundedPath(points, 8), points }
+}
+
+// Routes are precomputed once as a fresh result map over the items whose endpoints exist —
+// the same set the lazy cache would have computed — and every lookup is a pure read.
+const routes = new Map(
+  asArray(arch.connections)
+    .filter((conn) => components.has(conn.from) && components.has(conn.to))
+    .map((conn) => [conn, computeRoute(conn)])
+)
+
+function pathFor(conn) {
+  return routes.get(conn)
 }
 
 // ---- Rendering ---------------------------------------------------------------
@@ -351,24 +370,34 @@ const TYPE_LABELS = {
   external: 'External'
 }
 function renderLegend() {
-  const used = []
-  const seen = new Set()
-  for (const c of components.values()) {
-    if (!seen.has(c.type)) {
-      seen.add(c.type)
-      used.push(c.type)
-    }
-  }
+  const used = [...components.values()].reduce(
+    (acc, c) => {
+      if (!acc.seen.has(c.type)) {
+        acc.seen.add(c.type)
+        acc.used.push(c.type)
+      }
+      return acc
+    },
+    { seen: new Set(), used: [] }
+  ).used
   const y = legendY()
-  let x = layout.margin
-  const parts = [`        <text x="${x}" y="${y - 13}" class="t-primary" font-size="9" font-weight="600">Legend</text>`]
-  for (const type of used) {
-    parts.push(
-      `        <rect x="${x}" y="${y - 8}" width="14" height="9" rx="2" class="${componentFill[type] || 'c-external'}" stroke-width="1"/>`
-    )
-    parts.push(`        <text x="${x + 20}" y="${y}" class="t-muted" font-size="8">${TYPE_LABELS[type] || type}</text>`)
-    x += 30 + (textUnits(TYPE_LABELS[type] || type) * 5 + 28)
-  }
+  // The running x advance depends on each prior entry, so the legend is a non-mutating fold
+  // over the used types: each step returns the next parts array plus the next x position.
+  const { parts } = used.reduce(
+    (acc, type) => {
+      const rect = `        <rect x="${acc.x}" y="${y - 8}" width="14" height="9" rx="2" class="${componentFill[type] || 'c-external'}" stroke-width="1"/>`
+      const text = `        <text x="${acc.x + 20}" y="${y}" class="t-muted" font-size="8">${TYPE_LABELS[type] || type}</text>`
+      acc.parts.push(rect, text)
+      acc.x += 30 + (textUnits(TYPE_LABELS[type] || type) * 5 + 28)
+      return acc
+    },
+    {
+      parts: [
+        `        <text x="${layout.margin}" y="${y - 13}" class="t-primary" font-size="9" font-weight="600">Legend</text>`
+      ],
+      x: layout.margin
+    }
+  )
   return parts.join('\n')
 }
 

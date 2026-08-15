@@ -154,71 +154,77 @@ function validateWorkflow() {
     problems.push('Group ids must be unique.')
   }
 
-  for (const node of nodes.values()) {
+  const nodeProblems = [...nodes.values()].reduce((acc, node) => {
     if (!laneIds.has(node.lane)) {
-      problems.push(`Node "${node.id}" uses unknown lane "${node.lane}".`)
-      continue
+      acc.push(`Node "${node.id}" uses unknown lane "${node.lane}".`)
+      return acc
     }
     if (!Number.isInteger(node.col) || node.col < 0 || node.col >= layout.colXs.length) {
-      problems.push(
+      acc.push(
         `Node "${node.id}" uses column ${node.col}, but valid columns are integers 0..${layout.colXs.length - 1}.`
       )
-      continue
+      return acc
     }
     if (!isFinitePoint(node.x, node.y, node.cx, node.cy)) {
-      problems.push(
-        `Node "${node.id}" produced non-finite coordinates — check col, width, height, and yOffset are numbers.`
-      )
-      continue
+      acc.push(`Node "${node.id}" produced non-finite coordinates — check col, width, height, and yOffset are numbers.`)
+      return acc
     }
+    const local = []
     const estLabelW = textUnits(node.label) * 6.8
     if (estLabelW > node.width + 6) {
-      problems.push(
+      local.push(
         `Label "${node.label}" (~${Math.round(estLabelW)}px) is wider than node "${node.id}" (${node.width}px) — shorten the label, move detail to sublabel, or increase node.width.`
       )
     }
-
     const top = laneTop(node.lane)
     const contentTop = top + layout.laneTitleH
     const laneRight = layout.laneX + layout.laneW
     if (node.x < layout.laneX || node.x + node.width > laneRight) {
-      problems.push(`Node "${node.id}" exceeds the horizontal bounds of lane "${node.lane}".`)
+      local.push(`Node "${node.id}" exceeds the horizontal bounds of lane "${node.lane}".`)
     }
     if (node.y < contentTop || node.y + node.height > top + layout.laneH) {
-      problems.push(`Node "${node.id}" collides with the title or boundary of lane "${node.lane}".`)
+      local.push(`Node "${node.id}" collides with the title or boundary of lane "${node.lane}".`)
     }
-  }
+    acc.push(...local)
+    return acc
+  }, [])
+  problems.push(...nodeProblems)
 
-  for (const phase of asArray(workflow.phases)) {
+  const phaseProblems = asArray(workflow.phases).reduce((acc, phase) => {
     if (!Number.isInteger(phase.fromCol) || !Number.isInteger(phase.toCol)) {
-      problems.push(`Phase "${phase.id}" must use integer fromCol/toCol values.`)
-      continue
+      acc.push(`Phase "${phase.id}" must use integer fromCol/toCol values.`)
+      return acc
     }
+    const local = []
     if (phase.fromCol < 0 || phase.toCol >= layout.colXs.length || phase.fromCol > phase.toCol) {
-      problems.push(
+      local.push(
         `Phase "${phase.id}" uses invalid columns ${phase.fromCol}..${phase.toCol}; use an ordered range within 0..${layout.colXs.length - 1}.`
       )
     }
     const estLabelW = textUnits(phase.label) * 5.6
     const width = spanForCols(phase.fromCol, phase.toCol).width
     if (estLabelW > width + 8) {
-      problems.push(
+      local.push(
         `Phase label "${phase.label}" (~${Math.round(estLabelW)}px) is wider than its ${Math.round(width)}px span — shorten the label or widen the phase range.`
       )
     }
-  }
+    acc.push(...local)
+    return acc
+  }, [])
+  problems.push(...phaseProblems)
 
-  for (const group of asArray(workflow.groups)) {
+  const groupProblems = asArray(workflow.groups).reduce((acc, group) => {
     if (!laneIds.has(group.lane)) {
-      problems.push(`Group "${group.id}" uses unknown lane "${group.lane}".`)
-      continue
+      acc.push(`Group "${group.id}" uses unknown lane "${group.lane}".`)
+      return acc
     }
     if (!Number.isInteger(group.fromCol) || !Number.isInteger(group.toCol)) {
-      problems.push(`Group "${group.id}" must use integer fromCol/toCol values.`)
-      continue
+      acc.push(`Group "${group.id}" must use integer fromCol/toCol values.`)
+      return acc
     }
+    const local = []
     if (group.fromCol < 0 || group.toCol >= layout.colXs.length || group.fromCol > group.toCol) {
-      problems.push(
+      local.push(
         `Group "${group.id}" uses invalid columns ${group.fromCol}..${group.toCol}; use an ordered range within 0..${layout.colXs.length - 1}.`
       )
     }
@@ -226,109 +232,132 @@ function validateWorkflow() {
       (node) => node.lane === group.lane && node.col >= group.fromCol && node.col <= group.toCol
     )
     if (!contained) {
-      problems.push(
+      local.push(
         `Group "${group.id}" does not contain any nodes — align its lane/columns with the parallel or branch work it frames.`
       )
     }
-  }
+    acc.push(...local)
+    return acc
+  }, [])
+  problems.push(...groupProblems)
 
-  const byLane = new Map()
-  for (const node of nodes.values()) {
-    byLane.set(node.lane, [...(byLane.get(node.lane) || []), node])
-  }
-  for (const [lane, laneNodes] of byLane) {
-    for (let i = 0; i < laneNodes.length; i += 1) {
-      for (let j = i + 1; j < laneNodes.length; j += 1) {
-        if (rectsOverlap(laneNodes[i], laneNodes[j], 8)) {
-          problems.push(
-            `Nodes "${laneNodes[i].id}" and "${laneNodes[j].id}" are less than 8px apart in lane "${lane}" — move one to another col, adjust yOffset, or reduce width/height.`
-          )
-        }
-      }
-    }
-  }
+  // Nodes are grouped per lane into a fresh, exclusively owned Map, then pairs within each
+  // lane are checked with nested flatMaps — the fold mutates only its own accumulator.
+  const byLane = [...nodes.values()].reduce((acc, node) => {
+    const lane = acc.get(node.lane)
+    if (lane) lane.push(node)
+    else acc.set(node.lane, [node])
+    return acc
+  }, new Map())
+  const lanePairProblems = [...byLane.entries()].flatMap(([lane, laneNodes]) =>
+    laneNodes.flatMap((nodeA, i) =>
+      laneNodes
+        .slice(i + 1)
+        .flatMap((nodeB) =>
+          rectsOverlap(nodeA, nodeB, 8)
+            ? [
+                `Nodes "${nodeA.id}" and "${nodeB.id}" are less than 8px apart in lane "${lane}" — move one to another col, adjust yOffset, or reduce width/height.`
+              ]
+            : []
+        )
+    )
+  )
+  problems.push(...lanePairProblems)
 
-  for (const edge of workflow.edges) {
-    if (!nodes.has(edge.from))
-      problems.push(`Edge "${edge.label || edge.from}" references unknown source "${edge.from}".`)
-    if (!nodes.has(edge.to)) problems.push(`Edge "${edge.label || edge.to}" references unknown target "${edge.to}".`)
+  const edgeProblems = workflow.edges.flatMap((edge) => {
+    const local = []
+    if (!nodes.has(edge.from)) local.push(`Edge "${edge.label || edge.from}" references unknown source "${edge.from}".`)
+    if (!nodes.has(edge.to)) local.push(`Edge "${edge.label || edge.to}" references unknown target "${edge.to}".`)
     if (nodes.has(edge.from) && nodes.has(edge.to)) {
       const routed = pathFor(edge)
       if (routed.points.length === 2) {
         const [start, end] = routed.points
         const segmentLength = Math.hypot(end[0] - start[0], end[1] - start[1])
         if (segmentLength < 28) {
-          problems.push(
+          local.push(
             `Edge "${edge.from}" -> "${edge.to}" is too short (${Math.round(segmentLength)}px; minimum 28px) — drop its label or route it through a channel.`
           )
         }
       }
-      const segments = []
-      for (let i = 1; i < routed.points.length; i += 1) {
-        segments.push({ start: routed.points[i - 1], end: routed.points[i] })
-      }
-      for (const node of nodes.values()) {
-        if (node.id === edge.from || node.id === edge.to) continue
-        if (segments.some((segment) => segmentIntersectsRect(segment, node, 2))) {
-          problems.push(
-            `Edge "${edge.from}" -> "${edge.to}" crosses node "${node.id}" — adjust fromSide/toSide, route it through a channel, or move one node to a clearer lane/column.`
-          )
-        }
-      }
+      const segments = routed.points.slice(1).map((_point, index) => ({
+        start: routed.points[index],
+        end: routed.points[index + 1]
+      }))
+      const crossingProblems = [...nodes.values()].flatMap((node) =>
+        node.id === edge.from || node.id === edge.to
+          ? []
+          : segments.some((segment) => segmentIntersectsRect(segment, node, 2))
+            ? [
+                `Edge "${edge.from}" -> "${edge.to}" crosses node "${node.id}" — adjust fromSide/toSide, route it through a channel, or move one node to a clearer lane/column.`
+              ]
+            : []
+      )
+      local.push(...crossingProblems)
     }
-  }
+    return local
+  })
+  problems.push(...edgeProblems)
 
   if (Array.isArray(workflow.mainPath)) {
-    for (const id of workflow.mainPath) {
-      if (!nodes.has(id)) {
-        problems.push(`mainPath references unknown node "${id}".`)
-      }
-    }
-    for (let i = 0; i < workflow.mainPath.length - 1; i += 1) {
-      const fromId = workflow.mainPath[i]
-      const toId = workflow.mainPath[i + 1]
-      const from = nodes.get(fromId)
-      const to = nodes.get(toId)
-      if (!from || !to) continue
-      const linked = workflow.edges.some((edge) => edge.from === fromId && edge.to === toId)
-      if (!linked) {
-        problems.push(
-          `mainPath step "${fromId}" -> "${toId}" has no matching edge — add the edge or remove the pair from mainPath.`
-        )
-      }
-      if (to.col < from.col) {
-        problems.push(
-          `mainPath step "${fromId}" -> "${toId}" moves backward from col ${from.col} to ${to.col} — use a return edge outside mainPath for loops.`
-        )
-      }
-    }
+    const unknownStepProblems = workflow.mainPath.flatMap((id) =>
+      nodes.has(id) ? [] : [`mainPath references unknown node "${id}".`]
+    )
+    problems.push(...unknownStepProblems)
+    // Adjacent mainPath steps are paired with a pure zip and validated as a fold: each pair
+    // contributes its own problems without mutating the shared list.
+    const stepPairProblems = workflow.mainPath
+      .slice(0, -1)
+      .map((fromId, i) => [fromId, workflow.mainPath[i + 1]])
+      .flatMap(([fromId, toId]) => {
+        const from = nodes.get(fromId)
+        const to = nodes.get(toId)
+        if (!from || !to) return []
+        const local = []
+        const linked = workflow.edges.some((edge) => edge.from === fromId && edge.to === toId)
+        if (!linked) {
+          local.push(
+            `mainPath step "${fromId}" -> "${toId}" has no matching edge — add the edge or remove the pair from mainPath.`
+          )
+        }
+        if (to.col < from.col) {
+          local.push(
+            `mainPath step "${fromId}" -> "${toId}" moves backward from col ${from.col} to ${to.col} — use a return edge outside mainPath for loops.`
+          )
+        }
+        return local
+      })
+    problems.push(...stepPairProblems)
   }
 
-  const labelRects = []
-  for (const edge of workflow.edges) {
-    if (!edge.label || !nodes.has(edge.from) || !nodes.has(edge.to)) continue
-    const [lx, ly] = labelPoint(edge, pathFor(edge).points)
-    const width = Math.max(30, textUnits(edge.label) * 4.8 + 10)
-    labelRects.push({ label: edge.label, x: lx - width / 2, y: ly - 10, width, height: 14, lx, ly })
-  }
-  for (const rect of labelRects) {
-    for (const node of nodes.values()) {
-      if (rectsOverlap(rect, node, -2)) {
-        problems.push(
-          `Label "${rect.label}" overlaps node "${node.id}" — adjust labelDx/labelDy/labelSegment or set labelAt.\n${suggestLabelObstacleFix(rect, rect.lx, rect.ly, node, 'node')}`
-        )
-      }
-    }
-  }
-  for (let i = 0; i < labelRects.length; i += 1) {
-    for (let j = i + 1; j < labelRects.length; j += 1) {
-      if (rectsOverlap(labelRects[i], labelRects[j], -2)) {
-        problems.push(
-          `Labels "${labelRects[i].label}" and "${labelRects[j].label}" overlap — adjust labelDx/labelDy or remove one label.\n${suggestLabelPairFix(labelRects[i], labelRects[j])}`
-        )
-      }
-    }
-  }
+  const labelRects = workflow.edges
+    .filter((edge) => edge.label && nodes.has(edge.from) && nodes.has(edge.to))
+    .map((edge) => {
+      const [lx, ly] = labelPoint(edge, pathFor(edge).points)
+      const width = Math.max(30, textUnits(edge.label) * 4.8 + 10)
+      return { label: edge.label, x: lx - width / 2, y: ly - 10, width, height: 14, lx, ly }
+    })
+  const labelNodeProblems = labelRects.flatMap((rect) =>
+    [...nodes.values()].flatMap((node) =>
+      rectsOverlap(rect, node, -2)
+        ? [
+            `Label "${rect.label}" overlaps node "${node.id}" — adjust labelDx/labelDy/labelSegment or set labelAt.\n${suggestLabelObstacleFix(rect, rect.lx, rect.ly, node, 'node')}`
+          ]
+        : []
+    )
+  )
+  problems.push(...labelNodeProblems)
+  const labelPairProblems = labelRects.flatMap((rectA, i) =>
+    labelRects
+      .slice(i + 1)
+      .flatMap((rectB) =>
+        rectsOverlap(rectA, rectB, -2)
+          ? [
+              `Labels "${rectA.label}" and "${rectB.label}" overlap — adjust labelDx/labelDy or remove one label.\n${suggestLabelPairFix(rectA, rectB)}`
+            ]
+          : []
+      )
+  )
+  problems.push(...labelPairProblems)
 
   if (viewBox[0] < layout.laneX + layout.laneW + 16) {
     problems.push(
@@ -417,18 +446,23 @@ function routeVia(edge, from, to, start, end) {
   }
 }
 
-const pathCache = new Map()
-
-function pathFor(edge) {
-  if (pathCache.has(edge)) return pathCache.get(edge)
+function computeRoute(edge) {
   const from = nodes.get(edge.from)
   const to = nodes.get(edge.to)
   const start = anchor(from, chosenSide(edge.fromSide, defaultFromSide(from, to)))
   const end = anchor(to, chosenSide(edge.toSide, defaultToSide(from, to)))
   const points = [start, ...routeVia(edge, from, to, start, end), end]
-  const routed = { d: polylinePath(points), points }
-  pathCache.set(edge, routed)
-  return routed
+  return { d: polylinePath(points), points }
+}
+
+// Routes are precomputed once as a fresh result map over the items whose endpoints exist —
+// the same set the lazy cache would have computed — and every lookup is a pure read.
+const routes = new Map(
+  workflow.edges.filter((edge) => nodes.has(edge.from) && nodes.has(edge.to)).map((edge) => [edge, computeRoute(edge)])
+)
+
+function pathFor(edge) {
+  return routes.get(edge)
 }
 
 function renderLane(lane, index) {
