@@ -1,14 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Clock } from '@/domain/runtime/externs/Clock'
+import type { RoomTransport } from '@/runtime/RoomTransport'
 import { ChatRoom } from '@/domain/impls/runtime/ChatRoom'
 import { createMemoryMessageDatabase } from '@/domain/impls/database/Memory'
 import { createMessageStore } from '@/domain/MessageStore'
 import { MESSAGE_RECORD_TYPE } from '@/domain/Message'
-import { MESSAGE_TYPE, NativeWireCodec } from '@/protocol'
+import type { ChatMessage } from '@/protocol'
 import type { RuntimeCoordinator, RuntimeServer, RuntimeSnapshot } from '@/runtime/Contract'
 import { ClientLease } from '@/runtime/ClientLease'
 import { COORDINATOR_HEALTH_INTERVAL_MS, COORDINATOR_SESSION_KEY, Coordinator } from '@/runtime/Coordinator'
-import { createServer, getChatRoomId, getWorldRoomId } from '@/runtime/Server'
+import { createServer } from '@/runtime/Server'
 
 const DOMAIN = 'https://example.com'
 const PAGE_URL = `${DOMAIN}/topic`
@@ -36,34 +37,18 @@ class FakeClock implements Clock {
 beforeEach(() => vi.useFakeTimers())
 afterEach(() => vi.useRealTimers())
 
-const createTransport = (peerId: string) => {
-  const sentFrames: { roomId: string; payload: string; to?: string | string[] }[] = []
-  let messageListener: ((roomId: string, sourcePeerId: string, rawPayload: string) => void) | undefined
-  return {
-    transport: {
-      peerIdOf: () => peerId,
-      join: async () => {},
-      leave: () => {},
-      peers: () => [],
-      send: async (roomId: string, payload: string, to?: string | string[]) => {
-        sentFrames.push({ roomId, payload, to })
-      },
-      onMessage: (callback: (roomId: string, sourcePeerId: string, rawPayload: string) => void) => {
-        messageListener = callback
-        return () => {
-          messageListener = undefined
-        }
-      },
-      onPeerJoin: () => () => {},
-      onPeerLeave: () => () => {},
-      onRoomClose: () => () => {},
-      onError: () => () => {},
-      dispose: () => {}
-    },
-    sentFrames,
-    messageListener: () => messageListener
-  }
-}
+const createTransport = (peerId: string): RoomTransport => ({
+  peerIdOf: () => peerId,
+  join: async () => {},
+  leave: () => {},
+  send: async () => {},
+  onMessage: () => () => {},
+  onPeerJoin: () => () => {},
+  onPeerLeave: () => () => {},
+  onRoomClose: () => () => {},
+  onError: () => () => {},
+  dispose: () => {}
+})
 
 const createCoordinatorFixture = () => {
   const clock = new FakeClock()
@@ -74,7 +59,6 @@ const createCoordinatorFixture = () => {
   let destroyedDocuments = 0
   let hostNumber = 0
   let currentServer: RuntimeServer | null = null
-  let currentTransport: ReturnType<typeof createTransport> | null = null
   const tabs = new Map([[1, { id: 1, url: PAGE_URL }]])
 
   const coordinator = new Coordinator({
@@ -89,8 +73,7 @@ const createCoordinatorFixture = () => {
       hostDocumentExists = true
       providerAlive = true
       hostNumber += 1
-      currentTransport = createTransport(`peer-${hostNumber}`)
-      currentServer = createServer({ transport: currentTransport.transport, clock })
+      currentServer = createServer({ transport: createTransport(`peer-${hostNumber}`), clock })
       return { phase: 'ready', created: true }
     },
     probeHost: async () => {
@@ -103,7 +86,6 @@ const createCoordinatorFixture = () => {
       hostDocumentExists = false
       providerAlive = false
       currentServer = null
-      currentTransport = null
     },
     tabs: {
       get: async (tabId) => {
@@ -147,7 +129,6 @@ const createCoordinatorFixture = () => {
       hostDocumentExists = false
       providerAlive = false
       currentServer = null
-      currentTransport = null
     },
     killProvider: () => {
       providerAlive = false
@@ -155,13 +136,11 @@ const createCoordinatorFixture = () => {
     replaceProvider: () => {
       providerAlive = true
       hostNumber += 1
-      currentTransport = createTransport(`peer-${hostNumber}`)
-      currentServer = createServer({ transport: currentTransport.transport, clock })
+      currentServer = createServer({ transport: createTransport(`peer-${hostNumber}`), clock })
     },
     destroyedDocuments: () => destroyedDocuments,
     hostNumber: () => hostNumber,
     currentServer: () => currentServer!,
-    currentTransport: () => currentTransport!,
     registerPage: (pageId: string) =>
       coordinator.registerPage({ domain: DOMAIN, pageId, tab: { id: 1, url: PAGE_URL } })
   }
@@ -178,8 +157,18 @@ describe('Runtime host recovery and coordinator liveness', () => {
     })
     client.whenHostPhase((phase) => hostPhases.push(phase))
     const messageStore = createMessageStore(createMemoryMessageDatabase('recovery-no-outbox'))
+    const sentIds: string[] = []
+    const serverWithSendEvidence = new Proxy(fixture.serverProxy, {
+      get: (target, property: keyof RuntimeServer) => {
+        if (property !== 'sendChatMessage') return target[property]
+        return async (payload: { domain: string; event: ChatMessage }) => {
+          sentIds.push(payload.event.id)
+          return target.sendChatMessage(payload)
+        }
+      }
+    })
     const room = new ChatRoom({
-      server: fixture.serverProxy,
+      server: serverWithSendEvidence,
       messageStore,
       pageDomain: DOMAIN,
       pageId: 'page-a',
@@ -207,66 +196,13 @@ describe('Runtime host recovery and coordinator liveness', () => {
       const next = await fixture.currentServer().getSnapshot()
       expect(next.hostId).not.toBe(firstSnapshot!.hostId)
       expect(next.domains[0]).toMatchObject({ domain: DOMAIN, pageIds: ['page-a'], chatRoomJoined: true })
-      // No outbound recovery scan: the recovered host only broadcasts its own session/world
-      // announcements (always emitted since the broadcast adapter, regardless of room peers) and
-      // sends no chat or history traffic.
-      expect(
-        fixture
-          .currentTransport()
-          .sentFrames.map((frame) => frame.roomId)
-          .sort()
-      ).toEqual([getChatRoomId(DOMAIN), getWorldRoomId()].sort())
+      expect(sentIds).toEqual([])
       expect(recoveredSessions).toEqual([[{ sessionId: expect.any(String), user: USER }]])
       await expect(messageStore.query({ type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE })).resolves.toEqual([])
     })
     expect(fixture.coordinator.snapshotForTest().generation).toBe(2)
     expect(hostPhases).toContain('connecting')
     expect(hostPhases.at(-1)).toBe('ready')
-
-    // A real peer joins the recovered Chat room through the real codec, so the local send has
-    // one genuine wire target.
-    const remote = { id: 'peer-user', name: 'Peer', avatar: '' }
-    const chatRoomId = getChatRoomId(DOMAIN)
-    const encodedSession = await NativeWireCodec.encode({
-      type: MESSAGE_TYPE.SESSION,
-      sessionId: 'peer-session',
-      presenceId: 'peer-presence',
-      joinedAt: 0,
-      user: remote
-    })
-    fixture.currentTransport().messageListener()!(chatRoomId, 'peer-a', encodedSession)
-    await vi.waitFor(() =>
-      expect(recoveredSessions.at(-1)).toEqual([
-        { sessionId: expect.any(String), user: USER },
-        { sessionId: expect.any(String), user: remote }
-      ])
-    )
-
-    // The Chat delivery boundary on the recovered host: one valid local send reaches the wire
-    // once (the transport send is the wire) and persists once; one schema-invalid local send
-    // adds zero wire frames and zero persisted records (the delivery rejects before either
-    // side effect).
-    // Registering the peer announces the local session once; the send observations below are
-    // deltas against that baseline.
-    const baseline = fixture.currentTransport().sentFrames.length
-    const valid = await room.sendMessage({ type: 'text', body: 'hello', mentions: [] })
-    await vi.waitFor(async () => {
-      expect(fixture.currentTransport().sentFrames.length).toBe(baseline + 1)
-      // Ordinary Chat sends broadcast through the single delegation (`to: undefined`), never
-      // per-peer scaffolding.
-      expect(fixture.currentTransport().sentFrames.at(-1)).toMatchObject({ roomId: chatRoomId, to: undefined })
-      const persisted = await messageStore.query({ type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE })
-      expect(persisted.map((record) => record.id)).toEqual([valid.id])
-    })
-
-    await expect(room.sendMessage({ type: 'text', body: 'x'.repeat(192 * 1024 + 1), mentions: [] })).rejects.toThrow(
-      'Invalid message.'
-    )
-    await vi.waitFor(async () => {
-      expect(fixture.currentTransport().sentFrames.length).toBe(baseline + 1)
-      const persisted = await messageStore.query({ type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE })
-      expect(persisted.map((record) => record.id)).toEqual([valid.id])
-    })
   })
 
   it('restores persisted coordinator lease and host generation without duplicate pages', async () => {

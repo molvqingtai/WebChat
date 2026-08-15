@@ -44,7 +44,7 @@ Records arriving after either snapshot are not spliced into that snapshot. Live 
 
 ### 4. Shared frame and page bounds constrain each transfer
 
-Public encoding uses the strict 256KiB frame ceiling and 100-message response-page ceiling. History has no cumulative entry or canonical-content budget across the fixed snapshot. Every non-final page contains at least one entry; only a phase's sole page may be the explicit empty `page: 0, done: true` representation. The fixed 180-day snapshot continues across bounded pages until exhaustion and `done`, disconnection, cancellation, error, or the fixed 10-second operational timeout.
+Public encoding uses the strict 256KiB frame ceiling and 100-message response-page ceiling. History has no cumulative entry or canonical-content budget across the fixed snapshot. Every non-final page contains at least one entry; only a phase's sole page may be the explicit empty `page: 0, done: true` representation. The fixed 30-day snapshot continues across bounded pages until exhaustion and `done`, disconnection, cancellation, error, or the fixed 10-second operational timeout.
 
 Individual `messageIds` remain opaque strings with no NanoID regex or standalone string ceiling. Their containing frame is the resource boundary. Duplicate IDs remain harmless set input and still consume space in their page.
 
@@ -80,7 +80,7 @@ Old cursor/full-window fixtures and tests are deleted. No test may retain an old
 
 ## Risks / Trade-offs
 
-- [The first missing body waits for the complete inventory] -> Inventory pages remain frame-bounded and cover one fixed 180-day snapshot; exact filtering avoids retransmitting structurally high overlap.
+- [The first missing body waits for the complete inventory] -> Inventory pages remain frame-bounded and cover one fixed 30-day snapshot; exact filtering avoids retransmitting structurally high overlap.
 - [Provider pages can outrun remote processing without peer ACK] -> Local sends remain bounded and serial; remote gap/overflow terminates this connection's synchronization, while a later independent connection computes from then-current persisted IDs.
 - [Live or another page inserts after the requester snapshot] -> Atomic `insert-if-absent` remains the final truth; all-existing pages stay silent and do not repeat feedback.
 - [Several peer syncs overlap] -> Each complete attempt identity owns its own Toast and terminal dismissal; source/generation checks make old completion inert.

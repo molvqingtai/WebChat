@@ -33,7 +33,7 @@ History Pull and Push pages use the common `MAX_WIRE_BYTES = 256KiB`, and Push p
 
 One complete History synchronization has no session-wide cumulative message-count or canonical-content-byte limit. It also has no aggregate object or page guard.
 
-The fixed 180-day snapshots and bounded pages continue until data exhaustion and `done`. Disconnect, cancellation, source replacement, invalid input, supplier or insertion failure, and the fixed 10-second operational timeout are terminal. The timeout uses its established arm points and identity fencing; accepted progress does not re-arm or replace it. The 512-record/`8MiB` volatile inbound buffer is an independent instantaneous delivery bound rather than a History-session total.
+The fixed 30-day snapshots and bounded pages continue until data exhaustion and `done`. Disconnect, cancellation, source replacement, invalid input, supplier or insertion failure, and the fixed 10-second operational timeout are terminal. The timeout uses its established arm points and identity fencing; accepted progress does not re-arm or replace it. The 512-record/`8MiB` volatile inbound buffer is an independent instantaneous delivery bound rather than a History-session total.
 
 ### 4. Synchronize existing evidence mechanically
 
