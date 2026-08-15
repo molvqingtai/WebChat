@@ -226,7 +226,7 @@ const createContentStore = () => {
     // no fixed duration). The owner id guarantees one sync never dismisses another or an unrelated Toast.
     ChatRoomImpl.epochSource.onHistoryFeedback((event) => {
       store.send(
-        event.kind === 'loading'
+        event.type === 'loading'
           ? store
               .getDomain(ToastDomain())
               .command.LoadingCommand({ id: event.ownerId, message: 'Syncing message history...' })

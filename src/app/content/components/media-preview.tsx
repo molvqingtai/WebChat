@@ -88,7 +88,7 @@ type TransitionIntent = 'close' | 'replace' | null
 
 interface ActivePreviewTransition {
   generation: number
-  kind: 'opening' | 'closing'
+  phase: 'opening' | 'closing'
   transition: ViewTransition
   intent: TransitionIntent
 }
@@ -288,7 +288,7 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
           transferTransitionIdentity(requestId, closing.transitionElement)
           applyClose(true)
         })
-        active = { generation: requestId, kind: 'closing', transition, intent: null }
+        active = { generation: requestId, phase: 'closing', transition, intent: null }
         activeTransitionRef.current = active
         void transition.ready.catch(finish)
         void transition.updateCallbackDone.catch(finish)
@@ -304,7 +304,7 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
     const closing = selectedPreviewRef.current
     if (!closing || phaseRef.current === 'closing' || phaseRef.current === 'opening-close-pending') return
     const active = activeTransitionRef.current
-    if (phaseRef.current === 'opening' && active?.kind === 'opening' && active.generation === closing.requestId) {
+    if (phaseRef.current === 'opening' && active?.phase === 'opening' && active.generation === closing.requestId) {
       if (active.intent === 'close') return
       active.intent = 'close'
       phaseRef.current = 'opening-close-pending'
@@ -397,7 +397,7 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
           if (image) transferTransitionIdentity(requestId, image)
           else releaseTransitionIdentity(requestId)
         })
-        active = { generation: requestId, kind: 'opening', transition, intent: null }
+        active = { generation: requestId, phase: 'opening', transition, intent: null }
         activeTransitionRef.current = active
         void transition.ready.catch(finish)
         void transition.updateCallbackDone.catch(finish)
@@ -419,7 +419,7 @@ const MediaPreview = forwardRef<MediaPreviewHandle, { shellOpen: boolean }>(({ s
       }
       if (current) {
         const active = activeTransitionRef.current
-        if (active?.kind === 'opening' && active.generation === current.requestId) {
+        if (active?.phase === 'opening' && active.generation === current.requestId) {
           const shouldSkip = active.intent === null
           active.intent = 'replace'
           if (shouldSkip) active.transition.skipTransition()

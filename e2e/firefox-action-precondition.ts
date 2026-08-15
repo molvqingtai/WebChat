@@ -12,7 +12,7 @@ export interface FirefoxActionTab {
   /** Stable for the same physical tab within one process generation. */
   readonly identity: string
   readonly url: string
-  readonly kind: 'ordinary' | 'options'
+  readonly type: 'ordinary' | 'options'
   readonly testOwned: boolean
   readonly active: boolean
 }
@@ -125,7 +125,7 @@ const readTabs = async (adapter: FirefoxActionPreconditionAdapter): Promise<Fire
   return tabs
 }
 
-const isOwnedOrdinary = (tab: FirefoxActionTab): boolean => tab.testOwned && tab.kind === 'ordinary'
+const isOwnedOrdinary = (tab: FirefoxActionTab): boolean => tab.testOwned && tab.type === 'ordinary'
 
 const isAcceptedContent = (tab: FirefoxActionTab, context: FirefoxActionContext): boolean =>
   isOwnedOrdinary(tab) && tab.url === context.acceptedTarget
@@ -142,7 +142,7 @@ const requireIdentity = (
 
 const physicalInventory = (tabs: readonly FirefoxActionTab[]) =>
   tabs
-    .map(({ identity, url, kind, testOwned }) => ({ identity, url, kind, testOwned }))
+    .map(({ identity, url, type, testOwned }) => ({ identity, url, type, testOwned }))
     .sort((left, right) => left.identity.localeCompare(right.identity))
 
 const hasSamePhysicalInventory = (
@@ -154,7 +154,7 @@ const hasSamePhysicalInventory = (
     (tab, index) =>
       tab.identity === after[index]?.identity &&
       tab.url === after[index]?.url &&
-      tab.kind === after[index]?.kind &&
+      tab.type === after[index]?.type &&
       tab.testOwned === after[index]?.testOwned
   )
 

@@ -37,7 +37,7 @@ Deterministic evidence SHALL cover the real Remesh-to-Sonner boundary. The paren
 #### Scenario: Explicit successor may replace an error
 
 - **GIVEN** a current error remains visible at a stable Toast ID
-- **WHEN** a later generic Toast descriptor explicitly publishes new content and kind to the same ID
+- **WHEN** a later generic Toast descriptor explicitly publishes new content and type to the same ID
 - **THEN** the later descriptor MAY replace the error and SHALL begin its own ordinary presentation lifecycle; an implicit ready state or bare dismiss SHALL NOT qualify as that successor
 
 #### Scenario: User dismissal and default expiry remain available

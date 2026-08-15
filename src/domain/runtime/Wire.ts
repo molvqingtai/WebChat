@@ -104,10 +104,25 @@ const WireDomain = Remesh.domain({
     const SendQueuesState = domain.state<SendQueue[]>({ name: 'Wire.SendQueuesState', default: [] })
     const QueueSequenceState = domain.state<number>({ name: 'Wire.QueueSequenceState', default: 0 })
     const DropRecordsState = domain.state<DropRecord[]>({ name: 'Wire.DropRecordsState', default: [] })
+    // Current physical source admission per room: a source is admitted only while it is a member
+    // of the current room generation (PeerJoined added it and no PeerLeave/room close removed it).
+    // This is the upstream fact the lawful-rebind classifier requires before an ended observation
+    // may be re-activated; a departed source without a fresh PeerJoin is never admitted.
+    const RoomSourcesState = domain.state<{ roomId: string; sourcePeerIds: string[] }[]>({
+      name: 'Wire.RoomSourcesState',
+      default: []
+    })
 
     const PeerIdQuery = domain.query({
       name: 'Wire.PeerIdQuery',
       impl: (_, roomId: string) => transport.peerIdOf(roomId)
+    })
+    const IsSourceAdmittedQuery = domain.query({
+      name: 'Wire.IsSourceAdmittedQuery',
+      impl: ({ get }, payload: { roomId: string; sourcePeerId: string }) =>
+        get(RoomSourcesState())
+          .find((item) => item.roomId === payload.roomId)
+          ?.sourcePeerIds.includes(payload.sourcePeerId) ?? false
     })
     const TrustedRoomsQuery = domain.query({
       name: 'Wire.TrustedRoomsQuery',
@@ -193,6 +208,44 @@ const WireDomain = Remesh.domain({
      * A provider call that already started must settle its target once. It pops the head and emits the
      * result even if the room generation changed meanwhile; it is never re-sent into a new generation.
      */
+    const AdmitSourceCommand = domain.command({
+      name: 'Wire.AdmitSourceCommand',
+      impl: ({ get }, payload: { roomId: string; sourcePeerId: string }) => {
+        const sources = get(RoomSourcesState())
+        const room = sources.find((item) => item.roomId === payload.roomId)
+        const next = room
+          ? sources.map((item) =>
+              item.roomId === payload.roomId
+                ? {
+                    roomId: item.roomId,
+                    sourcePeerIds: item.sourcePeerIds.includes(payload.sourcePeerId)
+                      ? item.sourcePeerIds
+                      : [...item.sourcePeerIds, payload.sourcePeerId]
+                  }
+                : item
+            )
+          : [...sources, { roomId: payload.roomId, sourcePeerIds: [payload.sourcePeerId] }]
+        return RoomSourcesState().new(next)
+      }
+    })
+
+    const RemoveSourceCommand = domain.command({
+      name: 'Wire.RemoveSourceCommand',
+      impl: ({ get }, payload: { roomId: string; sourcePeerId: string }) => {
+        const sources = get(RoomSourcesState())
+        const room = sources.find((item) => item.roomId === payload.roomId)
+        if (!room) return null
+        const remaining = room.sourcePeerIds.filter((item) => item !== payload.sourcePeerId)
+        return RoomSourcesState().new(
+          remaining.length === 0
+            ? sources.filter((item) => item.roomId !== payload.roomId)
+            : sources.map((item) =>
+                item.roomId === payload.roomId ? { roomId: item.roomId, sourcePeerIds: remaining } : item
+              )
+        )
+      }
+    })
+
     const CompleteProviderSendCommand = domain.command({
       name: 'Wire.CompleteProviderSendCommand',
       impl: ({ get }, payload: { request: QueuedSendRequest; error?: Error }) => {
@@ -277,6 +330,7 @@ const WireDomain = Remesh.domain({
         return [
           RoomGenerationsState().new(replaceBy(generations, (item) => item.roomId === roomId, { roomId, generation })),
           TrustedRoomsState().new(get(TrustedRoomsState()).filter((item) => item !== roomId)),
+          RoomSourcesState().new(get(RoomSourcesState()).filter((item) => item.roomId !== roomId)),
           ...(payload.preservePending
             ? [
                 SendQueuesState().new(
@@ -503,6 +557,7 @@ const WireDomain = Remesh.domain({
         return [
           RoomGenerationsState().new(replaceBy(generations, (item) => item.roomId === roomId, { roomId, generation })),
           TrustedRoomsState().new(get(TrustedRoomsState()).filter((item) => item !== roomId)),
+          RoomSourcesState().new(get(RoomSourcesState()).filter((item) => item.roomId !== roomId)),
           ...(roomId === worldRoomId
             ? [SendQueuesState().new(sendQueues.filter((item) => item.roomId !== roomId))]
             : [
@@ -615,6 +670,16 @@ const WireDomain = Remesh.domain({
     })
 
     domain.effect({
+      name: 'Wire.AdmitSourceEffect',
+      impl: ({ fromEvent }) => fromEvent(PeerJoinedEvent).pipe(map(AdmitSourceCommand))
+    })
+
+    domain.effect({
+      name: 'Wire.RemoveSourceEffect',
+      impl: ({ fromEvent }) => fromEvent(PeerLeftEvent).pipe(map(RemoveSourceCommand))
+    })
+
+    domain.effect({
       name: 'Wire.ProviderPeerLeaveEffect',
       impl: () =>
         fromEventPattern<{ roomId: string; sourcePeerId: string }>(
@@ -653,8 +718,15 @@ const WireDomain = Remesh.domain({
     })
 
     return {
-      query: { PeerIdQuery, TrustedRoomsQuery, IsRoomTrustedQuery, DecodeQueuesQuery },
-      command: { JoinRoomsCommand, LeaveRoomCommand, SendMessageCommand, DropProtocolCommand: RecordDropCommand },
+      query: { PeerIdQuery, TrustedRoomsQuery, IsRoomTrustedQuery, DecodeQueuesQuery, IsSourceAdmittedQuery },
+      command: {
+        JoinRoomsCommand,
+        LeaveRoomCommand,
+        SendMessageCommand,
+        DropProtocolCommand: RecordDropCommand,
+        AdmitSourceCommand,
+        RemoveSourceCommand
+      },
       event: {
         RoomsJoinedEvent,
         RoomsJoinFailedEvent,

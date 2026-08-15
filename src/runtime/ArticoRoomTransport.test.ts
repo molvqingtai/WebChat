@@ -96,7 +96,26 @@ vi.mock('@rtco/client', () => {
     }
   }
 
-  return { Artico: FakeArtico }
+  return {
+    Artico: FakeArtico,
+    SocketSignaling: class {
+      readonly id = 'fake-signaling'
+      readonly state = 'ready'
+      connect() {}
+      disconnect() {}
+      signal() {}
+      join() {}
+      on() {
+        return this
+      }
+      off() {
+        return this
+      }
+      emit() {
+        return this
+      }
+    }
+  }
 })
 
 import { createArticoRoomTransport } from './ArticoRoomTransport'
@@ -220,7 +239,7 @@ describe('ArticoRoomTransport per-target isolation', () => {
     stalePeer.emit('error', new Error('stale peer error'))
     stalePeer.emit('close')
     await rejoin
-    await vi.advanceTimersByTimeAsync(5000)
+    await vi.advanceTimersByTimeAsync(10000)
 
     expect(fixture.peers).toHaveLength(2)
     expect(errors).toEqual([])
@@ -242,7 +261,7 @@ describe('ArticoRoomTransport per-target isolation', () => {
     expect(errors.map((error) => error.message)).toEqual(['id-taken'])
 
     currentPeer.emit('close')
-    await vi.advanceTimersByTimeAsync(5000)
+    await vi.advanceTimersByTimeAsync(10000)
 
     expect(fixture.peers).toHaveLength(2)
     transport.dispose()
@@ -286,7 +305,7 @@ describe('ArticoRoomTransport per-target isolation', () => {
     currentPeer.emit('close')
 
     transport.leave('chat-v3')
-    await vi.advanceTimersByTimeAsync(5000)
+    await vi.advanceTimersByTimeAsync(10000)
 
     expect(fixture.peers).toHaveLength(1)
     transport.dispose()
@@ -337,7 +356,7 @@ describe('ArticoRoomTransport per-target isolation', () => {
     const chatRoom = fixture.rooms.get('chat-a')!
 
     chatPeer.emit('close')
-    await vi.advanceTimersByTimeAsync(5000)
+    await vi.advanceTimersByTimeAsync(10000)
 
     expect(fixture.peers).toHaveLength(3)
     const replacement = fixture.peers[2]
@@ -361,7 +380,7 @@ describe('ArticoRoomTransport per-target isolation', () => {
     const worldRoom = fixture.rooms.get('world-v3')!
 
     transport.leave('chat-a')
-    await vi.advanceTimersByTimeAsync(5000)
+    await vi.advanceTimersByTimeAsync(10000)
 
     expect(fixture.peers).toHaveLength(2)
     expect(transport.peerIdOf('chat-a')).toBe('')
@@ -379,7 +398,7 @@ describe('ArticoRoomTransport per-target isolation', () => {
     const staleRoom = fixture.rooms.get('chat-a')!
 
     stalePeer.emit('close')
-    await vi.advanceTimersByTimeAsync(5000)
+    await vi.advanceTimersByTimeAsync(10000)
 
     expect(stalePeer.closed).toBe(true)
     expect(fixture.peers).toHaveLength(2)
@@ -397,7 +416,7 @@ describe('ArticoRoomTransport per-target isolation', () => {
     const stalePeer = fixture.peers[0]
 
     stalePeer.emit('close')
-    await vi.advanceTimersByTimeAsync(5000)
+    await vi.advanceTimersByTimeAsync(10000)
     stalePeer.emit('error', new Error('retired peer error'))
     expect(errors).toEqual([])
 
