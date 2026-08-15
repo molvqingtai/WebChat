@@ -470,7 +470,7 @@ const TERMINAL_EVIDENCE_FAILURE = normalizeTerminal(
 
 const deepFreeze = <Value>(value: Value): Value => {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
-    Object.values(value).forEach((child) => deepFreeze(child))
+    Object.values(value).forEach(deepFreeze)
     Object.freeze(value)
   }
   return value

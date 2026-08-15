@@ -5727,8 +5727,11 @@ describe('RuntimeServer history', () => {
       })
       await settle()
     }
-    await vi.waitFor(() => expect(started.length).toBe(4))
-    // Four response sends are now physically held; a fifth peer is a ready waiter.
+    await vi.waitFor(() => expect(started.length).toBe(2))
+    // The shared supplier-to-send pool counts every admitted job through its final send
+    // settlement: peer-0/1's provider jobs hold two slots behind their held response sends, and
+    // peer-1/2's requester inventory sends stay queued behind those held sends on the serial room
+    // queue, retaining the remaining slots. A fifth peer is therefore a ready waiter.
     fake.receive(roomId, 'peer-4', session({ id: 'hs-user-4', name: 'HS 4', avatar: '' }))
     await settle()
     fake.receive(roomId, 'peer-4', {
@@ -5743,8 +5746,8 @@ describe('RuntimeServer history', () => {
     fake.peerLeave(roomId, 'peer-0')
     await settle()
     await settle()
-    expect(started.length).toBe(4)
-    // The held sends settle: the slot is released exactly once and exactly one waiter promotes.
+    expect(started.length).toBe(2)
+    // The held sends settle: slots release exactly once and every queued waiter promotes in order.
     fake.releaseHistoryResponseSends()
     await vi.waitFor(() => expect(started.length).toBe(5))
     await settle()
@@ -5774,7 +5777,9 @@ describe('RuntimeServer history', () => {
       })
       await settle()
     }
-    await vi.waitFor(() => expect(started.length).toBe(4))
+    await vi.waitFor(() => expect(started.length).toBe(2))
+    // As above: two provider jobs hold their slots behind held response sends while the
+    // queue-blocked requester sends retain the remaining shared slots; the fifth peer waits.
     fake.receive(roomId, 'peer-4', session({ id: 'tc-user-4', name: 'TC 4', avatar: '' }))
     await settle()
     fake.receive(roomId, 'peer-4', {
@@ -5796,8 +5801,8 @@ describe('RuntimeServer history', () => {
     })
     await settle()
     await settle()
-    expect(started.length).toBe(4)
-    // The send settles: exactly one waiter promotes.
+    expect(started.length).toBe(2)
+    // The sends settle in order: slots release exactly once and the queued waiters promote.
     fake.releaseHistoryResponseSends()
     await vi.waitFor(() => expect(started.length).toBe(5))
   })

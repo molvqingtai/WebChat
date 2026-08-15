@@ -215,7 +215,7 @@ export const createArticoRoomTransport = (): RoomTransport => {
       return () => errorListeners.delete(callback)
     },
     dispose: () => {
-      Array.from(owners.values()).forEach((owner) => dropOwner(owner))
+      Array.from(owners.values()).forEach(dropOwner)
       messageListeners.clear()
       joinListeners.clear()
       leaveListeners.clear()

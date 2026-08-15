@@ -229,10 +229,7 @@ const DeliveryDomain = Remesh.domain({
 
     domain.effect({
       name: 'Delivery.ReleaseWithDomainEffect',
-      impl: ({ fromEvent }) =>
-        fromEvent(lifecycleDomain.event.DomainReleasedEvent).pipe(
-          map((releasedDomain) => ReleaseDomainCommand(releasedDomain))
-        )
+      impl: ({ fromEvent }) => fromEvent(lifecycleDomain.event.DomainReleasedEvent).pipe(map(ReleaseDomainCommand))
     })
 
     return {

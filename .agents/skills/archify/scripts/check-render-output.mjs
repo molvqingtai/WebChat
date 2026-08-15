@@ -44,7 +44,7 @@ if (svgMatches.length === 1) {
   const legendStart = svg.indexOf('<!-- Legend -->')
   const beforeLegend = legendStart >= 0 ? svg.slice(0, legendStart) : svg
   const arrows = collectArrows(beforeLegend)
-  const diagonal = arrows.filter((arrow) => isTwoPointDiagonal(arrow))
+  const diagonal = arrows.filter(isTwoPointDiagonal)
   addCheck(
     'orthogonal_arrows',
     diagonal.length === 0,

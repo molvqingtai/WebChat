@@ -30,10 +30,12 @@ const useTriggerAway = <T extends Element = Element, E extends Event = Event>(
       if (handleRef.current) {
         const rootNode = handleRef.current.getRootNode()
         const isInShadow = rootNode instanceof ShadowRoot
-        events.forEach((eventName) => {
-          document.removeEventListener(eventName, handler)
-          isInShadow && rootNode.removeEventListener(eventName, handler)
-        })
+        events.forEach(() =>
+          events.forEach((eventName) => {
+            document.removeEventListener(eventName, handler)
+            isInShadow && rootNode.removeEventListener(eventName, handler)
+          })
+        )
       }
       if (node) {
         const rootNode = node.getRootNode()
