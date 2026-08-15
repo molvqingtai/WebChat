@@ -10,7 +10,7 @@ WebChat needs one normal shell whose local status and initialization status have
 - `Initialization.ts` performs only the bounded initialization lifecycle: ordered dependency preparation, deadline and cancellation, generation fencing, application dependency activation, Runtime detach, and matching Toast commands. It reads and updates `AppStatusDomain` without declaring another Domain.
 - `App`, `AppButton`, and `AppFeedbackDomain` consume `AppStatusDomain` directly. Readiness gates only the Runtime-dependent operation at its use site.
 - The normal `AppMain`, `AppButton`, and `DanmakuContainer` composition mounts independently of status hydration and initialization. `AppMain` contains `Header`, `Main`, `Footer`, conditional `Setup`, and one panel-owned generic `Toaster`.
-- The AppButton actions menu exposes one Refresh slot. It owns initialization Retry before ready and current-site ChatRoom retry/reconnect after ready, with one disabled/rotating single-flight projection and matching generic Toast feedback.
+- The AppButton actions menu exposes one Refresh slot. It owns initialization Retry before ready and the current-Domain retry/reconnect result after ready, with one disabled/rotating single-flight projection and matching generic Toast feedback; the active ready-state manual-refresh contract starts a separately fenced World replacement without giving that child UI ownership.
 - Shell hydration, initialization, Retry, and unread processing share the one mounted `AppStatusDomain` lifecycle. A user open/close choice accepted while hydration is pending wins over the stored snapshot.
 - Deterministic tests verify the final root Domain list, single ownership, plain lifecycle orchestration, direct consumers, component ancestry, hydration races, unread rules, Refresh contexts, and stale-result fencing with the fixed Vitest stack.
 
@@ -28,5 +28,5 @@ None.
 
 - Affected source: `AppStatusDomain`, `Initialization.ts`, the content root Scope, `App`, `AppButton`, `AppFeedbackDomain`, and their focused tests.
 - Affected behavior: persisted shell state is available independently of initialization; initialization feedback uses the panel Toaster; Refresh changes context at readiness; incoming non-self messages mark boolean unread attention only while the panel is closed.
-- Unchanged: the field-scoped open, position, and unread key identities and semantics; initialization stage order and deadlines; Runtime/protocol/public APIs; ChatRoom and WorldRoom recovery scope; Toast copy and presentation; visual theme; browser permissions; production dependencies.
+- Unchanged by this shell change: the field-scoped open, position, and unread key identities and semantics; initialization stage order and deadlines; Runtime/protocol/public APIs; automatic ChatRoom and WorldRoom recovery ownership; pre-ready Retry dispatch; Toast copy and presentation; visual theme; browser permissions; production dependencies. The active manual-refresh contract governs the ready-state sibling World replacement.
 - QA, QC, and UX are outside this task unless the Owner explicitly requests a corresponding role.

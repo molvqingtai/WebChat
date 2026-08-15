@@ -56,7 +56,7 @@ Remote logical leave is independent: Artico physical departure starts the observ
 
 - **GIVEN** the application Reconnect Effect retains the frozen `leaveRoom()` then `joinRoom(command)` composition
 - **WHEN** the Runtime ChatRoom implementation executes that composition for an active domain
-- **THEN** `leaveRoom()` SHALL invoke current-domain Runtime reconnect rather than local final release, the replacement physical Chat session SHALL reuse the same `presenceId`, World SHALL remain physically joined, and a remote PeerLeave followed by the same presence within five seconds SHALL produce neither a confirmed leave nor another join
+- **THEN** `leaveRoom()` SHALL invoke current-domain Runtime reconnect rather than local final release, the replacement physical Chat session SHALL reuse the same `presenceId`, and a remote PeerLeave followed by the same presence within five seconds SHALL produce neither a confirmed leave nor another join; the Domain child SHALL NOT mutate the World registration registry, while the same ready-state AppButton action SHALL independently run the separately fenced World replacement defined by the manual Refresh contract
 
 #### Scenario: Local active-generation cleanup rejects
 

@@ -14,7 +14,7 @@ Existing page completion, History, and document-lifecycle contracts also constra
 
 - Give every physical peer exactly one World or domain Chat scope.
 - Coordinate World contribution and Chat connection as one local atomic domain attempt without duplicating their State owners.
-- Replace one domain Chat peer without overlapping old and new peers or interrupting other scopes.
+- Replace one domain Chat peer without overlapping old and new peers or crossing ownership into other scopes, including when AppButton independently starts a sibling World replacement.
 - Preserve stable logical presence across physical replacement and preserve exactly-once History triggering per accepted source incarnation.
 - Serialize final release and a later lease so an old World removal cannot delete a newly committed site.
 
@@ -42,9 +42,9 @@ Cleanup follows provenance. An attempt-created, never-committed World peer is le
 
 ### 3. A domain replacement is stop-before-start and keeps logical presence
 
-Connection serializes manual reconnect, automatic recovery, concurrent requests, and release for each domain. Replacement first marks A reconnecting, stops its current Chat owner, and awaits physical exit. Only then does generation N+1 allocate a new Chat peer and `sessionId`. Session supplies the already active `presenceId` and `joinedAt`, so remote observers see physical rebinding rather than a logical leave and join.
+Connection serializes automatic recovery, concurrent requests, release, and the Domain child of manual AppButton Refresh for each domain. Replacement first marks A reconnecting, stops its current Chat owner, and awaits physical exit. Only then does generation N+1 allocate a new Chat peer and `sessionId`. Session supplies the already active `presenceId` and `joinedAt`, so remote observers see physical rebinding rather than a logical leave and join.
 
-World receives no site transition during replacement. Other domain owners continue independently. Generation fences cover provider callbacks, delayed timers, snapshot publication, cleanup, and result settlement. Only the current generation can commit ready.
+The Domain replacement itself causes no World site transition. Automatic Domain recovery and non-AppButton retry leave the current World physical owner live. In ready application state, AppButton independently starts the sibling World stop-before-start replacement defined by the manual Refresh contract; that World child retains the registration registry and demand and is not owned or settled by the Domain generation. Other Domain owners continue independently. Generation fences cover provider callbacks, delayed timers, snapshot publication, cleanup, and result settlement. Only the current generation for each scope can mutate or settle that scope.
 
 Commit produces ready immediately. The accepted-source event that follows commit remains the one History trigger. History runs as independent per-source work and has no edge back to connection commit, retry, or ready.
 
@@ -74,7 +74,7 @@ The source change will update physical provider composition, internal scope meta
 
 ## Risks / Trade-offs
 
-- [Stop-before-start creates a brief current-domain outage] -> Keep the outage scoped to that domain and expose the existing reconnecting/unavailable truth; World and other Chat peers remain live.
+- [Stop-before-start creates a brief current-domain outage] -> Keep the Domain outage and reconnecting/unavailable truth scoped to that Domain. Automatic Domain replacement leaves World live; the separately owned AppButton World child follows its own stop-before-start lifecycle and remains outside Domain result and UI ownership.
 - [One side of an initial attempt can reach the network before the other] -> Keep both sides provisional locally, compensate only attempt-owned facts, and generation-fence all late work.
 - [World removal can fail after the final page disappears] -> Retain one bounded zero-page release owner that retries only the remaining World step and releases its resources after settlement.
 - [A new lease can wait behind a slow release] -> Preserve strict causal ordering and existing feedback; starting early would permit the old release to erase the new site.
