@@ -464,15 +464,14 @@ const WorldDomain = Remesh.domain({
         ),
         PresenceChangedEvent({ sourcePeerId: get(wireDomain.query.PeerIdQuery(worldRoomId)), presence: null }),
         PresencesState().new([]),
-        // Prior room membership, every pending presence send, and every connection-scoped
-        // full-publication owner/continuation lose authority with the old generation; an already
-        // invoked old provider send then settles against no live slot, and fresh work re-registers
-        // under the replacement's send generation.
+        // Prior room membership, every pending presence send, and the old full-publication REQUEST
+        // owner lose authority with the old generation (an already invoked old provider send then
+        // settles against no live slot). Live release continuations and any pending final
+        // publication are NOT discarded: they migrate to the fresh generation's current-snapshot
+        // publication, which settles each release exactly once.
         RoomMembersState().new([]),
         PendingPresenceSendsState().new([]),
         FullPublicationState().new(null),
-        LiveReleaseContinuationsState().new([]),
-        PendingFinalPublicationState().new(null),
         WorldSendGenerationState().new(get(WorldSendGenerationState()) + 1),
         RecoveryState().new(null)
       ]

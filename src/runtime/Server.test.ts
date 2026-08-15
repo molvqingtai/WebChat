@@ -1420,6 +1420,42 @@ describe('RuntimeServer lifecycle', () => {
     disposeServer(server)
   })
 
+  it('settles another Domain release through the fresh generation across a manual World replacement', async () => {
+    const clock = new FakeClock()
+    const fake = createFakeTransport()
+    const server = createServer({ transport: fake.transport, clock, codec: jsonCodec })
+    const worldRoomId = getWorldRoomId()
+    await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
+    await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
+    await server.attachPage({ domain: OTHER_DOMAIN, pageId: 'page-b' })
+    await server.joinChatRoom({ domain: OTHER_DOMAIN, user: USER, site: { origin: OTHER_DOMAIN } })
+    await settle()
+    expect((await server.getSnapshot()).world.localPresence?.sites).toHaveLength(2)
+
+    // Domain B's release starts; its World removal publication (the live release continuation that
+    // owns B's remaining release settlement) is invoked and held at the wire.
+    fake.hangSendsTo(worldRoomId)
+    const releaseB = server.leaveChatRoom({ domain: OTHER_DOMAIN })
+    await vi.waitFor(() => expect(fake.sent.filter((item) => item.roomId === worldRoomId).length).toBeGreaterThan(0))
+
+    // A's manual World replacement runs across B's held release: the old publication request loses
+    // authority, but B's release ownership migrates and settles exactly once through the fresh
+    // generation's own current-snapshot publication; A's registration and result stay intact.
+    const refresh = server.reconnectDomain({ domain: DOMAIN })
+    fake.releaseSends()
+    await Promise.all([refresh, releaseB])
+    await settle()
+
+    const after = await server.getSnapshot()
+    expect(after.domains.some((item) => item.domain === DOMAIN && item.chatRoomJoined)).toBe(true)
+    // B's release settled exactly once through the fresh generation (unjoined shell, no session).
+    expect(after.domains.some((item) => item.domain === OTHER_DOMAIN && item.chatRoomJoined)).toBe(false)
+    expect(after.domains.find((item) => item.domain === OTHER_DOMAIN)?.localSession).toBeUndefined()
+    expect(after.world.joined).toBe(true)
+    expect(after.world.localPresence?.sites.map((site) => site.origin)).toEqual([DOMAIN])
+    disposeServer(server)
+  })
+
   it('revokes the held old full-publication owner across a manual replacement', async () => {
     const clock = new FakeClock()
     const fake = createFakeTransport()
