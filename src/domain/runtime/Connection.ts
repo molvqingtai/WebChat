@@ -630,6 +630,9 @@ const ConnectionDomain = Remesh.domain({
       impl: ({ get }, payload: { requestId: string; error: Error }) => {
         const recovery = get(WorldRecoveryAttemptState())
         if (!recovery || recovery.requestId !== payload.requestId) return null
+        // A manual AppButton World replacement stays UI/Toast-silent but never evidence-silent:
+        // its genuine failure is a direct console diagnostic at this exact owner.
+        if (recovery.manual) console.error(payload.error)
         return [
           WorldRecoveryAttemptState().new(null),
           worldDomain.command.AbortRecoveryCommand(payload.requestId),

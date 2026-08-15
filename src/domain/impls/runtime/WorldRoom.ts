@@ -19,6 +19,11 @@ export interface WorldRoomDependencies {
 
 const contributionKey = (sourcePeerId: string, origin: string) => `${sourcePeerId}\u0000${origin}`
 
+/** The original returned/emitted Promise remains the sole product owner of its rejection; this
+ * named observer only settles a derived side branch so it can never become an unhandled
+ * rejection, and it intentionally records nothing further for the same Error. */
+const observeDerivedRejection = () => undefined
+
 export class WorldRoom extends EventHub {
   private readonly contributions = new Map<string, Contribution>()
   private nextOrder = 0
@@ -28,7 +33,11 @@ export class WorldRoom extends EventHub {
     super()
     dependencies.whenReady(() => {
       const attachedHostId = dependencies.getSnapshot().hostId
-      this.attachmentTask = this.attachmentTask.catch(() => {}).then(() => this.attachRuntime(attachedHostId))
+      // The prior attachment remains the sole owner of its rejection; this link only preserves the
+      // serialized attachment order and intentionally records nothing further for the same Error.
+      this.attachmentTask = this.attachmentTask
+        .catch(observeDerivedRejection)
+        .then(() => this.attachRuntime(attachedHostId))
       void this.attachmentTask.catch((error) => this.emit('error', error as Error))
     })
   }

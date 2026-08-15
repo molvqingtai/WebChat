@@ -118,7 +118,8 @@ describe('browser sync configuration preparation', () => {
     expect(fixture.values[CONFIG_STORE_VERSION_KEY]).toBe(2)
     expect(fixture.values.user).toBe('private-value')
     expect(diagnostic).toHaveBeenCalledTimes(1)
-    expect(diagnostic).toHaveBeenCalledWith('[WebChat] Configuration store preparation failed')
+    // The direct diagnostic keeps the original provider Error rather than a replacement message.
+    expect(diagnostic).toHaveBeenCalledWith(expect.objectContaining({ message: 'private failure' }))
 
     await requestBrowserSyncStoragePreparation(fixture.runtime)
     expect(fixture.storage.clear).toHaveBeenCalledTimes(2)

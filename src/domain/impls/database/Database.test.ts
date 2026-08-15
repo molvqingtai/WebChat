@@ -452,6 +452,34 @@ describe.each(backends)('$name Database contract', (backend) => {
     expect(listener).toHaveBeenCalledOnce()
   })
 
+  it('routes a thrown watcher error to its composition reporter once while commit and later watchers continue', async () => {
+    const name = `database-watch-owner-${backend.name}-${databaseId++}`
+    names.add(name)
+    const reported: unknown[] = []
+    const database =
+      backend.name === 'Memory'
+        ? createMemoryMessageDatabase(name, { onWatcherError: (error) => reported.push(error) })
+        : createIndexedDBDatabase(createMessageDatabaseDefinition(name, 2), {
+            onWatcherError: (error) => reported.push(error)
+          })
+    opened.add(database)
+
+    const failure = new Error('watcher exploded')
+    const later = vi.fn()
+    database.watch(['records'], () => {
+      throw failure
+    })
+    database.watch(['records'], later)
+
+    await expect(
+      database.write(['records'], (transaction) => transaction.insert('records', 'record-1', record('first')))
+    ).resolves.toEqual({ inserted: true })
+    // The committed write is unaffected, the failed watcher's original Error reaches its owner
+    // exactly once, and the later watcher still runs on both backends.
+    expect(reported).toEqual([failure])
+    expect(later).toHaveBeenCalledOnce()
+  })
+
   it('closes idempotently, drains started work, and rejects new operations and watches', async () => {
     const name = `database-close-${backend.name}-${databaseId++}`
     const database = create(backend, name)

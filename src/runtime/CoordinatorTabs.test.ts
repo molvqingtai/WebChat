@@ -106,6 +106,33 @@ beforeEach(() => vi.useFakeTimers())
 afterEach(() => vi.useRealTimers())
 
 describe('Coordinator trusted Tabs lifecycle', () => {
+  it('keeps attempt-all rebuild evidence when one tab attachment fails', async () => {
+    const fixture = createFixture()
+    await fixture.register(DOMAIN_A, 'document-a', 1, `${DOMAIN_A}/topic#first`)
+    await fixture.register(DOMAIN_A, 'document-b', 2, `${DOMAIN_A}/other`)
+    fixture.events.length = 0
+    const failure = new Error('attach failed for document-b')
+    fixture.attachPage.mockImplementation(async ({ domain, pageId }: { domain: string; pageId: string }) => {
+      fixture.events.push(`attach:${domain}:${pageId}`)
+      if (pageId === 'document-b') throw failure
+      return snapshot(domain, pageId)
+    })
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    fixture.replaceHost()
+    await fixture.coordinator.reconcile()
+
+    // Attempt-all rebuild continues: the failed tab keeps its original Error as a direct
+    // diagnostic at the Coordinator owner while the other tab is still attached.
+    expect(diagnostic).toHaveBeenCalledWith(failure)
+    expect(fixture.events).toContain(`attach:${DOMAIN_A}:document-a`)
+    expect(fixture.events).toContain(`attach:${DOMAIN_A}:document-b`)
+    expect(fixture.coordinator.snapshotForTest().tabs).toContainEqual(
+      expect.objectContaining({ tabId: 1, pageId: 'document-a' })
+    )
+    diagnostic.mockRestore()
+  })
+
   it('keeps multiple same-domain tabs and releases only trusted non-last/last closes', async () => {
     const fixture = createFixture()
     await fixture.register(DOMAIN_A, 'document-a', 1, `${DOMAIN_A}/topic#first`)

@@ -68,6 +68,11 @@ interface PageConnectionAttempt {
 
 const PAGE_CONNECTION_ATTEMPT_TIMEOUT_MS = 10000
 
+/** The original returned/emitted Promise remains the sole product owner of its rejection; this
+ * named observer only settles a derived side branch so it can never become an unhandled
+ * rejection, and it intentionally records nothing further for the same Error. */
+const observeDerivedRejection = () => undefined
+
 const abortError = (message: string): DOMException => new DOMException(message, 'AbortError')
 
 const raceWithSignal = <Value>(task: Promise<Value>, signal: AbortSignal): Promise<Value> =>
@@ -265,7 +270,9 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
         throw error
       })
       .finally(() => globalThis.clearTimeout(timeout))
-    void attachment.task.catch(() => {})
+    // The catch above already emitted and rethrew this rejection to its owner; this observer only
+    // keeps the shared task from becoming an unhandled rejection.
+    void attachment.task.catch(observeDerivedRejection)
     return attachment
   }
 
@@ -370,7 +377,9 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
       .finally(() => {
         if (!this.isAttachmentCurrent(attachment)) this.repairRegistration(key)
       })
-      .catch(() => {})
+      // raceWithSignal returns the physical result to its caller; this branch only performs the
+      // registration repair and observes the derived rejection so it stays handled.
+      .catch(observeDerivedRejection)
     return raceWithSignal(physical, attachment.controller.signal)
   }
 

@@ -28,6 +28,11 @@ export interface ServerConfig {
 const defaultClock: Clock = { now: () => Date.now() }
 const serverDisposers = new WeakMap<RuntimeServer, () => void>()
 
+/** The returned task remains the sole product owner of its rejection; this named observer only
+ * settles the in-flight tracking branch so it can never become an unhandled rejection, and it
+ * intentionally records nothing further for the same Error. */
+const observeDerivedRejection = () => undefined
+
 export const disposeServer = (server: RuntimeServer) => serverDisposers.get(server)?.()
 
 export const createServer = (config: ServerConfig): RuntimeServer => {
@@ -333,11 +338,9 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     if (existing) return existing
     const task = performReset(domain, operationId)
     inFlightResets.set(domain, task)
-    task
-      .catch(() => {})
-      .finally(() => {
-        if (inFlightResets.get(domain) === task) inFlightResets.delete(domain)
-      })
+    task.catch(observeDerivedRejection).finally(() => {
+      if (inFlightResets.get(domain) === task) inFlightResets.delete(domain)
+    })
     return task
   }
 
@@ -368,11 +371,9 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       store.send(connectionDomain.command.LeaveDomainCommand(domain))
     })
     inFlightReleases.set(domain, task)
-    task
-      .catch(() => {})
-      .finally(() => {
-        inFlightReleases.delete(domain)
-      })
+    task.catch(observeDerivedRejection).finally(() => {
+      inFlightReleases.delete(domain)
+    })
     return task
   }
 
@@ -479,11 +480,9 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
         if (existing) return existing
         const task = joinChatRoomSettled(payload)
         inFlightJoins.set(payload.domain, task)
-        task
-          .catch(() => {})
-          .finally(() => {
-            if (inFlightJoins.get(payload.domain) === task) inFlightJoins.delete(payload.domain)
-          })
+        task.catch(observeDerivedRejection).finally(() => {
+          if (inFlightJoins.get(payload.domain) === task) inFlightJoins.delete(payload.domain)
+        })
         return task
       }
       return joinChatRoomSettled(payload)
@@ -542,11 +541,9 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       const operationId = nanoid()
       const task = performReconnect(payload.domain, operationId)
       inFlightReconnects.set(payload.domain, task)
-      task
-        .catch(() => {})
-        .finally(() => {
-          if (inFlightReconnects.get(payload.domain) === task) inFlightReconnects.delete(payload.domain)
-        })
+      task.catch(observeDerivedRejection).finally(() => {
+        if (inFlightReconnects.get(payload.domain) === task) inFlightReconnects.delete(payload.domain)
+      })
       return task
     },
     onInbound: async (payload, callback) => pagePort.onInbound(payload.pageId, callback),

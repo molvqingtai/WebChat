@@ -352,7 +352,9 @@ const WorldDomain = Remesh.domain({
           ]
         }
         // A provider throw settles the publication; a manual AppButton replacement keeps that
-        // failure out of page UI/Toast while automatic recovery retains its diagnostics.
+        // failure out of page UI/Toast but never evidence-silent, while automatic recovery
+        // retains its existing diagnostics.
+        if (publication.manual) console.error(payload.error)
         return [...(publication.manual ? [] : [ErrorEvent(payload.error)]), ...settlePublication(get, publication)]
       }
     })
@@ -783,12 +785,19 @@ const WorldDomain = Remesh.domain({
         fromEvent(wireDomain.event.MessageSendFailedEvent).pipe(
           filter(
             ({ requestId }) =>
-              // A manual AppButton replacement's catch-up failure stays out of page UI; automatic
-              // recovery and ordinary join catch-up retain their diagnostics.
-              (requestId.startsWith('world:catch-up:') || requestId.startsWith('world:recovery-catch-up:')) &&
-              !requestId.startsWith('world:manual-catch-up:')
+              requestId.startsWith('world:catch-up:') ||
+              requestId.startsWith('world:recovery-catch-up:') ||
+              requestId.startsWith('world:manual-catch-up:')
           ),
-          map(({ error }) => ErrorEvent(error))
+          map(({ requestId, error }) => {
+            // A manual AppButton replacement's catch-up failure stays out of page UI but never
+            // evidence-silent; automatic recovery and ordinary join catch-up keep diagnostics.
+            if (requestId.startsWith('world:manual-catch-up:')) {
+              console.error(error)
+              return null
+            }
+            return ErrorEvent(error)
+          })
         )
     })
 

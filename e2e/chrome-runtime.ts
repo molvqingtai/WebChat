@@ -70,7 +70,12 @@ type Evidence = {
     after: Record<string, unknown>
   }
   sandbox: string
-  cleanup: { rootExited: boolean; residualProcesses: string[]; profileRemoved: boolean }
+  cleanup: {
+    rootExited: boolean
+    residualProcesses: string[]
+    profileRemoved: boolean
+    errors: { resource: string; phase: string; message: string }[]
+  }
   appState?: AppState
   failure?: string
   events?: RuntimeEvent[]
@@ -202,7 +207,7 @@ const evidence: Evidence = {
   relayDiagnostics: [],
   rawBoundaryMessages: { offscreen: 0, content: 0 },
   sandbox: disableSandbox ? 'disabled-in-github-actions' : 'enabled',
-  cleanup: { rootExited: false, residualProcesses: [], profileRemoved: false }
+  cleanup: { rootExited: false, residualProcesses: [], profileRemoved: false, errors: [] }
 }
 
 try {
@@ -653,7 +658,15 @@ try {
     () => {
       try {
         cdp?.close()
-      } catch {}
+      } catch (error) {
+        // Cleanup failure is ordered evidence, not silence; bounded teardown continues and an
+        // otherwise passing run still fails cleanup below.
+        evidence.cleanup.errors.push({
+          resource: 'cdp',
+          phase: 'timeout-close',
+          message: error instanceof Error ? error.message : String(error)
+        })
+      }
     }
   )
 } catch (error) {
@@ -662,10 +675,25 @@ try {
   evidence.events = runtimeEvents.slice(-100)
 } finally {
   if (cdp) {
-    await Promise.race([cdp.send('Browser.close').catch(() => {}), delay(1000)])
+    await Promise.race([
+      cdp.send('Browser.close').catch((error: unknown) => {
+        evidence.cleanup.errors.push({
+          resource: 'browser',
+          phase: 'browser-close',
+          message: error instanceof Error ? error.message : String(error)
+        })
+      }),
+      delay(1000)
+    ])
     try {
       cdp.close()
-    } catch {}
+    } catch (error) {
+      evidence.cleanup.errors.push({
+        resource: 'cdp',
+        phase: 'final-close',
+        message: error instanceof Error ? error.message : String(error)
+      })
+    }
   }
 
   await Promise.race([exitResult, delay(5000)])
@@ -703,19 +731,20 @@ try {
   if (
     !evidence.cleanup.rootExited ||
     evidence.cleanup.residualProcesses.length > 0 ||
-    !evidence.cleanup.profileRemoved
+    !evidence.cleanup.profileRemoved ||
+    evidence.cleanup.errors.length > 0
   ) {
     cleanupError = new Error('Owned Chromium cleanup failed')
   }
 }
 
-if (cleanupError) {
-  console.error(JSON.stringify({ evidence, stderr: stderr.join('') }, null, 2))
-  throw cleanupError
-}
 if (runError) {
   console.error(JSON.stringify({ evidence, stderr: stderr.join('') }, null, 2))
   throw runError
+}
+if (cleanupError) {
+  console.error(JSON.stringify({ evidence, stderr: stderr.join('') }, null, 2))
+  throw cleanupError
 }
 
 console.log(

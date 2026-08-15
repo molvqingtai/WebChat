@@ -37,6 +37,11 @@ const requestResult = <Result>(request: IDBRequest<Result>): Promise<Result> =>
     })
   })
 
+/** The original returned/emitted Promise remains the sole product owner of its rejection; this
+ * named observer only settles a derived side branch so it can never become an unhandled
+ * rejection, and it intentionally records nothing further for the same Error. */
+const observeDerivedRejection = () => undefined
+
 const transactionResult = (transaction: IDBTransaction): Promise<void> =>
   new Promise((resolve, reject) => {
     transaction.addEventListener('complete', () => resolve(), { once: true })
@@ -188,12 +193,14 @@ class IndexedDBTransaction<
   private track<Result>(operation: Promise<Result>): Promise<Result> {
     this.touch()
     this.pending += 1
+    // The returned operation stays the sole failure owner; the derived branch only maintains the
+    // pending count, and its rejection is observed so it cannot become an unhandled rejection.
     void operation
       .finally(() => {
         this.pending -= 1
         if (this.pending === 0 && this.active) this.idle()
       })
-      .catch(() => {})
+      .catch(observeDerivedRejection)
     return operation
   }
 
@@ -379,7 +386,10 @@ export class IndexedDBDatabase<Schema extends DatabaseSchema<Schema>> implements
   private closed = false
   private closePromise: Promise<void> | null = null
 
-  constructor(private readonly definition: DatabaseDefinition<Schema>) {
+  constructor(
+    private readonly definition: DatabaseDefinition<Schema>,
+    private readonly onWatcherError?: (error: unknown) => void
+  ) {
     this.channel = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel(definition.channelName)
     this.channel?.addEventListener('message', (event: MessageEvent<unknown>) => {
       if (!Array.isArray(event.data) || !event.data.every((store) => typeof store === 'string')) return
@@ -398,7 +408,9 @@ export class IndexedDBDatabase<Schema extends DatabaseSchema<Schema>> implements
 
   private track<Result>(operation: Promise<Result>): Promise<Result> {
     this.inFlight.add(operation)
-    void operation.finally(() => this.inFlight.delete(operation)).catch(() => {})
+    // The returned operation stays the sole failure owner; the derived branch only maintains the
+    // in-flight set, and its rejection is observed so it cannot become an unhandled rejection.
+    void operation.finally(() => this.inFlight.delete(operation)).catch(observeDerivedRejection)
     return operation
   }
 
@@ -408,7 +420,12 @@ export class IndexedDBDatabase<Schema extends DatabaseSchema<Schema>> implements
       if (!stores.some((store) => watcher.stores.has(store))) return
       try {
         watcher.listener()
-      } catch {}
+      } catch (error) {
+        // A watcher failure never rolls back the committed write and never stops later listeners;
+        // the composition-owned reporter (or direct console fallback) keeps the original Error.
+        if (this.onWatcherError) this.onWatcherError(error)
+        else console.error(error)
+      }
     })
   }
 
@@ -427,11 +444,18 @@ export class IndexedDBDatabase<Schema extends DatabaseSchema<Schema>> implements
       signal?.throwIfAborted()
       const transaction = database.transaction(scope, writable ? 'readwrite' : 'readonly')
       const settled = transactionResult(transaction)
-      void settled.catch(() => {})
+      // `settled` is awaited later as the real owner; this early observer only prevents the
+      // interval between creation and that await from producing an unhandled rejection.
+      void settled.catch(observeDerivedRejection)
       const abort = () => {
         try {
           transaction.abort()
-        } catch {}
+        } catch (error) {
+          // IDBTransaction.abort() throws InvalidStateError only when the transaction already
+          // reached its terminal committed/aborted state — that exact condition is benign.
+          if (error instanceof DOMException && error.name === 'InvalidStateError') return
+          console.error(error)
+        }
       }
       let callbackSettled = false
       const wrapped = new IndexedDBTransaction(
@@ -485,7 +509,13 @@ export class IndexedDBDatabase<Schema extends DatabaseSchema<Schema>> implements
       } catch (error) {
         wrapped.finish()
         abort()
-        await settled.catch(() => {})
+        // The abort above makes this rejection the expected AbortError (a structural non-result);
+        // any other unexpected settlement failure is only diagnostic and never replaces the
+        // primary callback failure rethrown below.
+        await settled.catch((settlementError: unknown) => {
+          if (settlementError instanceof DOMException && settlementError.name === 'AbortError') return
+          console.error(settlementError)
+        })
         signal?.throwIfAborted()
         throw error
       } finally {
@@ -541,8 +571,9 @@ export class IndexedDBDatabase<Schema extends DatabaseSchema<Schema>> implements
 }
 
 export const createIndexedDBDatabase = <Schema extends DatabaseSchema<Schema>>(
-  definition: DatabaseDefinition<Schema>
-): Database<Schema> => new IndexedDBDatabase(definition)
+  definition: DatabaseDefinition<Schema>,
+  options?: { onWatcherError?: (error: unknown) => void }
+): Database<Schema> => new IndexedDBDatabase(definition, options?.onWatcherError)
 
 /**
  * A cross-tab deletion contender can hold the old store open indefinitely (Firefox preparation runs without
@@ -616,5 +647,7 @@ export const prepareIndexedDBMessageDatabase = (coordinator?: PreparationLockCoo
   )
 }
 
-export const createIndexedDBMessageDatabase = (): Database<MessageDatabaseSchema> =>
-  createIndexedDBDatabase(createMessageDatabaseDefinition(STORAGE_NAME, MESSAGE_STORE_VERSION))
+export const createIndexedDBMessageDatabase = (options?: {
+  onWatcherError?: (error: unknown) => void
+}): Database<MessageDatabaseSchema> =>
+  createIndexedDBDatabase(createMessageDatabaseDefinition(STORAGE_NAME, MESSAGE_STORE_VERSION), options)

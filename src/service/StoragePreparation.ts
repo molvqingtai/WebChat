@@ -38,10 +38,17 @@ const prepareConfigurationStorage = (identity: string, storage: StorageArea): Pr
       lock.checkpoint()
     } catch (error) {
       if (lock.signal.aborted) throw error
-      console.error('[WebChat] Configuration store preparation failed')
-      throw new Error('Configuration store preparation failed')
+      // Install-time preparation has no current page: keep the original provider Error as the
+      // direct diagnostic instead of replacing it with a generic message.
+      console.error(error)
+      throw error
     }
   })
+
+/** The preparation promise already records its own failure; this named observer only keeps the
+ * fire-and-forget install listener from becoming an unhandled rejection, recording nothing
+ * further for the same Error. */
+const observeDerivedRejection = () => undefined
 
 const runtimeApi = () => browser.runtime as unknown as RuntimeApi
 const syncStorage = () => browser.storage.sync as unknown as StorageArea
@@ -52,7 +59,7 @@ export const registerBrowserSyncStoragePreparation = (
 ) => {
   const prepare = () => prepareConfigurationStorage(`browser-sync:${runtime.id}`, storage)
 
-  runtime.onInstalled.addListener(() => prepare().catch(() => {}))
+  runtime.onInstalled.addListener(() => prepare().catch(observeDerivedRejection))
   runtime.onMessage.addListener((message) => {
     if (message !== PREPARE_BROWSER_SYNC_STORAGE) return undefined
     return prepare().then(

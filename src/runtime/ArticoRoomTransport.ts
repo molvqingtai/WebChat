@@ -92,7 +92,11 @@ export const createArticoRoomTransport = (): RoomTransport => {
     owner.room = undefined
     try {
       stale?.close()
-    } catch {}
+    } catch (error) {
+      // A retired owner is already non-current: its close failure has no current user impact, but
+      // it must not disappear.
+      console.error(error)
+    }
   }
 
   const startPeer = (owner: PeerOwner) => {
@@ -169,7 +173,11 @@ export const createArticoRoomTransport = (): RoomTransport => {
     }
     try {
       owner.peer.close()
-    } catch {}
+    } catch (error) {
+      // A disposed owner is already non-current: its close failure has no current user impact,
+      // but it must not disappear.
+      console.error(error)
+    }
   }
 
   return {

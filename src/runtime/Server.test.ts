@@ -1344,15 +1344,18 @@ describe('RuntimeServer lifecycle', () => {
     await settle()
     const errors: RuntimeErrorEvent[] = []
     await server.onError({ pageId: 'page-a' }, (event) => errors.push(event))
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
 
-    // The World child's own recovery join rejects once: the Domain refresh still completes and no
-    // World failure reaches the page error stream that feeds UI/Toast; automatic recovery remains
-    // the owner of the follow-up.
+    // The World child's own recovery join rejects once: the Domain refresh still completes, no
+    // World failure reaches the page error stream that feeds UI/Toast, and the manual failure is
+    // retained as a direct console diagnostic (UI-silent, never evidence-silent).
     fake.failNextJoin(worldRoomId)
     await server.reconnectDomain({ domain: DOMAIN })
     await settle()
     expect((await server.getSnapshot()).domains[0].chatRoomJoined).toBe(true)
     expect(errors).toEqual([])
+    expect(diagnostic).toHaveBeenCalledWith(expect.objectContaining({ message: `Room "${worldRoomId}" join failed` }))
+    diagnostic.mockRestore()
     disposeServer(server)
   })
 
@@ -2000,7 +2003,12 @@ describe('RuntimeServer lifecycle', () => {
     const oldFake = createFakeTransport({ physicalReady: false })
     const oldServer = createServer({ transport: oldFake.transport, clock: oldClock, codec: jsonCodec })
     await oldServer.attachPage({ domain: DOMAIN, pageId: 'page-a' })
-    void oldServer.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE }).catch(() => {})
+    const pendingJoin = oldServer.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
+    // The disposed pending join may only ever hang or reject with the cancellation outcome; an
+    // unrelated rejection must fail this test.
+    void pendingJoin.catch((error: unknown) => {
+      expect(error instanceof Error && error.message.includes('cancel')).toBe(true)
+    })
     await oldFake.waitForDesiredRooms(2)
 
     disposeServer(oldServer)

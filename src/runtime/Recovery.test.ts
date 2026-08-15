@@ -175,13 +175,22 @@ describe('Runtime host recovery and coordinator liveness', () => {
       getSnapshot: () => client.snapshot(),
       whenReady: (callback) => client.whenReady(callback)
     })
-    room.onError(() => {})
+    const roomErrors: unknown[] = []
+    room.onError((error) => roomErrors.push(error))
     const recoveredSessions: { sessionId: string; user: typeof USER }[][] = []
     room.onSessions((sessions) => recoveredSessions.push([...sessions]))
     let pageJoinTask = Promise.resolve()
+    const joinRejections: unknown[] = []
     client.whenReady(() => {
-      pageJoinTask = pageJoinTask.catch(() => {}).then(() => room.joinRoom({ user: USER, site: SITE }))
-      void pageJoinTask.catch(() => {})
+      pageJoinTask = pageJoinTask
+        .catch((error: unknown) => {
+          // The retry chain may only ever observe the dead-host window's host-unavailable
+          // rejection; anything else fails this test here.
+          expect(error instanceof Error && error.message.startsWith('Runtime host unavailable')).toBe(true)
+          joinRejections.push(error)
+        })
+        .then(() => room.joinRoom({ user: USER, site: SITE }))
+      void pageJoinTask.catch((error: unknown) => joinRejections.push(error))
     })
 
     const firstSnapshot = await client.init()
@@ -203,6 +212,11 @@ describe('Runtime host recovery and coordinator liveness', () => {
     expect(fixture.coordinator.snapshotForTest().generation).toBe(2)
     expect(hostPhases).toContain('connecting')
     expect(hostPhases.at(-1)).toBe('ready')
+    // The healthy recovery flow emits no page errors and no unexpected join rejections.
+    expect(roomErrors).toEqual([])
+    for (const rejection of joinRejections) {
+      expect(rejection instanceof Error && rejection.message.startsWith('Runtime host unavailable')).toBe(true)
+    }
   })
 
   it('restores persisted coordinator lease and host generation without duplicate pages', async () => {

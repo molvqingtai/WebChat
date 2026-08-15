@@ -38,6 +38,8 @@ interface PortBinding {
   port: PresenceStorePort
   onMessage: (message: unknown) => void
   onDisconnect: () => void
+  /** Set when the port's disconnect event fired, proving its already-terminal condition. */
+  disconnected?: boolean
 }
 
 interface PendingRequest {
@@ -105,7 +107,10 @@ export class PresenceStoreProviderPortAdapter implements Adapter {
         this.requestPorts.set(rawMessage.id, binding)
         dispatch(this.callbacks, rawMessage, this.fail)
       },
-      onDisconnect: () => this.detach(binding, false)
+      onDisconnect: () => {
+        binding.disconnected = true
+        this.detach(binding, false)
+      }
     }
     port.onMessage.addListener(binding.onMessage)
     port.onDisconnect.addListener(binding.onDisconnect)
@@ -201,6 +206,7 @@ export class PresenceStoreInjectPortAdapter implements Adapter {
         dispatch(this.callbacks, rawMessage, () => {})
       },
       onDisconnect: () => {
+        binding.disconnected = true
         this.detach(binding, false)
         this.terminate(generation, binding, 'PresenceStore background port disconnected')
       }
@@ -228,11 +234,13 @@ export class PresenceStoreInjectPortAdapter implements Adapter {
     binding.port.onMessage.removeListener(binding.onMessage)
     binding.port.onDisconnect.removeListener(binding.onDisconnect)
     if (this.active === binding) this.active = undefined
-    if (disconnect) {
+    if (disconnect && !binding.disconnected) {
       try {
         binding.port.disconnect()
-      } catch {
-        // The binding is already terminal and its requests are rejected locally.
+      } catch (error) {
+        // The disconnect event already proved the port terminal; reaching this throw means an
+        // unexpected cleanup failure, which must not disappear.
+        console.error(error)
       }
     }
   }

@@ -54,6 +54,11 @@ const getState = <Schema extends DatabaseSchema<Schema>>(definition: DatabaseDef
 
 const abortError = (signal: AbortSignal): unknown => signal.reason ?? new DOMException('Aborted', 'AbortError')
 
+/** The original returned/emitted Promise remains the sole product owner of its rejection; this
+ * named observer only settles a derived side branch so it can never become an unhandled
+ * rejection, and it intentionally records nothing further for the same Error. */
+const observeDerivedRejection = () => undefined
+
 class MemoryTransaction<
   Schema extends DatabaseSchema<Schema>,
   Allowed extends StoreName<Schema>
@@ -227,7 +232,10 @@ export class MemoryDatabase<Schema extends DatabaseSchema<Schema>> implements Da
   private closed = false
   private closePromise: Promise<void> | null = null
 
-  constructor(private readonly definition: DatabaseDefinition<Schema>) {
+  constructor(
+    private readonly definition: DatabaseDefinition<Schema>,
+    private readonly onWatcherError?: (error: unknown) => void
+  ) {
     this.state = getState(definition)
     this.state.instances.add(this)
   }
@@ -238,7 +246,9 @@ export class MemoryDatabase<Schema extends DatabaseSchema<Schema>> implements Da
 
   private track<Result>(operation: Promise<Result>): Promise<Result> {
     this.inFlight.add(operation)
-    void operation.finally(() => this.inFlight.delete(operation)).catch(() => {})
+    // The returned operation stays the sole failure owner; the derived branch only maintains the
+    // in-flight set, and its rejection is observed so it cannot become an unhandled rejection.
+    void operation.finally(() => this.inFlight.delete(operation)).catch(observeDerivedRejection)
     return operation
   }
 
@@ -333,7 +343,12 @@ export class MemoryDatabase<Schema extends DatabaseSchema<Schema>> implements Da
       if (!stores.some((store) => watcher.stores.has(store))) return
       try {
         watcher.listener()
-      } catch {}
+      } catch (error) {
+        // A watcher failure never rolls back the committed write and never stops later listeners;
+        // the composition-owned reporter (or direct console fallback) keeps the original Error.
+        if (this.onWatcherError) this.onWatcherError(error)
+        else console.error(error)
+      }
     })
   }
 
@@ -348,8 +363,11 @@ export class MemoryDatabase<Schema extends DatabaseSchema<Schema>> implements Da
 }
 
 export const createMemoryDatabase = <Schema extends DatabaseSchema<Schema>>(
-  definition: DatabaseDefinition<Schema>
-): Database<Schema> => new MemoryDatabase(definition)
+  definition: DatabaseDefinition<Schema>,
+  options?: { onWatcherError?: (error: unknown) => void }
+): Database<Schema> => new MemoryDatabase(definition, options?.onWatcherError)
 
-export const createMemoryMessageDatabase = (name: string): Database<MessageDatabaseSchema> =>
-  createMemoryDatabase(createMessageDatabaseDefinition(name, 2))
+export const createMemoryMessageDatabase = (
+  name: string,
+  options?: { onWatcherError?: (error: unknown) => void }
+): Database<MessageDatabaseSchema> => createMemoryDatabase(createMessageDatabaseDefinition(name, 2), options)

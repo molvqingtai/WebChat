@@ -66,6 +66,11 @@ const withDeadline = <T>(task: Promise<T>, timeoutMs: number, message: string) =
     task.then(resolve, reject).finally(() => globalThis.clearTimeout(timer))
   })
 
+/** The original returned/emitted Promise remains the sole product owner of its rejection; this
+ * named observer only settles a derived side branch so it can never become an unhandled
+ * rejection, and it intentionally records nothing further for the same Error. */
+const observeDerivedRejection = () => undefined
+
 export class Coordinator {
   private readonly tabs = new Map<number, PhysicalTab>()
   private readonly epochs = new Map<number, number>()
@@ -92,7 +97,7 @@ export class Coordinator {
       tabs: this.currentTabs()
     }
     this.persistTail = this.persistTail
-      .catch(() => {})
+      .catch(observeDerivedRejection)
       .then(() => this.options.storage.set({ [COORDINATOR_SESSION_KEY]: state }))
     await this.persistTail
   }
@@ -193,8 +198,10 @@ export class Coordinator {
           this.options.attachPage({ domain: binding.domain, pageId: binding.pageId }),
           COORDINATOR_RPC_TIMEOUT_MS,
           'Runtime page attachment timed out'
-        ).catch(() => {
-          // best-effort attachment: a failed tab must not block the remaining tabs
+        ).catch((error: unknown) => {
+          // Attempt-all attachment continues for the remaining tabs; a failed tab keeps its
+          // original Error as a direct diagnostic at this exact owner.
+          console.error(error)
         })
       )
     )
@@ -277,7 +284,10 @@ export class Coordinator {
           const current = this.tabs.get(binding.tabId)
           if (current?.pageId !== binding.pageId) await this.options.detachPage(lease)
         },
-        () => {}
+        // The timeout rejection above already owns this failure; this observer only consumes the
+        // late rejection of the underlying attachment so it can never become an unhandled
+        // rejection.
+        observeDerivedRejection
       )
       throw error
     }
@@ -318,7 +328,7 @@ export class Coordinator {
       .finally(() => {
         if (this.pending.get(binding.tabId)?.epoch === epoch) this.pending.delete(binding.tabId)
       })
-      .catch(() => {})
+      .catch(observeDerivedRejection)
     return task
   }
 
@@ -332,7 +342,7 @@ export class Coordinator {
       .finally(() => {
         if (this.releases.get(binding.tabId)?.task === task) this.releases.delete(binding.tabId)
       })
-      .catch(() => {})
+      .catch(observeDerivedRejection)
     return task
   }
 

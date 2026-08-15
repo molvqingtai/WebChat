@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { HistorySupplyEvent } from '@/runtime/Contract'
 import { PagePort } from '@/runtime/PagePort'
 
@@ -132,6 +132,26 @@ describe('PagePort history request/response', () => {
     await expect(pending).resolves.toBeNull()
     expect(port.pendingHistoryCountForTest()).toBe(0)
     expect(oldEvents.at(-1)).toEqual({ type: 'cancel', supplyId: request.supplyId })
+  })
+
+  it('logs a detached page cancellation callback failure and still settles the pending supply', async () => {
+    const port = new PagePort()
+    const failure = new Error('detached page cancel exploded')
+    port.provideHistory('page-a', request.domain, (event) => {
+      if (event.type === 'cancel') throw failure
+    })
+    const pending = port.supplyHistory('page-a', request)
+    const rejected = expect(pending).rejects.toThrow('History supplier page detached')
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    port.removePage('page-a')
+
+    // The detached page's callback failure is a direct diagnostic at its exact owner, never
+    // swallowed and never rerouted, while the pending supply still settles by its own contract.
+    expect(diagnostic).toHaveBeenCalledWith(failure)
+    await rejected
+    expect(port.pendingHistoryCountForTest()).toBe(0)
+    diagnostic.mockRestore()
   })
 
   it('releases a failed or host-disposed pending correlation', async () => {

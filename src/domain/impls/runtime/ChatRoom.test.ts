@@ -1065,14 +1065,20 @@ describe('Runtime-backed ChatRoom application port', () => {
     // First join holds its provider call; a second join supersedes it by beginConnectionAttempt, which
     // must report the predecessor token cancelled BEFORE aborting it (first-terminal-wins).
     const first = room.joinRoom({ user: USER, site: SITE })
-    first.catch(() => {})
     await settle()
     const second = room.joinRoom({ user: USER, site: SITE })
-    second.catch(() => {})
+    await settle()
+
+    // Both task rejections keep their exact expected identity instead of a silent sink: the first
+    // rejects on supersession and the second on disposal-time page detachment.
+    const firstRejection = expect(first).rejects.toThrow('Page connection attempt superseded')
+    const secondRejection = expect(second).rejects.toThrow('Runtime page detached')
     await settle()
 
     expect(lifecycle.value.getTaskResult(first)).toBe('cancelled')
     room.dispose()
+    await firstRejection
+    await secondRejection
     await database.close()
   })
 })
