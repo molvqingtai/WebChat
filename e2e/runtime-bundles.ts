@@ -48,12 +48,12 @@ assert(!chromeHost.includes('tabs.query'), 'Chrome Offscreen host must not conta
 ;['this.tabs.get', 'this.tabs.sendMessage'].forEach((marker) =>
   assert(firefoxBackground.includes(marker), `Firefox background provider must retain ${marker}`)
 )
-;['Dropped Offscreen Runtime relay:', 'untrusted-source', 'target-mismatch'].forEach((relayMarker) => {
+;['Dropped Offscreen Runtime relay:', 'untrusted-source', 'target-mismatch'].forEach((relayMarker) =>
   assert(
     !firefoxBackground.includes(relayMarker),
     `Firefox background must not contain Chrome relay marker ${relayMarker}`
   )
-})
+)
 
 const expectedCoreJsImports = ['core-js/actual/typed-array/from-base64', 'core-js/actual/typed-array/to-base64']
 const coreJsImports = [...wireCodecSource.matchAll(/^import '([^']*core-js[^']*)'$/gm)].map((match) => match[1])
@@ -75,13 +75,13 @@ const codecPolyfillMarkers = [
     ['Chrome content', chromeContent],
     ['Firefox content', firefoxContent]
   ] as const
-).forEach(([target, bundles]) => {
-  bundles.forEach((bundle, index) => {
-    codecPolyfillMarkers.forEach((marker) => {
+).forEach(([target, bundles]) =>
+  bundles.forEach((bundle, index) =>
+    codecPolyfillMarkers.forEach((marker) =>
       assert(!bundle.includes(marker), `${target} entry ${index} must not contain codec polyfill marker ${marker}`)
-    })
-  })
-})
+    )
+  )
+)
 ;(
   [
     ['Chrome host', chromeHost],
@@ -91,9 +91,9 @@ const codecPolyfillMarkers = [
   ;['fromBase64', 'toBase64', 'lastChunkHandling'].forEach((marker) =>
     assert(bundle.includes(marker), `${target} must contain ${marker}`)
   )
-  ;['setFromBase64', 'fromHex', 'toHex', 'setFromHex', 'atob(', 'btoa('].forEach((residue) => {
+  ;['setFromBase64', 'fromHex', 'toHex', 'setFromHex', 'atob(', 'btoa('].forEach((residue) =>
     assert(!bundle.includes(residue), `${target} must not contain unrelated Base64/hex residue ${residue}`)
-  })
+  )
 })
 
 console.log(

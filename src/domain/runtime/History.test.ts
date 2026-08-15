@@ -167,7 +167,7 @@ describe('HistoryDomain connection-binding lifecycle', () => {
       done: true
     })
     await vi.waitFor(() =>
-      expect(store.query(history.query.RequesterAttemptsQuery()).every((item) => item.completed)).toBe(true)
+      expect(store.query(history.query.RequesterAttemptsQuery()).every((item) => item.loadingSettled)).toBe(true)
     )
     // A repeated start on the same incarnation is inert (its requester binding persists); only
     // the real replacement lifecycle retires the old owner into a retained collection and admits

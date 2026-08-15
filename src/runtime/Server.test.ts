@@ -3489,9 +3489,7 @@ describe('RuntimeServer history', () => {
     })
     const pages = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)
     // Every page stays strictly below 64KiB after the codec's own size boundary.
-    pages.forEach((page) => {
-      expect(new TextEncoder().encode(JSON.stringify(page)).byteLength).toBeLessThan(64 * 1024)
-    })
+    pages.forEach((page) => expect(new TextEncoder().encode(JSON.stringify(page)).byteLength).toBeLessThan(64 * 1024))
     expect(pages[pages.length - 1]).toMatchObject({ done: true })
     const covered = pages.flatMap((p) => (p as { messageIds: string[] }).messageIds)
     expect(new Set(covered).size).toBe(manyIds.length)

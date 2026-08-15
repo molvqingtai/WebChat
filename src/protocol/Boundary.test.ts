@@ -64,12 +64,12 @@ describe('public protocol source boundary', () => {
       )
       expect(source, `${file} reads a hidden wall clock`).not.toContain('Date.now')
       const dependencies = [...source.matchAll(/(?:from\s+|import\s+)['"]([^'"]+)['"]/g)].map((match) => match[1]!)
-      dependencies.forEach((dependency) => {
+      dependencies.forEach((dependency) =>
         expect(
           dependency.startsWith('.') || ALLOWED_DEPENDENCIES.has(dependency),
           `${file} imports unsupported dependency ${dependency}`
         ).toBe(true)
-      })
+      )
       FORBIDDEN_SYMBOLS.forEach((symbol) =>
         expect(source, `${file} contains private symbol ${symbol}`).not.toContain(symbol)
       )

@@ -227,13 +227,13 @@ describe('replaceable application boundaries', () => {
     const sourceEntries = await Promise.all(
       (await codeFiles(projectPath('src'))).map(async (file) => [file, await source(file)] as const)
     )
-    storageConstantNames.forEach((name) => {
+    storageConstantNames.forEach((name) =>
       expect(
         sourceEntries
           .filter(([, value]) => new RegExp(`^export const ${name}(?:\\s|=)`, 'm').test(value))
           .map(([file]) => path.relative(ROOT, file))
       ).toEqual(['src/constants/storage.ts'])
-    })
+    )
 
     expect(content).toContain('prepareBrowserSyncStorage: requestBrowserSyncStoragePreparation')
     expect(content).toContain(
