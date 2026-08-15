@@ -169,9 +169,13 @@ describe('HistoryDomain connection-binding lifecycle', () => {
     await vi.waitFor(() =>
       expect(store.query(history.query.RequesterAttemptsQuery()).every((item) => item.completed)).toBe(true)
     )
-    // The retained completed collection does not block the replacement connection's fresh request:
-    // a new synchronization starts while the old identity still accepts late pages.
+    // A repeated start on the same incarnation is inert (its requester binding persists); only
+    // the real replacement lifecycle retires the old owner into a retained collection and admits
+    // a fresh request identity while the old one still accepts late pages.
     store.send(history.command.StartRequesterCommand({ domain: DOMAIN, sourcePeerId: 'peer-a' }))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(store.query(history.query.RequesterAttemptsQuery())).toHaveLength(1)
+    store.send(history.command.ResetHistoryForSessionCommand({ domain: DOMAIN, sourcePeerId: 'peer-a' }))
     await vi.waitFor(() => expect(store.query(history.query.RequesterAttemptsQuery())).toHaveLength(2))
     // Domain release must clear BOTH directional bindings itself: only then can the same ids
     // bind again and start fresh synchronization work (a stale terminal binding would block both).

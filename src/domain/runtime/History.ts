@@ -279,7 +279,7 @@ const HistoryDomain = Remesh.domain({
     const StartRequestedEvent = domain.event<{ domain: string; sourcePeerId: string }>({
       name: 'History.StartRequestedEvent'
     })
-    const FinishRequestedEvent = domain.event<{ domain: string; sourcePeerId: string }>({
+    const FinishRequestedEvent = domain.event<{ domain: string; syncId: string; providerId: string }>({
       name: 'History.FinishRequestedEvent'
     })
     const FinishCurrentRequestedEvent = domain.event<HistoryAttemptKey>({
@@ -331,18 +331,15 @@ const HistoryDomain = Remesh.domain({
       impl: ({ get }, payload: { domain: string; sourcePeerId: string }) => {
         const runtime = get(sessionDomain.query.DomainQuery(payload.domain))
         if (!runtime?.sessions.some((session) => session.sourcePeerId === payload.sourcePeerId)) return null
-        // Exactly one outgoing synchronization per connection incarnation: a terminal outgoing
-        // direction never starts again, so repeating a session or a late trigger cannot restart
-        // History on the same connection.
+        // Exactly one outgoing synchronization per connection incarnation: any existing requester
+        // binding marks this incarnation as already started, so a repeated session or a late
+        // trigger is inert. Only the real replacement lifecycle (which clears the binding) admits
+        // a fresh requester; a retained collection then survives solely to merge late pages.
         const requesterBinding = get(HistorySyncBindingsState()).get(
           bindingKeyFor({ sourcePeerId: payload.sourcePeerId, domain: payload.domain, direction: 'requester' })
         )
-        if (requesterBinding?.terminal) return null
-        // One active outgoing synchronization per domain: a retained (loading-settled) requester
-        // persists only to merge late pages by request identity and does not block the replacement
-        // connection's fresh request.
+        if (requesterBinding) return null
         const requesters = get(RequesterAttemptsState())
-        if (requesters.some((item) => item.domain === payload.domain && !item.completed)) return null
         const allocated = nextTokens(get, 2)
         const state: RequesterAttemptState = {
           sourcePeerId: payload.sourcePeerId,
@@ -386,6 +383,14 @@ const HistoryDomain = Remesh.domain({
         const settled: RequesterAttemptState = { ...current, completed: true }
         return [
           RequesterAttemptsState().new(replaceBy(requesters, (item) => matchesSync(item, current), settled)),
+          // The outgoing inventory output for this settled request stops; cleanup is scoped to
+          // this request identity so a coexisting fresh request's sends are never removed.
+          PendingWireSendsState().new(
+            removeBy(
+              get(PendingWireSendsState()),
+              (item) => item.type === 'inventory' && item.syncId === current.syncId
+            )
+          ),
           ...(dismissFeedback(get, current) ?? []),
           SyncCompletedEvent({ domain: key.domain, sourcePeerId: key.sourcePeerId })
         ]
@@ -394,36 +399,18 @@ const HistoryDomain = Remesh.domain({
 
     const FinishRequesterCommand = domain.command({
       name: 'History.FinishRequesterCommand',
-      impl: ({ get }, payload: { domain: string; sourcePeerId: string }) => {
+      impl: ({ get }, payload: { domain: string; syncId: string; providerId: string }) => {
         const requesters = get(RequesterAttemptsState())
-        const current = requesters.find((item) => item.domain === payload.domain)
+        const current = requesters.find((item) => item.domain === payload.domain && item.syncId === payload.syncId)
         if (!current) return null
-        // A provider lane closes on its own terminal: that snapshotted provider settles, and the
-        // loading closes once every request-start provider has completed, failed, or departed.
-        const lane = current.providers[payload.sourcePeerId]
+        // Settle only that provider's request-start snapshot seat: loading settlement is separate
+        // from response collection, so a provider failure never terminalizes or erases its lane.
         const next: RequesterAttemptState = {
           ...current,
-          providers: lane
-            ? {
-                ...current.providers,
-                [payload.sourcePeerId]: {
-                  ...lane,
-                  responseDone: true,
-                  awaitingBatchId: undefined,
-                  pendingResponsePages: []
-                }
-              }
-            : current.providers,
-          settledProviders: [...new Set([...current.settledProviders, payload.sourcePeerId])]
+          settledProviders: [...new Set([...current.settledProviders, payload.providerId])]
         }
         const actions: RemeshCommandOutput[] = [
-          RequesterAttemptsState().new(replaceBy(requesters, (item) => matchesSync(item, current), next)),
-          PendingWireSendsState().new(
-            removeBy(
-              get(PendingWireSendsState()),
-              (item) => item.domain === payload.domain && item.type === 'inventory'
-            )
-          )
+          RequesterAttemptsState().new(replaceBy(requesters, (item) => matchesSync(item, current), next))
         ]
         // Loading closure never deletes or terminalizes the request: the requester persists so a
         // valid late associated page still merges.
@@ -436,7 +423,9 @@ const HistoryDomain = Remesh.domain({
       name: 'History.FinishCurrentRequesterCommand',
       impl: ({ get }, payload: HistoryAttemptKey) => {
         const current = get(RequesterAttemptsState()).find((item) => matchesSync(item, payload))
-        return current ? FinishRequestedEvent({ domain: payload.domain, sourcePeerId: payload.sourcePeerId }) : null
+        return current
+          ? FinishRequestedEvent({ domain: payload.domain, syncId: payload.syncId, providerId: payload.sourcePeerId })
+          : null
       }
     })
 
@@ -614,10 +603,22 @@ const HistoryDomain = Remesh.domain({
             ? { ...item, completed: true }
             : item
         )
+        const retiredIds = new Set(
+          requesters
+            .filter(
+              (item) => item.sourcePeerId === payload.sourcePeerId && item.domain === payload.domain && !item.completed
+            )
+            .map((item) => item.syncId)
+        )
         return [
           ...(retained.some((item, index) => item !== requesters[index])
             ? [RequesterAttemptsState().new(retained)]
             : []),
+          // Retire the replaced request's outgoing inventory output (scoped to its identity) while
+          // preserving its response collection for late pages.
+          PendingWireSendsState().new(
+            removeBy(get(PendingWireSendsState()), (item) => item.type === 'inventory' && retiredIds.has(item.syncId))
+          ),
           ClearSyncBindingsCommand(payload),
           CleanupProviderSlotsCommand(payload),
           ...dismissedOwners.flatMap((item) => dismissFeedback(get, item) ?? []),
@@ -667,7 +668,9 @@ const HistoryDomain = Remesh.domain({
         const current = found as PendingInventorySend
         const requesters = get(RequesterAttemptsState())
         const attempt = requesters.find((item) => matchesSync(item, current))
-        if (!attempt) return null
+        // A retired (loading-settled) requester no longer broadcasts inventory; its collection only
+        // merges late pages.
+        if (!attempt || attempt.completed) return null
         const next: RequesterAttemptState = {
           ...attempt,
           nextInventoryPage: attempt.nextInventoryPage + 1
@@ -1437,7 +1440,11 @@ const HistoryDomain = Remesh.domain({
       if (provider.responseDone) {
         return {
           ok: false,
-          action: FinishRequestedEvent({ domain: current.domain, sourcePeerId: payload.sourcePeerId })
+          action: FinishRequestedEvent({
+            domain: current.domain,
+            syncId: current.syncId,
+            providerId: payload.sourcePeerId
+          })
         }
       }
       const ordered = payload.message.messages.every(
@@ -1506,19 +1513,35 @@ const HistoryDomain = Remesh.domain({
           if (queuedMatch) {
             return JSON.stringify(queuedMatch) === fingerprint
               ? null
-              : FinishRequestedEvent({ domain: binding.domain, sourcePeerId: payload.sourcePeerId })
+              : FinishRequestedEvent({
+                  domain: current.domain,
+                  syncId: current.syncId,
+                  providerId: payload.sourcePeerId
+                })
           }
           if (payload.message.page === provider.expectedResponsePage - 1) {
             return provider.lastAppliedPageFingerprint === fingerprint
               ? null
-              : FinishRequestedEvent({ domain: binding.domain, sourcePeerId: payload.sourcePeerId })
+              : FinishRequestedEvent({
+                  domain: current.domain,
+                  syncId: current.syncId,
+                  providerId: payload.sourcePeerId
+                })
           }
           if (provider.responseDone || queued.some((item) => item.done)) {
-            return FinishRequestedEvent({ domain: binding.domain, sourcePeerId: payload.sourcePeerId })
+            return FinishRequestedEvent({
+              domain: current.domain,
+              syncId: current.syncId,
+              providerId: payload.sourcePeerId
+            })
           }
           if (payload.message.page === provider.queuedResponseTail) {
             if (queued.length >= MAX_PENDING_RESPONSE_PAGES) {
-              return FinishRequestedEvent({ domain: binding.domain, sourcePeerId: payload.sourcePeerId })
+              return FinishRequestedEvent({
+                domain: current.domain,
+                syncId: current.syncId,
+                providerId: payload.sourcePeerId
+              })
             }
             return RequesterAttemptsState().new(
               replaceBy(
@@ -1532,7 +1555,11 @@ const HistoryDomain = Remesh.domain({
               )
             )
           }
-          return FinishRequestedEvent({ domain: binding.domain, sourcePeerId: payload.sourcePeerId })
+          return FinishRequestedEvent({
+            domain: current.domain,
+            syncId: current.syncId,
+            providerId: payload.sourcePeerId
+          })
         }
         if (payload.message.page !== provider.expectedResponsePage) {
           // Identical replay of the last applied page is idempotent; anything else (gap,
@@ -1544,7 +1571,11 @@ const HistoryDomain = Remesh.domain({
           ) {
             return null
           }
-          return FinishRequestedEvent({ domain: binding.domain, sourcePeerId: payload.sourcePeerId })
+          return FinishRequestedEvent({
+            domain: current.domain,
+            syncId: current.syncId,
+            providerId: payload.sourcePeerId
+          })
         }
         const prepared = prepareResponsePage(current, provider, payload)
         if (!prepared.ok) return prepared.action
@@ -1556,7 +1587,11 @@ const HistoryDomain = Remesh.domain({
         for (const event of page.messages) {
           const messageBytes = getTextByteSize(JSON.stringify(event))
           if (messageCount + 1 > historySessionMessages || decodedBytes + messageBytes > historySessionBytes) {
-            return FinishRequestedEvent({ domain: binding.domain, sourcePeerId: payload.sourcePeerId })
+            return FinishRequestedEvent({
+              domain: current.domain,
+              syncId: current.syncId,
+              providerId: payload.sourcePeerId
+            })
           }
           messageCount += 1
           decodedBytes += messageBytes
@@ -1565,7 +1600,11 @@ const HistoryDomain = Remesh.domain({
         // before any record is built, and observeHlc threads ordered per-item clock state
         for (const event of page.messages) {
           if (event.hlc.timestamp < current.cutoff) {
-            return FinishRequestedEvent({ domain: binding.domain, sourcePeerId: payload.sourcePeerId })
+            return FinishRequestedEvent({
+              domain: current.domain,
+              syncId: current.syncId,
+              providerId: payload.sourcePeerId
+            })
           }
           const user =
             page.users.find((candidate) => candidate.id === event.userId) ??
@@ -1638,13 +1677,15 @@ const HistoryDomain = Remesh.domain({
         const output: RemeshCommandOutput[] = [
           RequesterAttemptsState().new(replaceBy(requesters, (item) => matchesSync(item, current), next)),
           ...(activation ? (activateFeedback(get, current) ?? []) : []),
-          ...(lane.finalBatch ? [FinishRequestedEvent({ domain: current.domain, sourcePeerId: providerId })] : [])
+          ...(lane.finalBatch
+            ? [FinishRequestedEvent({ domain: current.domain, syncId: current.syncId, providerId })]
+            : [])
         ]
         if (!lane.finalBatch && queued) {
           // Dequeue must re-validate the page number: a stale or duplicated queued page that no
           // longer matches the expected page cancels the lane instead of being applied.
           if (queued.page !== nextLane.expectedResponsePage) {
-            output.push(FinishRequestedEvent({ domain: current.domain, sourcePeerId: providerId }))
+            output.push(FinishRequestedEvent({ domain: current.domain, syncId: current.syncId, providerId }))
             return output
           }
           const prepared = prepareResponsePage(next, nextLane, {
@@ -1671,13 +1712,13 @@ const HistoryDomain = Remesh.domain({
               decodedBytes += messageBytes
             }
             if (!budgetOk) {
-              output.push(FinishRequestedEvent({ domain: current.domain, sourcePeerId: providerId }))
+              output.push(FinishRequestedEvent({ domain: current.domain, syncId: current.syncId, providerId }))
             } else {
               const records: ChatMessageRecord[] = []
               // and continue skips events observeHlc rejects while threading ordered clock state
               for (const event of page.messages) {
                 if (event.hlc.timestamp < next.cutoff) {
-                  output.push(FinishRequestedEvent({ domain: current.domain, sourcePeerId: providerId }))
+                  output.push(FinishRequestedEvent({ domain: current.domain, syncId: current.syncId, providerId }))
                   break
                 }
                 const user =
@@ -1737,7 +1778,7 @@ const HistoryDomain = Remesh.domain({
         const providerEntry =
           current && Object.entries(current.providers).find(([, lane]) => lane.awaitingBatchId === payload.batchId)
         return current && providerEntry
-          ? FinishRequestedEvent({ domain: current.domain, sourcePeerId: providerEntry[0] })
+          ? FinishRequestedEvent({ domain: current.domain, syncId: current.syncId, providerId: providerEntry[0] })
           : null
       }
     })
@@ -1850,7 +1891,7 @@ const HistoryDomain = Remesh.domain({
             const failedPageIds: string[] = []
             return defer(async () => {
               const current = get(RequesterAttemptsState()).find((item) => matchesSync(item, key))
-              if (!current || current.inventoryPages.length > 0) return []
+              if (!current || current.completed || current.inventoryPages.length > 0) return []
               const pageIds = pagePort.historyPageIds(key.domain)
               const supplyRequest = {
                 domain: key.domain,
@@ -1881,8 +1922,8 @@ const HistoryDomain = Remesh.domain({
                     break
                   }
                   // Re-check the complete live attempt after every settlement before selecting
-                  // another page: a cleanup-invalidated requester stops the old selection loop.
-                  if (!get(RequesterAttemptsState()).some((item) => matchesSync(item, key))) {
+                  // another page: a cleanup-invalidated or retired requester stops the old loop.
+                  if (!get(RequesterAttemptsState()).some((item) => matchesSync(item, key) && !item.completed)) {
                     return finishEarly()
                   }
                 } catch {
@@ -1894,13 +1935,13 @@ const HistoryDomain = Remesh.domain({
                   if (!pagePort.historyPageIds(key.domain).includes(pageId)) {
                     failedPageIds.push(pageId)
                   }
-                  if (!get(RequesterAttemptsState()).some((item) => matchesSync(item, key))) {
+                  if (!get(RequesterAttemptsState()).some((item) => matchesSync(item, key) && !item.completed)) {
                     return finishEarly()
                   }
                 }
               }
               const attempt = get(RequesterAttemptsState()).find((item) => matchesSync(item, key))
-              if (!supplied || !attempt) {
+              if (!supplied || !attempt || attempt.completed) {
                 return [
                   ...(failedPageIds.length > 0 ? [DeadPagesEvent(failedPageIds)] : []),
                   FinishCurrentRequestedEvent(key)

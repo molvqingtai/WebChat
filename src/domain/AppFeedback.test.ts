@@ -119,9 +119,7 @@ const createFixture = (readiness?: Readiness) => {
     room,
     chat,
     toast,
-    emitReadiness: (state: ReadinessState) => {
-      readinessListeners.forEach((listener) => listener(state))
-    }
+    emitReadiness: (state: ReadinessState) => readinessListeners.forEach((listener) => listener(state))
   }
 }
 

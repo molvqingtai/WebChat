@@ -13,12 +13,8 @@ const useShareRef = <T>(...refs: (Ref<T> | undefined)[]) => {
   return useCallback(
     (node: T) => {
       const cleanups = refs.map((ref) => setRef(ref, node))
-      return () => {
-        cleanups.forEach((cleanup, index) => {
-          if (typeof cleanup === 'function') cleanup()
-          else setRef(refs[index], null)
-        })
-      }
+      return () =>
+        cleanups.forEach((cleanup, index) => (typeof cleanup === 'function' ? cleanup() : setRef(refs[index], null)))
     },
     [...refs]
   )

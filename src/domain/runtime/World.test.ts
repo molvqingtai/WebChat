@@ -109,10 +109,7 @@ const stage = (fixture: ReturnType<typeof createFixture>, attemptId: string, ori
 }
 
 const settleAll = async () => {
-  await Array.from({ length: 20 }).reduce<Promise<unknown>>(
-    (acc) => acc.then(() => Promise.resolve()),
-    Promise.resolve()
-  )
+  for (let index = 0; index < 20; index += 1) await Promise.resolve()
 }
 
 describe('WorldDomain single per-target publication iterator', () => {

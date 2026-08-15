@@ -128,8 +128,7 @@ const createFixture = (user: UserInfo, userInfoBeforeNotification = false) => {
 const fixtures: Array<ReturnType<typeof createFixture>> = []
 
 afterEach(async () => {
-  const fixturesToDispose = fixtures.splice(0)
-  await Promise.all(fixturesToDispose.map((fixture) => fixture.dispose()))
+  await Promise.all(fixtures.splice(0).map((fixture) => fixture.dispose()))
   vi.restoreAllMocks()
 })
 

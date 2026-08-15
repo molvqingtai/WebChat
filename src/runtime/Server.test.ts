@@ -3880,8 +3880,8 @@ describe('RuntimeServer history', () => {
       done: true
     })
     await settle()
-    // A changed replay of the queued terminal N+2 cancels the attempt immediately and discards the
-    // queued N+1 and N+2, even after the held page 0 settles.
+    // A changed replay of the queued terminal N+2 is rejected as invalid, but it does not erase
+    // the already-accepted queued N+1 and N+2: they are retained and merged once page 0 settles.
     fake.receive(roomId, 'peer-a', {
       type: MESSAGE_TYPE.HISTORY_MESSAGES_PUSH,
       syncId,
@@ -3894,7 +3894,7 @@ describe('RuntimeServer history', () => {
     release.ack?.()
     await settle()
     await settle()
-    expect(delivered).toEqual(['page-0-msg'])
+    expect(delivered).toEqual(['page-0-msg', 'page-1-msg', 'page-2-msg'])
   })
 
   it('frees admission capacity on real peer removal so a new peer progresses', async () => {

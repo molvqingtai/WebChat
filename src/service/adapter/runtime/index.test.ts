@@ -65,9 +65,7 @@ describe('Runtime browser adapters', () => {
     adapter.onMessage(received)
 
     const request = providerMessage('request', { sender: { type: 'injector' }, meta: {} })
-    listeners.forEach((listener) => {
-      listener(request, { tab: { id: 7, url: 'https://example.com/' } } as never)
-    })
+    listeners.forEach((listener) => listener(request, { tab: { id: 7, url: 'https://example.com/' } } as never))
     adapter.sendMessage(providerMessage('response'), [])
 
     expect(received).toHaveBeenCalledWith({
@@ -79,9 +77,7 @@ describe('Runtime browser adapters', () => {
       sender: { type: 'injector' },
       meta: {}
     })
-    listeners.forEach((listener) => {
-      listener(backgroundRequest, { url: 'chrome-extension://test/background.js' })
-    })
+    listeners.forEach((listener) => listener(backgroundRequest, { url: 'chrome-extension://test/background.js' }))
     expect(received).toHaveBeenLastCalledWith(backgroundRequest)
     expect(sendMessage).toHaveBeenCalledWith(providerMessage('response'))
 

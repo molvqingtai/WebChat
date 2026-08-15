@@ -130,18 +130,10 @@ const createFixture = ({
     set,
     watch,
     browserGet,
-    emitMessage: (message: ChatMessage) => {
-      messageListeners.forEach((listener) => listener(message))
-    },
-    emitSessions: (sessions: readonly ChatSession[]) => {
-      sessionListeners.forEach((listener) => listener(sessions))
-    },
-    emitJoin: (session: ChatSession) => {
-      joinListeners.forEach((listener) => listener(session))
-    },
-    emitLeave: (session: ChatSession) => {
-      leaveListeners.forEach((listener) => listener(session))
-    },
+    emitMessage: (message: ChatMessage) => messageListeners.forEach((listener) => listener(message)),
+    emitSessions: (sessions: readonly ChatSession[]) => sessionListeners.forEach((listener) => listener(sessions)),
+    emitJoin: (session: ChatSession) => joinListeners.forEach((listener) => listener(session)),
+    emitLeave: (session: ChatSession) => leaveListeners.forEach((listener) => listener(session)),
     messageListeners,
     sessionListeners
   }
@@ -169,19 +161,15 @@ const createSharedStatusStorage = (
 
   return {
     writes,
-    clearWrites: () => {
-      writes.splice(0)
-    },
+    clearWrites: () => writes.splice(0),
     synchronize: <Value extends StorageValue>(key: StatusStorageKey, value: Value) => {
       values.set(key, value)
-      watchers.values().forEach((callbacks) => callbacks.forEach((callback) => callback()))
+      watchers.forEach((callbacks) => callbacks.forEach((callback) => callback()))
     },
     pause: (tabId: string) => pausedTabs.add(tabId),
     resume: (tabId: string) => {
       pausedTabs.delete(tabId)
-      {
-        ;(watchers.get(tabId) ?? []).forEach((callback) => callback())
-      }
+      watchers.get(tabId)?.forEach((callback) => callback())
     },
     holdNextRead: (tabId: string, key: StatusStorageKey) => {
       const captured = deferred<void>()
@@ -302,7 +290,7 @@ describe('AppStatus shared domain status', () => {
   it('exposes only the shell queries, commands, and events used by production consumers', () => {
     const fixture = createFixture()
 
-    expect(Object.keys(fixture.domain.query).toSorted()).toEqual(
+    expect(Object.keys(fixture.domain.query).sort()).toEqual(
       [
         'AppButtonAuthorQuery',
         'HasUnreadQuery',
@@ -311,16 +299,16 @@ describe('AppStatus shared domain status', () => {
         'PositionQuery',
         'ReadyQuery',
         'StatusLoadIsFinishedQuery'
-      ].toSorted()
+      ].sort()
     )
-    expect(Object.keys(fixture.domain.command).toSorted()).toEqual(
+    expect(Object.keys(fixture.domain.command).sort()).toEqual(
       [
         'MarkReadyCommand',
         'MarkUnavailableCommand',
         'RetryCommand',
         'UpdateOpenCommand',
         'UpdatePositionCommand'
-      ].toSorted()
+      ].sort()
     )
     expect(Object.keys(fixture.domain.event)).toEqual(['RetryRequestedEvent'])
   })
