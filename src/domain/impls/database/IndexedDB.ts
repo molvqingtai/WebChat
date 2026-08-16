@@ -165,7 +165,14 @@ class IndexedDBTransaction<
     let request: IDBRequest<number>
     try {
       request = this.transaction.objectStore(storeName).count()
-    } catch {
+    } catch (error) {
+      if (
+        error instanceof DOMException &&
+        (error.name === 'InvalidStateError' || error.name === 'TransactionInactiveError')
+      ) {
+        return
+      }
+      console.error(error)
       return
     }
     const continueKeepingAlive = () => this.keepAlive(generation)
@@ -188,12 +195,11 @@ class IndexedDBTransaction<
   private track<Result>(operation: Promise<Result>): Promise<Result> {
     this.touch()
     this.pending += 1
-    void operation
-      .finally(() => {
-        this.pending -= 1
-        if (this.pending === 0 && this.active) this.idle()
-      })
-      .catch(() => {})
+    const releasePending = () => {
+      this.pending -= 1
+      if (this.pending === 0 && this.active) this.idle()
+    }
+    void operation.then(releasePending, releasePending)
     return operation
   }
 
@@ -372,14 +378,19 @@ class IndexedDBTransaction<
 }
 
 export class IndexedDBDatabase<Schema extends DatabaseSchema<Schema>> implements Database<Schema> {
-  private databasePromise: Promise<IDBDatabase> | null = null
+  private databasePromise: Promise<
+    { readonly ok: true; readonly database: IDBDatabase } | { readonly ok: false; readonly error: unknown }
+  > | null = null
   private readonly watchers = new Set<{ stores: ReadonlySet<string>; listener: () => void }>()
   private readonly inFlight = new Set<Promise<unknown>>()
   private readonly channel: BroadcastChannel | null
   private closed = false
   private closePromise: Promise<void> | null = null
 
-  constructor(private readonly definition: DatabaseDefinition<Schema>) {
+  constructor(
+    private readonly definition: DatabaseDefinition<Schema>,
+    private readonly onWatcherError?: (error: unknown) => void
+  ) {
     this.channel = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel(definition.channelName)
     this.channel?.addEventListener('message', (event: MessageEvent<unknown>) => {
       if (!Array.isArray(event.data) || !event.data.every((store) => typeof store === 'string')) return
@@ -391,14 +402,21 @@ export class IndexedDBDatabase<Schema extends DatabaseSchema<Schema>> implements
     if (this.closed) throw new Error('Database is closed')
   }
 
-  private database(): Promise<IDBDatabase> {
-    this.databasePromise ??= openDatabase(this.definition)
-    return this.databasePromise
+  private async database(): Promise<IDBDatabase> {
+    this.databasePromise ??= openDatabase(this.definition).then(
+      (database) => ({ ok: true as const, database }),
+      (error: unknown) => ({ ok: false as const, error })
+    )
+    const result = await this.databasePromise
+    if (!result.ok) throw result.error
+    return result.database
   }
 
   private track<Result>(operation: Promise<Result>): Promise<Result> {
     this.inFlight.add(operation)
-    void operation.finally(() => this.inFlight.delete(operation)).catch(() => {})
+    const releaseOwnership = () => this.inFlight.delete(operation)
+    // The returned operation owns its result; both side outcomes perform only in-flight cleanup.
+    void operation.then(releaseOwnership, releaseOwnership)
     return operation
   }
 
@@ -408,7 +426,21 @@ export class IndexedDBDatabase<Schema extends DatabaseSchema<Schema>> implements
       if (!stores.some((store) => watcher.stores.has(store))) return
       try {
         watcher.listener()
-      } catch {}
+      } catch (error) {
+        // A watcher failure never rolls back the committed write and never stops later listeners;
+        // the composition-owned reporter (or direct console fallback) keeps the original Error.
+        if (!this.onWatcherError) {
+          console.error(error)
+          return
+        }
+        try {
+          this.onWatcherError(error)
+        } catch (reporterError) {
+          // Error delivery failure is independently diagnostic and cannot affect the committed
+          // write or later watchers.
+          console.error(reporterError)
+        }
+      }
     })
   }
 
@@ -426,12 +458,19 @@ export class IndexedDBDatabase<Schema extends DatabaseSchema<Schema>> implements
       const database = await this.database()
       signal?.throwIfAborted()
       const transaction = database.transaction(scope, writable ? 'readwrite' : 'readonly')
-      const settled = transactionResult(transaction)
-      void settled.catch(() => {})
+      const settled = transactionResult(transaction).then(
+        () => ({ ok: true as const }),
+        (error: unknown) => ({ ok: false as const, error })
+      )
       const abort = () => {
         try {
           transaction.abort()
-        } catch {}
+        } catch (error) {
+          // IDBTransaction.abort() throws InvalidStateError only when the transaction already
+          // reached its terminal committed/aborted state — that exact condition is benign.
+          if (error instanceof DOMException && error.name === 'InvalidStateError') return
+          console.error(error)
+        }
       }
       let callbackSettled = false
       const wrapped = new IndexedDBTransaction(
@@ -475,7 +514,8 @@ export class IndexedDBDatabase<Schema extends DatabaseSchema<Schema>> implements
         signal?.throwIfAborted()
         wrapped.assertCallbackActive()
         wrapped.finish()
-        await settled
+        const settlement = await settled
+        if (!settlement.ok) throw settlement.error
         if (writable && wrapped.mutated.size > 0) {
           const mutated = [...wrapped.mutated]
           this.notify(mutated)
@@ -485,7 +525,16 @@ export class IndexedDBDatabase<Schema extends DatabaseSchema<Schema>> implements
       } catch (error) {
         wrapped.finish()
         abort()
-        await settled.catch(() => {})
+        const settlement = await settled
+        // A distinct non-abort settlement failure is secondary to the callback/abort primary.
+        // When settlement itself is the returned primary, identity equality prevents duplication.
+        if (
+          !settlement.ok &&
+          settlement.error !== error &&
+          !(settlement.error instanceof DOMException && settlement.error.name === 'AbortError')
+        ) {
+          console.error(settlement.error)
+        }
         signal?.throwIfAborted()
         throw error
       } finally {
@@ -532,8 +581,8 @@ export class IndexedDBDatabase<Schema extends DatabaseSchema<Schema>> implements
     this.closed = true
     this.watchers.clear()
     this.closePromise = Promise.allSettled(this.inFlight).then(async () => {
-      const database = await this.databasePromise?.catch(() => null)
-      database?.close()
+      const result = await this.databasePromise
+      if (result?.ok) result.database.close()
       this.channel?.close()
     })
     return this.closePromise
@@ -541,8 +590,9 @@ export class IndexedDBDatabase<Schema extends DatabaseSchema<Schema>> implements
 }
 
 export const createIndexedDBDatabase = <Schema extends DatabaseSchema<Schema>>(
-  definition: DatabaseDefinition<Schema>
-): Database<Schema> => new IndexedDBDatabase(definition)
+  definition: DatabaseDefinition<Schema>,
+  options?: { onWatcherError?: (error: unknown) => void }
+): Database<Schema> => new IndexedDBDatabase(definition, options?.onWatcherError)
 
 /**
  * A cross-tab deletion contender can hold the old store open indefinitely (Firefox preparation runs without
@@ -581,7 +631,7 @@ const deleteMessageDatabase = (): Promise<void> =>
       'error',
       () => {
         clearBlockedTimer()
-        reject(new Error('Message store deletion failed'))
+        reject(request.error ?? new Error('Message store deletion failed'))
       },
       { once: true }
     )
@@ -593,28 +643,24 @@ export const prepareIndexedDBMessageDatabase = (coordinator?: PreparationLockCoo
   return withPreparationLock(
     `message:${STORAGE_NAME}`,
     async (lock) => {
-      try {
-        const databases = await lock.read(indexedDB.databases())
-        const existing = databases.find((database) => database.name === STORAGE_NAME)
-        if (existing && existing.version !== MESSAGE_STORE_VERSION) {
-          await lock.write(async () => {
-            await deleteMessageDatabase()
-          })
-          lock.checkpoint()
-        }
-
-        const database = await lock.write(() => openDatabase(definition))
-        database.close()
+      const databases = await lock.read(indexedDB.databases())
+      const existing = databases.find((database) => database.name === STORAGE_NAME)
+      if (existing && existing.version !== MESSAGE_STORE_VERSION) {
+        await lock.write(async () => {
+          await deleteMessageDatabase()
+        })
         lock.checkpoint()
-      } catch (error) {
-        if (lock.signal.aborted) throw error
-        console.error('[WebChat] Message store preparation failed')
-        throw new Error('Message store preparation failed')
       }
+
+      const database = await lock.write(() => openDatabase(definition))
+      database.close()
+      lock.checkpoint()
     },
     coordinator
   )
 }
 
-export const createIndexedDBMessageDatabase = (): Database<MessageDatabaseSchema> =>
-  createIndexedDBDatabase(createMessageDatabaseDefinition(STORAGE_NAME, MESSAGE_STORE_VERSION))
+export const createIndexedDBMessageDatabase = (options?: {
+  onWatcherError?: (error: unknown) => void
+}): Database<MessageDatabaseSchema> =>
+  createIndexedDBDatabase(createMessageDatabaseDefinition(STORAGE_NAME, MESSAGE_STORE_VERSION), options)

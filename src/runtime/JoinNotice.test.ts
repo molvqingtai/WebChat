@@ -50,7 +50,6 @@ class DeterministicNetwork {
   private readonly deliveredFrames: HeldFrame[] = []
   private readonly lifecycleEvents: string[] = []
   private readonly announcedPairs = new Set<string>()
-  private readonly releaseOnSessionSend = new Map<string, { sourcePeerId: string; targetPeerId: string }>()
 
   holdSession(sourcePeerId: string, targetPeerId: string) {
     this.heldRoutes.add(`${sourcePeerId}->${targetPeerId}`)
@@ -64,10 +63,6 @@ class DeterministicNetwork {
     const pair = this.pairKey(roomId, leftPeerId, rightPeerId)
     this.heldDiscoveries.delete(pair)
     this.announce(roomId, leftPeerId, rightPeerId)
-  }
-
-  releaseSessionWhenPeerPublishes(publishingPeerId: string, sourcePeerId: string, targetPeerId: string) {
-    this.releaseOnSessionSend.set(publishingPeerId, { sourcePeerId, targetPeerId })
   }
 
   releaseSession(sourcePeerId: string, targetPeerId: string) {
@@ -161,6 +156,7 @@ class DeterministicNetwork {
       peerIdOf: () => peerId,
       join: async (roomId) => {
         endpoint.rooms.add(roomId)
+        this.discover(roomId, peerId)
       },
       leave: (roomId) => {
         if (!endpoint.rooms.delete(roomId)) return
@@ -178,11 +174,6 @@ class DeterministicNetwork {
         this.discover(roomId, peerId)
         await Promise.resolve()
         await Promise.resolve()
-        const release = parsed.type === MESSAGE_TYPE.SESSION ? this.releaseOnSessionSend.get(peerId) : undefined
-        if (release) {
-          this.releaseOnSessionSend.delete(peerId)
-          this.releaseSession(release.sourcePeerId, release.targetPeerId)
-        }
         this.endpoints.forEach((target, targetPeerId) => {
           if (targetPeerId === peerId || !target.rooms.has(roomId) || (selected && !selected.has(targetPeerId))) return
           const frame = { roomId, sourcePeerId: peerId, targetPeerId, payload }
@@ -276,12 +267,20 @@ const createStack = async (
   options: {
     presenceStore?: PresenceStore
     now?: number
+    sleep?: () => Promise<void>
     onAllocateText?: () => void
     onAllocateReaction?: () => void
   } = {}
 ): Promise<ApplicationStack> => {
   const now = options.now ?? NOW + stacks.length
-  const clock: Clock = { now: () => now }
+  const clock: Clock = {
+    now: () => now,
+    sleep: async () => {
+      await options.sleep?.()
+      await Promise.resolve()
+      await Promise.resolve()
+    }
+  }
   const server = createServer({
     transport: network.transport(peerId),
     clock,
@@ -448,22 +447,29 @@ describe('join notice observation baseline', () => {
   })
 
   it.each([
-    { name: 'SESSION arrives during B preparation', holdBaselineSession: false },
-    { name: 'pre-existing SESSION arrives immediately after B commit', holdBaselineSession: true }
+    { name: 'SESSION arrives before the B post-join pause', holdBaselineSession: false },
+    { name: 'held SESSION arrives during the B post-join pause', holdBaselineSession: true }
   ])('$name', async ({ holdBaselineSession }) => {
     const network = new DeterministicNetwork()
     const a = await createStack(network, 'peer-a', { id: 'user-a', name: 'A', avatar: '' })
-    const b = await createStack(network, 'peer-b', { id: 'user-b', name: 'B', avatar: '' })
+    const b = await createStack(
+      network,
+      'peer-b',
+      { id: 'user-b', name: 'B', avatar: '' },
+      {
+        sleep: async () => {
+          if (holdBaselineSession) network.releaseSession('peer-a', 'peer-b')
+        }
+      }
+    )
 
     await a.join()
     await vi.waitFor(async () => expect(await noticeUsers(a)).toEqual(['user-a']))
-    network.holdSession('peer-a', 'peer-b')
-    if (!holdBaselineSession) network.releaseSessionWhenPeerPublishes('peer-b', 'peer-a', 'peer-b')
+    if (holdBaselineSession) network.holdSession('peer-a', 'peer-b')
 
     await b.join()
     await vi.waitFor(async () => expect(await noticeUsers(a)).toEqual(expect.arrayContaining(['user-a', 'user-b'])))
     await vi.waitFor(async () => expect(await noticeUsers(b)).toContain('user-b'))
-    if (holdBaselineSession) network.releaseSession('peer-a', 'peer-b')
 
     await vi.waitFor(() =>
       expect(

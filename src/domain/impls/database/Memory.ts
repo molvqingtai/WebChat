@@ -227,7 +227,10 @@ export class MemoryDatabase<Schema extends DatabaseSchema<Schema>> implements Da
   private closed = false
   private closePromise: Promise<void> | null = null
 
-  constructor(private readonly definition: DatabaseDefinition<Schema>) {
+  constructor(
+    private readonly definition: DatabaseDefinition<Schema>,
+    private readonly onWatcherError?: (error: unknown) => void
+  ) {
     this.state = getState(definition)
     this.state.instances.add(this)
   }
@@ -238,7 +241,9 @@ export class MemoryDatabase<Schema extends DatabaseSchema<Schema>> implements Da
 
   private track<Result>(operation: Promise<Result>): Promise<Result> {
     this.inFlight.add(operation)
-    void operation.finally(() => this.inFlight.delete(operation)).catch(() => {})
+    const releaseOwnership = () => this.inFlight.delete(operation)
+    // The returned operation owns its result; both side outcomes perform only in-flight cleanup.
+    void operation.then(releaseOwnership, releaseOwnership)
     return operation
   }
 
@@ -333,7 +338,21 @@ export class MemoryDatabase<Schema extends DatabaseSchema<Schema>> implements Da
       if (!stores.some((store) => watcher.stores.has(store))) return
       try {
         watcher.listener()
-      } catch {}
+      } catch (error) {
+        // A watcher failure never rolls back the committed write and never stops later listeners;
+        // the composition-owned reporter (or direct console fallback) keeps the original Error.
+        if (!this.onWatcherError) {
+          console.error(error)
+          return
+        }
+        try {
+          this.onWatcherError(error)
+        } catch (reporterError) {
+          // Error delivery failure is independently diagnostic and cannot affect the committed
+          // write or later watchers.
+          console.error(reporterError)
+        }
+      }
     })
   }
 
@@ -348,8 +367,11 @@ export class MemoryDatabase<Schema extends DatabaseSchema<Schema>> implements Da
 }
 
 export const createMemoryDatabase = <Schema extends DatabaseSchema<Schema>>(
-  definition: DatabaseDefinition<Schema>
-): Database<Schema> => new MemoryDatabase(definition)
+  definition: DatabaseDefinition<Schema>,
+  options?: { onWatcherError?: (error: unknown) => void }
+): Database<Schema> => new MemoryDatabase(definition, options?.onWatcherError)
 
-export const createMemoryMessageDatabase = (name: string): Database<MessageDatabaseSchema> =>
-  createMemoryDatabase(createMessageDatabaseDefinition(name, 2))
+export const createMemoryMessageDatabase = (
+  name: string,
+  options?: { onWatcherError?: (error: unknown) => void }
+): Database<MessageDatabaseSchema> => createMemoryDatabase(createMessageDatabaseDefinition(name, 2), options)

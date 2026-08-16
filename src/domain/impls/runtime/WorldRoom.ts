@@ -28,9 +28,23 @@ export class WorldRoom extends EventHub {
     super()
     dependencies.whenReady(() => {
       const attachedHostId = dependencies.getSnapshot().hostId
-      this.attachmentTask = this.attachmentTask.catch(() => {}).then(() => this.attachRuntime(attachedHostId))
-      void this.attachmentTask.catch((error) => this.emit('error', error as Error))
+      const attachCurrentHost = () => this.attachRuntime(attachedHostId)
+      // The settled tail serializes both outcomes; this attachment's rejection is transferred
+      // exactly once to the room error owner and then becomes the next settled queue token.
+      this.attachmentTask = this.attachmentTask
+        .then(attachCurrentHost, attachCurrentHost)
+        .then(undefined, (error) => this.emitError(error))
     })
+  }
+
+  private emitError(error: unknown) {
+    const failure = error instanceof Error ? error : new Error(String(error))
+    try {
+      this.emit('error', failure)
+    } catch (deliveryError) {
+      // A projection listener cannot reopen the serialized attachment tail or recursively emit.
+      console.error(deliveryError)
+    }
   }
 
   private replaceSource(sourcePeerId: string, presence: WorldRoomMessage, activeKeys?: Set<string>) {

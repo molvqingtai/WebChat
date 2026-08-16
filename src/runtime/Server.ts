@@ -12,7 +12,7 @@ import { IdentityExtern } from '@/domain/runtime/externs/Identity'
 import { PresenceStoreExtern, type PresenceStore } from '@/domain/runtime/externs/PresenceStore'
 import { RoomTransportExtern, WireCodecExtern } from '@/domain/runtime/externs/RoomTransport'
 import type { RoomTransport } from '@/runtime/RoomTransport'
-import { NativeWireCodec, type WireCodec } from '@/protocol'
+import { MESSAGE_TYPE, NativeWireCodec, type TextMessage, type WireCodec } from '@/protocol'
 import type { ChatSite, ChatUser } from '@/protocol'
 import type { RuntimeServer, RuntimeSnapshot } from '@/runtime/Contract'
 import { PagePort, createPagePortImpl } from '@/runtime/PagePort'
@@ -89,6 +89,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   }
 
   const presenceRecoveries = new Map<string, PresenceRecovery>()
+  const pendingConnectionCancellations = new Set<() => void>()
   let disposed = false
 
   const beginPresenceRecovery = (domain: string) => {
@@ -211,27 +212,50 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     cancelledResult: () => T
   ): Promise<T> =>
     new Promise<T>((resolve, reject) => {
+      let settled = false
       const dispose = () => {
         success.unsubscribe()
         failure.unsubscribe()
         cancelled.unsubscribe()
+        pendingConnectionCancellations.delete(cancelPending)
+      }
+      const cancelPending = () => {
+        if (settled) return
+        settled = true
+        dispose()
+        reject(operationCancelled())
       }
       const success = store.subscribeEvent(connectionDomain.event.OperationSucceededEvent, (result) => {
-        if (result.operationId !== operationId) return
+        if (result.operationId !== operationId || settled) return
+        settled = true
         dispose()
         resolve(select(result))
       })
       const failure = store.subscribeEvent(connectionDomain.event.OperationFailedEvent, (result) => {
-        if (result.operationId !== operationId) return
+        if (result.operationId !== operationId || settled) return
+        settled = true
         dispose()
         reject(result.error)
       })
       const cancelled = store.subscribeEvent(connectionDomain.event.OperationCancelledEvent, (result) => {
-        if (result.operationId !== operationId) return
+        if (result.operationId !== operationId || settled) return
+        settled = true
         dispose()
         resolve(cancelledResult())
       })
-      store.send(command)
+      pendingConnectionCancellations.add(cancelPending)
+      if (disposed) {
+        cancelPending()
+        return
+      }
+      try {
+        store.send(command)
+      } catch (error) {
+        if (settled) return
+        settled = true
+        dispose()
+        reject(error)
+      }
     })
 
   const runSessionOperation = <T>(
@@ -249,6 +273,23 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       const failure = store.subscribeEvent(sessionDomain.event.OperationFailedEvent, (result) => {
         if (result.operationId !== operationId) return
         success.unsubscribe()
+        failure.unsubscribe()
+        reject(result.error)
+      })
+      store.send(command)
+    })
+
+  const runTextAcceptanceOperation = (operationId: string, command: RemeshAction): Promise<TextMessage> =>
+    new Promise<TextMessage>((resolve, reject) => {
+      const accepted = store.subscribeEvent(sessionDomain.event.TextMessageAcceptedEvent, (result) => {
+        if (result.operationId !== operationId) return
+        accepted.unsubscribe()
+        failure.unsubscribe()
+        resolve(result.message)
+      })
+      const failure = store.subscribeEvent(sessionDomain.event.OperationFailedEvent, (result) => {
+        if (result.operationId !== operationId) return
+        accepted.unsubscribe()
         failure.unsubscribe()
         reject(result.error)
       })
@@ -333,11 +374,10 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     if (existing) return existing
     const task = performReset(domain, operationId)
     inFlightResets.set(domain, task)
-    task
-      .catch(() => {})
-      .finally(() => {
-        if (inFlightResets.get(domain) === task) inFlightResets.delete(domain)
-      })
+    const releaseReset = () => {
+      if (inFlightResets.get(domain) === task) inFlightResets.delete(domain)
+    }
+    void task.then(releaseReset, releaseReset)
     return task
   }
 
@@ -368,11 +408,10 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       store.send(connectionDomain.command.LeaveDomainCommand(domain))
     })
     inFlightReleases.set(domain, task)
-    task
-      .catch(() => {})
-      .finally(() => {
-        inFlightReleases.delete(domain)
-      })
+    const releaseDeparture = () => {
+      if (inFlightReleases.get(domain) === task) inFlightReleases.delete(domain)
+    }
+    void task.then(releaseDeparture, releaseDeparture)
     return task
   }
 
@@ -479,11 +518,10 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
         if (existing) return existing
         const task = joinChatRoomSettled(payload)
         inFlightJoins.set(payload.domain, task)
-        task
-          .catch(() => {})
-          .finally(() => {
-            if (inFlightJoins.get(payload.domain) === task) inFlightJoins.delete(payload.domain)
-          })
+        const releaseJoin = () => {
+          if (inFlightJoins.get(payload.domain) === task) inFlightJoins.delete(payload.domain)
+        }
+        void task.then(releaseJoin, releaseJoin)
         return task
       }
       return joinChatRoomSettled(payload)
@@ -514,11 +552,12 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     sendChatMessage: async (payload) => {
       await waitForLivePresence(payload.domain)
       const operationId = nanoid()
-      await runSessionOperation(
-        operationId,
-        sessionDomain.command.SendChatMessageCommand({ operationId, ...payload }),
-        () => undefined
-      )
+      const command = sessionDomain.command.SendChatMessageCommand({ operationId, ...payload })
+      if (payload.event.type === MESSAGE_TYPE.TEXT) {
+        return runTextAcceptanceOperation(operationId, command)
+      }
+      await runSessionOperation(operationId, command, () => undefined)
+      return payload.event
     },
     ackInbound: async (payload) => {
       store.send(deliveryDomain.command.AckInboundCommand(payload))
@@ -542,11 +581,10 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       const operationId = nanoid()
       const task = performReconnect(payload.domain, operationId)
       inFlightReconnects.set(payload.domain, task)
-      task
-        .catch(() => {})
-        .finally(() => {
-          if (inFlightReconnects.get(payload.domain) === task) inFlightReconnects.delete(payload.domain)
-        })
+      const releaseReconnect = () => {
+        if (inFlightReconnects.get(payload.domain) === task) inFlightReconnects.delete(payload.domain)
+      }
+      void task.then(releaseReconnect, releaseReconnect)
       return task
     },
     onInbound: async (payload, callback) => pagePort.onInbound(payload.pageId, callback),
@@ -565,6 +603,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     disposed = true
     presenceRecoveries.forEach((recovery) => recovery.resolve())
     presenceRecoveries.clear()
+    ;[...pendingConnectionCancellations].forEach((cancel) => cancel())
     pageBridges.forEach((subscription) => subscription.unsubscribe())
     try {
       store.discard()

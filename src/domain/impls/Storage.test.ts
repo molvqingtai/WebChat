@@ -438,42 +438,34 @@ describe('configuration storage version ownership', () => {
 
   it('does not advance completion after clear failure and retries later', async () => {
     const fixture = createVersionStorage({ exists: true, value: 2 }, new Map([['old', 'generation']]))
-    vi.mocked(fixture.storage.clear).mockRejectedValueOnce(new Error('private failure'))
-    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const providerError = new Error('configuration clear refused')
+    vi.mocked(fixture.storage.clear).mockRejectedValueOnce(providerError)
     const identity = `retry-${configurationStorageId++}`
     const { prepareConfigurationStorage } = await import('./Storage')
 
-    await expect(prepareConfigurationStorage(identity, fixture.storage)).rejects.toThrow(
-      'Configuration store preparation failed'
-    )
+    await expect(prepareConfigurationStorage(identity, fixture.storage)).rejects.toBe(providerError)
     expect(fixture.version()).toEqual({ exists: true, value: 2 })
     expect(fixture.storage.writeVersion).not.toHaveBeenCalled()
-    expect(diagnostic).toHaveBeenCalledWith('[WebChat] Configuration store preparation failed')
 
     await prepareConfigurationStorage(identity, fixture.storage)
     expect(fixture.storage.clear).toHaveBeenCalledTimes(2)
     expect(fixture.version()).toEqual({ exists: true, value: CONFIG_STORE_VERSION })
-    diagnostic.mockRestore()
   })
 
   it('retries marker completion after a successful clear without clearing twice', async () => {
     const fixture = createVersionStorage({ exists: true, value: 2 }, new Map([['old', 'generation']]))
-    vi.mocked(fixture.storage.writeVersion).mockRejectedValueOnce(new Error('private failure'))
-    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const providerError = new Error('configuration marker refused')
+    vi.mocked(fixture.storage.writeVersion).mockRejectedValueOnce(providerError)
     const identity = `completion-retry-${configurationStorageId++}`
     const { prepareConfigurationStorage } = await import('./Storage')
 
-    await expect(prepareConfigurationStorage(identity, fixture.storage)).rejects.toThrow(
-      'Configuration store preparation failed'
-    )
+    await expect(prepareConfigurationStorage(identity, fixture.storage)).rejects.toBe(providerError)
     expect(fixture.values.size).toBe(0)
     expect(fixture.version()).toEqual({ exists: false })
 
     await prepareConfigurationStorage(identity, fixture.storage)
     expect(fixture.storage.clear).toHaveBeenCalledTimes(1)
     expect(fixture.version()).toEqual({ exists: true, value: CONFIG_STORE_VERSION })
-    expect(diagnostic).toHaveBeenCalledTimes(1)
-    diagnostic.mockRestore()
   })
 
   it('keeps independent physical scopes isolated', async () => {

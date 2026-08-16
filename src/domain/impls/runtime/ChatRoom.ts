@@ -53,6 +53,7 @@ interface RuntimeAttachment {
   controller: AbortController
   ownerAttemptId: number | null
   state: 'pending' | 'ready' | 'failed'
+  error?: unknown
   task: Promise<void>
   registrations: Partial<Record<RegistrationKey, () => Promise<void>>>
   repairs: Set<RegistrationKey>
@@ -233,6 +234,17 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
     if (this.attachment === attachment) this.attachment = null
   }
 
+  private emitError(error: unknown) {
+    const failure = error instanceof Error ? error : new Error(String(error))
+    try {
+      this.emit('error', failure)
+    } catch (deliveryError) {
+      // Error listeners are the terminal application projection. Their own failure cannot recurse
+      // into another room event or reject shared attachment/repair bookkeeping.
+      console.error(deliveryError)
+    }
+  }
+
   private startAttachment(ownerAttemptId: number | null) {
     if (this.disposed) throw abortError('Runtime page detached')
     const previous = this.attachment
@@ -257,15 +269,15 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
         attachment.state = 'ready'
       })
       .catch((error) => {
+        const failure = error instanceof Error ? error : new Error(String(error))
         attachment.state = 'failed'
-        if (!controller.signal.aborted) controller.abort(error)
+        attachment.error = failure
+        if (!controller.signal.aborted) controller.abort(failure)
         if (!this.disposed && attachment.ownerAttemptId === null && this.attachment === attachment) {
-          this.emit('error', error as Error)
+          this.emitError(failure)
         }
-        throw error
       })
       .finally(() => globalThis.clearTimeout(timeout))
-    void attachment.task.catch(() => {})
     return attachment
   }
 
@@ -330,6 +342,7 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
 
     try {
       await raceWithSignal(attachment.task, attempt.controller.signal)
+      if (attachment.error !== undefined) throw attachment.error
     } catch (error) {
       if (this.attachment === attachment && attachment.ownerAttemptId === attempt.id) {
         this.cancelAttachment(attachment, error)
@@ -357,7 +370,7 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
     const repair = withDeadline(this.register(attachment, key), 'Page callback repair timed out')
     void repair
       .catch((error) => {
-        if (this.isAttachmentCurrent(attachment)) this.emit('error', error as Error)
+        if (this.isAttachmentCurrent(attachment)) this.emitError(error)
       })
       .finally(() => attachment.repairs.delete(key))
   }
@@ -366,11 +379,12 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
     const registration = attachment.registrations[key]
     if (!registration) throw new Error(`Missing Runtime ${key} registration`)
     const physical = Promise.resolve().then(registration)
-    void physical
-      .finally(() => {
-        if (!this.isAttachmentCurrent(attachment)) this.repairRegistration(key)
-      })
-      .catch(() => {})
+    const repairIfOwnershipMoved = () => {
+      if (!this.isAttachmentCurrent(attachment)) this.repairRegistration(key)
+    }
+    // raceWithSignal owns the physical result; this side branch performs only the same
+    // post-settlement registration repair on both outcomes.
+    void physical.then(repairIfOwnershipMoved, repairIfOwnershipMoved)
     return raceWithSignal(physical, attachment.controller.signal)
   }
 
@@ -451,7 +465,7 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
         } catch (error) {
           if (prerequisite) throw error
           if (!isCurrent()) return
-          this.emit('error', error as Error)
+          this.emitError(error)
           retryInbound(event)
         }
         return
@@ -468,20 +482,20 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
         }
         if (isInvalidMessageRecordError(error)) {
           // The record cannot become durable; ACK discards only this invalid Runtime event after diagnosis.
-          this.emit('error', error)
+          this.emitError(error)
           invalidInbound.add(event.sequence)
           try {
             await acknowledgeInbound(event, false)
           } catch (ackError) {
             if (prerequisite) throw ackError
             if (!isCurrent()) return
-            this.emit('error', ackError as Error)
+            this.emitError(ackError)
             retryInbound(event)
           }
           return
         }
         if (prerequisite) throw error
-        this.emit('error', error as Error)
+        this.emitError(error)
         retryInbound(event)
       }
     }
@@ -529,7 +543,7 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
                 reason: (error as Error).message || 'History supply cancelled'
               })
               .catch((settleError) => {
-                if (isCurrent()) this.emit('error', settleError as Error)
+                if (isCurrent()) this.emitError(settleError)
               })
             return
           }
@@ -551,7 +565,7 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
           }
         })
         .catch((error) => {
-          if (isCurrent()) this.emit('error', error as Error)
+          if (isCurrent()) this.emitError(error)
         })
     }
 
@@ -571,7 +585,7 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
         // fresh toast. The identity never expires so a late transport repeat cannot reappear.
         if (this.seenErrorEventIds.has(event.eventId)) return
         this.seenErrorEventIds.add(event.eventId)
-        this.emit('error', new Error(event.message))
+        this.emitError(new Error(event.message))
       })
     attachment.registrations.history = () =>
       dependencies.server.provideHistory(
@@ -710,12 +724,16 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
       command.type === 'text'
         ? await this.dependencies.server.allocateTextMessage({ domain: this.dependencies.pageDomain, ...command })
         : await this.dependencies.server.allocateReactionMessage({ domain: this.dependencies.pageDomain, ...command })
-    await this.dependencies.server.sendChatMessage({
+    const accepted = await this.dependencies.server.sendChatMessage({
       domain: this.dependencies.pageDomain,
       event: record.message
     })
+    if (command.type === 'text') {
+      void this.dependencies.messageStore.insert(record).catch((error) => this.emitError(error))
+      return accepted
+    }
     await this.dependencies.messageStore.insert(record)
-    return record.message
+    return accepted
   }
 
   onMessage(listener: (message: ChatMessage) => void): Unsubscribe {

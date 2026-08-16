@@ -105,24 +105,37 @@ describe('browser sync configuration preparation', () => {
     }
   )
 
-  it('returns non-ready after a console-only failure without advancing the marker', async () => {
+  it('preserves a page-requested provider failure without logging it at the install owner', async () => {
     const fixture = createFixture({ [CONFIG_STORE_VERSION_KEY]: 2, user: 'private-value' })
-    fixture.storage.clear.mockRejectedValueOnce(new Error('private failure'))
+    const failure = new Error('private failure')
+    fixture.storage.clear.mockRejectedValueOnce(failure)
     const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
     registerBrowserSyncStoragePreparation(fixture.runtime, fixture.storage)
 
-    await expect(requestBrowserSyncStoragePreparation(fixture.runtime)).rejects.toThrow(
-      'Browser sync configuration preparation failed'
-    )
+    await expect(requestBrowserSyncStoragePreparation(fixture.runtime)).rejects.toBe(failure)
 
     expect(fixture.values[CONFIG_STORE_VERSION_KEY]).toBe(2)
     expect(fixture.values.user).toBe('private-value')
-    expect(diagnostic).toHaveBeenCalledTimes(1)
-    expect(diagnostic).toHaveBeenCalledWith('[WebChat] Configuration store preparation failed')
+    expect(diagnostic).not.toHaveBeenCalled()
 
     await requestBrowserSyncStoragePreparation(fixture.runtime)
     expect(fixture.storage.clear).toHaveBeenCalledTimes(2)
     expect(fixture.values).toEqual({ [CONFIG_STORE_VERSION_KEY]: CONFIG_STORE_VERSION })
+    diagnostic.mockRestore()
+  })
+
+  it('logs an install-time provider failure once and resolves the listener without a page route', async () => {
+    const fixture = createFixture({ [CONFIG_STORE_VERSION_KEY]: 2, user: 'private-value' })
+    const failure = new Error('install private failure')
+    fixture.storage.clear.mockRejectedValueOnce(failure)
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+    registerBrowserSyncStoragePreparation(fixture.runtime, fixture.storage)
+
+    await expect(fixture.installedListeners[0]()).resolves.toBeUndefined()
+
+    expect(diagnostic).toHaveBeenCalledOnce()
+    expect(diagnostic).toHaveBeenCalledWith(failure)
+    expect(fixture.values).toEqual({ [CONFIG_STORE_VERSION_KEY]: 2, user: 'private-value' })
     diagnostic.mockRestore()
   })
 
@@ -132,9 +145,7 @@ describe('browser sync configuration preparation', () => {
     const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
     registerBrowserSyncStoragePreparation(fixture.runtime, fixture.storage)
 
-    await expect(requestBrowserSyncStoragePreparation(fixture.runtime)).rejects.toThrow(
-      'Browser sync configuration preparation failed'
-    )
+    await expect(requestBrowserSyncStoragePreparation(fixture.runtime)).rejects.toThrow('private failure')
     expect(fixture.values).toEqual({})
     expect(fixture.storage.clear).toHaveBeenCalledTimes(1)
 
@@ -142,7 +153,7 @@ describe('browser sync configuration preparation', () => {
     expect(fixture.storage.clear).toHaveBeenCalledTimes(1)
     expect(fixture.storage.set).toHaveBeenCalledTimes(2)
     expect(fixture.values).toEqual({ [CONFIG_STORE_VERSION_KEY]: CONFIG_STORE_VERSION })
-    expect(diagnostic).toHaveBeenCalledTimes(1)
+    expect(diagnostic).not.toHaveBeenCalled()
     diagnostic.mockRestore()
   })
 

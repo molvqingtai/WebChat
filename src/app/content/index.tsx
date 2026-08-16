@@ -215,7 +215,14 @@ const createContentStore = () => {
   })
 
   const activateApplicationDependencies = () => {
-    const database = createIndexedDBMessageDatabase()
+    // A watcher failure on the page's own database owns a current visible/persistence-dependent
+    // projection: it reaches this page's existing toast route once with the original message.
+    const database = createIndexedDBMessageDatabase({
+      onWatcherError: (error) =>
+        store.send(
+          store.getDomain(ToastDomain()).command.ErrorCommand(error instanceof Error ? error.message : String(error))
+        )
+    })
     const ChatRoomImpl = createChatRoomImpl(database)
     const WorldRoomImpl = createWorldRoomImpl()
     const ReadinessImpl = createReadinessImpl(whenHostPhase)

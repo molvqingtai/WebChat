@@ -1,4 +1,4 @@
-> **Completion status (2026-07-30):** The Owner explicitly accepted PR #81 at implementation exact `7d86309636ccef56ec4d9cb495114b3ce907aef3` and authorized merge after this documentation and task closeout. Exact CI run `30551473319` passed setup/linter/tests/build 4/4, and fresh Review task #416 passed P0/P1/P2 `0/0/0`. Browser evidence remains exact-bound: Chrome MV3 passed only on superseded exact `f44f25015a38d4ef65d94a8b768d9e620d8f3463`; a final-exact browser rerun, a real no-Web-Locks environment, and Firefox MV2 remain `UNVERIFIED` and nonblocking. A checked item means implemented, freshly gated, truthfully recorded, or explicitly closed by Owner acceptance; it does not reinterpret any `UNVERIFIED` result as PASS.
+> **Completion status (2026-07-30):** The Owner explicitly accepted PR #81 at implementation exact `7d86309636ccef56ec4d9cb495114b3ce907aef3` and authorized merge after this documentation and task closeout. Exact CI run `30551473319` passed setup/linter/tests/build 4/4, and fresh Review task #416 passed P0/P1/P2 `0/0/0`. Browser evidence remains exact-bound: Chrome MV3 passed only on superseded exact `f44f25015a38d4ef65d94a8b768d9e620d8f3463`; a final-exact browser rerun, a real no-Web-Locks environment, and Firefox MV2 remain `UNVERIFIED` and nonblocking. A checked item means implemented, freshly gated, truthfully recorded, or explicitly closed by Owner acceptance; it does not reinterpret any `UNVERIFIED` result as PASS. The 2026-08-16 caught-error observability synchronization reopens only the affected routing/evidence rows below; historical reset/retry/privacy completion remains unchanged.
 
 ## 1. Persistence Authority
 
@@ -25,21 +25,21 @@
 ## 4. Startup And Diagnostics
 
 - [x] 4.1 Gate Remesh store construction, default-state writes, persistence reads/watches, history access, and UI mount until the current page's required message and configuration scopes are ready.
-- [x] 4.2 On read/delete/clear/recreation/completion failure, keep completion unadvanced, stop that startup lifecycle, and emit only bounded privacy-safe console diagnostics.
-- [x] 4.3 Prove no Toast, `AppFeedback`, alert, DOM/status error, notification, SystemNotice, migration control, close-tabs warning, or success copy is added; preserve only ordinary empty-history/default/setup outcomes.
+- [ ] 4.2 On read/delete/clear/recreation/completion failure, keep completion unadvanced and stop that startup lifecycle; route a current-page-requested initialization/persistence failure through the existing unchanged-message `toast.error(error.message)` path, and call `console.error(error)` directly for install-time/no-page or structurally user-irrelevant failures.
+- [ ] 4.3 Prove blocked work and successful reset add no user feedback, the current-page terminal-error path adds no prefix/wrapper/replacement copy or second UI surface, the existing privacy-safe Error construction boundary remains unchanged, and ordinary empty-history/default/setup outcomes remain unchanged.
 
 ## 5. Regression Matrix
 
 - [x] 5.1 Add deterministic message-store coverage for absence baseline, same-version preservation, adjacent/skipped/reverse mismatch, complete residue deletion, blocked/error paths, pre/post-delete interruption, retry, recreation, and concurrent no-double-reset behavior.
 - [x] 5.2 Add deterministic configuration coverage for missing-marker baseline with existing data, same-version preservation, adjacent/skipped/reverse/malformed mismatch, extension-sync and multi-origin local scopes, all three preserved AppStatus field keys, failure/retry, interruption, and concurrency.
 - [x] 5.3 Update cross-family and isolation sentinels proving message/config independence, AppStatus field preservation, other-origin laziness, host localStorage namespace isolation, generated non-target IndexedDB preservation, and browser-area preservation.
-- [x] 5.4 Add static/startup guards rejecting package-version ownership, broad startup clearing, public API widening, user-visible migration feedback, and application access before preparation.
+- [ ] 5.4 Add static/startup guards rejecting package-version ownership, broad startup clearing, public API widening, migration-specific/decorated feedback beyond the existing unchanged-message current-page error route, and application access before preparation.
 - [x] 5.5 Update deterministic exact-target-name regressions to direct `STORAGE_NAME` with no message/origin suffix for target absence, same version, mismatch, same-origin contenders, and separate origins sharing the name; use one generated unrelated database to prove the non-target boundary without enumerating alternate identities.
 
 ## 6. Delivery Gates
 
 - [x] 6.1 Run the initial reset lifecycle's focused fail-before controls and complete repository source, type, lint, format, build, and strict OpenSpec gates on one immutable implementation exact.
 - [x] 6.2 Obtain fresh Reviewer findings on the complete two-family contract, concurrency, failure, isolation, and regression matrix.
-- [x] 6.3 Record nonblocking Chrome MV3 and Firefox MV2 baseline/mismatch/console-only behavior truth where the established environments can create the required persisted states; do not convert unavailable evidence into PASS.
+- [ ] 6.3 Record nonblocking Chrome MV3 and Firefox MV2 baseline/mismatch/current-page unchanged-message versus no-page/no-impact direct-console behavior truth where the established environments can create the required persisted states; do not convert unavailable evidence into PASS.
 - [x] 6.4 Keep implementation on the same requirement branch and PR, and wait for separate explicit Owner authorization before merge.
 - [x] 6.5 Re-run focused, complete static/source/build, and Review gates on the replacement exact after the direct `STORAGE_NAME` identity switch and history-specific test cleanup; prior exact evidence does not transfer.

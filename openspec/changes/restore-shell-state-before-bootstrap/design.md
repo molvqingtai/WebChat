@@ -39,7 +39,7 @@ Initialization phase never enters any of the three persisted fields. `AppStatusD
 
 `Initialization.ts` owns the ordered asynchronous attempt: browser-sync storage, local configuration storage, message database, Runtime initialization, application dependency activation, and Runtime detach. Each attempt has one deadline, AbortSignal, generation, and terminal.
 
-The lifecycle obtains `AppStatusDomain` from the store, sends its phase commands, and subscribes to its Retry event. It issues `Preparing WebChat` and `WebChat unavailable` through `Toast.ts`. It declares no Remesh Domain and owns no phase state parallel to `AppStatusDomain`.
+The lifecycle obtains `AppStatusDomain` from the store, sends its phase commands, and subscribes to its Retry event. It issues `Preparing WebChat` through `Toast.ts`. When a genuine current-page attempt fails, it replaces that attempt's matching loading descriptor through `Toast.ts` with an error whose copy is exactly the original `error.message`; it does not prefix, wrap, map, normalize, or replace that copy. A failure with no current affected page or no user impact calls `console.error(error)` directly instead of manufacturing a Toast destination. The lifecycle declares no Remesh Domain and owns no phase state parallel to `AppStatusDomain`.
 
 ### 4. Consumers use AppStatusDomain directly
 
@@ -57,7 +57,7 @@ The mounted root owns one hydration and persistence lifecycle. If the user expan
 
 The generic `Toaster` is the final business child of `AppMain`, inside its positioned `motion.div`. `Toast.ts -> ToastExtern -> ToastImpl -> Sonner` is the one Toast capability for initialization, Runtime readiness, reconnect, join Retry, and unrelated notifications.
 
-An active initialization attempt publishes one `Preparing WebChat` loading command. A current terminal failure cancels only its matching loading ID and publishes one `WebChat unavailable` error. Success cancels only matching loading and publishes no success Toast. Operation truth remains independent of Toaster mount and paint.
+An active initialization attempt publishes one `Preparing WebChat` loading command under the stable initialization Toast ID. A genuine current-page terminal failure publishes one same-ID error containing exactly the original `error.message` as the direct replacement for loading, without a preceding cancel. Success cancels only matching loading and publishes no success Toast. No-page or user-irrelevant failure calls `console.error(error)` directly. Operation truth remains independent of Toaster mount and paint.
 
 ### 7. Refresh has two exclusive contexts
 

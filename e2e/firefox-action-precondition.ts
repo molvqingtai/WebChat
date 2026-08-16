@@ -83,11 +83,9 @@ const assertContext = (context: FirefoxActionContext): void => {
     }
   })
 
-  let isHttpsTarget = false
-
-  try {
-    isHttpsTarget = new URL(context.acceptedTarget).protocol === 'https:'
-  } catch {}
+  // Explicit input validation instead of an empty-catch control flow: an unparseable target is an
+  // invalid input and can never pass.
+  const isHttpsTarget = URL.canParse(context.acceptedTarget) && new URL(context.acceptedTarget).protocol === 'https:'
 
   if (!isHttpsTarget) {
     fail('invalid-context', 'Firefox action accepted target must be a valid HTTPS URL')

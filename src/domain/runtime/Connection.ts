@@ -8,6 +8,7 @@ import WireDomain from '@/domain/runtime/Wire'
 import WorldDomain, { getWorldRoomId } from '@/domain/runtime/World'
 import type { ChatSite, ChatUser } from '@/protocol'
 import type { RuntimeSnapshot } from '@/runtime/Contract'
+import { ClockExtern, sleep } from '@/domain/runtime/externs/Clock'
 
 export interface ConnectionOptions {
   [key: string]: string | number | undefined
@@ -65,6 +66,7 @@ export interface RuntimeFailure {
 }
 
 const PHYSICAL_ROOM_JOIN_TIMEOUT_MS = 10000
+const POST_JOIN_SEND_DELAY_MS = 1000
 export const ROOM_RECOVERY_RETRY_INTERVAL_MS = 10000
 const replaceBy = <T>(items: T[], predicate: (item: T) => boolean, next: T): T[] =>
   items.some(predicate) ? items.map((item) => (predicate(item) ? next : item)) : [...items, next]
@@ -80,6 +82,7 @@ const ConnectionDomain = Remesh.domain({
     const worldDomain = domain.getDomain(WorldDomain({ sessionId: options.worldSessionId }))
     const deliveryDomain = domain.getDomain(DeliveryDomain())
     const historyDomain = domain.getDomain(HistoryDomain())
+    const clock = domain.getExtern(ClockExtern)
 
     const AttemptsState = domain.state<JoinAttempt[]>({ name: 'Connection.AttemptsState', default: [] })
     const GenerationsState = domain.state<DomainGeneration[]>({
@@ -566,7 +569,11 @@ const ConnectionDomain = Remesh.domain({
     // presence.
     const startManualWorldReplacement = (get: Parameters<Parameters<typeof domain.command>[0]['impl']>[0]['get']) => [
       worldDomain.command.DepartRoomCommand(),
-      wireDomain.command.LeaveRoomCommand({ roomId: getWorldRoomId(), preservePending: false }),
+      wireDomain.command.LeaveRoomCommand({
+        roomId: getWorldRoomId(),
+        preservePending: false,
+        diagnosticOnly: true
+      }),
       ...startWorldRecovery(get, true)
     ]
 
@@ -630,10 +637,17 @@ const ConnectionDomain = Remesh.domain({
       impl: ({ get }, payload: { requestId: string; error: Error }) => {
         const recovery = get(WorldRecoveryAttemptState())
         if (!recovery || recovery.requestId !== payload.requestId) return null
+        // A manual AppButton World replacement stays UI/Toast-silent but never evidence-silent:
+        // its genuine failure is a direct console diagnostic at this exact owner.
+        if (recovery.manual) console.error(payload.error)
         return [
           WorldRecoveryAttemptState().new(null),
           worldDomain.command.AbortRecoveryCommand(payload.requestId),
-          wireDomain.command.LeaveRoomCommand({ roomId: getWorldRoomId(), preservePending: false }),
+          wireDomain.command.LeaveRoomCommand({
+            roomId: getWorldRoomId(),
+            preservePending: false,
+            ...(recovery.manual ? { diagnosticOnly: true } : {})
+          }),
           // A manual AppButton World replacement keeps its failure out of page UI/Toast; automatic
           // recovery retains its existing diagnostics contract.
           ...(recovery.manual ? [] : [ErrorEvent({ error: payload.error })]),
@@ -778,7 +792,13 @@ const ConnectionDomain = Remesh.domain({
     })
     domain.effect({
       name: 'Connection.RoomsJoinedEffect',
-      impl: ({ fromEvent }) => fromEvent(wireDomain.event.RoomsJoinedEvent).pipe(map(RoomsJoinedCommand))
+      impl: ({ fromEvent }) =>
+        fromEvent(wireDomain.event.RoomsJoinedEvent).pipe(
+          mergeMap(async (payload) => {
+            await sleep(clock, POST_JOIN_SEND_DELAY_MS)
+            return RoomsJoinedCommand(payload)
+          })
+        )
     })
     domain.effect({
       name: 'Connection.RoomsJoinFailureEffect',

@@ -51,7 +51,7 @@ Closing the panel or ending the page/extension context may physically unmount th
 
 The existing request-correlated loading dwell and no-success-Toast policy remain unchanged. When retry/reconnect succeeds, or genuine Runtime readiness reaches ready, the business flow may dismiss only the matching current loading entry after its required dwell. It may not target a terminal error that replaced that loading entry, and delayed cleanup from an older request may not affect a newer descriptor with the same ID.
 
-Failure still updates the matching loading entry to the normalized error. Once that error is published, request settlement may clear button/pending state without clearing the error presentation.
+Failure still updates the matching loading entry to the error descriptor selected by its current owning route. For a genuine current-page initialization failure governed by caught-error observability, that descriptor uses exactly the original `error.message` without prefix, suffix, wrapper, mapping, normalization, or replacement copy; an initialization failure with no current affected page/live route or no user impact calls `console.error(error)` directly and creates no Toast. Other operation-specific copy, including the existing ready-context `Connection failed`, remains governed by its own authority. Once an error descriptor is published, request settlement may clear button/pending state without clearing the error presentation.
 
 ### 5. Accessibility and recovery stay independent
 

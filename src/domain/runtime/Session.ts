@@ -1,7 +1,12 @@
 import { Remesh } from 'remesh'
 import { concatMap, filter, map, mergeMap, Observable } from 'rxjs'
 import DeliveryDomain from '@/domain/runtime/Delivery'
-import WireDomain, { type WireFailureStage, type WireMessageEvent } from '@/domain/runtime/Wire'
+import WireDomain, {
+  selectPeerIds,
+  type WireFailureStage,
+  type WireMessageEvent,
+  type WireRoomWideSendResume
+} from '@/domain/runtime/Wire'
 import { ClockExtern } from '@/domain/runtime/externs/Clock'
 import { RoomTransportExtern } from '@/domain/runtime/externs/RoomTransport'
 import { IdentityExtern } from '@/domain/runtime/externs/Identity'
@@ -16,6 +21,7 @@ import {
   ChatMessageSchema,
   MESSAGE_TYPE,
   type ChatMessage,
+  type TextMessage,
   type HLC,
   type MentionedUser,
   type ChatSite,
@@ -118,6 +124,11 @@ export interface TextMessageAllocatedEventPayload {
 export interface ReactionMessageAllocatedEventPayload {
   operationId: string
   record: ReactionMessageRecord
+}
+
+export interface TextMessageAcceptedEventPayload {
+  operationId: string
+  message: TextMessage
 }
 
 export interface SessionOperationFailed {
@@ -402,6 +413,9 @@ const SessionDomain = Remesh.domain({
     const ReactionMessageAllocatedEvent = domain.event<ReactionMessageAllocatedEventPayload>({
       name: 'Session.ReactionMessageAllocatedEvent'
     })
+    const TextMessageAcceptedEvent = domain.event<TextMessageAcceptedEventPayload>({
+      name: 'Session.TextMessageAcceptedEvent'
+    })
     const OperationFailedEvent = domain.event<SessionOperationFailed>({ name: 'Session.OperationFailedEvent' })
     const ErrorEvent = domain.event<SessionFailure>({ name: 'Session.ErrorEvent' })
 
@@ -516,6 +530,10 @@ const SessionDomain = Remesh.domain({
           return PreparedPublishFailedEvent({ attemptId, error: new Error('Prepared session disappeared') })
         }
         const requestId = initialRequestId(attemptId)
+        const targetPeerIds = selectPeerIds(
+          prepared.runtime.sessions.map((session) => session.sourcePeerId),
+          get(wireDomain.query.PeerIdQuery(prepared.runtime.roomId))
+        )
         const message = {
           type: MESSAGE_TYPE.SESSION,
           sessionId: prepared.runtime.sessionId,
@@ -523,7 +541,7 @@ const SessionDomain = Remesh.domain({
           joinedAt: prepared.runtime.joinedAt,
           user: prepared.runtime.user
         } as const
-        // A regular Session publication is one room broadcast; the transport fans it out.
+        if (targetPeerIds.length === 0) return PreparedPublishedEvent({ attemptId })
         const pending = {
           ...prepared,
           publishRequestId: requestId
@@ -535,6 +553,7 @@ const SessionDomain = Remesh.domain({
           wireDomain.command.SendMessageCommand({
             requestId,
             roomId: prepared.runtime.roomId,
+            targetPeerIds,
             message
           })
         ]
@@ -1105,6 +1124,21 @@ const SessionDomain = Remesh.domain({
           })
         }
         const requestId = chatRequestId(payload.operationId)
+        const targetPeerIds = selectPeerIds(
+          runtime.sessions.map((session) => session.sourcePeerId),
+          get(wireDomain.query.PeerIdQuery(runtime.roomId))
+        )
+        if (targetPeerIds.length === 0) {
+          // A Text message is accepted locally regardless of transport targets: the local
+          // acceptance/display settlement is independent of whether any peer receives it.
+          return [
+            HlcState().new(adopted),
+            ...(event.type === MESSAGE_TYPE.TEXT
+              ? [TextMessageAcceptedEvent({ operationId: payload.operationId, message: event })]
+              : []),
+            OperationSucceededEvent({ operationId: payload.operationId })
+          ]
+        }
         const pending: PendingChatSend = {
           operationId: payload.operationId,
           requestId,
@@ -1118,13 +1152,45 @@ const SessionDomain = Remesh.domain({
             ...get(PendingChatSendsState()).filter((item) => item.operationId !== payload.operationId),
             pending
           ]),
+          ...(event.type === MESSAGE_TYPE.TEXT
+            ? [TextMessageAcceptedEvent({ operationId: payload.operationId, message: event })]
+            : []),
           // An ordinary Chat message is one room broadcast; the transport fans it out.
           wireDomain.command.SendMessageCommand({
             requestId,
             roomId: runtime.roomId,
+            targetPeerIds,
+            targetPeerIdsOwner: 'session',
             message: event
           })
         ]
+      }
+    })
+
+    const ResumeRoomWideChatSendCommand = domain.command({
+      name: 'Session.ResumeRoomWideChatSendCommand',
+      impl: ({ get }, payload: WireRoomWideSendResume) => {
+        const pending = get(PendingChatSendsState()).find((item) => item.requestId === payload.requestId)
+        const runtime = pending
+          ? (get(PreparedSessionsState()).find((item) => item.runtime.roomId === payload.roomId)?.runtime ??
+            get(DomainsState()).find((item) => item.domain === pending.domain))
+          : undefined
+        if (!pending || !runtime || runtime.roomId !== payload.roomId) return null
+        // Logical-release fence: once the owner domain has entered LiveReleasesState, its
+        // awaited active-presence cleanup still holds the committed runtime and the physical
+        // Wire membership, so the Wire identity/generation/trust fences alone would pass. A
+        // late post-join timer expiring inside this window must stay inert — no target
+        // re-derivation and no provider call; the queued head remains suspended until the
+        // release's final physical leave cancels it quietly, and the release's own
+        // settlement/failure/retry and any successor state are untouched.
+        if (get(ReleasingDomainQuery(runtime.domain))) return null
+        return wireDomain.command.ResumeRoomWideSendCommand({
+          ...payload,
+          targetPeerIds: selectPeerIds(
+            runtime.sessions.map((session) => session.sourcePeerId),
+            get(wireDomain.query.PeerIdQuery(runtime.roomId))
+          )
+        })
       }
     })
 
@@ -1849,6 +1915,11 @@ const SessionDomain = Remesh.domain({
       impl: ({ fromEvent }) => fromEvent(wireDomain.event.MessageSendFailedEvent).pipe(map(FailPreparedPublishCommand))
     })
     domain.effect({
+      name: 'Session.RoomWideSendResumeEffect',
+      impl: ({ fromEvent }) =>
+        fromEvent(wireDomain.event.RoomWideSendResumeRequestedEvent).pipe(map(ResumeRoomWideChatSendCommand))
+    })
+    domain.effect({
       name: 'Session.ChatSendSuccessEffect',
       impl: ({ fromEvent }) =>
         fromEvent(wireDomain.event.MessageSentEvent).pipe(map(({ requestId }) => CompleteChatSendCommand(requestId)))
@@ -1936,6 +2007,7 @@ const SessionDomain = Remesh.domain({
         OperationSucceededEvent,
         TextMessageAllocatedEvent,
         ReactionMessageAllocatedEvent,
+        TextMessageAcceptedEvent,
         OperationFailedEvent,
         ErrorEvent,
         PendingLeaveArmedEvent

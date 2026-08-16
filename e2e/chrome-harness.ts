@@ -36,6 +36,32 @@ type CleanupState = {
   residualProcesses: OwnedProcess[]
 }
 
+export type CleanupFailureEvidence = {
+  resource: string
+  phase: string
+  message: string
+  deadlineAt: number
+  remainingMs: number
+}
+
+export type CleanupAttempt = {
+  resource: string
+  phase: string
+  run: (remainingMs: number) => unknown | PromiseLike<unknown>
+}
+
+export type ChromeTeardownOptions = {
+  errors: CleanupFailureEvidence[]
+  cleanupTimeoutMs: number
+  hasCdp: () => boolean
+  closeCdp: () => void
+  closeBrowser: () => PromiseLike<unknown>
+  waitForBrowserExit: (remainingMs: number) => PromiseLike<unknown>
+  remainingAttempts: () => CleanupAttempt[]
+  cleanupComplete: () => boolean
+  now?: () => number
+}
+
 type CleanupOptions = {
   rootPid?: number
   isRootExited: () => boolean
@@ -52,9 +78,47 @@ export const delay = (durationMs: number): Promise<void> => new Promise((resolve
 
 const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error))
 
+export const readDevToolsActivePort = async (
+  path: string,
+  read: (path: string) => Promise<string>
+): Promise<string | null> => {
+  try {
+    return (await read(path)).trim() || null
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return null
+    throw error
+  }
+}
+
+export const createProfileRemovalVerificationAttempt = (
+  path: string,
+  accessPath: (path: string) => PromiseLike<unknown>,
+  setRemoved: (removed: boolean) => void
+): CleanupAttempt => ({
+  resource: 'profile',
+  phase: 'verify-removed',
+  run: async () => {
+    setRemoved(false)
+    try {
+      await accessPath(path)
+    } catch (error) {
+      if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+        setRemoved(true)
+        return
+      }
+      throw error
+    }
+  }
+})
+
 export const waitFor = async <T>(
   check: () => T | null | undefined | false | Promise<T | null | undefined | false>,
-  { timeoutMs, label, intervalMs = 100 }: { timeoutMs: number; label: string; intervalMs?: number }
+  {
+    timeoutMs,
+    label,
+    intervalMs = 100,
+    retryErrors = true
+  }: { timeoutMs: number; label: string; intervalMs?: number; retryErrors?: boolean }
 ): Promise<T> => {
   const startedAt = Date.now()
   let lastError: unknown
@@ -63,6 +127,7 @@ export const waitFor = async <T>(
       const value = await check()
       if (value) return value
     } catch (error) {
+      if (!retryErrors) throw error
       lastError = error
     }
     await delay(intervalMs)
@@ -117,6 +182,96 @@ export const withDeadline = <T>(
       }
     )
   })
+
+export const appendCleanupFailure = (
+  errors: CleanupFailureEvidence[],
+  deadlineAt: number,
+  resource: string,
+  phase: string,
+  error: unknown,
+  now: () => number = Date.now
+) => {
+  errors.push({
+    resource,
+    phase,
+    message: errorMessage(error),
+    deadlineAt,
+    remainingMs: Math.max(0, deadlineAt - now())
+  })
+}
+
+export const runCleanupAttempts = async (
+  attempts: CleanupAttempt[],
+  errors: CleanupFailureEvidence[],
+  deadlineAt: number,
+  now: () => number = Date.now
+) => {
+  for (const attempt of attempts) {
+    const remainingMs = Math.max(0, deadlineAt - now())
+    if (remainingMs === 0) {
+      appendCleanupFailure(
+        errors,
+        deadlineAt,
+        attempt.resource,
+        attempt.phase,
+        new Error('Shared cleanup deadline exhausted'),
+        now
+      )
+      continue
+    }
+    try {
+      await withDeadline(
+        Promise.resolve().then(() => attempt.run(remainingMs)),
+        remainingMs,
+        `${attempt.resource} ${attempt.phase}`
+      )
+    } catch (error) {
+      appendCleanupFailure(errors, deadlineAt, attempt.resource, attempt.phase, error, now)
+    }
+  }
+}
+
+export const selectTerminalError = (runError: unknown, cleanupError: Error | undefined): unknown =>
+  runError ?? cleanupError
+
+export const createChromeTeardown = (options: ChromeTeardownOptions) => {
+  const now = options.now ?? Date.now
+  let deadlineAt: number | undefined
+  const beginCleanup = () => (deadlineAt ??= now() + options.cleanupTimeoutMs)
+
+  return {
+    timeoutClose: () => {
+      try {
+        options.closeCdp()
+      } catch (error) {
+        appendCleanupFailure(options.errors, beginCleanup(), 'cdp', 'timeout-close', error, now)
+      }
+    },
+    finish: async (runError: unknown) => {
+      const attempts: CleanupAttempt[] = options.hasCdp()
+        ? [
+            {
+              resource: 'browser',
+              phase: 'browser-close',
+              run: (remainingMs) => withDeadline(options.closeBrowser(), Math.min(1000, remainingMs), 'Browser.close')
+            },
+            { resource: 'cdp', phase: 'final-close', run: () => options.closeCdp() },
+            {
+              resource: 'browser',
+              phase: 'graceful-exit',
+              run: (remainingMs) => options.waitForBrowserExit(Math.min(1000, remainingMs))
+            }
+          ]
+        : []
+      await runCleanupAttempts([...attempts, ...options.remainingAttempts()], options.errors, beginCleanup(), now)
+      const cleanupError =
+        options.cleanupComplete() && options.errors.length === 0
+          ? undefined
+          : new Error('Owned Chromium cleanup failed')
+      return { cleanupError, terminalError: selectTerminalError(runError, cleanupError) }
+    }
+  }
+}
 
 export const evaluateRuntimeMessage = <T>(
   evaluate: (expression: string) => Promise<T>,

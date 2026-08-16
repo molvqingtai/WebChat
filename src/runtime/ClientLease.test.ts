@@ -40,24 +40,46 @@ describe('ClientLease generation ownership', () => {
     const phases: HostPhase[] = []
     const client = new ClientLease({ coordinator, pageId: 'page-a', domain: 'https://example.test' })
     client.whenHostPhase((phase) => phases.push(phase))
-    let settled = false
-    const initializing = client
-      .init()
-      .catch(() => null)
-      .finally(() => {
-        settled = true
-      })
+    const initializing = client.init()
+    const rejected = expect(initializing).rejects.toEqual(new Error('Runtime control-plane request timed out'))
 
     await vi.waitFor(() => expect(coordinator.registerPage).toHaveBeenCalledOnce())
     try {
       expect(phases).toEqual(['none', 'connecting'])
       await vi.advanceTimersByTimeAsync(15000)
-      expect(settled).toBe(true)
+      await rejected
       expect(phases.at(-1)).toBe('unavailable')
     } finally {
       client.detach()
-      await initializing
+      await Promise.allSettled([initializing])
     }
+  })
+
+  it('isolates a throwing failure listener and continues the original failure lifecycle', async () => {
+    const providerError = new Error('runtime provider refused')
+    const listenerError = new Error('failure listener crashed')
+    const coordinator = coordinatorWith(vi.fn(async () => Promise.reject(providerError)))
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const laterListener = vi.fn()
+    const phases: HostPhase[] = []
+    const client = new ClientLease({ coordinator, pageId: 'page-a', domain: 'https://example.test' })
+    client.whenHostPhase((phase) => phases.push(phase))
+    client.whenFailure(() => {
+      throw listenerError
+    })
+    client.whenFailure(laterListener)
+
+    const initializing = client.init()
+    const rejected = expect(initializing).rejects.toBe(providerError)
+    await vi.advanceTimersByTimeAsync(15000)
+    await rejected
+
+    expect(diagnostic).toHaveBeenCalledWith(listenerError)
+    expect(laterListener).toHaveBeenCalledOnce()
+    expect(laterListener).toHaveBeenCalledWith(providerError)
+    expect(phases).toEqual(['none', 'connecting', 'unavailable'])
+    client.detach()
+    diagnostic.mockRestore()
   })
 
   it('does not publish ready or start a watchdog after init is detached', async () => {
@@ -137,6 +159,83 @@ describe('ClientLease generation ownership', () => {
     client.detach()
   })
 
+  it('projects one queued Coordinator failure through only the current page failure route', async () => {
+    const failure = {
+      eventId: 'rebuild-failure',
+      message: 'current page attachment failed',
+      subsystem: 'connection' as const,
+      operation: 'lifecycle' as const,
+      scope: 'https://example.test'
+    }
+    const coordinator = coordinatorWith(vi.fn(async () => ({ ...registration(), failures: [failure] })))
+    const failures: Error[] = []
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const client = new ClientLease({
+      coordinator,
+      pageId: 'page-a',
+      domain: failure.scope
+    })
+    client.whenFailure((error) => failures.push(error))
+
+    await expect(client.init()).resolves.toEqual(snapshot)
+
+    expect(failures).toEqual([new Error(failure.message)])
+    expect(diagnostic).not.toHaveBeenCalled()
+    client.detach()
+    diagnostic.mockRestore()
+  })
+
+  it('projects a queued failure once before recovering a replaced host generation', async () => {
+    const domain = 'https://example.test'
+    const pageId = 'page-a'
+    const ownedSnapshot = (hostId: string): RuntimeSnapshot => ({
+      ...snapshot,
+      hostId,
+      domains: [
+        {
+          domain,
+          phase: 'active',
+          pageIds: [pageId],
+          chatRoomJoined: true,
+          sessions: []
+        }
+      ]
+    })
+    const failure = {
+      eventId: 'watchdog-rebuild-failure',
+      message: 'replacement attachment failed',
+      subsystem: 'connection' as const,
+      operation: 'lifecycle' as const,
+      scope: domain
+    }
+    const current = registration(ownedSnapshot('host-b'), 2)
+    const registerPage = vi
+      .fn<RuntimeCoordinator['registerPage']>()
+      .mockResolvedValueOnce(registration(ownedSnapshot('host-a'), 1))
+      .mockResolvedValueOnce({ ...current, failures: [failure] })
+      .mockResolvedValue(current)
+    const failures: string[] = []
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const client = new ClientLease({
+      coordinator: coordinatorWith(registerPage),
+      pageId,
+      domain,
+      watchdogIntervalMs: 60000
+    })
+    client.whenFailure((error) => failures.push(error.message))
+
+    await client.init()
+    await client.checkNow()
+    await client.checkNow()
+
+    expect(registerPage).toHaveBeenCalledTimes(4)
+    expect(failures).toEqual([failure.message])
+    expect(diagnostic).not.toHaveBeenCalled()
+    expect(client.snapshot()).toMatchObject({ hostId: 'host-b', hostPhase: 'ready' })
+    client.detach()
+    diagnostic.mockRestore()
+  })
+
   it('keeps bounded polling after a permanent control-plane failure and surfaces every failure with its original message', async () => {
     const domain = 'https://example.test'
     const pageId = 'page-a'
@@ -157,7 +256,6 @@ describe('ClientLease generation ownership', () => {
       .fn<RuntimeCoordinator['registerPage']>()
       .mockResolvedValueOnce(registration(healthySnapshot))
       .mockRejectedValue(nativeError)
-    const logError = vi.fn()
     const phases: HostPhase[] = []
     const failures: string[] = []
     const client = new ClientLease({
@@ -166,8 +264,7 @@ describe('ClientLease generation ownership', () => {
       domain,
       startupTimeoutMs: 1000,
       startupRetryIntervalMs: 10,
-      watchdogIntervalMs: 3000,
-      logError
+      watchdogIntervalMs: 3000
     })
     client.whenHostPhase((phase) => phases.push(phase))
     client.whenFailure((error) => failures.push(error.message))
@@ -239,14 +336,12 @@ describe('ClientLease generation ownership', () => {
 
   it('treats every transport rejection as diagnostic without changing the healthy lease', async () => {
     const coordinator = coordinatorWith(vi.fn(async () => registration()))
-    const logError = vi.fn()
     const phases: HostPhase[] = []
     const client = new ClientLease({
       coordinator,
       pageId: 'page-a',
       domain: 'https://example.test',
-      watchdogIntervalMs: 60000,
-      logError
+      watchdogIntervalMs: 60000
     })
     client.whenHostPhase((phase) => phases.push(phase))
     await client.init()
@@ -354,8 +449,7 @@ describe('ClientLease generation ownership', () => {
       coordinator,
       pageId,
       domain,
-      watchdogIntervalMs: 60000,
-      logError: vi.fn()
+      watchdogIntervalMs: 60000
     })
     client.whenHostPhase((phase) => phases.push(phase))
     await client.init()
@@ -401,16 +495,16 @@ describe('ClientLease generation ownership', () => {
       .mockReturnValueOnce(staleCheck.promise)
       .mockResolvedValueOnce(replacement)
       .mockResolvedValueOnce(replacement)
-    const logError = vi.fn()
+    const failures: string[] = []
     const phases: HostPhase[] = []
     const client = new ClientLease({
       coordinator: coordinatorWith(registerPage),
       pageId,
       domain,
-      watchdogIntervalMs: 60000,
-      logError
+      watchdogIntervalMs: 60000
     })
     client.whenHostPhase((phase) => phases.push(phase))
+    client.whenFailure((error) => failures.push(error.message))
     await client.init()
     phases.length = 0
 
@@ -423,8 +517,7 @@ describe('ClientLease generation ownership', () => {
 
     expect(registerPage).toHaveBeenCalledTimes(4)
     expect(phases).toEqual(['unavailable', 'connecting', 'ready'])
-    expect(logError).toHaveBeenCalledOnce()
-    expect(logError).toHaveBeenCalledWith(expect.objectContaining({ message: 'suspended probe failed' }))
+    expect(failures).toEqual(['suspended probe failed'])
     expect(client.snapshot()).toMatchObject({ hostId: 'host-b', hostPhase: 'ready' })
     client.detach()
   })
@@ -453,16 +546,16 @@ describe('ClientLease generation ownership', () => {
       .mockReturnValueOnce(staleCheck.promise)
       .mockResolvedValueOnce(replacement)
       .mockResolvedValueOnce(replacement)
-    const logError = vi.fn()
+    const failures: string[] = []
     const phases: HostPhase[] = []
     const client = new ClientLease({
       coordinator: coordinatorWith(registerPage),
       pageId,
       domain,
-      watchdogIntervalMs: 60000,
-      logError
+      watchdogIntervalMs: 60000
     })
     client.whenHostPhase((phase) => phases.push(phase))
+    client.whenFailure((error) => failures.push(error.message))
     await client.init()
     phases.length = 0
 
@@ -477,7 +570,7 @@ describe('ClientLease generation ownership', () => {
       await suspended
 
       expect(phases).toEqual(['connecting', 'ready'])
-      expect(logError).not.toHaveBeenCalled()
+      expect(failures).toEqual([])
       expect(client.snapshot()).toMatchObject({ hostId: 'host-b', hostPhase: 'ready' })
     } finally {
       staleCheck.reject(new Error('test cleanup'))

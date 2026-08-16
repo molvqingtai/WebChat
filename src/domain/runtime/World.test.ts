@@ -90,6 +90,7 @@ const createFixture = (options?: { failNextEncode?: () => boolean }) => {
         sites: [{ origin }]
       }
       if (!joinedPeers.includes(sourcePeerId)) joinedPeers.push(sourcePeerId)
+      fixture.store.send(fixture.world.command.PeerJoinedCommand({ roomId: getWorldRoomId(), sourcePeerId }))
       messageListener?.(getWorldRoomId(), sourcePeerId, JSON.stringify(presence))
     }
   }
@@ -122,11 +123,8 @@ describe('WorldDomain single per-target publication iterator', () => {
     })
 
     stage(fixture, 'attempt-a', 'https://a.example')
-    // A normal publication is one room broadcast even when the room currently has no members.
-    await vi.waitFor(() => expect(fixture.attempts).toHaveLength(1))
-    expect(fixture.attempts[0].targetPeerIds).toBeUndefined()
-    fixture.attempts[0].settle.resolve()
     await vi.waitFor(() => expect(published).toBe(true))
+    expect(fixture.attempts).toEqual([])
     fixture.store.discard()
   })
 
@@ -145,7 +143,7 @@ describe('WorldDomain single per-target publication iterator', () => {
 
     stage(fixture, 'attempt-a', 'https://a.example')
     await vi.waitFor(() => expect(fixture.attempts).toHaveLength(1))
-    expect(fixture.attempts[0].targetPeerIds).toBeUndefined()
+    expect(fixture.attempts[0].targetPeerIds).toEqual(['peer-1', 'peer-2'])
     fixture.attempts[0].settle.reject(new Error('target one exploded'))
     await vi.waitFor(() => expect(published).toBe(true))
 
@@ -303,9 +301,16 @@ describe('WorldDomain single per-target publication iterator', () => {
     const attemptsBefore = fixture.attempts.length
 
     failEncode = false
+    fixture.store.send(fixture.world.command.PeerLeftCommand({ roomId: getWorldRoomId(), sourcePeerId: 'peer-1' }))
+    fixture.emitRemotePresence('peer-2', 'https://two.example')
+    await vi.waitFor(() => expect(fixture.attempts.length).toBeGreaterThan(attemptsBefore))
+    fixture.attempts.at(-1)?.settle.resolve()
+    await settleAll()
+    const beforeRetry = fixture.attempts.length
     await vi.advanceTimersByTimeAsync(1500)
     await settleAll()
-    expect(fixture.attempts.length).toBeGreaterThan(attemptsBefore)
+    expect(fixture.attempts.length).toBe(beforeRetry + 1)
+    expect(fixture.attempts.at(-1)?.targetPeerIds).toEqual(['peer-1'])
     fixture.attempts[fixture.attempts.length - 1].settle.resolve()
     await settleAll()
     expect(released).toEqual(['https://b.example'])

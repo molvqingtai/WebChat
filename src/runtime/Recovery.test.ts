@@ -28,6 +28,10 @@ class FakeClock implements Clock {
   current = 1000
 
   now = () => this.current
+  async sleep() {
+    await Promise.resolve()
+    await Promise.resolve()
+  }
   advance(ms: number) {
     this.current += ms
     vi.advanceTimersByTime(ms)
@@ -175,13 +179,21 @@ describe('Runtime host recovery and coordinator liveness', () => {
       getSnapshot: () => client.snapshot(),
       whenReady: (callback) => client.whenReady(callback)
     })
-    room.onError(() => {})
+    const roomErrors: unknown[] = []
+    room.onError((error) => roomErrors.push(error))
     const recoveredSessions: { sessionId: string; user: typeof USER }[][] = []
     room.onSessions((sessions) => recoveredSessions.push([...sessions]))
     let pageJoinTask = Promise.resolve()
+    const joinRejections: unknown[] = []
     client.whenReady(() => {
-      pageJoinTask = pageJoinTask.catch(() => {}).then(() => room.joinRoom({ user: USER, site: SITE }))
-      void pageJoinTask.catch(() => {})
+      const joinAfterTail = () => room.joinRoom({ user: USER, site: SITE })
+      pageJoinTask = pageJoinTask.then(joinAfterTail, (error: unknown) => {
+        // The prior attempt remains caller-owned; only this exact transient permits the serialized
+        // recovery tail to continue.
+        expect(error).toEqual(new Error('Runtime host unavailable: connecting'))
+        joinRejections.push(error)
+        return joinAfterTail()
+      })
     })
 
     const firstSnapshot = await client.init()
@@ -200,9 +212,13 @@ describe('Runtime host recovery and coordinator liveness', () => {
       expect(recoveredSessions).toEqual([[{ sessionId: expect.any(String), user: USER }]])
       await expect(messageStore.query({ type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE })).resolves.toEqual([])
     })
+    await pageJoinTask
     expect(fixture.coordinator.snapshotForTest().generation).toBe(2)
     expect(hostPhases).toContain('connecting')
     expect(hostPhases.at(-1)).toBe('ready')
+    // The healthy recovery flow emits no page errors and no unexpected join rejections.
+    expect(roomErrors).toEqual([])
+    expect(joinRejections).toEqual([])
   })
 
   it('restores persisted coordinator lease and host generation without duplicate pages', async () => {
@@ -300,6 +316,24 @@ describe('Runtime host recovery and coordinator liveness', () => {
     ).rejects.toThrow('Runtime host unavailable: unavailable')
     expect(coordinator.snapshotForTest()).toMatchObject({ hostPhase: 'unavailable', hostId: null })
     expect(destroyed).toBe(1)
+  })
+
+  it('preserves a host creation provider Error for the registering page', async () => {
+    const providerError = new Error('offscreen creation refused')
+    const coordinator = new Coordinator({
+      storage: { get: async () => ({}), set: async () => {} },
+      tabs: { get: async () => ({ id: 1, url: PAGE_URL }) },
+      ensureHostDocument: async () => Promise.reject(providerError),
+      probeHost: async () => ({ hostId: 'unreachable', phase: 'ready' }),
+      destroyHostDocument: async () => {},
+      attachPage: async ({ pageId }) => pageSnapshot(pageId),
+      detachPage: async () => {}
+    })
+
+    await expect(
+      coordinator.registerPage({ domain: DOMAIN, pageId: 'page-a', tab: { id: 1, url: PAGE_URL } })
+    ).rejects.toBe(providerError)
+    expect(coordinator.snapshotForTest()).toMatchObject({ hostPhase: 'unavailable', hostId: null })
   })
 
   it('keeps a physical tab binding and Runtime lease across page heartbeat loss', async () => {

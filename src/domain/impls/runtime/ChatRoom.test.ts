@@ -173,6 +173,7 @@ const serverFixture = (): ServerFixture => {
     }),
     sendChatMessage: vi.fn(async ({ event }) => {
       sent.push(event)
+      return event
     }),
     ackInbound: vi.fn(async () => {}),
     replayInbound: async () => [],
@@ -341,6 +342,45 @@ describe('Runtime-backed ChatRoom application port', () => {
     })
 
     expect(errors).toEqual([new Error('Runtime transport disconnected'), new Error('Runtime transport disconnected')])
+  })
+
+  it('isolates a throwing error listener from shared attachment settlement', async () => {
+    const fixture = serverFixture()
+    const attachmentFailure = new Error('Runtime callback registration failed')
+    vi.spyOn(fixture.server, 'onInbound').mockRejectedValueOnce(attachmentFailure)
+    const database = createMemoryMessageDatabase(`throwing-error-listener-${databaseId++}`)
+    const messageStore = createMessageStore(database)
+    let ready = () => {}
+    const room = new ChatRoom({
+      server: fixture.server,
+      messageStore,
+      pageDomain: DOMAIN,
+      pageId: 'page-1',
+      getSnapshot: () => domainSnapshot(),
+      whenReady: (listener) => {
+        ready = listener
+        return () => {}
+      }
+    })
+    const deliveryFailure = new Error('ChatRoom error listener failed')
+    const listener = vi.fn(() => {
+      throw deliveryFailure
+    })
+    room.onError(listener)
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    ready()
+    await vi.waitFor(() => expect(diagnostic).toHaveBeenCalledWith(deliveryFailure))
+
+    expect(listener).toHaveBeenCalledOnce()
+    expect(listener).toHaveBeenCalledWith(attachmentFailure)
+    expect(diagnostic).toHaveBeenCalledOnce()
+    await expect(room.joinRoom({ user: USER, site: SITE })).resolves.toBeUndefined()
+    expect(diagnostic).toHaveBeenCalledOnce()
+
+    diagnostic.mockRestore()
+    room.dispose()
+    await database.close()
   })
 
   it('publishes initialization as one session snapshot without a synthetic join fact', async () => {
@@ -719,37 +759,63 @@ describe('Runtime-backed ChatRoom application port', () => {
     expect(fixture.server.ackInbound).not.toHaveBeenCalled()
   })
 
-  it('completes transport before inserting each local command', async () => {
+  it('returns an accepted text before its independent insertion settles', async () => {
     const order: string[] = []
+    const insertion = Promise.withResolvers<void>()
     const controlled = new ControlledDatabase(createMemoryMessageDatabase(`send-first-${databaseId++}`))
-    controlled.beforeWrite = () => {
-      order.push('insert')
-    }
     const fixture = await setup([], controlled)
     vi.mocked(fixture.server.sendChatMessage).mockImplementation(async ({ event }) => {
       order.push(`send:${event.id}`)
       fixture.sent.push(event)
+      return event
     })
     await settle()
     await fixture.room.joinRoom({ user: USER, site: SITE })
     order.length = 0
+    controlled.beforeWrite = async () => {
+      order.push('insert')
+      await insertion.promise
+    }
 
-    const text = await fixture.room.sendMessage({ type: 'text', body: 'hello', mentions: [] })
-    const reaction = await fixture.room.sendMessage({
-      type: 'reaction',
-      targetId: 'target',
-      reaction: 'like',
-      active: true
-    })
+    const textTask = fixture.room.sendMessage({ type: 'text', body: 'hello', mentions: [] })
+    await vi.waitFor(() => expect(order).toEqual(['send:allocated-text', 'insert']))
+    const text = await textTask
 
     expect(text).toMatchObject({ type: MESSAGE_TYPE.TEXT, id: 'allocated-text', body: 'hello' })
-    expect(reaction).toMatchObject({ type: MESSAGE_TYPE.REACTION, id: 'allocated-reaction', targetId: 'target' })
-    expect(order).toEqual(['send:allocated-text', 'insert', 'send:allocated-reaction', 'insert'])
+    expect(order).toEqual(['send:allocated-text', 'insert'])
+    insertion.resolve()
+    await vi.waitFor(async () => expect(await fixture.messageStore.query()).toHaveLength(1))
     expect(
       (await fixture.messageStore.query())
         .filter((record) => record.type === MESSAGE_RECORD_TYPE.CHAT_MESSAGE)
         .map((record) => record.id)
-    ).toEqual(['allocated-reaction', 'allocated-text'])
+    ).toEqual(['allocated-text'])
+  })
+
+  it('keeps reaction transport and insertion in the awaited settlement', async () => {
+    const insertion = Promise.withResolvers<void>()
+    const controlled = new ControlledDatabase(createMemoryMessageDatabase(`reaction-settlement-${databaseId++}`))
+    controlled.beforeWrite = () => insertion.promise
+    const fixture = await setup([], controlled)
+    await settle()
+
+    let settled = false
+    const reactionTask = fixture.room
+      .sendMessage({ type: 'reaction', targetId: 'target', reaction: 'like', active: true })
+      .then((message) => {
+        settled = true
+        return message
+      })
+    await vi.waitFor(() => expect(fixture.server.sendChatMessage).toHaveBeenCalledOnce())
+    await settle()
+    expect(settled).toBe(false)
+
+    insertion.resolve()
+    await expect(reactionTask).resolves.toMatchObject({
+      type: MESSAGE_TYPE.REACTION,
+      id: 'allocated-reaction',
+      targetId: 'target'
+    })
   })
 
   it('returns this call allocated message instead of a same-id canonical winner', async () => {
@@ -769,7 +835,7 @@ describe('Runtime-backed ChatRoom application port', () => {
     expect(fixture.sent).toEqual([message])
   })
 
-  it('does not insert or return a message when transport rejects', async () => {
+  it('does not insert or return a message when protocol acceptance rejects', async () => {
     const controlled = new ControlledDatabase(createMemoryMessageDatabase(`send-reject-${databaseId++}`))
     const beforeWrite = vi.fn()
     controlled.beforeWrite = beforeWrite
@@ -784,19 +850,23 @@ describe('Runtime-backed ChatRoom application port', () => {
     await expect(fixture.messageStore.query()).resolves.toEqual([])
   })
 
-  it('accepts remote-visible local loss when insertion fails after transport', async () => {
+  it('returns the accepted text and routes the original insertion failure without cancelling transport', async () => {
     const controlled = new ControlledDatabase(createMemoryMessageDatabase(`local-loss-${databaseId++}`))
+    const persistenceError = new Error('local persistence failed')
     controlled.beforeWrite = () => {
-      throw new Error('local persistence failed')
+      throw persistenceError
     }
     const fixture = await setup([], controlled)
+    const errors: Error[] = []
+    fixture.room.onError((error) => errors.push(error))
     await settle()
 
-    await expect(fixture.room.sendMessage({ type: 'text', body: 'hello', mentions: [] })).rejects.toThrow(
-      'local persistence failed'
-    )
+    await expect(fixture.room.sendMessage({ type: 'text', body: 'hello', mentions: [] })).resolves.toMatchObject({
+      id: 'allocated-text',
+      body: 'hello'
+    })
+    await vi.waitFor(() => expect(errors).toEqual([persistenceError]))
     expect(fixture.sent.map((message) => message.id)).toEqual(['allocated-text'])
-    await vi.runAllTimersAsync()
     expect(fixture.server.sendChatMessage).toHaveBeenCalledOnce()
   })
 
@@ -1065,14 +1135,20 @@ describe('Runtime-backed ChatRoom application port', () => {
     // First join holds its provider call; a second join supersedes it by beginConnectionAttempt, which
     // must report the predecessor token cancelled BEFORE aborting it (first-terminal-wins).
     const first = room.joinRoom({ user: USER, site: SITE })
-    first.catch(() => {})
     await settle()
     const second = room.joinRoom({ user: USER, site: SITE })
-    second.catch(() => {})
+    await settle()
+
+    // Both task rejections keep their exact expected identity instead of a silent sink: the first
+    // rejects on supersession and the second on disposal-time page detachment.
+    const firstRejection = expect(first).rejects.toThrow('Page connection attempt superseded')
+    const secondRejection = expect(second).rejects.toThrow('Runtime page detached')
     await settle()
 
     expect(lifecycle.value.getTaskResult(first)).toBe('cancelled')
     room.dispose()
+    await firstRejection
+    await secondRejection
     await database.close()
   })
 })

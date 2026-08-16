@@ -146,7 +146,7 @@ export interface RuntimeServer {
     reaction: ReactionType
     active: boolean
   }) => Promise<ReactionMessageRecord>
-  sendChatMessage: (payload: { domain: string; event: ChatMessage }) => Promise<void>
+  sendChatMessage: (payload: { domain: string; event: ChatMessage }) => Promise<ChatMessage>
   ackInbound: (payload: { domain: string; sequence: number; inserted: boolean }) => Promise<void>
   replayInbound: (payload: { domain: string; after: number }) => Promise<InboundEvent[]>
   reconnectDomain: (payload: { domain: string }) => Promise<void | null>
@@ -180,6 +180,7 @@ export interface RuntimeTab {
 
 export interface RuntimePageRegistration extends RuntimeHostStatus {
   snapshot: RuntimeSnapshot
+  failures?: RuntimeErrorEvent[]
 }
 
 export interface RuntimeCoordinator {

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
-import { COORDINATOR_HEALTH_INTERVAL_MS, Coordinator } from '@/runtime/Coordinator'
+import { COORDINATOR_HEALTH_INTERVAL_MS, COORDINATOR_RPC_TIMEOUT_MS, Coordinator } from '@/runtime/Coordinator'
 import type { RuntimeSnapshot } from '@/runtime/Contract'
 
 const DOMAIN_A = 'https://a.example'
@@ -25,6 +25,8 @@ const createFixture = () => {
     [2, { id: 2, url: `${DOMAIN_A}/other` }]
   ])
   const detachFailures = new Map<string, number>()
+  const tabLookupFailures = new Map<number, Error>()
+  let persistFailure: Error | null = null
   const delayedDetaches = new Set<string>()
   const pendingDetaches: Array<{ pageId: string; resolve: () => void }> = []
   const attachPage = vi.fn(async ({ domain, pageId }: { domain: string; pageId: string }) => {
@@ -44,7 +46,15 @@ const createFixture = () => {
     releasedPageIds.push(pageId)
   })
   const coordinator = new Coordinator({
-    storage: { get: async () => ({}), set: async () => {} },
+    storage: {
+      get: async () => ({}),
+      set: async () => {
+        if (!persistFailure) return
+        const error = persistFailure
+        persistFailure = null
+        throw error
+      }
+    },
     ensureHostDocument: async () => {
       const created = replacementPending
       replacementPending = false
@@ -56,6 +66,8 @@ const createFixture = () => {
     detachPage,
     tabs: {
       get: async (tabId: number) => {
+        const lookupFailure = tabLookupFailures.get(tabId)
+        if (lookupFailure) throw lookupFailure
         const tab = tabs.get(tabId)
         if (!tab) throw new Error('No tab')
         return tab
@@ -70,17 +82,26 @@ const createFixture = () => {
     })
   const removeTab = (tabId: number) =>
     (coordinator as unknown as { removeTab: (tabId: number) => Promise<void> }).removeTab(tabId)
+  const updateTab = (tabId: number, url: string) =>
+    (coordinator as unknown as { updateTab: (tabId: number, url: string) => Promise<void> }).updateTab(tabId, url)
 
   return {
     coordinator,
     register,
     removeTab,
+    updateTab,
     tabs,
     attachPage,
     detachPage,
     events,
     releasedPageIds,
     failDetach: (pageId: string) => detachFailures.set(pageId, 1),
+    failTabLookup: (tabId: number, error: Error) => tabLookupFailures.set(tabId, error),
+    clearTabLookupFailure: (tabId: number) => tabLookupFailures.delete(tabId),
+    failNextPersist: (error: Error) => {
+      persistFailure = error
+    },
+    reconcileTabs: () => (coordinator as unknown as { reconcileTabs: () => Promise<void> }).reconcileTabs(),
     delayDetach: (pageId: string) => delayedDetaches.add(pageId),
     resolveNextDetach: (pageId: string) => {
       const index = pendingDetaches.findIndex((pending) => pending.pageId === pageId)
@@ -106,6 +127,163 @@ beforeEach(() => vi.useFakeTimers())
 afterEach(() => vi.useRealTimers())
 
 describe('Coordinator trusted Tabs lifecycle', () => {
+  it('keeps attempt-all rebuild evidence when one tab attachment fails', async () => {
+    const fixture = createFixture()
+    await fixture.register(DOMAIN_A, 'document-a', 1, `${DOMAIN_A}/topic#first`)
+    await fixture.register(DOMAIN_A, 'document-b', 2, `${DOMAIN_A}/other`)
+    fixture.events.length = 0
+    const failure = new Error('attach failed for document-b')
+    let failed = false
+    fixture.attachPage.mockImplementation(async ({ domain, pageId }: { domain: string; pageId: string }) => {
+      fixture.events.push(`attach:${domain}:${pageId}`)
+      if (pageId === 'document-b' && !failed) {
+        failed = true
+        throw failure
+      }
+      return snapshot(domain, pageId)
+    })
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    fixture.replaceHost()
+    await fixture.coordinator.reconcile()
+
+    expect(diagnostic).not.toHaveBeenCalled()
+    expect(fixture.events).toContain(`attach:${DOMAIN_A}:document-a`)
+    expect(fixture.events).toContain(`attach:${DOMAIN_A}:document-b`)
+    expect(fixture.coordinator.snapshotForTest().tabs).toContainEqual(
+      expect.objectContaining({ tabId: 1, pageId: 'document-a' })
+    )
+    const unaffected = await fixture.register(DOMAIN_A, 'document-a', 1, `${DOMAIN_A}/topic#first`)
+    expect(unaffected).not.toHaveProperty('failures')
+    await expect(fixture.register(DOMAIN_A, 'document-b', 2, `${DOMAIN_A}/other`)).resolves.toMatchObject({
+      failures: [
+        {
+          eventId: expect.any(String),
+          message: failure.message,
+          subsystem: 'connection',
+          operation: 'lifecycle',
+          scope: DOMAIN_A
+        }
+      ]
+    })
+    diagnostic.mockRestore()
+  })
+
+  it('keeps a lookup failure diagnostic while reconciling independent tabs', async () => {
+    const fixture = createFixture()
+    await fixture.register(DOMAIN_A, 'document-a', 1, `${DOMAIN_A}/topic#first`)
+    await fixture.register(DOMAIN_A, 'document-b', 2, `${DOMAIN_A}/other`)
+    const failure = new Error('tab lookup failed')
+    fixture.failTabLookup(1, failure)
+    fixture.tabs.set(2, { id: 2, url: `${DOMAIN_A}/updated#fragment` })
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    await fixture.reconcileTabs()
+
+    expect(diagnostic).toHaveBeenCalledWith(failure)
+    expect(fixture.coordinator.snapshotForTest().tabs).toContainEqual(
+      expect.objectContaining({ tabId: 1, pageId: 'document-a' })
+    )
+    expect(fixture.coordinator.snapshotForTest().tabs).toContainEqual(
+      expect.objectContaining({ tabId: 2, url: `${DOMAIN_A}/updated` })
+    )
+    diagnostic.mockRestore()
+  })
+
+  it('keeps a late rebuild failure console-only after its page owner is removed', async () => {
+    const fixture = createFixture()
+    await fixture.register(DOMAIN_A, 'document-a', 1, `${DOMAIN_A}/topic#first`)
+    const attachment = Promise.withResolvers<RuntimeSnapshot>()
+    fixture.attachPage.mockReturnValueOnce(attachment.promise)
+    fixture.attachPage.mockClear()
+    const failure = new Error('removed page attachment failed')
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    fixture.replaceHost()
+    const rebuilding = fixture.coordinator.reconcile()
+    await vi.waitFor(() => expect(fixture.attachPage).toHaveBeenCalledOnce())
+    await fixture.removeTab(1)
+    attachment.reject(failure)
+    await rebuilding
+
+    expect(diagnostic).toHaveBeenCalledOnce()
+    expect(diagnostic).toHaveBeenCalledWith(failure)
+    const replacement = await fixture.register(DOMAIN_A, 'document-new', 1, `${DOMAIN_A}/topic#first`)
+    expect(replacement).not.toHaveProperty('failures')
+    diagnostic.mockRestore()
+  })
+
+  it('retains and retries a navigation update whose persistence fails', async () => {
+    const fixture = createFixture()
+    await fixture.register(DOMAIN_A, 'document-a', 1, `${DOMAIN_A}/topic#first`)
+    fixture.tabs.set(1, { id: 1, url: `${DOMAIN_A}/updated#fragment` })
+    const failure = new Error('reconciliation persistence failed')
+    fixture.failNextPersist(failure)
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    await fixture.reconcileTabs()
+    expect(diagnostic).not.toHaveBeenCalled()
+    expect(fixture.coordinator.snapshotForTest().tabs).toContainEqual(
+      expect.objectContaining({ tabId: 1, url: `${DOMAIN_A}/topic` })
+    )
+
+    await fixture.reconcileTabs()
+    expect(fixture.coordinator.snapshotForTest().tabs).toContainEqual(
+      expect.objectContaining({ tabId: 1, url: `${DOMAIN_A}/updated` })
+    )
+    await expect(fixture.register(DOMAIN_A, 'document-a', 1, `${DOMAIN_A}/updated#fragment`)).resolves.toMatchObject({
+      failures: [
+        {
+          eventId: expect.any(String),
+          message: failure.message,
+          subsystem: 'connection',
+          operation: 'lifecycle',
+          scope: DOMAIN_A
+        }
+      ]
+    })
+    diagnostic.mockRestore()
+  })
+
+  it('rolls back a browser navigation whose persistence fails and reconciles it later', async () => {
+    const fixture = createFixture()
+    await fixture.register(DOMAIN_A, 'document-a', 1, `${DOMAIN_A}/topic#first`)
+    const updatedUrl = `${DOMAIN_A}/updated`
+    fixture.tabs.set(1, { id: 1, url: updatedUrl })
+    const failure = new Error('browser navigation persistence failed')
+    fixture.failNextPersist(failure)
+
+    await expect(fixture.updateTab(1, updatedUrl)).rejects.toBe(failure)
+    expect(fixture.coordinator.snapshotForTest().tabs).toContainEqual(
+      expect.objectContaining({ tabId: 1, url: `${DOMAIN_A}/topic` })
+    )
+
+    await fixture.reconcileTabs()
+    expect(fixture.coordinator.snapshotForTest().tabs).toContainEqual(
+      expect.objectContaining({ tabId: 1, url: updatedUrl })
+    )
+  })
+
+  it('retains and reconciles a confirmed removal whose persistence fails', async () => {
+    const fixture = createFixture()
+    await fixture.register(DOMAIN_A, 'document-a', 1, `${DOMAIN_A}/topic#first`)
+    const failure = new Error('removal persistence failed')
+    fixture.failNextPersist(failure)
+
+    await expect(fixture.removeTab(1)).rejects.toBe(failure)
+    expect(fixture.coordinator.snapshotForTest().tabs).toContainEqual(
+      expect.objectContaining({ tabId: 1, pageId: 'document-a' })
+    )
+
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+    await fixture.reconcileTabs()
+
+    expect(fixture.coordinator.snapshotForTest().tabs).toEqual([])
+    expect(fixture.detachPage).toHaveBeenCalledTimes(2)
+    expect(diagnostic).not.toHaveBeenCalled()
+    diagnostic.mockRestore()
+  })
+
   it('keeps multiple same-domain tabs and releases only trusted non-last/last closes', async () => {
     const fixture = createFixture()
     await fixture.register(DOMAIN_A, 'document-a', 1, `${DOMAIN_A}/topic#first`)
@@ -142,6 +320,33 @@ describe('Coordinator trusted Tabs lifecycle', () => {
     })
   })
 
+  it('queues a health-interval persistence rejection for its confirmed current page', async () => {
+    const fixture = createFixture()
+    await fixture.register(DOMAIN_A, 'document-a', 1, `${DOMAIN_A}/topic#first`)
+    const failure = new Error('health reconciliation persistence failed')
+    fixture.failNextPersist(failure)
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    await vi.advanceTimersByTimeAsync(COORDINATOR_HEALTH_INTERVAL_MS)
+    await expect(fixture.register(DOMAIN_A, 'document-a', 1, `${DOMAIN_A}/topic#first`)).resolves.toMatchObject({
+      failures: [
+        {
+          eventId: expect.any(String),
+          message: failure.message,
+          subsystem: 'connection',
+          operation: 'lifecycle',
+          scope: DOMAIN_A
+        }
+      ]
+    })
+
+    expect(diagnostic).not.toHaveBeenCalled()
+    expect(fixture.coordinator.snapshotForTest().tabs).toContainEqual(
+      expect.objectContaining({ tabId: 1, pageId: 'document-a' })
+    )
+    diagnostic.mockRestore()
+  })
+
   it('reattaches reload/same-domain documents before retiring the old generation', async () => {
     const fixture = createFixture()
     await fixture.register(DOMAIN_A, 'document-old', 1, `${DOMAIN_A}/topic#first`)
@@ -156,6 +361,32 @@ describe('Coordinator trusted Tabs lifecycle', () => {
     expect(fixture.coordinator.snapshotForTest()).toMatchObject({
       tabs: [{ tabId: 1, domain: DOMAIN_A, pageId: 'document-new' }]
     })
+  })
+
+  it('keeps a registration deadline primary separate from late detach cleanup failure', async () => {
+    const fixture = createFixture()
+    const lateAttachment = Promise.withResolvers<RuntimeSnapshot>()
+    fixture.attachPage.mockReturnValueOnce(lateAttachment.promise)
+    const cleanupFailure = new Error('late attachment detach failed')
+    fixture.detachPage.mockRejectedValueOnce(cleanupFailure)
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const registration = fixture.register(DOMAIN_A, 'document-a', 1, `${DOMAIN_A}/topic#first`)
+    const outcome = registration.then(
+      () => ({ status: 'resolved' as const }),
+      (error: unknown) => ({ status: 'rejected' as const, error })
+    )
+
+    await vi.advanceTimersByTimeAsync(COORDINATOR_RPC_TIMEOUT_MS)
+    await expect(outcome).resolves.toEqual({
+      status: 'rejected',
+      error: new Error('Runtime page attachment timed out')
+    })
+    expect(diagnostic).not.toHaveBeenCalled()
+
+    lateAttachment.resolve(snapshot(DOMAIN_A, 'document-a'))
+    await vi.waitFor(() => expect(diagnostic).toHaveBeenCalledWith(cleanupFailure))
+    expect(diagnostic).toHaveBeenCalledOnce()
+    diagnostic.mockRestore()
   })
 
   it('releases a prior domain exactly once and rejects payload-only or stale tab claims', async () => {
@@ -328,7 +559,11 @@ describe('Coordinator trusted Tabs lifecycle', () => {
   it('uses tab activation only as a wake and reconciliation trigger', () => {
     const source = readFileSync(path.resolve(process.cwd(), 'src/runtime/Background.ts'), 'utf8')
 
-    expect(source).toContain('browser.tabs.onActivated.addListener(() => void coordinator.reconcile())')
+    expect(source).toMatch(/coordinator\.removeTab\(tabId\)\.catch\(\(error\) => console\.error\(error\)\)/)
+    expect(source).toMatch(
+      /coordinator\.updateTab\(tabId, changeInfo\.url\)\.catch\(\(error\) => console\.error\(error\)\)/
+    )
+    expect(source).toMatch(/coordinator\.reconcile\(\)\.catch\(\(error\) => console\.error\(error\)\)/)
     expect(source).not.toMatch(/onActivated\.addListener\([^\n]*(removeTab|detachPage|updateTab)/)
   })
 })

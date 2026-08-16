@@ -319,8 +319,7 @@ describe('application feedback ownership', () => {
       coordinator: { ensureHost: vi.fn(), registerPage },
       pageId,
       domain,
-      watchdogIntervalMs: 1000,
-      logError: vi.fn()
+      watchdogIntervalMs: 1000
     })
     await lease.init()
     const fixture = createFixture({

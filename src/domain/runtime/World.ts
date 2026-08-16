@@ -1,6 +1,6 @@
 import { Remesh } from 'remesh'
 import { concatMap, filter, map } from 'rxjs'
-import WireDomain, { type WireFailureStage, type WireMessageEvent } from '@/domain/runtime/Wire'
+import WireDomain, { selectPeerIds, type WireFailureStage, type WireMessageEvent } from '@/domain/runtime/Wire'
 import { RoomTransportExtern } from '@/domain/runtime/externs/RoomTransport'
 import { WORLD_ROOM_ID_V5 } from '@/constants/config'
 import { type ChatSite, type ChatUser, type WorldRoomMessage } from '@/protocol'
@@ -32,6 +32,7 @@ interface FullPublication {
   requestId: string
   revision: number
   presence: WorldRoomMessage
+  targetPeerIds: string[]
   stagedAttemptId: string | null
   recoveryRequestId: string | null
   /** True only when the publication belongs to an AppButton manual World replacement: its failure
@@ -256,17 +257,21 @@ const WorldDomain = Remesh.domain({
           requestId: publicationRequestId(sequence),
           revision: currentRevision,
           presence,
+          targetPeerIds: selectPeerIds(get(RoomMembersState()), get(wireDomain.query.PeerIdQuery(worldRoomId))),
           stagedAttemptId,
           recoveryRequestId,
           ...(recoveryRequestId && recovery?.manual ? { manual: true } : {})
         }
-        // A normal World publication is one room broadcast; the transport fans it out.
+        if (publication.targetPeerIds.length === 0) {
+          return [PublicationSequenceState().new(sequence), ...settlePublication(get, publication)]
+        }
         return [
           PublicationSequenceState().new(sequence),
           FullPublicationState().new(publication),
           wireDomain.command.SendMessageCommand({
             requestId: publication.requestId,
             roomId: worldRoomId,
+            targetPeerIds: publication.targetPeerIds,
             message: publication.presence
           })
         ]
@@ -352,7 +357,9 @@ const WorldDomain = Remesh.domain({
           ]
         }
         // A provider throw settles the publication; a manual AppButton replacement keeps that
-        // failure out of page UI/Toast while automatic recovery retains its diagnostics.
+        // failure out of page UI/Toast but never evidence-silent, while automatic recovery
+        // retains its existing diagnostics.
+        if (publication.manual) console.error(payload.error)
         return [...(publication.manual ? [] : [ErrorEvent(payload.error)]), ...settlePublication(get, publication)]
       }
     })
@@ -370,10 +377,11 @@ const WorldDomain = Remesh.domain({
         ) {
           return null
         }
-        // Re-issue the room broadcast for the live release continuation.
+        if (publication.targetPeerIds.length === 0) return settlePublication(get, publication)
         return wireDomain.command.SendMessageCommand({
           requestId,
           roomId: worldRoomId,
+          targetPeerIds: publication.targetPeerIds,
           message: publication.presence
         })
       }
@@ -783,12 +791,19 @@ const WorldDomain = Remesh.domain({
         fromEvent(wireDomain.event.MessageSendFailedEvent).pipe(
           filter(
             ({ requestId }) =>
-              // A manual AppButton replacement's catch-up failure stays out of page UI; automatic
-              // recovery and ordinary join catch-up retain their diagnostics.
-              (requestId.startsWith('world:catch-up:') || requestId.startsWith('world:recovery-catch-up:')) &&
-              !requestId.startsWith('world:manual-catch-up:')
+              requestId.startsWith('world:catch-up:') ||
+              requestId.startsWith('world:recovery-catch-up:') ||
+              requestId.startsWith('world:manual-catch-up:')
           ),
-          map(({ error }) => ErrorEvent(error))
+          map(({ requestId, error }) => {
+            // A manual AppButton replacement's catch-up failure stays out of page UI but never
+            // evidence-silent; automatic recovery and ordinary join catch-up keep diagnostics.
+            if (requestId.startsWith('world:manual-catch-up:')) {
+              console.error(error)
+              return null
+            }
+            return ErrorEvent(error)
+          })
         )
     })
 

@@ -74,6 +74,43 @@ const createFixture = (
 }
 
 describe('WorldRoom Runtime adapter', () => {
+  it('isolates a throwing error listener and settles the shared attachment tail', async () => {
+    const initial = snapshot([])
+    const attachment = Promise.withResolvers<RuntimeSnapshot>()
+    const getSnapshot = vi.fn(() => attachment.promise)
+    let ready = () => {}
+    const room = new WorldRoom({
+      server: {
+        onWorldPresence: async () => {},
+        getSnapshot
+      } as unknown as RuntimeServer,
+      pageId: 'page-1',
+      getSnapshot: () => initial,
+      whenReady: (listener) => {
+        ready = listener
+        return () => {}
+      }
+    })
+    const attachmentFailure = new Error('World attachment failed')
+    const deliveryFailure = new Error('World error listener failed')
+    const listener = vi.fn(() => {
+      throw deliveryFailure
+    })
+    room.onError(listener)
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    ready()
+    await vi.waitFor(() => expect(getSnapshot).toHaveBeenCalledOnce())
+    attachment.reject(attachmentFailure)
+
+    await expect(room.getState()).resolves.toEqual([])
+    expect(listener).toHaveBeenCalledOnce()
+    expect(listener).toHaveBeenCalledWith(attachmentFailure)
+    expect(diagnostic).toHaveBeenCalledOnce()
+    expect(diagnostic).toHaveBeenCalledWith(deliveryFailure)
+    diagnostic.mockRestore()
+  })
+
   it('replays subscribed updates after the initial snapshot baseline', async () => {
     const oldSource = presence(ALPHA, [{ origin: 'https://old.test', title: 'Old' }])
     const newSource = presence(ALPHA, [{ origin: 'https://new.test', title: 'New' }])
