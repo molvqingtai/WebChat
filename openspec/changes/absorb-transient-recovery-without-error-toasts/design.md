@@ -11,11 +11,11 @@ Connection lifecycle is controlled only by structural facts: current page and Ru
 - Keep raw relay and probe traffic available across Background startup without waiting for business-state reconstruction.
 - Preserve healthy physical Runtime and Room work across normal Chrome and Edge MV3 Background idle/restart.
 - Keep an old document non-ready and boundedly polling after a full extension reload until its own lifecycle ends.
-- Give every current page, Chat attempt, World attempt, publication, release, send, and error one generation-scoped in-memory owner.
+- Give every current page, Chat attempt, World attempt, whole publication, release, send, and error one generation-scoped in-memory owner.
 - Clean only a Room handle created but not committed by the failing or canceled attempt.
-- Publish each latest full Presence revision through one World iterator and complete a live domain release even when no page binding remains.
+- Publish each latest full Presence revision through one World owner and one explicit logical-recipient array call, and complete a live domain release even when no page binding remains.
 - Surface every distinct real local failure as a fresh original-message toast on every current affected page.
-- Keep local send acceptance, target failure, and History no-result semantics explicit.
+- Keep local send acceptance, native selected-array first-error interruption, and History no-result semantics explicit.
 
 **Non-Goals:**
 
@@ -32,7 +32,7 @@ Content, Runtime, and tab listeners install synchronously before any awaited wor
 
 ### 2. Browser Background and physical Runtime have separate lifecycles
 
-A normal Chrome or Edge MV3 Background idle/restart preserves the Offscreen Runtime, healthy Rooms, and in-flight Runtime owners. Firefox uses its persistent Background Runtime. A missing or replaced physical Runtime identity invalidates the old Runtime generation, marks affected pages non-ready, pauses sends, and cancels old page, domain, Room, and iterator owners. One current Background in-memory single-flight creates or adopts the replacement host. The Background fans invalidation only to live pages it currently knows; other pages rejoin through their next live register or watchdog event.
+A normal Chrome or Edge MV3 Background idle/restart preserves the Offscreen Runtime, healthy Rooms, and in-flight Runtime owners. Firefox uses its persistent Background Runtime. A missing or replaced physical Runtime identity invalidates the old Runtime generation, marks affected pages non-ready, pauses sends, and cancels old page, domain, Room, and publication owners. One current Background in-memory single-flight creates or adopts the replacement host. The Background fans invalidation only to live pages it currently knows; other pages rejoin through their next live register or watchdog event.
 
 ### 3. Full extension reload keeps the old document non-ready
 
@@ -44,25 +44,25 @@ A page owner is keyed by page, navigation, and Runtime generation. It owns the a
 
 ### 5. Each Room attempt owns only its uncommitted handle
 
-Chat and World recovery use one live in-memory attempt at a time. A join attempt lasts at most ten seconds and records only an optional handle that it created. Chat commits only after join and current Session publication; World enters its sole Presence iterator after join. Successful commit transfers an attempt-created handle out of attempt cleanup. Failure or cancellation performs one idempotent leave only for an attempt-created, uncommitted handle; a reused or committed Room is never left by attempt cleanup. A cleanup throw is another real failure, but cleanup does not gain a second owner or journal and cancellation still completes. A current Room close enters the same recovery path, while a close from an older generation is dropped.
+Chat and World recovery use one live in-memory attempt at a time. A join attempt lasts at most ten seconds and records only an optional handle that it created. Chat commits only after join and current Session publication; World enters its sole Presence publication owner after join. For the direct post-join continuation, the call site sleeps one second, re-checks its exact attempt, and only then derives current logical recipients; it does not snapshot recipients before sleeping. Successful commit transfers an attempt-created handle out of attempt cleanup. Failure or cancellation performs one idempotent leave only for an attempt-created, uncommitted handle; a reused or committed Room is never left by attempt cleanup. A cleanup throw is another real failure, but cleanup does not gain a second owner or journal and cancellation still completes. A current Room close enters the same recovery path, while a close from an older generation is dropped.
 
-### 6. World publication has one iterator and preserves continuation
+### 6. World publication has one array request and preserves continuation
 
-Every World publication enters one iterator that freezes the latest full Presence revision and distinct targets. Each target receives at most one `room.send()` call for that revision. A return records local acceptance; a throw records failure, surfaces that failure when a live affected page exists, and continues with remaining targets. The revision settles locally after all targets are attempted and does not require every target to accept or acknowledge.
+Every World publication enters one current owner that freezes the latest full Presence revision and one distinct logical-recipient array. A non-empty revision makes exactly one `room.send(body, peerIds)` call; an empty array makes zero provider calls and settles as successful no-recipient work. A return records local acceptance. A provider throw rejects the one send with the original Error and may interrupt later array targets inside Artico; WebChat does not catch per target, continue later targets itself, or retain per-target accepted/failed results. The revision then follows its existing whole-publication failure settlement and does not require remote acceptance or acknowledgement.
 
-Runtime, Room, or World-owner loss cancels the iterator. A Presence-revision supersession is different: it stops only the older revision, preserves the Room, attempted results, and original ready or release continuation, and immediately enters the latest revision through the same owner. Stale close events never invalidate the current physical Runtime.
+Runtime, Room, or World-owner loss cancels the publication owner. A Presence-revision supersession is different: it stops only the older revision, preserves the Room and original ready or release continuation, and immediately enters the latest revision through the same owner. An already invoked old provider call settles against no current publication slot and is never replayed. Stale close events never invalidate the current physical Runtime.
 
-A valid World demand is either a current page binding or an exact live domain-release continuation. Therefore the last-page release can publish the latest Presence after its page binding is gone. With no live page, a real publication failure is diagnostic, while the iterator and release continue at their bounded cadence. The sole successful return is the original continuation.
+A valid World demand is either a current page binding or an exact live domain-release continuation. Therefore the last-page release can publish the latest Presence after its page binding is gone. With no live page, a real publication failure is diagnostic. Only a release publication preflight failure that performed zero provider calls retains the same whole-publication request and reissues it at the existing bounded cadence; a provider throw is never retried. The sole successful return is the original continuation.
 
 ### 7. Domain and host release use live next-step state
 
-A domain release has one Runtime-local owner and one in-memory next step: leave Chat, remove the domain contribution, publish the latest full Presence through the sole World iterator, then complete. A failure keeps the same step, is surfaced when an affected page is current, and retries boundedly while the owner remains current. A last-page release reaches completion through its release continuation rather than requiring a page binding. Explicit reconnect starts a new domain generation only after the current release completes.
+A domain release has one Runtime-local owner and one in-memory next step: leave Chat, remove the domain contribution, publish the latest full Presence through the sole World publication owner, then complete. A preflight failure that made zero provider calls keeps the same step, is surfaced when an affected page is current, and retries boundedly while the owner remains current. A provider-invoked failure settles through the publication's existing failure path and is not retried. A last-page release reaches completion through its release continuation rather than requiring a page binding. Explicit reconnect starts a new domain generation only after the current release completes.
 
 Host disposal similarly advances one in-memory step at a time through idempotent Room leaves and host destruction. Resource absence counts as completion. Background-only release state is not restored after worker loss; the next current event reconciles current tabs and physical Runtime facts.
 
 ### 8. Send results and remote no-result outcomes are distinct
 
-Preflight validates the trusted Room, wire payload, encoding, and distinct targets before any provider send. Each target is called once. `room.send()` returning means local acceptance and does not promise remote acknowledgement or delivery. A throw fails that target and is never retried. An explicit single-target throw rejects its call; multi-target work retains the accepted and failed results after every target is attempted.
+Preflight validates the trusted Room, wire payload, encoding, and explicit targets before any provider send. An explicit string or non-empty array is delegated in one `room.send()` call, while an empty array makes no provider call. `room.send()` returning means local acceptance and does not promise remote acknowledgement or delivery. A throw rejects that one call with the original Error and is never retried after provider invocation. For an array, Artico's first selected target throw may interrupt later targets; WebChat adds no per-target loop, containment, result aggregation, retry, or acknowledgement.
 
 A History request may wait for a response only after local acceptance. No response, no retained History, peer departure, or response expiry is a no-result outcome, not an error, toast, acknowledgement, or reason to resend.
 
@@ -78,7 +78,7 @@ Cancellation, supersession, normal leave, stale completion, hostile transport in
 
 - [An old document remains open after full reload] -> It stays non-ready and continues bounded polling; every real failed poll remains visible until the document ends.
 - [The last page starts domain release] -> Its live release continuation remains valid World demand, so Presence and release can settle without a page binding.
-- [A publication target throws] -> The target is not retried; its failure is visible when routable and the iterator still attempts every other target.
+- [A selected publication target throws] -> The one array call rejects with the original Error and may interrupt later Artico targets; WebChat does not retry or continue them through a second loop.
 - [No affected page exists for a Runtime failure] -> The failure is diagnostic because there is no valid user-visible destination.
 - [The physical Runtime disappears] -> Old generation work is canceled and current callers recover from physical facts without retrying an already called target for the same revision.
 

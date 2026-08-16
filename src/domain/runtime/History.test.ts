@@ -25,12 +25,15 @@ const jsonCodec: WireCodec = {
 }
 
 const fakeTransport = () => {
+  const sent: { roomId: string; targetPeerIds?: string | string[]; message: ChatRoomMessage }[] = []
   let messageListener: ((roomId: string, sourcePeerId: string, rawPayload: string) => void) | null = null
   const transport: RoomTransport = {
     peerIdOf: () => 'local-peer',
     join: async () => {},
     leave: () => {},
-    send: async () => {},
+    send: async (roomId, payload, targetPeerIds) => {
+      sent.push({ roomId, targetPeerIds, message: JSON.parse(payload) as ChatRoomMessage })
+    },
     onMessage: (callback) => {
       messageListener = callback
       return () => {
@@ -45,15 +48,16 @@ const fakeTransport = () => {
   }
   return {
     transport,
+    sent,
     receive: (roomId: string, sourcePeerId: string, message: unknown) => {
       messageListener?.(roomId, sourcePeerId, JSON.stringify(message))
     }
   }
 }
 
-const setup = async () => {
+const setup = async (sourcePeerId = 'peer-a') => {
   const pagePort = new PagePort()
-  const { transport, receive } = fakeTransport()
+  const { transport, receive, sent } = fakeTransport()
   const store = Remesh.store({
     externs: [
       ClockExtern.impl({ now: () => 1_000_000 }),
@@ -111,9 +115,9 @@ const setup = async () => {
     user: USER
   }
   await new Promise((resolve) => setTimeout(resolve, 0))
-  receive(ROOM_ID, 'peer-a', sessionMessage)
+  receive(ROOM_ID, sourcePeerId, sessionMessage)
   await new Promise((resolve) => setTimeout(resolve, 0))
-  return { store, session, history, wire, delivery, pagePort, receive }
+  return { store, session, history, wire, delivery, pagePort, receive, sent }
 }
 
 const providerRequest = (syncId: string, page: number, done: boolean): HistoryMessagesPull => ({
@@ -184,6 +188,52 @@ describe('HistoryDomain connection-binding lifecycle', () => {
     await vi.waitFor(() => expect(store.query(history.query.ProviderAttemptsQuery())).toHaveLength(1))
     store.send(history.command.StartRequesterCommand({ domain: DOMAIN, sourcePeerId: 'peer-a' }))
     await vi.waitFor(() => expect(store.query(history.query.RequesterAttemptsQuery())).toHaveLength(1))
+  })
+})
+
+describe('HistoryDomain inventory targets', () => {
+  it('sends every inventory page once to the request-start provider array', async () => {
+    const { store, history, pagePort, receive, sent } = await setup()
+    pagePort.provideHistory('page-a', DOMAIN, (event) => {
+      if (event.type === 'request') {
+        void pagePort.resolveHistorySupply('page-a', event.request.supplyId, { records: [], done: true })
+      }
+    })
+
+    receive(ROOM_ID, 'local-peer', {
+      type: MESSAGE_TYPE.SESSION,
+      sessionId: 'self-session',
+      presenceId: 'self-presence',
+      joinedAt: 3,
+      user: { id: 'self-user', name: 'Self', avatar: '' }
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    store.send(history.command.StartRequesterCommand({ domain: DOMAIN, sourcePeerId: 'peer-a' }))
+
+    await vi.waitFor(() =>
+      expect(sent.some((item) => item.message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)).toBe(true)
+    )
+    expect(sent.find((item) => item.message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)?.targetPeerIds).toEqual([
+      'peer-a'
+    ])
+  })
+
+  it('settles a self-only inventory attempt without a provider send', async () => {
+    const { store, history, pagePort, sent } = await setup('local-peer')
+    pagePort.provideHistory('page-a', DOMAIN, (event) => {
+      if (event.type === 'request') {
+        void pagePort.resolveHistorySupply('page-a', event.request.supplyId, { records: [], done: true })
+      }
+    })
+
+    store.send(history.command.StartRequesterCommand({ domain: DOMAIN, sourcePeerId: 'local-peer' }))
+    await vi.waitFor(() =>
+      expect(store.query(history.query.RequesterAttemptsQuery())).toEqual([
+        expect.objectContaining({ sourcePeerId: 'local-peer', loadingSettled: true })
+      ])
+    )
+
+    expect(sent.filter((item) => item.message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)).toEqual([])
   })
 })
 

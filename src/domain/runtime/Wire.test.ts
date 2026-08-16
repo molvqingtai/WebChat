@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Remesh, type Args, type RemeshEvent, type RemeshSubscribeOnlyEvent } from 'remesh'
-import WireDomain from '@/domain/runtime/Wire'
+import WireDomain, { selectPeerIds } from '@/domain/runtime/Wire'
 import { RoomTransportExtern, WireCodecExtern } from '@/domain/runtime/externs/RoomTransport'
+import { ClockExtern, type Clock } from '@/domain/runtime/externs/Clock'
 import type { RoomTransport } from '@/runtime/RoomTransport'
 import { MAX_DECODE_QUEUE_BYTES, MAX_DECODE_QUEUE_FRAMES } from '@/constants/config'
 import { MESSAGE_TYPE, WireCodecError, type WireCodec } from '@/protocol'
@@ -26,7 +27,8 @@ const deferred = <T>() => {
 }
 
 const fixture = (
-  codec: WireCodec = { encode: async (value) => JSON.stringify(value), decode: async (payload) => JSON.parse(payload) }
+  codec: WireCodec = { encode: async (value) => JSON.stringify(value), decode: async (payload) => JSON.parse(payload) },
+  clock: Clock = { now: () => 0, sleep: async () => {} }
 ) => {
   const sent: { roomId: string; payload: string; to?: string | string[] }[] = []
   let join: (roomId: string) => Promise<void> = async () => {}
@@ -66,7 +68,7 @@ const fixture = (
     dispose: vi.fn()
   }
   const store = Remesh.store({
-    externs: [RoomTransportExtern.impl(transport), WireCodecExtern.impl(codec)]
+    externs: [ClockExtern.impl(clock), RoomTransportExtern.impl(transport), WireCodecExtern.impl(codec)]
   })
   const action = WireDomain()
   const wire = store.getDomain(action)
@@ -116,6 +118,10 @@ const invalidateRoom = (runtime: ReturnType<typeof fixture>, transition: 'leave'
 }
 
 describe('WireDomain anti-corruption boundary', () => {
+  it('selects distinct non-self product peer ids in first-seen order', () => {
+    expect(selectPeerIds(['peer-b', 'local-peer', 'peer-a', 'peer-b'], 'local-peer')).toEqual(['peer-b', 'peer-a'])
+  })
+
   it('admits sends and typed inbound values only after physical room acceptance', async () => {
     const runtime = fixture()
     const untrustedFailure = runtime.event(runtime.wire.event.MessageSendFailedEvent)
@@ -185,6 +191,114 @@ describe('WireDomain anti-corruption boundary', () => {
     await trustRoom(runtime)
     await expect(sent).resolves.toEqual({ requestId: 'reconnect-send' })
     expect(runtime.sent).toEqual([{ roomId: ROOM, payload: JSON.stringify(message), to: undefined }])
+  })
+
+  it('waits for the exact post-join continuation before resuming a never-invoked head', async () => {
+    const waiting = deferred<void>()
+    const delays: number[] = []
+    const runtime = fixture(undefined, {
+      now: () => 0,
+      sleep: (ms) => {
+        delays.push(ms)
+        return waiting.promise
+      }
+    })
+    await trustRoom(runtime)
+    runtime.store.send(runtime.wire.command.LeaveRoomCommand({ roomId: ROOM, preservePending: true }))
+    runtime.store.send(
+      runtime.wire.command.SendMessageCommand({
+        requestId: 'delayed-resume',
+        roomId: ROOM,
+        targetPeerIds: ['peer-a'],
+        message
+      })
+    )
+
+    await trustRoom(runtime)
+    await vi.waitFor(() => expect(delays).toEqual([1000]))
+    expect(runtime.sent).toEqual([])
+
+    waiting.resolve()
+    await vi.waitFor(() => expect(runtime.sent).toHaveLength(1))
+    expect(runtime.sent[0].to).toEqual(['peer-a'])
+  })
+
+  it('resolves a room-wide head after the join wait and uses the then-current targets', async () => {
+    const waiting = deferred<void>()
+    const runtime = fixture(undefined, { now: () => 0, sleep: () => waiting.promise })
+    await trustRoom(runtime)
+    runtime.store.send(runtime.wire.command.LeaveRoomCommand({ roomId: ROOM, preservePending: true }))
+    runtime.store.send(
+      runtime.wire.command.SendMessageCommand({
+        requestId: 'room-wide-resume',
+        roomId: ROOM,
+        targetPeerIds: ['peer-before'],
+        targetPeerIdsOwner: 'session',
+        message
+      })
+    )
+
+    const resume = runtime.event(runtime.wire.event.RoomWideSendResumeRequestedEvent)
+    await trustRoom(runtime)
+    expect(runtime.sent).toEqual([])
+    waiting.resolve()
+    const identity = await resume
+    expect(runtime.sent).toEqual([])
+
+    runtime.store.send(
+      runtime.wire.command.ResumeRoomWideSendCommand({
+        ...identity,
+        targetPeerIds: selectPeerIds(['peer-after', 'local-peer', 'peer-after'], 'local-peer')
+      })
+    )
+    await vi.waitFor(() => expect(runtime.sent).toHaveLength(1))
+    expect(runtime.sent[0].to).toEqual(['peer-after'])
+  })
+
+  it('settles an empty room-wide resume without invoking the provider', async () => {
+    const waiting = deferred<void>()
+    const runtime = fixture(undefined, { now: () => 0, sleep: () => waiting.promise })
+    await trustRoom(runtime)
+    runtime.store.send(runtime.wire.command.LeaveRoomCommand({ roomId: ROOM, preservePending: true }))
+    const sent = runtime.event(runtime.wire.event.MessageSentEvent)
+    runtime.store.send(
+      runtime.wire.command.SendMessageCommand({
+        requestId: 'empty-room-wide-resume',
+        roomId: ROOM,
+        targetPeerIds: ['peer-before'],
+        targetPeerIdsOwner: 'session',
+        message
+      })
+    )
+
+    const resume = runtime.event(runtime.wire.event.RoomWideSendResumeRequestedEvent)
+    await trustRoom(runtime)
+    waiting.resolve()
+    runtime.store.send(runtime.wire.command.ResumeRoomWideSendCommand({ ...(await resume), targetPeerIds: [] }))
+
+    await expect(sent).resolves.toEqual({ requestId: 'empty-room-wide-resume' })
+    expect(runtime.sent).toEqual([])
+  })
+
+  it('makes a superseded post-join resume inert', async () => {
+    const waiting = deferred<void>()
+    const runtime = fixture(undefined, { now: () => 0, sleep: () => waiting.promise })
+    await trustRoom(runtime)
+    runtime.store.send(runtime.wire.command.LeaveRoomCommand({ roomId: ROOM, preservePending: true }))
+    runtime.store.send(
+      runtime.wire.command.SendMessageCommand({
+        requestId: 'stale-resume',
+        roomId: ROOM,
+        targetPeerIds: ['peer-a'],
+        message
+      })
+    )
+    await trustRoom(runtime)
+    runtime.store.send(runtime.wire.command.LeaveRoomCommand({ roomId: ROOM, preservePending: false }))
+
+    waiting.resolve()
+    await Promise.resolve()
+    expect(runtime.sent).toEqual([])
   })
 
   it('does not restart an active send when the same trusted room is joined again', async () => {
