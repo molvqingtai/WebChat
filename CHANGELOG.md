@@ -1,3 +1,20 @@
+## [2.5.1](https://github.com/molvqingtai/WebChat/compare/v2.5.0...v2.5.1) (2026-08-16)
+
+### Bug Fixes
+
+- **chat:** project accepted text before downstream work ([0a508f4](https://github.com/molvqingtai/WebChat/commit/0a508f4ef3a8e16192e7d3b1949deff5fc59df06))
+- close caught-error observability review findings ([dd1426e](https://github.com/molvqingtai/WebChat/commit/dd1426e26f4e332ab938eb96cab32554d9600f6e))
+- **e2e:** preserve DevToolsActivePort read errors ([324fc0f](https://github.com/molvqingtai/WebChat/commit/324fc0f82ebb1ec885663e30add07423636a0b03))
+- **e2e:** preserve profile verification errors ([4eb0c05](https://github.com/molvqingtai/WebChat/commit/4eb0c056c932929eeef9514fe8f451a7ad3b5758))
+- preserve caught error ownership ([d515bfc](https://github.com/molvqingtai/WebChat/commit/d515bfc8e830373a0455cac982eb4bd44f2ff5c2))
+- preserve caught-error ownership and route user-impacting failures ([aa9b240](https://github.com/molvqingtai/WebChat/commit/aa9b2407aa6531f94dd24fd32f35a47131952bcb))
+- **runtime:** fence queued room-wide resume during release ([9bce4b7](https://github.com/molvqingtai/WebChat/commit/9bce4b7661e4f2a9326925f559da98eb01a719bb))
+- **runtime:** preserve cleanup error ownership ([24d2bbb](https://github.com/molvqingtai/WebChat/commit/24d2bbb1401ef626f91215292b82ef0ea67a0730))
+- **runtime:** preserve current-page failure ownership ([f4d1d7c](https://github.com/molvqingtai/WebChat/commit/f4d1d7c038130897008e04b6320d857129699e63))
+- **runtime:** preserve derived error ownership ([dad7294](https://github.com/molvqingtai/WebChat/commit/dad729441583294a726f59065aaa9b93e4a07a59))
+- **runtime:** refresh queued room-wide targets ([49c06a7](https://github.com/molvqingtai/WebChat/commit/49c06a7f3b52106649fb9c709e19781101065bee))
+- **runtime:** target room sends to logical peers ([938ef81](https://github.com/molvqingtai/WebChat/commit/938ef8192925adba05c91edc020a6312cbc7344c))
+
 # [2.5.0](https://github.com/molvqingtai/WebChat/compare/v2.4.9...v2.5.0) (2026-08-15)
 
 ### Bug Fixes
