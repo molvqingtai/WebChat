@@ -21,6 +21,7 @@ import {
   ChatMessageSchema,
   MESSAGE_TYPE,
   type ChatMessage,
+  type TextMessage,
   type HLC,
   type MentionedUser,
   type ChatSite,
@@ -123,6 +124,11 @@ export interface TextMessageAllocatedEventPayload {
 export interface ReactionMessageAllocatedEventPayload {
   operationId: string
   record: ReactionMessageRecord
+}
+
+export interface TextMessageAcceptedEventPayload {
+  operationId: string
+  message: TextMessage
 }
 
 export interface SessionOperationFailed {
@@ -406,6 +412,9 @@ const SessionDomain = Remesh.domain({
     })
     const ReactionMessageAllocatedEvent = domain.event<ReactionMessageAllocatedEventPayload>({
       name: 'Session.ReactionMessageAllocatedEvent'
+    })
+    const TextMessageAcceptedEvent = domain.event<TextMessageAcceptedEventPayload>({
+      name: 'Session.TextMessageAcceptedEvent'
     })
     const OperationFailedEvent = domain.event<SessionOperationFailed>({ name: 'Session.OperationFailedEvent' })
     const ErrorEvent = domain.event<SessionFailure>({ name: 'Session.ErrorEvent' })
@@ -1135,6 +1144,10 @@ const SessionDomain = Remesh.domain({
             ...get(PendingChatSendsState()).filter((item) => item.operationId !== payload.operationId),
             pending
           ]),
+          ...(event.type === MESSAGE_TYPE.TEXT
+            ? [TextMessageAcceptedEvent({ operationId: payload.operationId, message: event })]
+            : []),
+          // An ordinary Chat message is one room broadcast; the transport fans it out.
           wireDomain.command.SendMessageCommand({
             requestId,
             roomId: runtime.roomId,
@@ -1986,6 +1999,7 @@ const SessionDomain = Remesh.domain({
         OperationSucceededEvent,
         TextMessageAllocatedEvent,
         ReactionMessageAllocatedEvent,
+        TextMessageAcceptedEvent,
         OperationFailedEvent,
         ErrorEvent,
         PendingLeaveArmedEvent

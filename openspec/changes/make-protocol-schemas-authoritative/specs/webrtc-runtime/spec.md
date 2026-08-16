@@ -215,7 +215,11 @@ interface ChatRoom {
 }
 ```
 
-No alias, compatibility field, overload, extra method, generic metadata bag, Runtime type, or peer/source/joinedAt/timer/IDB/host/page/lease/retry field SHALL extend this contract without explicit Owner intervention. `joinRoom` SHALL use the caller-supplied user/site and `impls` SHALL create `sessionId`. `leaveRoom` SHALL operate on the currently joined room instance. `sendMessage` SHALL accept only the frozen business commands; `impls` SHALL create `id`, `hlc`, and `userId`, complete transport acceptance, and call local `MessageStore.insert`. Only after that insert operation successfully settles SHALL it resolve with the exact `ChatMessage` allocated and transported by that call. It SHALL NOT return or expose an insert result, same-id existing winner, `MessageRecord`, delivery status, or Runtime provenance.
+No alias, compatibility field, overload, extra method, generic metadata bag, Runtime type, or peer/source/joinedAt/timer/IDB/host/page/lease/retry field SHALL extend this contract without explicit Owner intervention. `joinRoom` SHALL use the caller-supplied user/site and `impls` SHALL create `sessionId`. `leaveRoom` SHALL operate on the currently joined room instance. `sendMessage` SHALL accept only the frozen business commands, and `impls` SHALL create `id`, `hlc`, and `userId`.
+
+For `SendTextCommand`, the complete allocated message SHALL pass the existing single full `ChatMessageSchema` boundary before any local projection, transport, or persistence side effect. A successful parse SHALL resolve the call with the exact allocated `TextMessage` for immediate current-page projection without awaiting transport or `MessageStore.insert`. Transport and insertion SHALL then be attempted as independent owned work; neither result SHALL gate, undo, delay, or re-reject that local acceptance, and failure of one SHALL NOT prevent the other attempt. Their genuine failures SHALL remain observable through the existing scoped error route. A schema failure SHALL preserve the draft, return no message, expose only `Invalid message.`, and perform neither side effect. A later text-send failure SHALL NOT restore the already cleared accepted draft or hold a later protocol-valid text behind its settlement. Display eligibility SHALL depend only on full protocol acceptance and SHALL NOT inspect or branch on any later error's message, name, type, code, constructor, subsystem, or operation.
+
+For `SendReactionCommand`, `impls` SHALL retain the existing transport-acceptance and local-insert settlement before returning the exact allocated-and-transported `ReactionMessage`. Neither path SHALL return or expose an insert result, same-id existing winner, `MessageRecord`, delivery status, or Runtime provenance.
 
 `onSessions` SHALL be the only application session-state truth. For a normal accepted live change, the implementation SHALL publish the updated immutable session snapshot before the corresponding `onJoinRoom` or `onLeaveRoom` fact. Initialization, first join, hydration, refresh, reconnect, host replacement, and replay SHALL publish snapshots only, with no synthetic live delta. `onMessage` SHALL publish only a first durably accepted remote live `ChatMessage`; it SHALL exclude `SessionMessage`, history request/response/control traffic, history messages/replay, initial IDB reads, local sends, duplicate/conflicting inserts, and store-watch replay. Chat and World session instances SHALL remain distinct; same-origin pages share one Runtime logical Chat view, while separate browsers/devices maintain local views that converge.
 
@@ -375,13 +379,30 @@ Production Runtime/application adapters SHALL use `globalThis.setTimeout` and `g
 
 #### Scenario: Exact command allocation and send-first persistence
 
-- **WHEN** `sendMessage` accepts `SendTextCommand` or `SendReactionCommand`
-- **THEN** the caller SHALL provide none of `id`, `hlc`, `userId`, or `sessionId`; `impls` SHALL allocate them, complete transport acceptance, then call `MessageStore.insert`, and only after that operation successfully settles resolve with the exact allocated-and-transported `ChatMessage`, even when same-id handling retains an existing canonical winner; it SHALL return neither that winner nor a status/result DTO and SHALL add no hidden callback or retry
+- **WHEN** `sendMessage` accepts `SendReactionCommand`
+- **THEN** the caller SHALL provide none of `id`, `hlc`, `userId`, or `sessionId`; `impls` SHALL allocate them, complete transport acceptance, then call `MessageStore.insert`, and only after that operation successfully settles resolve with the exact allocated-and-transported `ReactionMessage`, even when same-id handling retains an existing canonical winner; it SHALL return neither that winner nor a status/result DTO and SHALL add no hidden callback or retry
+
+#### Scenario: Protocol-valid text accepts before fallible side effects
+
+- **WHEN** `sendMessage` allocates a `SendTextCommand` and the complete `TextMessage` passes the single full protocol-schema boundary
+- **THEN** it SHALL return that exact allocated message for immediate current-page projection without waiting for transport or local insertion; both side effects SHALL be attempted independently afterward, and neither settlement SHALL alter or reject the accepted local result
+
+#### Scenario: Every post-validation error is display-irrelevant
+
+- **GIVEN** a local text passed the complete protocol boundary
+- **WHEN** any later Runtime, RTC, peer, transport, persistence, History, or other operation fails with any Error identity or content
+- **THEN** the accepted local projection SHALL remain allowed without matching the Error's message, name, type, code, constructor, subsystem, or operation
 
 #### Scenario: Causal local send projection
 
-- **WHEN** local text sends race store-watch refresh, another tab sends the same body/mentions, or a same-id collision retains another canonical winner
-- **THEN** the application SHALL derive exactly one local success projection from the `ChatMessage` returned by that call, never visible-record diff, body/mention matching, `onMessage`, or a hidden side channel; transport or MessageStore rejection SHALL return no message, preserve the draft, and emit no local success projection
+- **WHEN** local text sends race store-watch refresh, another tab sends the same body/mentions, a same-id collision retains another canonical winner, or accepted-message transport or persistence remains pending or fails
+- **THEN** the application SHALL derive the local projection from the exact `TextMessage` returned at protocol acceptance, clear that accepted draft, and never use visible-record diff, body/mention matching, `onMessage`, or a hidden side channel; later failure SHALL preserve the projection and cleared draft while following its existing error route
+
+#### Scenario: Later text does not wait for prior side effects
+
+- **GIVEN** one protocol-valid local text has unresolved or failed transport or persistence work
+- **WHEN** a later local text passes the same complete protocol boundary
+- **THEN** the later text SHALL project and clear its own draft without waiting for the earlier work, and recovery SHALL NOT flush an accumulated local-display queue
 
 #### Scenario: Database and MessageStore exclude history protocol
 
@@ -405,8 +426,8 @@ Production Runtime/application adapters SHALL use `globalThis.setTimeout` and `g
 
 #### Scenario: Runtime unavailable and accepted send-first loss window
 
-- **WHEN** a send begins before readiness, transport rejects, or transport succeeds but local insertion later fails or never starts because the browser exits
-- **THEN** unavailable/rejected input SHALL preserve the draft, write no normal local record, return no `ChatMessage`, and emit no local success projection, while the post-handoff local-loss window SHALL remain accepted with no status, outbox, same-id crash retry, or hidden fallback
+- **WHEN** text preparation fails before a complete protocol-valid message exists, the complete schema rejects, or post-acceptance transport or insertion later fails or never settles because the browser exits
+- **THEN** preparation/schema failure SHALL preserve the draft, return no `TextMessage`, and produce no projection or side effect; post-acceptance failure SHALL preserve the current-page projection and cleared draft, retain its existing error owner, and add no status, outbox, same-id crash retry, or hidden fallback
 
 #### Scenario: No Runtime history copy
 
@@ -454,7 +475,7 @@ The headless Runtime SHALL bind each Chat source to a session identity and logic
 
 ### Requirement: One-shot migration without dual architecture
 
-The change SHALL be delivered as one candidate that includes the hosts, exact eight-method ChatRoom port, state-free Runtime client, clean-cut internal comctx surface, uniquely owned Lifecycle/Connection/Session/World/History/Delivery/Wire Domain graph, private RoomTransport Extern/provider composition, message delivery, reconnect entry, current v5 peer protocol, exact typed Database extern/default adapters, internal concrete MessageStore, canonical outer-type/outer-id `MessageRecord` with `ChatMessageRecord.message` and `SystemNoticeRecord.notice`, send-first persistence, and complete removal of page-owned WebRTC, v1-v4 active protocol paths, stateful ChatRoom authority, catch-all Network ownership, and old WireExtern/provider route. Persistence and Runtime authority SHALL be complete clean-cut structural replacements rather than minimal repairs; no compatibility wrapper, alias, dual path, dead facade, hidden state channel, provider leak, or test-only accommodation may retain an obsolete owner/record/Store/outbox architecture. No intermediate release SHALL ship multiple architectures or protocol generations. Existing local message history SHALL NOT be imported, migrated, or retained by the canonical database.
+The change SHALL be delivered as one candidate that includes the hosts, exact eight-method ChatRoom port, state-free Runtime client, clean-cut internal comctx surface, uniquely owned Lifecycle/Connection/Session/World/History/Delivery/Wire Domain graph, private RoomTransport Extern/provider composition, message delivery, reconnect entry, current v5 peer protocol, exact typed Database extern/default adapters, internal concrete MessageStore, canonical outer-type/outer-id `MessageRecord` with `ChatMessageRecord.message` and `SystemNoticeRecord.notice`, protocol-accepted local text projection with independently owned transport and persistence work, and complete removal of page-owned WebRTC, v1-v4 active protocol paths, stateful ChatRoom authority, catch-all Network ownership, and old WireExtern/provider route. Persistence and Runtime authority SHALL be complete clean-cut structural replacements rather than minimal repairs; no compatibility wrapper, alias, dual path, dead facade, hidden state channel, provider leak, or test-only accommodation may retain an obsolete owner/record/Store/outbox architecture. No intermediate release SHALL ship multiple architectures or protocol generations. Existing local message history SHALL NOT be imported, migrated, or retained by the canonical database.
 
 #### Scenario: Single-candidate completeness
 
@@ -468,7 +489,7 @@ The change SHALL be delivered as one candidate that includes the hosts, exact ei
 
 ### Requirement: Verification coverage protects runtime boundaries
 
-Contract tests for peer wire behavior SHALL import only from `@/protocol` or the documented public entry. Type-negative and unchanged-backend suites SHALL cover Database typing, transactions, cancellation, ordering, insertion, watch, close, and value isolation on IndexedDB and Memory. Application and page Domain tests SHALL cover strict declarative `MessageRecord` structure, schema/load acceptance when a physical database key, outer record id, nested message or notice id, or nested user id differs from another identity in the row, cross-variant first-value-wins conflict behavior outside validation, MessageStore replay/conflict/query/abort/clear/watch behavior, send-first success/failure/loss behavior, causal local projection, and ordering. Headless Runtime tests SHALL cover each unique owner, provisional connection generations, sessions, World presence, history, delivery replay, Wire queues, trusted provider translation, and internal RPC contracts.
+Contract tests for peer wire behavior SHALL import only from `@/protocol` or the documented public entry. Type-negative and unchanged-backend suites SHALL cover Database typing, transactions, cancellation, ordering, insertion, watch, close, and value isolation on IndexedDB and Memory. Application and page Domain tests SHALL cover strict declarative `MessageRecord` structure, schema/load acceptance when a physical database key, outer record id, nested message or notice id, or nested user id differs from another identity in the row, cross-variant first-value-wins conflict behavior outside validation, MessageStore replay/conflict/query/abort/clear/watch behavior, protocol-invalid local text with zero side effects, protocol-accepted text projection before pending/rejected transport and persistence, independent post-acceptance attempts, later-send non-blocking behavior, unchanged reaction settlement, causal local projection, and ordering. Headless Runtime tests SHALL cover each unique owner, provisional connection generations, sessions, World presence, history, delivery replay, Wire queues, trusted provider translation, and internal RPC contracts.
 
 Dependency, export, and residue checks SHALL prove that public protocol code has no reverse application or Runtime dependencies; Chat and UI do not import concrete Runtime, provider, Database, or adapter primitives; MessageStore remains internal; provider imports remain composition-only; and removed owners, aliases, fallback paths, status/outbox/retry state, cross-identity schema/load rejection, and old Wire routes do not return. Reconnect controls SHALL continue covering immediate request-owned dispatch, pending button state, mounted and absent Toast behavior, stale fencing, request-local cleanup, original Toaster parameters, and the absence of a second readiness/result surface.
 

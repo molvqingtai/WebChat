@@ -724,12 +724,16 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
       command.type === 'text'
         ? await this.dependencies.server.allocateTextMessage({ domain: this.dependencies.pageDomain, ...command })
         : await this.dependencies.server.allocateReactionMessage({ domain: this.dependencies.pageDomain, ...command })
-    await this.dependencies.server.sendChatMessage({
+    const accepted = await this.dependencies.server.sendChatMessage({
       domain: this.dependencies.pageDomain,
       event: record.message
     })
+    if (command.type === 'text') {
+      void this.dependencies.messageStore.insert(record).catch((error) => this.emitError(error))
+      return accepted
+    }
     await this.dependencies.messageStore.insert(record)
-    return record.message
+    return accepted
   }
 
   onMessage(listener: (message: ChatMessage) => void): Unsubscribe {

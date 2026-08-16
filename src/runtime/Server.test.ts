@@ -5,7 +5,14 @@ import type { PresenceStore } from '@/domain/runtime/externs/PresenceStore'
 import type { RoomTransport } from '@/runtime/RoomTransport'
 import type { UserInfo } from '@/domain/UserInfo'
 import type { WireCodec } from '@/protocol'
-import { MESSAGE_TYPE, type ChatRoomMessage, type ChatUser, type TextMessage, type WorldRoomMessage } from '@/protocol'
+import {
+  MESSAGE_TYPE,
+  type ChatMessage,
+  type ChatRoomMessage,
+  type ChatUser,
+  type TextMessage,
+  type WorldRoomMessage
+} from '@/protocol'
 import { MESSAGE_RECORD_TYPE, type ReactionMessageRecord, type TextMessageRecord } from '@/domain/Message'
 import type { ReactionMessageAllocatedEventPayload, TextMessageAllocatedEventPayload } from '@/domain/runtime/Session'
 import { createMessageStore } from '@/domain/MessageStore'
@@ -3421,6 +3428,40 @@ describe('RuntimeServer trusted delivery', () => {
 })
 
 describe('RuntimeServer send reliability', () => {
+  it('accepts later protocol-valid texts without waiting for an earlier transport settlement', async () => {
+    const { fake, server, roomId } = await setup()
+    fake.hangSendsTo(roomId)
+    const first = await server.allocateTextMessage({ domain: DOMAIN, body: 'first', mentions: [] })
+    const second = await server.allocateTextMessage({ domain: DOMAIN, body: 'second', mentions: [] })
+    const settled: string[] = []
+
+    const firstTask = server
+      .sendChatMessage({ domain: DOMAIN, event: first.message })
+      .then(() => settled.push(first.message.id))
+    await fake.waitForSendAttempt(roomId)
+    const secondTask = server
+      .sendChatMessage({ domain: DOMAIN, event: second.message })
+      .then(() => settled.push(second.message.id))
+    await settle()
+
+    try {
+      expect(settled).toEqual([first.message.id, second.message.id])
+    } finally {
+      fake.releaseSends()
+      await Promise.all([firstTask, secondTask])
+    }
+  })
+
+  it('settles a send with no session target locally without a wire send', async () => {
+    const { fake, server, roomId } = await setup()
+    const record = await server.allocateTextMessage({ domain: DOMAIN, body: 'outbound', mentions: [] })
+
+    await server.sendChatMessage({ domain: DOMAIN, event: record.message })
+
+    // A Chat message is one room broadcast to the current members.
+    expect(fake.messages(roomId).filter((message) => message.type === MESSAGE_TYPE.TEXT)).toHaveLength(1)
+  })
+
   it.each([MESSAGE_TYPE.TEXT, MESSAGE_TYPE.REACTION])(
     'settles a room-wide %s send with no Session target without a wire send',
     async (messageType) => {
@@ -3436,7 +3477,7 @@ describe('RuntimeServer send reliability', () => {
     }
   )
 
-  it('allocates id/HLC centrally and rejects an explicit single-target throw once surfaced', async () => {
+  it('accepts text before a transport failure while retaining the Runtime error owner', async () => {
     const { fake, server, roomId } = await setup()
     fake.receive(roomId, 'peer-a', session())
     await settle()
@@ -3451,8 +3492,7 @@ describe('RuntimeServer send reliability', () => {
     expect(failures).toEqual([])
 
     fake.failSend(new Error('partial send'))
-    // The single session target throw is a real failure: surfaced once and the send rejects.
-    await expect(server.sendChatMessage({ domain: DOMAIN, event: record.message })).rejects.toThrow('partial send')
+    await expect(server.sendChatMessage({ domain: DOMAIN, event: record.message })).resolves.toBe(record.message)
     await settle()
     expect(failures).toEqual(['partial send'])
     const next = await server.allocateTextMessage({ domain: DOMAIN, body: 'next', mentions: [] })
@@ -3595,6 +3635,30 @@ describe('RuntimeServer send reliability', () => {
       disposeServer(server)
     }
   )
+
+  it('keeps reaction transport failure in the caller settlement', async () => {
+    const { fake, server } = await setup()
+    const record = await server.allocateReactionMessage({
+      domain: DOMAIN,
+      targetId: 'target',
+      reaction: 'like',
+      active: true
+    })
+    const transportError = new Error('reaction transport failed')
+    fake.failSend(transportError)
+
+    await expect(server.sendChatMessage({ domain: DOMAIN, event: record.message })).rejects.toBe(transportError)
+  })
+
+  it('rejects protocol-invalid text before any wire attempt', async () => {
+    const { fake, server } = await setup()
+    const record = await server.allocateTextMessage({ domain: DOMAIN, body: 'valid', mentions: [] })
+    const attemptsBefore = fake.sendAttempts.length
+    const invalid = { ...record.message, body: 1 } as unknown as ChatMessage
+
+    await expect(server.sendChatMessage({ domain: DOMAIN, event: invalid })).rejects.toThrow('Invalid message.')
+    expect(fake.sendAttempts).toHaveLength(attemptsBefore)
+  })
 })
 
 describe('RuntimeServer World presence', () => {
