@@ -151,6 +151,7 @@ export class ClientLease {
     this.ready = true
     this.setHostPhase(registration.snapshot.hostPhase)
     this.readyCallbacks.forEach((callback) => callback())
+    registration.failures?.forEach((failure) => this.emitFailure(new Error(failure.message)))
     return registration.snapshot
   }
 

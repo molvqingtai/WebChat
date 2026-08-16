@@ -36,6 +36,20 @@ type CleanupState = {
   residualProcesses: OwnedProcess[]
 }
 
+export type CleanupFailureEvidence = {
+  resource: string
+  phase: string
+  message: string
+  deadlineAt: number
+  remainingMs: number
+}
+
+export type CleanupAttempt = {
+  resource: string
+  phase: string
+  run: (remainingMs: number) => unknown | PromiseLike<unknown>
+}
+
 type CleanupOptions = {
   rootPid?: number
   isRootExited: () => boolean
@@ -117,6 +131,57 @@ export const withDeadline = <T>(
       }
     )
   })
+
+export const appendCleanupFailure = (
+  errors: CleanupFailureEvidence[],
+  deadlineAt: number,
+  resource: string,
+  phase: string,
+  error: unknown,
+  now: () => number = Date.now
+) => {
+  errors.push({
+    resource,
+    phase,
+    message: errorMessage(error),
+    deadlineAt,
+    remainingMs: Math.max(0, deadlineAt - now())
+  })
+}
+
+export const runCleanupAttempts = async (
+  attempts: CleanupAttempt[],
+  errors: CleanupFailureEvidence[],
+  deadlineAt: number,
+  now: () => number = Date.now
+) => {
+  for (const attempt of attempts) {
+    const remainingMs = Math.max(0, deadlineAt - now())
+    if (remainingMs === 0) {
+      appendCleanupFailure(
+        errors,
+        deadlineAt,
+        attempt.resource,
+        attempt.phase,
+        new Error('Shared cleanup deadline exhausted'),
+        now
+      )
+      continue
+    }
+    try {
+      await withDeadline(
+        Promise.resolve().then(() => attempt.run(remainingMs)),
+        remainingMs,
+        `${attempt.resource} ${attempt.phase}`
+      )
+    } catch (error) {
+      appendCleanupFailure(errors, deadlineAt, attempt.resource, attempt.phase, error, now)
+    }
+  }
+}
+
+export const selectTerminalError = (runError: unknown, cleanupError: Error | undefined): unknown =>
+  runError ?? cleanupError
 
 export const evaluateRuntimeMessage = <T>(
   evaluate: (expression: string) => Promise<T>,

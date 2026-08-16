@@ -2039,24 +2039,13 @@ describe('RuntimeServer lifecycle', () => {
     const oldServer = createServer({ transport: oldFake.transport, clock: oldClock, codec: jsonCodec })
     await oldServer.attachPage({ domain: DOMAIN, pageId: 'page-a' })
     const pendingJoin = oldServer.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
-    let finishPendingProbe = () => {}
-    const pendingProbe = new Promise<void>((resolve) => {
-      finishPendingProbe = resolve
-    })
-    const pendingOutcome = Promise.race([
-      pendingJoin.then(
-        () => ({ status: 'resolved' as const }),
-        (error: unknown) => ({ status: 'rejected' as const, error })
-      ),
-      pendingProbe.then(() => ({ status: 'pending' as const }))
-    ])
     await oldFake.waitForDesiredRooms(2)
 
     disposeServer(oldServer)
     oldFake.open()
-    await settle()
-    finishPendingProbe()
-    await expect(pendingOutcome).resolves.toEqual({ status: 'pending' })
+    await expect(pendingJoin).rejects.toEqual(
+      new DOMException('Runtime presence is completing its final release', 'AbortError')
+    )
     expect(oldFake.desired).toEqual(new Set())
     expect(oldFake.physicalJoinCalls).toEqual([])
     expect(oldFake.sendAttempts).toEqual([])

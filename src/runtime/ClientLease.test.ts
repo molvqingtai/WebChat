@@ -137,6 +137,33 @@ describe('ClientLease generation ownership', () => {
     client.detach()
   })
 
+  it('projects one queued Coordinator failure through only the current page failure route', async () => {
+    const failure = {
+      eventId: 'rebuild-failure',
+      message: 'current page attachment failed',
+      subsystem: 'connection' as const,
+      operation: 'lifecycle' as const,
+      scope: 'https://example.test'
+    }
+    const coordinator = coordinatorWith(vi.fn(async () => ({ ...registration(), failures: [failure] })))
+    const failures: Error[] = []
+    const logError = vi.fn()
+    const client = new ClientLease({
+      coordinator,
+      pageId: 'page-a',
+      domain: failure.scope,
+      logError
+    })
+    client.whenFailure((error) => failures.push(error))
+
+    await expect(client.init()).resolves.toEqual(snapshot)
+
+    expect(failures).toEqual([new Error(failure.message)])
+    expect(logError).toHaveBeenCalledOnce()
+    expect(logError).toHaveBeenCalledWith(new Error(failure.message))
+    client.detach()
+  })
+
   it('keeps bounded polling after a permanent control-plane failure and surfaces every failure with its original message', async () => {
     const domain = 'https://example.test'
     const pageId = 'page-a'

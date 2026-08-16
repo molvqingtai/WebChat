@@ -3,9 +3,14 @@ import { access, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 import {
+  appendCleanupFailure,
   CdpClient,
+  type CleanupAttempt,
+  type CleanupFailureEvidence,
   delay,
   evaluateRuntimeMessage,
+  runCleanupAttempts,
+  selectTerminalError,
   terminateOwnedProcesses,
   waitFor,
   waitForUniqueTarget,
@@ -74,7 +79,7 @@ type Evidence = {
     rootExited: boolean
     residualProcesses: string[]
     profileRemoved: boolean
-    errors: { resource: string; phase: string; message: string }[]
+    errors: CleanupFailureEvidence[]
   }
   appState?: AppState
   failure?: string
@@ -108,6 +113,7 @@ const readPositiveTimeout = (name: string, fallback: number): number => {
 const startupTimeoutMs = readPositiveTimeout('WEBCHAT_E2E_STARTUP_TIMEOUT_MS', 20000)
 const cdpRequestTimeoutMs = readPositiveTimeout('WEBCHAT_E2E_CDP_TIMEOUT_MS', 5000)
 const suiteTimeoutMs = readPositiveTimeout('WEBCHAT_E2E_SUITE_TIMEOUT_MS', 60000)
+const cleanupTimeoutMs = 10000
 const sandboxSetting = process.env.WEBCHAT_CHROMIUM_DISABLE_SANDBOX ?? 'false'
 if (sandboxSetting !== 'true' && sandboxSetting !== 'false') {
   throw new Error('WEBCHAT_CHROMIUM_DISABLE_SANDBOX must be exactly "true" or "false"')
@@ -194,6 +200,8 @@ const exitResult = new Promise((resolveExit) => {
 let cdp: CdpClient | undefined
 let runError: unknown
 let cleanupError: Error | undefined
+let cleanupDeadlineAt: number | undefined
+const beginCleanup = () => (cleanupDeadlineAt ??= Date.now() + cleanupTimeoutMs)
 const runtimeEvents: RuntimeEvent[] = []
 const evidence: Evidence = {
   browser: null,
@@ -659,13 +667,7 @@ try {
       try {
         cdp?.close()
       } catch (error) {
-        // Cleanup failure is ordered evidence, not silence; bounded teardown continues and an
-        // otherwise passing run still fails cleanup below.
-        evidence.cleanup.errors.push({
-          resource: 'cdp',
-          phase: 'timeout-close',
-          message: error instanceof Error ? error.message : String(error)
-        })
+        appendCleanupFailure(evidence.cleanup.errors, beginCleanup(), 'cdp', 'timeout-close', error)
       }
     }
   )
@@ -674,29 +676,23 @@ try {
   evidence.failure = errorStack(error)
   evidence.events = runtimeEvents.slice(-100)
 } finally {
+  const deadlineAt = beginCleanup()
+  const attempts: CleanupAttempt[] = []
   if (cdp) {
-    await Promise.race([
-      cdp.send('Browser.close').catch((error: unknown) => {
-        evidence.cleanup.errors.push({
-          resource: 'browser',
-          phase: 'browser-close',
-          message: error instanceof Error ? error.message : String(error)
-        })
-      }),
-      delay(1000)
-    ])
-    try {
-      cdp.close()
-    } catch (error) {
-      evidence.cleanup.errors.push({
-        resource: 'cdp',
-        phase: 'final-close',
-        message: error instanceof Error ? error.message : String(error)
-      })
-    }
+    attempts.push(
+      {
+        resource: 'browser',
+        phase: 'browser-close',
+        run: (remainingMs) => withDeadline(cdp!.send('Browser.close'), Math.min(1000, remainingMs), 'Browser.close')
+      },
+      { resource: 'cdp', phase: 'final-close', run: () => cdp!.close() },
+      {
+        resource: 'browser',
+        phase: 'graceful-exit',
+        run: (remainingMs) => Promise.race([exitResult, delay(Math.min(1000, remainingMs))])
+      }
+    )
   }
-
-  await Promise.race([exitResult, delay(5000)])
   const signalPid = (pid: number, signal: NodeJS.Signals): void => {
     try {
       process.kill(pid, signal)
@@ -704,29 +700,53 @@ try {
       if (!(error instanceof Error) || !('code' in error) || error.code !== 'ESRCH') throw error
     }
   }
-  const cleanupState = await terminateOwnedProcesses({
-    rootPid: chrome.pid,
-    isRootExited: () => exited,
-    listOwnedProcesses: () =>
-      processEntries().filter(
-        ({ processGroupId, command }) => processGroupId === chrome.pid || command.includes(profilePath)
-      ),
-    signalProcessGroup: (pid: number, signal: NodeJS.Signals) => {
-      if (process.platform === 'win32') {
-        if (!exited) chrome.kill(signal)
-      } else {
-        signalPid(-pid, signal)
+  attempts.push(
+    {
+      resource: 'chromium-processes',
+      phase: 'terminate-owned',
+      run: async (remainingMs) => {
+        const termTimeoutMs = Math.min(3000, remainingMs)
+        const cleanupState = await terminateOwnedProcesses({
+          rootPid: chrome.pid,
+          isRootExited: () => exited,
+          listOwnedProcesses: () =>
+            processEntries().filter(
+              ({ processGroupId, command }) => processGroupId === chrome.pid || command.includes(profilePath)
+            ),
+          signalProcessGroup: (pid: number, signal: NodeJS.Signals) => {
+            if (process.platform === 'win32') {
+              if (!exited) chrome.kill(signal)
+            } else {
+              signalPid(-pid, signal)
+            }
+          },
+          signalProcess: signalPid,
+          termTimeoutMs,
+          killTimeoutMs: Math.max(0, remainingMs - termTimeoutMs)
+        })
+        evidence.cleanup.rootExited = cleanupState.rootExited
+        evidence.cleanup.residualProcesses = cleanupState.residualProcesses.map(
+          ({ pid, command }) => `${pid} ${command}`
+        )
       }
     },
-    signalProcess: signalPid
-  })
-  evidence.cleanup.rootExited = cleanupState.rootExited
-  evidence.cleanup.residualProcesses = cleanupState.residualProcesses.map(({ pid, command }) => `${pid} ${command}`)
-  await rm(profilePath, { recursive: true, force: true })
-  evidence.cleanup.profileRemoved = await access(profilePath).then(
-    () => false,
-    () => true
+    {
+      resource: 'profile',
+      phase: 'remove',
+      run: () => rm(profilePath, { recursive: true, force: true })
+    },
+    {
+      resource: 'profile',
+      phase: 'verify-removed',
+      run: async () => {
+        evidence.cleanup.profileRemoved = await access(profilePath).then(
+          () => false,
+          () => true
+        )
+      }
+    }
   )
+  await runCleanupAttempts(attempts, evidence.cleanup.errors, deadlineAt)
 
   if (
     !evidence.cleanup.rootExited ||
@@ -738,13 +758,10 @@ try {
   }
 }
 
-if (runError) {
+const terminalError = selectTerminalError(runError, cleanupError)
+if (terminalError) {
   console.error(JSON.stringify({ evidence, stderr: stderr.join('') }, null, 2))
-  throw runError
-}
-if (cleanupError) {
-  console.error(JSON.stringify({ evidence, stderr: stderr.join('') }, null, 2))
-  throw cleanupError
+  throw terminalError
 }
 
 console.log(

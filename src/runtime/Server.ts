@@ -89,6 +89,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   }
 
   const presenceRecoveries = new Map<string, PresenceRecovery>()
+  const pendingConnectionCancellations = new Set<() => void>()
   let disposed = false
 
   const beginPresenceRecovery = (domain: string) => {
@@ -211,27 +212,50 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     cancelledResult: () => T
   ): Promise<T> =>
     new Promise<T>((resolve, reject) => {
+      let settled = false
       const dispose = () => {
         success.unsubscribe()
         failure.unsubscribe()
         cancelled.unsubscribe()
+        pendingConnectionCancellations.delete(cancelPending)
+      }
+      const cancelPending = () => {
+        if (settled) return
+        settled = true
+        dispose()
+        reject(operationCancelled())
       }
       const success = store.subscribeEvent(connectionDomain.event.OperationSucceededEvent, (result) => {
-        if (result.operationId !== operationId) return
+        if (result.operationId !== operationId || settled) return
+        settled = true
         dispose()
         resolve(select(result))
       })
       const failure = store.subscribeEvent(connectionDomain.event.OperationFailedEvent, (result) => {
-        if (result.operationId !== operationId) return
+        if (result.operationId !== operationId || settled) return
+        settled = true
         dispose()
         reject(result.error)
       })
       const cancelled = store.subscribeEvent(connectionDomain.event.OperationCancelledEvent, (result) => {
-        if (result.operationId !== operationId) return
+        if (result.operationId !== operationId || settled) return
+        settled = true
         dispose()
         resolve(cancelledResult())
       })
-      store.send(command)
+      pendingConnectionCancellations.add(cancelPending)
+      if (disposed) {
+        cancelPending()
+        return
+      }
+      try {
+        store.send(command)
+      } catch (error) {
+        if (settled) return
+        settled = true
+        dispose()
+        reject(error)
+      }
     })
 
   const runSessionOperation = <T>(
@@ -561,6 +585,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     disposed = true
     presenceRecoveries.forEach((recovery) => recovery.resolve())
     presenceRecoveries.clear()
+    ;[...pendingConnectionCancellations].forEach((cancel) => cancel())
     pageBridges.forEach((subscription) => subscription.unsubscribe())
     try {
       store.discard()

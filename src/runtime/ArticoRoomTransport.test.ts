@@ -10,6 +10,7 @@ const fixture = vi.hoisted(() => ({
   }[],
   joinShouldThrow: undefined as (() => Error) | undefined,
   leaveShouldThrow: undefined as (() => Error) | undefined,
+  closeShouldThrow: undefined as (() => Error) | undefined,
   room: null as null | {
     open(peerId: string): void
     loseReadiness(peerId: string): void
@@ -100,6 +101,7 @@ vi.mock('@rtco/client', () => {
     }
 
     close() {
+      if (fixture.closeShouldThrow) throw fixture.closeShouldThrow()
       this.closed = true
     }
   }
@@ -135,10 +137,51 @@ beforeEach(() => {
   fixture.rooms.clear()
   fixture.joinShouldThrow = undefined
   fixture.leaveShouldThrow = undefined
+  fixture.closeShouldThrow = undefined
 })
 afterEach(() => vi.useRealTimers())
 
 describe('ArticoRoomTransport per-target isolation', () => {
+  it('retains a retired peer close failure and still constructs its successor', async () => {
+    vi.useFakeTimers()
+    const transport = createArticoRoomTransport()
+    await transport.join('chat-a')
+    const stalePeer = fixture.peers[0]
+    const failure = new Error('retired peer close failed')
+    fixture.closeShouldThrow = () => failure
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    stalePeer.emit('close')
+    await vi.advanceTimersByTimeAsync(10000)
+
+    expect(diagnostic).toHaveBeenCalledOnce()
+    expect(diagnostic).toHaveBeenCalledWith(failure)
+    expect(fixture.peers).toHaveLength(2)
+    expect(transport.peerIdOf('chat-a')).toBe(fixture.peers[1].id)
+    fixture.closeShouldThrow = undefined
+    diagnostic.mockRestore()
+    transport.dispose()
+  })
+
+  it('retains a disposed peer close failure after removing its exact owner', async () => {
+    const transport = createArticoRoomTransport()
+    await transport.join('chat-a')
+    const failure = new Error('disposed peer close failed')
+    fixture.closeShouldThrow = () => failure
+    const errors: Error[] = []
+    transport.onError((error) => errors.push(error))
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    transport.leave('chat-a')
+
+    expect(errors).toEqual([])
+    expect(diagnostic).toHaveBeenCalledOnce()
+    expect(diagnostic).toHaveBeenCalledWith(failure)
+    expect(transport.peerIdOf('chat-a')).toBe('')
+    diagnostic.mockRestore()
+    transport.dispose()
+  })
+
   it('routes a diagnostic-only physical leave failure directly without a transport error event', async () => {
     const transport = createArticoRoomTransport()
     await transport.join('room-a')

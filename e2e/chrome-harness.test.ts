@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   CdpClient,
   evaluateRuntimeMessage,
+  runCleanupAttempts,
+  selectTerminalError,
   terminateOwnedProcesses,
   waitForUniqueTarget,
   withDeadline
@@ -67,6 +69,68 @@ describe('Chrome Runtime harness', () => {
       'Timed out waiting for Chrome Runtime suite after 10ms'
     )
     expect(onTimeout).toHaveBeenCalledOnce()
+  })
+
+  it('retains all three close failures in order under one absolute cleanup deadline', async () => {
+    const deadlineAt = Date.now() + 1000
+    const timeoutFailure = new Error('timeout close failed')
+    const browserFailure = new Error('Browser.close rejected')
+    const finalFailure = new Error('final CDP close failed')
+    const attempts = [vi.fn(), vi.fn(), vi.fn()]
+    const errors: Parameters<typeof runCleanupAttempts>[1] = []
+
+    await runCleanupAttempts(
+      [
+        {
+          resource: 'cdp',
+          phase: 'timeout-close',
+          run: () => {
+            attempts[0]()
+            throw timeoutFailure
+          }
+        },
+        {
+          resource: 'browser',
+          phase: 'browser-close',
+          run: async () => {
+            attempts[1]()
+            throw browserFailure
+          }
+        },
+        {
+          resource: 'cdp',
+          phase: 'final-close',
+          run: () => {
+            attempts[2]()
+            throw finalFailure
+          }
+        }
+      ],
+      errors,
+      deadlineAt
+    )
+
+    attempts.forEach((attempt) => expect(attempt).toHaveBeenCalledOnce())
+    expect(
+      errors.map(({ resource, phase, message, deadlineAt: deadline }) => ({
+        resource,
+        phase,
+        message,
+        deadline
+      }))
+    ).toEqual([
+      { resource: 'cdp', phase: 'timeout-close', message: timeoutFailure.message, deadline: deadlineAt },
+      { resource: 'browser', phase: 'browser-close', message: browserFailure.message, deadline: deadlineAt },
+      { resource: 'cdp', phase: 'final-close', message: finalFailure.message, deadline: deadlineAt }
+    ])
+  })
+
+  it('keeps an earlier run failure primary while cleanup remains secondary', () => {
+    const primary = new Error('product assertion failed')
+    const cleanup = new Error('Owned Chromium cleanup failed')
+
+    expect(selectTerminalError(primary, cleanup)).toBe(primary)
+    expect(selectTerminalError(undefined, cleanup)).toBe(cleanup)
   })
 
   it('waits while a target is absent and accepts the first unique target', async () => {

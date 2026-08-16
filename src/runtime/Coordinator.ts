@@ -1,10 +1,12 @@
 import type {
   HostPhase,
+  RuntimeErrorEvent,
   RuntimeHostStatus,
   RuntimePageRegistration,
   RuntimeSnapshot,
   RuntimeTab
 } from '@/runtime/Contract'
+import { nanoid } from 'nanoid'
 import { canonicalNavigationUrl, isEligibleContentUrl, isSameNavigation } from '@/service/adapter/runtime/Navigation'
 
 export const COORDINATOR_HEALTH_INTERVAL_MS = 5000
@@ -71,6 +73,7 @@ export class Coordinator {
   private readonly epochs = new Map<number, number>()
   private readonly pending = new Map<number, PendingRegistration>()
   private readonly releases = new Map<number, PendingRelease>()
+  private readonly pendingPageErrors = new Map<string, RuntimeErrorEvent[]>()
   private readonly confirmedRemovedTabs = new Set<number>()
   private creating: Promise<RuntimeHostStatus> | null = null
   private restoration: Promise<void> | null = null
@@ -201,10 +204,28 @@ export class Coordinator {
           this.options.attachPage({ domain: binding.domain, pageId: binding.pageId }),
           COORDINATOR_RPC_TIMEOUT_MS,
           'Runtime page attachment timed out'
-        ).catch((error: unknown) => {
-          // Attempt-all attachment continues for the remaining tabs; a failed tab keeps its
-          // original Error as a direct diagnostic at this exact owner.
-          console.error(error)
+        ).catch(async (error: unknown) => {
+          const failure = error instanceof Error ? error : new Error(String(error))
+          try {
+            const current = this.tabs.get(binding.tabId)
+            if (current?.pageId !== binding.pageId || !(await this.isCurrentTab(binding))) {
+              console.error(failure)
+              return
+            }
+          } catch (ownershipError) {
+            console.error(failure)
+            console.error(ownershipError)
+            return
+          }
+          const pending = this.pendingPageErrors.get(binding.pageId) ?? []
+          pending.push({
+            eventId: nanoid(),
+            message: failure.message,
+            subsystem: 'connection',
+            operation: 'lifecycle',
+            scope: binding.domain
+          })
+          this.pendingPageErrors.set(binding.pageId, pending)
         })
       )
     )
@@ -317,6 +338,7 @@ export class Coordinator {
         await Promise.allSettled([this.options.detachPage(lease)])
         throw error
       }
+      this.pendingPageErrors.delete(previous.pageId)
       if (this.epochs.get(binding.tabId) !== epoch || !(await this.isCurrentTab(binding))) {
         await this.options.detachPage(lease)
         throw new Error('Browser tab registration was superseded')
@@ -325,7 +347,9 @@ export class Coordinator {
     this.tabs.set(binding.tabId, binding)
     await this.persist()
     this.maintainHost()
-    return { ...status, snapshot }
+    const failures = this.pendingPageErrors.get(binding.pageId)
+    if (failures) this.pendingPageErrors.delete(binding.pageId)
+    return { ...status, snapshot, ...(failures ? { failures } : {}) }
   }
 
   async registerPage(payload: { domain: string; pageId: string; tab?: RuntimeTab }): Promise<RuntimePageRegistration> {
@@ -366,6 +390,7 @@ export class Coordinator {
     this.pending.delete(tabId)
     if (!binding) return
     await this.releaseBinding(binding)
+    this.pendingPageErrors.delete(binding.pageId)
     const current = this.tabs.get(tabId)
     if (this.epochs.get(tabId) !== epoch || current?.domain !== binding.domain || current.pageId !== binding.pageId) {
       return

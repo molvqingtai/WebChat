@@ -209,6 +209,59 @@ const injectorRegistries = (adapter: PresenceStoreInjectPortAdapter) =>
   }
 
 describe('PresenceStore authenticated port', () => {
+  it('skips a proved disconnected Port and diagnoses a distinct disconnect throw', () => {
+    const namespace = presenceStoreNamespace(EXTENSION_ID)
+    const runtime: PresenceStorePortApi = {
+      id: EXTENSION_ID,
+      connect: () => {
+        throw new Error('not used')
+      },
+      onConnect: createListenerEvent<(port: PresenceStorePort) => void>().event
+    }
+    const inject = new PresenceStoreInjectPortAdapter(runtime, namespace)
+    type TestBinding = {
+      port: PresenceStorePort
+      onMessage: (message: unknown) => void
+      onDisconnect: () => void
+      disconnected?: boolean
+    }
+    const detach = (binding: TestBinding, disconnect: boolean) =>
+      (
+        inject as unknown as {
+          detach: (binding: TestBinding, disconnect: boolean) => void
+        }
+      ).detach(binding, disconnect)
+    const binding = (disconnect: () => void, disconnected?: boolean) => ({
+      port: {
+        name: namespace,
+        postMessage: () => {},
+        disconnect,
+        onMessage: createListenerEvent<(message: unknown) => void>().event,
+        onDisconnect: createListenerEvent<() => void>().event
+      },
+      onMessage: () => {},
+      onDisconnect: () => {},
+      disconnected
+    })
+    const alreadyTerminalDisconnect = vi.fn()
+
+    detach(binding(alreadyTerminalDisconnect, true), true)
+    expect(alreadyTerminalDisconnect).not.toHaveBeenCalled()
+
+    const failure = new Error('unexpected Port disconnect failure')
+    const unexpectedDisconnect = vi.fn(() => {
+      throw failure
+    })
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+    detach(binding(unexpectedDisconnect), true)
+
+    expect(unexpectedDisconnect).toHaveBeenCalledOnce()
+    expect(diagnostic).toHaveBeenCalledOnce()
+    expect(diagnostic).toHaveBeenCalledWith(failure)
+    diagnostic.mockRestore()
+    inject.dispose()
+  })
+
   it('accepts only the exact Offscreen transport source', async () => {
     const bus = createPortBus()
     const namespace = presenceStoreNamespace(EXTENSION_ID)

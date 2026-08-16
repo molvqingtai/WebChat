@@ -133,9 +133,13 @@ describe('Coordinator trusted Tabs lifecycle', () => {
     await fixture.register(DOMAIN_A, 'document-b', 2, `${DOMAIN_A}/other`)
     fixture.events.length = 0
     const failure = new Error('attach failed for document-b')
+    let failed = false
     fixture.attachPage.mockImplementation(async ({ domain, pageId }: { domain: string; pageId: string }) => {
       fixture.events.push(`attach:${domain}:${pageId}`)
-      if (pageId === 'document-b') throw failure
+      if (pageId === 'document-b' && !failed) {
+        failed = true
+        throw failure
+      }
       return snapshot(domain, pageId)
     })
     const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
@@ -143,14 +147,25 @@ describe('Coordinator trusted Tabs lifecycle', () => {
     fixture.replaceHost()
     await fixture.coordinator.reconcile()
 
-    // Attempt-all rebuild continues: the failed tab keeps its original Error as a direct
-    // diagnostic at the Coordinator owner while the other tab is still attached.
-    expect(diagnostic).toHaveBeenCalledWith(failure)
+    expect(diagnostic).not.toHaveBeenCalled()
     expect(fixture.events).toContain(`attach:${DOMAIN_A}:document-a`)
     expect(fixture.events).toContain(`attach:${DOMAIN_A}:document-b`)
     expect(fixture.coordinator.snapshotForTest().tabs).toContainEqual(
       expect.objectContaining({ tabId: 1, pageId: 'document-a' })
     )
+    const unaffected = await fixture.register(DOMAIN_A, 'document-a', 1, `${DOMAIN_A}/topic#first`)
+    expect(unaffected).not.toHaveProperty('failures')
+    await expect(fixture.register(DOMAIN_A, 'document-b', 2, `${DOMAIN_A}/other`)).resolves.toMatchObject({
+      failures: [
+        {
+          eventId: expect.any(String),
+          message: failure.message,
+          subsystem: 'connection',
+          operation: 'lifecycle',
+          scope: DOMAIN_A
+        }
+      ]
+    })
     diagnostic.mockRestore()
   })
 
@@ -172,6 +187,29 @@ describe('Coordinator trusted Tabs lifecycle', () => {
     expect(fixture.coordinator.snapshotForTest().tabs).toContainEqual(
       expect.objectContaining({ tabId: 2, url: `${DOMAIN_A}/updated` })
     )
+    diagnostic.mockRestore()
+  })
+
+  it('keeps a late rebuild failure console-only after its page owner is removed', async () => {
+    const fixture = createFixture()
+    await fixture.register(DOMAIN_A, 'document-a', 1, `${DOMAIN_A}/topic#first`)
+    const attachment = Promise.withResolvers<RuntimeSnapshot>()
+    fixture.attachPage.mockReturnValueOnce(attachment.promise)
+    fixture.attachPage.mockClear()
+    const failure = new Error('removed page attachment failed')
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    fixture.replaceHost()
+    const rebuilding = fixture.coordinator.reconcile()
+    await vi.waitFor(() => expect(fixture.attachPage).toHaveBeenCalledOnce())
+    await fixture.removeTab(1)
+    attachment.reject(failure)
+    await rebuilding
+
+    expect(diagnostic).toHaveBeenCalledOnce()
+    expect(diagnostic).toHaveBeenCalledWith(failure)
+    const replacement = await fixture.register(DOMAIN_A, 'document-new', 1, `${DOMAIN_A}/topic#first`)
+    expect(replacement).not.toHaveProperty('failures')
     diagnostic.mockRestore()
   })
 

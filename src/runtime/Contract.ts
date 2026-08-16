@@ -180,6 +180,7 @@ export interface RuntimeTab {
 
 export interface RuntimePageRegistration extends RuntimeHostStatus {
   snapshot: RuntimeSnapshot
+  failures?: RuntimeErrorEvent[]
 }
 
 export interface RuntimeCoordinator {
