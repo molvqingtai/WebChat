@@ -110,11 +110,13 @@ The existing `assembleURL` implementation SHALL remain unchanged: its `new URL(u
 
 `RoomTransport.send(roomId, payload, to?: string | string[])` SHALL preserve its optional target type. After confirming that the room is joined, the WebChat adapter SHALL call `room.send(payload, to)` exactly once. It SHALL NOT manufacture recipients from room membership, maintain or consult a parallel `readyPeers` set, or loop over recipients.
 
-Target intent SHALL be exact: `undefined` means room broadcast; `string` means one peer; `string[]` means the selected peer subset without duplicate delivery to the same room peer; and `[]` means no recipients. An empty array SHALL NOT become broadcast. Ordinary Chat messages, normal Session publications, normal World publications, and History requests SHALL omit the target. History responses SHALL target the actual requester. Session/World current-state catch-up for a peer that joined or reconnected after the original publication SHALL remain targeted to that peer and SHALL NOT become a duplicate room broadcast.
+Target intent SHALL be exact: `undefined` means native room broadcast; `string` means one peer; `string[]` means the selected peer subset in array order; and `[]` means no recipients. An empty array SHALL NOT become broadcast. Every current room-wide product producer SHALL instead resolve application-owned logical recipients: initial Session publication, ordinary Text/Reaction, every History inventory-request page, World full publication, and World publication retry. A non-empty result SHALL make exactly one array-target `room.send`, while an empty result SHALL make zero provider calls. History responses SHALL target the actual requester. Session/World current-state catch-up for a peer that joined or reconnected after the original publication SHALL remain targeted to that peer and SHALL NOT become a duplicate room-wide publication.
 
-This correction SHALL assume that each delegated `room.send` completes successfully. The implementation SHALL keep the existing `@rtco/client` version and lock resolution unchanged and SHALL NOT add send-failure handling. Handling a send failure SHALL remain outside this change and require separate authority.
+Product recipient owners SHALL de-duplicate in first-seen order and exclude self without reading or filtering Artico Call, DataChannel, or separate grace/departure state. Current Session/room-membership ownership SHALL determine which bindings are present. A direct join-followup Session or World publication SHALL perform its required `sleep(1000)` first, re-check the current owner, and only then derive/filter the then-current peer ids. It SHALL NOT snapshot recipients before the sleep. Chain-external sends SHALL retain their prior timing.
 
-One History synchronization SHALL allocate one request identity and broadcast each paginated inventory-request page exactly once without a target. Current room membership at request start SHALL be a loading-settlement snapshot only, not the send target. Response page order and bounds SHALL be validated independently by `(syncId, sourcePeerId)`, while completion, failure, and departure SHALL settle that provider only for loading. One provider's invalid page, failure, or departure SHALL NOT cancel another provider or erase otherwise valid History received later. Every response page associated with the known request identity and accepted by the existing pagination validation SHALL have its valid records retained and merged through the existing message-identity deduplication regardless of arrival time, loading visibility, provider connectivity, or room generation changes. `syncId` and `sourcePeerId` SHALL only correlate and validate pages; elapsed time and generation changes SHALL NOT discard an otherwise valid page.
+Artico's selected-array settlement SHALL remain native. The first selected target throw MAY interrupt later targets and SHALL reject the one delegated send with the original Error. WebChat SHALL NOT expand the array, catch per target, continue later targets itself, retry after provider invocation, add an outbox or acknowledgement, or classify Error text. The existing World release preflight retry SHALL remain limited to a failure that made zero provider calls and SHALL reuse the same publication request and frozen target array. The implementation SHALL keep the existing `@rtco/client` version and lock resolution unchanged.
+
+One History synchronization SHALL allocate one request identity and send each paginated inventory-request page exactly once to the request-start `expectedProviders` array. The same Session/provider snapshot SHALL own loading settlement and every page's explicit targets. Response page order and bounds SHALL be validated independently by `(syncId, sourcePeerId)`, while completion, failure, and departure SHALL settle that provider only for loading. One provider's invalid page, failure, or departure SHALL NOT cancel another provider or erase otherwise valid History received later. Every response page associated with the known request identity and accepted by the existing pagination validation SHALL have its valid records retained and merged through the existing message-identity deduplication regardless of arrival time, loading visibility, provider connectivity, or room generation changes. `syncId` and `sourcePeerId` SHALL only correlate and validate pages; elapsed time and generation changes SHALL NOT discard an otherwise valid page.
 
 History loading SHALL remain manually dismissible. Manual dismissal SHALL change only the UI and SHALL NOT cancel response collection. Otherwise loading SHALL close when every snapshotted provider is completed, failed, or departed, or when the existing absolute ten-second `HISTORY_REQUEST_TIMEOUT_MS` deadline from request start expires, whichever occurs first. This SHALL have the loading-only settlement semantics of racing `Promise.allSettled(providerHistories)` against the timeout; it SHALL NOT await the timeout as a member of `Promise.all` or cancel the losing provider work. Loading closure, timeout, provider failure or departure, and room generation changes SHALL NOT cause an otherwise valid associated History page to be discarded. Whenever such a page arrives, its records SHALL continue through pagination validation, message-identity deduplication, and merge.
 
@@ -129,22 +131,22 @@ History loading SHALL remain manually dismissible. Manual dismissal SHALL change
 
 - **GIVEN** an ordinary Chat message or normal Session/World publication with no request-specific recipient
 - **WHEN** it is sent to the room
-- **THEN** it SHALL omit the target and SHALL NOT build per-peer pending send state
-- **BUT** a Session/World current-state snapshot required by one peer that joined or reconnected after the original publication SHALL target only that peer
+- **THEN** it SHALL resolve current logical recipients and use one non-empty array-target provider call, or zero calls for an empty array, without building per-peer pending send state
+- **BUT** a Session/World current-state snapshot required by one peer that joined or reconnected after the original publication SHALL retain that one explicit recipient
 
-#### Scenario: Broadcast one History request and merge every provider
+#### Scenario: Target one History request array and merge every provider
 
 - **GIVEN** a History request-start membership snapshot containing multiple peers
 - **WHEN** the requester sends the paginated inventory-request pages for that identity and providers respond
-- **THEN** each request page SHALL be one no-target room broadcast, while each response SHALL target the requester
+- **THEN** each request page SHALL make one provider call with that same explicit `expectedProviders` array, while each response SHALL target the requester
 - **AND** valid response lanes SHALL be tracked independently by `(syncId, sourcePeerId)` and their records SHALL be deduplicated and merged without one provider failure cancelling another
 
-#### Scenario: Keep send-failure behavior outside this correction
+#### Scenario: Preserve selected-array provider failure
 
-- **GIVEN** the adapter delegates one optional-target send
-- **WHEN** this source correction is implemented
-- **THEN** the send SHALL be treated as successful and the existing `@rtco/client` version and lock resolution SHALL remain unchanged
-- **AND** the source SHALL add no send-failure handling
+- **GIVEN** one explicit target array whose first selected Call throws before a later selected Call is attempted
+- **WHEN** the adapter delegates the array once
+- **THEN** the original Error SHALL reject the whole send and MAY interrupt the later target
+- **AND** WebChat SHALL add no per-target attempt-all, provider-call retry, outbox, acknowledgement, classifier, dependency, or lockfile change; the existing zero-call World release preflight retry SHALL remain unchanged
 
 #### Scenario: Close History loading on settlement or timeout
 
@@ -179,7 +181,7 @@ The unified source child SHALL replace the exact-History requester/provider cand
 
 The unified source child SHALL carry the reviewed `proposal.md`, `design.md`, and `specs/source-quality-tooling/spec.md` text without replacing any artifact with an earlier contract. It SHALL carry the same `tasks.md` row identifiers, wording, and order. Only checkbox markers MAY change, and a row SHALL be checked only when every clause in that row is true on the same immutable source exact.
 
-A failed, abandoned, or superseded candidate SHALL NOT supply completion evidence to a repair child. When source inspection or fresh review contradicts any clause in a checked row, that row SHALL remain unchecked on the next candidate. The docs-only authority SHALL complete its phase 1 freeze rows; phase 2 inventory, phase 3 implementation, phase 4 preservation, and phase 5 verification/review rows SHALL remain unchecked until their complete work is performed and proven on the current source exact. This synchronization SHALL preserve the retained success-only Artico delegation, broadcast/target classification, multi-provider History settlement, 304-file clean cut, and exact six-file `+15/-15` retention replacement without adding a second authority or enforcement surface.
+A failed, abandoned, or superseded candidate SHALL NOT supply completion evidence to a repair child. When source inspection or fresh review contradicts any clause in a checked row, that row SHALL remain unchecked on the next candidate. The docs-only authority SHALL complete its phase 1 freeze rows; phase 2 inventory, phase 3 implementation, phase 4 preservation, and phase 5 verification/review rows SHALL remain unchecked until their complete work is performed and proven on the current source exact. This synchronization SHALL preserve the retained one-call optional-target adapter, current explicit product-target classification, native selected-array first-error behavior, multi-provider History settlement, 304-file clean cut, and exact six-file `+15/-15` retention replacement without adding a second authority or enforcement surface.
 
 #### Scenario: Reject a stale authority mirror
 
@@ -197,7 +199,7 @@ A failed, abandoned, or superseded candidate SHALL NOT supply completion evidenc
 
 - **GIVEN** the docs-only authority has completed phase 1 while source inventory, implementation, preservation, verification, and review remain unfinished
 - **WHEN** the unified source child is created
-- **THEN** it SHALL carry the reviewed three authority texts and complete task-row set, with only current-exact checkbox updates and no restoration of provider, rejection, attempt-all, preflight, first-error, or send-failure obligations
+- **THEN** it SHALL carry the reviewed three authority texts and complete task-row set, with only current-exact checkbox updates and no restoration of WebChat-owned per-target attempt-all, readiness filtering, retry, outbox, acknowledgement, or send-failure classification
 
 ### Requirement: Functional-iteration cleanup uses only existing repository tooling
 

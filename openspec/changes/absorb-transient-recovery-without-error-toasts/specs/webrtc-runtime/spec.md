@@ -2,7 +2,7 @@
 
 ### Requirement: Connection lifecycle uses only current structural state
 
-WebChat SHALL decide retry, readiness, cancellation, and settlement only from current page, navigation, Runtime, Room, owner, revision, and request-continuation facts. Error text, name, type, constructor, code, and value SHALL NOT control lifecycle. Lifecycle owners, retry state, target iteration, Room-attempt handles, error delivery, and cleanup next steps SHALL remain in the current live generation and SHALL NOT be stored as durable owners, outcomes, delivery cursors, outboxes, per-target records, cleanup journals, or compare-and-swap state.
+WebChat SHALL decide retry, readiness, cancellation, and settlement only from current page, navigation, Runtime, Room, owner, revision, and request-continuation facts. Error text, name, type, constructor, code, and value SHALL NOT control lifecycle. Lifecycle owners, retry state, whole-publication requests and target arrays, Room-attempt handles, error delivery, and cleanup next steps SHALL remain in the current live generation and SHALL NOT be stored as durable owners, outcomes, delivery cursors, outboxes, per-target records, cleanup journals, or compare-and-swap state.
 
 Trusted raw relay and probe-response listeners SHALL be available before awaited business bootstrap. A business envelope SHALL resume exactly once only if its sender, page, navigation, and target remain current.
 
@@ -20,7 +20,7 @@ Trusted raw relay and probe-response listeners SHALL be available before awaited
 
 ### Requirement: Browser restart boundaries preserve only live work
 
-A normal Chrome or Edge MV3 Background idle/restart SHALL preserve the Offscreen physical Runtime, healthy Rooms, and in-flight Runtime owners. Firefox SHALL keep Runtime ownership in its persistent Background. A missing or replaced physical Runtime identity SHALL invalidate the old Runtime generation, mark affected pages non-ready, pause sends, and cancel old page, domain, Room, and iterator owners. One current Background in-memory single-flight SHALL create or adopt a replacement host. The Background SHALL fan invalidation only to live pages in its current memory; every other page SHALL rejoin only through its next live register or watchdog event.
+A normal Chrome or Edge MV3 Background idle/restart SHALL preserve the Offscreen physical Runtime, healthy Rooms, and in-flight Runtime owners. Firefox SHALL keep Runtime ownership in its persistent Background. A missing or replaced physical Runtime identity SHALL invalidate the old Runtime generation, mark affected pages non-ready, pause sends, and cancel old page, domain, Room, and publication owners. One current Background in-memory single-flight SHALL create or adopt a replacement host. The Background SHALL fan invalidation only to live pages in its current memory; every other page SHALL rejoin only through its next live register or watchdog event.
 
 After a full extension reload, an old Content document SHALL remain non-ready and SHALL NOT be promised automatic recovery into the new extension generation. While that document remains current, its existing watchdog SHALL perform ordinary control-plane polling at a bounded cadence. Each real failed poll SHALL create a fresh Content-local failure. Refresh, navigation, close, or supersession SHALL cancel the old polling owner and invalidate late results. WebChat SHALL NOT automatically refresh or reinject the page or add a permission or manifest path for this lifecycle.
 
@@ -48,7 +48,7 @@ WebChat SHALL NOT add user-facing retry controls, status surfaces, or settings f
 
 A page SHALL be ready only while its exact page, navigation, and Runtime generation own a complete callback set and current snapshot, its domain Chat is current, its host World is healthy, and the latest full Presence revision is settled. Attach or repair failure SHALL keep that page non-ready, surface the failure, and retry at a bounded cadence only while the same page owner remains current.
 
-Each Chat or World join attempt SHALL last at most ten seconds and SHALL retain only an optional Room handle that the attempt created. A Chat attempt SHALL commit only after join and current Session publication; a World attempt SHALL enter the sole Presence iterator after join. After commit, an attempt-created handle SHALL NOT belong to attempt cleanup. On failure or cancellation, WebChat SHALL perform one idempotent leave only for an attempt-created, uncommitted handle and SHALL never leave a reused or committed Room. A cleanup throw SHALL be a separate real failure and SHALL NOT prevent cancellation from completing or create a second cleanup owner. A current Chat or World Room close SHALL mark affected pages non-ready and enter the same recovery path; a close from an older generation SHALL be dropped.
+Each Chat or World join attempt SHALL last at most ten seconds and SHALL retain only an optional Room handle that the attempt created. A Chat attempt SHALL commit only after join and current Session publication; a World attempt SHALL enter the sole Presence publication owner after join. A direct post-join publication continuation SHALL sleep one second first, re-check its exact current owner, and only then derive/filter its current logical target array; it SHALL NOT snapshot recipients before sleeping. After commit, an attempt-created handle SHALL NOT belong to attempt cleanup. On failure or cancellation, WebChat SHALL perform one idempotent leave only for an attempt-created, uncommitted handle and SHALL never leave a reused or committed Room. A cleanup throw SHALL be a separate real failure and SHALL NOT prevent cancellation from completing or create a second cleanup owner. A current Chat or World Room close SHALL mark affected pages non-ready and enter the same recovery path; a close from an older generation SHALL be dropped.
 
 #### Scenario: Page repair cannot ready a superseded navigation
 
@@ -68,43 +68,43 @@ Each Chat or World join attempt SHALL last at most ten seconds and SHALL retain 
 - **WHEN** the cleanup leave throws
 - **THEN** WebChat SHALL record a distinct real failure where routable and SHALL still complete cancellation without adding a cleanup journal or owner
 
-### Requirement: One World iterator settles the latest Presence and release
+### Requirement: One World publication request settles the latest Presence and release
 
-Every World publication SHALL enter one current Runtime-local iterator that freezes the latest full Presence revision and its distinct targets. The iterator SHALL call `room.send()` at most once for each target in that revision. A return SHALL record local acceptance. A throw SHALL record target failure, SHALL NOT retry that target, and SHALL NOT prevent remaining targets from being attempted. The revision SHALL settle locally after all targets are attempted without requiring every target to accept or acknowledge.
+Every World publication SHALL enter one current Runtime-local owner that freezes the latest full Presence revision and one distinct logical-recipient array. A non-empty revision SHALL make exactly one `room.send(body, peerIds)` call, while an empty array SHALL make zero provider calls and settle as successful no-recipient work. A return SHALL record local acceptance. A provider throw SHALL reject the one send with the original Error and MAY interrupt later selected targets inside Artico. WebChat SHALL NOT catch per target, continue later targets itself, retain per-target accepted/failed results, retry an invoked send, create an outbox, or require remote acceptance or acknowledgement.
 
-Runtime, Room, or World-owner loss SHALL cancel the iterator. When only the Presence revision is superseded, WebChat SHALL stop the older revision, preserve the current Room, attempted results, and original ready or release continuation, and enter the latest revision through the same World owner. A stale close event SHALL NOT invalidate the current Runtime or Room.
+Runtime, Room, or World-owner loss SHALL cancel the publication owner. When only the Presence revision is superseded, WebChat SHALL stop the older revision, preserve the current Room and original ready or release continuation, and enter the latest revision through the same World owner. An already invoked old provider call SHALL settle against no current publication slot and SHALL NOT be replayed. A stale close event SHALL NOT invalidate the current Runtime or Room.
 
-A current page binding or an exact live domain-release continuation SHALL each be sufficient World demand. A last-page release SHALL therefore publish the latest full Presence and return through its release continuation even after no page binding remains. A real failure with no live affected page SHALL remain diagnostic and SHALL NOT stop the World iterator or release progression.
+A current page binding or an exact live domain-release continuation SHALL each be sufficient World demand. A last-page release SHALL therefore publish the latest full Presence and return through its release continuation even after no page binding remains. A real failure with no live affected page SHALL remain diagnostic. Only a release publication preflight failure that performed zero provider calls MAY retain and reissue the same whole-publication step at its existing bounded cadence; a provider-invoked throw SHALL NOT be retried.
 
 #### Scenario: Revision supersession preserves the World owner
 
-- **GIVEN** a World iterator has attempted one or more targets for a Presence revision
+- **GIVEN** a World publication request is current or its one provider call is in flight for a Presence revision
 - **WHEN** a newer Presence revision supersedes it while the Runtime, Room, and World owner remain current
-- **THEN** WebChat SHALL preserve the Room, attempted results, and request continuation, SHALL NOT retry a target for the superseded revision, and SHALL enter the latest revision with its own one-call-per-target iterator
+- **THEN** WebChat SHALL preserve the Room and request continuation, SHALL NOT replay the superseded revision, and SHALL enter the latest revision with its own one-array-call publication request
 
-#### Scenario: One target failure does not stop publication
+#### Scenario: First selected target failure follows native array interruption
 
 - **GIVEN** a Presence revision has multiple distinct targets
-- **WHEN** one target's `room.send()` throws
-- **THEN** that target SHALL fail without retry, every remaining target SHALL still be attempted once, and the revision SHALL settle locally
+- **WHEN** Artico's one array-target `room.send()` reaches a selected target that throws
+- **THEN** the original Error SHALL reject the whole send, later targets MAY remain unattempted, and WebChat SHALL add no per-target continuation or retry
 
 #### Scenario: Last-page release completes without a binding
 
 - **GIVEN** the last current page has detached and the live domain release has removed its contribution
 - **WHEN** the release requests publication of the latest full Presence
-- **THEN** the release continuation SHALL count as World demand, publication SHALL complete through the sole iterator, and the domain SHALL advance to closed without requiring a page binding
+- **THEN** the release continuation SHALL count as World demand, publication SHALL complete through the sole publication owner, and the domain SHALL advance to closed without requiring a page binding
 
 ### Requirement: Domain and host release advance one live step
 
-A domain release SHALL have one Runtime-local owner and one in-memory next step. It SHALL idempotently leave Chat, remove the domain contribution, publish the latest full Presence through the sole World iterator, and complete in that order. A real step failure SHALL keep the same step and retry boundedly while the release owner and Runtime generation remain current. Explicit reconnect SHALL start a new domain generation only after its release completes.
+A domain release SHALL have one Runtime-local owner and one in-memory next step. It SHALL idempotently leave Chat, remove the domain contribution, publish the latest full Presence through the sole World publication owner, and complete in that order. A real preflight step failure that performed zero provider calls SHALL keep the same step and retry boundedly while the release owner and Runtime generation remain current. A provider-invoked publication failure SHALL follow its existing settlement and SHALL NOT be retried. Explicit reconnect SHALL start a new domain generation only after its release completes.
 
 Host disposal SHALL likewise advance one in-memory step at a time through idempotent Room leaves and host destruction. A missing resource SHALL count as completion. Background-only release or disposal progress SHALL NOT be durably restored after worker loss; a later current event SHALL reconcile current tabs and physical Runtime facts.
 
 #### Scenario: Release retries only its current step
 
 - **GIVEN** a live domain release is at one cleanup or publication step
-- **WHEN** that step throws or reaches its own deadline
-- **THEN** WebChat SHALL keep the same in-memory step, surface the failure where routable, and retry only that step while the release owner remains current
+- **WHEN** its preflight fails or reaches its own deadline before any provider call
+- **THEN** WebChat SHALL keep the same in-memory step, surface the failure where routable, and retry only that uninvoked step while the release owner remains current
 
 #### Scenario: Runtime loss cancels old release work
 
@@ -114,7 +114,7 @@ Host disposal SHALL likewise advance one in-memory step at a time through idempo
 
 ### Requirement: Send settlement distinguishes local acceptance from no-result
 
-Before any provider send, WebChat SHALL validate the trusted Room, wire payload, encoding, and distinct targets. A preflight failure SHALL perform zero provider sends. Each target SHALL receive at most one `room.send()` call. A return SHALL mean local acceptance only and SHALL NOT promise remote acknowledgement or delivery. A throw SHALL fail that target, SHALL NOT be retried, and SHALL surface as a real local failure when routable. An explicit single-target throw SHALL reject its call; multi-target work SHALL retain each accepted and failed result after every target is attempted.
+Before any provider send, WebChat SHALL validate the trusted Room, wire payload, encoding, and explicit targets. A preflight failure SHALL perform zero provider sends. An explicit string or non-empty array SHALL be delegated through exactly one `room.send()` call; an empty array SHALL make no provider call. A return SHALL mean local acceptance only and SHALL NOT promise remote acknowledgement or delivery. A throw SHALL reject the one call with the original Error, SHALL NOT be retried after provider invocation, and SHALL surface as a real local failure when routable. For an array, Artico's first selected target throw MAY interrupt later targets; WebChat SHALL NOT perform per-target attempt-all or retain per-target result records.
 
 A History request MAY wait for a response only after local acceptance. No response, no retained History, peer departure, response expiry, or remote non-delivery SHALL be a no-result outcome and SHALL NOT create an error, toast, acknowledgement, or resend.
 
@@ -126,9 +126,9 @@ A History request MAY wait for a response only after local acceptance. No respon
 
 #### Scenario: Thrown target is never retried
 
-- **GIVEN** a current multi-target operation
-- **WHEN** one target's `room.send()` throws
-- **THEN** WebChat SHALL surface that failure where routable, SHALL NOT call that target again, and SHALL continue to remaining targets
+- **GIVEN** a current explicit target array
+- **WHEN** one selected target throws inside the single provider call
+- **THEN** WebChat SHALL surface the original whole-send failure where routable, SHALL NOT call that target or array again, and SHALL NOT continue remaining targets through a WebChat loop
 
 #### Scenario: Missing History is no-result
 

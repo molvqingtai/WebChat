@@ -7,13 +7,13 @@ The browser also has two different restart boundaries. Normal Chrome and Edge MV
 ## What Changes
 
 - Make connection recovery depend only on current structural lifecycle facts, never error content.
-- Keep lifecycle owner, retry, iterator, error delivery, Room-attempt handle, and cleanup step state inside the current live generation; do not add durable lifecycle state.
+- Keep lifecycle owner, retry, whole-publication request, error delivery, Room-attempt handle, and cleanup step state inside the current live generation; do not add durable lifecycle state.
 - Preserve Chrome and Edge Offscreen Runtime work across normal MV3 Background idle/restart and keep Firefox on its persistent Background Runtime.
 - Keep an old document non-ready after full extension reload and continue ordinary bounded polling until refresh, navigation, close, or supersession.
 - Give each Chat and World attempt ownership only of an optional handle it created but has not committed.
-- Route every Presence publication through one World iterator; preserve the Room, attempted results, and ready or release continuation when only the revision is superseded.
+- Route every Presence publication through one World publication owner that freezes the full revision and one logical-recipient array; preserve the Room and ready or release continuation when only the revision is superseded.
 - Treat an exact live domain-release continuation as World demand so last-page release publishes Presence and completes without a page binding.
-- Treat `room.send()` return as local acceptance, never retry a target that throws, and keep remote non-delivery or missing History as no-result.
+- Treat one array-target `room.send()` return as local acceptance; preserve the original whole-send Error and native first-target interruption on throw, never retry an invoked provider send, and keep remote non-delivery or missing History as no-result.
 - Create a fresh original-message toast for every distinct real local failure on every current affected page; do not suppress, merge, update, throttle, normalize, or rewrite it.
 
 ## Capabilities
@@ -29,6 +29,6 @@ None.
 ## Impact
 
 - Affected behavior: Content binding and readiness, Chrome and Edge MV3 wake, Firefox persistent Runtime, full extension reload, Chat and World recovery, Presence revisions, domain and host release, target sends, History response windows, and error toasts.
-- Affected implementation: Background bootstrap, physical Runtime coordination, page leases and callbacks, Room-attempt cleanup, the World target iterator, live release steps, send settlement, and current-route error delivery.
-- Affected verification: worker wake, full reload, Runtime replacement, page supersession, Room failure and cleanup, revision supersession, last-page release, target failure, History no-result, original-message toast fan-out, and zero durable lifecycle state.
+- Affected implementation: Background bootstrap, physical Runtime coordination, page leases and callbacks, Room-attempt cleanup, the World publication owner, live release steps, send settlement, and current-route error delivery.
+- Affected verification: worker wake, full reload, Runtime replacement, page supersession, Room failure and cleanup, revision supersession, last-page release, array-send failure, History no-result, original-message toast fan-out, and zero durable lifecycle state.
 - Unchanged: canonical message data and ordering, Room trust rules, Runtime networking protocols, permissions, manifest behavior, dependencies, and remote delivery guarantees.
