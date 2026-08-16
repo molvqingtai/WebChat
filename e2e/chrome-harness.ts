@@ -90,6 +90,27 @@ export const readDevToolsActivePort = async (
   }
 }
 
+export const createProfileRemovalVerificationAttempt = (
+  path: string,
+  accessPath: (path: string) => PromiseLike<unknown>,
+  setRemoved: (removed: boolean) => void
+): CleanupAttempt => ({
+  resource: 'profile',
+  phase: 'verify-removed',
+  run: async () => {
+    setRemoved(false)
+    try {
+      await accessPath(path)
+    } catch (error) {
+      if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+        setRemoved(true)
+        return
+      }
+      throw error
+    }
+  }
+})
+
 export const waitFor = async <T>(
   check: () => T | null | undefined | false | Promise<T | null | undefined | false>,
   {

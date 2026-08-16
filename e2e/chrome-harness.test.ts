@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   CdpClient,
   createChromeTeardown,
+  createProfileRemovalVerificationAttempt,
   evaluateRuntimeMessage,
   readDevToolsActivePort,
   terminateOwnedProcesses,
@@ -82,6 +83,67 @@ describe('Chrome Runtime harness', () => {
       })
     ).resolves.toBe('9222')
     expect(read).toHaveBeenCalledTimes(2)
+  })
+
+  it('preserves a profile verification I/O failure through the live teardown composition', async () => {
+    const denied = Object.assign(new Error('permission denied'), { code: 'EACCES' })
+    const errors: Parameters<typeof createChromeTeardown>[0]['errors'] = []
+    let profileRemoved = false
+    const teardown = createChromeTeardown({
+      errors,
+      cleanupTimeoutMs: 1000,
+      hasCdp: () => false,
+      closeCdp: () => {},
+      closeBrowser: async () => {},
+      waitForBrowserExit: async () => {},
+      remainingAttempts: () => [
+        createProfileRemovalVerificationAttempt(
+          '/profile',
+          async () => Promise.reject(denied),
+          (removed) => {
+            profileRemoved = removed
+          }
+        )
+      ],
+      cleanupComplete: () => profileRemoved
+    })
+
+    const result = await teardown.finish(undefined)
+
+    expect(profileRemoved).toBe(false)
+    expect(errors.map(({ resource, phase, message }) => ({ resource, phase, message }))).toEqual([
+      { resource: 'profile', phase: 'verify-removed', message: denied.message }
+    ])
+    expect(result.cleanupError).toEqual(new Error('Owned Chromium cleanup failed'))
+    expect(result.terminalError).toBe(result.cleanupError)
+
+    const missing = Object.assign(new Error('missing'), { code: 'ENOENT' })
+    const absenceErrors: Parameters<typeof createChromeTeardown>[0]['errors'] = []
+    const absenceTeardown = createChromeTeardown({
+      errors: absenceErrors,
+      cleanupTimeoutMs: 1000,
+      hasCdp: () => false,
+      closeCdp: () => {},
+      closeBrowser: async () => {},
+      waitForBrowserExit: async () => {},
+      remainingAttempts: () => [
+        createProfileRemovalVerificationAttempt(
+          '/profile',
+          async () => Promise.reject(missing),
+          (removed) => {
+            profileRemoved = removed
+          }
+        )
+      ],
+      cleanupComplete: () => profileRemoved
+    })
+
+    const absenceResult = await absenceTeardown.finish(undefined)
+
+    expect(profileRemoved).toBe(true)
+    expect(absenceErrors).toEqual([])
+    expect(absenceResult.cleanupError).toBeUndefined()
+    expect(absenceResult.terminalError).toBeUndefined()
   })
 
   it('propagates sender-visible Runtime message rejection', async () => {

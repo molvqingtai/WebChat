@@ -5,6 +5,7 @@ import { basename, join, resolve } from 'node:path'
 import {
   CdpClient,
   createChromeTeardown,
+  createProfileRemovalVerificationAttempt,
   type CleanupAttempt,
   type CleanupFailureEvidence,
   delay,
@@ -263,16 +264,9 @@ const teardown = createChromeTeardown({
       phase: 'remove',
       run: () => rm(profilePath, { recursive: true, force: true })
     },
-    {
-      resource: 'profile',
-      phase: 'verify-removed',
-      run: async () => {
-        evidence.cleanup.profileRemoved = await access(profilePath).then(
-          () => false,
-          () => true
-        )
-      }
-    }
+    createProfileRemovalVerificationAttempt(profilePath, access, (removed) => {
+      evidence.cleanup.profileRemoved = removed
+    })
   ],
   cleanupComplete: () =>
     evidence.cleanup.rootExited && evidence.cleanup.residualProcesses.length === 0 && evidence.cleanup.profileRemoved
