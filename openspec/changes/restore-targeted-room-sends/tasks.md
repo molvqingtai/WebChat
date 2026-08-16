@@ -29,5 +29,5 @@
 
 - [x] 4.1 Run focused and full Vitest, TypeScript, Oxfmt/Oxlint, Chrome/Firefox production builds, strict focused/full OpenSpec, status, doctor, authority-residue, scope, identity, and repository-cleanliness gates.
 - [x] 4.2 Prove the cumulative source diff changes no protocol/schema/persistence/History/local-projection/UI/dependency/lock behavior outside the exact targeting and direct-join timing authority, and keeps PR #135 unchanged.
-- [ ] 4.3 Freeze one immutable source exact with sole-parent/local-remote-PR identity and terminal hosted CI, then obtain one fresh cumulative Inspector review of the exact and all mutation-sensitive controls.
+- [x] 4.3 Freeze one immutable source exact with sole-parent/local-remote-PR identity and terminal hosted CI, then obtain one fresh cumulative Inspector review of the exact and all mutation-sensitive controls.
 - [x] 4.4 Keep the pull request Draft and do not mark Ready, merge, deploy, release, or publish without later explicit authority.
