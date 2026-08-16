@@ -1,7 +1,12 @@
 import { Remesh } from 'remesh'
 import { concatMap, filter, map, mergeMap, Observable } from 'rxjs'
 import DeliveryDomain from '@/domain/runtime/Delivery'
-import WireDomain, { selectPeerIds, type WireFailureStage, type WireMessageEvent } from '@/domain/runtime/Wire'
+import WireDomain, {
+  selectPeerIds,
+  type WireFailureStage,
+  type WireMessageEvent,
+  type WireRoomWideSendResume
+} from '@/domain/runtime/Wire'
 import { ClockExtern } from '@/domain/runtime/externs/Clock'
 import { RoomTransportExtern } from '@/domain/runtime/externs/RoomTransport'
 import { IdentityExtern } from '@/domain/runtime/externs/Identity'
@@ -1134,9 +1139,29 @@ const SessionDomain = Remesh.domain({
             requestId,
             roomId: runtime.roomId,
             targetPeerIds,
+            targetPeerIdsOwner: 'session',
             message: event
           })
         ]
+      }
+    })
+
+    const ResumeRoomWideChatSendCommand = domain.command({
+      name: 'Session.ResumeRoomWideChatSendCommand',
+      impl: ({ get }, payload: WireRoomWideSendResume) => {
+        const pending = get(PendingChatSendsState()).find((item) => item.requestId === payload.requestId)
+        const runtime = pending
+          ? (get(PreparedSessionsState()).find((item) => item.runtime.roomId === payload.roomId)?.runtime ??
+            get(DomainsState()).find((item) => item.domain === pending.domain))
+          : undefined
+        if (!pending || !runtime || runtime.roomId !== payload.roomId) return null
+        return wireDomain.command.ResumeRoomWideSendCommand({
+          ...payload,
+          targetPeerIds: selectPeerIds(
+            runtime.sessions.map((session) => session.sourcePeerId),
+            get(wireDomain.query.PeerIdQuery(runtime.roomId))
+          )
+        })
       }
     })
 
@@ -1859,6 +1884,11 @@ const SessionDomain = Remesh.domain({
     domain.effect({
       name: 'Session.InitialSendFailureEffect',
       impl: ({ fromEvent }) => fromEvent(wireDomain.event.MessageSendFailedEvent).pipe(map(FailPreparedPublishCommand))
+    })
+    domain.effect({
+      name: 'Session.RoomWideSendResumeEffect',
+      impl: ({ fromEvent }) =>
+        fromEvent(wireDomain.event.RoomWideSendResumeRequestedEvent).pipe(map(ResumeRoomWideChatSendCommand))
     })
     domain.effect({
       name: 'Session.ChatSendSuccessEffect',

@@ -23,11 +23,21 @@ export interface WireFailure {
   stage?: WireFailureStage
 }
 
-export interface WireSendRequest {
+interface WireSendRequestBase {
   requestId: string
   roomId: string
-  targetPeerIds?: string[]
   message: WireMessage
+}
+
+export type WireSendRequest = WireSendRequestBase &
+  (
+    | { targetPeerIds: string[]; targetPeerIdsOwner: 'session' }
+    | { targetPeerIds?: string[]; targetPeerIdsOwner?: never }
+  )
+
+export interface WireRoomWideSendResume extends QueueIdentity {
+  requestId: string
+  roomId: string
 }
 
 export interface WireMessageEvent {
@@ -53,7 +63,7 @@ interface RawFrame extends QueueIdentity {
   wireBytes: number
 }
 
-interface QueuedSendRequest extends WireSendRequest, QueueIdentity {}
+type QueuedSendRequest = WireSendRequest & QueueIdentity
 
 interface EncodedSend {
   request: QueuedSendRequest
@@ -178,6 +188,9 @@ const WireDomain = Remesh.domain({
     const SendRequestedEvent = domain.event<QueuedSendRequest>({ name: 'Wire.SendRequestedEvent' })
     const SendResumeAfterJoinRequestedEvent = domain.event<QueueIdentity & { roomId: string }>({
       name: 'Wire.SendResumeAfterJoinRequestedEvent'
+    })
+    const RoomWideSendResumeRequestedEvent = domain.event<WireRoomWideSendResume>({
+      name: 'Wire.RoomWideSendResumeRequestedEvent'
     })
     const ProviderSendRequestedEvent = domain.event<EncodedSend>({ name: 'Wire.ProviderSendRequestedEvent' })
     const RawFrameAdmittedEvent = domain.event<RawFrame>({ name: 'Wire.RawFrameAdmittedEvent' })
@@ -370,11 +383,47 @@ const WireDomain = Remesh.domain({
         ) {
           return null
         }
+        if (head.targetPeerIdsOwner === 'session') {
+          return RoomWideSendResumeRequestedEvent({ ...identity, requestId: head.requestId })
+        }
         return [
           SendQueuesState().new(
             replaceBy(queues, (item) => item.roomId === identity.roomId, { ...current, suspended: false })
           ),
           SendRequestedEvent(head)
+        ]
+      }
+    })
+
+    const ResumeRoomWideSendCommand = domain.command({
+      name: 'Wire.ResumeRoomWideSendCommand',
+      impl: ({ get }, payload: WireRoomWideSendResume & { targetPeerIds: string[] }) => {
+        const queues = get(SendQueuesState())
+        const current = queues.find((item) => item.roomId === payload.roomId)
+        const head = current?.requests[0]
+        if (
+          !current?.suspended ||
+          current.headInvoked ||
+          head?.sequence !== payload.sequence ||
+          head.requestId !== payload.requestId ||
+          head.targetPeerIdsOwner !== 'session' ||
+          head.generation !== payload.generation ||
+          generationFor(get(RoomGenerationsState()), payload.roomId) !== payload.generation ||
+          !get(TrustedRoomsState()).includes(payload.roomId)
+        ) {
+          return null
+        }
+        if (payload.targetPeerIds.length === 0) return CompleteProviderSendCommand({ request: head })
+        const resumedHead = { ...head, targetPeerIds: payload.targetPeerIds }
+        return [
+          SendQueuesState().new(
+            replaceBy(queues, (item) => item.roomId === payload.roomId, {
+              ...current,
+              suspended: false,
+              requests: [resumedHead, ...current.requests.slice(1)]
+            })
+          ),
+          SendRequestedEvent(resumedHead)
         ]
       }
     })
@@ -813,6 +862,7 @@ const WireDomain = Remesh.domain({
         JoinRoomsCommand,
         LeaveRoomCommand,
         SendMessageCommand,
+        ResumeRoomWideSendCommand,
         DropProtocolCommand: RecordDropCommand,
         AdmitSourceCommand,
         RemoveSourceCommand
@@ -823,6 +873,7 @@ const WireDomain = Remesh.domain({
         MessageSentEvent,
         MessageSendFailedEvent,
         MessageAcceptedEvent,
+        RoomWideSendResumeRequestedEvent,
         PeerJoinedEvent,
         PeerLeftEvent,
         RoomClosedEvent,

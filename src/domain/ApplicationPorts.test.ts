@@ -20,24 +20,91 @@ const codeFiles = async (directory: string): Promise<string[]> => {
     .filter((file) => /\.[cm]?[jt]sx?$/.test(file))
 }
 
+const balancedCallArgument = (value: string, start: number): string | null => {
+  let depth = 1
+  let quote = ''
+  let escaped = false
+  let comment = ''
+  for (let index = start; index < value.length; index += 1) {
+    const current = value[index]
+    const next = value[index + 1]
+    if (comment === 'line') {
+      if (current === '\n') comment = ''
+      continue
+    }
+    if (comment === 'block') {
+      if (current === '*' && next === '/') {
+        comment = ''
+        index += 1
+      }
+      continue
+    }
+    if (quote) {
+      if (escaped) escaped = false
+      else if (current === '\\') escaped = true
+      else if (current === quote) quote = ''
+      continue
+    }
+    if (current === '/' && next === '/') {
+      comment = 'line'
+      index += 1
+    } else if (current === '/' && next === '*') {
+      comment = 'block'
+      index += 1
+    } else if (current === '"' || current === "'" || current === '`') quote = current
+    else if (current === '(') depth += 1
+    else if (current === ')' && --depth === 0) return value.slice(start, index)
+  }
+  return null
+}
+
+const hasTopLevelTargetPeerIds = (argument: string): boolean => {
+  const objectStart = argument.search(/\S/)
+  if (objectStart < 0 || argument[objectStart] !== '{') return false
+  let depth = 0
+  for (let index = objectStart; index < argument.length; index += 1) {
+    if (argument[index] === '{') depth += 1
+    else if (argument[index] === '}') depth -= 1
+    else if (depth === 1 && argument.startsWith('targetPeerIds', index)) {
+      const suffix = argument.slice(index + 'targetPeerIds'.length).match(/^\s*([:,])/)
+      if (suffix) return true
+    }
+  }
+  return false
+}
+
+const productionSendCalls = async () => {
+  const calls: { file: string; line: number; targetPeerIds: boolean }[] = []
+  for (const file of await codeFiles(projectPath('src'))) {
+    if (/\.test\.[cm]?[jt]sx?$/.test(file)) continue
+    const value = await source(file)
+    for (const match of value.matchAll(/\.SendMessageCommand\s*\(/g)) {
+      const argument = balancedCallArgument(value, (match.index ?? 0) + match[0].length)
+      calls.push({
+        file: path.relative(ROOT, file),
+        line: value.slice(0, match.index).split('\n').length,
+        targetPeerIds: argument !== null && hasTopLevelTargetPeerIds(argument)
+      })
+    }
+  }
+  return calls
+}
+
 describe('replaceable application boundaries', () => {
   it('keeps every product send explicitly targeted and preserves the targeting authority comment', async () => {
-    const [session, history, world, wire] = await Promise.all([
-      source('src/domain/runtime/Session.ts'),
-      source('src/domain/runtime/History.ts'),
-      source('src/domain/runtime/World.ts'),
-      source('src/domain/runtime/Wire.ts')
+    const [calls, wire, runtimeSources] = await Promise.all([
+      productionSendCalls(),
+      source('src/domain/runtime/Wire.ts'),
+      Promise.all(
+        (await codeFiles(projectPath('src/domain/runtime')))
+          .filter((file) => !/\.test\.[cm]?[jt]sx?$/.test(file))
+          .map(source)
+      )
     ])
-    const productionSources = [session, history, world]
-    const callsBySource = productionSources.map((value) => [...value.matchAll(/SendMessageCommand\(\{/g)])
 
-    expect(callsBySource.map((calls) => calls.length)).toEqual([4, 2, 5])
-    productionSources.forEach((value) => {
-      for (const match of value.matchAll(/SendMessageCommand\(\{/g)) {
-        expect(value.slice(match.index, match.index + 400)).toContain('targetPeerIds')
-      }
-    })
-    expect(`${session}\n${history}\n${world}`).not.toMatch(/\bUserList\b|\breadyPeers\b/)
+    expect(calls.length).toBeGreaterThan(0)
+    expect(calls.filter((call) => !call.targetPeerIds)).toEqual([])
+    expect(runtimeSources.join('\n')).not.toMatch(/\bUserList\b|\breadyPeers\b/)
     expect(wire).toContain(
       'https://github.com/matallui/artico/blob/8a4f1a185be9355f893120e9492151f1785e59fa/packages/client/src/room.ts#L114'
     )

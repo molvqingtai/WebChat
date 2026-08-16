@@ -712,7 +712,19 @@ describe('RuntimeServer lifecycle', () => {
     const roomId = getChatRoomId(DOMAIN)
     fake.peerJoin(roomId, 'peer-chat')
     fake.receive(roomId, 'peer-chat', session())
+    await settle()
+    fake.peerLeave(roomId, 'peer-chat')
+    fake.peerJoin(roomId, 'peer-chat')
+    fake.receive(roomId, 'peer-chat', {
+      ...session({ ...REMOTE_USER, name: 'New generation' }),
+      sessionId: 'session-new-generation',
+      presenceId: 'presence-new-generation',
+      joinedAt: NOW + 2
+    })
+    fake.receive(roomId, fake.transport.peerIdOf(roomId), session({ id: 'self-user', name: 'Self', avatar: '' }))
     emitRemoteWorldPresence(fake, 'peer-world')
+    fake.peerJoin(getWorldRoomId(), 'peer-world')
+    emitRemoteWorldPresence(fake, fake.transport.peerIdOf(getWorldRoomId()))
     await settle()
     expect(fake.sendAttempts).toEqual([])
 
@@ -765,6 +777,81 @@ describe('RuntimeServer lifecycle', () => {
     await vi.waitFor(() => expect(fake.sendAttempts).toHaveLength(baseline + 1))
     expect(fake.sendAttempts.at(-1)?.to).toEqual(['peer-world'])
     disposeServer(server)
+  })
+
+  it('makes a delayed Domain recovery inert after Runtime teardown', async () => {
+    const { clock, fake, server, roomId } = await setup()
+    fake.peerJoin(roomId, 'peer-chat')
+    fake.receive(roomId, 'peer-chat', session())
+    await settle()
+    const baseline = fake.sendAttempts.length
+    const paused = deferred<void>()
+    const delays: number[] = []
+    clock.sleep = (ms) => {
+      delays.push(ms)
+      return paused.promise
+    }
+
+    fake.roomClose(roomId)
+    await vi.waitFor(() => expect(delays).toContain(1000))
+    disposeServer(server)
+    paused.resolve()
+    await settle()
+
+    expect(fake.sendAttempts).toHaveLength(baseline)
+  })
+
+  it('makes a delayed World recovery inert after Runtime teardown', async () => {
+    const { clock, fake, server } = await setup()
+    const worldRoomId = getWorldRoomId()
+    emitRemoteWorldPresence(fake, 'peer-world')
+    await settle()
+    const baseline = fake.sendAttempts.length
+    const paused = deferred<void>()
+    const delays: number[] = []
+    clock.sleep = (ms) => {
+      delays.push(ms)
+      return paused.promise
+    }
+
+    fake.roomClose(worldRoomId)
+    await vi.waitFor(() => expect(delays).toContain(1000))
+    disposeServer(server)
+    paused.resolve()
+    await settle()
+
+    expect(fake.sendAttempts).toHaveLength(baseline)
+  })
+
+  it('does not let an old Runtime join continuation mutate its replacement', async () => {
+    const oldClock = new FakeClock()
+    const oldFake = createFakeTransport()
+    const oldServer = createServer({ transport: oldFake.transport, clock: oldClock, codec: jsonCodec })
+    await oldServer.attachPage({ domain: DOMAIN, pageId: 'old-page' })
+    const paused = deferred<void>()
+    const delays: number[] = []
+    oldClock.sleep = (ms) => {
+      delays.push(ms)
+      return paused.promise
+    }
+    oldFake.plantPeer(getChatRoomId(DOMAIN), 'old-peer')
+    const oldJoin = oldServer.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE }).catch(() => null)
+    await vi.waitFor(() => expect(delays).toContain(1000))
+    expect(oldFake.sendAttempts).toEqual([])
+    disposeServer(oldServer)
+
+    const newFake = createFakeTransport()
+    const newServer = createServer({ transport: newFake.transport, clock: new FakeClock(), codec: jsonCodec })
+    await newServer.attachPage({ domain: DOMAIN, pageId: 'new-page' })
+    await newServer.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
+    const replacement = await newServer.getSnapshot()
+    paused.resolve()
+    await settle()
+
+    expect(oldFake.sendAttempts).toEqual([])
+    expect(replacement.domains[0]).toMatchObject({ domain: DOMAIN, phase: 'active', pageIds: ['new-page'] })
+    await expect(oldJoin).resolves.toBeNull()
+    disposeServer(newServer)
   })
 
   it('one clean refresh converges the stale member count from the ended-observation state', async () => {
@@ -3334,14 +3421,20 @@ describe('RuntimeServer trusted delivery', () => {
 })
 
 describe('RuntimeServer send reliability', () => {
-  it('settles a send with no session target locally without a wire send', async () => {
-    const { fake, server, roomId } = await setup()
-    const record = await server.allocateTextMessage({ domain: DOMAIN, body: 'outbound', mentions: [] })
+  it.each([MESSAGE_TYPE.TEXT, MESSAGE_TYPE.REACTION])(
+    'settles a room-wide %s send with no Session target without a wire send',
+    async (messageType) => {
+      const { fake, server, roomId } = await setup()
+      const record =
+        messageType === MESSAGE_TYPE.TEXT
+          ? await server.allocateTextMessage({ domain: DOMAIN, body: 'outbound', mentions: [] })
+          : await server.allocateReactionMessage({ domain: DOMAIN, targetId: 'target', reaction: 'like', active: true })
 
-    await server.sendChatMessage({ domain: DOMAIN, event: record.message })
+      await server.sendChatMessage({ domain: DOMAIN, event: record.message })
 
-    expect(fake.messages(roomId).filter((message) => message.type === MESSAGE_TYPE.TEXT)).toHaveLength(0)
-  })
+      expect(fake.messages(roomId).filter((message) => message.type === messageType)).toHaveLength(0)
+    }
+  )
 
   it('allocates id/HLC centrally and rejects an explicit single-target throw once surfaced', async () => {
     const { fake, server, roomId } = await setup()
@@ -3365,6 +3458,56 @@ describe('RuntimeServer send reliability', () => {
     const next = await server.allocateTextMessage({ domain: DOMAIN, body: 'next', mentions: [] })
     expect(next.message.hlc).toEqual({ timestamp: NOW, counter: 1 })
   })
+
+  it.each([MESSAGE_TYPE.TEXT, MESSAGE_TYPE.REACTION])(
+    're-resolves a queued room-wide %s send from current Sessions after recovery',
+    async (messageType) => {
+      const { clock, fake, server, roomId } = await setup()
+      const oldUser = { id: 'old-user', name: 'Old', avatar: '' }
+      const newUser = { id: 'new-user', name: 'New', avatar: '' }
+      fake.peerJoin(roomId, 'peer-old')
+      fake.receive(roomId, 'peer-old', session(oldUser))
+      await settle()
+      const record =
+        messageType === MESSAGE_TYPE.TEXT
+          ? await server.allocateTextMessage({ domain: DOMAIN, body: 'queued', mentions: [] })
+          : await server.allocateReactionMessage({ domain: DOMAIN, targetId: 'target', reaction: 'like', active: true })
+      const waiting = deferred<void>()
+      const delays: number[] = []
+      clock.sleep = (ms) => {
+        delays.push(ms)
+        return waiting.promise
+      }
+
+      fake.roomClose(roomId)
+      const sending = server.sendChatMessage({ domain: DOMAIN, event: record.message })
+      await vi.waitFor(() => expect(delays).toContain(1000))
+      expect(fake.sendAttempts.filter((attempt) => JSON.parse(attempt.payload).type === messageType)).toEqual([])
+
+      fake.peerLeave(roomId, 'peer-old')
+      await vi.advanceTimersByTimeAsync(PENDING_LEAVE_GRACE_MS)
+      fake.peerJoin(roomId, 'peer-new')
+      fake.receive(roomId, 'peer-new', session(newUser))
+      await settle()
+      fake.peerLeave(roomId, 'peer-new')
+      fake.peerJoin(roomId, 'peer-new')
+      fake.receive(roomId, 'peer-new', {
+        ...session({ ...newUser, name: 'New generation' }),
+        sessionId: 'session-new-generation',
+        presenceId: 'presence-new-generation',
+        joinedAt: NOW + 2
+      })
+      const selfPeerId = fake.transport.peerIdOf(roomId)
+      fake.receive(roomId, selfPeerId, session({ id: 'self-wire-user', name: 'Self wire', avatar: '' }))
+      await settle()
+
+      waiting.resolve()
+      await sending
+      const attempt = fake.sendAttempts.find((item) => JSON.parse(item.payload).type === messageType)
+      expect(attempt?.to).toEqual(['peer-new'])
+      disposeServer(server)
+    }
+  )
 })
 
 describe('RuntimeServer World presence', () => {

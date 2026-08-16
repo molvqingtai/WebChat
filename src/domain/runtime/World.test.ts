@@ -301,9 +301,16 @@ describe('WorldDomain single per-target publication iterator', () => {
     const attemptsBefore = fixture.attempts.length
 
     failEncode = false
+    fixture.store.send(fixture.world.command.PeerLeftCommand({ roomId: getWorldRoomId(), sourcePeerId: 'peer-1' }))
+    fixture.emitRemotePresence('peer-2', 'https://two.example')
+    await vi.waitFor(() => expect(fixture.attempts.length).toBeGreaterThan(attemptsBefore))
+    fixture.attempts.at(-1)?.settle.resolve()
+    await settleAll()
+    const beforeRetry = fixture.attempts.length
     await vi.advanceTimersByTimeAsync(1500)
     await settleAll()
-    expect(fixture.attempts.length).toBeGreaterThan(attemptsBefore)
+    expect(fixture.attempts.length).toBe(beforeRetry + 1)
+    expect(fixture.attempts.at(-1)?.targetPeerIds).toEqual(['peer-1'])
     fixture.attempts[fixture.attempts.length - 1].settle.resolve()
     await settleAll()
     expect(released).toEqual(['https://b.example'])

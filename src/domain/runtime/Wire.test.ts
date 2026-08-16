@@ -223,6 +223,63 @@ describe('WireDomain anti-corruption boundary', () => {
     expect(runtime.sent[0].to).toEqual(['peer-a'])
   })
 
+  it('resolves a room-wide head after the join wait and uses the then-current targets', async () => {
+    const waiting = deferred<void>()
+    const runtime = fixture(undefined, { now: () => 0, sleep: () => waiting.promise })
+    await trustRoom(runtime)
+    runtime.store.send(runtime.wire.command.LeaveRoomCommand({ roomId: ROOM, preservePending: true }))
+    runtime.store.send(
+      runtime.wire.command.SendMessageCommand({
+        requestId: 'room-wide-resume',
+        roomId: ROOM,
+        targetPeerIds: ['peer-before'],
+        targetPeerIdsOwner: 'session',
+        message
+      })
+    )
+
+    const resume = runtime.event(runtime.wire.event.RoomWideSendResumeRequestedEvent)
+    await trustRoom(runtime)
+    expect(runtime.sent).toEqual([])
+    waiting.resolve()
+    const identity = await resume
+    expect(runtime.sent).toEqual([])
+
+    runtime.store.send(
+      runtime.wire.command.ResumeRoomWideSendCommand({
+        ...identity,
+        targetPeerIds: selectPeerIds(['peer-after', 'local-peer', 'peer-after'], 'local-peer')
+      })
+    )
+    await vi.waitFor(() => expect(runtime.sent).toHaveLength(1))
+    expect(runtime.sent[0].to).toEqual(['peer-after'])
+  })
+
+  it('settles an empty room-wide resume without invoking the provider', async () => {
+    const waiting = deferred<void>()
+    const runtime = fixture(undefined, { now: () => 0, sleep: () => waiting.promise })
+    await trustRoom(runtime)
+    runtime.store.send(runtime.wire.command.LeaveRoomCommand({ roomId: ROOM, preservePending: true }))
+    const sent = runtime.event(runtime.wire.event.MessageSentEvent)
+    runtime.store.send(
+      runtime.wire.command.SendMessageCommand({
+        requestId: 'empty-room-wide-resume',
+        roomId: ROOM,
+        targetPeerIds: ['peer-before'],
+        targetPeerIdsOwner: 'session',
+        message
+      })
+    )
+
+    const resume = runtime.event(runtime.wire.event.RoomWideSendResumeRequestedEvent)
+    await trustRoom(runtime)
+    waiting.resolve()
+    runtime.store.send(runtime.wire.command.ResumeRoomWideSendCommand({ ...(await resume), targetPeerIds: [] }))
+
+    await expect(sent).resolves.toEqual({ requestId: 'empty-room-wide-resume' })
+    expect(runtime.sent).toEqual([])
+  })
+
   it('makes a superseded post-join resume inert', async () => {
     const waiting = deferred<void>()
     const runtime = fixture(undefined, { now: () => 0, sleep: () => waiting.promise })
