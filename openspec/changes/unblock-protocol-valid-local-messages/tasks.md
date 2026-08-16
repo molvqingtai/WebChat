@@ -23,6 +23,6 @@
 ## 4. Verify And Deliver
 
 - [x] 4.1 Run focused mutation controls plus the full Vitest suite, TypeScript, Oxfmt/Oxlint, Chrome/Firefox production builds, Archify, strict focused/all OpenSpec validation, status, doctor, scope, and residue checks on one clean candidate.
-- [x] 4.2 Use the built latest-develop candidate in an isolated real-browser multi-peer run with continuous Toast/DOM observation; record send-to-first-DOM timing through multiple post-validation failure windows and do not treat a terminal screenshot alone as negative evidence.
+- [ ] 4.2 Use the built latest-develop candidate in an isolated real-browser multi-peer run with continuous Toast/DOM observation; record send-to-first-DOM timing through multiple post-validation failure windows and do not treat a terminal screenshot alone as negative evidence.
 - [ ] 4.3 Publish one immutable source exact with exact tree/sole-parent/local-remote-PR identity and terminal hosted CI, then obtain one fresh cumulative Inspector source review.
 - [x] 4.4 Keep every pull request Draft and do not mark Ready, merge, deploy, release, publish, or modify the Owner's Default Chrome without later explicit authority.
