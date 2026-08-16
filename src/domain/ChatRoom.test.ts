@@ -52,7 +52,7 @@ const deferred = () => {
   return { promise, resolve, reject }
 }
 
-const createFixture = (options: { delayRecordWatch?: boolean; user?: UserInfo | null } = {}) => {
+const createFixture = (options: { delayRecordWatch?: boolean; user?: UserInfo | null; chat?: ChatRoom } = {}) => {
   vi.stubGlobal('document', {
     location: { origin: 'https://example.test' },
     title: '',
@@ -107,7 +107,7 @@ const createFixture = (options: { delayRecordWatch?: boolean; user?: UserInfo | 
     listeners.add(listener)
     return () => listeners.delete(listener)
   }
-  const chat: ChatRoom = {
+  const chat: ChatRoom = options.chat ?? {
     joinRoom: vi.fn(async () => {}),
     leaveRoom: vi.fn(async () => {}),
     sendMessage: vi.fn(async (command: SendMessageCommand) => {
@@ -303,7 +303,7 @@ const createPendingConnectionFixture = (stage: PendingConnectionStage) => {
     allocateReactionMessage: async () => {
       throw new Error('not used')
     },
-    sendChatMessage: async () => {},
+    sendChatMessage: async ({ event }) => event,
     ackInbound: async () => {},
     replayInbound: async () => {
       replayCalls += 1
@@ -961,7 +961,7 @@ describe('ChatRoomDomain exact application port', () => {
       allocateReactionMessage: async () => {
         throw new Error('not used')
       },
-      sendChatMessage: async () => {},
+      sendChatMessage: async ({ event }) => event,
       ackInbound: async () => {},
       replayInbound: async () => [],
       reconnectDomain: async () => {},
@@ -1147,6 +1147,117 @@ describe('ChatRoomDomain exact application port', () => {
 
     fixture.store.send(fixture.room.command.SettleReconnectIntervalCommand(request.id))
     await vi.waitFor(() => expect(fixture.store.query(fixture.room.query.ReconnectRequestQuery())).toBeNull())
+    fixture.store.discard()
+  })
+
+  it('projects serial accepted texts and clears each draft before held transport settles', async () => {
+    const pageDomain = 'https://example.test'
+    const transportAttempts: ReturnType<typeof Promise.withResolvers<void>>[] = []
+    const transportSettlements: Promise<Error | null>[] = []
+    let allocation = 0
+    const adapterDatabase = createMemoryMessageDatabase(`accepted-transport-${databaseId++}`)
+    const adapterStore = createMessageStore(adapterDatabase)
+    const runtimeSnapshot: RuntimeSnapshot = {
+      hostId: 'accepted-transport-host',
+      hostPhase: 'ready',
+      peerId: 'accepted-transport-peer',
+      domains: [
+        {
+          domain: pageDomain,
+          phase: 'active',
+          pageIds: ['accepted-transport-page'],
+          chatRoomJoined: true,
+          localSession: { sessionId: 'accepted-transport-session', user: WIRE_SELF, joinedAt: 1 },
+          sessions: []
+        }
+      ],
+      world: { joined: false, peerId: 'accepted-transport-peer', presences: [] }
+    }
+    const server = {
+      attachPage: async () => runtimeSnapshot,
+      detachPage: async () => {},
+      getSnapshot: async () => runtimeSnapshot,
+      joinChatRoom: async () => runtimeSnapshot,
+      leaveChatRoom: async () => {},
+      allocateTextMessage: async ({ body, mentions }) => {
+        const id = `accepted-${++allocation}`
+        const message = {
+          type: MESSAGE_TYPE.TEXT,
+          id,
+          hlc: { timestamp: 4, counter: allocation },
+          userId: SELF.id,
+          body,
+          mentions
+        } as const
+        return {
+          type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE,
+          id,
+          message,
+          user: WIRE_SELF,
+          receivedAt: 4
+        } as const
+      },
+      allocateReactionMessage: async () => {
+        throw new Error('not used')
+      },
+      sendChatMessage: async ({ event }) => {
+        const attempt = Promise.withResolvers<void>()
+        transportAttempts.push(attempt)
+        transportSettlements.push(
+          attempt.promise.then(
+            () => null,
+            (error: Error) => error
+          )
+        )
+        return event
+      },
+      ackInbound: async () => {},
+      replayInbound: async () => [],
+      reconnectDomain: async () => {},
+      onInbound: async () => {},
+      onSessionEvent: async () => {},
+      onWorldPresence: async () => {},
+      onError: async () => {},
+      provideHistory: async () => {},
+      resolveHistorySupply: async () => {},
+      rejectHistorySupply: async () => {},
+      onHistoryFeedback: async () => {}
+    } satisfies RuntimeServer
+    const adapter = new RuntimeChatRoom({
+      server,
+      messageStore: adapterStore,
+      pageDomain,
+      pageId: 'accepted-transport-page',
+      getSnapshot: () => runtimeSnapshot,
+      whenReady: (listener) => {
+        listener()
+        return () => {}
+      }
+    })
+    const fixture = createFixture({ chat: adapter })
+    await join(fixture)
+    const projected: string[] = []
+    fixture.store.subscribeEvent(fixture.room.event.SendTextMessageEvent, (message) => projected.push(message.id))
+
+    fixture.store.send(fixture.input.command.InputCommand('first'))
+    fixture.store.send(fixture.room.command.SendTextMessageCommand('first'))
+    await vi.waitFor(() => expect(projected).toEqual(['accepted-1']))
+    expect(fixture.store.query(fixture.input.query.MessageQuery())).toBe('')
+    expect(transportAttempts).toHaveLength(1)
+
+    fixture.store.send(fixture.input.command.InputCommand('second'))
+    fixture.store.send(fixture.room.command.SendTextMessageCommand('second'))
+    await vi.waitFor(() => expect(projected).toEqual(['accepted-1', 'accepted-2']))
+    expect(fixture.store.query(fixture.input.query.MessageQuery())).toBe('')
+    expect(transportAttempts).toHaveLength(2)
+
+    const transportError = new Error('late transport failure')
+    transportAttempts[0]!.reject(transportError)
+    await expect(transportSettlements[0]).resolves.toBe(transportError)
+    expect(projected).toEqual(['accepted-1', 'accepted-2'])
+
+    transportAttempts[1]!.resolve()
+    await expect(transportSettlements[1]).resolves.toBeNull()
     fixture.store.discard()
   })
 
