@@ -40,24 +40,46 @@ describe('ClientLease generation ownership', () => {
     const phases: HostPhase[] = []
     const client = new ClientLease({ coordinator, pageId: 'page-a', domain: 'https://example.test' })
     client.whenHostPhase((phase) => phases.push(phase))
-    let settled = false
-    const initializing = client
-      .init()
-      .catch(() => null)
-      .finally(() => {
-        settled = true
-      })
+    const initializing = client.init()
+    const rejected = expect(initializing).rejects.toEqual(new Error('Runtime control-plane request timed out'))
 
     await vi.waitFor(() => expect(coordinator.registerPage).toHaveBeenCalledOnce())
     try {
       expect(phases).toEqual(['none', 'connecting'])
       await vi.advanceTimersByTimeAsync(15000)
-      expect(settled).toBe(true)
+      await rejected
       expect(phases.at(-1)).toBe('unavailable')
     } finally {
       client.detach()
-      await initializing
+      await Promise.allSettled([initializing])
     }
+  })
+
+  it('isolates a throwing failure listener and continues the original failure lifecycle', async () => {
+    const providerError = new Error('runtime provider refused')
+    const listenerError = new Error('failure listener crashed')
+    const coordinator = coordinatorWith(vi.fn(async () => Promise.reject(providerError)))
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const laterListener = vi.fn()
+    const phases: HostPhase[] = []
+    const client = new ClientLease({ coordinator, pageId: 'page-a', domain: 'https://example.test' })
+    client.whenHostPhase((phase) => phases.push(phase))
+    client.whenFailure(() => {
+      throw listenerError
+    })
+    client.whenFailure(laterListener)
+
+    const initializing = client.init()
+    const rejected = expect(initializing).rejects.toBe(providerError)
+    await vi.advanceTimersByTimeAsync(15000)
+    await rejected
+
+    expect(diagnostic).toHaveBeenCalledWith(listenerError)
+    expect(laterListener).toHaveBeenCalledOnce()
+    expect(laterListener).toHaveBeenCalledWith(providerError)
+    expect(phases).toEqual(['none', 'connecting', 'unavailable'])
+    client.detach()
+    diagnostic.mockRestore()
   })
 
   it('does not publish ready or start a watchdog after init is detached', async () => {

@@ -106,7 +106,13 @@ export class ClientLease {
 
   private emitFailure(error: unknown) {
     const failure = error instanceof Error ? error : new Error(String(error))
-    this.failureCallbacks.forEach((callback) => callback(failure))
+    this.failureCallbacks.forEach((callback) => {
+      try {
+        callback(failure)
+      } catch (listenerError) {
+        console.error(listenerError)
+      }
+    })
   }
 
   private emitRegistrationFailures(registration: RuntimePageRegistration) {

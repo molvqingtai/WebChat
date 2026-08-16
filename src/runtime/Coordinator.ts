@@ -271,8 +271,9 @@ export class Coordinator {
       this.hostPhase = 'connecting'
       this.creating = this.establishHost()
         .catch((error) => {
-          console.error('[WebChat] Runtime host creation failed:', error)
-          return { phase: 'unavailable', created: false } as HostEnsureResult
+          this.hostPhase = 'unavailable'
+          this.hostId = null
+          throw error
         })
         .then(async (result) => {
           if (result.phase === 'ready') {

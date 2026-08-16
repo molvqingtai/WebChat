@@ -78,6 +78,18 @@ export const delay = (durationMs: number): Promise<void> => new Promise((resolve
 
 const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error))
 
+export const readDevToolsActivePort = async (
+  path: string,
+  read: (path: string) => Promise<string>
+): Promise<string | null> => {
+  try {
+    return (await read(path)).trim() || null
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return null
+    throw error
+  }
+}
+
 export const waitFor = async <T>(
   check: () => T | null | undefined | false | Promise<T | null | undefined | false>,
   { timeoutMs, label, intervalMs = 100 }: { timeoutMs: number; label: string; intervalMs?: number }

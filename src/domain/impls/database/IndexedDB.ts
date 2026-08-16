@@ -378,7 +378,9 @@ class IndexedDBTransaction<
 }
 
 export class IndexedDBDatabase<Schema extends DatabaseSchema<Schema>> implements Database<Schema> {
-  private databasePromise: Promise<IDBDatabase> | null = null
+  private databasePromise: Promise<
+    { readonly ok: true; readonly database: IDBDatabase } | { readonly ok: false; readonly error: unknown }
+  > | null = null
   private readonly watchers = new Set<{ stores: ReadonlySet<string>; listener: () => void }>()
   private readonly inFlight = new Set<Promise<unknown>>()
   private readonly channel: BroadcastChannel | null
@@ -400,9 +402,14 @@ export class IndexedDBDatabase<Schema extends DatabaseSchema<Schema>> implements
     if (this.closed) throw new Error('Database is closed')
   }
 
-  private database(): Promise<IDBDatabase> {
-    this.databasePromise ??= openDatabase(this.definition)
-    return this.databasePromise
+  private async database(): Promise<IDBDatabase> {
+    this.databasePromise ??= openDatabase(this.definition).then(
+      (database) => ({ ok: true as const, database }),
+      (error: unknown) => ({ ok: false as const, error })
+    )
+    const result = await this.databasePromise
+    if (!result.ok) throw result.error
+    return result.database
   }
 
   private track<Result>(operation: Promise<Result>): Promise<Result> {
@@ -574,8 +581,8 @@ export class IndexedDBDatabase<Schema extends DatabaseSchema<Schema>> implements
     this.closed = true
     this.watchers.clear()
     this.closePromise = Promise.allSettled(this.inFlight).then(async () => {
-      const database = await this.databasePromise?.catch(() => null)
-      database?.close()
+      const result = await this.databasePromise
+      if (result?.ok) result.database.close()
       this.channel?.close()
     })
     return this.closePromise
@@ -624,7 +631,7 @@ const deleteMessageDatabase = (): Promise<void> =>
       'error',
       () => {
         clearBlockedTimer()
-        reject(new Error('Message store deletion failed'))
+        reject(request.error ?? new Error('Message store deletion failed'))
       },
       { once: true }
     )
@@ -636,24 +643,18 @@ export const prepareIndexedDBMessageDatabase = (coordinator?: PreparationLockCoo
   return withPreparationLock(
     `message:${STORAGE_NAME}`,
     async (lock) => {
-      try {
-        const databases = await lock.read(indexedDB.databases())
-        const existing = databases.find((database) => database.name === STORAGE_NAME)
-        if (existing && existing.version !== MESSAGE_STORE_VERSION) {
-          await lock.write(async () => {
-            await deleteMessageDatabase()
-          })
-          lock.checkpoint()
-        }
-
-        const database = await lock.write(() => openDatabase(definition))
-        database.close()
+      const databases = await lock.read(indexedDB.databases())
+      const existing = databases.find((database) => database.name === STORAGE_NAME)
+      if (existing && existing.version !== MESSAGE_STORE_VERSION) {
+        await lock.write(async () => {
+          await deleteMessageDatabase()
+        })
         lock.checkpoint()
-      } catch (error) {
-        if (lock.signal.aborted) throw error
-        console.error('[WebChat] Message store preparation failed')
-        throw new Error('Message store preparation failed')
       }
+
+      const database = await lock.write(() => openDatabase(definition))
+      database.close()
+      lock.checkpoint()
     },
     coordinator
   )

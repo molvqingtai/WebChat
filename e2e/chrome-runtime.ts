@@ -9,6 +9,7 @@ import {
   type CleanupFailureEvidence,
   delay,
   evaluateRuntimeMessage,
+  readDevToolsActivePort,
   terminateOwnedProcesses,
   waitFor,
   waitForUniqueTarget,
@@ -284,8 +285,7 @@ try {
       const activePort = await waitFor(
         async () => {
           if (exited) throw new Error(`Chromium exited before CDP startup: ${stderr.join('')}`)
-          const value = await readFile(activePortPath, 'utf8').catch(() => '')
-          return value.trim() || null
+          return readDevToolsActivePort(activePortPath, (path) => readFile(path, 'utf8'))
         },
         { timeoutMs: 10000, label: 'Chromium DevToolsActivePort' }
       )

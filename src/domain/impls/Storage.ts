@@ -28,24 +28,18 @@ export const prepareConfigurationStorage = (
   withPreparationLock(
     `configuration:${identity}`,
     async (lock) => {
-      try {
-        const stored = await lock.read(storage.readVersion())
-        if (!stored.exists) {
-          await lock.write(() => storage.writeVersion(CONFIG_STORE_VERSION))
-          lock.checkpoint()
-          return
-        }
-        if (stored.value === CONFIG_STORE_VERSION) return
-
-        await lock.write(() => storage.clear())
-        lock.checkpoint()
+      const stored = await lock.read(storage.readVersion())
+      if (!stored.exists) {
         await lock.write(() => storage.writeVersion(CONFIG_STORE_VERSION))
         lock.checkpoint()
-      } catch (error) {
-        if (lock.signal.aborted) throw error
-        console.error('[WebChat] Configuration store preparation failed')
-        throw new Error('Configuration store preparation failed')
+        return
       }
+      if (stored.value === CONFIG_STORE_VERSION) return
+
+      await lock.write(() => storage.clear())
+      lock.checkpoint()
+      await lock.write(() => storage.writeVersion(CONFIG_STORE_VERSION))
+      lock.checkpoint()
     },
     coordinator
   )

@@ -3,6 +3,7 @@ import {
   CdpClient,
   createChromeTeardown,
   evaluateRuntimeMessage,
+  readDevToolsActivePort,
   terminateOwnedProcesses,
   waitForUniqueTarget,
   withDeadline
@@ -41,6 +42,19 @@ class FakeWebSocket {
 }
 
 describe('Chrome Runtime harness', () => {
+  it('treats only a missing DevToolsActivePort file as startup absence', async () => {
+    const missing = Object.assign(new Error('missing'), { code: 'ENOENT' })
+    const denied = Object.assign(new Error('permission denied'), { code: 'EACCES' })
+
+    await expect(
+      readDevToolsActivePort('/profile/DevToolsActivePort', async () => Promise.reject(missing))
+    ).resolves.toBe(null)
+    await expect(
+      readDevToolsActivePort('/profile/DevToolsActivePort', async () => Promise.reject(denied))
+    ).rejects.toBe(denied)
+    await expect(readDevToolsActivePort('/profile/DevToolsActivePort', async () => ' 9222\n')).resolves.toBe('9222')
+  })
+
   it('propagates sender-visible Runtime message rejection', async () => {
     const evaluate = vi.fn<(expression: string) => Promise<boolean>>().mockRejectedValue(new Error('raw rejected'))
 

@@ -314,6 +314,24 @@ describe('Runtime host recovery and coordinator liveness', () => {
     expect(destroyed).toBe(1)
   })
 
+  it('preserves a host creation provider Error for the registering page', async () => {
+    const providerError = new Error('offscreen creation refused')
+    const coordinator = new Coordinator({
+      storage: { get: async () => ({}), set: async () => {} },
+      tabs: { get: async () => ({ id: 1, url: PAGE_URL }) },
+      ensureHostDocument: async () => Promise.reject(providerError),
+      probeHost: async () => ({ hostId: 'unreachable', phase: 'ready' }),
+      destroyHostDocument: async () => {},
+      attachPage: async ({ pageId }) => pageSnapshot(pageId),
+      detachPage: async () => {}
+    })
+
+    await expect(
+      coordinator.registerPage({ domain: DOMAIN, pageId: 'page-a', tab: { id: 1, url: PAGE_URL } })
+    ).rejects.toBe(providerError)
+    expect(coordinator.snapshotForTest()).toMatchObject({ hostPhase: 'unavailable', hostId: null })
+  })
+
   it('keeps a physical tab binding and Runtime lease across page heartbeat loss', async () => {
     const fixture = createCoordinatorFixture()
     await fixture.registerPage('crashed-page')
