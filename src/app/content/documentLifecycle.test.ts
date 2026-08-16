@@ -133,8 +133,7 @@ describe('Content document-lifecycle owner composed parent control', () => {
     const lease = new ClientLease({
       coordinator: { ensureHost: vi.fn(), registerPage },
       pageId,
-      domain,
-      logError: vi.fn()
+      domain
     })
     const detachSpy = vi.spyOn(lease, 'detach')
     // Install readiness instrumentation BEFORE the composed store ignites the AppFeedback/Readiness
@@ -267,8 +266,7 @@ describe('Content document-lifecycle owner composed parent control', () => {
     const lease = new ClientLease({
       coordinator: { ensureHost: vi.fn(), registerPage },
       pageId,
-      domain,
-      logError: vi.fn()
+      domain
     })
     let readinessSubscriptions = 0
     let readinessUnsubscriptions = 0

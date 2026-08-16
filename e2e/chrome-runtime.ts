@@ -3,14 +3,12 @@ import { access, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 import {
-  appendCleanupFailure,
   CdpClient,
+  createChromeTeardown,
   type CleanupAttempt,
   type CleanupFailureEvidence,
   delay,
   evaluateRuntimeMessage,
-  runCleanupAttempts,
-  selectTerminalError,
   terminateOwnedProcesses,
   waitFor,
   waitForUniqueTarget,
@@ -199,9 +197,7 @@ const exitResult = new Promise((resolveExit) => {
 
 let cdp: CdpClient | undefined
 let runError: unknown
-let cleanupError: Error | undefined
-let cleanupDeadlineAt: number | undefined
-const beginCleanup = () => (cleanupDeadlineAt ??= Date.now() + cleanupTimeoutMs)
+let terminalError: unknown
 const runtimeEvents: RuntimeEvent[] = []
 const evidence: Evidence = {
   browser: null,
@@ -217,6 +213,69 @@ const evidence: Evidence = {
   sandbox: disableSandbox ? 'disabled-in-github-actions' : 'enabled',
   cleanup: { rootExited: false, residualProcesses: [], profileRemoved: false, errors: [] }
 }
+const signalPid = (pid: number, signal: NodeJS.Signals): void => {
+  try {
+    process.kill(pid, signal)
+  } catch (error) {
+    if (!(error instanceof Error) || !('code' in error) || error.code !== 'ESRCH') throw error
+  }
+}
+const teardown = createChromeTeardown({
+  errors: evidence.cleanup.errors,
+  cleanupTimeoutMs,
+  hasCdp: () => Boolean(cdp),
+  closeCdp: () => cdp?.close(),
+  closeBrowser: () => cdp!.send('Browser.close'),
+  waitForBrowserExit: (remainingMs) => Promise.race([exitResult, delay(remainingMs)]),
+  remainingAttempts: (): CleanupAttempt[] => [
+    {
+      resource: 'chromium-processes',
+      phase: 'terminate-owned',
+      run: async (remainingMs) => {
+        const termTimeoutMs = Math.min(3000, remainingMs)
+        const cleanupState = await terminateOwnedProcesses({
+          rootPid: chrome.pid,
+          isRootExited: () => exited,
+          listOwnedProcesses: () =>
+            processEntries().filter(
+              ({ processGroupId, command }) => processGroupId === chrome.pid || command.includes(profilePath)
+            ),
+          signalProcessGroup: (pid: number, signal: NodeJS.Signals) => {
+            if (process.platform === 'win32') {
+              if (!exited) chrome.kill(signal)
+            } else {
+              signalPid(-pid, signal)
+            }
+          },
+          signalProcess: signalPid,
+          termTimeoutMs,
+          killTimeoutMs: Math.max(0, remainingMs - termTimeoutMs)
+        })
+        evidence.cleanup.rootExited = cleanupState.rootExited
+        evidence.cleanup.residualProcesses = cleanupState.residualProcesses.map(
+          ({ pid, command }) => `${pid} ${command}`
+        )
+      }
+    },
+    {
+      resource: 'profile',
+      phase: 'remove',
+      run: () => rm(profilePath, { recursive: true, force: true })
+    },
+    {
+      resource: 'profile',
+      phase: 'verify-removed',
+      run: async () => {
+        evidence.cleanup.profileRemoved = await access(profilePath).then(
+          () => false,
+          () => true
+        )
+      }
+    }
+  ],
+  cleanupComplete: () =>
+    evidence.cleanup.rootExited && evidence.cleanup.residualProcesses.length === 0 && evidence.cleanup.profileRemoved
+})
 
 try {
   await withDeadline(
@@ -663,102 +722,16 @@ try {
     })(),
     suiteTimeoutMs,
     'Chrome Runtime suite',
-    () => {
-      try {
-        cdp?.close()
-      } catch (error) {
-        appendCleanupFailure(evidence.cleanup.errors, beginCleanup(), 'cdp', 'timeout-close', error)
-      }
-    }
+    teardown.timeoutClose
   )
 } catch (error) {
   runError = error
   evidence.failure = errorStack(error)
   evidence.events = runtimeEvents.slice(-100)
 } finally {
-  const deadlineAt = beginCleanup()
-  const attempts: CleanupAttempt[] = []
-  if (cdp) {
-    attempts.push(
-      {
-        resource: 'browser',
-        phase: 'browser-close',
-        run: (remainingMs) => withDeadline(cdp!.send('Browser.close'), Math.min(1000, remainingMs), 'Browser.close')
-      },
-      { resource: 'cdp', phase: 'final-close', run: () => cdp!.close() },
-      {
-        resource: 'browser',
-        phase: 'graceful-exit',
-        run: (remainingMs) => Promise.race([exitResult, delay(Math.min(1000, remainingMs))])
-      }
-    )
-  }
-  const signalPid = (pid: number, signal: NodeJS.Signals): void => {
-    try {
-      process.kill(pid, signal)
-    } catch (error) {
-      if (!(error instanceof Error) || !('code' in error) || error.code !== 'ESRCH') throw error
-    }
-  }
-  attempts.push(
-    {
-      resource: 'chromium-processes',
-      phase: 'terminate-owned',
-      run: async (remainingMs) => {
-        const termTimeoutMs = Math.min(3000, remainingMs)
-        const cleanupState = await terminateOwnedProcesses({
-          rootPid: chrome.pid,
-          isRootExited: () => exited,
-          listOwnedProcesses: () =>
-            processEntries().filter(
-              ({ processGroupId, command }) => processGroupId === chrome.pid || command.includes(profilePath)
-            ),
-          signalProcessGroup: (pid: number, signal: NodeJS.Signals) => {
-            if (process.platform === 'win32') {
-              if (!exited) chrome.kill(signal)
-            } else {
-              signalPid(-pid, signal)
-            }
-          },
-          signalProcess: signalPid,
-          termTimeoutMs,
-          killTimeoutMs: Math.max(0, remainingMs - termTimeoutMs)
-        })
-        evidence.cleanup.rootExited = cleanupState.rootExited
-        evidence.cleanup.residualProcesses = cleanupState.residualProcesses.map(
-          ({ pid, command }) => `${pid} ${command}`
-        )
-      }
-    },
-    {
-      resource: 'profile',
-      phase: 'remove',
-      run: () => rm(profilePath, { recursive: true, force: true })
-    },
-    {
-      resource: 'profile',
-      phase: 'verify-removed',
-      run: async () => {
-        evidence.cleanup.profileRemoved = await access(profilePath).then(
-          () => false,
-          () => true
-        )
-      }
-    }
-  )
-  await runCleanupAttempts(attempts, evidence.cleanup.errors, deadlineAt)
-
-  if (
-    !evidence.cleanup.rootExited ||
-    evidence.cleanup.residualProcesses.length > 0 ||
-    !evidence.cleanup.profileRemoved ||
-    evidence.cleanup.errors.length > 0
-  ) {
-    cleanupError = new Error('Owned Chromium cleanup failed')
-  }
+  terminalError = (await teardown.finish(runError)).terminalError
 }
 
-const terminalError = selectTerminalError(runError, cleanupError)
 if (terminalError) {
   console.error(JSON.stringify({ evidence, stderr: stderr.join('') }, null, 2))
   throw terminalError

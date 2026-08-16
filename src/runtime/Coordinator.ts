@@ -103,7 +103,7 @@ export class Coordinator {
   private maintainHost() {
     if (this.healthTimer || this.tabs.size === 0) return
     this.healthTimer = globalThis.setInterval(() => {
-      void this.reconcile().catch((error) => console.error(error))
+      void this.reconcile().catch((error) => this.routeReconcileFailure(error))
     }, COORDINATOR_HEALTH_INTERVAL_MS)
   }
 
@@ -166,6 +166,35 @@ export class Coordinator {
     return url !== null && isSameNavigation(url, binding.url)
   }
 
+  private queuePageFailure(binding: PhysicalTab, error: unknown) {
+    const failure = error instanceof Error ? error : new Error(String(error))
+    const pending = this.pendingPageErrors.get(binding.pageId) ?? []
+    pending.push({
+      eventId: nanoid(),
+      message: failure.message,
+      subsystem: 'connection',
+      operation: 'lifecycle',
+      scope: binding.domain
+    })
+    this.pendingPageErrors.set(binding.pageId, pending)
+  }
+
+  private async routeReconcileFailure(error: unknown) {
+    let routed = false
+    await Promise.all(
+      this.currentTabs().map(async (binding) => {
+        try {
+          if (this.tabs.get(binding.tabId) !== binding || !(await this.isCurrentTab(binding))) return
+          this.queuePageFailure(binding, error)
+          routed = true
+        } catch (ownershipError) {
+          console.error(ownershipError)
+        }
+      })
+    )
+    if (!routed) console.error(error)
+  }
+
   private async reconcileTabs() {
     await Promise.all(
       this.currentTabs().map(async (binding) => {
@@ -184,8 +213,22 @@ export class Coordinator {
           try {
             await this.persist()
           } catch (error) {
-            if (this.tabs.get(binding.tabId) === updated) this.tabs.set(binding.tabId, current)
-            throw error
+            if (this.tabs.get(binding.tabId) !== updated) {
+              console.error(error)
+              return
+            }
+            this.tabs.set(binding.tabId, current)
+            try {
+              if ((await this.currentNavigation(current)) !== url) {
+                console.error(error)
+                return
+              }
+            } catch (ownershipError) {
+              console.error(error)
+              console.error(ownershipError)
+              return
+            }
+            this.queuePageFailure(current, error)
           }
         } catch (error) {
           // Reconciliation is attempt-all: retain this tab's original failure while independent
@@ -217,15 +260,7 @@ export class Coordinator {
             console.error(ownershipError)
             return
           }
-          const pending = this.pendingPageErrors.get(binding.pageId) ?? []
-          pending.push({
-            eventId: nanoid(),
-            message: failure.message,
-            subsystem: 'connection',
-            operation: 'lifecycle',
-            scope: binding.domain
-          })
-          this.pendingPageErrors.set(binding.pageId, pending)
+          this.queuePageFailure(binding, failure)
         })
       )
     )

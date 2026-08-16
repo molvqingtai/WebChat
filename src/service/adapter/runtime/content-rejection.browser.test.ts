@@ -41,30 +41,30 @@ describe('content Runtime rejection ownership', () => {
       heartbeatTimeout: 30
     })
     const coordinator = injectCoordinator(new InjectAdapter(runtime))
-    const logError = vi.fn()
+    const failures: Error[] = []
     const phases: HostPhase[] = []
     const client = new ClientLease({
       coordinator,
       pageId: 'page-a',
-      domain: 'https://example.test',
-      logError
+      domain: 'https://example.test'
     })
     const releaseRejectionOwner = ownInjectRejections((error) => client.observeTransportRejection(error))
     const releasePhase = client.whenHostPhase((phase) => phases.push(phase))
+    const releaseFailure = client.whenFailure((error) => failures.push(error))
 
     try {
       await expect(client.init()).rejects.toBe(nativeError)
       await wait(0)
 
       expect(unhandled).toEqual([])
-      expect(logError).toHaveBeenCalledOnce()
-      expect(logError).toHaveBeenCalledWith(nativeError)
+      expect(failures).toEqual([nativeError])
       expect(phases).toEqual(['none', 'connecting', 'unavailable'])
       const replayed = vi.fn()
       client.whenHostPhase(replayed)
       expect(replayed).toHaveBeenCalledWith('unavailable')
     } finally {
       releasePhase()
+      releaseFailure()
       client.detach()
       releaseRejectionOwner()
       window.removeEventListener('unhandledrejection', onUnhandled)
@@ -121,7 +121,7 @@ describe('content Runtime rejection ownership', () => {
       heartbeatTimeout: 30
     })
     const coordinator = injectCoordinator(new InjectAdapter(runtime))
-    const logError = vi.fn()
+    const failures: string[] = []
     const phases: HostPhase[] = []
     const client = new ClientLease({
       coordinator,
@@ -129,11 +129,11 @@ describe('content Runtime rejection ownership', () => {
       domain: 'https://example.test',
       startupTimeoutMs: 200,
       startupRetryIntervalMs: 20,
-      watchdogIntervalMs: 60000,
-      logError
+      watchdogIntervalMs: 60000
     })
     const releaseRejectionOwner = ownInjectRejections((error) => client.observeTransportRejection(error))
     client.whenHostPhase((phase) => phases.push(phase))
+    const releaseFailure = client.whenFailure((error) => failures.push(error.message))
 
     try {
       await expect(client.init()).resolves.toEqual(snapshot)
@@ -144,10 +144,8 @@ describe('content Runtime rejection ownership', () => {
       await wait(0)
 
       expect(unhandled).toEqual([])
-      expect(logError).toHaveBeenCalledOnce()
-      expect((logError.mock.calls[0][0] as Error).message).toMatch(
-        /Extension context invalidated\.|Runtime control-plane request timed out/
-      )
+      expect(failures).toHaveLength(1)
+      expect(failures[0]).toMatch(/Extension context invalidated\.|Runtime control-plane request timed out/)
       expect(phases).toEqual(['connecting', 'unavailable'])
 
       await expect(coordinator.registerPage({ domain: 'https://example.test', pageId: 'page-a' })).rejects.toThrow(
@@ -156,12 +154,13 @@ describe('content Runtime rejection ownership', () => {
       await wait(0)
 
       expect(unhandled).toEqual([])
-      expect(logError).toHaveBeenCalledOnce()
+      expect(failures).toHaveLength(1)
       expect(phases).toHaveLength(2)
       const replayed = vi.fn()
       client.whenHostPhase(replayed)
       expect(replayed).toHaveBeenCalledWith('unavailable')
     } finally {
+      releaseFailure()
       client.detach()
       releaseRejectionOwner()
       window.removeEventListener('unhandledrejection', onUnhandled)

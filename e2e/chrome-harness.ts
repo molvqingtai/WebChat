@@ -50,6 +50,18 @@ export type CleanupAttempt = {
   run: (remainingMs: number) => unknown | PromiseLike<unknown>
 }
 
+export type ChromeTeardownOptions = {
+  errors: CleanupFailureEvidence[]
+  cleanupTimeoutMs: number
+  hasCdp: () => boolean
+  closeCdp: () => void
+  closeBrowser: () => PromiseLike<unknown>
+  waitForBrowserExit: (remainingMs: number) => PromiseLike<unknown>
+  remainingAttempts: () => CleanupAttempt[]
+  cleanupComplete: () => boolean
+  now?: () => number
+}
+
 type CleanupOptions = {
   rootPid?: number
   isRootExited: () => boolean
@@ -182,6 +194,45 @@ export const runCleanupAttempts = async (
 
 export const selectTerminalError = (runError: unknown, cleanupError: Error | undefined): unknown =>
   runError ?? cleanupError
+
+export const createChromeTeardown = (options: ChromeTeardownOptions) => {
+  const now = options.now ?? Date.now
+  let deadlineAt: number | undefined
+  const beginCleanup = () => (deadlineAt ??= now() + options.cleanupTimeoutMs)
+
+  return {
+    timeoutClose: () => {
+      try {
+        options.closeCdp()
+      } catch (error) {
+        appendCleanupFailure(options.errors, beginCleanup(), 'cdp', 'timeout-close', error, now)
+      }
+    },
+    finish: async (runError: unknown) => {
+      const attempts: CleanupAttempt[] = options.hasCdp()
+        ? [
+            {
+              resource: 'browser',
+              phase: 'browser-close',
+              run: (remainingMs) => withDeadline(options.closeBrowser(), Math.min(1000, remainingMs), 'Browser.close')
+            },
+            { resource: 'cdp', phase: 'final-close', run: () => options.closeCdp() },
+            {
+              resource: 'browser',
+              phase: 'graceful-exit',
+              run: (remainingMs) => options.waitForBrowserExit(Math.min(1000, remainingMs))
+            }
+          ]
+        : []
+      await runCleanupAttempts([...attempts, ...options.remainingAttempts()], options.errors, beginCleanup(), now)
+      const cleanupError =
+        options.cleanupComplete() && options.errors.length === 0
+          ? undefined
+          : new Error('Owned Chromium cleanup failed')
+      return { cleanupError, terminalError: selectTerminalError(runError, cleanupError) }
+    }
+  }
+}
 
 export const evaluateRuntimeMessage = <T>(
   evaluate: (expression: string) => Promise<T>,

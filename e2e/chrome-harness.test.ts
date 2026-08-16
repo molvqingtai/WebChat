@@ -1,9 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   CdpClient,
+  createChromeTeardown,
   evaluateRuntimeMessage,
-  runCleanupAttempts,
-  selectTerminalError,
   terminateOwnedProcesses,
   waitForUniqueTarget,
   withDeadline
@@ -71,66 +70,86 @@ describe('Chrome Runtime harness', () => {
     expect(onTimeout).toHaveBeenCalledOnce()
   })
 
-  it('retains all three close failures in order under one absolute cleanup deadline', async () => {
-    const deadlineAt = Date.now() + 1000
+  it('runs the live close composition in order and keeps the run failure primary', async () => {
     const timeoutFailure = new Error('timeout close failed')
     const browserFailure = new Error('Browser.close rejected')
     const finalFailure = new Error('final CDP close failed')
-    const attempts = [vi.fn(), vi.fn(), vi.fn()]
-    const errors: Parameters<typeof runCleanupAttempts>[1] = []
-
-    await runCleanupAttempts(
-      [
+    const primary = new Error('product assertion failed')
+    const order: string[] = []
+    const errors: Parameters<typeof createChromeTeardown>[0]['errors'] = []
+    const teardown = createChromeTeardown({
+      errors,
+      cleanupTimeoutMs: 1000,
+      hasCdp: () => true,
+      closeCdp: () => {
+        const phase = order.length === 0 ? 'timeout-close' : 'final-close'
+        order.push(phase)
+        throw phase === 'timeout-close' ? timeoutFailure : finalFailure
+      },
+      closeBrowser: async () => {
+        order.push('browser-close')
+        throw browserFailure
+      },
+      waitForBrowserExit: async () => {
+        order.push('graceful-exit')
+      },
+      remainingAttempts: () => [
         {
-          resource: 'cdp',
-          phase: 'timeout-close',
+          resource: 'chromium-processes',
+          phase: 'terminate-owned',
           run: () => {
-            attempts[0]()
-            throw timeoutFailure
+            order.push('terminate-owned')
           }
         },
         {
-          resource: 'browser',
-          phase: 'browser-close',
-          run: async () => {
-            attempts[1]()
-            throw browserFailure
+          resource: 'profile',
+          phase: 'remove',
+          run: () => {
+            order.push('remove')
           }
         },
         {
-          resource: 'cdp',
-          phase: 'final-close',
+          resource: 'profile',
+          phase: 'verify-removed',
           run: () => {
-            attempts[2]()
-            throw finalFailure
+            order.push('verify-removed')
           }
         }
       ],
-      errors,
-      deadlineAt
-    )
+      cleanupComplete: () => {
+        order.push('cleanup-gate')
+        return false
+      }
+    })
 
-    attempts.forEach((attempt) => expect(attempt).toHaveBeenCalledOnce())
+    teardown.timeoutClose()
+    const result = await teardown.finish(primary)
+
+    expect(order).toEqual([
+      'timeout-close',
+      'browser-close',
+      'final-close',
+      'graceful-exit',
+      'terminate-owned',
+      'remove',
+      'verify-removed',
+      'cleanup-gate'
+    ])
     expect(
-      errors.map(({ resource, phase, message, deadlineAt: deadline }) => ({
+      errors.map(({ resource, phase, message, deadlineAt }) => ({
         resource,
         phase,
         message,
-        deadline
+        deadlineAt
       }))
     ).toEqual([
-      { resource: 'cdp', phase: 'timeout-close', message: timeoutFailure.message, deadline: deadlineAt },
-      { resource: 'browser', phase: 'browser-close', message: browserFailure.message, deadline: deadlineAt },
-      { resource: 'cdp', phase: 'final-close', message: finalFailure.message, deadline: deadlineAt }
+      { resource: 'cdp', phase: 'timeout-close', message: timeoutFailure.message, deadlineAt: expect.any(Number) },
+      { resource: 'browser', phase: 'browser-close', message: browserFailure.message, deadlineAt: expect.any(Number) },
+      { resource: 'cdp', phase: 'final-close', message: finalFailure.message, deadlineAt: expect.any(Number) }
     ])
-  })
-
-  it('keeps an earlier run failure primary while cleanup remains secondary', () => {
-    const primary = new Error('product assertion failed')
-    const cleanup = new Error('Owned Chromium cleanup failed')
-
-    expect(selectTerminalError(primary, cleanup)).toBe(primary)
-    expect(selectTerminalError(undefined, cleanup)).toBe(cleanup)
+    expect(new Set(errors.map(({ deadlineAt }) => deadlineAt)).size).toBe(1)
+    expect(result.cleanupError).toEqual(new Error('Owned Chromium cleanup failed'))
+    expect(result.terminalError).toBe(primary)
   })
 
   it('waits while a target is absent and accepts the first unique target', async () => {

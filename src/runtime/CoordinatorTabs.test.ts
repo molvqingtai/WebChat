@@ -222,7 +222,7 @@ describe('Coordinator trusted Tabs lifecycle', () => {
     const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
 
     await fixture.reconcileTabs()
-    expect(diagnostic).toHaveBeenCalledWith(failure)
+    expect(diagnostic).not.toHaveBeenCalled()
     expect(fixture.coordinator.snapshotForTest().tabs).toContainEqual(
       expect.objectContaining({ tabId: 1, url: `${DOMAIN_A}/topic` })
     )
@@ -231,6 +231,17 @@ describe('Coordinator trusted Tabs lifecycle', () => {
     expect(fixture.coordinator.snapshotForTest().tabs).toContainEqual(
       expect.objectContaining({ tabId: 1, url: `${DOMAIN_A}/updated` })
     )
+    await expect(fixture.register(DOMAIN_A, 'document-a', 1, `${DOMAIN_A}/updated#fragment`)).resolves.toMatchObject({
+      failures: [
+        {
+          eventId: expect.any(String),
+          message: failure.message,
+          subsystem: 'connection',
+          operation: 'lifecycle',
+          scope: DOMAIN_A
+        }
+      ]
+    })
     diagnostic.mockRestore()
   })
 
@@ -309,7 +320,7 @@ describe('Coordinator trusted Tabs lifecycle', () => {
     })
   })
 
-  it('keeps a health-interval reconciliation rejection as a direct diagnostic', async () => {
+  it('queues a health-interval persistence rejection for its confirmed current page', async () => {
     const fixture = createFixture()
     await fixture.register(DOMAIN_A, 'document-a', 1, `${DOMAIN_A}/topic#first`)
     const failure = new Error('health reconciliation persistence failed')
@@ -317,9 +328,19 @@ describe('Coordinator trusted Tabs lifecycle', () => {
     const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
 
     await vi.advanceTimersByTimeAsync(COORDINATOR_HEALTH_INTERVAL_MS)
-    await vi.waitFor(() => expect(diagnostic).toHaveBeenCalledWith(failure))
+    await expect(fixture.register(DOMAIN_A, 'document-a', 1, `${DOMAIN_A}/topic#first`)).resolves.toMatchObject({
+      failures: [
+        {
+          eventId: expect.any(String),
+          message: failure.message,
+          subsystem: 'connection',
+          operation: 'lifecycle',
+          scope: DOMAIN_A
+        }
+      ]
+    })
 
-    expect(diagnostic).toHaveBeenCalledOnce()
+    expect(diagnostic).not.toHaveBeenCalled()
     expect(fixture.coordinator.snapshotForTest().tabs).toContainEqual(
       expect.objectContaining({ tabId: 1, pageId: 'document-a' })
     )
