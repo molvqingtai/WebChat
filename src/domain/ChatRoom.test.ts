@@ -303,7 +303,7 @@ const createPendingConnectionFixture = (stage: PendingConnectionStage) => {
     allocateReactionMessage: async () => {
       throw new Error('not used')
     },
-    sendChatMessage: async () => {},
+    sendChatMessage: async ({ event }) => event,
     ackInbound: async () => {},
     replayInbound: async () => {
       replayCalls += 1
@@ -961,7 +961,7 @@ describe('ChatRoomDomain exact application port', () => {
       allocateReactionMessage: async () => {
         throw new Error('not used')
       },
-      sendChatMessage: async () => {},
+      sendChatMessage: async ({ event }) => event,
       ackInbound: async () => {},
       replayInbound: async () => [],
       reconnectDomain: async () => {},

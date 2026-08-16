@@ -12,7 +12,7 @@ import { IdentityExtern } from '@/domain/runtime/externs/Identity'
 import { PresenceStoreExtern, type PresenceStore } from '@/domain/runtime/externs/PresenceStore'
 import { RoomTransportExtern, WireCodecExtern } from '@/domain/runtime/externs/RoomTransport'
 import type { RoomTransport } from '@/runtime/RoomTransport'
-import { NativeWireCodec, type WireCodec } from '@/protocol'
+import { MESSAGE_TYPE, NativeWireCodec, type TextMessage, type WireCodec } from '@/protocol'
 import type { ChatSite, ChatUser } from '@/protocol'
 import type { RuntimeServer, RuntimeSnapshot } from '@/runtime/Contract'
 import { PagePort, createPagePortImpl } from '@/runtime/PagePort'
@@ -279,6 +279,23 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       store.send(command)
     })
 
+  const runTextAcceptanceOperation = (operationId: string, command: RemeshAction): Promise<TextMessage> =>
+    new Promise<TextMessage>((resolve, reject) => {
+      const accepted = store.subscribeEvent(sessionDomain.event.TextMessageAcceptedEvent, (result) => {
+        if (result.operationId !== operationId) return
+        accepted.unsubscribe()
+        failure.unsubscribe()
+        resolve(result.message)
+      })
+      const failure = store.subscribeEvent(sessionDomain.event.OperationFailedEvent, (result) => {
+        if (result.operationId !== operationId) return
+        accepted.unsubscribe()
+        failure.unsubscribe()
+        reject(result.error)
+      })
+      store.send(command)
+    })
+
   /** Typed allocation runner: the exact record variant is carried by a typed success event. */
   const runAllocationOperation = <TRecord>(
     operationId: string,
@@ -535,11 +552,12 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     sendChatMessage: async (payload) => {
       await waitForLivePresence(payload.domain)
       const operationId = nanoid()
-      await runSessionOperation(
-        operationId,
-        sessionDomain.command.SendChatMessageCommand({ operationId, ...payload }),
-        () => undefined
-      )
+      const command = sessionDomain.command.SendChatMessageCommand({ operationId, ...payload })
+      if (payload.event.type === MESSAGE_TYPE.TEXT) {
+        return runTextAcceptanceOperation(operationId, command)
+      }
+      await runSessionOperation(operationId, command, () => undefined)
+      return payload.event
     },
     ackInbound: async (payload) => {
       store.send(deliveryDomain.command.AckInboundCommand(payload))
