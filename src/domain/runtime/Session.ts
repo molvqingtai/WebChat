@@ -1,7 +1,7 @@
 import { Remesh } from 'remesh'
 import { concatMap, filter, map, mergeMap, Observable } from 'rxjs'
 import DeliveryDomain from '@/domain/runtime/Delivery'
-import WireDomain, { type WireFailureStage, type WireMessageEvent } from '@/domain/runtime/Wire'
+import WireDomain, { selectPeerIds, type WireFailureStage, type WireMessageEvent } from '@/domain/runtime/Wire'
 import { ClockExtern } from '@/domain/runtime/externs/Clock'
 import { RoomTransportExtern } from '@/domain/runtime/externs/RoomTransport'
 import { IdentityExtern } from '@/domain/runtime/externs/Identity'
@@ -516,6 +516,10 @@ const SessionDomain = Remesh.domain({
           return PreparedPublishFailedEvent({ attemptId, error: new Error('Prepared session disappeared') })
         }
         const requestId = initialRequestId(attemptId)
+        const targetPeerIds = selectPeerIds(
+          prepared.runtime.sessions.map((session) => session.sourcePeerId),
+          get(wireDomain.query.PeerIdQuery(prepared.runtime.roomId))
+        )
         const message = {
           type: MESSAGE_TYPE.SESSION,
           sessionId: prepared.runtime.sessionId,
@@ -523,7 +527,7 @@ const SessionDomain = Remesh.domain({
           joinedAt: prepared.runtime.joinedAt,
           user: prepared.runtime.user
         } as const
-        // A regular Session publication is one room broadcast; the transport fans it out.
+        if (targetPeerIds.length === 0) return PreparedPublishedEvent({ attemptId })
         const pending = {
           ...prepared,
           publishRequestId: requestId
@@ -535,6 +539,7 @@ const SessionDomain = Remesh.domain({
           wireDomain.command.SendMessageCommand({
             requestId,
             roomId: prepared.runtime.roomId,
+            targetPeerIds,
             message
           })
         ]
@@ -1105,6 +1110,13 @@ const SessionDomain = Remesh.domain({
           })
         }
         const requestId = chatRequestId(payload.operationId)
+        const targetPeerIds = selectPeerIds(
+          runtime.sessions.map((session) => session.sourcePeerId),
+          get(wireDomain.query.PeerIdQuery(runtime.roomId))
+        )
+        if (targetPeerIds.length === 0) {
+          return [HlcState().new(adopted), OperationSucceededEvent({ operationId: payload.operationId })]
+        }
         const pending: PendingChatSend = {
           operationId: payload.operationId,
           requestId,
@@ -1118,10 +1130,10 @@ const SessionDomain = Remesh.domain({
             ...get(PendingChatSendsState()).filter((item) => item.operationId !== payload.operationId),
             pending
           ]),
-          // An ordinary Chat message is one room broadcast; the transport fans it out.
           wireDomain.command.SendMessageCommand({
             requestId,
             roomId: runtime.roomId,
+            targetPeerIds,
             message: event
           })
         ]

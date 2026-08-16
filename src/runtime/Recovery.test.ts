@@ -28,6 +28,10 @@ class FakeClock implements Clock {
   current = 1000
 
   now = () => this.current
+  async sleep() {
+    await Promise.resolve()
+    await Promise.resolve()
+  }
   advance(ms: number) {
     this.current += ms
     vi.advanceTimersByTime(ms)

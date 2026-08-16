@@ -3,6 +3,7 @@ import * as v from 'valibot'
 import { fromEventPattern, map, mergeMap } from 'rxjs'
 import { MAX_DECODE_QUEUE_BYTES, MAX_DECODE_QUEUE_FRAMES, WORLD_ROOM_ID_V5 } from '@/constants/config'
 import { RoomTransportExtern, WireCodecExtern } from '@/domain/runtime/externs/RoomTransport'
+import { ClockExtern, sleep } from '@/domain/runtime/externs/Clock'
 import { ChatRoomMessageSchema, WorldRoomMessageSchema, type ChatRoomMessage, type WorldRoomMessage } from '@/protocol'
 import { getTextByteSize } from '@/utils/getTextByteSize'
 import stringToHex from '@/utils/stringToHex'
@@ -83,17 +84,32 @@ interface DropRecord {
 const MAX_LOGGED_SOURCES = 256
 const LOG_INTERVAL_MS = 10000
 const worldRoomId = stringToHex(WORLD_ROOM_ID_V5)
+const POST_JOIN_SEND_DELAY_MS = 1000
 const queueId = (roomId: string, sourcePeerId: string) => JSON.stringify([roomId, sourcePeerId])
 const generationFor = (generations: RoomGeneration[], roomId: string) =>
   generations.find((item) => item.roomId === roomId)?.generation ?? 0
 const replaceBy = <T>(items: T[], predicate: (item: T) => boolean, next: T): T[] =>
   items.some(predicate) ? items.map((item) => (predicate(item) ? next : item)) : [...items, next]
 
+/**
+ * Why specify peerIds:
+ * According to artico source code, room.send() without target will send to all calls (including connecting peers).
+ * If a peer's DataChannel is not ready, it will throw "Connection is not established yet" error and interrupt the forEach loop.
+ * Sessions only contains peers that have completed application-layer Session synchronization, which means their DataChannel is already established.
+ * So we only send to peers in Sessions to avoid errors.
+ *
+ * @see https://github.com/matallui/artico/blob/8a4f1a185be9355f893120e9492151f1785e59fa/packages/client/src/room.ts#L114 Room.send() implementation
+ * @see hhttps://github.com/matallui/artico/blob/8a4f1a185be9355f893120e9492151f1785e59fa/packages/peer/src/peer.ts#L281 Peer.send() throws error when not ready
+ */
+export const selectPeerIds = (sourcePeerIds: string[], selfPeerId: string): string[] =>
+  [...new Set(sourcePeerIds)].filter((peerId) => peerId !== selfPeerId)
+
 const WireDomain = Remesh.domain({
   name: 'WireDomain',
   impl: (domain) => {
     const transport = domain.getExtern(RoomTransportExtern)
     const codec = domain.getExtern(WireCodecExtern)
+    const clock = domain.getExtern(ClockExtern)
 
     const TrustedRoomsState = domain.state<string[]>({ name: 'Wire.TrustedRoomsState', default: [] })
     const RoomGenerationsState = domain.state<RoomGeneration[]>({
@@ -160,6 +176,9 @@ const WireDomain = Remesh.domain({
       name: 'Wire.LeaveRoomRequestedEvent'
     })
     const SendRequestedEvent = domain.event<QueuedSendRequest>({ name: 'Wire.SendRequestedEvent' })
+    const SendResumeAfterJoinRequestedEvent = domain.event<QueueIdentity & { roomId: string }>({
+      name: 'Wire.SendResumeAfterJoinRequestedEvent'
+    })
     const ProviderSendRequestedEvent = domain.event<EncodedSend>({ name: 'Wire.ProviderSendRequestedEvent' })
     const RawFrameAdmittedEvent = domain.event<RawFrame>({ name: 'Wire.RawFrameAdmittedEvent' })
 
@@ -310,7 +329,7 @@ const WireDomain = Remesh.domain({
           (queues, { roomId, queue }) =>
             replaceBy(queues, (item) => item.roomId === roomId, {
               ...queue,
-              suspended: false,
+              suspended: !queue.headInvoked,
               requests: queue.requests.map((request) => ({ ...request, generation: current(roomId) }))
             }),
           sendQueues
@@ -324,7 +343,38 @@ const WireDomain = Remesh.domain({
           }),
           ...resumed
             .filter(({ queue }) => !queue.headInvoked)
-            .map(({ head, roomId }) => SendRequestedEvent({ ...head, generation: current(roomId) }))
+            .map(({ head, roomId }) =>
+              SendResumeAfterJoinRequestedEvent({
+                roomId,
+                generation: current(roomId),
+                sequence: head.sequence
+              })
+            )
+        ]
+      }
+    })
+
+    const ResumeSendAfterJoinCommand = domain.command({
+      name: 'Wire.ResumeSendAfterJoinCommand',
+      impl: ({ get }, identity: QueueIdentity & { roomId: string }) => {
+        const queues = get(SendQueuesState())
+        const current = queues.find((item) => item.roomId === identity.roomId)
+        const head = current?.requests[0]
+        if (
+          !current?.suspended ||
+          current.headInvoked ||
+          head?.sequence !== identity.sequence ||
+          head.generation !== identity.generation ||
+          generationFor(get(RoomGenerationsState()), identity.roomId) !== identity.generation ||
+          !get(TrustedRoomsState()).includes(identity.roomId)
+        ) {
+          return null
+        }
+        return [
+          SendQueuesState().new(
+            replaceBy(queues, (item) => item.roomId === identity.roomId, { ...current, suspended: false })
+          ),
+          SendRequestedEvent(head)
         ]
       }
     })
@@ -619,6 +669,16 @@ const WireDomain = Remesh.domain({
             } catch (error) {
               return RoomsJoinFailedEvent({ requestId: request.requestId, error: error as Error })
             }
+          })
+        )
+    })
+    domain.effect({
+      name: 'Wire.SendResumeAfterJoinEffect',
+      impl: ({ fromEvent }) =>
+        fromEvent(SendResumeAfterJoinRequestedEvent).pipe(
+          mergeMap(async (identity) => {
+            await sleep(clock, POST_JOIN_SEND_DELAY_MS)
+            return ResumeSendAfterJoinCommand(identity)
           })
         )
     })

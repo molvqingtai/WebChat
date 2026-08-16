@@ -21,6 +21,32 @@ const codeFiles = async (directory: string): Promise<string[]> => {
 }
 
 describe('replaceable application boundaries', () => {
+  it('keeps every product send explicitly targeted and preserves the targeting authority comment', async () => {
+    const [session, history, world, wire] = await Promise.all([
+      source('src/domain/runtime/Session.ts'),
+      source('src/domain/runtime/History.ts'),
+      source('src/domain/runtime/World.ts'),
+      source('src/domain/runtime/Wire.ts')
+    ])
+    const productionSources = [session, history, world]
+    const callsBySource = productionSources.map((value) => [...value.matchAll(/SendMessageCommand\(\{/g)])
+
+    expect(callsBySource.map((calls) => calls.length)).toEqual([4, 2, 5])
+    productionSources.forEach((value) => {
+      for (const match of value.matchAll(/SendMessageCommand\(\{/g)) {
+        expect(value.slice(match.index, match.index + 400)).toContain('targetPeerIds')
+      }
+    })
+    expect(`${session}\n${history}\n${world}`).not.toMatch(/\bUserList\b|\breadyPeers\b/)
+    expect(wire).toContain(
+      'https://github.com/matallui/artico/blob/8a4f1a185be9355f893120e9492151f1785e59fa/packages/client/src/room.ts#L114'
+    )
+    expect(wire).toContain(
+      'hhttps://github.com/matallui/artico/blob/8a4f1a185be9355f893120e9492151f1785e59fa/packages/peer/src/peer.ts#L281'
+    )
+    expect(wire).toContain('Sessions only contains peers that have completed application-layer Session synchronization')
+  })
+
   it('exposes only the Owner-final ChatRoom, Database, session path, and clock capabilities', async () => {
     const [chatRoom, database, messageStore, runtimeContract, pagePort, clock, implementation] = await Promise.all([
       source('src/domain/externs/ChatRoom.ts'),

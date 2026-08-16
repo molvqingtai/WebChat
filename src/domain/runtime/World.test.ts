@@ -90,6 +90,7 @@ const createFixture = (options?: { failNextEncode?: () => boolean }) => {
         sites: [{ origin }]
       }
       if (!joinedPeers.includes(sourcePeerId)) joinedPeers.push(sourcePeerId)
+      fixture.store.send(fixture.world.command.PeerJoinedCommand({ roomId: getWorldRoomId(), sourcePeerId }))
       messageListener?.(getWorldRoomId(), sourcePeerId, JSON.stringify(presence))
     }
   }
@@ -122,11 +123,8 @@ describe('WorldDomain single per-target publication iterator', () => {
     })
 
     stage(fixture, 'attempt-a', 'https://a.example')
-    // A normal publication is one room broadcast even when the room currently has no members.
-    await vi.waitFor(() => expect(fixture.attempts).toHaveLength(1))
-    expect(fixture.attempts[0].targetPeerIds).toBeUndefined()
-    fixture.attempts[0].settle.resolve()
     await vi.waitFor(() => expect(published).toBe(true))
+    expect(fixture.attempts).toEqual([])
     fixture.store.discard()
   })
 
@@ -145,7 +143,7 @@ describe('WorldDomain single per-target publication iterator', () => {
 
     stage(fixture, 'attempt-a', 'https://a.example')
     await vi.waitFor(() => expect(fixture.attempts).toHaveLength(1))
-    expect(fixture.attempts[0].targetPeerIds).toBeUndefined()
+    expect(fixture.attempts[0].targetPeerIds).toEqual(['peer-1', 'peer-2'])
     fixture.attempts[0].settle.reject(new Error('target one exploded'))
     await vi.waitFor(() => expect(published).toBe(true))
 

@@ -2,7 +2,7 @@ import { Remesh, type RemeshCommandOutput } from 'remesh'
 import { catchError, filter, from, map, mergeMap, Observable, of } from 'rxjs'
 import DeliveryDomain from '@/domain/runtime/Delivery'
 import SessionDomain, { observeHlc } from '@/domain/runtime/Session'
-import WireDomain, { type WireFailureStage, type WireMessageEvent } from '@/domain/runtime/Wire'
+import WireDomain, { selectPeerIds, type WireFailureStage, type WireMessageEvent } from '@/domain/runtime/Wire'
 import { ClockExtern } from '@/domain/runtime/externs/Clock'
 import { PagePortExtern } from '@/domain/runtime/externs/PagePort'
 import {
@@ -786,6 +786,11 @@ const HistoryDomain = Remesh.domain({
         if (!current || current.retired) return ReleaseRequesterSupplyJobCommand(payload)
         const page = current.inventoryPages[current.nextInventoryPage]
         if (!page) return FinishCurrentRequestedEvent(payload)
+        const targetPeerIds = selectPeerIds(
+          current.expectedProviders,
+          get(wireDomain.query.PeerIdQuery(runtime.roomId))
+        )
+        if (targetPeerIds.length === 0) return FinishCurrentRequestedEvent(payload)
         const requestId = `history:inventory:${payload.syncToken}:${current.nextInventoryPage}`
         return [
           PendingWireSendsState().new([
@@ -801,6 +806,7 @@ const HistoryDomain = Remesh.domain({
           wireDomain.command.SendMessageCommand({
             requestId,
             roomId: runtime.roomId,
+            targetPeerIds,
             message: page
           })
         ]
