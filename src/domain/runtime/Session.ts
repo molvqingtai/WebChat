@@ -1155,6 +1155,14 @@ const SessionDomain = Remesh.domain({
             get(DomainsState()).find((item) => item.domain === pending.domain))
           : undefined
         if (!pending || !runtime || runtime.roomId !== payload.roomId) return null
+        // Logical-release fence: once the owner domain has entered LiveReleasesState, its
+        // awaited active-presence cleanup still holds the committed runtime and the physical
+        // Wire membership, so the Wire identity/generation/trust fences alone would pass. A
+        // late post-join timer expiring inside this window must stay inert — no target
+        // re-derivation and no provider call; the queued head remains suspended until the
+        // release's final physical leave cancels it quietly, and the release's own
+        // settlement/failure/retry and any successor state are untouched.
+        if (get(ReleasingDomainQuery(runtime.domain))) return null
         return wireDomain.command.ResumeRoomWideSendCommand({
           ...payload,
           targetPeerIds: selectPeerIds(

@@ -3508,6 +3508,93 @@ describe('RuntimeServer send reliability', () => {
       disposeServer(server)
     }
   )
+
+  it.each([MESSAGE_TYPE.TEXT, MESSAGE_TYPE.REACTION])(
+    'keeps a queued room-wide %s send inert when its owner enters release during the post-join delay',
+    async (messageType) => {
+      const clock = new FakeClock()
+      const fake = createFakeTransport()
+      const values: Record<string, unknown> = {}
+      const cleanupStarted = deferred<void>()
+      const releaseCleanup = deferred<void>()
+      const presenceStore = createBrowserPresenceStore({
+        get: async (key) => ({ [key]: values[key] }),
+        set: async (items) => {
+          const record = Object.values(items)[0] as { local?: unknown } | undefined
+          // The release cleanup save carries no local record; hold it so the owner stays in
+          // LiveReleasesState with the committed runtime and physical membership retained.
+          if (record && typeof record === 'object' && !('local' in record)) {
+            cleanupStarted.resolve()
+            await releaseCleanup.promise
+          }
+          Object.assign(values, items)
+        }
+      })
+      const server = createServer({ transport: fake.transport, clock, codec: jsonCodec, presenceStore })
+      const roomId = getChatRoomId(DOMAIN)
+      await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
+      await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
+      await settle()
+      fake.peerJoin(roomId, 'peer-chat')
+      fake.receive(roomId, 'peer-chat', session())
+      await settle()
+      const baseline = fake.sendAttempts.length
+      const record =
+        messageType === MESSAGE_TYPE.TEXT
+          ? await server.allocateTextMessage({ domain: DOMAIN, body: 'queued', mentions: [] })
+          : await server.allocateReactionMessage({ domain: DOMAIN, targetId: 'target', reaction: 'like', active: true })
+      const waiting = deferred<void>()
+      const delays: number[] = []
+      clock.sleep = (ms) => {
+        delays.push(ms)
+        return waiting.promise
+      }
+
+      // The room closes and the runtime auto-rejoins; the queued room-wide send waits out the
+      // post-join delay. During the delay its owner domain enters release and the active-record
+      // cleanup write stays held: LiveReleasesState is written but the physical Wire leave has
+      // not run, so the Wire identity/generation/trust fences alone would still pass.
+      fake.roomClose(roomId)
+      let sendSettled = false
+      const sending = server.sendChatMessage({ domain: DOMAIN, event: record.message })
+      void sending.then(
+        () => {
+          sendSettled = true
+        },
+        () => {
+          sendSettled = true
+        }
+      )
+      await vi.waitFor(() => expect(delays).toContain(1000))
+      const leaving = server.leaveChatRoom({ domain: DOMAIN })
+      await cleanupStarted.promise
+
+      // The timer expires inside the release window: zero target re-derivation, zero provider
+      // call, and the send stays unsettled (no synthetic failure/success).
+      waiting.resolve()
+      await settle()
+      expect(fake.sendAttempts).toHaveLength(baseline)
+      expect(sendSettled).toBe(false)
+
+      // The release cleanup then completes; the final physical leave quietly cancels the queued
+      // send, the leave settles exactly once, and still no provider attempt escapes.
+      releaseCleanup.resolve()
+      await leaving
+      await vi.waitFor(() => expect(fake.joined.has(roomId)).toBe(false))
+      await settle()
+      expect(fake.sendAttempts).toHaveLength(baseline)
+      expect(sendSettled).toBe(false)
+
+      // A fresh successor join on the same domain is unaffected by the stale continuation.
+      await server.attachPage({ domain: DOMAIN, pageId: 'page-b' })
+      await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
+      const snapshot = await server.getSnapshot()
+      expect(snapshot.domains[0]).toMatchObject({ domain: DOMAIN, phase: 'active' })
+      expect(snapshot.domains[0]?.pageIds).toContain('page-b')
+      expect(fake.sendAttempts).toHaveLength(baseline)
+      disposeServer(server)
+    }
+  )
 })
 
 describe('RuntimeServer World presence', () => {
