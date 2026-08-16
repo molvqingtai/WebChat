@@ -287,7 +287,7 @@ try {
           if (exited) throw new Error(`Chromium exited before CDP startup: ${stderr.join('')}`)
           return readDevToolsActivePort(activePortPath, (path) => readFile(path, 'utf8'))
         },
-        { timeoutMs: 10000, label: 'Chromium DevToolsActivePort' }
+        { timeoutMs: 10000, label: 'Chromium DevToolsActivePort', retryErrors: false }
       )
       const [port] = activePort.split('\n')
       const endpoint = `http://127.0.0.1:${port}`

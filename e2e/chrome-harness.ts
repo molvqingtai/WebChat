@@ -92,7 +92,12 @@ export const readDevToolsActivePort = async (
 
 export const waitFor = async <T>(
   check: () => T | null | undefined | false | Promise<T | null | undefined | false>,
-  { timeoutMs, label, intervalMs = 100 }: { timeoutMs: number; label: string; intervalMs?: number }
+  {
+    timeoutMs,
+    label,
+    intervalMs = 100,
+    retryErrors = true
+  }: { timeoutMs: number; label: string; intervalMs?: number; retryErrors?: boolean }
 ): Promise<T> => {
   const startedAt = Date.now()
   let lastError: unknown
@@ -101,6 +106,7 @@ export const waitFor = async <T>(
       const value = await check()
       if (value) return value
     } catch (error) {
+      if (!retryErrors) throw error
       lastError = error
     }
     await delay(intervalMs)

@@ -5,6 +5,7 @@ import {
   evaluateRuntimeMessage,
   readDevToolsActivePort,
   terminateOwnedProcesses,
+  waitFor,
   waitForUniqueTarget,
   withDeadline
 } from './chrome-harness.ts'
@@ -53,6 +54,34 @@ describe('Chrome Runtime harness', () => {
       readDevToolsActivePort('/profile/DevToolsActivePort', async () => Promise.reject(denied))
     ).rejects.toBe(denied)
     await expect(readDevToolsActivePort('/profile/DevToolsActivePort', async () => ' 9222\n')).resolves.toBe('9222')
+  })
+
+  it('propagates a DevToolsActivePort read failure through its production polling composition', async () => {
+    const denied = Object.assign(new Error('permission denied'), { code: 'EACCES' })
+
+    await expect(
+      waitFor(() => readDevToolsActivePort('/profile/DevToolsActivePort', async () => Promise.reject(denied)), {
+        timeoutMs: 10,
+        intervalMs: 1,
+        label: 'Chromium DevToolsActivePort',
+        retryErrors: false
+      })
+    ).rejects.toBe(denied)
+  })
+
+  it('retries DevToolsActivePort absence through its production polling composition', async () => {
+    const missing = Object.assign(new Error('missing'), { code: 'ENOENT' })
+    const read = vi.fn().mockRejectedValueOnce(missing).mockResolvedValue(' 9222\n')
+
+    await expect(
+      waitFor(() => readDevToolsActivePort('/profile/DevToolsActivePort', read), {
+        timeoutMs: 20,
+        intervalMs: 1,
+        label: 'Chromium DevToolsActivePort',
+        retryErrors: false
+      })
+    ).resolves.toBe('9222')
+    expect(read).toHaveBeenCalledTimes(2)
   })
 
   it('propagates sender-visible Runtime message rejection', async () => {
