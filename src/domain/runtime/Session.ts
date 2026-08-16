@@ -1129,7 +1129,15 @@ const SessionDomain = Remesh.domain({
           get(wireDomain.query.PeerIdQuery(runtime.roomId))
         )
         if (targetPeerIds.length === 0) {
-          return [HlcState().new(adopted), OperationSucceededEvent({ operationId: payload.operationId })]
+          // A Text message is accepted locally regardless of transport targets: the local
+          // acceptance/display settlement is independent of whether any peer receives it.
+          return [
+            HlcState().new(adopted),
+            ...(event.type === MESSAGE_TYPE.TEXT
+              ? [TextMessageAcceptedEvent({ operationId: payload.operationId, message: event })]
+              : []),
+            OperationSucceededEvent({ operationId: payload.operationId })
+          ]
         }
         const pending: PendingChatSend = {
           operationId: payload.operationId,

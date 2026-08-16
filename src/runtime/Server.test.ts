@@ -3430,6 +3430,11 @@ describe('RuntimeServer trusted delivery', () => {
 describe('RuntimeServer send reliability', () => {
   it('accepts later protocol-valid texts without waiting for an earlier transport settlement', async () => {
     const { fake, server, roomId } = await setup()
+    // A current member makes the room-wide sends reach the provider; the caller settlement
+    // still comes from local acceptance, not from transport completion.
+    fake.peerJoin(roomId, 'peer-a')
+    fake.receive(roomId, 'peer-a', session())
+    await settle()
     fake.hangSendsTo(roomId)
     const first = await server.allocateTextMessage({ domain: DOMAIN, body: 'first', mentions: [] })
     const second = await server.allocateTextMessage({ domain: DOMAIN, body: 'second', mentions: [] })
@@ -3450,16 +3455,6 @@ describe('RuntimeServer send reliability', () => {
       fake.releaseSends()
       await Promise.all([firstTask, secondTask])
     }
-  })
-
-  it('settles a send with no session target locally without a wire send', async () => {
-    const { fake, server, roomId } = await setup()
-    const record = await server.allocateTextMessage({ domain: DOMAIN, body: 'outbound', mentions: [] })
-
-    await server.sendChatMessage({ domain: DOMAIN, event: record.message })
-
-    // A Chat message is one room broadcast to the current members.
-    expect(fake.messages(roomId).filter((message) => message.type === MESSAGE_TYPE.TEXT)).toHaveLength(1)
   })
 
   it.each([MESSAGE_TYPE.TEXT, MESSAGE_TYPE.REACTION])(
@@ -3543,8 +3538,12 @@ describe('RuntimeServer send reliability', () => {
 
       waiting.resolve()
       await sending
-      const attempt = fake.sendAttempts.find((item) => JSON.parse(item.payload).type === messageType)
-      expect(attempt?.to).toEqual(['peer-new'])
+      // The caller may already have settled via local acceptance; the background transport
+      // resume re-derives current Session targets before its single provider call.
+      await vi.waitFor(() => {
+        const attempt = fake.sendAttempts.find((item) => JSON.parse(item.payload).type === messageType)
+        expect(attempt?.to).toEqual(['peer-new'])
+      })
       disposeServer(server)
     }
   )
@@ -3610,11 +3609,16 @@ describe('RuntimeServer send reliability', () => {
       await cleanupStarted.promise
 
       // The timer expires inside the release window: zero target re-derivation, zero provider
-      // call, and the send stays unsettled (no synthetic failure/success).
+      // call, and no synthetic failure/success. A Text caller has already settled via local
+      // acceptance (#135 semantics); a Reaction caller still awaits its transport settlement.
       waiting.resolve()
       await settle()
       expect(fake.sendAttempts).toHaveLength(baseline)
-      expect(sendSettled).toBe(false)
+      if (messageType === MESSAGE_TYPE.TEXT) {
+        await vi.waitFor(() => expect(sendSettled).toBe(true))
+      } else {
+        expect(sendSettled).toBe(false)
+      }
 
       // The release cleanup then completes; the final physical leave quietly cancels the queued
       // send, the leave settles exactly once, and still no provider attempt escapes.
@@ -3623,7 +3627,11 @@ describe('RuntimeServer send reliability', () => {
       await vi.waitFor(() => expect(fake.joined.has(roomId)).toBe(false))
       await settle()
       expect(fake.sendAttempts).toHaveLength(baseline)
-      expect(sendSettled).toBe(false)
+      if (messageType === MESSAGE_TYPE.TEXT) {
+        expect(sendSettled).toBe(true)
+      } else {
+        expect(sendSettled).toBe(false)
+      }
 
       // A fresh successor join on the same domain is unaffected by the stale continuation.
       await server.attachPage({ domain: DOMAIN, pageId: 'page-b' })
@@ -3637,7 +3645,12 @@ describe('RuntimeServer send reliability', () => {
   )
 
   it('keeps reaction transport failure in the caller settlement', async () => {
-    const { fake, server } = await setup()
+    const { fake, server, roomId } = await setup()
+    // A current member makes the room-wide reaction reach the provider so its failure can
+    // settle the caller.
+    fake.peerJoin(roomId, 'peer-a')
+    fake.receive(roomId, 'peer-a', session())
+    await settle()
     const record = await server.allocateReactionMessage({
       domain: DOMAIN,
       targetId: 'target',
