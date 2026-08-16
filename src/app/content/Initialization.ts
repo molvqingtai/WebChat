@@ -128,13 +128,18 @@ export const startInitializationLifecycle = ({
       .catch((error) => {
         if (!active || signal.aborted || generation !== attemptGeneration) return
         detachRuntime()
-        console.error('[WebChat] Initialization unavailable:', error)
-        // The stable id owns only the loading descriptor; every real failure gets its own fresh
-        // original-message toast. A runtime failure is surfaced once by the Runtime lease owner;
-        // a preparation failure is surfaced here with its original message.
-        store.send([appStatus.command.MarkUnavailableCommand(), toast.command.CancelCommand(INITIALIZATION_TOAST_ID)])
+        // A runtime failure is surfaced once by the Runtime lease owner. A preparation failure
+        // atomically replaces this attempt's loading Toast with the original provider message.
         if (!runtimeFailed.value) {
-          store.send(toast.command.ErrorCommand(error instanceof Error ? error.message : String(error)))
+          store.send([
+            appStatus.command.MarkUnavailableCommand(),
+            toast.command.ErrorCommand({
+              id: INITIALIZATION_TOAST_ID,
+              message: error instanceof Error ? error.message : String(error)
+            })
+          ])
+        } else {
+          store.send([appStatus.command.MarkUnavailableCommand(), toast.command.CancelCommand(INITIALIZATION_TOAST_ID)])
         }
       })
   }

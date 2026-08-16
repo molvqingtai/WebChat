@@ -271,6 +271,7 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
   const peersByRoom = new Map<string, Set<string>>()
   const failedJoins = new Set<string>()
   const failedNextSends = new Set<string>()
+  const failedLeaves = new Map<string, Error>()
   const messageListeners = new Set<(roomId: string, sourcePeerId: string, rawPayload: string) => void>()
   const joinListeners = new Set<(roomId: string, peerId: string) => void>()
   const leaveListeners = new Set<(roomId: string, peerId: string) => void>()
@@ -336,12 +337,17 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
       pendingJoins.set(roomId, pending)
       return pending.promise
     },
-    leave: (roomId) => {
+    leave: (roomId, options) => {
       operationLog.push(`leave:${roomId}`)
       desired.delete(roomId)
       joined.delete(roomId)
       pendingJoins.get(roomId)?.reject(new Error(`Room "${roomId}" join cancelled`))
       pendingJoins.delete(roomId)
+      const failure = failedLeaves.get(roomId)
+      if (!failure) return
+      failedLeaves.delete(roomId)
+      if (options?.diagnosticOnly) console.error(failure)
+      else errorListeners.forEach((listener) => listener(failure, roomId))
     },
     send: async (roomId, payload, to) => {
       // A broadcast records its actual recipients: the room's current members at send time.
@@ -450,6 +456,9 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
     },
     failNextJoin: (roomId: string) => {
       failedJoins.add(roomId)
+    },
+    failNextLeave: (roomId: string, error: Error) => {
+      failedLeaves.set(roomId, error)
     },
     failSend: (error: Error | null, roomId?: string) => {
       sendError = error
@@ -1344,15 +1353,44 @@ describe('RuntimeServer lifecycle', () => {
     await settle()
     const errors: RuntimeErrorEvent[] = []
     await server.onError({ pageId: 'page-a' }, (event) => errors.push(event))
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
 
-    // The World child's own recovery join rejects once: the Domain refresh still completes and no
-    // World failure reaches the page error stream that feeds UI/Toast; automatic recovery remains
-    // the owner of the follow-up.
+    // The World child's own recovery join rejects once: the Domain refresh still completes, no
+    // World failure reaches the page error stream that feeds UI/Toast, and the manual failure is
+    // retained as a direct console diagnostic (UI-silent, never evidence-silent).
     fake.failNextJoin(worldRoomId)
     await server.reconnectDomain({ domain: DOMAIN })
     await settle()
     expect((await server.getSnapshot()).domains[0].chatRoomJoined).toBe(true)
     expect(errors).toEqual([])
+    expect(diagnostic).toHaveBeenCalledWith(expect.objectContaining({ message: `Room "${worldRoomId}" join failed` }))
+    diagnostic.mockRestore()
+    disposeServer(server)
+  })
+
+  it('keeps manual World physical-leave failure console-only while Domain settles', async () => {
+    const clock = new FakeClock()
+    const fake = createFakeTransport()
+    const server = createServer({ transport: fake.transport, clock, codec: jsonCodec })
+    const worldRoomId = getWorldRoomId()
+    await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
+    await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
+    await settle()
+    const errors: RuntimeErrorEvent[] = []
+    await server.onError({ pageId: 'page-a' }, (event) => errors.push(event))
+    const failure = new Error('manual World leave failed')
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+    fake.failNextLeave(worldRoomId, failure)
+
+    await expect(server.reconnectDomain({ domain: DOMAIN })).resolves.toBeUndefined()
+    await settle()
+
+    expect((await server.getSnapshot()).domains[0]).toMatchObject({ chatRoomJoined: true })
+    expect((await server.getSnapshot()).world.joined).toBe(true)
+    expect(errors).toEqual([])
+    expect(diagnostic).toHaveBeenCalledOnce()
+    expect(diagnostic).toHaveBeenCalledWith(failure)
+    diagnostic.mockRestore()
     disposeServer(server)
   })
 
@@ -2000,11 +2038,14 @@ describe('RuntimeServer lifecycle', () => {
     const oldFake = createFakeTransport({ physicalReady: false })
     const oldServer = createServer({ transport: oldFake.transport, clock: oldClock, codec: jsonCodec })
     await oldServer.attachPage({ domain: DOMAIN, pageId: 'page-a' })
-    void oldServer.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE }).catch(() => {})
+    const pendingJoin = oldServer.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
     await oldFake.waitForDesiredRooms(2)
 
     disposeServer(oldServer)
     oldFake.open()
+    await expect(pendingJoin).rejects.toEqual(
+      new DOMException('Runtime presence is completing its final release', 'AbortError')
+    )
     expect(oldFake.desired).toEqual(new Set())
     expect(oldFake.physicalJoinCalls).toEqual([])
     expect(oldFake.sendAttempts).toEqual([])

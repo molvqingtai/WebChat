@@ -1,10 +1,12 @@
 import type {
   HostPhase,
+  RuntimeErrorEvent,
   RuntimeHostStatus,
   RuntimePageRegistration,
   RuntimeSnapshot,
   RuntimeTab
 } from '@/runtime/Contract'
+import { nanoid } from 'nanoid'
 import { canonicalNavigationUrl, isEligibleContentUrl, isSameNavigation } from '@/service/adapter/runtime/Navigation'
 
 export const COORDINATOR_HEALTH_INTERVAL_MS = 5000
@@ -71,6 +73,8 @@ export class Coordinator {
   private readonly epochs = new Map<number, number>()
   private readonly pending = new Map<number, PendingRegistration>()
   private readonly releases = new Map<number, PendingRelease>()
+  private readonly pendingPageErrors = new Map<string, RuntimeErrorEvent[]>()
+  private readonly confirmedRemovedTabs = new Set<number>()
   private creating: Promise<RuntimeHostStatus> | null = null
   private restoration: Promise<void> | null = null
   private persistTail: Promise<void> = Promise.resolve()
@@ -91,15 +95,16 @@ export class Coordinator {
       ...(this.hostId ? { hostId: this.hostId } : {}),
       tabs: this.currentTabs()
     }
-    this.persistTail = this.persistTail
-      .catch(() => {})
-      .then(() => this.options.storage.set({ [COORDINATOR_SESSION_KEY]: state }))
+    const persistAfterTail = () => this.options.storage.set({ [COORDINATOR_SESSION_KEY]: state })
+    this.persistTail = this.persistTail.then(persistAfterTail, persistAfterTail)
     await this.persistTail
   }
 
   private maintainHost() {
     if (this.healthTimer || this.tabs.size === 0) return
-    this.healthTimer = globalThis.setInterval(() => void this.reconcile(), COORDINATOR_HEALTH_INTERVAL_MS)
+    this.healthTimer = globalThis.setInterval(() => {
+      void this.reconcile().catch((error) => this.routeReconcileFailure(error))
+    }, COORDINATOR_HEALTH_INTERVAL_MS)
   }
 
   private stopMaintainingHost() {
@@ -150,18 +155,44 @@ export class Coordinator {
   }
 
   private async currentNavigation(binding: PhysicalTab) {
-    try {
-      const tab = await this.options.tabs.get(binding.tabId)
-      const url = typeof tab.url === 'string' ? canonicalNavigationUrl(tab.url) : null
-      return url && isEligibleContentUrl(url) && new URL(url).origin === binding.domain ? url : null
-    } catch {
-      return null
-    }
+    if (this.confirmedRemovedTabs.has(binding.tabId)) return null
+    const tab = await this.options.tabs.get(binding.tabId)
+    const url = typeof tab.url === 'string' ? canonicalNavigationUrl(tab.url) : null
+    return url && isEligibleContentUrl(url) && new URL(url).origin === binding.domain ? url : null
   }
 
   private async isCurrentTab(binding: PhysicalTab) {
     const url = await this.currentNavigation(binding)
     return url !== null && isSameNavigation(url, binding.url)
+  }
+
+  private queuePageFailure(binding: PhysicalTab, error: unknown) {
+    const failure = error instanceof Error ? error : new Error(String(error))
+    const pending = this.pendingPageErrors.get(binding.pageId) ?? []
+    pending.push({
+      eventId: nanoid(),
+      message: failure.message,
+      subsystem: 'connection',
+      operation: 'lifecycle',
+      scope: binding.domain
+    })
+    this.pendingPageErrors.set(binding.pageId, pending)
+  }
+
+  private async routeReconcileFailure(error: unknown) {
+    let routed = false
+    await Promise.all(
+      this.currentTabs().map(async (binding) => {
+        try {
+          if (this.tabs.get(binding.tabId) !== binding || !(await this.isCurrentTab(binding))) return
+          this.queuePageFailure(binding, error)
+          routed = true
+        } catch (ownershipError) {
+          console.error(ownershipError)
+        }
+      })
+    )
+    if (!routed) console.error(error)
   }
 
   private async reconcileTabs() {
@@ -171,15 +202,38 @@ export class Coordinator {
           const url = await this.currentNavigation(binding)
           if (!url) {
             await this.removeCurrentTab(binding.tabId)
+            this.confirmedRemovedTabs.delete(binding.tabId)
             return
           }
           if (url === binding.url) return
           const current = this.tabs.get(binding.tabId)
           if (current?.pageId !== binding.pageId) return
-          this.tabs.set(binding.tabId, { ...current, url })
-          await this.persist()
-        } catch {
-          // best-effort reconciliation: a failed tab must not block the remaining tabs
+          const updated = { ...current, url }
+          this.tabs.set(binding.tabId, updated)
+          try {
+            await this.persist()
+          } catch (error) {
+            if (this.tabs.get(binding.tabId) !== updated) {
+              console.error(error)
+              return
+            }
+            this.tabs.set(binding.tabId, current)
+            try {
+              if ((await this.currentNavigation(current)) !== url) {
+                console.error(error)
+                return
+              }
+            } catch (ownershipError) {
+              console.error(error)
+              console.error(ownershipError)
+              return
+            }
+            this.queuePageFailure(current, error)
+          }
+        } catch (error) {
+          // Reconciliation is attempt-all: retain this tab's original failure while independent
+          // tabs continue. Only an actual navigation result, never a lookup failure, removes it.
+          console.error(error)
         }
       })
     )
@@ -193,8 +247,20 @@ export class Coordinator {
           this.options.attachPage({ domain: binding.domain, pageId: binding.pageId }),
           COORDINATOR_RPC_TIMEOUT_MS,
           'Runtime page attachment timed out'
-        ).catch(() => {
-          // best-effort attachment: a failed tab must not block the remaining tabs
+        ).catch(async (error: unknown) => {
+          const failure = error instanceof Error ? error : new Error(String(error))
+          try {
+            const current = this.tabs.get(binding.tabId)
+            if (current?.pageId !== binding.pageId || !(await this.isCurrentTab(binding))) {
+              console.error(failure)
+              return
+            }
+          } catch (ownershipError) {
+            console.error(failure)
+            console.error(ownershipError)
+            return
+          }
+          this.queuePageFailure(binding, failure)
         })
       )
     )
@@ -205,8 +271,9 @@ export class Coordinator {
       this.hostPhase = 'connecting'
       this.creating = this.establishHost()
         .catch((error) => {
-          console.error('[WebChat] Runtime host creation failed:', error)
-          return { phase: 'unavailable', created: false } as HostEnsureResult
+          this.hostPhase = 'unavailable'
+          this.hostId = null
+          throw error
         })
         .then(async (result) => {
           if (result.phase === 'ready') {
@@ -275,9 +342,21 @@ export class Coordinator {
       void attachment.then(
         async () => {
           const current = this.tabs.get(binding.tabId)
-          if (current?.pageId !== binding.pageId) await this.options.detachPage(lease)
+          if (current?.pageId !== binding.pageId) {
+            try {
+              await this.options.detachPage(lease)
+            } catch (cleanupError) {
+              // The caller already owns the deadline Error. A late attachment cleanup failure is
+              // distinct, has no page route, and remains directly diagnostic.
+              console.error(cleanupError)
+            }
+          }
         },
-        () => {}
+        (lateError) => {
+          // The caller already owns an identical provider rejection. A distinct rejection after
+          // the deadline has no page route and remains directly diagnostic.
+          if (lateError !== error) console.error(lateError)
+        }
       )
       throw error
     }
@@ -295,6 +374,7 @@ export class Coordinator {
         await Promise.allSettled([this.options.detachPage(lease)])
         throw error
       }
+      this.pendingPageErrors.delete(previous.pageId)
       if (this.epochs.get(binding.tabId) !== epoch || !(await this.isCurrentTab(binding))) {
         await this.options.detachPage(lease)
         throw new Error('Browser tab registration was superseded')
@@ -303,22 +383,24 @@ export class Coordinator {
     this.tabs.set(binding.tabId, binding)
     await this.persist()
     this.maintainHost()
-    return { ...status, snapshot }
+    const failures = this.pendingPageErrors.get(binding.pageId)
+    if (failures) this.pendingPageErrors.delete(binding.pageId)
+    return { ...status, snapshot, ...(failures ? { failures } : {}) }
   }
 
   async registerPage(payload: { domain: string; pageId: string; tab?: RuntimeTab }): Promise<RuntimePageRegistration> {
     await this.restore()
     const binding = await this.validateRegistration(payload)
+    this.confirmedRemovedTabs.delete(binding.tabId)
     const current = this.pending.get(binding.tabId)
     if (current?.pageId === binding.pageId) return current.task
     const epoch = this.nextEpoch(binding.tabId)
     const task = this.attachRegistration(binding, epoch)
     this.pending.set(binding.tabId, { pageId: binding.pageId, epoch, task })
-    void task
-      .finally(() => {
-        if (this.pending.get(binding.tabId)?.epoch === epoch) this.pending.delete(binding.tabId)
-      })
-      .catch(() => {})
+    const releasePending = () => {
+      if (this.pending.get(binding.tabId)?.epoch === epoch) this.pending.delete(binding.tabId)
+    }
+    void task.then(releasePending, releasePending)
     return task
   }
 
@@ -328,11 +410,10 @@ export class Coordinator {
 
     const task = this.options.detachPage({ domain: binding.domain, pageId: binding.pageId })
     this.releases.set(binding.tabId, { domain: binding.domain, pageId: binding.pageId, task })
-    void task
-      .finally(() => {
-        if (this.releases.get(binding.tabId)?.task === task) this.releases.delete(binding.tabId)
-      })
-      .catch(() => {})
+    const releaseOwnership = () => {
+      if (this.releases.get(binding.tabId)?.task === task) this.releases.delete(binding.tabId)
+    }
+    void task.then(releaseOwnership, releaseOwnership)
     return task
   }
 
@@ -345,22 +426,31 @@ export class Coordinator {
     this.pending.delete(tabId)
     if (!binding) return
     await this.releaseBinding(binding)
+    this.pendingPageErrors.delete(binding.pageId)
     const current = this.tabs.get(tabId)
     if (this.epochs.get(tabId) !== epoch || current?.domain !== binding.domain || current.pageId !== binding.pageId) {
       return
     }
     this.tabs.delete(tabId)
-    await this.persist()
+    try {
+      await this.persist()
+    } catch (error) {
+      if (!this.tabs.has(tabId)) this.tabs.set(tabId, binding)
+      throw error
+    }
     this.stopMaintainingHost()
   }
 
   async removeTab(tabId: number): Promise<void> {
     await this.restore()
+    this.confirmedRemovedTabs.add(tabId)
     await this.removeCurrentTab(tabId)
+    this.confirmedRemovedTabs.delete(tabId)
   }
 
   async updateTab(tabId: number, url: string): Promise<void> {
     await this.restore()
+    this.confirmedRemovedTabs.delete(tabId)
     const binding = this.tabs.get(tabId)
     if (!binding) return
     const canonicalUrl = canonicalNavigationUrl(url)
@@ -369,8 +459,14 @@ export class Coordinator {
       return
     }
     if (binding.url === canonicalUrl) return
-    this.tabs.set(tabId, { ...binding, url: canonicalUrl })
-    await this.persist()
+    const updated = { ...binding, url: canonicalUrl }
+    this.tabs.set(tabId, updated)
+    try {
+      await this.persist()
+    } catch (error) {
+      if (this.tabs.get(tabId) === updated) this.tabs.set(tabId, binding)
+      throw error
+    }
   }
 
   watchHost() {

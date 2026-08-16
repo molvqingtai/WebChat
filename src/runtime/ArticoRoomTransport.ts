@@ -92,7 +92,11 @@ export const createArticoRoomTransport = (): RoomTransport => {
     owner.room = undefined
     try {
       stale?.close()
-    } catch {}
+    } catch (error) {
+      // A retired owner is already non-current: its close failure has no current user impact, but
+      // it must not disappear.
+      console.error(error)
+    }
   }
 
   const startPeer = (owner: PeerOwner) => {
@@ -148,7 +152,7 @@ export const createArticoRoomTransport = (): RoomTransport => {
     return owner
   }
 
-  const dropOwner = (owner: PeerOwner) => {
+  const dropOwner = (owner: PeerOwner, diagnosticOnly = false) => {
     if (owner.disposed) return
     owner.disposed = true
     owners.delete(owner.roomId)
@@ -164,12 +168,17 @@ export const createArticoRoomTransport = (): RoomTransport => {
       try {
         room.leave()
       } catch (error) {
-        errorListeners.forEach((listener) => listener(error as Error, owner.roomId))
+        if (diagnosticOnly) console.error(error)
+        else errorListeners.forEach((listener) => listener(error as Error, owner.roomId))
       }
     }
     try {
       owner.peer.close()
-    } catch {}
+    } catch (error) {
+      // A disposed owner is already non-current: its close failure has no current user impact,
+      // but it must not disappear.
+      console.error(error)
+    }
   }
 
   return {
@@ -183,10 +192,10 @@ export const createArticoRoomTransport = (): RoomTransport => {
       joinNow(owner)
       return pending.promise
     },
-    leave: (roomId) => {
+    leave: (roomId, options) => {
       const owner = owners.get(roomId)
       if (!owner) return
-      dropOwner(owner)
+      dropOwner(owner, options?.diagnosticOnly)
     },
     send: async (roomId, payload, to) => {
       const owner = owners.get(roomId)
@@ -215,7 +224,7 @@ export const createArticoRoomTransport = (): RoomTransport => {
       return () => errorListeners.delete(callback)
     },
     dispose: () => {
-      Array.from(owners.values()).forEach(dropOwner)
+      Array.from(owners.values()).forEach((owner) => dropOwner(owner))
       messageListeners.clear()
       joinListeners.clear()
       leaveListeners.clear()

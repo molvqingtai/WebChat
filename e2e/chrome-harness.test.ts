@@ -1,8 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   CdpClient,
+  createChromeTeardown,
+  createProfileRemovalVerificationAttempt,
   evaluateRuntimeMessage,
+  readDevToolsActivePort,
   terminateOwnedProcesses,
+  waitFor,
   waitForUniqueTarget,
   withDeadline
 } from './chrome-harness.ts'
@@ -40,6 +44,108 @@ class FakeWebSocket {
 }
 
 describe('Chrome Runtime harness', () => {
+  it('treats only a missing DevToolsActivePort file as startup absence', async () => {
+    const missing = Object.assign(new Error('missing'), { code: 'ENOENT' })
+    const denied = Object.assign(new Error('permission denied'), { code: 'EACCES' })
+
+    await expect(
+      readDevToolsActivePort('/profile/DevToolsActivePort', async () => Promise.reject(missing))
+    ).resolves.toBe(null)
+    await expect(
+      readDevToolsActivePort('/profile/DevToolsActivePort', async () => Promise.reject(denied))
+    ).rejects.toBe(denied)
+    await expect(readDevToolsActivePort('/profile/DevToolsActivePort', async () => ' 9222\n')).resolves.toBe('9222')
+  })
+
+  it('propagates a DevToolsActivePort read failure through its production polling composition', async () => {
+    const denied = Object.assign(new Error('permission denied'), { code: 'EACCES' })
+
+    await expect(
+      waitFor(() => readDevToolsActivePort('/profile/DevToolsActivePort', async () => Promise.reject(denied)), {
+        timeoutMs: 10,
+        intervalMs: 1,
+        label: 'Chromium DevToolsActivePort',
+        retryErrors: false
+      })
+    ).rejects.toBe(denied)
+  })
+
+  it('retries DevToolsActivePort absence through its production polling composition', async () => {
+    const missing = Object.assign(new Error('missing'), { code: 'ENOENT' })
+    const read = vi.fn().mockRejectedValueOnce(missing).mockResolvedValue(' 9222\n')
+
+    await expect(
+      waitFor(() => readDevToolsActivePort('/profile/DevToolsActivePort', read), {
+        timeoutMs: 20,
+        intervalMs: 1,
+        label: 'Chromium DevToolsActivePort',
+        retryErrors: false
+      })
+    ).resolves.toBe('9222')
+    expect(read).toHaveBeenCalledTimes(2)
+  })
+
+  it('preserves a profile verification I/O failure through the live teardown composition', async () => {
+    const denied = Object.assign(new Error('permission denied'), { code: 'EACCES' })
+    const errors: Parameters<typeof createChromeTeardown>[0]['errors'] = []
+    let profileRemoved = false
+    const teardown = createChromeTeardown({
+      errors,
+      cleanupTimeoutMs: 1000,
+      hasCdp: () => false,
+      closeCdp: () => {},
+      closeBrowser: async () => {},
+      waitForBrowserExit: async () => {},
+      remainingAttempts: () => [
+        createProfileRemovalVerificationAttempt(
+          '/profile',
+          async () => Promise.reject(denied),
+          (removed) => {
+            profileRemoved = removed
+          }
+        )
+      ],
+      cleanupComplete: () => profileRemoved
+    })
+
+    const result = await teardown.finish(undefined)
+
+    expect(profileRemoved).toBe(false)
+    expect(errors.map(({ resource, phase, message }) => ({ resource, phase, message }))).toEqual([
+      { resource: 'profile', phase: 'verify-removed', message: denied.message }
+    ])
+    expect(result.cleanupError).toEqual(new Error('Owned Chromium cleanup failed'))
+    expect(result.terminalError).toBe(result.cleanupError)
+
+    const missing = Object.assign(new Error('missing'), { code: 'ENOENT' })
+    const absenceErrors: Parameters<typeof createChromeTeardown>[0]['errors'] = []
+    const absenceTeardown = createChromeTeardown({
+      errors: absenceErrors,
+      cleanupTimeoutMs: 1000,
+      hasCdp: () => false,
+      closeCdp: () => {},
+      closeBrowser: async () => {},
+      waitForBrowserExit: async () => {},
+      remainingAttempts: () => [
+        createProfileRemovalVerificationAttempt(
+          '/profile',
+          async () => Promise.reject(missing),
+          (removed) => {
+            profileRemoved = removed
+          }
+        )
+      ],
+      cleanupComplete: () => profileRemoved
+    })
+
+    const absenceResult = await absenceTeardown.finish(undefined)
+
+    expect(profileRemoved).toBe(true)
+    expect(absenceErrors).toEqual([])
+    expect(absenceResult.cleanupError).toBeUndefined()
+    expect(absenceResult.terminalError).toBeUndefined()
+  })
+
   it('propagates sender-visible Runtime message rejection', async () => {
     const evaluate = vi.fn<(expression: string) => Promise<boolean>>().mockRejectedValue(new Error('raw rejected'))
 
@@ -67,6 +173,88 @@ describe('Chrome Runtime harness', () => {
       'Timed out waiting for Chrome Runtime suite after 10ms'
     )
     expect(onTimeout).toHaveBeenCalledOnce()
+  })
+
+  it('runs the live close composition in order and keeps the run failure primary', async () => {
+    const timeoutFailure = new Error('timeout close failed')
+    const browserFailure = new Error('Browser.close rejected')
+    const finalFailure = new Error('final CDP close failed')
+    const primary = new Error('product assertion failed')
+    const order: string[] = []
+    const errors: Parameters<typeof createChromeTeardown>[0]['errors'] = []
+    const teardown = createChromeTeardown({
+      errors,
+      cleanupTimeoutMs: 1000,
+      hasCdp: () => true,
+      closeCdp: () => {
+        const phase = order.length === 0 ? 'timeout-close' : 'final-close'
+        order.push(phase)
+        throw phase === 'timeout-close' ? timeoutFailure : finalFailure
+      },
+      closeBrowser: async () => {
+        order.push('browser-close')
+        throw browserFailure
+      },
+      waitForBrowserExit: async () => {
+        order.push('graceful-exit')
+      },
+      remainingAttempts: () => [
+        {
+          resource: 'chromium-processes',
+          phase: 'terminate-owned',
+          run: () => {
+            order.push('terminate-owned')
+          }
+        },
+        {
+          resource: 'profile',
+          phase: 'remove',
+          run: () => {
+            order.push('remove')
+          }
+        },
+        {
+          resource: 'profile',
+          phase: 'verify-removed',
+          run: () => {
+            order.push('verify-removed')
+          }
+        }
+      ],
+      cleanupComplete: () => {
+        order.push('cleanup-gate')
+        return false
+      }
+    })
+
+    teardown.timeoutClose()
+    const result = await teardown.finish(primary)
+
+    expect(order).toEqual([
+      'timeout-close',
+      'browser-close',
+      'final-close',
+      'graceful-exit',
+      'terminate-owned',
+      'remove',
+      'verify-removed',
+      'cleanup-gate'
+    ])
+    expect(
+      errors.map(({ resource, phase, message, deadlineAt }) => ({
+        resource,
+        phase,
+        message,
+        deadlineAt
+      }))
+    ).toEqual([
+      { resource: 'cdp', phase: 'timeout-close', message: timeoutFailure.message, deadlineAt: expect.any(Number) },
+      { resource: 'browser', phase: 'browser-close', message: browserFailure.message, deadlineAt: expect.any(Number) },
+      { resource: 'cdp', phase: 'final-close', message: finalFailure.message, deadlineAt: expect.any(Number) }
+    ])
+    expect(new Set(errors.map(({ deadlineAt }) => deadlineAt)).size).toBe(1)
+    expect(result.cleanupError).toEqual(new Error('Owned Chromium cleanup failed'))
+    expect(result.terminalError).toBe(primary)
   })
 
   it('waits while a target is absent and accepts the first unique target', async () => {

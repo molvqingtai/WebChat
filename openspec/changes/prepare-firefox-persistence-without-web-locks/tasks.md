@@ -1,4 +1,4 @@
-> **Acceptance status (2026-08-01):** The Owner explicitly accepted PR #91 at immutable source exact `5d6aff72c96b11a23272956aee9755db108edc26` through the unified PR #91-#94 acceptance branch. Fresh architecture-first Review task #515 passed with P0/P1/P2 `0/0/0`, and exact CI passed 4/4. Real Firefox production initialization and concurrent-tab behavior passed; the five-second blocked terminal is covered deterministically and remains real-browser `UNVERIFIED`, not PASS. Owner acceptance is conditional Ready/merge authorization after this PM-owned documentation child and final identity/CI gates.
+> **Acceptance status (2026-08-01):** The Owner explicitly accepted PR #91 at immutable source exact `5d6aff72c96b11a23272956aee9755db108edc26` through the unified PR #91-#94 acceptance branch. Fresh architecture-first Review task #515 passed with P0/P1/P2 `0/0/0`, and exact CI passed 4/4. Real Firefox production initialization and concurrent-tab behavior passed; the five-second blocked terminal is covered deterministically and remains real-browser `UNVERIFIED`, not PASS. Owner acceptance is conditional Ready/merge authorization after this PM-owned documentation child and final identity/CI gates. The 2026-08-16 caught-error observability synchronization reopens only the blocked-failure routing regression row below; browser coordination, deadline, Retry, and historical evidence remain unchanged.
 
 ## 1. Product Authority
 
@@ -10,7 +10,7 @@
 
 - [x] 2.1 Inject one preparation coordinator into origin-local configuration and canonical message-database preparation.
 - [x] 2.2 Keep Firefox free of Web Locks execution while Chrome owns Web Locks arbitration.
-- [x] 2.3 Cover direct/Web Locks selection, concurrent convergence, abort generations, blocked deadline settlement, and Retry through final-result tests.
+- [x] 2.3 Cover direct/Web Locks selection, concurrent convergence, abort generations, blocked deadline settlement, and Retry through final-result tests; prove a genuine current-page failure directly replaces same-ID loading with the original `error.message` and no preceding cancel or decorated/replacement copy, while no-page/no-impact failure uses direct `console.error(error)`.
 
 ## 3. Delivery Gates
 

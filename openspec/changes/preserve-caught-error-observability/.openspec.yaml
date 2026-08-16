@@ -1,0 +1,5 @@
+schema: spec-driven
+created: 2026-08-16
+goal: Preserve every genuine caught failure through one scoped diagnostic or
+  current UI route while keeping only proven non-errors silent and making tests
+  and E2E cleanup evidence explicit.

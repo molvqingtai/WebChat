@@ -114,11 +114,17 @@ export const registerPage = (lease: Parameters<typeof coordinator.registerPage>[
 export const restore = () => coordinator.restore()
 
 export const watchTabs = () => {
-  browser.tabs.onRemoved.addListener((tabId) => void coordinator.removeTab(tabId))
-  browser.tabs.onUpdated.addListener((tabId, changeInfo) => {
-    if (typeof changeInfo.url === 'string') void coordinator.updateTab(tabId, changeInfo.url)
+  browser.tabs.onRemoved.addListener((tabId) => {
+    void coordinator.removeTab(tabId).catch((error) => console.error(error))
   })
-  browser.tabs.onActivated.addListener(() => void coordinator.reconcile())
+  browser.tabs.onUpdated.addListener((tabId, changeInfo) => {
+    if (typeof changeInfo.url === 'string') {
+      void coordinator.updateTab(tabId, changeInfo.url).catch((error) => console.error(error))
+    }
+  })
+  browser.tabs.onActivated.addListener(() => {
+    void coordinator.reconcile().catch((error) => console.error(error))
+  })
 }
 
 /** MV3 service-worker suspension does not imply that the Offscreen document died. */

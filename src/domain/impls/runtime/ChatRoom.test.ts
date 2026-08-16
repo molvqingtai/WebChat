@@ -343,6 +343,45 @@ describe('Runtime-backed ChatRoom application port', () => {
     expect(errors).toEqual([new Error('Runtime transport disconnected'), new Error('Runtime transport disconnected')])
   })
 
+  it('isolates a throwing error listener from shared attachment settlement', async () => {
+    const fixture = serverFixture()
+    const attachmentFailure = new Error('Runtime callback registration failed')
+    vi.spyOn(fixture.server, 'onInbound').mockRejectedValueOnce(attachmentFailure)
+    const database = createMemoryMessageDatabase(`throwing-error-listener-${databaseId++}`)
+    const messageStore = createMessageStore(database)
+    let ready = () => {}
+    const room = new ChatRoom({
+      server: fixture.server,
+      messageStore,
+      pageDomain: DOMAIN,
+      pageId: 'page-1',
+      getSnapshot: () => domainSnapshot(),
+      whenReady: (listener) => {
+        ready = listener
+        return () => {}
+      }
+    })
+    const deliveryFailure = new Error('ChatRoom error listener failed')
+    const listener = vi.fn(() => {
+      throw deliveryFailure
+    })
+    room.onError(listener)
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    ready()
+    await vi.waitFor(() => expect(diagnostic).toHaveBeenCalledWith(deliveryFailure))
+
+    expect(listener).toHaveBeenCalledOnce()
+    expect(listener).toHaveBeenCalledWith(attachmentFailure)
+    expect(diagnostic).toHaveBeenCalledOnce()
+    await expect(room.joinRoom({ user: USER, site: SITE })).resolves.toBeUndefined()
+    expect(diagnostic).toHaveBeenCalledOnce()
+
+    diagnostic.mockRestore()
+    room.dispose()
+    await database.close()
+  })
+
   it('publishes initialization as one session snapshot without a synthetic join fact', async () => {
     const { room } = await setup()
     const snapshots: Array<readonly ChatSession[]> = []
@@ -1065,14 +1104,20 @@ describe('Runtime-backed ChatRoom application port', () => {
     // First join holds its provider call; a second join supersedes it by beginConnectionAttempt, which
     // must report the predecessor token cancelled BEFORE aborting it (first-terminal-wins).
     const first = room.joinRoom({ user: USER, site: SITE })
-    first.catch(() => {})
     await settle()
     const second = room.joinRoom({ user: USER, site: SITE })
-    second.catch(() => {})
+    await settle()
+
+    // Both task rejections keep their exact expected identity instead of a silent sink: the first
+    // rejects on supersession and the second on disposal-time page detachment.
+    const firstRejection = expect(first).rejects.toThrow('Page connection attempt superseded')
+    const secondRejection = expect(second).rejects.toThrow('Runtime page detached')
     await settle()
 
     expect(lifecycle.value.getTaskResult(first)).toBe('cancelled')
     room.dispose()
+    await firstRejection
+    await secondRejection
     await database.close()
   })
 })

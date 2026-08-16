@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { HistorySupplyEvent } from '@/runtime/Contract'
 import { PagePort } from '@/runtime/PagePort'
 
@@ -45,12 +45,17 @@ describe('PagePort session-event lifecycle', () => {
 
   it('reports and removes a session-event callback that rejects', async () => {
     const port = new PagePort()
+    const failure = new Error('page closed')
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
     port.onSessionEvent('page-a', async () => {
-      throw new Error('page closed')
+      throw failure
     })
 
     expect(await port.emitSessionEvent(['page-a'], event)).toEqual(['page-a'])
     expect(await port.emitSessionEvent(['page-a'], event)).toEqual([])
+    expect(diagnostic).toHaveBeenCalledOnce()
+    expect(diagnostic).toHaveBeenCalledWith(failure)
+    diagnostic.mockRestore()
   })
 })
 
@@ -74,6 +79,33 @@ describe('PagePort Runtime error delivery', () => {
       { eventId: 'event-1', message: 'Runtime transport disconnected', subsystem: 'connection', operation: 'lifecycle' }
     ])
   })
+
+  it.each(['synchronous', 'asynchronous'] as const)(
+    'keeps a %s error-delivery callback failure as one direct diagnostic',
+    async (mode) => {
+      const port = new PagePort()
+      const failure = new Error(`${mode} page error delivery failed`)
+      const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+      port.onError('page-a', () => {
+        if (mode === 'synchronous') throw failure
+        return Promise.reject(failure)
+      })
+
+      await expect(
+        port.emitError(['page-a'], {
+          eventId: 'event-failed',
+          message: 'original Runtime failure',
+          subsystem: 'connection',
+          operation: 'lifecycle'
+        })
+      ).resolves.toEqual(['page-a'])
+
+      expect(diagnostic).toHaveBeenCalledOnce()
+      expect(diagnostic).toHaveBeenCalledWith(failure)
+      expect(await port.emitError(['page-a'], {} as never)).toEqual([])
+      diagnostic.mockRestore()
+    }
+  )
 })
 
 describe('PagePort history request/response', () => {
@@ -132,6 +164,57 @@ describe('PagePort history request/response', () => {
     await expect(pending).resolves.toBeNull()
     expect(port.pendingHistoryCountForTest()).toBe(0)
     expect(oldEvents.at(-1)).toEqual({ type: 'cancel', supplyId: request.supplyId })
+  })
+
+  it('logs a detached page cancellation callback failure and still settles the pending supply', async () => {
+    const port = new PagePort()
+    const failure = new Error('detached page cancel exploded')
+    port.provideHistory('page-a', request.domain, (event) => {
+      if (event.type === 'cancel') throw failure
+    })
+    const pending = port.supplyHistory('page-a', request)
+    const outcome = pending.then(
+      () => ({ status: 'resolved' as const }),
+      (error: unknown) => ({ status: 'rejected' as const, error })
+    )
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    port.removePage('page-a')
+
+    // The detached page's callback failure is a direct diagnostic at its exact owner, never
+    // swallowed and never rerouted, while the pending supply still settles by its own contract.
+    expect(diagnostic).toHaveBeenCalledWith(failure)
+    await expect(outcome).resolves.toEqual({
+      status: 'rejected',
+      error: new Error('History supplier page detached')
+    })
+    expect(port.pendingHistoryCountForTest()).toBe(0)
+    diagnostic.mockRestore()
+  })
+
+  it('logs an active cancellation callback failure and settles the pending supply', async () => {
+    const port = new PagePort()
+    const failure = new Error('active page cancel exploded')
+    port.provideHistory('page-a', request.domain, (event) => {
+      if (event.type === 'cancel') throw failure
+    })
+    const pending = port.supplyHistory('page-a', request)
+    const outcome = pending.then(
+      () => ({ status: 'resolved' as const }),
+      (error: unknown) => ({ status: 'rejected' as const, error })
+    )
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    await expect(port.cancelHistorySupply(request.supplyId)).resolves.toBeUndefined()
+
+    expect(diagnostic).toHaveBeenCalledOnce()
+    expect(diagnostic).toHaveBeenCalledWith(failure)
+    await expect(outcome).resolves.toEqual({
+      status: 'rejected',
+      error: new Error('History supplier page detached')
+    })
+    expect(port.pendingHistoryCountForTest()).toBe(0)
+    diagnostic.mockRestore()
   })
 
   it('releases a failed or host-disposed pending correlation', async () => {

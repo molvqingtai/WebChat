@@ -9,7 +9,6 @@ export interface ClientLeaseOptions {
   startupTimeoutMs?: number
   startupRetryIntervalMs?: number
   watchdogIntervalMs?: number
-  logError?: (error: unknown) => void
 }
 
 const wait = (milliseconds: number, signal: AbortSignal) =>
@@ -65,13 +64,11 @@ export class ClientLease {
   private readonly startupTimeoutMs
   private readonly startupRetryIntervalMs
   private readonly watchdogIntervalMs
-  private readonly logError
 
   constructor(private readonly options: ClientLeaseOptions) {
     this.startupTimeoutMs = options.startupTimeoutMs ?? 15000
     this.startupRetryIntervalMs = options.startupRetryIntervalMs ?? 1000
     this.watchdogIntervalMs = options.watchdogIntervalMs ?? 5000
-    this.logError = options.logError ?? ((error) => console.error('[WebChat] Runtime recovery failed:', error))
   }
 
   whenReady(callback: () => void) {
@@ -109,8 +106,17 @@ export class ClientLease {
 
   private emitFailure(error: unknown) {
     const failure = error instanceof Error ? error : new Error(String(error))
-    this.logError(failure)
-    this.failureCallbacks.forEach((callback) => callback(failure))
+    this.failureCallbacks.forEach((callback) => {
+      try {
+        callback(failure)
+      } catch (listenerError) {
+        console.error(listenerError)
+      }
+    })
+  }
+
+  private emitRegistrationFailures(registration: RuntimePageRegistration) {
+    registration.failures?.forEach((failure) => this.emitFailure(new Error(failure.message)))
   }
 
   /** Callback delivery rejections are diagnostic only; error content never controls the lease lifecycle. */
@@ -151,6 +157,7 @@ export class ClientLease {
     this.ready = true
     this.setHostPhase(registration.snapshot.hostPhase)
     this.readyCallbacks.forEach((callback) => callback())
+    this.emitRegistrationFailures(registration)
     return registration.snapshot
   }
 
@@ -186,8 +193,10 @@ export class ClientLease {
         attemptDeadline - Date.now(),
         lifecycle.signal
       )
+      if (!this.isCurrent(lifecycle)) return
+      this.emitRegistrationFailures(registration)
       if (Date.now() >= attemptDeadline) throw new Error('Runtime control-plane request timed out')
-      if (!this.isCurrent(lifecycle) || this.checking !== check || Date.now() >= check.deadline) return
+      if (this.checking !== check || Date.now() >= check.deadline) return
       const lease = registration.snapshot.domains.find((item) => item.domain === this.options.domain)
       const replaced =
         registration.generation !== this.coordinatorGeneration ||

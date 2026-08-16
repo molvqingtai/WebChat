@@ -209,6 +209,59 @@ const injectorRegistries = (adapter: PresenceStoreInjectPortAdapter) =>
   }
 
 describe('PresenceStore authenticated port', () => {
+  it('skips a proved disconnected Port and diagnoses a distinct disconnect throw', () => {
+    const namespace = presenceStoreNamespace(EXTENSION_ID)
+    const runtime: PresenceStorePortApi = {
+      id: EXTENSION_ID,
+      connect: () => {
+        throw new Error('not used')
+      },
+      onConnect: createListenerEvent<(port: PresenceStorePort) => void>().event
+    }
+    const inject = new PresenceStoreInjectPortAdapter(runtime, namespace)
+    type TestBinding = {
+      port: PresenceStorePort
+      onMessage: (message: unknown) => void
+      onDisconnect: () => void
+      disconnected?: boolean
+    }
+    const detach = (binding: TestBinding, disconnect: boolean) =>
+      (
+        inject as unknown as {
+          detach: (binding: TestBinding, disconnect: boolean) => void
+        }
+      ).detach(binding, disconnect)
+    const binding = (disconnect: () => void, disconnected?: boolean) => ({
+      port: {
+        name: namespace,
+        postMessage: () => {},
+        disconnect,
+        onMessage: createListenerEvent<(message: unknown) => void>().event,
+        onDisconnect: createListenerEvent<() => void>().event
+      },
+      onMessage: () => {},
+      onDisconnect: () => {},
+      disconnected
+    })
+    const alreadyTerminalDisconnect = vi.fn()
+
+    detach(binding(alreadyTerminalDisconnect, true), true)
+    expect(alreadyTerminalDisconnect).not.toHaveBeenCalled()
+
+    const failure = new Error('unexpected Port disconnect failure')
+    const unexpectedDisconnect = vi.fn(() => {
+      throw failure
+    })
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+    detach(binding(unexpectedDisconnect), true)
+
+    expect(unexpectedDisconnect).toHaveBeenCalledOnce()
+    expect(diagnostic).toHaveBeenCalledOnce()
+    expect(diagnostic).toHaveBeenCalledWith(failure)
+    diagnostic.mockRestore()
+    inject.dispose()
+  })
+
   it('accepts only the exact Offscreen transport source', async () => {
     const bus = createPortBus()
     const namespace = presenceStoreNamespace(EXTENSION_ID)
@@ -278,6 +331,79 @@ describe('PresenceStore authenticated port', () => {
     provider.dispose()
     expect(bus.activePortCount()).toBe(0)
     expect(bus.connectionListenerCount()).toBe(0)
+  })
+
+  it.each(['synchronous', 'asynchronous'] as const)(
+    'keeps a %s provider-response callback failure as a direct diagnostic',
+    async (mode) => {
+      const bus = createPortBus()
+      const namespace = presenceStoreNamespace(EXTENSION_ID)
+      const provider = new PresenceStoreProviderPortAdapter(bus.background, {
+        portName: namespace,
+        offscreenUrl: OFFSCREEN_URL
+      })
+      const inject = new PresenceStoreInjectPortAdapter(bus.offscreen, namespace)
+      const failure = new Error(`${mode} response callback failed`)
+      inject.onMessage(() => {
+        if (mode === 'synchronous') throw failure
+        return Promise.reject(failure)
+      })
+      const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+      await settle()
+
+      inject.sendMessage(injectorMessage('callback-failure', namespace), [])
+      await settle()
+      bus.sendPortMessage(providerMessage('callback-failure', namespace))
+      await settle()
+
+      expect(diagnostic).toHaveBeenCalledOnce()
+      expect(diagnostic).toHaveBeenCalledWith(failure)
+      diagnostic.mockRestore()
+      inject.dispose()
+      provider.dispose()
+    }
+  )
+
+  it('keeps terminal-response and heartbeat callback failures as direct diagnostics', () => {
+    const namespace = presenceStoreNamespace(EXTENSION_ID)
+    const terminalEndpoint = createInjectorEndpoint(namespace)
+    const heartbeatEndpoint = createInjectorEndpoint(namespace)
+    let connections = 0
+    const runtime: PresenceStorePortApi = {
+      id: EXTENSION_ID,
+      connect: () => (connections++ === 0 ? terminalEndpoint.port : heartbeatEndpoint.port),
+      onConnect: createListenerEvent<(port: PresenceStorePort) => void>().event
+    }
+    const inject = new PresenceStoreInjectPortAdapter(runtime, namespace)
+    const terminalFailure = new Error('terminal response callback failed')
+    inject.onMessage(() => {
+      throw terminalFailure
+    })
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+    inject.sendMessage(injectorMessage('terminal-callback', namespace), [])
+
+    terminalEndpoint.drop()
+    expect(diagnostic).toHaveBeenCalledWith(terminalFailure)
+
+    const heartbeatFailure = new Error('heartbeat callback failed')
+    inject.onMessage(() => {
+      throw heartbeatFailure
+    })
+    inject.sendMessage(
+      {
+        type: 'ping',
+        sender: { type: 'injector' },
+        id: 'heartbeat-callback',
+        path: [],
+        meta: {},
+        namespace,
+        timeStamp: Date.now()
+      },
+      []
+    )
+    expect(diagnostic).toHaveBeenCalledWith(heartbeatFailure)
+    diagnostic.mockRestore()
+    inject.dispose()
   })
 
   it('drops an old response instead of routing it to a replacement Port', () => {

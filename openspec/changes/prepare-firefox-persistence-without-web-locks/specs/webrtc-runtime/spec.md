@@ -28,13 +28,13 @@ Both strategies SHALL use the same storage identities, versions, reset eligibili
 
 When deletion of the canonical IndexedDB message database for a version mismatch reports `blocked`, WebChat SHALL own one delete request and start one five-second blocked deadline. Success or error before the deadline SHALL clear that deadline and settle that request. If the request remains blocked at the deadline, the current preparation SHALL reject with `Message store deletion blocked`, SHALL NOT publish readiness, and SHALL NOT start a competing delete.
 
-The current initialization owner SHALL surface that rejection through its unavailable state and normalized generic error Toast. Actions-menu Refresh SHALL be eligible to start a later current initialization attempt. The blocked path SHALL add no dedicated UI, notification, success feedback, close-tabs instruction, or alternate persistence path.
+When a current page request owns that rejection, the initialization owner SHALL surface it through its unavailable state and directly replace the matching loading descriptor with a same-ID generic error containing exactly the original `error.message`, with no preceding cancel, prefix, suffix, wrapper, mapping, normalization, or replacement copy. A failure with no current affected page/live route or no user impact SHALL call `console.error(error)` directly and SHALL NOT manufacture a Toast destination. Actions-menu Refresh SHALL be eligible to start a later current initialization attempt. The blocked path SHALL add no dedicated UI, notification, success feedback, close-tabs instruction, or alternate persistence path.
 
 #### Scenario: Blocked deletion reaches a bounded terminal
 
 - **GIVEN** canonical message-database deletion has reported `blocked` and has not settled
 - **WHEN** five seconds elapse
-- **THEN** the current preparation SHALL reject, initialization SHALL remain non-ready, one normalized retryable initialization error SHALL be available, and no competing deletion SHALL start
+- **THEN** the current preparation SHALL reject, initialization SHALL remain non-ready, the current page's same-ID loading SHALL become an error containing exactly the original `error.message` (`Message store deletion blocked`) without a preceding cancel or decorated/replacement copy, and no competing deletion SHALL start
 
 #### Scenario: Deletion settles before the blocked deadline
 

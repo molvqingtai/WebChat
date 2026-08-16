@@ -4,7 +4,7 @@ export interface RoomTransport {
   readonly peerIdOf: (roomId: string) => string
   /** Resolves only after the provider has created the physical room. */
   join: (roomId: string) => Promise<void>
-  leave: (roomId: string) => void
+  leave: (roomId: string, options?: { diagnosticOnly?: boolean }) => void
   /**
    * Passes the selected targets to the provider directly; an omitted target means the provider's
    * own room broadcast, and an empty target list sends nothing. The provider's send settlement or

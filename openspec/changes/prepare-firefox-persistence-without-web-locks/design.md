@@ -33,7 +33,7 @@ The first `blocked` event for canonical message-database deletion starts one fiv
 
 ### 4. Initialization feedback owns recovery
 
-A preparation rejection terminates only the current initialization attempt. The initialization owner marks the application unavailable and publishes the normalized generic `WebChat unavailable` error Toast. Actions-menu Refresh starts a later current attempt. Persistence preparation adds no separate retry state or dedicated user-facing copy.
+A preparation rejection terminates only the current initialization attempt. When that attempt is owned by the current page, the initialization owner marks the application unavailable and directly replaces its matching loading descriptor with a same-ID generic error containing exactly the original `error.message`, with no preceding cancel, prefix, suffix, wrapper, mapping, normalization, or replacement copy. Actions-menu Refresh starts a later current attempt. A preparation failure with no current affected page/live route or no user impact calls `console.error(error)` directly. Persistence preparation adds no separate retry state, Toast identity, or dedicated user-facing copy.
 
 ### 5. Verification binds source and production behavior
 

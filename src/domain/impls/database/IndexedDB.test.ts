@@ -341,7 +341,6 @@ describe('IndexedDB Message database version ownership', () => {
       }
     })
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
     const timers: Array<{ callback: () => void; ms?: number }> = []
     const nativeSetTimeout = globalThis.setTimeout
     vi.stubGlobal(
@@ -353,7 +352,8 @@ describe('IndexedDB Message database version ownership', () => {
     )
 
     let settled = false
-    const preparation = prepareIndexedDBMessageDatabase().then(
+    const preparation = prepareIndexedDBMessageDatabase()
+    void preparation.then(
       () => {
         settled = true
       },
@@ -369,9 +369,8 @@ describe('IndexedDB Message database version ownership', () => {
     expect(blockedTimer).toBeDefined()
     blockedTimer!.callback()
 
-    await expect(preparation).resolves.toBeUndefined()
+    await expect(preparation).rejects.toEqual(new Error('Message store deletion blocked'))
     expect(settled).toBe(true)
-    expect(diagnostic).toHaveBeenCalledWith('[WebChat] Message store preparation failed')
     vi.stubGlobal('setTimeout', nativeSetTimeout)
 
     blocker.close()
@@ -385,7 +384,6 @@ describe('IndexedDB Message database version ownership', () => {
     expect(rebuilt.version).toBe(MESSAGE_STORE_VERSION)
     rebuilt.close()
     warning.mockRestore()
-    diagnostic.mockRestore()
   })
 
   it('keeps a blocked delete non-ready and completes the same request after release', async () => {
@@ -424,11 +422,10 @@ describe('IndexedDB Message database version ownership', () => {
       }
     })
     legacy.close()
-    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
-    const enumeration = vi.spyOn(indexedDB, 'databases').mockRejectedValueOnce(new Error('private failure'))
+    const providerError = new Error('database enumeration refused')
+    const enumeration = vi.spyOn(indexedDB, 'databases').mockRejectedValueOnce(providerError)
 
-    await expect(prepareIndexedDBMessageDatabase()).rejects.toThrow('Message store preparation failed')
-    expect(diagnostic).toHaveBeenCalledWith('[WebChat] Message store preparation failed')
+    await expect(prepareIndexedDBMessageDatabase()).rejects.toBe(providerError)
     enumeration.mockRestore()
 
     const unchanged = await openDB(name)
@@ -439,7 +436,6 @@ describe('IndexedDB Message database version ownership', () => {
     const rebuilt = await openDB(name)
     expect(rebuilt.version).toBe(MESSAGE_STORE_VERSION)
     rebuilt.close()
-    diagnostic.mockRestore()
   })
 
   it('does not advance past a deletion error and retries the old generation', async () => {
@@ -452,13 +448,10 @@ describe('IndexedDB Message database version ownership', () => {
     })
     legacy.close()
     const nativeDelete = indexedDB.deleteDatabase.bind(indexedDB)
-    const deletion = vi
-      .spyOn(indexedDB, 'deleteDatabase')
-      .mockImplementationOnce(() => failedRequest(new DOMException('private failure', 'UnknownError')))
-    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const providerError = new DOMException('database deletion refused', 'UnknownError')
+    const deletion = vi.spyOn(indexedDB, 'deleteDatabase').mockImplementationOnce(() => failedRequest(providerError))
 
-    await expect(prepareIndexedDBMessageDatabase()).rejects.toThrow('Message store preparation failed')
-    expect(diagnostic).toHaveBeenCalledWith('[WebChat] Message store preparation failed')
+    await expect(prepareIndexedDBMessageDatabase()).rejects.toBe(providerError)
     deletion.mockImplementation(nativeDelete)
 
     const unchanged = await openDB(name)
@@ -468,7 +461,6 @@ describe('IndexedDB Message database version ownership', () => {
     await prepareIndexedDBMessageDatabase()
     expect(deletion).toHaveBeenCalledTimes(2)
     deletion.mockRestore()
-    diagnostic.mockRestore()
   })
 
   it('rebuilds empty on retry when target recreation failed after deletion', async () => {
@@ -482,12 +474,10 @@ describe('IndexedDB Message database version ownership', () => {
     await legacy.put('legacy', 'old-generation', 'sentinel')
     legacy.close()
     const nativeOpen = indexedDB.open.bind(indexedDB)
-    const opening = vi
-      .spyOn(indexedDB, 'open')
-      .mockImplementationOnce(() => failedRequest(new DOMException('private failure', 'UnknownError')))
-    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const providerError = new DOMException('database open refused', 'UnknownError')
+    const opening = vi.spyOn(indexedDB, 'open').mockImplementationOnce(() => failedRequest(providerError))
 
-    await expect(prepareIndexedDBMessageDatabase()).rejects.toThrow('Message store preparation failed')
+    await expect(prepareIndexedDBMessageDatabase()).rejects.toBe(providerError)
     expect((await indexedDB.databases()).some((database) => database.name === name)).toBe(false)
     opening.mockImplementation(nativeOpen)
 
@@ -497,7 +487,6 @@ describe('IndexedDB Message database version ownership', () => {
     expect([...rebuilt.objectStoreNames]).toEqual(['conflicts', 'records'])
     rebuilt.close()
     opening.mockRestore()
-    diagnostic.mockRestore()
   })
 
   it('preserves unrelated IndexedDB identities during a target reset', async () => {
@@ -524,6 +513,21 @@ describe('IndexedDB Message database version ownership', () => {
     const preserved = await openDB(unrelatedName)
     await expect(preserved.get('sentinels', 'key')).resolves.toBe('preserved')
     preserved.close()
+  })
+
+  it('keeps a shared open rejection with its returned operations while terminal close settles', async () => {
+    names.add(STORAGE_NAME)
+    const providerError = new DOMException('shared database open refused', 'UnknownError')
+    const opening = vi.spyOn(indexedDB, 'open').mockImplementationOnce(() => failedRequest(providerError))
+    const database = createIndexedDBMessageDatabase()
+    const messageStore = createMessageStore(database)
+    const first = messageStore.query()
+    const second = messageStore.query()
+
+    await expect(first).rejects.toBe(providerError)
+    await expect(second).rejects.toBe(providerError)
+    await expect(database.close()).resolves.toBeUndefined()
+    expect(opening).toHaveBeenCalledOnce()
   })
 
   it('uses the same target name in independent native origin partitions', async () => {

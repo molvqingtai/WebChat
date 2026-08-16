@@ -133,16 +133,44 @@ describe('initialization lifecycle ownership', () => {
       id: INITIALIZATION_TOAST_ID,
       dismissible: false
     })
-    // The stable id owns only loading; it is dismissed on failure.
-    expect(fixture.toast.cancel).toHaveBeenCalledWith(INITIALIZATION_TOAST_ID)
     if (stage === 'initializeRuntime') {
       // A runtime failure is surfaced once by the Runtime lease owner; initialization does not
       // duplicate it into a second toast.
+      expect(fixture.toast.cancel).toHaveBeenCalledWith(INITIALIZATION_TOAST_ID)
       expect(fixture.toast.error).not.toHaveBeenCalled()
     } else {
-      expect(fixture.toast.error).toHaveBeenCalledWith(`${stage} unavailable`)
+      expect(fixture.toast.cancel).not.toHaveBeenCalled()
+      expect(fixture.toast.error).toHaveBeenCalledWith(`${stage} unavailable`, {
+        id: INITIALIZATION_TOAST_ID
+      })
     }
     expect(fixture.activateApplicationDependencies).not.toHaveBeenCalled()
+    stop()
+  })
+
+  it('replaces the same initialization Toast with each original Retry failure', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const fixture = createFixture()
+    const initialFailure = new Error('initial provider detail')
+    const retryFailure = new Error('retry provider detail')
+    vi.mocked(fixture.dependencies.prepareBrowserSyncStorage)
+      .mockRejectedValueOnce(initialFailure)
+      .mockRejectedValueOnce(retryFailure)
+    const stop = start(fixture)
+
+    await vi.waitFor(() => expect(phase(fixture)).toBe('unavailable'))
+    expect(fixture.toast.error).toHaveBeenNthCalledWith(1, initialFailure.message, {
+      id: INITIALIZATION_TOAST_ID
+    })
+
+    fixture.store.send(fixture.domain.command.RetryCommand())
+    await vi.waitFor(() => expect(fixture.dependencies.prepareBrowserSyncStorage).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() => expect(fixture.toast.error).toHaveBeenCalledTimes(2))
+
+    expect(fixture.toast.error).toHaveBeenNthCalledWith(2, retryFailure.message, {
+      id: INITIALIZATION_TOAST_ID
+    })
+    expect(fixture.toast.cancel).not.toHaveBeenCalled()
     stop()
   })
 

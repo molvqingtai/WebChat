@@ -7,7 +7,7 @@ WebChat currently owns two persistence families with different physical scopes:
 
 These are independent active generations, each controlled by its own constant. Any active target's persisted version that is not strictly equal to its target makes that authority's version-managed values incompatible. Ordinary extension, package, semantic-release, wire, protocol, and non-target-database states do not participate.
 
-The configuration version mechanism is introduced as a non-destructive baseline: a missing completion value records the current target without deleting pre-version configuration data. The message target follows the same clean boundary: production logic uses only `STORAGE_NAME` and creates it empty when absent. It does not inspect or clean up any non-target identity. Every non-equal existing target version resets that active physical store directly to the target. Active-store failures are observable only in the developer console.
+The configuration version mechanism is introduced as a non-destructive baseline: a missing completion value records the current target without deleting pre-version configuration data. The message target follows the same clean boundary: production logic uses only `STORAGE_NAME` and creates it empty when absent. It does not inspect or clean up any non-target identity. Every non-equal existing target version resets that active physical store directly to the target. Active-store failures retain their original Error and follow the current structural owner: current-page-requested preparation uses the existing unchanged-message application route, while install-time/no-page and user-irrelevant work remains directly observable in the developer console.
 
 ## Goals / Non-Goals
 
@@ -19,7 +19,7 @@ The configuration version mechanism is introduced as a non-destructive baseline:
 - Reset each active persistence scope on strict version inequality in either direction, including skipped versions, without ordered migrations or compatibility reads.
 - Preserve existing configuration data when establishing its first marker baseline and preserve target-name message data on every same-version reopen; non-target message data is neither a baseline nor a cleanup target and remains untouched.
 - Keep message and configuration decisions independent while preventing application use until every scope required by that page is ready.
-- Define exact physical deletion scopes, eager and fallback triggers, concurrency fences, interruption recovery, blocked/error handling, silent success, and console-only failure.
+- Define exact physical deletion scopes, eager and fallback triggers, concurrency fences, interruption recovery, blocked/error handling, silent success, and owner-routed failure diagnostics.
 - Bind the policy with deterministic regressions without widening public storage APIs or coupling persistence to the app version.
 
 **Non-Goals:**
@@ -109,28 +109,26 @@ No new application writer is admitted while its scope is being evaluated or rese
 
 If target-mismatch deletion is blocked, the current application remains unmounted and the request SHALL NOT be reported as ready. The implementation MAY log one bounded console diagnostic and await the same native request; it SHALL not display a close-tabs warning, start a second delete, or time out into a late unowned deletion. When the blocker releases, the same lifecycle may complete. If its execution context ends, the next injection re-observes the target identity and starts or joins the required lifecycle from persisted state.
 
-### 6. Completion is durable; failure is console-only and retryable
+### 6. Completion is durable; failure follows its current owner and remains retryable
 
 Each target database deletion success is irreversible. If execution stops before target-mismatch deletion, the target remains non-current and the next injection retries. If execution stops after target deletion but before recreation, the next injection creates the absent target empty. Target readiness at `MESSAGE_STORE_VERSION` is the message completion state; there is no second message migration marker and no non-target-identity state participates.
 
 The configuration completion value advances only after the corresponding clear succeeds. If execution stops after a clear but before recording completion, the next attempt may repeat an idempotent clear of that still-unreleased scope, but no application writer may have populated it in between. Once the target completion value exists, later same-version attempts preserve new data.
 
-Any read, delete, clear, recreation, or completion-write error SHALL:
+Any read, delete, clear, recreation, or completion-write error SHALL retain its original Error, leave the mismatched or missing completion state unadvanced, keep the affected WebChat application startup closed for that lifecycle, and retry through the next `onInstalled`, Runtime startup, or content injection that owns the scope. Its diagnostic route depends only on the current structural owner and user impact:
 
-- emit only a bounded `console.error` diagnostic without persisted values, user content, origin details beyond existing safe context, or raw data;
-- leave the mismatched or missing completion state unadvanced;
-- keep the affected WebChat application startup closed for that lifecycle; and
-- retry through the next `onInstalled`, Runtime startup, or content injection that owns the scope.
+- a terminal preparation failure owned by a current page request that prevents that page's initialization or persistence readiness uses the existing application error route, whose sole UI projection is exactly `toast.error(error.message)` with no prefix, suffix, wrapper, mapping, normalization, or replacement copy; and
+- install-time work with no current page, a failure with no current affected page/live route, and work that structurally cannot affect the current user's operation, readiness, visible state, or persistence result calls `console.error(error)` directly at its owner.
 
-There SHALL be no Toast, `AppFeedback`, alert, DOM error, status page, notification, SystemNotice, retry button, migration progress, or success message. A blocked request MAY emit a bounded console diagnostic but is not success. Creating or recreating the message target is visible only as empty history. A successful configuration reset preserves AppStatus and is visible only through ordinary defaults or setup for cleared version-managed values such as `UserInfo`; those normal product states are not migration feedback.
+The original Error/message remains subject to the existing privacy-safe construction boundary; routing adds no persisted values, user content, origin details beyond existing safe context, or raw data. There SHALL be no reset-specific `AppFeedback`, alert, DOM error, status page, notification, SystemNotice, retry button, migration progress, success message, or second Toast. A blocked request MAY emit a bounded console diagnostic but is not success and remains outside the current-page terminal-error route. Creating or recreating the message target is visible only as empty history. A successful configuration reset preserves AppStatus and is visible only through ordinary defaults or setup for cleared version-managed values such as `UserInfo`; those normal product states are not migration feedback.
 
 ### 7. Regression evidence proves both positive and negative boundaries
 
 Deterministic tests SHALL cover, separately for message and configuration persistence: missing-state baseline, same-version preservation, adjacent mismatch, skipped mismatch, reverse mismatch, deletion/clear failure, interruption before and after the irreversible boundary, retry, target reconstruction, and concurrent contenders without double reset. IndexedDB tests SHALL additionally cover exact `STORAGE_NAME` target identity, absence of a message or origin suffix, target mismatch cleanup, same-origin concurrent opens, and two browser origins independently using the same target name. Static guards SHALL require the message database definition, preparation lock, current-database lookup, and deletion to target direct `STORAGE_NAME`; the runtime-generated unrelated-database sentinel, not a repository-wide identity scan, proves non-target isolation. Configuration tests SHALL cover the extension-wide sync scope and multiple independent origin-local scopes, including malformed completion values and preservation of all three AppStatus field keys.
 
-Sentinels SHALL prove family independence and isolation: a message reset preserves configuration; a configuration reset preserves the active canonical database and all three AppStatus fields; resetting one origin preserves another origin; host-page local keys outside `${STORAGE_NAME}:`, a runtime-generated unrelated IndexedDB database, and browser areas outside current ownership remain unchanged. Startup and static tests SHALL reject package-version ownership, app-version comparisons, message target indirection away from direct `STORAGE_NAME`, startup `clear()` ownership, user-visible migration feedback, and public API widening.
+Sentinels SHALL prove family independence and isolation: a message reset preserves configuration; a configuration reset preserves the active canonical database and all three AppStatus fields; resetting one origin preserves another origin; host-page local keys outside `${STORAGE_NAME}:`, a runtime-generated unrelated IndexedDB database, and browser areas outside current ownership remain unchanged. Startup and static tests SHALL reject package-version ownership, app-version comparisons, message target indirection away from direct `STORAGE_NAME`, startup `clear()` ownership, migration-specific or decorated user-visible feedback beyond the existing unchanged-message current-page error route, and public API widening.
 
-Nonblocking production Chrome MV3 and Firefox MV2 verification SHOULD record baseline, mismatch, silent-success/default-state, and console-only failure outcomes when the established browser environments can create those persisted starting states. Browser evidence does not replace deterministic source tests and remains nonblocking under the Owner's established workflow.
+Nonblocking production Chrome MV3 and Firefox MV2 verification SHOULD record baseline, mismatch, silent-success/default-state, current-page unchanged-message failure routing, and no-page/no-impact direct-console outcomes when the established browser environments can create those persisted starting states. Browser evidence does not replace deterministic source tests and remains nonblocking under the Owner's established workflow.
 
 ## Risks / Trade-offs
 
@@ -140,7 +138,7 @@ Nonblocking production Chrome MV3 and Firefox MV2 verification SHOULD record bas
 - [Per-origin persistence cannot be cleared globally from `onInstalled`] -> Gate and lazily reset each origin on its next injection, while eagerly handling only the extension-wide configuration scope.
 - [Concurrent tabs can observe the same stale version] -> Serialize by physical identity, prohibit writers before readiness, and require every later contender to re-read completion before deleting.
 - [IndexedDB deletion can remain blocked] -> Keep the page unmounted, retain one owned native request, log only to console, and retry from persisted state after interruption.
-- [A failure gives the user no in-app recovery message] -> This is the Owner's explicit console-only requirement; preserve retryability without introducing a second UI lifecycle.
+- [A current-page preparation failure disappears while startup stays closed] -> Use the existing application error route with the original `error.message`; keep install-time/no-page and user-irrelevant failures in direct console diagnostics, and introduce no second UI lifecycle.
 - [Configuration sync data can disappear after a version change] -> `CONFIG_STORE_VERSION` changes are explicit destructive decisions; normal UserInfo setup/default behavior is the intended post-reset state, while the three AppStatus fields remain preserved.
 
 ## Migration Plan
@@ -154,4 +152,4 @@ Before release, rollback is code-only by reverting the requirement branch. After
 
 ## Open Questions
 
-None. The Owner has fixed the two persistence families, eight centralized storage constants, exact direct `STORAGE_NAME` canonical IndexedDB identity, separate browser API namespaces, native origin isolation, completely untouched non-target identities, strict target-version non-equality semantics, preserved field-scoped AppStatus persistence, independent scope, lazy origin handling, direct active-target reset, awaited completion, console-only failure, and ordinary app-version exclusion.
+None. The Owner has fixed the two persistence families, eight centralized storage constants, exact direct `STORAGE_NAME` canonical IndexedDB identity, separate browser API namespaces, native origin isolation, completely untouched non-target identities, strict target-version non-equality semantics, preserved field-scoped AppStatus persistence, independent scope, lazy origin handling, direct active-target reset, awaited completion, current-owner failure routing, and ordinary app-version exclusion.
