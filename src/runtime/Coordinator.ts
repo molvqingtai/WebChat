@@ -99,7 +99,9 @@ export class Coordinator {
 
   private maintainHost() {
     if (this.healthTimer || this.tabs.size === 0) return
-    this.healthTimer = globalThis.setInterval(() => void this.reconcile(), COORDINATOR_HEALTH_INTERVAL_MS)
+    this.healthTimer = globalThis.setInterval(() => {
+      void this.reconcile().catch((error) => console.error(error))
+    }, COORDINATOR_HEALTH_INTERVAL_MS)
   }
 
   private stopMaintainingHost() {
@@ -283,7 +285,15 @@ export class Coordinator {
       void attachment.then(
         async () => {
           const current = this.tabs.get(binding.tabId)
-          if (current?.pageId !== binding.pageId) await this.options.detachPage(lease)
+          if (current?.pageId !== binding.pageId) {
+            try {
+              await this.options.detachPage(lease)
+            } catch (cleanupError) {
+              // The caller already owns the deadline Error. A late attachment cleanup failure is
+              // distinct, has no page route, and remains directly diagnostic.
+              console.error(cleanupError)
+            }
+          }
         },
         (lateError) => {
           // The caller already owns an identical provider rejection. A distinct rejection after
@@ -388,8 +398,14 @@ export class Coordinator {
       return
     }
     if (binding.url === canonicalUrl) return
-    this.tabs.set(tabId, { ...binding, url: canonicalUrl })
-    await this.persist()
+    const updated = { ...binding, url: canonicalUrl }
+    this.tabs.set(tabId, updated)
+    try {
+      await this.persist()
+    } catch (error) {
+      if (this.tabs.get(tabId) === updated) this.tabs.set(tabId, binding)
+      throw error
+    }
   }
 
   watchHost() {

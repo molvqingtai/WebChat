@@ -33,8 +33,18 @@ export class WorldRoom extends EventHub {
       // exactly once to the room error owner and then becomes the next settled queue token.
       this.attachmentTask = this.attachmentTask
         .then(attachCurrentHost, attachCurrentHost)
-        .then(undefined, (error) => this.emit('error', error as Error))
+        .then(undefined, (error) => this.emitError(error))
     })
+  }
+
+  private emitError(error: unknown) {
+    const failure = error instanceof Error ? error : new Error(String(error))
+    try {
+      this.emit('error', failure)
+    } catch (deliveryError) {
+      // A projection listener cannot reopen the serialized attachment tail or recursively emit.
+      console.error(deliveryError)
+    }
   }
 
   private replaceSource(sourcePeerId: string, presence: WorldRoomMessage, activeKeys?: Set<string>) {

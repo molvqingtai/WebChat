@@ -234,6 +234,17 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
     if (this.attachment === attachment) this.attachment = null
   }
 
+  private emitError(error: unknown) {
+    const failure = error instanceof Error ? error : new Error(String(error))
+    try {
+      this.emit('error', failure)
+    } catch (deliveryError) {
+      // Error listeners are the terminal application projection. Their own failure cannot recurse
+      // into another room event or reject shared attachment/repair bookkeeping.
+      console.error(deliveryError)
+    }
+  }
+
   private startAttachment(ownerAttemptId: number | null) {
     if (this.disposed) throw abortError('Runtime page detached')
     const previous = this.attachment
@@ -263,7 +274,7 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
         attachment.error = failure
         if (!controller.signal.aborted) controller.abort(failure)
         if (!this.disposed && attachment.ownerAttemptId === null && this.attachment === attachment) {
-          this.emit('error', failure)
+          this.emitError(failure)
         }
       })
       .finally(() => globalThis.clearTimeout(timeout))
@@ -359,7 +370,7 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
     const repair = withDeadline(this.register(attachment, key), 'Page callback repair timed out')
     void repair
       .catch((error) => {
-        if (this.isAttachmentCurrent(attachment)) this.emit('error', error as Error)
+        if (this.isAttachmentCurrent(attachment)) this.emitError(error)
       })
       .finally(() => attachment.repairs.delete(key))
   }
@@ -454,7 +465,7 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
         } catch (error) {
           if (prerequisite) throw error
           if (!isCurrent()) return
-          this.emit('error', error as Error)
+          this.emitError(error)
           retryInbound(event)
         }
         return
@@ -471,20 +482,20 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
         }
         if (isInvalidMessageRecordError(error)) {
           // The record cannot become durable; ACK discards only this invalid Runtime event after diagnosis.
-          this.emit('error', error)
+          this.emitError(error)
           invalidInbound.add(event.sequence)
           try {
             await acknowledgeInbound(event, false)
           } catch (ackError) {
             if (prerequisite) throw ackError
             if (!isCurrent()) return
-            this.emit('error', ackError as Error)
+            this.emitError(ackError)
             retryInbound(event)
           }
           return
         }
         if (prerequisite) throw error
-        this.emit('error', error as Error)
+        this.emitError(error)
         retryInbound(event)
       }
     }
@@ -532,7 +543,7 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
                 reason: (error as Error).message || 'History supply cancelled'
               })
               .catch((settleError) => {
-                if (isCurrent()) this.emit('error', settleError as Error)
+                if (isCurrent()) this.emitError(settleError)
               })
             return
           }
@@ -554,7 +565,7 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
           }
         })
         .catch((error) => {
-          if (isCurrent()) this.emit('error', error as Error)
+          if (isCurrent()) this.emitError(error)
         })
     }
 
@@ -574,7 +585,7 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
         // fresh toast. The identity never expires so a late transport repeat cannot reappear.
         if (this.seenErrorEventIds.has(event.eventId)) return
         this.seenErrorEventIds.add(event.eventId)
-        this.emit('error', new Error(event.message))
+        this.emitError(new Error(event.message))
       })
     attachment.registrations.history = () =>
       dependencies.server.provideHistory(
