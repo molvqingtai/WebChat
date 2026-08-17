@@ -9,6 +9,8 @@ interface PeerOwner {
   pendingLeave?: Promise<void>
   /** The retained failure of the last physical leave; the room stays occupied and non-reentrant. */
   leaveError?: { value: unknown }
+  /** Failure attribution of the in-flight leave; dispose upgrades any pending leave to diagnostic. */
+  leaveDiagnostic?: boolean
   disposed: boolean
 }
 
@@ -27,6 +29,8 @@ interface TrysteroMessageAction {
  */
 export const createTrysteroRoomTransport = (): RoomTransport => {
   const owners = new Map<string, PeerOwner>()
+  /** Terminal fence: after dispose no join may create a Room, even one awaiting a pending leave. */
+  let transportDisposed = false
 
   const messageListeners = new Set<(roomId: string, sourcePeerId: string, rawPayload: string) => void>()
   const joinListeners = new Set<(roomId: string, peerId: string) => void>()
@@ -68,7 +72,7 @@ export const createTrysteroRoomTransport = (): RoomTransport => {
     return owner
   }
 
-  const dropOwner = (owner: PeerOwner, diagnosticOnly = false) => {
+  const dropOwner = (owner: PeerOwner) => {
     if (owner.pendingLeave) return
     const room = owner.room
     if (!room) {
@@ -89,7 +93,7 @@ export const createTrysteroRoomTransport = (): RoomTransport => {
         // A failed leave keeps the room occupied: the owner is retained so no second Room is
         // ever created for this roomId, and later joins reject with this exact failure.
         owner.leaveError = { value: error }
-        if (diagnosticOnly) console.error(error)
+        if (owner.leaveDiagnostic) console.error(error)
         else errorListeners.forEach((listener) => listener(error as Error, owner.roomId))
       }
     )
@@ -105,8 +109,11 @@ export const createTrysteroRoomTransport = (): RoomTransport => {
       return owner && isActive(owner) ? selfId : ''
     },
     join: async (roomId) => {
+      if (transportDisposed) throw new Error('Room transport is disposed')
       const existing = owners.get(roomId)
       if (existing?.pendingLeave) await existing.pendingLeave
+      // A dispose may have landed while the leave was settling: never create a Room afterwards.
+      if (transportDisposed) throw new Error('Room transport is disposed')
       const owner = owners.get(roomId)
       if (!owner) {
         createOwner(roomId)
@@ -122,7 +129,8 @@ export const createTrysteroRoomTransport = (): RoomTransport => {
     leave: (roomId, options) => {
       const owner = owners.get(roomId)
       if (!owner) return
-      dropOwner(owner, options?.diagnosticOnly)
+      if (!owner.pendingLeave) owner.leaveDiagnostic = options?.diagnosticOnly === true
+      dropOwner(owner)
     },
     send: async (roomId, payload, to) => {
       const owner = owners.get(roomId)
@@ -156,9 +164,13 @@ export const createTrysteroRoomTransport = (): RoomTransport => {
       return () => errorListeners.delete(callback)
     },
     dispose: () => {
-      // A leave failure during teardown has no current user impact but must stay observable as
-      // diagnostics; the error listeners are cleared below, so it never fires into a dead set.
-      Array.from(owners.values()).forEach((owner) => dropOwner(owner, true))
+      // Terminal first: any pending-leave rejection after teardown is diagnostics-only, and no
+      // waiting join may create a Room once the transport is disposed.
+      transportDisposed = true
+      Array.from(owners.values()).forEach((owner) => {
+        owner.leaveDiagnostic = true
+        dropOwner(owner)
+      })
       messageListeners.clear()
       joinListeners.clear()
       leaveListeners.clear()

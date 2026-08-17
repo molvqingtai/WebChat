@@ -330,6 +330,49 @@ describe('TrysteroRoomTransport', () => {
     consoleError.mockRestore()
   })
 
+  it('rejects a join that was waiting on a pending leave when dispose lands first', async () => {
+    const transport = createTrysteroRoomTransport()
+    await transport.join('room-a')
+    trysteroFixture.deferLeave('room-a')
+
+    transport.leave('room-a')
+    const waiting = transport.join('room-a')
+    const assertion = expect(waiting).rejects.toThrow('Room transport is disposed')
+    await settle()
+    transport.dispose()
+    trysteroFixture.leaveControls.get('room-a')?.resolve()
+    await assertion
+
+    expect(trysteroFixture.joinCalls).toEqual(['room-a'])
+    expect(transport.peerIdOf('room-a')).toBe('')
+  })
+
+  it('rejects a join after dispose even for a fresh room', async () => {
+    const transport = createTrysteroRoomTransport()
+    transport.dispose()
+
+    await expect(transport.join('room-b')).rejects.toThrow('Room transport is disposed')
+    expect(trysteroFixture.joinCalls).toEqual([])
+  })
+
+  it('upgrades an ordinary pending leave rejection to diagnostics when dispose lands first', async () => {
+    const transport = createTrysteroRoomTransport()
+    const errors: string[] = []
+    transport.onError((error, roomId) => errors.push(`${roomId}:${error.message}`))
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    await transport.join('room-a')
+    trysteroFixture.deferLeave('room-a')
+
+    transport.leave('room-a')
+    transport.dispose()
+    trysteroFixture.leaveControls.get('room-a')?.reject(new Error('late leave failure'))
+    await settle()
+
+    expect(errors).toEqual([])
+    expect(consoleError).toHaveBeenCalledOnce()
+    consoleError.mockRestore()
+  })
+
   it('keeps a diagnostic-only leave failure out of the error stream while retaining the room', async () => {
     const transport = createTrysteroRoomTransport()
     const errors: string[] = []
