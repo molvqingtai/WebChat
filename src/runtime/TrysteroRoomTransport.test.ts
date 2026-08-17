@@ -105,6 +105,40 @@ const roomOf = (roomId: string) => {
   return room
 }
 
+import { describeRoomTransportContract, type RoomTransportHarness } from '@/runtime/RoomTransport.contract'
+
+const trysteroHarness: RoomTransportHarness = {
+  provider: 'trystero',
+  createTransport: createTrysteroRoomTransport,
+  joinedPeerId: () => 'trystero-self-id',
+  joinCalls: () => trysteroFixture.joinCalls,
+  sendCalls: () =>
+    trysteroFixture.sent.map((item) => ({
+      roomId: item.roomId,
+      payload: item.data,
+      // The adapter maps an omitted target to the provider's broadcast (`null`); normalize for
+      // the shared contract.
+      target: item.target ?? undefined
+    })),
+  deliveries: () => trysteroFixture.sent.map((item) => item.data),
+  failNextSend: (error) => trysteroFixture.fail(error),
+  emitMessage: (roomId, sourcePeerId, payload) => {
+    trysteroFixture.rooms.get(roomId)?.action.onMessage?.(payload, { peerId: sourcePeerId })
+  },
+  emitPeerJoin: (roomId, peerId) => {
+    trysteroFixture.rooms.get(roomId)?.onPeerJoin?.(peerId)
+  },
+  emitPeerLeave: (roomId, peerId) => {
+    trysteroFixture.rooms.get(roomId)?.onPeerLeave?.(peerId)
+  },
+  emitJoinError: (roomId, error) => {
+    trysteroFixture.joinErrors.get(roomId)?.({ error: error.message })
+  },
+  settle
+}
+
+describeRoomTransportContract(trysteroHarness)
+
 beforeEach(() => {
   vi.stubGlobal('__NAME__', 'web-chat-test')
   trysteroFixture.rooms.clear()
@@ -115,35 +149,6 @@ beforeEach(() => {
 })
 
 describe('TrysteroRoomTransport', () => {
-  it('joins a room with the default config and exposes the global selfId while joined', async () => {
-    const transport = createTrysteroRoomTransport()
-    expect(transport.peerIdOf('room-a')).toBe('')
-
-    await transport.join('room-a')
-
-    expect(trysteroFixture.rooms.has('room-a')).toBe(true)
-    expect(transport.peerIdOf('room-a')).toBe('trystero-self-id')
-    transport.dispose()
-  })
-
-  it('sends with broadcast, single, array, and unknown target semantics', async () => {
-    const transport = createTrysteroRoomTransport()
-    await transport.join('room-a')
-
-    await transport.send('room-a', 'all')
-    await transport.send('room-a', 'one', 'peer-a')
-    await transport.send('room-a', 'two', ['peer-a', 'peer-b'])
-    await transport.send('room-a', 'none', 'missing-peer')
-
-    expect(trysteroFixture.sent).toEqual([
-      { roomId: 'room-a', data: 'all', target: null },
-      { roomId: 'room-a', data: 'one', target: 'peer-a' },
-      { roomId: 'room-a', data: 'two', target: ['peer-a', 'peer-b'] },
-      { roomId: 'room-a', data: 'none', target: 'missing-peer' }
-    ])
-    transport.dispose()
-  })
-
   it('sends nothing for an empty target array without calling the provider', async () => {
     const transport = createTrysteroRoomTransport()
     await transport.join('room-a')
@@ -151,63 +156,6 @@ describe('TrysteroRoomTransport', () => {
     await transport.send('room-a', 'nobody', [])
 
     expect(trysteroFixture.sent).toEqual([])
-    transport.dispose()
-  })
-
-  it('surfaces provider send rejections as-is', async () => {
-    const transport = createTrysteroRoomTransport()
-    await transport.join('room-a')
-    const failure = new Error('relay publish failed')
-    trysteroFixture.fail(failure)
-
-    await expect(transport.send('room-a', 'boom')).rejects.toBe(failure)
-    transport.dispose()
-  })
-
-  it('delivers messages, peer joins, and peer leaves with the exact room scope', async () => {
-    const transport = createTrysteroRoomTransport()
-    const events: string[] = []
-    transport.onMessage((roomId, sourcePeerId, payload) => events.push(`message:${roomId}:${sourcePeerId}:${payload}`))
-    transport.onPeerJoin((roomId, peerId) => events.push(`join:${roomId}:${peerId}`))
-    transport.onPeerLeave((roomId, peerId) => events.push(`leave:${roomId}:${peerId}`))
-    await transport.join('room-a')
-    await transport.join('room-b')
-
-    roomOf('room-a').action.onMessage?.('hello', { peerId: 'peer-a' })
-    roomOf('room-a').onPeerJoin?.('peer-a')
-    roomOf('room-b').onPeerLeave?.('peer-b')
-
-    expect(events).toEqual(['message:room-a:peer-a:hello', 'join:room-a:peer-a', 'leave:room-b:peer-b'])
-    transport.dispose()
-  })
-
-  it('routes join errors to the scoped room error listeners', async () => {
-    const transport = createTrysteroRoomTransport()
-    const errors: string[] = []
-    transport.onError((error, roomId) => errors.push(`${roomId}:${error.message}`))
-    await transport.join('room-a')
-
-    trysteroFixture.joinErrors.get('room-a')?.({ error: 'handshake failed' })
-
-    expect(errors).toEqual(['room-a:handshake failed'])
-    transport.dispose()
-  })
-
-  it('leave removes the room after the physical settlement, fences its stale callbacks, and rejects later sends', async () => {
-    const transport = createTrysteroRoomTransport()
-    const events: string[] = []
-    transport.onPeerJoin((roomId, peerId) => events.push(`join:${roomId}:${peerId}`))
-    await transport.join('room-a')
-    const room = roomOf('room-a')
-
-    transport.leave('room-a')
-    expect(room.left).toBe(true)
-    await settle()
-
-    expect(transport.peerIdOf('room-a')).toBe('')
-    room.onPeerJoin?.('stale-peer')
-    expect(events).toEqual([])
-    await expect(transport.send('room-a', 'late')).rejects.toThrow('Room "room-a" not joined')
     transport.dispose()
   })
 
@@ -391,19 +339,6 @@ describe('TrysteroRoomTransport', () => {
     expect(trysteroFixture.joinCalls).toEqual(['room-a'])
     consoleError.mockRestore()
     transport.dispose()
-  })
-
-  it('dispose leaves every room and clears all listeners', async () => {
-    const transport = createTrysteroRoomTransport()
-    await transport.join('room-a')
-    await transport.join('room-b')
-
-    transport.dispose()
-    await settle()
-
-    expect(trysteroFixture.rooms.size).toBe(0)
-    expect(transport.peerIdOf('room-a')).toBe('')
-    expect(transport.peerIdOf('room-b')).toBe('')
   })
 })
 

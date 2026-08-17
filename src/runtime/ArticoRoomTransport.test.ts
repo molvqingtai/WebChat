@@ -11,11 +11,15 @@ const fixture = vi.hoisted(() => ({
   joinShouldThrow: undefined as (() => Error) | undefined,
   leaveShouldThrow: undefined as (() => Error) | undefined,
   closeShouldThrow: undefined as (() => Error) | undefined,
+  sendShouldThrow: undefined as Error | undefined,
+  joins: [] as string[],
+  roomPeers: new Map<string, string>(),
   room: null as null | {
     open(peerId: string): void
     loseReadiness(peerId: string): void
     attempts: { peerId: string; payload: string }[]
     sent: { peerId: string; payload: string }[]
+    emit(event: string, ...args: unknown[]): void
   },
   rooms: new Map<
     string,
@@ -24,8 +28,10 @@ const fixture = vi.hoisted(() => ({
       loseReadiness(peerId: string): void
       attempts: { peerId: string; payload: string }[]
       sent: { peerId: string; payload: string }[]
+      emit(event: string, ...args: unknown[]): void
     }
-  >()
+  >(),
+  sendCalls: [] as { roomId: string; payload: string; target?: string | string[] }[]
 }))
 
 vi.mock('@rtco/client', () => {
@@ -45,11 +51,20 @@ vi.mock('@rtco/client', () => {
   }
 
   class FakeRoom extends Emitter {
+    constructor(readonly roomId: string) {
+      super()
+    }
     readonly calls = new Map<string, boolean>()
     readonly attempts: { peerId: string; payload: string }[] = []
     readonly sent: { peerId: string; payload: string }[] = []
 
     send(payload: string, target?: string | string[]) {
+      fixture.sendCalls.push({ roomId: this.roomId, payload, target })
+      const failure = fixture.sendShouldThrow
+      if (failure) {
+        fixture.sendShouldThrow = undefined
+        throw failure
+      }
       const targets = target ? (Array.isArray(target) ? target : [target]) : null
       this.calls.forEach((ready, peerId) => {
         if (targets && !targets.includes(peerId)) return
@@ -94,7 +109,9 @@ vi.mock('@rtco/client', () => {
 
     join(roomId: string) {
       if (fixture.joinShouldThrow) throw fixture.joinShouldThrow()
-      const room = new FakeRoom()
+      const room = new FakeRoom(roomId)
+      fixture.joins.push(roomId)
+      fixture.roomPeers.set(roomId, this.id)
       fixture.room = room
       fixture.rooms.set(roomId, room)
       return room
@@ -129,15 +146,50 @@ vi.mock('@rtco/client', () => {
 })
 
 import { createArticoRoomTransport } from './ArticoRoomTransport'
+import { describeRoomTransportContract, type RoomTransportHarness } from './RoomTransport.contract'
+
+const articoHarness: RoomTransportHarness = {
+  provider: 'artico',
+  createTransport: createArticoRoomTransport,
+  joinedPeerId: (roomId) => fixture.roomPeers.get(roomId) ?? '',
+  joinCalls: () => fixture.joins,
+  sendCalls: () => fixture.sendCalls,
+  deliveries: () => Array.from(fixture.rooms.values()).flatMap((room) => room.sent.map((item) => item.payload)),
+  failNextSend: (error) => {
+    fixture.sendShouldThrow = error
+  },
+  emitMessage: (roomId, sourcePeerId, payload) => {
+    fixture.rooms.get(roomId)?.emit('message', payload, sourcePeerId)
+  },
+  emitPeerJoin: (roomId, peerId) => {
+    fixture.rooms.get(roomId)?.emit('join', peerId)
+  },
+  emitPeerLeave: (roomId, peerId) => {
+    fixture.rooms.get(roomId)?.emit('leave', peerId)
+  },
+  emitJoinError: (roomId, error) => {
+    const peerId = fixture.roomPeers.get(roomId)
+    fixture.peers.find((peer) => peer.id === peerId)?.emit('error', error)
+  },
+  settle: async () => {
+    await Promise.resolve()
+  }
+}
+
+describeRoomTransportContract(articoHarness)
 
 beforeEach(() => {
   fixture.peerStates.length = 0
   fixture.peers.length = 0
   fixture.room = null
   fixture.rooms.clear()
+  fixture.joins.length = 0
+  fixture.sendCalls.length = 0
+  fixture.roomPeers.clear()
   fixture.joinShouldThrow = undefined
   fixture.leaveShouldThrow = undefined
   fixture.closeShouldThrow = undefined
+  fixture.sendShouldThrow = undefined
 })
 afterEach(() => vi.useRealTimers())
 
@@ -254,16 +306,6 @@ describe('ArticoRoomTransport per-target isolation', () => {
 
     expect(fixture.room!.attempts).toEqual([{ peerId: 'closing-peer', payload: 'targeted' }])
     expect(fixture.room!.sent).toEqual([])
-  })
-
-  it('settles empty recipient sets and still rejects a missing room', async () => {
-    const transport = createArticoRoomTransport()
-    await transport.join('room-a')
-
-    await expect(transport.send('room-a', 'empty')).resolves.toBeUndefined()
-    await expect(transport.send('room-a', 'explicit-empty', [])).resolves.toBeUndefined()
-    expect(fixture.room!.attempts).toEqual([])
-    await expect(transport.send('missing-room', 'payload')).rejects.toThrow('Room "missing-room" not joined')
   })
 
   it('gives fresh Chat and World demand independent scoped peers and replacement owners', async () => {
