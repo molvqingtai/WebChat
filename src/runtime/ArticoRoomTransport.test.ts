@@ -146,7 +146,7 @@ vi.mock('@rtco/client', () => {
 })
 
 import { createArticoRoomTransport } from './ArticoRoomTransport'
-import { describeRoomTransportContract, type RoomTransportHarness } from './RoomTransport.contract'
+import { describeRoomTransportContract, type RoomTransportHarness } from './RoomTransport.contract.test-utils'
 
 const articoHarness: RoomTransportHarness = {
   provider: 'artico',

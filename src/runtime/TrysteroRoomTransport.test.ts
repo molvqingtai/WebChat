@@ -105,7 +105,7 @@ const roomOf = (roomId: string) => {
   return room
 }
 
-import { describeRoomTransportContract, type RoomTransportHarness } from '@/runtime/RoomTransport.contract'
+import { describeRoomTransportContract, type RoomTransportHarness } from '@/runtime/RoomTransport.contract.test-utils'
 
 const trysteroHarness: RoomTransportHarness = {
   provider: 'trystero',
@@ -149,6 +149,27 @@ beforeEach(() => {
 })
 
 describe('TrysteroRoomTransport', () => {
+  it('maps an omitted target to the provider broadcast null', async () => {
+    const transport = createTrysteroRoomTransport()
+    await transport.join('room-a')
+
+    await transport.send('room-a', 'all')
+
+    expect(trysteroFixture.sent).toEqual([{ roomId: 'room-a', data: 'all', target: null }])
+    transport.dispose()
+  })
+
+  it('dispose physically leaves every joined room after settlement', async () => {
+    const transport = createTrysteroRoomTransport()
+    await transport.join('room-a')
+    await transport.join('room-b')
+
+    transport.dispose()
+    await settle()
+
+    expect(trysteroFixture.rooms.size).toBe(0)
+  })
+
   it('sends nothing for an empty target array without calling the provider', async () => {
     const transport = createTrysteroRoomTransport()
     await transport.join('room-a')
