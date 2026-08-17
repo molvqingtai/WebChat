@@ -36,12 +36,6 @@ After installing WebChat, a ghost icon appears in the bottom-right corner of eac
 
 https://github.com/user-attachments/assets/e7ac9b8e-1b6c-43fb-8469-7a0a2c09d450
 
-## Peer Transport
-
-WebChat keeps its application and protocol layers independent from the underlying peer library. The current build uses [Trystero](https://github.com/dmotz/trystero) with its Nostr strategy for peer discovery and WebRTC room transport.
-
-[Artico](https://github.com/matallui/artico) remains available as an alternative build-time provider. To build with Artico, change `ROOM_TRANSPORT_PROVIDER` in [`src/runtime/TransportProvider.ts`](src/runtime/TransportProvider.ts) from `trystero` to `artico`, then rebuild the extension. This is a build-time selection; there is no runtime UI or environment-variable switch.
-
 ## Community
 
 Join the [WebChat Discord community](https://discord.com/channels/1398133810398367805/1398137562043908248) to share feedback, ask questions, and meet other users.
