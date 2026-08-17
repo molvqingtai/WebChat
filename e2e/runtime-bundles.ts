@@ -91,7 +91,15 @@ const codecPolyfillMarkers = [
   ;['fromBase64', 'toBase64', 'lastChunkHandling'].forEach((marker) =>
     assert(bundle.includes(marker), `${target} must contain ${marker}`)
   )
-  ;['setFromBase64', 'fromHex', 'toHex', 'setFromHex', 'atob(', 'btoa('].forEach((residue) =>
+  // Match core-js method definitions without rejecting identically named crypto helpers.
+  ;[
+    '{setFromBase64:function',
+    '{fromHex:function',
+    '{toHex:function',
+    '{setFromHex:function',
+    '{atob:function',
+    '{btoa:function'
+  ].forEach((residue) =>
     assert(!bundle.includes(residue), `${target} must not contain unrelated Base64/hex residue ${residue}`)
   )
 })
