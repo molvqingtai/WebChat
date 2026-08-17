@@ -34,8 +34,12 @@ export const createTrysteroRoomTransport = (): RoomTransport => {
   const closeListeners = new Set<(roomId: string) => void>()
   const errorListeners = new Set<(error: Error, roomId: string) => void>()
 
+  /** A room owner is active only while it is neither leaving nor retaining a failed leave. */
+  const isActive = (owner: PeerOwner) =>
+    owners.get(owner.roomId) === owner && !owner.disposed && !owner.pendingLeave && !owner.leaveError
+
   const bindRoom = (owner: PeerOwner, room: Room, action: TrysteroMessageAction) => {
-    const isCurrent = () => owners.get(owner.roomId) === owner && !owner.disposed && owner.room === room
+    const isCurrent = () => isActive(owner) && owner.room === room
     action.onMessage = (rawPayload, context) => {
       if (isCurrent()) messageListeners.forEach((listener) => listener(owner.roomId, context.peerId, rawPayload))
     }
@@ -54,7 +58,7 @@ export const createTrysteroRoomTransport = (): RoomTransport => {
     owners.set(roomId, owner)
     const room = joinRoom({ appId: __NAME__ }, roomId, {
       onJoinError: (details) => {
-        if (owners.get(roomId) !== owner || owner.disposed) return
+        if (!isActive(owner)) return
         errorListeners.forEach((listener) => listener(new Error(details.error), roomId))
       }
     })
@@ -74,7 +78,7 @@ export const createTrysteroRoomTransport = (): RoomTransport => {
     }
     // The physical leave settles asynchronously; the room stays occupied until it succeeds. A
     // same-room join must await this settlement before creating a fresh Room, and a failed leave
-    // keeps the owner so a rejoin resolves as still-joined instead of binding a stale Room.
+    // keeps the owner as a non-reentrant occupancy record.
     const pending = room.leave().then(
       () => {
         owner.disposed = true
@@ -96,7 +100,10 @@ export const createTrysteroRoomTransport = (): RoomTransport => {
   }
 
   return {
-    peerIdOf: (roomId) => (owners.has(roomId) ? selfId : ''),
+    peerIdOf: (roomId) => {
+      const owner = owners.get(roomId)
+      return owner && isActive(owner) ? selfId : ''
+    },
     join: async (roomId) => {
       const existing = owners.get(roomId)
       if (existing?.pendingLeave) await existing.pendingLeave
@@ -121,6 +128,10 @@ export const createTrysteroRoomTransport = (): RoomTransport => {
       const owner = owners.get(roomId)
       const room = owner?.room
       if (!owner || !room) throw new Error(`Room "${roomId}" not joined`)
+      // A room that is leaving (or whose leave failed) is not sendable: never invoke the
+      // provider on the stale Room, and surface the retained leave failure when present.
+      if (owner.leaveError) throw owner.leaveError.value
+      if (owner.pendingLeave) throw new Error(`Room "${roomId}" is leaving`)
       if (Array.isArray(to) && to.length === 0) return
       await roomAction(room).send(payload, { target: to ?? null })
     },
@@ -145,7 +156,9 @@ export const createTrysteroRoomTransport = (): RoomTransport => {
       return () => errorListeners.delete(callback)
     },
     dispose: () => {
-      Array.from(owners.values()).forEach((owner) => dropOwner(owner))
+      // A leave failure during teardown has no current user impact but must stay observable as
+      // diagnostics; the error listeners are cleared below, so it never fires into a dead set.
+      Array.from(owners.values()).forEach((owner) => dropOwner(owner, true))
       messageListeners.clear()
       joinListeners.clear()
       leaveListeners.clear()

@@ -251,13 +251,83 @@ describe('TrysteroRoomTransport', () => {
     await settle()
 
     expect(errors).toEqual(['room-a:leave rejected'])
-    // The failed leave retains the room as occupied: a same-room join rejects with the exact
-    // leave failure identity and never binds a second Room.
+    // The failed leave retains the room as occupied but inactive: a same-room join rejects with
+    // the exact leave failure identity, no second Room is bound, and the room reports no selfId.
     await expect(transport.join('room-a')).rejects.toBe(leaveFailure)
     expect(trysteroFixture.joinCalls).toEqual(['room-a'])
     expect(roomOf('room-a')).toBe(firstRoom)
-    expect(transport.peerIdOf('room-a')).toBe('trystero-self-id')
+    expect(transport.peerIdOf('room-a')).toBe('')
     transport.dispose()
+  })
+
+  it('makes a leaving room inert: no selfId, no provider send, no callbacks', async () => {
+    const transport = createTrysteroRoomTransport()
+    const events: string[] = []
+    transport.onMessage((roomId, sourcePeerId) => events.push(`message:${roomId}:${sourcePeerId}`))
+    transport.onPeerJoin((roomId, peerId) => events.push(`join:${roomId}:${peerId}`))
+    transport.onError((error, roomId) => events.push(`error:${roomId}:${error.message}`))
+    await transport.join('room-a')
+    const room = roomOf('room-a')
+    trysteroFixture.deferLeave('room-a')
+    const sentBefore = trysteroFixture.sent.length
+
+    transport.leave('room-a')
+
+    // Pending phase: the retained Room is fully inert.
+    expect(transport.peerIdOf('room-a')).toBe('')
+    await expect(transport.send('room-a', 'late')).rejects.toThrow('Room "room-a" is leaving')
+    expect(trysteroFixture.sent).toHaveLength(sentBefore)
+    room.action.onMessage?.('stale', { peerId: 'stale-peer' })
+    room.onPeerJoin?.('stale-peer')
+    trysteroFixture.joinErrors.get('room-a')?.({ error: 'stale join error' })
+    expect(events).toEqual([])
+
+    trysteroFixture.leaveControls.get('room-a')?.resolve()
+    await settle()
+    expect(transport.peerIdOf('room-a')).toBe('')
+    transport.dispose()
+  })
+
+  it('keeps a leave-failed room inert while rejecting sends with the retained error', async () => {
+    const transport = createTrysteroRoomTransport()
+    const events: string[] = []
+    transport.onMessage((roomId, sourcePeerId) => events.push(`message:${roomId}:${sourcePeerId}`))
+    transport.onError((error, roomId) => events.push(`error:${roomId}:${error.message}`))
+    await transport.join('room-a')
+    const room = roomOf('room-a')
+    trysteroFixture.deferLeave('room-a')
+    const leaveFailure = new Error('leave rejected')
+    const sentBefore = trysteroFixture.sent.length
+
+    transport.leave('room-a')
+    trysteroFixture.leaveControls.get('room-a')?.reject(leaveFailure)
+    await settle()
+
+    // Failed phase: exactly one scoped error, then the room is inert for sends and callbacks.
+    expect(events).toEqual(['error:room-a:leave rejected'])
+    expect(transport.peerIdOf('room-a')).toBe('')
+    await expect(transport.send('room-a', 'late')).rejects.toBe(leaveFailure)
+    expect(trysteroFixture.sent).toHaveLength(sentBefore)
+    room.action.onMessage?.('stale', { peerId: 'stale-peer' })
+    expect(events).toEqual(['error:room-a:leave rejected'])
+    transport.dispose()
+  })
+
+  it('reports a dispose-time leave rejection only as diagnostics', async () => {
+    const transport = createTrysteroRoomTransport()
+    const errors: string[] = []
+    transport.onError((error, roomId) => errors.push(`${roomId}:${error.message}`))
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    await transport.join('room-a')
+    trysteroFixture.deferLeave('room-a')
+
+    transport.dispose()
+    trysteroFixture.leaveControls.get('room-a')?.reject(new Error('dispose leave failed'))
+    await settle()
+
+    expect(errors).toEqual([])
+    expect(consoleError).toHaveBeenCalledOnce()
+    consoleError.mockRestore()
   })
 
   it('keeps a diagnostic-only leave failure out of the error stream while retaining the room', async () => {
