@@ -21,11 +21,27 @@ const trysteroFixture = vi.hoisted(() => {
   const rooms = new Map<string, FakeRoom>()
   const joinErrors = new Map<string, (details: { error: string }) => void>()
   const sent: { roomId: string; data: string; target?: string | string[] | null }[] = []
+  const leaveControls = new Map<
+    string,
+    { promise: Promise<void>; resolve: () => void; reject: (error: Error) => void }
+  >()
+  const joinCalls: string[] = []
   let failNextSend: Error | undefined
   return {
     rooms,
     joinErrors,
     sent,
+    leaveControls,
+    joinCalls,
+    deferLeave: (roomId: string) => {
+      let resolve!: () => void
+      let reject!: (error: Error) => void
+      const promise = new Promise<void>((onResolve, onReject) => {
+        resolve = onResolve
+        reject = onReject
+      })
+      leaveControls.set(roomId, { promise, resolve, reject })
+    },
     fail: (error: Error) => {
       failNextSend = error
     },
@@ -53,6 +69,7 @@ vi.mock('trystero', () => ({
       },
       onMessage: null
     }
+    trysteroFixture.joinCalls.push(roomId)
     const room: FakeRoom = {
       roomId,
       action,
@@ -62,6 +79,12 @@ vi.mock('trystero', () => ({
       left: false,
       leave() {
         this.left = true
+        const control = trysteroFixture.leaveControls.get(roomId)
+        if (control) {
+          return control.promise.then(() => {
+            trysteroFixture.rooms.delete(roomId)
+          })
+        }
         trysteroFixture.rooms.delete(roomId)
         return Promise.resolve()
       }
@@ -71,6 +94,10 @@ vi.mock('trystero', () => ({
     return room
   }
 }))
+
+const settle = async () => {
+  await new Promise<void>((resolve) => setTimeout(resolve, 0))
+}
 
 const roomOf = (roomId: string) => {
   const room = trysteroFixture.rooms.get(roomId)
@@ -83,6 +110,8 @@ beforeEach(() => {
   trysteroFixture.rooms.clear()
   trysteroFixture.joinErrors.clear()
   trysteroFixture.sent.length = 0
+  trysteroFixture.leaveControls.clear()
+  trysteroFixture.joinCalls.length = 0
 })
 
 describe('TrysteroRoomTransport', () => {
@@ -164,7 +193,7 @@ describe('TrysteroRoomTransport', () => {
     transport.dispose()
   })
 
-  it('leave removes the room, fences its stale callbacks, and rejects later sends', async () => {
+  it('leave removes the room after the physical settlement, fences its stale callbacks, and rejects later sends', async () => {
     const transport = createTrysteroRoomTransport()
     const events: string[] = []
     transport.onPeerJoin((roomId, peerId) => events.push(`join:${roomId}:${peerId}`))
@@ -172,12 +201,82 @@ describe('TrysteroRoomTransport', () => {
     const room = roomOf('room-a')
 
     transport.leave('room-a')
-
     expect(room.left).toBe(true)
+    await settle()
+
     expect(transport.peerIdOf('room-a')).toBe('')
     room.onPeerJoin?.('stale-peer')
     expect(events).toEqual([])
     await expect(transport.send('room-a', 'late')).rejects.toThrow('Room "room-a" not joined')
+    transport.dispose()
+  })
+
+  it('waits for a pending physical leave before rejoining the same room', async () => {
+    const transport = createTrysteroRoomTransport()
+    await transport.join('room-a')
+    const firstRoom = roomOf('room-a')
+    trysteroFixture.deferLeave('room-a')
+
+    transport.leave('room-a')
+    let rejoined = false
+    const rejoin = transport.join('room-a').then(() => {
+      rejoined = true
+    })
+    await settle()
+
+    // The leave is still in flight: no second Room may be created and the join stays pending.
+    expect(rejoined).toBe(false)
+    expect(trysteroFixture.joinCalls).toEqual(['room-a'])
+
+    trysteroFixture.leaveControls.get('room-a')?.resolve()
+    await rejoin
+
+    expect(trysteroFixture.joinCalls).toEqual(['room-a', 'room-a'])
+    expect(roomOf('room-a')).not.toBe(firstRoom)
+    expect(transport.peerIdOf('room-a')).toBe('trystero-self-id')
+    transport.dispose()
+  })
+
+  it('keeps the room occupied and reports a normal leave failure without rejoining a stale Room', async () => {
+    const transport = createTrysteroRoomTransport()
+    const errors: string[] = []
+    transport.onError((error, roomId) => errors.push(`${roomId}:${error.message}`))
+    await transport.join('room-a')
+    const firstRoom = roomOf('room-a')
+    trysteroFixture.deferLeave('room-a')
+
+    transport.leave('room-a')
+    const leaveFailure = new Error('leave rejected')
+    trysteroFixture.leaveControls.get('room-a')?.reject(leaveFailure)
+    await settle()
+
+    expect(errors).toEqual(['room-a:leave rejected'])
+    // The failed leave retains the room as occupied: a same-room join rejects with the exact
+    // leave failure identity and never binds a second Room.
+    await expect(transport.join('room-a')).rejects.toBe(leaveFailure)
+    expect(trysteroFixture.joinCalls).toEqual(['room-a'])
+    expect(roomOf('room-a')).toBe(firstRoom)
+    expect(transport.peerIdOf('room-a')).toBe('trystero-self-id')
+    transport.dispose()
+  })
+
+  it('keeps a diagnostic-only leave failure out of the error stream while retaining the room', async () => {
+    const transport = createTrysteroRoomTransport()
+    const errors: string[] = []
+    transport.onError((error, roomId) => errors.push(`${roomId}:${error.message}`))
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    await transport.join('room-a')
+    trysteroFixture.deferLeave('room-a')
+
+    transport.leave('room-a', { diagnosticOnly: true })
+    trysteroFixture.leaveControls.get('room-a')?.reject(new Error('diagnostic leave failed'))
+    await settle()
+
+    expect(errors).toEqual([])
+    expect(consoleError).toHaveBeenCalledOnce()
+    await expect(transport.join('room-a')).rejects.toThrow('diagnostic leave failed')
+    expect(trysteroFixture.joinCalls).toEqual(['room-a'])
+    consoleError.mockRestore()
     transport.dispose()
   })
 
@@ -187,6 +286,7 @@ describe('TrysteroRoomTransport', () => {
     await transport.join('room-b')
 
     transport.dispose()
+    await settle()
 
     expect(trysteroFixture.rooms.size).toBe(0)
     expect(transport.peerIdOf('room-a')).toBe('')

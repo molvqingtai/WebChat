@@ -5,6 +5,10 @@ import type { RoomTransport } from '@/runtime/RoomTransport'
 interface PeerOwner {
   roomId: string
   room?: Room
+  /** The in-flight physical leave settlement for this room, if any. */
+  pendingLeave?: Promise<void>
+  /** The retained failure of the last physical leave; the room stays occupied and non-reentrant. */
+  leaveError?: { value: unknown }
   disposed: boolean
 }
 
@@ -60,30 +64,58 @@ export const createTrysteroRoomTransport = (): RoomTransport => {
     return owner
   }
 
-  const dropOwner = (owner: PeerOwner) => {
-    if (owner.disposed) return
-    owner.disposed = true
-    owners.delete(owner.roomId)
+  const dropOwner = (owner: PeerOwner, diagnosticOnly = false) => {
+    if (owner.pendingLeave) return
     const room = owner.room
-    owner.room = undefined
-    room?.leave().catch((error: unknown) => {
-      // A disposed owner is already non-current: its leave failure has no current user impact,
-      // but it must not disappear.
-      console.error(error)
+    if (!room) {
+      owner.disposed = true
+      owners.delete(owner.roomId)
+      return
+    }
+    // The physical leave settles asynchronously; the room stays occupied until it succeeds. A
+    // same-room join must await this settlement before creating a fresh Room, and a failed leave
+    // keeps the owner so a rejoin resolves as still-joined instead of binding a stale Room.
+    const pending = room.leave().then(
+      () => {
+        owner.disposed = true
+        owner.room = undefined
+        if (owners.get(owner.roomId) === owner) owners.delete(owner.roomId)
+      },
+      (error: unknown) => {
+        // A failed leave keeps the room occupied: the owner is retained so no second Room is
+        // ever created for this roomId, and later joins reject with this exact failure.
+        owner.leaveError = { value: error }
+        if (diagnosticOnly) console.error(error)
+        else errorListeners.forEach((listener) => listener(error as Error, owner.roomId))
+      }
+    )
+    owner.pendingLeave = pending
+    void pending.finally(() => {
+      owner.pendingLeave = undefined
     })
   }
 
   return {
     peerIdOf: (roomId) => (owners.has(roomId) ? selfId : ''),
-    join: (roomId) => {
-      const owner = owners.get(roomId) ?? createOwner(roomId)
-      // Trystero creates the physical room synchronously; the join settles immediately.
-      return owner.room ? Promise.resolve() : Promise.reject(new Error(`Room "${roomId}" not joined`))
+    join: async (roomId) => {
+      const existing = owners.get(roomId)
+      if (existing?.pendingLeave) await existing.pendingLeave
+      const owner = owners.get(roomId)
+      if (!owner) {
+        createOwner(roomId)
+        return
+      }
+      // A failed physical leave keeps the old Room occupied: rejoining must surface that exact
+      // failure instead of reporting a false success against the stale Room.
+      if (owner.leaveError) throw owner.leaveError.value
+      if (owner.room) return
+      owners.delete(roomId)
+      createOwner(roomId)
     },
-    leave: (roomId) => {
+    leave: (roomId, options) => {
       const owner = owners.get(roomId)
       if (!owner) return
-      dropOwner(owner)
+      dropOwner(owner, options?.diagnosticOnly)
     },
     send: async (roomId, payload, to) => {
       const owner = owners.get(roomId)
