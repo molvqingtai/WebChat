@@ -94,7 +94,7 @@ afterEach(() => {
 })
 
 describe('pinned Artico ready-to-closing behavior', () => {
-  it('requires adapter isolation because a target-array throw starves later peers', () => {
+  it('rethrows the first failure while still delivering to later ready peers', () => {
     vi.stubGlobal('RTCPeerConnection', FakePeerConnection)
     const signaling = new FakeSignaling() as unknown as Signaling
     const artico = new Artico({ signaling, debug: 0 })
@@ -108,11 +108,13 @@ describe('pinned Artico ready-to-closing behavior', () => {
     })
     channels[0].readyState = 'closing'
 
+    // A target-array send attempts every selected peer: the closing peer's original error is
+    // rethrown as-is, and later ready peers still receive the payload.
     expect(() => room.send('batched', ['closing-peer', 'ready-peer'])).toThrow('Connection is not established yet.')
-    expect(channels[1].sent).toEqual([])
+    expect(channels[1].sent).toEqual(['batched'])
 
     expect(() => room.send('isolated', 'closing-peer')).toThrow('Connection is not established yet.')
     expect(() => room.send('isolated', 'ready-peer')).not.toThrow()
-    expect(channels[1].sent).toEqual(['isolated'])
+    expect(channels[1].sent).toEqual(['batched', 'isolated'])
   })
 })

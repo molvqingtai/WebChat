@@ -57,8 +57,8 @@ importers:
         specifier: ^1.7.2
         version: 1.7.2
       '@rtco/client':
-        specifier: ^0.3.6
-        version: 0.3.6(supports-color@7.2.0)
+        specifier: github:molvqingtai/artico#test/pr40-42-integration&path:/packages/client
+        version: https://codeload.github.com/molvqingtai/artico/tar.gz/8593160bcb98d08aead35ce03cc1a09bfcbf1dba#path:/packages/client(supports-color@7.2.0)
       '@tailwindcss/typography':
         specifier: ^0.5.20
         version: 0.5.20(tailwindcss@4.3.3)
@@ -1705,8 +1705,9 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@rtco/client@0.3.6':
-    resolution: {integrity: sha512-d5GPdysHp4mH/FYJ2uHyx5hdvX1tAtrYFyZqLFnXEsKt1W6wQADfXDp/m+vbCYH6SHmcz1RMTJqIPS+PFPz2dA==}
+  '@rtco/client@https://codeload.github.com/molvqingtai/artico/tar.gz/8593160bcb98d08aead35ce03cc1a09bfcbf1dba#path:/packages/client':
+    resolution: {gitHosted: true, integrity: sha512-v6Os+/ezEtsM+pikneao85iWENdTUBct7T4u+AGL8E5Cluyqcimbn40j4UjXbBn5IhjqkChY/qpvsJo8I7Qx8Q==, path: /packages/client, tarball: https://codeload.github.com/molvqingtai/artico/tar.gz/8593160bcb98d08aead35ce03cc1a09bfcbf1dba}
+    version: 0.3.6
 
   '@rtco/peer@0.3.6':
     resolution: {integrity: sha512-h+E27YaXyRiBk4AarGd4Kiu9EzzjJQRomwsHq8AKbXhK8eEm6mZbzqCukclLsFdGHDPqcFHYOYpaOBYQe6YpNw==}
@@ -7412,7 +7413,7 @@ snapshots:
   '@rollup/rollup-win32-x64-msvc@4.52.3':
     optional: true
 
-  '@rtco/client@0.3.6(supports-color@7.2.0)':
+  '@rtco/client@https://codeload.github.com/molvqingtai/artico/tar.gz/8593160bcb98d08aead35ce03cc1a09bfcbf1dba#path:/packages/client(supports-color@7.2.0)':
     dependencies:
       '@rtco/peer': 0.3.6
       bufferutil: 4.1.0
