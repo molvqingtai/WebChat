@@ -60,15 +60,15 @@ Its meanings remain complete: omission is native room broadcast, a string is one
 
 Product send classification is closed:
 
-| Producer                                | Provider target                         |
-| --------------------------------------- | --------------------------------------- |
-| Initial Session publication             | omitted, native broadcast               |
-| Text/Reaction                           | omitted, native broadcast               |
-| World full snapshot                     | omitted, native broadcast               |
-| World zero-call whole-publication retry | omitted, native broadcast               |
-| History inventory-request page          | request-start `expectedProviders` array |
-| History response                        | existing requester peer                 |
-| Session/World current-state catch-up    | existing joined/reconnected peer        |
+| Producer                                | Provider target                       |
+| --------------------------------------- | ------------------------------------- |
+| Initial Session publication             | omitted, native broadcast             |
+| Text/Reaction                           | omitted, native broadcast             |
+| World full snapshot                     | omitted, native broadcast             |
+| World zero-call whole-publication retry | omitted, native broadcast             |
+| History inventory-request chunk         | target derived from triggering source |
+| History response                        | existing requester peer               |
+| Session/World current-state catch-up    | existing joined/reconnected peer      |
 
 Room-wide producers do not read, filter, de-duplicate, or self-exclude Session or World peer ids before sending. Business membership remains owned because it drives presence, History correlation, release, and catch-up; it is not a broadcast recipient cache.
 
@@ -107,7 +107,7 @@ Controls should be mutation-sensitive: restoring a room-wide target array, a fix
 
 - **Broadcast occurs with no active peer** -> Treat it as successful best effort; later History and targeted state catch-up provide the existing convergence paths.
 - **A peer activates immediately after broadcast** -> Send only current Session/World catch-up to that peer; do not duplicate room-wide publication or invent Text/Reaction replay.
-- **History is accidentally broadened** -> Keep request-start `expectedProviders` and requester identities explicit and mutation-test both directions.
+- **History is accidentally broadened** -> Derive the singleton target directly from the triggering-source requester identity, retain no provider-routing array, and mutation-test both directions.
 - **Removing the special resume path weakens fencing** -> Preserve generic queue identity, Room generation, owner revalidation, and stale cancellation; remove only recipient recomputation and fixed waiting.
 - **Single-provider cleanup leaves hidden Artico support** -> Scan production, tests, package manifests, lockfile, README/current docs, imports, composition, and structural rules; allow mentions only in archived historical records.
 - **Provider organization grows a registry prematurely** -> Require direct host composition and forbid barrels/selectors while only Trystero is supported.

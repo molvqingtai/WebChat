@@ -23,7 +23,7 @@ Production SHALL contain no Artico implementation, import, dependency, lock reso
 
 The private `RoomTransport.send(roomId, payload, target?)` capability SHALL preserve its complete optional-target meanings: omission is native room broadcast, a string is one peer, an array is the selected subset, and `[]` is no recipients. The Trystero adapter SHALL delegate omission as native broadcast without enumerating, filtering, de-duplicating, or self-excluding application peer ids.
 
-Initial Session publication, ordinary Text and Reaction, every World full snapshot, and the existing eligible World whole-publication retry SHALL omit the target and use native room broadcast. History inventory-request pages SHALL retain the request-start `expectedProviders` array. History responses SHALL retain the requester target. Session and World current-state catch-up SHALL retain the peer that joined or reconnected after the prior publication.
+Initial Session publication, ordinary Text and Reaction, every World full snapshot, and the existing eligible World whole-publication retry SHALL omit the target and use native room broadcast. History inventory-request chunks SHALL derive their singleton target directly from the triggering source and SHALL retain no `expectedProviders` routing array. History responses SHALL retain the requester target. Session and World current-state catch-up SHALL retain the peer that joined or reconnected after the prior publication.
 
 The World retry SHALL remain eligible only after preflight fails before any provider invocation. It SHALL retry the same whole-publication intent as native broadcast to peers active at the later invocation. WebChat SHALL never retry after a provider call, create per-peer attempt state, add an acknowledgement/outbox/delivery status, or infer remote delivery from a successful return.
 
@@ -37,7 +37,7 @@ The World retry SHALL remain eligible only after preflight fails before any prov
 
 - **GIVEN** a History inventory page, History response, Session catch-up, or World catch-up
 - **WHEN** it reaches the provider boundary
-- **THEN** History inventory SHALL target its request-start `expectedProviders`, the response SHALL target its requester, and catch-up SHALL target its existing joined/reconnected peer
+- **THEN** History inventory SHALL target only its directly derived triggering source with no provider-routing array, the response SHALL target its requester, and catch-up SHALL target its existing joined/reconnected peer
 - **AND** none of those sends SHALL be broadened to native room broadcast
 
 #### Scenario: Zero active peers is successful best effort
