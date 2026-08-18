@@ -119,6 +119,13 @@ const ChatRoomDomain = Remesh.domain({
         !get(ConnectionOperationIsLoadingQuery()) &&
         !get(ReconnectIsLoadingQuery())
     })
+    // Single shared submit truth for both the UI handoff and the domain command gate: the local
+    // Room generation has committed its join, the runtime is ready, and no connection or reconnect
+    // operation is loading. Peers, WebRTC handshake, and History are deliberately not part of it.
+    const CanSubmitTextQuery = domain.query({
+      name: 'Room.CanSubmitTextQuery',
+      impl: ({ get }) => get(JoinIsFinishedQuery()) && get(SendIsReadyQuery())
+    })
     const ReconnectAvailableQuery = domain.query({
       name: 'Room.ReconnectAvailableQuery',
       impl: ({ get }) => get(userInfoDomain.query.UserInfoQuery()) !== null && !get(ConnectionIsLoadingQuery())
@@ -177,8 +184,15 @@ const ChatRoomDomain = Remesh.domain({
     })
     const SendTextMessageCommand = domain.command({
       name: 'Room.SendTextMessageCommand',
-      impl: (_, message: string | { body: string; mentions: MentionedUser[] }) =>
-        SendTextRequestedEvent(typeof message === 'string' ? { body: message, mentions: [] } : message)
+      // Step-4 gate: a TEXT is only submitted after the local Room generation has finished its
+      // join and the runtime is ready with no connection/reconnect loading. Before that the
+      // command is a strict no-op: zero runtime command/request/allocation/validation/
+      // projection/persistence, and the user's draft is left untouched. Recovery never re-runs
+      // it; the user must submit again explicitly.
+      impl: ({ get }, message: string | { body: string; mentions: MentionedUser[] }) =>
+        get(CanSubmitTextQuery())
+          ? SendTextRequestedEvent(typeof message === 'string' ? { body: message, mentions: [] } : message)
+          : null
     })
 
     const SendReactionRequestedEvent = domain.event<{ messageId: string; reaction: 'like' | 'hate' }>({
@@ -398,38 +412,35 @@ const ChatRoomDomain = Remesh.domain({
 
     domain.effect({
       name: 'Room.SendTextEffect',
-      impl: ({ fromEvent, fromQuery, get }) =>
+      impl: ({ fromEvent, get }) =>
         fromEvent(SendTextRequestedEvent).pipe(
-          concatMap((command) =>
-            fromQuery(SendIsReadyQuery()).pipe(
-              startWith(get(SendIsReadyQuery())),
-              filter(Boolean),
-              take(1),
-              concatMap(async () => {
-                const user = get(userInfoDomain.query.UserInfoQuery())
-                if (!user) return OnErrorEvent(new Error('User identity is unavailable'))
-                const token = sendLifecycle.beginSend()
-                try {
-                  const message = await chatRoom.sendMessage({ type: 'text', ...command })
-                  sendLifecycle.settleSend(token, 'accepted')
-                  const record: TextMessageRecord = {
-                    type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE,
-                    id: message.id,
-                    message,
-                    user,
-                    receivedAt: Date.now()
-                  }
-                  return [messageInputDomain.command.ClearCommand(), SendTextMessageEvent(projectTextRecord(record))]
-                } catch (error) {
-                  // A send is silent cancellation only when its own exact token was cancelled by final
-                  // release; otherwise the owning invocation settles it as a real failure.
-                  if (sendLifecycle.getSendResult(token) === 'cancelled') return null
-                  sendLifecycle.settleSend(token, 'failed')
-                  return OnErrorEvent(normalizeError(error))
-                }
-              })
-            )
-          )
+          // Local projection must not wait for room readiness, connection/reconnect loading, or
+          // transport/persistence: a protocol-valid local text is accepted and displayed here;
+          // the physical send continues as background work (Wire queues it when the room is not
+          // yet trusted) and never gates or rolls back this local display.
+          concatMap(async (command) => {
+            const user = get(userInfoDomain.query.UserInfoQuery())
+            if (!user) return OnErrorEvent(new Error('User identity is unavailable'))
+            const token = sendLifecycle.beginSend()
+            try {
+              const message = await chatRoom.sendMessage({ type: 'text', ...command })
+              sendLifecycle.settleSend(token, 'accepted')
+              const record: TextMessageRecord = {
+                type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE,
+                id: message.id,
+                message,
+                user,
+                receivedAt: Date.now()
+              }
+              return [messageInputDomain.command.ClearCommand(), SendTextMessageEvent(projectTextRecord(record))]
+            } catch (error) {
+              // A send is silent cancellation only when its own exact token was cancelled by final
+              // release; otherwise the owning invocation settles it as a real failure.
+              if (sendLifecycle.getSendResult(token) === 'cancelled') return null
+              sendLifecycle.settleSend(token, 'failed')
+              return OnErrorEvent(normalizeError(error))
+            }
+          })
         )
     })
 
@@ -568,6 +579,7 @@ const ChatRoomDomain = Remesh.domain({
       query: {
         UserListQuery,
         JoinIsFinishedQuery,
+        CanSubmitTextQuery,
         ReconnectRequestQuery,
         ReconnectIsLoadingQuery,
         ConnectionOperationIsLoadingQuery,

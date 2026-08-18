@@ -185,6 +185,8 @@ describe.each(backends)('$name causal local send projection', (backend) => {
     database.watch = ((stores, listener) => watch(stores, () => notify.add(listener))) as typeof database.watch
     const page = createPage(database, () => 'local-message')
     await vi.waitFor(() => expect(page.store.query(page.list.query.LoadIsFinishedQuery())).toBe(true))
+    page.store.send(page.room.command.JoinRoomCommand())
+    await vi.waitFor(() => expect(page.store.query(page.room.query.JoinIsFinishedQuery())).toBe(true))
     const projected: string[] = []
     const remote: string[] = []
     page.store.subscribeEvent(page.room.event.SendTextMessageEvent, (message) => projected.push(message.id))
@@ -256,6 +258,10 @@ describe.each(backends)('$name causal local send projection', (backend) => {
     const second = createPage(secondDatabase, () => 'second-tab-message')
     await vi.waitFor(() => expect(first.store.query(first.list.query.LoadIsFinishedQuery())).toBe(true))
     await vi.waitFor(() => expect(second.store.query(second.list.query.LoadIsFinishedQuery())).toBe(true))
+    first.store.send(first.room.command.JoinRoomCommand())
+    second.store.send(second.room.command.JoinRoomCommand())
+    await vi.waitFor(() => expect(first.store.query(first.room.query.JoinIsFinishedQuery())).toBe(true))
+    await vi.waitFor(() => expect(second.store.query(second.room.query.JoinIsFinishedQuery())).toBe(true))
     const firstProjected: string[] = []
     const secondProjected: string[] = []
     first.store.subscribeEvent(first.room.event.SendTextMessageEvent, (message) => firstProjected.push(message.id))
@@ -299,6 +305,8 @@ describe.each(backends)('$name causal local send projection', (backend) => {
     await messageStore.insert(existing)
     const page = createPage(database, () => 'collision')
     await vi.waitFor(() => expect(page.store.query(page.list.query.LoadIsFinishedQuery())).toBe(true))
+    page.store.send(page.room.command.JoinRoomCommand())
+    await vi.waitFor(() => expect(page.store.query(page.room.query.JoinIsFinishedQuery())).toBe(true))
     const projected: Array<{ id: string; body: string }> = []
     page.store.subscribeEvent(page.room.event.SendTextMessageEvent, (message) =>
       projected.push({ id: message.id, body: message.body })
