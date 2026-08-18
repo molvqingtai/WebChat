@@ -101,11 +101,17 @@ describe('replaceable application boundaries', () => {
       )
     ])
 
-    expect(calls.length).toBeGreaterThan(0)
-    // Native room-wide broadcasts omit the optional target; History inventory/response and
-    // Session/World catch-up still carry explicit targets.
-    expect(calls.some((call) => !call.targetPeerIds)).toBe(true)
-    expect(calls.some((call) => call.targetPeerIds)).toBe(true)
+    // The five room-wide producers — initial Session, Text/Reaction, World full snapshot, and the
+    // eligible zero-call World retry — all broadcast with an omitted target.
+    const broadcasts = calls.filter((call) => !call.targetPeerIds)
+    expect(broadcasts.map((call) => `${call.file}:${call.line}`)).toEqual([
+      'src/domain/runtime/Session.ts:545',
+      'src/domain/runtime/Session.ts:1136',
+      'src/domain/runtime/World.ts:268',
+      'src/domain/runtime/World.ts:378'
+    ])
+    // History inventory/response and Session/World catch-up remain explicitly targeted.
+    expect(calls.filter((call) => call.targetPeerIds)).toHaveLength(7)
     expect(runtimeSources.join('\n')).not.toMatch(/\bUserList\b|\breadyPeers\b/)
     expect(runtimeSources.join('\n')).not.toMatch(/matallui\/artico|Connection is not established yet/)
   })

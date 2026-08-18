@@ -92,7 +92,7 @@ interface PendingChatSend {
   domain: string
   roomId: string
   message: ChatMessage
-  /** Frozen distinct per-target send requests still awaiting their single provider call. */
+  /** Queued room-wide send requests still awaiting their single provider broadcast. */
 }
 
 interface LiveRelease {

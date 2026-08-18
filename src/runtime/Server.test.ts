@@ -147,8 +147,8 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
   const joinCalls: string[] = []
   const physicalJoinCalls: string[] = []
   const operationLog: string[] = []
-  const sent: { roomId: string; payload: string; to?: string | string[] }[] = []
-  const sendAttempts: { roomId: string; payload: string; to?: string | string[] }[] = []
+  const sent: { roomId: string; payload: string; to?: string | string[]; rawTarget?: string | string[] }[] = []
+  const sendAttempts: { roomId: string; payload: string; to?: string | string[]; rawTarget?: string | string[] }[] = []
   const sendAttemptWaiters: {
     roomId?: string
     resolve: (attempt: (typeof sendAttempts)[number]) => void
@@ -242,8 +242,9 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
     },
     send: async (roomId, payload, to) => {
       // A broadcast records its actual recipients: the room's current members at send time.
+      // `rawTarget` keeps the caller's own target argument (undefined means a native broadcast).
       const recipients = to === undefined ? [...(peersByRoom.get(roomId) ?? [])] : to
-      const attempt = { roomId, payload, to: recipients }
+      const attempt = { roomId, payload, to: recipients, rawTarget: to }
       sendAttempts.push(attempt)
       const matchingWaiters = sendAttemptWaiters.filter((waiter) => !waiter.roomId || waiter.roomId === roomId)
       sendAttemptWaiters.splice(
@@ -587,6 +588,43 @@ describe('RuntimeServer lifecycle', () => {
     await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
 
     expect(fake.sendAttempts.map(({ to }) => to)).toEqual([[], []])
+    disposeServer(server)
+  })
+
+  it('records a native broadcast raw target of undefined for every room-wide producer', async () => {
+    const fake = createFakeTransport()
+    const server = createServer({ transport: fake.transport, clock: new FakeClock(), codec: jsonCodec })
+    await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
+    const roomId = getChatRoomId(DOMAIN)
+    fake.plantPeer(roomId, 'peer-a')
+    fake.receive(roomId, 'peer-a', session())
+    await settle()
+
+    await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
+    const text = await server.allocateTextMessage({ domain: DOMAIN, body: 'outbound', mentions: [] })
+    await server.sendChatMessage({ domain: DOMAIN, event: text.message })
+    const reaction = await server.allocateReactionMessage({
+      domain: DOMAIN,
+      targetId: 't',
+      reaction: 'like',
+      active: true
+    })
+    await server.sendChatMessage({ domain: DOMAIN, event: reaction.message })
+    await settle()
+
+    // initial Session, Text, Reaction, and World full snapshot all carry an omitted raw target.
+    const sessionAttempt = fake.sendAttempts.findLast(
+      (attempt) => attempt.roomId === roomId && JSON.parse(attempt.payload).type === MESSAGE_TYPE.SESSION
+    )
+    expect(sessionAttempt?.rawTarget).toBeUndefined()
+    for (const type of [MESSAGE_TYPE.TEXT, MESSAGE_TYPE.REACTION]) {
+      const attempt = fake.sendAttempts.findLast((a) => a.roomId === roomId && JSON.parse(a.payload).type === type)
+      expect(attempt?.rawTarget).toBeUndefined()
+    }
+    const worldAttempt = fake.sendAttempts.findLast(
+      (a) => a.roomId === getWorldRoomId() && 'sites' in JSON.parse(a.payload)
+    )
+    expect(worldAttempt?.rawTarget).toBeUndefined()
     disposeServer(server)
   })
 

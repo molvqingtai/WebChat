@@ -182,7 +182,7 @@ const WorldDomain = Remesh.domain({
     })
     const ErrorEvent = domain.event<Error>({ name: 'World.ErrorEvent' })
     // A live release publication whose preflight step could not reach the provider re-issues that
-    // un-attempted step at a bounded cadence. It is never a per-target re-send of an attempted target.
+    // un-attempted step at a bounded cadence. It is never a re-broadcast of an already-performed send.
     const PublicationStepRetryRequestedEvent = domain.event<{ requestId: string }>({
       name: 'World.PublicationStepRetryRequestedEvent'
     })
@@ -334,8 +334,8 @@ const WorldDomain = Remesh.domain({
           return [FullPublicationState().new(null)]
         }
         // A preflight failure performed zero provider sends. For a live-release continuation it keeps
-        // the same publication step and re-issues the current un-attempted target at a bounded cadence
-        // (never a per-target re-send of an attempted target, never a premature DomainReleasedEvent).
+        // the same publication step and re-broadcasts it at a bounded cadence
+        // (never a re-send of an already-broadcast snapshot, never a premature DomainReleasedEvent).
         if (payload.stage === 'preflight') {
           if (!publication.stagedAttemptId && !publication.recoveryRequestId) {
             const released = get(LiveReleaseContinuationsState())
