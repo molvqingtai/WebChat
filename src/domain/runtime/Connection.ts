@@ -8,7 +8,7 @@ import WireDomain from '@/domain/runtime/Wire'
 import WorldDomain, { getWorldRoomId } from '@/domain/runtime/World'
 import type { ChatSite, ChatUser } from '@/protocol'
 import type { RuntimeSnapshot } from '@/runtime/Contract'
-import { ClockExtern, sleep } from '@/domain/runtime/externs/Clock'
+import { ClockExtern } from '@/domain/runtime/externs/Clock'
 
 export interface ConnectionOptions {
   [key: string]: string | number | undefined
@@ -66,7 +66,6 @@ export interface RuntimeFailure {
 }
 
 const PHYSICAL_ROOM_JOIN_TIMEOUT_MS = 10000
-const POST_JOIN_SEND_DELAY_MS = 1000
 export const ROOM_RECOVERY_RETRY_INTERVAL_MS = 10000
 const replaceBy = <T>(items: T[], predicate: (item: T) => boolean, next: T): T[] =>
   items.some(predicate) ? items.map((item) => (predicate(item) ? next : item)) : [...items, next]
@@ -792,13 +791,7 @@ const ConnectionDomain = Remesh.domain({
     })
     domain.effect({
       name: 'Connection.RoomsJoinedEffect',
-      impl: ({ fromEvent }) =>
-        fromEvent(wireDomain.event.RoomsJoinedEvent).pipe(
-          mergeMap(async (payload) => {
-            await sleep(clock, POST_JOIN_SEND_DELAY_MS)
-            return RoomsJoinedCommand(payload)
-          })
-        )
+      impl: ({ fromEvent }) => fromEvent(wireDomain.event.RoomsJoinedEvent).pipe(map(RoomsJoinedCommand))
     })
     domain.effect({
       name: 'Connection.RoomsJoinFailureEffect',

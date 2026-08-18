@@ -446,26 +446,13 @@ describe('join notice observation baseline', () => {
     )
   })
 
-  it.each([
-    { name: 'SESSION arrives before the B post-join pause', holdBaselineSession: false },
-    { name: 'held SESSION arrives during the B post-join pause', holdBaselineSession: true }
-  ])('$name', async ({ holdBaselineSession }) => {
+  it('SESSION arrives before B joins', async () => {
     const network = new DeterministicNetwork()
     const a = await createStack(network, 'peer-a', { id: 'user-a', name: 'A', avatar: '' })
-    const b = await createStack(
-      network,
-      'peer-b',
-      { id: 'user-b', name: 'B', avatar: '' },
-      {
-        sleep: async () => {
-          if (holdBaselineSession) network.releaseSession('peer-a', 'peer-b')
-        }
-      }
-    )
+    const b = await createStack(network, 'peer-b', { id: 'user-b', name: 'B', avatar: '' })
 
     await a.join()
     await vi.waitFor(async () => expect(await noticeUsers(a)).toEqual(['user-a']))
-    if (holdBaselineSession) network.holdSession('peer-a', 'peer-b')
 
     await b.join()
     await vi.waitFor(async () => expect(await noticeUsers(a)).toEqual(expect.arrayContaining(['user-a', 'user-b'])))

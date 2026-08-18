@@ -5,7 +5,7 @@ import type { PresenceStore } from '@/domain/runtime/externs/PresenceStore'
 import { RUNTIME_NAMESPACE_PREFIX } from '@/runtime/Contract'
 import type { MessageMeta } from '@/service/adapter/runtime/Provider'
 import { createServer, disposeServer } from '@/runtime/Server'
-import { createRoomTransport } from '@/runtime/TransportProvider'
+import { createTrysteroRoomTransport } from '@/runtime/transports/trystero/TrysteroRoomTransport'
 import type { HostHandle } from '@/runtime/HostOwner'
 
 export type { HostHandle } from '@/runtime/HostOwner'
@@ -19,7 +19,7 @@ type HostAdapter = Adapter<MessageMeta> & { dispose: () => void }
  */
 export const startHost = (adapter: HostAdapter, presenceStore: PresenceStore): HostHandle => {
   const server = createServer({
-    transport: createRoomTransport(),
+    transport: createTrysteroRoomTransport(),
     presenceStore
   })
   const [provideRuntime] = defineProxy(() => server, {

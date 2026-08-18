@@ -114,7 +114,7 @@ const settleAll = async () => {
 }
 
 describe('WorldDomain single per-target publication iterator', () => {
-  it('settles immediately without any send when no remote presence target exists', async () => {
+  it('broadcasts the full snapshot natively even with zero active peers and settles with the provider no-op', async () => {
     const fixture = createFixture()
     await fixture.joinWorldRoom()
     let published = false
@@ -123,12 +123,14 @@ describe('WorldDomain single per-target publication iterator', () => {
     })
 
     stage(fixture, 'attempt-a', 'https://a.example')
+    await vi.waitFor(() => expect(fixture.attempts).toHaveLength(1))
+    expect(fixture.attempts[0].targetPeerIds).toBeUndefined()
+    fixture.attempts[0].settle.resolve()
     await vi.waitFor(() => expect(published).toBe(true))
-    expect(fixture.attempts).toEqual([])
     fixture.store.discard()
   })
 
-  it('attempts every frozen target exactly once, surfaces a throwing target, and still settles', async () => {
+  it('broadcasts the snapshot once natively, surfaces a provider failure, and still settles', async () => {
     const fixture = createFixture()
     await fixture.joinWorldRoom()
     fixture.emitRemotePresence('peer-1', 'https://one.example')
@@ -143,7 +145,7 @@ describe('WorldDomain single per-target publication iterator', () => {
 
     stage(fixture, 'attempt-a', 'https://a.example')
     await vi.waitFor(() => expect(fixture.attempts).toHaveLength(1))
-    expect(fixture.attempts[0].targetPeerIds).toEqual(['peer-1', 'peer-2'])
+    expect(fixture.attempts[0].targetPeerIds).toBeUndefined()
     fixture.attempts[0].settle.reject(new Error('target one exploded'))
     await vi.waitFor(() => expect(published).toBe(true))
 
@@ -310,7 +312,8 @@ describe('WorldDomain single per-target publication iterator', () => {
     await vi.advanceTimersByTimeAsync(1500)
     await settleAll()
     expect(fixture.attempts.length).toBe(beforeRetry + 1)
-    expect(fixture.attempts.at(-1)?.targetPeerIds).toEqual(['peer-1'])
+    // The retried publication step is one fresh native broadcast, not a re-send of frozen targets.
+    expect(fixture.attempts.at(-1)?.targetPeerIds).toBeUndefined()
     fixture.attempts[fixture.attempts.length - 1].settle.resolve()
     await settleAll()
     expect(released).toEqual(['https://b.example'])

@@ -3,7 +3,7 @@ import * as v from 'valibot'
 import { fromEventPattern, map, mergeMap } from 'rxjs'
 import { MAX_DECODE_QUEUE_BYTES, MAX_DECODE_QUEUE_FRAMES, WORLD_ROOM_ID_V5 } from '@/constants/config'
 import { RoomTransportExtern, WireCodecExtern } from '@/domain/runtime/externs/RoomTransport'
-import { ClockExtern, sleep } from '@/domain/runtime/externs/Clock'
+import { ClockExtern } from '@/domain/runtime/externs/Clock'
 import { ChatRoomMessageSchema, WorldRoomMessageSchema, type ChatRoomMessage, type WorldRoomMessage } from '@/protocol'
 import { getTextByteSize } from '@/utils/getTextByteSize'
 import stringToHex from '@/utils/stringToHex'
@@ -29,16 +29,7 @@ interface WireSendRequestBase {
   message: WireMessage
 }
 
-export type WireSendRequest = WireSendRequestBase &
-  (
-    | { targetPeerIds: string[]; targetPeerIdsOwner: 'session' }
-    | { targetPeerIds?: string[]; targetPeerIdsOwner?: never }
-  )
-
-export interface WireRoomWideSendResume extends QueueIdentity {
-  requestId: string
-  roomId: string
-}
+export type WireSendRequest = WireSendRequestBase & { targetPeerIds?: string[] }
 
 export interface WireMessageEvent {
   roomId: string
@@ -94,7 +85,6 @@ interface DropRecord {
 const MAX_LOGGED_SOURCES = 256
 const LOG_INTERVAL_MS = 10000
 const worldRoomId = stringToHex(WORLD_ROOM_ID_V5)
-const POST_JOIN_SEND_DELAY_MS = 1000
 const queueId = (roomId: string, sourcePeerId: string) => JSON.stringify([roomId, sourcePeerId])
 const generationFor = (generations: RoomGeneration[], roomId: string) =>
   generations.find((item) => item.roomId === roomId)?.generation ?? 0
@@ -102,14 +92,9 @@ const replaceBy = <T>(items: T[], predicate: (item: T) => boolean, next: T): T[]
   items.some(predicate) ? items.map((item) => (predicate(item) ? next : item)) : [...items, next]
 
 /**
- * Why specify peerIds:
- * According to artico source code, room.send() without target will send to all calls (including connecting peers).
- * If a peer's DataChannel is not ready, it will throw "Connection is not established yet" error and interrupt the forEach loop.
- * Sessions only contains peers that have completed application-layer Session synchronization, which means their DataChannel is already established.
- * So we only send to peers in Sessions to avoid errors.
- *
- * @see https://github.com/matallui/artico/blob/8a4f1a185be9355f893120e9492151f1785e59fa/packages/client/src/room.ts#L114 Room.send() implementation
- * @see hhttps://github.com/matallui/artico/blob/8a4f1a185be9355f893120e9492151f1785e59fa/packages/peer/src/peer.ts#L281 Peer.send() throws error when not ready
+ * Deduplicates and self-excludes the supplied peer ids. Retained only for the explicit targeted
+ * sends (History inventory/response and Session/World catch-up); room-wide product sends now use
+ * the provider's native broadcast instead.
  */
 export const selectPeerIds = (sourcePeerIds: string[], selfPeerId: string): string[] =>
   [...new Set(sourcePeerIds)].filter((peerId) => peerId !== selfPeerId)
@@ -188,9 +173,6 @@ const WireDomain = Remesh.domain({
     const SendRequestedEvent = domain.event<QueuedSendRequest>({ name: 'Wire.SendRequestedEvent' })
     const SendResumeAfterJoinRequestedEvent = domain.event<QueueIdentity & { roomId: string }>({
       name: 'Wire.SendResumeAfterJoinRequestedEvent'
-    })
-    const RoomWideSendResumeRequestedEvent = domain.event<WireRoomWideSendResume>({
-      name: 'Wire.RoomWideSendResumeRequestedEvent'
     })
     const ProviderSendRequestedEvent = domain.event<EncodedSend>({ name: 'Wire.ProviderSendRequestedEvent' })
     const RawFrameAdmittedEvent = domain.event<RawFrame>({ name: 'Wire.RawFrameAdmittedEvent' })
@@ -383,47 +365,11 @@ const WireDomain = Remesh.domain({
         ) {
           return null
         }
-        if (head.targetPeerIdsOwner === 'session') {
-          return RoomWideSendResumeRequestedEvent({ ...identity, requestId: head.requestId })
-        }
         return [
           SendQueuesState().new(
             replaceBy(queues, (item) => item.roomId === identity.roomId, { ...current, suspended: false })
           ),
           SendRequestedEvent(head)
-        ]
-      }
-    })
-
-    const ResumeRoomWideSendCommand = domain.command({
-      name: 'Wire.ResumeRoomWideSendCommand',
-      impl: ({ get }, payload: WireRoomWideSendResume & { targetPeerIds: string[] }) => {
-        const queues = get(SendQueuesState())
-        const current = queues.find((item) => item.roomId === payload.roomId)
-        const head = current?.requests[0]
-        if (
-          !current?.suspended ||
-          current.headInvoked ||
-          head?.sequence !== payload.sequence ||
-          head.requestId !== payload.requestId ||
-          head.targetPeerIdsOwner !== 'session' ||
-          head.generation !== payload.generation ||
-          generationFor(get(RoomGenerationsState()), payload.roomId) !== payload.generation ||
-          !get(TrustedRoomsState()).includes(payload.roomId)
-        ) {
-          return null
-        }
-        if (payload.targetPeerIds.length === 0) return CompleteProviderSendCommand({ request: head })
-        const resumedHead = { ...head, targetPeerIds: payload.targetPeerIds }
-        return [
-          SendQueuesState().new(
-            replaceBy(queues, (item) => item.roomId === payload.roomId, {
-              ...current,
-              suspended: false,
-              requests: [resumedHead, ...current.requests.slice(1)]
-            })
-          ),
-          SendRequestedEvent(resumedHead)
         ]
       }
     })
@@ -723,13 +669,7 @@ const WireDomain = Remesh.domain({
     })
     domain.effect({
       name: 'Wire.SendResumeAfterJoinEffect',
-      impl: ({ fromEvent }) =>
-        fromEvent(SendResumeAfterJoinRequestedEvent).pipe(
-          mergeMap(async (identity) => {
-            await sleep(clock, POST_JOIN_SEND_DELAY_MS)
-            return ResumeSendAfterJoinCommand(identity)
-          })
-        )
+      impl: ({ fromEvent }) => fromEvent(SendResumeAfterJoinRequestedEvent).pipe(map(ResumeSendAfterJoinCommand))
     })
 
     domain.effect({
@@ -862,7 +802,6 @@ const WireDomain = Remesh.domain({
         JoinRoomsCommand,
         LeaveRoomCommand,
         SendMessageCommand,
-        ResumeRoomWideSendCommand,
         DropProtocolCommand: RecordDropCommand,
         AdmitSourceCommand,
         RemoveSourceCommand
@@ -873,7 +812,6 @@ const WireDomain = Remesh.domain({
         MessageSentEvent,
         MessageSendFailedEvent,
         MessageAcceptedEvent,
-        RoomWideSendResumeRequestedEvent,
         PeerJoinedEvent,
         PeerLeftEvent,
         RoomClosedEvent,

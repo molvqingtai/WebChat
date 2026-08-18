@@ -1,6 +1,6 @@
 import { Remesh } from 'remesh'
 import { concatMap, filter, map } from 'rxjs'
-import WireDomain, { selectPeerIds, type WireFailureStage, type WireMessageEvent } from '@/domain/runtime/Wire'
+import WireDomain, { type WireFailureStage, type WireMessageEvent } from '@/domain/runtime/Wire'
 import { RoomTransportExtern } from '@/domain/runtime/externs/RoomTransport'
 import { WORLD_ROOM_ID_V5 } from '@/constants/config'
 import { type ChatSite, type ChatUser, type WorldRoomMessage } from '@/protocol'
@@ -32,7 +32,6 @@ interface FullPublication {
   requestId: string
   revision: number
   presence: WorldRoomMessage
-  targetPeerIds: string[]
   stagedAttemptId: string | null
   recoveryRequestId: string | null
   /** True only when the publication belongs to an AppButton manual World replacement: its failure
@@ -257,21 +256,18 @@ const WorldDomain = Remesh.domain({
           requestId: publicationRequestId(sequence),
           revision: currentRevision,
           presence,
-          targetPeerIds: selectPeerIds(get(RoomMembersState()), get(wireDomain.query.PeerIdQuery(worldRoomId))),
           stagedAttemptId,
           recoveryRequestId,
           ...(recoveryRequestId && recovery?.manual ? { manual: true } : {})
         }
-        if (publication.targetPeerIds.length === 0) {
-          return [PublicationSequenceState().new(sequence), ...settlePublication(get, publication)]
-        }
+        // Native room-wide broadcast: the provider delivers to the peers active at send time,
+        // including the zero-active-peer no-op settlement.
         return [
           PublicationSequenceState().new(sequence),
           FullPublicationState().new(publication),
           wireDomain.command.SendMessageCommand({
             requestId: publication.requestId,
             roomId: worldRoomId,
-            targetPeerIds: publication.targetPeerIds,
             message: publication.presence
           })
         ]
@@ -377,11 +373,11 @@ const WorldDomain = Remesh.domain({
         ) {
           return null
         }
-        if (publication.targetPeerIds.length === 0) return settlePublication(get, publication)
+        // Native room-wide broadcast retry (only ever reached after a preflight failure made
+        // zero provider calls).
         return wireDomain.command.SendMessageCommand({
           requestId,
           roomId: worldRoomId,
-          targetPeerIds: publication.targetPeerIds,
           message: publication.presence
         })
       }
