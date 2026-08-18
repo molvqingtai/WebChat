@@ -1,3 +1,15 @@
+# [2.6.0](https://github.com/molvqingtai/WebChat/compare/v2.5.1...v2.6.0) (2026-08-18)
+
+### Bug Fixes
+
+- **runtime:** fence leaving Trystero rooms from active use ([2280b7c](https://github.com/molvqingtai/WebChat/commit/2280b7c6bd0beaf686e527da9f4c244947fa4e35))
+- **runtime:** fence Trystero joins after transport disposal ([79eecd3](https://github.com/molvqingtai/WebChat/commit/79eecd3b4cc8191ffff5d4381f385061191b74fd))
+- **runtime:** settle Trystero room leaves before rejoin ([8b3ac35](https://github.com/molvqingtai/WebChat/commit/8b3ac35c95f96162f73cadfdf1d5828f1e99c4d3))
+
+### Features
+
+- **runtime:** add Trystero Nostr room transport provider ([da68cb8](https://github.com/molvqingtai/WebChat/commit/da68cb87d47f1d1dfd049be84c1e2135728cf128))
+
 ## [2.5.1](https://github.com/molvqingtai/WebChat/compare/v2.5.0...v2.5.1) (2026-08-16)
 
 ### Bug Fixes
