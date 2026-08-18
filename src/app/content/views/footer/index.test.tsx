@@ -9,7 +9,6 @@ vi.mock('remesh-react', () => ({
     query.name === 'Room.CanSubmitTextQuery' ? canSubmitText : (queryFixtures[query.name] ?? null)
 }))
 
-vi.mock('@/hooks/useThrottle', () => ({ default: (fn: () => void) => fn }))
 vi.mock('@/hooks/useRoot', () => ({ default: () => null }))
 vi.mock('@/hooks/useCursorPosition', () => ({
   default: () => ({ x: 0, y: 0, selectionStart: 0, selectionEnd: 0, setRef: () => {} })
@@ -17,7 +16,6 @@ vi.mock('@/hooks/useCursorPosition', () => ({
 vi.mock('imgcap', () => ({ default: vi.fn() }))
 
 const sendSpy = vi.fn((_action: unknown) => {})
-const command = (kind: string) => (value: unknown) => ({ kind, value }) as const
 const fakeDomain = {
   query: {
     MessageQuery: () => ({ name: 'MessageInput.ValueQuery' }),
@@ -26,10 +24,10 @@ const fakeDomain = {
     CanSubmitTextQuery: () => ({ name: 'Room.CanSubmitTextQuery' })
   },
   command: {
-    InputCommand: command('MessageInput.InputCommand'),
-    ClearCommand: command('MessageInput.ClearCommand'),
-    WarningCommand: command('Toast.WarningCommand'),
-    SendTextMessageCommand: command('Room.SendTextMessageCommand')
+    InputCommand: (value: unknown) => value,
+    ClearCommand: () => 'MessageInput.ClearCommand',
+    WarningCommand: () => 'Toast.WarningCommand',
+    SendTextMessageCommand: (value: unknown) => value
   }
 }
 let canSubmitText = false
@@ -48,9 +46,10 @@ afterEach(() => {
 const renderFooter = () => render(<Footer />)
 const textarea = () => screen.getByRole('textbox')
 const sendButton = () => screen.getByRole('button', { name: /send/i })
+const submitShape = () => ({ body: 'hello', mentions: [] })
 
-const pressEnter = () => {
-  fireEvent.keyDown(textarea(), { key: 'Enter', code: 'Enter', shiftKey: false })
+const pressEnter = (shiftKey = false) => {
+  fireEvent.keyDown(textarea(), { key: 'Enter', code: 'Enter', shiftKey })
 }
 
 describe('Footer step-4 submit gate', () => {
@@ -61,12 +60,12 @@ describe('Footer step-4 submit gate', () => {
 
     // Editing stays available: typing dispatches InputCommand (draft recorded) but submission is a no-op.
     fireEvent.input(textarea(), { target: { value: 'draft' } })
-    expect(sendSpy).toHaveBeenCalledWith({ kind: 'MessageInput.InputCommand', value: 'draft' })
+    expect(sendSpy).toHaveBeenCalledWith('draft')
 
     pressEnter()
-    expect(sendSpy).not.toHaveBeenCalledWith({ kind: 'Room.SendTextMessageCommand', value: expect.anything() })
+    expect(sendSpy).not.toHaveBeenCalledWith(submitShape())
     fireEvent.click(sendButton())
-    expect(sendSpy).not.toHaveBeenCalledWith({ kind: 'Room.SendTextMessageCommand', value: expect.anything() })
+    expect(sendSpy).not.toHaveBeenCalledWith(submitShape())
   })
 
   it('enables the button and lets Enter submit exactly once when CanSubmitTextQuery becomes true', async () => {
@@ -77,9 +76,33 @@ describe('Footer step-4 submit gate', () => {
 
     pressEnter()
     await vi.waitFor(() => expect(sendSpy).toHaveBeenCalledTimes(1))
-    expect(sendSpy).toHaveBeenCalledWith({
-      kind: 'Room.SendTextMessageCommand',
-      value: { body: 'hello', mentions: [] }
-    })
+    expect(sendSpy).toHaveBeenCalledWith(submitShape())
+  })
+
+  it('lets Shift+Enter edit without submitting', async () => {
+    canSubmitText = true
+    renderFooter()
+
+    pressEnter(true)
+    await Promise.resolve()
+    expect(sendSpy).not.toHaveBeenCalledWith(submitShape())
+  })
+
+  it('does not let a gated Enter occupy the real throttle window: after recovery the first Enter submits', async () => {
+    const { rerender } = render(<Footer />)
+
+    // Before connection: Enter is gated before the throttled submit path.
+    pressEnter()
+    await Promise.resolve()
+    expect(sendSpy).not.toHaveBeenCalledWith(submitShape())
+
+    // Connection completes: the very next Enter must not be swallowed by a stale throttle window.
+    canSubmitText = true
+    rerender(<Footer />)
+    expect((sendButton() as HTMLButtonElement).disabled).toBe(false)
+
+    pressEnter()
+    await vi.waitFor(() => expect(sendSpy).toHaveBeenCalledTimes(1))
+    expect(sendSpy).toHaveBeenCalledWith(submitShape())
   })
 })

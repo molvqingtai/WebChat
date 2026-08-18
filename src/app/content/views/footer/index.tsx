@@ -164,6 +164,14 @@ const Footer: FC = () => {
   }
 
   const handleSend = useThrottle(handleSendMessage, 1000)
+  // The step-4 submit gate lives before the throttle: a submission attempt while the room is not
+  // yet joined/trusted must never occupy the send throttle window, otherwise the user's first real
+  // submission right after connection recovery would be swallowed. The inner gate in
+  // handleSendMessage stays as defense so a gated press also performs zero work.
+  const handleSubmit = () => {
+    if (!canSubmitText) return
+    handleSend()
+  }
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (autoCompleteListShow && autoCompleteList.length) {
@@ -202,7 +210,7 @@ const Footer: FC = () => {
       if (autoCompleteListShow && autoCompleteList.length) {
         handleInjectAtSyntax(selectedUser.name)
       } else {
-        handleSend()
+        handleSubmit()
       }
       e.preventDefault()
     }
@@ -386,7 +394,7 @@ const Footer: FC = () => {
       <div className="flex items-center">
         <EmojiButton onSelect={handleInjectEmoji}></EmojiButton>
         <ImageButton disabled={inputLoading} onSelect={handleInjectImage}></ImageButton>
-        <Button className="ml-auto" size="sm" disabled={!canSubmitText} onClick={handleSend}>
+        <Button className="ml-auto" size="sm" disabled={!canSubmitText} onClick={handleSubmit}>
           <span className="mr-2">Send</span>
           <CornerDownLeftIcon className="text-slate-400" size={12}></CornerDownLeftIcon>
         </Button>

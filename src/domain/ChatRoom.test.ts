@@ -1318,7 +1318,7 @@ describe('ChatRoomDomain exact application port', () => {
     fixture.store.discard()
   })
 
-  it('rejects text submission while a reconnect is loading; recovery never auto-submits; an explicit later submit sends once', async () => {
+  it('rejects text submission while a reconnect is loading (zero work, draft kept); recovery never auto-submits; an explicit later submit sends exactly once', async () => {
     const fixture = createFixture()
     await join(fixture)
     const reconnect = deferred()
@@ -1326,17 +1326,26 @@ describe('ChatRoomDomain exact application port', () => {
     fixture.store.send(fixture.room.command.ReconnectCommand())
     expect(fixture.store.query(fixture.room.query.ReconnectIsLoadingQuery())).toBe(true)
 
+    const projected: string[] = []
+    fixture.store.subscribeEvent(fixture.room.event.SendTextMessageEvent, (message) => projected.push(message.id))
+    fixture.store.send(fixture.input.command.InputCommand('during reconnect draft'))
+
     fixture.store.send(fixture.room.command.SendTextMessageCommand('during reconnect'))
     await Promise.resolve()
     expect(fixture.chat.sendMessage).not.toHaveBeenCalled()
+    expect(projected).toEqual([])
     expect(fixture.store.query(fixture.list.query.ItemQuery('local-message'))).toBeNull()
+    expect(fixture.store.query(fixture.input.query.MessageQuery())).toBe('during reconnect draft')
 
     // Recovery resolves the loading but never re-submits the text automatically.
     reconnect.resolve()
     await vi.waitFor(() => expect(fixture.store.query(fixture.room.query.ReconnectIsLoadingQuery())).toBe(false))
     expect(fixture.chat.sendMessage).not.toHaveBeenCalled()
+    expect(projected).toEqual([])
+    expect(fixture.store.query(fixture.input.query.MessageQuery())).toBe('during reconnect draft')
 
-    // The user's explicit later submit sends exactly once.
+    // The user's explicit later submit performs exactly one send + one event + one projection +
+    // one draft clear.
     fixture.store.send(fixture.room.command.SendTextMessageCommand('during reconnect'))
     await vi.waitFor(() =>
       expect(fixture.chat.sendMessage).toHaveBeenCalledWith({
@@ -1346,28 +1355,39 @@ describe('ChatRoomDomain exact application port', () => {
       })
     )
     expect(fixture.chat.sendMessage).toHaveBeenCalledTimes(1)
-    await vi.waitFor(() => expect(fixture.store.query(fixture.list.query.ItemQuery('local-message'))).not.toBeNull())
+    await vi.waitFor(() => expect(projected).toEqual(['local-message']))
+    expect(fixture.store.query(fixture.list.query.ItemQuery('local-message'))).not.toBeNull()
+    expect(fixture.store.query(fixture.input.query.MessageQuery())).toBe('')
     fixture.store.discard()
   })
 
-  it('rejects text submission while a page connection is in progress; the retained join does not resend; an explicit later submit sends once', async () => {
+  it('rejects text submission while a page connection is in progress (zero work, draft kept); the retained join does not resend; an explicit later submit sends exactly once', async () => {
     const fixture = createFixture()
     const joining = deferred()
     vi.mocked(fixture.chat.joinRoom).mockReturnValueOnce(joining.promise)
     fixture.store.send(fixture.room.command.JoinRoomCommand())
 
+    const projected: string[] = []
+    fixture.store.subscribeEvent(fixture.room.event.SendTextMessageEvent, (message) => projected.push(message.id))
+    fixture.store.send(fixture.input.command.InputCommand('during page recovery draft'))
+
     fixture.store.send(fixture.room.command.SendTextMessageCommand('during page recovery'))
     await Promise.resolve()
     expect(fixture.chat.sendMessage).not.toHaveBeenCalled()
+    expect(projected).toEqual([])
     expect(fixture.store.query(fixture.list.query.ItemQuery('local-message'))).toBeNull()
+    expect(fixture.store.query(fixture.input.query.MessageQuery())).toBe('during page recovery draft')
 
     // The retained join completes, but nothing auto-submits the earlier text.
     joining.resolve()
     await vi.waitFor(() => expect(fixture.store.query(fixture.room.query.JoinIsFinishedQuery())).toBe(true))
     await Promise.resolve()
     expect(fixture.chat.sendMessage).not.toHaveBeenCalled()
+    expect(projected).toEqual([])
+    expect(fixture.store.query(fixture.input.query.MessageQuery())).toBe('during page recovery draft')
 
-    // The user's explicit later submit sends exactly once.
+    // The user's explicit later submit performs exactly one send + one event + one projection +
+    // one draft clear.
     fixture.store.send(fixture.room.command.SendTextMessageCommand('during page recovery'))
     await vi.waitFor(() =>
       expect(fixture.chat.sendMessage).toHaveBeenCalledWith({
@@ -1377,7 +1397,9 @@ describe('ChatRoomDomain exact application port', () => {
       })
     )
     expect(fixture.chat.sendMessage).toHaveBeenCalledTimes(1)
-    await vi.waitFor(() => expect(fixture.store.query(fixture.list.query.ItemQuery('local-message'))).not.toBeNull())
+    await vi.waitFor(() => expect(projected).toEqual(['local-message']))
+    expect(fixture.store.query(fixture.list.query.ItemQuery('local-message'))).not.toBeNull()
+    expect(fixture.store.query(fixture.input.query.MessageQuery())).toBe('')
     fixture.store.discard()
   })
 
