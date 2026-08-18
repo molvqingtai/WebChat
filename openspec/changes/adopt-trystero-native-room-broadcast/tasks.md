@@ -26,5 +26,5 @@
 - [x] 4.1 Pass focused mutation-sensitive broadcast/target/catch-up/zero-peer/queue/layout/residue controls and the complete shared Trystero provider contract; record the cumulative Server inventory as `176 -> 166`: 10 legal deletions (5 fixed one-second-only cases and 5 Artico selected-array-only cases), with no formal additions.
 - [x] 4.2 Pass format, lint, typecheck, full tests, Chrome and Firefox builds, pack, strict OpenSpec/status, and repository cleanliness gates on one immutable source exact.
 - [x] 4.3 Push the single cumulative candidate with exact parent/tree/scope and terminal hosted CI while keeping the pull request Draft.
-- [ ] 4.4 Obtain fresh cumulative source review on that exact, then hand it to the Owner for product acceptance.
-- [ ] 4.5 Do not mark Ready, merge, modify `master`, release, deploy, or write production data without separate Owner authority.
+- [x] 4.4 Obtain fresh cumulative source review on final exact `ae69b3d47cffacb9007acd04dd2703dfec10ad83` and receive Owner product acceptance.
+- [x] 4.5 Under separate Owner authority, merge PR #138 only to `develop` as `2c4249326f09bba607ef584f07049daab722d313`; leave `master` unchanged and do not release, deploy, or write production data without further authority.
