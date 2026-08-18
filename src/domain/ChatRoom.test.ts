@@ -1261,32 +1261,31 @@ describe('ChatRoomDomain exact application port', () => {
     fixture.store.discard()
   })
 
-  it('holds text and reaction operations until Runtime readiness returns without publishing an error', async () => {
+  it('projects protocol-valid text immediately even when readiness is not ready; reaction still waits', async () => {
     const fixture = createFixture()
     await join(fixture)
     const errors: Error[] = []
     fixture.store.subscribeEvent(fixture.room.event.OnErrorEvent, (error) => errors.push(error))
 
+    // Not ready: protocol-valid text is accepted, displayed, and its send invoked immediately.
     fixture.emitReadiness('connecting')
     fixture.store.send(fixture.room.command.SendTextMessageCommand('held text'))
-    await Promise.resolve()
-    expect(fixture.chat.sendMessage).not.toHaveBeenCalled()
-
-    fixture.emitReadiness('unavailable')
-    await Promise.resolve()
-    expect(fixture.chat.sendMessage).not.toHaveBeenCalled()
-
-    fixture.emitReadiness('ready')
     await vi.waitFor(() =>
       expect(fixture.chat.sendMessage).toHaveBeenCalledWith({ type: 'text', body: 'held text', mentions: [] })
     )
     await vi.waitFor(() => expect(fixture.store.query(fixture.list.query.ItemQuery('local-message'))).not.toBeNull())
-    vi.mocked(fixture.chat.sendMessage).mockClear()
 
+    fixture.emitReadiness('ready')
     fixture.emitReadiness('connecting')
     fixture.store.send(fixture.room.command.SendReactionCommand({ messageId: 'local-message', reaction: 'like' }))
     await Promise.resolve()
-    expect(fixture.chat.sendMessage).not.toHaveBeenCalled()
+    // Reaction settlement is unchanged: it still waits for readiness.
+    expect(fixture.chat.sendMessage).not.toHaveBeenCalledWith({
+      type: 'reaction',
+      targetId: 'local-message',
+      reaction: 'like',
+      active: true
+    })
 
     fixture.emitReadiness('ready')
     await vi.waitFor(() =>
@@ -1301,17 +1300,34 @@ describe('ChatRoomDomain exact application port', () => {
     fixture.store.discard()
   })
 
-  it('holds a send behind an in-progress page connection and completes it after the join', async () => {
+  it('projects protocol-valid text immediately even while a reconnect is loading', async () => {
+    const fixture = createFixture()
+    await join(fixture)
+    const reconnect = deferred()
+    vi.mocked(fixture.chat.leaveRoom).mockReturnValueOnce(reconnect.promise)
+    fixture.store.send(fixture.room.command.ReconnectCommand())
+    expect(fixture.store.query(fixture.room.query.ReconnectIsLoadingQuery())).toBe(true)
+
+    fixture.store.send(fixture.room.command.SendTextMessageCommand('during reconnect'))
+    await vi.waitFor(() =>
+      expect(fixture.chat.sendMessage).toHaveBeenCalledWith({
+        type: 'text',
+        body: 'during reconnect',
+        mentions: []
+      })
+    )
+    await vi.waitFor(() => expect(fixture.store.query(fixture.list.query.ItemQuery('local-message'))).not.toBeNull())
+    reconnect.resolve()
+    fixture.store.discard()
+  })
+
+  it('starts a protocol-valid text send immediately even while a page connection is in progress', async () => {
     const fixture = createFixture()
     const joining = deferred()
     vi.mocked(fixture.chat.joinRoom).mockReturnValueOnce(joining.promise)
     fixture.store.send(fixture.room.command.JoinRoomCommand())
 
     fixture.store.send(fixture.room.command.SendTextMessageCommand('during page recovery'))
-    await Promise.resolve()
-    expect(fixture.chat.sendMessage).not.toHaveBeenCalled()
-
-    joining.resolve()
     await vi.waitFor(() =>
       expect(fixture.chat.sendMessage).toHaveBeenCalledWith({
         type: 'text',
@@ -1319,6 +1335,8 @@ describe('ChatRoomDomain exact application port', () => {
         mentions: []
       })
     )
+    await vi.waitFor(() => expect(fixture.store.query(fixture.list.query.ItemQuery('local-message'))).not.toBeNull())
+    joining.resolve()
     fixture.store.discard()
   })
 

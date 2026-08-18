@@ -12,6 +12,7 @@
 - [x] 2.2 Add adapter/Runtime controls using distinct post-validation failure sources/messages that independently hold and reject local insertion, prove transport and persistence are both attempted when the other fails, preserve each original Error through the existing scoped owner, and fail any mutation that special-cases one Error to control display.
 - [x] 2.3 Preserve mutation-sensitive protocol-invalid controls proving zero local projection, zero wire, zero persistence, draft retention, and only `Invalid message.`; retain exact allocated identity, delayed-watch, same-id collision, and same-content cross-tab evidence.
 - [x] 2.4 Pin unchanged reaction settlement, direct provider `room.send(payload, to)` delegation, remote-live `onMessage`, History, recovery, and absence of outbound queue/retry/status/fallback behavior.
+- [x] 2.5 Prove protocol-valid text projects immediately even while room readiness is not ready, a page connection is in progress, or a reconnect is loading (Wire queues the physical send when the room is not yet trusted); invalid text still zero-projects; later text does not batched-flush.
 
 ## 3. Implement Protocol-Accepted Local Projection
 
