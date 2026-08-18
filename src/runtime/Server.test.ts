@@ -577,6 +577,17 @@ describe('RuntimeServer lifecycle', () => {
       { roomId, to: ['peer-chat'] },
       { roomId: getWorldRoomId(), to: ['peer-world'] }
     ])
+    // Both the initial Session and the World full snapshot are native broadcasts (raw target
+    // omitted), while the fake fans them out to the active members.
+    expect(fake.sendAttempts.map(({ rawTarget }) => rawTarget)).toEqual([undefined, undefined])
+    // Opposite control: a peer joining after commit triggers a targeted Session catch-up.
+    fake.peerJoin(roomId, 'peer-late')
+    await settle()
+    const catchUpAttempt = fake.sendAttempts.findLast(
+      (a) => a.roomId === roomId && JSON.parse(a.payload).type === MESSAGE_TYPE.SESSION && Array.isArray(a.rawTarget)
+    )
+    expect(catchUpAttempt).toBeDefined()
+    expect(catchUpAttempt?.rawTarget).toEqual(['peer-late'])
     disposeServer(server)
   })
 
@@ -588,51 +599,6 @@ describe('RuntimeServer lifecycle', () => {
     await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
 
     expect(fake.sendAttempts.map(({ to }) => to)).toEqual([[], []])
-    disposeServer(server)
-  })
-
-  it('records a native broadcast raw target of undefined for every room-wide producer', async () => {
-    const fake = createFakeTransport()
-    const server = createServer({ transport: fake.transport, clock: new FakeClock(), codec: jsonCodec })
-    await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
-    const roomId = getChatRoomId(DOMAIN)
-    fake.plantPeer(roomId, 'peer-a')
-    fake.receive(roomId, 'peer-a', session())
-    await settle()
-
-    await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
-    const text = await server.allocateTextMessage({ domain: DOMAIN, body: 'outbound', mentions: [] })
-    await server.sendChatMessage({ domain: DOMAIN, event: text.message })
-    const reaction = await server.allocateReactionMessage({
-      domain: DOMAIN,
-      targetId: 't',
-      reaction: 'like',
-      active: true
-    })
-    await server.sendChatMessage({ domain: DOMAIN, event: reaction.message })
-    await settle()
-
-    // initial Session, Text, Reaction, and World full snapshot all carry an omitted raw target.
-    const sessionAttempt = fake.sendAttempts.findLast(
-      (attempt) => attempt.roomId === roomId && JSON.parse(attempt.payload).type === MESSAGE_TYPE.SESSION
-    )
-    expect(sessionAttempt?.rawTarget).toBeUndefined()
-    for (const type of [MESSAGE_TYPE.TEXT, MESSAGE_TYPE.REACTION]) {
-      const attempt = fake.sendAttempts.findLast((a) => a.roomId === roomId && JSON.parse(a.payload).type === type)
-      expect(attempt?.rawTarget).toBeUndefined()
-    }
-    const worldAttempt = fake.sendAttempts.findLast(
-      (a) => a.roomId === getWorldRoomId() && 'sites' in JSON.parse(a.payload)
-    )
-    expect(worldAttempt?.rawTarget).toBeUndefined()
-
-    // Opposite control: a newly joined peer triggers a targeted Session catch-up, never a broadcast.
-    fake.peerJoin(roomId, 'peer-new')
-    await settle()
-    const catchUp = fake.sendAttempts.findLast(
-      (a) => a.roomId === roomId && JSON.parse(a.payload).type === MESSAGE_TYPE.SESSION && Array.isArray(a.rawTarget)
-    )
-    expect(catchUp?.rawTarget).toEqual(['peer-new'])
     disposeServer(server)
   })
 
@@ -2886,6 +2852,10 @@ describe('RuntimeServer provisional recovery races', () => {
     fake.peerJoin(worldRoomId, 'late-peer')
     await settle()
     expect(sentToPeer(fake, worldRoomId, 'late-peer')).toEqual([currentPresence])
+    // Opposite control: a World catch-up is explicitly targeted to the newly active peer.
+    const catchUpAttempt = fake.sendAttempts.findLast((a) => a.roomId === worldRoomId && Array.isArray(a.rawTarget))
+    expect(catchUpAttempt).toBeDefined()
+    expect(catchUpAttempt?.rawTarget).toEqual(['late-peer'])
 
     emitRemoteWorldPresence(fake, 'discovered-peer')
     await settle()
@@ -3252,7 +3222,9 @@ describe('RuntimeServer send reliability', () => {
       await server.sendChatMessage({ domain: DOMAIN, event: record.message })
 
       const attempt = fake.sendAttempts.find((item) => JSON.parse(item.payload).type === messageType)
+      expect(attempt).toBeDefined()
       expect(attempt?.to).toEqual(['peer-a'])
+      expect(attempt?.rawTarget).toBeUndefined()
       expect(fake.messages(roomId).filter((message) => message.type === messageType)).toHaveLength(1)
     }
   )
@@ -3847,6 +3819,12 @@ describe('RuntimeServer history', () => {
     })
     const sent = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH)
     expect(sent[sent.length - 1]).toMatchObject({ messages: [{ id: 'inner-message' }] })
+    // Opposite control: a History response is explicitly targeted to the requesting peer.
+    const pushAttempt = fake.sendAttempts.findLast(
+      (a) => a.roomId === roomId && JSON.parse(a.payload).type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH
+    )
+    expect(pushAttempt).toBeDefined()
+    expect(pushAttempt?.rawTarget).toEqual(['peer-a'])
   })
 
   it('runs one exact-difference inventory -> missing-body sync through the real page boundary', async () => {
