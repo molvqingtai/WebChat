@@ -91,10 +91,9 @@ const productionSendCalls = async () => {
 }
 
 describe('replaceable application boundaries', () => {
-  it('keeps every product send explicitly targeted and preserves the targeting authority comment', async () => {
-    const [calls, wire, runtimeSources] = await Promise.all([
+  it('keeps room-wide sends as native broadcasts and targeted sends explicitly targeted', async () => {
+    const [calls, runtimeSources] = await Promise.all([
       productionSendCalls(),
-      source('src/domain/runtime/Wire.ts'),
       Promise.all(
         (await codeFiles(projectPath('src/domain/runtime')))
           .filter((file) => !/\.test\.[cm]?[jt]sx?$/.test(file))
@@ -102,16 +101,19 @@ describe('replaceable application boundaries', () => {
       )
     ])
 
-    expect(calls.length).toBeGreaterThan(0)
-    expect(calls.filter((call) => !call.targetPeerIds)).toEqual([])
+    // The five room-wide producers — initial Session, Text/Reaction, World full snapshot, and the
+    // eligible zero-call World retry — all broadcast with an omitted target.
+    const broadcasts = calls.filter((call) => !call.targetPeerIds)
+    expect(broadcasts.map((call) => `${call.file}:${call.line}`)).toEqual([
+      'src/domain/runtime/Session.ts:545',
+      'src/domain/runtime/Session.ts:1136',
+      'src/domain/runtime/World.ts:268',
+      'src/domain/runtime/World.ts:378'
+    ])
+    // History inventory/response and Session/World catch-up remain explicitly targeted.
+    expect(calls.filter((call) => call.targetPeerIds)).toHaveLength(7)
     expect(runtimeSources.join('\n')).not.toMatch(/\bUserList\b|\breadyPeers\b/)
-    expect(wire).toContain(
-      'https://github.com/matallui/artico/blob/8a4f1a185be9355f893120e9492151f1785e59fa/packages/client/src/room.ts#L114'
-    )
-    expect(wire).toContain(
-      'hhttps://github.com/matallui/artico/blob/8a4f1a185be9355f893120e9492151f1785e59fa/packages/peer/src/peer.ts#L281'
-    )
-    expect(wire).toContain('Sessions only contains peers that have completed application-layer Session synchronization')
+    expect(runtimeSources.join('\n')).not.toMatch(/matallui\/artico|Connection is not established yet/)
   })
 
   it('exposes only the Owner-final ChatRoom, Database, session path, and clock capabilities', async () => {

@@ -1,5 +1,5 @@
 /**
- * Conservative v2 ceiling for one complete Base64 string passed to Artico.
+ * Conservative v2 ceiling for one complete Base64 string passed to the wire transport.
  * This is a protocol policy, not a uniform browser hard limit: SCTP message
  * size and fragmentation behavior differ between WebRTC peers, while v2 has
  * no application-level fragment reassembly.

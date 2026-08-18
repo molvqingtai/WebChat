@@ -1,4 +1,4 @@
-/** Trusted source metadata is supplied by the physical Artico room/call. */
+/** Trusted source metadata is supplied by the physical room/peer. */
 export interface RoomTransport {
   /** The current physical peer identity of the exact room's owner, or '' when the room has none. */
   readonly peerIdOf: (roomId: string) => string

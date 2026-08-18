@@ -272,13 +272,13 @@
       "tag": "Wire only"
     },
     {
-      "id": "artico",
+      "id": "trystero",
       "type": "cloud",
-      "label": "Artico Provider Impl",
-      "sublabel": "scoped peer owners per room scope",
+      "label": "Trystero Provider Impl",
+      "sublabel": "sole Nostr room transport",
       "pos": [2630, 300],
       "size": [205, 76],
-      "tag": "World peer + per-domain Chat peers"
+      "tag": "World room + per-domain Chat rooms"
     },
     {
       "id": "signaling",
@@ -348,7 +348,7 @@
         "wire-protocol",
         "wire-codec",
         "transport-extern",
-        "artico"
+        "trystero"
       ],
       "pad": 44
     },
@@ -373,7 +373,7 @@
     {
       "kind": "security-group",
       "label": "Private Provider Boundary",
-      "wraps": ["transport-extern", "artico"]
+      "wraps": ["transport-extern", "trystero"]
     },
     {
       "kind": "security-group",
@@ -732,12 +732,12 @@
     },
     {
       "from": "transport-extern",
-      "to": "artico",
+      "to": "trystero",
       "label": "impl",
       "variant": "emphasis"
     },
     {
-      "from": "artico",
+      "from": "trystero",
       "to": "signaling",
       "label": "discover",
       "variant": "dashed",
@@ -745,7 +745,7 @@
       "toSide": "bottom"
     },
     {
-      "from": "artico",
+      "from": "trystero",
       "to": "remote-peers",
       "label": "encrypted P2P",
       "variant": "emphasis",
@@ -798,9 +798,9 @@
         "Notification and AppAction use structurally disjoint versioned RPC namespaces",
         "Wire is the anti-corruption boundary: trusted source, strict validation, ordered queues",
         "RoomTransportExtern is Runtime-private and visible only to Wire",
-        "Artico is one provider implementation; fake and Artico run the same contract suite",
-        "One dedicated World peer plus one Chat peer per domain; no host-wide shared peer",
-        "Reconnect stops the old Chat peer before its replacement joins with a fresh peerId"
+        "Trystero is the sole provider implementation and runs the shared RoomTransport contract suite",
+        "One dedicated World room plus one Chat room per domain; no host-wide shared room",
+        "Reconnect disposes the old Chat room before the current Room/generation owner installs its replacement; selfId stays stable"
       ]
     }
   ]

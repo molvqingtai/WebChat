@@ -30,8 +30,8 @@ export interface RoomTransportHarness {
 
 /**
  * The provider-neutral RoomTransport contract: every assertion is observable through the
- * interface alone and runs once per provider harness. Provider-specific lifecycle (Artico peer
- * restart/readiness, Trystero async leave settlement) stays in each adapter's own test file.
+ * interface alone and runs once per provider harness. Provider-specific lifecycle (e.g. async leave
+ * settlement) stays in each adapter's own test file.
  */
 export const describeRoomTransportContract = (harness: RoomTransportHarness) => {
   describe(`RoomTransport contract [${harness.provider}]`, () => {
