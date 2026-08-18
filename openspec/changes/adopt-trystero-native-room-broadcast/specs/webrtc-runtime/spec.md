@@ -87,7 +87,7 @@ Generic serialized-send queueing and its queue identity, request, trusted Room, 
 
 The Runtime SHALL define one private `RoomTransportExtern` injected only into `WireDomain`. It SHALL express provider-neutral capabilities for stable local peer identity, room join/leave, optional-target send, transport-confirmed inbound source, peer join/leave, room close/error, and deterministic dispose. `RoomTransport` MAY remain only as the concrete implementation shape behind that Extern; it SHALL NOT be a public application port, protocol export, or capability imported by UI, application Domains, or non-Wire Runtime Domains.
 
-Trystero SHALL appear only in `src/runtime/transports/trystero/`, its provider-specific tests, and the explicit `src/runtime/host.ts` composition root. `WireDomain` SHALL remain the sole anti-corruption boundary: it validates trusted room/source identity, codec/schema/size limits, ordering and queue bounds, then emits typed Runtime Events; outbound typed Domain intent is encoded and sent only through its Effect and `RoomTransportExtern`. The former imperative `WireExtern` route and every direct concrete/provider call from another Domain SHALL remain absent.
+Concrete Trystero implementation symbols and imports SHALL appear only in `src/runtime/transports/trystero/`, its provider-specific tests, and the explicit `src/runtime/host.ts` composition root. Package manifests, the lockfile, and current documentation MAY name pinned `trystero@0.25.3` as the sole supported provider, but provider-neutral Runtime/Domain boundaries SHALL expose no Trystero type or import. `WireDomain` SHALL remain the sole anti-corruption boundary: it validates trusted room/source identity, codec/schema/size limits, ordering and queue bounds, then emits typed Runtime Events; outbound typed Domain intent is encoded and sent only through its Effect and `RoomTransportExtern`. The former imperative `WireExtern` route and every direct concrete/provider call from another Domain SHALL remain absent.
 
 Provider contract coverage SHALL preserve stable peer identity, join/leave, trusted inbound source, native broadcast, explicit string/array targets including `[]`, room-level failure, peer join/leave, close, error, and deterministic dispose without adding delivery acknowledgement. The shared harness SHALL remain provider-neutral at Runtime root and SHALL run against the sole Trystero implementation.
 
@@ -99,7 +99,7 @@ Provider contract coverage SHALL preserve stable peer identity, join/leave, trus
 #### Scenario: Artico does not leak
 
 - **WHEN** imports, public exports, Domain Externs, protocol types, comctx contracts, and composition are inspected
-- **THEN** Trystero symbols SHALL remain inside its provider directory, provider-specific tests, and `host.ts`, and only `WireDomain` SHALL obtain `RoomTransportExtern`
+- **THEN** concrete Trystero implementation symbols and imports SHALL remain inside its provider directory, provider-specific tests, and `host.ts`, while manifests, lockfile, and current documentation MAY name the pinned sole provider and only `WireDomain` SHALL obtain the provider-neutral `RoomTransportExtern`
 - **AND** Artico symbols and dependencies SHALL be absent from current production, tests, composition, package resolution, and supported-provider documentation
 
 #### Scenario: Provider contract parity
