@@ -27,7 +27,6 @@ import type {
   WorldPresenceEvent
 } from '@/runtime/Contract'
 import { HISTORY_REQUEST_TIMEOUT_MS, RUNTIME_DOMAIN_GRACE_MS, PENDING_LEAVE_GRACE_MS } from '@/constants/config'
-import { createArticoRoomTransport } from '@/runtime/ArticoRoomTransport'
 import { createBrowserPresenceStore } from '@/runtime/PresenceStore'
 
 const NOW = 1_800_000_000_000
@@ -45,122 +44,6 @@ const USER_INFO: UserInfo = {
 }
 const REMOTE_USER: ChatUser = { id: 'remote-user', name: 'Remote', avatar: '' }
 const SITE = { origin: DOMAIN, title: 'Example', icon: 'https://example.com/favicon.ico' }
-
-interface RuntimeArticoRoom {
-  open(peerId: string): void
-  loseReadiness(peerId: string): void
-  closeUnexpectedly(): void
-  readonly attempts: { peerId: string; payload: string }[]
-  readonly sent: { peerId: string; payload: string }[]
-}
-
-interface RuntimeArticoJoinPlan {
-  peers: string[]
-  closing: string[]
-}
-
-const runtimeArticoFixture = vi.hoisted(() => ({
-  rooms: new Map<string, RuntimeArticoRoom>(),
-  nextJoins: new Map<string, RuntimeArticoJoinPlan>()
-}))
-
-vi.mock('@rtco/client', () => {
-  class Emitter {
-    private readonly listeners = new Map<string, Set<(...args: unknown[]) => void>>()
-
-    on(event: string, listener: (...args: unknown[]) => void) {
-      const listeners = this.listeners.get(event) ?? new Set()
-      listeners.add(listener)
-      this.listeners.set(event, listeners)
-      return this
-    }
-
-    emit(event: string, ...args: unknown[]) {
-      this.listeners.get(event)?.forEach((listener) => listener(...args))
-    }
-  }
-
-  class FakeRoom extends Emitter implements RuntimeArticoRoom {
-    private readonly peers = new Map<string, boolean>()
-    readonly attempts: { peerId: string; payload: string }[] = []
-    readonly sent: { peerId: string; payload: string }[] = []
-
-    send(payload: string, target?: string | string[]) {
-      const targets = target ? (Array.isArray(target) ? target : [target]) : null
-      this.peers.forEach((ready, peerId) => {
-        if (targets && !targets.includes(peerId)) return
-        this.attempts.push({ peerId, payload })
-        // A provider-native broadcast delivers to each ready member; a targeted send rejects on
-        // a not-ready target.
-        if (targets === null) {
-          if (ready) this.sent.push({ peerId, payload })
-          return
-        }
-        if (!ready) throw new Error('Connection is not established yet.')
-        this.sent.push({ peerId, payload })
-      })
-    }
-
-    open(peerId: string) {
-      this.peers.set(peerId, true)
-      this.emit('join', peerId)
-    }
-
-    loseReadiness(peerId: string) {
-      this.peers.set(peerId, false)
-    }
-
-    closeUnexpectedly() {
-      this.emit('close')
-    }
-
-    leave() {
-      this.emit('close')
-    }
-  }
-
-  class FakeArtico extends Emitter {
-    readonly id = 'local-peer'
-    readonly state = 'ready'
-
-    join(roomId: string) {
-      const room = new FakeRoom()
-      runtimeArticoFixture.rooms.set(roomId, room)
-      const plan = runtimeArticoFixture.nextJoins.get(roomId)
-      runtimeArticoFixture.nextJoins.delete(roomId)
-      if (plan) {
-        void Promise.resolve().then(() => {
-          plan.peers.forEach((peerId) => room.open(peerId))
-          plan.closing.forEach((peerId) => room.loseReadiness(peerId))
-        })
-      }
-      return room
-    }
-
-    close() {}
-  }
-
-  return {
-    Artico: FakeArtico,
-    SocketSignaling: class {
-      readonly id = 'fake-signaling'
-      readonly state = 'ready'
-      connect() {}
-      disconnect() {}
-      signal() {}
-      join() {}
-      on() {
-        return this
-      }
-      off() {
-        return this
-      }
-      emit() {
-        return this
-      }
-    }
-  }
-})
 
 type TestWireMessage = ChatRoomMessage | (WorldRoomMessage & { type?: never })
 const isWorldPresence = (message: TestWireMessage): message is WorldRoomMessage & { type?: never } => 'sites' in message
@@ -246,24 +129,10 @@ class FakeClock implements Clock {
   }
 }
 
-const holdClockSleep = (clock: FakeClock) => {
-  const started = deferred<void>()
-  const release = deferred<void>()
-  clock.sleep = async () => {
-    started.resolve()
-    await release.promise
-  }
-  return { started: started.promise, release: release.resolve }
-}
-
 beforeEach(() => {
   vi.useFakeTimers()
-  runtimeArticoFixture.rooms.clear()
-  runtimeArticoFixture.nextJoins.clear()
 })
 afterEach(() => {
-  runtimeArticoFixture.rooms.clear()
-  runtimeArticoFixture.nextJoins.clear()
   vi.useRealTimers()
 })
 
@@ -278,8 +147,8 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
   const joinCalls: string[] = []
   const physicalJoinCalls: string[] = []
   const operationLog: string[] = []
-  const sent: { roomId: string; payload: string; to?: string | string[] }[] = []
-  const sendAttempts: { roomId: string; payload: string; to?: string | string[] }[] = []
+  const sent: { roomId: string; payload: string; to?: string | string[]; rawTarget?: string | string[] }[] = []
+  const sendAttempts: { roomId: string; payload: string; to?: string | string[]; rawTarget?: string | string[] }[] = []
   const sendAttemptWaiters: {
     roomId?: string
     resolve: (attempt: (typeof sendAttempts)[number]) => void
@@ -373,8 +242,9 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
     },
     send: async (roomId, payload, to) => {
       // A broadcast records its actual recipients: the room's current members at send time.
+      // `rawTarget` keeps the caller's own target argument (undefined means a native broadcast).
       const recipients = to === undefined ? [...(peersByRoom.get(roomId) ?? [])] : to
-      const attempt = { roomId, payload, to: recipients }
+      const attempt = { roomId, payload, to: recipients, rawTarget: to }
       sendAttempts.push(attempt)
       const matchingWaiters = sendAttemptWaiters.filter((waiter) => !waiter.roomId || waiter.roomId === roomId)
       sendAttemptWaiters.splice(
@@ -567,21 +437,6 @@ const emitRemoteWorldPresence = (fake: ReturnType<typeof createFakeTransport>, s
   })
 }
 
-const articoRoom = (roomId: string) => {
-  const room = runtimeArticoFixture.rooms.get(roomId)
-  if (!room) throw new Error(`Artico test room "${roomId}" missing`)
-  return room
-}
-
-const articoMessagesTo = (room: RuntimeArticoRoom, peerId: string) =>
-  room.sent.filter((item) => item.peerId === peerId).map((item) => JSON.parse(item.payload) as TestWireMessage)
-
-const createArticoTestServer = async (roomIds: string[], codec: WireCodec = jsonCodec) => {
-  const transport = createArticoRoomTransport()
-  await Promise.all(roomIds.map((roomId) => transport.join(roomId)))
-  return createServer({ transport, clock: new FakeClock(), codec })
-}
-
 const deferred = <T>() => {
   let resolve!: (value: T) => void
   let reject!: (error: Error) => void
@@ -701,164 +556,63 @@ const sessionAllocationEventFixture = () => {
 void sessionAllocationEventFixture
 
 describe('RuntimeServer lifecycle', () => {
-  it('derives current Session and World targets only after the direct join pause', async () => {
-    const paused = deferred<void>()
-    const delays: number[] = []
-    const clock = new FakeClock()
-    clock.sleep = (ms) => {
-      delays.push(ms)
-      return paused.promise
-    }
-    const fake = createFakeTransport()
-    const server = createServer({ transport: fake.transport, clock, codec: jsonCodec })
-    await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
-    const joining = server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
-    await vi.waitFor(() => expect(delays).toEqual([1000]))
-    expect(fake.sendAttempts).toEqual([])
-
-    const roomId = getChatRoomId(DOMAIN)
-    fake.peerJoin(roomId, 'peer-chat')
-    fake.receive(roomId, 'peer-chat', session())
-    await settle()
-    fake.peerLeave(roomId, 'peer-chat')
-    fake.peerJoin(roomId, 'peer-chat')
-    fake.receive(roomId, 'peer-chat', {
-      ...session({ ...REMOTE_USER, name: 'New generation' }),
-      sessionId: 'session-new-generation',
-      presenceId: 'presence-new-generation',
-      joinedAt: NOW + 2
-    })
-    fake.receive(roomId, fake.transport.peerIdOf(roomId), session({ id: 'self-user', name: 'Self', avatar: '' }))
-    emitRemoteWorldPresence(fake, 'peer-world')
-    fake.peerJoin(getWorldRoomId(), 'peer-world')
-    emitRemoteWorldPresence(fake, fake.transport.peerIdOf(getWorldRoomId()))
-    await settle()
-    expect(fake.sendAttempts).toEqual([])
-
-    paused.resolve()
-    await joining
-    expect(fake.sendAttempts.map(({ roomId: sentRoomId, to }) => ({ roomId: sentRoomId, to }))).toEqual([
-      { roomId, to: ['peer-chat'] },
-      { roomId: getWorldRoomId(), to: ['peer-world'] }
-    ])
-    disposeServer(server)
-  })
-
-  it('settles a direct join with empty logical recipients without a provider send', async () => {
+  it('broadcasts the initial Session and World snapshot natively on a direct join', async () => {
     const fake = createFakeTransport()
     const server = createServer({ transport: fake.transport, clock: new FakeClock(), codec: jsonCodec })
     await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
-
-    await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
-
-    expect(fake.sendAttempts).toEqual([])
-    disposeServer(server)
-  })
-
-  it('delays a World recovery publication and reads membership after that join', async () => {
-    const clock = new FakeClock()
-    const fake = createFakeTransport()
-    const server = createServer({ transport: fake.transport, clock, codec: jsonCodec })
-    await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
-    await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
-    const baseline = fake.sendAttempts.length
-    const paused = deferred<void>()
-    const delays: number[] = []
-    clock.sleep = (ms) => {
-      delays.push(ms)
-      return paused.promise
-    }
-
-    fake.roomClose(getWorldRoomId())
-    await vi.waitFor(() => expect(delays).toEqual([1000]))
-    fake.peerJoin(getWorldRoomId(), 'peer-world')
+    const roomId = getChatRoomId(DOMAIN)
+    fake.plantPeer(roomId, 'peer-chat')
+    fake.receive(roomId, 'peer-chat', session())
+    fake.plantPeer(getWorldRoomId(), 'peer-world')
     fake.receive(getWorldRoomId(), 'peer-world', {
       sessionId: 'remote-world-peer-world',
       user: REMOTE_USER,
       sites: [{ origin: 'https://remote.example', title: 'Remote' }]
     })
     await settle()
-    expect(fake.sendAttempts).toHaveLength(baseline)
 
-    paused.resolve()
+    await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
+
+    expect(fake.sendAttempts.map(({ roomId: sentRoomId, to }) => ({ roomId: sentRoomId, to }))).toEqual([
+      { roomId, to: ['peer-chat'] },
+      { roomId: getWorldRoomId(), to: ['peer-world'] }
+    ])
+    // Both the initial Session and the World full snapshot are native broadcasts (raw target
+    // omitted), while the fake fans them out to the active members.
+    expect(fake.sendAttempts.map(({ rawTarget }) => rawTarget)).toEqual([undefined, undefined])
+    // Opposite control: a peer joining after commit triggers a targeted Session catch-up.
+    fake.peerJoin(roomId, 'peer-late')
+    await settle()
+    const catchUpAttempt = fake.sendAttempts.findLast(
+      (a) => a.roomId === roomId && JSON.parse(a.payload).type === MESSAGE_TYPE.SESSION && Array.isArray(a.rawTarget)
+    )
+    expect(catchUpAttempt).toBeDefined()
+    expect(catchUpAttempt?.rawTarget).toEqual(['peer-late'])
+    disposeServer(server)
+  })
+
+  it('broadcasts a direct join even with zero active peers and settles through the provider no-op', async () => {
+    const fake = createFakeTransport()
+    const server = createServer({ transport: fake.transport, clock: new FakeClock(), codec: jsonCodec })
+    await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
+
+    await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
+
+    expect(fake.sendAttempts.map(({ to }) => to)).toEqual([[], []])
+    disposeServer(server)
+  })
+
+  it('republishes the World snapshot natively as soon as the room recovers', async () => {
+    const fake = createFakeTransport()
+    const server = createServer({ transport: fake.transport, clock: new FakeClock(), codec: jsonCodec })
+    await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
+    await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
+    const baseline = fake.sendAttempts.length
+
+    fake.roomClose(getWorldRoomId())
     await vi.waitFor(() => expect(fake.sendAttempts).toHaveLength(baseline + 1))
-    expect(fake.sendAttempts.at(-1)?.to).toEqual(['peer-world'])
+    expect(fake.sendAttempts.at(-1)?.to).toEqual([])
     disposeServer(server)
-  })
-
-  it('makes a delayed Domain recovery inert after Runtime teardown', async () => {
-    const { clock, fake, server, roomId } = await setup()
-    fake.peerJoin(roomId, 'peer-chat')
-    fake.receive(roomId, 'peer-chat', session())
-    await settle()
-    const baseline = fake.sendAttempts.length
-    const paused = deferred<void>()
-    const delays: number[] = []
-    clock.sleep = (ms) => {
-      delays.push(ms)
-      return paused.promise
-    }
-
-    fake.roomClose(roomId)
-    await vi.waitFor(() => expect(delays).toContain(1000))
-    disposeServer(server)
-    paused.resolve()
-    await settle()
-
-    expect(fake.sendAttempts).toHaveLength(baseline)
-  })
-
-  it('makes a delayed World recovery inert after Runtime teardown', async () => {
-    const { clock, fake, server } = await setup()
-    const worldRoomId = getWorldRoomId()
-    emitRemoteWorldPresence(fake, 'peer-world')
-    await settle()
-    const baseline = fake.sendAttempts.length
-    const paused = deferred<void>()
-    const delays: number[] = []
-    clock.sleep = (ms) => {
-      delays.push(ms)
-      return paused.promise
-    }
-
-    fake.roomClose(worldRoomId)
-    await vi.waitFor(() => expect(delays).toContain(1000))
-    disposeServer(server)
-    paused.resolve()
-    await settle()
-
-    expect(fake.sendAttempts).toHaveLength(baseline)
-  })
-
-  it('does not let an old Runtime join continuation mutate its replacement', async () => {
-    const oldClock = new FakeClock()
-    const oldFake = createFakeTransport()
-    const oldServer = createServer({ transport: oldFake.transport, clock: oldClock, codec: jsonCodec })
-    await oldServer.attachPage({ domain: DOMAIN, pageId: 'old-page' })
-    const paused = deferred<void>()
-    const delays: number[] = []
-    oldClock.sleep = (ms) => {
-      delays.push(ms)
-      return paused.promise
-    }
-    oldFake.plantPeer(getChatRoomId(DOMAIN), 'old-peer')
-    const oldJoin = oldServer.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE }).catch(() => null)
-    await vi.waitFor(() => expect(delays).toContain(1000))
-    expect(oldFake.sendAttempts).toEqual([])
-    disposeServer(oldServer)
-
-    const newFake = createFakeTransport()
-    const newServer = createServer({ transport: newFake.transport, clock: new FakeClock(), codec: jsonCodec })
-    await newServer.attachPage({ domain: DOMAIN, pageId: 'new-page' })
-    await newServer.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
-    const replacement = await newServer.getSnapshot()
-    paused.resolve()
-    await settle()
-
-    expect(oldFake.sendAttempts).toEqual([])
-    expect(replacement.domains[0]).toMatchObject({ domain: DOMAIN, phase: 'active', pageIds: ['new-page'] })
-    await expect(oldJoin).resolves.toBeNull()
-    disposeServer(newServer)
   })
 
   it('one clean refresh converges the stale member count from the ended-observation state', async () => {
@@ -1862,7 +1616,7 @@ describe('RuntimeServer lifecycle', () => {
     expect(fake.physicalJoinCalls).toEqual([getChatRoomId(DOMAIN), getWorldRoomId()])
     expect(
       fake.messages(getChatRoomId(DOMAIN)).filter((message) => message.type === MESSAGE_TYPE.SESSION)
-    ).toHaveLength(0)
+    ).toHaveLength(1)
     expect(snapshot.domains[0].localSession?.user).toEqual(USER)
     const presence = fake.messages(getWorldRoomId()).find(isWorldPresence)
     expect(presence?.user).toEqual(USER)
@@ -1931,7 +1685,12 @@ describe('RuntimeServer lifecycle', () => {
     expect(joinResult).toBe('resolved')
     expect(fake.joined).toEqual(fake.desired)
     expect(fake.joinCalls).toEqual([roomId, worldRoomId])
-    expect(fake.messages(roomId).filter((message) => message.type === MESSAGE_TYPE.SESSION)).toHaveLength(0)
+    // The initial Session is one native broadcast; the pre-existing member is its provider-side recipient.
+    expect(fake.messages(roomId).filter((message) => message.type === MESSAGE_TYPE.SESSION)).toHaveLength(1)
+    const sessionAttempt = fake.sendAttempts.findLast(
+      (attempt) => attempt.roomId === roomId && JSON.parse(attempt.payload).type === MESSAGE_TYPE.SESSION
+    )
+    expect(sessionAttempt?.to).toEqual(['remote-peer'])
     expect(fake.messages(worldRoomId).filter(isWorldPresence)).toHaveLength(1)
     expect(localSessions).toHaveLength(1)
     expect(worldPresences.map((event) => event.sourcePeerId)).toEqual(['local-peer'])
@@ -1989,7 +1748,6 @@ describe('RuntimeServer lifecycle', () => {
       if (event.sourcePeerId === 'remote-peer') remotePresenceSeen.resolve()
     })
     fake.hangSendsTo(roomId)
-    const joinPause = holdClockSleep(clock)
     const firstSendAttempt = fake.waitForSendAttempt(roomId)
     // Pre-existing room members become the initial publication's distinct targets.
     fake.plantPeer(roomId, 'remote-peer')
@@ -1998,15 +1756,15 @@ describe('RuntimeServer lifecycle', () => {
     await fake.waitForDesiredRooms(2)
 
     fake.open()
-    await joinPause.started
+    // The Session broadcast is hung at the provider: the commit is still pending, and late remote
+    // membership stays buffered behind the publication.
+    await expect(firstSendAttempt).resolves.toMatchObject({ roomId })
     fake.receive(roomId, 'remote-peer', session())
     fake.receive(worldRoomId, 'remote-peer', {
       sessionId: 'remote-world-session',
       user: REMOTE_USER,
       sites: [SITE]
     })
-    joinPause.release()
-    await expect(firstSendAttempt).resolves.toMatchObject({ roomId })
     await settle()
 
     expect(localSessions).toEqual([])
@@ -2053,20 +1811,19 @@ describe('RuntimeServer lifecycle', () => {
       remoteSessions.push(session)
     })
     fake.hangSendsTo(roomId)
-    const joinPause = holdClockSleep(clock)
     const firstSendAttempt = fake.waitForSendAttempt(roomId)
     // A pre-existing room member becomes the initial publication's distinct target.
     fake.plantPeer(roomId, 'remote-peer')
     const join = server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
     await fake.waitForDesiredRooms(2)
     fake.open()
-    await joinPause.started
+    // The Session broadcast is hung at the provider while the strictly later remote join lands in
+    // the provisional window.
+    await firstSendAttempt
     fake.receive(roomId, 'later-peer', {
       ...session(),
       joinedAt: NOW + 1
     })
-    joinPause.release()
-    await firstSendAttempt
     await settle()
     expect(remoteSessions).toEqual([])
 
@@ -2151,7 +1908,9 @@ describe('RuntimeServer lifecycle', () => {
 
     expect(fake.joinCalls).toEqual([roomId, worldRoomId, roomId, worldRoomId])
     expect(fake.physicalJoinCalls).toEqual([roomId, worldRoomId])
-    expect(fake.messages(roomId).filter((message) => message.type === MESSAGE_TYPE.SESSION)).toEqual([])
+    const sessions = fake.messages(roomId).filter((message) => message.type === MESSAGE_TYPE.SESSION)
+    expect(sessions).toHaveLength(1)
+    expect(sessions[0]?.user).toEqual(refreshedUser)
     fake.peerJoin(worldRoomId, 'remote-peer')
     await settle()
     expect(fake.messages(worldRoomId).filter(isWorldPresence).at(-1)).toEqual(
@@ -2287,7 +2046,11 @@ describe('RuntimeServer lifecycle', () => {
     expect(fake.physicalJoinCalls.filter((id) => id === roomId)).toHaveLength(2)
     // The World child also physically re-joined through its own replacement.
     expect(fake.physicalJoinCalls.filter((id) => id === worldRoomId)).toHaveLength(2)
-    expect(fake.messages(roomId).filter((message) => message.type === MESSAGE_TYPE.SESSION)).toHaveLength(0)
+    const sessionAttempts = fake.sendAttempts.filter(
+      (attempt) => attempt.roomId === roomId && JSON.parse(attempt.payload).type === MESSAGE_TYPE.SESSION
+    )
+    expect(sessionAttempts).toHaveLength(2)
+    expect(sessionAttempts.map((attempt) => attempt.to)).toEqual([[], ['remote-peer']])
     const worldMessages = fake.messages(worldRoomId).filter(isWorldPresence)
     expect(worldMessages.length).toBeGreaterThanOrEqual(2)
     expect(worldMessages.at(-1)).toEqual(after.world.localPresence)
@@ -2703,11 +2466,8 @@ describe('RuntimeServer lifecycle', () => {
     // before the domain commits.
     fake.plantPeer(roomIdB, 'chat-peer-b')
     fake.hangSendsTo(roomIdB)
-    const joinPause = holdClockSleep(clock)
     const joinB = server.joinChatRoom({ domain: OTHER_DOMAIN, user: USER, site: { origin: OTHER_DOMAIN } })
-    await joinPause.started
     fake.receive(roomIdB, 'chat-peer-b', session())
-    joinPause.release()
     await fake.waitForSendAttempt(roomIdB)
     await settle()
 
@@ -2980,16 +2740,13 @@ describe('RuntimeServer lifecycle', () => {
     // Hold the first cold join's Chat publication after the physical World peer joined.
     fake.plantPeer(roomId, 'chat-peer')
     fake.hangSendsTo(roomId)
-    const joinPause = holdClockSleep(clock)
     const firstJoin = server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE }).then(
       () => null,
       (error: Error) => error
     )
     await fake.waitForDesiredRooms(2)
     fake.open()
-    await joinPause.started
     fake.receive(roomId, 'chat-peer', session())
-    joinPause.release()
     await fake.waitForSendAttempt(roomId)
 
     // A live remote World presence arrives while the first join is provisional.
@@ -3064,19 +2821,16 @@ describe('RuntimeServer provisional recovery races', () => {
     // staged World publication pending while a remote World member lands.
     fake.plantPeer(roomId, 'chat-peer')
     fake.hangSendsTo(roomId)
-    const joinPause = holdClockSleep(clock)
     const join = server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
     await fake.waitForDesiredRooms(2)
 
     fake.open()
-    await joinPause.started
     fake.receive(roomId, 'chat-peer', session())
     emitRemoteWorldPresence(fake, 'early-peer')
-    joinPause.release()
     await settle()
     await settle()
     fake.releaseSends()
-    // Hold the World wire so the frozen iterator stays pending while another peer joins.
+    // Hold the World wire so the publication iterator stays pending while another peer joins.
     fake.hangSendsTo(worldRoomId)
     await fake.waitForSendAttempt(worldRoomId)
     fake.peerJoin(worldRoomId, 'mid-peer')
@@ -3098,6 +2852,10 @@ describe('RuntimeServer provisional recovery races', () => {
     fake.peerJoin(worldRoomId, 'late-peer')
     await settle()
     expect(sentToPeer(fake, worldRoomId, 'late-peer')).toEqual([currentPresence])
+    // Opposite control: a World catch-up is explicitly targeted to the newly active peer.
+    const catchUpAttempt = fake.sendAttempts.findLast((a) => a.roomId === worldRoomId && Array.isArray(a.rawTarget))
+    expect(catchUpAttempt).toBeDefined()
+    expect(catchUpAttempt?.rawTarget).toEqual(['late-peer'])
 
     emitRemoteWorldPresence(fake, 'discovered-peer')
     await settle()
@@ -3115,16 +2873,13 @@ describe('RuntimeServer provisional recovery races', () => {
     // Hold the first attempt's Chat session broadcast so the peer join lands inside its pending window.
     fake.plantPeer(roomId, 'chat-peer')
     fake.hangSendsTo(roomId)
-    const joinPause = holdClockSleep(clock)
     const firstJoin = server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE }).then(
       () => null,
       (error: Error) => error
     )
     await fake.waitForDesiredRooms(2)
     fake.open()
-    await joinPause.started
     fake.receive(roomId, 'chat-peer', session())
-    joinPause.release()
     await fake.waitForSendAttempt(roomId)
 
     fake.peerJoin(roomId, 'stale-peer')
@@ -3163,15 +2918,13 @@ describe('RuntimeServer provisional recovery races', () => {
     fake.plantPeer(roomId, 'chat-peer')
     fake.makeNotReady()
     fake.hangSendsTo(roomId)
-    const joinPause = holdClockSleep(clock)
     const chatBroadcastStarted = fake.waitForSendAttempt(roomId)
     const reconnect = server.reconnectDomain({ domain: DOMAIN })
     await fake.waitForJoinCalls(4)
     fake.open()
-    await joinPause.started
-    fake.receive(roomId, 'remote-peer', session())
-    joinPause.release()
+    // The provisional Session broadcast is hung at the provider while the remote session lands.
     await expect(chatBroadcastStarted).resolves.toMatchObject({ roomId })
+    fake.receive(roomId, 'remote-peer', session())
     await settle()
     const eventsBeforeCommit = [...remoteSessions]
     const sessionsBeforeCommit = (await server.getSnapshot()).domains[0].sessions
@@ -3197,14 +2950,11 @@ describe('RuntimeServer provisional recovery races', () => {
     fake.plantPeer(roomId, 'chat-peer')
     fake.makeNotReady()
     fake.hangSendsTo(roomId)
-    const joinPause = holdClockSleep(clock)
     const firstBroadcastStarted = fake.waitForSendAttempt(roomId)
     const firstReconnect = server.reconnectDomain({ domain: DOMAIN })
     await fake.waitForJoinCalls(4)
     fake.open()
-    await joinPause.started
     fake.receive(roomId, 'stale-remote-peer', session())
-    joinPause.release()
     await expect(firstBroadcastStarted).resolves.toMatchObject({ roomId })
     await settle()
     const eventsBeforeSupersede = [...remoteSessions]
@@ -3238,7 +2988,7 @@ describe('RuntimeServer provisional recovery races', () => {
     const worldRoomId = getWorldRoomId()
     const currentPresence = (await server.getSnapshot()).world.localPresence
     if (!currentPresence) throw new Error('Committed local presence missing')
-    // A known remote presence becomes the frozen recovery-iterator target.
+    // A known remote presence is active for the recovery-iterator publication.
     emitRemoteWorldPresence(fake)
     await settle()
     expect(sentToPeer(fake, worldRoomId, 'remote-peer')).toEqual([currentPresence])
@@ -3265,7 +3015,7 @@ describe('RuntimeServer provisional recovery races', () => {
     await settle()
 
     expect((await server.getSnapshot()).world.joined).toBe(true)
-    // The frozen target was attempted exactly once more for the recovery revision, and the peer that
+    // The recovery revision was broadcast exactly once more, and the peer that
     // joined mid-publication receives exactly one catch-up at commit.
     expect(sentToPeer(fake, worldRoomId, 'remote-peer')).toEqual([currentPresence, currentPresence])
     expect(sentToPeer(fake, worldRoomId, 'missed-peer')).toEqual([currentPresence])
@@ -3458,9 +3208,12 @@ describe('RuntimeServer send reliability', () => {
   })
 
   it.each([MESSAGE_TYPE.TEXT, MESSAGE_TYPE.REACTION])(
-    'settles a room-wide %s send with no Session target without a wire send',
+    'broadcasts a room-wide %s send natively to the current room members',
     async (messageType) => {
       const { fake, server, roomId } = await setup()
+      fake.plantPeer(roomId, 'peer-a')
+      fake.receive(roomId, 'peer-a', session())
+      await settle()
       const record =
         messageType === MESSAGE_TYPE.TEXT
           ? await server.allocateTextMessage({ domain: DOMAIN, body: 'outbound', mentions: [] })
@@ -3468,7 +3221,11 @@ describe('RuntimeServer send reliability', () => {
 
       await server.sendChatMessage({ domain: DOMAIN, event: record.message })
 
-      expect(fake.messages(roomId).filter((message) => message.type === messageType)).toHaveLength(0)
+      const attempt = fake.sendAttempts.find((item) => JSON.parse(item.payload).type === messageType)
+      expect(attempt).toBeDefined()
+      expect(attempt?.to).toEqual(['peer-a'])
+      expect(attempt?.rawTarget).toBeUndefined()
+      expect(fake.messages(roomId).filter((message) => message.type === messageType)).toHaveLength(1)
     }
   )
 
@@ -3495,9 +3252,9 @@ describe('RuntimeServer send reliability', () => {
   })
 
   it.each([MESSAGE_TYPE.TEXT, MESSAGE_TYPE.REACTION])(
-    're-resolves a queued room-wide %s send from current Sessions after recovery',
+    'resumes a queued room-wide %s send after recovery and broadcasts to the then-active members',
     async (messageType) => {
-      const { clock, fake, server, roomId } = await setup()
+      const { fake, server, roomId } = await setup()
       const oldUser = { id: 'old-user', name: 'Old', avatar: '' }
       const newUser = { id: 'new-user', name: 'New', avatar: '' }
       fake.peerJoin(roomId, 'peer-old')
@@ -3507,139 +3264,23 @@ describe('RuntimeServer send reliability', () => {
         messageType === MESSAGE_TYPE.TEXT
           ? await server.allocateTextMessage({ domain: DOMAIN, body: 'queued', mentions: [] })
           : await server.allocateReactionMessage({ domain: DOMAIN, targetId: 'target', reaction: 'like', active: true })
-      const waiting = deferred<void>()
-      const delays: number[] = []
-      clock.sleep = (ms) => {
-        delays.push(ms)
-        return waiting.promise
-      }
 
       fake.roomClose(roomId)
       const sending = server.sendChatMessage({ domain: DOMAIN, event: record.message })
-      await vi.waitFor(() => expect(delays).toContain(1000))
-      expect(fake.sendAttempts.filter((attempt) => JSON.parse(attempt.payload).type === messageType)).toEqual([])
+      await sending
+      await vi.waitFor(() => {
+        const attempt = fake.sendAttempts.find((item) => JSON.parse(item.payload).type === messageType)
+        expect(attempt?.to).toEqual(['peer-old'])
+      })
 
+      // Membership churn after the send never causes a re-send: no retry, outbox, or target
+      // re-derivation exists.
       fake.peerLeave(roomId, 'peer-old')
       await vi.advanceTimersByTimeAsync(PENDING_LEAVE_GRACE_MS)
       fake.peerJoin(roomId, 'peer-new')
       fake.receive(roomId, 'peer-new', session(newUser))
       await settle()
-      fake.peerLeave(roomId, 'peer-new')
-      fake.peerJoin(roomId, 'peer-new')
-      fake.receive(roomId, 'peer-new', {
-        ...session({ ...newUser, name: 'New generation' }),
-        sessionId: 'session-new-generation',
-        presenceId: 'presence-new-generation',
-        joinedAt: NOW + 2
-      })
-      const selfPeerId = fake.transport.peerIdOf(roomId)
-      fake.receive(roomId, selfPeerId, session({ id: 'self-wire-user', name: 'Self wire', avatar: '' }))
-      await settle()
-
-      waiting.resolve()
-      await sending
-      // The caller may already have settled via local acceptance; the background transport
-      // resume re-derives current Session targets before its single provider call.
-      await vi.waitFor(() => {
-        const attempt = fake.sendAttempts.find((item) => JSON.parse(item.payload).type === messageType)
-        expect(attempt?.to).toEqual(['peer-new'])
-      })
-      disposeServer(server)
-    }
-  )
-
-  it.each([MESSAGE_TYPE.TEXT, MESSAGE_TYPE.REACTION])(
-    'keeps a queued room-wide %s send inert when its owner enters release during the post-join delay',
-    async (messageType) => {
-      const clock = new FakeClock()
-      const fake = createFakeTransport()
-      const values: Record<string, unknown> = {}
-      const cleanupStarted = deferred<void>()
-      const releaseCleanup = deferred<void>()
-      const presenceStore = createBrowserPresenceStore({
-        get: async (key) => ({ [key]: values[key] }),
-        set: async (items) => {
-          const record = Object.values(items)[0] as { local?: unknown } | undefined
-          // The release cleanup save carries no local record; hold it so the owner stays in
-          // LiveReleasesState with the committed runtime and physical membership retained.
-          if (record && typeof record === 'object' && !('local' in record)) {
-            cleanupStarted.resolve()
-            await releaseCleanup.promise
-          }
-          Object.assign(values, items)
-        }
-      })
-      const server = createServer({ transport: fake.transport, clock, codec: jsonCodec, presenceStore })
-      const roomId = getChatRoomId(DOMAIN)
-      await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
-      await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
-      await settle()
-      fake.peerJoin(roomId, 'peer-chat')
-      fake.receive(roomId, 'peer-chat', session())
-      await settle()
-      const baseline = fake.sendAttempts.length
-      const record =
-        messageType === MESSAGE_TYPE.TEXT
-          ? await server.allocateTextMessage({ domain: DOMAIN, body: 'queued', mentions: [] })
-          : await server.allocateReactionMessage({ domain: DOMAIN, targetId: 'target', reaction: 'like', active: true })
-      const waiting = deferred<void>()
-      const delays: number[] = []
-      clock.sleep = (ms) => {
-        delays.push(ms)
-        return waiting.promise
-      }
-
-      // The room closes and the runtime auto-rejoins; the queued room-wide send waits out the
-      // post-join delay. During the delay its owner domain enters release and the active-record
-      // cleanup write stays held: LiveReleasesState is written but the physical Wire leave has
-      // not run, so the Wire identity/generation/trust fences alone would still pass.
-      fake.roomClose(roomId)
-      let sendSettled = false
-      const sending = server.sendChatMessage({ domain: DOMAIN, event: record.message })
-      void sending.then(
-        () => {
-          sendSettled = true
-        },
-        () => {
-          sendSettled = true
-        }
-      )
-      await vi.waitFor(() => expect(delays).toContain(1000))
-      const leaving = server.leaveChatRoom({ domain: DOMAIN })
-      await cleanupStarted.promise
-
-      // The timer expires inside the release window: zero target re-derivation, zero provider
-      // call, and no synthetic failure/success. A Text caller has already settled via local
-      // acceptance (#135 semantics); a Reaction caller still awaits its transport settlement.
-      waiting.resolve()
-      await settle()
-      expect(fake.sendAttempts).toHaveLength(baseline)
-      if (messageType === MESSAGE_TYPE.TEXT) {
-        await vi.waitFor(() => expect(sendSettled).toBe(true))
-      } else {
-        expect(sendSettled).toBe(false)
-      }
-
-      // The release cleanup then completes; the final physical leave quietly cancels the queued
-      // send, the leave settles exactly once, and still no provider attempt escapes.
-      releaseCleanup.resolve()
-      await leaving
-      await vi.waitFor(() => expect(fake.joined.has(roomId)).toBe(false))
-      await settle()
-      expect(fake.sendAttempts).toHaveLength(baseline)
-      if (messageType === MESSAGE_TYPE.TEXT) {
-        expect(sendSettled).toBe(true)
-      } else {
-        expect(sendSettled).toBe(false)
-      }
-
-      // A fresh successor join on the same domain is unaffected by the stale continuation.
-      await server.attachPage({ domain: DOMAIN, pageId: 'page-b' })
-      await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
-      const snapshot = await server.getSnapshot()
-      expect(snapshot.domains[0]).toMatchObject({ domain: DOMAIN, phase: 'active' })
-      expect(snapshot.domains[0]?.pageIds).toContain('page-b')
-      expect(fake.sendAttempts).toHaveLength(baseline)
+      expect(fake.sendAttempts.filter((item) => JSON.parse(item.payload).type === messageType)).toHaveLength(1)
       disposeServer(server)
     }
   )
@@ -3680,7 +3321,7 @@ describe('RuntimeServer World presence', () => {
     const events: WorldPresenceEvent[] = []
     await server.onWorldPresence({ pageId: 'page-a' }, (event) => events.push(event))
     await server.attachPage({ domain: OTHER_DOMAIN, pageId: 'page-b' })
-    // A live remote target turns each committed revision into one per-target wire publication.
+    // A live remote peer is the recipients of each committed revision's native broadcast.
     emitRemoteWorldPresence(fake)
     await settle()
 
@@ -3695,14 +3336,16 @@ describe('RuntimeServer World presence', () => {
     expect(localEvents[0]?.presence?.presence.sites).toEqual([SITE, { origin: OTHER_DOMAIN }])
 
     const outgoing = fake.messages(getWorldRoomId()).filter(isWorldPresence)
-    expect(outgoing).toHaveLength(2)
+    expect(outgoing).toHaveLength(3)
+    const outgoingAttempts = fake.sendAttempts.filter((attempt) => attempt.roomId === getWorldRoomId())
+    expect(outgoingAttempts.map((attempt) => attempt.to)).toEqual([[], ['remote-peer'], ['remote-peer']])
     expect(localEvents[0]?.presence?.presence).toEqual(outgoing.at(-1))
   })
 
   it('surfaces a World target failure and still settles the revision and join', async () => {
     const { fake, server } = await setup()
     const worldRoomId = getWorldRoomId()
-    // A known remote target turns the second-domain revision into one per-target publication.
+    // A known remote peer receives the second-domain revision's native broadcast.
     emitRemoteWorldPresence(fake)
     await settle()
     const events: WorldPresenceEvent[] = []
@@ -3725,7 +3368,7 @@ describe('RuntimeServer World presence', () => {
   it('publishes full privacy-bounded snapshots and atomically replaces/deletes remote presence', async () => {
     const { fake, server } = await setup()
     const worldRoomId = getWorldRoomId()
-    // A live remote target turns each committed revision into one per-target wire publication.
+    // A live remote peer is the recipients of each committed revision's native broadcast.
     emitRemoteWorldPresence(fake)
     await settle()
     await server.attachPage({ domain: OTHER_DOMAIN, pageId: 'other-page' })
@@ -4176,6 +3819,12 @@ describe('RuntimeServer history', () => {
     })
     const sent = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH)
     expect(sent[sent.length - 1]).toMatchObject({ messages: [{ id: 'inner-message' }] })
+    // Opposite control: a History response is explicitly targeted to the requesting peer.
+    const pushAttempt = fake.sendAttempts.findLast(
+      (a) => a.roomId === roomId && JSON.parse(a.payload).type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH
+    )
+    expect(pushAttempt).toBeDefined()
+    expect(pushAttempt?.rawTarget).toEqual(['peer-a'])
   })
 
   it('runs one exact-difference inventory -> missing-body sync through the real page boundary', async () => {
@@ -4898,14 +4547,11 @@ describe('RuntimeServer history', () => {
     fake.plantPeer(roomId, 'remote-peer')
     fake.makeNotReady()
     fake.hangSendsTo(roomId)
-    const joinPause = holdClockSleep(clock)
     const chatBroadcastStarted = fake.waitForSendAttempt(roomId)
     const reconnect = server.reconnectDomain({ domain: DOMAIN })
     await fake.waitForJoinCalls(4)
     fake.open()
-    await joinPause.started
     fake.receive(roomId, 'peer-b', session({ id: 'user-b', name: 'User B', avatar: '' }))
-    joinPause.release()
     await expect(chatBroadcastStarted).resolves.toMatchObject({ roomId })
     // B's valid same-presence SESSION arrived during the prepared phase.
     await settle()
@@ -4948,14 +4594,11 @@ describe('RuntimeServer history', () => {
     fake.plantPeer(roomId, 'remote-peer')
     fake.makeNotReady()
     fake.hangSendsTo(roomId)
-    const joinPause = holdClockSleep(clock)
     const chatBroadcastStarted = fake.waitForSendAttempt(roomId)
     const reconnect = server.reconnectDomain({ domain: DOMAIN })
     await fake.waitForJoinCalls(4)
     fake.open()
-    await joinPause.started
     fake.receive(roomId, 'remote-peer', session())
-    joinPause.release()
     await expect(chatBroadcastStarted).resolves.toMatchObject({ roomId })
     fake.releaseSends()
     await reconnect
@@ -4987,14 +4630,11 @@ describe('RuntimeServer history', () => {
     fake.plantPeer(roomId, 'remote-peer')
     fake.makeNotReady()
     fake.hangSendsTo(roomId)
-    const joinPause = holdClockSleep(clock)
     const chatBroadcastStarted = fake.waitForSendAttempt(roomId)
     const reconnect = server.reconnectDomain({ domain: DOMAIN })
     await fake.waitForJoinCalls(4)
     fake.open()
-    await joinPause.started
     fake.receive(roomId, 'peer-b', session({ id: 'user-b', name: 'User B', avatar: '' }))
-    joinPause.release()
     await expect(chatBroadcastStarted).resolves.toMatchObject({ roomId })
     await settle()
     // ... then the SAME source switches to a different presence C before commit.
@@ -5037,15 +4677,12 @@ describe('RuntimeServer history', () => {
     fake.plantPeer(roomId, 'remote-peer')
     fake.makeNotReady()
     fake.hangSendsTo(roomId)
-    const joinPause = holdClockSleep(clock)
     const chatBroadcastStarted = fake.waitForSendAttempt(roomId)
     const reconnect = server.reconnectDomain({ domain: DOMAIN })
     await fake.waitForJoinCalls(4)
     fake.open()
-    await joinPause.started
     const rebind = session({ id: 'user-b', name: 'User B', avatar: '' })
     fake.receive(roomId, 'peer-b', rebind)
-    joinPause.release()
     await expect(chatBroadcastStarted).resolves.toMatchObject({ roomId })
     // Duplicate valid same-presence SESSION frames: one logical rebind marker.
     fake.receive(roomId, 'peer-b', rebind)
@@ -5079,15 +4716,14 @@ describe('RuntimeServer history', () => {
       fake.plantPeer(roomId, 'remote-peer')
       fake.makeNotReady()
       fake.hangSendsTo(roomId)
-      const joinPause = holdClockSleep(clock)
       const chatBroadcastStarted = fake.waitForSendAttempt(roomId)
       const reconnect = server.reconnectDomain({ domain: DOMAIN })
       await fake.waitForJoinCalls(4)
       fake.open()
-      await joinPause.started
-      fake.receive(roomId, 'peer-b', session({ id: 'user-c', name: 'User C', avatar: '' }))
-      joinPause.release()
+      // The provisional Session broadcast is hung at the provider while the reused source's
+      // current-C session lands in the prepared attempt.
       await expect(chatBroadcastStarted).resolves.toMatchObject({ roomId })
+      fake.receive(roomId, 'peer-b', session({ id: 'user-c', name: 'User C', avatar: '' }))
       await settle()
       fake.releaseSends()
       await reconnect
@@ -5514,14 +5150,11 @@ describe('RuntimeServer history', () => {
     fake.plantPeer(roomId, 'remote-peer')
     fake.makeNotReady()
     fake.hangSendsTo(roomId)
-    const joinPause = holdClockSleep(clock)
     const chatBroadcastStarted = fake.waitForSendAttempt(roomId)
     const reconnect = server.reconnectDomain({ domain: DOMAIN })
     await fake.waitForJoinCalls(4)
     fake.open()
-    await joinPause.started
     fake.receive(roomId, 'peer-b', session({ id: 'user-b', name: 'User B', avatar: '' }))
-    joinPause.release()
     await expect(chatBroadcastStarted).resolves.toMatchObject({ roomId })
     // B's same-presence rebind then the SAME source switches to C before commit.
     fake.receive(roomId, 'peer-b', session({ id: 'user-c', name: 'User C', avatar: '' }))
@@ -5553,14 +5186,11 @@ describe('RuntimeServer history', () => {
     fake.plantPeer(roomId, 'remote-peer')
     fake.makeNotReady()
     fake.hangSendsTo(roomId)
-    const joinPause = holdClockSleep(clock)
     const chatBroadcastStarted = fake.waitForSendAttempt(roomId)
     const reconnect = server.reconnectDomain({ domain: DOMAIN })
     await fake.waitForJoinCalls(4)
     fake.open()
-    await joinPause.started
     fake.receive(roomId, 'peer-b', session({ id: 'user-b', name: 'User B', avatar: '' }))
-    joinPause.release()
     await expect(chatBroadcastStarted).resolves.toMatchObject({ roomId })
     await settle()
     // The rebind source leaves AGAIN before the commit: its cancellation fact is revoked.
@@ -7156,209 +6786,5 @@ describe('RuntimeServer history', () => {
     })
     await settle()
     expect(fake.messages(otherRoomId).some((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)).toBe(true)
-  })
-})
-
-describe('RuntimeServer Artico selected-array settlement', () => {
-  it('skips initial Chat publication without a synchronized Session target', async () => {
-    const roomId = getChatRoomId(DOMAIN)
-    const worldRoomId = getWorldRoomId()
-    const server = await createArticoTestServer([roomId, worldRoomId])
-    const chatRoom = articoRoom(roomId)
-    const worldRoom = articoRoom(worldRoomId)
-    chatRoom.open('closing-peer')
-    chatRoom.open('later-ready-peer')
-    chatRoom.loseReadiness('closing-peer')
-    worldRoom.open('world-ready-peer')
-    await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
-
-    const joinError = await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE }).then(
-      () => null,
-      (error: Error) => error.message
-    )
-    await settle()
-    const snapshot = await server.getSnapshot()
-    const result = {
-      joinError,
-      joined: snapshot.domains[0]?.chatRoomJoined ?? false,
-      laterChat: articoMessagesTo(chatRoom, 'later-ready-peer').map((message) => message.type),
-      laterWorld: articoMessagesTo(worldRoom, 'world-ready-peer').filter(isWorldPresence).length
-    }
-    disposeServer(server)
-
-    expect(result).toEqual({
-      joinError: null,
-      joined: true,
-      laterChat: [],
-      laterWorld: 1
-    })
-  })
-
-  it('preserves the first target Error and does not attempt a later array target', async () => {
-    const roomId = getChatRoomId(DOMAIN)
-    const worldRoomId = getWorldRoomId()
-    const server = await createArticoTestServer([roomId, worldRoomId])
-    const chatRoom = articoRoom(roomId)
-    const worldRoom = articoRoom(worldRoomId)
-    chatRoom.open('chat-ready-peer')
-    worldRoom.open('accepted-peer')
-    worldRoom.open('closing-peer')
-    worldRoom.open('later-ready-peer')
-    worldRoom.loseReadiness('closing-peer')
-    await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
-
-    const joinError = await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE }).then(
-      () => null,
-      (error: Error) => error.message
-    )
-    await settle()
-    const snapshot = await server.getSnapshot()
-    const result = {
-      joinError,
-      joined: snapshot.domains[0]?.chatRoomJoined ?? false,
-      attempts: worldRoom.attempts.map((attempt) => attempt.peerId),
-      accepted: articoMessagesTo(worldRoom, 'accepted-peer').filter(isWorldPresence).length,
-      later: articoMessagesTo(worldRoom, 'later-ready-peer').filter(isWorldPresence).length
-    }
-    disposeServer(server)
-
-    expect(result).toEqual({
-      joinError: null,
-      joined: true,
-      attempts: ['accepted-peer', 'closing-peer'],
-      accepted: 1,
-      later: 0
-    })
-  })
-
-  it('settles a committed World update after preserving the selected-array failure', async () => {
-    const firstRoomId = getChatRoomId(DOMAIN)
-    const secondRoomId = getChatRoomId(OTHER_DOMAIN)
-    const worldRoomId = getWorldRoomId()
-    const server = await createArticoTestServer([firstRoomId, secondRoomId, worldRoomId])
-    articoRoom(firstRoomId).open('chat-ready-peer')
-    articoRoom(secondRoomId).open('chat-ready-peer')
-    const worldRoom = articoRoom(worldRoomId)
-    worldRoom.open('closing-peer')
-    worldRoom.open('later-ready-peer')
-    await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
-    await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
-    await server.attachPage({ domain: OTHER_DOMAIN, pageId: 'page-b' })
-    await server.joinChatRoom({
-      domain: OTHER_DOMAIN,
-      user: USER,
-      site: { ...SITE, origin: OTHER_DOMAIN, title: 'Other' }
-    })
-    await settle()
-    const laterBefore = articoMessagesTo(worldRoom, 'later-ready-peer').length
-    const errors: string[] = []
-    await server.onError({ pageId: 'page-a' }, (event) => errors.push(event.message))
-    worldRoom.loseReadiness('closing-peer')
-
-    await server.detachPage({ domain: OTHER_DOMAIN, pageId: 'page-b' })
-    await vi.advanceTimersByTimeAsync(RUNTIME_DOMAIN_GRACE_MS + 1)
-    await settle()
-    const snapshot = await server.getSnapshot()
-    const laterMessages = articoMessagesTo(worldRoom, 'later-ready-peer')
-    const latest = laterMessages.at(-1)
-    const result = {
-      domains: snapshot.domains.map((domain) => domain.domain),
-      laterDelta: laterMessages.length - laterBefore,
-      latestSites: latest && isWorldPresence(latest) ? latest.sites.map((site) => site.origin) : [],
-      errors
-    }
-    disposeServer(server)
-
-    expect(result).toEqual({
-      domains: [DOMAIN],
-      laterDelta: 0,
-      latestSites: [DOMAIN, OTHER_DOMAIN],
-      errors: ['Connection is not established yet.']
-    })
-  })
-
-  it('commits World recovery after preserving first-target interruption', async () => {
-    const roomId = getChatRoomId(DOMAIN)
-    const worldRoomId = getWorldRoomId()
-    const server = await createArticoTestServer([roomId, worldRoomId])
-    articoRoom(roomId).open('chat-ready-peer')
-    const initialWorldRoom = articoRoom(worldRoomId)
-    initialWorldRoom.open('world-ready-peer')
-    await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
-    await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
-    await settle()
-    const errors: string[] = []
-    await server.onError({ pageId: 'page-a' }, (event) => errors.push(event.message))
-    runtimeArticoFixture.nextJoins.set(worldRoomId, {
-      peers: ['closing-peer', 'later-ready-peer'],
-      closing: ['closing-peer']
-    })
-
-    initialWorldRoom.closeUnexpectedly()
-    await settle()
-    await settle()
-    const recoveredWorldRoom = articoRoom(worldRoomId)
-    const snapshot = await server.getSnapshot()
-    const result = {
-      joined: snapshot.world.joined,
-      attempts: recoveredWorldRoom.attempts.map((attempt) => attempt.peerId),
-      later: articoMessagesTo(recoveredWorldRoom, 'later-ready-peer').filter(isWorldPresence).length,
-      errors
-    }
-    disposeServer(server)
-
-    expect(result).toEqual({
-      joined: true,
-      attempts: ['closing-peer'],
-      later: 0,
-      errors: ['Connection is not established yet.']
-    })
-  })
-
-  it('keeps pre-provider codec rejection operation-wide with zero target attempts', async () => {
-    const roomId = getChatRoomId(DOMAIN)
-    const worldRoomId = getWorldRoomId()
-    const codec: WireCodec = {
-      encode: async () => {
-        throw new Error('codec rejected')
-      },
-      decode: async (payload) => JSON.parse(payload)
-    }
-    const server = await createArticoTestServer([roomId, worldRoomId], codec)
-    const chatRoom = articoRoom(roomId)
-    const worldRoom = articoRoom(worldRoomId)
-    chatRoom.open('chat-ready-peer')
-    worldRoom.open('world-ready-peer')
-    await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
-
-    const joinError = await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE }).then(
-      () => null,
-      (error: Error) => error.message
-    )
-    await settle()
-    const snapshot = await server.getSnapshot()
-    const result = {
-      joinError,
-      domains: snapshot.domains,
-      chatAttempts: chatRoom.attempts,
-      worldAttempts: worldRoom.attempts
-    }
-    disposeServer(server)
-
-    expect(result).toEqual({
-      joinError: 'codec rejected',
-      domains: [
-        {
-          domain: DOMAIN,
-          pageIds: ['page-a'],
-          phase: 'active',
-          chatRoomJoined: false,
-          sessions: [],
-          localSession: undefined
-        }
-      ],
-      chatAttempts: [],
-      worldAttempts: []
-    })
   })
 })
