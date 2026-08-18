@@ -6,7 +6,7 @@ The product now requires both Artico and Trystero to remain supported, with Arti
 
 ## What Changes
 
-- Restore the Artico adapter under its own provider directory while retaining the current Trystero adapter and its provider-local peer-connect error silence.
+- Restore the Artico adapter under its own provider directory while retaining the current Trystero adapter and its provider-local peer-connect error silence. Inside each provider directory, use the contextual names `RoomTransport.ts` and `RoomTransport.test.ts` rather than repeating the provider name.
 - Add one build-time provider selection constant under `src/constants/`, default it to `artico`, and keep the sole concrete selection/composition helper inside Runtime. Each host instance creates exactly one selected transport; there is no simultaneous dual connection, runtime hot switch, automatic fallback, user setting, or environment selector.
 - Require both adapters to satisfy the same root provider-neutral RoomTransport contract. Omitted targets mean provider-native broadcast to peers ready at invocation; explicit targets select only ready peers; `[]` means no recipients. Pending peers are skipped without queueing or later replay.
 - Restore Artico's per-room owner, explicit `wss://web-chat.io` signaling composition, scoped recovery, and provider-local lifecycle while keeping every Artico type out of Domain, protocol, UI, persistence, and comctx contracts.

@@ -18,7 +18,7 @@
 
 ## 3. Dual-Provider Implementation
 
-- [ ] 3.1 Restore `src/runtime/transports/artico/` from the last accepted provider implementation and reconcile it only with current RoomTransport/lifecycle/error contracts; retain `src/runtime/transports/trystero/` byte-for-byte except reviewed integration dependencies.
+- [ ] 3.1 Restore `src/runtime/transports/artico/RoomTransport.ts` and its contextual `RoomTransport.test.ts` from the last accepted provider implementation; move the reviewed Trystero implementation/test to the same contextual names under `transports/trystero/`. Reconcile only current RoomTransport/lifecycle/error contracts and add no `ArticoRoomTransport*` or `TrysteroRoomTransport*` filename.
 - [ ] 3.2 Add the `'artico' | 'trystero'` constant to `src/constants/config.ts`, default it to `artico`, add `src/runtime/RoomTransportProvider.ts`, and make `host.ts` create exactly one selected adapter through that helper.
 - [ ] 3.3 Restore the Artico dependency temporarily at the exact immutable fork integration commit and regenerate the lockfile without a branch, tag, path, workspace, or moving ref.
 - [ ] 3.4 Preserve Artico per-room peer identity, `wss://web-chat.io`, 10-second close recovery, demand repair, owner fencing, and provider-scoped errors; do not duplicate upstream readiness logic or classify its error string in WebChat.
@@ -30,7 +30,7 @@
 
 - [ ] 4.1 Run the root shared RoomTransport contract unchanged against Artico and Trystero, covering identity, lifecycle, trusted source, omitted/string/array/empty targets, mixed readiness, zero recipients, provider events/failures, and dispose.
 - [ ] 4.2 Prove default Artico constructs exactly once with zero Trystero side effects, and a test-owned Trystero selection constructs exactly once with zero Artico side effects.
-- [ ] 4.3 Prove Artico provider-specific ownership/signaling/recovery/readiness behavior and Trystero provider-specific Nostr/lifecycle/error-silence behavior without cross-provider leakage.
+- [ ] 4.3 Prove Artico provider-specific ownership/signaling/recovery/readiness behavior and Trystero provider-specific Nostr/lifecycle/error-silence behavior without cross-provider leakage; structurally require contextual `RoomTransport*` filenames and reject redundant provider-prefixed names.
 - [ ] 4.4 Prove all room-wide producers remain omitted-target, all History/catch-up sends retain exact targets, skipped peers receive no late replay, and existing queue/generation/owner/no-retry boundaries do not regress.
 - [ ] 4.5 Pass focused/full tests, format, lint, typecheck, Chrome/Firefox builds, pack, strict OpenSpec/status/Doctor, architecture, scope, identity, lockfile, and hosted CI gates on one immutable Draft acceptance exact.
 - [ ] 4.6 Obtain fresh independent coding review, then Owner acceptance of the immutable fork-backed Draft candidate. Do not merge it to `develop`.

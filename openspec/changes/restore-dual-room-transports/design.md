@@ -40,14 +40,16 @@ src/runtime/
   host.ts
   transports/
     artico/
-      ArticoRoomTransport.ts
-      ArticoRoomTransport.test.ts
+      RoomTransport.ts
+      RoomTransport.test.ts
     trystero/
-      TrysteroRoomTransport.ts
-      TrysteroRoomTransport.test.ts
+      RoomTransport.ts
+      RoomTransport.test.ts
 ```
 
 `domain/runtime/externs/RoomTransport.ts` remains the private Domain injection port. The root concrete `RoomTransport.ts` shape and shared contract harness remain provider-neutral and are not duplicated inside provider directories.
+
+Each provider directory supplies the distinguishing context, so its implementation and test use only `RoomTransport.ts` and `RoomTransport.test.ts`. `ArticoRoomTransport.ts`, `TrysteroRoomTransport.ts`, and matching prefixed test filenames are forbidden redundant names. The composition helper may alias the two same-named factory imports locally when it needs to distinguish them.
 
 `RoomTransportProvider.ts` is the sole concrete provider-selection helper. It imports both factories, reads the one constant, and returns exactly one adapter. `host.ts` calls only that helper and never constructs a provider directly. No transport barrel, registry, plugin system, fallback chain, or second production composition route is added.
 
@@ -133,7 +135,7 @@ Provider-specific controls additionally prove:
 - Trystero Nostr composition, join/leave fences, matching peer-connect silence, and non-matching error forwarding;
 - the default constant selects and instantiates Artico exactly once while Trystero has zero construction/side effects;
 - a test-only constant substitution selects Trystero exactly once while Artico has zero construction/side effects, without creating a production environment branch;
-- source/dependency/layout/current-documentation scans retain both providers and reject provider leakage outside authorized surfaces; and
+- source/dependency/layout/current-documentation scans retain both providers, require the contextual provider filenames, and reject redundant prefixed filenames or provider leakage outside authorized surfaces; and
 - the temporary fork-to-official dependency transition is explicit and immutable.
 
 ## Risks / Trade-offs

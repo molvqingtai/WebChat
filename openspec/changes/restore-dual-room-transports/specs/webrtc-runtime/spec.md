@@ -130,6 +130,8 @@ The Runtime SHALL define one private `RoomTransportExtern` injected only into `W
 
 Concrete Artico implementation symbols and imports SHALL appear only in `src/runtime/transports/artico/`, its provider-specific tests, and the explicit `src/runtime/RoomTransportProvider.ts` composition helper. Concrete Trystero implementation symbols and imports SHALL have the same boundary under `src/runtime/transports/trystero/`. Package manifests, the lockfile, and current documentation MAY name both supported providers, but provider-neutral Runtime/Domain boundaries SHALL expose no Artico or Trystero type or import.
 
+Each provider directory SHALL name its implementation `RoomTransport.ts` and its provider-specific test `RoomTransport.test.ts`. It SHALL NOT repeat its directory context in `ArticoRoomTransport*` or `TrysteroRoomTransport*` filenames. The composition helper MAY distinguish same-named exports with local import aliases.
+
 `WireDomain` SHALL remain the sole anti-corruption boundary: it validates trusted room/source identity, codec/schema/size limits, ordering and queue bounds, then emits typed Runtime Events; outbound typed Domain intent is encoded and sent only through its Effect and `RoomTransportExtern`. The former imperative `WireExtern` route and every direct concrete/provider call from another Domain SHALL remain absent.
 
 The root shared provider contract SHALL run against both implementations and preserve stable identity, join/leave, trusted inbound source, omitted ready-peer broadcast, explicit string/array targets including `[]`, zero-ready settlement, room-level failure, peer join/leave, close/error, and deterministic dispose without delivery acknowledgement.
@@ -144,6 +146,7 @@ The root shared provider contract SHALL run against both implementations and pre
 
 - **WHEN** imports, public exports, Domain Externs, protocol types, comctx contracts, persistence, UI, and composition are inspected
 - **THEN** concrete provider symbols SHALL remain inside their respective provider directories/tests and `RoomTransportProvider.ts`
+- **AND** each provider directory SHALL use only the contextual `RoomTransport.ts` and `RoomTransport.test.ts` names, with no provider-prefixed duplicate filename
 - **AND** only `WireDomain` SHALL obtain the provider-neutral `RoomTransportExtern`
 
 #### Scenario: Provider contract parity
