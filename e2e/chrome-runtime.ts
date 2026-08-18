@@ -666,16 +666,25 @@ try {
         `chrome.runtime.sendMessage(${JSON.stringify(message('relay-check-spoofed-content'))})`,
         contentContext.id
       )
-      await waitFor(
-        () =>
-          runtimeEvents.filter(
-            (event) => event.event === 'console' && event.args?.[0] === '[WebChat] Dropped Offscreen Runtime relay:'
-          ).length >= 6,
-        { timeoutMs: 2000, label: 'rejected relay logs' }
-      )
+      // The rejected messages are dropped silently: none reach the content relay log and no
+      // console output is produced. A trailing valid message proves the pipeline processed the
+      // rejects before it (in-order delivery from the same offscreen sender).
+      const trailingMessage = message('relay-check-after-rejects')
+      await evaluate(offscreenSession[0], `chrome.runtime.sendMessage(${JSON.stringify(trailingMessage)})`)
+      try {
+        await waitFor(
+          async () => {
+            const received = await evaluate(pageSession[0], 'globalThis.__webchatRelayMessages', contentContext.id)
+            return received.includes('relay-check-after-rejects') ? received : null
+          },
+          { timeoutMs: 2000, label: 'post-rejection provider relay' }
+        )
+      } catch (error) {
+        throw new Error(`${errorMessage(error)}; events: ${JSON.stringify(runtimeEvents.slice(-20))}`)
+      }
 
       evidence.relayed = await evaluate(pageSession[0], 'globalThis.__webchatRelayMessages', contentContext.id)
-      const expectedRelay = ['relay-check-valid-apply', 'relay-check-valid-callback']
+      const expectedRelay = ['relay-check-valid-apply', 'relay-check-valid-callback', 'relay-check-after-rejects']
       if (JSON.stringify(evidence.relayed) !== JSON.stringify(expectedRelay)) {
         throw new Error(
           `Unexpected relayed messages: ${JSON.stringify(evidence.relayed)}; events: ${JSON.stringify(runtimeEvents.slice(-20))}`
@@ -685,8 +694,8 @@ try {
       evidence.rejectedRelayWarnings = runtimeEvents.filter(
         (event) => event.event === 'console' && event.args?.[0] === '[WebChat] Dropped Offscreen Runtime relay:'
       ).length
-      if (evidence.rejectedRelayWarnings !== 6) {
-        throw new Error(`Expected six rejected relay warnings, received ${evidence.rejectedRelayWarnings}`)
+      if (evidence.rejectedRelayWarnings !== 0) {
+        throw new Error(`Expected zero rejected relay console output, received ${evidence.rejectedRelayWarnings}`)
       }
 
       evidence.extensionErrors = runtimeEvents
