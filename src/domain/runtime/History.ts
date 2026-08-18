@@ -66,7 +66,7 @@ interface ProviderResponseState {
   queuedResponseTail: number
 }
 
-/** Outgoing requester: one domain synchronization broadcasting paged inventory requests and
+/** Outgoing requester: one domain synchronization sending targeted paged inventory requests and
  * merging every provider's response pages through independent per-provider response lanes. */
 interface RequesterAttemptState extends HistoryAttemptKey {
   cutoff: number
@@ -81,7 +81,7 @@ interface RequesterAttemptState extends HistoryAttemptKey {
   /** Snapshotted providers that have already completed, failed, or departed. */
   settledProviders: string[]
   /** True once the loading UI has closed (all providers settled, timeout, or manual dismiss).
-   *  Loading-only: the requester keeps broadcasting inventory and merging late pages. */
+   *  Loading-only: the requester keeps sending targeted inventory pages and merging late pages. */
   loadingSettled: boolean
   /** True once a real source replacement retires this outgoing owner; its inventory stops while
    *  its response collection keeps accepting valid late pages by request identity. */
@@ -401,7 +401,7 @@ const HistoryDomain = Remesh.domain({
         const current = requesters.find((item) => matchesSync(item, key))
         if (!current || current.loadingSettled) return null
         // Loading-only settlement: the UI closes exactly once while the requester keeps
-        // broadcasting inventory and merging valid late pages; only a real source replacement
+        // sending targeted inventory pages and merging valid late pages; only a real source replacement
         // retires the outgoing work.
         const settled: RequesterAttemptState = { ...current, loadingSettled: true }
         return [
@@ -822,7 +822,7 @@ const HistoryDomain = Remesh.domain({
         const current = found as PendingInventorySend
         const requesters = get(RequesterAttemptsState())
         const attempt = requesters.find((item) => matchesSync(item, current))
-        // Only a retired requester (real source replacement) stops broadcasting inventory; a
+        // Only a retired requester (real source replacement) stops sending targeted inventory; a
         // loading-settled one keeps sending so remaining providers still receive the request. The
         // settled send is consumed here and the admitted job releases at this true terminal stage
         // (or at the final done page's settlement) instead of being revoked mid-flight.

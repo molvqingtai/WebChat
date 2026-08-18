@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { createTrysteroRoomTransport } from '@/runtime/TrysteroRoomTransport'
-import { createRoomTransport } from '@/runtime/TransportProvider'
+import { createTrysteroRoomTransport } from '@/runtime/transports/trystero/TrysteroRoomTransport'
 
 interface FakeAction {
   send: (data: string, options?: { target?: string | string[] | null }) => Promise<void>
@@ -364,8 +363,8 @@ describe('TrysteroRoomTransport', () => {
 })
 
 describe('RoomTransport composition', () => {
-  it('selects the Trystero provider by default through the single composition point', async () => {
-    const transport = createRoomTransport()
+  it('composes the Trystero provider directly from the sole factory', async () => {
+    const transport = createTrysteroRoomTransport()
     await transport.join('room-a')
 
     expect(transport.peerIdOf('room-a')).toBe('trystero-self-id')
