@@ -113,7 +113,7 @@ const settleAll = async () => {
   for (let index = 0; index < 20; index += 1) await Promise.resolve()
 }
 
-describe('WorldDomain single per-target publication iterator', () => {
+describe('WorldDomain single native-broadcast publication iterator', () => {
   it('broadcasts the full snapshot natively even with zero active peers and settles with the provider no-op', async () => {
     const fixture = createFixture()
     await fixture.joinWorldRoom()
@@ -312,7 +312,7 @@ describe('WorldDomain single per-target publication iterator', () => {
     await vi.advanceTimersByTimeAsync(1500)
     await settleAll()
     expect(fixture.attempts.length).toBe(beforeRetry + 1)
-    // The retried publication step is one fresh native broadcast, not a re-send of frozen targets.
+    // The retried publication step is one fresh native broadcast, not a re-send of the snapshot.
     expect(fixture.attempts.at(-1)?.targetPeerIds).toBeUndefined()
     fixture.attempts[fixture.attempts.length - 1].settle.resolve()
     await settleAll()

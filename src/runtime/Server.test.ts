@@ -625,6 +625,14 @@ describe('RuntimeServer lifecycle', () => {
       (a) => a.roomId === getWorldRoomId() && 'sites' in JSON.parse(a.payload)
     )
     expect(worldAttempt?.rawTarget).toBeUndefined()
+
+    // Opposite control: a newly joined peer triggers a targeted Session catch-up, never a broadcast.
+    fake.peerJoin(roomId, 'peer-new')
+    await settle()
+    const catchUp = fake.sendAttempts.findLast(
+      (a) => a.roomId === roomId && JSON.parse(a.payload).type === MESSAGE_TYPE.SESSION && Array.isArray(a.rawTarget)
+    )
+    expect(catchUp?.rawTarget).toEqual(['peer-new'])
     disposeServer(server)
   })
 
@@ -2856,7 +2864,7 @@ describe('RuntimeServer provisional recovery races', () => {
     await settle()
     await settle()
     fake.releaseSends()
-    // Hold the World wire so the frozen iterator stays pending while another peer joins.
+    // Hold the World wire so the publication iterator stays pending while another peer joins.
     fake.hangSendsTo(worldRoomId)
     await fake.waitForSendAttempt(worldRoomId)
     fake.peerJoin(worldRoomId, 'mid-peer')
@@ -3010,7 +3018,7 @@ describe('RuntimeServer provisional recovery races', () => {
     const worldRoomId = getWorldRoomId()
     const currentPresence = (await server.getSnapshot()).world.localPresence
     if (!currentPresence) throw new Error('Committed local presence missing')
-    // A known remote presence becomes the frozen recovery-iterator target.
+    // A known remote presence is active for the recovery-iterator publication.
     emitRemoteWorldPresence(fake)
     await settle()
     expect(sentToPeer(fake, worldRoomId, 'remote-peer')).toEqual([currentPresence])
@@ -3037,7 +3045,7 @@ describe('RuntimeServer provisional recovery races', () => {
     await settle()
 
     expect((await server.getSnapshot()).world.joined).toBe(true)
-    // The frozen target was attempted exactly once more for the recovery revision, and the peer that
+    // The recovery revision was broadcast exactly once more, and the peer that
     // joined mid-publication receives exactly one catch-up at commit.
     expect(sentToPeer(fake, worldRoomId, 'remote-peer')).toEqual([currentPresence, currentPresence])
     expect(sentToPeer(fake, worldRoomId, 'missed-peer')).toEqual([currentPresence])
@@ -3341,7 +3349,7 @@ describe('RuntimeServer World presence', () => {
     const events: WorldPresenceEvent[] = []
     await server.onWorldPresence({ pageId: 'page-a' }, (event) => events.push(event))
     await server.attachPage({ domain: OTHER_DOMAIN, pageId: 'page-b' })
-    // A live remote target turns each committed revision into one per-target wire publication.
+    // A live remote peer is the recipients of each committed revision's native broadcast.
     emitRemoteWorldPresence(fake)
     await settle()
 
@@ -3365,7 +3373,7 @@ describe('RuntimeServer World presence', () => {
   it('surfaces a World target failure and still settles the revision and join', async () => {
     const { fake, server } = await setup()
     const worldRoomId = getWorldRoomId()
-    // A known remote target turns the second-domain revision into one per-target publication.
+    // A known remote peer receives the second-domain revision's native broadcast.
     emitRemoteWorldPresence(fake)
     await settle()
     const events: WorldPresenceEvent[] = []
@@ -3388,7 +3396,7 @@ describe('RuntimeServer World presence', () => {
   it('publishes full privacy-bounded snapshots and atomically replaces/deletes remote presence', async () => {
     const { fake, server } = await setup()
     const worldRoomId = getWorldRoomId()
-    // A live remote target turns each committed revision into one per-target wire publication.
+    // A live remote peer is the recipients of each committed revision's native broadcast.
     emitRemoteWorldPresence(fake)
     await settle()
     await server.attachPage({ domain: OTHER_DOMAIN, pageId: 'other-page' })
