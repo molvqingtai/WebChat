@@ -1,3 +1,9 @@
+## [2.6.1](https://github.com/molvqingtai/WebChat/compare/v2.6.0...v2.6.1) (2026-08-18)
+
+### Bug Fixes
+
+- **runtime:** remove Artico/per-target residue and prove raw broadcast targets ([e373805](https://github.com/molvqingtai/WebChat/commit/e37380577828b484a011adab4da9c9bf2f1e84d3))
+
 # [2.6.0](https://github.com/molvqingtai/WebChat/compare/v2.5.1...v2.6.0) (2026-08-18)
 
 ### Bug Fixes
