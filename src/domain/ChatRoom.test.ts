@@ -1261,25 +1261,43 @@ describe('ChatRoomDomain exact application port', () => {
     fixture.store.discard()
   })
 
-  it('projects protocol-valid text immediately even when readiness is not ready; reaction still waits', async () => {
+  it('rejects text submission before readiness (zero work, draft kept), never auto-submits on recovery; a later explicit submit sends once; reaction still waits', async () => {
     const fixture = createFixture()
     await join(fixture)
     const errors: Error[] = []
     fixture.store.subscribeEvent(fixture.room.event.OnErrorEvent, (error) => errors.push(error))
+    fixture.store.send(fixture.input.command.InputCommand('held text'))
 
-    // Not ready: protocol-valid text is accepted, displayed, and its send invoked immediately.
+    // Not ready: submission is a strict no-op — no runtime call, no projection, draft preserved.
     fixture.emitReadiness('connecting')
+    fixture.store.send(fixture.room.command.SendTextMessageCommand('held text'))
+    await Promise.resolve()
+    expect(fixture.chat.sendMessage).not.toHaveBeenCalled()
+    expect(fixture.store.query(fixture.list.query.ItemQuery('local-message'))).toBeNull()
+    expect(fixture.store.query(fixture.input.query.MessageQuery())).toBe('held text')
+
+    // Readiness recovery alone never re-submits the pending text (the automatic recovery
+    // connection re-establishes the join but must not replay the earlier submission).
+    fixture.emitReadiness('ready')
+    await vi.waitFor(() =>
+      expect(fixture.store.query(fixture.room.query.ConnectionOperationIsLoadingQuery())).toBe(false)
+    )
+    expect(fixture.chat.sendMessage).not.toHaveBeenCalled()
+    expect(fixture.store.query(fixture.input.query.MessageQuery())).toBe('held text')
+
+    // The user's explicit later submit performs exactly one send + one projection + one draft clear.
     fixture.store.send(fixture.room.command.SendTextMessageCommand('held text'))
     await vi.waitFor(() =>
       expect(fixture.chat.sendMessage).toHaveBeenCalledWith({ type: 'text', body: 'held text', mentions: [] })
     )
+    expect(fixture.chat.sendMessage).toHaveBeenCalledTimes(1)
     await vi.waitFor(() => expect(fixture.store.query(fixture.list.query.ItemQuery('local-message'))).not.toBeNull())
+    expect(fixture.store.query(fixture.input.query.MessageQuery())).toBe('')
 
-    fixture.emitReadiness('ready')
+    // Reaction settlement is unchanged: it still waits for readiness.
     fixture.emitReadiness('connecting')
     fixture.store.send(fixture.room.command.SendReactionCommand({ messageId: 'local-message', reaction: 'like' }))
     await Promise.resolve()
-    // Reaction settlement is unchanged: it still waits for readiness.
     expect(fixture.chat.sendMessage).not.toHaveBeenCalledWith({
       type: 'reaction',
       targetId: 'local-message',
@@ -1300,7 +1318,7 @@ describe('ChatRoomDomain exact application port', () => {
     fixture.store.discard()
   })
 
-  it('projects protocol-valid text immediately even while a reconnect is loading', async () => {
+  it('rejects text submission while a reconnect is loading; recovery never auto-submits; an explicit later submit sends once', async () => {
     const fixture = createFixture()
     await join(fixture)
     const reconnect = deferred()
@@ -1309,6 +1327,17 @@ describe('ChatRoomDomain exact application port', () => {
     expect(fixture.store.query(fixture.room.query.ReconnectIsLoadingQuery())).toBe(true)
 
     fixture.store.send(fixture.room.command.SendTextMessageCommand('during reconnect'))
+    await Promise.resolve()
+    expect(fixture.chat.sendMessage).not.toHaveBeenCalled()
+    expect(fixture.store.query(fixture.list.query.ItemQuery('local-message'))).toBeNull()
+
+    // Recovery resolves the loading but never re-submits the text automatically.
+    reconnect.resolve()
+    await vi.waitFor(() => expect(fixture.store.query(fixture.room.query.ReconnectIsLoadingQuery())).toBe(false))
+    expect(fixture.chat.sendMessage).not.toHaveBeenCalled()
+
+    // The user's explicit later submit sends exactly once.
+    fixture.store.send(fixture.room.command.SendTextMessageCommand('during reconnect'))
     await vi.waitFor(() =>
       expect(fixture.chat.sendMessage).toHaveBeenCalledWith({
         type: 'text',
@@ -1316,17 +1345,29 @@ describe('ChatRoomDomain exact application port', () => {
         mentions: []
       })
     )
+    expect(fixture.chat.sendMessage).toHaveBeenCalledTimes(1)
     await vi.waitFor(() => expect(fixture.store.query(fixture.list.query.ItemQuery('local-message'))).not.toBeNull())
-    reconnect.resolve()
     fixture.store.discard()
   })
 
-  it('starts a protocol-valid text send immediately even while a page connection is in progress', async () => {
+  it('rejects text submission while a page connection is in progress; the retained join does not resend; an explicit later submit sends once', async () => {
     const fixture = createFixture()
     const joining = deferred()
     vi.mocked(fixture.chat.joinRoom).mockReturnValueOnce(joining.promise)
     fixture.store.send(fixture.room.command.JoinRoomCommand())
 
+    fixture.store.send(fixture.room.command.SendTextMessageCommand('during page recovery'))
+    await Promise.resolve()
+    expect(fixture.chat.sendMessage).not.toHaveBeenCalled()
+    expect(fixture.store.query(fixture.list.query.ItemQuery('local-message'))).toBeNull()
+
+    // The retained join completes, but nothing auto-submits the earlier text.
+    joining.resolve()
+    await vi.waitFor(() => expect(fixture.store.query(fixture.room.query.JoinIsFinishedQuery())).toBe(true))
+    await Promise.resolve()
+    expect(fixture.chat.sendMessage).not.toHaveBeenCalled()
+
+    // The user's explicit later submit sends exactly once.
     fixture.store.send(fixture.room.command.SendTextMessageCommand('during page recovery'))
     await vi.waitFor(() =>
       expect(fixture.chat.sendMessage).toHaveBeenCalledWith({
@@ -1335,8 +1376,8 @@ describe('ChatRoomDomain exact application port', () => {
         mentions: []
       })
     )
+    expect(fixture.chat.sendMessage).toHaveBeenCalledTimes(1)
     await vi.waitFor(() => expect(fixture.store.query(fixture.list.query.ItemQuery('local-message'))).not.toBeNull())
-    joining.resolve()
     fixture.store.discard()
   })
 
@@ -1451,6 +1492,7 @@ describe('ChatRoomDomain exact application port', () => {
 
   it('does not fabricate a local projection when the send-first port rejects', async () => {
     const fixture = createFixture()
+    await join(fixture)
     const projected: string[] = []
     const errors: Error[] = []
     fixture.store.subscribeEvent(fixture.room.event.SendTextMessageEvent, (message) => projected.push(message.id))
@@ -1469,6 +1511,7 @@ describe('ChatRoomDomain exact application port', () => {
 
   it('completes a send cancelled by final release without publishing a room error', async () => {
     const fixture = createFixture()
+    await join(fixture)
     const errors: Error[] = []
     fixture.store.subscribeEvent(fixture.room.event.OnErrorEvent, (error) => errors.push(error))
     let rejectSend!: (reason?: unknown) => void
@@ -1497,6 +1540,7 @@ describe('ChatRoomDomain exact application port', () => {
 
   it('surfaces a real provider send failure even while connection loading is present', async () => {
     const fixture = createFixture()
+    await join(fixture)
     const errors: Error[] = []
     fixture.store.subscribeEvent(fixture.room.event.OnErrorEvent, (error) => errors.push(error))
     let rejectSend!: (reason?: unknown) => void
@@ -1523,6 +1567,7 @@ describe('ChatRoomDomain exact application port', () => {
 
   it('does not let a remote peer leave cancel a pending local send that then really fails', async () => {
     const fixture = createFixture()
+    await join(fixture)
     const errors: Error[] = []
     fixture.store.subscribeEvent(fixture.room.event.OnErrorEvent, (error) => errors.push(error))
     let rejectSend!: (reason?: unknown) => void

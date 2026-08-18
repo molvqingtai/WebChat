@@ -119,6 +119,13 @@ const ChatRoomDomain = Remesh.domain({
         !get(ConnectionOperationIsLoadingQuery()) &&
         !get(ReconnectIsLoadingQuery())
     })
+    // Single shared submit truth for both the UI handoff and the domain command gate: the local
+    // Room generation has committed its join, the runtime is ready, and no connection or reconnect
+    // operation is loading. Peers, WebRTC handshake, and History are deliberately not part of it.
+    const CanSubmitTextQuery = domain.query({
+      name: 'Room.CanSubmitTextQuery',
+      impl: ({ get }) => get(JoinIsFinishedQuery()) && get(SendIsReadyQuery())
+    })
     const ReconnectAvailableQuery = domain.query({
       name: 'Room.ReconnectAvailableQuery',
       impl: ({ get }) => get(userInfoDomain.query.UserInfoQuery()) !== null && !get(ConnectionIsLoadingQuery())
@@ -177,8 +184,15 @@ const ChatRoomDomain = Remesh.domain({
     })
     const SendTextMessageCommand = domain.command({
       name: 'Room.SendTextMessageCommand',
-      impl: (_, message: string | { body: string; mentions: MentionedUser[] }) =>
-        SendTextRequestedEvent(typeof message === 'string' ? { body: message, mentions: [] } : message)
+      // Step-4 gate: a TEXT is only submitted after the local Room generation has finished its
+      // join and the runtime is ready with no connection/reconnect loading. Before that the
+      // command is a strict no-op: zero runtime command/request/allocation/validation/
+      // projection/persistence, and the user's draft is left untouched. Recovery never re-runs
+      // it; the user must submit again explicitly.
+      impl: ({ get }, message: string | { body: string; mentions: MentionedUser[] }) =>
+        get(CanSubmitTextQuery())
+          ? SendTextRequestedEvent(typeof message === 'string' ? { body: message, mentions: [] } : message)
+          : null
     })
 
     const SendReactionRequestedEvent = domain.event<{ messageId: string; reaction: 'like' | 'hate' }>({
@@ -565,6 +579,7 @@ const ChatRoomDomain = Remesh.domain({
       query: {
         UserListQuery,
         JoinIsFinishedQuery,
+        CanSubmitTextQuery,
         ReconnectRequestQuery,
         ReconnectIsLoadingQuery,
         ConnectionOperationIsLoadingQuery,

@@ -37,6 +37,7 @@ const Footer: FC = () => {
   const userInfoDomain = useRemeshDomain(UserInfoDomain())
   const userInfo = useRemeshQuery(userInfoDomain.query.UserInfoQuery())
   const userList = useRemeshQuery(chatRoomDomain.query.UserListQuery())
+  const canSubmitText = useRemeshQuery(chatRoomDomain.query.CanSubmitTextQuery())
 
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const { x, y, selectionStart, selectionEnd, setRef } = useCursorPosition()
@@ -137,6 +138,9 @@ const Footer: FC = () => {
   }
 
   const handleSendMessage = async () => {
+    // Step-4 gate: while the local Room generation has not finished its join/commit or a
+    // connection/reconnect is loading, submission is a no-op and the draft stays untouched.
+    if (!canSubmitText) return
     if (!`${message}`.trim()) {
       inputRef.current?.focus()
       return
@@ -382,7 +386,7 @@ const Footer: FC = () => {
       <div className="flex items-center">
         <EmojiButton onSelect={handleInjectEmoji}></EmojiButton>
         <ImageButton disabled={inputLoading} onSelect={handleInjectImage}></ImageButton>
-        <Button className="ml-auto" size="sm" onClick={handleSend}>
+        <Button className="ml-auto" size="sm" disabled={!canSubmitText} onClick={handleSend}>
           <span className="mr-2">Send</span>
           <CornerDownLeftIcon className="text-slate-400" size={12}></CornerDownLeftIcon>
         </Button>
