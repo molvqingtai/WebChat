@@ -97,6 +97,7 @@
     "rxjs": "^7.8.2",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.6.0",
+    "trystero": "0.25.3",
     "type-fest": "^5.8.0",
     "unstorage": "^1.17.5",
     "valibot": "1.4.2"
