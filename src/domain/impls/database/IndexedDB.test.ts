@@ -340,7 +340,6 @@ describe('IndexedDB Message database version ownership', () => {
         database.createObjectStore('legacy')
       }
     })
-    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const timers: Array<{ callback: () => void; ms?: number }> = []
     const nativeSetTimeout = globalThis.setTimeout
     vi.stubGlobal(
@@ -361,7 +360,9 @@ describe('IndexedDB Message database version ownership', () => {
         settled = true
       }
     )
-    await vi.waitFor(() => expect(warning).toHaveBeenCalledTimes(1))
+    // The bounded blocked window is armed silently: the deadline timer registers with no console
+    // output while the contender still holds the old store open.
+    await vi.waitFor(() => expect(timers.some(({ ms }) => ms === 5000)).toBe(true))
     expect(settled).toBe(false)
 
     // Force the bounded blocked window to expire while the contender still holds the old store open.
@@ -378,12 +379,11 @@ describe('IndexedDB Message database version ownership', () => {
     expect(unchanged.version).toBe(1)
     unchanged.close()
 
-    // The visible failure is retryable: once the contender releases, preparation converges.
+    // The failure is retryable: once the contender releases, preparation converges.
     await prepareIndexedDBMessageDatabase()
     const rebuilt = await openDB(name)
     expect(rebuilt.version).toBe(MESSAGE_STORE_VERSION)
     rebuilt.close()
-    warning.mockRestore()
   })
 
   it('keeps a blocked delete non-ready and completes the same request after release', async () => {
@@ -394,14 +394,23 @@ describe('IndexedDB Message database version ownership', () => {
         database.createObjectStore('legacy')
       }
     })
-    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    // Capture the bounded blocked deadline without scheduling a real timer, so the signal that the
+    // blocked handler ran is the deadline registration (the console warning was removed).
+    const timers: Array<{ callback: () => void; ms?: number }> = []
+    vi.stubGlobal(
+      'setTimeout',
+      vi.fn((callback: () => void, ms?: number) => {
+        timers.push({ callback, ms })
+        return 0 as unknown as ReturnType<typeof globalThis.setTimeout>
+      })
+    )
     const deletion = vi.spyOn(indexedDB, 'deleteDatabase')
     let ready = false
 
     const preparation = prepareIndexedDBMessageDatabase().then(() => {
       ready = true
     })
-    await vi.waitFor(() => expect(warning).toHaveBeenCalledTimes(1))
+    await vi.waitFor(() => expect(timers.some(({ ms }) => ms === 5000)).toBe(true))
     expect(ready).toBe(false)
     expect(deletion).toHaveBeenCalledTimes(1)
 
@@ -409,7 +418,7 @@ describe('IndexedDB Message database version ownership', () => {
     await preparation
     expect(ready).toBe(true)
     expect(deletion).toHaveBeenCalledTimes(1)
-    warning.mockRestore()
+    vi.unstubAllGlobals()
     deletion.mockRestore()
   })
 

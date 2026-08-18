@@ -276,8 +276,6 @@ const retainInvalidRecordDiagnostics = async (
   )
 }
 
-const reportedDiagnosticFailures = new WeakSet<Database<MessageDatabaseSchema>>()
-
 export const createMessageStore = (database: Database<MessageDatabaseSchema>): MessageStore => ({
   insert: async (input, { signal }: MessageInsertOptions = {}) => {
     const record = input
@@ -341,12 +339,8 @@ export const createMessageStore = (database: Database<MessageDatabaseSchema>): M
     if (invalidRecords.length > 0) {
       try {
         await retainInvalidRecordDiagnostics(database, invalidRecords, signal)
-      } catch (error) {
+      } catch {
         signal?.throwIfAborted()
-        if (!reportedDiagnosticFailures.has(database)) {
-          reportedDiagnosticFailures.add(database)
-          console.warn('[WebChat] Failed to retain invalid MessageRecord diagnostics:', error)
-        }
       }
     }
     signal?.throwIfAborted()

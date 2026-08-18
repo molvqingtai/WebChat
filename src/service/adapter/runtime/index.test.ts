@@ -223,6 +223,38 @@ describe('Runtime browser adapters', () => {
     expect(listeners.size).toBe(0)
   })
 
+  it('drops malformed relays without an onRejected observer and stays silent', async () => {
+    const { runtime, listeners } = createMessaging()
+    const tabs = {
+      query: vi.fn(),
+      get: vi.fn(async () => {
+        throw new Error('No tab')
+      }),
+      sendMessage: vi.fn()
+    }
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    // The production call site no longer passes onRejected: drops keep their exact behavior with
+    // no observer attached and produce no console output.
+    const dispose = relayOffscreenProviderMessages({
+      runtime: runtime as never,
+      tabs,
+      namespace: 'WEB_CHAT_RUNTIME_V2:test-extension',
+      offscreenUrl: 'chrome-extension://test-extension/offscreen.html'
+    })
+    const listener = [...listeners][0]!
+    const offscreen = { url: 'chrome-extension://test-extension/offscreen.html' } as never
+
+    expect(() => listener(null, offscreen)).not.toThrow()
+    expect(() => listener({ sender: { type: 'provider' } }, offscreen)).not.toThrow()
+    await settle()
+    expect(tabs.sendMessage).not.toHaveBeenCalled()
+    expect(warn).not.toHaveBeenCalled()
+    warn.mockRestore()
+
+    dispose()
+    expect(listeners.size).toBe(0)
+  })
+
   it('keeps hash-only navigation routable while fencing real navigation', async () => {
     const { runtime, listeners } = createMessaging()
     let currentUrl = 'https://example.com/topic?sort=new#reply-2'
