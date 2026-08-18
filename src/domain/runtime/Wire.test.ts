@@ -289,6 +289,7 @@ describe('WireDomain anti-corruption boundary', () => {
     // The drop result is unchanged (the event still fires) but produces no console output now that
     // the warning sink is removed.
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined)
 
     Array.from({ length: MAX_DECODE_QUEUE_FRAMES + 1 }, (_, i) => i).forEach((index) =>
       runtime.receive(ROOM, 'peer-a', `frame-${index}`)
@@ -301,7 +302,9 @@ describe('WireDomain anti-corruption boundary', () => {
       { id: JSON.stringify([ROOM, 'peer-a']), frameCount: MAX_DECODE_QUEUE_FRAMES, wireBytes: 56 }
     ])
     expect(warn).not.toHaveBeenCalled()
+    expect(errorLog).not.toHaveBeenCalled()
     warn.mockRestore()
+    errorLog.mockRestore()
     blocked.resolve(message)
   })
 

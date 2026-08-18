@@ -340,6 +340,7 @@ describe('IndexedDB Message database version ownership', () => {
         database.createObjectStore('legacy')
       }
     })
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {})
     const timers: Array<{ callback: () => void; ms?: number }> = []
     const nativeSetTimeout = globalThis.setTimeout
     vi.stubGlobal(
@@ -364,6 +365,7 @@ describe('IndexedDB Message database version ownership', () => {
     // output while the contender still holds the old store open.
     await vi.waitFor(() => expect(timers.some(({ ms }) => ms === 5000)).toBe(true))
     expect(settled).toBe(false)
+    expect(errorLog).not.toHaveBeenCalled()
 
     // Force the bounded blocked window to expire while the contender still holds the old store open.
     const blockedTimer = timers.find(({ ms }) => ms === 5000)
@@ -372,6 +374,7 @@ describe('IndexedDB Message database version ownership', () => {
 
     await expect(preparation).rejects.toEqual(new Error('Message store deletion blocked'))
     expect(settled).toBe(true)
+    expect(errorLog).not.toHaveBeenCalled()
     vi.stubGlobal('setTimeout', nativeSetTimeout)
 
     blocker.close()
@@ -384,6 +387,8 @@ describe('IndexedDB Message database version ownership', () => {
     const rebuilt = await openDB(name)
     expect(rebuilt.version).toBe(MESSAGE_STORE_VERSION)
     rebuilt.close()
+    expect(errorLog).not.toHaveBeenCalled()
+    errorLog.mockRestore()
   })
 
   it('keeps a blocked delete non-ready and completes the same request after release', async () => {
@@ -404,6 +409,7 @@ describe('IndexedDB Message database version ownership', () => {
         return 0 as unknown as ReturnType<typeof globalThis.setTimeout>
       })
     )
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {})
     const deletion = vi.spyOn(indexedDB, 'deleteDatabase')
     let ready = false
 
@@ -413,11 +419,14 @@ describe('IndexedDB Message database version ownership', () => {
     await vi.waitFor(() => expect(timers.some(({ ms }) => ms === 5000)).toBe(true))
     expect(ready).toBe(false)
     expect(deletion).toHaveBeenCalledTimes(1)
+    expect(errorLog).not.toHaveBeenCalled()
 
     blocker.close()
     await preparation
     expect(ready).toBe(true)
     expect(deletion).toHaveBeenCalledTimes(1)
+    expect(errorLog).not.toHaveBeenCalled()
+    errorLog.mockRestore()
     vi.unstubAllGlobals()
     deletion.mockRestore()
   })
