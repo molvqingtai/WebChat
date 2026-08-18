@@ -8,7 +8,6 @@ import WireDomain from '@/domain/runtime/Wire'
 import WorldDomain, { getWorldRoomId } from '@/domain/runtime/World'
 import type { ChatSite, ChatUser } from '@/protocol'
 import type { RuntimeSnapshot } from '@/runtime/Contract'
-import { ClockExtern } from '@/domain/runtime/externs/Clock'
 
 export interface ConnectionOptions {
   [key: string]: string | number | undefined
@@ -81,7 +80,6 @@ const ConnectionDomain = Remesh.domain({
     const worldDomain = domain.getDomain(WorldDomain({ sessionId: options.worldSessionId }))
     const deliveryDomain = domain.getDomain(DeliveryDomain())
     const historyDomain = domain.getDomain(HistoryDomain())
-    const clock = domain.getExtern(ClockExtern)
 
     const AttemptsState = domain.state<JoinAttempt[]>({ name: 'Connection.AttemptsState', default: [] })
     const GenerationsState = domain.state<DomainGeneration[]>({

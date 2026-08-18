@@ -3,7 +3,6 @@ import * as v from 'valibot'
 import { fromEventPattern, map, mergeMap } from 'rxjs'
 import { MAX_DECODE_QUEUE_BYTES, MAX_DECODE_QUEUE_FRAMES, WORLD_ROOM_ID_V5 } from '@/constants/config'
 import { RoomTransportExtern, WireCodecExtern } from '@/domain/runtime/externs/RoomTransport'
-import { ClockExtern } from '@/domain/runtime/externs/Clock'
 import { ChatRoomMessageSchema, WorldRoomMessageSchema, type ChatRoomMessage, type WorldRoomMessage } from '@/protocol'
 import { getTextByteSize } from '@/utils/getTextByteSize'
 import stringToHex from '@/utils/stringToHex'
@@ -104,7 +103,6 @@ const WireDomain = Remesh.domain({
   impl: (domain) => {
     const transport = domain.getExtern(RoomTransportExtern)
     const codec = domain.getExtern(WireCodecExtern)
-    const clock = domain.getExtern(ClockExtern)
 
     const TrustedRoomsState = domain.state<string[]>({ name: 'Wire.TrustedRoomsState', default: [] })
     const RoomGenerationsState = domain.state<RoomGeneration[]>({
