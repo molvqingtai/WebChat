@@ -1137,9 +1137,9 @@
           <li>&bull; Notification and AppAction use structurally disjoint versioned RPC namespaces</li>
           <li>&bull; Wire is the anti-corruption boundary: trusted source, strict validation, ordered queues</li>
           <li>&bull; RoomTransportExtern is Runtime-private and visible only to Wire</li>
-          <li>&bull; Trystero is the sole provider implementation; fake and Trystero run the same contract suite</li>
+          <li>&bull; Trystero is the sole provider implementation and runs the shared RoomTransport contract suite</li>
           <li>&bull; One dedicated World room plus one Chat room per domain; no host-wide shared room</li>
-          <li>&bull; Reconnect stops the old Chat peer before its replacement joins with a fresh peerId</li>
+          <li>&bull; Reconnect disposes the old Chat room before the current Room/generation owner installs its replacement; selfId stays stable</li>
         </ul>
       </div>
     </div>
