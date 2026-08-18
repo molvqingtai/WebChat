@@ -79,12 +79,18 @@ describe('Footer step-4 submit gate', () => {
     expect(sendSpy).toHaveBeenCalledWith(submitShape())
   })
 
-  it('lets Shift+Enter edit without submitting', async () => {
+  it('lets Shift+Enter edit without submitting or preventing default editing behavior', () => {
     canSubmitText = true
     renderFooter()
 
-    pressEnter(true)
-    await Promise.resolve()
+    // dispatchEvent returns true when default was NOT prevented: Shift+Enter keeps editing.
+    const notPrevented = fireEvent.keyDown(textarea(), { key: 'Enter', code: 'Enter', shiftKey: true })
+    expect(notPrevented).toBe(true)
+    expect(sendSpy).not.toHaveBeenCalledWith(submitShape())
+
+    // Editing stays fully available after the Shift+Enter keypress.
+    fireEvent.input(textarea(), { target: { value: 'edited draft' } })
+    expect(sendSpy).toHaveBeenCalledWith('edited draft')
     expect(sendSpy).not.toHaveBeenCalledWith(submitShape())
   })
 
