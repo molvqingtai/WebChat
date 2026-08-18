@@ -2,7 +2,6 @@
 
 This file provides guidance for AI coding agents working in this repository.
 
-
 ## Overview
 
 WebChat is a decentralized, serverless browser extension that enables anonymous P2P chat on any website using WebRTC. Built with WXT framework for cross-browser support (Chrome, Firefox, Edge).

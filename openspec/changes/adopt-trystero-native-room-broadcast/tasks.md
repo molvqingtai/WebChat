@@ -23,7 +23,7 @@
 
 ## 4. Verification And Delivery
 
-- [x] 4.1 Pass focused mutation-sensitive broadcast/target/catch-up/zero-peer/queue/layout/residue controls and the complete shared Trystero provider contract.
+- [x] 4.1 Pass focused mutation-sensitive broadcast/target/catch-up/zero-peer/queue/layout/residue controls and the complete shared Trystero provider contract; record the cumulative Server inventory as `176 -> 166`: 10 legal deletions (5 fixed one-second-only cases and 5 Artico selected-array-only cases), with no formal additions.
 - [x] 4.2 Pass format, lint, typecheck, full tests, Chrome and Firefox builds, pack, strict OpenSpec/status, and repository cleanliness gates on one immutable source exact.
 - [x] 4.3 Push the single cumulative candidate with exact parent/tree/scope and terminal hosted CI while keeping the pull request Draft.
 - [ ] 4.4 Obtain fresh cumulative source review on that exact, then hand it to the Owner for product acceptance.
