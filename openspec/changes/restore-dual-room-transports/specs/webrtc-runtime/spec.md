@@ -27,40 +27,41 @@ Production SHALL add no user setting, runtime hot switch, environment selector, 
 - **WHEN** existing scoped error and recovery ownership handles it
 - **THEN** WebChat SHALL NOT instantiate or fall back to the other provider
 
-### Requirement: Both providers implement ready-only best-effort sending
+### Requirement: Both providers preserve target shape and native send behavior
 
-The private `RoomTransport.send(roomId, payload, target?)` capability SHALL preserve one provider-neutral meaning across Artico and Trystero: omission is one provider-native broadcast to peers ready at invocation, a string selects that peer if ready, an array selects its ready members, and `[]` selects no recipients.
+The private `RoomTransport.send(roomId, payload, target?)` capability SHALL preserve one provider-neutral target shape across Artico and Trystero: omission requests one provider-native room broadcast, a string selects that provider peer id, an array supplies those provider peer ids under native provider semantics, and `[]` selects no recipients.
 
-Pending, closing, closed, missing, or otherwise non-ready peers SHALL be skipped without waiting, throwing a readiness-only failure, queueing, retrying, recording delivery state, or replaying after a later readiness transition. A zero-ready-peer operation SHALL settle as a successful no-recipient best-effort send. Successful settlement SHALL NOT assert remote receipt.
+WebChat SHALL NOT enumerate provider peers, inspect DataChannels, cache readiness, wait, queue, retry, record delivery state, or replay an old operation after a later readiness transition. Successful settlement SHALL NOT assert remote receipt.
 
-Trystero SHALL delegate omission to its native active-peer broadcast and explicit targets to its native action. Artico SHALL delegate the same optional target to an upstream Room version whose fan-out checks `Call.ready`, attempts every selected ready Call despite another ready Call's failure, and skips non-ready Calls. WebChat SHALL NOT enumerate provider peers, inspect DataChannels, cache readiness, or classify Artico's readiness error string.
+Trystero SHALL delegate omission to its native active-peer broadcast and explicit targets to its native action. The delivered Artico adapter SHALL use registry `@rtco/client@0.3.6` and directly invoke `room.send(payload, target)`. WebChat SHALL NOT pre-implement unpublished Artico ready-only/attempt-all behavior, catch its readiness error string, or add an adapter fan-out layer. Published Artico 0.3.6 MAY invoke a selected pending Call and MAY stop after the first thrown Call error.
 
 Initial Session, Text, Reaction, every World full snapshot, and the eligible zero-provider-call World retry SHALL retain omitted-target broadcast. History inventory/response and Session/World current-state catch-up SHALL retain their existing explicit business targets. No fixed post-join wait or application-owned broadcast target array SHALL return.
 
-#### Scenario: Mixed readiness broadcasts to ready peers only
+#### Scenario: Trystero retains native active-peer sending
 
-- **GIVEN** either provider knows one ready peer and one pending or closing peer
-- **WHEN** an omitted-target room-wide producer sends
-- **THEN** only the ready peer SHALL receive a provider send attempt, the non-ready peer SHALL produce no readiness error, and the operation SHALL add no queue or later replay
+- **GIVEN** Trystero knows one active peer and one pending or inactive peer
+- **WHEN** an omitted or explicit-target producer sends
+- **THEN** its native action SHALL preserve Trystero's active-peer semantics
+- **AND** WebChat SHALL add no readiness cache, wait, queue, retry, or later replay
 
-#### Scenario: Explicit targets preserve ready-only meaning
+#### Scenario: Artico 0.3.6 delegates directly
 
-- **GIVEN** a string or array target contains ready, pending, closing, missing, or duplicate provider peer ids
+- **GIVEN** Artico is selected with registry `@rtco/client@0.3.6`
+- **WHEN** the adapter sends with an omitted, string, array, or empty-array target
+- **THEN** it SHALL invoke `room.send(payload, target)` exactly once without enumerating Calls or reading readiness
+- **AND** a pending-Call readiness error or abort-first fan-out result SHALL remain the package's native behavior
+
+#### Scenario: Empty target preserves no-recipient behavior
+
+- **GIVEN** the target is `[]`
 - **WHEN** the selected adapter sends
-- **THEN** it SHALL preserve the provider's explicit-target semantics while invoking only ready peers
-- **AND** one ready peer's genuine send failure SHALL NOT prevent another selected ready peer from being attempted in Artico's Room fan-out
+- **THEN** it SHALL settle without a selected recipient, wait, retry, queue, acknowledgement, outbox, status, or remote-delivery claim
 
-#### Scenario: Empty or zero-ready target settles without delivery claim
+#### Scenario: WebChat does not replay after readiness changes
 
-- **GIVEN** the target is `[]` or no selected peer is ready
-- **WHEN** the selected adapter sends
-- **THEN** it SHALL settle without a physical send, readiness error, wait, retry, queue, acknowledgement, outbox, status, or remote-delivery claim
-
-#### Scenario: A later-ready peer receives no old operation
-
-- **GIVEN** a peer was skipped because it was not ready at invocation
+- **GIVEN** a provider did not deliver an operation because a peer was pending, inactive, missing, or failed during native send
 - **WHEN** that peer later becomes ready
-- **THEN** neither provider nor WebChat SHALL replay the skipped Text, Reaction, Session, World, or Artico stream operation solely because readiness changed
+- **THEN** WebChat SHALL NOT replay the old Text, Reaction, Session, World, or Artico stream operation solely because readiness changed
 - **AND** only existing targeted Session/World catch-up and History synchronization MAY provide their already-authorized convergence
 
 ### Requirement: Restored Artico uses scoped ownership and owned signaling
@@ -90,26 +91,34 @@ Close-driven Artico replacement SHALL retain the established 10-second cadence. 
 - **THEN** one owner-fenced replacement path SHALL run at the established 10-second close cadence or immediate demand repair boundary
 - **AND** stale, retired, or disposed generations SHALL produce no current-room event or cross-room effect
 
-### Requirement: Temporary Artico fork dependency cannot enter develop
+### Requirement: Delivery uses registry Artico 0.3.6
 
-During Draft implementation and verification, `@rtco/client` MAY resolve from one full immutable commit in the Owner's Artico fork that contains the completed PR #41 client behavior and retained client fixes. It SHALL NOT resolve from a branch name, moving tag, local path, workspace link, uncommitted build, or other mutable reference.
+The current WebChat delivery manifest and lockfile SHALL resolve registry `@rtco/client@0.3.6`. They SHALL NOT resolve from a personal fork, branch name, moving tag, local path, workspace link, Git subdirectory, uncommitted build, or other mutable reference.
 
-Before a WebChat merge to `develop`, the manifest and lockfile SHALL resolve `@rtco/client` from an exact official upstream release containing the reviewed ready-only and failure-isolation behavior plus the retained listener fix. The installed official package SHALL be directly proven equivalent for the required behavior, and all focused/full gates plus fresh coding review SHALL pass on that dependency replacement.
+Immutable integration commit `0deb0f0f` MAY remain historical evidence that WebChat built against the repaired Artico candidate, but it SHALL NOT remain a delivery dependency or create a wait for an upstream release or Artico preview authorization. Exactly three tests whose assertions require unpublished ready-only/attempt-all behavior SHALL remain explicitly skipped on 0.3.6; every other provider and selector control SHALL execute.
 
-Artico server-only PR #40 SHALL NOT be treated as a browser client dependency requirement even if it is present in the temporary fork integration commit.
+Any later repaired official Artico version SHALL require explicit Owner authorization. That future change SHALL use one exact registry version, regenerate the lockfile, directly verify the installed package, re-enable the three tests, rerun complete gates, and receive fresh coding review. Artico server-only PR #40 and Vercel preview authorization SHALL NOT be treated as current WebChat browser-client gates.
 
-#### Scenario: Draft verification uses immutable fork evidence
+#### Scenario: Current delivery resolves registry 0.3.6
 
-- **GIVEN** upstream has not yet published the required client fixes
-- **WHEN** the dual-provider candidate is built for automated gates or coding verification
-- **THEN** its Git dependency SHALL name one full immutable fork commit and the lockfile SHALL resolve that exact commit
+- **GIVEN** the dual-provider candidate is built for delivery
+- **WHEN** its manifest and lockfile are inspected
+- **THEN** `@rtco/client` SHALL resolve to registry version `0.3.6`
+- **AND** no fork, Git subdirectory, workspace, local path, or moving ref SHALL remain
 
-#### Scenario: Develop merge requires official package provenance
+#### Scenario: Unpublished controls remain visible but inactive
 
-- **GIVEN** the dual-provider candidate is otherwise accepted
-- **WHEN** it becomes eligible for a `develop` merge
-- **THEN** no personal-fork, branch, local-path, or mutable Artico dependency SHALL remain
-- **AND** the exact official package, regenerated lockfile, required installed behavior, full gates, and fresh coding review SHALL all be current on that head
+- **GIVEN** registry Artico 0.3.6 lacks ready-only and attempt-all behavior
+- **WHEN** the Artico provider tests run
+- **THEN** exactly the three controls requiring that unpublished behavior SHALL be explicitly skipped
+- **AND** lifecycle, signaling, ownership, omitted/string/array/empty targets, missing-room, error identity, selector, and Trystero controls SHALL remain active
+
+#### Scenario: Later repaired-version adoption is separate
+
+- **GIVEN** a repaired official Artico version becomes available
+- **WHEN** the Owner authorizes WebChat to adopt it
+- **THEN** the candidate SHALL directly verify that exact registry package, re-enable all three tests, and pass complete gates plus fresh coding review
+- **AND** availability alone SHALL NOT change the current delivery dependency or block the current batch
 
 ### Requirement: Current documentation identifies both supported providers
 
@@ -126,7 +135,7 @@ Archived historical change records MAY retain the provider truth of their own ex
 
 ### Requirement: Provider capability is private behind WireDomain
 
-The Runtime SHALL define one private `RoomTransportExtern` injected only into `WireDomain`. It SHALL express provider-neutral capabilities for stable local peer identity, room join/leave, optional-target ready-only send, transport-confirmed inbound source, peer join/leave, room close/error, and deterministic dispose. `RoomTransport` MAY remain only as the concrete implementation shape behind that Extern; it SHALL NOT be a public application port, protocol export, or capability imported by UI, application Domains, or non-Wire Runtime Domains.
+The Runtime SHALL define one private `RoomTransportExtern` injected only into `WireDomain`. It SHALL express provider-neutral capabilities for stable local peer identity, room join/leave, optional-target provider-native send, transport-confirmed inbound source, peer join/leave, room close/error, and deterministic dispose. `RoomTransport` MAY remain only as the concrete implementation shape behind that Extern; it SHALL NOT be a public application port, protocol export, or capability imported by UI, application Domains, or non-Wire Runtime Domains.
 
 Concrete Artico implementation symbols and imports SHALL appear only in `src/runtime/transports/artico/`, its provider-specific tests, and the explicit `src/runtime/RoomTransportProvider.ts` composition helper. Concrete Trystero implementation symbols and imports SHALL have the same boundary under `src/runtime/transports/trystero/`. Package manifests, the lockfile, and current documentation MAY name both supported providers, but provider-neutral Runtime/Domain boundaries SHALL expose no Artico or Trystero type or import.
 
@@ -134,7 +143,7 @@ Each provider directory SHALL name its implementation `RoomTransport.ts` and its
 
 `WireDomain` SHALL remain the sole anti-corruption boundary: it validates trusted room/source identity, codec/schema/size limits, ordering and queue bounds, then emits typed Runtime Events; outbound typed Domain intent is encoded and sent only through its Effect and `RoomTransportExtern`. The former imperative `WireExtern` route and every direct concrete/provider call from another Domain SHALL remain absent.
 
-The root shared provider contract SHALL run against both implementations and preserve stable identity, join/leave, trusted inbound source, omitted ready-peer broadcast, explicit string/array targets including `[]`, zero-ready settlement, room-level failure, peer join/leave, close/error, and deterministic dispose without delivery acknowledgement.
+The root shared provider contract SHALL run against both implementations and preserve stable identity, join/leave, trusted inbound source, omitted provider-native broadcast, explicit string/array targets including `[]`, room-level failure, peer join/leave, close/error, and deterministic dispose without delivery acknowledgement. It SHALL NOT falsely assert ready-only or attempt-all parity that published Artico 0.3.6 does not provide.
 
 #### Scenario: Provider can be replaced without application change
 
@@ -152,7 +161,8 @@ The root shared provider contract SHALL run against both implementations and pre
 #### Scenario: Provider contract parity
 
 - **WHEN** the root shared RoomTransport contract suite runs independently against Artico and Trystero
-- **THEN** both SHALL satisfy the same identity, lifecycle, trusted-source, ready-only broadcast/target, zero-recipient, event/failure, and dispose meanings without provider-specific leakage into the harness
+- **THEN** both SHALL satisfy the same identity, lifecycle, trusted-source, target-shape, event/failure, and dispose meanings without provider-specific leakage into the harness
+- **AND** provider-native fan-out differences SHALL remain provider-specific and accurately represented by active or explicitly skipped controls
 
 ## REMOVED Requirements
 
@@ -166,7 +176,7 @@ The root shared provider contract SHALL run against both implementations and pre
 
 **Reason**: Room-wide intent remains omitted-target provider-native broadcast, but it is no longer Trystero-specific.
 
-**Migration**: Both providers implement the new ready-only best-effort requirement. The existing room-wide versus request-specific producer classification and no-ACK/no-retry boundaries remain unchanged.
+**Migration**: Both providers preserve the same optional target shape while executing their native send behavior. The existing room-wide versus request-specific producer classification and no-ACK/no-retry boundaries remain unchanged.
 
 ### Requirement: Trystero activation converges through targeted current-state catch-up
 
