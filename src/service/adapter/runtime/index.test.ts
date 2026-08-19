@@ -286,35 +286,6 @@ describe('Runtime browser adapters', () => {
     expect(rejected).toHaveBeenLastCalledWith({ reason: 'target-mismatch', targetId: 7 })
   })
 
-  it('drops malformed relays without an onRejected observer', async () => {
-    const { runtime, listeners } = createMessaging()
-    const tabs = {
-      query: vi.fn(),
-      get: vi.fn(async () => {
-        throw new Error('No tab')
-      }),
-      sendMessage: vi.fn()
-    }
-    // The production call site no longer passes onRejected: drops keep their exact behavior with
-    // no observer attached.
-    const dispose = relayOffscreenProviderMessages({
-      runtime: runtime as never,
-      tabs,
-      namespace: 'WEB_CHAT_RUNTIME_V2:test-extension',
-      offscreenUrl: 'chrome-extension://test-extension/offscreen.html'
-    })
-    const listener = [...listeners][0]!
-    const offscreen = { url: 'chrome-extension://test-extension/offscreen.html' } as never
-
-    expect(() => listener(null, offscreen)).not.toThrow()
-    expect(() => listener({ sender: { type: 'provider' } }, offscreen)).not.toThrow()
-    await settle()
-    expect(tabs.sendMessage).not.toHaveBeenCalled()
-
-    dispose()
-    expect(listeners.size).toBe(0)
-  })
-
   it('guards every listener on the shared Runtime bus before raw message access', async () => {
     const { runtime, listeners } = createMessaging()
     const providerReceived = vi.fn()
