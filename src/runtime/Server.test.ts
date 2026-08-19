@@ -395,6 +395,9 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
       peers.add(peerId)
       peersByRoom.set(roomId, peers)
     },
+    forgetPeer: (roomId: string, peerId: string) => {
+      peersByRoom.get(roomId)?.delete(peerId)
+    },
     peerJoin: (roomId: string, peerId: string) => {
       if (!joined.has(roomId)) return
       const peers = peersByRoom.get(roomId) ?? new Set<string>()
@@ -4304,6 +4307,46 @@ describe('RuntimeServer history', () => {
       { domain: DOMAIN, pageId: 'page-a' },
       async (): Promise<HistorySupplyResult> => ({ records, done: true })
     )
+
+  it('resets a provider-only terminal binding across room recovery', async () => {
+    const { fake, server, roomId } = await setup()
+    const started: string[] = []
+    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, async (pull) => {
+      if (pull.mode === 'inventory') return { records: [], done: true }
+      started.push(pull.syncId)
+      return { records: [], done: true }
+    })
+
+    // A provider Pull is valid without peerJoin or a requester/session setup on this runtime.
+    fake.receive(roomId, 'provider-only-peer', request('provider-only-initial', 0, [], true))
+    await vi.waitFor(() => expect(started).toEqual(['provider-only-initial']))
+    await vi.waitFor(() => {
+      expect(
+        fake
+          .messages(roomId)
+          .filter(
+            (message) =>
+              message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH &&
+              (message as { syncId: string }).syncId === 'provider-only-initial'
+          )
+      ).toHaveLength(1)
+    })
+    await settle()
+    await settle()
+
+    // Keep the source out of the fake recovery join list: this control has no peer lifecycle.
+    fake.forgetPeer(roomId, 'provider-only-peer')
+    fake.roomClose(roomId)
+    await vi.waitFor(async () => {
+      expect(fake.joined.has(roomId)).toBe(true)
+      expect((await server.getSnapshot()).domains[0]?.chatRoomJoined).toBe(true)
+    })
+
+    fake.receive(roomId, 'provider-only-peer', request('provider-only-recovery', 0, [], true))
+    await vi.waitFor(() => expect(started).toEqual(['provider-only-initial', 'provider-only-recovery']))
+    expect(started).toEqual(['provider-only-initial', 'provider-only-recovery'])
+    disposeServer(server)
+  })
 
   it('delivers a schema-accepted response whose message userId is absent from the users array', async () => {
     const { fake, server, roomId } = await setup()

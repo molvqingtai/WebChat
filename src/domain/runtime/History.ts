@@ -668,9 +668,14 @@ const HistoryDomain = Remesh.domain({
             .filter((item) => item.domain === runtimeDomain)
             .map((item) => item.sourcePeerId)
         )
-        return [...sourcePeerIds].map((sourcePeerId) =>
-          ResetHistoryForSessionCommand({ domain: runtimeDomain, sourcePeerId })
-        )
+        return [
+          ...[...sourcePeerIds].map((sourcePeerId) =>
+            ResetHistoryForSessionCommand({ domain: runtimeDomain, sourcePeerId })
+          ),
+          // A completed provider may leave only its terminal binding, so it is absent from every
+          // source-owned collection above; room reset must clear that binding as well.
+          ClearDomainSyncBindingsCommand(runtimeDomain)
+        ]
       }
     })
 
