@@ -47,13 +47,15 @@ A true replacement source clears the prior source connection's binding only thro
 
 The provider still receives the requester's complete paged inventory, freezes its own 30-day snapshot, and sends missing records only to the requesting source. The requester still accepts valid provider pages under the exact attempt identity and converges through bounded Delivery plus `insert-if-absent` message identity.
 
+The `syncId` is not a bearer credential. Before creating or reading a response lane, applying records, publishing feedback, or finishing loading, the requester verifies that the inbound Push transport source equals the requester's owning `sourcePeerId`. A non-owner frame remains fully inert even if it presents the owner's exact `syncId`; the owner's same page remains eligible afterward.
+
 Duplicate records held by several peers remain harmless: each pairwise exchange may offer them, and persistence retains one canonical record. Late valid pages for an already-associated attempt retain their existing acceptance boundary after loading settlement. No protocol or persistence migration is needed.
 
 ### 5. Regression evidence must distinguish trigger and target scope
 
 Implementation controls must make an all-current-sessions mutation fail. Requester State must contain no `expectedProviders` or settled-provider arrays. With B and C current, a B-triggered requester must physically send only target `[B]`; a C-triggered requester must send only `[C]`. Sequential C admission must produce zero new A-to-B/B-to-A logical Pull, and batch B/C admission must produce exactly one source-owned requester per source with distinct `syncId` values and direct singleton targets. Controls must also prove multiple chunks retain one logical `syncId`, produce no peer ACK or Pull/Push alternation, and advance only after local chunk-send settlement.
 
-Existing two-peer bidirectional pull/push, terminal restart rejection, source departure, replacement-after-settlement, timeout, late valid pages, loading ownership, supplier bounds, protocol validation, response targeting, and identity-deduplicated insertion remain required regression controls.
+Existing two-peer bidirectional pull/push, terminal restart rejection, source departure, replacement-after-settlement, timeout, late valid pages, loading ownership, supplier bounds, protocol validation, response targeting, and identity-deduplicated insertion remain required regression controls. A deterministic connected-runtime control must prove A-to-B and B-to-A exactly once, then C admission adds only A-to-C, C-to-A, B-to-C, and C-to-B while the established A/B pair does not restart.
 
 ## Risks / Trade-offs
 

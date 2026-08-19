@@ -44,6 +44,13 @@ A generic internal Wire `requestId` MAY correlate one local chunk-send settlemen
 - **THEN** A SHALL send one requester inventory only to B and B SHALL independently send one requester inventory only to A, using different local `syncId` values
 - **AND** each provider SHALL send its missing-record Push only to the corresponding requester
 
+#### Scenario: Only the requester owner may advance a Push lane
+
+- **GIVEN** a requester owned by source A and its exact `syncId`
+- **WHEN** another current source B presents a declaratively valid Push with that `syncId`
+- **THEN** the frame SHALL create or read no response lane, apply no record, publish no feedback, and perform no loading or terminal mutation
+- **AND** the same page from source A SHALL remain eligible to apply and complete normally
+
 #### Scenario: Pages retain one logical request identity
 
 - **GIVEN** one Pull inventory or Push difference exceeds one bounded wire frame

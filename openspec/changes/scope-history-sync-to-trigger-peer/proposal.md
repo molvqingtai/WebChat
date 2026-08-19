@@ -10,6 +10,7 @@ The duplicate rounds do not improve the intended history union: every newly acce
 - Delete the requester's `expectedProviders`/settled-provider routing arrays and derive its sole physical target directly from the attempt's `sourcePeerId`.
 - Preserve one logical Pull followed by one logical Push per direction. Their continuous pages are chunks under the same `syncId`, not separate History requests or per-chunk peer round trips.
 - Preserve symmetric behavior: both ends independently pull from the newly accepted remote source, and each provider pushes only the records missing from that requester's inventory.
+- Require every inbound Push to come from the `sourcePeerId` that owns the matching requester; another peer presenting the exact `syncId` remains fully inert.
 - Ensure a newly joined peer starts only its new pairwise exchanges; it does not restart History between already-established peers.
 - Preserve current exact-difference protocol, 30-day snapshots, pagination, fixed 10-second timeout, late valid response collection, message-identity convergence, supplier/admission bounds, source replacement, and cleanup semantics.
 
@@ -22,5 +23,5 @@ The duplicate rounds do not improve the intended history union: every newly acce
 ## Impact
 
 - Production: `src/domain/runtime/History.ts` requester routing/settlement State and target allocation only.
-- Tests: History/Connection controls for sequential and batched multi-peer Session admission, singleton targets, no established-pair restart, replacement, and retained bidirectional behavior.
+- Tests: History/Connection controls for sequential and batched multi-peer Session admission, singleton targets, requester-owner Push admission, no established-pair restart, replacement, and retained bidirectional behavior.
 - Unchanged: public protocol and schemas, MessageStore/Delivery, UI and loading copy, transport/provider behavior, local Text projection, persistence, room membership, and every current History resource/lifecycle bound.
