@@ -27,7 +27,7 @@ interface TrysteroMessageAction {
  * are simply never emitted, join failures arrive through `onJoinError`, and send rejections
  * surface through the returned Promise as-is.
  */
-export const createTrysteroRoomTransport = (): RoomTransport => {
+export const createRoomTransport = (): RoomTransport => {
   const owners = new Map<string, PeerOwner>()
   /** Terminal fence: after dispose no join may create a Room, even one awaiting a pending leave. */
   let transportDisposed = false

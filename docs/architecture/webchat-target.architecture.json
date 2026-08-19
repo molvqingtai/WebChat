@@ -798,7 +798,8 @@
         "Notification and AppAction use structurally disjoint versioned RPC namespaces",
         "Wire is the anti-corruption boundary: trusted source, strict validation, ordered queues",
         "RoomTransportExtern is Runtime-private and visible only to Wire",
-        "Trystero is the sole provider implementation and runs the shared RoomTransport contract suite",
+        "Artico is the build-time default; Trystero remains a supported default-Nostr alternative",
+        "RoomTransportProvider creates exactly one selected adapter; both run the shared contract suite",
         "One dedicated World room plus one Chat room per domain; no host-wide shared room",
         "Reconnect disposes the old Chat room before the current Room/generation owner installs its replacement; selfId stays stable"
       ]

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { createTrysteroRoomTransport } from '@/runtime/transports/trystero/TrysteroRoomTransport'
+import { createRoomTransport } from '@/runtime/transports/trystero/RoomTransport'
 
 interface FakeAction {
   send: (data: string, options?: { target?: string | string[] | null }) => Promise<void>
@@ -108,7 +108,7 @@ import { describeRoomTransportContract, type RoomTransportHarness } from '@/runt
 
 const trysteroHarness: RoomTransportHarness = {
   provider: 'trystero',
-  createTransport: createTrysteroRoomTransport,
+  createTransport: createRoomTransport,
   joinedPeerId: () => 'trystero-self-id',
   joinCalls: () => trysteroFixture.joinCalls,
   sendCalls: () =>
@@ -147,9 +147,9 @@ beforeEach(() => {
   trysteroFixture.joinCalls.length = 0
 })
 
-describe('TrysteroRoomTransport', () => {
+describe('Trystero RoomTransport', () => {
   it('maps an omitted target to the provider broadcast null', async () => {
-    const transport = createTrysteroRoomTransport()
+    const transport = createRoomTransport()
     await transport.join('room-a')
 
     await transport.send('room-a', 'all')
@@ -159,7 +159,7 @@ describe('TrysteroRoomTransport', () => {
   })
 
   it('dispose physically leaves every joined room after settlement', async () => {
-    const transport = createTrysteroRoomTransport()
+    const transport = createRoomTransport()
     await transport.join('room-a')
     await transport.join('room-b')
 
@@ -170,7 +170,7 @@ describe('TrysteroRoomTransport', () => {
   })
 
   it('sends nothing for an empty target array without calling the provider', async () => {
-    const transport = createTrysteroRoomTransport()
+    const transport = createRoomTransport()
     await transport.join('room-a')
 
     await transport.send('room-a', 'nobody', [])
@@ -180,7 +180,7 @@ describe('TrysteroRoomTransport', () => {
   })
 
   it('waits for a pending physical leave before rejoining the same room', async () => {
-    const transport = createTrysteroRoomTransport()
+    const transport = createRoomTransport()
     await transport.join('room-a')
     const firstRoom = roomOf('room-a')
     trysteroFixture.deferLeave('room-a')
@@ -206,7 +206,7 @@ describe('TrysteroRoomTransport', () => {
   })
 
   it('keeps the room occupied and reports a normal leave failure without rejoining a stale Room', async () => {
-    const transport = createTrysteroRoomTransport()
+    const transport = createRoomTransport()
     const errors: string[] = []
     transport.onError((error, roomId) => errors.push(`${roomId}:${error.message}`))
     await transport.join('room-a')
@@ -229,7 +229,7 @@ describe('TrysteroRoomTransport', () => {
   })
 
   it('makes a leaving room inert: no selfId, no provider send, no callbacks', async () => {
-    const transport = createTrysteroRoomTransport()
+    const transport = createRoomTransport()
     const events: string[] = []
     transport.onMessage((roomId, sourcePeerId) => events.push(`message:${roomId}:${sourcePeerId}`))
     transport.onPeerJoin((roomId, peerId) => events.push(`join:${roomId}:${peerId}`))
@@ -257,7 +257,7 @@ describe('TrysteroRoomTransport', () => {
   })
 
   it('keeps a leave-failed room inert while rejecting sends with the retained error', async () => {
-    const transport = createTrysteroRoomTransport()
+    const transport = createRoomTransport()
     const events: string[] = []
     transport.onMessage((roomId, sourcePeerId) => events.push(`message:${roomId}:${sourcePeerId}`))
     transport.onError((error, roomId) => events.push(`error:${roomId}:${error.message}`))
@@ -282,7 +282,7 @@ describe('TrysteroRoomTransport', () => {
   })
 
   it('reports a dispose-time leave rejection only as diagnostics', async () => {
-    const transport = createTrysteroRoomTransport()
+    const transport = createRoomTransport()
     const errors: string[] = []
     transport.onError((error, roomId) => errors.push(`${roomId}:${error.message}`))
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
@@ -299,7 +299,7 @@ describe('TrysteroRoomTransport', () => {
   })
 
   it('rejects a join that was waiting on a pending leave when dispose lands first', async () => {
-    const transport = createTrysteroRoomTransport()
+    const transport = createRoomTransport()
     await transport.join('room-a')
     trysteroFixture.deferLeave('room-a')
 
@@ -316,7 +316,7 @@ describe('TrysteroRoomTransport', () => {
   })
 
   it('rejects a join after dispose even for a fresh room', async () => {
-    const transport = createTrysteroRoomTransport()
+    const transport = createRoomTransport()
     transport.dispose()
 
     await expect(transport.join('room-b')).rejects.toThrow('Room transport is disposed')
@@ -324,7 +324,7 @@ describe('TrysteroRoomTransport', () => {
   })
 
   it('upgrades an ordinary pending leave rejection to diagnostics when dispose lands first', async () => {
-    const transport = createTrysteroRoomTransport()
+    const transport = createRoomTransport()
     const errors: string[] = []
     transport.onError((error, roomId) => errors.push(`${roomId}:${error.message}`))
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
@@ -342,7 +342,7 @@ describe('TrysteroRoomTransport', () => {
   })
 
   it('keeps a diagnostic-only leave failure out of the error stream while retaining the room', async () => {
-    const transport = createTrysteroRoomTransport()
+    const transport = createRoomTransport()
     const errors: string[] = []
     transport.onError((error, roomId) => errors.push(`${roomId}:${error.message}`))
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
@@ -362,7 +362,7 @@ describe('TrysteroRoomTransport', () => {
   })
 
   it('silently swallows a post-SDP peer-connect failure with zero error forward and zero console output', async () => {
-    const transport = createTrysteroRoomTransport()
+    const transport = createRoomTransport()
     const errors: string[] = []
     transport.onError((error, roomId) => errors.push(`${roomId}:${error.message}`))
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
@@ -387,7 +387,7 @@ describe('TrysteroRoomTransport', () => {
   })
 
   it('applies the same stateless silence to repeated peer-connect callbacks without rate limiting', async () => {
-    const transport = createTrysteroRoomTransport()
+    const transport = createRoomTransport()
     const errors: string[] = []
     transport.onError((error, roomId) => errors.push(`${roomId}:${error.message}`))
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
@@ -410,7 +410,7 @@ describe('TrysteroRoomTransport', () => {
   })
 
   it('forwards incorrect password and handshake failures exactly once with no adapter console output', async () => {
-    const transport = createTrysteroRoomTransport()
+    const transport = createRoomTransport()
     const errors: string[] = []
     transport.onError((error, roomId) => errors.push(`${roomId}:${error.message}`))
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
@@ -433,7 +433,7 @@ describe('TrysteroRoomTransport', () => {
   })
 
   it('forwards the fixed text verbatim once when it does not start the message (startsWith cannot degrade to includes)', async () => {
-    const transport = createTrysteroRoomTransport()
+    const transport = createRoomTransport()
     const errors: string[] = []
     transport.onError((error, roomId) => errors.push(`${roomId}:${error.message}`))
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
@@ -455,7 +455,7 @@ describe('TrysteroRoomTransport', () => {
   })
 
   it('keeps a stale owner fenced even for a matching peer-connect error', async () => {
-    const transport = createTrysteroRoomTransport()
+    const transport = createRoomTransport()
     const events: string[] = []
     transport.onError((error, roomId) => events.push(`error:${roomId}:${error.message}`))
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
@@ -481,7 +481,7 @@ describe('TrysteroRoomTransport', () => {
 
 describe('RoomTransport composition', () => {
   it('composes the Trystero provider directly from the sole factory', async () => {
-    const transport = createTrysteroRoomTransport()
+    const transport = createRoomTransport()
     await transport.join('room-a')
 
     expect(transport.peerIdOf('room-a')).toBe('trystero-self-id')
