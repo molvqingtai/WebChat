@@ -1652,6 +1652,10 @@ const HistoryDomain = Remesh.domain({
         const requesters = get(RequesterAttemptsState())
         const current = requesters.find((item) => item.domain === domain && item.syncId === payload.message.syncId)
         if (!current) return null
+        // The sync id is not a bearer credential: only the source peer that owns this requester may
+        // create or advance its response lane. A different peer using the exact id must be inert,
+        // including no delivery, lane, feedback, or finish mutation.
+        if (current.sourcePeerId !== payload.sourcePeerId) return null
         const binding = { domain }
         const provider = current.providers[payload.sourcePeerId] ?? newProviderResponseState()
         const withProvider = (lane: ProviderResponseState): RequesterAttemptState => ({

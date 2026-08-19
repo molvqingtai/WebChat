@@ -4,6 +4,7 @@ import HistoryDomain from './History'
 import SessionDomain from './Session'
 import WireDomain from './Wire'
 import DeliveryDomain from './Delivery'
+import LifecycleDomain from './Lifecycle'
 import { PagePort } from '@/runtime/PagePort'
 import { ClockExtern } from '@/domain/runtime/externs/Clock'
 import { IdentityExtern } from '@/domain/runtime/externs/Identity'
@@ -25,11 +26,24 @@ const jsonCodec: WireCodec = {
   decode: async (payload) => JSON.parse(payload)
 }
 
-const fakeTransport = () => {
-  const sent: { roomId: string; targetPeerIds?: string | string[]; message: ChatRoomMessage }[] = []
+type SentMessage = {
+  roomId: string
+  targetPeerIds?: string | string[]
+  message: ChatRoomMessage
+  fromPeerId?: string
+}
+
+type TransportFixture = {
+  transport: RoomTransport
+  sent: SentMessage[]
+  receive: (roomId: string, sourcePeerId: string, message: unknown) => void
+}
+
+const fakeTransport = (localPeerId = 'local-peer'): TransportFixture => {
+  const sent: SentMessage[] = []
   let messageListener: ((roomId: string, sourcePeerId: string, rawPayload: string) => void) | null = null
   const transport: RoomTransport = {
-    peerIdOf: () => 'local-peer',
+    peerIdOf: () => localPeerId,
     join: async () => {},
     leave: () => {},
     send: async (roomId, payload, targetPeerIds) => {
@@ -56,9 +70,14 @@ const fakeTransport = () => {
   }
 }
 
-const setup = async (sourcePeerId = 'peer-a', codec: WireCodec = jsonCodec) => {
-  const pagePort = new PagePort()
-  const { transport, receive, sent } = fakeTransport()
+const setupRuntime = async (
+  sourcePeerId: string,
+  codec: WireCodec,
+  fixture: TransportFixture,
+  pagePort = new PagePort(),
+  remoteUser: typeof USER = USER
+) => {
+  const { transport, receive, sent } = fixture
   const store = Remesh.store({
     externs: [
       ClockExtern.impl({ now: () => 1_000_000 }),
@@ -110,16 +129,118 @@ const setup = async (sourcePeerId = 'peer-a', codec: WireCodec = jsonCodec) => {
   store.send(wire.command.JoinRoomsCommand({ requestId: 'join-1', roomIds: [ROOM_ID] }))
   const sessionMessage: ChatRoomMessage = {
     type: MESSAGE_TYPE.SESSION,
-    sessionId: 'session-1',
-    presenceId: 'presence-1',
+    sessionId: `session-${sourcePeerId}`,
+    presenceId: `presence-${sourcePeerId}`,
     joinedAt: 2,
-    user: USER
+    user: remoteUser
   }
   await new Promise((resolve) => setTimeout(resolve, 0))
   receive(ROOM_ID, sourcePeerId, sessionMessage)
   await new Promise((resolve) => setTimeout(resolve, 0))
   return { store, session, history, wire, delivery, pagePort, receive, sent }
 }
+
+const setup = async (sourcePeerId = 'peer-a', codec: WireCodec = jsonCodec) =>
+  setupRuntime(sourcePeerId, codec, fakeTransport())
+
+const connectedNetwork = () => {
+  type Peer = {
+    peerId: string
+    joinedRooms: Set<string>
+    messageListener: ((roomId: string, sourcePeerId: string, rawPayload: string) => void) | null
+    peerJoinListeners: Set<(roomId: string, peerId: string) => void>
+    peerLeaveListeners: Set<(roomId: string, peerId: string) => void>
+  }
+  const peers = new Map<string, Peer>()
+
+  const create = (peerId: string): TransportFixture => {
+    const sent: SentMessage[] = []
+    const peer: Peer = {
+      peerId,
+      joinedRooms: new Set(),
+      messageListener: null,
+      peerJoinListeners: new Set(),
+      peerLeaveListeners: new Set()
+    }
+    peers.set(peerId, peer)
+    const transport: RoomTransport = {
+      peerIdOf: () => peerId,
+      join: async (roomId) => {
+        if (peer.joinedRooms.has(roomId)) return
+        peer.joinedRooms.add(roomId)
+        for (const other of peers.values()) {
+          if (other.peerId === peerId || !other.joinedRooms.has(roomId)) continue
+          for (const listener of other.peerJoinListeners) listener(roomId, peerId)
+          for (const listener of peer.peerJoinListeners) listener(roomId, other.peerId)
+        }
+      },
+      leave: (roomId) => {
+        if (!peer.joinedRooms.delete(roomId)) return
+        for (const other of peers.values()) {
+          if (other.peerId === peerId || !other.joinedRooms.has(roomId)) continue
+          for (const listener of other.peerLeaveListeners) listener(roomId, peerId)
+        }
+      },
+      send: async (roomId, payload, targetPeerIds) => {
+        const requested =
+          targetPeerIds === undefined
+            ? [...peers.keys()]
+            : typeof targetPeerIds === 'string'
+              ? [targetPeerIds]
+              : targetPeerIds
+        const targets = [...new Set(requested)].filter((target) => target !== peerId)
+        sent.push({
+          roomId,
+          targetPeerIds,
+          message: JSON.parse(payload) as ChatRoomMessage,
+          fromPeerId: peerId
+        })
+        for (const target of targets) {
+          const recipient = peers.get(target)
+          if (recipient?.joinedRooms.has(roomId)) recipient.messageListener?.(roomId, peerId, payload)
+        }
+      },
+      onMessage: (callback) => {
+        peer.messageListener = callback
+        return () => {
+          if (peer.messageListener === callback) peer.messageListener = null
+        }
+      },
+      onPeerJoin: (callback) => {
+        peer.peerJoinListeners.add(callback)
+        return () => peer.peerJoinListeners.delete(callback)
+      },
+      onPeerLeave: (callback) => {
+        peer.peerLeaveListeners.add(callback)
+        return () => peer.peerLeaveListeners.delete(callback)
+      },
+      onRoomClose: () => () => {},
+      onError: () => () => {},
+      dispose: () => {
+        for (const roomId of peer.joinedRooms) transport.leave(roomId)
+        peers.delete(peerId)
+      }
+    }
+    return {
+      transport,
+      sent,
+      receive: (roomId: string, sourcePeerId: string, message: unknown) => {
+        peer.messageListener?.(roomId, sourcePeerId, JSON.stringify(message))
+      }
+    }
+  }
+
+  return { create }
+}
+
+const networkUser = (peerId: string) => ({ id: `user-${peerId}`, name: peerId, avatar: '' })
+const networkSession = (peerId: string): ChatRoomMessage => ({
+  type: MESSAGE_TYPE.SESSION,
+  sessionId: `session-${peerId}`,
+  presenceId: `presence-${peerId}`,
+  joinedAt: 2,
+  user: networkUser(peerId)
+})
 
 const providerRequest = (syncId: string, page: number, done: boolean): HistoryMessagesPull => ({
   type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
@@ -264,6 +385,76 @@ describe('HistoryDomain peer-scoped requester targets', () => {
   const pullMessage = (item: Fixture['sent'][number]) => item.message as HistoryMessagesPull
   const pushMessage = (item: Fixture['sent'][number]) => item.message as HistoryMessagesPush
   const targetsOf = (item: Fixture['sent'][number]) => JSON.stringify(item.targetPeerIds)
+
+  it('rejects a non-owner push before any lane, delivery, or feedback mutation', async () => {
+    const { store, history, pagePort, receive, delivery } = await setup()
+    const lifecycleAction = LifecycleDomain()
+    const lifecycle = store.getDomain(lifecycleAction)
+    store.subscribeDomain(lifecycleAction)
+    store.igniteDomain(lifecycleAction)
+    store.send(lifecycle.command.AttachPageCommand({ domain: DOMAIN, pageId: 'page-a' }))
+    const inbound: ChatMessageRecord[] = []
+    const feedback: unknown[] = []
+    pagePort.onInbound('page-a', (event) => {
+      if ('record' in event) {
+        inbound.push(event.record)
+        store.send(delivery.command.AckInboundCommand({ domain: DOMAIN, sequence: event.sequence, inserted: true }))
+      }
+    })
+    pagePort.onHistoryFeedback('page-a', (event) => {
+      feedback.push(event)
+    })
+    supplyEmpty(pagePort)
+
+    store.send(history.command.StartRequesterCommand({ domain: DOMAIN, sourcePeerId: 'peer-a' }))
+    await vi.waitFor(() => expect(store.query(history.query.RequesterAttemptsQuery())).toHaveLength(1))
+    const requester = store.query(history.query.RequesterAttemptsQuery())[0]!
+    const record: ChatMessageRecord = {
+      type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE,
+      id: 'owned-record',
+      message: {
+        type: MESSAGE_TYPE.TEXT,
+        id: 'owned-record',
+        hlc: { timestamp: 1_000_001, counter: 0 },
+        userId: USER.id,
+        body: 'owned',
+        mentions: []
+      },
+      user: USER,
+      receivedAt: 1_000_001
+    }
+    const push = () =>
+      ({
+        type: MESSAGE_TYPE.HISTORY_MESSAGES_PUSH,
+        syncId: requester.syncId,
+        page: 0,
+        users: [USER],
+        messages: [record.message],
+        done: true
+      }) satisfies HistoryMessagesPush
+
+    // The exact sync id is known, but it belongs to peer-a. A peer-b frame must be fully inert.
+    receive(ROOM_ID, 'peer-b', push())
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(store.query(history.query.RequesterAttemptsQuery())).toEqual([
+      expect.objectContaining({ sourcePeerId: 'peer-a', providers: {}, loadingSettled: false })
+    ])
+    expect(store.query(delivery.query.BufferedEventsQuery({ domain: DOMAIN, after: 0 }))).toEqual([])
+    expect(inbound).toEqual([])
+    expect(feedback).toEqual([])
+
+    // The owner frame with the same page still applies and completes the response lane normally.
+    receive(ROOM_ID, 'peer-a', push())
+    await vi.waitFor(() => expect(inbound).toHaveLength(1))
+    await vi.waitFor(() =>
+      expect(store.query(history.query.RequesterAttemptsQuery()).every((item) => item.loadingSettled)).toBe(true)
+    )
+    expect(inbound).toEqual([expect.objectContaining({ id: record.id, message: record.message, user: record.user })])
+    expect(feedback).toEqual([
+      { domain: DOMAIN, ownerId: expect.stringContaining('peer-a'), type: 'loading' },
+      { domain: DOMAIN, ownerId: expect.stringContaining('peer-a'), type: 'dismiss' }
+    ])
+  })
 
   it('targets only the triggering source peer for each direction', async () => {
     const { store, history, pagePort, receive, sent } = await setup()
@@ -469,6 +660,115 @@ describe('HistoryDomain peer-scoped requester targets', () => {
     expect(pages.map((page) => page.page)).toEqual(pages.map((_, index) => index))
     expect(pages.slice(0, -1).every((page) => !page.done)).toBe(true)
     expect(pages.at(-1)?.done).toBe(true)
+  })
+})
+
+describe('HistoryDomain current-function peer topology', () => {
+  type RuntimeFixture = Awaited<ReturnType<typeof setupRuntime>>
+
+  const historyMessages = (fixtures: RuntimeFixture[]) =>
+    fixtures
+      .flatMap((fixture) => fixture.sent)
+      .filter((item) => {
+        return (
+          item.message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL ||
+          item.message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH
+        )
+      })
+  const pulls = (messages: SentMessage[]) =>
+    messages.filter((item) => item.message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)
+  const pushes = (messages: SentMessage[]) =>
+    messages.filter((item) => item.message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH)
+  const targeted = (item: SentMessage, peerId: string) =>
+    JSON.stringify(item.targetPeerIds) === JSON.stringify([peerId])
+
+  const assertExchange = (messages: SentMessage[], requesterPeerId: string, providerPeerId: string) => {
+    const pull = pulls(messages).filter((item) => item.fromPeerId === requesterPeerId && targeted(item, providerPeerId))
+    const push = pushes(messages).filter(
+      (item) => item.fromPeerId === providerPeerId && targeted(item, requesterPeerId)
+    )
+    expect(pull).toHaveLength(1)
+    expect(push).toHaveLength(1)
+    const pullPage = pull[0]!.message as HistoryMessagesPull
+    const pushPage = push[0]!.message as HistoryMessagesPush
+    expect(pushPage.syncId).toBe(pullPage.syncId)
+    expect(pullPage.page).toBe(0)
+    expect(pushPage.page).toBe(0)
+    expect(pullPage.done).toBe(true)
+    expect(pushPage.done).toBe(true)
+    return pullPage.syncId
+  }
+
+  const provideEmptyHistory = (fixture: RuntimeFixture) => {
+    fixture.pagePort.provideHistory('page-a', DOMAIN, (event) => {
+      if (event.type === 'request') {
+        void fixture.pagePort.resolveHistorySupply('page-a', event.request.supplyId, { records: [], done: true })
+      }
+    })
+  }
+
+  const resetHistoryFor = (fixture: RuntimeFixture, sourcePeerId: string) => {
+    fixture.store.send(fixture.history.command.ResetHistoryForSessionCommand({ domain: DOMAIN, sourcePeerId }))
+  }
+
+  const waitForPeer = async (fixture: RuntimeFixture, sourcePeerId: string) => {
+    await vi.waitFor(() =>
+      expect(
+        fixture.store
+          .query(fixture.session.query.DomainQuery(DOMAIN))
+          ?.sessions.some((item) => item.sourcePeerId === sourcePeerId)
+      ).toBe(true)
+    )
+  }
+
+  it('runs both directions once and adds only four directions when C joins', async () => {
+    const network = connectedNetwork()
+    const a = await setupRuntime('peer-b', jsonCodec, network.create('peer-a'), new PagePort(), networkUser('peer-b'))
+    const b = await setupRuntime('peer-a', jsonCodec, network.create('peer-b'), new PagePort(), networkUser('peer-a'))
+    const initial = [a, b]
+    initial.forEach(provideEmptyHistory)
+    await Promise.all([waitForPeer(a, 'peer-b'), waitForPeer(b, 'peer-a')])
+
+    // These are the same reset commands Connection uses after a committed source binding; the
+    // request and response then cross the connected production Wire/Session/History lifecycles.
+    resetHistoryFor(a, 'peer-b')
+    resetHistoryFor(b, 'peer-a')
+    await vi.waitFor(() => expect(pulls(historyMessages(initial))).toHaveLength(2))
+    await vi.waitFor(() => expect(pushes(historyMessages(initial))).toHaveLength(2))
+
+    const initialMessages = historyMessages(initial)
+    const initialAB = assertExchange(initialMessages, 'peer-a', 'peer-b')
+    const initialBA = assertExchange(initialMessages, 'peer-b', 'peer-a')
+
+    const c = await setupRuntime('peer-a', jsonCodec, network.create('peer-c'), new PagePort(), networkUser('peer-a'))
+    a.receive(ROOM_ID, 'peer-c', networkSession('peer-c'))
+    b.receive(ROOM_ID, 'peer-c', networkSession('peer-c'))
+    c.receive(ROOM_ID, 'peer-b', networkSession('peer-b'))
+    const all = [a, b, c]
+    all.forEach(provideEmptyHistory)
+    await Promise.all([
+      waitForPeer(a, 'peer-c'),
+      waitForPeer(b, 'peer-c'),
+      waitForPeer(c, 'peer-a'),
+      waitForPeer(c, 'peer-b')
+    ])
+
+    resetHistoryFor(a, 'peer-c')
+    resetHistoryFor(b, 'peer-c')
+    resetHistoryFor(c, 'peer-a')
+    resetHistoryFor(c, 'peer-b')
+    await vi.waitFor(() => expect(pulls(historyMessages(all))).toHaveLength(6))
+    await vi.waitFor(() => expect(pushes(historyMessages(all))).toHaveLength(6))
+
+    const messages = historyMessages(all)
+    // The original A<->B exchange has no second logical owner after C joins.
+    expect(assertExchange(messages, 'peer-a', 'peer-b')).toBe(initialAB)
+    expect(assertExchange(messages, 'peer-b', 'peer-a')).toBe(initialBA)
+    // C contributes exactly the four new directed requester/provider exchanges.
+    assertExchange(messages, 'peer-a', 'peer-c')
+    assertExchange(messages, 'peer-c', 'peer-a')
+    assertExchange(messages, 'peer-b', 'peer-c')
+    assertExchange(messages, 'peer-c', 'peer-b')
   })
 })
 
