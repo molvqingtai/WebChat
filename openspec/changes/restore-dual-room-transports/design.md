@@ -109,11 +109,11 @@ The provider-local `could not connect to peer ` callback exception remains activ
 
 No product code attempts to fall back from Artico to Trystero after an Artico failure, or vice versa. A provider failure follows that provider's existing scoped error and recovery path.
 
-### 6. Fork dependency is acceptance-only
+### 6. Fork dependency is Draft-verification-only
 
 Source implementation may temporarily pin `@rtco/client` to a full immutable commit in `molvqingtai/artico` that combines the completed PR #41 with the retained Artico client fixes needed by WebChat. A branch name, tag controlled by the fork, workspace path, floating Git ref, or uncommitted package is not acceptable evidence.
 
-That immutable fork dependency is permitted only for implementation, automated gates, and Owner acceptance on a Draft candidate. Before a WebChat merge to `develop`, upstream must publish an official `@rtco/client` version containing the required client behavior. The candidate must replace the Git dependency with that exact official version, regenerate the lockfile, prove the installed package contains the reviewed ready-only/failure-isolation behavior, rerun the complete gates, and receive a fresh coding review for the dependency-only replacement.
+That immutable fork dependency is permitted only for implementation, automated gates, and coding verification on a Draft candidate. Before a WebChat merge to `develop`, upstream must publish an official `@rtco/client` version containing the required client behavior. The candidate must replace the Git dependency with that exact official version, regenerate the lockfile, prove the installed package contains the reviewed ready-only/failure-isolation behavior, rerun the complete gates, and receive a fresh coding review for the dependency-only replacement.
 
 Artico PR #40 is server-only and is not a browser client dependency requirement. It may be present in the temporary fork integration exact, but the WebChat merge gate is defined by the official client package containing the client-side PR #41 readiness/failure-isolation change and the retained listener fix used by the restored adapter.
 
@@ -144,7 +144,7 @@ Provider-specific controls additionally prove:
 - **Default Artico reintroduces pending Call failures** -> Require the completed PR #41 ready-only fan-out before integration; do not reproduce its logic in WebChat.
 - **Pending peers miss immediate sends** -> Accept the existing best-effort contract; Session/World catch-up and History remain the only established convergence paths.
 - **Both providers accidentally connect** -> Centralize selection in one helper and directly prove the unselected factory has zero construction and side effects.
-- **Personal fork becomes permanent infrastructure** -> Allow only a full commit for Draft acceptance and make an official upstream package a closed `develop` merge gate.
+- **Personal fork becomes permanent infrastructure** -> Allow only a full commit for Draft verification and make an official upstream package a closed `develop` merge gate.
 - **README overstates switching** -> Describe support and default only; do not advertise runtime failover or a user setting.
 
 ## Migration Plan
@@ -153,9 +153,9 @@ Provider-specific controls additionally prove:
 2. Complete and independently review Artico PR #41's in-place ready-only repair and the Trystero peer-connect/error-console implementation. Neither is merged by this authority.
 3. Build one immutable Artico fork integration commit, then create the dual-provider WebChat source/test candidate with both reviewed workstreams and this authority in its ancestry.
 4. Restore the Artico provider directory and dependency, add the single provider selector/default, retain Trystero, update current documentation, and run both shared/provider-specific controls plus full repository gates.
-5. Use the immutable fork commit for Draft implementation and Owner acceptance only.
+5. Use the immutable fork commit for Draft implementation and verification only.
 6. After upstream publishes the required Artico client fixes, replace the fork dependency with the exact official version, regenerate the lockfile, rerun full gates, and obtain fresh coding review.
-7. Only after canonical task/status completion and Owner acceptance may an explicitly authorized merge to `develop` occur. Master promotion, release, deploy, signaling-server change, or production write requires separate authority.
+7. Only after the official-package exact has coding review, exact CI, applicable canonical docs/status, and no live batch hold may the ordinary protected merge to `develop` occur. No separate Owner acceptance is required. Master promotion, release, deploy, signaling-server change, or production write requires separate authority.
 
 Rollback is source-only: revert the dual-provider candidate and dependency changes. There is no protocol, schema, persistence, data, or server migration.
 

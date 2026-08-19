@@ -92,16 +92,16 @@ Close-driven Artico replacement SHALL retain the established 10-second cadence. 
 
 ### Requirement: Temporary Artico fork dependency cannot enter develop
 
-During Draft implementation and Owner acceptance, `@rtco/client` MAY resolve from one full immutable commit in the Owner's Artico fork that contains the completed PR #41 client behavior and retained client fixes. It SHALL NOT resolve from a branch name, moving tag, local path, workspace link, uncommitted build, or other mutable reference.
+During Draft implementation and verification, `@rtco/client` MAY resolve from one full immutable commit in the Owner's Artico fork that contains the completed PR #41 client behavior and retained client fixes. It SHALL NOT resolve from a branch name, moving tag, local path, workspace link, uncommitted build, or other mutable reference.
 
 Before a WebChat merge to `develop`, the manifest and lockfile SHALL resolve `@rtco/client` from an exact official upstream release containing the reviewed ready-only and failure-isolation behavior plus the retained listener fix. The installed official package SHALL be directly proven equivalent for the required behavior, and all focused/full gates plus fresh coding review SHALL pass on that dependency replacement.
 
 Artico server-only PR #40 SHALL NOT be treated as a browser client dependency requirement even if it is present in the temporary fork integration commit.
 
-#### Scenario: Draft acceptance uses immutable fork evidence
+#### Scenario: Draft verification uses immutable fork evidence
 
 - **GIVEN** upstream has not yet published the required client fixes
-- **WHEN** the dual-provider candidate is built for automated gates or Owner acceptance
+- **WHEN** the dual-provider candidate is built for automated gates or coding verification
 - **THEN** its Git dependency SHALL name one full immutable fork commit and the lockfile SHALL resolve that exact commit
 
 #### Scenario: Develop merge requires official package provenance
