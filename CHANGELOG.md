@@ -1,3 +1,21 @@
+# [2.7.0](https://github.com/molvqingtai/WebChat/compare/v2.6.1...v2.7.0) (2026-08-19)
+
+### Bug Fixes
+
+- **app:** gate Enter before the send throttle; complete step-4 truth-table controls ([20ee6ac](https://github.com/molvqingtai/WebChat/commit/20ee6ac3fd82a29363f252827ecd071c8233a63d))
+- **app:** gate text submission on joined/trusted/committed room (step-4) ([2836983](https://github.com/molvqingtai/WebChat/commit/283698352163c2d8afe0d1157d6af60dfb40ddb2))
+- **app:** project protocol-valid text immediately without waiting for readiness ([241dfd6](https://github.com/molvqingtai/WebChat/commit/241dfd652463ff4936f2e342d4581668cc3538a5))
+- **history:** enforce peer-owned response lanes ([84df1a1](https://github.com/molvqingtai/WebChat/commit/84df1a18e45461f0d1887ca0f54d26b462af5f91))
+- **history:** scope sync requests to triggering peer ([7696117](https://github.com/molvqingtai/WebChat/commit/769611751497c4ae1531a356ae5208c74fbf9700))
+- **runtime:** complete dual-provider transport controls ([1080dec](https://github.com/molvqingtai/WebChat/commit/1080dece375c576dd72304d6ed3ebfd9418b8487))
+- **runtime:** fan out Artico sends to ready peers ([3a4257e](https://github.com/molvqingtai/WebChat/commit/3a4257ef17cb3e56c8b58867ebe0199e923518f5))
+- **runtime:** restore direct Artico 0.3.6 send delegation ([e526b87](https://github.com/molvqingtai/WebChat/commit/e526b8700162438ba75f220ab824070206b06040))
+
+### Features
+
+- **runtime:** restore dual room transports with Artico default ([67e8afb](https://github.com/molvqingtai/WebChat/commit/67e8afb384134f1542e029ba62b47d7f5df6c0c9))
+- **runtime:** silence Trystero peer-connect errors and remove non-error console output ([7e74054](https://github.com/molvqingtai/WebChat/commit/7e740541fa27c8703ad2d9e0a365930715e34582))
+
 ## [2.6.1](https://github.com/molvqingtai/WebChat/compare/v2.6.0...v2.6.1) (2026-08-18)
 
 ### Bug Fixes
