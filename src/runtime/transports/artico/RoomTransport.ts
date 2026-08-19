@@ -14,7 +14,6 @@ interface PeerOwner {
   peerId: string
   peer: Artico
   room?: Room
-  readyPeers: Set<string>
   pendingJoin?: PendingJoin
   restartTimer: ReturnType<typeof globalThis.setTimeout> | null
   disposed: boolean
@@ -54,18 +53,15 @@ export const createRoomTransport = (): RoomTransport => {
     })
     room.on('join', (joinedPeerId) => {
       if (!isCurrent()) return
-      owner.readyPeers.add(joinedPeerId)
       joinListeners.forEach((listener) => listener(owner.roomId, joinedPeerId))
     })
     room.on('leave', (leftPeerId) => {
       if (!isCurrent()) return
-      owner.readyPeers.delete(leftPeerId)
       leaveListeners.forEach((listener) => listener(owner.roomId, leftPeerId))
     })
     room.on('close', () => {
       if (!isCurrent()) return
       owner.room = undefined
-      owner.readyPeers.clear()
       if (!owner.disposed) {
         closeListeners.forEach((listener) => listener(owner.roomId))
       }
@@ -94,7 +90,6 @@ export const createRoomTransport = (): RoomTransport => {
   const retirePeer = (owner: PeerOwner) => {
     const stale = owner.peer
     owner.room = undefined
-    owner.readyPeers.clear()
     try {
       stale?.close()
     } catch (error) {
@@ -149,7 +144,6 @@ export const createRoomTransport = (): RoomTransport => {
       roomId,
       peerId: nanoid(),
       peer: undefined as unknown as Artico,
-      readyPeers: new Set(),
       restartTimer: null,
       disposed: false
     }
@@ -162,7 +156,6 @@ export const createRoomTransport = (): RoomTransport => {
     if (owner.disposed) return
     owner.disposed = true
     owners.delete(owner.roomId)
-    owner.readyPeers.clear()
     if (owner.restartTimer) {
       globalThis.clearTimeout(owner.restartTimer)
       owner.restartTimer = null
@@ -208,24 +201,7 @@ export const createRoomTransport = (): RoomTransport => {
       const owner = owners.get(roomId)
       const room = owner?.room
       if (!owner || !room) throw new Error(`Room "${roomId}" not joined`)
-      if (Array.isArray(to) && to.length === 0) return
-      const targets = to === undefined ? undefined : new Set(Array.isArray(to) ? to : [to])
-      let firstError: unknown
-      let failed = false
-      // Artico 0.3.6 Room.send aborts on the first Call.send failure and does not guard pending
-      // Calls. Send each current ready peer separately so one failure cannot starve later peers.
-      for (const peerId of owner.readyPeers) {
-        if (targets && !targets.has(peerId)) continue
-        try {
-          room.send(payload, peerId)
-        } catch (error) {
-          if (!failed) {
-            firstError = error
-            failed = true
-          }
-        }
-      }
-      if (failed) throw firstError
+      room.send(payload, to)
     },
     onMessage: (callback) => {
       messageListeners.add(callback)
