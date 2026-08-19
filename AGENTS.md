@@ -10,7 +10,8 @@ WebChat is a decentralized, serverless browser extension that enables anonymous 
 
 - **WXT**: Browser extension framework (config: `wxt.config.ts`)
 - **Remesh**: DDD framework for domain logic with true UI/logic separation (RxJS-based reactive state management)
-- **Trystero**: WebRTC P2P communication library over public Nostr relays (used as the sole room transport)
+- **Artico**: Default WebRTC P2P room transport, using WebChat's owned signaling endpoint
+- **Trystero**: Supported alternative WebRTC P2P room transport using its default public Nostr strategy
 - **React 19** with TypeScript
 - **Tailwind CSS v4** with shadcn/ui components
 - **Valibot**: Runtime schema validation
@@ -81,7 +82,7 @@ Remesh is used across two ownership layers:
 
 ### P2P Communication Architecture
 
-The content pages are UI/comctx clients. They do not own peer rooms or duplicate durable history. A single shared headless Runtime lives in a Chrome MV3 offscreen document or the persistent Firefox MV2 background page. The Runtime owns the Trystero WebRTC transport, trusted `sourcePeerId` context, World/Chat sessions, decode and delivery queues, and history scheduling, supply, cancellation, and admission. After the last page for an origin detaches, that origin's domain state enters a five-second grace period; this does not release the shared Runtime or any other domain.
+The content pages are UI/comctx clients. They do not own peer rooms or duplicate durable history. A single shared headless Runtime lives in a Chrome MV3 offscreen document or the persistent Firefox MV2 background page. The Runtime owns one selected WebRTC room transport, trusted `sourcePeerId` context, World/Chat sessions, decode and delivery queues, and history scheduling, supply, cancellation, and admission. Artico is the shipped build-time default; Trystero remains a build-time alternative using its default Nostr strategy. `RoomTransportProvider.ts` instantiates exactly one provider for each Runtime host, with no runtime switch, automatic fallback, or simultaneous provider connection. After the last page for an origin detaches, that origin's domain state enters a five-second grace period; this does not release the shared Runtime or any other domain.
 
 `src/protocol/` is the third-party-facing peer boundary:
 
@@ -164,6 +165,7 @@ Application and Runtime constants in `src/constants/config.ts`:
 - `MAX_AVATAR_SIZE = 5120` - Maximum avatar size in browser sync storage
 - `HISTORY_WINDOW_DAYS = 30` - Frozen peer-history candidate window
 - `RUNTIME_DOMAIN_GRACE_MS = 5000` - Per-domain last-page detach grace; it is not the shared host lifetime
+- `ROOM_TRANSPORT_PROVIDER = 'artico'` - Build-time room transport selection; the supported alternative is `'trystero'`
 
 Public limits in `src/protocol/Limits.ts` are deliberately separate:
 

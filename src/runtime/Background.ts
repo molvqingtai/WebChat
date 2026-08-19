@@ -3,7 +3,7 @@ import { defineProxy } from 'comctx'
 import type { PresenceStore } from '@/domain/runtime/externs/PresenceStore'
 import type { RuntimeServer } from '@/runtime/Contract'
 import { RUNTIME_NAMESPACE_PREFIX } from '@/runtime/Contract'
-import { ProvideAdapter, relayOffscreenProviderMessages, type RelayRejection } from '@/service/adapter/runtime'
+import { ProvideAdapter, relayOffscreenProviderMessages } from '@/service/adapter/runtime'
 import { BackgroundInjectAdapter, type MessageApi } from '@/service/adapter/runtime/Core'
 import {
   PresenceStoreProviderPortAdapter,
@@ -30,8 +30,7 @@ if (!import.meta.env.FIREFOX) {
   providePresenceStore(
     new PresenceStoreProviderPortAdapter(portApi, {
       portName: presenceNamespace,
-      offscreenUrl: browser.runtime.getURL(OFFSCREEN_URL),
-      onError: (error) => console.warn('[WebChat] PresenceStore port failure:', error)
+      offscreenUrl: browser.runtime.getURL(OFFSCREEN_URL)
     })
   )
 }
@@ -135,6 +134,5 @@ export const relayOffscreenMessages = () =>
     runtime: browser.runtime,
     tabs: browser.tabs,
     namespace: runtimeNamespace,
-    offscreenUrl: browser.runtime.getURL(OFFSCREEN_URL),
-    onRejected: (rejection: RelayRejection) => console.warn('[WebChat] Dropped Offscreen Runtime relay:', rejection)
+    offscreenUrl: browser.runtime.getURL(OFFSCREEN_URL)
   })

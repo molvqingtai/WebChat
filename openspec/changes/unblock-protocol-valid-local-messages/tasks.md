@@ -12,6 +12,7 @@
 - [x] 2.2 Add adapter/Runtime controls using distinct post-validation failure sources/messages that independently hold and reject local insertion, prove transport and persistence are both attempted when the other fails, preserve each original Error through the existing scoped owner, and fail any mutation that special-cases one Error to control display.
 - [x] 2.3 Preserve mutation-sensitive protocol-invalid controls proving zero local projection, zero wire, zero persistence, draft retention, and only `Invalid message.`; retain exact allocated identity, delayed-watch, same-id collision, and same-content cross-tab evidence.
 - [x] 2.4 Pin unchanged reaction settlement, direct provider `room.send(payload, to)` delegation, remote-live `onMessage`, History, recovery, and absence of outbound queue/retry/status/fallback behavior.
+- [x] 2.5 Add mutation-sensitive step-four admission controls proving ordinary text submission remains unavailable until the local Room generation has finished joining, reached ready, and cleared connection/reconnect loading: the native send control stays disabled, Enter is a no-op, Shift+Enter remains editable, the draft is retained, and the Domain performs zero allocation, validation, event, projection, transport, or persistence work. Recovery alone does not submit; a later explicit submission uses one exact allocated identity, projects and clears once after protocol acceptance, and makes one provider attempt even with zero peers.
 
 ## 3. Implement Protocol-Accepted Local Projection
 
@@ -19,6 +20,7 @@
 - [x] 3.2 Start text transport and `MessageStore.insert` as independent post-acceptance work whose failures keep their existing scoped Error owners, do not cancel the other attempt, and cannot re-reject or mutate the accepted local result.
 - [x] 3.3 Make application text projection and draft clearing consume the protocol-accepted returned identity without waiting for later work; remove downstream settlement from the queue that admits later text commands.
 - [x] 3.4 Keep pre-acceptance preparation/schema failure, reaction behavior, local/remote projection ownership, persistence conflict rules, and every public/protocol/provider boundary unchanged; add no compatibility or fallback path.
+- [x] 3.5 Gate ordinary text admission through one `CanSubmitTextQuery` shared by the Footer and `SendTextMessageCommand`, defined by finished local join, ready host state, and no connection/reconnect operation in progress. Return no event while the gate is false; once admitted, let the text Effect consume only that accepted event without waiting on or subscribing to readiness, remote peers, WebRTC handshake, transport, persistence, or History.
 
 ## 4. Verify And Deliver
 

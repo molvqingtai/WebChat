@@ -27,7 +27,7 @@ interface TrysteroMessageAction {
  * are simply never emitted, join failures arrive through `onJoinError`, and send rejections
  * surface through the returned Promise as-is.
  */
-export const createTrysteroRoomTransport = (): RoomTransport => {
+export const createRoomTransport = (): RoomTransport => {
   const owners = new Map<string, PeerOwner>()
   /** Terminal fence: after dispose no join may create a Room, even one awaiting a pending leave. */
   let transportDisposed = false
@@ -63,6 +63,12 @@ export const createTrysteroRoomTransport = (): RoomTransport => {
     const room = joinRoom({ appId: __NAME__ }, roomId, {
       onJoinError: (details) => {
         if (!isActive(owner)) return
+        // Trystero 0.25.3 reports a post-SDP peer-to-peer failure through this callback. It names
+        // no responsible side and is not actionable, so it stays private to the adapter: no generic
+        // error event, Toast, console output, retained state, or rate limiting. Every later
+        // negotiation attempt follows the same stateless rule; stale owners remain fenced. All
+        // other join errors keep the generic route exactly once.
+        if (details.error.startsWith('could not connect to peer ')) return
         errorListeners.forEach((listener) => listener(new Error(details.error), roomId))
       }
     })

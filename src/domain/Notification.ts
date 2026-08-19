@@ -26,9 +26,7 @@ const NotificationDomain = Remesh.domain({
               return null
             }
 
-            void notificationExtern.push(message).catch((error) => {
-              console.warn('[WebChat] Notification push failed:', error)
-            })
+            void notificationExtern.push(message).catch(() => {})
             return null
           })
         )

@@ -783,17 +783,6 @@ const WireDomain = Remesh.domain({
         ).pipe(map(ErrorEvent))
     })
 
-    domain.effect({
-      name: 'Wire.ProtocolDropEffect',
-      impl: ({ fromEvent }) =>
-        fromEvent(ProtocolDropEvent).pipe(
-          map(({ sourcePeerId, reason, error }) => {
-            console.warn(`[WebChat] Dropped v5 frame from ${sourcePeerId}: ${reason}`, error ?? '')
-            return null
-          })
-        )
-    })
-
     return {
       query: { PeerIdQuery, TrustedRoomsQuery, IsRoomTrustedQuery, DecodeQueuesQuery, IsSourceAdmittedQuery },
       command: {

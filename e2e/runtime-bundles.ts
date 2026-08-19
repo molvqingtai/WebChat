@@ -48,7 +48,7 @@ assert(!chromeHost.includes('tabs.query'), 'Chrome Offscreen host must not conta
 ;['this.tabs.get', 'this.tabs.sendMessage'].forEach((marker) =>
   assert(firefoxBackground.includes(marker), `Firefox background provider must retain ${marker}`)
 )
-;['Dropped Offscreen Runtime relay:', 'untrusted-source', 'target-mismatch'].forEach((relayMarker) =>
+;['untrusted-source', 'target-mismatch'].forEach((relayMarker) =>
   assert(
     !firefoxBackground.includes(relayMarker),
     `Firefox background must not contain Chrome relay marker ${relayMarker}`

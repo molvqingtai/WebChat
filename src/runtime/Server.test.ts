@@ -3178,6 +3178,31 @@ describe('RuntimeServer trusted delivery', () => {
 })
 
 describe('RuntimeServer send reliability', () => {
+  it('reaches the step-4 gate with zero peers: join+trusted+commit complete and a first TEXT reaches the provider exactly once', async () => {
+    const { fake, server, roomId } = await setup()
+    // No peers are planted, no session()/History is supplied: the whole join must complete on its own.
+
+    const snapshot = await server.getSnapshot()
+    const domain = snapshot.domains.find((item) => item.domain === DOMAIN)
+    expect(domain?.phase).toBe('active')
+    expect(domain?.chatRoomJoined).toBe(true)
+    expect(domain?.localSession?.user.id).toBe(USER.id)
+
+    // The room is trusted with zero members: a freshly allocated TEXT is accepted and reaches the
+    // provider exactly once through the empty-member no-op broadcast with its exact identity.
+    const record = await server.allocateTextMessage({ domain: DOMAIN, body: 'zero peers', mentions: [] })
+    await expect(server.sendChatMessage({ domain: DOMAIN, event: record.message })).resolves.toBe(record.message)
+    await settle()
+
+    const attempts = fake.sent.filter(
+      (item) => item.roomId === roomId && JSON.parse(item.payload).type === MESSAGE_TYPE.TEXT
+    )
+    expect(attempts).toHaveLength(1)
+    expect(attempts[0].to).toEqual([])
+    expect(JSON.parse(attempts[0].payload).id).toBe(record.message.id)
+    disposeServer(server)
+  })
+
   it('accepts later protocol-valid texts without waiting for an earlier transport settlement', async () => {
     const { fake, server, roomId } = await setup()
     // A current member makes the room-wide sends reach the provider; the caller settlement

@@ -228,3 +228,6 @@ export const RUNTIME_DOMAIN_GRACE_MS = 5000 as const
  * cancels it, expiry removes the generation and emits one leave when no other presence remains.
  */
 export const PENDING_LEAVE_GRACE_MS = 5000 as const
+
+export type RoomTransportProvider = 'artico' | 'trystero'
+export const ROOM_TRANSPORT_PROVIDER: RoomTransportProvider = 'artico'
