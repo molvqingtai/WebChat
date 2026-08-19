@@ -1,4 +1,5 @@
 allowBuilds:
+  '@rtco/client@https://codeload.github.com/molvqingtai/artico/tar.gz/0deb0f0fa2fc1ec17f05043f8fb47bc4c11de71f#path:/packages/client': false
   bufferutil: true
   core-js: false
   esbuild: true
