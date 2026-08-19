@@ -28,6 +28,8 @@ This authority supersedes only the contrary initial-Session broadcast/catch-up c
 
 Connection already receives each Wire `onPeerJoin(roomId, sourcePeerId)` fact after Wire admits that source. The minimal change makes that existing handler invoke the current Session target-send path and the current History requester-start path for the same source. It adds no edge registry, pending-edge set, peer snapshot, or room-size decision.
 
+Deferred peer work remains owned by the exact accepted connection attempt and room generation. Peer leave, domain release, attempt failure or supersession, host loss, and room recovery cancel stale callbacks before they can target-send Session or start History. A peer edge arriving after release begins is not admitted, while a fresh replacement-generation edge may start exactly once without a parallel committed-attempt ledger.
+
 Session and History keep their existing independent state. History owns its fresh `syncId`, Pull/Push progression, terminal state, and existing budgets. A Session success or failure does not start, authorize, settle, or cancel History, and a History success or failure does not do so for Session.
 
 Alternative rejected: continue using Session binding as the History trigger. It serializes independent protocols, makes logical Presence identity an unnecessary History transport authority, and cannot guarantee that the two protocols cover the same physical edges.
@@ -53,6 +55,8 @@ Alternative rejected: replace Session binding with another source-membership gua
 ### 4. Current History exchange and wire contracts remain intact
 
 Each admitted direction still allocates one fresh `syncId`, sends continuous target-only Pull inventory pages, and receives continuous target-only Push pages under the current cutoff, paging, replay, timeout, supplier, Delivery, persistence, and terminal rules. Provider/requester attempts retain their distinct existing terminal fences: settling the local loading UI does not terminate an exact-owner requester's valid late Push collection. The public Session/Pull/Push structures remain byte-for-byte unchanged. No peer-visible combined handshake or acknowledgement is added.
+
+Automatic Chat-room close and recovery clear the recovered domain's provider ownership and every requester/provider binding, including terminal provider-only bindings whose source collection has already been released. Exact requester attempts and their collected state remain available under the existing valid late-Push boundary. A fresh same-source Pull after recovery can therefore create one new provider without reviving or being blocked by the prior physical incarnation.
 
 ### 5. Typed routing is not repeated inside internal apply Commands
 

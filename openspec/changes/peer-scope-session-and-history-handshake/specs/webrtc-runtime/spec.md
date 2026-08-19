@@ -6,7 +6,9 @@ Each current admitted Chat peer-join callback SHALL independently invoke one tar
 
 Initial Session publication SHALL NOT use an omitted target, room-wide broadcast, all-peer snapshot, baseline-peer set, missed-peer catch-up list, or delayed room-size decision. Receiving a valid Session SHALL validate and apply only that remote Session; it SHALL NOT itself trigger a Session reply. An eligible page-zero History Pull delivered by Wire's trusted-room, current-generation, and schema-valid accepted-message path SHALL create source-owned provider work directly from its transport `roomId`, `sourcePeerId`, and `syncId`, without requiring a Session binding, Wire source-membership query, accepted Session, `sessionId`, `presenceId`, user identity, or Presence observation. Only matching continuous pages SHALL advance it under the existing page-order, replay, resource, bound-`syncId`, and terminal fences; gaps, changed replays, a second `syncId`, post-done pages, and terminal connections SHALL retain their existing behavior. Push SHALL retain its exact requester `syncId` and owning-source match plus its existing valid late-page boundary, including collection after loading settlement. Text, Reaction, and World publication SHALL retain their existing room-wide behavior.
 
-This change SHALL add no peer-edge registry, pending-edge owner, retry, or new generation State. Existing Wire/Connection leave, reconnect, replacement, queue, and generation behavior SHALL remain unchanged.
+This change SHALL add no peer-edge registry, pending-edge owner, retry, committed-attempt ledger, or new generation State. Deferred peer work SHALL remain owned by the exact accepted connection attempt and room generation. Peer leave, domain release, attempt failure or supersession, host loss, and room recovery SHALL cancel stale callbacks before Session send or History start, and a peer edge arriving after release begins SHALL produce no new protocol work.
+
+Automatic Chat-room close and recovery SHALL clear the recovered domain's provider ownership and all requester/provider bindings, including terminal provider-only bindings with no remaining source collection, so that a fresh same-source Pull can create one provider in the replacement physical incarnation. This reset SHALL retain exact requester attempts and their collected state for valid late Push pages under the existing boundary.
 
 #### Scenario: Joining peer exchanges independently with existing peers
 
@@ -45,6 +47,18 @@ This change SHALL add no peer-edge registry, pending-edge owner, retry, or new g
 - **GIVEN** A and B have completed or terminalized both directional Session and History lanes
 - **WHEN** C is later admitted by A and B
 - **THEN** only A-C, C-A, B-C, and C-B SHALL start one Session lane and one History lane each, while A-B and B-A remain unchanged
+
+#### Scenario: Deferred peer work stays with its exact lifecycle
+
+- **GIVEN** peer work is deferred for one accepted connection attempt and room generation
+- **WHEN** that peer leaves, domain release begins, the attempt fails or is superseded, the host is lost, or room recovery replaces the physical incarnation
+- **THEN** the stale callback SHALL send no Session and start no History, a peer arriving after release begins SHALL produce no protocol work, and one fresh peer in the current replacement generation SHALL start exactly one Session lane and one History requester without a committed-attempt ledger
+
+#### Scenario: Recovery resets provider bindings without ending late Push
+
+- **GIVEN** a provider-only Pull has terminalized and its source collection has been released while an exact requester may still collect valid late Push pages
+- **WHEN** the Chat room closes automatically and the domain recovers without per-peer leave callbacks
+- **THEN** recovery SHALL clear the old provider ownership and every requester/provider binding for that domain, a fresh same-source Pull SHALL invoke one new provider, and the exact requester attempt SHALL retain its valid late-Push collection boundary
 
 ## MODIFIED Requirements
 
