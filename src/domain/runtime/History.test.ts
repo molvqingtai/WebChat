@@ -168,18 +168,18 @@ const connectedNetwork = () => {
       join: async (roomId) => {
         if (peer.joinedRooms.has(roomId)) return
         peer.joinedRooms.add(roomId)
-        for (const other of peers.values()) {
-          if (other.peerId === peerId || !other.joinedRooms.has(roomId)) continue
-          for (const listener of other.peerJoinListeners) listener(roomId, peerId)
-          for (const listener of peer.peerJoinListeners) listener(roomId, other.peerId)
-        }
+        peers.forEach((other) => {
+          if (other.peerId === peerId || !other.joinedRooms.has(roomId)) return
+          other.peerJoinListeners.forEach((listener) => listener(roomId, peerId))
+          peer.peerJoinListeners.forEach((listener) => listener(roomId, other.peerId))
+        })
       },
       leave: (roomId) => {
         if (!peer.joinedRooms.delete(roomId)) return
-        for (const other of peers.values()) {
-          if (other.peerId === peerId || !other.joinedRooms.has(roomId)) continue
-          for (const listener of other.peerLeaveListeners) listener(roomId, peerId)
-        }
+        peers.forEach((other) => {
+          if (other.peerId === peerId || !other.joinedRooms.has(roomId)) return
+          other.peerLeaveListeners.forEach((listener) => listener(roomId, peerId))
+        })
       },
       send: async (roomId, payload, targetPeerIds) => {
         const requested =
@@ -195,10 +195,10 @@ const connectedNetwork = () => {
           message: JSON.parse(payload) as ChatRoomMessage,
           fromPeerId: peerId
         })
-        for (const target of targets) {
+        targets.forEach((target) => {
           const recipient = peers.get(target)
           if (recipient?.joinedRooms.has(roomId)) recipient.messageListener?.(roomId, peerId, payload)
-        }
+        })
       },
       onMessage: (callback) => {
         peer.messageListener = callback
@@ -217,7 +217,7 @@ const connectedNetwork = () => {
       onRoomClose: () => () => {},
       onError: () => () => {},
       dispose: () => {
-        for (const roomId of peer.joinedRooms) transport.leave(roomId)
+        peer.joinedRooms.forEach((roomId) => transport.leave(roomId))
         peers.delete(peerId)
       }
     }
