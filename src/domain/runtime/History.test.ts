@@ -12,7 +12,8 @@ import { RoomTransportExtern, WireCodecExtern } from '@/domain/runtime/externs/R
 import { PagePortExtern } from '@/domain/runtime/externs/PagePort'
 import { MESSAGE_TYPE } from '@/protocol'
 import type { RoomTransport } from '@/runtime/RoomTransport'
-import type { HistoryMessagesPull, WireCodec, ChatRoomMessage } from '@/protocol'
+import type { HistoryMessagesPull, HistoryMessagesPush, WireCodec, ChatRoomMessage } from '@/protocol'
+import { MESSAGE_RECORD_TYPE, type ChatMessageRecord } from '@/domain/Message'
 import { getChatRoomId } from '@/runtime/Server'
 
 const DOMAIN = 'https://example.com'
@@ -55,7 +56,7 @@ const fakeTransport = () => {
   }
 }
 
-const setup = async (sourcePeerId = 'peer-a') => {
+const setup = async (sourcePeerId = 'peer-a', codec: WireCodec = jsonCodec) => {
   const pagePort = new PagePort()
   const { transport, receive, sent } = fakeTransport()
   const store = Remesh.store({
@@ -67,7 +68,7 @@ const setup = async (sourcePeerId = 'peer-a') => {
         save: async () => {}
       }),
       RoomTransportExtern.impl(transport),
-      WireCodecExtern.impl(jsonCodec),
+      WireCodecExtern.impl(codec),
       PagePortExtern.impl(pagePort)
     ]
   })
@@ -192,7 +193,7 @@ describe('HistoryDomain connection-binding lifecycle', () => {
 })
 
 describe('HistoryDomain inventory targets', () => {
-  it('sends every inventory page once to the request-start provider array', async () => {
+  it('sends every inventory page once to the triggering source provider', async () => {
     const { store, history, pagePort, receive, sent } = await setup()
     pagePort.provideHistory('page-a', DOMAIN, (event) => {
       if (event.type === 'request') {
@@ -234,6 +235,240 @@ describe('HistoryDomain inventory targets', () => {
     )
 
     expect(sent.filter((item) => item.message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)).toEqual([])
+  })
+})
+
+describe('HistoryDomain peer-scoped requester targets', () => {
+  const admitPeer = async (receive: Fixture['receive'], peerId: string, sessionId: string) => {
+    receive(ROOM_ID, peerId, {
+      type: MESSAGE_TYPE.SESSION,
+      sessionId,
+      presenceId: `presence-${peerId}`,
+      joinedAt: 3,
+      user: USER
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  }
+
+  const supplyEmpty = (pagePort: Fixture['pagePort']) =>
+    pagePort.provideHistory('page-a', DOMAIN, (event) => {
+      if (event.type === 'request') {
+        void pagePort.resolveHistorySupply('page-a', event.request.supplyId, { records: [], done: true })
+      }
+    })
+
+  const pulls = (sent: Fixture['sent']) =>
+    sent.filter((item) => item.message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)
+  const pushes = (sent: Fixture['sent']) =>
+    sent.filter((item) => item.message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH)
+  const pullMessage = (item: Fixture['sent'][number]) => item.message as HistoryMessagesPull
+  const pushMessage = (item: Fixture['sent'][number]) => item.message as HistoryMessagesPush
+  const targetsOf = (item: Fixture['sent'][number]) => JSON.stringify(item.targetPeerIds)
+
+  it('targets only the triggering source peer for each direction', async () => {
+    const { store, history, pagePort, receive, sent } = await setup()
+    supplyEmpty(pagePort)
+    await admitPeer(receive, 'peer-b', 'session-b')
+
+    store.send(history.command.StartRequesterCommand({ domain: DOMAIN, sourcePeerId: 'peer-a' }))
+    await vi.waitFor(() => expect(pulls(sent)).toHaveLength(1))
+    store.send(history.command.StartRequesterCommand({ domain: DOMAIN, sourcePeerId: 'peer-b' }))
+    await vi.waitFor(() => expect(pulls(sent)).toHaveLength(2))
+
+    const [first, second] = pulls(sent)
+    expect(first.targetPeerIds).toEqual(['peer-a'])
+    expect(second.targetPeerIds).toEqual(['peer-b'])
+    const syncIds = pulls(sent).map((item) => pullMessage(item).syncId)
+    expect(new Set(syncIds).size).toBe(2)
+    expect(
+      store
+        .query(history.query.RequesterAttemptsQuery())
+        .map((item) => item.sourcePeerId)
+        .sort()
+    ).toEqual(['peer-a', 'peer-b'])
+  })
+
+  it('admitting a new peer never restarts or appends to an established exchange', async () => {
+    const { store, history, pagePort, receive, sent } = await setup()
+    supplyEmpty(pagePort)
+
+    store.send(history.command.StartRequesterCommand({ domain: DOMAIN, sourcePeerId: 'peer-a' }))
+    await vi.waitFor(() => expect(pulls(sent)).toHaveLength(1))
+    const establishedSyncId = pullMessage(pulls(sent)[0]!).syncId
+    receive(ROOM_ID, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PUSH,
+      syncId: establishedSyncId,
+      page: 0,
+      users: [],
+      messages: [],
+      done: true
+    })
+    await vi.waitFor(() =>
+      expect(store.query(history.query.RequesterAttemptsQuery()).every((item) => item.loadingSettled)).toBe(true)
+    )
+
+    // C joins: only the C-scoped exchange starts; the established A exchange sends nothing more.
+    await admitPeer(receive, 'peer-c', 'session-c')
+    store.send(history.command.StartRequesterCommand({ domain: DOMAIN, sourcePeerId: 'peer-c' }))
+    await vi.waitFor(() => expect(pulls(sent)).toHaveLength(2))
+
+    const establishedPulls = pulls(sent).filter((item) => targetsOf(item) === JSON.stringify(['peer-a']))
+    expect(establishedPulls).toHaveLength(1)
+    const newPeerPulls = pulls(sent).filter((item) => targetsOf(item) === JSON.stringify(['peer-c']))
+    expect(newPeerPulls).toHaveLength(1)
+    const established = store
+      .query(history.query.RequesterAttemptsQuery())
+      .find((item) => item.sourcePeerId === 'peer-a')
+    expect(established?.syncId).toBe(establishedSyncId)
+  })
+
+  it('batched admissions create distinct owners with exact singleton targets', async () => {
+    const { store, history, pagePort, receive, sent } = await setup()
+    supplyEmpty(pagePort)
+    await admitPeer(receive, 'peer-b', 'session-b')
+    await admitPeer(receive, 'peer-c', 'session-c')
+
+    store.send(history.command.StartRequesterCommand({ domain: DOMAIN, sourcePeerId: 'peer-b' }))
+    store.send(history.command.StartRequesterCommand({ domain: DOMAIN, sourcePeerId: 'peer-c' }))
+    await vi.waitFor(() => expect(pulls(sent)).toHaveLength(2))
+
+    // Mutation-sensitive: restoring an all-current-Session allocation would target
+    // ['peer-b','peer-c'] (or include 'peer-a') and fail these singleton assertions.
+    const targets = pulls(sent).map(targetsOf).sort()
+    expect(targets).toEqual([JSON.stringify(['peer-b']), JSON.stringify(['peer-c'])])
+    const syncIds = pulls(sent).map((item) => pullMessage(item).syncId)
+    expect(new Set(syncIds).size).toBe(2)
+  })
+
+  it('settles the loading once its own source completes, without waiting on any other peer', async () => {
+    const { store, history, pagePort, receive, sent } = await setup()
+    supplyEmpty(pagePort)
+    await admitPeer(receive, 'peer-b', 'session-b')
+
+    store.send(history.command.StartRequesterCommand({ domain: DOMAIN, sourcePeerId: 'peer-a' }))
+    await vi.waitFor(() => expect(pulls(sent)).toHaveLength(1))
+    const syncId = pullMessage(pulls(sent)[0]!).syncId
+
+    // The sole provider completes; the loading closes even though peer-b never responded to
+    // anything. An all-provider snapshot would keep the loading open on the unsettled peer-b seat.
+    receive(ROOM_ID, 'peer-a', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PUSH,
+      syncId,
+      page: 0,
+      users: [],
+      messages: [],
+      done: true
+    })
+    await vi.waitFor(() =>
+      expect(store.query(history.query.RequesterAttemptsQuery()).every((item) => item.loadingSettled)).toBe(true)
+    )
+  })
+
+  it('an unrelated departure never settles the loading; the source departure does', async () => {
+    const { store, history, pagePort, receive, sent } = await setup()
+    supplyEmpty(pagePort)
+    await admitPeer(receive, 'peer-b', 'session-b')
+
+    store.send(history.command.StartRequesterCommand({ domain: DOMAIN, sourcePeerId: 'peer-a' }))
+    await vi.waitFor(() => expect(pulls(sent)).toHaveLength(1))
+
+    store.send(history.command.RemovePeerCommand({ domain: DOMAIN, sourcePeerId: 'peer-b' }))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(store.query(history.query.RequesterAttemptsQuery()).every((item) => !item.loadingSettled)).toBe(true)
+
+    store.send(history.command.RemovePeerCommand({ domain: DOMAIN, sourcePeerId: 'peer-a' }))
+    await vi.waitFor(() =>
+      expect(store.query(history.query.RequesterAttemptsQuery()).every((item) => item.loadingSettled)).toBe(true)
+    )
+  })
+
+  it('multi-page inventory stays one logical pull under one syncId with in-order progression', async () => {
+    // A tiny encoded-frame bound forces the real chunking to split the inventory into pages.
+    const limitedCodec: WireCodec = {
+      encode: async (value) => {
+        const frame = JSON.stringify(value)
+        if (frame.length > 200) throw new Error('frame too large')
+        return frame
+      },
+      decode: async (payload) => JSON.parse(payload)
+    }
+    const { store, history, pagePort, sent } = await setup('peer-a', limitedCodec)
+    const record = (id: string): ChatMessageRecord => ({
+      type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE,
+      id,
+      message: {
+        type: MESSAGE_TYPE.TEXT,
+        id,
+        hlc: { timestamp: 1_000_000, counter: 0 },
+        userId: USER.id,
+        body: 'x',
+        mentions: []
+      },
+      user: USER,
+      receivedAt: 1_000_000
+    })
+    // 40-char ids make exactly two fit each 200-byte frame, so four ids chunk into two pages.
+    const ids = [1, 2, 3, 4].map((n) => `m-${String(n).padStart(38, '0')}`)
+    pagePort.provideHistory('page-a', DOMAIN, (event) => {
+      if (event.type === 'request') {
+        void pagePort.resolveHistorySupply('page-a', event.request.supplyId, {
+          records: ids.map(record),
+          done: true
+        })
+      }
+    })
+
+    store.send(history.command.StartRequesterCommand({ domain: DOMAIN, sourcePeerId: 'peer-a' }))
+    await vi.waitFor(() => expect(pulls(sent).length).toBeGreaterThan(1))
+
+    const pages = pulls(sent).map(pullMessage)
+    // One logical pull: every chunk shares the single attempt syncId and the singleton target,
+    // pages progress in order, and only the final page is done. No response chunk from the peer
+    // was ever received, proving progression is local send settlement, not a peer round trip.
+    expect(new Set(pages.map((page) => page.syncId)).size).toBe(1)
+    expect(pulls(sent).every((item) => targetsOf(item) === JSON.stringify(['peer-a']))).toBe(true)
+    expect(pages.map((page) => page.page)).toEqual(pages.map((_, index) => index))
+    expect(pages.slice(0, -1).every((page) => !page.done)).toBe(true)
+    expect(pages.at(-1)?.done).toBe(true)
+  })
+
+  it('multi-page response stays one logical push under the request syncId', async () => {
+    const { store, history, pagePort, sent } = await setup()
+    const record = (id: string): ChatMessageRecord => ({
+      type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE,
+      id,
+      message: {
+        type: MESSAGE_TYPE.TEXT,
+        id,
+        hlc: { timestamp: 1_000_000, counter: 0 },
+        userId: USER.id,
+        body: 'x',
+        mentions: []
+      },
+      user: USER,
+      receivedAt: 1_000_000
+    })
+    // One more record than a single response page holds, so the push chunks into two pages.
+    const ids = Array.from({ length: 101 }, (_, index) => `m-${index}`)
+    pagePort.provideHistory('page-a', DOMAIN, (event) => {
+      if (event.type === 'request') {
+        void pagePort.resolveHistorySupply('page-a', event.request.supplyId, {
+          records: ids.map(record),
+          done: true
+        })
+      }
+    })
+
+    // The remote peer pulls from us; our provider response is one logical push chunked into pages.
+    sendProviderRequest(store, history, 'remote-sync-1', 0, true)
+    await vi.waitFor(() => expect(pushes(sent).length).toBeGreaterThan(1))
+
+    const pages = pushes(sent).map(pushMessage)
+    expect(pages.every((page) => page.syncId === 'remote-sync-1')).toBe(true)
+    expect(pushes(sent).every((item) => targetsOf(item) === JSON.stringify(['peer-a']))).toBe(true)
+    expect(pages.map((page) => page.page)).toEqual(pages.map((_, index) => index))
+    expect(pages.slice(0, -1).every((page) => !page.done)).toBe(true)
+    expect(pages.at(-1)?.done).toBe(true)
   })
 })
 

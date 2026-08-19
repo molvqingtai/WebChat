@@ -66,8 +66,8 @@ interface ProviderResponseState {
   queuedResponseTail: number
 }
 
-/** Outgoing requester: one domain synchronization sending targeted paged inventory requests and
- * merging every provider's response pages through independent per-provider response lanes. */
+/** Outgoing requester: one domain synchronization sending targeted paged inventory requests to
+ * the single triggering source peer and merging its response pages through the response lane. */
 interface RequesterAttemptState extends HistoryAttemptKey {
   cutoff: number
   inventoryIds: string[]
@@ -75,13 +75,9 @@ interface RequesterAttemptState extends HistoryAttemptKey {
   inventoryPages: HistoryMessagesPull[]
   nextInventoryPage: number
   feedbackActive: boolean
-  /** Providers expected at request start; the loading settles only when every one of them has
-   * completed, failed, or departed. */
-  expectedProviders: string[]
-  /** Snapshotted providers that have already completed, failed, or departed. */
-  settledProviders: string[]
-  /** True once the loading UI has closed (all providers settled, timeout, or manual dismiss).
-   *  Loading-only: the requester keeps sending targeted inventory pages and merging late pages. */
+  /** True once the loading UI has closed (the sole provider completed, failed, or departed, the
+   *  timeout fired, or a manual dismiss). Loading-only: the requester keeps sending targeted
+   *  inventory pages and merging late pages. */
   loadingSettled: boolean
   /** True once a real source replacement retires this outgoing owner; its inventory stops while
    *  its response collection keeps accepting valid late pages by request identity. */
@@ -200,9 +196,6 @@ const sourceJobKey = (key: HistoryAttemptKey) => `${key.domain}|${key.sourcePeer
 
 /** Non-dormant requester jobs currently occupying the shared supplier-to-send active slots. */
 const countActiveRequesterJobs = (jobs: RequesterSupplyJob[]) => jobs.filter((item) => !item.dormant).length
-
-const allExpectedSettled = (state: RequesterAttemptState) =>
-  state.expectedProviders.every((provider) => state.settledProviders.includes(provider))
 
 const HistoryDomain = Remesh.domain({
   name: 'HistoryDomain',
@@ -370,8 +363,6 @@ const HistoryDomain = Remesh.domain({
           inventoryPages: [],
           nextInventoryPage: 0,
           feedbackActive: false,
-          expectedProviders: [...new Set(runtime.sessions.map((session) => session.sourcePeerId))],
-          settledProviders: [],
           providers: {},
           loadingSettled: false,
           retired: false
@@ -418,19 +409,12 @@ const HistoryDomain = Remesh.domain({
         const requesters = get(RequesterAttemptsState())
         const current = requesters.find((item) => item.domain === payload.domain && item.syncId === payload.syncId)
         if (!current) return null
-        // Settle only that provider's request-start snapshot seat: loading settlement is separate
-        // from response collection, so a provider failure never terminalizes or erases its lane.
-        const next: RequesterAttemptState = {
-          ...current,
-          settledProviders: [...new Set([...current.settledProviders, payload.providerId])]
-        }
-        const actions: RemeshCommandOutput[] = [
-          RequesterAttemptsState().new(replaceBy(requesters, (item) => matchesSync(item, current), next))
-        ]
+        // Singleton scope: this requester's sole provider is its own triggering source, so only
+        // that source's finish closes the loading (SettleLoadingCommand is itself idempotent).
         // Loading closure never deletes or terminalizes the request: the requester persists so a
         // valid late associated page still merges.
-        if (allExpectedSettled(next) && !next.loadingSettled) actions.push(SettleLoadingCommand(current))
-        return actions
+        if (payload.providerId !== current.sourcePeerId) return null
+        return SettleLoadingCommand(current)
       }
     })
 
@@ -786,10 +770,10 @@ const HistoryDomain = Remesh.domain({
         if (!current || current.retired) return ReleaseRequesterSupplyJobCommand(payload)
         const page = current.inventoryPages[current.nextInventoryPage]
         if (!page) return FinishCurrentRequestedEvent(payload)
-        const targetPeerIds = selectPeerIds(
-          current.expectedProviders,
-          get(wireDomain.query.PeerIdQuery(runtime.roomId))
-        )
+        // Singleton scope: the sole physical target is the triggering source itself. The
+        // Wire-peer intersection only excludes the local peer; a departed source yields an empty
+        // target and the attempt finishes locally with no fallback target.
+        const targetPeerIds = selectPeerIds([current.sourcePeerId], get(wireDomain.query.PeerIdQuery(runtime.roomId)))
         if (targetPeerIds.length === 0) return FinishCurrentRequestedEvent(payload)
         const requestId = `history:inventory:${payload.syncToken}:${current.nextInventoryPage}`
         return [
@@ -1927,32 +1911,15 @@ const HistoryDomain = Remesh.domain({
       impl: ({ get }, payload: { domain: string; sourcePeerId: string }) => {
         const requesters = get(RequesterAttemptsState())
         const owners = get(FeedbackOwnersState())
-        // A departing provider settles its request-start snapshot seat in EVERY active requester
-        // for the domain that expected it: it does not terminalize the lane, clear accepted queued
-        // pages, or make a later otherwise valid associated page ineligible. Each request
-        // re-evaluates its own snapshot independently and closes its loading once fully settled.
+        // A departing provider closes the loading of EVERY active requester it owns — under
+        // singleton scope that is exactly the requester whose triggering source is the departing
+        // peer: it does not terminalize the lane, clear accepted queued pages, or make a later
+        // otherwise valid associated page ineligible.
         const affected = requesters.filter(
-          (item) =>
-            item.domain === payload.domain && !item.retired && item.expectedProviders.includes(payload.sourcePeerId)
+          (item) => item.domain === payload.domain && !item.retired && item.sourcePeerId === payload.sourcePeerId
         )
-        const advanced = affected.map((item) => ({
-          key: item,
-          next: {
-            ...item,
-            settledProviders: [...new Set([...item.settledProviders, payload.sourcePeerId])]
-          } as RequesterAttemptState
-        }))
         return [
-          ...(advanced.length > 0
-            ? [
-                RequesterAttemptsState().new(
-                  requesters.map((item) => advanced.find((entry) => matchesSync(entry.key, item))?.next ?? item)
-                )
-              ]
-            : []),
-          ...advanced
-            .filter((entry) => allExpectedSettled(entry.next) && !entry.next.loadingSettled)
-            .map((entry) => SettleLoadingCommand(entry.key)),
+          ...affected.filter((item) => !item.loadingSettled).map((item) => SettleLoadingCommand(item)),
           CleanupProviderSlotsCommand(payload),
           ClearSyncBindingsCommand(payload),
           ...owners
