@@ -2973,15 +2973,246 @@ describe('RuntimeServer provisional recovery races', () => {
     await settle()
     // The superseded attempt never commits, so the peer can only receive the replacement identity.
     const staleChatSessions = sentToPeer(fake, roomId, 'stale-peer')
-    expect(staleChatSessions.length).toBeGreaterThanOrEqual(0)
-    staleChatSessions.forEach((message) =>
-      expect(message).toEqual(expect.objectContaining({ user: expect.objectContaining({ name: 'Refreshed' }) }))
-    )
+    expect(staleChatSessions).toEqual([])
     // The superseded attempt never commits, so the peer can only receive the replacement identity,
     // exactly once, as a current World Room target.
     expect(sentToPeer(fake, worldRoomId, 'stale-peer')).toEqual([
       expect.objectContaining({ user: expect.objectContaining({ name: 'Refreshed' }) })
     ])
+  })
+
+  it('cleans provisional History ownership before a same-source retry', async () => {
+    const fake = createFakeTransport({ physicalReady: false })
+    const server = createServer({ transport: fake.transport, clock: new FakeClock(), codec: jsonCodec })
+    const roomId = getChatRoomId(DOMAIN)
+    const worldRoomId = getWorldRoomId()
+    await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
+
+    const started: string[] = []
+    const cancelled: string[] = []
+    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, (request, signal) => {
+      if (request.mode === 'inventory') return Promise.resolve({ records: [], done: true })
+      started.push(request.syncId)
+      return new Promise<HistorySupplyResult>((_resolve, reject) => {
+        signal.addEventListener(
+          'abort',
+          () => {
+            cancelled.push(request.syncId)
+            reject(signal.reason ?? new Error('History supply cancelled'))
+          },
+          { once: true }
+        )
+      })
+    })
+
+    fake.plantPeer(roomId, 'history-peer')
+    fake.hangSendsTo(worldRoomId)
+    const worldSendAttempt = fake.waitForSendAttempt(worldRoomId)
+    const firstJoin = server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE }).then(
+      () => null,
+      () => null
+    )
+    await fake.waitForDesiredRooms(2)
+    fake.open()
+    await worldSendAttempt
+
+    fake.receive(roomId, 'history-peer', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
+      syncId: 'provisional-pull',
+      page: 0,
+      messageIds: [],
+      done: true
+    })
+    await vi.waitFor(() => expect(started).toEqual(['provisional-pull']))
+
+    const replacement = server.joinChatRoom({
+      domain: DOMAIN,
+      user: { ...USER, name: 'Retried' },
+      site: SITE
+    })
+    await settle()
+    fake.releaseSends()
+    await expect(firstJoin).resolves.toBeNull()
+    const replacementSnapshot = await replacement
+    expect(replacementSnapshot?.domains[0]?.localSession?.user.name).toBe('Retried')
+
+    await vi.waitFor(() => expect(cancelled).toEqual(['provisional-pull']))
+    fake.receive(roomId, 'history-peer', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
+      syncId: 'fresh-pull',
+      page: 0,
+      messageIds: [],
+      done: true
+    })
+    await vi.waitFor(() => expect(started).toEqual(['provisional-pull', 'fresh-pull']))
+    disposeServer(server)
+  })
+
+  it('preserves a committed History owner while a replacement attempt is superseded', async () => {
+    const { fake, server, roomId } = await setup()
+    const worldRoomId = getWorldRoomId()
+    const started: string[] = []
+    const cancelled: string[] = []
+    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, (request, signal) => {
+      if (request.mode === 'inventory') return Promise.resolve({ records: [], done: true })
+      started.push(request.syncId)
+      return new Promise<HistorySupplyResult>((_resolve, reject) => {
+        signal.addEventListener(
+          'abort',
+          () => {
+            cancelled.push(request.syncId)
+            reject(signal.reason ?? new Error('History supply cancelled'))
+          },
+          { once: true }
+        )
+      })
+    })
+    fake.receive(roomId, 'committed-history-peer', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
+      syncId: 'committed-pull',
+      page: 0,
+      messageIds: [],
+      done: true
+    })
+    await vi.waitFor(() => expect(started).toEqual(['committed-pull']))
+
+    fake.plantPeer(worldRoomId, 'world-peer')
+    fake.hangSendsTo(worldRoomId)
+    const worldSendAttempt = fake.waitForSendAttempt(worldRoomId)
+    const firstReplacement = server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
+    await worldSendAttempt
+    const secondReplacement = server.joinChatRoom({
+      domain: DOMAIN,
+      user: { ...USER, name: 'Second replacement' },
+      site: SITE
+    })
+    await settle()
+    fake.releaseSends()
+
+    await expect(firstReplacement).resolves.toBeNull()
+    const snapshot = await secondReplacement
+    expect(snapshot?.domains[0]?.localSession?.user.name).toBe('Second replacement')
+    expect(cancelled).toEqual([])
+    disposeServer(server)
+  })
+
+  it('cleans provisional History on domain release before commit and allows a same-source retry', async () => {
+    const clock = new FakeClock()
+    const fake = createFakeTransport({ physicalReady: false })
+    const server = createServer({ transport: fake.transport, clock, codec: jsonCodec })
+    const roomId = getChatRoomId(DOMAIN)
+    const worldRoomId = getWorldRoomId()
+    await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
+
+    const started: string[] = []
+    const cancelled: string[] = []
+    const installProvider = () =>
+      registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, (request, signal) => {
+        if (request.mode === 'inventory') return Promise.resolve({ records: [], done: true })
+        started.push(request.syncId)
+        return new Promise<HistorySupplyResult>((_resolve, reject) => {
+          signal.addEventListener(
+            'abort',
+            () => {
+              cancelled.push(request.syncId)
+              reject(signal.reason ?? new Error('History supply cancelled'))
+            },
+            { once: true }
+          )
+        })
+      })
+    await installProvider()
+
+    fake.plantPeer(roomId, 'grace-history-peer')
+    fake.hangSendsTo(worldRoomId)
+    const worldSendAttempt = fake.waitForSendAttempt(worldRoomId)
+    const firstJoin = server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE }).then(
+      () => null,
+      () => null
+    )
+    await fake.waitForDesiredRooms(2)
+    fake.open()
+    await worldSendAttempt
+
+    fake.receive(roomId, 'grace-history-peer', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
+      syncId: 'grace-pull',
+      page: 0,
+      messageIds: [],
+      done: true
+    })
+    await vi.waitFor(() => expect(started).toEqual(['grace-pull']))
+
+    // The last page detaches while the combined Chat+World attempt is still provisional; grace
+    // expiry releases the attempt and must cancel its History owner before the domain disappears.
+    await server.detachPage({ domain: DOMAIN, pageId: 'page-a' })
+    await vi.advanceTimersByTimeAsync(RUNTIME_DOMAIN_GRACE_MS)
+    await settle()
+    fake.releaseSends()
+    await expect(firstJoin).resolves.toBeNull()
+    await vi.waitFor(() => expect(cancelled).toEqual(['grace-pull']))
+
+    // A fresh page lease and same-source Pull must bind a new History incarnation after release.
+    await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
+    await installProvider()
+    const retry = server.joinChatRoom({ domain: DOMAIN, user: { ...USER, name: 'Retried after grace' }, site: SITE })
+    await retry
+    fake.receive(roomId, 'grace-history-peer', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
+      syncId: 'fresh-after-grace',
+      page: 0,
+      messageIds: [],
+      done: true
+    })
+    await vi.waitFor(() => expect(started).toEqual(['grace-pull', 'fresh-after-grace']))
+    disposeServer(server)
+  })
+
+  it('cancels a deferred peer after leave before commit and preserves the current peer opposite', async () => {
+    const fake = createFakeTransport({ physicalReady: false })
+    const server = createServer({ transport: fake.transport, clock: new FakeClock(), codec: jsonCodec })
+    const roomId = getChatRoomId(DOMAIN)
+    const worldRoomId = getWorldRoomId()
+    await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
+    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, async () => ({
+      records: [],
+      done: true
+    }))
+
+    fake.hangSendsTo(worldRoomId)
+    const worldSendAttempt = fake.waitForSendAttempt(worldRoomId)
+    const join = server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
+    await fake.waitForDesiredRooms(2)
+    fake.open()
+    await worldSendAttempt
+
+    fake.peerJoin(roomId, 'leaving-peer')
+    fake.peerJoin(roomId, 'current-peer')
+    await settle()
+    fake.peerLeave(roomId, 'leaving-peer')
+    await settle()
+
+    fake.releaseSends()
+    await join
+    await vi.waitFor(() => {
+      expect(sentToPeer(fake, roomId, 'current-peer')).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ type: MESSAGE_TYPE.SESSION }),
+          expect.objectContaining({ type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL })
+        ])
+      )
+    })
+
+    const leavingMessages = sentToPeer(fake, roomId, 'leaving-peer').filter(
+      (message) => message.type === MESSAGE_TYPE.SESSION || message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL
+    )
+    expect(leavingMessages).toEqual([])
+    const currentMessages = sentToPeer(fake, roomId, 'current-peer').filter(
+      (message) => message.type === MESSAGE_TYPE.SESSION || message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL
+    )
+    expect(currentMessages.filter((message) => message.type === MESSAGE_TYPE.SESSION)).toHaveLength(1)
+    expect(currentMessages.filter((message) => message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)).toHaveLength(1)
+    disposeServer(server)
   })
 
   it('keeps reconnect inbound sessions attempt-owned until replacement commit', async () => {
