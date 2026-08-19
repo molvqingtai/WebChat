@@ -8,15 +8,16 @@
 
 ## 2. Implementation
 
-- [ ] 2.1 Add the first-composition Trystero adapter prefix guard after the current-owner fence and before generic error forwarding.
-- [ ] 2.2 Remove all six frozen executable warnings and three commented log examples without adding replacement logging, events, Toasts, or error classification.
-- [ ] 2.3 Add direct adapter controls for one and repeated matching callbacks, password/handshake forwarding, stale ownership, zero console output, and unchanged callback/provider behavior.
-- [ ] 2.4 Add focused controls for each removed warning site's preserved operation result, the exact Notification rejection consumer, and a repository-level inventory that rejects every production console method except `error`.
-- [ ] 2.5 Prove generic RoomTransport, Domain, Toast, protocol, persistence, dependency, and manifest surfaces remain unchanged.
+- [x] 2.1 Add the first-composition Trystero adapter prefix guard after the current-owner fence and before generic error forwarding.
+- [x] 2.2 Remove all six frozen executable warnings and three commented log examples without adding replacement logging, events, Toasts, or error classification.
+- [x] 2.3 Add direct adapter controls for one and repeated matching callbacks, password/handshake forwarding, stale ownership, zero console output, and unchanged callback/provider behavior.
+- [x] 2.4 Keep focused controls for current behavior around the affected operations and the exact Notification rejection consumer; use source diff and cumulative static review, not repository inventory, source scans, bundle markers, or old-text absence assertions, to verify deleted code stays deleted.
+- [x] 2.5 Prove generic RoomTransport, Domain, Toast, protocol, persistence, dependency, and manifest surfaces remain unchanged.
 
 ## 3. Verification and Delivery
 
 - [x] 3.1 Validate this canonical authority with format check, strict affected OpenSpec validation, all-change strict status, and OpenSpec Doctor; freeze one clean docs-only exact.
-- [ ] 3.2 Publish one source/test-only implementation child from the reviewed authority exact and pass the repository's focused/full static, test, build, OpenSpec, architecture, scope, identity, and hosted CI gates.
-- [ ] 3.3 Obtain one fresh independent coding-stage review on the immutable source/test exact, covering the prefix exception, six warning removals, complete console inventory, non-matching errors, and all frozen no-change boundaries.
-- [ ] 3.4 After coding PASS, update canonical task/status truth, obtain Owner product acceptance, and only then perform an explicitly authorized develop merge; do not infer master promotion, release, or deploy authority.
+- [x] 3.2 Freeze implementation exact `05265059b356dcc795d0201a7390715a4fdd63e9`; record focused/static evidence, the truthful local full result of 920/923 with three existing Markdown browser-mode timeouts, and exact hosted run `32212778326` setup/linter/tests/build 4/4 terminal success.
+- [x] 3.3 Obtain fresh cumulative coding-stage CODE FINAL PASS `0/0/0` on exact `05265059`, covering the prefix exception, warning removals by static source review, current behavior controls, non-matching errors, and all frozen no-change boundaries.
+- [x] 3.4 Update canonical task/status truth after coding PASS. No separate Owner acceptance is required for this batch.
+- [ ] 3.5 Keep PR #145 Draft until tasks #1355, #1418, #1419, and #1420 all have coding PASS, exact CI, applicable canonical docs/status, and no other live hold; only then use the ordinary target-branch Ready/merge flow. Do not infer master promotion, release, or deploy authority.

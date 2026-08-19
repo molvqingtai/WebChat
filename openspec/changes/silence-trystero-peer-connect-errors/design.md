@@ -16,7 +16,7 @@ The same base contains six executable non-error console calls, all `console.warn
 - Keep the classifier inside the concrete Trystero adapter and leave generic contracts provider-neutral.
 - Preserve every non-matching join error through its current one-owner route.
 - Remove the complete current production warning/log inventory without converting warnings to Errors or changing surrounding behavior.
-- Make the Error-only production console rule structurally reviewable.
+- Make the Error-only production console rule explicit in production source and cumulative static review.
 
 **Non-Goals:**
 
@@ -67,7 +67,7 @@ Executable non-test production files under `src` SHALL call no `console` method 
 
 This is a console-output policy, not permission to swallow arbitrary failures. Existing caught-error authority still requires a genuine failure to retain its caller-visible rejection, current-user route, or existing `console.error` owner unless this change explicitly classifies the exact site above as quiet or redundantly owned.
 
-### 5. Evidence is direct and mutation-sensitive
+### 5. Tests verify current behavior; source review verifies deletion
 
 Focused adapter controls SHALL invoke the captured first-composition callback directly and prove:
 
@@ -77,13 +77,15 @@ Focused adapter controls SHALL invoke the captured first-composition callback di
 - password and handshake examples each reach the existing generic error listener exactly once with their original text and no adapter console output; and
 - stale callback behavior remains unchanged.
 
-Source-quality evidence SHALL enumerate executable non-test production files under `src` and fail if any console call other than `console.error` returns. Focused behavior controls SHALL prove that removing each warning does not remove its existing bounded rejection, drop, abort, or continuation result. A test that only searches the six old lines or mocks the generic Toast layer is insufficient.
+Cumulative static review SHALL inspect the complete affected production source and implementation diff to confirm that the six warnings, three commented examples, and any replacement non-error output are absent. Tests SHALL NOT scan source files, generated bundles, comments, or old warning text solely to prove deleted code remains absent.
+
+Focused behavior controls SHALL instead prove current observable behavior: the Trystero prefix remains silent, non-matching errors retain their owner, and the affected operations retain their bounded rejection, drop, abort, continuation, retry, or cleanup result. Console spies remain appropriate only where zero console output is itself part of the surviving product behavior, such as the Trystero silence exception.
 
 ## Risks / Trade-offs
 
 - Prefix matching can become stale when Trystero changes its message. Pinning the exception to Trystero 0.25.3 and keeping it inside one adapter limits the blast radius; a dependency upgrade must revalidate it.
 - Complete silence removes local diagnostics for this peer-attempt class and for the six warning sites. That is intentional product policy; actionable genuine failures must continue through existing `console.error` or application error ownership rather than warning-level output.
-- A broad source scan can false-positive tests. The structural rule therefore targets executable non-test production source while allowing test spies and assertions.
+- Deletion completeness is reviewer-owned rather than test-owned. A future source change can reintroduce non-error output unless cumulative static review continues to enforce the explicit production policy.
 
 ## Open Questions
 
