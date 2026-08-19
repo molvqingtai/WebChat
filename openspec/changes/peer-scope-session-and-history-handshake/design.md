@@ -42,7 +42,7 @@ Alternative rejected: preserve initial broadcast and add targeted repair. The sa
 
 ### 3. Protocol-valid History uses transport context, not logical identity
 
-A first inbound History Pull that reaches Wire's typed accepted-message event has already passed the current trusted-room, room-generation, and public-schema checks and carries its transport `sourcePeerId`. It creates provider work directly under `(roomId, sourcePeerId, syncId)`. It does not require Session binding, Wire source-membership lookup, Session acceptance order, `sessionId`, `presenceId`, user identity, or Presence observation. The requester starts directly from the peer-join callback, not from Session binding/commit events.
+An eligible page-zero inbound History Pull that reaches Wire's typed accepted-message event has already passed the current trusted-room, room-generation, and public-schema checks and carries its transport `sourcePeerId`. It creates provider work directly under `(roomId, sourcePeerId, syncId)`. Matching continuous pages advance that attempt only under the existing page-order, replay, resource, bound-`syncId`, and terminal fences; a gap, changed replay, second `syncId`, post-done page, or terminal connection remains inert or rejected exactly as before. Neither admission path requires Session binding, Wire source-membership lookup, Session acceptance order, `sessionId`, `presenceId`, user identity, or Presence observation. The requester starts directly from the peer-join callback, not from Session binding/commit events.
 
 Push retains its existing requester-attempt authority: its `syncId` must identify a current requester and its transport source must equal that requester's owning `sourcePeerId`. It adds no Session or membership lookup, so the existing valid late-page boundary after source departure or loading settlement remains unchanged.
 
@@ -52,7 +52,17 @@ Alternative rejected: replace Session binding with another source-membership gua
 
 ### 4. Current History exchange and wire contracts remain intact
 
-Each admitted direction still allocates one fresh `syncId`, sends continuous target-only Pull inventory pages, receives continuous target-only Push pages, and terminalizes once under the current timeout, cutoff, paging, supplier, Delivery, and persistence rules. The public Session/Pull/Push structures remain byte-for-byte unchanged. No peer-visible combined handshake or acknowledgement is added.
+Each admitted direction still allocates one fresh `syncId`, sends continuous target-only Pull inventory pages, and receives continuous target-only Push pages under the current cutoff, paging, replay, timeout, supplier, Delivery, persistence, and terminal rules. Provider/requester attempts retain their distinct existing terminal fences: settling the local loading UI does not terminate an exact-owner requester's valid late Push collection. The public Session/Pull/Push structures remain byte-for-byte unchanged. No peer-visible combined handshake or acknowledgement is added.
+
+### 5. Typed routing is not repeated inside internal apply Commands
+
+Wire's room-selected schema remains the single peer-input validation boundary. The sole Session Effects then route SESSION versus TEXT/REACTION accepted values, and the sole World Effect routes the schema-selected World value. Their internal, non-exported apply Commands have no second production caller, so repeating the identical message-kind or World-room test there adds no distinct responsibility.
+
+The implementation removes only these repeated checks: SESSION in `ApplySessionMessageCommand`, TEXT/REACTION in `ApplyLiveMessageCommand`, and `sites` plus World room identity in `ApplyPresenceCommand`. The Effects carry the narrowed types into those Commands.
+
+This does not remove lifecycle or business validation. Wire still rechecks trusted room and captured generation after asynchronous decode because leave/reconnect/close can occur while decoding. Session still requires the current binding, matching user, valid HLC, and currently admitted source for lawful reactivation of an ended Presence. World still rejects same-session identity conflict. History still owns attempt/source, paging, replay, timeout, late-page, and resource rules. The local outbound Chat schema parse remains the first validation of a locally constructed value, and World peer-join/leave room tests remain the actual router because Connection currently sends each peer fact to both Session and World.
+
+Alternative rejected: remove guards by pattern or because their names resemble protocol validation. A check is removed only when its sole caller already proves the same fact; checks with asynchronous lifecycle, routing, or state-machine responsibility remain.
 
 ## Risks / Trade-offs
 
@@ -62,7 +72,8 @@ Each admitted direction still allocates one fresh `syncId`, sends continuous tar
 ## Migration Plan
 
 1. Replace initial Session broadcast/baseline catch-up with the current peer-join target-send path.
-2. Invoke the current History requester from the same peer-join handler and let protocol-valid Pull use its accepted-message room/source context directly, with no Session-binding or replacement membership guard.
-3. Add mutation-sensitive two-peer, three-peer, and empty-room controls while retaining all existing protocol/resource tests.
-4. Freeze one source/test exact, run the repository's focused/full tests and complete gates, then obtain a fresh cumulative coding review.
-5. Update canonical OpenSpec/status only after coding PASS. Merge, master promotion, release, and deploy require separate current authority.
+2. Invoke the current History requester from the same peer-join handler and let eligible Pull pages use their accepted-message room/source context directly, with no Session-binding or replacement membership guard.
+3. Narrow the three internal apply Commands at their existing typed Effects and remove only their repeated kind/room checks, retaining all stateful and asynchronous lifecycle guards.
+4. Add mutation-sensitive two-peer, three-peer, empty-room, typed-routing, and retained-stateful-guard controls while retaining all existing protocol/resource tests.
+5. Freeze one source/test exact, run the repository's focused/full tests and complete gates, then obtain a fresh cumulative coding review.
+6. Update canonical OpenSpec/status only after coding PASS. Merge, master promotion, release, and deploy require separate current authority.
