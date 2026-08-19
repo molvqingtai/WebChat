@@ -34,13 +34,6 @@ interface DomainGeneration {
   generation: number
 }
 
-interface CommittedAttempt {
-  domain: string
-  roomId: string
-  attemptId: string
-  generation: number
-}
-
 interface WorldRecoveryAttempt {
   requestId: string
   generation: number
@@ -91,10 +84,6 @@ const ConnectionDomain = Remesh.domain({
     const AttemptsState = domain.state<JoinAttempt[]>({ name: 'Connection.AttemptsState', default: [] })
     const GenerationsState = domain.state<DomainGeneration[]>({
       name: 'Connection.GenerationsState',
-      default: []
-    })
-    const CommittedAttemptsState = domain.state<CommittedAttempt[]>({
-      name: 'Connection.CommittedAttemptsState',
       default: []
     })
     const WorldRecoveryGenerationState = domain.state<number>({
@@ -448,14 +437,6 @@ const ConnectionDomain = Remesh.domain({
         }
         return [
           AttemptsState().new(attempts.filter((item) => item.attemptId !== attempt.attemptId)),
-          CommittedAttemptsState().new(
-            replaceBy(get(CommittedAttemptsState()), (item) => item.domain === attempt.domain, {
-              domain: attempt.domain,
-              roomId: attempt.roomId!,
-              attemptId: attempt.attemptId,
-              generation: attempt.generation
-            })
-          ),
           sessionDomain.command.CommitPreparedCommand(attempt.attemptId),
           worldDomain.command.CommitStagedCommand(attempt.attemptId),
           ...(attempt.mode === 'reconnect' ? [lifecycleDomain.command.FinishReconnectCommand(attempt.domain)] : []),
@@ -534,23 +515,19 @@ const ConnectionDomain = Remesh.domain({
 
     const PeerJoinedCommand = domain.command({
       name: 'Connection.PeerJoinedCommand',
-      impl: ({ get }, payload: { roomId: string; sourcePeerId: string; attemptId?: string; generation?: number }) => {
+      impl: ({ get }, payload: { roomId: string; sourcePeerId: string; generation?: number }) => {
         const runtimeDomain = get(sessionDomain.query.RoomDomainQuery(payload.roomId))
         const runtime = runtimeDomain ? get(sessionDomain.query.DomainQuery(runtimeDomain)) : null
         const currentGeneration = runtimeDomain
           ? get(GenerationsState()).find((item) => item.domain === runtimeDomain)?.generation
           : undefined
-        if (!runtime || runtime.roomId !== payload.roomId || currentGeneration !== payload.generation) return null
-        if (payload.attemptId) {
-          const committed = get(CommittedAttemptsState()).find((item) => item.domain === runtimeDomain)
-          if (
-            !committed ||
-            committed.roomId !== payload.roomId ||
-            committed.attemptId !== payload.attemptId ||
-            committed.generation !== payload.generation
-          ) {
-            return null
-          }
+        if (
+          !runtime ||
+          runtime.roomId !== payload.roomId ||
+          currentGeneration !== payload.generation ||
+          get(sessionDomain.query.ReleasingDomainQuery(runtimeDomain!))
+        ) {
+          return null
         }
         return [sessionDomain.command.PeerJoinedCommand(payload), historyDomain.command.StartRequesterCommand(payload)]
       }
@@ -578,14 +555,24 @@ const ConnectionDomain = Remesh.domain({
           return startWorldRecovery(get)
         }
         const runtimeDomain = get(sessionDomain.query.RoomDomainQuery(payload.roomId))
-        if (!runtimeDomain || !get(lifecycleDomain.query.DomainLeaseQuery(runtimeDomain))) return null
+        if (
+          !runtimeDomain ||
+          !get(lifecycleDomain.query.DomainLeaseQuery(runtimeDomain)) ||
+          get(sessionDomain.query.ReleasingDomainQuery(runtimeDomain))
+        ) {
+          return null
+        }
         const generations = get(GenerationsState())
         const generation = (generations.find((item) => item.domain === runtimeDomain)?.generation ?? 0) + 1
-        return startAttempt(get, {
+        const recovery = startAttempt(get, {
           attemptId: `recovery:${runtimeDomain}:${generation}`,
           mode: 'recover',
           domain: runtimeDomain
         })
+        return [
+          historyDomain.command.ResetHistoryForRoomCommand(runtimeDomain),
+          ...(Array.isArray(recovery) ? recovery : [recovery])
+        ]
       }
     })
 
@@ -765,7 +752,6 @@ const ConnectionDomain = Remesh.domain({
         )
         const remainingAttempts = get(AttemptsState()).filter((item) => item.domain !== payload.domain)
         return [
-          CommittedAttemptsState().new(get(CommittedAttemptsState()).filter((item) => item.domain !== payload.domain)),
           historyDomain.command.ReleaseDomainCommand(payload.domain),
           sessionDomain.command.ReleaseDomainCommand(payload.domain),
           ...(remainingDomains.length === 0 && remainingAttempts.length === 0
@@ -901,7 +887,12 @@ const ConnectionDomain = Remesh.domain({
               const generation = runtimeDomain
                 ? get(GenerationsState()).find((item) => item.domain === runtimeDomain)?.generation
                 : undefined
-              return runtime && generation !== undefined ? of(PeerJoinedCommand({ ...payload, generation })) : EMPTY
+              return runtime &&
+                runtimeDomain !== null &&
+                generation !== undefined &&
+                !get(sessionDomain.query.ReleasingDomainQuery(runtimeDomain))
+                ? of(PeerJoinedCommand({ ...payload, generation }))
+                : EMPTY
             }
             const requestId = attempt?.joinRequestId ?? recovery?.joinRequestId
             if (!requestId) return EMPTY
@@ -970,7 +961,7 @@ const ConnectionDomain = Remesh.domain({
               map(() =>
                 PeerJoinedCommand({
                   ...payload,
-                  ...(attempt ? { attemptId: attempt.attemptId, generation: attempt.generation } : {})
+                  ...(attempt ? { generation: attempt.generation } : {})
                 })
               )
             )

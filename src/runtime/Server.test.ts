@@ -10,6 +10,7 @@ import {
   type ChatMessage,
   type ChatRoomMessage,
   type ChatUser,
+  type HistoryMessagesPull,
   type TextMessage,
   type WorldRoomMessage
 } from '@/protocol'
@@ -608,6 +609,169 @@ describe('RuntimeServer lifecycle', () => {
     expect(
       lateChatAttempts.filter(({ rawTarget }) => JSON.stringify(rawTarget) === JSON.stringify(['peer-late']))
     ).toHaveLength(2)
+    disposeServer(server)
+  })
+
+  it('resets the closed room History incarnation while retaining late requester pages', async () => {
+    const { fake, server, roomId } = await setup()
+    const started: string[] = []
+    const cancelled: string[] = []
+    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, (request, signal) => {
+      if (request.mode === 'inventory') return Promise.resolve({ records: [], done: true })
+      started.push(request.syncId)
+      return new Promise<HistorySupplyResult>((_resolve, reject) => {
+        signal.addEventListener(
+          'abort',
+          () => {
+            cancelled.push(request.syncId)
+            reject(signal.reason ?? new Error('History supply cancelled'))
+          },
+          { once: true }
+        )
+      })
+    })
+
+    fake.peerJoin(roomId, 'history-peer')
+    await vi.waitFor(() => {
+      expect(
+        sentToPeer(fake, roomId, 'history-peer').filter(
+          (message) => message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL
+        )
+      ).toHaveLength(1)
+    })
+    const oldRequesterPull = sentToPeer(fake, roomId, 'history-peer').find(
+      (message): message is HistoryMessagesPull => message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL
+    )
+    if (!oldRequesterPull) throw new Error('Initial requester Pull missing')
+
+    fake.receive(roomId, 'history-peer', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
+      syncId: 'old-provider-pull',
+      page: 0,
+      messageIds: [],
+      done: true
+    })
+    await vi.waitFor(() => expect(started).toEqual(['old-provider-pull']))
+
+    fake.roomClose(roomId)
+    await vi.waitFor(() => expect(cancelled).toEqual(['old-provider-pull']))
+    await vi.waitFor(() => expect(fake.joined.has(roomId)).toBe(true))
+    await vi.waitFor(() => {
+      const edgeMessages = sentToPeer(fake, roomId, 'history-peer').filter(
+        (message) => message.type === MESSAGE_TYPE.SESSION || message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL
+      )
+      expect(edgeMessages).toHaveLength(4)
+    })
+
+    const recoveredMessages = sentToPeer(fake, roomId, 'history-peer').filter(
+      (message) => message.type === MESSAGE_TYPE.SESSION || message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL
+    )
+    expect(recoveredMessages.filter((message) => message.type === MESSAGE_TYPE.SESSION)).toHaveLength(2)
+    expect(recoveredMessages.filter((message) => message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)).toHaveLength(2)
+    expect(
+      new Set(
+        recoveredMessages
+          .filter((message): message is HistoryMessagesPull => message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)
+          .map((message) => message.syncId)
+      ).size
+    ).toBe(2)
+
+    const lateInbound: string[] = []
+    await server.onInbound({ pageId: 'page-a' }, (event) => {
+      lateInbound.push(event.record.message.id)
+    })
+    fake.receive(roomId, 'history-peer', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PUSH,
+      syncId: oldRequesterPull.syncId,
+      page: 0,
+      users: [REMOTE_USER],
+      messages: [text('late-after-room-close')],
+      done: true
+    })
+    await vi.waitFor(() => expect(lateInbound).toContain('late-after-room-close'))
+
+    fake.receive(roomId, 'history-peer', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
+      syncId: 'fresh-provider-pull',
+      page: 0,
+      messageIds: [],
+      done: true
+    })
+    await vi.waitFor(() => expect(started).toEqual(['old-provider-pull', 'fresh-provider-pull']))
+    disposeServer(server)
+  })
+
+  it('blocks release-start peer edges while keeping a committed opposite domain active', async () => {
+    const clock = new FakeClock()
+    const fake = createFakeTransport()
+    const values: Record<string, unknown> = {}
+    let holdClearSave = false
+    const clearSaveStarted = deferred<void>()
+    const releaseClearSave = deferred<void>()
+    const presenceStore = createBrowserPresenceStore({
+      get: async (key) => ({ [key]: values[key] }),
+      set: async (items) => {
+        const record = Object.values(items)[0] as { lastJoinedAt?: number; observers?: unknown[] }
+        if (
+          holdClearSave &&
+          record &&
+          typeof record === 'object' &&
+          record.lastJoinedAt === 0 &&
+          (record.observers ?? []).length === 0
+        ) {
+          clearSaveStarted.resolve()
+          await releaseClearSave.promise
+        }
+        Object.assign(values, items)
+      }
+    })
+    const server = createServer({ transport: fake.transport, clock, codec: jsonCodec, presenceStore })
+    const oppositeDomain = OTHER_DOMAIN
+    const releaseRoomId = getChatRoomId(DOMAIN)
+    const oppositeRoomId = getChatRoomId(oppositeDomain)
+    await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
+    await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
+    await server.attachPage({ domain: oppositeDomain, pageId: 'page-b' })
+    await server.joinChatRoom({ domain: oppositeDomain, user: USER, site: { ...SITE, origin: oppositeDomain } })
+    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, async () => ({
+      records: [],
+      done: true
+    }))
+    await registerHistoryProvider(server, { domain: oppositeDomain, pageId: 'page-b' }, async () => ({
+      records: [],
+      done: true
+    }))
+    await settle()
+
+    holdClearSave = true
+    const leave = server.leaveChatRoom({ domain: DOMAIN })
+    await clearSaveStarted.promise
+
+    fake.peerJoin(releaseRoomId, 'release-peer')
+    fake.peerJoin(oppositeRoomId, 'opposite-peer')
+    fake.receive(releaseRoomId, 'release-peer', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
+      syncId: 'release-pull',
+      page: 0,
+      messageIds: [],
+      done: true
+    })
+    await settle()
+
+    const releaseEdgeMessages = sentToPeer(fake, releaseRoomId, 'release-peer').filter(
+      (message) => message.type === MESSAGE_TYPE.SESSION || message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL
+    )
+    expect(releaseEdgeMessages).toEqual([])
+    const oppositeEdgeMessages = sentToPeer(fake, oppositeRoomId, 'opposite-peer').filter(
+      (message) => message.type === MESSAGE_TYPE.SESSION || message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL
+    )
+    expect(oppositeEdgeMessages.filter((message) => message.type === MESSAGE_TYPE.SESSION)).toHaveLength(1)
+    expect(oppositeEdgeMessages.filter((message) => message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)).toHaveLength(
+      1
+    )
+
+    releaseClearSave.resolve()
+    await leave
     disposeServer(server)
   })
 
@@ -3290,6 +3454,50 @@ describe('RuntimeServer provisional recovery races', () => {
       sessions: []
     })
     expect((await server.getSnapshot()).domains[0].sessions).toEqual([])
+  })
+
+  it('sends one Session and one History Pull to a peer admitted by the replacement generation', async () => {
+    const { fake, server, roomId } = await setup()
+    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, async () => ({
+      records: [],
+      done: true
+    }))
+    const worldRoomId = getWorldRoomId()
+    fake.makeNotReady()
+    fake.hangSendsTo(worldRoomId)
+    const firstWorldSend = fake.waitForSendAttempt(worldRoomId)
+    const firstReconnect = server.reconnectDomain({ domain: DOMAIN })
+    await fake.waitForJoinCalls(4)
+    fake.open()
+    await firstWorldSend
+
+    const replacement = server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
+    await expect(firstReconnect).resolves.toBeNull()
+    await fake.waitForJoinCalls(6)
+    await vi.waitFor(() => expect(fake.joined.has(roomId)).toBe(true))
+
+    fake.peerJoin(roomId, 'replacement-peer')
+    await settle()
+    expect(
+      sentToPeer(fake, roomId, 'replacement-peer').filter(
+        (message) => message.type === MESSAGE_TYPE.SESSION || message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL
+      )
+    ).toEqual([])
+
+    fake.releaseSends()
+    await replacement
+    await vi.waitFor(() => {
+      const messages = sentToPeer(fake, roomId, 'replacement-peer').filter(
+        (message) => message.type === MESSAGE_TYPE.SESSION || message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL
+      )
+      expect(messages).toHaveLength(2)
+    })
+    const messages = sentToPeer(fake, roomId, 'replacement-peer').filter(
+      (message) => message.type === MESSAGE_TYPE.SESSION || message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL
+    )
+    expect(messages.filter((message) => message.type === MESSAGE_TYPE.SESSION)).toHaveLength(1)
+    expect(messages.filter((message) => message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)).toHaveLength(1)
+    disposeServer(server)
   })
 
   it('catches up only peers that miss a provisional World recovery publication', async () => {
