@@ -20,6 +20,10 @@ export interface RoomTransportHarness {
   readonly deliveries: () => readonly string[]
   /** Makes the next provider send reject with the exact error. */
   readonly failNextSend: (error: Error) => void
+  /** Adds a provider-specific ready peer before the shared rejection probe, when required. */
+  readonly prepareSend?: (roomId: string) => void
+  /** Artico expands one logical send into per-ready-peer provider calls. */
+  readonly assertTargetForwarding?: (transport: RoomTransport) => Promise<void>
   readonly emitMessage: (roomId: string, sourcePeerId: string, payload: string) => void
   readonly emitPeerJoin: (roomId: string, peerId: string) => void
   readonly emitPeerLeave: (roomId: string, peerId: string) => void
@@ -59,17 +63,21 @@ export const describeRoomTransportContract = (harness: RoomTransportHarness) => 
       const transport = harness.createTransport()
       await transport.join('room-a')
 
-      await transport.send('room-a', 'all')
-      await transport.send('room-a', 'one', 'peer-a')
-      await transport.send('room-a', 'two', ['peer-a', 'peer-b'])
-      await transport.send('room-a', 'none', 'missing-peer')
+      if (harness.assertTargetForwarding) {
+        await harness.assertTargetForwarding(transport)
+      } else {
+        await transport.send('room-a', 'all')
+        await transport.send('room-a', 'one', 'peer-a')
+        await transport.send('room-a', 'two', ['peer-a', 'peer-b'])
+        await transport.send('room-a', 'none', 'missing-peer')
 
-      expect(harness.sendCalls()).toEqual([
-        { roomId: 'room-a', payload: 'all', target: undefined },
-        { roomId: 'room-a', payload: 'one', target: 'peer-a' },
-        { roomId: 'room-a', payload: 'two', target: ['peer-a', 'peer-b'] },
-        { roomId: 'room-a', payload: 'none', target: 'missing-peer' }
-      ])
+        expect(harness.sendCalls()).toEqual([
+          { roomId: 'room-a', payload: 'all', target: undefined },
+          { roomId: 'room-a', payload: 'one', target: 'peer-a' },
+          { roomId: 'room-a', payload: 'two', target: ['peer-a', 'peer-b'] },
+          { roomId: 'room-a', payload: 'none', target: 'missing-peer' }
+        ])
+      }
       transport.dispose()
     })
 
@@ -86,6 +94,7 @@ export const describeRoomTransportContract = (harness: RoomTransportHarness) => 
     it('surfaces a provider send rejection with its exact identity', async () => {
       const transport = harness.createTransport()
       await transport.join('room-a')
+      harness.prepareSend?.('room-a')
       const failure = new Error('provider send failed')
       harness.failNextSend(failure)
 
