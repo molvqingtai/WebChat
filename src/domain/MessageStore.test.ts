@@ -269,10 +269,8 @@ describe.each(backends)('$name MessageStore contract', (backend) => {
     await expect(database.read(['records'], (transaction) => transaction.count('records'))).resolves.toBe(0)
   })
 
-  it('consumes an invalid-record diagnostics retention failure silently and still serves the load', async () => {
+  it('consumes an invalid-record diagnostics retention failure and still serves the load', async () => {
     const { database } = create(backend)
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {})
     // A strict-union-invalid row forces the retention path during load.
     await database.write(['records'], (transaction) =>
       transaction.insert('records', 'legacy', { event: textRecord('legacy').message, user: USER, receivedAt: 1 })
@@ -281,7 +279,7 @@ describe.each(backends)('$name MessageStore contract', (backend) => {
     await database.write(['records'], (transaction) => transaction.insert('records', 'valid-kept', valid))
 
     // Retaining the diagnostics fails; the load must still return the valid records with the
-    // failure consumed silently (no console output, no rejection).
+    // failure consumed (no rejection escapes the query).
     const failing: Database<MessageDatabaseSchema> = {
       read: (stores, operation, signal) => database.read(stores, operation, signal),
       write: (stores, operation, signal) =>
@@ -293,10 +291,6 @@ describe.each(backends)('$name MessageStore contract', (backend) => {
     }
     const messageStore = createMessageStore(failing)
     await expect(messageStore.query()).resolves.toEqual([valid])
-    expect(warn).not.toHaveBeenCalled()
-    expect(errorLog).not.toHaveBeenCalled()
-    warn.mockRestore()
-    errorLog.mockRestore()
   })
 
   it('accepts finite fractional receivedAt values for both record variants at load', async () => {

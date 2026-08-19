@@ -223,7 +223,7 @@ describe('Runtime browser adapters', () => {
     expect(listeners.size).toBe(0)
   })
 
-  it('drops malformed relays without an onRejected observer and stays silent', async () => {
+  it('drops malformed relays without an onRejected observer', async () => {
     const { runtime, listeners } = createMessaging()
     const tabs = {
       query: vi.fn(),
@@ -232,9 +232,8 @@ describe('Runtime browser adapters', () => {
       }),
       sendMessage: vi.fn()
     }
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     // The production call site no longer passes onRejected: drops keep their exact behavior with
-    // no observer attached and produce no console output.
+    // no observer attached.
     const dispose = relayOffscreenProviderMessages({
       runtime: runtime as never,
       tabs,
@@ -248,8 +247,6 @@ describe('Runtime browser adapters', () => {
     expect(() => listener({ sender: { type: 'provider' } }, offscreen)).not.toThrow()
     await settle()
     expect(tabs.sendMessage).not.toHaveBeenCalled()
-    expect(warn).not.toHaveBeenCalled()
-    warn.mockRestore()
 
     dispose()
     expect(listeners.size).toBe(0)

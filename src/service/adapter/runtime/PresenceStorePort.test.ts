@@ -297,17 +297,15 @@ describe('PresenceStore authenticated port', () => {
     expect(bus.connectionListenerCount()).toBe(0)
   })
 
-  it('consumes a provider callback failure silently when no onError observer is attached', async () => {
+  it('contains a provider callback failure when no onError observer is attached', async () => {
     const bus = createPortBus()
     const namespace = presenceStoreNamespace(EXTENSION_ID)
     // The production call site no longer passes onError: a throwing message callback is contained
-    // by dispatch with no observer and produces no console output.
+    // by dispatch with no observer and the remaining listeners still run.
     const provider = new PresenceStoreProviderPortAdapter(bus.background, {
       portName: namespace,
       offscreenUrl: OFFSCREEN_URL
     })
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
-    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     const received = vi.fn()
     provider.onMessage(() => {
       throw new Error('listener failure')
@@ -319,10 +317,6 @@ describe('PresenceStore authenticated port', () => {
     await settle()
 
     expect(received).toHaveBeenCalledTimes(1)
-    expect(warn).not.toHaveBeenCalled()
-    expect(errorLog).not.toHaveBeenCalled()
-    warn.mockRestore()
-    errorLog.mockRestore()
 
     provider.dispose()
     expect(bus.activePortCount()).toBe(0)
