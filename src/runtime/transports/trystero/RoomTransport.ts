@@ -63,6 +63,9 @@ export const createRoomTransport = (): RoomTransport => {
     const room = joinRoom({ appId: __NAME__ }, roomId, {
       onJoinError: (details) => {
         if (!isActive(owner)) return
+        // Trystero reports post-SDP peer-connect failures without an attributable side. They are
+        // non-actionable adapter noise; keep the rule stateless and forward all other failures.
+        if (details.error.startsWith('could not connect to peer ')) return
         errorListeners.forEach((listener) => listener(new Error(details.error), roomId))
       }
     })

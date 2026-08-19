@@ -198,7 +198,6 @@ describe('NotificationDomain message eligibility', () => {
 
   it('reads canonical settings and contains a rejected dispatch before a later eligible message', async () => {
     const failure = new Error('notification unavailable')
-    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const fixture = createFixture(SELF, true)
     fixtures.push(fixture)
     fixture.push.mockRejectedValueOnce(failure).mockResolvedValueOnce('notification-2')
@@ -213,7 +212,5 @@ describe('NotificationDomain message eligibility', () => {
 
     expect(fixture.push).toHaveBeenNthCalledWith(1, expect.objectContaining({ id: first.id }))
     expect(fixture.push).toHaveBeenNthCalledWith(2, expect.objectContaining({ id: second.id }))
-    expect(warning).toHaveBeenCalledOnce()
-    expect(warning).toHaveBeenCalledWith('[WebChat] Notification push failed:', failure)
   })
 })

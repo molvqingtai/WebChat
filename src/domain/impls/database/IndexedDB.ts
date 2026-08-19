@@ -612,7 +612,6 @@ const deleteMessageDatabase = (): Promise<void> =>
     request.addEventListener(
       'blocked',
       () => {
-        console.warn('[WebChat] Message store reset is blocked')
         blockedTimer ??= globalThis.setTimeout(() => {
           reject(new Error('Message store deletion blocked'))
         }, MESSAGE_STORE_DELETION_BLOCKED_TIMEOUT_MS)

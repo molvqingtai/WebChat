@@ -229,4 +229,5 @@ export const RUNTIME_DOMAIN_GRACE_MS = 5000 as const
  */
 export const PENDING_LEAVE_GRACE_MS = 5000 as const
 
-export const ROOM_TRANSPORT_PROVIDER = 'artico' as const
+export type RoomTransportProvider = 'artico' | 'trystero'
+export const ROOM_TRANSPORT_PROVIDER: RoomTransportProvider = 'artico'

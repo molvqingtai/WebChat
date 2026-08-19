@@ -13,7 +13,8 @@ const fixture = vi.hoisted(() => ({
   joinCalls: [] as string[],
   sendCalls: [] as { roomId: string; payload: string; target?: string | string[] }[],
   deliveries: [] as { roomId: string; payload: string }[],
-  sendShouldThrow: undefined as Error | undefined,
+  readySendFailures: new Map<string, Error>(),
+  queuedSendFailures: [] as Error[],
   joinShouldThrow: undefined as (() => Error) | undefined,
   leaveShouldThrow: undefined as (() => Error) | undefined,
   closeShouldThrow: undefined as (() => Error) | undefined,
@@ -32,7 +33,19 @@ const fixture = vi.hoisted(() => ({
       sent: { peerId: string; payload: string }[]
       emit(event: string, ...args: unknown[]): void
     }
-  >()
+  >(),
+  failReadySend: (peerId: string, error: Error) => {
+    fixture.readySendFailures.set(peerId, error)
+  },
+  queueSendFailure: (error: Error) => {
+    fixture.queuedSendFailures.push(error)
+  },
+  takeReadySendFailure: (peerId: string) => {
+    const failure = fixture.readySendFailures.get(peerId)
+    fixture.readySendFailures.delete(peerId)
+    return failure
+  },
+  takeQueuedSendFailure: () => fixture.queuedSendFailures.shift()
 }))
 
 vi.mock('@rtco/client', () => {
@@ -58,28 +71,28 @@ vi.mock('@rtco/client', () => {
 
     send(payload: string, target?: string | string[]) {
       fixture.sendCalls.push({ roomId: this.roomId, payload, target })
-      if (fixture.sendShouldThrow) {
-        const failure = fixture.sendShouldThrow
-        fixture.sendShouldThrow = undefined
-        throw failure
-      }
       const targets = target ? (Array.isArray(target) ? target : [target]) : null
+      let firstError: Error | undefined
+      let attemptedReady = false
       this.calls.forEach((ready, peerId) => {
         if (targets && !targets.includes(peerId)) return
+        // Artico's Room operation skips calls that are not ready at invocation time. They are not
+        // attempts and cannot fail the operation; every selected ready call is still visited.
+        if (!ready) return
+        attemptedReady = true
         this.attempts.push({ peerId, payload })
-        // A provider-native broadcast delivers to each ready member; a targeted send rejects on
-        // a not-ready target.
-        if (targets === null) {
-          if (ready) {
-            fixture.deliveries.push({ roomId: this.roomId, payload })
-            this.sent.push({ peerId, payload })
-          }
+        const failure = fixture.takeReadySendFailure(peerId) ?? fixture.takeQueuedSendFailure()
+        if (failure) {
+          firstError ??= failure
           return
         }
-        if (!ready) throw new Error('Connection is not established yet.')
         fixture.deliveries.push({ roomId: this.roomId, payload })
         this.sent.push({ peerId, payload })
       })
+      // The shared contract also probes a provider-level rejection with an empty room. Keep that
+      // compatibility probe separate from per-call failure handling above.
+      if (!attemptedReady && this.calls.size === 0) firstError = fixture.takeQueuedSendFailure()
+      if (firstError) throw firstError
     }
 
     constructor(readonly roomId: string) {
@@ -172,9 +185,7 @@ const articoHarness: RoomTransportHarness = {
   joinCalls: () => fixture.joinCalls,
   sendCalls: () => fixture.sendCalls,
   deliveries: () => fixture.deliveries.map(({ payload }) => payload),
-  failNextSend: (error) => {
-    fixture.sendShouldThrow = error
-  },
+  failNextSend: (error) => fixture.queueSendFailure(error),
   emitMessage: (roomId, sourcePeerId, payload) => {
     fixture.rooms.get(roomId)?.emit('message', payload, sourcePeerId)
   },
@@ -201,7 +212,8 @@ beforeEach(() => {
   fixture.joinCalls.length = 0
   fixture.sendCalls.length = 0
   fixture.deliveries.length = 0
-  fixture.sendShouldThrow = undefined
+  fixture.readySendFailures.clear()
+  fixture.queuedSendFailures.length = 0
   fixture.room = null
   fixture.rooms.clear()
   fixture.joinShouldThrow = undefined
@@ -303,7 +315,7 @@ describe('Artico RoomTransport', () => {
     ])
   })
 
-  it('contains an untargeted ready-to-closing miss, attempts later peers exactly once, and surfaces the failure', async () => {
+  it('skips an untargeted pending call and attempts every ready peer exactly once', async () => {
     const transport = createRoomTransport()
     await transport.join('room-a')
     fixture.room!.open('closing-peer')
@@ -314,7 +326,6 @@ describe('Artico RoomTransport', () => {
     await expect(transport.send('room-a', 'presence')).resolves.toBeUndefined()
 
     expect(fixture.room!.attempts).toEqual([
-      { peerId: 'closing-peer', payload: 'presence' },
       { peerId: 'ready-b', payload: 'presence' },
       { peerId: 'ready-a', payload: 'presence' }
     ])
@@ -324,7 +335,7 @@ describe('Artico RoomTransport', () => {
     ])
   })
 
-  it('preserves explicit first-seen order while deduplicating targets', async () => {
+  it('preserves explicit first-seen order while skipping pending targets', async () => {
     const transport = createRoomTransport()
     await transport.join('room-a')
     fixture.room!.open('closing-peer')
@@ -334,10 +345,39 @@ describe('Artico RoomTransport', () => {
 
     await expect(
       transport.send('room-a', 'targeted', ['ready-b', 'closing-peer', 'ready-a', 'ready-b'])
-    ).rejects.toThrow('Connection is not established yet.')
+    ).resolves.toBeUndefined()
 
-    expect(fixture.room!.attempts).toEqual([{ peerId: 'closing-peer', payload: 'targeted' }])
-    expect(fixture.room!.sent).toEqual([])
+    expect(fixture.room!.attempts).toEqual([
+      { peerId: 'ready-a', payload: 'targeted' },
+      { peerId: 'ready-b', payload: 'targeted' }
+    ])
+    expect(fixture.room!.sent).toEqual([
+      { peerId: 'ready-a', payload: 'targeted' },
+      { peerId: 'ready-b', payload: 'targeted' }
+    ])
+  })
+
+  it('attempts every ready call and rethrows the first ready failure by identity', async () => {
+    const transport = createRoomTransport()
+    await transport.join('room-a')
+    fixture.room!.open('pending-first')
+    fixture.room!.loseReadiness('pending-first')
+    fixture.room!.open('ready-first')
+    fixture.room!.open('ready-success')
+    fixture.room!.open('ready-last')
+    const firstFailure = new Error('first ready call failed')
+    const lastFailure = new Error('last ready call failed')
+    fixture.failReadySend('ready-first', firstFailure)
+    fixture.failReadySend('ready-last', lastFailure)
+
+    await expect(transport.send('room-a', 'presence')).rejects.toBe(firstFailure)
+
+    expect(fixture.room!.attempts).toEqual([
+      { peerId: 'ready-first', payload: 'presence' },
+      { peerId: 'ready-success', payload: 'presence' },
+      { peerId: 'ready-last', payload: 'presence' }
+    ])
+    expect(fixture.room!.sent).toEqual([{ peerId: 'ready-success', payload: 'presence' }])
   })
 
   it('settles empty recipient sets and still rejects a missing room', async () => {
