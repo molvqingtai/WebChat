@@ -297,6 +297,31 @@ describe('PresenceStore authenticated port', () => {
     expect(bus.connectionListenerCount()).toBe(0)
   })
 
+  it('contains a provider callback failure when no onError observer is attached', async () => {
+    const bus = createPortBus()
+    const namespace = presenceStoreNamespace(EXTENSION_ID)
+    // The production call site no longer passes onError: a throwing message callback is contained
+    // by dispatch with no observer and the remaining listeners still run.
+    const provider = new PresenceStoreProviderPortAdapter(bus.background, {
+      portName: namespace,
+      offscreenUrl: OFFSCREEN_URL
+    })
+    const received = vi.fn()
+    provider.onMessage(() => {
+      throw new Error('listener failure')
+    })
+    provider.onMessage(received)
+
+    const offscreen = bus.offscreen.connect({ name: namespace })
+    offscreen.postMessage(injectorMessage('offscreen', namespace))
+    await settle()
+
+    expect(received).toHaveBeenCalledTimes(1)
+
+    provider.dispose()
+    expect(bus.activePortCount()).toBe(0)
+  })
+
   it('accepts provider responses only from the private port and exact route', async () => {
     const bus = createPortBus()
     const namespace = presenceStoreNamespace(EXTENSION_ID)

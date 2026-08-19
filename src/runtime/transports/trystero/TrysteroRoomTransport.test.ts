@@ -360,6 +360,123 @@ describe('TrysteroRoomTransport', () => {
     consoleError.mockRestore()
     transport.dispose()
   })
+
+  it('silently swallows a post-SDP peer-connect failure with zero error forward and zero console output', async () => {
+    const transport = createTrysteroRoomTransport()
+    const errors: string[] = []
+    transport.onError((error, roomId) => errors.push(`${roomId}:${error.message}`))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    await transport.join('room-a')
+
+    trysteroFixture.joinErrors.get('room-a')?.({ error: 'could not connect to peer abc123 after exchanging SDP' })
+    await settle()
+
+    // The non-attributable failure stays adapter-private: no generic error, no console of any
+    // level, and the room itself is untouched (membership and selfId remain).
+    expect(errors).toEqual([])
+    expect(warn).not.toHaveBeenCalled()
+    expect(errorLog).not.toHaveBeenCalled()
+    expect(log).not.toHaveBeenCalled()
+    expect(transport.peerIdOf('room-a')).toBe('trystero-self-id')
+    warn.mockRestore()
+    errorLog.mockRestore()
+    log.mockRestore()
+    transport.dispose()
+  })
+
+  it('applies the same stateless silence to repeated peer-connect callbacks without rate limiting', async () => {
+    const transport = createTrysteroRoomTransport()
+    const errors: string[] = []
+    transport.onError((error, roomId) => errors.push(`${roomId}:${error.message}`))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    await transport.join('room-a')
+
+    // Every negotiation attempt reports the same class; each is silently swallowed, with no
+    // retained state or rate limiter changing the rule.
+    trysteroFixture.joinErrors.get('room-a')?.({ error: 'could not connect to peer peer-1 after exchanging SDP' })
+    trysteroFixture.joinErrors.get('room-a')?.({ error: 'could not connect to peer peer-2 after exchanging SDP' })
+    trysteroFixture.joinErrors.get('room-a')?.({ error: 'could not connect to peer peer-1 after exchanging SDP' })
+    await settle()
+
+    expect(errors).toEqual([])
+    expect(warn).not.toHaveBeenCalled()
+    expect(errorLog).not.toHaveBeenCalled()
+    warn.mockRestore()
+    errorLog.mockRestore()
+    transport.dispose()
+  })
+
+  it('forwards incorrect password and handshake failures exactly once with no adapter console output', async () => {
+    const transport = createTrysteroRoomTransport()
+    const errors: string[] = []
+    transport.onError((error, roomId) => errors.push(`${roomId}:${error.message}`))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    await transport.join('room-a')
+
+    trysteroFixture.joinErrors.get('room-a')?.({ error: 'incorrect password' })
+    trysteroFixture.joinErrors.get('room-a')?.({ error: 'handshake timeout' })
+    await settle()
+
+    expect(errors).toEqual(['room-a:incorrect password', 'room-a:handshake timeout'])
+    expect(warn).not.toHaveBeenCalled()
+    expect(errorLog).not.toHaveBeenCalled()
+    expect(log).not.toHaveBeenCalled()
+    warn.mockRestore()
+    errorLog.mockRestore()
+    log.mockRestore()
+    transport.dispose()
+  })
+
+  it('forwards the fixed text verbatim once when it does not start the message (startsWith cannot degrade to includes)', async () => {
+    const transport = createTrysteroRoomTransport()
+    const errors: string[] = []
+    transport.onError((error, roomId) => errors.push(`${roomId}:${error.message}`))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    await transport.join('room-a')
+
+    const nonPrefix = 'negotiation stalled: could not connect to peer abc123 after exchanging SDP'
+    trysteroFixture.joinErrors.get('room-a')?.({ error: nonPrefix })
+    await settle()
+
+    // The fixed text in a non-prefix position is not the classified case: it forwards verbatim,
+    // exactly once, with no adapter console output.
+    expect(errors).toEqual([`room-a:${nonPrefix}`])
+    expect(warn).not.toHaveBeenCalled()
+    expect(errorLog).not.toHaveBeenCalled()
+    warn.mockRestore()
+    errorLog.mockRestore()
+    transport.dispose()
+  })
+
+  it('keeps a stale owner fenced even for a matching peer-connect error', async () => {
+    const transport = createTrysteroRoomTransport()
+    const events: string[] = []
+    transport.onError((error, roomId) => events.push(`error:${roomId}:${error.message}`))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    await transport.join('room-a')
+    trysteroFixture.deferLeave('room-a')
+
+    transport.leave('room-a')
+    trysteroFixture.joinErrors.get('room-a')?.({ error: 'could not connect to peer stale-peer after exchanging SDP' })
+    await settle()
+    expect(events).toEqual([])
+
+    trysteroFixture.leaveControls.get('room-a')?.resolve()
+    await settle()
+    expect(events).toEqual([])
+    expect(warn).not.toHaveBeenCalled()
+    expect(errorLog).not.toHaveBeenCalled()
+    warn.mockRestore()
+    errorLog.mockRestore()
+    transport.dispose()
+  })
 })
 
 describe('RoomTransport composition', () => {

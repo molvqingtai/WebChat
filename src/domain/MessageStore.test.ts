@@ -269,6 +269,30 @@ describe.each(backends)('$name MessageStore contract', (backend) => {
     await expect(database.read(['records'], (transaction) => transaction.count('records'))).resolves.toBe(0)
   })
 
+  it('consumes an invalid-record diagnostics retention failure and still serves the load', async () => {
+    const { database } = create(backend)
+    // A strict-union-invalid row forces the retention path during load.
+    await database.write(['records'], (transaction) =>
+      transaction.insert('records', 'legacy', { event: textRecord('legacy').message, user: USER, receivedAt: 1 })
+    )
+    const valid = textRecord('valid-kept')
+    await database.write(['records'], (transaction) => transaction.insert('records', 'valid-kept', valid))
+
+    // Retaining the diagnostics fails; the load must still return the valid records with the
+    // failure consumed (no rejection escapes the query).
+    const failing: Database<MessageDatabaseSchema> = {
+      read: (stores, operation, signal) => database.read(stores, operation, signal),
+      write: (stores, operation, signal) =>
+        stores.includes('conflicts')
+          ? Promise.reject(new Error('conflicts store unavailable'))
+          : database.write(stores, operation, signal),
+      watch: (stores, listener) => database.watch(stores, listener),
+      close: () => database.close()
+    }
+    const messageStore = createMessageStore(failing)
+    await expect(messageStore.query()).resolves.toEqual([valid])
+  })
+
   it('accepts finite fractional receivedAt values for both record variants at load', async () => {
     const { database, messageStore } = create(backend)
     const fractionalChat = { ...textRecord('fractional-chat'), receivedAt: 1.5 }
