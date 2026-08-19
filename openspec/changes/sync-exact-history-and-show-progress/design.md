@@ -9,7 +9,7 @@ The new peer contract has exactly two variants. Request pages carry the requeste
 **Goals:**
 
 - Replace the complete History subprotocol and state machine with one exact inventory-difference design.
-- Start exactly one independent synchronization per room connection and direction, with no retry or progress continuation.
+- Start exactly one independent synchronization per accepted source connection and direction, with each outgoing requester deriving its sole target from that same source, storing no provider-routing array, and adding no retry or progress continuation.
 - Keep requester/provider 30-day snapshots fixed, bounded, ordered, and source-local.
 - Process missing-record pages serially and retain atomic `insert-if-absent` as the final concurrency boundary.
 - Give each incoming `syncId` one operation-owned loading identity projected to all current same-domain pages.
@@ -32,7 +32,9 @@ This keeps strict schema selection simple and prevents an incompatible peer from
 
 ### 2. A room connection owns one two-phase synchronization per direction
 
-Joining the room with one current source incarnation is the only History trigger. Each peer starts exactly one outgoing requester synchronization under its own `syncId`; the reverse direction uses another `syncId`. Repeating the same SESSION, attaching a page, receiving a late page, reaching a timeout, or terminating History does not start another synchronization for that connection. One outgoing requester State holds the local inventory snapshot and expected response page. The first valid incoming request page zero binds the connection's sole provider `syncId`; its provider State accumulates request pages, then owns the filtered provider snapshot and response send progression.
+Accepting one current source incarnation is the only History trigger. Each peer starts exactly one outgoing requester synchronization under its own `syncId`, targeted only to that same accepted source; the reverse direction uses another `syncId`. A later peer starts only its own pairwise exchange and does not restart an established pair. Repeating the same SESSION, attaching a page, receiving a late page, reaching a timeout, or terminating History does not start another synchronization for that connection. One outgoing requester State holds the local inventory snapshot and expected response page; its physical target derives directly from the attempt's source identity, with no provider-routing array. The first valid incoming request page zero binds the connection's sole provider `syncId`; its provider State accumulates request pages, then owns the filtered provider snapshot and response send progression.
+
+Every continuous request page is a chunk of that one logical Pull and retains the same `syncId`; the provider waits for Pull `done: true` before computing and streaming the one logical Push. Every response page is a chunk of that Push under the same request identity. Generic Wire request ids correlate only local chunk-send settlement and are not peer-visible History requests or acknowledgements.
 
 Request and response page counters each start at zero. The provider cannot query/filter or emit a response until it accepts the final request page. An explicit empty page terminates an empty phase. While the synchronization remains active, identical page replay is idempotent; changed replay, gaps, out-of-order pages, response-before-inventory, or data after `done` terminate only that direction. Completion, cancellation, and failure retain only the bound `syncId` plus one terminal bit, so neither the same nor a different `syncId` can restart History before that source incarnation ends.
 
