@@ -1,5 +1,5 @@
 import { Remesh } from 'remesh'
-import { filter, map, mergeMap, Observable } from 'rxjs'
+import { EMPTY, filter, map, merge, mergeMap, Observable, of, take, takeUntil } from 'rxjs'
 import HistoryDomain from '@/domain/runtime/History'
 import LifecycleDomain from '@/domain/runtime/Lifecycle'
 import DeliveryDomain from '@/domain/runtime/Delivery'
@@ -94,7 +94,6 @@ const ConnectionDomain = Remesh.domain({
       name: 'Connection.WorldRecoveryAttemptState',
       default: null
     })
-
     const AttemptsQuery = domain.query({ name: 'Connection.AttemptsQuery', impl: ({ get }) => get(AttemptsState()) })
     const PhaseQuery = domain.query({
       name: 'Connection.PhaseQuery',
@@ -494,7 +493,7 @@ const ConnectionDomain = Remesh.domain({
       name: 'Connection.PeerJoinedCommand',
       impl: (_, payload: { roomId: string; sourcePeerId: string }) => [
         sessionDomain.command.PeerJoinedCommand(payload),
-        worldDomain.command.PeerJoinedCommand(payload)
+        historyDomain.command.StartRequesterCommand(payload)
       ]
     })
 
@@ -517,7 +516,7 @@ const ConnectionDomain = Remesh.domain({
       impl: ({ get }, payload: { roomId: string }) => {
         if (payload.roomId === getWorldRoomId()) {
           if (get(sessionDomain.query.DomainsQuery()).length === 0) return null
-          return [...startWorldRecovery(get)]
+          return startWorldRecovery(get)
         }
         const runtimeDomain = get(sessionDomain.query.RoomDomainQuery(payload.roomId))
         if (!runtimeDomain || !get(lifecycleDomain.query.DomainLeaseQuery(runtimeDomain))) return null
@@ -830,7 +829,78 @@ const ConnectionDomain = Remesh.domain({
     })
     domain.effect({
       name: 'Connection.PeerJoinEffect',
-      impl: ({ fromEvent }) => fromEvent(wireDomain.event.PeerJoinedEvent).pipe(map(PeerJoinedCommand))
+      impl: ({ fromEvent, get }) =>
+        fromEvent(wireDomain.event.PeerJoinedEvent).pipe(
+          mergeMap((payload) => {
+            const attempt = get(AttemptsState()).find((item) => item.roomId === payload.roomId)
+            const recovery = payload.roomId === getWorldRoomId() ? get(WorldRecoveryAttemptState()) : null
+            const trusted = get(wireDomain.query.IsRoomTrustedQuery(payload.roomId))
+            if (!attempt && !recovery && trusted) return of(PeerJoinedCommand(payload))
+            const requestId = attempt?.joinRequestId ?? recovery?.joinRequestId
+            if (!requestId) return EMPTY
+
+            const cancellation$ = attempt
+              ? merge(
+                  fromEvent(wireDomain.event.RoomsJoinFailedEvent).pipe(
+                    filter((event) => event.requestId === requestId)
+                  ),
+                  fromEvent(AttemptFailedEvent).pipe(
+                    filter((event) => event.attemptId === attempt.attemptId && event.generation === attempt.generation)
+                  ),
+                  fromEvent(AttemptSupersededEvent).pipe(
+                    filter((event) => event.attemptId === attempt.attemptId && event.generation === attempt.generation)
+                  ),
+                  fromEvent(AttemptStartedEvent).pipe(
+                    filter((event) => event.domain === attempt.domain && event.generation !== attempt.generation)
+                  ),
+                  fromEvent(lifecycleDomain.event.DomainReleasedEvent).pipe(
+                    filter((domain) => domain === attempt.domain)
+                  ),
+                  fromEvent(lifecycleDomain.event.HostDestroyedEvent)
+                )
+              : merge(
+                  fromEvent(wireDomain.event.RoomsJoinFailedEvent).pipe(
+                    filter((event) => event.requestId === requestId)
+                  ),
+                  fromEvent(WorldRecoveryAbortedEvent).pipe(
+                    filter(
+                      (event) => event.requestId === recovery?.requestId && event.generation === recovery?.generation
+                    )
+                  ),
+                  fromEvent(lifecycleDomain.event.HostDestroyedEvent)
+                )
+
+            const roomReady$: Observable<null> = trusted
+              ? of(null)
+              : fromEvent(wireDomain.event.RoomsJoinedEvent).pipe(
+                  filter((event) => event.requestId === requestId && event.roomIds.includes(payload.roomId)),
+                  take(1),
+                  map(() => null)
+                )
+            const release$: Observable<null> = attempt
+              ? roomReady$.pipe(
+                  mergeMap(() =>
+                    fromEvent(AttemptAcceptedEvent).pipe(
+                      filter(
+                        (event) => event.attemptId === attempt.attemptId && event.generation === attempt.generation
+                      ),
+                      take(1),
+                      map(() => null)
+                    )
+                  )
+                )
+              : roomReady$
+            return release$.pipe(
+              takeUntil(cancellation$),
+              map(() => PeerJoinedCommand(payload))
+            )
+          })
+        )
+    })
+    domain.effect({
+      name: 'Connection.WorldPeerJoinEffect',
+      impl: ({ fromEvent }) =>
+        fromEvent(wireDomain.event.PeerJoinedEvent).pipe(map(worldDomain.command.PeerJoinedCommand))
     })
     domain.effect({
       name: 'Connection.PeerLeaveEffect',
@@ -872,32 +942,6 @@ const ConnectionDomain = Remesh.domain({
               })
           ),
           map(WorldRecoveryTimedOutCommand)
-        )
-    })
-    domain.effect({
-      name: 'Connection.BindingChangedEffect',
-      impl: ({ fromEvent }) =>
-        fromEvent(sessionDomain.event.BindingChangedEvent).pipe(
-          map(historyDomain.command.ResetHistoryForSessionCommand)
-        )
-    })
-    domain.effect({
-      name: 'Connection.BindingRemovedEffect',
-      impl: ({ fromEvent }) =>
-        fromEvent(sessionDomain.event.BindingRemovedEvent).pipe(map(historyDomain.command.RemovePeerCommand))
-    })
-    domain.effect({
-      name: 'Connection.CommittedSessionsEffect',
-      impl: ({ fromEvent }) =>
-        fromEvent(sessionDomain.event.DomainCommittedEvent).pipe(
-          map(({ domain: runtimeDomain, newSessions }) =>
-            newSessions.map((session) =>
-              historyDomain.command.ResetHistoryForSessionCommand({
-                domain: runtimeDomain,
-                sourcePeerId: session.sourcePeerId
-              })
-            )
-          )
         )
     })
     domain.effect({

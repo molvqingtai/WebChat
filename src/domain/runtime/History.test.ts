@@ -75,7 +75,8 @@ const setupRuntime = async (
   codec: WireCodec,
   fixture: TransportFixture,
   pagePort = new PagePort(),
-  remoteUser: typeof USER = USER
+  remoteUser: typeof USER = USER,
+  admitRemote = true
 ) => {
   const { transport, receive, sent } = fixture
   const store = Remesh.store({
@@ -135,8 +136,10 @@ const setupRuntime = async (
     user: remoteUser
   }
   await new Promise((resolve) => setTimeout(resolve, 0))
-  receive(ROOM_ID, sourcePeerId, sessionMessage)
-  await new Promise((resolve) => setTimeout(resolve, 0))
+  if (admitRemote) {
+    receive(ROOM_ID, sourcePeerId, sessionMessage)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  }
   return { store, session, history, wire, delivery, pagePort, receive, sent }
 }
 
@@ -302,6 +305,7 @@ describe('HistoryDomain connection-binding lifecycle', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(store.query(history.query.RequesterAttemptsQuery())).toHaveLength(1)
     store.send(history.command.ResetHistoryForSessionCommand({ domain: DOMAIN, sourcePeerId: 'peer-a' }))
+    store.send(history.command.StartRequesterCommand({ domain: DOMAIN, sourcePeerId: 'peer-a' }))
     await vi.waitFor(() => expect(store.query(history.query.RequesterAttemptsQuery())).toHaveLength(2))
     // Domain release must clear BOTH directional bindings itself: only then can the same ids
     // bind again and start fresh synchronization work (a stale terminal binding would block both).
@@ -707,8 +711,24 @@ describe('HistoryDomain current-function peer topology', () => {
     })
   }
 
+  it('admits an eligible Pull before any Session binding exists', async () => {
+    const fixture = await setupRuntime('peer-a', jsonCodec, fakeTransport(), new PagePort(), USER, false)
+    provideEmptyHistory(fixture)
+
+    fixture.receive(ROOM_ID, 'peer-a', providerRequest('pull-before-session', 0, true))
+
+    await vi.waitFor(() =>
+      expect(fixture.sent.filter((item) => item.message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH)).toHaveLength(1)
+    )
+    expect(fixture.store.query(fixture.session.query.DomainQuery(DOMAIN))?.sessions).toEqual([])
+    expect(
+      fixture.sent.find((item) => item.message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH)?.targetPeerIds
+    ).toEqual(['peer-a'])
+  })
+
   const resetHistoryFor = (fixture: RuntimeFixture, sourcePeerId: string) => {
     fixture.store.send(fixture.history.command.ResetHistoryForSessionCommand({ domain: DOMAIN, sourcePeerId }))
+    fixture.store.send(fixture.history.command.StartRequesterCommand({ domain: DOMAIN, sourcePeerId }))
   }
 
   const waitForPeer = async (fixture: RuntimeFixture, sourcePeerId: string) => {

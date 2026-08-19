@@ -17,6 +17,8 @@ import {
   MESSAGE_TYPE,
   type ChatMessage,
   type TextMessage,
+  type ReactionMessage,
+  type SessionMessage,
   type HLC,
   type MentionedUser,
   type ChatSite,
@@ -59,14 +61,6 @@ interface PreparedSession {
   reboundBindings: Array<{ presenceId: string; sourcePeerId: string }>
   /** Unprotected same-source bindings this attempt displaced (rollback/supersession transfers none). */
   displacedBindings: SessionBinding[]
-  publishRequestId?: string
-  missedPeerIds: string[]
-  baselinePeerIds: string[]
-}
-
-interface PendingBaselinePeers {
-  domain: string
-  sourcePeerIds: string[]
 }
 
 /** One observer-side pending-leave deadline per remote presence (idempotent duplicates). */
@@ -141,7 +135,6 @@ const getChatRoomId = (domain: string): string => stringToHex(`${CHAT_ROOM_NAMES
 const replaceBy = <T>(items: T[], predicate: (item: T) => boolean, next: T): T[] =>
   items.some(predicate) ? items.map((item) => (predicate(item) ? next : item)) : [...items, next]
 const removeBy = <T>(items: T[], predicate: (item: T) => boolean): T[] => items.filter((item) => !predicate(item))
-const appendUnique = <T>(items: T[], item: T): T[] => (items.includes(item) ? items : [...items, item])
 const retainBoundedObservations = (observations: ObservedPresence[]): ObservedPresence[] => {
   if (observations.length <= MAX_PRESENCE_OBSERVATIONS) return observations
   const overflow = observations.length - MAX_PRESENCE_OBSERVATIONS
@@ -215,8 +208,6 @@ const makeRecord = (message: ChatMessage, user: ChatUser, receivedAt: number): C
   receivedAt
 })
 
-const initialRequestId = (attemptId: string) => `session:initial:${attemptId}`
-const catchUpRequestId = (attemptId: string, sourcePeerId: string) => `session:catch-up:${attemptId}:${sourcePeerId}`
 const chatRequestId = (operationId: string) => `session:chat:${operationId}`
 /** Extracts the exact domain from identity/catch-up send request ids, when structurally present. */
 const backgroundSendDomain = (requestId: string): string | undefined => {
@@ -224,11 +215,6 @@ const backgroundSendDomain = (requestId: string): string | undefined => {
     const rest = requestId.slice('session:peer:'.length)
     const colon = rest.lastIndexOf(':')
     return colon > 0 ? rest.slice(0, colon) : rest
-  }
-  if (requestId.startsWith('session:catch-up:')) {
-    const rest = requestId.slice('session:catch-up:'.length)
-    const parts = rest.split(':')
-    return parts[0] === 'recovery' && parts[1] ? parts[1] : undefined
   }
   return undefined
 }
@@ -249,10 +235,6 @@ const SessionDomain = Remesh.domain({
     const DomainsState = domain.state<SessionDomainState[]>({ name: 'Session.DomainsState', default: [] })
     const PreparedSessionsState = domain.state<PreparedSession[]>({
       name: 'Session.PreparedSessionsState',
-      default: []
-    })
-    const PendingBaselinePeersState = domain.state<PendingBaselinePeers[]>({
-      name: 'Session.PendingBaselinePeersState',
       default: []
     })
     const PresenceDomainsState = domain.state<PresenceDomainRecord[]>({
@@ -504,9 +486,7 @@ const SessionDomain = Remesh.domain({
           observers: priorPrepared?.observers ?? presence?.observers ?? [],
           isNewPresence: !current && local.status === 'pending',
           reboundBindings: priorPrepared?.reboundBindings ?? [],
-          displacedBindings: priorPrepared?.displacedBindings ?? [],
-          missedPeerIds: [],
-          baselinePeerIds: []
+          displacedBindings: priorPrepared?.displacedBindings ?? []
         }
         return [
           PreparedSessionsState().new(
@@ -521,60 +501,12 @@ const SessionDomain = Remesh.domain({
       name: 'Session.PublishPreparedCommand',
       impl: ({ get }, attemptId: string) => {
         const prepared = get(PreparedSessionsState()).find((item) => item.attemptId === attemptId)
-        if (!prepared) {
-          return PreparedPublishFailedEvent({ attemptId, error: new Error('Prepared session disappeared') })
-        }
-        const requestId = initialRequestId(attemptId)
-        const message = {
-          type: MESSAGE_TYPE.SESSION,
-          sessionId: prepared.runtime.sessionId,
-          presenceId: prepared.runtime.presenceId,
-          joinedAt: prepared.runtime.joinedAt,
-          user: prepared.runtime.user
-        } as const
-        // Native room-wide broadcast: the provider delivers to the peers active at send time,
-        // including the zero-active-peer no-op settlement.
-        const pending = {
-          ...prepared,
-          publishRequestId: requestId
-        }
-        return [
-          PreparedSessionsState().new(
-            replaceBy(get(PreparedSessionsState()), (item) => item.attemptId === attemptId, pending)
-          ),
-          wireDomain.command.SendMessageCommand({
-            requestId,
-            roomId: prepared.runtime.roomId,
-            message
-          })
-        ]
-      }
-    })
-
-    const CompletePreparedPublishCommand = domain.command({
-      name: 'Session.CompletePreparedPublishCommand',
-      impl: ({ get }, requestId: string) => {
-        const prepared = get(PreparedSessionsState()).find((item) => item.publishRequestId === requestId)
-        return prepared ? PreparedPublishedEvent({ attemptId: prepared.attemptId }) : null
-      }
-    })
-
-    const FailPreparedPublishCommand = domain.command({
-      name: 'Session.FailPreparedPublishCommand',
-      impl: ({ get }, payload: { requestId: string; error: Error; stage?: WireFailureStage }) => {
-        const prepared = get(PreparedSessionsState()).find((item) => item.publishRequestId === payload.requestId)
-        if (!prepared) return null
-        // Owner loss (leave/supersede invalidates the queue) cancels the publish quietly.
-        if (payload.stage === 'cancelled') return null
-        // A preflight failure performed zero provider sends and fails the attempt.
-        if (payload.stage === 'preflight') {
-          return PreparedPublishFailedEvent({ attemptId: prepared.attemptId, error: payload.error })
-        }
-        // A genuine broadcast failure is surfaced once; the publication is complete.
-        return [
-          ErrorEvent({ error: payload.error, domain: prepared.runtime.domain }),
-          PreparedPublishedEvent({ attemptId: prepared.attemptId })
-        ]
+        return prepared
+          ? PreparedPublishedEvent({ attemptId })
+          : PreparedPublishFailedEvent({
+              attemptId,
+              error: new Error('Prepared session disappeared')
+            })
       }
     })
 
@@ -619,21 +551,6 @@ const SessionDomain = Remesh.domain({
           },
           observers: prepared.observers
         }
-        const baselines = get(PendingBaselinePeersState())
-        const currentBaseline = baselines.find((item) => item.domain === prepared.runtime.domain)
-        const sourcePeerIds = [
-          ...(currentBaseline?.sourcePeerIds ?? []),
-          ...prepared.baselinePeerIds.filter(
-            (sourcePeerId) => !prepared.runtime.sessions.some((session) => session.sourcePeerId === sourcePeerId)
-          )
-        ].filter((sourcePeerId, index, items) => items.indexOf(sourcePeerId) === index)
-        const nextBaselines =
-          sourcePeerIds.length > 0
-            ? replaceBy(baselines, (item) => item.domain === prepared.runtime.domain, {
-                domain: prepared.runtime.domain,
-                sourcePeerIds
-              })
-            : removeBy(baselines, (item) => item.domain === prepared.runtime.domain)
         // Atomic commit: promote the attempt's runtime and cancel ONLY the pending-leave
         // deadlines this attempt actually rebound and still holds current sources for. Prior
         // committed sessions are retained only when a current pending-leave record preserves
@@ -688,7 +605,6 @@ const SessionDomain = Remesh.domain({
                 )
             )
           ),
-          PendingBaselinePeersState().new(nextBaselines),
           PresenceDomainsState().new(
             replaceBy(presenceDomains, (item) => item.domain === prepared.runtime.domain, presence)
           ),
@@ -758,21 +674,7 @@ const SessionDomain = Remesh.domain({
                   })
                 )
               ]),
-          DomainCommittedEvent({ attemptId, domain: prepared.runtime.domain, newSessions }),
-          ...prepared.missedPeerIds.map((sourcePeerId) =>
-            wireDomain.command.SendMessageCommand({
-              requestId: catchUpRequestId(attemptId, sourcePeerId),
-              roomId: prepared.runtime.roomId,
-              targetPeerIds: [sourcePeerId],
-              message: {
-                type: MESSAGE_TYPE.SESSION,
-                sessionId: prepared.runtime.sessionId,
-                presenceId: prepared.runtime.presenceId,
-                joinedAt: prepared.runtime.joinedAt,
-                user: prepared.runtime.user
-              }
-            })
-          )
+          DomainCommittedEvent({ attemptId, domain: prepared.runtime.domain, newSessions })
         ]
       }
     })
@@ -912,9 +814,6 @@ const SessionDomain = Remesh.domain({
           ),
           PresenceDomainsState().new(removeBy(get(PresenceDomainsState()), (item) => item.domain === runtimeDomain)),
           PendingLeavesState().new(removeBy(get(PendingLeavesState()), (item) => item.domain === runtimeDomain)),
-          PendingBaselinePeersState().new(
-            removeBy(get(PendingBaselinePeersState()), (item) => item.domain === runtimeDomain)
-          ),
           ChatLeavePublishedEvent({ domain: runtimeDomain })
         ]
       }
@@ -948,9 +847,6 @@ const SessionDomain = Remesh.domain({
         return [
           DomainsState().new(removeBy(domains, (item) => item.domain === runtimeDomain)),
           PreparedSessionsState().new(removeBy(prepared, (item) => item.runtime.domain === runtimeDomain)),
-          PendingBaselinePeersState().new(
-            removeBy(get(PendingBaselinePeersState()), (item) => item.domain === runtimeDomain)
-          ),
           PresenceDomainsState().new(removeBy(get(PresenceDomainsState()), (item) => item.domain === runtimeDomain)),
           PendingLeavesState().new(removeBy(get(PendingLeavesState()), (item) => item.domain === runtimeDomain)),
           LiveReleasesState().new(removeBy(get(LiveReleasesState()), (item) => item.domain === runtimeDomain)),
@@ -979,9 +875,6 @@ const SessionDomain = Remesh.domain({
           ),
           PresenceDomainsState().new(replaceBy(presenceDomains, (item) => item.domain === runtimeDomain, record)),
           PendingLeavesState().new(removeBy(get(PendingLeavesState()), (item) => item.domain === runtimeDomain)),
-          PendingBaselinePeersState().new(
-            removeBy(get(PendingBaselinePeersState()), (item) => item.domain === runtimeDomain)
-          ),
           PersistPresenceRequestedEvent({ record, requestId })
         ]
       }
@@ -1171,8 +1064,7 @@ const SessionDomain = Remesh.domain({
 
     const ApplySessionMessageCommand = domain.command({
       name: 'Session.ApplySessionMessageCommand',
-      impl: ({ get }, payload: WireMessageEvent) => {
-        if (!('type' in payload.message) || payload.message.type !== MESSAGE_TYPE.SESSION) return null
+      impl: ({ get }, payload: WireMessageEvent & { message: SessionMessage }) => {
         const message = payload.message
         const preparedSessions = get(PreparedSessionsState())
         const prepared = preparedSessions.find((item) => item.runtime.roomId === payload.roomId)
@@ -1350,8 +1242,7 @@ const SessionDomain = Remesh.domain({
               runtime: nextRuntime,
               observers: nextObservers,
               reboundBindings,
-              displacedBindings,
-              baselinePeerIds: prepared.baselinePeerIds.filter((sourcePeerId) => sourcePeerId !== payload.sourcePeerId)
+              displacedBindings
             })
           )
         }
@@ -1362,19 +1253,6 @@ const SessionDomain = Remesh.domain({
           ...retainedLocalLifecycle(persisted),
           observers: nextObservers
         }
-        const baselines = get(PendingBaselinePeersState())
-        const baseline = baselines.find((item) => item.domain === runtime.domain)
-        const isBaselinePeer = baseline?.sourcePeerIds.includes(payload.sourcePeerId) === true
-        const remainingBaselinePeerIds =
-          baseline?.sourcePeerIds.filter((sourcePeerId) => sourcePeerId !== payload.sourcePeerId) ?? []
-        const nextBaselines = isBaselinePeer
-          ? remainingBaselinePeerIds.length > 0
-            ? replaceBy(baselines, (item) => item.domain === runtime.domain, {
-                domain: runtime.domain,
-                sourcePeerIds: remainingBaselinePeerIds
-              })
-            : removeBy(baselines, (item) => item.domain === runtime.domain)
-          : baselines
         const wasLogicallyActive =
           observed?.status === 'active' || hasActiveUserPresence(nextObservers, message.user.id, message.presenceId)
         const isLaterLogicalJoin = message.joinedAt > runtime.joinedAt
@@ -1444,7 +1322,6 @@ const SessionDomain = Remesh.domain({
               ]
             : []),
           PersistPresenceRequestedEvent({ record }),
-          ...(isBaselinePeer ? [PendingBaselinePeersState().new(nextBaselines)] : []),
           RuntimeSessionChangedEvent(sessionEvent),
           ...(physicalBindingChanged
             ? [BindingChangedEvent({ domain: runtime.domain, sourcePeerId: payload.sourcePeerId })]
@@ -1455,13 +1332,7 @@ const SessionDomain = Remesh.domain({
 
     const ApplyLiveMessageCommand = domain.command({
       name: 'Session.ApplyLiveMessageCommand',
-      impl: ({ get }, payload: WireMessageEvent) => {
-        if (
-          !('type' in payload.message) ||
-          (payload.message.type !== MESSAGE_TYPE.TEXT && payload.message.type !== MESSAGE_TYPE.REACTION)
-        ) {
-          return null
-        }
+      impl: ({ get }, payload: WireMessageEvent & { message: TextMessage | ReactionMessage }) => {
         const runtime = get(DomainsState()).find((item) => item.roomId === payload.roomId)
         if (!runtime) return null
         // The source's CURRENT binding: a grace-retained generation is not current physical
@@ -1513,22 +1384,7 @@ const SessionDomain = Remesh.domain({
       impl: ({ get }, payload: { roomId: string; sourcePeerId: string }) => {
         const preparedSessions = get(PreparedSessionsState())
         const prepared = preparedSessions.find((item) => item.runtime.roomId === payload.roomId)
-        if (prepared) {
-          const baselinePeerIds = appendUnique(prepared.baselinePeerIds, payload.sourcePeerId)
-          const missedPeerIds = prepared.publishRequestId
-            ? appendUnique(prepared.missedPeerIds, payload.sourcePeerId)
-            : prepared.missedPeerIds
-          return baselinePeerIds === prepared.baselinePeerIds && missedPeerIds === prepared.missedPeerIds
-            ? null
-            : PreparedSessionsState().new(
-                replaceBy(preparedSessions, (item) => item.attemptId === prepared.attemptId, {
-                  ...prepared,
-                  baselinePeerIds,
-                  missedPeerIds
-                })
-              )
-        }
-        const runtime = get(DomainsState()).find((item) => item.roomId === payload.roomId)
+        const runtime = prepared?.runtime ?? get(DomainsState()).find((item) => item.roomId === payload.roomId)
         return runtime
           ? wireDomain.command.SendMessageCommand({
               requestId: `session:peer:${runtime.domain}:${payload.sourcePeerId}`,
@@ -1624,8 +1480,6 @@ const SessionDomain = Remesh.domain({
               return PreparedSessionsState().new(
                 replaceBy(preparedSessions, (item) => item.attemptId === prepared.attemptId, {
                   ...prepared,
-                  missedPeerIds: prepared.missedPeerIds.filter((item) => item !== payload.sourcePeerId),
-                  baselinePeerIds: prepared.baselinePeerIds.filter((item) => item !== payload.sourcePeerId),
                   // The departed source's rebind marker AND displaced fact are revoked: only a
                   // CURRENT source may carry cancellation authority or a displacement to the commit.
                   reboundBindings: prepared.reboundBindings.filter(
@@ -1642,25 +1496,7 @@ const SessionDomain = Remesh.domain({
           : null
         const domains = get(DomainsState())
         const runtime = domains.find((item) => item.roomId === payload.roomId)
-        const baselineDomain = prepared?.runtime.domain ?? runtime?.domain
-        const baselines = get(PendingBaselinePeersState())
-        const baseline = baselines.find((item) => item.domain === baselineDomain)
-        const remainingBaselinePeerIds =
-          baseline?.sourcePeerIds.filter((sourcePeerId) => sourcePeerId !== payload.sourcePeerId) ?? []
-        const baselineAction = baseline?.sourcePeerIds.includes(payload.sourcePeerId)
-          ? PendingBaselinePeersState().new(
-              remainingBaselinePeerIds.length > 0
-                ? replaceBy(baselines, (item) => item.domain === baseline.domain, {
-                    domain: baseline.domain,
-                    sourcePeerIds: remainingBaselinePeerIds
-                  })
-                : removeBy(baselines, (item) => item.domain === baseline.domain)
-            )
-          : null
-        const cleanupActions = [
-          ...(preparedAction ? [preparedAction] : []),
-          ...(baselineAction ? [baselineAction] : [])
-        ]
+        const cleanupActions = preparedAction ? [preparedAction] : []
         if (!runtime) return cleanupActions.length > 0 ? cleanupActions : null
         // Resolve the source's CURRENT binding: on a reused source carrying a grace-preserved
         // older generation plus a current one, physical departure closes/arms the CURRENT
@@ -1852,17 +1688,6 @@ const SessionDomain = Remesh.domain({
         )
     })
     domain.effect({
-      name: 'Session.InitialSendSuccessEffect',
-      impl: ({ fromEvent }) =>
-        fromEvent(wireDomain.event.MessageSentEvent).pipe(
-          map(({ requestId }) => CompletePreparedPublishCommand(requestId))
-        )
-    })
-    domain.effect({
-      name: 'Session.InitialSendFailureEffect',
-      impl: ({ fromEvent }) => fromEvent(wireDomain.event.MessageSendFailedEvent).pipe(map(FailPreparedPublishCommand))
-    })
-    domain.effect({
       name: 'Session.ChatSendSuccessEffect',
       impl: ({ fromEvent }) =>
         fromEvent(wireDomain.event.MessageSentEvent).pipe(map(({ requestId }) => CompleteChatSendCommand(requestId)))
@@ -1875,7 +1700,7 @@ const SessionDomain = Remesh.domain({
       name: 'Session.BackgroundSendFailureEffect',
       impl: ({ fromEvent }) =>
         fromEvent(wireDomain.event.MessageSendFailedEvent).pipe(
-          filter(({ requestId }) => requestId.startsWith('session:peer:') || requestId.startsWith('session:catch-up:')),
+          filter(({ requestId }) => requestId.startsWith('session:peer:')),
           map(({ requestId, error }) => ErrorEvent({ error, domain: backgroundSendDomain(requestId) }))
         )
     })
@@ -1883,7 +1708,10 @@ const SessionDomain = Remesh.domain({
       name: 'Session.WireSessionEffect',
       impl: ({ fromEvent }) =>
         fromEvent(wireDomain.event.MessageAcceptedEvent).pipe(
-          filter((event) => 'type' in event.message && event.message.type === MESSAGE_TYPE.SESSION),
+          filter(
+            (event): event is WireMessageEvent & { message: SessionMessage } =>
+              'type' in event.message && event.message.type === MESSAGE_TYPE.SESSION
+          ),
           map(ApplySessionMessageCommand)
         )
     })
@@ -1892,7 +1720,7 @@ const SessionDomain = Remesh.domain({
       impl: ({ fromEvent }) =>
         fromEvent(wireDomain.event.MessageAcceptedEvent).pipe(
           filter(
-            (event) =>
+            (event): event is WireMessageEvent & { message: TextMessage | ReactionMessage } =>
               'type' in event.message &&
               (event.message.type === MESSAGE_TYPE.TEXT || event.message.type === MESSAGE_TYPE.REACTION)
           ),
