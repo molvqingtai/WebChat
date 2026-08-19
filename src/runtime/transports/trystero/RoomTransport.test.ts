@@ -373,6 +373,8 @@ describe('Trystero RoomTransport', () => {
     trysteroFixture.joinErrors.get('room-a')?.({ error: 'could not connect to peer abc123 after exchanging SDP' })
     await settle()
 
+    // The non-attributable failure stays adapter-private: no generic error, no console of any
+    // level, and the room itself is untouched (membership and selfId remain).
     expect(errors).toEqual([])
     expect(warn).not.toHaveBeenCalled()
     expect(errorLog).not.toHaveBeenCalled()
@@ -392,6 +394,8 @@ describe('Trystero RoomTransport', () => {
     const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     await transport.join('room-a')
 
+    // Every negotiation attempt reports the same class; each is silently swallowed, with no
+    // retained state or rate limiter changing the rule.
     trysteroFixture.joinErrors.get('room-a')?.({ error: 'could not connect to peer peer-1 after exchanging SDP' })
     trysteroFixture.joinErrors.get('room-a')?.({ error: 'could not connect to peer peer-2 after exchanging SDP' })
     trysteroFixture.joinErrors.get('room-a')?.({ error: 'could not connect to peer peer-1 after exchanging SDP' })
@@ -428,7 +432,7 @@ describe('Trystero RoomTransport', () => {
     transport.dispose()
   })
 
-  it('forwards the fixed text verbatim once when it does not start the message', async () => {
+  it('forwards the fixed text verbatim once when it does not start the message (startsWith cannot degrade to includes)', async () => {
     const transport = createRoomTransport()
     const errors: string[] = []
     transport.onError((error, roomId) => errors.push(`${roomId}:${error.message}`))
@@ -440,6 +444,8 @@ describe('Trystero RoomTransport', () => {
     trysteroFixture.joinErrors.get('room-a')?.({ error: nonPrefix })
     await settle()
 
+    // The fixed text in a non-prefix position is not the classified case: it forwards verbatim,
+    // exactly once, with no adapter console output.
     expect(errors).toEqual([`room-a:${nonPrefix}`])
     expect(warn).not.toHaveBeenCalled()
     expect(errorLog).not.toHaveBeenCalled()

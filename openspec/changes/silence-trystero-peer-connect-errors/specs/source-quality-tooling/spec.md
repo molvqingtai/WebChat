@@ -2,7 +2,7 @@
 
 ### Requirement: Production console output is Error-only
 
-Executable non-test production source under `src` SHALL call no `console` method other than `console.error`, including but not limited to `warn`, `log`, `debug`, `info`, `trace`, `table`, `dir`, `group`, and timer methods. Comments SHALL NOT retain disabled non-error calls as examples. Tests MAY spy on or mock console methods only to assert behavior. Existing `console.error` calls and their exact failure ownership SHALL remain unchanged.
+Executable non-test production source under `src` SHALL call no `console` method other than `console.error`, including but not limited to `warn`, `log`, `debug`, `info`, `trace`, `table`, `dir`, `group`, and timer methods. Comments SHALL NOT retain disabled non-error calls as examples. Tests MAY spy on or mock console methods only to assert current observable behavior. Existing `console.error` calls and their exact failure ownership SHALL remain unchanged.
 
 The implementation SHALL remove the six executable `console.warn` calls present on `develop@b49951189f25530153ee098aa08947fcde28b55f` in Notification, MessageStore, IndexedDB, Wire, and Background, plus the three commented `console.log` examples in the avatar library. It SHALL NOT convert them to `console.error`, Toasts, events, another logger, or a generic swallow helper.
 
@@ -10,10 +10,17 @@ Removing a warning SHALL NOT remove or alter the surrounding operation's existin
 
 The general caught-error authority remains in force: a genuine failure still requires its caller-visible rejection, current-user route, or existing `console.error` owner unless this change explicitly classifies that exact frozen warning site as quiet or redundantly owned.
 
-#### Scenario: Complete production inventory contains only Error output
+Deletion completeness SHALL be established by implementation diff and cumulative static source review. Tests SHALL NOT read source files, generated bundles, comments, or historical warning/log text solely to prove deleted code remains absent. Tests SHALL remain responsible for current functionality, business results, error ownership, lifecycle, retry, cleanup, and user-visible behavior.
 
-- **WHEN** executable non-test production files under `src` are structurally inventoried
+#### Scenario: Static source review confirms Error-only output
+
+- **WHEN** the complete affected production source and implementation diff are cumulatively reviewed
 - **THEN** no console call other than `console.error` SHALL exist, no disabled non-error call SHALL remain in comments, and existing `console.error` ownership SHALL remain unchanged
+
+#### Scenario: Tests remain scoped to current behavior
+
+- **WHEN** focused unit or E2E coverage is added or reviewed for this change
+- **THEN** it SHALL verify current functionality or observable results and SHALL NOT scan source, bundles, comments, or historical log text solely to enforce absence of deleted code
 
 #### Scenario: Optional Notification rejection remains handled and quiet
 

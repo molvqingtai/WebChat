@@ -17,13 +17,13 @@
 
 - [x] 3.1 Move Trystero implementation/provider tests into `src/runtime/transports/trystero/`; keep the contract/shared harness at Runtime root; compose Trystero directly only from `host.ts`; add no barrel, registry, selector, or compatibility layer.
 - [x] 3.2 Remove Artico implementation/tests, provider selector, dependency and lock resolution, supported-provider documentation, composition/imports, and active structural assertions without changing archived historical evidence.
-- [x] 3.3 Convert initial Session, Text/Reaction, World full snapshot, and eligible zero-call World retry to native omitted-target broadcast; preserve targeted History inventory/response and Session/World catch-up.
+- [x] 3.3 Convert initial Session, Text/Reaction, World full snapshot, and eligible zero-call World retry to native omitted-target broadcast; preserve targeted History inventory/response and Session/World catch-up. The later triggering-source inventory target repair is tracked by `scope-history-sync-to-trigger-peer`.
 - [x] 3.4 Delete all fixed post-join one-second waits, after-sleep peer-id work, `targetPeerIdsOwner: 'session'`, `RoomWideSendResumeRequestedEvent`, `ResumeRoomWideSendCommand`, and their exclusive tests while preserving generic queue order, resume, generation/owner fences, cancellation, and invoked-send no-retry behavior.
 - [x] 3.5 Preserve Session/World membership, History provider snapshots and settlement, the complete optional-target API, protocol-valid local projection, original Error ownership, and every protocol/persistence/public-API boundary.
 
 ## 4. Verification And Delivery
 
-- [x] 4.1 Pass focused mutation-sensitive broadcast/target/catch-up/zero-peer/queue/layout/residue controls and the complete shared Trystero provider contract; record the cumulative Server inventory as `176 -> 166`: 10 legal deletions (5 fixed one-second-only cases and 5 Artico selected-array-only cases), with no formal additions.
+- [x] 4.1 Pass focused mutation-sensitive broadcast/target/catch-up/zero-peer/queue/layout/residue controls and the complete shared Trystero provider contract; record the cumulative Server inventory as `176 -> 166`: 10 legal deletions (5 fixed one-second-only cases and 5 Artico selected-array-only cases), with no formal additions. The later direct History triggering-source controls are tracked by `scope-history-sync-to-trigger-peer`.
 - [x] 4.2 Pass format, lint, typecheck, full tests, Chrome and Firefox builds, pack, strict OpenSpec/status, and repository cleanliness gates on one immutable source exact.
 - [x] 4.3 Push the single cumulative candidate with exact parent/tree/scope and terminal hosted CI while keeping the pull request Draft.
 - [x] 4.4 Obtain fresh cumulative source review on final exact `ae69b3d47cffacb9007acd04dd2703dfec10ad83` and receive Owner product acceptance.

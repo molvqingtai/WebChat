@@ -22,11 +22,11 @@ None.
 ### Modified Capabilities
 
 - `webrtc-runtime`: Keep Trystero's post-SDP peer-connect failure private and completely silent while preserving every other join error and all connection behavior.
-- `source-quality-tooling`: Remove the complete current non-error console-output inventory from production source and prevent warning/log methods from returning.
+- `source-quality-tooling`: Remove the complete current non-error console-output inventory from production source and keep warning/log methods out of production through source review.
 
 ## Impact
 
 - Affected implementation: `src/runtime/transports/trystero/TrysteroRoomTransport.ts` and the six current production `console.warn` sites in Notification, MessageStore, IndexedDB, Wire, and Background, plus the three commented avatar-library `console.log` examples.
-- Affected tests: focused Trystero adapter controls for matching, repeated, stale, and non-matching callbacks; focused controls for behavior around removed warning sites; a repository-level production-source console inventory that rejects every method except `console.error`.
+- Affected tests: focused Trystero adapter controls for matching, repeated, stale, and non-matching callbacks, plus focused controls for the surviving operation results around removed warning sites. Deletion completeness is verified by source diff and cumulative static review, not by tests that scan for removed code, log text, or comments.
 - Affected user behavior: `could not connect to peer ...` no longer creates a Toast or console record; other join failures remain visible through the existing error path.
 - Unchanged: existing `console.error` sites and ownership, RoomTransport contracts, Domain/UI error types, peer identity, Room membership, cleanup, announce, signaling, handshake, retry/reconnection, protocols, persistence, manifests, dependencies, release, and deployment.
