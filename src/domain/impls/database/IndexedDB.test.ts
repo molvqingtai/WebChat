@@ -394,7 +394,7 @@ describe('IndexedDB Message database version ownership', () => {
       }
     })
     // Capture the bounded blocked deadline without scheduling a real timer, so the signal that the
-    // blocked handler ran is the deadline registration (the console warning was removed).
+    // blocked handler ran is the deadline registration.
     const timers: Array<{ callback: () => void; ms?: number }> = []
     vi.stubGlobal(
       'setTimeout',

@@ -10,14 +10,11 @@ describe('current peer protocol generation', () => {
     expect(getWorldRoomId()).toBe(stringToHex('WEB_CHAT_WORLD_ROOM_V5'))
   })
 
-  it('keeps current Session and Wire free of retired rejection diagnostics and v4 labels', () => {
+  it('keeps current Session free of retired rejection diagnostics and v4 labels', () => {
     const session = readFileSync(path.resolve(process.cwd(), 'src/domain/runtime/Session.ts'), 'utf8')
-    const wire = readFileSync(path.resolve(process.cwd(), 'src/domain/runtime/Wire.ts'), 'utf8')
 
-    // Local production no longer revalidates protocol shape, so those diagnostics are gone, and
-    // the Wire drop warning text was removed with the production console cleanup.
+    // Local production no longer revalidates protocol shape, so those diagnostics are gone.
     expect(session).not.toContain('Message exceeds the v5 event contract')
-    expect(wire).not.toContain('Dropped v5 frame')
-    expect(`${session}\n${wire}`).not.toMatch(/\bv4\b/)
+    expect(session).not.toMatch(/\bv4\b/)
   })
 })

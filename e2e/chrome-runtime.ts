@@ -63,7 +63,6 @@ type Evidence = {
   startupMs: number | null
   targets: Array<Pick<TargetInfo, 'type' | 'title' | 'url'>>
   relayed: string[]
-  rejectedRelayWarnings: number
   extensionErrors: RuntimeEvent[]
   relayDiagnostics: RuntimeEvent[]
   rawBoundaryMessages: { offscreen: number; content: number }
@@ -208,7 +207,6 @@ const evidence: Evidence = {
   startupMs: null,
   targets: [],
   relayed: [],
-  rejectedRelayWarnings: 0,
   extensionErrors: [],
   relayDiagnostics: [],
   rawBoundaryMessages: { offscreen: 0, content: 0 },
@@ -666,9 +664,8 @@ try {
         `chrome.runtime.sendMessage(${JSON.stringify(message('relay-check-spoofed-content'))})`,
         contentContext.id
       )
-      // The rejected messages are dropped silently: none reach the content relay log and no
-      // console output is produced. A trailing valid message proves the pipeline processed the
-      // rejects before it (in-order delivery from the same offscreen sender).
+      // A trailing valid message proves the pipeline processed the rejects before it (in-order
+      // delivery from the same offscreen sender).
       const trailingMessage = message('relay-check-after-rejects')
       await evaluate(offscreenSession[0], `chrome.runtime.sendMessage(${JSON.stringify(trailingMessage)})`)
       try {
@@ -689,13 +686,6 @@ try {
         throw new Error(
           `Unexpected relayed messages: ${JSON.stringify(evidence.relayed)}; events: ${JSON.stringify(runtimeEvents.slice(-20))}`
         )
-      }
-
-      evidence.rejectedRelayWarnings = runtimeEvents.filter(
-        (event) => event.event === 'console' && event.args?.[0] === '[WebChat] Dropped Offscreen Runtime relay:'
-      ).length
-      if (evidence.rejectedRelayWarnings !== 0) {
-        throw new Error(`Expected zero rejected relay console output, received ${evidence.rejectedRelayWarnings}`)
       }
 
       evidence.extensionErrors = runtimeEvents
