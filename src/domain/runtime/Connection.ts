@@ -515,21 +515,28 @@ const ConnectionDomain = Remesh.domain({
 
     const PeerJoinedCommand = domain.command({
       name: 'Connection.PeerJoinedCommand',
-      impl: ({ get }, payload: { roomId: string; sourcePeerId: string; generation?: number }) => {
+      impl: ({ get }, payload: { roomId: string; sourcePeerId: string; generation: number }) => {
         const runtimeDomain = get(sessionDomain.query.RoomDomainQuery(payload.roomId))
         const runtime = runtimeDomain ? get(sessionDomain.query.DomainQuery(runtimeDomain)) : null
         const currentGeneration = runtimeDomain
           ? get(GenerationsState()).find((item) => item.domain === runtimeDomain)?.generation
           : undefined
         if (
+          !runtimeDomain ||
           !runtime ||
           runtime.roomId !== payload.roomId ||
           currentGeneration !== payload.generation ||
-          get(sessionDomain.query.ReleasingDomainQuery(runtimeDomain!))
+          get(sessionDomain.query.ReleasingDomainQuery(runtimeDomain))
         ) {
           return null
         }
-        return [sessionDomain.command.PeerJoinedCommand(payload), historyDomain.command.StartRequesterCommand(payload)]
+        return [
+          sessionDomain.command.PeerJoinedCommand(payload),
+          historyDomain.command.HistoryMessagesPullCommand({
+            domain: runtimeDomain,
+            sourcePeerId: payload.sourcePeerId
+          })
+        ]
       }
     })
 
@@ -570,7 +577,7 @@ const ConnectionDomain = Remesh.domain({
           domain: runtimeDomain
         })
         return [
-          historyDomain.command.ResetHistoryForRoomCommand(runtimeDomain),
+          historyDomain.command.ResetDomainHistorySyncCommand(runtimeDomain),
           ...(Array.isArray(recovery) ? recovery : [recovery])
         ]
       }
@@ -879,9 +886,9 @@ const ConnectionDomain = Remesh.domain({
         fromEvent(wireDomain.event.PeerJoinedEvent).pipe(
           mergeMap((payload) => {
             const attempt = get(AttemptsState()).find((item) => item.roomId === payload.roomId)
-            const recovery = payload.roomId === getWorldRoomId() ? get(WorldRecoveryAttemptState()) : null
             const trusted = get(wireDomain.query.IsRoomTrustedQuery(payload.roomId))
-            if (!attempt && !recovery && trusted) {
+            if (!attempt) {
+              if (!trusted) return EMPTY
               const runtimeDomain = get(sessionDomain.query.RoomDomainQuery(payload.roomId))
               const runtime = runtimeDomain ? get(sessionDomain.query.DomainQuery(runtimeDomain)) : null
               const generation = runtimeDomain
@@ -894,47 +901,27 @@ const ConnectionDomain = Remesh.domain({
                 ? of(PeerJoinedCommand({ ...payload, generation }))
                 : EMPTY
             }
-            const requestId = attempt?.joinRequestId ?? recovery?.joinRequestId
+            const requestId = attempt.joinRequestId
             if (!requestId) return EMPTY
 
-            const cancellation$ = attempt
-              ? merge(
-                  fromEvent(wireDomain.event.RoomsJoinFailedEvent).pipe(
-                    filter((event) => event.requestId === requestId)
-                  ),
-                  fromEvent(AttemptFailedEvent).pipe(
-                    filter((event) => event.attemptId === attempt.attemptId && event.generation === attempt.generation)
-                  ),
-                  fromEvent(AttemptSupersededEvent).pipe(
-                    filter((event) => event.attemptId === attempt.attemptId && event.generation === attempt.generation)
-                  ),
-                  fromEvent(AttemptStartedEvent).pipe(
-                    filter((event) => event.domain === attempt.domain && event.generation !== attempt.generation)
-                  ),
-                  fromEvent(lifecycleDomain.event.DomainReleasedEvent).pipe(
-                    filter((domain) => domain === attempt.domain)
-                  ),
-                  fromEvent(wireDomain.event.PeerLeftEvent).pipe(
-                    filter((event) => event.roomId === payload.roomId && event.sourcePeerId === payload.sourcePeerId)
-                  ),
-                  fromEvent(wireDomain.event.ErrorEvent).pipe(filter((event) => event.roomId === payload.roomId)),
-                  fromEvent(lifecycleDomain.event.HostDestroyedEvent)
-                )
-              : merge(
-                  fromEvent(wireDomain.event.RoomsJoinFailedEvent).pipe(
-                    filter((event) => event.requestId === requestId)
-                  ),
-                  fromEvent(WorldRecoveryAbortedEvent).pipe(
-                    filter(
-                      (event) => event.requestId === recovery?.requestId && event.generation === recovery?.generation
-                    )
-                  ),
-                  fromEvent(wireDomain.event.PeerLeftEvent).pipe(
-                    filter((event) => event.roomId === payload.roomId && event.sourcePeerId === payload.sourcePeerId)
-                  ),
-                  fromEvent(wireDomain.event.ErrorEvent).pipe(filter((event) => event.roomId === payload.roomId)),
-                  fromEvent(lifecycleDomain.event.HostDestroyedEvent)
-                )
+            const cancellation$ = merge(
+              fromEvent(wireDomain.event.RoomsJoinFailedEvent).pipe(filter((event) => event.requestId === requestId)),
+              fromEvent(AttemptFailedEvent).pipe(
+                filter((event) => event.attemptId === attempt.attemptId && event.generation === attempt.generation)
+              ),
+              fromEvent(AttemptSupersededEvent).pipe(
+                filter((event) => event.attemptId === attempt.attemptId && event.generation === attempt.generation)
+              ),
+              fromEvent(AttemptStartedEvent).pipe(
+                filter((event) => event.domain === attempt.domain && event.generation !== attempt.generation)
+              ),
+              fromEvent(lifecycleDomain.event.DomainReleasedEvent).pipe(filter((domain) => domain === attempt.domain)),
+              fromEvent(wireDomain.event.PeerLeftEvent).pipe(
+                filter((event) => event.roomId === payload.roomId && event.sourcePeerId === payload.sourcePeerId)
+              ),
+              fromEvent(wireDomain.event.ErrorEvent).pipe(filter((event) => event.roomId === payload.roomId)),
+              fromEvent(lifecycleDomain.event.HostDestroyedEvent)
+            )
 
             const roomReady$: Observable<null> = trusted
               ? of(null)
@@ -943,27 +930,18 @@ const ConnectionDomain = Remesh.domain({
                   take(1),
                   map(() => null)
                 )
-            const release$: Observable<null> = attempt
-              ? roomReady$.pipe(
-                  mergeMap(() =>
-                    fromEvent(AttemptAcceptedEvent).pipe(
-                      filter(
-                        (event) => event.attemptId === attempt.attemptId && event.generation === attempt.generation
-                      ),
-                      take(1),
-                      map(() => null)
-                    )
-                  )
+            const release$: Observable<null> = roomReady$.pipe(
+              mergeMap(() =>
+                fromEvent(AttemptAcceptedEvent).pipe(
+                  filter((event) => event.attemptId === attempt.attemptId && event.generation === attempt.generation),
+                  take(1),
+                  map(() => null)
                 )
-              : roomReady$
+              )
+            )
             return release$.pipe(
               takeUntil(cancellation$),
-              map(() =>
-                PeerJoinedCommand({
-                  ...payload,
-                  ...(attempt ? { generation: attempt.generation } : {})
-                })
-              )
+              map(() => PeerJoinedCommand({ ...payload, generation: attempt.generation }))
             )
           })
         )

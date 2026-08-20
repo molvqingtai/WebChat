@@ -336,14 +336,14 @@ const HistoryDomain = Remesh.domain({
 
     // ── Requester lifecycle ─────────────────────────────────────────────────────
 
-    const StartRequesterCommand = domain.command({
-      name: 'History.StartRequesterCommand',
-      impl: ({ get }, payload: { roomId?: string; domain?: string; sourcePeerId: string }) => {
-        const domain = payload.roomId ? get(sessionDomain.query.RoomDomainQuery(payload.roomId)) : payload.domain
-        if (!domain || get(sessionDomain.query.ReleasingDomainQuery(domain))) return null
-        const runtime = get(sessionDomain.query.DomainQuery(domain))
-        const roomId = payload.roomId ?? runtime?.roomId
-        if (!roomId) return null
+    const HistoryMessagesPullCommand = domain.command({
+      name: 'History.HistoryMessagesPullCommand',
+      impl: ({ get }, payload: { domain: string; sourcePeerId: string }) => {
+        if (get(sessionDomain.query.ReleasingDomainQuery(payload.domain))) return null
+        const runtime = get(sessionDomain.query.DomainQuery(payload.domain))
+        if (!runtime) return null
+        const domain = payload.domain
+        const roomId = runtime.roomId
         // Exactly one outgoing synchronization per connection incarnation: any existing requester
         // binding marks this incarnation as already started, so a repeated session or a late
         // trigger is inert. Only the real replacement lifecycle (which clears the binding) admits
@@ -554,6 +554,34 @@ const HistoryDomain = Remesh.domain({
         !get(FeedbackOwnersState()).some((item) => item.domain === runtimeDomain)
     })
 
+    const discoverDomainSources = (
+      get: Parameters<Parameters<typeof domain.command>[0]['impl']>[0]['get'],
+      runtimeDomain: string
+    ): Array<{ domain: string; sourcePeerId: string }> => {
+      const sourcePeerIds = new Set<string>()
+      const collect = (items: readonly HistoryAttemptKey[]) => {
+        items.forEach((item) => {
+          if (item.domain === runtimeDomain) sourcePeerIds.add(item.sourcePeerId)
+        })
+      }
+      collect(get(RequesterAttemptsState()))
+      collect(get(ProviderAttemptsState()))
+      collect(get(ProviderSupplySuccessorsState()))
+      collect(get(ProviderSupplyJobsState()))
+      collect(get(ActiveSuppliesState()))
+      collect(get(WaitingSuppliesState()))
+      collect(get(RequesterSupplyJobsState()))
+      collect(get(PendingWireSendsState()))
+      collect(get(FeedbackOwnersState()))
+      for (const key of get(HistorySyncBindingsState()).keys()) {
+        const [sourcePeerId, domainName, direction] = key.split('\u0000')
+        if (sourcePeerId && domainName === runtimeDomain && (direction === 'provider' || direction === 'requester')) {
+          sourcePeerIds.add(sourcePeerId)
+        }
+      }
+      return [...sourcePeerIds].map((sourcePeerId) => ({ domain: runtimeDomain, sourcePeerId }))
+    }
+
     const CleanupProviderSlotsCommand = domain.command({
       name: 'History.CleanupProviderSlotsCommand',
       impl: ({ get }, payload: { domain: string; sourcePeerId: string }) => {
@@ -599,8 +627,8 @@ const HistoryDomain = Remesh.domain({
       }
     })
 
-    const ResetHistoryForSessionCommand = domain.command({
-      name: 'History.ResetHistoryForSessionCommand',
+    const ResetPeerHistorySyncCommand = domain.command({
+      name: 'History.ResetPeerHistorySyncCommand',
       impl: ({ get }, payload: { domain: string; sourcePeerId: string }) => {
         const requesters = get(RequesterAttemptsState())
         const owners = get(FeedbackOwnersState())
@@ -650,32 +678,10 @@ const HistoryDomain = Remesh.domain({
       }
     })
 
-    const ResetHistoryForRoomCommand = domain.command({
-      name: 'History.ResetHistoryForRoomCommand',
+    const ResetDomainHistorySyncCommand = domain.command({
+      name: 'History.ResetDomainHistorySyncCommand',
       impl: ({ get }, runtimeDomain: string) => {
-        const sourcePeerIds = new Set(
-          [
-            ...get(RequesterAttemptsState()),
-            ...get(ProviderAttemptsState()),
-            ...get(ProviderSupplySuccessorsState()),
-            ...get(ProviderSupplyJobsState()),
-            ...get(ActiveSuppliesState()),
-            ...get(WaitingSuppliesState()),
-            ...get(RequesterSupplyJobsState()),
-            ...get(PendingWireSendsState()),
-            ...get(FeedbackOwnersState())
-          ]
-            .filter((item) => item.domain === runtimeDomain)
-            .map((item) => item.sourcePeerId)
-        )
-        return [
-          ...[...sourcePeerIds].map((sourcePeerId) =>
-            ResetHistoryForSessionCommand({ domain: runtimeDomain, sourcePeerId })
-          ),
-          // A completed provider may leave only its terminal binding, so it is absent from every
-          // source-owned collection above; room reset must clear that binding as well.
-          ClearDomainSyncBindingsCommand(runtimeDomain)
-        ]
+        return discoverDomainSources(get, runtimeDomain).map(ResetPeerHistorySyncCommand)
       }
     })
 
@@ -1966,15 +1972,7 @@ const HistoryDomain = Remesh.domain({
     const ReleaseDomainCommand = domain.command({
       name: 'History.ReleaseDomainCommand',
       impl: ({ get }, runtimeDomain: string) => {
-        const providerSources = get(ProviderAttemptsState())
-          .filter((item) => item.domain === runtimeDomain)
-          .map((item) => ({ domain: runtimeDomain, sourcePeerId: item.sourcePeerId }))
-        const successorSources = get(ProviderSupplySuccessorsState())
-          .filter((item) => item.domain === runtimeDomain)
-          .map((item) => ({ domain: runtimeDomain, sourcePeerId: item.sourcePeerId }))
-        const uniqueSources = [
-          ...new Map([...providerSources, ...successorSources].map((item) => [item.sourcePeerId, item])).values()
-        ]
+        const sources = discoverDomainSources(get, runtimeDomain)
         const owners = get(FeedbackOwnersState()).filter((item) => item.domain === runtimeDomain)
         // Job-aware release: a dormant successor is removed without starting; a live page supply
         // is cancelled on one awaited settlement path so its own terminal finish releases the job
@@ -1998,7 +1996,7 @@ const HistoryDomain = Remesh.domain({
             ? [RequesterSupplyJobsState().new(removeBy(jobs, (item) => dormantTokens.has(item.syncToken)))]
             : []),
           ...(cancelSupplyIds.length > 0 ? [CancelRequesterSuppliesEvent(cancelSupplyIds)] : []),
-          ...uniqueSources.map(CleanupProviderSlotsCommand),
+          ...sources.map(CleanupProviderSlotsCommand),
           ClearDomainSyncBindingsCommand(runtimeDomain),
           ...owners.flatMap((item) => dismissFeedback(get, item) ?? [])
         ]
@@ -2457,9 +2455,9 @@ const HistoryDomain = Remesh.domain({
     return {
       query: { RequesterAttemptsQuery, ProviderAttemptsQuery, ProviderSupplyJobsQuery, DomainCleanupSettledQuery },
       command: {
-        StartRequesterCommand,
-        ResetHistoryForSessionCommand,
-        ResetHistoryForRoomCommand,
+        HistoryMessagesPullCommand,
+        ResetPeerHistorySyncCommand,
+        ResetDomainHistorySyncCommand,
         FinishRequesterCommand,
         RemovePeerCommand,
         ReleaseDomainCommand,

@@ -284,7 +284,7 @@ describe('HistoryDomain connection-binding lifecycle', () => {
     expect(store.query(history.query.ProviderAttemptsQuery())).toHaveLength(0)
     // Requester direction: start, complete through the real response input path, and verify the
     // loading-close settlement retains the completed collection while a fresh request starts freely.
-    store.send(history.command.StartRequesterCommand({ domain: DOMAIN, sourcePeerId: 'peer-a' }))
+    store.send(history.command.HistoryMessagesPullCommand({ domain: DOMAIN, sourcePeerId: 'peer-a' }))
     const requester = store.query(history.query.RequesterAttemptsQuery()).find((item) => item.sourcePeerId === 'peer-a')
     expect(requester).toBeDefined()
     receive(ROOM_ID, 'peer-a', {
@@ -301,18 +301,18 @@ describe('HistoryDomain connection-binding lifecycle', () => {
     // A repeated start on the same incarnation is inert (its requester binding persists); only
     // the real replacement lifecycle retires the old owner into a retained collection and admits
     // a fresh request identity while the old one still accepts late pages.
-    store.send(history.command.StartRequesterCommand({ domain: DOMAIN, sourcePeerId: 'peer-a' }))
+    store.send(history.command.HistoryMessagesPullCommand({ domain: DOMAIN, sourcePeerId: 'peer-a' }))
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(store.query(history.query.RequesterAttemptsQuery())).toHaveLength(1)
-    store.send(history.command.ResetHistoryForSessionCommand({ domain: DOMAIN, sourcePeerId: 'peer-a' }))
-    store.send(history.command.StartRequesterCommand({ domain: DOMAIN, sourcePeerId: 'peer-a' }))
+    store.send(history.command.ResetPeerHistorySyncCommand({ domain: DOMAIN, sourcePeerId: 'peer-a' }))
+    store.send(history.command.HistoryMessagesPullCommand({ domain: DOMAIN, sourcePeerId: 'peer-a' }))
     await vi.waitFor(() => expect(store.query(history.query.RequesterAttemptsQuery())).toHaveLength(2))
     // Domain release must clear BOTH directional bindings itself: only then can the same ids
     // bind again and start fresh synchronization work (a stale terminal binding would block both).
     store.send(history.command.ReleaseDomainCommand(DOMAIN))
     sendProviderRequest(store, history, 'rel-a', 0, true)
     await vi.waitFor(() => expect(store.query(history.query.ProviderAttemptsQuery())).toHaveLength(1))
-    store.send(history.command.StartRequesterCommand({ domain: DOMAIN, sourcePeerId: 'peer-a' }))
+    store.send(history.command.HistoryMessagesPullCommand({ domain: DOMAIN, sourcePeerId: 'peer-a' }))
     await vi.waitFor(() => expect(store.query(history.query.RequesterAttemptsQuery())).toHaveLength(1))
   })
 })
@@ -334,7 +334,7 @@ describe('HistoryDomain inventory targets', () => {
       user: { id: 'self-user', name: 'Self', avatar: '' }
     })
     await new Promise((resolve) => setTimeout(resolve, 0))
-    store.send(history.command.StartRequesterCommand({ domain: DOMAIN, sourcePeerId: 'peer-a' }))
+    store.send(history.command.HistoryMessagesPullCommand({ domain: DOMAIN, sourcePeerId: 'peer-a' }))
 
     await vi.waitFor(() =>
       expect(sent.some((item) => item.message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)).toBe(true)
@@ -352,7 +352,7 @@ describe('HistoryDomain inventory targets', () => {
       }
     })
 
-    store.send(history.command.StartRequesterCommand({ domain: DOMAIN, sourcePeerId: 'local-peer' }))
+    store.send(history.command.HistoryMessagesPullCommand({ domain: DOMAIN, sourcePeerId: 'local-peer' }))
     await vi.waitFor(() =>
       expect(store.query(history.query.RequesterAttemptsQuery())).toEqual([
         expect.objectContaining({ sourcePeerId: 'local-peer', loadingSettled: true })
@@ -410,7 +410,7 @@ describe('HistoryDomain peer-scoped requester targets', () => {
     })
     supplyEmpty(pagePort)
 
-    store.send(history.command.StartRequesterCommand({ domain: DOMAIN, sourcePeerId: 'peer-a' }))
+    store.send(history.command.HistoryMessagesPullCommand({ domain: DOMAIN, sourcePeerId: 'peer-a' }))
     await vi.waitFor(() => expect(store.query(history.query.RequesterAttemptsQuery())).toHaveLength(1))
     const requester = store.query(history.query.RequesterAttemptsQuery())[0]!
     const record: ChatMessageRecord = {
@@ -465,9 +465,9 @@ describe('HistoryDomain peer-scoped requester targets', () => {
     supplyEmpty(pagePort)
     await admitPeer(receive, 'peer-b', 'session-b')
 
-    store.send(history.command.StartRequesterCommand({ domain: DOMAIN, sourcePeerId: 'peer-a' }))
+    store.send(history.command.HistoryMessagesPullCommand({ domain: DOMAIN, sourcePeerId: 'peer-a' }))
     await vi.waitFor(() => expect(pulls(sent)).toHaveLength(1))
-    store.send(history.command.StartRequesterCommand({ domain: DOMAIN, sourcePeerId: 'peer-b' }))
+    store.send(history.command.HistoryMessagesPullCommand({ domain: DOMAIN, sourcePeerId: 'peer-b' }))
     await vi.waitFor(() => expect(pulls(sent)).toHaveLength(2))
 
     const [first, second] = pulls(sent)
@@ -487,7 +487,7 @@ describe('HistoryDomain peer-scoped requester targets', () => {
     const { store, history, pagePort, receive, sent } = await setup()
     supplyEmpty(pagePort)
 
-    store.send(history.command.StartRequesterCommand({ domain: DOMAIN, sourcePeerId: 'peer-a' }))
+    store.send(history.command.HistoryMessagesPullCommand({ domain: DOMAIN, sourcePeerId: 'peer-a' }))
     await vi.waitFor(() => expect(pulls(sent)).toHaveLength(1))
     const establishedSyncId = pullMessage(pulls(sent)[0]!).syncId
     receive(ROOM_ID, 'peer-a', {
@@ -504,7 +504,7 @@ describe('HistoryDomain peer-scoped requester targets', () => {
 
     // C joins: only the C-scoped exchange starts; the established A exchange sends nothing more.
     await admitPeer(receive, 'peer-c', 'session-c')
-    store.send(history.command.StartRequesterCommand({ domain: DOMAIN, sourcePeerId: 'peer-c' }))
+    store.send(history.command.HistoryMessagesPullCommand({ domain: DOMAIN, sourcePeerId: 'peer-c' }))
     await vi.waitFor(() => expect(pulls(sent)).toHaveLength(2))
 
     const establishedPulls = pulls(sent).filter((item) => targetsOf(item) === JSON.stringify(['peer-a']))
@@ -523,8 +523,8 @@ describe('HistoryDomain peer-scoped requester targets', () => {
     await admitPeer(receive, 'peer-b', 'session-b')
     await admitPeer(receive, 'peer-c', 'session-c')
 
-    store.send(history.command.StartRequesterCommand({ domain: DOMAIN, sourcePeerId: 'peer-b' }))
-    store.send(history.command.StartRequesterCommand({ domain: DOMAIN, sourcePeerId: 'peer-c' }))
+    store.send(history.command.HistoryMessagesPullCommand({ domain: DOMAIN, sourcePeerId: 'peer-b' }))
+    store.send(history.command.HistoryMessagesPullCommand({ domain: DOMAIN, sourcePeerId: 'peer-c' }))
     await vi.waitFor(() => expect(pulls(sent)).toHaveLength(2))
 
     // Mutation-sensitive: restoring an all-current-Session allocation would target
@@ -540,7 +540,7 @@ describe('HistoryDomain peer-scoped requester targets', () => {
     supplyEmpty(pagePort)
     await admitPeer(receive, 'peer-b', 'session-b')
 
-    store.send(history.command.StartRequesterCommand({ domain: DOMAIN, sourcePeerId: 'peer-a' }))
+    store.send(history.command.HistoryMessagesPullCommand({ domain: DOMAIN, sourcePeerId: 'peer-a' }))
     await vi.waitFor(() => expect(pulls(sent)).toHaveLength(1))
     const syncId = pullMessage(pulls(sent)[0]!).syncId
 
@@ -564,7 +564,7 @@ describe('HistoryDomain peer-scoped requester targets', () => {
     supplyEmpty(pagePort)
     await admitPeer(receive, 'peer-b', 'session-b')
 
-    store.send(history.command.StartRequesterCommand({ domain: DOMAIN, sourcePeerId: 'peer-a' }))
+    store.send(history.command.HistoryMessagesPullCommand({ domain: DOMAIN, sourcePeerId: 'peer-a' }))
     await vi.waitFor(() => expect(pulls(sent)).toHaveLength(1))
 
     store.send(history.command.RemovePeerCommand({ domain: DOMAIN, sourcePeerId: 'peer-b' }))
@@ -613,7 +613,7 @@ describe('HistoryDomain peer-scoped requester targets', () => {
       }
     })
 
-    store.send(history.command.StartRequesterCommand({ domain: DOMAIN, sourcePeerId: 'peer-a' }))
+    store.send(history.command.HistoryMessagesPullCommand({ domain: DOMAIN, sourcePeerId: 'peer-a' }))
     await vi.waitFor(() => expect(pulls(sent).length).toBeGreaterThan(1))
 
     const pages = pulls(sent).map(pullMessage)
@@ -727,8 +727,8 @@ describe('HistoryDomain current-function peer topology', () => {
   })
 
   const resetHistoryFor = (fixture: RuntimeFixture, sourcePeerId: string) => {
-    fixture.store.send(fixture.history.command.ResetHistoryForSessionCommand({ domain: DOMAIN, sourcePeerId }))
-    fixture.store.send(fixture.history.command.StartRequesterCommand({ domain: DOMAIN, sourcePeerId }))
+    fixture.store.send(fixture.history.command.ResetPeerHistorySyncCommand({ domain: DOMAIN, sourcePeerId }))
+    fixture.store.send(fixture.history.command.HistoryMessagesPullCommand({ domain: DOMAIN, sourcePeerId }))
   }
 
   const waitForPeer = async (fixture: RuntimeFixture, sourcePeerId: string) => {
