@@ -10,6 +10,7 @@ import {
   type ChatMessage,
   type ChatRoomMessage,
   type ChatUser,
+  type HistoryMessagesPull,
   type TextMessage,
   type WorldRoomMessage
 } from '@/protocol'
@@ -170,9 +171,7 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
   const errorListeners = new Set<(error: Error, roomId: string) => void>()
   let sendError: Error | null = null
   let sendErrorRoomId: string | null = null
-  let blockedSendRoomId: string | null = null
-  let sendGate: Promise<void> | null = null
-  let releaseSendGate = () => {}
+  const sendGates = new Map<string, { promise: Promise<void>; release: () => void }>()
   let historySendGate: Promise<void> | null = null
   let releaseHistorySendGate = () => {}
   let activeHistorySends = 0
@@ -258,7 +257,8 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
       if (failedNextSends.delete(roomId)) throw new Error(`Room "${roomId}" send failed`)
       sent.push(attempt)
       operationLog.push(`send:${roomId}`)
-      if (sendGate && roomId === blockedSendRoomId) await sendGate
+      const sendGate = sendGates.get(roomId)
+      if (sendGate) await sendGate.promise
       const message = JSON.parse(payload) as TestWireMessage
       if (!('type' in message) || message.type !== MESSAGE_TYPE.HISTORY_MESSAGES_PUSH) return
       if (!historySendGate) return
@@ -296,9 +296,8 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
       joined.clear()
       pendingJoins.forEach((pending, roomId) => pending.reject(new Error(`Room "${roomId}" join cancelled`)))
       pendingJoins.clear()
-      releaseSendGate()
-      sendGate = null
-      blockedSendRoomId = null
+      sendGates.forEach(({ release }) => release())
+      sendGates.clear()
       desiredWaiters.splice(0).forEach((waiter) => waiter.resolve())
       joinCallWaiters.splice(0).forEach((waiter) => waiter.resolve())
       sendAttemptWaiters.length = 0
@@ -360,15 +359,15 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
       failedNextSends.add(roomId)
     },
     hangSendsTo: (roomId: string) => {
-      blockedSendRoomId = roomId
-      sendGate = new Promise<void>((resolve) => {
-        releaseSendGate = resolve
+      let release!: () => void
+      const promise = new Promise<void>((resolve) => {
+        release = resolve
       })
+      sendGates.set(roomId, { promise, release })
     },
     releaseSends: () => {
-      releaseSendGate()
-      sendGate = null
-      blockedSendRoomId = null
+      sendGates.forEach(({ release }) => release())
+      sendGates.clear()
     },
     hangHistoryResponseSends: () => {
       historySendGate = new Promise<void>((resolve) => {
@@ -395,6 +394,9 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
       const peers = peersByRoom.get(roomId) ?? new Set<string>()
       peers.add(peerId)
       peersByRoom.set(roomId, peers)
+    },
+    forgetPeer: (roomId: string, peerId: string) => {
+      peersByRoom.get(roomId)?.delete(peerId)
     },
     peerJoin: (roomId: string, peerId: string) => {
       if (!joined.has(roomId)) return
@@ -556,49 +558,282 @@ const sessionAllocationEventFixture = () => {
 void sessionAllocationEventFixture
 
 describe('RuntimeServer lifecycle', () => {
-  it('broadcasts the initial Session and World snapshot natively on a direct join', async () => {
+  it('starts Session and History only for admitted peer edges on a direct join', async () => {
     const fake = createFakeTransport()
     const server = createServer({ transport: fake.transport, clock: new FakeClock(), codec: jsonCodec })
     await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
+    registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, async () => ({ records: [], done: true }))
     const roomId = getChatRoomId(DOMAIN)
     fake.plantPeer(roomId, 'peer-chat')
-    fake.receive(roomId, 'peer-chat', session())
     fake.plantPeer(getWorldRoomId(), 'peer-world')
-    fake.receive(getWorldRoomId(), 'peer-world', {
-      sessionId: 'remote-world-peer-world',
-      user: REMOTE_USER,
-      sites: [{ origin: 'https://remote.example', title: 'Remote' }]
-    })
-    await settle()
 
     await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
-
-    expect(fake.sendAttempts.map(({ roomId: sentRoomId, to }) => ({ roomId: sentRoomId, to }))).toEqual([
-      { roomId, to: ['peer-chat'] },
-      { roomId: getWorldRoomId(), to: ['peer-world'] }
-    ])
-    // Both the initial Session and the World full snapshot are native broadcasts (raw target
-    // omitted), while the fake fans them out to the active members.
-    expect(fake.sendAttempts.map(({ rawTarget }) => rawTarget)).toEqual([undefined, undefined])
-    // Opposite control: a peer joining after commit triggers a targeted Session catch-up.
-    fake.peerJoin(roomId, 'peer-late')
-    await settle()
-    const catchUpAttempt = fake.sendAttempts.findLast(
-      (a) => a.roomId === roomId && JSON.parse(a.payload).type === MESSAGE_TYPE.SESSION && Array.isArray(a.rawTarget)
+    await vi.waitFor(() =>
+      expect(
+        fake.sendAttempts.filter(({ roomId: sentRoomId, payload }) => {
+          if (sentRoomId !== roomId) return false
+          const message = JSON.parse(payload) as ChatRoomMessage
+          return message.type === MESSAGE_TYPE.SESSION || message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL
+        })
+      ).toHaveLength(2)
     )
-    expect(catchUpAttempt).toBeDefined()
-    expect(catchUpAttempt?.rawTarget).toEqual(['peer-late'])
+
+    const initialChatAttempts = fake.sendAttempts.filter(({ roomId: sentRoomId }) => sentRoomId === roomId)
+    expect(
+      initialChatAttempts.map(({ rawTarget, payload }) => ({ rawTarget, type: JSON.parse(payload).type }))
+    ).toEqual([
+      { rawTarget: ['peer-chat'], type: MESSAGE_TYPE.SESSION },
+      { rawTarget: ['peer-chat'], type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL }
+    ])
+    expect(
+      fake.sendAttempts.find(({ roomId: sentRoomId }) => sentRoomId === getWorldRoomId())?.rawTarget
+    ).toBeUndefined()
+
+    // A peer joining after commit creates only its new Session/History edge.
+    fake.peerJoin(roomId, 'peer-late')
+    await vi.waitFor(() =>
+      expect(
+        fake.sendAttempts.filter(({ roomId: sentRoomId, payload }) => {
+          if (sentRoomId !== roomId) return false
+          const message = JSON.parse(payload) as ChatRoomMessage
+          return message.type === MESSAGE_TYPE.SESSION || message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL
+        })
+      ).toHaveLength(4)
+    )
+    const lateChatAttempts = fake.sendAttempts.filter(({ roomId: sentRoomId, payload }) => {
+      if (sentRoomId !== roomId) return false
+      const message = JSON.parse(payload) as ChatRoomMessage
+      return message.type === MESSAGE_TYPE.SESSION || message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL
+    })
+    expect(lateChatAttempts.slice(2).every(({ rawTarget }) => Array.isArray(rawTarget))).toBe(true)
+    expect(
+      lateChatAttempts.filter(({ rawTarget }) => JSON.stringify(rawTarget) === JSON.stringify(['peer-chat']))
+    ).toHaveLength(2)
+    expect(
+      lateChatAttempts.filter(({ rawTarget }) => JSON.stringify(rawTarget) === JSON.stringify(['peer-late']))
+    ).toHaveLength(2)
     disposeServer(server)
   })
 
-  it('broadcasts a direct join even with zero active peers and settles through the provider no-op', async () => {
+  it('resets the closed room History incarnation while retaining late requester pages', async () => {
+    const { fake, server, roomId } = await setup()
+    const started: string[] = []
+    const cancelled: string[] = []
+    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, (request, signal) => {
+      if (request.mode === 'inventory') return Promise.resolve({ records: [], done: true })
+      started.push(request.syncId)
+      return new Promise<HistorySupplyResult>((_resolve, reject) => {
+        signal.addEventListener(
+          'abort',
+          () => {
+            cancelled.push(request.syncId)
+            reject(signal.reason ?? new Error('History supply cancelled'))
+          },
+          { once: true }
+        )
+      })
+    })
+
+    fake.peerJoin(roomId, 'history-peer')
+    await vi.waitFor(() => {
+      expect(
+        sentToPeer(fake, roomId, 'history-peer').filter(
+          (message) => message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL
+        )
+      ).toHaveLength(1)
+    })
+    const oldRequesterPull = sentToPeer(fake, roomId, 'history-peer').find(
+      (message): message is HistoryMessagesPull => message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL
+    )
+    if (!oldRequesterPull) throw new Error('Initial requester Pull missing')
+
+    fake.receive(roomId, 'history-peer', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
+      syncId: 'old-provider-pull',
+      page: 0,
+      messageIds: [],
+      done: true
+    })
+    await vi.waitFor(() => expect(started).toEqual(['old-provider-pull']))
+
+    fake.roomClose(roomId)
+    await vi.waitFor(() => expect(cancelled).toEqual(['old-provider-pull']))
+    await vi.waitFor(() => expect(fake.joined.has(roomId)).toBe(true))
+    await vi.waitFor(() => {
+      const edgeMessages = sentToPeer(fake, roomId, 'history-peer').filter(
+        (message) => message.type === MESSAGE_TYPE.SESSION || message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL
+      )
+      expect(edgeMessages).toHaveLength(4)
+    })
+
+    const recoveredMessages = sentToPeer(fake, roomId, 'history-peer').filter(
+      (message) => message.type === MESSAGE_TYPE.SESSION || message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL
+    )
+    expect(recoveredMessages.filter((message) => message.type === MESSAGE_TYPE.SESSION)).toHaveLength(2)
+    expect(recoveredMessages.filter((message) => message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)).toHaveLength(2)
+    expect(
+      new Set(
+        recoveredMessages
+          .filter((message): message is HistoryMessagesPull => message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)
+          .map((message) => message.syncId)
+      ).size
+    ).toBe(2)
+
+    const lateInbound: string[] = []
+    await server.onInbound({ pageId: 'page-a' }, (event) => {
+      lateInbound.push(event.record.message.id)
+    })
+    fake.receive(roomId, 'history-peer', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PUSH,
+      syncId: oldRequesterPull.syncId,
+      page: 0,
+      users: [REMOTE_USER],
+      messages: [text('late-after-room-close')],
+      done: true
+    })
+    await vi.waitFor(() => expect(lateInbound).toContain('late-after-room-close'))
+
+    fake.receive(roomId, 'history-peer', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
+      syncId: 'fresh-provider-pull',
+      page: 0,
+      messageIds: [],
+      done: true
+    })
+    await vi.waitFor(() => expect(started).toEqual(['old-provider-pull', 'fresh-provider-pull']))
+    disposeServer(server)
+  })
+
+  it('blocks release-start peer edges while keeping a committed opposite domain active', async () => {
+    const clock = new FakeClock()
+    const fake = createFakeTransport()
+    const values: Record<string, unknown> = {}
+    let holdClearSave = false
+    const clearSaveStarted = deferred<void>()
+    const releaseClearSave = deferred<void>()
+    const presenceStore = createBrowserPresenceStore({
+      get: async (key) => ({ [key]: values[key] }),
+      set: async (items) => {
+        const record = Object.values(items)[0] as { lastJoinedAt?: number; observers?: unknown[] }
+        if (
+          holdClearSave &&
+          record &&
+          typeof record === 'object' &&
+          record.lastJoinedAt === 0 &&
+          (record.observers ?? []).length === 0
+        ) {
+          clearSaveStarted.resolve()
+          await releaseClearSave.promise
+        }
+        Object.assign(values, items)
+      }
+    })
+    const server = createServer({ transport: fake.transport, clock, codec: jsonCodec, presenceStore })
+    const oppositeDomain = OTHER_DOMAIN
+    const releaseRoomId = getChatRoomId(DOMAIN)
+    const oppositeRoomId = getChatRoomId(oppositeDomain)
+    await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
+    await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
+    await server.attachPage({ domain: oppositeDomain, pageId: 'page-b' })
+    await server.joinChatRoom({ domain: oppositeDomain, user: USER, site: { ...SITE, origin: oppositeDomain } })
+    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, async () => ({
+      records: [],
+      done: true
+    }))
+    await registerHistoryProvider(server, { domain: oppositeDomain, pageId: 'page-b' }, async () => ({
+      records: [],
+      done: true
+    }))
+    await settle()
+
+    holdClearSave = true
+    const leave = server.leaveChatRoom({ domain: DOMAIN })
+    await clearSaveStarted.promise
+
+    fake.peerJoin(releaseRoomId, 'release-peer')
+    fake.peerJoin(oppositeRoomId, 'opposite-peer')
+    fake.receive(releaseRoomId, 'release-peer', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
+      syncId: 'release-pull',
+      page: 0,
+      messageIds: [],
+      done: true
+    })
+    await settle()
+
+    const releaseEdgeMessages = sentToPeer(fake, releaseRoomId, 'release-peer').filter(
+      (message) => message.type === MESSAGE_TYPE.SESSION || message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL
+    )
+    expect(releaseEdgeMessages).toEqual([])
+    const oppositeEdgeMessages = sentToPeer(fake, oppositeRoomId, 'opposite-peer').filter(
+      (message) => message.type === MESSAGE_TYPE.SESSION || message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL
+    )
+    expect(oppositeEdgeMessages.filter((message) => message.type === MESSAGE_TYPE.SESSION)).toHaveLength(1)
+    expect(oppositeEdgeMessages.filter((message) => message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)).toHaveLength(
+      1
+    )
+
+    releaseClearSave.resolve()
+    await leave
+    disposeServer(server)
+  })
+
+  it('commits an empty room without Session or History peer sends', async () => {
     const fake = createFakeTransport()
     const server = createServer({ transport: fake.transport, clock: new FakeClock(), codec: jsonCodec })
     await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
 
     await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
 
-    expect(fake.sendAttempts.map(({ to }) => to)).toEqual([[], []])
+    expect(fake.sendAttempts).toHaveLength(1)
+    expect(fake.sendAttempts[0]?.roomId).toBe(getWorldRoomId())
+    expect(fake.sendAttempts[0]?.rawTarget).toBeUndefined()
+    disposeServer(server)
+  })
+
+  it('adds only pairwise work when two more peers are admitted', async () => {
+    const fake = createFakeTransport()
+    const server = createServer({ transport: fake.transport, clock: new FakeClock(), codec: jsonCodec })
+    await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
+    registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, async () => ({ records: [], done: true }))
+    const roomId = getChatRoomId(DOMAIN)
+    fake.plantPeer(roomId, 'peer-b')
+    fake.plantPeer(roomId, 'peer-c')
+
+    await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
+    await vi.waitFor(() =>
+      expect(
+        fake.sendAttempts.filter(({ roomId: sentRoomId, payload }) => {
+          if (sentRoomId !== roomId) return false
+          const message = JSON.parse(payload) as ChatRoomMessage
+          return message.type === MESSAGE_TYPE.SESSION || message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL
+        })
+      ).toHaveLength(4)
+    )
+
+    const initial = fake.sendAttempts.filter(({ roomId: sentRoomId }) => sentRoomId === roomId)
+    expect(initial.every(({ rawTarget }) => Array.isArray(rawTarget))).toBe(true)
+    expect(initial.map(({ rawTarget }) => JSON.stringify(rawTarget)).toSorted()).toEqual([
+      JSON.stringify(['peer-b']),
+      JSON.stringify(['peer-b']),
+      JSON.stringify(['peer-c']),
+      JSON.stringify(['peer-c'])
+    ])
+    fake.peerJoin(roomId, 'peer-d')
+    await vi.waitFor(() =>
+      expect(
+        fake.sendAttempts.filter(({ roomId: sentRoomId, payload }) => {
+          if (sentRoomId !== roomId) return false
+          const message = JSON.parse(payload) as ChatRoomMessage
+          return message.type === MESSAGE_TYPE.SESSION || message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL
+        })
+      ).toHaveLength(6)
+    )
+    const all = fake.sendAttempts.filter(({ roomId: sentRoomId }) => sentRoomId === roomId)
+    expect(all.filter(({ rawTarget }) => JSON.stringify(rawTarget) === JSON.stringify(['peer-b']))).toHaveLength(2)
+    expect(all.filter(({ rawTarget }) => JSON.stringify(rawTarget) === JSON.stringify(['peer-c']))).toHaveLength(2)
+    expect(all.filter(({ rawTarget }) => JSON.stringify(rawTarget) === JSON.stringify(['peer-d']))).toHaveLength(2)
+    expect(all.some(({ rawTarget }) => rawTarget === undefined)).toBe(false)
     disposeServer(server)
   })
 
@@ -1611,6 +1846,7 @@ describe('RuntimeServer lifecycle', () => {
       site: SITE
     })
     if (!snapshot) throw new Error('Join was cancelled')
+    await settle()
 
     expect(fake.joinCalls).toEqual([getChatRoomId(DOMAIN), getWorldRoomId()])
     expect(fake.physicalJoinCalls).toEqual([getChatRoomId(DOMAIN), getWorldRoomId()])
@@ -1747,8 +1983,8 @@ describe('RuntimeServer lifecycle', () => {
       if (event.sourcePeerId === 'local-peer') localPresenceSeen.resolve()
       if (event.sourcePeerId === 'remote-peer') remotePresenceSeen.resolve()
     })
-    fake.hangSendsTo(roomId)
-    const firstSendAttempt = fake.waitForSendAttempt(roomId)
+    fake.hangSendsTo(worldRoomId)
+    const worldSendAttempt = fake.waitForSendAttempt(worldRoomId)
     // Pre-existing room members become the initial publication's distinct targets.
     fake.plantPeer(roomId, 'remote-peer')
     fake.plantPeer(worldRoomId, 'remote-peer')
@@ -1756,9 +1992,9 @@ describe('RuntimeServer lifecycle', () => {
     await fake.waitForDesiredRooms(2)
 
     fake.open()
-    // The Session broadcast is hung at the provider: the commit is still pending, and late remote
-    // membership stays buffered behind the publication.
-    await expect(firstSendAttempt).resolves.toMatchObject({ roomId })
+    // The World publication is hung at the provider: the commit is still pending, and late remote
+    // membership stays buffered behind the publication. Session delivery is independent.
+    await expect(worldSendAttempt).resolves.toMatchObject({ roomId: worldRoomId })
     fake.receive(roomId, 'remote-peer', session())
     fake.receive(worldRoomId, 'remote-peer', {
       sessionId: 'remote-world-session',
@@ -1810,16 +2046,17 @@ describe('RuntimeServer lifecycle', () => {
     await observeRemoteSessions(server, { pageId: 'page-a' }, ({ session }) => {
       remoteSessions.push(session)
     })
-    fake.hangSendsTo(roomId)
-    const firstSendAttempt = fake.waitForSendAttempt(roomId)
+    const worldRoomId = getWorldRoomId()
+    fake.hangSendsTo(worldRoomId)
+    const worldSendAttempt = fake.waitForSendAttempt(worldRoomId)
     // A pre-existing room member becomes the initial publication's distinct target.
     fake.plantPeer(roomId, 'remote-peer')
     const join = server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
     await fake.waitForDesiredRooms(2)
     fake.open()
-    // The Session broadcast is hung at the provider while the strictly later remote join lands in
+    // The World publication is hung at the provider while the strictly later remote join lands in
     // the provisional window.
-    await firstSendAttempt
+    await worldSendAttempt
     fake.receive(roomId, 'later-peer', {
       ...session(),
       joinedAt: NOW + 1
@@ -2022,6 +2259,8 @@ describe('RuntimeServer lifecycle', () => {
     await settle()
     fake.plantPeer(roomId, 'remote-peer')
     fake.makeNotReady()
+    fake.hangSendsTo(worldRoomId)
+    const worldSendAttempt = fake.waitForSendAttempt(worldRoomId)
 
     let reconnectResult: 'pending' | 'resolved' = 'pending'
     const reconnect = server.reconnectDomain({ domain: DOMAIN }).then(() => {
@@ -2037,6 +2276,8 @@ describe('RuntimeServer lifecycle', () => {
     // satisfy the replacement while it is still provisional.
     expect((await server.getSnapshot()).domains[0].localSession).toBeUndefined()
     fake.open()
+    await worldSendAttempt
+    fake.releaseSends()
     await Promise.all([reconnect, localSessionSeen.promise])
 
     const after = await server.getSnapshot()
@@ -2049,8 +2290,8 @@ describe('RuntimeServer lifecycle', () => {
     const sessionAttempts = fake.sendAttempts.filter(
       (attempt) => attempt.roomId === roomId && JSON.parse(attempt.payload).type === MESSAGE_TYPE.SESSION
     )
-    expect(sessionAttempts).toHaveLength(2)
-    expect(sessionAttempts.map((attempt) => attempt.to)).toEqual([[], ['remote-peer']])
+    expect(sessionAttempts).toHaveLength(1)
+    expect(sessionAttempts.map((attempt) => attempt.to)).toEqual([['remote-peer']])
     const worldMessages = fake.messages(worldRoomId).filter(isWorldPresence)
     expect(worldMessages.length).toBeGreaterThanOrEqual(2)
     expect(worldMessages.at(-1)).toEqual(after.world.localPresence)
@@ -2737,9 +2978,10 @@ describe('RuntimeServer lifecycle', () => {
     const worldRoomId = getWorldRoomId()
     await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
 
-    // Hold the first cold join's Chat publication after the physical World peer joined.
+    // Hold the first cold join's World publication after the physical rooms join.
     fake.plantPeer(roomId, 'chat-peer')
-    fake.hangSendsTo(roomId)
+    fake.hangSendsTo(worldRoomId)
+    const worldSendAttempt = fake.waitForSendAttempt(worldRoomId)
     const firstJoin = server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE }).then(
       () => null,
       (error: Error) => error
@@ -2747,7 +2989,7 @@ describe('RuntimeServer lifecycle', () => {
     await fake.waitForDesiredRooms(2)
     fake.open()
     fake.receive(roomId, 'chat-peer', session())
-    await fake.waitForSendAttempt(roomId)
+    await worldSendAttempt
 
     // A live remote World presence arrives while the first join is provisional.
     emitRemoteWorldPresence(fake)
@@ -2817,22 +3059,21 @@ describe('RuntimeServer provisional recovery races', () => {
     await server.onWorldPresence({ pageId: 'page-a' }, (event) => {
       if (event.sourcePeerId === fake.transport.peerIdOf(getWorldRoomId())) localPresences.push(event)
     })
-    // A pre-existing Chat member makes the session publication block on the wire gate, keeping the
-    // staged World publication pending while a remote World member lands.
+    // A held World publication keeps the staged join pending while a remote World member lands.
     fake.plantPeer(roomId, 'chat-peer')
-    fake.hangSendsTo(roomId)
+    fake.plantPeer(worldRoomId, 'early-peer')
+    fake.hangSendsTo(worldRoomId)
+    const worldSendAttempt = fake.waitForSendAttempt(worldRoomId)
     const join = server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
     await fake.waitForDesiredRooms(2)
 
     fake.open()
     fake.receive(roomId, 'chat-peer', session())
+    await worldSendAttempt
     emitRemoteWorldPresence(fake, 'early-peer')
     await settle()
     await settle()
-    fake.releaseSends()
-    // Hold the World wire so the publication iterator stays pending while another peer joins.
-    fake.hangSendsTo(worldRoomId)
-    await fake.waitForSendAttempt(worldRoomId)
+    // The World wire remains held so the publication iterator stays pending while another peer joins.
     fake.peerJoin(worldRoomId, 'mid-peer')
     await settle()
     expect(sentToPeer(fake, worldRoomId, 'mid-peer')).toEqual([])
@@ -2870,9 +3111,11 @@ describe('RuntimeServer provisional recovery races', () => {
     const roomId = getChatRoomId(DOMAIN)
     const worldRoomId = getWorldRoomId()
     await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
-    // Hold the first attempt's Chat session broadcast so the peer join lands inside its pending window.
+    // Hold the first attempt's World publication so the peer join lands inside its pending window.
     fake.plantPeer(roomId, 'chat-peer')
     fake.hangSendsTo(roomId)
+    fake.hangSendsTo(worldRoomId)
+    const worldSendAttempt = fake.waitForSendAttempt(worldRoomId)
     const firstJoin = server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE }).then(
       () => null,
       (error: Error) => error
@@ -2880,7 +3123,7 @@ describe('RuntimeServer provisional recovery races', () => {
     await fake.waitForDesiredRooms(2)
     fake.open()
     fake.receive(roomId, 'chat-peer', session())
-    await fake.waitForSendAttempt(roomId)
+    await worldSendAttempt
 
     fake.peerJoin(roomId, 'stale-peer')
     fake.peerJoin(worldRoomId, 'stale-peer')
@@ -2897,15 +3140,246 @@ describe('RuntimeServer provisional recovery races', () => {
     await settle()
     // The superseded attempt never commits, so the peer can only receive the replacement identity.
     const staleChatSessions = sentToPeer(fake, roomId, 'stale-peer')
-    expect(staleChatSessions.length).toBeGreaterThanOrEqual(0)
-    staleChatSessions.forEach((message) =>
-      expect(message).toEqual(expect.objectContaining({ user: expect.objectContaining({ name: 'Refreshed' }) }))
-    )
+    expect(staleChatSessions).toEqual([])
     // The superseded attempt never commits, so the peer can only receive the replacement identity,
     // exactly once, as a current World Room target.
     expect(sentToPeer(fake, worldRoomId, 'stale-peer')).toEqual([
       expect.objectContaining({ user: expect.objectContaining({ name: 'Refreshed' }) })
     ])
+  })
+
+  it('cleans provisional History ownership before a same-source retry', async () => {
+    const fake = createFakeTransport({ physicalReady: false })
+    const server = createServer({ transport: fake.transport, clock: new FakeClock(), codec: jsonCodec })
+    const roomId = getChatRoomId(DOMAIN)
+    const worldRoomId = getWorldRoomId()
+    await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
+
+    const started: string[] = []
+    const cancelled: string[] = []
+    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, (request, signal) => {
+      if (request.mode === 'inventory') return Promise.resolve({ records: [], done: true })
+      started.push(request.syncId)
+      return new Promise<HistorySupplyResult>((_resolve, reject) => {
+        signal.addEventListener(
+          'abort',
+          () => {
+            cancelled.push(request.syncId)
+            reject(signal.reason ?? new Error('History supply cancelled'))
+          },
+          { once: true }
+        )
+      })
+    })
+
+    fake.plantPeer(roomId, 'history-peer')
+    fake.hangSendsTo(worldRoomId)
+    const worldSendAttempt = fake.waitForSendAttempt(worldRoomId)
+    const firstJoin = server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE }).then(
+      () => null,
+      () => null
+    )
+    await fake.waitForDesiredRooms(2)
+    fake.open()
+    await worldSendAttempt
+
+    fake.receive(roomId, 'history-peer', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
+      syncId: 'provisional-pull',
+      page: 0,
+      messageIds: [],
+      done: true
+    })
+    await vi.waitFor(() => expect(started).toEqual(['provisional-pull']))
+
+    const replacement = server.joinChatRoom({
+      domain: DOMAIN,
+      user: { ...USER, name: 'Retried' },
+      site: SITE
+    })
+    await settle()
+    fake.releaseSends()
+    await expect(firstJoin).resolves.toBeNull()
+    const replacementSnapshot = await replacement
+    expect(replacementSnapshot?.domains[0]?.localSession?.user.name).toBe('Retried')
+
+    await vi.waitFor(() => expect(cancelled).toEqual(['provisional-pull']))
+    fake.receive(roomId, 'history-peer', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
+      syncId: 'fresh-pull',
+      page: 0,
+      messageIds: [],
+      done: true
+    })
+    await vi.waitFor(() => expect(started).toEqual(['provisional-pull', 'fresh-pull']))
+    disposeServer(server)
+  })
+
+  it('preserves a committed History owner while a replacement attempt is superseded', async () => {
+    const { fake, server, roomId } = await setup()
+    const worldRoomId = getWorldRoomId()
+    const started: string[] = []
+    const cancelled: string[] = []
+    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, (request, signal) => {
+      if (request.mode === 'inventory') return Promise.resolve({ records: [], done: true })
+      started.push(request.syncId)
+      return new Promise<HistorySupplyResult>((_resolve, reject) => {
+        signal.addEventListener(
+          'abort',
+          () => {
+            cancelled.push(request.syncId)
+            reject(signal.reason ?? new Error('History supply cancelled'))
+          },
+          { once: true }
+        )
+      })
+    })
+    fake.receive(roomId, 'committed-history-peer', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
+      syncId: 'committed-pull',
+      page: 0,
+      messageIds: [],
+      done: true
+    })
+    await vi.waitFor(() => expect(started).toEqual(['committed-pull']))
+
+    fake.plantPeer(worldRoomId, 'world-peer')
+    fake.hangSendsTo(worldRoomId)
+    const worldSendAttempt = fake.waitForSendAttempt(worldRoomId)
+    const firstReplacement = server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
+    await worldSendAttempt
+    const secondReplacement = server.joinChatRoom({
+      domain: DOMAIN,
+      user: { ...USER, name: 'Second replacement' },
+      site: SITE
+    })
+    await settle()
+    fake.releaseSends()
+
+    await expect(firstReplacement).resolves.toBeNull()
+    const snapshot = await secondReplacement
+    expect(snapshot?.domains[0]?.localSession?.user.name).toBe('Second replacement')
+    expect(cancelled).toEqual([])
+    disposeServer(server)
+  })
+
+  it('cleans provisional History on domain release before commit and allows a same-source retry', async () => {
+    const clock = new FakeClock()
+    const fake = createFakeTransport({ physicalReady: false })
+    const server = createServer({ transport: fake.transport, clock, codec: jsonCodec })
+    const roomId = getChatRoomId(DOMAIN)
+    const worldRoomId = getWorldRoomId()
+    await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
+
+    const started: string[] = []
+    const cancelled: string[] = []
+    const installProvider = () =>
+      registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, (request, signal) => {
+        if (request.mode === 'inventory') return Promise.resolve({ records: [], done: true })
+        started.push(request.syncId)
+        return new Promise<HistorySupplyResult>((_resolve, reject) => {
+          signal.addEventListener(
+            'abort',
+            () => {
+              cancelled.push(request.syncId)
+              reject(signal.reason ?? new Error('History supply cancelled'))
+            },
+            { once: true }
+          )
+        })
+      })
+    await installProvider()
+
+    fake.plantPeer(roomId, 'grace-history-peer')
+    fake.hangSendsTo(worldRoomId)
+    const worldSendAttempt = fake.waitForSendAttempt(worldRoomId)
+    const firstJoin = server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE }).then(
+      () => null,
+      () => null
+    )
+    await fake.waitForDesiredRooms(2)
+    fake.open()
+    await worldSendAttempt
+
+    fake.receive(roomId, 'grace-history-peer', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
+      syncId: 'grace-pull',
+      page: 0,
+      messageIds: [],
+      done: true
+    })
+    await vi.waitFor(() => expect(started).toEqual(['grace-pull']))
+
+    // The last page detaches while the combined Chat+World attempt is still provisional; grace
+    // expiry releases the attempt and must cancel its History owner before the domain disappears.
+    await server.detachPage({ domain: DOMAIN, pageId: 'page-a' })
+    await vi.advanceTimersByTimeAsync(RUNTIME_DOMAIN_GRACE_MS)
+    await settle()
+    fake.releaseSends()
+    await expect(firstJoin).resolves.toBeNull()
+    await vi.waitFor(() => expect(cancelled).toEqual(['grace-pull']))
+
+    // A fresh page lease and same-source Pull must bind a new History incarnation after release.
+    await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
+    await installProvider()
+    const retry = server.joinChatRoom({ domain: DOMAIN, user: { ...USER, name: 'Retried after grace' }, site: SITE })
+    await retry
+    fake.receive(roomId, 'grace-history-peer', {
+      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
+      syncId: 'fresh-after-grace',
+      page: 0,
+      messageIds: [],
+      done: true
+    })
+    await vi.waitFor(() => expect(started).toEqual(['grace-pull', 'fresh-after-grace']))
+    disposeServer(server)
+  })
+
+  it('cancels a deferred peer after leave before commit and preserves the current peer opposite', async () => {
+    const fake = createFakeTransport({ physicalReady: false })
+    const server = createServer({ transport: fake.transport, clock: new FakeClock(), codec: jsonCodec })
+    const roomId = getChatRoomId(DOMAIN)
+    const worldRoomId = getWorldRoomId()
+    await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
+    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, async () => ({
+      records: [],
+      done: true
+    }))
+
+    fake.hangSendsTo(worldRoomId)
+    const worldSendAttempt = fake.waitForSendAttempt(worldRoomId)
+    const join = server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
+    await fake.waitForDesiredRooms(2)
+    fake.open()
+    await worldSendAttempt
+
+    fake.peerJoin(roomId, 'leaving-peer')
+    fake.peerJoin(roomId, 'current-peer')
+    await settle()
+    fake.peerLeave(roomId, 'leaving-peer')
+    await settle()
+
+    fake.releaseSends()
+    await join
+    await vi.waitFor(() => {
+      expect(sentToPeer(fake, roomId, 'current-peer')).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ type: MESSAGE_TYPE.SESSION }),
+          expect.objectContaining({ type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL })
+        ])
+      )
+    })
+
+    const leavingMessages = sentToPeer(fake, roomId, 'leaving-peer').filter(
+      (message) => message.type === MESSAGE_TYPE.SESSION || message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL
+    )
+    expect(leavingMessages).toEqual([])
+    const currentMessages = sentToPeer(fake, roomId, 'current-peer').filter(
+      (message) => message.type === MESSAGE_TYPE.SESSION || message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL
+    )
+    expect(currentMessages.filter((message) => message.type === MESSAGE_TYPE.SESSION)).toHaveLength(1)
+    expect(currentMessages.filter((message) => message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)).toHaveLength(1)
+    disposeServer(server)
   })
 
   it('keeps reconnect inbound sessions attempt-owned until replacement commit', async () => {
@@ -2917,13 +3391,14 @@ describe('RuntimeServer provisional recovery races', () => {
     // A current room member becomes the provisional publication's distinct target.
     fake.plantPeer(roomId, 'chat-peer')
     fake.makeNotReady()
-    fake.hangSendsTo(roomId)
-    const chatBroadcastStarted = fake.waitForSendAttempt(roomId)
+    const worldRoomId = getWorldRoomId()
+    fake.hangSendsTo(worldRoomId)
+    const worldSendAttempt = fake.waitForSendAttempt(worldRoomId)
     const reconnect = server.reconnectDomain({ domain: DOMAIN })
     await fake.waitForJoinCalls(4)
     fake.open()
-    // The provisional Session broadcast is hung at the provider while the remote session lands.
-    await expect(chatBroadcastStarted).resolves.toMatchObject({ roomId })
+    // The provisional World publication is hung at the provider while the remote session lands.
+    await expect(worldSendAttempt).resolves.toMatchObject({ roomId: worldRoomId })
     fake.receive(roomId, 'remote-peer', session())
     await settle()
     const eventsBeforeCommit = [...remoteSessions]
@@ -2949,13 +3424,14 @@ describe('RuntimeServer provisional recovery races', () => {
     // A current room member becomes the provisional publication's distinct target.
     fake.plantPeer(roomId, 'chat-peer')
     fake.makeNotReady()
-    fake.hangSendsTo(roomId)
-    const firstBroadcastStarted = fake.waitForSendAttempt(roomId)
+    const worldRoomId = getWorldRoomId()
+    fake.hangSendsTo(worldRoomId)
+    const worldSendAttempt = fake.waitForSendAttempt(worldRoomId)
     const firstReconnect = server.reconnectDomain({ domain: DOMAIN })
     await fake.waitForJoinCalls(4)
     fake.open()
     fake.receive(roomId, 'stale-remote-peer', session())
-    await expect(firstBroadcastStarted).resolves.toMatchObject({ roomId })
+    await expect(worldSendAttempt).resolves.toMatchObject({ roomId: worldRoomId })
     await settle()
     const eventsBeforeSupersede = [...remoteSessions]
     const retainedBeforeSupersede = (await server.getSnapshot()).domains[0].sessions
@@ -2981,6 +3457,50 @@ describe('RuntimeServer provisional recovery races', () => {
       sessions: []
     })
     expect((await server.getSnapshot()).domains[0].sessions).toEqual([])
+  })
+
+  it('sends one Session and one History Pull to a peer admitted by the replacement generation', async () => {
+    const { fake, server, roomId } = await setup()
+    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, async () => ({
+      records: [],
+      done: true
+    }))
+    const worldRoomId = getWorldRoomId()
+    fake.makeNotReady()
+    fake.hangSendsTo(worldRoomId)
+    const firstWorldSend = fake.waitForSendAttempt(worldRoomId)
+    const firstReconnect = server.reconnectDomain({ domain: DOMAIN })
+    await fake.waitForJoinCalls(4)
+    fake.open()
+    await firstWorldSend
+
+    const replacement = server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
+    await expect(firstReconnect).resolves.toBeNull()
+    await fake.waitForJoinCalls(6)
+    await vi.waitFor(() => expect(fake.joined.has(roomId)).toBe(true))
+
+    fake.peerJoin(roomId, 'replacement-peer')
+    await settle()
+    expect(
+      sentToPeer(fake, roomId, 'replacement-peer').filter(
+        (message) => message.type === MESSAGE_TYPE.SESSION || message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL
+      )
+    ).toEqual([])
+
+    fake.releaseSends()
+    await replacement
+    await vi.waitFor(() => {
+      const messages = sentToPeer(fake, roomId, 'replacement-peer').filter(
+        (message) => message.type === MESSAGE_TYPE.SESSION || message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL
+      )
+      expect(messages).toHaveLength(2)
+    })
+    const messages = sentToPeer(fake, roomId, 'replacement-peer').filter(
+      (message) => message.type === MESSAGE_TYPE.SESSION || message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL
+    )
+    expect(messages.filter((message) => message.type === MESSAGE_TYPE.SESSION)).toHaveLength(1)
+    expect(messages.filter((message) => message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)).toHaveLength(1)
+    disposeServer(server)
   })
 
   it('catches up only peers that miss a provisional World recovery publication', async () => {
@@ -3208,6 +3728,7 @@ describe('RuntimeServer send reliability', () => {
     // A current member makes the room-wide sends reach the provider; the caller settlement
     // still comes from local acceptance, not from transport completion.
     fake.peerJoin(roomId, 'peer-a')
+    await settle()
     fake.receive(roomId, 'peer-a', session())
     await settle()
     fake.hangSendsTo(roomId)
@@ -3315,6 +3836,7 @@ describe('RuntimeServer send reliability', () => {
     // A current member makes the room-wide reaction reach the provider so its failure can
     // settle the caller.
     fake.peerJoin(roomId, 'peer-a')
+    await settle()
     fake.receive(roomId, 'peer-a', session())
     await settle()
     const record = await server.allocateReactionMessage({
@@ -3786,6 +4308,46 @@ describe('RuntimeServer history', () => {
       async (): Promise<HistorySupplyResult> => ({ records, done: true })
     )
 
+  it('resets a provider-only terminal binding across room recovery', async () => {
+    const { fake, server, roomId } = await setup()
+    const started: string[] = []
+    await registerHistoryProvider(server, { domain: DOMAIN, pageId: 'page-a' }, async (pull) => {
+      if (pull.mode === 'inventory') return { records: [], done: true }
+      started.push(pull.syncId)
+      return { records: [], done: true }
+    })
+
+    // A provider Pull is valid without peerJoin or a requester/session setup on this runtime.
+    fake.receive(roomId, 'provider-only-peer', request('provider-only-initial', 0, [], true))
+    await vi.waitFor(() => expect(started).toEqual(['provider-only-initial']))
+    await vi.waitFor(() => {
+      expect(
+        fake
+          .messages(roomId)
+          .filter(
+            (message) =>
+              message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH &&
+              (message as { syncId: string }).syncId === 'provider-only-initial'
+          )
+      ).toHaveLength(1)
+    })
+    await settle()
+    await settle()
+
+    // Keep the source out of the fake recovery join list: this control has no peer lifecycle.
+    fake.forgetPeer(roomId, 'provider-only-peer')
+    fake.roomClose(roomId)
+    await vi.waitFor(async () => {
+      expect(fake.joined.has(roomId)).toBe(true)
+      expect((await server.getSnapshot()).domains[0]?.chatRoomJoined).toBe(true)
+    })
+
+    fake.receive(roomId, 'provider-only-peer', request('provider-only-recovery', 0, [], true))
+    await vi.waitFor(() => expect(started).toEqual(['provider-only-initial', 'provider-only-recovery']))
+    expect(started).toEqual(['provider-only-initial', 'provider-only-recovery'])
+    disposeServer(server)
+  })
+
   it('delivers a schema-accepted response whose message userId is absent from the users array', async () => {
     const { fake, server, roomId } = await setup()
     await registerInventoryProvider(server)
@@ -3793,6 +4355,8 @@ describe('RuntimeServer history', () => {
     await server.onInbound({ pageId: 'page-a' }, (event) => {
       delivered.push(event.record.message.id)
     })
+    fake.peerJoin(roomId, 'peer-a')
+    await settle()
     fake.receive(roomId, 'peer-a', session())
     await settle()
     await settle()
@@ -3859,6 +4423,8 @@ describe('RuntimeServer history', () => {
     await server.onInbound({ pageId: 'page-a' }, (event) => {
       delivered.push(event.record.message.id)
     })
+    fake.peerJoin(roomId, 'peer-a')
+    await settle()
     fake.receive(roomId, 'peer-a', session())
     await settle()
     const requestMsg = fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)
@@ -3888,6 +4454,8 @@ describe('RuntimeServer history', () => {
     await server.onHistoryFeedback({ pageId: 'page-a' }, (event) => {
       feedback.push(event)
     })
+    fake.peerJoin(roomId, 'peer-a')
+    await settle()
     fake.receive(roomId, 'peer-a', session())
     await settle()
     const requestMsg = fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)
@@ -3915,6 +4483,8 @@ describe('RuntimeServer history', () => {
     await server.onHistoryFeedback({ pageId: 'page-a' }, (event) => {
       feedback.push(event)
     })
+    fake.peerJoin(roomId, 'peer-a')
+    await settle()
     fake.receive(roomId, 'peer-a', session())
     await settle()
     const requestMsg = fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)
@@ -3964,6 +4534,8 @@ describe('RuntimeServer history', () => {
   it('cancels the attempt on a page gap or out-of-order page', async () => {
     const { fake, server, roomId } = await setup()
     await registerInventoryProvider(server)
+    fake.peerJoin(roomId, 'peer-a')
+    await settle()
     fake.receive(roomId, 'peer-a', session())
     await settle()
     const requestMsg = fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)
@@ -4024,6 +4596,8 @@ describe('RuntimeServer history', () => {
       records,
       done: true
     }))
+    fake.peerJoin(roomId, 'peer-a')
+    await settle()
     fake.receive(roomId, 'peer-a', session())
     await vi.waitFor(() => {
       const pages = fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)
@@ -4045,6 +4619,8 @@ describe('RuntimeServer history', () => {
       delivered.push(event.record.message.id)
       await server.ackInbound({ domain: event.domain, sequence: event.sequence, inserted: true })
     })
+    fake.peerJoin(roomId, 'peer-a')
+    await settle()
     fake.receive(roomId, 'peer-a', session())
     await settle()
     const requestMsg = fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)
@@ -4093,6 +4669,8 @@ describe('RuntimeServer history', () => {
       }
       await server.ackInbound({ domain: event.domain, sequence: event.sequence, inserted: true })
     })
+    fake.peerJoin(roomId, 'peer-a')
+    await settle()
     fake.receive(roomId, 'peer-a', session())
     await settle()
     const requestMsg = fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)
@@ -4144,6 +4722,8 @@ describe('RuntimeServer history', () => {
       const records = await store.query({ type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE })
       return { records: records as TextMessageRecord[], done: true }
     })
+    fake.peerJoin(roomId, 'peer-a')
+    await settle()
     fake.receive(roomId, 'peer-a', session())
     await settle()
     const requestMsg = fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)
@@ -4190,6 +4770,8 @@ describe('RuntimeServer history', () => {
   it('cancels a dormant successor on changed replay or post-done inventory input', async () => {
     const { fake, server, roomId } = await setup()
     await registerInventoryProvider(server)
+    fake.peerJoin(roomId, 'peer-a')
+    await settle()
     fake.receive(roomId, 'peer-a', session())
     await settle()
     const firstSync = (
@@ -4330,6 +4912,8 @@ describe('RuntimeServer history', () => {
       }
       await server.ackInbound({ domain: event.domain, sequence: event.sequence, inserted: true })
     })
+    fake.peerJoin(roomId, 'peer-a')
+    await settle()
     fake.receive(roomId, 'peer-a', session())
     await settle()
     const requestMsg = fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)
@@ -4389,6 +4973,8 @@ describe('RuntimeServer history', () => {
       }
       await server.ackInbound({ domain: event.domain, sequence: event.sequence, inserted: true })
     })
+    fake.peerJoin(roomId, 'peer-a')
+    await settle()
     fake.receive(roomId, 'peer-a', session())
     await settle()
     const requestMsg = fake.messages(roomId).find((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)
@@ -4568,16 +5154,16 @@ describe('RuntimeServer history', () => {
     // B departs: the committed binding is retained only by the leave grace.
     fake.peerLeave(roomId, 'peer-b')
     await settle()
-    // A local reconnect enters its prepared phase; its SESSION publication is held.
+    // A local reconnect enters its prepared phase; its World publication is held.
     fake.plantPeer(roomId, 'remote-peer')
     fake.makeNotReady()
-    fake.hangSendsTo(roomId)
-    const chatBroadcastStarted = fake.waitForSendAttempt(roomId)
+    fake.hangSendsTo(getWorldRoomId())
+    const worldPublicationStarted = fake.waitForSendAttempt(getWorldRoomId())
     const reconnect = server.reconnectDomain({ domain: DOMAIN })
     await fake.waitForJoinCalls(4)
     fake.open()
     fake.receive(roomId, 'peer-b', session({ id: 'user-b', name: 'User B', avatar: '' }))
-    await expect(chatBroadcastStarted).resolves.toMatchObject({ roomId })
+    await expect(worldPublicationStarted).resolves.toMatchObject({ roomId: getWorldRoomId() })
     // B's valid same-presence SESSION arrived during the prepared phase.
     await settle()
     // A fresh TEXT from B's source before the commit is NOT admitted (attempt-owned until commit).
@@ -4618,13 +5204,13 @@ describe('RuntimeServer history', () => {
     // A local reconnect's replacement Room contains no B and B publishes no replacement SESSION.
     fake.plantPeer(roomId, 'remote-peer')
     fake.makeNotReady()
-    fake.hangSendsTo(roomId)
-    const chatBroadcastStarted = fake.waitForSendAttempt(roomId)
+    fake.hangSendsTo(getWorldRoomId())
+    const worldPublicationStarted = fake.waitForSendAttempt(getWorldRoomId())
     const reconnect = server.reconnectDomain({ domain: DOMAIN })
     await fake.waitForJoinCalls(4)
     fake.open()
     fake.receive(roomId, 'remote-peer', session())
-    await expect(chatBroadcastStarted).resolves.toMatchObject({ roomId })
+    await expect(worldPublicationStarted).resolves.toMatchObject({ roomId: getWorldRoomId() })
     fake.releaseSends()
     await reconnect
     await settle()
@@ -4654,13 +5240,13 @@ describe('RuntimeServer history', () => {
     // A held local replacement accepts B's valid same-presence SESSION in its prepared attempt...
     fake.plantPeer(roomId, 'remote-peer')
     fake.makeNotReady()
-    fake.hangSendsTo(roomId)
-    const chatBroadcastStarted = fake.waitForSendAttempt(roomId)
+    fake.hangSendsTo(getWorldRoomId())
+    const worldPublicationStarted = fake.waitForSendAttempt(getWorldRoomId())
     const reconnect = server.reconnectDomain({ domain: DOMAIN })
     await fake.waitForJoinCalls(4)
     fake.open()
     fake.receive(roomId, 'peer-b', session({ id: 'user-b', name: 'User B', avatar: '' }))
-    await expect(chatBroadcastStarted).resolves.toMatchObject({ roomId })
+    await expect(worldPublicationStarted).resolves.toMatchObject({ roomId: getWorldRoomId() })
     await settle()
     // ... then the SAME source switches to a different presence C before commit.
     fake.receive(roomId, 'peer-b', session({ id: 'user-c', name: 'User C', avatar: '' }))
@@ -4701,14 +5287,14 @@ describe('RuntimeServer history', () => {
     await settle()
     fake.plantPeer(roomId, 'remote-peer')
     fake.makeNotReady()
-    fake.hangSendsTo(roomId)
-    const chatBroadcastStarted = fake.waitForSendAttempt(roomId)
+    fake.hangSendsTo(getWorldRoomId())
+    const worldPublicationStarted = fake.waitForSendAttempt(getWorldRoomId())
     const reconnect = server.reconnectDomain({ domain: DOMAIN })
     await fake.waitForJoinCalls(4)
     fake.open()
     const rebind = session({ id: 'user-b', name: 'User B', avatar: '' })
     fake.receive(roomId, 'peer-b', rebind)
-    await expect(chatBroadcastStarted).resolves.toMatchObject({ roomId })
+    await expect(worldPublicationStarted).resolves.toMatchObject({ roomId: getWorldRoomId() })
     // Duplicate valid same-presence SESSION frames: one logical rebind marker.
     fake.receive(roomId, 'peer-b', rebind)
     await settle()
@@ -4740,14 +5326,14 @@ describe('RuntimeServer history', () => {
       await settle()
       fake.plantPeer(roomId, 'remote-peer')
       fake.makeNotReady()
-      fake.hangSendsTo(roomId)
-      const chatBroadcastStarted = fake.waitForSendAttempt(roomId)
+      fake.hangSendsTo(getWorldRoomId())
+      const worldPublicationStarted = fake.waitForSendAttempt(getWorldRoomId())
       const reconnect = server.reconnectDomain({ domain: DOMAIN })
       await fake.waitForJoinCalls(4)
       fake.open()
       // The provisional Session broadcast is hung at the provider while the reused source's
       // current-C session lands in the prepared attempt.
-      await expect(chatBroadcastStarted).resolves.toMatchObject({ roomId })
+      await expect(worldPublicationStarted).resolves.toMatchObject({ roomId: getWorldRoomId() })
       fake.receive(roomId, 'peer-b', session({ id: 'user-c', name: 'User C', avatar: '' }))
       await settle()
       fake.releaseSends()
@@ -4797,12 +5383,12 @@ describe('RuntimeServer history', () => {
     // A held ordinary join provisionally switches that source to C.
     fake.plantPeer(roomId, 'remote-peer')
     fake.makeNotReady()
-    fake.hangSendsTo(roomId)
-    const chatBroadcastStarted = fake.waitForSendAttempt(roomId)
+    fake.hangSendsTo(getWorldRoomId())
+    const worldPublicationStarted = fake.waitForSendAttempt(getWorldRoomId())
     const join = server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
     await fake.waitForJoinCalls(4)
     fake.open()
-    await expect(chatBroadcastStarted).resolves.toMatchObject({ roomId })
+    await expect(worldPublicationStarted).resolves.toMatchObject({ roomId: getWorldRoomId() })
     fake.receive(roomId, 'peer-b', session({ id: 'user-c', name: 'User C', avatar: '' }))
     await settle()
     // The source departs before the commit: provisional C has no surviving authoritative
@@ -4835,12 +5421,12 @@ describe('RuntimeServer history', () => {
       await settle()
       fake.plantPeer(roomId, 'remote-peer')
       fake.makeNotReady()
-      fake.hangSendsTo(roomId)
-      const chatBroadcastStarted = fake.waitForSendAttempt(roomId)
+      fake.hangSendsTo(getWorldRoomId())
+      const worldPublicationStarted = fake.waitForSendAttempt(getWorldRoomId())
       const join = server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
       await fake.waitForJoinCalls(4)
       fake.open()
-      await expect(chatBroadcastStarted).resolves.toMatchObject({ roomId })
+      await expect(worldPublicationStarted).resolves.toMatchObject({ roomId: getWorldRoomId() })
       // The prepared switch to C and the source departure arm B's committed grace.
       fake.receive(roomId, 'peer-b', session({ id: 'user-c', name: 'User C', avatar: '' }))
       await settle()
@@ -4880,12 +5466,12 @@ describe('RuntimeServer history', () => {
     // A held ordinary preparation switches peer-b-1 from B to C (B displaced on that source).
     fake.plantPeer(roomId, 'remote-peer')
     fake.makeNotReady()
-    fake.hangSendsTo(roomId)
-    const chatBroadcastStarted = fake.waitForSendAttempt(roomId)
+    fake.hangSendsTo(getWorldRoomId())
+    const worldPublicationStarted = fake.waitForSendAttempt(getWorldRoomId())
     const join = server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
     await fake.waitForJoinCalls(4)
     fake.open()
-    await expect(chatBroadcastStarted).resolves.toMatchObject({ roomId })
+    await expect(worldPublicationStarted).resolves.toMatchObject({ roomId: getWorldRoomId() })
     fake.receive(roomId, 'peer-b-1', session({ id: 'user-c', name: 'User C', avatar: '' }))
     await settle()
     // The LAST prepared B source departs: no B source survives in the preparation, and the
@@ -4960,12 +5546,12 @@ describe('RuntimeServer history', () => {
     // A held ordinary preparation switches B's source to C.
     fake.plantPeer(roomId, 'remote-peer')
     fake.makeNotReady()
-    fake.hangSendsTo(roomId)
-    const chatBroadcastStarted = fake.waitForSendAttempt(roomId)
+    fake.hangSendsTo(getWorldRoomId())
+    const worldPublicationStarted = fake.waitForSendAttempt(getWorldRoomId())
     const join = server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
     await fake.waitForJoinCalls(4)
     fake.open()
-    await expect(chatBroadcastStarted).resolves.toMatchObject({ roomId })
+    await expect(worldPublicationStarted).resolves.toMatchObject({ roomId: getWorldRoomId() })
     fake.receive(roomId, 'peer-b', session({ id: 'user-c', name: 'User C', avatar: '' }))
     await settle()
     // An UNRELATED D PeerLeave must not reactivate the preparation-displaced B.
@@ -4995,12 +5581,12 @@ describe('RuntimeServer history', () => {
     // A held ordinary join receives changed-user C from the same source, recording displaced B.
     fake.plantPeer(roomId, 'remote-peer')
     fake.makeNotReady()
-    fake.hangSendsTo(roomId)
-    const chatBroadcastStarted = fake.waitForSendAttempt(roomId)
+    fake.hangSendsTo(getWorldRoomId())
+    const worldPublicationStarted = fake.waitForSendAttempt(getWorldRoomId())
     const join = server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
     await fake.waitForJoinCalls(4)
     fake.open()
-    await expect(chatBroadcastStarted).resolves.toMatchObject({ roomId })
+    await expect(worldPublicationStarted).resolves.toMatchObject({ roomId: getWorldRoomId() })
     fake.receive(roomId, 'peer-b', session({ id: 'user-c', name: 'User C', avatar: '' }))
     await settle()
     // The source departs before the commit: provisional C is removed and committed B enters
@@ -5036,12 +5622,12 @@ describe('RuntimeServer history', () => {
     await settle()
     fake.plantPeer(roomId, 'remote-peer')
     fake.makeNotReady()
-    fake.hangSendsTo(roomId)
-    const chatBroadcastStarted = fake.waitForSendAttempt(roomId)
+    fake.hangSendsTo(getWorldRoomId())
+    const worldPublicationStarted = fake.waitForSendAttempt(getWorldRoomId())
     const join = server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
     await fake.waitForJoinCalls(4)
     fake.open()
-    await expect(chatBroadcastStarted).resolves.toMatchObject({ roomId })
+    await expect(worldPublicationStarted).resolves.toMatchObject({ roomId: getWorldRoomId() })
     // Both sources switch to C and D during the held preparation.
     fake.receive(roomId, 'peer-b1', session({ id: 'user-c', name: 'User C', avatar: '' }))
     await settle()
@@ -5826,6 +6412,8 @@ describe('RuntimeServer history', () => {
     await vi.waitFor(() => expect(started).toEqual(['peer-b']))
     // A source replacement ends the terminal binding: the next connection starts an independent
     // synchronization with a fresh id.
+    fake.peerLeave(roomId, 'peer-a')
+    fake.peerJoin(roomId, 'peer-a')
     fake.receive(roomId, 'peer-a', session({ id: 'sat-user-a-b', name: 'Sat A2', avatar: '' }))
     await settle()
     fake.receive(roomId, 'peer-a', {
@@ -5959,6 +6547,8 @@ describe('RuntimeServer history', () => {
     await settle()
     expect(started).toEqual([])
     // A source replacement ends the terminal binding: the next connection starts fresh.
+    fake.peerLeave(roomId, 'peer-a')
+    fake.peerJoin(roomId, 'peer-a')
     fake.receive(roomId, 'peer-a', session({ id: 'remote-user-b', name: 'Remote B', avatar: '' }))
     await settle()
     fake.receive(roomId, 'peer-a', {
@@ -6011,6 +6601,8 @@ describe('RuntimeServer history', () => {
     await settle()
     expect(started).toEqual(['ex-a'])
     // A source replacement ends the terminal binding: the next connection starts fresh.
+    fake.peerLeave(roomId, 'peer-a')
+    fake.peerJoin(roomId, 'peer-a')
     fake.receive(roomId, 'peer-a', session({ id: 'remote-user-b', name: 'Remote B', avatar: '' }))
     await settle()
     fake.receive(roomId, 'peer-a', {
@@ -6095,6 +6687,8 @@ describe('RuntimeServer history', () => {
       return { records: [], done: true }
     })
     // A remote session starts the local requester's inventory sync.
+    fake.peerJoin(roomId, 'peer-a')
+    await settle()
     fake.receive(roomId, 'peer-a', session())
     await settle()
     await vi.waitFor(() => expect(pageAInventoryHeld.length).toBe(1))
@@ -6259,6 +6853,7 @@ describe('RuntimeServer history', () => {
     })
     fake.hangHistoryResponseSends()
     for (let peer = 0; peer < 4; peer += 1) {
+      fake.peerJoin(roomId, `peer-${peer}`)
       fake.receive(roomId, `peer-${peer}`, session({ id: `hs-user-${peer}`, name: `HS ${peer}`, avatar: '' }))
       await settle()
       fake.receive(roomId, `peer-${peer}`, {
@@ -6309,6 +6904,7 @@ describe('RuntimeServer history', () => {
     })
     fake.hangHistoryResponseSends()
     for (let peer = 0; peer < 4; peer += 1) {
+      fake.peerJoin(roomId, `peer-${peer}`)
       fake.receive(roomId, `peer-${peer}`, session({ id: `tc-user-${peer}`, name: `TC ${peer}`, avatar: '' }))
       await settle()
       fake.receive(roomId, `peer-${peer}`, {
@@ -6393,8 +6989,10 @@ describe('RuntimeServer history', () => {
     await settle()
     expect(started).toEqual(['conn-a'])
     expect(fake.messages(roomId).filter((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH)).toHaveLength(1)
-    // A source replacement ends the terminal binding: the next connection starts one independent
-    // synchronization with a fresh id.
+    // A physical leave followed by a fresh peer admission ends the terminal binding: the next
+    // connection starts one independent synchronization with a fresh id.
+    fake.peerLeave(roomId, 'peer-a')
+    fake.peerJoin(roomId, 'peer-a')
     fake.receive(roomId, 'peer-a', session({ id: 'remote-user-b', name: 'Remote B', avatar: '' }))
     await settle()
     fake.receive(roomId, 'peer-a', {
@@ -6512,9 +7110,10 @@ describe('RuntimeServer history', () => {
     await settle()
     await settle()
     expect(started).toEqual(['done-sync', 'gap-sync'])
-    // Binding reset (a fresh session message replaces the binding without removing the peer):
-    // the old connection's terminal bindings are cleared and the next connection starts one
-    // independent synchronization.
+    // A physical leave followed by a fresh peer admission clears the old connection's terminal
+    // bindings and starts one independent synchronization.
+    fake.peerLeave(roomId, 'peer-a')
+    fake.peerJoin(roomId, 'peer-a')
     fake.receive(roomId, 'peer-a', session({ id: 'user-a-b', name: 'User A2', avatar: '' }))
     await settle()
     fake.receive(roomId, 'peer-a', {
@@ -6537,6 +7136,8 @@ describe('RuntimeServer history', () => {
       if (request.mode === 'inventory') return { records: [], done: true }
       return { records: [], done: true }
     })
+    fake.peerJoin(roomId, 'peer-a')
+    await settle()
     fake.receive(roomId, 'peer-a', session())
     await settle()
     // The local requester's own syncId is visible in its outgoing inventory request.
@@ -6574,6 +7175,8 @@ describe('RuntimeServer history', () => {
       started.push(request.syncId)
       return { records: [], done: true }
     })
+    fake.peerJoin(roomId, 'peer-a')
+    await settle()
     fake.receive(roomId, 'peer-a', session())
     await settle()
     // The connection runs its one synchronization in both directions.
@@ -6776,6 +7379,8 @@ describe('RuntimeServer history', () => {
     const { fake, server, roomId } = await setup()
     await registerInventoryProvider(server)
     // The same source joins the first domain; its requester sends its own inventory request.
+    fake.peerJoin(roomId, 'peer-a')
+    await settle()
     fake.receive(roomId, 'peer-a', session())
     await vi.waitFor(() => {
       expect(fake.messages(roomId).some((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)).toBe(true)
@@ -6791,6 +7396,8 @@ describe('RuntimeServer history', () => {
     )
     await settle()
     const otherRoomId = getChatRoomId(OTHER_DOMAIN_2)
+    fake.peerJoin(otherRoomId, 'peer-a')
+    await settle()
     fake.receive(otherRoomId, 'peer-a', session())
     await vi.waitFor(() => {
       expect(fake.messages(otherRoomId).some((m) => m.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL)).toBe(true)

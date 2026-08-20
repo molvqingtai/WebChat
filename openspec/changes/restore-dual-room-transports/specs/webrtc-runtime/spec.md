@@ -33,7 +33,7 @@ The private `RoomTransport.send(roomId, payload, target?)` capability SHALL pres
 
 WebChat SHALL NOT enumerate provider peers, inspect DataChannels, cache readiness, wait, queue, retry, record delivery state, or replay an old operation after a later readiness transition. Successful settlement SHALL NOT assert remote receipt.
 
-Trystero SHALL delegate omission to its native active-peer broadcast and explicit targets to its native action. The delivered Artico adapter SHALL use registry `@rtco/client@0.3.6` and directly invoke `room.send(payload, target)`. WebChat SHALL NOT pre-implement unpublished Artico ready-only/attempt-all behavior, catch its readiness error string, or add an adapter fan-out layer. Published Artico 0.3.6 MAY invoke a selected pending Call and MAY stop after the first thrown Call error.
+Trystero SHALL delegate omission to its native active-peer broadcast and explicit targets to its native action. The delivered Artico adapter SHALL use registry `@rtco/client@0.3.6` with its repository-owned pnpm patch and directly invoke `room.send(payload, target)`. WebChat SHALL NOT implement Artico ready-only/attempt-all behavior, catch its readiness error string, or add an adapter fan-out layer. The patched package SHALL skip selected pending Calls, attempt every selected ready Call in provider order, and preserve the first ready-Call failure identity.
 
 Initial Session, Text, Reaction, every World full snapshot, and the eligible zero-provider-call World retry SHALL retain omitted-target broadcast. History inventory/response and Session/World current-state catch-up SHALL retain their existing explicit business targets. No fixed post-join wait or application-owned broadcast target array SHALL return.
 
@@ -49,7 +49,7 @@ Initial Session, Text, Reaction, every World full snapshot, and the eligible zer
 - **GIVEN** Artico is selected with registry `@rtco/client@0.3.6`
 - **WHEN** the adapter sends with an omitted, string, array, or empty-array target
 - **THEN** it SHALL invoke `room.send(payload, target)` exactly once without enumerating Calls or reading readiness
-- **AND** a pending-Call readiness error or abort-first fan-out result SHALL remain the package's native behavior
+- **AND** the patched package SHALL skip selected pending Calls, attempt selected ready Calls in order, and reject with the first ready-Call failure only after those attempts
 
 #### Scenario: Empty target preserves no-recipient behavior
 
@@ -91,33 +91,34 @@ Close-driven Artico replacement SHALL retain the established 10-second cadence. 
 - **THEN** one owner-fenced replacement path SHALL run at the established 10-second close cadence or immediate demand repair boundary
 - **AND** stale, retired, or disposed generations SHALL produce no current-room event or cross-room effect
 
-### Requirement: Delivery uses registry Artico 0.3.6
+### Requirement: Delivery uses registry Artico 0.3.6 with a pnpm-native patch
 
-The current WebChat delivery manifest and lockfile SHALL resolve registry `@rtco/client@0.3.6`. They SHALL NOT resolve from a personal fork, branch name, moving tag, local path, workspace link, Git subdirectory, uncommitted build, or other mutable reference.
+The current WebChat delivery SHALL resolve registry `@rtco/client@0.3.6`. pnpm's native patch metadata SHALL map that exact package to the repository patch file and lockfile patch hash. Delivery SHALL NOT resolve from a personal fork, branch name, moving tag, local path, workspace link, Git subdirectory, uncommitted build, custom patch runner, vendored package, manual Artico build, or other mutable reference.
 
-Immutable integration commit `0deb0f0f` MAY remain historical evidence that WebChat built against the repaired Artico candidate, but it SHALL NOT remain a delivery dependency or create a wait for an upstream release or Artico preview authorization. Exactly three tests whose assertions require unpublished ready-only/attempt-all behavior SHALL remain explicitly skipped on 0.3.6; every other provider and selector control SHALL execute.
+Immutable integration commit `0deb0f0f` MAY remain provenance for the repaired behavior encoded in the pnpm patch, but it SHALL NOT remain a Git delivery dependency or create a wait for an upstream release or Artico preview authorization. The three ready-only/attempt-all controls SHALL execute and pass; every other provider and selector control SHALL remain active. Those controls are sufficient patch-effect evidence, and no additional installed-dist proof gate SHALL be required.
 
-Any later repaired official Artico version SHALL require explicit Owner authorization. That future change SHALL use one exact registry version, regenerate the lockfile, directly verify the installed package, re-enable the three tests, rerun complete gates, and receive fresh coding review. Artico server-only PR #40 and Vercel preview authorization SHALL NOT be treated as current WebChat browser-client gates.
+Any later repaired official Artico version SHALL require explicit Owner authorization. That future change SHALL use one exact registry version, intentionally remove or regenerate the patch metadata, rerun complete gates, and receive fresh coding review. Artico server-only PR #40 and Vercel preview authorization SHALL NOT be treated as current WebChat browser-client gates.
 
-#### Scenario: Current delivery resolves registry 0.3.6
+#### Scenario: Current delivery resolves and patches registry 0.3.6
 
 - **GIVEN** the dual-provider candidate is built for delivery
-- **WHEN** its manifest and lockfile are inspected
+- **WHEN** its dependency, pnpm workspace configuration, patch file, and lockfile are inspected
 - **THEN** `@rtco/client` SHALL resolve to registry version `0.3.6`
-- **AND** no fork, Git subdirectory, workspace, local path, or moving ref SHALL remain
+- **AND** pnpm SHALL apply the repository patch through its canonical metadata and lockfile hash
+- **AND** no fork, Git subdirectory, workspace link, local path, moving ref, custom runner, vendor copy, or manual build SHALL remain
 
-#### Scenario: Unpublished controls remain visible but inactive
+#### Scenario: Repaired controls are active
 
-- **GIVEN** registry Artico 0.3.6 lacks ready-only and attempt-all behavior
+- **GIVEN** registry Artico 0.3.6 is installed with the repository pnpm patch
 - **WHEN** the Artico provider tests run
-- **THEN** exactly the three controls requiring that unpublished behavior SHALL be explicitly skipped
+- **THEN** the three pending-skip, selected-order, and first-ready-failure controls SHALL execute and pass
 - **AND** lifecycle, signaling, ownership, omitted/string/array/empty targets, missing-room, error identity, selector, and Trystero controls SHALL remain active
 
 #### Scenario: Later repaired-version adoption is separate
 
 - **GIVEN** a repaired official Artico version becomes available
 - **WHEN** the Owner authorizes WebChat to adopt it
-- **THEN** the candidate SHALL directly verify that exact registry package, re-enable all three tests, and pass complete gates plus fresh coding review
+- **THEN** the candidate SHALL use that exact registry package, intentionally remove or regenerate the patch, and pass the active controls, complete gates, and fresh coding review
 - **AND** availability alone SHALL NOT change the current delivery dependency or block the current batch
 
 ### Requirement: Current documentation identifies both supported providers
@@ -143,7 +144,7 @@ Each provider directory SHALL name its implementation `RoomTransport.ts` and its
 
 `WireDomain` SHALL remain the sole anti-corruption boundary: it validates trusted room/source identity, codec/schema/size limits, ordering and queue bounds, then emits typed Runtime Events; outbound typed Domain intent is encoded and sent only through its Effect and `RoomTransportExtern`. The former imperative `WireExtern` route and every direct concrete/provider call from another Domain SHALL remain absent.
 
-The root shared provider contract SHALL run against both implementations and preserve stable identity, join/leave, trusted inbound source, omitted provider-native broadcast, explicit string/array targets including `[]`, room-level failure, peer join/leave, close/error, and deterministic dispose without delivery acknowledgement. It SHALL NOT falsely assert ready-only or attempt-all parity that published Artico 0.3.6 does not provide.
+The root shared provider contract SHALL run against both implementations and preserve stable identity, join/leave, trusted inbound source, omitted provider-native broadcast, explicit string/array targets including `[]`, room-level failure, peer join/leave, close/error, and deterministic dispose without delivery acknowledgement. Provider-specific controls SHALL own Artico pending-skip, selected-order, attempt-all, and first-failure behavior without leaking it into the provider-neutral adapter contract.
 
 #### Scenario: Provider can be replaced without application change
 
@@ -162,7 +163,7 @@ The root shared provider contract SHALL run against both implementations and pre
 
 - **WHEN** the root shared RoomTransport contract suite runs independently against Artico and Trystero
 - **THEN** both SHALL satisfy the same identity, lifecycle, trusted-source, target-shape, event/failure, and dispose meanings without provider-specific leakage into the harness
-- **AND** provider-native fan-out differences SHALL remain provider-specific and accurately represented by active or explicitly skipped controls
+- **AND** provider-native fan-out differences SHALL remain provider-specific and accurately represented by active controls
 
 ## REMOVED Requirements
 
