@@ -4,7 +4,7 @@ The authority parent is `docs/silence-trystero-peer-connect-error@a0551702931f85
 
 The completed `adopt-trystero-native-room-broadcast` authority made Trystero the sole provider and removed Artico, its selector, and all alternative-composition surfaces. This change explicitly supersedes only that sole-provider decision. Its provider-neutral send classification, removal of fixed post-join waits, targeted History/current-state catch-up, zero-recipient best effort, generic Wire queue fencing, and no-ACK/no-retry boundaries remain authoritative.
 
-Artico PR #41 and its ready-only follow-up remain separate upstream work. They were combined in immutable integration commit `0deb0f0f` for repaired-version build verification, but the Owner selected the original published registry `@rtco/client@0.3.6` for this WebChat delivery. WebChat therefore delegates directly to 0.3.6 and does not emulate unpublished ready-only/attempt-all behavior in its adapter. A repaired upstream release is not a current merge gate.
+Artico PR #41 and its ready-only follow-up remain separate upstream work. They were combined in immutable integration commit `0deb0f0f` for repaired-version build verification. The Owner subsequently authorized WebChat to retain the registry dependency `@rtco/client@0.3.6` and apply that reviewed repair through pnpm's native patch mechanism. WebChat still delegates directly to the package and does not emulate ready-only/attempt-all behavior in its adapter. A repaired upstream release is not a current merge gate.
 
 ## Goals / Non-Goals
 
@@ -87,7 +87,7 @@ WebChat preserves the provider-neutral target shape:
 
 WebChat does not enumerate provider peers, inspect DataChannels, cache readiness, queue, wait, retry, record delivery status, or replay after readiness changes. A successful return means only that the selected provider settled its native operation; it does not prove remote receipt.
 
-For Trystero, omitted target remains its native action broadcast over `activePeerMap`; explicit targets remain native action targets. For published Artico 0.3.6, the adapter directly calls `room.send(payload, target)`. That version may enter a selected pending Call and throw `Connection is not established yet.`, and its `Map.forEach` stops after the first thrown Call error. WebChat neither changes nor catches those semantics. Exactly three controls requiring unpublished pending-Call skipping or attempt-all behavior are explicitly skipped; every other lifecycle, target, empty-target, missing-room, signaling, ownership, error-identity, selector, and Trystero control remains active.
+For Trystero, omitted target remains its native action broadcast over `activePeerMap`; explicit targets remain native action targets. For Artico, the adapter directly calls `room.send(payload, target)` exactly once. The pnpm-patched 0.3.6 package skips selected pending Calls, visits selected ready Calls in provider order, attempts every selected ready Call, and rejects with the first ready-Call failure after the attempts finish. WebChat neither reproduces nor catches those package semantics. The three dependent controls execute; every lifecycle, target, empty-target, missing-room, signaling, ownership, error-identity, selector, and Trystero control remains active.
 
 The complete room-wide versus request-specific producer classification remains unchanged: initial Session, Text, Reaction, World snapshot, and eligible zero-call World retry omit target; History inventory/response and Session/World catch-up retain explicit business targets. Fixed one-second waits and application-owned broadcast target arrays do not return.
 
@@ -99,7 +99,7 @@ Every Artico peer generation explicitly receives the built-in `SocketSignaling` 
 
 The established close-driven Artico restart cadence remains 10 seconds. Fresh demand repairs a retained disconnected owner through the same single restart path. Leave/dispose retires the current room and peer under existing owner fences. Artico errors remain scoped to the exact current room owner; no provider message/name/code classification is introduced.
 
-The restored adapter delegates directly to published Artico 0.3.6. It does not reproduce future ready-only or attempt-all logic in WebChat, catch the exact `Connection is not established yet.` string, or add a readiness cache.
+The restored adapter delegates directly to registry Artico 0.3.6 with its repository-owned pnpm patch. It does not reproduce ready-only or attempt-all logic in WebChat, catch the exact `Connection is not established yet.` string, or add a readiness cache.
 
 ### 5. Trystero remains complete when selected
 
@@ -109,13 +109,13 @@ The provider-local `could not connect to peer ` callback exception remains activ
 
 No product code attempts to fall back from Artico to Trystero after an Artico failure, or vice versa. A provider failure follows that provider's existing scoped error and recovery path.
 
-### 6. Registry Artico 0.3.6 is the delivery dependency
+### 6. Registry Artico 0.3.6 plus a pnpm-native patch is the delivery dependency
 
-The final delivery candidate resolves `@rtco/client` from registry version `0.3.6` in both manifest and lockfile. A branch name, tag controlled by a fork, workspace path, floating Git ref, personal fork dependency, or uncommitted package is not acceptable delivery provenance.
+The final delivery candidate resolves `@rtco/client` from registry version `0.3.6`. pnpm's native `patch`/`patch-commit` workflow owns the repository patch file, the canonical `pnpm-workspace.yaml` `patchedDependencies` entry, and the lockfile patch hash. A branch name, tag controlled by a fork, workspace path, floating Git ref, personal fork dependency, uncommitted package, custom patch runner, vendored package, or release-time manual build is not acceptable delivery provenance.
 
-Immutable integration commit `0deb0f0f` was used only to build and verify the repaired-version candidate. It is not the delivery dependency and creates no requirement to wait for an upstream release or Artico preview checks. The final 0.3.6 replacement, official-like fake, and three narrow skips receive the complete WebChat gates and a fresh cumulative coding review.
+Immutable integration commit `0deb0f0f` remains provenance for the repaired behavior encoded by `patches/@rtco__client@0.3.6.patch`; it is not a Git delivery dependency and creates no requirement to wait for an upstream release or Artico preview checks. The production adapter stays byte-unchanged at direct delegation. The three formerly skipped provider controls are the required patch-effect evidence and execute with the complete WebChat gates and fresh cumulative coding review; no additional installed-dist proof gate is required.
 
-If the Owner later authorizes a repaired official Artico version, WebChat must replace 0.3.6 with that exact registry version, regenerate the lockfile, directly verify the installed package, re-enable all three skipped tests, rerun complete gates, and receive fresh coding review. That future switch is not part of the current four-item batch closeout. Artico PR #40 and its Vercel authorization checks are not WebChat browser-client gates.
+If the Owner later authorizes a repaired official Artico version, WebChat must replace 0.3.6 with that exact registry version, intentionally remove or regenerate the patch metadata, rerun the active controls and complete gates, and receive fresh coding review. Artico PR #40 and its Vercel authorization checks are not WebChat browser-client gates.
 
 ### 7. Documentation states the supported default truth
 
@@ -127,22 +127,22 @@ Historical archived OpenSpec records remain unchanged. Active completed changes 
 
 ### 8. Evidence proves parity and non-instantiation
 
-The root shared contract suite runs against both adapters and covers stable local identity, join/leave, inbound trusted source, omitted broadcast, string/array/empty targets, peer join/leave, close/error, and dispose. It does not claim provider-native fan-out parity that published Artico 0.3.6 does not provide.
+The root shared contract suite runs against both adapters and covers stable local identity, join/leave, inbound trusted source, omitted broadcast, string/array/empty targets, peer join/leave, close/error, and dispose. Provider-specific controls own Artico ready-only/attempt-all details; the adapter contract remains provider-neutral.
 
 Provider-specific controls additionally prove:
 
-- Artico per-room physical ownership, `wss://web-chat.io`, 10-second scoped recovery, direct 0.3.6 delegation, official-like abort-first fake behavior, exactly three unpublished-behavior skips, and no error-string handling in WebChat;
+- Artico per-room physical ownership, `wss://web-chat.io`, 10-second scoped recovery, direct 0.3.6 delegation, pending-Call skipping, selected-ready attempt-all order, first-ready-failure identity, and no error-string handling in WebChat;
 - Trystero Nostr composition, join/leave fences, matching peer-connect silence, and non-matching error forwarding;
 - the default constant selects and instantiates Artico exactly once while Trystero has zero construction/side effects;
 - a test-only constant substitution selects Trystero exactly once while Artico has zero construction/side effects, without creating a production environment branch;
 - source/dependency/layout/current-documentation scans retain both providers, require the contextual provider filenames, and reject redundant prefixed filenames or provider leakage outside authorized surfaces; and
-- registry 0.3.6 provenance is explicit, and any later repaired-version switch remains Owner-authorized follow-up work.
+- registry 0.3.6 plus pnpm-native patch provenance is explicit, and any later official-version switch remains Owner-authorized follow-up work.
 
 ## Risks / Trade-offs
 
 - **Two providers can drift** -> Run one mutation-sensitive shared contract against both and keep provider-specific behavior in isolated suites.
-- **Published Artico 0.3.6 may invoke a pending Call or stop after the first thrown Call error** -> Preserve direct package semantics, keep the three dependent controls visibly skipped, and do not emulate unpublished behavior in WebChat.
-- **A later repaired package changes send behavior** -> Require explicit Owner authorization, direct installed-package verification, re-enabled controls, complete gates, and fresh coding review.
+- **The patch targets bundled Artico distribution output** -> Pin it to exact registry 0.3.6 through pnpm metadata and require intentional regeneration/review on every dependency version change.
+- **A later official package supersedes the repair** -> Require explicit Owner authorization, intentional patch removal/regeneration, active controls, complete gates, and fresh coding review.
 - **Both providers accidentally connect** -> Centralize selection in one helper and directly prove the unselected factory has zero construction and side effects.
 - **Personal fork becomes permanent infrastructure** -> Deliver registry 0.3.6 and reject fork, workspace, local-path, or moving-ref dependencies from `develop`.
 - **README overstates switching** -> Describe support and default only; do not advertise runtime failover or a user setting.
@@ -153,11 +153,12 @@ Provider-specific controls additionally prove:
 2. Complete and independently review Artico PR #41's in-place ready-only repair and the Trystero peer-connect/error-console implementation. Neither is merged by this authority.
 3. Build one immutable Artico fork integration commit, then create the dual-provider WebChat source/test candidate with both reviewed workstreams and this authority in its ancestry.
 4. Restore the Artico provider directory and dependency, add the single provider selector/default, retain Trystero, update current documentation, and run both shared/provider-specific controls plus full repository gates.
-5. Use immutable integration commit `0deb0f0f` only for repaired-version build verification, then restore registry `@rtco/client@0.3.6` for delivery.
-6. Remove WebChat compatibility fan-out/readiness logic, retain direct 0.3.6 delegation, and explicitly skip only the three tests that require unpublished behavior.
-7. After the 0.3.6 exact has complete gates, exact CI, fresh coding review, and canonical docs/status, clear the four-item batch and perform the ordinary protected merge to `develop`. No separate Owner acceptance is required.
+5. Use immutable integration commit `0deb0f0f` only for repaired-version build verification, then restore registry `@rtco/client@0.3.6` for the original delivery.
+6. Remove WebChat compatibility fan-out/readiness logic, retain direct 0.3.6 delegation, and explicitly skip only the three tests unavailable in the unpatched registry package.
+7. After the original 0.3.6 exact has complete gates, exact CI, fresh coding review, and canonical docs/status, clear the four-item batch and perform the ordinary protected merge to `develop`. No separate Owner acceptance is required.
 8. After that batch reaches `develop`, the Owner has separately authorized direct `develop` to `master` promotion without another build/review/acceptance stage. Release and deploy remain unauthorized.
-9. Treat any later repaired official Artico version and re-enabled tests as separately Owner-authorized follow-up work.
+9. Under the later Owner-authorized follow-up, generate the repository patch only with pnpm native `patch`/`patch-commit`, keep the registry specifier at 0.3.6, restore the three controls, and publish a separate Draft candidate with exact CI and fresh coding review.
+10. Treat any future repaired official Artico version as another separately Owner-authorized dependency change that intentionally removes or regenerates the patch.
 
 Rollback is source-only: revert the dual-provider candidate and dependency changes. There is no protocol, schema, persistence, data, or server migration.
 

@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  '@rtco/client@0.3.6': 7b041fb2ec751591aa0e0412e8d271d39fcc7bb181f3ba1df696439d8e79fe08
+
 importers:
 
   .:
@@ -58,7 +61,7 @@ importers:
         version: 1.7.2
       '@rtco/client':
         specifier: 0.3.6
-        version: 0.3.6(supports-color@7.2.0)
+        version: 0.3.6(patch_hash=7b041fb2ec751591aa0e0412e8d271d39fcc7bb181f3ba1df696439d8e79fe08)(supports-color@7.2.0)
       '@tailwindcss/typography':
         specifier: ^0.5.20
         version: 0.5.20(tailwindcss@4.3.3)
@@ -7429,7 +7432,7 @@ snapshots:
   '@rollup/rollup-win32-x64-msvc@4.52.3':
     optional: true
 
-  '@rtco/client@0.3.6(supports-color@7.2.0)':
+  '@rtco/client@0.3.6(patch_hash=7b041fb2ec751591aa0e0412e8d271d39fcc7bb181f3ba1df696439d8e79fe08)(supports-color@7.2.0)':
     dependencies:
       '@rtco/peer': 0.3.6
       bufferutil: 4.1.0

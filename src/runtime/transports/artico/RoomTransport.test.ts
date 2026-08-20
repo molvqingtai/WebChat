@@ -72,21 +72,27 @@ vi.mock('@rtco/client', () => {
     send(payload: string, target?: string | string[]) {
       fixture.sendCalls.push({ roomId: this.roomId, payload, target })
       const targets = target ? (Array.isArray(target) ? target : [target]) : null
-      // Artico 0.3.6 does not guard Call.send by readiness and aborts the Room operation at the
-      // first thrown Call error.
-      this.calls.forEach((_ready, peerId) => {
+      let firstFailure: Error | undefined
+      // The patched Artico Room skips non-ready calls, attempts every selected ready call, and
+      // rethrows the first failure after the best-effort pass completes.
+      this.calls.forEach((ready, peerId) => {
+        if (!ready) return
         if (targets && !targets.includes(peerId)) return
         this.attempts.push({ peerId, payload })
         const failure = fixture.takeReadySendFailure(peerId) ?? fixture.takeQueuedSendFailure()
-        if (failure) throw failure
+        if (failure) {
+          firstFailure ??= failure
+          return
+        }
         fixture.deliveries.push({ roomId: this.roomId, payload })
         this.sent.push({ peerId, payload })
       })
       // The shared contract also probes a provider-level rejection with an empty room.
       if (this.calls.size === 0) {
         const failure = fixture.takeQueuedSendFailure()
-        if (failure) throw failure
+        firstFailure ??= failure
       }
+      if (firstFailure) throw firstFailure
     }
 
     constructor(readonly roomId: string) {
@@ -309,7 +315,7 @@ describe('Artico RoomTransport', () => {
     ])
   })
 
-  it.skip('skips an untargeted pending call and attempts every ready peer exactly once', async () => {
+  it('skips an untargeted pending call and attempts every ready peer exactly once', async () => {
     const transport = createRoomTransport()
     await transport.join('room-a')
     fixture.room!.pending('closing-peer')
@@ -328,7 +334,7 @@ describe('Artico RoomTransport', () => {
     ])
   })
 
-  it.skip('preserves explicit first-seen order while skipping pending targets', async () => {
+  it('preserves explicit first-seen order while skipping pending targets', async () => {
     const transport = createRoomTransport()
     await transport.join('room-a')
     fixture.room!.pending('closing-peer')
@@ -349,7 +355,7 @@ describe('Artico RoomTransport', () => {
     ])
   })
 
-  it.skip('attempts every ready call and rethrows the first ready failure by identity', async () => {
+  it('attempts every ready call and rethrows the first ready failure by identity', async () => {
     const transport = createRoomTransport()
     await transport.join('room-a')
     fixture.room!.pending('pending-first')
