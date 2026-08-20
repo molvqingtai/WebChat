@@ -50,6 +50,8 @@ Push retains its existing requester-attempt authority: its `syncId` must identif
 
 History may continue consuming Session-owned local facts that are unrelated to remote-source authorization, such as the current local domain snapshot or shared logical clock, through explicit CQRS surfaces. It must not query a remote Session binding to admit, start, or replace History work.
 
+The existing internal ingress Commands and Effects use the exact public protocol terms `HistoryMessagesPull` and `HistoryMessagesPush`. Inventory and response remain paging implementation details rather than alternate protocol names. This keeps the transport direction explicit without adding a wrapper Command, second ingress, or new State.
+
 Alternative rejected: replace Session binding with another source-membership guard. The protocol-valid accepted-message event already owns the room/generation/schema boundary and transport source; a second guard would add behavior without evidence and keep History coupled to unrelated lifecycle State.
 
 ### 4. Current History exchange and wire contracts remain intact
@@ -57,6 +59,8 @@ Alternative rejected: replace Session binding with another source-membership gua
 Each admitted direction still allocates one fresh `syncId`, sends continuous target-only Pull inventory pages, and receives continuous target-only Push pages under the current cutoff, paging, replay, timeout, supplier, Delivery, persistence, and terminal rules. Provider/requester attempts retain their distinct existing terminal fences: settling the local loading UI does not terminate an exact-owner requester's valid late Push collection. The public Session/Pull/Push structures remain byte-for-byte unchanged. No peer-visible combined handshake or acknowledgement is added.
 
 Automatic Chat-room close and recovery clear the recovered domain's provider ownership and every requester/provider binding, including terminal provider-only bindings whose source collection has already been released. Exact requester attempts and their collected state remain available under the existing valid late-Push boundary. A fresh same-source Pull after recovery can therefore create one new provider without reviving or being blocked by the prior physical incarnation.
+
+Domain reset and release share one pure, domain-scoped source discovery projection. It derives peer identities from every requester/provider attempt, supply job, active or waiting supply, pending wire send, feedback owner, and requester/provider binding key, then deduplicates once before applying the existing peer cleanup path. A source represented only by a terminal binding is therefore still reset, while no parallel owner registry or cleanup-only State is introduced.
 
 ### 5. Typed routing is not repeated inside internal apply Commands
 

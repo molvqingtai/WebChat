@@ -10,6 +10,8 @@ This change SHALL add no peer-edge registry, pending-edge owner, retry, committe
 
 Automatic Chat-room close and recovery SHALL clear the recovered domain's provider ownership and all requester/provider bindings, including terminal provider-only bindings with no remaining source collection, so that a fresh same-source Pull can create one provider in the replacement physical incarnation. This reset SHALL retain exact requester attempts and their collected state for valid late Push pages under the existing boundary.
 
+Domain reset and release SHALL discover source ownership from all domain-scoped requester/provider attempts, supply jobs, active or waiting supplies, pending wire sends, feedback owners, and requester/provider bindings; they SHALL deduplicate each source and apply the same peer cleanup path. A terminal binding-only source SHALL NOT be omitted merely because its attempt collection has already been released, and this discovery SHALL add no parallel source registry or cleanup-only State.
+
 #### Scenario: Joining peer exchanges independently with existing peers
 
 - **GIVEN** B and C have an established current relationship

@@ -8,6 +8,7 @@
 - [x] 2.1 Make the same existing Connection peer-join handler invoke the current History requester for that exact room/source, independently of Session binding, Session acceptance, or Presence identity.
 - [x] 2.2 Let an eligible page-zero Pull delivered by Wire's trusted-room/current-generation/schema-valid accepted-message path create source-owned provider work directly, and let only matching continuous pages advance under existing paging/replay/resource/terminal fences; remove Session-binding and Wire source-membership authorization plus Session-event start paths, and retain exact requester/source ownership plus the existing valid late-page boundary for Push after loading settlement.
 - [x] 2.3 Preserve current target-only Pull/Push shapes, paging, fresh directional `syncId`, cutoff, timeout, supplier/admission bounds, late-page, Delivery, persistence, replacement, and terminal behavior.
+- [x] 2.4 Name the existing Pull/Push ingress Commands and Effects with the exact `HistoryMessagesPull` and `HistoryMessagesPush` protocol terms without adding a wrapper Command, second ingress, or new State.
 
 ## 3. Remove Only Proven Repeated Input Guards
 
@@ -23,6 +24,7 @@
 - [x] 4.4 Add mutation-sensitive controls for the three removed internal kind/room checks and for every explicitly retained asynchronous/stateful guard.
 - [x] 4.5 Retain all existing leave/reconnect/replacement, Session identity/projection, History exact-difference/paging/resource, Wire queue/admission/generation, Delivery, protocol, Text/Reaction/World, and provider controls without adding another lifecycle mechanism.
 - [x] 4.6 Prove deferred peer work is canceled by exact leave/release/failure/supersession/host-loss ownership, and room recovery clears provider-only terminal bindings while retaining exact requester late-Push collection.
+- [x] 4.7 Reuse one pure domain-scoped source discovery projection across reset and release so attempts, jobs, supplies, sends, feedback owners, and binding-only terminal sources all reach the existing peer cleanup path without a parallel registry.
 
 ## 5. Delivery Gates
 
