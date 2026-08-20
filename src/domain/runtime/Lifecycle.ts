@@ -1,13 +1,11 @@
 import { Remesh } from 'remesh'
-import { filter, map, merge, mergeMap, Observable } from 'rxjs'
+import { map, mergeMap, Observable } from 'rxjs'
 import { RUNTIME_DOMAIN_GRACE_MS } from '@/constants/config'
-import type { HostPhase } from '@/runtime/Contract'
 
 /**
  * LifecycleDomain
  *
  * Owns the shared Runtime lifecycle contracts:
- * - host singleton with single-flight creation (background is the only coordinator)
  * - per-domain page lease/ref-count
  * - the unified grace window after the last page of a domain detaches
  * - per-domain serial reconnect state machine
@@ -29,26 +27,6 @@ export interface DomainLease {
 const LifecycleDomain = Remesh.domain({
   name: 'LifecycleDomain',
   impl: (domain) => {
-    const HostPhaseState = domain.state<HostPhase>({
-      name: 'Lifecycle.HostPhaseState',
-      default: 'none'
-    })
-
-    const HostPhaseQuery = domain.query({
-      name: 'Lifecycle.HostPhaseQuery',
-      impl: ({ get }) => get(HostPhaseState())
-    })
-
-    const HostGenerationState = domain.state<number>({
-      name: 'Lifecycle.HostGenerationState',
-      default: 0
-    })
-
-    const HostGenerationQuery = domain.query({
-      name: 'Lifecycle.HostGenerationQuery',
-      impl: ({ get }) => get(HostGenerationState())
-    })
-
     const DomainLeasesState = domain.state<DomainLease[]>({
       name: 'Lifecycle.DomainLeasesState',
       default: []
@@ -75,61 +53,6 @@ const LifecycleDomain = Remesh.domain({
     const HasOnlinePagesQuery = domain.query({
       name: 'Lifecycle.HasOnlinePagesQuery',
       impl: ({ get }) => get(DomainLeasesState()).some((lease) => lease.pageIds.length > 0)
-    })
-
-    // ============ Host single-flight ============
-
-    const RequestHostCommand = domain.command({
-      name: 'Lifecycle.RequestHostCommand',
-      impl: ({ get }) => {
-        const phase = get(HostPhaseState())
-        // Single-flight: only the first request while missing/unavailable starts creation.
-        if (phase === 'connecting' || phase === 'ready') {
-          return null
-        }
-        return [HostPhaseState().new('connecting'), HostCreateRequestedEvent()]
-      }
-    })
-
-    const HostEnsuredCommand = domain.command({
-      name: 'Lifecycle.HostEnsuredCommand',
-      impl: ({ get }, payload: { created: boolean }) => {
-        const current = get(HostGenerationState())
-        const generation = payload.created ? current + 1 : Math.max(1, current)
-        if (!Number.isSafeInteger(generation)) return HostFailedCommand('host generation exhausted')
-        return [HostPhaseState().new('ready'), HostGenerationState().new(generation), HostReadyEvent()]
-      }
-    })
-
-    const HostReadyCommand = domain.command({
-      name: 'Lifecycle.HostReadyCommand',
-      impl: () => HostEnsuredCommand({ created: false })
-    })
-
-    const RestoreHostGenerationCommand = domain.command({
-      name: 'Lifecycle.RestoreHostGenerationCommand',
-      impl: (_, generation: number) =>
-        Number.isSafeInteger(generation) && generation >= 0 ? HostGenerationState().new(generation) : null
-    })
-
-    const HostFailedCommand = domain.command({
-      name: 'Lifecycle.HostFailedCommand',
-      impl: (_, reason: string) => {
-        return [HostPhaseState().new('unavailable'), HostUnavailableEvent(reason)]
-      }
-    })
-
-    const HostDestroyedCommand = domain.command({
-      name: 'Lifecycle.HostDestroyedCommand',
-      impl: ({ get }) => {
-        const shouldRebuild = get(HasOnlinePagesQuery())
-        return [
-          HostPhaseState().new('none'),
-          HostDestroyedEvent(),
-          // Automatic rebuild while at least one domain page is online.
-          ...(shouldRebuild ? [RequestHostCommand()] : [])
-        ]
-      }
     })
 
     // ============ Domain lease / grace ============
@@ -254,11 +177,6 @@ const LifecycleDomain = Remesh.domain({
 
     // ============ Events ============
 
-    const HostCreateRequestedEvent = domain.event({ name: 'Lifecycle.HostCreateRequestedEvent' })
-    const HostReadyEvent = domain.event({ name: 'Lifecycle.HostReadyEvent' })
-    const HostUnavailableEvent = domain.event<string>({ name: 'Lifecycle.HostUnavailableEvent' })
-    const HostDestroyedEvent = domain.event({ name: 'Lifecycle.HostDestroyedEvent' })
-
     const DomainActivatedEvent = domain.event<string>({ name: 'Lifecycle.DomainActivatedEvent' })
     const DomainResumedEvent = domain.event<string>({ name: 'Lifecycle.DomainResumedEvent' })
     const DomainGraceStartedEvent = domain.event<{ domain: string; generation: number }>({
@@ -295,33 +213,14 @@ const LifecycleDomain = Remesh.domain({
       }
     })
 
-    domain.effect({
-      name: 'Lifecycle.EnsureHostEffect',
-      impl: ({ fromEvent, get }) => {
-        // Any page attach while the host is missing triggers single-flight creation.
-        return merge(fromEvent(PageAttachedEvent), fromEvent(DomainActivatedEvent)).pipe(
-          filter(() => get(HostPhaseState()) === 'none'),
-          map(() => RequestHostCommand())
-        )
-      }
-    })
-
     return {
       query: {
-        HostPhaseQuery,
-        HostGenerationQuery,
         DomainLeasesQuery,
         DomainLeaseQuery,
         RetainedDomainsQuery,
         HasOnlinePagesQuery
       },
       command: {
-        RequestHostCommand,
-        HostEnsuredCommand,
-        HostReadyCommand,
-        RestoreHostGenerationCommand,
-        HostFailedCommand,
-        HostDestroyedCommand,
         AttachPageCommand,
         DetachPageCommand,
         GraceExpiredCommand,
@@ -329,10 +228,6 @@ const LifecycleDomain = Remesh.domain({
         FinishReconnectCommand
       },
       event: {
-        HostCreateRequestedEvent,
-        HostReadyEvent,
-        HostUnavailableEvent,
-        HostDestroyedEvent,
         DomainActivatedEvent,
         DomainResumedEvent,
         DomainGraceStartedEvent,

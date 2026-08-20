@@ -12,7 +12,7 @@ import type {
 export interface PagePort {
   removePage: (pageId: string) => void
   beginSessionEvent: (pageId: string, callback: (event: RuntimeSessionEvent) => void | Promise<void>) => number
-  activateSessionEvent: (pageId: string, generation: number) => boolean
+  activateSessionEvent: (pageId: string, generation: number) => Promise<boolean>
   cancelSessionEvent: (pageId: string, generation: number) => void
   isSessionEventActive: (pageId: string, generation: number) => boolean
   historyPageIds: (domain: string) => string[]
@@ -35,7 +35,7 @@ export const PagePortExtern = Remesh.extern<PagePort>({
     beginSessionEvent: () => {
       throw new Error('"beginSessionEvent" not implemented.')
     },
-    activateSessionEvent: () => false,
+    activateSessionEvent: async () => false,
     cancelSessionEvent: () => {},
     isSessionEventActive: () => false,
     historyPageIds: () => [],

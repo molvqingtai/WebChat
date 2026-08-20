@@ -126,8 +126,6 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   const worldDomain = store.getDomain(worldAction)
   const historyDomain = store.getDomain(historyAction)
   const connectionDomain = store.getDomain(connectionAction)
-  store.send(lifecycleDomain.command.HostReadyCommand())
-
   interface PresenceRecovery {
     attempts: number
     promise: Promise<void>
@@ -835,22 +833,23 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
           },
           provenance: 'refresh'
         })
+        const current = store
+          .query(lifecycleDomain.query.DomainLeasesQuery())
+          .find((candidate) => candidate.domain === lease.domain)
+        const currentBinding = await requirePageBinding(payload, false).catch(() => null)
+        if (
+          !current?.pageIds.includes(payload.pageId) ||
+          currentBinding !== binding ||
+          !(await pagePort.activateSessionEvent(payload.pageId, generation))
+        ) {
+          pagePort.cancelSessionEvent(payload.pageId, generation)
+        } else if (binding) {
+          binding.sessionGeneration = generation
+        }
       } catch (error) {
         pagePort.cancelSessionEvent(payload.pageId, generation)
+        if (binding) await removeBinding(binding)
         throw error
-      }
-      const current = store
-        .query(lifecycleDomain.query.DomainLeasesQuery())
-        .find((candidate) => candidate.domain === lease.domain)
-      const currentBinding = await requirePageBinding(payload, false).catch(() => null)
-      if (
-        !current?.pageIds.includes(payload.pageId) ||
-        currentBinding !== binding ||
-        !pagePort.activateSessionEvent(payload.pageId, generation)
-      ) {
-        pagePort.cancelSessionEvent(payload.pageId, generation)
-      } else if (binding) {
-        binding.sessionGeneration = generation
       }
     },
     onWorldPresence: async (payload, callback) => {

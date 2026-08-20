@@ -2,7 +2,7 @@ import type { RoomTransport } from '@/runtime/RoomTransport'
 import { nanoid } from 'nanoid'
 import type { TransportProjection, TransportRoomState, TransportService } from '@/runtime/TransportHost'
 
-/** Background-local facade over the physical Offscreen transport. It retains no transport state. */
+/** Background-side facade over Offscreen's physical transport; its rooms are callback-aligned projections. */
 export class RemoteRoomTransport implements RoomTransport {
   private readonly rooms = new Map<string, TransportRoomState>()
   private readonly messages = new Set<(roomId: string, sourcePeerId: string, payload: string) => void>()

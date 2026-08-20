@@ -8,9 +8,10 @@ const createTransport = () => {
   let leave: Parameters<RoomTransport['onPeerLeave']>[0] = () => {}
   let close: Parameters<RoomTransport['onRoomClose']>[0] = () => {}
   let error: Parameters<RoomTransport['onError']>[0] = () => {}
+  const joinTransport = vi.fn(async () => {})
   const transport: RoomTransport = {
     peerIdOf: (roomId) => `peer:${roomId}`,
-    join: async () => {},
+    join: joinTransport,
     leave: vi.fn(),
     send: vi.fn(async () => {}),
     onMessage: (callback) => {
@@ -37,6 +38,7 @@ const createTransport = () => {
   }
   return {
     transport,
+    join: joinTransport,
     emit: {
       message: (roomId: string, sourcePeerId: string, payload: string) => message(roomId, sourcePeerId, payload),
       join: (roomId: string, peerId: string) => join(roomId, peerId),
@@ -114,5 +116,26 @@ describe('Offscreen TransportService', () => {
 
     expect(fixture.transport.send).not.toHaveBeenCalled()
     expect(fixture.transport.leave).not.toHaveBeenCalled()
+  })
+
+  it('settles one exact room handle before rejecting an overlapping replacement join', async () => {
+    const fixture = createTransport()
+    let releaseJoin!: () => void
+    const joining = new Promise<void>((resolve) => {
+      releaseJoin = resolve
+    })
+    fixture.join.mockImplementationOnce(async () => joining)
+    const service = createTransportService(fixture.transport)
+
+    const first = service.join('room-a', 'handle-a')
+    const second = service.join('room-a', 'handle-b')
+    await Promise.resolve()
+    expect(fixture.join).toHaveBeenCalledOnce()
+
+    releaseJoin()
+    await expect(first).resolves.toMatchObject({ roomId: 'room-a', handle: 'handle-a' })
+    await expect(second).rejects.toThrow('owned by a newer handle')
+    await expect(service.join('room-a', 'handle-a')).resolves.toMatchObject({ handle: 'handle-a' })
+    expect(fixture.join).toHaveBeenCalledOnce()
   })
 })

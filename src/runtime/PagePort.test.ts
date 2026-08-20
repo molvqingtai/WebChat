@@ -58,26 +58,32 @@ describe('PagePort session-event lifecycle', () => {
     diagnostic.mockRestore()
   })
 
-  it('holds a replacement callback provisional until its initial snapshot settles', async () => {
+  it('buffers session deltas until a replacement callback activates', async () => {
     const port = new PagePort()
     const received: string[] = []
-    let releaseSnapshot!: () => void
-    const snapshotSettled = new Promise<void>((resolve) => {
-      releaseSnapshot = resolve
-    })
-    const generation = port.beginSessionEvent('page-a', async (current) => {
+    const generation = port.beginSessionEvent('page-a', (current) => {
       received.push(current.type)
-      await snapshotSettled
     })
 
-    expect(await port.emitSessionEvent(['page-a'], event)).toEqual([])
+    expect(
+      await port.emitSessionEvent(['page-a'], {
+        type: 'join',
+        domain: request.domain,
+        snapshot: event.snapshot,
+        session: {
+          sourcePeerId: 'remote-peer',
+          sessionId: 'remote-session',
+          user: { id: 'remote-user', name: 'Remote', avatar: '' },
+          joinedAt: 11
+        },
+        provenance: 'live'
+      })
+    ).toEqual([])
     expect(received).toEqual([])
 
-    releaseSnapshot()
-    await snapshotSettled
-    expect(port.activateSessionEvent('page-a', generation)).toBe(true)
+    await expect(port.activateSessionEvent('page-a', generation)).resolves.toBe(true)
     expect(await port.emitSessionEvent(['page-a'], event)).toEqual([])
-    expect(received).toEqual(['snapshot'])
+    expect(received).toEqual(['join', 'snapshot'])
   })
 })
 

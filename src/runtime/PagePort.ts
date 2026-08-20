@@ -17,7 +17,11 @@ export class PagePort implements PagePortContract {
   private readonly activeSessionGenerations = new Map<string, number>()
   private readonly provisionalSessionEvents = new Map<
     string,
-    { generation: number; callback: (event: RuntimeSessionEvent) => void | Promise<void> }
+    {
+      generation: number
+      callback: (event: RuntimeSessionEvent) => void | Promise<void>
+      buffered: RuntimeSessionEvent[]
+    }
   >()
   private sessionEventGeneration = 0
   private readonly worldPresences = new Map<string, (event: WorldPresenceEvent) => void | Promise<void>>()
@@ -53,13 +57,17 @@ export class PagePort implements PagePortContract {
     const generation = ++this.sessionEventGeneration
     this.sessionEvents.delete(pageId)
     this.activeSessionGenerations.delete(pageId)
-    this.provisionalSessionEvents.set(pageId, { generation, callback })
+    this.provisionalSessionEvents.set(pageId, { generation, callback, buffered: [] })
     return generation
   }
 
-  activateSessionEvent(pageId: string, generation: number) {
+  async activateSessionEvent(pageId: string, generation: number) {
     const provisional = this.provisionalSessionEvents.get(pageId)
     if (!provisional || provisional.generation !== generation) return false
+    while (provisional.buffered.length > 0) {
+      await provisional.callback(provisional.buffered.shift()!)
+      if (this.provisionalSessionEvents.get(pageId) !== provisional) return false
+    }
     this.provisionalSessionEvents.delete(pageId)
     this.sessionEvents.set(pageId, provisional.callback)
     this.activeSessionGenerations.set(pageId, generation)
@@ -158,8 +166,25 @@ export class PagePort implements PagePortContract {
     return this.emit(this.inbound, pageIds, event)
   }
 
-  emitSessionEvent(pageIds: string[], event: RuntimeSessionEvent) {
-    return this.emit(this.sessionEvents, pageIds, event)
+  async emitSessionEvent(pageIds: string[], event: RuntimeSessionEvent) {
+    const deadPageIds: string[] = []
+    await Promise.all(
+      pageIds.map(async (pageId) => {
+        const listener = this.sessionEvents.get(pageId)
+        if (listener) {
+          try {
+            await listener(event)
+          } catch (error) {
+            console.error(error)
+            this.removePage(pageId)
+            deadPageIds.push(pageId)
+          }
+          return
+        }
+        this.provisionalSessionEvents.get(pageId)?.buffered.push(event)
+      })
+    )
+    return deadPageIds
   }
 
   emitWorldPresence(pageIds: string[], event: WorldPresenceEvent) {

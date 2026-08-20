@@ -14,9 +14,8 @@ export type { HostHandle } from '@/runtime/HostOwner'
 type HostAdapter = Adapter<MessageMeta> & { dispose: () => void }
 
 /**
- * Shared host bootstrap. Both hosts (Chrome/Edge Offscreen Document and the
- * Firefox long-lived Background Page) adapt their own messaging capability
- * and expose the same headless RuntimeServer over comctx.
+ * Starts the Background-owned logical Runtime and exposes its headless server over comctx.
+ * Chromium receives an injected Offscreen transport; Firefox uses its local transport directly.
  */
 export const startHost = (
   adapter: HostAdapter,

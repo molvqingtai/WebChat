@@ -174,7 +174,7 @@ describe('RuntimeServer production Page admission and restart recovery', () => {
       rebindPage,
       ensureTransport
     }
-    const server = createServer({ transport: fake.transport, admission })
+    const server = createServer({ transport: fake.transport, codec: jsonCodec, admission })
     const attach = () => server.attachPage({ domain: DOMAIN, pageId, caller: { tab: tabs.get(7) } })
     const call = async () => ({
       pageId,
@@ -205,6 +205,60 @@ describe('RuntimeServer production Page admission and restart recovery', () => {
         caller: { tab: { id: 8, url: pageUrl } }
       })
     ).rejects.toThrow('binding is no longer current')
+    disposeServer(fixture.server)
+  })
+
+  it('replays every Session delta that arrives while an exact replacement snapshot is pending', async () => {
+    const fixture = createAdmissionFixture()
+    await fixture.attach()
+    const call = await fixture.call()
+    await fixture.server.onSessionEvent(call, async () => {})
+    await fixture.server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE, ...call })
+
+    const events: RuntimeSessionEvent[] = []
+    const snapshotStarted = deferred<void>()
+    let releaseSnapshot!: () => void
+    const snapshotReleased = new Promise<void>((resolve) => {
+      releaseSnapshot = resolve
+    })
+    const replacement = fixture.server.onSessionEvent(call, async (event) => {
+      events.push(event)
+      if (event.type !== 'snapshot') return
+      snapshotStarted.resolve()
+      await snapshotReleased
+    })
+    await snapshotStarted.promise
+
+    fixture.fake.peerJoin(getChatRoomId(DOMAIN), 'queued-peer')
+    await settle()
+    fixture.fake.receive(getChatRoomId(DOMAIN), 'queued-peer', session(REMOTE_USER))
+    await settle()
+    expect((await fixture.server.getSnapshot()).domains[0]?.sessions).toEqual([
+      expect.objectContaining({ sourcePeerId: 'queued-peer' })
+    ])
+    expect(events).toHaveLength(1)
+
+    releaseSnapshot()
+    await replacement
+    expect(events).toEqual([
+      expect.objectContaining({ type: 'snapshot', provenance: 'refresh' }),
+      expect.objectContaining({ type: 'join', session: expect.objectContaining({ sourcePeerId: 'queued-peer' }) })
+    ])
+    disposeServer(fixture.server)
+  })
+
+  it('retires the exact browser binding when its initial Session callback rejects', async () => {
+    const fixture = createAdmissionFixture()
+    await fixture.attach()
+    const call = await fixture.call()
+    const failure = new Error('initial session projection failed')
+
+    await expect(fixture.server.onSessionEvent(call, async () => Promise.reject(failure))).rejects.toBe(failure)
+    await expect(fixture.server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE, ...call })).rejects.toThrow(
+      'binding is no longer current'
+    )
+    expect(fixture.storageState[RUNTIME_PAGE_BINDINGS_KEY]).toEqual({ pages: [] })
+    expect((await fixture.server.getSnapshot()).domains[0]).toMatchObject({ phase: 'grace', pageIds: [] })
     disposeServer(fixture.server)
   })
 

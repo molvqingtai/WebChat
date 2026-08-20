@@ -35,6 +35,7 @@ const report = (callback: () => void) => {
 /** Offscreen owns only physical transport and atomically replaces one callback per event lane. */
 export const createTransportService = (transport: RoomTransport = createRoomTransport()): TransportService => {
   const rooms = new Map<string, TransportRoomState>()
+  const joining = new Map<string, Promise<TransportRoomState>>()
   let onMessage: ((roomId: string, handle: string, sourcePeerId: string, payload: string) => void) | null = null
   let onPeerJoin: ((roomId: string, handle: string, peerId: string) => void) | null = null
   let onPeerLeave: ((roomId: string, handle: string, peerId: string) => void) | null = null
@@ -77,10 +78,28 @@ export const createTransportService = (transport: RoomTransport = createRoomTran
         if (existing.handle !== handle) throw new Error('Transport room is owned by a newer handle')
         return existing
       }
-      await transport.join(roomId)
-      const room = { roomId, handle, peerId: transport.peerIdOf(roomId) }
-      rooms.set(roomId, room)
-      return room
+      const pending = joining.get(roomId)
+      if (pending) {
+        const room = await pending
+        if (room.handle !== handle) throw new Error('Transport room is owned by a newer handle')
+        return room
+      }
+      const task = (async () => {
+        await transport.join(roomId)
+        const room = { roomId, handle, peerId: transport.peerIdOf(roomId) }
+        rooms.set(roomId, room)
+        return room
+      })()
+      joining.set(roomId, task)
+      void task.then(
+        () => {
+          if (joining.get(roomId) === task) joining.delete(roomId)
+        },
+        () => {
+          if (joining.get(roomId) === task) joining.delete(roomId)
+        }
+      )
+      return task
     },
     leave: async (roomId, handle, options) => {
       currentRoom(roomId, handle)

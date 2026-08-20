@@ -4,6 +4,7 @@ import { ProvideAdapter } from '@/service/adapter/runtime'
 import { BackgroundInjectAdapter, type MessageApi } from '@/service/adapter/runtime/Core'
 import type { RuntimeCoordinator, RuntimeHostStatus, RuntimePageRegistration } from '@/runtime/Contract'
 import { HostOwner } from '@/runtime/HostOwner'
+import { ChromiumTransportOwner } from '@/runtime/ChromiumTransportOwner'
 import { startHost } from '@/runtime/host'
 import { createBrowserPresenceStore } from '@/runtime/PresenceStore'
 import { RemoteRoomTransport } from '@/runtime/RemoteRoomTransport'
@@ -25,7 +26,7 @@ interface OffscreenApi {
  */
 const backgroundHost = new HostOwner()
 
-const ensureOffscreenDocument = async (): Promise<{ phase: RuntimeHostStatus['phase']; created: boolean }> => {
+const ensureOffscreenDocument = async (): Promise<{ phase: 'ready' | 'unavailable'; created: boolean }> => {
   const offscreen = (globalThis as { chrome?: { offscreen?: OffscreenApi } }).chrome?.offscreen
   if (!offscreen) return { phase: 'unavailable', created: false }
   if (await offscreen.hasDocument?.()) return { phase: 'ready', created: false }
@@ -40,19 +41,12 @@ const ensureOffscreenDocument = async (): Promise<{ phase: RuntimeHostStatus['ph
 const [, injectTransport] = defineProxy(() => ({}) as TransportService, {
   namespace: `${TRANSPORT_NAMESPACE_PREFIX}:${browser.runtime.id}`
 })
-let chromeTransport: RemoteRoomTransport | null = null
+const chromeTransportOwner = new ChromiumTransportOwner(
+  ensureOffscreenDocument,
+  () => new RemoteRoomTransport(injectTransport(new BackgroundInjectAdapter(messageApi)))
+)
 
-const ensureChromeTransport = async () => {
-  const offscreen = await ensureOffscreenDocument()
-  if (offscreen.phase !== 'ready') throw new Error('Chromium Offscreen transport is unavailable')
-  if (!chromeTransport) {
-    chromeTransport = new RemoteRoomTransport(injectTransport(new BackgroundInjectAdapter(messageApi)))
-    await chromeTransport.rebind()
-  } else if (offscreen.created) {
-    await chromeTransport.rebind()
-  }
-  return chromeTransport
-}
+const ensureChromeTransport = () => chromeTransportOwner.ensure()
 
 const admission = {
   tabs: browser.tabs,
@@ -65,9 +59,9 @@ const admission = {
 }
 
 const ensureBackgroundHost = async (): Promise<{ status: RuntimeHostStatus; created: boolean }> => {
-  if (!import.meta.env.FIREFOX) await ensureChromeTransport()
+  const transport = import.meta.env.FIREFOX ? undefined : await ensureChromeTransport()
   const { host, created } = backgroundHost.ensure(() =>
-    startHost(new ProvideAdapter(), presenceStore, import.meta.env.FIREFOX ? undefined : chromeTransport!, admission)
+    startHost(new ProvideAdapter(), presenceStore, transport, admission)
   )
   await host.server.getSnapshot()
   if (created) {

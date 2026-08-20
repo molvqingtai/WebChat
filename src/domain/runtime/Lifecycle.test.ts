@@ -29,23 +29,14 @@ const setup = () => {
 }
 
 describe('LifecycleDomain', () => {
-  it('makes host creation single-flight and automatically requests rebuild with online pages', () => {
+  it('owns only page leases and does not shadow Background host authority', () => {
     const { store, runtime } = setup()
-    let createRequests = 0
-    store.subscribeEvent(runtime.event.HostCreateRequestedEvent, () => {
-      createRequests += 1
-    })
-
     store.send(runtime.command.AttachPageCommand({ domain: 'https://example.com', pageId: 'page-a' }))
-    store.send(runtime.command.RequestHostCommand())
-    store.send(runtime.command.RequestHostCommand())
-    expect(store.query(runtime.query.HostPhaseQuery())).toBe('connecting')
-    expect(createRequests).toBe(1)
-
-    store.send(runtime.command.HostReadyCommand())
-    store.send(runtime.command.HostDestroyedCommand())
-    expect(store.query(runtime.query.HostPhaseQuery())).toBe('connecting')
-    expect(createRequests).toBe(2)
+    expect(runtime.query).not.toHaveProperty('HostPhaseQuery')
+    expect(runtime.query).not.toHaveProperty('HostGenerationQuery')
+    expect(runtime.command).not.toHaveProperty('RequestHostCommand')
+    expect(runtime.command).not.toHaveProperty('HostDestroyedCommand')
+    expect(store.query(runtime.query.DomainLeaseQuery('https://example.com'))?.pageIds).toEqual(['page-a'])
   })
 
   it('uses one idempotent lease per page and one grace generation for real two-tab cleanup', () => {

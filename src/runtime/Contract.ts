@@ -32,7 +32,7 @@ export interface WorldSnapshot {
 }
 
 export interface RuntimeSnapshot {
-  /** Changes whenever the physical Offscreen/Background Runtime is recreated. */
+  /** Changes whenever the Background-owned logical Runtime is recreated. */
   hostId: string
   hostPhase: HostPhase
   peerId: string
