@@ -68,6 +68,36 @@ describe('PagePort session-event lifecycle', () => {
     diagnostic.mockRestore()
   })
 
+  it('keeps a replacement session-event callback active when a stale callback rejects', async () => {
+    const port = new PagePort()
+    const started = deferred<void>()
+    const release = deferred<void>()
+    const failure = new Error('page closed')
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const received: string[] = []
+    port.onSessionEvent('page-a', async () => {
+      started.resolve()
+      await release.promise
+      throw failure
+    })
+    const staleDelivery = port.emitSessionEvent(['page-a'], event)
+    await started.promise
+
+    const replacement = port.beginSessionEvent('page-a', (current) => {
+      received.push(current.type)
+    })
+    await expect(port.activateSessionEvent('page-a', replacement)).resolves.toBe(true)
+
+    release.resolve()
+    expect(await staleDelivery).toEqual([])
+    expect(port.isSessionEventActive('page-a', replacement)).toBe(true)
+    expect(await port.emitSessionEvent(['page-a'], event)).toEqual([])
+    expect(received).toEqual(['snapshot'])
+    expect(diagnostic).toHaveBeenCalledOnce()
+    expect(diagnostic).toHaveBeenCalledWith(failure)
+    diagnostic.mockRestore()
+  })
+
   it('buffers session deltas until a replacement callback activates', async () => {
     const port = new PagePort()
     const received: string[] = []

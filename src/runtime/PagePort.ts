@@ -228,8 +228,10 @@ export class PagePort implements PagePortContract {
             await this.enqueueSessionEvent(pageId, listener, event, () => this.sessionEvents.get(pageId) === listener)
           } catch (error) {
             console.error(error)
-            this.removePage(pageId)
-            deadPageIds.push(pageId)
+            if (this.sessionEvents.get(pageId) === listener) {
+              this.removePage(pageId)
+              deadPageIds.push(pageId)
+            }
           }
           return
         }

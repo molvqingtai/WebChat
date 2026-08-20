@@ -45,7 +45,7 @@ export const createTransportService = (transport: RoomTransport = createRoomTran
   const projectionAfterCurrentJoins = async (): Promise<TransportProjection> => {
     // A fresh Background must not align an empty projection across a room join that an expired
     // Background already admitted. Those joins settle before this callback lane returns its fact.
-    await Promise.allSettled(joining.values())
+    while (joining.size > 0) await Promise.allSettled(joining.values())
     return projection()
   }
   const currentRoom = (roomId: string, handle: string) => {

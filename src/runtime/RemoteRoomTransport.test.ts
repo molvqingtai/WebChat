@@ -154,6 +154,48 @@ describe('RemoteRoomTransport', () => {
     expect(physical.leave).toHaveBeenCalledWith('room-a', undefined)
   })
 
+  it('waits for joins admitted while a fresh Background callback projection is registering', async () => {
+    const firstJoin = deferred<void>()
+    const secondJoin = deferred<void>()
+    const physical: RoomTransport = {
+      peerIdOf: (roomId) => `peer:${roomId}`,
+      join: vi.fn((roomId) => (roomId === 'room-a' ? firstJoin.promise : secondJoin.promise)),
+      leave: vi.fn(),
+      send: vi.fn(async () => {}),
+      onMessage: () => () => {},
+      onPeerJoin: () => () => {},
+      onPeerLeave: () => () => {},
+      onRoomClose: () => () => {},
+      onError: () => () => {},
+      dispose: vi.fn()
+    }
+    const service = createTransportService(physical)
+    const oldBackground = new RemoteRoomTransport(service)
+    await oldBackground.rebind()
+    const first = oldBackground.join('room-a')
+    await Promise.resolve()
+
+    const freshBackground = new RemoteRoomTransport(service)
+    let rebound = false
+    const rebinding = freshBackground.rebind().then(() => {
+      rebound = true
+    })
+    const second = oldBackground.join('room-b')
+    await Promise.resolve()
+    expect(physical.join).toHaveBeenCalledTimes(2)
+
+    firstJoin.resolve()
+    await first
+    await Promise.resolve()
+    expect(rebound).toBe(false)
+
+    secondJoin.resolve()
+    await second
+    await rebinding
+    expect(freshBackground.peerIdOf('room-a')).toBe('peer:room-a')
+    expect(freshBackground.peerIdOf('room-b')).toBe('peer:room-b')
+  })
+
   it('forwards diagnostic-only release once and fences callbacks after disposal', async () => {
     const fixture = createService()
     const transport = new RemoteRoomTransport(fixture.service)

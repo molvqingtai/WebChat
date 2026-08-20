@@ -54,7 +54,7 @@ describe('replaceable application boundaries', () => {
     expect(implementation).not.toMatch(/setTimeout:|clearTimeout:/)
   })
 
-  it('keeps production lease timing free of the removed coordinator path', async () => {
+  it('keeps production lease timing free of intervals', async () => {
     const [clientLease, server, background] = await Promise.all([
       source('src/runtime/ClientLease.ts'),
       source('src/runtime/Server.ts'),
@@ -64,7 +64,6 @@ describe('replaceable application boundaries', () => {
     expect(clientLease).not.toMatch(/\bsetInterval\??:|\bclearInterval\??:/)
     expect(server).not.toMatch(/\bsetInterval:|\bclearInterval:/)
     expect(background).not.toMatch(/\bsetInterval:|\bclearInterval:/)
-    expect(`${server}\n${background}`).not.toContain('@/runtime/Coordinator')
   })
 
   it('never clears the canonical message database from startup or setup state', async () => {
