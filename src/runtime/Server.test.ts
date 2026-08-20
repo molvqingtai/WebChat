@@ -9,7 +9,7 @@ import {
   RUNTIME_PAGE_BINDINGS_KEY
 } from '@/runtime/Server'
 import type { Clock } from '@/domain/runtime/externs/Clock'
-import type { PresenceStore } from '@/domain/runtime/externs/PresenceStore'
+import type { PresenceDomainRecord, PresenceStore } from '@/domain/runtime/externs/PresenceStore'
 import type { RoomTransport } from '@/runtime/RoomTransport'
 import type { UserInfo } from '@/domain/UserInfo'
 import type { WireCodec } from '@/protocol'
@@ -151,7 +151,7 @@ describe('RuntimeServer production Page admission and restart recovery', () => {
   const pageId = 'admitted-page'
   const pageUrl = `${DOMAIN}/topic`
 
-  const createAdmissionFixture = () => {
+  const createAdmissionFixture = ({ presenceStore }: { presenceStore?: PresenceStore } = {}) => {
     const storageState: Record<string, unknown> = {}
     const tabs = new Map([[7, { id: 7, url: pageUrl }]])
     const rebindPage = vi.fn(async () => {})
@@ -175,7 +175,7 @@ describe('RuntimeServer production Page admission and restart recovery', () => {
       rebindPage,
       ensureTransport
     }
-    const server = createServer({ transport: fake.transport, codec: jsonCodec, admission })
+    const server = createServer({ transport: fake.transport, codec: jsonCodec, admission, presenceStore })
     const attach = () => server.attachPage({ domain: DOMAIN, pageId, caller: { tab: tabs.get(7) } })
     const call = async () => ({
       pageId,
@@ -334,7 +334,6 @@ describe('RuntimeServer production Page admission and restart recovery', () => {
       event: text('waiting-text', USER.id),
       ...firstCall
     })
-    const waiting = second.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE, ...firstCall })
     await settle()
     expect(secondFake.joinCalls).toHaveLength(0)
     expect(messageAttempts()).toHaveLength(0)
@@ -348,6 +347,7 @@ describe('RuntimeServer production Page admission and restart recovery', () => {
     await registerPageCallbacks(second, recoveredCall)
     expect(secondFake.joinCalls).toHaveLength(0)
     expect(messageAttempts()).toHaveLength(0)
+    const restoringJoin = second.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE, ...recoveredCall })
 
     const currentTab = first.admission.tabs.get
     const releaseJoinBinding = deferred<void>()
@@ -361,7 +361,7 @@ describe('RuntimeServer production Page admission and restart recovery', () => {
     await settle()
     expect(messageAttempts()).toHaveLength(0)
     releaseJoinBinding.resolve()
-    await waiting
+    await restoringJoin
     await expect(waitingReaction).resolves.toEqual(reaction('waiting-reaction', USER.id))
     await expect(waitingText).resolves.toEqual(text('waiting-text', USER.id))
     await restoring
@@ -412,21 +412,139 @@ describe('RuntimeServer production Page admission and restart recovery', () => {
     await second.attachPage({ domain: DOMAIN, pageId: secondPageId, caller: { tab: secondTab } })
     await registerPageCallbacks(second, recoveredCall)
     await registerPageCallbacks(second, secondRecoveredCall)
-    releaseRecovery.resolve()
-    await restoring
-
     const waiting = second.sendChatMessage({
       domain: DOMAIN,
       event: reaction('preclaimed-recovery', USER.id),
       ...recoveredCall
     })
+    const restoringJoin = second.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE, ...recoveredCall })
     await settle()
     expect(secondFake.sendAttempts).toHaveLength(0)
 
-    await second.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE, ...recoveredCall })
+    releaseRecovery.resolve()
+    await restoring
+    await restoringJoin
     await expect(waiting).resolves.toEqual(reaction('preclaimed-recovery', USER.id))
     expect(first.rebindPage).toHaveBeenCalledTimes(2)
     expect(secondFake.joinCalls.filter((roomId) => roomId === getChatRoomId(DOMAIN))).toHaveLength(1)
+    disposeServer(first.server)
+    disposeServer(second)
+  })
+
+  it('fails a restoring reservation before effects when any retained Page callback is missing', async () => {
+    const first = createAdmissionFixture()
+    await first.attach()
+    const firstCall = await first.call()
+    await registerPageCallbacks(first.server, firstCall)
+
+    const recoveryStarted = deferred<void>()
+    const releaseRecovery = deferred<void>()
+    first.rebindPage.mockImplementation(async () => {
+      recoveryStarted.resolve()
+      await releaseRecovery.promise
+    })
+    const presenceStore: PresenceStore = {
+      load: vi.fn(async () => null),
+      save: vi.fn(async () => {})
+    }
+    const secondFake = createFakeTransport()
+    const second = createServer({
+      transport: secondFake.transport,
+      codec: jsonCodec,
+      admission: first.admission,
+      presenceStore
+    })
+    const restoring = restoreServerPageBindings(second)
+    await recoveryStarted.promise
+
+    const recoveredCall = {
+      pageId,
+      runtimeHostId: (await second.getSnapshot()).hostId,
+      caller: { tab: first.tabs.get(7) }
+    }
+    await second.attachPage({ domain: DOMAIN, pageId, caller: { tab: first.tabs.get(7) } })
+    await second.onSessionEvent(recoveredCall, async () => {})
+    const ownerJoin = second.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE, ...recoveredCall })
+    const ownerRejected = expect(ownerJoin).rejects.toThrow(
+      'Runtime Page recovery did not restore full callback readiness'
+    )
+    releaseRecovery.resolve()
+    await restoring
+    await ownerRejected
+    expect(presenceStore.save).not.toHaveBeenCalled()
+    expect(secondFake.joinCalls).toHaveLength(0)
+    expect(secondFake.sendAttempts).toHaveLength(0)
+    disposeServer(first.server)
+    disposeServer(second)
+  })
+
+  it.each([
+    ['site', { ...SITE, origin: OTHER_DOMAIN }, null],
+    [
+      'durable local user',
+      SITE,
+      {
+        domain: DOMAIN,
+        lastJoinedAt: NOW,
+        local: {
+          presenceId: 'retained-presence',
+          userId: 'different-user',
+          joinedAt: NOW,
+          status: 'active' as const
+        },
+        observers: []
+      } satisfies PresenceDomainRecord
+    ]
+  ])('terminally rejects a restoring owner with a conflicting %s before effects', async (_kind, site, record) => {
+    const first = createAdmissionFixture()
+    await first.attach()
+    const firstCall = await first.call()
+    await registerPageCallbacks(first.server, firstCall)
+
+    const recoveryStarted = deferred<void>()
+    const releaseRecovery = deferred<void>()
+    first.rebindPage.mockImplementation(async () => {
+      recoveryStarted.resolve()
+      await releaseRecovery.promise
+    })
+    const presenceStore: PresenceStore = {
+      load: vi.fn(async () => record),
+      save: vi.fn(async () => {})
+    }
+    const secondFake = createFakeTransport()
+    const second = createServer({
+      transport: secondFake.transport,
+      codec: jsonCodec,
+      admission: first.admission,
+      presenceStore
+    })
+    const restoring = restoreServerPageBindings(second)
+    await recoveryStarted.promise
+
+    const recoveredCall = {
+      pageId,
+      runtimeHostId: (await second.getSnapshot()).hostId,
+      caller: { tab: first.tabs.get(7) }
+    }
+    await second.attachPage({ domain: DOMAIN, pageId, caller: { tab: first.tabs.get(7) } })
+    await registerPageCallbacks(second, recoveredCall)
+    const waiting = second.sendChatMessage({
+      domain: DOMAIN,
+      event: reaction(`conflicting-${_kind}`, USER.id),
+      ...recoveredCall
+    })
+    const ownerJoin = second.joinChatRoom({ domain: DOMAIN, user: USER, site, ...recoveredCall })
+    const waitingRejected = expect(waiting).rejects.toThrow()
+    const ownerRejected = expect(ownerJoin).rejects.toThrow()
+    releaseRecovery.resolve()
+    await restoring
+    await settle()
+    await ownerRejected
+    await waitingRejected
+    expect(presenceStore.save).not.toHaveBeenCalled()
+    expect(secondFake.joinCalls).toHaveLength(0)
+    expect(secondFake.sendAttempts).toHaveLength(0)
+    expect((await second.getSnapshot()).domains.find((item) => item.domain === DOMAIN)?.localSession).toBeUndefined()
     disposeServer(first.server)
     disposeServer(second)
   })

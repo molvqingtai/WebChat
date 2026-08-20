@@ -22,8 +22,10 @@ import type { RuntimeCoordinator, RuntimePageRegistration, RuntimeServer, Runtim
 
 const pageId = 'page-a'
 const domain = 'https://example.test'
+const otherDomain = 'https://other.example.test'
 const pageUrl = `${domain}/topic`
 const user: ChatUser = { id: 'local-user', name: 'Local', avatar: '' }
+const site = { origin: domain, title: 'Example', icon: `${domain}/favicon.ico` }
 const userInfo: UserInfo = {
   ...user,
   createTime: 1,
@@ -301,24 +303,39 @@ describe('ClientLease event-driven Runtime admission', () => {
     await client.init()
     store.send(room.command.JoinRoomCommand())
     await vi.waitFor(() => expect(store.query(room.query.JoinIsFinishedQuery())).toBe(true))
+    const staleCall = {
+      pageId,
+      runtimeHostId: client.runtimeHostId(),
+      caller: { tab }
+    }
 
     const joinGate = deferred<void>()
-    const secondTransport = createRecoveryTransport()
+    const secondTransport = createRecoveryTransport(joinGate.promise)
     const second = createServer({ transport: secondTransport.transport, admission })
     currentServer = second
     const joinChatRoom = second.joinChatRoom.bind(second)
     const automaticJoin = vi.spyOn(second, 'joinChatRoom')
-    automaticJoin.mockImplementation(async (payload) => {
-      await joinGate.promise
-      return joinChatRoom(payload)
-    })
     submitDuringRecovery = true
     const restore = restoreServerPageBindings(second)
+    const staleJoin = joinChatRoom({ domain, user, site, ...staleCall })
+    const mismatchedJoin = joinChatRoom({
+      domain: otherDomain,
+      user,
+      site: { ...site, origin: otherDomain },
+      pageId,
+      runtimeHostId: (await second.getSnapshot()).hostId,
+      caller: { tab }
+    })
 
     await restore
     expect(client.runtimeHostId()).toBe((await second.getSnapshot()).hostId)
     await vi.waitFor(() => expect(automaticJoin).toHaveBeenCalledOnce())
     expect(recoveryAction).not.toBeNull()
+    await expect(staleJoin).rejects.toThrow('Runtime current-domain recovery owner is no longer current')
+    await expect(mismatchedJoin).rejects.toThrow('Runtime current-domain recovery owner is no longer current')
+    await vi.waitFor(() =>
+      expect(secondTransport.joinCalls.filter((roomId) => roomId === getChatRoomId(domain))).toHaveLength(1)
+    )
     let settled = false
     void recoveryAction!.then(() => {
       settled = true
@@ -327,7 +344,6 @@ describe('ClientLease event-driven Runtime admission', () => {
     expect(settled).toBe(false)
 
     joinGate.resolve()
-    await restore
     await expect(recoveryAction).resolves.toMatchObject({ type: MESSAGE_TYPE.TEXT, body: 'during recovery' })
     expect(automaticJoin).toHaveBeenCalledOnce()
     expect(secondTransport.joinCalls.filter((roomId) => roomId === getChatRoomId(domain))).toHaveLength(1)
