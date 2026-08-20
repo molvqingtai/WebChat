@@ -40,7 +40,9 @@ On Firefox MV2, the persistent Background Page/HTML SHALL own both the logical R
 
 ### Requirement: Fresh Background restores exact browser truth
 
-A fresh Chromium Background SHALL treat any session storage as provisional hints only. It SHALL validate tabs, URLs, navigation, sender identity, and page ownership against current browser facts before promoting an exact binding. It SHALL establish a new logical Runtime generation without replaying an old action or trusting an old callback closure.
+A fresh Chromium Background SHALL treat any session storage as provisional hints only. It SHALL validate tabs, URLs, navigation, sender identity, and page ownership against current browser facts before promoting an exact binding. It SHALL establish a new logical Runtime host identity without replaying an old action or trusting an old callback closure.
+
+Page registration SHALL be the sole coordinator entry that starts or reuses Background and returns the current `RuntimeSnapshot`. `RuntimeSnapshot.hostId` and `RuntimeSnapshot.hostPhase` SHALL be the sole host identity and status authority. The coordinator SHALL NOT expose a separate `ensureHost` RPC, coordinator phase, or coordinator generation. A Page binding SHALL NOT retain a nominal generation that has no consumer; exact binding identity and the Sessions callback generation SHALL remain the currentness fences at their respective boundaries.
 
 Recovery of all live domains SHALL remain a non-blocking side branch. The current Page action SHALL wait only for its own target-domain Chat, Session, or History readiness fence.
 
@@ -49,6 +51,13 @@ Recovery of all live domains SHALL remain a non-blocking side branch. The curren
 - **GIVEN** Background fresh boot discovered several provisional live domains
 - **WHEN** one exact Page RPC needs only its target domain
 - **THEN** Background SHALL validate and restore that exact caller and target readiness without waiting for unrelated domains, while other provisional Pages and domains recover asynchronously
+
+#### Scenario: Registration returns one host authority
+
+- **GIVEN** a Page reaches a missing, fresh, or current Background
+- **WHEN** it performs its ordinary registration
+- **THEN** that registration SHALL start or reuse Background and return one current Runtime snapshot
+- **AND** no separate host-start RPC, duplicate phase, constant coordinator generation, or write-only binding generation SHALL participate in readiness or replacement decisions
 
 ### Requirement: Background and Offscreen callback pairs restart transparently
 
@@ -100,7 +109,7 @@ Inbound, Sessions, World, Runtime-error, and History-feedback callback delivery 
 #### Scenario: Binding drift rejects activation
 
 - **GIVEN** a Page callback bind or rebind is receiving current full Sessions
-- **WHEN** tab, navigation, page owner, or binding generation changes before callback completion
+- **WHEN** tab, navigation, page owner, or exact binding identity changes before callback completion
 - **THEN** Background SHALL not activate that callback or execute the pending action and SHALL retire the stale binding through the existing rejection/detach path
 
 #### Scenario: Stale callback rejection preserves the replacement
@@ -112,7 +121,7 @@ Inbound, Sessions, World, Runtime-error, and History-feedback callback delivery 
 
 ### Requirement: Accepted actions execute once after target-scoped readiness
 
-Background SHALL validate exact sender tab, navigation, page owner, current callback state, and lifecycle generation before admitting a Page RPC. It SHALL wait only for the current action's target-domain readiness. Chromium SHALL command Offscreen to create or reuse the target `RTCPeerConnection`; Firefox SHALL do so directly. The command result SHALL carry exact handle/readiness and SHALL NOT be represented as an asynchronous provider event.
+Background SHALL validate exact sender tab, navigation, page owner, current callback state, and logical Runtime host identity before admitting a Page RPC. It SHALL wait only for the current action's target-domain readiness. Chromium SHALL command Offscreen to create or reuse the target `RTCPeerConnection`; Firefox SHALL do so directly. The command result SHALL carry exact handle/readiness and SHALL NOT be represented as an asynchronous provider event.
 
 After readiness, the gateway SHALL accept and execute the original current RPC invocation exactly once. It SHALL NOT replay an accepted invocation. A caller timeout after admission SHALL remain an ambiguous result for explicit caller handling and SHALL NOT authorize automatic replay of a non-idempotent mutation.
 

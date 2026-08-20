@@ -36,7 +36,9 @@ The Background owns Chat/World logical Rooms, Sessions, trusted page/domain bind
 
 ### 3. Fresh Background restores from browser facts
 
-A fresh Background may read `storage.session` only as provisional hints. It validates current browser truth through tabs, URLs, navigation, and exact sender identity before promoting any page/domain binding. It creates a new logical Runtime shell and current generation without replaying an old action or trusting an old callback closure.
+A fresh Background may read `storage.session` only as provisional hints. It validates current browser truth through tabs, URLs, navigation, and exact sender identity before promoting any page/domain binding. It creates a new logical Runtime shell and exact host identity without replaying an old action or trusting an old callback closure.
+
+Page registration is the only coordinator entry: it starts or reuses Background and returns the current `RuntimeSnapshot`. The snapshot's `hostId` and `hostPhase` are the sole host identity and status authority. There is no separate `ensureHost` RPC, constant coordinator generation, duplicate coordinator phase, or write-only Page-binding generation. Exact binding object identity and the Sessions callback generation remain at their actual ownership boundary.
 
 Full live-domain recovery proceeds as a non-blocking side branch. The current action waits only for its target domain. No global recovery barrier may delay unrelated Page ingress.
 
@@ -64,7 +66,7 @@ Every Page callback delivery captures its exact listener or Sessions generation 
 
 ### 7. Action admission is target-scoped and exactly once
 
-Background validates exact sender tab, navigation, page owner, callback state, and current generation. It waits only for the current action's target-domain Chat/Session/History fence. Chromium commands Offscreen to create or reuse the target `RTCPeerConnection`; Firefox does so directly. A command returns the exact handle/readiness result and does not masquerade as an asynchronous event.
+Background validates exact sender tab, navigation, page owner, callback state, and current logical Runtime host identity. It waits only for the current action's target-domain Chat/Session/History fence. Chromium commands Offscreen to create or reuse the target `RTCPeerConnection`; Firefox does so directly. A command returns the exact handle/readiness result and does not masquerade as an asynchronous event.
 
 After readiness, the gateway accepts the current RPC invocation and executes the original action exactly once. It never replays an accepted invocation. If a caller times out after admission, any ambiguous result remains caller-owned and requires an explicit new user or application decision rather than automatic mutation replay.
 
