@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createMemoryMessageDatabase } from '@/domain/impls/database/Memory'
+import { ChatRoom } from '@/domain/impls/runtime/ChatRoom'
+import { WorldRoom } from '@/domain/impls/runtime/WorldRoom'
+import { createMessageStore } from '@/domain/MessageStore'
 import { ClientLease } from './ClientLease'
-import type { RuntimeCoordinator, RuntimePageRegistration, RuntimeSnapshot } from './Contract'
+import type { RuntimeCoordinator, RuntimePageRegistration, RuntimeServer, RuntimeSnapshot } from './Contract'
 
 const pageId = 'page-a'
 const domain = 'https://example.test'
@@ -14,6 +18,47 @@ const snapshot = (hostId = 'host-a'): RuntimeSnapshot => ({
 })
 
 const registration = (hostId = 'host-a'): RuntimePageRegistration => ({ snapshot: snapshot(hostId) })
+
+let databaseId = 0
+
+const createComposedReadiness = ({
+  inboundRegistration = Promise.resolve(),
+  sessionRegistration = Promise.resolve(),
+  worldRegistration = Promise.resolve()
+}: {
+  inboundRegistration?: Promise<void>
+  sessionRegistration?: Promise<void>
+  worldRegistration?: Promise<void>
+} = {}) => {
+  const registerPage = vi.fn<RuntimeCoordinator['registerPage']>().mockResolvedValue(registration())
+  const client = new ClientLease({ coordinator: coordinatorWith(registerPage), pageId, domain })
+  const server = {
+    onInbound: vi.fn(async () => inboundRegistration),
+    onSessionEvent: vi.fn(async () => sessionRegistration),
+    onError: vi.fn(async () => {}),
+    provideHistory: vi.fn(async () => {}),
+    onHistoryFeedback: vi.fn(async () => {}),
+    replayInbound: vi.fn(async () => []),
+    onWorldPresence: vi.fn(async () => worldRegistration),
+    getSnapshot: vi.fn(async () => snapshot())
+  } as unknown as RuntimeServer
+  const database = createMemoryMessageDatabase(`client-lease-readiness-${databaseId++}`)
+  const chat = new ChatRoom({
+    server,
+    messageStore: createMessageStore(database),
+    pageDomain: domain,
+    pageId,
+    getSnapshot: () => client.snapshot(),
+    whenReady: (callback) => client.whenReady(callback)
+  })
+  new WorldRoom({
+    server,
+    pageId,
+    getSnapshot: () => client.snapshot(),
+    whenReady: (callback) => client.whenReady(callback)
+  })
+  return { chat, client, database, registerPage, server }
+}
 
 const coordinatorWith = (registerPage: RuntimeCoordinator['registerPage']): RuntimeCoordinator => ({
   registerPage
@@ -72,6 +117,62 @@ describe('ClientLease event-driven Runtime admission', () => {
     client.detach()
   })
 
+  it('waits for the real ChatRoom callback registration before the lease is ready', async () => {
+    const sessionRegistration = deferred<void>()
+    const fixture = createComposedReadiness({ sessionRegistration: sessionRegistration.promise })
+    let settled = false
+    const init = fixture.client.init().then(() => {
+      settled = true
+    })
+
+    await vi.waitFor(() => {
+      expect(fixture.server.onInbound).toHaveBeenCalledOnce()
+      expect(fixture.server.onSessionEvent).toHaveBeenCalledOnce()
+      expect(fixture.server.onError).toHaveBeenCalledOnce()
+      expect(fixture.server.provideHistory).toHaveBeenCalledOnce()
+      expect(fixture.server.onHistoryFeedback).toHaveBeenCalledOnce()
+      expect(fixture.server.onWorldPresence).toHaveBeenCalledOnce()
+    })
+    expect(settled).toBe(false)
+
+    sessionRegistration.resolve()
+    await init
+    expect(settled).toBe(true)
+    fixture.chat.dispose()
+    await fixture.database.close()
+    fixture.client.detach()
+  })
+
+  it('waits for the real WorldRoom attachment before the lease is ready', async () => {
+    const worldRegistration = deferred<void>()
+    const fixture = createComposedReadiness({ worldRegistration: worldRegistration.promise })
+    let settled = false
+    const init = fixture.client.init().then(() => {
+      settled = true
+    })
+
+    await vi.waitFor(() => expect(fixture.server.onWorldPresence).toHaveBeenCalledOnce())
+    expect(settled).toBe(false)
+
+    worldRegistration.resolve()
+    await init
+    expect(settled).toBe(true)
+    fixture.chat.dispose()
+    await fixture.database.close()
+    fixture.client.detach()
+  })
+
+  it('propagates a real ChatRoom registration failure through the lease readiness barrier', async () => {
+    const failure = new Error('ChatRoom Session registration failed')
+    const fixture = createComposedReadiness({ inboundRegistration: Promise.reject(failure) })
+
+    await expect(fixture.client.init()).rejects.toBe(failure)
+
+    fixture.chat.dispose()
+    await fixture.database.close()
+    fixture.client.detach()
+  })
+
   it('does not resolve a rebind until every asynchronous Page registration callback has settled', async () => {
     const registerPage = vi
       .fn<RuntimeCoordinator['registerPage']>()
@@ -82,14 +183,14 @@ describe('ClientLease event-driven Runtime admission', () => {
     let generation = 0
     let started = 0
     const client = new ClientLease({ coordinator: coordinatorWith(registerPage), pageId, domain })
-    for (let index = 0; index < 5; index += 1) {
+    Array.from({ length: 5 }).forEach(() => {
       client.whenReady(() => {
         if (generation === 0) return
         started += 1
         if (started === 5) callbacksStarted.resolve()
         return releaseCallbacks.promise
       })
-    }
+    })
 
     await client.init()
     generation = 1

@@ -414,7 +414,12 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     if (disposed) throw operationCancelled()
     const recovery = presenceRecoveries.get(domain)
     if (!recovery) {
-      if (store.query(sessionDomain.query.FinalizingPresenceQuery(domain))) throw operationCancelled()
+      if (
+        store.query(sessionDomain.query.FinalizingPresenceQuery(domain)) ||
+        !store.query(sessionDomain.query.DomainQuery(domain))
+      ) {
+        throw operationCancelled()
+      }
       return
     }
     await recovery.promise
@@ -718,11 +723,11 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
 
   const joinChatRoomSettled = async (
     payload: Parameters<RuntimeServer['joinChatRoom']>[0],
-    revalidate?: () => Promise<void>
+    revalidate?: () => Promise<void>,
+    recovery = beginPresenceRecovery(payload.domain)
   ) => {
     // Typed ChatUser/ChatSite values pass through unchanged; the application-to-protocol
     // mapping already happened before the value was narrowed to the schema-owned type.
-    const recovery = beginPresenceRecovery(payload.domain)
     let recovered = false
     try {
       const connect = () => {
@@ -822,13 +827,16 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     },
     getSnapshot: async () => snapshot(),
     joinChatRoom: (payload) => {
-      const settle = (revalidate?: () => Promise<void>) => {
+      const settle = (revalidate?: () => Promise<void>, recovery?: PresenceRecovery) => {
         // Overlapping same-domain joins observed while the domain's release is closing coalesce into
         // one shared settlement; fresh cold joins keep the existing newest-generation supersession.
         if (store.query(sessionDomain.query.ReleasingDomainQuery(payload.domain))) {
           const existing = inFlightJoins.get(payload.domain)
-          if (existing) return existing
-          const task = joinChatRoomSettled(payload, revalidate)
+          if (existing) {
+            if (recovery) finishPresenceRecovery(payload.domain, recovery, false)
+            return existing
+          }
+          const task = joinChatRoomSettled(payload, revalidate, recovery)
           inFlightJoins.set(payload.domain, task)
           const releaseJoin = () => {
             if (inFlightJoins.get(payload.domain) === task) inFlightJoins.delete(payload.domain)
@@ -836,14 +844,20 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
           void task.then(releaseJoin, releaseJoin)
           return task
         }
-        return joinChatRoomSettled(payload, revalidate)
+        return joinChatRoomSettled(payload, revalidate, recovery)
       }
       if (!config.admission) return settle()
+      const recovery = beginPresenceRecovery(payload.domain)
       return (async () => {
-        const binding = await requirePageBinding(payload, true)
-        const result = await settle(() => revalidateBinding(binding, payload))
-        await revalidateBinding(binding, payload)
-        return result
+        try {
+          const binding = await requirePageBinding(payload, true)
+          const result = await settle(() => revalidateBinding(binding, payload), recovery)
+          await revalidateBinding(binding, payload)
+          return result
+        } catch (error) {
+          finishPresenceRecovery(payload.domain, recovery, false)
+          throw error
+        }
       })()
     },
     leaveChatRoom: (payload) => {
@@ -974,7 +988,16 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
         }
       } catch (error) {
         pagePort.cancelSessionEvent(payload.pageId, generation)
-        if (binding) await removeBinding(binding)
+        const currentRecovery = binding ? pageRecoveries.get(binding.pageId) : undefined
+        const retainedRecovery =
+          currentRecovery &&
+          binding &&
+          currentRecovery.tabId === binding.tabId &&
+          currentRecovery.domain === binding.domain &&
+          isSameNavigation(currentRecovery.url, binding.url)
+            ? currentRecovery
+            : undefined
+        if (binding) await removeBinding(binding, retainedRecovery)
         throw error
       }
     },

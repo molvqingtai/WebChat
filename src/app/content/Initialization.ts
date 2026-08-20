@@ -43,7 +43,8 @@ const runInitializationAttempt = async (
   signal: AbortSignal,
   onRuntimeStarted: () => void = () => {},
   timeoutMs = CONTENT_INITIALIZATION_TIMEOUT_MS,
-  runtimeFailed = { value: false }
+  runtimeFailed = { value: false },
+  activateApplicationDependencies: () => void = () => {}
 ) => {
   const deadline = Date.now() + timeoutMs
 
@@ -57,6 +58,9 @@ const runInitializationAttempt = async (
   await run(dependencies.prepareBrowserSyncStorage)
   await run(dependencies.prepareLocalStorage)
   await run(dependencies.prepareMessageDatabase)
+  await run(async () => {
+    activateApplicationDependencies()
+  })
   const runtime = await run(() => {
     onRuntimeStarted()
     runtimeFailed.value = true
@@ -87,11 +91,18 @@ export const startInitializationLifecycle = ({
   let generation = 0
   let controller: AbortController | null = null
   let runtimeStarted = false
+  let applicationDependenciesActivated = false
 
   const detachRuntime = () => {
     if (!runtimeStarted) return
     runtimeStarted = false
     dependencies.detachRuntime()
+  }
+
+  const activateDependencies = () => {
+    if (applicationDependenciesActivated) return
+    activateApplicationDependencies()
+    applicationDependenciesActivated = true
   }
 
   const startAttempt = () => {
@@ -117,11 +128,10 @@ export const startInitializationLifecycle = ({
         runtimeStarted = true
       },
       timeoutMs,
-      runtimeFailed
+      runtimeFailed,
+      activateDependencies
     )
       .then(() => {
-        if (!active || signal.aborted || generation !== attemptGeneration) return
-        activateApplicationDependencies()
         if (!active || signal.aborted || generation !== attemptGeneration) return
         store.send([appStatus.command.MarkReadyCommand(), toast.command.CancelCommand(INITIALIZATION_TOAST_ID)])
       })

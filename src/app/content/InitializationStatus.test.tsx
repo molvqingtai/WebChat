@@ -175,7 +175,8 @@ describe('shell status and initialization independence', () => {
     })
     await vi.waitFor(() => expect(shell().dataset.loaded).toBe('true'))
     expect(shell().dataset.open).toBe('true')
-    expect(rendered.activateApplicationDependencies).not.toHaveBeenCalled()
+    if (stage === 'initializeRuntime') expect(rendered.activateApplicationDependencies).toHaveBeenCalledOnce()
+    else expect(rendered.activateApplicationDependencies).not.toHaveBeenCalled()
 
     stageWork.reject(new Error(`${stage} unavailable`))
     await vi.waitFor(() => expect(shell().dataset.phase).toBe('unavailable'))
