@@ -36,15 +36,30 @@ describe('ChromiumTransportOwner', () => {
     expect(rebind).toHaveBeenCalledOnce()
   })
 
-  it('drops a failed facade so the next ingress retries a fresh binding', async () => {
-    const firstFailure = new Error('initial callback alignment failed')
-    const rebind = vi.fn().mockRejectedValueOnce(firstFailure).mockResolvedValue(undefined)
-    const createTransport = vi.fn(() => ({ rebind }))
-    const owner = new ChromiumTransportOwner(async () => ({ phase: 'ready', created: false }), createTransport)
+  it('retries alignment on the facade already held by the logical Runtime', async () => {
+    const failure = new Error('replacement Offscreen callback alignment failed')
+    const documents = [
+      { phase: 'ready' as const, created: false },
+      { phase: 'ready' as const, created: true },
+      { phase: 'ready' as const, created: false }
+    ]
+    const rebind = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(failure)
+      .mockResolvedValueOnce(undefined)
+    const join = vi.fn()
+    const createTransport = vi.fn(() => ({ rebind, join }))
+    const owner = new ChromiumTransportOwner(async () => documents.shift()!, createTransport)
 
-    await expect(owner.ensure()).rejects.toBe(firstFailure)
-    await expect(owner.ensure()).resolves.toEqual(expect.any(Object))
-    expect(createTransport).toHaveBeenCalledTimes(2)
-    expect(rebind).toHaveBeenCalledTimes(2)
+    const serverTransport = await owner.ensure()
+    await expect(owner.ensure()).rejects.toBe(failure)
+    const admittedTransport = await owner.ensure()
+    admittedTransport.join('room-a')
+
+    expect(admittedTransport).toBe(serverTransport)
+    expect(createTransport).toHaveBeenCalledOnce()
+    expect(rebind).toHaveBeenCalledTimes(3)
+    expect(join).toHaveBeenCalledWith('room-a')
   })
 })

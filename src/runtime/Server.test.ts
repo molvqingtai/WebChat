@@ -2142,6 +2142,7 @@ describe('RuntimeServer lifecycle', () => {
     const remoteSessions: string[] = []
     const worldPresences: string[] = []
     const localSessionSeen = deferred<void>()
+    const remoteSessionSeen = deferred<void>()
     const localPresenceSeen = deferred<void>()
     const remotePresenceSeen = deferred<void>()
     await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
@@ -2151,6 +2152,7 @@ describe('RuntimeServer lifecycle', () => {
     })
     await observeRemoteSessions(server, { pageId: 'page-a' }, (event) => {
       remoteSessions.push(event.session.sourcePeerId)
+      remoteSessionSeen.resolve()
     })
     await server.onWorldPresence({ pageId: 'page-a' }, (event) => {
       worldPresences.push(event.sourcePeerId)
@@ -2188,6 +2190,7 @@ describe('RuntimeServer lifecycle', () => {
     const [snapshot] = await Promise.all([
       join,
       localSessionSeen.promise,
+      remoteSessionSeen.promise,
       localPresenceSeen.promise,
       remotePresenceSeen.promise
     ])
@@ -2216,9 +2219,11 @@ describe('RuntimeServer lifecycle', () => {
     const server = createServer({ transport: fake.transport, clock, codec: jsonCodec })
     const roomId = getChatRoomId(DOMAIN)
     const remoteSessions: RuntimeSession[] = []
+    const remoteSessionSeen = deferred<void>()
     await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
     await observeRemoteSessions(server, { pageId: 'page-a' }, ({ session }) => {
       remoteSessions.push(session)
+      remoteSessionSeen.resolve()
     })
     const worldRoomId = getWorldRoomId()
     fake.hangSendsTo(worldRoomId)
@@ -2240,6 +2245,7 @@ describe('RuntimeServer lifecycle', () => {
 
     fake.releaseSends()
     await join
+    await remoteSessionSeen.promise
     expect(remoteSessions).toEqual([expect.objectContaining({ sourcePeerId: 'later-peer', user: REMOTE_USER })])
   })
 

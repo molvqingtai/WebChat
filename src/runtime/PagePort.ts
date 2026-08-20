@@ -13,13 +13,23 @@ import type {
 
 export class PagePort implements PagePortContract {
   private readonly inbound = new Map<string, (event: InboundEvent) => void | Promise<void>>()
-  private readonly sessionEvents = new Map<string, (event: RuntimeSessionEvent) => void | Promise<void>>()
+  private readonly sessionEvents = new Map<
+    string,
+    {
+      generation: number
+      callback: (event: RuntimeSessionEvent) => void | Promise<void>
+      tail: Promise<void>
+      delivering: boolean
+    }
+  >()
   private readonly activeSessionGenerations = new Map<string, number>()
   private readonly provisionalSessionEvents = new Map<
     string,
     {
       generation: number
       callback: (event: RuntimeSessionEvent) => void | Promise<void>
+      tail: Promise<void>
+      delivering: boolean
       buffered: RuntimeSessionEvent[]
     }
   >()
@@ -49,27 +59,69 @@ export class PagePort implements PagePortContract {
 
   onSessionEvent(pageId: string, callback: (event: RuntimeSessionEvent) => void | Promise<void>) {
     this.provisionalSessionEvents.delete(pageId)
-    this.sessionEvents.set(pageId, callback)
-    this.activeSessionGenerations.set(pageId, ++this.sessionEventGeneration)
+    const generation = ++this.sessionEventGeneration
+    this.sessionEvents.set(pageId, { generation, callback, tail: Promise.resolve(), delivering: false })
+    this.activeSessionGenerations.set(pageId, generation)
   }
 
   beginSessionEvent(pageId: string, callback: (event: RuntimeSessionEvent) => void | Promise<void>) {
     const generation = ++this.sessionEventGeneration
     this.sessionEvents.delete(pageId)
     this.activeSessionGenerations.delete(pageId)
-    this.provisionalSessionEvents.set(pageId, { generation, callback, buffered: [] })
+    this.provisionalSessionEvents.set(pageId, {
+      generation,
+      callback,
+      tail: Promise.resolve(),
+      delivering: false,
+      buffered: []
+    })
     return generation
+  }
+
+  private enqueueSessionEvent(
+    pageId: string,
+    binding: {
+      generation: number
+      callback: (event: RuntimeSessionEvent) => void | Promise<void>
+      tail: Promise<void>
+      delivering: boolean
+    },
+    event: RuntimeSessionEvent,
+    current: () => boolean
+  ) {
+    const invoke = async () => {
+      if (!current()) return
+      await binding.callback(event)
+    }
+    // Start the first active callback in this event turn; only overlapping deltas join the tail.
+    // This retains the event bridge's existing immediate observable delivery without permitting
+    // a second callback to overtake a pending first one.
+    const delivery = binding.delivering ? binding.tail.then(invoke) : invoke()
+    binding.delivering = true
+    // Keep the physical delivery tail live after an error so already queued exact events can
+    // observe removal/replacement fencing instead of becoming unhandled rejections.
+    const settled = delivery.catch(() => {})
+    binding.tail = settled
+    void settled.then(() => {
+      if (binding.tail === settled) binding.delivering = false
+    })
+    return delivery
   }
 
   async activateSessionEvent(pageId: string, generation: number) {
     const provisional = this.provisionalSessionEvents.get(pageId)
     if (!provisional || provisional.generation !== generation) return false
     while (provisional.buffered.length > 0) {
-      await provisional.callback(provisional.buffered.shift()!)
+      await this.enqueueSessionEvent(
+        pageId,
+        provisional,
+        provisional.buffered.shift()!,
+        () => this.provisionalSessionEvents.get(pageId) === provisional
+      )
       if (this.provisionalSessionEvents.get(pageId) !== provisional) return false
     }
     this.provisionalSessionEvents.delete(pageId)
-    this.sessionEvents.set(pageId, provisional.callback)
+    this.sessionEvents.set(pageId, provisional)
     this.activeSessionGenerations.set(pageId, generation)
     return true
   }
@@ -173,7 +225,7 @@ export class PagePort implements PagePortContract {
         const listener = this.sessionEvents.get(pageId)
         if (listener) {
           try {
-            await listener(event)
+            await this.enqueueSessionEvent(pageId, listener, event, () => this.sessionEvents.get(pageId) === listener)
           } catch (error) {
             console.error(error)
             this.removePage(pageId)

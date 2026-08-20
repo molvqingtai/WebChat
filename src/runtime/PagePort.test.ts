@@ -2,6 +2,16 @@ import { describe, expect, it, vi } from 'vitest'
 import type { HistorySupplyEvent } from '@/runtime/Contract'
 import { PagePort } from '@/runtime/PagePort'
 
+const deferred = <Value>() => {
+  let resolve!: (value: Value) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<Value>((onResolve, onReject) => {
+    resolve = onResolve
+    reject = onReject
+  })
+  return { promise, resolve, reject }
+}
+
 const request = {
   supplyId: 'supply-1',
   domain: 'https://example.com',
@@ -84,6 +94,49 @@ describe('PagePort session-event lifecycle', () => {
     await expect(port.activateSessionEvent('page-a', generation)).resolves.toBe(true)
     expect(await port.emitSessionEvent(['page-a'], event)).toEqual([])
     expect(received).toEqual(['join', 'snapshot'])
+  })
+
+  it('delivers active session deltas in commit order through one exact callback tail', async () => {
+    const port = new PagePort()
+    const firstStarted = deferred<void>()
+    const releaseFirst = deferred<void>()
+    const received: string[] = []
+    port.onSessionEvent('page-a', async (current) => {
+      received.push(`start:${current.type}`)
+      if (current.type === 'join') {
+        firstStarted.resolve()
+        await releaseFirst.promise
+      }
+      received.push(`end:${current.type}`)
+    })
+    const join = {
+      type: 'join' as const,
+      domain: request.domain,
+      snapshot: event.snapshot,
+      session: {
+        sourcePeerId: 'remote-peer',
+        sessionId: 'remote-session',
+        user: { id: 'remote-user', name: 'Remote', avatar: '' },
+        joinedAt: 11
+      },
+      provenance: 'live' as const
+    }
+
+    const first = port.emitSessionEvent(['page-a'], join)
+    await firstStarted.promise
+    const second = port.emitSessionEvent(['page-a'], event)
+    let secondSettled = false
+    void second.then(() => {
+      secondSettled = true
+    })
+    await Promise.resolve()
+
+    expect(received).toEqual(['start:join'])
+    expect(secondSettled).toBe(false)
+    releaseFirst.resolve()
+    await expect(first).resolves.toEqual([])
+    await expect(second).resolves.toEqual([])
+    expect(received).toEqual(['start:join', 'end:join', 'start:snapshot', 'end:snapshot'])
   })
 })
 

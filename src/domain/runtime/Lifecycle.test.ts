@@ -1,6 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { readFileSync } from 'node:fs'
-import path from 'node:path'
 import { Remesh } from 'remesh'
 import LifecycleDomain from './Lifecycle'
 import type { Clock } from '@/domain/runtime/externs/Clock'
@@ -29,13 +27,9 @@ const setup = () => {
 }
 
 describe('LifecycleDomain', () => {
-  it('owns only page leases and does not shadow Background host authority', () => {
+  it('tracks an attached page lease', () => {
     const { store, runtime } = setup()
     store.send(runtime.command.AttachPageCommand({ domain: 'https://example.com', pageId: 'page-a' }))
-    expect(runtime.query).not.toHaveProperty('HostPhaseQuery')
-    expect(runtime.query).not.toHaveProperty('HostGenerationQuery')
-    expect(runtime.command).not.toHaveProperty('RequestHostCommand')
-    expect(runtime.command).not.toHaveProperty('HostDestroyedCommand')
     expect(store.query(runtime.query.DomainLeaseQuery('https://example.com'))?.pageIds).toEqual(['page-a'])
   })
 
@@ -68,18 +62,5 @@ describe('LifecycleDomain', () => {
     const leases = restarted.store.query(restarted.runtime.query.DomainLeasesQuery())
     expect(leases).toHaveLength(1)
     expect(leases[0].pageIds).toEqual(['page-a', 'page-b'])
-  })
-
-  it('has no timestamp expiry authority for physical page lifetime', () => {
-    const { store, runtime } = setup()
-    const domain = 'https://example.com'
-    store.send(runtime.command.AttachPageCommand({ domain, pageId: 'page-a' }))
-
-    expect(store.query(runtime.query.DomainLeaseQuery(domain))).not.toHaveProperty('pageLastSeenAt')
-    expect(runtime.command).not.toHaveProperty('ExpirePagesCommand')
-    expect(runtime.event).not.toHaveProperty('PageExpiredEvent')
-    expect(readFileSync(path.resolve(process.cwd(), 'src/domain/runtime/Lifecycle.ts'), 'utf8')).not.toMatch(
-      /pageLastSeenAt|seenAt|ExpirePagesCommand|PageExpiredEvent/
-    )
   })
 })

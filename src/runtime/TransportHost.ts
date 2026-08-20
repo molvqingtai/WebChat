@@ -42,6 +42,12 @@ export const createTransportService = (transport: RoomTransport = createRoomTran
   let onRoomClose: ((roomId: string, handle: string) => void) | null = null
   let onError: ((error: Error, roomId: string, handle: string) => void) | null = null
   const projection = (): TransportProjection => ({ rooms: [...rooms.values()] })
+  const projectionAfterCurrentJoins = async (): Promise<TransportProjection> => {
+    // A fresh Background must not align an empty projection across a room join that an expired
+    // Background already admitted. Those joins settle before this callback lane returns its fact.
+    await Promise.allSettled(joining.values())
+    return projection()
+  }
   const currentRoom = (roomId: string, handle: string) => {
     const room = rooms.get(roomId)
     if (!room || room.handle !== handle) throw new Error('Transport room handle is no longer current')
@@ -112,23 +118,23 @@ export const createTransportService = (transport: RoomTransport = createRoomTran
     },
     onMessage: async (callback) => {
       onMessage = callback
-      return projection()
+      return projectionAfterCurrentJoins()
     },
     onPeerJoin: async (callback) => {
       onPeerJoin = callback
-      return projection()
+      return projectionAfterCurrentJoins()
     },
     onPeerLeave: async (callback) => {
       onPeerLeave = callback
-      return projection()
+      return projectionAfterCurrentJoins()
     },
     onRoomClose: async (callback) => {
       onRoomClose = callback
-      return projection()
+      return projectionAfterCurrentJoins()
     },
     onError: async (callback) => {
       onError = callback
-      return projection()
+      return projectionAfterCurrentJoins()
     }
   }
 }

@@ -1,6 +1,17 @@
 import { describe, expect, it, vi } from 'vitest'
 import { RemoteRoomTransport } from '@/runtime/RemoteRoomTransport'
-import type { TransportRoomState, TransportService } from '@/runtime/TransportHost'
+import type { RoomTransport } from '@/runtime/RoomTransport'
+import { createTransportService, type TransportRoomState, type TransportService } from '@/runtime/TransportHost'
+
+const deferred = <Value>() => {
+  let resolve!: (value: Value) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<Value>((onResolve, onReject) => {
+    resolve = onResolve
+    reject = onReject
+  })
+  return { promise, resolve, reject }
+}
 
 const createService = () => {
   const messageCallbacks: Array<Parameters<TransportService['onMessage']>[0]> = []
@@ -92,6 +103,55 @@ describe('RemoteRoomTransport', () => {
 
     expect(freshBackground.peerIdOf('room-a')).toBe('peer:room-a')
     expect(messages).toEqual(['current'])
+  })
+
+  it('waits for an old admitted join before a fresh Background aligns its usable projection', async () => {
+    const joining = deferred<void>()
+    let message: Parameters<RoomTransport['onMessage']>[0] = () => {}
+    const physical: RoomTransport = {
+      peerIdOf: (roomId) => `peer:${roomId}`,
+      join: vi.fn(() => joining.promise),
+      leave: vi.fn(),
+      send: vi.fn(async () => {}),
+      onMessage: (callback) => {
+        message = callback
+        return () => {}
+      },
+      onPeerJoin: () => () => {},
+      onPeerLeave: () => () => {},
+      onRoomClose: () => () => {},
+      onError: () => () => {},
+      dispose: vi.fn()
+    }
+    const service = createTransportService(physical)
+    const oldBackground = new RemoteRoomTransport(service)
+    await oldBackground.rebind()
+    const oldJoin = oldBackground.join('room-a')
+    await Promise.resolve()
+    expect(physical.join).toHaveBeenCalledOnce()
+
+    const freshBackground = new RemoteRoomTransport(service)
+    const messages: string[] = []
+    freshBackground.onMessage((_roomId, _sourcePeerId, payload) => messages.push(payload))
+    let rebound = false
+    const rebinding = freshBackground.rebind().then(() => {
+      rebound = true
+    })
+    await Promise.resolve()
+    expect(rebound).toBe(false)
+
+    joining.resolve()
+    await oldJoin
+    await rebinding
+    expect(freshBackground.peerIdOf('room-a')).toBe('peer:room-a')
+    message('room-a', 'peer-a', 'current')
+    expect(messages).toEqual(['current'])
+
+    await freshBackground.send('room-a', 'payload')
+    await freshBackground.leave('room-a')
+    expect(physical.join).toHaveBeenCalledOnce()
+    expect(physical.send).toHaveBeenCalledWith('room-a', 'payload', undefined)
+    expect(physical.leave).toHaveBeenCalledWith('room-a', undefined)
   })
 
   it('forwards diagnostic-only release once and fences callbacks after disposal', async () => {

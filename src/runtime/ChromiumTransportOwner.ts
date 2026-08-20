@@ -11,6 +11,7 @@ interface RebindableTransport {
 export class ChromiumTransportOwner<Transport extends RebindableTransport> {
   private transport: Transport | null = null
   private pending: Promise<Transport> | null = null
+  private requiresRebind = true
 
   constructor(
     private readonly ensureDocument: () => Promise<ChromiumTransportStatus>,
@@ -21,17 +22,21 @@ export class ChromiumTransportOwner<Transport extends RebindableTransport> {
     if (this.pending) return this.pending
 
     const task = (async () => {
-      let candidate: Transport | null = null
       try {
         const document = await this.ensureDocument()
         if (document.phase !== 'ready') throw new Error('Chromium Offscreen transport is unavailable')
-        candidate = this.transport ?? this.createTransport()
-        const needsRebind = candidate !== this.transport || document.created
+        const candidate = this.transport ?? this.createTransport()
         this.transport = candidate
-        if (needsRebind) await candidate.rebind()
+        if (this.requiresRebind || document.created) {
+          this.requiresRebind = true
+          await candidate.rebind()
+          this.requiresRebind = false
+        }
         return candidate
       } catch (error) {
-        if (candidate && this.transport === candidate) this.transport = null
+        // A surviving Background already gave this facade to its Server. Keep that identity
+        // stable and retry only its callback alignment on the next ingress.
+        this.requiresRebind = true
         throw error
       }
     })()
