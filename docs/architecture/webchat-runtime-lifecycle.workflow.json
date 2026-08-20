@@ -2,463 +2,194 @@
   "schema_version": 1,
   "diagram_type": "workflow",
   "meta": {
-    "title": "WebChat Runtime Lifecycle",
-    "subtitle": "Content tabs, shared host, sleep/wake recovery, page exit, and AppButton reconnect",
+    "title": "WebChat Backend Action Wake Gateway",
+    "subtitle": "Every backend-bound action crosses Background start/reuse and Offscreen probe/rebuild",
     "output": "webchat-runtime-lifecycle.html"
   },
   "lanes": [
-    { "id": "content", "label": "Content Tab" },
-    { "id": "coordinator", "label": "Background Coordinator" },
-    { "id": "runtime", "label": "Shared Runtime Host" },
-    { "id": "rooms", "label": "Rooms + Runtime Data" },
-    { "id": "same_wake", "label": "Wake: Same Host", "variant": "exception" },
-    { "id": "new_wake", "label": "Wake: Rebuilt Host", "variant": "exception" },
-    { "id": "refresh", "label": "AppButton Refresh" },
-    { "id": "refresh_fault", "label": "Refresh No-op / Hold", "variant": "exception" },
-    { "id": "bfcache", "label": "BFCache Suspend / Restore" },
-    { "id": "release", "label": "Terminal Page Release" }
+    { "id": "caller", "label": "Content Caller" },
+    { "id": "background", "label": "Background Gateway" },
+    { "id": "runtime_reuse", "label": "Offscreen Alive" },
+    { "id": "runtime_rebuild", "label": "Offscreen Missing", "variant": "exception" },
+    { "id": "diagnostic", "label": "Current Recovery Gap", "variant": "exception" }
   ],
   "phases": [
-    { "id": "inject", "label": "Inject", "fromCol": 0, "toCol": 0 },
-    { "id": "prepare", "label": "Prepare", "fromCol": 1, "toCol": 1 },
-    { "id": "register", "label": "Register", "fromCol": 2, "toCol": 2 },
-    { "id": "host", "label": "Host", "fromCol": 3, "toCol": 3 },
-    { "id": "attach", "label": "Attach / Join", "fromCol": 4, "toCol": 4 },
-    { "id": "active", "label": "Active / Result", "fromCol": 5, "toCol": 5, "variant": "emphasis" }
+    { "id": "dispatch", "label": "Dispatch", "fromCol": 0, "toCol": 0 },
+    { "id": "background_gate", "label": "Background", "fromCol": 1, "toCol": 2, "variant": "emphasis" },
+    { "id": "runtime_gate", "label": "Offscreen Runtime", "fromCol": 3, "toCol": 5, "variant": "security" }
   ],
   "groups": [],
   "nodes": [
     {
-      "id": "content_injected",
-      "lane": "content",
+      "id": "backend_action",
+      "lane": "caller",
       "col": 0,
       "type": "frontend",
-      "label": "Content Script",
-      "sublabel": "new pageId"
+      "label": "Backend Action",
+      "sublabel": "RPC / operation",
+      "tag": "reload / AppButton"
     },
     {
-      "id": "prepare_local",
-      "lane": "content",
-      "col": 1,
-      "type": "database",
-      "label": "Local",
-      "sublabel": "I/O",
-      "width": 50
-    },
-    {
-      "id": "client_lease",
-      "lane": "content",
-      "col": 2,
-      "type": "frontend",
-      "label": "Lease",
-      "sublabel": "init",
-      "width": 50
-    },
-    {
-      "id": "tab_active",
-      "lane": "content",
+      "id": "resume_action",
+      "lane": "caller",
       "col": 5,
-      "type": "frontend",
-      "label": "Tab Projection",
-      "sublabel": "tab state",
-      "tag": "page-local"
+      "type": "backend",
+      "label": "Resume Action",
+      "sublabel": "original action",
+      "tag": "after recovery"
     },
     {
-      "id": "register_page",
-      "lane": "coordinator",
-      "col": 2,
+      "id": "background_state",
+      "lane": "background",
+      "col": 1,
       "type": "security",
-      "label": "registerPage",
-      "sublabel": "tab + URL"
+      "label": "Active?",
+      "sublabel": "MV3 worker",
+      "width": 50
     },
     {
-      "id": "ensure_host",
-      "lane": "coordinator",
-      "col": 3,
+      "id": "wake_background",
+      "lane": "background",
+      "col": 2,
+      "type": "cloud",
+      "label": "Wake",
+      "sublabel": "start or reuse",
+      "tag": "restore caller",
+      "width": 50
+    },
+    {
+      "id": "probe_offscreen",
+      "lane": "background",
+      "col": 4,
       "type": "backend",
       "label": "Probe",
-      "sublabel": "hostId",
-      "width": 60
+      "sublabel": "physical host",
+      "tag": "alive / missing",
+      "width": 68
     },
     {
-      "id": "attach_page",
-      "lane": "coordinator",
-      "col": 4,
-      "type": "backend",
-      "label": "Attach",
-      "sublabel": "binding",
-      "width": 60
+      "id": "reuse_runtime",
+      "lane": "runtime_reuse",
+      "col": 5,
+      "type": "messagebus",
+      "label": "Reuse Runtime",
+      "sublabel": "host + Rooms",
+      "tag": "keep peers"
     },
     {
-      "id": "runtime_host",
-      "lane": "runtime",
-      "col": 3,
+      "id": "rebuild_runtime",
+      "lane": "runtime_rebuild",
+      "col": 5,
       "type": "cloud",
-      "label": "Runtime",
-      "sublabel": "host",
-      "width": 48
+      "label": "Rebuild",
+      "sublabel": "generation + bind",
+      "tag": "Rooms first"
     },
     {
-      "id": "domain_lease",
-      "lane": "runtime",
-      "col": 4,
-      "type": "backend",
-      "label": "Lease",
-      "sublabel": "IDs",
-      "width": 36
-    },
-    {
-      "id": "page_callbacks",
-      "lane": "runtime",
-      "col": 5,
-      "type": "messagebus",
-      "label": "PagePort",
-      "sublabel": "callbacks"
-    },
-    {
-      "id": "join_rooms",
-      "lane": "rooms",
-      "col": 4,
-      "type": "messagebus",
-      "label": "Join Rooms",
-      "sublabel": "10s deadline"
-    },
-    {
-      "id": "room_state",
-      "lane": "rooms",
-      "col": 5,
-      "type": "database",
-      "label": "Room State",
-      "sublabel": "Chat / World",
-      "tag": "Artico owner per room"
-    },
-    {
-      "id": "sleep_same",
-      "lane": "same_wake",
-      "col": 0,
-      "type": "external",
-      "label": "System Sleep",
-      "sublabel": "timers pause"
-    },
-    {
-      "id": "wake_same",
-      "lane": "same_wake",
-      "col": 1,
-      "type": "backend",
-      "label": "Resume Checks",
-      "sublabel": "same host"
-    },
-    {
-      "id": "passive_check",
-      "lane": "same_wake",
-      "col": 3,
-      "type": "security",
-      "label": "Lease Healthy",
-      "sublabel": "no replay"
-    },
-    {
-      "id": "callback_loss",
-      "lane": "same_wake",
+      "id": "rooms_empty",
+      "lane": "diagnostic",
       "col": 5,
       "type": "security",
-      "label": "Counts Diverge",
-      "sublabel": "lost callback",
-      "tag": "confirmed gap"
-    },
-    {
-      "id": "host_lost",
-      "lane": "new_wake",
-      "col": 0,
-      "type": "external",
-      "label": "Runtime Lost",
-      "sublabel": "replaced"
-    },
-    {
-      "id": "new_generation",
-      "lane": "new_wake",
-      "col": 2,
-      "type": "cloud",
-      "label": "New Runtime",
-      "sublabel": "generation +1"
-    },
-    {
-      "id": "lease_only",
-      "lane": "new_wake",
-      "col": 3,
-      "type": "backend",
-      "label": "Tabs",
-      "sublabel": "pageIds",
-      "width": 42
-    },
-    {
-      "id": "local_join_stale",
-      "lane": "new_wake",
-      "col": 4,
-      "type": "security",
-      "label": "Stale",
-      "sublabel": "join",
-      "width": 42
-    },
-    {
-      "id": "runtime_empty",
-      "lane": "new_wake",
-      "col": 5,
-      "type": "security",
-      "label": "No Rooms",
-      "sublabel": "empty host",
-      "tag": "primary suspect"
-    },
-    {
-      "id": "refresh_click",
-      "lane": "refresh",
-      "col": 0,
-      "type": "frontend",
-      "label": "Refresh Click",
-      "sublabel": "reconnect"
-    },
-    {
-      "id": "world_refresh",
-      "lane": "refresh",
-      "col": 1,
-      "type": "messagebus",
-      "label": "World",
-      "sublabel": "async",
-      "width": 50
-    },
-    {
-      "id": "domain_gate",
-      "lane": "refresh",
-      "col": 2,
-      "type": "security",
-      "label": "Gate",
-      "sublabel": "seed?",
-      "width": 50
-    },
-    {
-      "id": "reset_domain",
-      "lane": "refresh",
-      "col": 3,
-      "type": "backend",
-      "label": "Reset",
-      "sublabel": "state",
-      "width": 42
-    },
-    {
-      "id": "replacement_join",
-      "lane": "refresh",
-      "col": 4,
-      "type": "messagebus",
-      "label": "Rejoin",
-      "sublabel": "10s",
-      "width": 42
-    },
-    { "id": "refresh_done", "lane": "refresh", "col": 5, "type": "backend", "label": "Commit", "sublabel": "settles" },
-    {
-      "id": "history_hold",
-      "lane": "refresh_fault",
-      "col": 3,
-      "type": "security",
-      "label": "Hold",
-      "sublabel": "cancel",
-      "width": 55
-    },
-    {
-      "id": "reconnect_noop",
-      "lane": "refresh_fault",
-      "col": 4,
-      "type": "security",
-      "label": "No-op",
-      "sublabel": "no seed",
-      "width": 55
-    },
-    {
-      "id": "no_peer_result",
-      "lane": "refresh_fault",
-      "col": 5,
-      "type": "security",
-      "label": "No Peer",
-      "sublabel": "loading ends"
-    },
-    {
-      "id": "pagehide_cached",
-      "lane": "bfcache",
-      "col": 0,
-      "type": "frontend",
-      "label": "pagehide",
-      "sublabel": "stop lease"
-    },
-    {
-      "id": "lease_retained",
-      "lane": "bfcache",
-      "col": 2,
-      "type": "backend",
-      "label": "Lease Retained",
-      "sublabel": "same pageId"
-    },
-    {
-      "id": "pageshow_cached",
-      "lane": "bfcache",
-      "col": 4,
-      "type": "frontend",
-      "label": "pageshow",
-      "sublabel": "re-register"
-    },
-    {
-      "id": "terminal_exit",
-      "lane": "release",
-      "col": 0,
-      "type": "frontend",
-      "label": "Terminal Exit",
-      "sublabel": "navigate"
-    },
-    {
-      "id": "detach_runtime",
-      "lane": "release",
-      "col": 2,
-      "type": "backend",
-      "label": "detachPage",
-      "sublabel": "drop pageId"
-    },
-    {
-      "id": "domain_grace",
-      "lane": "release",
-      "col": 4,
-      "type": "messagebus",
-      "label": "5s Grace",
-      "sublabel": "wait return"
-    },
-    {
-      "id": "domain_release",
-      "lane": "release",
-      "col": 5,
-      "type": "backend",
-      "label": "Release Domain",
-      "sublabel": "leave + clear"
+      "label": "Rooms Empty",
+      "sublabel": "Refresh no-op",
+      "tag": "known gap"
     }
   ],
   "edges": [
-    { "from": "content_injected", "to": "prepare_local" },
-    { "from": "prepare_local", "to": "client_lease" },
     {
-      "from": "client_lease",
-      "to": "register_page",
+      "from": "backend_action",
+      "to": "background_state",
       "variant": "emphasis",
       "fromSide": "bottom",
       "toSide": "top",
       "route": "drop"
     },
-    { "from": "register_page", "to": "ensure_host" },
+    { "from": "background_state", "to": "wake_background", "variant": "emphasis" },
     {
-      "from": "ensure_host",
-      "to": "runtime_host",
+      "from": "wake_background",
+      "to": "probe_offscreen",
+      "label": "restore context",
+      "variant": "emphasis"
+    },
+    {
+      "from": "probe_offscreen",
+      "to": "reuse_runtime",
+      "label": "alive",
       "variant": "emphasis",
+      "role": "branch",
       "fromSide": "bottom",
       "toSide": "top",
-      "route": "drop"
+      "route": "drop",
+      "labelSegment": 1
     },
-    { "from": "runtime_host", "to": "domain_lease", "variant": "emphasis" },
     {
-      "from": "attach_page",
-      "to": "domain_lease",
-      "variant": "emphasis",
-      "fromSide": "bottom",
-      "toSide": "top",
-      "route": "drop"
+      "from": "probe_offscreen",
+      "to": "rebuild_runtime",
+      "label": "missing",
+      "variant": "security",
+      "role": "branch",
+      "fromSide": "right",
+      "toSide": "right",
+      "route": "outside-right",
+      "labelDy": 58
     },
-    { "from": "domain_lease", "to": "page_callbacks" },
     {
-      "from": "domain_lease",
-      "to": "join_rooms",
+      "from": "reuse_runtime",
+      "to": "resume_action",
       "variant": "emphasis",
-      "fromSide": "bottom",
-      "toSide": "top",
-      "route": "drop"
-    },
-    { "from": "join_rooms", "to": "room_state", "variant": "emphasis" },
-    {
-      "from": "room_state",
-      "to": "page_callbacks",
-      "variant": "emphasis",
+      "role": "return",
       "fromSide": "top",
       "toSide": "bottom",
       "route": "up-channel"
     },
     {
-      "from": "page_callbacks",
-      "to": "tab_active",
-      "label": "project",
+      "from": "rebuild_runtime",
+      "to": "resume_action",
       "variant": "emphasis",
-      "fromSide": "top",
-      "toSide": "bottom",
-      "route": "up-channel",
-      "labelSegment": 1
+      "role": "return",
+      "fromSide": "right",
+      "toSide": "right",
+      "route": "outside-right"
     },
-    { "from": "sleep_same", "to": "wake_same" },
-    { "from": "wake_same", "to": "passive_check", "variant": "security" },
-    { "from": "passive_check", "to": "callback_loss", "variant": "security", "role": "error" },
-    { "from": "host_lost", "to": "new_generation", "variant": "security" },
-    { "from": "new_generation", "to": "lease_only", "variant": "security" },
-    { "from": "lease_only", "to": "local_join_stale", "variant": "security" },
-    { "from": "local_join_stale", "to": "runtime_empty", "variant": "security", "role": "error" },
-    { "from": "refresh_click", "to": "world_refresh", "variant": "dashed", "role": "async" },
-    { "from": "world_refresh", "to": "domain_gate", "variant": "emphasis" },
-    { "from": "domain_gate", "to": "reset_domain", "variant": "emphasis" },
-    { "from": "reset_domain", "to": "replacement_join", "variant": "emphasis" },
-    { "from": "replacement_join", "to": "refresh_done", "variant": "emphasis" },
     {
-      "from": "reset_domain",
-      "to": "history_hold",
+      "from": "rebuild_runtime",
+      "to": "rooms_empty",
       "variant": "security",
       "role": "error",
       "fromSide": "bottom",
       "toSide": "top",
       "route": "drop"
-    },
-    {
-      "from": "domain_gate",
-      "to": "reconnect_noop",
-      "variant": "security",
-      "role": "error",
-      "fromSide": "bottom",
-      "toSide": "top",
-      "route": "drop"
-    },
-    { "from": "reconnect_noop", "to": "no_peer_result", "variant": "security", "role": "error" },
-    { "from": "pagehide_cached", "to": "lease_retained", "variant": "dashed" },
-    { "from": "lease_retained", "to": "pageshow_cached", "variant": "dashed" },
-    { "from": "terminal_exit", "to": "detach_runtime" },
-    { "from": "detach_runtime", "to": "domain_grace" },
-    { "from": "domain_grace", "to": "domain_release" }
+    }
   ],
   "cards": [
     {
       "dot": "cyan",
-      "title": "Ownership",
+      "title": "One Gateway",
       "items": [
-        "One pageId and UI projection per content document",
-        "One Coordinator persists tab-to-page bindings",
-        "One shared Runtime owns Chat and World peers",
-        "Chat and World counts are projected separately in every tab"
-      ]
-    },
-    {
-      "dot": "rose",
-      "title": "Sleep/Wake Gaps",
-      "items": [
-        "Same host: callback loss has no delivery acknowledgement or replay",
-        "New host: rebuildTabs restores page leases, not room aggregates",
-        "Content JoinStatus survives while the new Runtime has no rooms",
-        "That mismatch explains divergent counts and an empty Runtime"
+        "Every backend-bound action enters the same wake gateway",
+        "Browser reload and AppButton Refresh are only examples",
+        "The original action and caller identity survive recovery",
+        "OS sleep, timer pause, BFCache, and page exit are out of scope"
       ]
     },
     {
       "dot": "emerald",
-      "title": "Refresh Semantics",
+      "title": "Background + Runtime",
       "items": [
-        "The button awaits only the Chat domain operation",
-        "World replacement runs independently",
-        "A missing Runtime domain and seed produces a successful no-op",
-        "A real replacement join has a ten-second outer deadline"
+        "Chrome MV3 starts or reuses the Background worker",
+        "Firefox persistent Background follows the reuse path",
+        "An alive Offscreen host preserves Rooms and runtime data",
+        "A missing host rebuilds generation, bindings, and Rooms first"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Known Recovery Gap",
+      "items": [
+        "The current rebuilt-host path restores page leases",
+        "It can leave the new Runtime without Chat or World Rooms",
+        "AppButton Refresh may then succeed without a domain seed",
+        "Room counts can remain inconsistent across content tabs"
       ]
     }
   ]

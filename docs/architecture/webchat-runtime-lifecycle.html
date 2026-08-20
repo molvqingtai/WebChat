@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="generator" content="archify 2.11.0" />
-    <title>WebChat Runtime Lifecycle Diagram</title>
+    <title>WebChat Backend Action Wake Gateway Diagram</title>
     <script>
       // Resolve the theme before first paint so light-preference users don't
       // see a dark flash. The toolbar script below re-applies with UI state.
@@ -712,14 +712,14 @@
       <div class="header">
         <div class="header-row">
           <div class="pulse-dot"></div>
-          <h1>WebChat Runtime Lifecycle</h1>
+          <h1>WebChat Backend Action Wake Gateway</h1>
         </div>
-        <p class="subtitle">Content tabs, shared host, sleep/wake recovery, page exit, and AppButton reconnect</p>
+        <p class="subtitle">Every backend-bound action crosses Background start/reuse and Offscreen probe/rebuild</p>
       </div>
 
       <!-- Main Diagram -->
       <div class="diagram-container">
-        <svg viewBox="0 0 720 1396" role="img" aria-label="WebChat Runtime Lifecycle — Content tabs, shared host, sleep/wake recovery, page exit, and AppButton reconnect (workflow diagram)">
+        <svg viewBox="0 0 720 776" role="img" aria-label="WebChat Backend Action Wake Gateway — Every backend-bound action crosses Background start/reuse and Offscreen probe/rebuild (workflow diagram)">
         <!-- Definitions -->
         <defs>
           <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
@@ -744,332 +744,119 @@
 
         <!-- Swimlanes -->
         <rect x="40" y="52" width="640" height="104" rx="10" class="c-lane" stroke-width="1"/>
-        <text x="54" y="74" class="t-dim" font-size="10" font-weight="600">01 / Content Tab</text>
+        <text x="54" y="74" class="t-dim" font-size="10" font-weight="600">01 / Content Caller</text>
 
         <rect x="40" y="176" width="640" height="104" rx="10" class="c-lane" stroke-width="1"/>
-        <text x="54" y="198" class="t-dim" font-size="10" font-weight="600">02 / Background Coordinator</text>
+        <text x="54" y="198" class="t-dim" font-size="10" font-weight="600">02 / Background Gateway</text>
 
         <rect x="40" y="300" width="640" height="104" rx="10" class="c-lane" stroke-width="1"/>
-        <text x="54" y="322" class="t-dim" font-size="10" font-weight="600">03 / Shared Runtime Host</text>
+        <text x="54" y="322" class="t-dim" font-size="10" font-weight="600">03 / Offscreen Alive</text>
 
         <rect x="40" y="424" width="640" height="104" rx="10" class="c-lane" stroke-width="1"/>
-        <text x="54" y="446" class="t-dim" font-size="10" font-weight="600">04 / Rooms + Runtime Data</text>
+        <rect x="46" y="430" width="628" height="92" rx="8" class="c-security-group" stroke-width="1"/>
+        <text x="54" y="446" class="t-security" font-size="10" font-weight="600">EX / Offscreen Missing</text>
 
         <rect x="40" y="548" width="640" height="104" rx="10" class="c-lane" stroke-width="1"/>
         <rect x="46" y="554" width="628" height="92" rx="8" class="c-security-group" stroke-width="1"/>
-        <text x="54" y="570" class="t-security" font-size="10" font-weight="600">EX / Wake: Same Host</text>
-
-        <rect x="40" y="672" width="640" height="104" rx="10" class="c-lane" stroke-width="1"/>
-        <rect x="46" y="678" width="628" height="92" rx="8" class="c-security-group" stroke-width="1"/>
-        <text x="54" y="694" class="t-security" font-size="10" font-weight="600">EX / Wake: Rebuilt Host</text>
-
-        <rect x="40" y="796" width="640" height="104" rx="10" class="c-lane" stroke-width="1"/>
-        <text x="54" y="818" class="t-dim" font-size="10" font-weight="600">07 / AppButton Refresh</text>
-
-        <rect x="40" y="920" width="640" height="104" rx="10" class="c-lane" stroke-width="1"/>
-        <rect x="46" y="926" width="628" height="92" rx="8" class="c-security-group" stroke-width="1"/>
-        <text x="54" y="942" class="t-security" font-size="10" font-weight="600">EX / Refresh No-op / Hold</text>
-
-        <rect x="40" y="1044" width="640" height="104" rx="10" class="c-lane" stroke-width="1"/>
-        <text x="54" y="1066" class="t-dim" font-size="10" font-weight="600">09 / BFCache Suspend / Restore</text>
-
-        <rect x="40" y="1168" width="640" height="104" rx="10" class="c-lane" stroke-width="1"/>
-        <text x="54" y="1190" class="t-dim" font-size="10" font-weight="600">10 / Terminal Page Release</text>
+        <text x="54" y="570" class="t-security" font-size="10" font-weight="600">EX / Current Recovery Gap</text>
 
         <!-- Phase headers -->
         <line x1="42" y1="35" x2="134" y2="35" class="a-default" stroke-width="1.1"/>
         <rect x="42" y="27" width="92" height="16" rx="4" class="c-mask"/>
-        <text x="88" y="39" class="t-muted" font-size="8" font-weight="600" text-anchor="middle">Inject</text>
-        <line x1="174" y1="35" x2="266" y2="35" class="a-default" stroke-width="1.1"/>
-        <rect x="174" y="27" width="92" height="16" rx="4" class="c-mask"/>
-        <text x="220" y="39" class="t-muted" font-size="8" font-weight="600" text-anchor="middle">Prepare</text>
-        <line x1="254" y1="35" x2="346" y2="35" class="a-default" stroke-width="1.1"/>
-        <rect x="254" y="27" width="92" height="16" rx="4" class="c-mask"/>
-        <text x="300" y="39" class="t-muted" font-size="8" font-weight="600" text-anchor="middle">Register</text>
-        <line x1="384" y1="35" x2="476" y2="35" class="a-default" stroke-width="1.1"/>
-        <rect x="384" y="27" width="92" height="16" rx="4" class="c-mask"/>
-        <text x="430" y="39" class="t-muted" font-size="8" font-weight="600" text-anchor="middle">Host</text>
-        <line x1="454" y1="35" x2="546" y2="35" class="a-default" stroke-width="1.1"/>
-        <rect x="454" y="27" width="92" height="16" rx="4" class="c-mask"/>
-        <text x="500" y="39" class="t-muted" font-size="8" font-weight="600" text-anchor="middle">Attach / Join</text>
-        <line x1="579" y1="35" x2="671" y2="35" class="a-emphasis" stroke-width="1.1"/>
-        <rect x="579" y="27" width="92" height="16" rx="4" class="c-mask"/>
-        <text x="625" y="39" class="t-backend" font-size="8" font-weight="600" text-anchor="middle">Active / Result</text>
+        <text x="88" y="39" class="t-muted" font-size="8" font-weight="600" text-anchor="middle">Dispatch</text>
+        <line x1="174" y1="35" x2="346" y2="35" class="a-emphasis" stroke-width="1.1"/>
+        <rect x="174" y="27" width="172" height="16" rx="4" class="c-mask"/>
+        <text x="260" y="39" class="t-backend" font-size="8" font-weight="600" text-anchor="middle">Background</text>
+        <line x1="384" y1="35" x2="671" y2="35" class="a-security" stroke-width="1.1"/>
+        <rect x="384" y="27" width="287" height="16" rx="4" class="c-mask"/>
+        <text x="527.5" y="39" class="t-security" font-size="8" font-weight="600" text-anchor="middle">Offscreen Runtime</text>
 
         <!-- Workflow groups -->
 
 
         <!-- Edge paths -->
-        <path d="M 134 119 L 195 119" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
-        <path d="M 245 119 L 275 119" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
-        <path d="M 300 145 L 300 166 L 300 166 L 300 217" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path d="M 346 243 L 400 243" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
-        <path d="M 430 269 L 430 290 L 430 290 L 430 341" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path d="M 454 367 L 482 367" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path d="M 500 269 L 500 290 L 500 290 L 500 341" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path d="M 518 367 L 579 367" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
-        <path d="M 500 393 L 500 414 L 500 414 L 500 465" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path d="M 546 491 L 579 491" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path d="M 625 457 L 625 313 L 625 313 L 625 393" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path d="M 625 341 L 625 57 L 625 57 L 625 153" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path d="M 134 615 L 174 615" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
-        <path d="M 266 615 L 384 615" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
-        <path d="M 476 615 L 579 615" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
-        <path d="M 134 739 L 254 739" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
-        <path d="M 346 739 L 409 739" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
-        <path d="M 451 739 L 479 739" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
-        <path d="M 521 739 L 579 739" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
-        <path d="M 134 863 L 195 863" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
-        <path d="M 245 863 L 275 863" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path d="M 325 863 L 409 863" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path d="M 451 863 L 479 863" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path d="M 521 863 L 579 863" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path d="M 430 889 L 430 910 L 430 910 L 430 961" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
-        <path d="M 300 889 L 300 910 L 500 910 L 500 961" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
-        <path d="M 527.5 987 L 579 987" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
-        <path d="M 134 1111 L 254 1111" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
-        <path d="M 346 1111 L 454 1111" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
-        <path d="M 134 1235 L 254 1235" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
-        <path d="M 346 1235 L 454 1235" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
-        <path d="M 546 1235 L 579 1235" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+        <path d="M 88 153 L 88 166 L 220 166 L 220 217" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path d="M 245 243 L 275 243" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path d="M 325 243 L 466 243" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path d="M 500 277 L 500 290 L 625 290 L 625 333" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path d="M 534 243 L 692 243 L 692 491 L 671 491" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
+        <path d="M 625 333 L 625 57 L 625 57 L 625 153" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path d="M 671 491 L 692 491 L 692 119 L 671 119" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path d="M 625 525 L 625 538 L 625 538 L 625 581" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
 
         <!-- Nodes -->
-        <rect x="42" y="93" width="92" height="52" rx="6" class="c-mask"/>
-        <rect x="42" y="93" width="92" height="52" rx="6" class="c-frontend" stroke-width="1.5"/>
-        <text x="88" y="114" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Content Script</text>
-        <text x="88" y="131" class="t-muted" font-size="8" text-anchor="middle">new pageId</text>
-
-        <rect x="195" y="93" width="50" height="52" rx="6" class="c-mask"/>
-        <rect x="195" y="93" width="50" height="52" rx="6" class="c-database" stroke-width="1.5"/>
-        <text x="220" y="114" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Local</text>
-        <text x="220" y="131" class="t-muted" font-size="8" text-anchor="middle">I/O</text>
-
-        <rect x="275" y="93" width="50" height="52" rx="6" class="c-mask"/>
-        <rect x="275" y="93" width="50" height="52" rx="6" class="c-frontend" stroke-width="1.5"/>
-        <text x="300" y="114" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Lease</text>
-        <text x="300" y="131" class="t-muted" font-size="8" text-anchor="middle">init</text>
+        <rect x="42" y="85" width="92" height="68" rx="6" class="c-mask"/>
+        <rect x="42" y="85" width="92" height="68" rx="6" class="c-frontend" stroke-width="1.5"/>
+        <text x="88" y="106" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Backend Action</text>
+        <text x="88" y="123" class="t-muted" font-size="8" text-anchor="middle">RPC / operation</text>
+        <text x="88" y="141" class="t-frontend" font-size="7" text-anchor="middle">reload / AppButton</text>
 
         <rect x="579" y="85" width="92" height="68" rx="6" class="c-mask"/>
-        <rect x="579" y="85" width="92" height="68" rx="6" class="c-frontend" stroke-width="1.5"/>
-        <text x="625" y="106" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Tab Projection</text>
-        <text x="625" y="123" class="t-muted" font-size="8" text-anchor="middle">tab state</text>
-        <text x="625" y="141" class="t-frontend" font-size="7" text-anchor="middle">page-local</text>
+        <rect x="579" y="85" width="92" height="68" rx="6" class="c-backend" stroke-width="1.5"/>
+        <text x="625" y="106" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Resume Action</text>
+        <text x="625" y="123" class="t-muted" font-size="8" text-anchor="middle">original action</text>
+        <text x="625" y="141" class="t-backend" font-size="7" text-anchor="middle">after recovery</text>
 
-        <rect x="254" y="217" width="92" height="52" rx="6" class="c-mask"/>
-        <rect x="254" y="217" width="92" height="52" rx="6" class="c-security" stroke-width="1.5"/>
-        <text x="300" y="238" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">registerPage</text>
-        <text x="300" y="255" class="t-muted" font-size="8" text-anchor="middle">tab + URL</text>
+        <rect x="195" y="217" width="50" height="52" rx="6" class="c-mask"/>
+        <rect x="195" y="217" width="50" height="52" rx="6" class="c-security" stroke-width="1.5"/>
+        <text x="220" y="238" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Active?</text>
+        <text x="220" y="255" class="t-muted" font-size="8" text-anchor="middle">MV3 worker</text>
 
-        <rect x="400" y="217" width="60" height="52" rx="6" class="c-mask"/>
-        <rect x="400" y="217" width="60" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
-        <text x="430" y="238" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Probe</text>
-        <text x="430" y="255" class="t-muted" font-size="8" text-anchor="middle">hostId</text>
+        <rect x="275" y="209" width="50" height="68" rx="6" class="c-mask"/>
+        <rect x="275" y="209" width="50" height="68" rx="6" class="c-cloud" stroke-width="1.5"/>
+        <text x="300" y="230" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Wake</text>
+        <text x="300" y="247" class="t-muted" font-size="8" text-anchor="middle">start or reuse</text>
+        <text x="300" y="265" class="t-cloud" font-size="7" text-anchor="middle">restore caller</text>
 
-        <rect x="470" y="217" width="60" height="52" rx="6" class="c-mask"/>
-        <rect x="470" y="217" width="60" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
-        <text x="500" y="238" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Attach</text>
-        <text x="500" y="255" class="t-muted" font-size="8" text-anchor="middle">binding</text>
+        <rect x="466" y="209" width="68" height="68" rx="6" class="c-mask"/>
+        <rect x="466" y="209" width="68" height="68" rx="6" class="c-backend" stroke-width="1.5"/>
+        <text x="500" y="230" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Probe</text>
+        <text x="500" y="247" class="t-muted" font-size="8" text-anchor="middle">physical host</text>
+        <text x="500" y="265" class="t-backend" font-size="7" text-anchor="middle">alive / missing</text>
 
-        <rect x="406" y="341" width="48" height="52" rx="6" class="c-mask"/>
-        <rect x="406" y="341" width="48" height="52" rx="6" class="c-cloud" stroke-width="1.5"/>
-        <text x="430" y="362" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Runtime</text>
-        <text x="430" y="379" class="t-muted" font-size="8" text-anchor="middle">host</text>
-
-        <rect x="482" y="341" width="36" height="52" rx="6" class="c-mask"/>
-        <rect x="482" y="341" width="36" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
-        <text x="500" y="362" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Lease</text>
-        <text x="500" y="379" class="t-muted" font-size="8" text-anchor="middle">IDs</text>
-
-        <rect x="579" y="341" width="92" height="52" rx="6" class="c-mask"/>
-        <rect x="579" y="341" width="92" height="52" rx="6" class="c-messagebus" stroke-width="1.5"/>
-        <text x="625" y="362" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">PagePort</text>
-        <text x="625" y="379" class="t-muted" font-size="8" text-anchor="middle">callbacks</text>
-
-        <rect x="454" y="465" width="92" height="52" rx="6" class="c-mask"/>
-        <rect x="454" y="465" width="92" height="52" rx="6" class="c-messagebus" stroke-width="1.5"/>
-        <text x="500" y="486" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Join Rooms</text>
-        <text x="500" y="503" class="t-muted" font-size="8" text-anchor="middle">10s deadline</text>
+        <rect x="579" y="333" width="92" height="68" rx="6" class="c-mask"/>
+        <rect x="579" y="333" width="92" height="68" rx="6" class="c-messagebus" stroke-width="1.5"/>
+        <text x="625" y="354" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Reuse Runtime</text>
+        <text x="625" y="371" class="t-muted" font-size="8" text-anchor="middle">host + Rooms</text>
+        <text x="625" y="389" class="t-messagebus" font-size="7" text-anchor="middle">keep peers</text>
 
         <rect x="579" y="457" width="92" height="68" rx="6" class="c-mask"/>
-        <rect x="579" y="457" width="92" height="68" rx="6" class="c-database" stroke-width="1.5"/>
-        <text x="625" y="478" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Room State</text>
-        <text x="625" y="495" class="t-muted" font-size="8" text-anchor="middle">Chat / World</text>
-        <text x="625" y="513" class="t-database" font-size="7" text-anchor="middle">Artico owner per room</text>
-
-        <rect x="42" y="589" width="92" height="52" rx="6" class="c-mask"/>
-        <rect x="42" y="589" width="92" height="52" rx="6" class="c-external" stroke-width="1.5"/>
-        <text x="88" y="610" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">System Sleep</text>
-        <text x="88" y="627" class="t-muted" font-size="8" text-anchor="middle">timers pause</text>
-
-        <rect x="174" y="589" width="92" height="52" rx="6" class="c-mask"/>
-        <rect x="174" y="589" width="92" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
-        <text x="220" y="610" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Resume Checks</text>
-        <text x="220" y="627" class="t-muted" font-size="8" text-anchor="middle">same host</text>
-
-        <rect x="384" y="589" width="92" height="52" rx="6" class="c-mask"/>
-        <rect x="384" y="589" width="92" height="52" rx="6" class="c-security" stroke-width="1.5"/>
-        <text x="430" y="610" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Lease Healthy</text>
-        <text x="430" y="627" class="t-muted" font-size="8" text-anchor="middle">no replay</text>
+        <rect x="579" y="457" width="92" height="68" rx="6" class="c-cloud" stroke-width="1.5"/>
+        <text x="625" y="478" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Rebuild</text>
+        <text x="625" y="495" class="t-muted" font-size="8" text-anchor="middle">generation + bind</text>
+        <text x="625" y="513" class="t-cloud" font-size="7" text-anchor="middle">Rooms first</text>
 
         <rect x="579" y="581" width="92" height="68" rx="6" class="c-mask"/>
         <rect x="579" y="581" width="92" height="68" rx="6" class="c-security" stroke-width="1.5"/>
-        <text x="625" y="602" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Counts Diverge</text>
-        <text x="625" y="619" class="t-muted" font-size="8" text-anchor="middle">lost callback</text>
-        <text x="625" y="637" class="t-security" font-size="7" text-anchor="middle">confirmed gap</text>
-
-        <rect x="42" y="713" width="92" height="52" rx="6" class="c-mask"/>
-        <rect x="42" y="713" width="92" height="52" rx="6" class="c-external" stroke-width="1.5"/>
-        <text x="88" y="734" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Runtime Lost</text>
-        <text x="88" y="751" class="t-muted" font-size="8" text-anchor="middle">replaced</text>
-
-        <rect x="254" y="713" width="92" height="52" rx="6" class="c-mask"/>
-        <rect x="254" y="713" width="92" height="52" rx="6" class="c-cloud" stroke-width="1.5"/>
-        <text x="300" y="734" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">New Runtime</text>
-        <text x="300" y="751" class="t-muted" font-size="8" text-anchor="middle">generation +1</text>
-
-        <rect x="409" y="713" width="42" height="52" rx="6" class="c-mask"/>
-        <rect x="409" y="713" width="42" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
-        <text x="430" y="734" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Tabs</text>
-        <text x="430" y="751" class="t-muted" font-size="8" text-anchor="middle">pageIds</text>
-
-        <rect x="479" y="713" width="42" height="52" rx="6" class="c-mask"/>
-        <rect x="479" y="713" width="42" height="52" rx="6" class="c-security" stroke-width="1.5"/>
-        <text x="500" y="734" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Stale</text>
-        <text x="500" y="751" class="t-muted" font-size="8" text-anchor="middle">join</text>
-
-        <rect x="579" y="705" width="92" height="68" rx="6" class="c-mask"/>
-        <rect x="579" y="705" width="92" height="68" rx="6" class="c-security" stroke-width="1.5"/>
-        <text x="625" y="726" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">No Rooms</text>
-        <text x="625" y="743" class="t-muted" font-size="8" text-anchor="middle">empty host</text>
-        <text x="625" y="761" class="t-security" font-size="7" text-anchor="middle">primary suspect</text>
-
-        <rect x="42" y="837" width="92" height="52" rx="6" class="c-mask"/>
-        <rect x="42" y="837" width="92" height="52" rx="6" class="c-frontend" stroke-width="1.5"/>
-        <text x="88" y="858" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Refresh Click</text>
-        <text x="88" y="875" class="t-muted" font-size="8" text-anchor="middle">reconnect</text>
-
-        <rect x="195" y="837" width="50" height="52" rx="6" class="c-mask"/>
-        <rect x="195" y="837" width="50" height="52" rx="6" class="c-messagebus" stroke-width="1.5"/>
-        <text x="220" y="858" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">World</text>
-        <text x="220" y="875" class="t-muted" font-size="8" text-anchor="middle">async</text>
-
-        <rect x="275" y="837" width="50" height="52" rx="6" class="c-mask"/>
-        <rect x="275" y="837" width="50" height="52" rx="6" class="c-security" stroke-width="1.5"/>
-        <text x="300" y="858" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Gate</text>
-        <text x="300" y="875" class="t-muted" font-size="8" text-anchor="middle">seed?</text>
-
-        <rect x="409" y="837" width="42" height="52" rx="6" class="c-mask"/>
-        <rect x="409" y="837" width="42" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
-        <text x="430" y="858" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Reset</text>
-        <text x="430" y="875" class="t-muted" font-size="8" text-anchor="middle">state</text>
-
-        <rect x="479" y="837" width="42" height="52" rx="6" class="c-mask"/>
-        <rect x="479" y="837" width="42" height="52" rx="6" class="c-messagebus" stroke-width="1.5"/>
-        <text x="500" y="858" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Rejoin</text>
-        <text x="500" y="875" class="t-muted" font-size="8" text-anchor="middle">10s</text>
-
-        <rect x="579" y="837" width="92" height="52" rx="6" class="c-mask"/>
-        <rect x="579" y="837" width="92" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
-        <text x="625" y="858" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Commit</text>
-        <text x="625" y="875" class="t-muted" font-size="8" text-anchor="middle">settles</text>
-
-        <rect x="402.5" y="961" width="55" height="52" rx="6" class="c-mask"/>
-        <rect x="402.5" y="961" width="55" height="52" rx="6" class="c-security" stroke-width="1.5"/>
-        <text x="430" y="982" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Hold</text>
-        <text x="430" y="999" class="t-muted" font-size="8" text-anchor="middle">cancel</text>
-
-        <rect x="472.5" y="961" width="55" height="52" rx="6" class="c-mask"/>
-        <rect x="472.5" y="961" width="55" height="52" rx="6" class="c-security" stroke-width="1.5"/>
-        <text x="500" y="982" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">No-op</text>
-        <text x="500" y="999" class="t-muted" font-size="8" text-anchor="middle">no seed</text>
-
-        <rect x="579" y="961" width="92" height="52" rx="6" class="c-mask"/>
-        <rect x="579" y="961" width="92" height="52" rx="6" class="c-security" stroke-width="1.5"/>
-        <text x="625" y="982" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">No Peer</text>
-        <text x="625" y="999" class="t-muted" font-size="8" text-anchor="middle">loading ends</text>
-
-        <rect x="42" y="1085" width="92" height="52" rx="6" class="c-mask"/>
-        <rect x="42" y="1085" width="92" height="52" rx="6" class="c-frontend" stroke-width="1.5"/>
-        <text x="88" y="1106" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">pagehide</text>
-        <text x="88" y="1123" class="t-muted" font-size="8" text-anchor="middle">stop lease</text>
-
-        <rect x="254" y="1085" width="92" height="52" rx="6" class="c-mask"/>
-        <rect x="254" y="1085" width="92" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
-        <text x="300" y="1106" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Lease Retained</text>
-        <text x="300" y="1123" class="t-muted" font-size="8" text-anchor="middle">same pageId</text>
-
-        <rect x="454" y="1085" width="92" height="52" rx="6" class="c-mask"/>
-        <rect x="454" y="1085" width="92" height="52" rx="6" class="c-frontend" stroke-width="1.5"/>
-        <text x="500" y="1106" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">pageshow</text>
-        <text x="500" y="1123" class="t-muted" font-size="8" text-anchor="middle">re-register</text>
-
-        <rect x="42" y="1209" width="92" height="52" rx="6" class="c-mask"/>
-        <rect x="42" y="1209" width="92" height="52" rx="6" class="c-frontend" stroke-width="1.5"/>
-        <text x="88" y="1230" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Terminal Exit</text>
-        <text x="88" y="1247" class="t-muted" font-size="8" text-anchor="middle">navigate</text>
-
-        <rect x="254" y="1209" width="92" height="52" rx="6" class="c-mask"/>
-        <rect x="254" y="1209" width="92" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
-        <text x="300" y="1230" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">detachPage</text>
-        <text x="300" y="1247" class="t-muted" font-size="8" text-anchor="middle">drop pageId</text>
-
-        <rect x="454" y="1209" width="92" height="52" rx="6" class="c-mask"/>
-        <rect x="454" y="1209" width="92" height="52" rx="6" class="c-messagebus" stroke-width="1.5"/>
-        <text x="500" y="1230" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">5s Grace</text>
-        <text x="500" y="1247" class="t-muted" font-size="8" text-anchor="middle">wait return</text>
-
-        <rect x="579" y="1209" width="92" height="52" rx="6" class="c-mask"/>
-        <rect x="579" y="1209" width="92" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
-        <text x="625" y="1230" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Release Domain</text>
-        <text x="625" y="1247" class="t-muted" font-size="8" text-anchor="middle">leave + clear</text>
+        <text x="625" y="602" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Rooms Empty</text>
+        <text x="625" y="619" class="t-muted" font-size="8" text-anchor="middle">Refresh no-op</text>
+        <text x="625" y="637" class="t-security" font-size="7" text-anchor="middle">known gap</text>
 
         <!-- Edge labels -->
 
 
-
-
-
-
-
-
-
-
-
-        <rect x="603.2" y="37" width="43.6" height="14" rx="3" class="c-mask"/>
-        <text x="625" y="47" class="t-backend" font-size="8" text-anchor="middle">project</text>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+        <rect x="354.5" y="223" width="82" height="14" rx="3" class="c-mask"/>
+        <text x="395.5" y="233" class="t-backend" font-size="8" text-anchor="middle">restore context</text>
+        <rect x="545.5" y="270" width="34" height="14" rx="3" class="c-mask"/>
+        <text x="562.5" y="280" class="t-backend" font-size="8" text-anchor="middle">alive</text>
+        <rect x="670.2" y="405" width="43.6" height="14" rx="3" class="c-mask"/>
+        <text x="692" y="415" class="t-security" font-size="8" text-anchor="middle">missing</text>
 
 
 
 
         <!-- Legend -->
-        <text x="175" y="1296" class="t-primary" font-size="10" font-weight="600">Legend</text>
-        <rect x="175" y="1308" width="14" height="9" rx="2" class="c-frontend" stroke-width="1"/>
-        <text x="195" y="1316" class="t-muted" font-size="7">User UI</text>
-        <rect x="260" y="1308" width="14" height="9" rx="2" class="c-backend" stroke-width="1"/>
-        <text x="280" y="1316" class="t-muted" font-size="7">Agent logic</text>
-        <rect x="370" y="1308" width="14" height="9" rx="2" class="c-security" stroke-width="1"/>
-        <text x="390" y="1316" class="t-muted" font-size="7">Policy</text>
-        <rect x="455" y="1308" width="14" height="9" rx="2" class="c-messagebus" stroke-width="1"/>
-        <text x="475" y="1316" class="t-muted" font-size="7">Tool action</text>
-        <rect x="565" y="1308" width="14" height="9" rx="2" class="c-database" stroke-width="1"/>
-        <text x="585" y="1316" class="t-muted" font-size="7">Context / trace</text>
+        <text x="175" y="676" class="t-primary" font-size="10" font-weight="600">Legend</text>
+        <rect x="175" y="688" width="14" height="9" rx="2" class="c-frontend" stroke-width="1"/>
+        <text x="195" y="696" class="t-muted" font-size="7">User UI</text>
+        <rect x="260" y="688" width="14" height="9" rx="2" class="c-backend" stroke-width="1"/>
+        <text x="280" y="696" class="t-muted" font-size="7">Agent logic</text>
+        <rect x="370" y="688" width="14" height="9" rx="2" class="c-security" stroke-width="1"/>
+        <text x="390" y="696" class="t-muted" font-size="7">Policy</text>
+        <rect x="455" y="688" width="14" height="9" rx="2" class="c-messagebus" stroke-width="1"/>
+        <text x="475" y="696" class="t-muted" font-size="7">Tool action</text>
+        <rect x="565" y="688" width="14" height="9" rx="2" class="c-database" stroke-width="1"/>
+        <text x="585" y="696" class="t-muted" font-size="7">Context / trace</text>
       </svg>
       </div>
 
@@ -1078,39 +865,39 @@
       <div class="card">
         <div class="card-header">
           <div class="card-dot cyan"></div>
-          <h3>Ownership</h3>
+          <h3>One Gateway</h3>
         </div>
         <ul>
-          <li>&bull; One pageId and UI projection per content document</li>
-          <li>&bull; One Coordinator persists tab-to-page bindings</li>
-          <li>&bull; One shared Runtime owns Chat and World peers</li>
-          <li>&bull; Chat and World counts are projected separately in every tab</li>
-        </ul>
-      </div>
-
-      <div class="card">
-        <div class="card-header">
-          <div class="card-dot rose"></div>
-          <h3>Sleep/Wake Gaps</h3>
-        </div>
-        <ul>
-          <li>&bull; Same host: callback loss has no delivery acknowledgement or replay</li>
-          <li>&bull; New host: rebuildTabs restores page leases, not room aggregates</li>
-          <li>&bull; Content JoinStatus survives while the new Runtime has no rooms</li>
-          <li>&bull; That mismatch explains divergent counts and an empty Runtime</li>
+          <li>&bull; Every backend-bound action enters the same wake gateway</li>
+          <li>&bull; Browser reload and AppButton Refresh are only examples</li>
+          <li>&bull; The original action and caller identity survive recovery</li>
+          <li>&bull; OS sleep, timer pause, BFCache, and page exit are out of scope</li>
         </ul>
       </div>
 
       <div class="card">
         <div class="card-header">
           <div class="card-dot emerald"></div>
-          <h3>Refresh Semantics</h3>
+          <h3>Background + Runtime</h3>
         </div>
         <ul>
-          <li>&bull; The button awaits only the Chat domain operation</li>
-          <li>&bull; World replacement runs independently</li>
-          <li>&bull; A missing Runtime domain and seed produces a successful no-op</li>
-          <li>&bull; A real replacement join has a ten-second outer deadline</li>
+          <li>&bull; Chrome MV3 starts or reuses the Background worker</li>
+          <li>&bull; Firefox persistent Background follows the reuse path</li>
+          <li>&bull; An alive Offscreen host preserves Rooms and runtime data</li>
+          <li>&bull; A missing host rebuilds generation, bindings, and Rooms first</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot rose"></div>
+          <h3>Known Recovery Gap</h3>
+        </div>
+        <ul>
+          <li>&bull; The current rebuilt-host path restores page leases</li>
+          <li>&bull; It can leave the new Runtime without Chat or World Rooms</li>
+          <li>&bull; AppButton Refresh may then succeed without a domain seed</li>
+          <li>&bull; Room counts can remain inconsistent across content tabs</li>
         </ul>
       </div>
     </div>
