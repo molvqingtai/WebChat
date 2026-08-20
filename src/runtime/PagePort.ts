@@ -14,6 +14,12 @@ import type {
 export class PagePort implements PagePortContract {
   private readonly inbound = new Map<string, (event: InboundEvent) => void | Promise<void>>()
   private readonly sessionEvents = new Map<string, (event: RuntimeSessionEvent) => void | Promise<void>>()
+  private readonly activeSessionGenerations = new Map<string, number>()
+  private readonly provisionalSessionEvents = new Map<
+    string,
+    { generation: number; callback: (event: RuntimeSessionEvent) => void | Promise<void> }
+  >()
+  private sessionEventGeneration = 0
   private readonly worldPresences = new Map<string, (event: WorldPresenceEvent) => void | Promise<void>>()
   private readonly runtimeErrors = new Map<string, (event: RuntimeErrorEvent) => void | Promise<void>>()
   private readonly historyFeedbacks = new Map<string, (event: HistoryFeedbackEvent) => void | Promise<void>>()
@@ -38,7 +44,36 @@ export class PagePort implements PagePortContract {
   }
 
   onSessionEvent(pageId: string, callback: (event: RuntimeSessionEvent) => void | Promise<void>) {
+    this.provisionalSessionEvents.delete(pageId)
     this.sessionEvents.set(pageId, callback)
+    this.activeSessionGenerations.set(pageId, ++this.sessionEventGeneration)
+  }
+
+  beginSessionEvent(pageId: string, callback: (event: RuntimeSessionEvent) => void | Promise<void>) {
+    const generation = ++this.sessionEventGeneration
+    this.sessionEvents.delete(pageId)
+    this.activeSessionGenerations.delete(pageId)
+    this.provisionalSessionEvents.set(pageId, { generation, callback })
+    return generation
+  }
+
+  activateSessionEvent(pageId: string, generation: number) {
+    const provisional = this.provisionalSessionEvents.get(pageId)
+    if (!provisional || provisional.generation !== generation) return false
+    this.provisionalSessionEvents.delete(pageId)
+    this.sessionEvents.set(pageId, provisional.callback)
+    this.activeSessionGenerations.set(pageId, generation)
+    return true
+  }
+
+  cancelSessionEvent(pageId: string, generation: number) {
+    if (this.provisionalSessionEvents.get(pageId)?.generation === generation) {
+      this.provisionalSessionEvents.delete(pageId)
+    }
+  }
+
+  isSessionEventActive(pageId: string, generation: number) {
+    return this.activeSessionGenerations.get(pageId) === generation
   }
 
   onWorldPresence(pageId: string, callback: (event: WorldPresenceEvent) => void | Promise<void>) {
@@ -72,6 +107,8 @@ export class PagePort implements PagePortContract {
   removePage(pageId: string) {
     this.inbound.delete(pageId)
     this.sessionEvents.delete(pageId)
+    this.activeSessionGenerations.delete(pageId)
+    this.provisionalSessionEvents.delete(pageId)
     this.worldPresences.delete(pageId)
     this.runtimeErrors.delete(pageId)
     this.historyFeedbacks.delete(pageId)
@@ -230,6 +267,7 @@ export class PagePort implements PagePortContract {
     const pageIds = new Set([
       ...this.inbound.keys(),
       ...this.sessionEvents.keys(),
+      ...this.provisionalSessionEvents.keys(),
       ...this.worldPresences.keys(),
       ...this.runtimeErrors.keys(),
       ...this.historyFeedbacks.keys(),

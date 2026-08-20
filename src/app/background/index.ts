@@ -6,7 +6,7 @@ import { defineAppActionProxy, defineNotificationProxy } from '@/service/Contrac
 import { Notification } from '@/service/Notification'
 import { COORDINATOR_NAMESPACE } from '@/runtime/Contract'
 import type { RuntimeCoordinator } from '@/runtime/Contract'
-import { ensureHost, registerPage, restore, watchTabs, watchOffscreenClosed } from '@/runtime/Background'
+import { ensureHost, registerPage, restore, watchTabs } from '@/runtime/Background'
 import { registerActionClick } from '@/app/background/ActionRegistration'
 import { registerBrowserSyncStoragePreparation } from '@/service/StoragePreparation'
 
@@ -22,12 +22,11 @@ export default defineBackground({
 
     const appAction = provideAppAction(new ProvideAdapter())
 
-    // Sole host coordinator: pages request the shared Runtime host here.
+    // Pages enter the single Background-owned Runtime host through this control endpoint.
     const [provideCoordinator] = defineProxy<() => RuntimeCoordinator>(() => ({ ensureHost, registerPage }), {
       namespace: `${COORDINATOR_NAMESPACE}:${browser.runtime.id}`
     })
     provideCoordinator(new ProvideAdapter())
-    watchOffscreenClosed()
     watchTabs()
     void restore()
 

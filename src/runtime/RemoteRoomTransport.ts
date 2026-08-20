@@ -1,9 +1,10 @@
 import type { RoomTransport } from '@/runtime/RoomTransport'
-import type { TransportService } from '@/runtime/TransportHost'
+import { nanoid } from 'nanoid'
+import type { TransportProjection, TransportRoomState, TransportService } from '@/runtime/TransportHost'
 
 /** Background-local facade over the physical Offscreen transport. It retains no transport state. */
 export class RemoteRoomTransport implements RoomTransport {
-  private readonly peerIds = new Map<string, string>()
+  private readonly rooms = new Map<string, TransportRoomState>()
   private readonly messages = new Set<(roomId: string, sourcePeerId: string, payload: string) => void>()
   private readonly joins = new Set<(roomId: string, peerId: string) => void>()
   private readonly leaves = new Set<(roomId: string, peerId: string) => void>()
@@ -11,39 +12,52 @@ export class RemoteRoomTransport implements RoomTransport {
   private readonly errors = new Set<(error: Error, roomId: string) => void>()
   private binding: Promise<void> = Promise.resolve()
   private generation = 0
+  private acceptingGeneration = 0
   private disposed = false
 
   constructor(private readonly service: TransportService) {}
 
   rebind() {
     const generation = ++this.generation
-    const closedRoomIds = [...this.peerIds.keys()]
-    this.peerIds.clear()
+    this.acceptingGeneration = 0
+    const align = (projections: TransportProjection[]) => {
+      const projection = projections.at(0) ?? { rooms: [] }
+      if (projections.some((candidate) => JSON.stringify(candidate) !== JSON.stringify(projection))) {
+        throw new Error('Transport callback registrations did not return one current projection')
+      }
+      const previous = new Map(this.rooms)
+      this.rooms.clear()
+      projection.rooms.forEach((room) => this.rooms.set(room.roomId, room))
+      previous.forEach((room, roomId) => {
+        if (this.rooms.get(roomId)?.handle !== room.handle) this.closes.forEach((callback) => callback(roomId))
+      })
+    }
     this.binding = Promise.all([
-      this.service.onMessage((roomId, sourcePeerId, payload) => {
-        if (!this.isCurrent(generation)) return
+      this.service.onMessage((roomId, handle, sourcePeerId, payload) => {
+        if (!this.accepts(generation, roomId, handle)) return
         this.messages.forEach((callback) => callback(roomId, sourcePeerId, payload))
       }),
-      this.service.onPeerJoin((roomId, peerId) => {
-        if (!this.isCurrent(generation)) return
+      this.service.onPeerJoin((roomId, handle, peerId) => {
+        if (!this.accepts(generation, roomId, handle)) return
         this.joins.forEach((callback) => callback(roomId, peerId))
       }),
-      this.service.onPeerLeave((roomId, peerId) => {
-        if (!this.isCurrent(generation)) return
+      this.service.onPeerLeave((roomId, handle, peerId) => {
+        if (!this.accepts(generation, roomId, handle)) return
         this.leaves.forEach((callback) => callback(roomId, peerId))
       }),
-      this.service.onRoomClose((roomId) => {
-        if (!this.isCurrent(generation)) return
-        this.peerIds.delete(roomId)
+      this.service.onRoomClose((roomId, handle) => {
+        if (!this.accepts(generation, roomId, handle)) return
+        this.rooms.delete(roomId)
         this.closes.forEach((callback) => callback(roomId))
       }),
-      this.service.onError((error, roomId) => {
-        if (!this.isCurrent(generation)) return
+      this.service.onError((error, roomId, handle) => {
+        if (!this.accepts(generation, roomId, handle)) return
         this.errors.forEach((callback) => callback(error, roomId))
       })
-    ]).then(() => {
+    ]).then((projections) => {
       if (!this.isCurrent(generation)) return
-      closedRoomIds.forEach((roomId) => this.closes.forEach((callback) => callback(roomId)))
+      align(projections)
+      this.acceptingGeneration = generation
     })
     return this.binding
   }
@@ -52,22 +66,44 @@ export class RemoteRoomTransport implements RoomTransport {
     return !this.disposed && this.generation === generation
   }
 
-  peerIdOf = (roomId: string) => this.peerIds.get(roomId) ?? ''
+  private accepts(generation: number, roomId: string, handle: string) {
+    return (
+      this.isCurrent(generation) && this.acceptingGeneration === generation && this.rooms.get(roomId)?.handle === handle
+    )
+  }
+
+  peerIdOf = (roomId: string) => this.rooms.get(roomId)?.peerId ?? ''
   join = async (roomId: string) => {
     const generation = this.generation
     await this.binding
     if (!this.isCurrent(generation)) throw new Error('Room transport generation is no longer current')
-    const peerId = await this.service.join(roomId)
+    const existing = this.rooms.get(roomId)
+    if (existing) return
+    const room = await this.service.join(roomId, nanoid())
     if (!this.isCurrent(generation)) throw new Error('Room transport generation is no longer current')
-    this.peerIds.set(roomId, peerId)
+    this.rooms.set(roomId, room)
   }
-  leave = (roomId: string, options?: { diagnosticOnly?: boolean }) => {
-    this.peerIds.delete(roomId)
-    void this.service.leave(roomId, options).catch(console.error)
+  leave = async (roomId: string, options?: { diagnosticOnly?: boolean }) => {
+    const generation = this.generation
+    const room = this.rooms.get(roomId)
+    if (!room) return
+    await this.binding
+    if (!this.isCurrent(generation) || this.rooms.get(roomId)?.handle !== room.handle) return
+    await this.service.leave(roomId, room.handle, options)
+    if (this.isCurrent(generation) && this.rooms.get(roomId)?.handle === room.handle) this.rooms.delete(roomId)
   }
   send = async (roomId: string, payload: string, to?: string | string[]) => {
+    const generation = this.generation
+    const room = this.rooms.get(roomId)
+    if (!room) throw new Error('Room transport has no current handle')
     await this.binding
-    await this.service.send(roomId, payload, to)
+    if (!this.isCurrent(generation) || this.rooms.get(roomId)?.handle !== room.handle) {
+      throw new Error('Room transport generation is no longer current')
+    }
+    await this.service.send(roomId, room.handle, payload, to)
+    if (!this.isCurrent(generation) || this.rooms.get(roomId)?.handle !== room.handle) {
+      throw new Error('Room transport generation is no longer current')
+    }
   }
   onMessage = (callback: (roomId: string, sourcePeerId: string, payload: string) => void) => {
     this.messages.add(callback)
@@ -92,7 +128,8 @@ export class RemoteRoomTransport implements RoomTransport {
   dispose = () => {
     this.disposed = true
     this.generation += 1
-    this.peerIds.clear()
+    this.acceptingGeneration = 0
+    this.rooms.clear()
     this.messages.clear()
     this.joins.clear()
     this.leaves.clear()

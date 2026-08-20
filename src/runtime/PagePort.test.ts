@@ -57,6 +57,28 @@ describe('PagePort session-event lifecycle', () => {
     expect(diagnostic).toHaveBeenCalledWith(failure)
     diagnostic.mockRestore()
   })
+
+  it('holds a replacement callback provisional until its initial snapshot settles', async () => {
+    const port = new PagePort()
+    const received: string[] = []
+    let releaseSnapshot!: () => void
+    const snapshotSettled = new Promise<void>((resolve) => {
+      releaseSnapshot = resolve
+    })
+    const generation = port.beginSessionEvent('page-a', async (current) => {
+      received.push(current.type)
+      await snapshotSettled
+    })
+
+    expect(await port.emitSessionEvent(['page-a'], event)).toEqual([])
+    expect(received).toEqual([])
+
+    releaseSnapshot()
+    await snapshotSettled
+    expect(port.activateSessionEvent('page-a', generation)).toBe(true)
+    expect(await port.emitSessionEvent(['page-a'], event)).toEqual([])
+    expect(received).toEqual(['snapshot'])
+  })
 })
 
 describe('PagePort Runtime error delivery', () => {

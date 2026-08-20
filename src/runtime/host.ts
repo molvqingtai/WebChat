@@ -4,7 +4,7 @@ import { browser } from '#imports'
 import type { PresenceStore } from '@/domain/runtime/externs/PresenceStore'
 import { RUNTIME_NAMESPACE_PREFIX } from '@/runtime/Contract'
 import type { MessageMeta } from '@/service/adapter/runtime/Provider'
-import { createServer, disposeServer } from '@/runtime/Server'
+import { createServer, disposeServer, type RuntimeAdmission } from '@/runtime/Server'
 import { createRoomTransport } from '@/runtime/RoomTransportProvider'
 import type { RoomTransport } from '@/runtime/RoomTransport'
 import type { HostHandle } from '@/runtime/HostOwner'
@@ -21,11 +21,13 @@ type HostAdapter = Adapter<MessageMeta> & { dispose: () => void }
 export const startHost = (
   adapter: HostAdapter,
   presenceStore: PresenceStore,
-  transport: RoomTransport = createRoomTransport()
+  transport: RoomTransport = createRoomTransport(),
+  admission?: RuntimeAdmission
 ): HostHandle => {
   const server = createServer({
     transport,
-    presenceStore
+    presenceStore,
+    admission
   })
   const [provideRuntime] = defineProxy(() => server, {
     namespace: `${RUNTIME_NAMESPACE_PREFIX}:${browser.runtime.id}`

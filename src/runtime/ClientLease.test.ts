@@ -59,6 +59,24 @@ describe('ClientLease event-driven Runtime admission', () => {
     client.detach()
   })
 
+  it('rebinds through a fresh ordinary registration without using the test-only refresh entry', async () => {
+    const registerPage = vi
+      .fn<RuntimeCoordinator['registerPage']>()
+      .mockResolvedValueOnce(registration('host-a', 1))
+      .mockResolvedValueOnce(registration('host-b', 1))
+    const ready = vi.fn()
+    const client = new ClientLease({ coordinator: coordinatorWith(registerPage), pageId, domain })
+    client.whenReady(ready)
+
+    await client.init()
+    await client.rebind()
+
+    expect(registerPage).toHaveBeenCalledTimes(2)
+    expect(client.snapshot()).toMatchObject({ hostId: 'host-b' })
+    expect(ready).toHaveBeenCalledTimes(2)
+    client.detach()
+  })
+
   it('keeps an unrelated timeout from replaying an admitted action', async () => {
     const registerPage = vi
       .fn<RuntimeCoordinator['registerPage']>()

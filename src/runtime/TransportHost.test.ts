@@ -53,8 +53,9 @@ describe('Offscreen TransportService', () => {
     const service = createTransportService(fixture.transport)
     const first = vi.fn()
     const current = vi.fn()
+    const room = await service.join('room-a', 'handle-a')
 
-    await service.onMessage(first)
+    await expect(service.onMessage(first)).resolves.toEqual({ rooms: [room] })
     fixture.emit.message('room-a', 'peer-a', 'first')
     await service.onMessage(current)
     fixture.emit.message('room-a', 'peer-a', 'current')
@@ -69,39 +70,49 @@ describe('Offscreen TransportService', () => {
     await service.onPeerLeave(current)
     fixture.emit.leave('room-a', 'peer-b')
 
-    await service.onRoomClose(first)
-    fixture.emit.close('room-a')
-    await service.onRoomClose(current)
-    fixture.emit.close('room-b')
-
     const failure = new Error('transport failed')
     await service.onError(first)
     fixture.emit.error(failure, 'room-a')
     await service.onError(current)
-    fixture.emit.error(failure, 'room-b')
+    fixture.emit.error(failure, 'room-a')
+
+    await service.onRoomClose(first)
+    fixture.emit.close('room-a')
 
     expect(first.mock.calls).toEqual([
-      ['room-a', 'peer-a', 'first'],
-      ['room-a', 'peer-a'],
-      ['room-a', 'peer-a'],
-      ['room-a'],
-      [failure, 'room-a']
+      ['room-a', 'handle-a', 'peer-a', 'first'],
+      ['room-a', 'handle-a', 'peer-a'],
+      ['room-a', 'handle-a', 'peer-a'],
+      [failure, 'room-a', 'handle-a'],
+      ['room-a', 'handle-a']
     ])
     expect(current.mock.calls).toEqual([
-      ['room-a', 'peer-a', 'current'],
-      ['room-a', 'peer-b'],
-      ['room-a', 'peer-b'],
-      ['room-b'],
-      [failure, 'room-b']
+      ['room-a', 'handle-a', 'peer-a', 'current'],
+      ['room-a', 'handle-a', 'peer-b'],
+      ['room-a', 'handle-a', 'peer-b'],
+      [failure, 'room-a', 'handle-a']
     ])
   })
 
   it('preserves the RoomTransport leave options at the physical boundary', async () => {
     const fixture = createTransport()
     const service = createTransportService(fixture.transport)
+    await service.join('room-a', 'handle-a')
 
-    await service.leave('room-a', { diagnosticOnly: true })
+    await service.leave('room-a', 'handle-a', { diagnosticOnly: true })
 
     expect(fixture.transport.leave).toHaveBeenCalledWith('room-a', { diagnosticOnly: true })
+  })
+
+  it('rejects a stale physical command before it reaches the room transport', async () => {
+    const fixture = createTransport()
+    const service = createTransportService(fixture.transport)
+    await service.join('room-a', 'current')
+
+    await expect(service.send('room-a', 'stale', 'payload')).rejects.toThrow('no longer current')
+    await expect(service.leave('room-a', 'stale')).rejects.toThrow('no longer current')
+
+    expect(fixture.transport.send).not.toHaveBeenCalled()
+    expect(fixture.transport.leave).not.toHaveBeenCalled()
   })
 })

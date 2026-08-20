@@ -117,6 +117,10 @@ describe('DeliveryDomain resource and batch ACK boundaries', () => {
     const emitAttempts: string[] = []
     const pagePort: PagePortContract = {
       removePage: () => {},
+      beginSessionEvent: () => 0,
+      activateSessionEvent: () => false,
+      cancelSessionEvent: () => {},
+      isSessionEventActive: () => false,
       historyPageIds: () => [],
       emitInbound: async (_pageIds, event) => {
         emitAttempts.push(event.record.id)

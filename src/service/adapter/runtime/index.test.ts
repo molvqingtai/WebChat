@@ -82,7 +82,7 @@ describe('Runtime browser adapters', () => {
     expect(listeners.size).toBe(0)
   })
 
-  it('replaces forged registerPage tab claims with extension sender metadata', () => {
+  it('adds extension sender metadata as the unforgeable caller for every Page RPC', () => {
     const { runtime, listeners } = createMessaging()
     const adapter = new ProviderAdapter(runtime)
     const received = vi.fn()
@@ -104,7 +104,19 @@ describe('Runtime browser adapters', () => {
 
     expect(received).toHaveBeenCalledWith({
       ...request,
-      args: [{ ...claimedLease, tab: trustedTab }],
+      args: [{ ...claimedLease, caller: { tab: trustedTab } }],
+      meta: { tab: trustedTab }
+    })
+
+    const mutation = providerMessage('mutation-caller', {
+      sender: { type: 'injector' },
+      path: ['sendChatMessage'],
+      args: [{ domain: 'https://example.com', caller: { tab: claimedLease.tab } }]
+    })
+    listeners.forEach((listener) => listener(mutation, { tab: trustedTab } as never))
+    expect(received).toHaveBeenLastCalledWith({
+      ...mutation,
+      args: [{ domain: 'https://example.com', caller: { tab: trustedTab } }],
       meta: { tab: trustedTab }
     })
     adapter.dispose()

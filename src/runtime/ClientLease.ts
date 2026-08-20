@@ -223,4 +223,37 @@ export class ClientLease {
     if (!this.snapshotValue) throw new Error('Runtime client not initialized')
     return this.snapshotValue
   }
+
+  runtimeHostId() {
+    return this.snapshotValue?.hostId
+  }
+
+  /**
+   * The Background asks a surviving Page to make a fresh ordinary registration after it restarts.
+   * This deliberately shares the registration primitive with startup without turning `checkNow()`
+   * into a production recovery oracle.
+   */
+  async rebind() {
+    const lifecycle = this.lifecycle
+    if (!lifecycle || !this.isCurrent(lifecycle)) return
+    const deadline = Date.now() + this.startupTimeoutMs
+    this.ready = false
+    this.setHostPhase('connecting')
+    try {
+      const registration = await this.registerWithinBudget(lifecycle, deadline)
+      if (!this.isCurrent(lifecycle)) return
+      this.snapshotValue = registration.snapshot
+      this.coordinatorGeneration = registration.generation
+      this.ready = true
+      this.setHostPhase(registration.snapshot.hostPhase)
+      this.readyCallbacks.forEach((callback) => callback())
+      this.emitRegistrationFailures(registration)
+    } catch (error) {
+      if (!this.isCurrent(lifecycle)) return
+      this.ready = false
+      this.setHostPhase('unavailable')
+      this.emitFailure(error)
+      throw error
+    }
+  }
 }

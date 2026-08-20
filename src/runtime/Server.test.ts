@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createServer, disposeServer, getChatRoomId, getWorldRoomId } from '@/runtime/Server'
+import {
+  createServer,
+  disposeServer,
+  getChatRoomId,
+  getWorldRoomId,
+  restoreServerPageBindings,
+  RUNTIME_PAGE_BINDINGS_KEY
+} from '@/runtime/Server'
 import type { Clock } from '@/domain/runtime/externs/Clock'
 import type { PresenceStore } from '@/domain/runtime/externs/PresenceStore'
 import type { RoomTransport } from '@/runtime/RoomTransport'
@@ -137,6 +144,114 @@ class FakeClock implements Clock {
 
 beforeEach(() => {
   vi.useFakeTimers()
+})
+
+describe('RuntimeServer production Page admission and restart recovery', () => {
+  const pageId = 'admitted-page'
+  const pageUrl = `${DOMAIN}/topic`
+
+  const createAdmissionFixture = () => {
+    const storageState: Record<string, unknown> = {}
+    const tabs = new Map([[7, { id: 7, url: pageUrl }]])
+    const rebindPage = vi.fn(async () => {})
+    const ensureTransport = vi.fn(async () => {})
+    const fake = createFakeTransport()
+    const admission = {
+      tabs: {
+        get: async (tabId: number) => {
+          const tab = tabs.get(tabId)
+          if (!tab) throw new Error('tab missing')
+          return tab
+        },
+        sendMessage: async () => undefined
+      },
+      storage: {
+        get: async (key: string) => ({ [key]: storageState[key] }),
+        set: async (items: Record<string, unknown>) => {
+          Object.assign(storageState, items)
+        }
+      },
+      rebindPage,
+      ensureTransport
+    }
+    const server = createServer({ transport: fake.transport, admission })
+    const attach = () => server.attachPage({ domain: DOMAIN, pageId, caller: { tab: tabs.get(7) } })
+    const call = async () => ({
+      pageId,
+      runtimeHostId: (await server.getSnapshot()).hostId,
+      caller: { tab: tabs.get(7) }
+    })
+    return { admission, attach, call, fake, rebindPage, server, storageState, tabs }
+  }
+
+  it('admits a Page mutation only after exact browser binding and full callback snapshot activation', async () => {
+    const fixture = createAdmissionFixture()
+    await fixture.attach()
+    const call = await fixture.call()
+
+    await expect(fixture.server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE, ...call })).rejects.toThrow(
+      'session callback is not active'
+    )
+
+    await fixture.server.onSessionEvent(call, async () => {})
+    await fixture.server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE, ...call })
+    expect(fixture.fake.joinCalls.filter((roomId) => roomId === getChatRoomId(DOMAIN))).toHaveLength(1)
+
+    await expect(
+      fixture.server.sendChatMessage({
+        domain: DOMAIN,
+        event: text('forged', USER.id),
+        ...call,
+        caller: { tab: { id: 8, url: pageUrl } }
+      })
+    ).rejects.toThrow('binding is no longer current')
+    disposeServer(fixture.server)
+  })
+
+  it('sends a real exact Page rebind after a fresh Background and never promotes stale hints', async () => {
+    const first = createAdmissionFixture()
+    await first.attach()
+    expect(first.storageState[RUNTIME_PAGE_BINDINGS_KEY]).toEqual({
+      pages: [{ tabId: 7, pageId, domain: DOMAIN, url: pageUrl }]
+    })
+
+    const secondFake = createFakeTransport()
+    const second = createServer({ transport: secondFake.transport, admission: first.admission })
+    await restoreServerPageBindings(second)
+    expect(first.rebindPage).toHaveBeenCalledWith(7, pageId)
+
+    const oldCall = await first.call()
+    await expect(second.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE, ...oldCall })).rejects.toThrow(
+      'binding is no longer current'
+    )
+
+    first.tabs.set(7, { id: 7, url: `${DOMAIN}/new-topic` })
+    await restoreServerPageBindings(second)
+    expect(first.storageState[RUNTIME_PAGE_BINDINGS_KEY]).toEqual({ pages: [] })
+    disposeServer(first.server)
+    disposeServer(second)
+  })
+
+  it('retires a provisional callback when its exact browser binding drifts during the full snapshot', async () => {
+    const fixture = createAdmissionFixture()
+    await fixture.attach()
+    const call = await fixture.call()
+    let releaseSnapshot!: () => void
+    const snapshotGate = new Promise<void>((resolve) => {
+      releaseSnapshot = resolve
+    })
+
+    const registration = fixture.server.onSessionEvent(call, async () => snapshotGate)
+    await Promise.resolve()
+    fixture.tabs.set(7, { id: 7, url: `${DOMAIN}/other-topic` })
+    releaseSnapshot()
+    await registration
+
+    await expect(fixture.server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE, ...call })).rejects.toThrow(
+      'binding is no longer current'
+    )
+    disposeServer(fixture.server)
+  })
 })
 afterEach(() => {
   vi.useRealTimers()
