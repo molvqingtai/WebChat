@@ -6,6 +6,7 @@ import { RUNTIME_NAMESPACE_PREFIX } from '@/runtime/Contract'
 import type { MessageMeta } from '@/service/adapter/runtime/Provider'
 import { createServer, disposeServer } from '@/runtime/Server'
 import { createRoomTransport } from '@/runtime/RoomTransportProvider'
+import type { RoomTransport } from '@/runtime/RoomTransport'
 import type { HostHandle } from '@/runtime/HostOwner'
 
 export type { HostHandle } from '@/runtime/HostOwner'
@@ -17,9 +18,13 @@ type HostAdapter = Adapter<MessageMeta> & { dispose: () => void }
  * Firefox long-lived Background Page) adapt their own messaging capability
  * and expose the same headless RuntimeServer over comctx.
  */
-export const startHost = (adapter: HostAdapter, presenceStore: PresenceStore): HostHandle => {
+export const startHost = (
+  adapter: HostAdapter,
+  presenceStore: PresenceStore,
+  transport: RoomTransport = createRoomTransport()
+): HostHandle => {
   const server = createServer({
-    transport: createRoomTransport(),
+    transport,
     presenceStore
   })
   const [provideRuntime] = defineProxy(() => server, {

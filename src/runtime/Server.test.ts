@@ -79,8 +79,13 @@ const sessionObservers = (server: RuntimeServer, pageId: string): SessionObserve
 const registerSessionObservers = async (server: RuntimeServer, pageId: string, observers: SessionObservers) => {
   if (observers.registered) return
   observers.registered = true
+  let initialRefreshPending = true
   await server.onSessionEvent({ pageId }, async (event: RuntimeSessionEvent) => {
-    if (event.type === 'snapshot' && event.snapshot.localSession) {
+    // These observers model lifecycle commits. Callback binding emits its first refresh projection
+    // before later join/reconnect refreshes, which retain their existing lifecycle coverage.
+    const initialRefresh = initialRefreshPending && event.type === 'snapshot' && event.provenance === 'refresh'
+    initialRefreshPending = false
+    if (event.type === 'snapshot' && !initialRefresh && event.snapshot.localSession) {
       for (const listener of observers.local) {
         await listener({ domain: event.domain, session: event.snapshot.localSession })
       }
@@ -3577,6 +3582,30 @@ describe('RuntimeServer provisional recovery races', () => {
 })
 
 describe('RuntimeServer trusted delivery', () => {
+  it('projects the current domain session snapshot whenever a Page callback binds', async () => {
+    const { server } = await setup()
+    const first: RuntimeSessionEvent[] = []
+    const replacement: RuntimeSessionEvent[] = []
+
+    await server.onSessionEvent({ pageId: 'page-a' }, (event) => {
+      first.push(event)
+    })
+    await server.onSessionEvent({ pageId: 'page-a' }, (event) => {
+      replacement.push(event)
+    })
+
+    expect(first).toEqual([
+      expect.objectContaining({
+        type: 'snapshot',
+        domain: DOMAIN,
+        provenance: 'refresh',
+        snapshot: expect.objectContaining({ localSession: expect.objectContaining({ user: USER }) })
+      })
+    ])
+    expect(replacement).toEqual(first)
+    disposeServer(server)
+  })
+
   it('binds live authors to the transport source session and ignores payload identity claims', async () => {
     const { fake, server, roomId } = await setup()
     const received: string[] = []
@@ -3608,7 +3637,7 @@ describe('RuntimeServer trusted delivery', () => {
     fake.receive(roomId, 'peer-a', { ...accepted, joinedAt: undefined } as unknown as TestWireMessage)
     await settle()
 
-    expect(events.map(({ type }) => type)).toEqual(['join', 'snapshot'])
+    expect(events.map(({ type }) => type)).toEqual(['snapshot', 'join', 'snapshot'])
     expect((await server.getSnapshot()).domains[0].sessions).toEqual([
       expect.objectContaining({
         sourcePeerId: 'peer-a',

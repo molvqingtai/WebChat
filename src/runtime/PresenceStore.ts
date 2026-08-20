@@ -8,9 +8,7 @@ import {
 import stringToHex from '@/utils/stringToHex'
 
 const PRESENCE_STORAGE_PREFIX = 'WEB_CHAT_RUNTIME_PRESENCE_V1'
-const PRESENCE_STORE_NAMESPACE_PREFIX = 'WEB_CHAT_RUNTIME_PRESENCE_STORE_V1'
 const PRESENCE_STORE_OPERATION_TIMEOUT_MS = 5000
-export const presenceStoreNamespace = (runtimeId: string) => `${PRESENCE_STORE_NAMESPACE_PREFIX}:${runtimeId}`
 
 const boundedId = v.pipe(v.string(), v.minLength(1), v.maxLength(128))
 const domainOrigin = v.pipe(v.string(), v.minLength(1), v.maxLength(2048))

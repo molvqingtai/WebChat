@@ -76,6 +76,7 @@ export class Coordinator {
   private readonly pendingPageErrors = new Map<string, RuntimeErrorEvent[]>()
   private readonly confirmedRemovedTabs = new Set<number>()
   private creating: Promise<RuntimeHostStatus> | null = null
+  private rebuilding: Promise<void> = Promise.resolve()
   private restoration: Promise<void> | null = null
   private persistTail: Promise<void> = Promise.resolve()
   private healthTimer: ReturnType<typeof globalThis.setInterval> | null = null
@@ -242,8 +243,9 @@ export class Coordinator {
   private async rebuildTabs() {
     await this.reconcileTabs()
     await Promise.all(
-      this.currentTabs().map((binding) =>
-        withDeadline(
+      this.currentTabs().map((binding) => {
+        if (this.pending.get(binding.tabId)?.pageId === binding.pageId) return Promise.resolve()
+        return withDeadline(
           this.options.attachPage({ domain: binding.domain, pageId: binding.pageId }),
           COORDINATOR_RPC_TIMEOUT_MS,
           'Runtime page attachment timed out'
@@ -262,7 +264,7 @@ export class Coordinator {
           }
           this.queuePageFailure(binding, failure)
         })
-      )
+      })
     )
   }
 
@@ -287,7 +289,11 @@ export class Coordinator {
             this.hostPhase = 'unavailable'
           }
           await this.persist()
-          if (result.created && this.hostPhase === 'ready') await this.rebuildTabs()
+          if (result.created && this.hostPhase === 'ready') {
+            // A logical Runtime replacement restores persisted leases independently. The Page
+            // whose real registration caused this ensure remains the only readiness blocker.
+            this.rebuilding = this.rebuildTabs().catch((error) => this.routeReconcileFailure(error))
+          }
           return { phase: this.hostPhase, generation: this.generation }
         })
         .finally(() => {
@@ -497,8 +503,10 @@ export class Coordinator {
     await this.persist()
     if (this.tabs.size > 0) {
       this.maintainHost()
-      const status = await this.ensureHost()
-      if (status.phase === 'ready') await this.reconcileTabs()
+      // Stored tabs are hints, not a foreground admission dependency. Each restored binding is
+      // re-read from Tabs before attachment, while a current Page registration waits only for
+      // its own trusted tab and Runtime response.
+      void this.ensureHost().catch((error) => this.routeReconcileFailure(error))
     }
   }
 
@@ -516,7 +524,10 @@ export class Coordinator {
     await this.restore()
     if (this.tabs.size > 0) {
       const status = await this.ensureHost()
-      if (status.phase === 'ready') await this.reconcileTabs()
+      if (status.phase === 'ready') {
+        await this.rebuilding
+        await this.reconcileTabs()
+      }
     }
   }
 

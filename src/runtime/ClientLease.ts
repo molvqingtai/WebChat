@@ -8,7 +8,6 @@ export interface ClientLeaseOptions {
   domain: string
   startupTimeoutMs?: number
   startupRetryIntervalMs?: number
-  watchdogIntervalMs?: number
 }
 
 const wait = (milliseconds: number, signal: AbortSignal) =>
@@ -53,22 +52,17 @@ export class ClientLease {
   private snapshotValue: RuntimeSnapshot | null = null
   private coordinatorGeneration = 0
   private ready = false
-  private watchdog: ReturnType<typeof globalThis.setInterval> | null = null
   private lifecycle: AbortController | null = null
-  private recovering: { lifecycle: AbortController; deadline: number; task: Promise<void> } | null = null
-  private checking: { deadline: number; task: Promise<void> } | null = null
   private readonly readyCallbacks = new Set<() => void>()
   private readonly hostPhaseCallbacks = new Set<(phase: HostPhase) => void>()
   private readonly failureCallbacks = new Set<(error: Error) => void>()
   private hostPhase: HostPhase = 'none'
   private readonly startupTimeoutMs
   private readonly startupRetryIntervalMs
-  private readonly watchdogIntervalMs
 
   constructor(private readonly options: ClientLeaseOptions) {
     this.startupTimeoutMs = options.startupTimeoutMs ?? 15000
     this.startupRetryIntervalMs = options.startupRetryIntervalMs ?? 1000
-    this.watchdogIntervalMs = options.watchdogIntervalMs ?? 5000
   }
 
   whenReady(callback: () => void) {
@@ -83,7 +77,7 @@ export class ClientLease {
     return () => this.hostPhaseCallbacks.delete(callback)
   }
 
-  /** Every distinct real control-plane failure is surfaced once here; polling never stops on failure. */
+  /** Every distinct real control-plane failure is surfaced once here. */
   whenFailure(callback: (error: Error) => void) {
     this.failureCallbacks.add(callback)
     return () => this.failureCallbacks.delete(callback)
@@ -161,93 +155,45 @@ export class ClientLease {
     return registration.snapshot
   }
 
-  private recover(lifecycle: AbortController, deadline: number) {
-    if (!this.isCurrent(lifecycle)) return Promise.resolve()
-    if (this.recovering?.lifecycle === lifecycle && Date.now() < this.recovering.deadline) {
-      return this.recovering.task
-    }
-    this.setHostPhase('connecting')
-    const recovery = { lifecycle, deadline, task: Promise.resolve() }
-    const task = this.attach(lifecycle, deadline)
-      .then(() => {})
-      .catch((error) => {
-        if (!this.isCurrent(lifecycle) || this.recovering !== recovery) return
-        this.setHostPhase('unavailable')
-        this.emitFailure(error)
-      })
-    recovery.task = task
-    this.recovering = recovery
-    void task.finally(() => {
-      if (this.recovering?.task === task) this.recovering = null
-    })
-    return task
-  }
-
-  private async checkOnce(check: { deadline: number }) {
+  /**
+   * A real Page RPC may explicitly refresh its exact binding. There is deliberately no timer:
+   * browser events, not a page health loop, wake or recover the Background authority.
+   */
+  async checkNow() {
     const lifecycle = this.lifecycle
     if (!lifecycle || !this.isCurrent(lifecycle)) return
-    const attemptDeadline = Math.min(check.deadline, Date.now() + CLIENT_LEASE_RPC_TIMEOUT_MS)
+    const deadline = Date.now() + this.startupTimeoutMs
     try {
-      const registration = await withDeadline(
-        this.options.coordinator.registerPage(this.lease()),
-        attemptDeadline - Date.now(),
-        lifecycle.signal
-      )
+      const registration = await this.registerWithinBudget(lifecycle, deadline)
       if (!this.isCurrent(lifecycle)) return
       this.emitRegistrationFailures(registration)
-      if (Date.now() >= attemptDeadline) throw new Error('Runtime control-plane request timed out')
-      if (this.checking !== check || Date.now() >= check.deadline) return
       const lease = registration.snapshot.domains.find((item) => item.domain === this.options.domain)
       const replaced =
         registration.generation !== this.coordinatorGeneration ||
         registration.snapshot.hostId !== this.snapshotValue?.hostId ||
         !lease?.pageIds.includes(this.options.pageId)
       if (replaced) {
-        this.ready = false
-        await this.recover(lifecycle, check.deadline)
+        // This exact RPC is the sole new admission. Adopt its current state directly instead of
+        // issuing another probe or replaying an action through a recovery helper.
+        this.snapshotValue = registration.snapshot
+        this.coordinatorGeneration = registration.generation
+        this.ready = true
+        this.setHostPhase(registration.snapshot.hostPhase)
+        this.readyCallbacks.forEach((callback) => callback())
         return
       }
       this.snapshotValue = registration.snapshot
       this.setHostPhase(registration.snapshot.hostPhase)
     } catch (error) {
-      if (!this.isCurrent(lifecycle) || this.checking !== check) return
-      if (Date.now() >= check.deadline) {
-        this.ready = false
-        this.setHostPhase('unavailable')
-        this.emitFailure(error)
-        return
-      }
+      if (!this.isCurrent(lifecycle)) return
       this.ready = false
-      await this.recover(lifecycle, check.deadline)
+      this.setHostPhase('unavailable')
+      this.emitFailure(error)
     }
-  }
-
-  checkNow() {
-    const now = Date.now()
-    if (this.checking && now < this.checking.deadline) return this.checking.task
-    if (this.recovering && now >= this.recovering.deadline) this.recovering = null
-    const check = { deadline: now + this.startupTimeoutMs, task: Promise.resolve() }
-    const task = this.checkOnce(check).finally(() => {
-      if (this.checking?.task === task) this.checking = null
-    })
-    check.task = task
-    this.checking = check
-    return task
-  }
-
-  private startWatchdog(lifecycle: AbortController) {
-    if (this.watchdog || !this.isCurrent(lifecycle)) return
-    this.watchdog = globalThis.setInterval(() => {
-      if (this.isCurrent(lifecycle)) void this.checkNow()
-    }, this.watchdogIntervalMs)
   }
 
   async init(): Promise<RuntimeSnapshot | null> {
     this.lifecycle?.abort(new DOMException('Runtime lease superseded', 'AbortError'))
-    this.recovering = null
-    this.checking = null
-    if (this.watchdog) globalThis.clearInterval(this.watchdog)
-    this.watchdog = null
     const lifecycle = new AbortController()
     this.lifecycle = lifecycle
     this.ready = false
@@ -255,7 +201,6 @@ export class ClientLease {
     try {
       const snapshot = await this.attach(lifecycle)
       if (!snapshot || !this.isCurrent(lifecycle)) return null
-      this.startWatchdog(lifecycle)
       return snapshot
     } catch (error) {
       if (lifecycle.signal.aborted) return null
@@ -270,14 +215,8 @@ export class ClientLease {
   detach() {
     this.lifecycle?.abort(new DOMException('Runtime lease detached', 'AbortError'))
     this.lifecycle = null
-    this.recovering = null
-    this.checking = null
     this.ready = false
     this.setHostPhase('none')
-    if (this.watchdog) {
-      globalThis.clearInterval(this.watchdog)
-      this.watchdog = null
-    }
   }
 
   snapshot(): RuntimeSnapshot {

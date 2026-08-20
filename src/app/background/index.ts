@@ -6,14 +6,7 @@ import { defineAppActionProxy, defineNotificationProxy } from '@/service/Contrac
 import { Notification } from '@/service/Notification'
 import { COORDINATOR_NAMESPACE } from '@/runtime/Contract'
 import type { RuntimeCoordinator } from '@/runtime/Contract'
-import {
-  ensureHost,
-  registerPage,
-  relayOffscreenMessages,
-  restore,
-  watchTabs,
-  watchOffscreenClosed
-} from '@/runtime/Background'
+import { ensureHost, registerPage, restore, watchTabs, watchOffscreenClosed } from '@/runtime/Background'
 import { registerActionClick } from '@/app/background/ActionRegistration'
 import { registerBrowserSyncStoragePreparation } from '@/service/StoragePreparation'
 
@@ -34,7 +27,6 @@ export default defineBackground({
       namespace: `${COORDINATOR_NAMESPACE}:${browser.runtime.id}`
     })
     provideCoordinator(new ProvideAdapter())
-    if (!import.meta.env.FIREFOX) relayOffscreenMessages()
     watchOffscreenClosed()
     watchTabs()
     void restore()

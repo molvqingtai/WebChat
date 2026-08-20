@@ -588,7 +588,23 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       return task
     },
     onInbound: async (payload, callback) => pagePort.onInbound(payload.pageId, callback),
-    onSessionEvent: async (payload, callback) => pagePort.onSessionEvent(payload.pageId, callback),
+    onSessionEvent: async (payload, callback) => {
+      pagePort.onSessionEvent(payload.pageId, callback)
+      const lease = store
+        .query(lifecycleDomain.query.DomainLeasesQuery())
+        .find((candidate) => candidate.pageIds.includes(payload.pageId))
+      if (!lease) return
+      const runtime = snapshot().domains.find((candidate) => candidate.domain === lease.domain)
+      await pagePort.emitSessionEvent([payload.pageId], {
+        type: 'snapshot',
+        domain: lease.domain,
+        snapshot: {
+          ...(runtime?.localSession ? { localSession: runtime.localSession } : {}),
+          sessions: runtime?.sessions ?? []
+        },
+        provenance: 'refresh'
+      })
+    },
     onWorldPresence: async (payload, callback) => pagePort.onWorldPresence(payload.pageId, callback),
     onError: async (payload, callback) => pagePort.onError(payload.pageId, callback),
     onHistoryFeedback: async (payload, callback) => pagePort.onHistoryFeedback(payload.pageId, callback),

@@ -556,6 +556,50 @@ describe('Coordinator trusted Tabs lifecycle', () => {
     })
   })
 
+  it('waits only for the current Page while restoring unrelated persisted tab hints', async () => {
+    let releaseUnrelated!: () => void
+    const unrelatedLookup = new Promise<void>((resolve) => {
+      releaseUnrelated = resolve
+    })
+    const lookups: number[] = []
+    const attachPage = vi.fn(async ({ domain, pageId }: { domain: string; pageId: string }) => snapshot(domain, pageId))
+    const coordinator = new Coordinator({
+      storage: {
+        get: async () => ({
+          'WEB_CHAT_RUNTIME_COORDINATOR_V3:state': {
+            generation: 1,
+            hostId: 'stale-host',
+            tabs: [
+              { tabId: 1, domain: DOMAIN_A, pageId: 'page-current', url: `${DOMAIN_A}/topic` },
+              { tabId: 2, domain: DOMAIN_B, pageId: 'page-unrelated', url: `${DOMAIN_B}/topic` }
+            ]
+          }
+        }),
+        set: async () => {}
+      },
+      ensureHostDocument: async () => ({ phase: 'ready', created: false }),
+      probeHost: async () => ({ hostId: 'current-host', phase: 'ready' as const }),
+      destroyHostDocument: async () => {},
+      attachPage,
+      detachPage: async () => {},
+      tabs: {
+        get: async (tabId: number) => {
+          lookups.push(tabId)
+          if (tabId === 2) await unrelatedLookup
+          return { id: tabId, url: `${tabId === 1 ? DOMAIN_A : DOMAIN_B}/topic` }
+        }
+      }
+    })
+
+    await expect(
+      coordinator.registerPage({ domain: DOMAIN_A, pageId: 'page-current', tab: { id: 1, url: `${DOMAIN_A}/topic` } })
+    ).resolves.toMatchObject({ phase: 'ready', generation: 2 })
+    await vi.waitFor(() => expect(lookups).toContain(2))
+
+    releaseUnrelated()
+    await coordinator.reconcile()
+  })
+
   it('uses tab activation only as a wake and reconciliation trigger', () => {
     const source = readFileSync(path.resolve(process.cwd(), 'src/runtime/Background.ts'), 'utf8')
 

@@ -3,7 +3,6 @@ import type { Message } from 'comctx'
 import { InjectAdapter, ownInjectRejections } from '@/service/adapter/runtime'
 import { BackgroundInjectAdapter } from '@/service/adapter/runtime/Core'
 import { ProviderAdapter, type MessageMeta } from '@/service/adapter/runtime/Provider'
-import { relayOffscreenProviderMessages } from '@/service/adapter/runtime/Relay'
 import { TabsProviderAdapter } from '@/service/adapter/runtime/Tabs'
 
 const createMessaging = () => {
@@ -35,8 +34,6 @@ const providerMessage = (id: string, overrides: Partial<Message<MessageMeta>> = 
   ...overrides
 })
 
-const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
-
 describe('Runtime browser adapters', () => {
   it('preserves the native Runtime rejection through the content InjectAdapter seam', async () => {
     const { runtime, sendMessage } = createMessaging()
@@ -58,7 +55,7 @@ describe('Runtime browser adapters', () => {
     }
   })
 
-  it('keeps the Offscreen provider on runtime messaging without a tabs capability', () => {
+  it('keeps the Offscreen transport provider on runtime messaging without a tabs capability', () => {
     const { runtime, listeners, sendMessage } = createMessaging()
     const adapter = new ProviderAdapter(runtime)
     const received = vi.fn()
@@ -151,142 +148,7 @@ describe('Runtime browser adapters', () => {
     expect(sendMessage).toHaveBeenCalledWith(message)
   })
 
-  it('relays only trusted Offscreen provider messages to their exact live tab', async () => {
-    const { runtime, listeners } = createMessaging()
-    const tabs = {
-      query: vi.fn(),
-      get: vi.fn(async (tabId: number) => {
-        if (tabId === 8) return { id: tabId, url: 'https://elsewhere.example/' }
-        if (tabId === 9) throw new Error('No tab')
-        return { id: tabId, url: 'https://example.com/' }
-      }),
-      sendMessage: vi.fn()
-    }
-    const rejected = vi.fn()
-    const dispose = relayOffscreenProviderMessages({
-      runtime: runtime as never,
-      tabs,
-      namespace: 'WEB_CHAT_RUNTIME_V2:test-extension',
-      offscreenUrl: 'chrome-extension://test-extension/offscreen.html',
-      onRejected: rejected
-    })
-    const listener = [...listeners][0]!
-    const offscreen = { url: 'chrome-extension://test-extension/offscreen.html' } as never
-    const content = { url: 'https://example.com/' } as never
-    const malformedMessages: unknown[] = [null, 'raw', 0, false, [], {}, { sender: { type: 'provider' } }]
-
-    malformedMessages.forEach((message) => {
-      expect(() => listener(message, offscreen)).not.toThrow()
-      expect(() => listener(message, content)).not.toThrow()
-    })
-    listener(providerMessage('valid'), offscreen)
-    listener(providerMessage('forged'), { url: 'chrome-extension://test-extension/options.html' } as never)
-    listener(providerMessage('namespace', { namespace: 'UNKNOWN' }), offscreen)
-    listener(providerMessage('direction', { sender: { type: 'injector' } }), offscreen)
-    listener(
-      providerMessage('presence-request', {
-        sender: { type: 'injector' },
-        namespace: 'WEB_CHAT_RUNTIME_PRESENCE_STORE_V1:test-extension',
-        meta: {}
-      }),
-      offscreen
-    )
-    listener(
-      providerMessage('presence-response', {
-        namespace: 'WEB_CHAT_RUNTIME_PRESENCE_STORE_V1:test-extension',
-        meta: {}
-      }),
-      { url: 'chrome-extension://test-extension/background.js' } as never
-    )
-    listener(providerMessage('schema', { id: '' }), offscreen)
-    listener(providerMessage('background', { meta: {} }), offscreen)
-    listener(providerMessage('target', { meta: { tab: { id: 7, url: 'http://example.com/' } } }), offscreen)
-    listener(providerMessage('mismatch', { meta: { tab: { id: 8, url: 'https://example.com/' } } }), offscreen)
-    listener(providerMessage('missing', { meta: { tab: { id: 9, url: 'https://example.com/' } } }), offscreen)
-    listener(providerMessage('normal-injector', { sender: { type: 'injector' } }), content)
-    await settle()
-
-    expect(tabs.sendMessage).toHaveBeenCalledTimes(1)
-    expect(tabs.sendMessage).toHaveBeenCalledWith(7, providerMessage('valid'))
-    expect(rejected.mock.calls.map(([result]) => result)).toEqual([
-      ...malformedMessages.map(() => ({ reason: 'invalid-message' })),
-      { reason: 'untrusted-source', targetId: 7 },
-      { reason: 'invalid-namespace', targetId: 7 },
-      { reason: 'invalid-direction', targetId: 7 },
-      { reason: 'invalid-message' },
-      { reason: 'invalid-target' },
-      { reason: 'target-mismatch', targetId: 8 },
-      { reason: 'target-unavailable', targetId: 9 }
-    ])
-
-    dispose()
-    expect(listeners.size).toBe(0)
-  })
-
-  it('drops malformed relays without an onRejected observer', async () => {
-    const { runtime, listeners } = createMessaging()
-    const tabs = {
-      query: vi.fn(),
-      get: vi.fn(async () => {
-        throw new Error('No tab')
-      }),
-      sendMessage: vi.fn()
-    }
-    // The production call site no longer passes onRejected: drops keep their exact behavior with
-    // no observer attached.
-    const dispose = relayOffscreenProviderMessages({
-      runtime: runtime as never,
-      tabs,
-      namespace: 'WEB_CHAT_RUNTIME_V2:test-extension',
-      offscreenUrl: 'chrome-extension://test-extension/offscreen.html'
-    })
-    const listener = [...listeners][0]!
-    const offscreen = { url: 'chrome-extension://test-extension/offscreen.html' } as never
-
-    expect(() => listener(null, offscreen)).not.toThrow()
-    expect(() => listener({ sender: { type: 'provider' } }, offscreen)).not.toThrow()
-    await settle()
-    expect(tabs.sendMessage).not.toHaveBeenCalled()
-
-    dispose()
-    expect(listeners.size).toBe(0)
-  })
-
-  it('keeps hash-only navigation routable while fencing real navigation', async () => {
-    const { runtime, listeners } = createMessaging()
-    let currentUrl = 'https://example.com/topic?sort=new#reply-2'
-    const tabs = {
-      query: vi.fn(),
-      get: vi.fn(async (tabId: number) => ({ id: tabId, url: currentUrl })),
-      sendMessage: vi.fn()
-    }
-    const rejected = vi.fn()
-    relayOffscreenProviderMessages({
-      runtime: runtime as never,
-      tabs,
-      namespace: 'WEB_CHAT_RUNTIME_V2:test-extension',
-      offscreenUrl: 'chrome-extension://test-extension/offscreen.html',
-      onRejected: rejected
-    })
-    const listener = [...listeners][0]!
-    const offscreen = { url: 'chrome-extension://test-extension/offscreen.html' } as never
-    const response = providerMessage('hash-in-flight', {
-      meta: { tab: { id: 7, url: 'https://example.com/topic?sort=new#reply-1' } }
-    })
-
-    listener(response, offscreen)
-    await settle()
-    expect(tabs.sendMessage).toHaveBeenCalledWith(7, response)
-
-    tabs.sendMessage.mockClear()
-    currentUrl = 'https://example.com/other?sort=new#reply-1'
-    listener(response, offscreen)
-    await settle()
-    expect(tabs.sendMessage).not.toHaveBeenCalled()
-    expect(rejected).toHaveBeenLastCalledWith({ reason: 'target-mismatch', targetId: 7 })
-  })
-
-  it('guards every listener on the shared Runtime bus before raw message access', async () => {
+  it('guards every listener on the shared Runtime bus before raw message access', () => {
     const { runtime, listeners } = createMessaging()
     const providerReceived = vi.fn()
     const injectReceived = vi.fn()
@@ -299,23 +161,6 @@ describe('Runtime browser adapters', () => {
     const disposeInject = inject.onMessage(injectReceived)
     const injectListener = [...listeners].at(-1)!
 
-    const tabs = {
-      query: vi.fn(),
-      get: vi.fn().mockResolvedValue({ id: 7, url: 'https://example.com/' }),
-      sendMessage: vi.fn()
-    }
-    const rejected = vi.fn()
-    const disposeRelay = relayOffscreenProviderMessages({
-      runtime: runtime as never,
-      tabs,
-      namespace: 'WEB_CHAT_RUNTIME_V2:test-extension',
-      offscreenUrl: 'chrome-extension://test-extension/offscreen.html',
-      onRejected: rejected
-    })
-    const relayListener = [...listeners].at(-1)!
-
-    const offscreen = { url: 'chrome-extension://test-extension/offscreen.html' }
-    const content = { url: 'https://example.com/', tab: { id: 7, url: 'https://example.com/' } }
     const malformedMessages: unknown[] = [
       null,
       'raw',
@@ -331,35 +176,26 @@ describe('Runtime browser adapters', () => {
     }
 
     malformedMessages.forEach((message) => {
-      expect(() => dispatch(message, offscreen)).not.toThrow()
-      expect(() => dispatch(message, content)).not.toThrow()
+      expect(() => dispatch(message, { url: 'chrome-extension://test-extension/offscreen.html' })).not.toThrow()
+      expect(() =>
+        dispatch(message, { url: 'https://example.com/', tab: { id: 7, url: 'https://example.com/' } })
+      ).not.toThrow()
     })
 
     expect(providerReceived).not.toHaveBeenCalled()
     expect(injectReceived).not.toHaveBeenCalled()
-    expect(tabs.get).not.toHaveBeenCalled()
-    expect(tabs.sendMessage).not.toHaveBeenCalled()
-    expect(rejected.mock.calls.map(([value]) => value)).toEqual(
-      malformedMessages.map(() => ({ reason: 'invalid-message' }))
-    )
 
     const providerRequest = providerMessage('provider-valid', { sender: { type: 'injector' }, meta: {} })
-    providerListener(providerRequest, content)
+    providerListener(providerRequest, { tab: { id: 7, url: 'https://example.com/' } } as never)
     expect(providerReceived).toHaveBeenCalledWith({
       ...providerRequest,
       meta: { tab: { id: 7, url: 'https://example.com/' } }
     })
 
     const injectResponse = providerMessage('inject-valid')
-    injectListener(injectResponse, offscreen)
+    injectListener(injectResponse, { url: 'chrome-extension://test-extension/offscreen.html' })
     expect(injectReceived).toHaveBeenCalledWith(injectResponse)
 
-    const relayResponse = providerMessage('relay-valid')
-    relayListener(relayResponse, offscreen)
-    await settle()
-    expect(tabs.sendMessage).toHaveBeenCalledWith(7, relayResponse)
-
-    disposeRelay()
     provider.dispose()
     if (typeof disposeInject === 'function') disposeInject()
     expect(listeners.size).toBe(0)

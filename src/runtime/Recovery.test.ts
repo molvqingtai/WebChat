@@ -209,7 +209,7 @@ describe('Runtime host recovery and coordinator liveness', () => {
       expect(next.hostId).not.toBe(firstSnapshot!.hostId)
       expect(next.domains[0]).toMatchObject({ domain: DOMAIN, pageIds: ['page-a'], chatRoomJoined: true })
       expect(sentIds).toEqual([])
-      expect(recoveredSessions).toEqual([[{ sessionId: expect.any(String), user: USER }]])
+      expect(recoveredSessions).toEqual([[], [{ sessionId: expect.any(String), user: USER }]])
       await expect(messageStore.query({ type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE })).resolves.toEqual([])
     })
     await pageJoinTask
