@@ -1,4 +1,4 @@
-> **Final coding status (2026-08-19):** Delivery exact `e526b8700162438ba75f220ab824070206b06040` uses registry `@rtco/client@0.3.6`, delegates directly to its native send behavior, and keeps exactly three unpublished ready-only/attempt-all controls skipped. Hosted CI `32247303999` and fresh cumulative CODE FINAL PASS `0/0/0` are complete. Immutable integration commit `0deb0f0fa2fc1ec17f05043f8fb47bc4c11de71f` was repaired-version build evidence only and is not a delivery dependency or merge gate.
+> **Final coding status (2026-08-20):** Follow-up exact `69c6a8a46af4efac02815dbd2902b24e7cc1e687` keeps registry `@rtco/client@0.3.6`, applies the reviewed repair through pnpm's native patch mechanism, leaves the production adapter on direct `room.send(payload, target)`, and restores all three ready-only/attempt-all controls. Hosted CI `32330416985` and fresh cumulative CODE FINAL PASS `0/0/0` report `c9a7ce60` are complete. No additional patch-effect proof gate is required.
 
 ## 1. Product Authority
 
@@ -40,9 +40,17 @@
 ## 5. Registry Dependency and Delivery
 
 - [x] 5.1 Restore registry `@rtco/client@0.3.6`, regenerate the lockfile, and remove the temporary Git-subdirectory workspace exclusion; retain no fork, moving ref, local path, or workspace dependency.
-- [x] 5.2 Remove WebChat compatibility `readyPeers`/per-peer fan-out, retain direct `room.send(payload, target)`, make the fake match 0.3.6 unguarded/abort-first behavior, and explicitly skip exactly three tests that require unpublished ready-only/attempt-all semantics.
+- [x] 5.2 For the original unpatched 0.3.6 delivery, remove WebChat compatibility `readyPeers`/per-peer fan-out, retain direct `room.send(payload, target)`, make the fake match unguarded/abort-first behavior, and explicitly skip exactly three unavailable ready-only/attempt-all controls.
 - [x] 5.3 Pass focused/full/static/build/pack/OpenSpec/Archify gates, hosted CI `32247303999`, and fresh cumulative CODE FINAL PASS `0/0/0` on exact `e526b870`.
 - [x] 5.4 Update canonical task/status truth to the reviewed 0.3.6 exact and current Owner decision.
-- [ ] 5.5 After the four-item batch has exact CI, reviews, applicable docs/status, and no live hold, perform its ordinary protected merge to `develop`; no separate Owner acceptance is required.
-- [ ] 5.6 If the Owner later authorizes a repaired official Artico version, replace 0.3.6 with that exact registry version, regenerate the lockfile, directly verify the package, re-enable all three skipped tests, rerun complete gates, and obtain fresh coding review.
+- [x] 5.5 After the four-item batch has exact CI, reviews, applicable docs/status, and no live hold, perform its ordinary protected merge to `develop`; no separate Owner acceptance is required.
+- [ ] 5.6 If the Owner later authorizes a repaired official Artico version, replace 0.3.6 with that exact registry version, intentionally remove or regenerate the native patch metadata, rerun the active controls and complete gates, and obtain fresh coding review.
 - [x] 5.7 Record the separate Owner authorization for direct `develop` to `master` promotion after the corrected batch reaches `develop`, without adding another build/review/acceptance stage; release, deploy, signaling-server change, and production writes remain unauthorized.
+
+## 6. Native Artico Patch Follow-up
+
+- [x] 6.1 Keep registry `@rtco/client@0.3.6` and generate `patches/@rtco__client@0.3.6.patch`, the canonical `pnpm-workspace.yaml` mapping, and lockfile patch hash only through pnpm native `patch`/`patch-commit`; add no custom runner, vendor copy, Git dependency, or manual release build.
+- [x] 6.2 Keep the production adapter byte-unchanged on direct `room.send(payload, target)` and restore the three pending-skip, selected-order, and first-ready-failure controls.
+- [x] 6.3 Pass focused 30/30, full 974, static/build/pack/OpenSpec/Archify gates, exact hosted CI `32330416985`, and fresh CODE FINAL PASS `0/0/0` on `69c6a8a4`.
+- [x] 6.4 Synchronize canonical design/spec/task truth to the reviewed native-patch exact; per Owner rule, canonical docs require no independent review.
+- [ ] 6.5 Keep Draft PR #151 frozen until explicit Ready/merge authority; do not perform master promotion, release, deploy, signaling-server change, or production action.
