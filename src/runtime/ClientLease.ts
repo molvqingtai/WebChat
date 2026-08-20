@@ -52,7 +52,7 @@ export class ClientLease {
   private snapshotValue: RuntimeSnapshot | null = null
   private ready = false
   private lifecycle: AbortController | null = null
-  private readonly readyCallbacks = new Set<() => void>()
+  private readonly readyCallbacks = new Set<() => void | Promise<void>>()
   private readonly hostPhaseCallbacks = new Set<(phase: HostPhase) => void>()
   private readonly failureCallbacks = new Set<(error: Error) => void>()
   private hostPhase: HostPhase = 'none'
@@ -64,9 +64,13 @@ export class ClientLease {
     this.startupRetryIntervalMs = options.startupRetryIntervalMs ?? 1000
   }
 
-  whenReady(callback: () => void) {
+  whenReady(callback: () => void | Promise<void>) {
     this.readyCallbacks.add(callback)
-    if (this.ready) callback()
+    if (this.ready) {
+      void Promise.resolve()
+        .then(callback)
+        .catch((error) => this.emitFailure(error))
+    }
     return () => this.readyCallbacks.delete(callback)
   }
 
@@ -112,6 +116,12 @@ export class ClientLease {
     registration.failures?.forEach((failure) => this.emitFailure(new Error(failure.message)))
   }
 
+  private async notifyReady(lifecycle: AbortController) {
+    await Promise.all([...this.readyCallbacks].map((callback) => Promise.resolve().then(callback)))
+    if (!this.isCurrent(lifecycle))
+      throw lifecycle.signal.reason ?? new DOMException('Runtime lease aborted', 'AbortError')
+  }
+
   /** Callback delivery rejections are diagnostic only; error content never controls the lease lifecycle. */
   observeTransportRejection(_error: unknown) {
     return false
@@ -145,9 +155,9 @@ export class ClientLease {
     const registration = await this.registerWithinBudget(lifecycle, deadline)
     if (!this.isCurrent(lifecycle)) return null
     this.snapshotValue = registration.snapshot
+    await this.notifyReady(lifecycle)
     this.ready = true
     this.setHostPhase(registration.snapshot.hostPhase)
-    this.readyCallbacks.forEach((callback) => callback())
     this.emitRegistrationFailures(registration)
     return registration.snapshot
   }
@@ -171,9 +181,10 @@ export class ClientLease {
         // This exact RPC is the sole new admission. Adopt its current state directly instead of
         // issuing another probe or replaying an action through a recovery helper.
         this.snapshotValue = registration.snapshot
+        this.ready = false
+        await this.notifyReady(lifecycle)
         this.ready = true
         this.setHostPhase(registration.snapshot.hostPhase)
-        this.readyCallbacks.forEach((callback) => callback())
         return
       }
       this.snapshotValue = registration.snapshot
@@ -237,9 +248,9 @@ export class ClientLease {
       const registration = await this.registerWithinBudget(lifecycle, deadline)
       if (!this.isCurrent(lifecycle)) return
       this.snapshotValue = registration.snapshot
+      await this.notifyReady(lifecycle)
       this.ready = true
       this.setHostPhase(registration.snapshot.hostPhase)
-      this.readyCallbacks.forEach((callback) => callback())
       this.emitRegistrationFailures(registration)
     } catch (error) {
       if (!this.isCurrent(lifecycle)) return

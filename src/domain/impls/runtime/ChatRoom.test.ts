@@ -305,6 +305,47 @@ beforeEach(() => vi.useFakeTimers())
 afterEach(() => vi.useRealTimers())
 
 describe('Runtime-backed ChatRoom application port', () => {
+  it('returns a readiness task that waits for every Page callback registration and inbound replay', async () => {
+    const fixture = serverFixture()
+    const sessionRegistration = Promise.withResolvers<void>()
+    const callbackRegistrations = [
+      vi.spyOn(fixture.server, 'onInbound'),
+      vi.spyOn(fixture.server, 'onSessionEvent'),
+      vi.spyOn(fixture.server, 'onError'),
+      vi.spyOn(fixture.server, 'provideHistory'),
+      vi.spyOn(fixture.server, 'onHistoryFeedback')
+    ]
+    vi.spyOn(fixture.server, 'onSessionEvent').mockImplementation(async () => sessionRegistration.promise)
+    const database = createMemoryMessageDatabase(`readiness-task-${databaseId++}`)
+    const messageStore = createMessageStore(database)
+    let ready!: () => void | Promise<void>
+    const room = new ChatRoom({
+      server: fixture.server,
+      messageStore,
+      pageDomain: DOMAIN,
+      pageId: 'page-1',
+      getSnapshot: () => domainSnapshot(),
+      whenReady: (listener) => {
+        ready = listener
+        return () => {}
+      }
+    })
+
+    let settled = false
+    const readiness = Promise.resolve(ready()).then(() => {
+      settled = true
+    })
+    await settle()
+    callbackRegistrations.forEach((registration) => expect(registration).toHaveBeenCalledOnce())
+    expect(settled).toBe(false)
+
+    sessionRegistration.resolve()
+    await readiness
+    expect(settled).toBe(true)
+    room.dispose()
+    await database.close()
+  })
+
   it('reconstructs a transport-safe Runtime error message for domain listeners', async () => {
     const { room, emitError } = await setup()
     const errors: Error[] = []

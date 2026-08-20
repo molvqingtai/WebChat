@@ -57,6 +57,17 @@ interface PageBinding {
   sessionGeneration: number | null
 }
 
+interface PageRecovery {
+  tabId: number
+  pageId: string
+  domain: string
+  url: string
+  /** Old host calls already admitted to this exact recovery remain fenced to its lifetime. */
+  pendingHostIds: Set<string>
+  promise: Promise<void>
+  fail: (error: Error) => void
+}
+
 interface PersistedPageBindings {
   pages: Array<Pick<PageBinding, 'tabId' | 'pageId' | 'domain' | 'url'>>
 }
@@ -137,6 +148,10 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   const pageBindings = new Map<string, PageBinding>()
   const tabBindings = new Map<number, PageBinding>()
   const rebindHints = new Map<number, PersistedPageBindings['pages'][number]>()
+  const pageRecoveries = new Map<string, PageRecovery>()
+  const recoveryAdmissions = new WeakMap<object, PageRecovery>()
+  let restoreInFlight: Promise<void> | null = null
+  let recoveryHintsReady = Promise.resolve()
   let bindingPersistTail: Promise<void> = Promise.resolve()
 
   const isCurrentBinding = (binding: PageBinding) =>
@@ -169,8 +184,29 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     )
   }
 
-  const removeBinding = async (binding: PageBinding) => {
+  const waitForPageRecovery = async (payload: RuntimePageCall) => {
+    const admitted = recoveryAdmissions.get(payload)
+    if (admitted) {
+      await admitted.promise
+      return admitted
+    }
+    await recoveryHintsReady
+    const pageId = payload.pageId
+    if (!pageId) return null
+    const recovery = pageRecoveries.get(pageId)
+    if (!recovery) return null
+    if (typeof payload.runtimeHostId === 'string') recovery.pendingHostIds.add(payload.runtimeHostId)
+    recoveryAdmissions.set(payload, recovery)
+    await recovery.promise
+    return recovery
+  }
+
+  const removeBinding = async (binding: PageBinding, retainedRecovery?: PageRecovery) => {
     if (!isCurrentBinding(binding)) return
+    const recovery = pageRecoveries.get(binding.pageId)
+    if (recovery && recovery !== retainedRecovery) {
+      recovery.fail(new Error('Runtime Page recovery binding is no longer current'))
+    }
     pageBindings.delete(binding.pageId)
     tabBindings.delete(binding.tabId)
     pagePort.removePage(binding.pageId)
@@ -178,7 +214,11 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     await persistPageBindings()
   }
 
-  const requirePageBinding = async (payload: RuntimePageCall, requireSessionCallback: boolean) => {
+  const requirePageBinding = async (
+    payload: RuntimePageCall,
+    requireSessionCallback: boolean,
+    waitForRecovery = true
+  ) => {
     const admission = config.admission
     if (!admission) return null
     await admission.ensureTransport()
@@ -187,8 +227,11 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     if (!pageId || typeof callerTabId !== 'number' || !Number.isSafeInteger(callerTabId) || callerTabId < 0) {
       throw new Error('Current Page browser caller is required')
     }
+    const recovery = waitForRecovery ? await waitForPageRecovery(payload) : null
     const binding = pageBindings.get(pageId)
-    if (!binding || binding.tabId !== callerTabId || payload.runtimeHostId !== snapshot().hostId) {
+    const currentHost = payload.runtimeHostId === snapshot().hostId
+    const recoveredHost = recovery?.pendingHostIds.has(payload.runtimeHostId ?? '') ?? false
+    if (!binding || binding.tabId !== callerTabId || (!currentHost && !recoveredHost)) {
       throw new Error('Runtime Page binding is no longer current')
     }
     if (requireSessionCallback) {
@@ -233,6 +276,13 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     ) {
       throw new Error('Browser tab navigation is no longer eligible')
     }
+    const recovery = pageRecoveries.get(payload.pageId)
+    if (
+      recovery &&
+      (recovery.tabId !== tabId || recovery.domain !== payload.domain || !isSameNavigation(recovery.url, url))
+    ) {
+      throw new Error('Runtime Page recovery binding is no longer current')
+    }
     return {
       tabId: tabId!,
       pageId: payload.pageId,
@@ -252,13 +302,87 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   const installBinding = async (binding: PageBinding) => {
     const previousPage = pageBindings.get(binding.pageId)
     const previousTab = tabBindings.get(binding.tabId)
-    if (previousPage) await removeBinding(previousPage)
-    if (previousTab && previousTab !== previousPage) await removeBinding(previousTab)
+    const recovery = pageRecoveries.get(binding.pageId)
+    const retainsRecovery =
+      recovery &&
+      recovery.tabId === binding.tabId &&
+      recovery.domain === binding.domain &&
+      isSameNavigation(recovery.url, binding.url)
+        ? recovery
+        : undefined
+    if (previousPage) await removeBinding(previousPage, retainsRecovery)
+    if (previousTab && previousTab !== previousPage) await removeBinding(previousTab, retainsRecovery)
     rebindHints.delete(binding.tabId)
     pageBindings.set(binding.pageId, binding)
     tabBindings.set(binding.tabId, binding)
     store.send(lifecycleDomain.command.AttachPageCommand({ domain: binding.domain, pageId: binding.pageId }))
     await persistPageBindings()
+  }
+
+  const beginPageRecovery = (candidate: Pick<PageBinding, 'tabId' | 'pageId' | 'domain' | 'url'>) => {
+    const existing = pageRecoveries.get(candidate.pageId)
+    if (existing) return existing
+    const admission = config.admission
+    if (!admission) throw new Error('Runtime Page admission is unavailable')
+
+    let failed = false
+    let rejectCancellation!: (error: Error) => void
+    const cancellation = new Promise<never>((_resolve, reject) => {
+      rejectCancellation = reject
+    })
+    const recovery = {
+      ...candidate,
+      pendingHostIds: new Set<string>(),
+      promise: Promise.resolve(),
+      fail: (error: Error) => {
+        if (failed) return
+        failed = true
+        rejectCancellation(error)
+      }
+    } satisfies PageRecovery
+    let start!: () => void
+    const rebind = new Promise<void>((resolve, reject) => {
+      start = () => {
+        void (async () => {
+          try {
+            await admission.rebindPage(candidate.tabId, candidate.pageId)
+            const binding = pageBindings.get(candidate.pageId)
+            if (
+              !binding ||
+              !isCurrentBinding(binding) ||
+              binding.tabId !== candidate.tabId ||
+              binding.domain !== candidate.domain ||
+              !isSameNavigation(binding.url, candidate.url) ||
+              binding.sessionGeneration === null ||
+              !pagePort.isSessionEventActive(binding.pageId, binding.sessionGeneration)
+            ) {
+              throw new Error('Runtime Page recovery did not restore the current Session callback')
+            }
+            resolve()
+          } catch (error) {
+            const failure = error instanceof Error ? error : new Error(String(error))
+            const binding = pageBindings.get(candidate.pageId)
+            if (binding && binding.tabId === candidate.tabId) await removeBinding(binding, recovery)
+            else if (rebindHints.get(candidate.tabId)?.pageId === candidate.pageId) {
+              rebindHints.delete(candidate.tabId)
+              await persistPageBindings()
+            }
+            reject(failure)
+          }
+        })()
+      }
+    })
+    recovery.promise = Promise.race([rebind, cancellation])
+    pageRecoveries.set(candidate.pageId, recovery)
+    const releaseRecovery = () => {
+      if (pageRecoveries.get(candidate.pageId) === recovery) pageRecoveries.delete(candidate.pageId)
+    }
+    // A failed navigation keeps this exact fence until its already-issued rebind returns, so a
+    // late stale registration cannot recreate the retired binding with a newer tab URL.
+    void recovery.promise.catch(() => {})
+    void rebind.then(releaseRecovery, releaseRecovery)
+    start()
+    return recovery
   }
 
   const beginPresenceRecovery = (domain: string) => {
@@ -345,7 +469,12 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   const pageBridges = [
     store.subscribeEvent(sessionDomain.event.RuntimeSessionChangedEvent, (event) => {
       const pageIds = store.query(lifecycleDomain.query.DomainLeaseQuery(event.domain))?.pageIds ?? []
-      void pagePort.emitSessionEvent(pageIds, event)
+      void pagePort.emitSessionEvent(pageIds, event).then((deadPageIds) => {
+        deadPageIds.forEach((pageId) => {
+          const binding = pageBindings.get(pageId)
+          if (binding) beginPageRecovery(binding)
+        })
+      })
     }),
     store.subscribeEvent(worldDomain.event.PresenceChangedEvent, (event) => {
       const committed = new Set(store.query(sessionDomain.query.DomainsQuery()).map((runtime) => runtime.domain))
@@ -684,7 +813,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       return snapshot()
     },
     detachPage: async (payload) => {
-      const binding = await requirePageBinding(payload, false)
+      const binding = await requirePageBinding(payload, false, false)
       if (binding) await removeBinding(binding)
       else {
         pagePort.removePage(payload.pageId)
@@ -805,11 +934,11 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       return result
     },
     onInbound: async (payload, callback) => {
-      await requirePageBinding(payload, false)
+      await requirePageBinding(payload, false, false)
       pagePort.onInbound(payload.pageId, callback)
     },
     onSessionEvent: async (payload, callback) => {
-      const binding = await requirePageBinding(payload, false)
+      const binding = await requirePageBinding(payload, false, false)
       const generation = pagePort.beginSessionEvent(payload.pageId, callback)
       if (binding) binding.sessionGeneration = null
       const lease = store
@@ -833,7 +962,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
         const current = store
           .query(lifecycleDomain.query.DomainLeasesQuery())
           .find((candidate) => candidate.domain === lease.domain)
-        const currentBinding = await requirePageBinding(payload, false).catch(() => null)
+        const currentBinding = await requirePageBinding(payload, false, false).catch(() => null)
         if (
           !current?.pageIds.includes(payload.pageId) ||
           currentBinding !== binding ||
@@ -850,19 +979,19 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       }
     },
     onWorldPresence: async (payload, callback) => {
-      await requirePageBinding(payload, false)
+      await requirePageBinding(payload, false, false)
       pagePort.onWorldPresence(payload.pageId, callback)
     },
     onError: async (payload, callback) => {
-      await requirePageBinding(payload, false)
+      await requirePageBinding(payload, false, false)
       pagePort.onError(payload.pageId, callback)
     },
     onHistoryFeedback: async (payload, callback) => {
-      await requirePageBinding(payload, false)
+      await requirePageBinding(payload, false, false)
       pagePort.onHistoryFeedback(payload.pageId, callback)
     },
     provideHistory: async (payload, callback) => {
-      await requirePageBinding(payload, false)
+      await requirePageBinding(payload, false, false)
       pagePort.provideHistory(payload.pageId, payload.domain, callback)
     },
     resolveHistorySupply: async (payload) => {
@@ -875,58 +1004,77 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     }
   }
 
-  const restorePageBindings = async () => {
-    const admission = config.admission
-    if (!admission) return
-    const stored = (await admission.storage.get(RUNTIME_PAGE_BINDINGS_KEY))[RUNTIME_PAGE_BINDINGS_KEY]
-    const candidates =
-      stored && typeof stored === 'object' && !Array.isArray(stored)
-        ? (stored as Partial<PersistedPageBindings>).pages
-        : undefined
-    if (!Array.isArray(candidates)) return
-    const restored: PersistedPageBindings['pages'] = []
-    const seenTabs = new Set<number>()
-    rebindHints.clear()
-    for (const candidate of candidates) {
-      if (
-        !candidate ||
-        !Number.isSafeInteger(candidate.tabId) ||
-        candidate.tabId < 0 ||
-        typeof candidate.pageId !== 'string' ||
-        typeof candidate.domain !== 'string' ||
-        typeof candidate.url !== 'string' ||
-        seenTabs.has(candidate.tabId)
-      ) {
-        continue
-      }
+  const restorePageBindings = () => {
+    if (restoreInFlight) return restoreInFlight
+    let releaseRecoveryHints!: () => void
+    recoveryHintsReady = new Promise<void>((resolve) => {
+      releaseRecoveryHints = resolve
+    })
+    const task = (async () => {
+      const admission = config.admission
+      if (!admission) return
       try {
-        const tab = await admission.tabs.get(candidate.tabId)
-        const url = typeof tab.url === 'string' ? canonicalNavigationUrl(tab.url) : null
-        if (
-          tab.id !== candidate.tabId ||
-          !url ||
-          !isEligibleContentUrl(url) ||
-          new URL(url).origin !== candidate.domain ||
-          !isSameNavigation(url, candidate.url)
-        ) {
-          continue
+        const stored = (await admission.storage.get(RUNTIME_PAGE_BINDINGS_KEY))[RUNTIME_PAGE_BINDINGS_KEY]
+        const candidates =
+          stored && typeof stored === 'object' && !Array.isArray(stored)
+            ? (stored as Partial<PersistedPageBindings>).pages
+            : undefined
+        if (!Array.isArray(candidates)) return
+        const seenTabs = new Set<number>()
+        const seenPages = new Set<string>()
+        rebindHints.clear()
+        for (const candidate of candidates) {
+          if (
+            !candidate ||
+            !Number.isSafeInteger(candidate.tabId) ||
+            candidate.tabId < 0 ||
+            typeof candidate.pageId !== 'string' ||
+            typeof candidate.domain !== 'string' ||
+            typeof candidate.url !== 'string' ||
+            seenTabs.has(candidate.tabId) ||
+            seenPages.has(candidate.pageId)
+          ) {
+            continue
+          }
+          try {
+            const tab = await admission.tabs.get(candidate.tabId)
+            const url = typeof tab.url === 'string' ? canonicalNavigationUrl(tab.url) : null
+            if (
+              tab.id !== candidate.tabId ||
+              !url ||
+              !isEligibleContentUrl(url) ||
+              new URL(url).origin !== candidate.domain ||
+              !isSameNavigation(url, candidate.url)
+            ) {
+              continue
+            }
+            seenTabs.add(candidate.tabId)
+            seenPages.add(candidate.pageId)
+            if (!tabBindings.has(candidate.tabId)) rebindHints.set(candidate.tabId, { ...candidate, url })
+          } catch {
+            // Browser truth is unavailable for this hint. It is never promoted into a Runtime binding.
+          }
         }
-        seenTabs.add(candidate.tabId)
-        const hint = { ...candidate, url }
-        restored.push(hint)
-        if (!tabBindings.has(candidate.tabId)) rebindHints.set(candidate.tabId, hint)
-      } catch {
-        // Browser truth is unavailable for this hint. It is never promoted into a Runtime binding.
+        await persistPageBindings()
+        const recoveries = [...rebindHints.values()].map((hint) => beginPageRecovery(hint))
+        releaseRecoveryHints()
+        await Promise.all(
+          recoveries.map((recovery) =>
+            recovery.promise.catch((error) => {
+              console.error(error)
+            })
+          )
+        )
+      } finally {
+        releaseRecoveryHints()
       }
+    })()
+    restoreInFlight = task
+    const releaseRestore = () => {
+      if (restoreInFlight === task) restoreInFlight = null
     }
-    await persistPageBindings()
-    await Promise.all(
-      [...rebindHints.values()].map(({ tabId, pageId }) =>
-        admission.rebindPage(tabId, pageId).catch((error) => {
-          console.error(error)
-        })
-      )
-    )
+    void task.then(releaseRestore, releaseRestore)
+    return task
   }
 
   const removeTab = async (tabId: number, url?: string) => {
@@ -936,7 +1084,9 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       await removeBinding(binding)
       return
     }
-    if (!rebindHints.delete(tabId)) return
+    const hint = rebindHints.get(tabId)
+    if (!hint || !rebindHints.delete(tabId)) return
+    pageRecoveries.get(hint.pageId)?.fail(new Error('Runtime Page recovery binding is no longer current'))
     await persistPageBindings()
   }
 

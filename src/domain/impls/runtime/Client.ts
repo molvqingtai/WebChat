@@ -72,7 +72,7 @@ browser.runtime.onMessage.addListener((message: unknown) => {
   return client.rebind()
 })
 
-export const whenReady = (callback: () => void) => client.whenReady(callback)
+export const whenReady = (callback: () => void | Promise<void>) => client.whenReady(callback)
 export const whenHostPhase = (callback: Parameters<typeof client.whenHostPhase>[0]) => client.whenHostPhase(callback)
 export const whenFailure = (callback: Parameters<typeof client.whenFailure>[0]) => client.whenFailure(callback)
 export const initClient = (): Promise<RuntimeSnapshot | null> => client.init()

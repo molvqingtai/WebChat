@@ -38,7 +38,7 @@ export interface ChatRoomDependencies {
   pageDomain: string
   pageId: string
   getSnapshot: () => RuntimeSnapshot
-  whenReady: (callback: () => void) => Unsubscribe
+  whenReady: (callback: () => void | Promise<void>) => Unsubscribe
 }
 
 type RuntimeMessageStore = MessageStore & {
@@ -202,7 +202,14 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
       // cancellation fact for that attempt.
       if (this.activeConnection) this.reportResult?.(this.activeConnection.resultToken, 'cancelled')
       this.activeConnection?.controller.abort(abortError('Runtime host generation replaced'))
-      this.startAttachment(null)
+      const attachment = this.startAttachment(null)
+      const readiness = attachment.task.then(() => {
+        if (attachment.error !== undefined) throw attachment.error
+      })
+      // ClientLease awaits and handles this same task. The local handler keeps a non-ClientLease
+      // consumer from turning an already-reported attachment failure into an unhandled rejection.
+      void readiness.catch(() => {})
+      return readiness
     })
   }
 
