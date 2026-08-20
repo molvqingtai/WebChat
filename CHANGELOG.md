@@ -1,3 +1,13 @@
+## [2.7.1](https://github.com/molvqingtai/WebChat/compare/v2.7.0...v2.7.1) (2026-08-20)
+
+### Bug Fixes
+
+- **runtime:** apply native Artico client patch ([69c6a8a](https://github.com/molvqingtai/WebChat/commit/69c6a8a46af4efac02815dbd2902b24e7cc1e687))
+- **runtime:** clear terminal provider bindings on room reset ([c5cdb7c](https://github.com/molvqingtai/WebChat/commit/c5cdb7cb195b6fc0f68d7f3858b149dff24ed3a2))
+- **runtime:** fence peer edges across recovery release ([eaf1bfe](https://github.com/molvqingtai/WebChat/commit/eaf1bfee925b89eea8b2baebb89285ab69a586e1))
+- **runtime:** fence provisional peer history callbacks ([5c9a734](https://github.com/molvqingtai/WebChat/commit/5c9a73469fba0fa59c438c7c9da9e9a0a3334f03))
+- **runtime:** scope peer session and history sync ([bad3fae](https://github.com/molvqingtai/WebChat/commit/bad3faefba7ba4686e7991482b9c0b97a322cc93))
+
 # [2.7.0](https://github.com/molvqingtai/WebChat/compare/v2.6.1...v2.7.0) (2026-08-19)
 
 ### Bug Fixes
