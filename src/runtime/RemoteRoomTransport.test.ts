@@ -137,6 +137,39 @@ describe('RemoteRoomTransport', () => {
     expect(freshBackground.peerIdOf('room-b')).toBe('peer:room-b')
   })
 
+  it('fences an expired admission after an empty fresh rebind yields once', async () => {
+    const physical: RoomTransport = {
+      peerIdOf: (roomId) => `peer:${roomId}`,
+      join: vi.fn(async () => {}),
+      leave: vi.fn(),
+      send: vi.fn(async () => {}),
+      onMessage: () => () => {},
+      onPeerJoin: () => () => {},
+      onPeerLeave: () => () => {},
+      onRoomClose: () => () => {},
+      onError: () => () => {},
+      dispose: vi.fn()
+    }
+    const service = createTransportService(physical)
+    const oldBackground = new RemoteRoomTransport(service)
+    await oldBackground.rebind()
+
+    const freshBackground = new RemoteRoomTransport(service)
+    const rebinding = freshBackground.rebind()
+    await Promise.resolve()
+    const oldJoin = oldBackground.join('room-a')
+
+    await expect(oldJoin).rejects.toThrow('admission is no longer current')
+    await rebinding
+    expect(physical.join).not.toHaveBeenCalled()
+    expect(oldBackground.peerIdOf('room-a')).toBe('')
+    expect(freshBackground.peerIdOf('room-a')).toBe('')
+
+    await freshBackground.join('room-a')
+    expect(physical.join).toHaveBeenCalledOnce()
+    expect(freshBackground.peerIdOf('room-a')).toBe('peer:room-a')
+  })
+
   it('waits for an old admitted join before a fresh Background aligns its usable projection', async () => {
     const joining = deferred<void>()
     let message: Parameters<RoomTransport['onMessage']>[0] = () => {}

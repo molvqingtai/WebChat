@@ -48,12 +48,6 @@ export const createTransportService = (transport: RoomTransport = createRoomTran
   let onRoomClose: ((roomId: string, handle: string) => void) | null = null
   let onError: ((error: Error, roomId: string, handle: string) => void) | null = null
   const projection = (): TransportProjection => ({ rooms: [...rooms.values()] })
-  const projectionAfterCurrentJoins = async (): Promise<TransportProjection> => {
-    // A fresh Background must not align a projection across a room join that an expired
-    // Background already admitted. Those joins settle before the rebind cut is published.
-    while (joining.size > 0) await Promise.allSettled(joining.values())
-    return projection()
-  }
   const currentRoom = (roomId: string, handle: string) => {
     const room = rooms.get(roomId)
     if (!room || room.handle !== handle) throw new Error('Transport room handle is no longer current')
@@ -132,7 +126,9 @@ export const createTransportService = (transport: RoomTransport = createRoomTran
         onError = error
         // Let an already-active facade submit its synchronous admission before the rebind cut.
         await Promise.resolve()
-        const current = await projectionAfterCurrentJoins()
+        // The final empty observation, projection, and admission publication are one cut.
+        while (joining.size > 0) await Promise.allSettled(joining.values())
+        const current = projection()
         admission += 1
         return { ...current, admission }
       }
