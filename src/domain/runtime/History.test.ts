@@ -262,7 +262,7 @@ const sendProviderRequest = (
   done: boolean
 ) => {
   store.send(
-    history.command.HandleInventoryPageCommand({
+    history.command.HandleHistoryMessagesPullCommand({
       roomId: ROOM_ID,
       sourcePeerId: 'peer-a',
       message: providerRequest(syncId, page, done)

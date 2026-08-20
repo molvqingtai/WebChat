@@ -558,28 +558,29 @@ const HistoryDomain = Remesh.domain({
       get: Parameters<Parameters<typeof domain.command>[0]['impl']>[0]['get'],
       runtimeDomain: string
     ): Array<{ domain: string; sourcePeerId: string }> => {
-      const sourcePeerIds = new Set<string>()
-      const collect = (items: readonly HistoryAttemptKey[]) => {
-        items.forEach((item) => {
-          if (item.domain === runtimeDomain) sourcePeerIds.add(item.sourcePeerId)
-        })
-      }
-      collect(get(RequesterAttemptsState()))
-      collect(get(ProviderAttemptsState()))
-      collect(get(ProviderSupplySuccessorsState()))
-      collect(get(ProviderSupplyJobsState()))
-      collect(get(ActiveSuppliesState()))
-      collect(get(WaitingSuppliesState()))
-      collect(get(RequesterSupplyJobsState()))
-      collect(get(PendingWireSendsState()))
-      collect(get(FeedbackOwnersState()))
-      for (const key of get(HistorySyncBindingsState()).keys()) {
+      const sourcePeerIds = [
+        ...get(RequesterAttemptsState()),
+        ...get(ProviderAttemptsState()),
+        ...get(ProviderSupplySuccessorsState()),
+        ...get(ProviderSupplyJobsState()),
+        ...get(ActiveSuppliesState()),
+        ...get(WaitingSuppliesState()),
+        ...get(RequesterSupplyJobsState()),
+        ...get(PendingWireSendsState()),
+        ...get(FeedbackOwnersState())
+      ]
+        .filter((item) => item.domain === runtimeDomain)
+        .map((item) => item.sourcePeerId)
+      const bindingPeerIds = [...get(HistorySyncBindingsState()).keys()].flatMap((key) => {
         const [sourcePeerId, domainName, direction] = key.split('\u0000')
-        if (sourcePeerId && domainName === runtimeDomain && (direction === 'provider' || direction === 'requester')) {
-          sourcePeerIds.add(sourcePeerId)
-        }
-      }
-      return [...sourcePeerIds].map((sourcePeerId) => ({ domain: runtimeDomain, sourcePeerId }))
+        return sourcePeerId && domainName === runtimeDomain && (direction === 'provider' || direction === 'requester')
+          ? [sourcePeerId]
+          : []
+      })
+      return [...new Set([...sourcePeerIds, ...bindingPeerIds])].map((sourcePeerId) => ({
+        domain: runtimeDomain,
+        sourcePeerId
+      }))
     }
 
     const CleanupProviderSlotsCommand = domain.command({
@@ -873,8 +874,8 @@ const HistoryDomain = Remesh.domain({
 
     // ── Provider inventory input ────────────────────────────────────────────────
 
-    const HandleInventoryPageCommand = domain.command({
-      name: 'History.HandleInventoryPageCommand',
+    const HandleHistoryMessagesPullCommand = domain.command({
+      name: 'History.HandleHistoryMessagesPullCommand',
       impl: ({ get }, payload: WireMessageEvent & { message: HistoryMessagesPull }) => {
         const domain = get(sessionDomain.query.RoomDomainQuery(payload.roomId))
         if (!domain || get(sessionDomain.query.ReleasingDomainQuery(domain))) return null
@@ -1668,8 +1669,8 @@ const HistoryDomain = Remesh.domain({
       return { ok: true, page: payload.message }
     }
 
-    const ApplyResponsePageCommand = domain.command({
-      name: 'History.ApplyResponsePageCommand',
+    const HistoryMessagesPushCommand = domain.command({
+      name: 'History.HistoryMessagesPushCommand',
       impl: ({ get }, payload: WireMessageEvent & { message: HistoryMessagesPush }) => {
         // A valid response page is accepted by its domain request identity regardless of the
         // provider's current connection state: offline, generation replacement, or a closed
@@ -2222,25 +2223,25 @@ const HistoryDomain = Remesh.domain({
         ) as unknown as Observable<never>
     })
     domain.effect({
-      name: 'History.WireInventoryEffect',
+      name: 'History.HistoryMessagesPullEffect',
       impl: ({ fromEvent }) =>
         fromEvent(wireDomain.event.MessageAcceptedEvent).pipe(
           filter(
             (event): event is WireMessageEvent & { message: HistoryMessagesPull } =>
               'type' in event.message && event.message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL
           ),
-          map(HandleInventoryPageCommand)
+          map(HandleHistoryMessagesPullCommand)
         )
     })
     domain.effect({
-      name: 'History.WireResponseEffect',
+      name: 'History.HistoryMessagesPushEffect',
       impl: ({ fromEvent }) =>
         fromEvent(wireDomain.event.MessageAcceptedEvent).pipe(
           filter(
             (event): event is WireMessageEvent & { message: HistoryMessagesPush } =>
               'type' in event.message && event.message.type === MESSAGE_TYPE.HISTORY_MESSAGES_PUSH
           ),
-          map(ApplyResponsePageCommand)
+          map(HistoryMessagesPushCommand)
         )
     })
     domain.effect({
@@ -2461,7 +2462,7 @@ const HistoryDomain = Remesh.domain({
         FinishRequesterCommand,
         RemovePeerCommand,
         ReleaseDomainCommand,
-        HandleInventoryPageCommand,
+        HandleHistoryMessagesPullCommand,
         QueueInventoryPageCommand
       },
       event: {
