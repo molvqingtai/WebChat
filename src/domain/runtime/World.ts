@@ -567,8 +567,7 @@ const WorldDomain = Remesh.domain({
 
     const ApplyPresenceCommand = domain.command({
       name: 'World.ApplyPresenceCommand',
-      impl: ({ get }, payload: WireMessageEvent) => {
-        if (!('sites' in payload.message) || payload.roomId !== worldRoomId) return null
+      impl: ({ get }, payload: WireMessageEvent & { message: WorldRoomMessage }) => {
         const presences = get(PresencesState())
         const current = presences.find((item) => item.sourcePeerId === payload.sourcePeerId)
         if (
@@ -750,7 +749,10 @@ const WorldDomain = Remesh.domain({
       name: 'World.WireMessageEffect',
       impl: ({ fromEvent }) =>
         fromEvent(wireDomain.event.MessageAcceptedEvent).pipe(
-          filter((event) => 'sites' in event.message),
+          filter(
+            (event): event is WireMessageEvent & { message: WorldRoomMessage } =>
+              'sites' in event.message && event.roomId === worldRoomId
+          ),
           map(ApplyPresenceCommand)
         )
     })
