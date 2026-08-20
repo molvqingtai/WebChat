@@ -1,13 +1,37 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { Remesh } from 'remesh'
+import ChatRoomDomain from '@/domain/ChatRoom'
+import UserInfoDomain, { type UserInfo } from '@/domain/UserInfo'
 import { createMemoryMessageDatabase } from '@/domain/impls/database/Memory'
 import { ChatRoom } from '@/domain/impls/runtime/ChatRoom'
 import { WorldRoom } from '@/domain/impls/runtime/WorldRoom'
-import { createMessageStore } from '@/domain/MessageStore'
+import { createConnectionLifecycle } from '@/domain/impls/ConnectionLifecycle'
+import { createSendLifecycle } from '@/domain/impls/SendLifecycle'
+import { ChatRoomExtern } from '@/domain/externs/ChatRoom'
+import { ConnectionLifecycleExtern } from '@/domain/externs/ConnectionLifecycle'
+import { ReadinessExtern } from '@/domain/externs/Readiness'
+import { SendLifecycleExtern } from '@/domain/externs/SendLifecycle'
+import { BrowserSyncStorageExtern, type Storage, type StorageValue } from '@/domain/externs/Storage'
+import { WorldRoomExtern } from '@/domain/externs/WorldRoom'
+import { createMessageStore, MessageDatabaseExtern } from '@/domain/MessageStore'
+import { MESSAGE_TYPE, type ChatUser } from '@/protocol'
+import type { RoomTransport } from '@/runtime/RoomTransport'
+import { createServer, disposeServer, getChatRoomId, restoreServerPageBindings } from '@/runtime/Server'
 import { ClientLease } from './ClientLease'
 import type { RuntimeCoordinator, RuntimePageRegistration, RuntimeServer, RuntimeSnapshot } from './Contract'
 
 const pageId = 'page-a'
 const domain = 'https://example.test'
+const pageUrl = `${domain}/topic`
+const user: ChatUser = { id: 'local-user', name: 'Local', avatar: '' }
+const userInfo: UserInfo = {
+  ...user,
+  createTime: 1,
+  themeMode: 'system',
+  danmakuEnabled: true,
+  notificationEnabled: true,
+  notificationType: 'all'
+}
 
 const snapshot = (hostId = 'host-a'): RuntimeSnapshot => ({
   hostId,
@@ -64,8 +88,62 @@ const coordinatorWith = (registerPage: RuntimeCoordinator['registerPage']): Runt
   registerPage
 })
 
+const createRecoveryTransport = (holdJoin?: Promise<void>) => {
+  const joined = new Set<string>()
+  const joinCalls: string[] = []
+  const listeners = {
+    message: new Set<(roomId: string, sourcePeerId: string, rawPayload: string) => void>(),
+    peerJoin: new Set<(roomId: string, peerId: string) => void>(),
+    peerLeave: new Set<(roomId: string, peerId: string) => void>(),
+    roomClose: new Set<(roomId: string) => void>(),
+    error: new Set<(error: Error, roomId: string) => void>()
+  }
+  const transport: RoomTransport = {
+    peerIdOf: (roomId) => (joined.has(roomId) ? `peer:${roomId}` : ''),
+    join: async (roomId) => {
+      joinCalls.push(roomId)
+      if (holdJoin && roomId === getChatRoomId(domain)) await holdJoin
+      joined.add(roomId)
+    },
+    leave: (roomId) => {
+      joined.delete(roomId)
+    },
+    send: async (roomId) => {
+      if (!joined.has(roomId)) throw new Error(`Room "${roomId}" is not joined`)
+    },
+    onMessage: (callback) => {
+      listeners.message.add(callback)
+      return () => listeners.message.delete(callback)
+    },
+    onPeerJoin: (callback) => {
+      listeners.peerJoin.add(callback)
+      return () => listeners.peerJoin.delete(callback)
+    },
+    onPeerLeave: (callback) => {
+      listeners.peerLeave.add(callback)
+      return () => listeners.peerLeave.delete(callback)
+    },
+    onRoomClose: (callback) => {
+      listeners.roomClose.add(callback)
+      return () => listeners.roomClose.delete(callback)
+    },
+    onError: (callback) => {
+      listeners.error.add(callback)
+      return () => listeners.error.delete(callback)
+    },
+    dispose: () => {
+      joined.clear()
+      Object.values(listeners).forEach((items) => items.clear())
+    }
+  }
+  return { joinCalls, transport }
+}
+
 beforeEach(() => vi.useFakeTimers())
-afterEach(() => vi.useRealTimers())
+afterEach(() => {
+  vi.unstubAllGlobals()
+  vi.useRealTimers()
+})
 
 describe('ClientLease event-driven Runtime admission', () => {
   it('initializes once and never starts a Page watchdog', async () => {
@@ -115,6 +193,151 @@ describe('ClientLease event-driven Runtime admission', () => {
     expect(client.snapshot()).toMatchObject({ hostId: 'host-b' })
     expect(ready).toHaveBeenCalledTimes(2)
     client.detach()
+  })
+
+  it('restores a fresh Server target domain through the retained automatic ChatRoom join before releasing actions', async () => {
+    vi.stubGlobal('document', {
+      location: { origin: domain },
+      title: 'Example',
+      querySelector: () => null
+    })
+    const storageState: Record<string, unknown> = {}
+    const tab = { id: 7, url: pageUrl }
+    let client!: ClientLease
+    let chat!: ChatRoom
+    let submitDuringRecovery = false
+    let recoveryAction: Promise<unknown> | null = null
+    const admission = {
+      tabs: {
+        get: async () => tab,
+        sendMessage: async () => undefined
+      },
+      storage: {
+        get: async (key: string) => ({ [key]: storageState[key] }),
+        set: async (items: Record<string, unknown>) => {
+          Object.assign(storageState, items)
+        }
+      },
+      rebindPage: async () => client.rebind(),
+      ensureTransport: async () => {}
+    }
+    const firstTransport = createRecoveryTransport()
+    const first = createServer({ transport: firstTransport.transport, admission })
+    let currentServer: RuntimeServer = first
+    const registerPage: RuntimeCoordinator['registerPage'] = async () => {
+      const snapshot = await currentServer.attachPage({ domain, pageId, caller: { tab } })
+      if (submitDuringRecovery) {
+        recoveryAction = chat.sendMessage({ type: MESSAGE_TYPE.TEXT, body: 'during recovery', mentions: [] })
+      }
+      return { snapshot }
+    }
+    client = new ClientLease({ coordinator: coordinatorWith(registerPage), pageId, domain })
+    const bind = <Payload extends object>(payload: Payload) => ({
+      ...payload,
+      pageId,
+      runtimeHostId: client.runtimeHostId(),
+      caller: { tab }
+    })
+    const server = {
+      attachPage: (payload) => currentServer.attachPage(bind(payload)),
+      detachPage: (payload) => currentServer.detachPage(bind(payload)),
+      getSnapshot: () => currentServer.getSnapshot(),
+      joinChatRoom: (payload) => currentServer.joinChatRoom(bind(payload)),
+      leaveChatRoom: (payload) => currentServer.leaveChatRoom(bind(payload)),
+      allocateTextMessage: (payload) => currentServer.allocateTextMessage(bind(payload)),
+      allocateReactionMessage: (payload) => currentServer.allocateReactionMessage(bind(payload)),
+      sendChatMessage: (payload) => currentServer.sendChatMessage(bind(payload)),
+      ackInbound: (payload) => currentServer.ackInbound(bind(payload)),
+      replayInbound: (payload) => currentServer.replayInbound(bind(payload)),
+      reconnectDomain: (payload) => currentServer.reconnectDomain(bind(payload)),
+      onInbound: (payload, callback) => currentServer.onInbound(bind(payload), callback),
+      onSessionEvent: (payload, callback) => currentServer.onSessionEvent(bind(payload), callback),
+      onWorldPresence: (payload, callback) => currentServer.onWorldPresence(bind(payload), callback),
+      onError: (payload, callback) => currentServer.onError(bind(payload), callback),
+      onHistoryFeedback: (payload, callback) => currentServer.onHistoryFeedback(bind(payload), callback),
+      provideHistory: (payload, callback) => currentServer.provideHistory(bind(payload), callback),
+      resolveHistorySupply: (payload) => currentServer.resolveHistorySupply(bind(payload)),
+      rejectHistorySupply: (payload) => currentServer.rejectHistorySupply(bind(payload))
+    } as RuntimeServer
+    const database = createMemoryMessageDatabase(`client-lease-domain-recovery-${databaseId++}`)
+    chat = new ChatRoom({
+      server,
+      messageStore: createMessageStore(database),
+      pageDomain: domain,
+      pageId,
+      getSnapshot: () => client.snapshot(),
+      whenReady: (callback) => client.whenReady(callback)
+    })
+    const lifecycle = createConnectionLifecycle()
+    chat.bindConnectionResultReporter(lifecycle.report)
+    const storage: Storage = {
+      get: async <Value extends StorageValue>() => userInfo as Value,
+      set: async () => {},
+      watch: async () => async () => {}
+    }
+    const store = Remesh.store({
+      externs: [
+        ChatRoomExtern.impl(chat),
+        ConnectionLifecycleExtern.impl(lifecycle.value),
+        SendLifecycleExtern.impl(createSendLifecycle()),
+        ReadinessExtern.impl({
+          onState: (callback) =>
+            client.whenHostPhase((phase) =>
+              callback(phase === 'ready' || phase === 'unavailable' ? phase : 'connecting')
+            )
+        }),
+        MessageDatabaseExtern.impl(database),
+        BrowserSyncStorageExtern.impl(storage),
+        WorldRoomExtern.impl({ getState: async () => [], onState: () => () => {}, onError: () => () => {} })
+      ]
+    })
+    const roomAction = ChatRoomDomain()
+    const userAction = UserInfoDomain()
+    const room = store.getDomain(roomAction)
+    const info = store.getDomain(userAction)
+    store.igniteDomain(roomAction)
+    store.send(info.command.UpdateUserInfoCommand(userInfo))
+
+    await client.init()
+    store.send(room.command.JoinRoomCommand())
+    await vi.waitFor(() => expect(store.query(room.query.JoinIsFinishedQuery())).toBe(true))
+
+    const joinGate = deferred<void>()
+    const secondTransport = createRecoveryTransport()
+    const second = createServer({ transport: secondTransport.transport, admission })
+    currentServer = second
+    const joinChatRoom = second.joinChatRoom.bind(second)
+    const automaticJoin = vi.spyOn(second, 'joinChatRoom')
+    automaticJoin.mockImplementation(async (payload) => {
+      await joinGate.promise
+      return joinChatRoom(payload)
+    })
+    submitDuringRecovery = true
+    const restore = restoreServerPageBindings(second)
+
+    await restore
+    expect(client.runtimeHostId()).toBe((await second.getSnapshot()).hostId)
+    await vi.waitFor(() => expect(automaticJoin).toHaveBeenCalledOnce())
+    expect(recoveryAction).not.toBeNull()
+    let settled = false
+    void recoveryAction!.then(() => {
+      settled = true
+    })
+    await Promise.resolve()
+    expect(settled).toBe(false)
+
+    joinGate.resolve()
+    await restore
+    await expect(recoveryAction).resolves.toMatchObject({ type: MESSAGE_TYPE.TEXT, body: 'during recovery' })
+    expect(automaticJoin).toHaveBeenCalledOnce()
+    expect(secondTransport.joinCalls.filter((roomId) => roomId === getChatRoomId(domain))).toHaveLength(1)
+
+    store.discard()
+    chat.dispose()
+    client.detach()
+    await database.close()
+    disposeServer(first)
+    disposeServer(second)
   })
 
   it('waits for the real ChatRoom callback registration before the lease is ready', async () => {

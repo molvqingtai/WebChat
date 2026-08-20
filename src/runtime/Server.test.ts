@@ -377,6 +377,60 @@ describe('RuntimeServer production Page admission and restart recovery', () => {
     disposeServer(second)
   })
 
+  it('preclaims fresh-Background target-domain recovery before the restoring join starts', async () => {
+    const first = createAdmissionFixture()
+    await first.attach()
+    const firstCall = await first.call()
+    await registerPageCallbacks(first.server, firstCall)
+    const secondPageId = 'admitted-page-second'
+    const secondTab = { id: 8, url: `${DOMAIN}/secondary-topic` }
+    first.tabs.set(secondTab.id, secondTab)
+    await first.server.attachPage({ domain: DOMAIN, pageId: secondPageId, caller: { tab: secondTab } })
+
+    const recoveryStarted = deferred<void>()
+    const releaseRecovery = deferred<void>()
+    first.rebindPage.mockImplementation(async () => {
+      recoveryStarted.resolve()
+      await releaseRecovery.promise
+    })
+    const secondFake = createFakeTransport()
+    const second = createServer({ transport: secondFake.transport, codec: jsonCodec, admission: first.admission })
+    const restoring = restoreServerPageBindings(second)
+    await recoveryStarted.promise
+
+    const recoveredCall = {
+      pageId,
+      runtimeHostId: (await second.getSnapshot()).hostId,
+      caller: { tab: first.tabs.get(7) }
+    }
+    const secondRecoveredCall = {
+      pageId: secondPageId,
+      runtimeHostId: (await second.getSnapshot()).hostId,
+      caller: { tab: secondTab }
+    }
+    await second.attachPage({ domain: DOMAIN, pageId, caller: { tab: first.tabs.get(7) } })
+    await second.attachPage({ domain: DOMAIN, pageId: secondPageId, caller: { tab: secondTab } })
+    await registerPageCallbacks(second, recoveredCall)
+    await registerPageCallbacks(second, secondRecoveredCall)
+    releaseRecovery.resolve()
+    await restoring
+
+    const waiting = second.sendChatMessage({
+      domain: DOMAIN,
+      event: reaction('preclaimed-recovery', USER.id),
+      ...recoveredCall
+    })
+    await settle()
+    expect(secondFake.sendAttempts).toHaveLength(0)
+
+    await second.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE, ...recoveredCall })
+    await expect(waiting).resolves.toEqual(reaction('preclaimed-recovery', USER.id))
+    expect(first.rebindPage).toHaveBeenCalledTimes(2)
+    expect(secondFake.joinCalls.filter((roomId) => roomId === getChatRoomId(DOMAIN))).toHaveLength(1)
+    disposeServer(first.server)
+    disposeServer(second)
+  })
+
   it('rejects a recovered Page action without effect when its target domain never becomes live', async () => {
     const first = createAdmissionFixture()
     await first.attach()
@@ -405,9 +459,16 @@ describe('RuntimeServer production Page admission and restart recovery', () => {
     await restoring
     await settle()
 
-    await expect(
-      second.sendChatMessage({ domain: DOMAIN, event: reaction('without-domain', USER.id), ...recoveredCall })
-    ).rejects.toThrow('Runtime presence is completing its final release')
+    const waiting = second.sendChatMessage({
+      domain: DOMAIN,
+      event: reaction('without-domain', USER.id),
+      ...recoveredCall
+    })
+    const rejected = expect(waiting).rejects.toThrow('Runtime current-domain recovery timed out')
+    await settle()
+    expect(secondFake.sendAttempts).toHaveLength(0)
+    await vi.advanceTimersByTimeAsync(PHYSICAL_ROOM_JOIN_TIMEOUT_MS)
+    await rejected
     expect(secondFake.sendAttempts).toHaveLength(0)
     disposeServer(first.server)
     disposeServer(second)

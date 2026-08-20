@@ -68,11 +68,21 @@ interface PageRecovery {
   fail: (error: Error) => void
 }
 
+interface PresenceRecovery {
+  attempts: number
+  awaitingRestoringJoin: boolean
+  promise: Promise<void>
+  resolve: () => void
+  reject: (error: Error) => void
+  timeout?: ReturnType<typeof globalThis.setTimeout>
+}
+
 interface PersistedPageBindings {
   pages: Array<Pick<PageBinding, 'tabId' | 'pageId' | 'domain' | 'url'>>
 }
 
 const defaultClock: Clock = { now: () => Date.now() }
+const PRESENCE_RECOVERY_TIMEOUT_MS = 10000
 const serverDisposers = new WeakMap<RuntimeServer, () => void>()
 interface ServerControl {
   restorePageBindings: () => Promise<void>
@@ -136,12 +146,6 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   const worldDomain = store.getDomain(worldAction)
   const historyDomain = store.getDomain(historyAction)
   const connectionDomain = store.getDomain(connectionAction)
-  interface PresenceRecovery {
-    attempts: number
-    promise: Promise<void>
-    resolve: () => void
-  }
-
   const presenceRecoveries = new Map<string, PresenceRecovery>()
   const pendingConnectionCancellations = new Set<() => void>()
   let disposed = false
@@ -324,6 +328,12 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     if (existing) return existing
     const admission = config.admission
     if (!admission) throw new Error('Runtime Page admission is unavailable')
+    // Only a fresh Background lacks a current domain. Reserve that target before the Page rebind
+    // begins so the surviving Page's existing automatic join can claim it without duplicating an
+    // already-live callback recovery.
+    const presenceRecovery = store.query(sessionDomain.query.DomainQuery(candidate.domain))
+      ? null
+      : beginPresenceRecovery(candidate.domain, true)
 
     let failed = false
     let rejectCancellation!: (error: Error) => void
@@ -337,6 +347,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       fail: (error: Error) => {
         if (failed) return
         failed = true
+        if (presenceRecovery) failPresenceRecovery(candidate.domain, presenceRecovery, error)
         rejectCancellation(error)
       }
     } satisfies PageRecovery
@@ -361,6 +372,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
             resolve()
           } catch (error) {
             const failure = error instanceof Error ? error : new Error(String(error))
+            if (presenceRecovery) failPresenceRecovery(candidate.domain, presenceRecovery, failure)
             const binding = pageBindings.get(candidate.pageId)
             if (binding && binding.tabId === candidate.tabId) await removeBinding(binding, recovery)
             else if (rebindHints.get(candidate.tabId)?.pageId === candidate.pageId) {
@@ -385,18 +397,47 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     return recovery
   }
 
-  const beginPresenceRecovery = (domain: string) => {
+  const settlePresenceRecovery = (domain: string, recovery: PresenceRecovery, error?: Error) => {
+    if (presenceRecoveries.get(domain) !== recovery) return
+    presenceRecoveries.delete(domain)
+    if (recovery.timeout) globalThis.clearTimeout(recovery.timeout)
+    if (error) recovery.reject(error)
+    else recovery.resolve()
+  }
+
+  const beginPresenceRecovery = (domain: string, awaitRestoringJoin = false) => {
     const current = presenceRecoveries.get(domain)
     if (current) {
+      // A second surviving Page shares this domain's reservation. Only the existing automatic
+      // ChatRoom join may claim it after the Page recovery has completed.
+      if (awaitRestoringJoin) return current
+      if (current.awaitingRestoringJoin) {
+        current.awaitingRestoringJoin = false
+        return current
+      }
       current.attempts += 1
       return current
     }
-    let resolve = () => {}
-    const promise = new Promise<void>((onResolve) => {
+    let resolve!: () => void
+    let reject!: (error: Error) => void
+    const promise = new Promise<void>((onResolve, onReject) => {
       resolve = onResolve
+      reject = onReject
     })
-    const recovery = { attempts: 1, promise, resolve }
+    const recovery: PresenceRecovery = {
+      attempts: 1,
+      awaitingRestoringJoin: awaitRestoringJoin,
+      promise,
+      resolve,
+      reject
+    }
     presenceRecoveries.set(domain, recovery)
+    if (awaitRestoringJoin) {
+      recovery.timeout = globalThis.setTimeout(() => {
+        settlePresenceRecovery(domain, recovery, new Error('Runtime current-domain recovery timed out'))
+      }, PRESENCE_RECOVERY_TIMEOUT_MS)
+    }
+    void promise.catch(() => {})
     return recovery
   }
 
@@ -404,9 +445,11 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     if (presenceRecoveries.get(domain) !== recovery) return
     recovery.attempts -= 1
     if (!succeeded && recovery.attempts > 0) return
-    presenceRecoveries.delete(domain)
-    recovery.resolve()
+    settlePresenceRecovery(domain, recovery)
   }
+
+  const failPresenceRecovery = (domain: string, recovery: PresenceRecovery, error: Error) =>
+    settlePresenceRecovery(domain, recovery, error)
 
   const operationCancelled = () => new DOMException('Runtime presence is completing its final release', 'AbortError')
 
@@ -916,7 +959,9 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       store.send(deliveryDomain.command.AckInboundCommand(payload))
     },
     replayInbound: async (payload) => {
-      await requirePageBinding(payload, true)
+      // Replay is part of the Page's own callback activation. It must verify the exact active
+      // Session binding without waiting on the recovery whose completion depends on this replay.
+      await requirePageBinding(payload, true, false)
       return store.query(deliveryDomain.query.BufferedEventsQuery(payload))
     },
     reconnectDomain: async (payload) => {
@@ -1116,7 +1161,10 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   serverControls.set(server, { restorePageBindings, removeTab })
   serverDisposers.set(server, () => {
     disposed = true
-    presenceRecoveries.forEach((recovery) => recovery.resolve())
+    presenceRecoveries.forEach((recovery) => {
+      if (recovery.timeout) globalThis.clearTimeout(recovery.timeout)
+      recovery.resolve()
+    })
     presenceRecoveries.clear()
     ;[...pendingConnectionCancellations].forEach((cancel) => cancel())
     pageBridges.forEach((subscription) => subscription.unsubscribe())
