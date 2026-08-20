@@ -206,8 +206,10 @@ export class PagePort implements PagePortContract {
           // Error delivery cannot recursively create another page error; retain the original
           // callback failure as a direct diagnostic and continue removing independent dead pages.
           console.error(error)
-          this.removePage(pageId)
-          deadPageIds.push(pageId)
+          if (listeners.get(pageId) === listener) {
+            this.removePage(pageId)
+            deadPageIds.push(pageId)
+          }
         }
       })
     )

@@ -55,51 +55,48 @@ describe('Offscreen TransportService', () => {
     const service = createTransportService(fixture.transport)
     const first = vi.fn()
     const current = vi.fn()
-    const room = await service.join('room-a', 'handle-a')
+    const firstBinding = await service.rebind(first, first, first, first, first)
+    const room = await service.join('room-a', 'handle-a', firstBinding.admission)
 
-    await expect(service.onMessage(first)).resolves.toEqual({ rooms: [room] })
     fixture.emit.message('room-a', 'peer-a', 'first')
-    await service.onMessage(current)
-    fixture.emit.message('room-a', 'peer-a', 'current')
-
-    await service.onPeerJoin(first)
     fixture.emit.join('room-a', 'peer-a')
-    await service.onPeerJoin(current)
-    fixture.emit.join('room-a', 'peer-b')
-
-    await service.onPeerLeave(first)
     fixture.emit.leave('room-a', 'peer-a')
-    await service.onPeerLeave(current)
-    fixture.emit.leave('room-a', 'peer-b')
-
     const failure = new Error('transport failed')
-    await service.onError(first)
     fixture.emit.error(failure, 'room-a')
-    await service.onError(current)
+    const currentBinding = await service.rebind(current, current, current, current, current)
+    expect(currentBinding.rooms).toEqual([room])
+    fixture.emit.message('room-a', 'peer-a', 'current')
+    fixture.emit.join('room-a', 'peer-b')
+    fixture.emit.leave('room-a', 'peer-b')
     fixture.emit.error(failure, 'room-a')
-
-    await service.onRoomClose(first)
     fixture.emit.close('room-a')
 
     expect(first.mock.calls).toEqual([
       ['room-a', 'handle-a', 'peer-a', 'first'],
       ['room-a', 'handle-a', 'peer-a'],
       ['room-a', 'handle-a', 'peer-a'],
-      [failure, 'room-a', 'handle-a'],
-      ['room-a', 'handle-a']
+      [failure, 'room-a', 'handle-a']
     ])
     expect(current.mock.calls).toEqual([
       ['room-a', 'handle-a', 'peer-a', 'current'],
       ['room-a', 'handle-a', 'peer-b'],
       ['room-a', 'handle-a', 'peer-b'],
-      [failure, 'room-a', 'handle-a']
+      [failure, 'room-a', 'handle-a'],
+      ['room-a', 'handle-a']
     ])
   })
 
   it('preserves the RoomTransport leave options at the physical boundary', async () => {
     const fixture = createTransport()
     const service = createTransportService(fixture.transport)
-    await service.join('room-a', 'handle-a')
+    const binding = await service.rebind(
+      () => {},
+      () => {},
+      () => {},
+      () => {},
+      () => {}
+    )
+    await service.join('room-a', 'handle-a', binding.admission)
 
     await service.leave('room-a', 'handle-a', { diagnosticOnly: true })
 
@@ -109,7 +106,14 @@ describe('Offscreen TransportService', () => {
   it('rejects a stale physical command before it reaches the room transport', async () => {
     const fixture = createTransport()
     const service = createTransportService(fixture.transport)
-    await service.join('room-a', 'current')
+    const binding = await service.rebind(
+      () => {},
+      () => {},
+      () => {},
+      () => {},
+      () => {}
+    )
+    await service.join('room-a', 'current', binding.admission)
 
     await expect(service.send('room-a', 'stale', 'payload')).rejects.toThrow('no longer current')
     await expect(service.leave('room-a', 'stale')).rejects.toThrow('no longer current')
@@ -126,16 +130,23 @@ describe('Offscreen TransportService', () => {
     })
     fixture.join.mockImplementationOnce(async () => joining)
     const service = createTransportService(fixture.transport)
+    const binding = await service.rebind(
+      () => {},
+      () => {},
+      () => {},
+      () => {},
+      () => {}
+    )
 
-    const first = service.join('room-a', 'handle-a')
-    const second = service.join('room-a', 'handle-b')
+    const first = service.join('room-a', 'handle-a', binding.admission)
+    const second = service.join('room-a', 'handle-b', binding.admission)
     await Promise.resolve()
     expect(fixture.join).toHaveBeenCalledOnce()
 
     releaseJoin()
     await expect(first).resolves.toMatchObject({ roomId: 'room-a', handle: 'handle-a' })
     await expect(second).rejects.toThrow('owned by a newer handle')
-    await expect(service.join('room-a', 'handle-a')).resolves.toMatchObject({ handle: 'handle-a' })
+    await expect(service.join('room-a', 'handle-a', binding.admission)).resolves.toMatchObject({ handle: 'handle-a' })
     expect(fixture.join).toHaveBeenCalledOnce()
   })
 })

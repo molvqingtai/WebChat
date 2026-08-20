@@ -11,17 +11,21 @@ export interface TransportProjection {
   rooms: TransportRoomState[]
 }
 
+export interface TransportBinding extends TransportProjection {
+  admission: number
+}
+
 export interface TransportService {
-  join: (roomId: string, handle: string) => Promise<TransportRoomState>
+  join: (roomId: string, handle: string, admission: number) => Promise<TransportRoomState>
   leave: (roomId: string, handle: string, options?: { diagnosticOnly?: boolean }) => Promise<void>
   send: (roomId: string, handle: string, payload: string, to?: string | string[]) => Promise<void>
-  onMessage: (
-    callback: (roomId: string, handle: string, sourcePeerId: string, payload: string) => void
-  ) => Promise<TransportProjection>
-  onPeerJoin: (callback: (roomId: string, handle: string, peerId: string) => void) => Promise<TransportProjection>
-  onPeerLeave: (callback: (roomId: string, handle: string, peerId: string) => void) => Promise<TransportProjection>
-  onRoomClose: (callback: (roomId: string, handle: string) => void) => Promise<TransportProjection>
-  onError: (callback: (error: Error, roomId: string, handle: string) => void) => Promise<TransportProjection>
+  rebind: (
+    onMessage: (roomId: string, handle: string, sourcePeerId: string, payload: string) => void,
+    onPeerJoin: (roomId: string, handle: string, peerId: string) => void,
+    onPeerLeave: (roomId: string, handle: string, peerId: string) => void,
+    onRoomClose: (roomId: string, handle: string) => void,
+    onError: (error: Error, roomId: string, handle: string) => void
+  ) => Promise<TransportBinding>
 }
 
 const report = (callback: () => void) => {
@@ -36,6 +40,8 @@ const report = (callback: () => void) => {
 export const createTransportService = (transport: RoomTransport = createRoomTransport()): TransportService => {
   const rooms = new Map<string, TransportRoomState>()
   const joining = new Map<string, Promise<TransportRoomState>>()
+  let admission = 0
+  let rebinding: Promise<void> | null = null
   let onMessage: ((roomId: string, handle: string, sourcePeerId: string, payload: string) => void) | null = null
   let onPeerJoin: ((roomId: string, handle: string, peerId: string) => void) | null = null
   let onPeerLeave: ((roomId: string, handle: string, peerId: string) => void) | null = null
@@ -43,8 +49,8 @@ export const createTransportService = (transport: RoomTransport = createRoomTran
   let onError: ((error: Error, roomId: string, handle: string) => void) | null = null
   const projection = (): TransportProjection => ({ rooms: [...rooms.values()] })
   const projectionAfterCurrentJoins = async (): Promise<TransportProjection> => {
-    // A fresh Background must not align an empty projection across a room join that an expired
-    // Background already admitted. Those joins settle before this callback lane returns its fact.
+    // A fresh Background must not align a projection across a room join that an expired
+    // Background already admitted. Those joins settle before the rebind cut is published.
     while (joining.size > 0) await Promise.allSettled(joining.values())
     return projection()
   }
@@ -78,7 +84,8 @@ export const createTransportService = (transport: RoomTransport = createRoomTran
   })
 
   return {
-    join: async (roomId, handle) => {
+    join: async (roomId, handle, joinAdmission) => {
+      if (joinAdmission !== admission) throw new Error('Transport room admission is no longer current')
       const existing = rooms.get(roomId)
       if (existing) {
         if (existing.handle !== handle) throw new Error('Transport room is owned by a newer handle')
@@ -116,25 +123,29 @@ export const createTransportService = (transport: RoomTransport = createRoomTran
       currentRoom(roomId, handle)
       await transport.send(roomId, payload, to)
     },
-    onMessage: async (callback) => {
-      onMessage = callback
-      return projectionAfterCurrentJoins()
-    },
-    onPeerJoin: async (callback) => {
-      onPeerJoin = callback
-      return projectionAfterCurrentJoins()
-    },
-    onPeerLeave: async (callback) => {
-      onPeerLeave = callback
-      return projectionAfterCurrentJoins()
-    },
-    onRoomClose: async (callback) => {
-      onRoomClose = callback
-      return projectionAfterCurrentJoins()
-    },
-    onError: async (callback) => {
-      onError = callback
-      return projectionAfterCurrentJoins()
+    rebind: (message, peerJoin, peerLeave, roomClose, error) => {
+      const register = async () => {
+        onMessage = message
+        onPeerJoin = peerJoin
+        onPeerLeave = peerLeave
+        onRoomClose = roomClose
+        onError = error
+        // Let an already-active facade submit its synchronous admission before the rebind cut.
+        await Promise.resolve()
+        const current = await projectionAfterCurrentJoins()
+        admission += 1
+        return { ...current, admission }
+      }
+      const binding = rebinding ? rebinding.then(register) : register()
+      const settled = binding.then(
+        () => {},
+        () => {}
+      )
+      rebinding = settled
+      void settled.then(() => {
+        if (rebinding === settled) rebinding = null
+      })
+      return binding
     }
   }
 }

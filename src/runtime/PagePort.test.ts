@@ -20,6 +20,31 @@ const request = {
   mode: 'provider' as const
 }
 
+const sharedEmitLanes = [
+  {
+    name: 'inbound',
+    register: (port: PagePort, callback: () => void | Promise<void>) => port.onInbound('page-a', () => callback()),
+    emit: (port: PagePort) => port.emitInbound(['page-a'], {} as never)
+  },
+  {
+    name: 'World presence',
+    register: (port: PagePort, callback: () => void | Promise<void>) =>
+      port.onWorldPresence('page-a', () => callback()),
+    emit: (port: PagePort) => port.emitWorldPresence(['page-a'], {} as never)
+  },
+  {
+    name: 'Runtime error',
+    register: (port: PagePort, callback: () => void | Promise<void>) => port.onError('page-a', () => callback()),
+    emit: (port: PagePort) => port.emitError(['page-a'], {} as never)
+  },
+  {
+    name: 'History feedback',
+    register: (port: PagePort, callback: () => void | Promise<void>) =>
+      port.onHistoryFeedback('page-a', () => callback()),
+    emit: (port: PagePort) => port.emitHistoryFeedback(['page-a'], {} as never)
+  }
+] as const
+
 describe('PagePort session-event lifecycle', () => {
   const event = {
     type: 'snapshot' as const,
@@ -214,6 +239,44 @@ describe('PagePort Runtime error delivery', () => {
       expect(diagnostic).toHaveBeenCalledOnce()
       expect(diagnostic).toHaveBeenCalledWith(failure)
       expect(await port.emitError(['page-a'], {} as never)).toEqual([])
+      diagnostic.mockRestore()
+    }
+  )
+})
+
+describe('PagePort shared callback lifecycle', () => {
+  it.each(sharedEmitLanes)(
+    'keeps a replacement $name callback and Sessions generation active when a stale callback rejects',
+    async ({ register, emit }) => {
+      const port = new PagePort()
+      const started = deferred<void>()
+      const release = deferred<void>()
+      const failure = new Error('page closed')
+      const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+      const received: string[] = []
+      const sessions: string[] = []
+      port.onSessionEvent('page-a', () => {
+        sessions.push('current')
+      })
+      register(port, async () => {
+        started.resolve()
+        await release.promise
+        throw failure
+      })
+      const staleDelivery = emit(port)
+      await started.promise
+
+      register(port, () => {
+        received.push('current')
+      })
+      release.resolve()
+      expect(await staleDelivery).toEqual([])
+      expect(await emit(port)).toEqual([])
+      expect(received).toEqual(['current'])
+      expect(await port.emitSessionEvent(['page-a'], {} as never)).toEqual([])
+      expect(sessions).toEqual(['current'])
+      expect(diagnostic).toHaveBeenCalledOnce()
+      expect(diagnostic).toHaveBeenCalledWith(failure)
       diagnostic.mockRestore()
     }
   )

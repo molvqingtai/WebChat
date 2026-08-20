@@ -13,6 +13,7 @@ export class RemoteRoomTransport implements RoomTransport {
   private binding: Promise<void> = Promise.resolve()
   private generation = 0
   private acceptingGeneration = 0
+  private admission = 0
   private disposed = false
 
   constructor(private readonly service: TransportService) {}
@@ -20,11 +21,7 @@ export class RemoteRoomTransport implements RoomTransport {
   rebind() {
     const generation = ++this.generation
     this.acceptingGeneration = 0
-    const align = (projections: TransportProjection[]) => {
-      const projection = projections.at(0) ?? { rooms: [] }
-      if (projections.some((candidate) => JSON.stringify(candidate) !== JSON.stringify(projection))) {
-        throw new Error('Transport callback registrations did not return one current projection')
-      }
+    const align = (projection: TransportProjection) => {
       const previous = new Map(this.rooms)
       this.rooms.clear()
       projection.rooms.forEach((room) => this.rooms.set(room.roomId, room))
@@ -32,33 +29,36 @@ export class RemoteRoomTransport implements RoomTransport {
         if (this.rooms.get(roomId)?.handle !== room.handle) this.closes.forEach((callback) => callback(roomId))
       })
     }
-    this.binding = Promise.all([
-      this.service.onMessage((roomId, handle, sourcePeerId, payload) => {
-        if (!this.accepts(generation, roomId, handle)) return
-        this.messages.forEach((callback) => callback(roomId, sourcePeerId, payload))
-      }),
-      this.service.onPeerJoin((roomId, handle, peerId) => {
-        if (!this.accepts(generation, roomId, handle)) return
-        this.joins.forEach((callback) => callback(roomId, peerId))
-      }),
-      this.service.onPeerLeave((roomId, handle, peerId) => {
-        if (!this.accepts(generation, roomId, handle)) return
-        this.leaves.forEach((callback) => callback(roomId, peerId))
-      }),
-      this.service.onRoomClose((roomId, handle) => {
-        if (!this.accepts(generation, roomId, handle)) return
-        this.rooms.delete(roomId)
-        this.closes.forEach((callback) => callback(roomId))
-      }),
-      this.service.onError((error, roomId, handle) => {
-        if (!this.accepts(generation, roomId, handle)) return
-        this.errors.forEach((callback) => callback(error, roomId))
+    this.binding = this.service
+      .rebind(
+        (roomId, handle, sourcePeerId, payload) => {
+          if (!this.accepts(generation, roomId, handle)) return
+          this.messages.forEach((callback) => callback(roomId, sourcePeerId, payload))
+        },
+        (roomId, handle, peerId) => {
+          if (!this.accepts(generation, roomId, handle)) return
+          this.joins.forEach((callback) => callback(roomId, peerId))
+        },
+        (roomId, handle, peerId) => {
+          if (!this.accepts(generation, roomId, handle)) return
+          this.leaves.forEach((callback) => callback(roomId, peerId))
+        },
+        (roomId, handle) => {
+          if (!this.accepts(generation, roomId, handle)) return
+          this.rooms.delete(roomId)
+          this.closes.forEach((callback) => callback(roomId))
+        },
+        (error, roomId, handle) => {
+          if (!this.accepts(generation, roomId, handle)) return
+          this.errors.forEach((callback) => callback(error, roomId))
+        }
+      )
+      .then(({ admission, ...projection }) => {
+        if (!this.isCurrent(generation)) return
+        align(projection)
+        this.admission = admission
+        this.acceptingGeneration = generation
       })
-    ]).then((projections) => {
-      if (!this.isCurrent(generation)) return
-      align(projections)
-      this.acceptingGeneration = generation
-    })
     return this.binding
   }
 
@@ -75,11 +75,16 @@ export class RemoteRoomTransport implements RoomTransport {
   peerIdOf = (roomId: string) => this.rooms.get(roomId)?.peerId ?? ''
   join = async (roomId: string) => {
     const generation = this.generation
+    const handle = nanoid()
+    const admitted =
+      this.acceptingGeneration === generation && !this.rooms.has(roomId)
+        ? this.service.join(roomId, handle, this.admission)
+        : null
     await this.binding
     if (!this.isCurrent(generation)) throw new Error('Room transport generation is no longer current')
     const existing = this.rooms.get(roomId)
     if (existing) return
-    const room = await this.service.join(roomId, nanoid())
+    const room = await (admitted ?? this.service.join(roomId, handle, this.admission))
     if (!this.isCurrent(generation)) throw new Error('Room transport generation is no longer current')
     this.rooms.set(roomId, room)
   }
