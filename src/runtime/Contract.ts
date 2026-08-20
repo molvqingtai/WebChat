@@ -205,23 +205,17 @@ export interface RuntimeServer {
 
 export const RUNTIME_NAMESPACE_PREFIX = 'WEB_CHAT_RUNTIME_V2' as const
 
-export interface RuntimeHostStatus {
-  phase: HostPhase
-  generation: number
-}
-
 export interface RuntimeTab {
   id?: number
   url?: string
 }
 
-export interface RuntimePageRegistration extends RuntimeHostStatus {
+export interface RuntimePageRegistration {
   snapshot: RuntimeSnapshot
   failures?: RuntimeErrorEvent[]
 }
 
 export interface RuntimeCoordinator {
-  ensureHost: () => Promise<RuntimeHostStatus>
   registerPage: (payload: { domain: string; pageId: string } & RuntimePageCall) => Promise<RuntimePageRegistration>
 }
 

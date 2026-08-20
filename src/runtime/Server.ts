@@ -54,7 +54,6 @@ interface PageBinding {
   pageId: string
   domain: string
   url: string
-  generation: number
   sessionGeneration: number | null
 }
 
@@ -138,7 +137,6 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   const pageBindings = new Map<string, PageBinding>()
   const tabBindings = new Map<number, PageBinding>()
   const rebindHints = new Map<number, PersistedPageBindings['pages'][number]>()
-  let bindingGeneration = 0
   let bindingPersistTail: Promise<void> = Promise.resolve()
 
   const isCurrentBinding = (binding: PageBinding) =>
@@ -240,7 +238,6 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       pageId: payload.pageId,
       domain: payload.domain,
       url,
-      generation: ++bindingGeneration,
       sessionGeneration: null
     }
   }

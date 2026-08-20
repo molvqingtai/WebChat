@@ -13,14 +13,9 @@ const snapshot = (hostId = 'host-a'): RuntimeSnapshot => ({
   world: { joined: true, peerId: 'peer-a', presences: [] }
 })
 
-const registration = (hostId = 'host-a', generation = 1): RuntimePageRegistration => ({
-  phase: 'ready',
-  generation,
-  snapshot: snapshot(hostId)
-})
+const registration = (hostId = 'host-a'): RuntimePageRegistration => ({ snapshot: snapshot(hostId) })
 
 const coordinatorWith = (registerPage: RuntimeCoordinator['registerPage']): RuntimeCoordinator => ({
-  ensureHost: vi.fn(async () => ({ phase: 'ready' as const, generation: 1 })),
   registerPage
 })
 
@@ -44,8 +39,8 @@ describe('ClientLease event-driven Runtime admission', () => {
   it('refreshes only from one explicit current Page event', async () => {
     const registerPage = vi
       .fn<RuntimeCoordinator['registerPage']>()
-      .mockResolvedValueOnce(registration('host-a', 1))
-      .mockResolvedValueOnce(registration('host-b', 2))
+      .mockResolvedValueOnce(registration('host-a'))
+      .mockResolvedValueOnce(registration('host-b'))
     const ready = vi.fn()
     const client = new ClientLease({ coordinator: coordinatorWith(registerPage), pageId, domain })
     client.whenReady(ready)
@@ -62,8 +57,8 @@ describe('ClientLease event-driven Runtime admission', () => {
   it('rebinds through a fresh ordinary registration without using the test-only refresh entry', async () => {
     const registerPage = vi
       .fn<RuntimeCoordinator['registerPage']>()
-      .mockResolvedValueOnce(registration('host-a', 1))
-      .mockResolvedValueOnce(registration('host-b', 1))
+      .mockResolvedValueOnce(registration('host-a'))
+      .mockResolvedValueOnce(registration('host-b'))
     const ready = vi.fn()
     const client = new ClientLease({ coordinator: coordinatorWith(registerPage), pageId, domain })
     client.whenReady(ready)
@@ -116,7 +111,7 @@ describe('ClientLease event-driven Runtime admission', () => {
     await client.init()
     const refresh = client.checkNow()
     client.detach()
-    resolve(registration('host-b', 2))
+    resolve(registration('host-b'))
     await refresh
 
     expect(() => client.snapshot()).not.toThrow()

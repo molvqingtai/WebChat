@@ -50,7 +50,6 @@ const withDeadline = <T>(task: Promise<T>, milliseconds: number, signal: AbortSi
 
 export class ClientLease {
   private snapshotValue: RuntimeSnapshot | null = null
-  private coordinatorGeneration = 0
   private ready = false
   private lifecycle: AbortController | null = null
   private readonly readyCallbacks = new Set<() => void>()
@@ -132,7 +131,6 @@ export class ClientLease {
           lifecycle.signal
         )
         if (Date.now() >= attemptDeadline) throw new Error('Runtime control-plane request timed out')
-        if (result.phase !== 'ready') throw new Error(`Runtime host unavailable: ${result.phase}`)
         return result
       } catch (error) {
         lifecycle.signal.throwIfAborted()
@@ -147,7 +145,6 @@ export class ClientLease {
     const registration = await this.registerWithinBudget(lifecycle, deadline)
     if (!this.isCurrent(lifecycle)) return null
     this.snapshotValue = registration.snapshot
-    this.coordinatorGeneration = registration.generation
     this.ready = true
     this.setHostPhase(registration.snapshot.hostPhase)
     this.readyCallbacks.forEach((callback) => callback())
@@ -169,14 +166,11 @@ export class ClientLease {
       this.emitRegistrationFailures(registration)
       const lease = registration.snapshot.domains.find((item) => item.domain === this.options.domain)
       const replaced =
-        registration.generation !== this.coordinatorGeneration ||
-        registration.snapshot.hostId !== this.snapshotValue?.hostId ||
-        !lease?.pageIds.includes(this.options.pageId)
+        registration.snapshot.hostId !== this.snapshotValue?.hostId || !lease?.pageIds.includes(this.options.pageId)
       if (replaced) {
         // This exact RPC is the sole new admission. Adopt its current state directly instead of
         // issuing another probe or replaying an action through a recovery helper.
         this.snapshotValue = registration.snapshot
-        this.coordinatorGeneration = registration.generation
         this.ready = true
         this.setHostPhase(registration.snapshot.hostPhase)
         this.readyCallbacks.forEach((callback) => callback())
@@ -243,7 +237,6 @@ export class ClientLease {
       const registration = await this.registerWithinBudget(lifecycle, deadline)
       if (!this.isCurrent(lifecycle)) return
       this.snapshotValue = registration.snapshot
-      this.coordinatorGeneration = registration.generation
       this.ready = true
       this.setHostPhase(registration.snapshot.hostPhase)
       this.readyCallbacks.forEach((callback) => callback())

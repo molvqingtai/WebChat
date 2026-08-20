@@ -312,10 +312,10 @@ describe('application feedback ownership', () => {
     }
     const registerPage = vi
       .fn<RuntimeCoordinator['registerPage']>()
-      .mockResolvedValueOnce({ phase: 'ready', generation: 1, snapshot })
+      .mockResolvedValueOnce({ snapshot })
       .mockRejectedValue(nativeError)
     const lease = new ClientLease({
-      coordinator: { ensureHost: vi.fn(), registerPage },
+      coordinator: { registerPage },
       pageId,
       domain,
       startupTimeoutMs: 1000,

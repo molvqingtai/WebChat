@@ -2,7 +2,7 @@ import { browser } from '#imports'
 import { defineProxy } from 'comctx'
 import { ProvideAdapter } from '@/service/adapter/runtime'
 import { BackgroundInjectAdapter, type MessageApi } from '@/service/adapter/runtime/Core'
-import type { RuntimeCoordinator, RuntimeHostStatus, RuntimePageRegistration } from '@/runtime/Contract'
+import type { RuntimeCoordinator, RuntimePageRegistration } from '@/runtime/Contract'
 import { HostOwner } from '@/runtime/HostOwner'
 import { ChromiumTransportOwner } from '@/runtime/ChromiumTransportOwner'
 import { startHost } from '@/runtime/host'
@@ -58,7 +58,7 @@ const admission = {
   }
 }
 
-const ensureBackgroundHost = async (): Promise<{ status: RuntimeHostStatus; created: boolean }> => {
+const ensureBackgroundHost = async () => {
   const transport = import.meta.env.FIREFOX ? undefined : await ensureChromeTransport()
   const { host, created } = backgroundHost.ensure(() =>
     startHost(new ProvideAdapter(), presenceStore, transport, admission)
@@ -69,17 +69,14 @@ const ensureBackgroundHost = async (): Promise<{ status: RuntimeHostStatus; crea
     // This side branch never delays the Page RPC that woke the Background.
     void restoreServerPageBindings(host.server)?.catch((error) => console.error(error))
   }
-  return { status: { phase: 'ready', generation: 1 }, created }
 }
 
-export const ensureHost = async (): Promise<RuntimeHostStatus> => (await ensureBackgroundHost()).status
-
 export const registerPage: RuntimeCoordinator['registerPage'] = async (payload): Promise<RuntimePageRegistration> => {
-  const { status } = await ensureBackgroundHost()
+  await ensureBackgroundHost()
   const server = backgroundHost.server
   if (!server) throw new Error('Logical Runtime background host is unavailable')
   const snapshot = await server.attachPage(payload)
-  return { ...status, snapshot }
+  return { snapshot }
 }
 
 /** Fresh Background startup restores only validated Page rebind targets, never old callback closures or actions. */
