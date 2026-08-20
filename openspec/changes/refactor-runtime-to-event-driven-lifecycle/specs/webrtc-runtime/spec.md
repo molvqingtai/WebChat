@@ -56,6 +56,8 @@ Each existing Background/Offscreen provider method and callback SHALL remain a t
 
 Abstract diagram names such as `onXXXA(callbackA)` and `onXXXXB(callbackB)` SHALL NOT require a new API or adapter. Callback restart SHALL add no callback sequencing protocol, ACK, queue, ledger, receipt, payload persistence, replay, or deadline protocol. An expired old callback payload SHALL be discarded.
 
+The five Offscreen callback lanes SHALL share one Runtime-private transport admission epoch. Rebinding SHALL drain every join admitted by the preceding epoch, then perform the final empty-admission observation, complete current Room projection capture, and successor-epoch publication in one synchronous service operation with no `await` or re-entry point between those facts. A join from an expired facade SHALL fail its epoch check before physical provider join or commit. This epoch SHALL NOT enter an application-facing port, peer protocol, callback protocol, acknowledgement, queue, or compatibility path.
+
 #### Scenario: All endpoint restart combinations converge
 
 - **GIVEN** one of Background fresh + Offscreen surviving, Background surviving + Offscreen fresh, both fresh, or both current
@@ -68,11 +70,20 @@ Abstract diagram names such as `onXXXA(callbackA)` and `onXXXXB(callbackB)` SHAL
 - **WHEN** a new Background restores its callback pairs
 - **THEN** the old payload SHALL NOT be persisted, queued, replayed, acknowledged, or applied, and only a later event delivered through the new current callback MAY be processed
 
+#### Scenario: Projection and admission epoch publish at one cut
+
+- **GIVEN** a fresh Background rebinds while an old facade may still attempt a transport join
+- **WHEN** all joins admitted before the rebind cut have settled
+- **THEN** Offscreen SHALL synchronously observe no remaining old admission, capture the complete current Room projection, and publish the successor epoch as one operation
+- **AND** any later old-epoch join SHALL fail before physical provider work or Room commit, while all pre-cut committed Rooms SHALL appear in the returned projection
+
 ### Requirement: onSessionsChange is immediate initial load and exact rebind
 
 A new Page SHALL call the existing `runtime.onSessionsChange(callback)` method as both subscription and initial load. After a fresh Background invalidates old callback IDs, it SHALL send `runtime:sessions-rebind` to each exact restored provisional Page, and each Page SHALL re-execute the same method with a new callback. An Offscreen-only replacement SHALL NOT trigger this rebind.
 
 Background SHALL atomically replace the exact Page callback, linearize current full Sessions, immediately invoke the new callback with that full state, wait for the existing callback call to complete, and revalidate the exact binding. Only a still-current binding SHALL activate the callback for later ordered deltas. A failed callback call or binding drift SHALL retire the provisional binding. Other provisional Pages SHALL rebind asynchronously without blocking the current caller. The lifecycle SHALL add no separate initial-load query, snapshot RPC, or readiness ACK.
+
+Inbound, Sessions, World, Runtime-error, and History-feedback callback delivery SHALL capture the exact listener or Sessions generation that it invokes. A rejected callback SHALL remove the Page only if that captured binding remains current. A rejection from an old callback that was replaced while pending SHALL NOT remove the replacement, its current Sessions generation, or action admission owned by that replacement.
 
 #### Scenario: First bind immediately loads current Sessions
 
@@ -91,6 +102,13 @@ Background SHALL atomically replace the exact Page callback, linearize current f
 - **GIVEN** a Page callback bind or rebind is receiving current full Sessions
 - **WHEN** tab, navigation, page owner, or binding generation changes before callback completion
 - **THEN** Background SHALL not activate that callback or execute the pending action and SHALL retire the stale binding through the existing rejection/detach path
+
+#### Scenario: Stale callback rejection preserves the replacement
+
+- **GIVEN** an old Page callback invocation remains pending
+- **WHEN** the same Page installs a current replacement and the old invocation later rejects
+- **THEN** Background SHALL retain the exact replacement and its current Sessions generation
+- **AND** only a rejection from the still-current captured binding MAY retire that Page
 
 ### Requirement: Accepted actions execute once after target-scoped readiness
 

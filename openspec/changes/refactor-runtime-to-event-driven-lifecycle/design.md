@@ -52,11 +52,15 @@ When both endpoints are current, each existing one-to-one provider method/callba
 
 The diagram's `onXXXA(callbackA)` and `onXXXXB(callbackB)` are placeholders for existing one-to-one pairs. They add no multiplexing adapter, callback-sequencing protocol, ACK, queue, ledger, receipt, payload replay, or new API. An old callback payload may expire and must never be saved or replayed.
 
+All five Offscreen callback lanes share one transport-service admission epoch. Rebinding first drains joins admitted by the preceding epoch, then performs the final empty-admission observation, captures the complete current Room projection, and publishes the successor epoch in one synchronous operation with no `await` or re-entry point. A join presents the epoch held by its exact Background facade; an expired epoch is rejected before physical provider join or commit. The epoch is Runtime-private linearization state, not a new application or peer API.
+
 ### 6. onSessionsChange owns both initial load and rebind
 
 A normal new Page performs `runtime.onSessionsChange(callback)` once as both subscription and initial load. After Background fresh boot, each restored provisional Page receives `runtime:sessions-rebind` and re-executes the same method with a new callback. Offscreen-only restart does not enter this branch.
 
 Background atomically replaces the exact Page callback, linearizes current full Sessions, immediately invokes the callback with that full state, waits for the existing callback call to complete, and revalidates the exact binding. Only then does it activate the callback for later ordered deltas. Failure or binding drift retires that provisional binding. Other provisional Pages rebind asynchronously and do not block the current caller. No separate initial-load query, snapshot RPC, or ACK exists.
+
+Every Page callback delivery captures its exact listener or Sessions generation before invocation. A rejected stale invocation may remove the Page only while that same captured binding remains current. If a same-Page replacement became current while the old callback was pending, the old rejection cannot delete the replacement, its current Sessions generation, or later action admission.
 
 ### 7. Action admission is target-scoped and exactly once
 
