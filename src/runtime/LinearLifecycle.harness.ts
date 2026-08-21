@@ -269,7 +269,7 @@ export interface HarnessCallResult {
   pageTerminal?: ConnectionLifecycleResult
 }
 
-export type CallOp = 'join' | 'leave' | 'reconnect' | 'sendText'
+export type CallOp = 'join' | 'leave' | 'reconnect' | 'sendText' | 'allocate' | 'reaction'
 
 export interface HarnessPage {
   index: number
@@ -313,6 +313,11 @@ export interface HarnessWorld {
   /** Arms a one-shot gate on the next admission tabs.get — used to place an invalidation exactly
    * inside a post-effect revalidation window. */
   armTabsGate: () => void
+  /** Arms a one-shot gate on the next admission ensureTransport — used to suspend a bound
+   * validation while a same-tuple B2 is installed. */
+  armTransportGate: () => void
+  /** Arms a one-shot gate on the next replayInbound RPC — used to hold Chat replay across cleanup. */
+  armReplayGate: () => void
   dispose: () => void
 }
 
@@ -348,6 +353,7 @@ export const createHarnessWorld = (config: WorldConfig): HarnessWorld => {
 
   const tabs = new Map<number, { id: number; url: string }>()
   let tabsGateArmed = false
+  let transportGateArmed = false
   const storageState: Record<string, unknown> = {}
   const admission = {
     tabs: {
@@ -370,7 +376,13 @@ export const createHarnessWorld = (config: WorldConfig): HarnessWorld => {
       }
     },
     rebindPage: async () => undefined,
-    ensureTransport: async () => undefined
+    ensureTransport: async () => {
+      if (transportGateArmed) {
+        transportGateArmed = false
+        const gate = gates.create<void>('admission.ensureTransport', {})
+        await gate.promise
+      }
+    }
   }
 
   const server = createServer({ transport, codec: jsonCodec, presenceStore: presence.store, admission })
@@ -410,6 +422,11 @@ export const createHarnessWorld = (config: WorldConfig): HarnessWorld => {
     } else if (observation.type === 'binding') {
       detail.B = identityLabel('B', observation.binding)
       detail.domain = observation.binding.domain
+      detail.pageId = observation.binding.pageId
+    } else if (observation.type === 'validation') {
+      detail.B = identityLabel('B', observation.binding)
+      detail.domain = observation.binding.domain
+      detail.pageId = observation.binding.pageId
     }
     for (const key of ['envelope', 'cohort', 'member', 'capability', 'record', 'token', 'binding']) delete detail[key]
     if (owner !== undefined) detail.a = owner
@@ -439,6 +456,7 @@ export const createHarnessWorld = (config: WorldConfig): HarnessWorld => {
 
   const pages: HarnessPage[] = []
   let navigateSeq = 0
+  let replayGateArmed = false
   for (let index = 0; index < config.pageCount; index += 1) {
     const pageId = `harness-page-${config.seed}-${index}`
     const tabId = 1000 + index
@@ -490,7 +508,17 @@ export const createHarnessWorld = (config: WorldConfig): HarnessWorld => {
       allocateReactionMessage: (payload) => server.allocateReactionMessage(withBinding(payload)),
       sendChatMessage: (payload) => server.sendChatMessage(withBinding(payload)),
       ackInbound: (payload) => server.ackInbound(withBinding(payload)),
-      replayInbound: (payload) => server.replayInbound(withBinding(payload)),
+      replayInbound: async (payload) => {
+        // The Server RPC (and its exact-B readiness owner) is established first; the armed gate
+        // then holds the replay continuation open across a later cleanup window.
+        const result = await server.replayInbound(withBinding(payload))
+        if (replayGateArmed) {
+          replayGateArmed = false
+          const gate = gates.create<void>('replay.inbound', { page: index })
+          await gate.promise
+        }
+        return result
+      },
       reconnectDomain: (payload) => server.reconnectDomain(withBinding(payload)),
       onInbound: (payload, callback) => server.onInbound(withBinding(payload), callback),
       onSessionEvent: (payload, callback) => server.onSessionEvent(withBinding(payload), callback),
@@ -544,7 +572,7 @@ export const createHarnessWorld = (config: WorldConfig): HarnessWorld => {
     // Ready publication tap: the exact point ClientLease publishes ready to Page consumers.
     lease.whenReady(() => {
       page.readyPublished = true
-      log.record('ready.publish', { page: index, worldAttachSettled: page.worldAttachSettled })
+      log.record('ready.publish', { page: index, pageId, worldAttachSettled: page.worldAttachSettled })
     })
     // World attach settlement tap: queued after WorldRoom's own attach hook, so `getState()`
     // resolves only after that exact attachment generation physically completed.
@@ -600,6 +628,12 @@ export const createHarnessWorld = (config: WorldConfig): HarnessWorld => {
     armTabsGate: () => {
       tabsGateArmed = true
     },
+    armTransportGate: () => {
+      transportGateArmed = true
+    },
+    armReplayGate: () => {
+      replayGateArmed = true
+    },
     dispose: () => {
       pages.forEach((page) => {
         page.chat.dispose()
@@ -626,6 +660,8 @@ export type ScheduleStep =
   | { kind: 'room-close' }
   | { kind: 'arm-insert-failure'; page: number }
   | { kind: 'arm-tabs-gate' }
+  | { kind: 'arm-transport-gate' }
+  | { kind: 'arm-replay-gate' }
 
 export interface CallSpec {
   page: number
@@ -640,7 +676,7 @@ export interface Schedule {
   steps: ScheduleStep[]
 }
 
-const OPS: CallOp[] = ['join', 'leave', 'reconnect', 'sendText']
+const OPS: CallOp[] = ['join', 'leave', 'reconnect', 'sendText', 'allocate', 'reaction']
 
 /**
  * Deterministic seeded generator: 1-3 real distinguishable Pages, 1-3 calls per Page drawn from
@@ -797,6 +833,35 @@ export const runSchedule = async (schedule: Schedule, driver: SchedulerDriver): 
               result.error = `${error?.name}: ${error?.message}`
               log.record('call.settle', { a, result: 'error', error: result.error })
             })
+        } else if (spec.op === 'allocate') {
+          page.server
+            .allocateTextMessage({ domain: HARNESS_DOMAIN, body: spec.body ?? `call-${a}`, mentions: [] })
+            .then(() => {
+              result.settled = 'success'
+              log.record('call.settle', { a, result: 'success' })
+            })
+            .catch((error: Error) => {
+              result.settled = error?.name === 'AbortError' ? 'null' : 'error'
+              result.error = `${error?.name}: ${error?.message}`
+              log.record('call.settle', { a, result: result.settled, error: result.error })
+            })
+        } else if (spec.op === 'reaction') {
+          page.server
+            .allocateReactionMessage({
+              domain: HARNESS_DOMAIN,
+              targetId: `target-${a}`,
+              reaction: 'like',
+              active: true
+            })
+            .then(() => {
+              result.settled = 'success'
+              log.record('call.settle', { a, result: 'success' })
+            })
+            .catch((error: Error) => {
+              result.settled = error?.name === 'AbortError' ? 'null' : 'error'
+              result.error = `${error?.name}: ${error?.message}`
+              log.record('call.settle', { a, result: result.settled, error: result.error })
+            })
         } else {
           const event: TextMessage = {
             type: MESSAGE_TYPE.TEXT,
@@ -917,6 +982,10 @@ export const runSchedule = async (schedule: Schedule, driver: SchedulerDriver): 
         world.pages[step.page].failNextInsert = true
       } else if (step.kind === 'arm-tabs-gate') {
         world.armTabsGate()
+      } else if (step.kind === 'arm-transport-gate') {
+        world.armTransportGate()
+      } else if (step.kind === 'arm-replay-gate') {
+        world.armReplayGate()
       }
     }
     // Deterministic drain: release remaining gates in creation order, advancing time only when no
@@ -1219,34 +1288,37 @@ export const oracleSuccessorOrdering = (result: RunResult): string[] => {
 }
 
 /**
- * O8 (final ready validation): every ready publication is preceded by a successful final
- * Server-side validation for the same Page, with no binding invalidation/replacement in between.
+ * O8 (final ready validation, exact-B): every ready publication is preceded by a successful
+ * Server-side validation of one exact B object for that Page, and that exact object was not
+ * retired between its validation and the publication. A same-tuple B2 can never satisfy B1's term.
  */
 export const oracleReadyFinalValidation = (result: RunResult): string[] => {
   const violations: string[] = []
+  const identity = result.log.entries.filter((entry) => entry.kind === 'identity')
   for (const publish of result.log.entries.filter((entry) => entry.kind === 'ready.publish')) {
-    const validate = [...result.log.entries]
+    const validated = [...identity]
       .reverse()
       .find(
         (entry) =>
-          entry.kind === 'ready.validate' && entry.detail.page === publish.detail.page && entry.seq < publish.seq
+          entry.detail.phase === 'passed' && entry.detail.pageId === publish.detail.pageId && entry.seq < publish.seq
       )
-    if (!validate) {
+    if (!validated) {
       violations.push(
-        `ready.publish seq=${publish.seq} page=${String(publish.detail.page)} has no preceding final Server-side validation`
+        `ready.publish seq=${publish.seq} page=${String(publish.detail.page)} has no preceding exact-B Server validation`
       )
       continue
     }
-    const invalidated = result.log.entries.some(
+    const retired = identity.some(
       (entry) =>
-        (entry.kind === 'binding.invalidate' || entry.kind === 'binding.replace') &&
-        entry.detail.page === publish.detail.page &&
-        entry.seq > validate.seq &&
+        entry.detail.type === 'binding' &&
+        entry.detail.phase === 'removed' &&
+        entry.detail.B === validated.detail.B &&
+        entry.seq > validated.seq &&
         entry.seq < publish.seq
     )
-    if (invalidated) {
+    if (retired) {
       violations.push(
-        `ready.publish seq=${publish.seq} page=${String(publish.detail.page)} fired after its binding was invalidated past the final validation seq=${validate.seq}`
+        `ready.publish seq=${publish.seq} page=${String(publish.detail.page)} fired after its validated exact binding ${String(validated.detail.B)} was retired (validated seq=${validated.seq})`
       )
     }
   }
@@ -1254,8 +1326,9 @@ export const oracleReadyFinalValidation = (result: RunResult): string[] => {
 }
 
 /**
- * O9 (cohort fence): no durable presence save/hydrate or connect effect is attributed to a member
- * of a cohort after that cohort closed.
+ * O9 (cohort fence): no durable effect — neither an acquisition save/hydrate nor a post-seal
+ * Connection commit's persistence — is attributed to a member of a cohort after that cohort
+ * closed. A legitimate commit can only happen while its captured cohort is open.
  */
 export const oracleCohortFence = (result: RunResult): string[] => {
   const violations: string[] = []
@@ -1264,12 +1337,7 @@ export const oracleCohortFence = (result: RunResult): string[] => {
     identity.find((entry) => entry.detail.phase === 'enrolled' && entry.detail.a === a)?.detail.C
   const closedSeq = (cohort: unknown) =>
     identity.find((entry) => entry.detail.phase === 'closed' && entry.detail.C === cohort)?.seq
-  // Only the pre-seal acquisition continuation is fenced by its cohort; a post-seal save is the
-  // authoritative commit's persistence.
-  const sealedSeq = (a: unknown) =>
-    identity.find((entry) => entry.detail.phase === 'sealed' && entry.detail.a === a)?.seq ?? Number.POSITIVE_INFINITY
   for (const save of result.log.entries.filter((entry) => entry.kind === 'presence.save')) {
-    if (save.seq > sealedSeq(save.detail.a)) continue
     const cohort = cohortOf(save.detail.a)
     if (cohort === undefined) continue
     const closed = closedSeq(cohort)

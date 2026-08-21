@@ -20,6 +20,12 @@ export interface CommitCapabilityMeta {
   readonly kind: 'join' | 'reconnect'
   /** Exact binding object identity the capability was minted for. */
   readonly binding: unknown
+  /**
+   * Synchronous final linearization probe evaluated at every irreversible commit boundary. The
+   * Server envelope captures its exact cohort here: once that cohort is closed, the consumed
+   * capability no longer authorizes any commit.
+   */
+  readonly commitFence?: () => boolean
 }
 
 export interface CommitAuthority {
@@ -62,7 +68,12 @@ export const createCommitAuthority = (): CommitAuthority => {
       entry.state = 'consumed'
       return true
     },
-    authorizes: (token) => entries.get(token)?.state === 'consumed',
+    authorizes: (token) => {
+      const entry = entries.get(token)
+      if (!entry || entry.state !== 'consumed') return false
+      // Final linearization at the commit boundary: the captured cohort must still authorize it.
+      return entry.meta.commitFence?.() ?? true
+    },
     revokeBinding: (binding) => {
       if (typeof binding !== 'object' || binding === null) return
       for (const token of byBinding.get(binding) ?? []) {

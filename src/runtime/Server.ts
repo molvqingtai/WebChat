@@ -119,6 +119,7 @@ export type ServerLifecycleObservation =
     }
   | { readonly type: 'readiness'; readonly phase: 'begin' | 'end'; readonly token: ReadinessToken }
   | { readonly type: 'binding'; readonly phase: 'installed' | 'removed'; readonly binding: PageBinding }
+  | { readonly type: 'validation'; readonly phase: 'passed'; readonly binding: PageBinding }
 
 interface PhysicalRequest {
   readonly requestId: string
@@ -384,15 +385,40 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     }
   }
 
-  /** Exact-B retirement decrements all of its outstanding readiness owners. */
+  /** Exact-B retirement decrements all of its outstanding readiness owners, then immediately
+   * re-evaluates each affected cohort so a satisfied cleanup conjunction wakes its waiters. */
   const retireBindingReadiness = (binding: PageBinding) => {
+    const domains = new Set<string>()
     // Copy first: the loop mutates the iterated set (exact-B retirement decrements each token).
     // oxlint-disable-next-line no-useless-spread
     for (const token of [...(bindingReadiness.get(binding) ?? [])]) {
       domainReadiness.get(token.domain)?.delete(token)
       bindingReadiness.get(binding)?.delete(token)
+      domains.add(token.domain)
       emit({ type: 'readiness', phase: 'end', token })
       token.done()
+    }
+    for (const domain of domains) {
+      const cohort = domainCohorts.get(domain)
+      if (cohort) evaluateCohort(cohort)
+    }
+  }
+
+  /** The exact-B attach/readiness work completed (its final validation passed): every outstanding
+   * readiness owner of this exact binding decrements, and affected cohorts re-evaluate at once. */
+  const settleBindingReadiness = (binding: PageBinding) => {
+    const domains = new Set<string>()
+    // oxlint-disable-next-line no-useless-spread
+    for (const token of [...(bindingReadiness.get(binding) ?? [])]) {
+      domainReadiness.get(token.domain)?.delete(token)
+      bindingReadiness.get(binding)?.delete(token)
+      domains.add(token.domain)
+      emit({ type: 'readiness', phase: 'end', token })
+      token.done()
+    }
+    for (const domain of domains) {
+      const cohort = domainCohorts.get(domain)
+      if (cohort) evaluateCohort(cohort)
     }
   }
 
@@ -448,14 +474,20 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   const requirePageBinding = async (payload: RuntimePageCall, requireSessionCallback: boolean) => {
     const admission = config.admission
     if (!admission) return null
-    await admission.ensureTransport()
     const pageId = payload.pageId
     const callerTabId = payload.caller?.tab?.id
     if (!pageId || typeof callerTabId !== 'number' || !Number.isSafeInteger(callerTabId) || callerTabId < 0) {
       throw new Error('Current Page browser caller is required')
     }
+    // Capture the exact binding object BEFORE any await. Every check below re-validates this same
+    // object identity; a same-tuple successor installed while this call is suspended is never
+    // adopted by re-resolving the stable tuple.
     const binding = pageBindings.get(pageId)
     if (!binding || binding.tabId !== callerTabId || payload.runtimeHostId !== snapshot().hostId) {
+      throw new Error('Runtime Page binding is no longer current')
+    }
+    await admission.ensureTransport()
+    if (pageBindings.get(pageId) !== binding) {
       throw new Error('Runtime Page binding is no longer current')
     }
     if (requireSessionCallback) {
@@ -1000,7 +1032,10 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
           operationId,
           domain: payload.domain,
           kind: 'join',
-          binding: binding ?? null
+          binding: binding ?? null,
+          // Final linearization: every irreversible commit of this operation must synchronously
+          // re-prove its captured cohort is still open. A closed cohort authorizes no commit.
+          commitFence: () => activeCohort.state !== 'closed'
         })
         emit({ type: 'capability', phase: 'minted', capability })
         if (!commitAuthority.consume(capability)) throw operationCancelled()
@@ -1053,7 +1088,8 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
         if (boundedRevalidate) await boundedRevalidate()
         envelopeFence()
         if (!(await connect())) return null
-        envelopeFence()
+        // The committed snapshot is the sole terminal: once the envelope's effect sealed and the
+        // operation committed, no later cohort/binding event may rewrite it back to null.
         return snapshot()
       }
     })()
@@ -1101,7 +1137,15 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     // this exact operation can perform the reset and only its consumed capability can commit the
     // later replacement. P observation is global and armed before any dispatch, exactly like an
     // initial join.
-    const capability = commitAuthority.mint({ operationId, domain, kind: 'reconnect', binding: binding ?? null })
+    const capability = commitAuthority.mint({
+      operationId,
+      domain,
+      kind: 'reconnect',
+      binding: binding ?? null,
+      // The same final linearization as an initial join: a closed captured cohort authorizes no
+      // reset destruction and no replacement commit.
+      commitFence: () => activeCohort.state !== 'closed'
+    })
     emit({ type: 'capability', phase: 'minted', capability })
     if (!commitAuthority.consume(capability)) throw operationCancelled()
     emit({ type: 'capability', phase: 'consumed', capability })
@@ -1166,12 +1210,18 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       }
     },
     getSnapshot: async (payload) => {
-      // Bound call: validates the exact current binding object (identity, host, browser
-      // navigation). `validateReadiness` additionally requires the complete exact-B readiness
-      // conjunction; the Page's unique ready publication rides on that final Server-side check.
+      // Bound call: captures the exact current binding object before any await and re-validates
+      // that same object after every suspension — a same-tuple successor is never adopted.
+      // `validateReadiness` additionally requires the complete exact-B readiness conjunction and
+      // settles that exact binding's outstanding attach/readiness owners: it is the final
+      // Server-side term of the Page's unique ready publication.
       if (payload?.pageId) {
         const binding = await requirePageBinding(payload, payload.validateReadiness === true)
         if (payload.validateReadiness === true) requireFullReadiness(binding)
+        if (binding) {
+          emit({ type: 'validation', phase: 'passed', binding })
+          if (payload.validateReadiness === true) settleBindingReadiness(binding)
+        }
       }
       return snapshot()
     },
@@ -1285,8 +1335,16 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       store.send(deliveryDomain.command.AckInboundCommand(payload))
     },
     replayInbound: async (payload) => {
-      await requirePageBinding(payload, true)
-      return store.query(deliveryDomain.query.BufferedEventsQuery(payload))
+      const binding = await requirePageBinding(payload, true)
+      // Replay is part of the exact-B attach work: its owner also ends only at the final
+      // validation, on failure, or on exact-B retirement.
+      const endReadiness = binding ? trackReadiness(binding, binding.domain) : undefined
+      try {
+        return store.query(deliveryDomain.query.BufferedEventsQuery(payload))
+      } catch (error) {
+        endReadiness?.()
+        throw error
+      }
     },
     reconnectDomain: async (payload) => {
       const binding = await requirePageBinding(payload, true)
@@ -1318,11 +1376,14 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     },
     onInbound: async (payload, callback) => {
       const binding = await requirePageBinding(payload, false)
+      // The readiness owner outlives this RPC: it ends only when the exact-B attach work completes
+      // (final validation), when this registration itself fails, or on exact-B retirement.
       const endReadiness = binding ? trackReadiness(binding, binding.domain) : undefined
       try {
         pagePort.onInbound(payload.pageId, callback)
-      } finally {
+      } catch (error) {
         endReadiness?.()
+        throw error
       }
     },
     onSessionEvent: async (payload, callback) => {
@@ -1338,6 +1399,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
           .find((candidate) => candidate.pageIds.includes(payload.pageId))
         if (!lease) {
           pagePort.cancelSessionEvent(payload.pageId, generation)
+          endReadiness?.()
           return
         }
         const runtime = snapshot().domains.find((candidate) => candidate.domain === lease.domain)
@@ -1360,17 +1422,21 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
             currentBinding !== binding ||
             !(await pagePort.activateSessionEvent(payload.pageId, generation))
           ) {
+            // The registration was not established: its owner ends here rather than at validation.
             pagePort.cancelSessionEvent(payload.pageId, generation)
+            endReadiness?.()
           } else if (binding) {
             binding.sessionGeneration = generation
           }
         } catch (error) {
           pagePort.cancelSessionEvent(payload.pageId, generation)
+          endReadiness?.()
           if (binding) await removeBinding(binding)
           throw error
         }
-      } finally {
+      } catch (error) {
         endReadiness?.()
+        throw error
       }
     },
     onWorldPresence: async (payload, callback) => {
@@ -1378,8 +1444,9 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       const endReadiness = binding ? trackReadiness(binding, binding.domain) : undefined
       try {
         pagePort.onWorldPresence(payload.pageId, callback)
-      } finally {
+      } catch (error) {
         endReadiness?.()
+        throw error
       }
     },
     onError: async (payload, callback) => {
@@ -1387,8 +1454,9 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       const endReadiness = binding ? trackReadiness(binding, binding.domain) : undefined
       try {
         pagePort.onError(payload.pageId, callback)
-      } finally {
+      } catch (error) {
         endReadiness?.()
+        throw error
       }
     },
     onHistoryFeedback: async (payload, callback) => {
@@ -1396,8 +1464,9 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       const endReadiness = binding ? trackReadiness(binding, binding.domain) : undefined
       try {
         pagePort.onHistoryFeedback(payload.pageId, callback)
-      } finally {
+      } catch (error) {
         endReadiness?.()
+        throw error
       }
     },
     provideHistory: async (payload, callback) => {
@@ -1405,8 +1474,9 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       const endReadiness = binding ? trackReadiness(binding, binding.domain) : undefined
       try {
         pagePort.provideHistory(payload.pageId, payload.domain, callback)
-      } finally {
+      } catch (error) {
         endReadiness?.()
+        throw error
       }
     },
     resolveHistorySupply: async (payload) => {

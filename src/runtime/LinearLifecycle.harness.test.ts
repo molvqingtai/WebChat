@@ -27,6 +27,8 @@ import {
   oracleSingleTerminalOwner,
   runSchedule,
   shrinkSchedule,
+  type HarnessGate,
+  type HarnessWorld,
   type RunResult,
   type Schedule,
   type SchedulerDriver
@@ -583,5 +585,162 @@ describe('Linear lifecycle generated harness — repair finding P1-3 (final boun
     lease.whenAttach(() => undefined)
     await expect(lease.init()).rejects.toThrow('Runtime Page binding is no longer current')
     expect(readyPublished).toBe(false)
+  })
+})
+
+/**
+ * K1 (post-K commit fence): C closes at its deadline while the provider join is still pending;
+ * the Q then succeeds BEFORE Connection's physical timeout. The old continuation must not commit:
+ * its consumed K's captured-cohort authorization fails synchronously at the commit boundary and
+ * the action settles with the structured null — never a commit-after-close plus null split.
+ */
+const postKCommitSchedule: Schedule = {
+  seed: 113,
+  pageCount: 1,
+  calls: [{ page: 0, op: 'join' }],
+  steps: [
+    { kind: 'init-page', page: 0 },
+    { kind: 'start-call', call: 0 },
+    { kind: 'release-gate', pick: 0 }, // presence.load
+    { kind: 'arm-tabs-gate' },
+    { kind: 'release-gate', pick: 0 }, // presence.save -> post-acquisition revalidation hangs in tabs.get
+    { kind: 'advance', ms: 9000 }, // t=9s of C's 10s budget consumed
+    { kind: 'release-gate', pick: 0 }, // tabs.get resumes -> K consumed, Q dispatched ~t=9s
+    { kind: 'advance', ms: 1000 }, // t=10s: C deadline closes while the provider join is pending
+    { kind: 'release-gate', pick: 0 }, // chat transport join succeeds AFTER close (physical timeout ~t=19s)
+    { kind: 'release-gate', pick: 0 } // world transport join succeeds AFTER close
+  ]
+}
+
+/** Drives the world's gates in creation order, skipping any label in `hold`, until `done`. */
+const driveWorld = async (world: HarnessWorld, done: () => boolean, hold: string[] = []) => {
+  for (let round = 0; round < 100 && !done(); round += 1) {
+    const gate = world.gates.pending().find((candidate) => !hold.includes(candidate.label))
+    if (!gate) {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      continue
+    }
+    ;(gate as HarnessGate<unknown>).release(undefined as never)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  }
+}
+
+describe('Linear lifecycle generated harness — task #1544 killing schedules', () => {
+  it('K1: a consumed K cannot commit after its cohort deadline closed; the action settles null', async () => {
+    const result = await runSchedule(postKCommitSchedule, driver)
+    expect(oracleHarnessValidity(result), report(result)).toEqual([])
+    expect(result.results[0].settled, report(result)).toBe('null')
+    const identity = result.log.entries.filter((entry) => entry.kind === 'identity')
+    const closed = identity.find((entry) => entry.detail.phase === 'closed')
+    expect(closed, report(result)).toBeDefined()
+    // The race genuinely happened: at least one physical join settled AFTER the cohort closed.
+    const lateJoin = result.log.entries.find(
+      (entry) => entry.kind === 'transport.join.settle' && entry.seq > closed!.seq
+    )
+    expect(lateJoin, report(result)).toBeDefined()
+    // Zero commit persistence was performed by the old continuation after the close.
+    const lateSave = result.log.entries.find(
+      (entry) => entry.kind === 'presence.save' && entry.detail.a === 0 && entry.seq > closed!.seq
+    )
+    expect(lateSave, report(result)).toBeUndefined()
+    expect(oracleCohortFence(result), report(result)).toEqual([])
+    // The late physical terminal still arrived and was recorded exactly once (P decrements).
+    const lateTerminals = identity.filter((entry) => entry.detail.phase === 'terminal' && entry.seq > closed!.seq)
+    expect(lateTerminals.length, report(result)).toBeGreaterThan(0)
+  })
+
+  it('K2: readiness owners cover replay; cleanup neither clears early nor sleeps after retirement', async () => {
+    // Real timers: this control drives the live world through real macrotask turns.
+    vi.useRealTimers()
+    const world = createHarnessWorld({ seed: 130, pageCount: 1 })
+    try {
+      const page = world.pages[0]
+      await page.lease.init()
+      // A replay readiness owner stays outstanding (its gate is held), then a join completes.
+      world.armReplayGate()
+      let replaySettled = false
+      const replayTask = page.server.replayInbound({ domain: HARNESS_DOMAIN, after: 0 }).then(
+        () => {
+          replaySettled = true
+        },
+        () => {
+          replaySettled = true
+        }
+      )
+      let joinSettled = false
+      page.chat.joinRoom({ user: harnessUser(0), site: HARNESS_SITE }).then(
+        () => {
+          joinSettled = true
+        },
+        () => {
+          joinSettled = true
+        }
+      )
+      // Drive everything except the held replay gate until the join commits.
+      await driveWorld(world, () => joinSettled, ['replay.inbound'])
+      expect(joinSettled).toBe(true)
+      const identity = () => world.log.entries.filter((entry) => entry.kind === 'identity')
+      // The replay readiness owner began (covering replay work) and has not ended.
+      const replayToken = identity().find(
+        (entry) => entry.detail.phase === 'begin' && entry.detail.type === 'readiness'
+      )
+      expect(replayToken).toBeDefined()
+      // Cleanup must NOT clear the join's cohort while the readiness owner is outstanding, even
+      // though the join's member already self-observed and every Q terminated.
+      const prematureClear = identity().find((entry) => entry.detail.phase === 'cleared')
+      expect(prematureClear).toBeUndefined()
+      // A business call must wait for the same conjunction.
+      let sendSettled = false
+      const sendTask = page.chat.sendMessage({ type: 'text', body: 'k2', mentions: [] }).then(
+        () => {
+          sendSettled = true
+        },
+        () => {
+          sendSettled = true
+        }
+      )
+      await driveWorld(world, () => false, ['replay.inbound'])
+      expect(sendSettled).toBe(false)
+      // Releasing the replay gate settles the replay RPC; the owner still ends only at retirement
+      // (the final validation already happened for this binding generation).
+      for (const gate of world.gates.pending()) {
+        if (gate.label === 'replay.inbound') (gate as HarnessGate<unknown>).release(undefined as never)
+      }
+      await replayTask
+      expect(replaySettled).toBe(true)
+      // Exact-B retirement must immediately re-evaluate and wake the closed/open cleanup: after
+      // navigation the cohort clears and the waiting business call can proceed with the successor.
+      await world.navigate(0)
+      await driveWorld(world, () => identity().some((entry) => entry.detail.phase === 'cleared'))
+      expect(identity().some((entry) => entry.detail.phase === 'cleared')).toBe(true)
+      void sendTask
+    } finally {
+      world.dispose()
+    }
+  })
+
+  it('K3: a bound validation suspended mid-call never adopts a same-tuple B2', async () => {
+    vi.useRealTimers()
+    const world = createHarnessWorld({ seed: 131, pageCount: 1 })
+    try {
+      const page = world.pages[0]
+      await page.lease.init()
+      const hostId = (await world.server.getSnapshot()).hostId
+      world.armTransportGate()
+      const validation = world.server.getSnapshot({
+        pageId: page.pageId,
+        runtimeHostId: hostId,
+        caller: { tab: { id: page.tabId, url: page.url } },
+        validateReadiness: true
+      })
+      // B2 replaces the exact B1 while B1's validation is suspended inside the admission await.
+      await world.replacePage(0)
+      for (const gate of world.gates.pending()) {
+        if (gate.label === 'admission.ensureTransport') (gate as HarnessGate<unknown>).release(undefined as never)
+      }
+      await expect(validation).rejects.toThrow('Runtime Page binding is no longer current')
+    } finally {
+      world.dispose()
+    }
   })
 })

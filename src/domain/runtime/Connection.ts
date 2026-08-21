@@ -459,11 +459,13 @@ const ConnectionDomain = Remesh.domain({
           return null
         }
         // K fence: an envelope attempt commits only with its exact consumed capability; any other
-        // outcome (revoked, never consumed) aborts instead of committing.
+        // outcome (revoked, never consumed, or a closed captured cohort) aborts instead of
+        // committing. The cohort-closed refusal is the structured cancellation.
         if (attempt.capability !== undefined && !commitAuthority.authorizes(attempt.capability)) {
           return AbortAttemptCommand({
             attemptId: attempt.attemptId,
-            error: new Error('Domain join lost its exact commit capability')
+            error: new Error('Domain join lost its exact commit capability'),
+            cancellation: true
           })
         }
         return [
@@ -480,7 +482,7 @@ const ConnectionDomain = Remesh.domain({
 
     const AbortAttemptCommand = domain.command({
       name: 'Connection.AbortAttemptCommand',
-      impl: ({ get }, payload: { attemptId: string; error: Error }) => {
+      impl: ({ get }, payload: { attemptId: string; error: Error; cancellation?: boolean }) => {
         const attempts = get(AttemptsState())
         const attempt = attempts.find((item) => item.attemptId === payload.attemptId)
         if (!attempt) return null
@@ -504,9 +506,19 @@ const ConnectionDomain = Remesh.domain({
               ]
             : []),
           ...(attempt.mode === 'reconnect' ? [lifecycleDomain.command.FinishReconnectCommand(attempt.domain)] : []),
-          ...(attempt.operationId
-            ? [OperationFailedEvent({ operationId: attempt.operationId, error: payload.error })]
-            : [ErrorEvent({ error: payload.error, domain: attempt.domain })]),
+          // A cohort-closed commit refusal is the structured cancellation, not a failure: the RPC
+          // maps it to null exactly like a superseded operation. Its supersession owner is the
+          // closed cohort deadline (there is no superseding operation).
+          ...(attempt.operationId && payload.cancellation === true
+            ? [
+                OperationCancelledEvent({
+                  operationId: attempt.operationId,
+                  supersedingOperationId: attempt.operationId
+                })
+              ]
+            : attempt.operationId
+              ? [OperationFailedEvent({ operationId: attempt.operationId, error: payload.error })]
+              : [ErrorEvent({ error: payload.error, domain: attempt.domain })]),
           AttemptFailedEvent({ ...attempt, error: payload.error })
         ]
       }
