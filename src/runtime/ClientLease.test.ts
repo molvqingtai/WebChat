@@ -91,7 +91,7 @@ const coordinatorWith = (registerPage: RuntimeCoordinator['registerPage']): Runt
   registerPage
 })
 
-const createRecoveryTransport = (holdJoin?: Promise<void>) => {
+const createRecoveryTransport = (holdJoin?: Promise<void>, joinError?: Error) => {
   const joined = new Set<string>()
   const joinCalls: string[] = []
   const sendCalls: string[] = []
@@ -107,6 +107,7 @@ const createRecoveryTransport = (holdJoin?: Promise<void>) => {
     join: async (roomId) => {
       joinCalls.push(roomId)
       if (holdJoin && roomId === getChatRoomId(domain)) await holdJoin
+      if (joinError && roomId === getChatRoomId(domain)) throw joinError
       joined.add(roomId)
     },
     leave: (roomId) => {
@@ -248,9 +249,13 @@ const createAutomaticRecoveryPage = ({
 
 const createTwoPageRecovery = async ({
   ownerSiteOrigin = domain,
+  ownerJoinError,
+  ownerJoinGate,
   stored = null
 }: {
   ownerSiteOrigin?: string
+  ownerJoinError?: Error
+  ownerJoinGate?: Promise<void>
   stored?: PresenceDomainRecord | null
 } = {}) => {
   vi.stubGlobal('document', {
@@ -270,6 +275,7 @@ const createTwoPageRecovery = async ({
   const ownerLoadStarted = deferred<void>()
   const releaseOwnerLoad = deferred<void>()
   let loadCount = 0
+  let ownerRecoveryStartedAt = 0
   const presenceStore: PresenceStore = {
     load: vi.fn(async () => {
       loadCount += 1
@@ -300,6 +306,7 @@ const createTwoPageRecovery = async ({
       }
     },
     rebindPage: async (_tabId: number, pageId: string) => {
+      if (pageId === ownerPageId && ownerRecoveryStartedAt === 0) ownerRecoveryStartedAt = Date.now()
       if (pageId === followerPageId) await ownerLoadStarted.promise
       await pages.get(pageId)?.client.rebind()
     },
@@ -325,7 +332,7 @@ const createTwoPageRecovery = async ({
   await follower.initialize()
   activeOwnerSiteOrigin = ownerSiteOrigin === domain ? undefined : ownerSiteOrigin
 
-  const secondTransport = createRecoveryTransport()
+  const secondTransport = createRecoveryTransport(ownerJoinGate, ownerJoinError)
   const second = createServer({ transport: secondTransport.transport, admission, presenceStore })
   currentServer = second
   const automaticJoin = vi.spyOn(second, 'joinChatRoom')
@@ -343,6 +350,7 @@ const createTwoPageRecovery = async ({
     },
     follower,
     owner,
+    ownerRecoveryStartedAt,
     presenceStore,
     releaseOwnerLoad,
     restoring,
@@ -599,6 +607,84 @@ describe('ClientLease event-driven Runtime admission', () => {
     expect(recovery.presenceStore.load).toHaveBeenCalledOnce()
     expect(recovery.presenceStore.save).toHaveBeenCalledTimes(2)
     expect(recovery.secondTransport.joinCalls.filter((roomId) => roomId === getChatRoomId(domain))).toHaveLength(1)
+    await recovery.dispose()
+  })
+
+  it('rejects the restoring owner, follower, and waiting action with one physical-join failure', async () => {
+    const failure = new Error('exact restoring physical join failed')
+    const recovery = await createTwoPageRecovery({ ownerJoinError: failure })
+    const action = recovery.owner.chat.sendMessage({
+      type: MESSAGE_TYPE.TEXT,
+      body: 'must share owner failure',
+      mentions: []
+    })
+    const ownerJoin = recovery.automaticJoin.mock.results[0]?.value as Promise<unknown>
+    const followerJoin = recovery.automaticJoin.mock.results[1]?.value as Promise<unknown>
+    const ownerOutcome = ownerJoin.catch((error) => error)
+    const followerOutcome = followerJoin.catch((error) => error)
+    const actionOutcome = action.catch((error) => error)
+
+    recovery.releaseOwnerLoad.resolve()
+    await recovery.restoring
+
+    await expect(ownerOutcome).resolves.toBe(failure)
+    await expect(followerOutcome).resolves.toBe(failure)
+    await expect(actionOutcome).resolves.toBe(failure)
+    expect(recovery.presenceStore.load).toHaveBeenCalledOnce()
+    expect(recovery.secondTransport.joinCalls.filter((roomId) => roomId === getChatRoomId(domain))).toHaveLength(1)
+    expect(recovery.secondTransport.sendCalls).toHaveLength(0)
+    expect(
+      (await recovery.second.getSnapshot()).domains.find((item) => item.domain === domain)?.localSession
+    ).toBeUndefined()
+    await recovery.dispose()
+  })
+
+  it('fences a restoring owner whose physical join completes after the shared deadline', async () => {
+    const ownerJoinGate = deferred<void>()
+    const recovery = await createTwoPageRecovery({ ownerJoinGate: ownerJoinGate.promise })
+    const action = recovery.owner.chat.sendMessage({
+      type: MESSAGE_TYPE.TEXT,
+      body: 'must not survive owner deadline',
+      mentions: []
+    })
+    const ownerJoin = recovery.automaticJoin.mock.results[0]?.value as Promise<unknown>
+    const followerJoin = recovery.automaticJoin.mock.results[1]?.value as Promise<unknown>
+    const ownerOutcome = ownerJoin.catch((error) => error)
+    const followerOutcome = followerJoin.catch((error) => error)
+    const actionOutcome = action.catch((error) => error)
+
+    recovery.releaseOwnerLoad.resolve()
+    await recovery.restoring
+    await vi.waitFor(() =>
+      expect(recovery.secondTransport.joinCalls.filter((roomId) => roomId === getChatRoomId(domain))).toHaveLength(1)
+    )
+    let ownerSettled = false
+    void ownerOutcome.then(() => {
+      ownerSettled = true
+    })
+    const remainingDeadline = 10_000 - (Date.now() - recovery.ownerRecoveryStartedAt)
+    expect(remainingDeadline).toBeGreaterThan(0)
+    await vi.advanceTimersByTimeAsync(remainingDeadline)
+    await Promise.resolve()
+    expect(ownerSettled).toBe(true)
+
+    const timeout = await ownerOutcome
+    expect(timeout).toMatchObject({ message: 'Runtime current-domain recovery timed out' })
+    await expect(followerOutcome).resolves.toBe(timeout)
+    await expect(actionOutcome).resolves.toBe(timeout)
+    expect(
+      (await recovery.second.getSnapshot()).domains.find((item) => item.domain === domain)?.localSession
+    ).toBeUndefined()
+    expect(recovery.secondTransport.sendCalls).toHaveLength(0)
+
+    ownerJoinGate.resolve()
+    await vi.waitFor(() => expect(recovery.secondTransport.transport.peerIdOf(getChatRoomId(domain))).not.toBe(''))
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(
+      (await recovery.second.getSnapshot()).domains.find((item) => item.domain === domain)?.localSession
+    ).toBeUndefined()
+    expect(recovery.secondTransport.sendCalls).toHaveLength(0)
     await recovery.dispose()
   })
 

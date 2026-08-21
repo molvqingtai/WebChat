@@ -85,6 +85,8 @@ interface PresenceRecovery {
   promise: Promise<void>
   resolve: () => void
   reject: (error: Error) => void
+  settled: boolean
+  failure?: Error
   timeout?: ReturnType<typeof globalThis.setTimeout>
 }
 
@@ -414,9 +416,16 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   }
 
   const settlePresenceRecovery = (domain: string, recovery: PresenceRecovery, error?: Error) => {
-    if (presenceRecoveries.get(domain) !== recovery) return
+    if (presenceRecoveries.get(domain) !== recovery || recovery.settled) return
+    recovery.settled = true
+    if (error) recovery.failure = error
     presenceRecoveries.delete(domain)
     if (recovery.timeout) globalThis.clearTimeout(recovery.timeout)
+    // A terminal restoring-owner failure must retire the exact provisional attempt as well as the
+    // shared waiter promise. The Connection release path fences late room completions by identity.
+    if (error && recovery.restoringOwnerInFlight) {
+      store.send(connectionDomain.command.LeaveDomainCommand(domain))
+    }
     if (error) recovery.reject(error)
     else recovery.resolve()
   }
@@ -448,7 +457,8 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       ...(restoringBinding ? { restoringBinding } : {}),
       promise,
       resolve,
-      reject
+      reject,
+      settled: false
     }
     presenceRecoveries.set(domain, recovery)
     if (awaitRestoringJoin) {
@@ -491,6 +501,18 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     if (presenceRecoveries.get(domain) !== recovery) return
     if (recovery.restoringOwnerInFlight) {
       if (!restoringOwner) return
+      if (!succeeded) {
+        failPresenceRecovery(
+          domain,
+          recovery,
+          recovery.failure ?? new Error('Runtime current-domain recovery did not complete')
+        )
+        return
+      }
+      if (!store.query(sessionDomain.query.DomainQuery(domain))) {
+        failPresenceRecovery(domain, recovery, new Error('Runtime current-domain recovery did not commit'))
+        return
+      }
       recovery.restoringOwnerInFlight = false
       settlePresenceRecovery(domain, recovery)
       return
@@ -504,6 +526,12 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     settlePresenceRecovery(domain, recovery, error)
 
   const operationCancelled = () => new DOMException('Runtime presence is completing its final release', 'AbortError')
+
+  const assertPresenceRecoveryActive = (domain: string, recovery?: PresenceRecovery) => {
+    if (!recovery?.restoringOwnerInFlight) return
+    if (recovery.failure) throw recovery.failure
+    if (recovery.settled || presenceRecoveries.get(domain) !== recovery) throw operationCancelled()
+  }
 
   const waitForLivePresence = async (domain: string) => {
     if (disposed) throw operationCancelled()
@@ -531,16 +559,21 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   const acquirePresence = async (
     domain: string,
     userId: string,
-    validateStored?: (stored: PresenceDomainRecord | null) => Promise<void>
+    validateStored?: (stored: PresenceDomainRecord | null) => Promise<void>,
+    recovery?: PresenceRecovery
   ): Promise<'active' | 'acquired' | 'finalizing'> => {
     // A retained restoring owner validates its durable input immediately before this method can
     // hydrate, persist, or start a connection. Ordinary cold/manual joins keep their existing
     // in-memory-first identity behavior and never read here when already active.
     let stored: PresenceDomainRecord | null | undefined
     if (validateStored) {
+      assertPresenceRecoveryActive(domain, recovery)
       stored = await presenceStore.load(domain)
+      assertPresenceRecoveryActive(domain, recovery)
       await validateStored(stored)
+      assertPresenceRecoveryActive(domain, recovery)
     }
+    assertPresenceRecoveryActive(domain, recovery)
     if (store.query(sessionDomain.query.DomainQuery(domain))) {
       return store.query(sessionDomain.query.FinalizingPresenceQuery(domain)) ? 'finalizing' : 'active'
     }
@@ -550,6 +583,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       stored === undefined
         ? ((await presenceStore.load(domain)) ?? { domain, lastJoinedAt: 0, observers: [] })
         : (stored ?? { domain, lastJoinedAt: 0, observers: [] })
+    assertPresenceRecoveryActive(domain, recovery)
     const local =
       recordBeforeAcquire.local?.userId === userId
         ? recordBeforeAcquire.local
@@ -565,17 +599,22 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       lastJoinedAt: Math.max(recordBeforeAcquire.lastJoinedAt, local.joinedAt),
       local
     }
+    assertPresenceRecoveryActive(domain, recovery)
     await presenceStore.save(record)
+    assertPresenceRecoveryActive(domain, recovery)
     store.send(sessionDomain.command.HydratePresenceCommand(record))
     return 'acquired'
   }
   const acquireCurrentPresence = async (
     domain: string,
     userId: string,
-    validateStored?: (stored: PresenceDomainRecord | null) => Promise<void>
+    validateStored?: (stored: PresenceDomainRecord | null) => Promise<void>,
+    recovery?: PresenceRecovery
   ): Promise<'active' | 'acquired' | 'finalizing'> => {
     while (!disposed) {
-      const acquired = await acquirePresence(domain, userId, validateStored)
+      assertPresenceRecoveryActive(domain, recovery)
+      const acquired = await acquirePresence(domain, userId, validateStored, recovery)
+      assertPresenceRecoveryActive(domain, recovery)
       if (store.query(sessionDomain.query.FinalizingPresenceQuery(domain))) return 'finalizing'
       if (store.query(sessionDomain.query.DomainQuery(domain))) return 'active'
       if (acquired === 'acquired') return 'acquired'
@@ -853,10 +892,12 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
         )
       }
       while (true) {
+        assertPresenceRecoveryActive(payload.domain, recovery)
         if (revalidate) await revalidate()
+        assertPresenceRecoveryActive(payload.domain, recovery)
         let presenceState: Awaited<ReturnType<typeof acquireCurrentPresence>>
         try {
-          presenceState = await acquireCurrentPresence(payload.domain, payload.user.id, validateStored)
+          presenceState = await acquireCurrentPresence(payload.domain, payload.user.id, validateStored, recovery)
         } catch (error) {
           // An exact restoring owner with missing or conflicting durable input rejects the one
           // shared reservation before this join can persist, hydrate, connect, or release actions.
@@ -865,7 +906,9 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
           }
           throw error
         }
+        assertPresenceRecoveryActive(payload.domain, recovery)
         if (revalidate) await revalidate()
+        assertPresenceRecoveryActive(payload.domain, recovery)
         if (presenceState === 'finalizing') {
           // A lease observed after the release fence started never bypasses the shared release:
           // it waits for the one live release owner to close, then starts fresh through the loop.
@@ -889,10 +932,22 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
           continue
         }
         if (revalidate) await revalidate()
-        if (!(await connect())) return null
+        assertPresenceRecoveryActive(payload.domain, recovery)
+        const connected = await connect()
+        assertPresenceRecoveryActive(payload.domain, recovery)
+        if (!connected) {
+          if (restoringOwner) throw new Error('Runtime current-domain recovery did not connect')
+          return null
+        }
+        if (revalidate) await revalidate()
+        assertPresenceRecoveryActive(payload.domain, recovery)
         recovered = true
         return snapshot()
       }
+    } catch (error) {
+      const failure = recovery.failure ?? (error instanceof Error ? error : new Error(String(error)))
+      if (restoringOwner) failPresenceRecovery(payload.domain, recovery, failure)
+      throw failure
     } finally {
       finishPresenceRecovery(payload.domain, recovery, recovered, restoringOwner)
     }
