@@ -103,6 +103,7 @@ const serverDisposers = new WeakMap<RuntimeServer, () => void>()
 interface ServerControl {
   restorePageBindings: () => Promise<void>
   removeTab: (tabId: number, url?: string) => Promise<void>
+  startJoin: (payload: { operationId: string; domain: string; user: ChatUser; site: ChatSite }) => Promise<boolean>
 }
 const serverControls = new WeakMap<RuntimeServer, ServerControl>()
 
@@ -111,6 +112,12 @@ export const restoreServerPageBindings = (server: RuntimeServer) =>
   serverControls.get(server)?.restorePageBindings() ?? Promise.resolve()
 export const removeServerTab = (server: RuntimeServer, tabId: number, url?: string) =>
   serverControls.get(server)?.removeTab(tabId, url) ?? Promise.resolve()
+export const startServerJoin = (
+  server: RuntimeServer,
+  payload: { operationId: string; domain: string; user: ChatUser; site: ChatSite }
+) =>
+  serverControls.get(server)?.startJoin(payload) ??
+  Promise.reject(new Error('Runtime Server test control is unavailable'))
 
 export const createServer = (config: ServerConfig): RuntimeServer => {
   const clock = config.clock ?? defaultClock
@@ -1353,7 +1360,17 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     await persistPageBindings()
   }
 
-  serverControls.set(server, { restorePageBindings, removeTab })
+  serverControls.set(server, {
+    restorePageBindings,
+    removeTab,
+    startJoin: (payload) =>
+      runConnectionOperation(
+        payload.operationId,
+        connectionDomain.command.JoinDomainCommand(payload),
+        () => true,
+        () => false
+      )
+  })
   serverDisposers.set(server, () => {
     disposed = true
     presenceRecoveries.forEach((recovery) => {

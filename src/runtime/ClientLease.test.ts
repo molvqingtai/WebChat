@@ -17,7 +17,13 @@ import { createMessageStore, MessageDatabaseExtern } from '@/domain/MessageStore
 import type { PresenceDomainRecord, PresenceStore } from '@/domain/runtime/externs/PresenceStore'
 import { MESSAGE_TYPE, type ChatUser } from '@/protocol'
 import type { RoomTransport } from '@/runtime/RoomTransport'
-import { createServer, disposeServer, getChatRoomId, restoreServerPageBindings } from '@/runtime/Server'
+import {
+  createServer,
+  disposeServer,
+  getChatRoomId,
+  restoreServerPageBindings,
+  startServerJoin
+} from '@/runtime/Server'
 import { ClientLease } from './ClientLease'
 import type { RuntimeCoordinator, RuntimePageRegistration, RuntimeServer, RuntimeSnapshot } from './Contract'
 
@@ -94,6 +100,7 @@ const coordinatorWith = (registerPage: RuntimeCoordinator['registerPage']): Runt
 const createRecoveryTransport = (holdJoin?: Promise<void>, joinError?: Error) => {
   const joined = new Set<string>()
   const joinCalls: string[] = []
+  const leaveCalls: string[] = []
   const sendCalls: string[] = []
   const listeners = {
     message: new Set<(roomId: string, sourcePeerId: string, rawPayload: string) => void>(),
@@ -111,6 +118,7 @@ const createRecoveryTransport = (holdJoin?: Promise<void>, joinError?: Error) =>
       joined.add(roomId)
     },
     leave: (roomId) => {
+      leaveCalls.push(roomId)
       joined.delete(roomId)
     },
     send: async (roomId) => {
@@ -142,7 +150,7 @@ const createRecoveryTransport = (holdJoin?: Promise<void>, joinError?: Error) =>
       Object.values(listeners).forEach((items) => items.clear())
     }
   }
-  return { joinCalls, sendCalls, transport }
+  return { joinCalls, leaveCalls, sendCalls, transport }
 }
 
 const createAutomaticRecoveryPage = ({
@@ -650,6 +658,39 @@ describe('ClientLease event-driven Runtime admission', () => {
     expect(
       (await recovery.second.getSnapshot()).domains.find((item) => item.domain === domain)?.localSession
     ).toBeUndefined()
+    await recovery.dispose()
+  })
+
+  it('settles a superseded restoring owner quietly while a real successor command commits', async () => {
+    const ownerJoinGate = deferred<void>()
+    const recovery = await createTwoPageRecovery({ ownerJoinGate: ownerJoinGate.promise })
+    const ownerJoin = recovery.automaticJoin.mock.results[0]?.value as Promise<unknown>
+    const followerJoin = recovery.automaticJoin.mock.results[1]?.value as Promise<unknown>
+    const ownerOutcome = ownerJoin.catch((error) => error)
+    const followerOutcome = followerJoin.catch((error) => error)
+
+    recovery.releaseOwnerLoad.resolve()
+    await recovery.restoring
+    await vi.waitFor(() =>
+      expect(recovery.secondTransport.joinCalls.filter((roomId) => roomId === getChatRoomId(domain))).toHaveLength(1)
+    )
+
+    const successor = startServerJoin(recovery.second, {
+      operationId: 'superseding-test-join',
+      domain,
+      user,
+      site
+    })
+
+    await expect(ownerOutcome).resolves.toBeNull()
+    await expect(followerOutcome).resolves.toBeNull()
+    expect(recovery.secondTransport.leaveCalls).toHaveLength(0)
+    expect(recovery.secondTransport.sendCalls).toHaveLength(0)
+
+    ownerJoinGate.resolve()
+    await expect(successor).resolves.toBe(true)
+    expect(recovery.secondTransport.leaveCalls).toHaveLength(0)
+    expect(recovery.secondTransport.joinCalls.filter((roomId) => roomId === getChatRoomId(domain))).toHaveLength(2)
     await recovery.dispose()
   })
 
