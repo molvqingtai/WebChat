@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createServer, disposeServer, getChatRoomId, getWorldRoomId } from '@/runtime/Server'
+import {
+  createServer,
+  disposeServer,
+  getChatRoomId,
+  getWorldRoomId,
+  restoreServerPageBindings,
+  RUNTIME_PAGE_BINDINGS_KEY
+} from '@/runtime/Server'
 import type { Clock } from '@/domain/runtime/externs/Clock'
 import type { PresenceStore } from '@/domain/runtime/externs/PresenceStore'
 import type { RoomTransport } from '@/runtime/RoomTransport'
@@ -25,6 +32,7 @@ import type {
   RuntimeServer,
   RuntimeSession,
   RuntimeSessionEvent,
+  RuntimeTab,
   WorldPresenceEvent
 } from '@/runtime/Contract'
 import { HISTORY_REQUEST_TIMEOUT_MS, RUNTIME_DOMAIN_GRACE_MS, PENDING_LEAVE_GRACE_MS } from '@/constants/config'
@@ -79,8 +87,13 @@ const sessionObservers = (server: RuntimeServer, pageId: string): SessionObserve
 const registerSessionObservers = async (server: RuntimeServer, pageId: string, observers: SessionObservers) => {
   if (observers.registered) return
   observers.registered = true
+  let initialRefreshPending = true
   await server.onSessionEvent({ pageId }, async (event: RuntimeSessionEvent) => {
-    if (event.type === 'snapshot' && event.snapshot.localSession) {
+    // These observers model lifecycle commits. Callback binding emits its first refresh projection
+    // before later join/reconnect refreshes, which retain their existing lifecycle coverage.
+    const initialRefresh = initialRefreshPending && event.type === 'snapshot' && event.provenance === 'refresh'
+    initialRefreshPending = false
+    if (event.type === 'snapshot' && !initialRefresh && event.snapshot.localSession) {
       for (const listener of observers.local) {
         await listener({ domain: event.domain, session: event.snapshot.localSession })
       }
@@ -133,6 +146,182 @@ class FakeClock implements Clock {
 beforeEach(() => {
   vi.useFakeTimers()
 })
+
+describe('RuntimeServer production Page admission and restart recovery', () => {
+  const pageId = 'admitted-page'
+  const pageUrl = `${DOMAIN}/topic`
+
+  const createAdmissionFixture = () => {
+    const storageState: Record<string, unknown> = {}
+    const tabs = new Map([[7, { id: 7, url: pageUrl }]])
+    const rebindPage = vi.fn(async () => {})
+    const ensureTransport = vi.fn(async () => {})
+    const fake = createFakeTransport()
+    const admission = {
+      tabs: {
+        get: async (tabId: number) => {
+          const tab = tabs.get(tabId)
+          if (!tab) throw new Error('tab missing')
+          return tab
+        },
+        sendMessage: async () => undefined
+      },
+      storage: {
+        get: async (key: string) => ({ [key]: storageState[key] }),
+        set: async (items: Record<string, unknown>) => {
+          Object.assign(storageState, items)
+        }
+      },
+      rebindPage,
+      ensureTransport
+    }
+    const server = createServer({ transport: fake.transport, codec: jsonCodec, admission })
+    const attach = () => server.attachPage({ domain: DOMAIN, pageId, caller: { tab: tabs.get(7) } })
+    const call = async () => ({
+      pageId,
+      runtimeHostId: (await server.getSnapshot()).hostId,
+      caller: { tab: tabs.get(7) }
+    })
+    const activate = async (payload: Awaited<ReturnType<typeof call>>) => {
+      await Promise.all([
+        server.onInbound(payload, async () => {}),
+        server.onSessionEvent(payload, async () => {}),
+        server.onError(payload, async () => {}),
+        server.provideHistory({ ...payload, domain: DOMAIN }, () => {}),
+        server.onHistoryFeedback(payload, async () => {})
+      ])
+    }
+    return { admission, attach, call, fake, rebindPage, server, storageState, tabs, activate }
+  }
+
+  it('admits a Page mutation only after exact browser binding and full callback snapshot activation', async () => {
+    const fixture = createAdmissionFixture()
+    await fixture.attach()
+    const call = await fixture.call()
+
+    await expect(fixture.server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE, ...call })).rejects.toThrow(
+      'session callback is not active'
+    )
+
+    await fixture.server.onSessionEvent(call, async () => {})
+    await expect(fixture.server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE, ...call })).rejects.toThrow(
+      'callbacks are not active'
+    )
+
+    await fixture.activate(call)
+    await fixture.server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE, ...call })
+    expect(fixture.fake.joinCalls.filter((roomId) => roomId === getChatRoomId(DOMAIN))).toHaveLength(1)
+
+    await expect(
+      fixture.server.sendChatMessage({
+        domain: DOMAIN,
+        event: text('forged', USER.id),
+        ...call,
+        caller: { tab: { id: 8, url: pageUrl } }
+      })
+    ).rejects.toThrow('binding is no longer current')
+    disposeServer(fixture.server)
+  })
+
+  it('replays every Session delta that arrives while an exact replacement snapshot is pending', async () => {
+    const fixture = createAdmissionFixture()
+    await fixture.attach()
+    const call = await fixture.call()
+    await fixture.activate(call)
+    await fixture.server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE, ...call })
+
+    const events: RuntimeSessionEvent[] = []
+    const snapshotStarted = deferred<void>()
+    let releaseSnapshot!: () => void
+    const snapshotReleased = new Promise<void>((resolve) => {
+      releaseSnapshot = resolve
+    })
+    const replacement = fixture.server.onSessionEvent(call, async (event) => {
+      events.push(event)
+      if (event.type !== 'snapshot') return
+      snapshotStarted.resolve()
+      await snapshotReleased
+    })
+    await snapshotStarted.promise
+
+    fixture.fake.peerJoin(getChatRoomId(DOMAIN), 'queued-peer')
+    await settle()
+    fixture.fake.receive(getChatRoomId(DOMAIN), 'queued-peer', session(REMOTE_USER))
+    await settle()
+    expect((await fixture.server.getSnapshot()).domains[0]?.sessions).toEqual([
+      expect.objectContaining({ sourcePeerId: 'queued-peer' })
+    ])
+    expect(events).toHaveLength(1)
+
+    releaseSnapshot()
+    await replacement
+    expect(events).toEqual([
+      expect.objectContaining({ type: 'snapshot', provenance: 'refresh' }),
+      expect.objectContaining({ type: 'join', session: expect.objectContaining({ sourcePeerId: 'queued-peer' }) })
+    ])
+    disposeServer(fixture.server)
+  })
+
+  it('retires the exact browser binding when its initial Session callback rejects', async () => {
+    const fixture = createAdmissionFixture()
+    await fixture.attach()
+    const call = await fixture.call()
+    const failure = new Error('initial session projection failed')
+
+    await expect(fixture.server.onSessionEvent(call, async () => Promise.reject(failure))).rejects.toBe(failure)
+    await expect(fixture.server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE, ...call })).rejects.toThrow(
+      'binding is no longer current'
+    )
+    expect(fixture.storageState[RUNTIME_PAGE_BINDINGS_KEY]).toEqual({ pages: [] })
+    expect((await fixture.server.getSnapshot()).domains[0]).toMatchObject({ phase: 'grace', pageIds: [] })
+    disposeServer(fixture.server)
+  })
+
+  it('sends a real exact Page rebind after a fresh Background and never promotes stale hints', async () => {
+    const first = createAdmissionFixture()
+    await first.attach()
+    expect(first.storageState[RUNTIME_PAGE_BINDINGS_KEY]).toEqual({
+      pages: [{ tabId: 7, pageId, domain: DOMAIN, url: pageUrl }]
+    })
+
+    const secondFake = createFakeTransport()
+    const second = createServer({ transport: secondFake.transport, admission: first.admission })
+    await restoreServerPageBindings(second)
+    expect(first.rebindPage).toHaveBeenCalledWith(7, pageId)
+
+    const oldCall = await first.call()
+    await expect(second.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE, ...oldCall })).rejects.toThrow(
+      'binding is no longer current'
+    )
+
+    first.tabs.set(7, { id: 7, url: `${DOMAIN}/new-topic` })
+    await restoreServerPageBindings(second)
+    expect(first.storageState[RUNTIME_PAGE_BINDINGS_KEY]).toEqual({ pages: [] })
+    disposeServer(first.server)
+    disposeServer(second)
+  })
+
+  it('retires a provisional callback when its exact browser binding drifts during the full snapshot', async () => {
+    const fixture = createAdmissionFixture()
+    await fixture.attach()
+    const call = await fixture.call()
+    let releaseSnapshot!: () => void
+    const snapshotGate = new Promise<void>((resolve) => {
+      releaseSnapshot = resolve
+    })
+
+    const registration = fixture.server.onSessionEvent(call, async () => snapshotGate)
+    await Promise.resolve()
+    fixture.tabs.set(7, { id: 7, url: `${DOMAIN}/other-topic` })
+    releaseSnapshot()
+    await registration
+
+    await expect(fixture.server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE, ...call })).rejects.toThrow(
+      'binding is no longer current'
+    )
+    disposeServer(fixture.server)
+  })
+})
 afterEach(() => {
   vi.useRealTimers()
 })
@@ -140,6 +329,69 @@ afterEach(() => {
 const jsonCodec: WireCodec = {
   encode: async (value) => JSON.stringify(value),
   decode: async (payload) => JSON.parse(payload)
+}
+
+/**
+ * Real private Page calls with distinct browser bindings.  Schedules use this
+ * instead of a numeric page count so every trace carries its actual B owner.
+ */
+const createSeededPageHarness = ({
+  presenceStore,
+  physicalReady = true
+}: { presenceStore?: PresenceStore; physicalReady?: boolean } = {}) => {
+  const fake = createFakeTransport({ physicalReady })
+  const tabs = new Map<number, RuntimeTab>()
+  const storageState: Record<string, unknown> = {}
+  const server = createServer({
+    transport: fake.transport,
+    codec: jsonCodec,
+    ...(presenceStore ? { presenceStore } : {}),
+    admission: {
+      tabs: {
+        get: async (tabId) => {
+          const tab = tabs.get(tabId)
+          if (!tab) throw new Error(`Missing test tab ${tabId}`)
+          return tab
+        },
+        sendMessage: async () => undefined
+      },
+      storage: {
+        get: async (key) => ({ [key]: storageState[key] }),
+        set: async (items) => {
+          Object.assign(storageState, items)
+        }
+      },
+      rebindPage: async () => {},
+      ensureTransport: async () => {}
+    }
+  })
+  const makePage = (pageId: string, tabId: number, domain = DOMAIN) => {
+    const tab: RuntimeTab = { id: tabId, url: `${domain}/seeded-${pageId}` }
+    tabs.set(tabId, tab)
+    const call = async () => ({
+      pageId,
+      runtimeHostId: (await server.getSnapshot()).hostId,
+      caller: { tab: tabs.get(tabId)! }
+    })
+    const register = async () => {
+      const payload = await call()
+      await Promise.all([
+        server.onInbound(payload, async () => {}),
+        server.onSessionEvent(payload, async () => {}),
+        server.onError(payload, async () => {}),
+        server.provideHistory({ ...payload, domain }, () => {}),
+        server.onHistoryFeedback(payload, async () => {})
+      ])
+      return payload
+    }
+    const attach = async () => {
+      const payload = await call()
+      await server.attachPage({ domain, ...payload })
+      return register()
+    }
+    return { pageId, tabId, domain, call, attach, register }
+  }
+  return { fake, makePage, server, tabs }
 }
 
 const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean } = {}) => {
@@ -164,6 +416,7 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
   const failedJoins = new Set<string>()
   const failedNextSends = new Set<string>()
   const failedLeaves = new Map<string, Error>()
+  const heldLeaves = new Set<string>()
   const messageListeners = new Set<(roomId: string, sourcePeerId: string, rawPayload: string) => void>()
   const joinListeners = new Set<(roomId: string, peerId: string) => void>()
   const leaveListeners = new Set<(roomId: string, peerId: string) => void>()
@@ -231,6 +484,7 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
       operationLog.push(`leave:${roomId}`)
       desired.delete(roomId)
       joined.delete(roomId)
+      if (heldLeaves.has(roomId)) return
       pendingJoins.get(roomId)?.reject(new Error(`Room "${roomId}" join cancelled`))
       pendingJoins.delete(roomId)
       const failure = failedLeaves.get(roomId)
@@ -296,6 +550,7 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
       joined.clear()
       pendingJoins.forEach((pending, roomId) => pending.reject(new Error(`Room "${roomId}" join cancelled`)))
       pendingJoins.clear()
+      heldLeaves.clear()
       sendGates.forEach(({ release }) => release())
       sendGates.clear()
       desiredWaiters.splice(0).forEach((waiter) => waiter.resolve())
@@ -350,6 +605,14 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
     },
     failNextLeave: (roomId: string, error: Error) => {
       failedLeaves.set(roomId, error)
+    },
+    holdLeave: (roomId: string) => {
+      heldLeaves.add(roomId)
+    },
+    settleHeldLeave: (roomId: string) => {
+      heldLeaves.delete(roomId)
+      pendingJoins.get(roomId)?.reject(new Error(`Room "${roomId}" join cancelled`))
+      pendingJoins.delete(roomId)
     },
     failSend: (error: Error | null, roomId?: string) => {
       sendError = error
@@ -1968,6 +2231,7 @@ describe('RuntimeServer lifecycle', () => {
     const remoteSessions: string[] = []
     const worldPresences: string[] = []
     const localSessionSeen = deferred<void>()
+    const remoteSessionSeen = deferred<void>()
     const localPresenceSeen = deferred<void>()
     const remotePresenceSeen = deferred<void>()
     await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
@@ -1977,6 +2241,7 @@ describe('RuntimeServer lifecycle', () => {
     })
     await observeRemoteSessions(server, { pageId: 'page-a' }, (event) => {
       remoteSessions.push(event.session.sourcePeerId)
+      remoteSessionSeen.resolve()
     })
     await server.onWorldPresence({ pageId: 'page-a' }, (event) => {
       worldPresences.push(event.sourcePeerId)
@@ -2014,6 +2279,7 @@ describe('RuntimeServer lifecycle', () => {
     const [snapshot] = await Promise.all([
       join,
       localSessionSeen.promise,
+      remoteSessionSeen.promise,
       localPresenceSeen.promise,
       remotePresenceSeen.promise
     ])
@@ -2042,9 +2308,11 @@ describe('RuntimeServer lifecycle', () => {
     const server = createServer({ transport: fake.transport, clock, codec: jsonCodec })
     const roomId = getChatRoomId(DOMAIN)
     const remoteSessions: RuntimeSession[] = []
+    const remoteSessionSeen = deferred<void>()
     await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
     await observeRemoteSessions(server, { pageId: 'page-a' }, ({ session }) => {
       remoteSessions.push(session)
+      remoteSessionSeen.resolve()
     })
     const worldRoomId = getWorldRoomId()
     fake.hangSendsTo(worldRoomId)
@@ -2066,6 +2334,7 @@ describe('RuntimeServer lifecycle', () => {
 
     fake.releaseSends()
     await join
+    await remoteSessionSeen.promise
     expect(remoteSessions).toEqual([expect.objectContaining({ sourcePeerId: 'later-peer', user: REMOTE_USER })])
   })
 
@@ -3044,6 +3313,257 @@ describe('RuntimeServer lifecycle', () => {
 })
 
 describe('RuntimeServer provisional recovery races', () => {
+  it('seed reconnect-q-terminal-006 arms P before the reconnect Q is issued', async () => {
+    const { fake, makePage, server } = createSeededPageHarness()
+    const firstPage = makePage('page-reconnect-1', 48)
+    const b1 = await firstPage.attach()
+    const roomId = getChatRoomId(DOMAIN)
+    await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE, ...b1 })
+
+    fake.makeNotReady()
+    const reconnect = server.reconnectDomain({ domain: DOMAIN, ...b1 }).catch((error: Error) => error)
+    await fake.waitForJoinCalls(4)
+    fake.holdLeave(roomId)
+    fake.holdLeave(getWorldRoomId())
+    const release = server.leaveChatRoom({ domain: DOMAIN, ...b1 })
+    await settle()
+
+    const secondPage = makePage('page-reconnect-2', 49)
+    const b2 = await secondPage.attach()
+    let successorSettled = false
+    const successor = server
+      .joinChatRoom({ domain: DOMAIN, user: { ...USER, name: 'After reconnect' }, site: SITE, ...b2 })
+      .then((snapshot) => {
+        successorSettled = true
+        return snapshot
+      })
+    await settle()
+
+    // Initial plus reconnect only.  A third Chat Q would prove cleanup ran
+    // from reconnect's logical failure rather than that exact Q terminal.
+    expect(fake.joinCalls.filter((id) => id === roomId)).toHaveLength(2)
+    expect(successorSettled).toBe(false)
+
+    fake.settleHeldLeave(getWorldRoomId())
+    await settle()
+    expect(successorSettled).toBe(false)
+    expect(fake.joinCalls.filter((id) => id === roomId)).toHaveLength(2)
+
+    fake.settleHeldLeave(roomId)
+    await reconnect
+    await vi.waitFor(() => expect(fake.joinCalls.filter((id) => id === roomId)).toHaveLength(3))
+    fake.open()
+    await expect(successor).resolves.toMatchObject({
+      domains: [expect.objectContaining({ localSession: expect.objectContaining({ user: expect.any(Object) }) })]
+    })
+    await release
+    disposeServer(server)
+  })
+
+  it('seed late-load-005 lets the exact old continuation observe closure before save, hydrate, or Q', async () => {
+    const clock = new FakeClock()
+    const fake = createFakeTransport()
+    const loadStarted = deferred<void>()
+    const releaseLoad = deferred<void>()
+    const saves: string[] = []
+    const presenceStore: PresenceStore = {
+      load: async () => {
+        loadStarted.resolve()
+        await releaseLoad.promise
+        return null
+      },
+      save: async (record) => {
+        saves.push(record.domain)
+      }
+    }
+    const server = createServer({ transport: fake.transport, clock, codec: jsonCodec, presenceStore })
+    const trace = ['A1:load']
+    await server.attachPage({ domain: DOMAIN, pageId: 'page-old-load' })
+    await server.detachPage({ domain: DOMAIN, pageId: 'page-old-load' })
+    await vi.advanceTimersByTimeAsync(1)
+    const old = server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
+    await loadStarted.promise
+    // The load begins one tick after the grace deadline was armed, so this
+    // advances exactly C without advancing the later bounded-store timeout.
+    await vi.advanceTimersToNextTimerAsync()
+    await settle()
+    trace.push('C:closed')
+
+    releaseLoad.resolve()
+    await settle()
+    expect(saves).toEqual([])
+    expect(fake.joinCalls).toEqual([])
+    await expect(old).resolves.toBeNull()
+    expect(trace).toEqual(['A1:load', 'C:closed'])
+    disposeServer(server)
+  })
+
+  it('seed identity-partition-004 keeps three Page bindings partitioned across a late replacement', async () => {
+    const { fake, makePage, server } = createSeededPageHarness()
+    const page1 = makePage('page-identity-1', 45)
+    const page2 = makePage('page-identity-2', 46)
+    const page3 = makePage('page-identity-3', 47)
+    const b1 = await page1.attach()
+    const b2 = await page2.attach()
+    await page3.attach()
+    const roomId = getChatRoomId(DOMAIN)
+    const trace = ['B1:ready', 'B2:ready', 'B3:ready']
+    await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE, ...b1 })
+
+    fake.hangSendsTo(roomId)
+    const fromB2 = server.sendChatMessage({ domain: DOMAIN, event: text('b2-effect', USER.id), ...b2 })
+    await fake.waitForSendAttempt(roomId)
+    trace.push('D2:started')
+
+    await page1.attach()
+    trace.push('B1-prime:ready')
+    fake.releaseSends()
+
+    await expect(fromB2).resolves.toMatchObject({ id: 'b2-effect' })
+    expect(trace).toEqual(['B1:ready', 'B2:ready', 'B3:ready', 'D2:started', 'B1-prime:ready'])
+    expect((await server.getSnapshot()).domains[0]?.pageIds.slice().sort()).toEqual([
+      'page-identity-1',
+      'page-identity-2',
+      'page-identity-3'
+    ])
+    disposeServer(server)
+  })
+
+  it('seed k-before-reset-003 preserves the consumed K through a same-tuple replacement', async () => {
+    const values: Record<string, unknown> = {}
+    const resetStarted = deferred<void>()
+    const releaseReset = deferred<void>()
+    let holdNextSave = false
+    const presenceStore: PresenceStore = {
+      load: async (domain) => values[domain] as Awaited<ReturnType<PresenceStore['load']>>,
+      save: async (record) => {
+        if (holdNextSave) {
+          holdNextSave = false
+          resetStarted.resolve()
+          await releaseReset.promise
+        }
+        values[record.domain] = record
+      }
+    }
+    const { makePage, server } = createSeededPageHarness({ presenceStore })
+    const page = makePage('page-k', 42)
+    const b1 = await page.attach()
+    const trace = ['B1:ready']
+    await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE, ...b1 })
+
+    holdNextSave = true
+    const reconnect = server.reconnectDomain({ domain: DOMAIN, ...b1 })
+    await resetStarted.promise
+    trace.push('K1:consumed', 'reset:started')
+
+    await page.attach()
+    trace.push('B2:ready')
+    releaseReset.resolve()
+
+    await expect(reconnect).resolves.toBeUndefined()
+    expect(trace).toEqual(['B1:ready', 'K1:consumed', 'reset:started', 'B2:ready'])
+    expect((await server.getSnapshot()).domains).toEqual([
+      expect.objectContaining({ domain: DOMAIN, chatRoomJoined: true })
+    ])
+    disposeServer(server)
+  })
+
+  it('seed b-d-terminal-002 preserves an admitted send across same-tuple B replacement', async () => {
+    const { fake, makePage, server } = createSeededPageHarness()
+    const page = makePage('page-same-tuple', 41)
+    const b1 = await page.attach()
+    const roomId = getChatRoomId(DOMAIN)
+    const trace = ['B1:ready', 'A1:admitted']
+    await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE, ...b1 })
+
+    fake.hangSendsTo(roomId)
+    const sent = server.sendChatMessage({ domain: DOMAIN, event: text('b1-effect', USER.id), ...b1 })
+    await fake.waitForSendAttempt(roomId)
+    trace.push('D1:started')
+
+    // Same browser tuple, different private B.  It may revoke only an
+    // unconsumed capability; D1 already owns this exact provider send.
+    await page.attach()
+    trace.push('B2:ready')
+    fake.releaseSends()
+
+    await expect(sent).resolves.toMatchObject({ id: 'b1-effect' })
+    expect(trace).toEqual(['B1:ready', 'A1:admitted', 'D1:started', 'B2:ready'])
+    expect(
+      fake
+        .messages(roomId)
+        .filter((message): message is ChatRoomMessage => 'type' in message && message.type === MESSAGE_TYPE.TEXT)
+    ).toEqual([expect.objectContaining({ id: 'b1-effect' })])
+    disposeServer(server)
+  })
+
+  it('seed q-terminal-001 keeps a fresh successor behind the exact old Q receipt', async () => {
+    const { fake, makePage, server } = createSeededPageHarness({ physicalReady: false })
+    const roomId = getChatRoomId(DOMAIN)
+    const firstPage = makePage('page-q-1', 43)
+    const b1 = await firstPage.attach()
+    const trace: string[] = ['B1:ready', 'A1:Q-issued']
+
+    const first = server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE, ...b1 }).catch((error: Error) => error)
+    await fake.waitForDesiredRooms(2)
+    fake.holdLeave(roomId)
+    fake.holdLeave(getWorldRoomId())
+    trace.push('C:closed', 'P1:pending')
+
+    let releaseSettled = false
+    const release = server.leaveChatRoom({ domain: DOMAIN, ...b1 }).then(() => {
+      releaseSettled = true
+      trace.push('C:cleanup')
+    })
+    await settle()
+
+    const secondPage = makePage('page-q-2', 44)
+    const b2 = await secondPage.attach()
+    let successorSettled = false
+    const successor = server
+      .joinChatRoom({ domain: DOMAIN, user: { ...USER, name: 'Successor' }, site: SITE, ...b2 })
+      .then(
+        (snapshot) => {
+          successorSettled = true
+          trace.push('A2:terminal')
+          return snapshot
+        },
+        (error) => {
+          successorSettled = true
+          throw error
+        }
+      )
+    await settle()
+
+    expect(trace).toEqual(['B1:ready', 'A1:Q-issued', 'C:closed', 'P1:pending'])
+    expect(releaseSettled).toBe(false)
+    expect(successorSettled).toBe(false)
+    expect(fake.joinCalls.filter((id) => id === roomId)).toHaveLength(1)
+
+    fake.settleHeldLeave(getWorldRoomId())
+    await settle()
+    expect(releaseSettled).toBe(false)
+    expect(successorSettled).toBe(false)
+
+    fake.settleHeldLeave(roomId)
+    await first
+    await vi.waitFor(() => expect(fake.joinCalls.filter((id) => id === roomId)).toHaveLength(2))
+    expect(releaseSettled).toBe(true)
+    expect(successorSettled).toBe(false)
+
+    fake.open()
+    await expect(successor).resolves.toMatchObject({
+      domains: [
+        expect.objectContaining({
+          localSession: expect.objectContaining({ user: expect.objectContaining({ name: 'Successor' }) })
+        })
+      ]
+    })
+    await release
+    expect(trace).toEqual(['B1:ready', 'A1:Q-issued', 'C:closed', 'P1:pending', 'C:cleanup', 'A2:terminal'])
+    disposeServer(server)
+  })
+
   it('catches up every World peer exactly once across iterator, pending, join, and discovery paths', async () => {
     const clock = new FakeClock()
     const fake = createFakeTransport({ physicalReady: false })
@@ -3577,6 +4097,30 @@ describe('RuntimeServer provisional recovery races', () => {
 })
 
 describe('RuntimeServer trusted delivery', () => {
+  it('projects the current domain session snapshot whenever a Page callback binds', async () => {
+    const { server } = await setup()
+    const first: RuntimeSessionEvent[] = []
+    const replacement: RuntimeSessionEvent[] = []
+
+    await server.onSessionEvent({ pageId: 'page-a' }, (event) => {
+      first.push(event)
+    })
+    await server.onSessionEvent({ pageId: 'page-a' }, (event) => {
+      replacement.push(event)
+    })
+
+    expect(first).toEqual([
+      expect.objectContaining({
+        type: 'snapshot',
+        domain: DOMAIN,
+        provenance: 'refresh',
+        snapshot: expect.objectContaining({ localSession: expect.objectContaining({ user: USER }) })
+      })
+    ])
+    expect(replacement).toEqual(first)
+    disposeServer(server)
+  })
+
   it('binds live authors to the transport source session and ignores payload identity claims', async () => {
     const { fake, server, roomId } = await setup()
     const received: string[] = []
@@ -3608,7 +4152,7 @@ describe('RuntimeServer trusted delivery', () => {
     fake.receive(roomId, 'peer-a', { ...accepted, joinedAt: undefined } as unknown as TestWireMessage)
     await settle()
 
-    expect(events.map(({ type }) => type)).toEqual(['join', 'snapshot'])
+    expect(events.map(({ type }) => type)).toEqual(['snapshot', 'join', 'snapshot'])
     expect((await server.getSnapshot()).domains[0].sessions).toEqual([
       expect.objectContaining({
         sourcePeerId: 'peer-a',

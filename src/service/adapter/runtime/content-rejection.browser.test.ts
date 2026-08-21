@@ -99,7 +99,7 @@ describe('content Runtime rejection ownership', () => {
           ...message,
           type: message.type === 'ping' ? 'pong' : 'apply',
           sender: { type: 'provider' },
-          data: message.type === 'apply' ? { phase: 'ready', generation: 1, snapshot } : undefined
+          data: message.type === 'apply' ? { snapshot } : undefined
         }
         queueMicrotask(() => listeners.forEach((listener) => listener(response)))
         return Promise.resolve()
@@ -128,8 +128,7 @@ describe('content Runtime rejection ownership', () => {
       pageId: 'page-a',
       domain: 'https://example.test',
       startupTimeoutMs: 200,
-      startupRetryIntervalMs: 20,
-      watchdogIntervalMs: 60000
+      startupRetryIntervalMs: 20
     })
     const releaseRejectionOwner = ownInjectRejections((error) => client.observeTransportRejection(error))
     client.whenHostPhase((phase) => phases.push(phase))
@@ -145,8 +144,10 @@ describe('content Runtime rejection ownership', () => {
 
       expect(unhandled).toEqual([])
       expect(failures).toHaveLength(1)
-      expect(failures[0]).toMatch(/Extension context invalidated\.|Runtime control-plane request timed out/)
-      expect(phases).toEqual(['connecting', 'unavailable'])
+      expect(failures[0]).toMatch(
+        /Extension context invalidated\.|Runtime control-plane request timed out|Provider unavailable: heartbeat check timeout 30ms\./
+      )
+      expect(phases).toEqual(['unavailable'])
 
       await expect(coordinator.registerPage({ domain: 'https://example.test', pageId: 'page-a' })).rejects.toThrow(
         'Provider unavailable: heartbeat check timeout 30ms.'
@@ -155,7 +156,7 @@ describe('content Runtime rejection ownership', () => {
 
       expect(unhandled).toEqual([])
       expect(failures).toHaveLength(1)
-      expect(phases).toHaveLength(2)
+      expect(phases).toEqual(['unavailable'])
       const replayed = vi.fn()
       client.whenHostPhase(replayed)
       expect(replayed).toHaveBeenCalledWith('unavailable')

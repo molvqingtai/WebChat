@@ -20,31 +20,33 @@ function assert(condition: unknown, message: string): asserts condition {
 
 const chromeRoot = '.output/chrome-mv3'
 const firefoxRoot = '.output/firefox-mv2'
-const [chromeManifest, firefoxManifest, chromeChunks, firefoxBackground, wireCodecSource] = await Promise.all([
-  readJson(join(chromeRoot, 'manifest.json')),
-  readJson(join(firefoxRoot, 'manifest.json')),
-  readdir(join(chromeRoot, 'chunks')),
-  readFile(join(firefoxRoot, 'background.js'), 'utf8'),
-  readFile('src/protocol/WireCodec.ts', 'utf8')
-])
+const [chromeManifest, firefoxManifest, chromeChunks, chromeBackground, firefoxBackground, wireCodecSource] =
+  await Promise.all([
+    readJson(join(chromeRoot, 'manifest.json')),
+    readJson(join(firefoxRoot, 'manifest.json')),
+    readdir(join(chromeRoot, 'chunks')),
+    readFile(join(chromeRoot, 'background.js'), 'utf8'),
+    readFile(join(firefoxRoot, 'background.js'), 'utf8'),
+    readFile('src/protocol/WireCodec.ts', 'utf8')
+  ])
 
 assert(chromeManifest.manifest_version === 3, 'Expected the production Chrome MV3 manifest')
 assert(chromeManifest.background?.service_worker === 'background.js', 'Expected the Chrome service-worker host')
 assert(firefoxManifest.manifest_version === 2, 'Expected the production Firefox MV2 manifest')
 assert(firefoxManifest.background?.scripts?.includes('background.js'), 'Expected the Firefox background-page host')
 
-const chromeHostChunk = chromeChunks.find((file) => file.startsWith('host-') && file.endsWith('.js'))
-assert(chromeHostChunk, 'Expected the production Chrome Offscreen host chunk')
+const chromeTransportChunk = chromeChunks.find((file) => file.startsWith('TransportHost-') && file.endsWith('.js'))
+assert(chromeTransportChunk, 'Expected the production Chrome Offscreen transport chunk')
 const chromeContentEntries = chromeManifest.content_scripts?.flatMap((entry) => entry.js ?? []) ?? []
 const firefoxContentEntries = firefoxManifest.content_scripts?.flatMap((entry) => entry.js ?? []) ?? []
 assert(chromeContentEntries.length > 0, 'Expected at least one production Chrome content entry')
 assert(firefoxContentEntries.length > 0, 'Expected at least one production Firefox content entry')
-const [chromeHost, chromeContent, firefoxContent] = await Promise.all([
-  readFile(join(chromeRoot, 'chunks', chromeHostChunk), 'utf8'),
+const [chromeTransport, chromeContent, firefoxContent] = await Promise.all([
+  readFile(join(chromeRoot, 'chunks', chromeTransportChunk), 'utf8'),
   Promise.all(chromeContentEntries.map((entry) => readFile(join(chromeRoot, entry), 'utf8'))),
   Promise.all(firefoxContentEntries.map((entry) => readFile(join(firefoxRoot, entry), 'utf8')))
 ])
-assert(!chromeHost.includes('tabs.query'), 'Chrome Offscreen host must not contain tabs.query')
+assert(!chromeTransport.includes('tabs.query'), 'Chrome Offscreen transport must not contain tabs.query')
 ;['this.tabs.get', 'this.tabs.sendMessage'].forEach((marker) =>
   assert(firefoxBackground.includes(marker), `Firefox background provider must retain ${marker}`)
 )
@@ -84,7 +86,7 @@ const codecPolyfillMarkers = [
 )
 ;(
   [
-    ['Chrome host', chromeHost],
+    ['Chrome background', chromeBackground],
     ['Firefox background', firefoxBackground]
   ] as const
 ).forEach(([target, bundle]) => {
@@ -111,7 +113,8 @@ console.log(
       contentBytes: chromeContent.reduce((total, bundle) => total + Buffer.byteLength(bundle), 0),
       contentCodecPolyfill: false,
       offscreenTabsQuery: false,
-      runtimeBytes: Buffer.byteLength(chromeHost),
+      runtimeBytes: Buffer.byteLength(chromeBackground),
+      transportBytes: Buffer.byteLength(chromeTransport),
       uint8ArrayBase64: true
     },
     firefox: {

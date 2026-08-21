@@ -656,12 +656,15 @@ const WireDomain = Remesh.domain({
       impl: ({ fromEvent }) =>
         fromEvent(JoinRoomsRequestedEvent).pipe(
           mergeMap(async (request) => {
-            try {
-              await Promise.all(request.rooms.map(({ roomId }) => transport.join(roomId)))
-              return CompleteJoinRoomsCommand(request)
-            } catch (error) {
-              return RoomsJoinFailedEvent({ requestId: request.requestId, error: error as Error })
-            }
+            // A Q has one physical terminal only after every issued room owner
+            // has settled.  Promise.all would emit a failure for the first room
+            // while another exact H remains live, allowing release cleanup to
+            // mistake a partial provider abort for the complete Q receipt.
+            const results = await Promise.allSettled(request.rooms.map(({ roomId }) => transport.join(roomId)))
+            const failure = results.find((result): result is PromiseRejectedResult => result.status === 'rejected')
+            return failure
+              ? RoomsJoinFailedEvent({ requestId: request.requestId, error: failure.reason as Error })
+              : CompleteJoinRoomsCommand(request)
           })
         )
     })
@@ -796,6 +799,9 @@ const WireDomain = Remesh.domain({
       event: {
         RoomsJoinedEvent,
         RoomsJoinFailedEvent,
+        // Service-private issuance fact used by Server's exact physical owner.
+        // It is intentionally not part of the peer protocol or Page contract.
+        JoinRoomsRequestedEvent,
         MessageSentEvent,
         MessageSendFailedEvent,
         MessageAcceptedEvent,

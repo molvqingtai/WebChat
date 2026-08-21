@@ -6,6 +6,7 @@ import DeliveryDomain from '@/domain/runtime/Delivery'
 import SessionDomain, { type SessionPreparationMode } from '@/domain/runtime/Session'
 import WireDomain from '@/domain/runtime/Wire'
 import WorldDomain, { getWorldRoomId } from '@/domain/runtime/World'
+import { CommitCapabilityExtern } from '@/domain/runtime/externs/CommitCapability'
 import type { ChatSite, ChatUser } from '@/protocol'
 import type { RuntimeSnapshot } from '@/runtime/Contract'
 
@@ -21,7 +22,6 @@ interface JoinAttempt {
   mode: SessionPreparationMode
   domain: string
   generation: number
-  hostGeneration: number
   roomId?: string
   joinRequestId?: string
   /** Preserved typed join input so a failed initial attempt can retry as a fresh generation. */
@@ -37,7 +37,6 @@ interface DomainGeneration {
 interface WorldRecoveryAttempt {
   requestId: string
   generation: number
-  hostGeneration: number
   joinRequestId: string
   /** True only for an AppButton manual World replacement: its failure stays out of page UI/Toast
    * while automatic recovery keeps its existing diagnostics. */
@@ -80,6 +79,7 @@ const ConnectionDomain = Remesh.domain({
     const worldDomain = domain.getDomain(WorldDomain({ sessionId: options.worldSessionId }))
     const deliveryDomain = domain.getDomain(DeliveryDomain())
     const historyDomain = domain.getDomain(HistoryDomain())
+    const commitCapabilities = domain.getExtern(CommitCapabilityExtern)
 
     const AttemptsState = domain.state<JoinAttempt[]>({ name: 'Connection.AttemptsState', default: [] })
     const GenerationsState = domain.state<DomainGeneration[]>({
@@ -108,7 +108,7 @@ const ConnectionDomain = Remesh.domain({
         const runtimes = get(sessionDomain.query.DomainsQuery())
         return {
           hostId: options.hostId,
-          hostPhase: get(lifecycleDomain.query.HostPhaseQuery()),
+          hostPhase: 'ready',
           peerId: get(wireDomain.query.PeerIdQuery(getWorldRoomId())),
           domains: get(lifecycleDomain.query.DomainLeasesQuery()).map((lease) => {
             const runtime = runtimes.find((item) => item.domain === lease.domain)
@@ -157,9 +157,12 @@ const ConnectionDomain = Remesh.domain({
       name: 'Connection.WorldRecoveryTimeoutArmedEvent'
     })
     const ErrorEvent = domain.event<RuntimeFailure>({ name: 'Connection.ErrorEvent' })
-    const WorldRecoveryAbortedEvent = domain.event<{ requestId: string; generation: number; hostGeneration: number }>({
+    const WorldRecoveryAbortedEvent = domain.event<{ requestId: string; generation: number }>({
       name: 'Connection.WorldRecoveryAbortedEvent'
     })
+
+    const operationAdmitted = (operationId: string | undefined) =>
+      operationId === undefined || commitCapabilities.get(operationId)?.allows() !== false
 
     const startAttempt = (
       get: Parameters<Parameters<typeof domain.command>[0]['impl']>[0]['get'],
@@ -191,7 +194,6 @@ const ConnectionDomain = Remesh.domain({
         mode: payload.mode,
         domain: payload.domain,
         generation,
-        hostGeneration: get(lifecycleDomain.query.HostGenerationQuery()),
         user: payload.user,
         site: payload.site
       }
@@ -229,19 +231,24 @@ const ConnectionDomain = Remesh.domain({
     const JoinDomainCommand = domain.command({
       name: 'Connection.JoinDomainCommand',
       impl: ({ get }, payload: { operationId: string; domain: string; user: ChatUser; site: ChatSite }) =>
-        get(sessionDomain.query.ReleasingDomainQuery(payload.domain))
+        !operationAdmitted(payload.operationId)
           ? OperationFailedEvent({
               operationId: payload.operationId,
-              error: new Error('Domain release is already in progress')
+              error: new Error('Connection operation admission was revoked')
             })
-          : startAttempt(get, {
-              attemptId: payload.operationId,
-              operationId: payload.operationId,
-              mode: 'join',
-              domain: payload.domain,
-              user: payload.user,
-              site: payload.site
-            })
+          : get(sessionDomain.query.ReleasingDomainQuery(payload.domain))
+            ? OperationFailedEvent({
+                operationId: payload.operationId,
+                error: new Error('Domain release is already in progress')
+              })
+            : startAttempt(get, {
+                attemptId: payload.operationId,
+                operationId: payload.operationId,
+                mode: 'join',
+                domain: payload.domain,
+                user: payload.user,
+                site: payload.site
+              })
     })
 
     const PendingWorldRefreshState = domain.state<boolean>({
@@ -291,6 +298,12 @@ const ConnectionDomain = Remesh.domain({
     const ReconnectDomainCommand = domain.command({
       name: 'Connection.ReconnectDomainCommand',
       impl: ({ get }, payload: { operationId: string; domain: string; user?: ChatUser; site?: ChatSite }) => {
+        if (!operationAdmitted(payload.operationId)) {
+          return OperationFailedEvent({
+            operationId: payload.operationId,
+            error: new Error('Connection operation admission was revoked')
+          })
+        }
         if (get(sessionDomain.query.ReleasingDomainQuery(payload.domain))) {
           return OperationFailedEvent({
             operationId: payload.operationId,
@@ -428,12 +441,14 @@ const ConnectionDomain = Remesh.domain({
       impl: ({ get }, payload: { attemptId: string }) => {
         const attempts = get(AttemptsState())
         const attempt = attempts.find((item) => item.attemptId === payload.attemptId)
-        if (
-          !attempt ||
-          attempt.hostGeneration !== get(lifecycleDomain.query.HostGenerationQuery()) ||
-          !get(lifecycleDomain.query.DomainLeaseQuery(attempt.domain))
-        ) {
+        if (!attempt || !get(lifecycleDomain.query.DomainLeaseQuery(attempt.domain))) {
           return null
+        }
+        if (!operationAdmitted(attempt.operationId)) {
+          return AbortAttemptCommand({
+            attemptId: attempt.attemptId,
+            error: new Error('Connection operation admission was revoked before commit')
+          })
         }
         return [
           AttemptsState().new(attempts.filter((item) => item.attemptId !== attempt.attemptId)),
@@ -477,26 +492,6 @@ const ConnectionDomain = Remesh.domain({
             ? [OperationFailedEvent({ operationId: attempt.operationId, error: payload.error })]
             : [ErrorEvent({ error: payload.error, domain: attempt.domain })]),
           AttemptFailedEvent({ ...attempt, error: payload.error })
-        ]
-      }
-    })
-
-    const AbortHostAttemptsCommand = domain.command({
-      name: 'Connection.AbortHostAttemptsCommand',
-      impl: ({ get }) => {
-        const attempts = get(AttemptsState())
-        if (attempts.length === 0) return null
-        const domains = [...new Set(attempts.map((attempt) => attempt.domain))]
-        return [
-          ...attempts.map((attempt) =>
-            AbortAttemptCommand({
-              attemptId: attempt.attemptId,
-              error: new Error('Runtime host destroyed during join')
-            })
-          ),
-          // Host loss invalidates every History owner attached to an in-flight attempt, including
-          // a committed recovery lane whose physical room generation is no longer usable.
-          ...domains.map((runtimeDomain) => historyDomain.command.ReleaseDomainCommand(runtimeDomain))
         ]
       }
     })
@@ -595,7 +590,6 @@ const ConnectionDomain = Remesh.domain({
       const recovery: WorldRecoveryAttempt = {
         requestId,
         generation,
-        hostGeneration: get(lifecycleDomain.query.HostGenerationQuery()),
         joinRequestId: worldJoinRequestId(requestId),
         ...(manual ? { manual: true } : {})
       }
@@ -628,11 +622,7 @@ const ConnectionDomain = Remesh.domain({
 
     const RetryDomainRecoveryCommand = domain.command({
       name: 'Connection.RetryDomainRecoveryCommand',
-      impl: (
-        { get },
-        payload: { domain: string; generation: number; hostGeneration: number; user?: ChatUser; site?: ChatSite }
-      ) => {
-        if (get(lifecycleDomain.query.HostGenerationQuery()) !== payload.hostGeneration) return null
+      impl: ({ get }, payload: { domain: string; generation: number; user?: ChatUser; site?: ChatSite }) => {
         if (!get(lifecycleDomain.query.DomainLeaseQuery(payload.domain))) return null
         if (get(AttemptsState()).some((item) => item.domain === payload.domain)) return null
         const current = get(GenerationsState()).find((item) => item.domain === payload.domain)?.generation ?? 0
@@ -652,8 +642,7 @@ const ConnectionDomain = Remesh.domain({
 
     const RetryWorldRecoveryCommand = domain.command({
       name: 'Connection.RetryWorldRecoveryCommand',
-      impl: ({ get }, payload: { generation: number; hostGeneration: number }) => {
-        if (get(lifecycleDomain.query.HostGenerationQuery()) !== payload.hostGeneration) return null
+      impl: ({ get }, payload: { generation: number }) => {
         if (get(WorldRecoveryGenerationState()) !== payload.generation) return null
         if (get(WorldRecoveryAttemptState())) return null
         // Recovery proceeds from preserved World demand (active registrations/local presence), never
@@ -670,7 +659,6 @@ const ConnectionDomain = Remesh.domain({
         if (
           !recovery ||
           recovery.requestId !== payload.requestId ||
-          recovery.hostGeneration !== get(lifecycleDomain.query.HostGenerationQuery()) ||
           // The completion gate is preserved World registration/demand and exact recovery identity:
           // a Domain reset's zero-committed-Domain interval never strands a settled World child.
           get(worldDomain.query.LocalPresenceQuery()) === null
@@ -702,8 +690,7 @@ const ConnectionDomain = Remesh.domain({
           ...(recovery.manual ? [] : [ErrorEvent({ error: payload.error })]),
           WorldRecoveryAbortedEvent({
             requestId: recovery.requestId,
-            generation: recovery.generation,
-            hostGeneration: recovery.hostGeneration
+            generation: recovery.generation
           })
         ]
       }
@@ -919,8 +906,7 @@ const ConnectionDomain = Remesh.domain({
               fromEvent(wireDomain.event.PeerLeftEvent).pipe(
                 filter((event) => event.roomId === payload.roomId && event.sourcePeerId === payload.sourcePeerId)
               ),
-              fromEvent(wireDomain.event.ErrorEvent).pipe(filter((event) => event.roomId === payload.roomId)),
-              fromEvent(lifecycleDomain.event.HostDestroyedEvent)
+              fromEvent(wireDomain.event.ErrorEvent).pipe(filter((event) => event.roomId === payload.roomId))
             )
 
             const roomReady$: Observable<null> = trusted
@@ -954,10 +940,6 @@ const ConnectionDomain = Remesh.domain({
     domain.effect({
       name: 'Connection.PeerLeaveEffect',
       impl: ({ fromEvent }) => fromEvent(wireDomain.event.PeerLeftEvent).pipe(map(PeerLeftCommand))
-    })
-    domain.effect({
-      name: 'Connection.HostDestroyedEffect',
-      impl: ({ fromEvent }) => fromEvent(lifecycleDomain.event.HostDestroyedEvent).pipe(map(AbortHostAttemptsCommand))
     })
     domain.effect({
       name: 'Connection.RoomCloseEffect',
@@ -1054,7 +1036,6 @@ const ConnectionDomain = Remesh.domain({
             RetryDomainRecoveryCommand({
               domain: attempt.domain,
               generation: attempt.generation,
-              hostGeneration: attempt.hostGeneration,
               user: attempt.user,
               site: attempt.site
             })
@@ -1083,9 +1064,7 @@ const ConnectionDomain = Remesh.domain({
                 return () => globalThis.clearTimeout(timerId)
               })
           ),
-          map((payload) =>
-            RetryWorldRecoveryCommand({ generation: payload.generation, hostGeneration: payload.hostGeneration })
-          )
+          map((payload) => RetryWorldRecoveryCommand({ generation: payload.generation }))
         )
     })
 
