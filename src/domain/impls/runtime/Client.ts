@@ -34,7 +34,8 @@ ownInjectRejections((error) => client.observeTransportRejection(error))
 const bindPage = <Payload extends object>(payload: Payload) => ({
   ...payload,
   pageId,
-  runtimeHostId: client.runtimeHostId()
+  runtimeHostId: client.runtimeHostId(),
+  bindingId: client.bindingId()
 })
 
 /** Every Page-facing Runtime call carries its current logical binding. Browser caller facts are added by Provider. */
@@ -65,14 +66,15 @@ browser.runtime.onMessage.addListener((message: unknown) => {
     !message ||
     typeof message !== 'object' ||
     (message as { type?: unknown }).type !== 'runtime:sessions-rebind' ||
-    (message as { pageId?: unknown }).pageId !== pageId
+    (message as { pageId?: unknown }).pageId !== pageId ||
+    typeof (message as { rebindId?: unknown }).rebindId !== 'string'
   ) {
     return
   }
-  return client.rebind()
+  return client.rebind((message as { rebindId: string }).rebindId)
 })
 
-export const whenReady = (callback: () => void) => client.whenReady(callback)
+export const whenReady = (callback: () => void | Promise<void>) => client.whenReady(callback)
 export const whenHostPhase = (callback: Parameters<typeof client.whenHostPhase>[0]) => client.whenHostPhase(callback)
 export const whenFailure = (callback: Parameters<typeof client.whenFailure>[0]) => client.whenFailure(callback)
 export const initClient = (): Promise<RuntimeSnapshot | null> => client.init()

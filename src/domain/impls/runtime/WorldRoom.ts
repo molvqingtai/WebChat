@@ -14,7 +14,7 @@ export interface WorldRoomDependencies {
   server: RuntimeServer
   pageId: string
   getSnapshot: () => RuntimeSnapshot
-  whenReady: (callback: () => void) => () => void
+  whenReady: (callback: () => void | Promise<void>) => () => void
 }
 
 const contributionKey = (sourcePeerId: string, origin: string) => `${sourcePeerId}\u0000${origin}`
@@ -31,9 +31,9 @@ export class WorldRoom extends EventHub {
       const attachCurrentHost = () => this.attachRuntime(attachedHostId)
       // The settled tail serializes both outcomes; this attachment's rejection is transferred
       // exactly once to the room error owner and then becomes the next settled queue token.
-      this.attachmentTask = this.attachmentTask
-        .then(attachCurrentHost, attachCurrentHost)
-        .then(undefined, (error) => this.emitError(error))
+      const attachment = this.attachmentTask.then(attachCurrentHost, attachCurrentHost)
+      this.attachmentTask = attachment.then(undefined, (error) => this.emitError(error))
+      return attachment
     })
   }
 

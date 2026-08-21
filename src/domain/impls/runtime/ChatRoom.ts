@@ -38,7 +38,7 @@ export interface ChatRoomDependencies {
   pageDomain: string
   pageId: string
   getSnapshot: () => RuntimeSnapshot
-  whenReady: (callback: () => void) => Unsubscribe
+  whenReady: (callback: () => void | Promise<void>) => Unsubscribe
 }
 
 type RuntimeMessageStore = MessageStore & {
@@ -202,7 +202,15 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
       // cancellation fact for that attempt.
       if (this.activeConnection) this.reportResult?.(this.activeConnection.resultToken, 'cancelled')
       this.activeConnection?.controller.abort(abortError('Runtime host generation replaced'))
-      this.startAttachment(null)
+      const attachment = this.startAttachment(null)
+      const readiness = attachment.task.then(() => {
+        if (attachment.error !== undefined) throw attachment.error
+      })
+      // ClientLease awaits this exact readiness promise during a private rebind. Some isolated
+      // dependency fakes only notify and intentionally ignore callback results, so observe their
+      // rejection here as well without changing the promise returned to the real lease.
+      void readiness.catch(() => {})
+      return readiness
     })
   }
 

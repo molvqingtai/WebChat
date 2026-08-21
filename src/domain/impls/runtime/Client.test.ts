@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const fixture = vi.hoisted(() => ({
   listener: undefined as ((message: unknown) => unknown) | undefined,
-  rebind: vi.fn(async () => {}),
+  rebind: vi.fn(async (rebindId: string) => ({ rebindId })),
   proxy: {} as Record<string, unknown>
 }))
 
@@ -31,6 +31,7 @@ vi.mock('@/service/adapter/runtime', () => ({
 vi.mock('@/runtime/ClientLease', () => ({
   ClientLease: class {
     runtimeHostId = () => 'host-a'
+    bindingId = () => 'binding-a'
     whenReady = () => () => {}
     whenHostPhase = () => () => {}
     whenFailure = () => () => {}
@@ -54,13 +55,35 @@ describe('Page Runtime rebind ingress', () => {
 
   afterEach(() => vi.unstubAllGlobals())
 
-  it('re-executes the current Page registration only for its exact Background rebind target', async () => {
+  it('re-executes the current Page registration only for its exact Background rebind target and token', async () => {
     await import('./Client')
 
-    expect(fixture.listener!({ type: 'runtime:sessions-rebind', pageId: 'other-page' })).toBeUndefined()
+    expect(
+      fixture.listener!({ type: 'runtime:sessions-rebind', pageId: 'other-page', rebindId: 'rebind-a' })
+    ).toBeUndefined()
+    expect(fixture.listener!({ type: 'runtime:sessions-rebind', pageId: 'page-a' })).toBeUndefined()
     expect(fixture.rebind).not.toHaveBeenCalled()
 
-    await fixture.listener?.({ type: 'runtime:sessions-rebind', pageId: 'page-a' })
-    expect(fixture.rebind).toHaveBeenCalledOnce()
+    await expect(
+      fixture.listener?.({ type: 'runtime:sessions-rebind', pageId: 'page-a', rebindId: 'rebind-a' })
+    ).resolves.toEqual({
+      rebindId: 'rebind-a'
+    })
+    expect(fixture.rebind).toHaveBeenCalledExactlyOnceWith('rebind-a')
+  })
+
+  it('attaches the current private binding identity to Page-originated Runtime calls', async () => {
+    const attachPage = vi.fn(async () => undefined)
+    fixture.proxy.attachPage = attachPage
+    const { server } = await import('./Client')
+
+    await server.attachPage({ domain: 'https://example.com', pageId: 'ignored' })
+
+    expect(attachPage).toHaveBeenCalledExactlyOnceWith({
+      domain: 'https://example.com',
+      pageId: 'page-a',
+      runtimeHostId: 'host-a',
+      bindingId: 'binding-a'
+    })
   })
 })

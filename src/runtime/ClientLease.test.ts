@@ -72,6 +72,37 @@ describe('ClientLease event-driven Runtime admission', () => {
     client.detach()
   })
 
+  it('returns an exact rebind outcome only after every current readiness callback settles', async () => {
+    const registerPage = vi
+      .fn<RuntimeCoordinator['registerPage']>()
+      .mockResolvedValueOnce(registration('host-a'))
+      .mockResolvedValueOnce({ ...registration('host-b'), rebindId: 'rebind-a' })
+    let releaseReady!: () => void
+    const readiness = new Promise<void>((resolve) => {
+      releaseReady = resolve
+    })
+    let readyCalls = 0
+    const client = new ClientLease({ coordinator: coordinatorWith(registerPage), pageId, domain })
+    client.whenReady(() => {
+      readyCalls += 1
+      return readyCalls === 1 ? undefined : readiness
+    })
+
+    await client.init()
+    let settled = false
+    const rebind = client.rebind('rebind-a').then((outcome) => {
+      settled = true
+      return outcome
+    })
+    await Promise.resolve()
+
+    expect(settled).toBe(false)
+    expect(registerPage).toHaveBeenLastCalledWith({ domain, pageId, rebindId: 'rebind-a' })
+    releaseReady()
+    await expect(rebind).resolves.toEqual({ rebindId: 'rebind-a' })
+    client.detach()
+  })
+
   it('keeps an unrelated timeout from replaying an admitted action', async () => {
     const registerPage = vi
       .fn<RuntimeCoordinator['registerPage']>()

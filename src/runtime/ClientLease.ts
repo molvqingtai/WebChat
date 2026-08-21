@@ -50,9 +50,10 @@ const withDeadline = <T>(task: Promise<T>, milliseconds: number, signal: AbortSi
 
 export class ClientLease {
   private snapshotValue: RuntimeSnapshot | null = null
+  private bindingIdValue: string | null = null
   private ready = false
   private lifecycle: AbortController | null = null
-  private readonly readyCallbacks = new Set<() => void>()
+  private readonly readyCallbacks = new Set<() => void | Promise<void>>()
   private readonly hostPhaseCallbacks = new Set<(phase: HostPhase) => void>()
   private readonly failureCallbacks = new Set<(error: Error) => void>()
   private hostPhase: HostPhase = 'none'
@@ -64,9 +65,9 @@ export class ClientLease {
     this.startupRetryIntervalMs = options.startupRetryIntervalMs ?? 1000
   }
 
-  whenReady(callback: () => void) {
+  whenReady(callback: () => void | Promise<void>) {
     this.readyCallbacks.add(callback)
-    if (this.ready) callback()
+    if (this.ready) void Promise.resolve(callback()).catch((error) => this.emitFailure(error))
     return () => this.readyCallbacks.delete(callback)
   }
 
@@ -82,8 +83,16 @@ export class ClientLease {
     return () => this.failureCallbacks.delete(callback)
   }
 
-  private lease() {
-    return { domain: this.options.domain, pageId: this.options.pageId }
+  private lease(rebindId?: string) {
+    return {
+      domain: this.options.domain,
+      pageId: this.options.pageId,
+      ...(rebindId ? { rebindId } : {})
+    }
+  }
+
+  private async notifyReady() {
+    await Promise.all([...this.readyCallbacks].map((callback) => callback()))
   }
 
   private isCurrent(lifecycle: AbortController) {
@@ -117,7 +126,11 @@ export class ClientLease {
     return false
   }
 
-  private async registerWithinBudget(lifecycle: AbortController, deadline: number): Promise<RuntimePageRegistration> {
+  private async registerWithinBudget(
+    lifecycle: AbortController,
+    deadline: number,
+    rebindId?: string
+  ): Promise<RuntimePageRegistration> {
     let lastError: unknown = new Error('Runtime registration failed')
     for (;;) {
       lifecycle.signal.throwIfAborted()
@@ -126,7 +139,7 @@ export class ClientLease {
       try {
         const attemptDeadline = Math.min(deadline, Date.now() + CLIENT_LEASE_RPC_TIMEOUT_MS)
         const result = await withDeadline(
-          this.options.coordinator.registerPage(this.lease()),
+          this.options.coordinator.registerPage(this.lease(rebindId)),
           attemptDeadline - Date.now(),
           lifecycle.signal
         )
@@ -145,9 +158,10 @@ export class ClientLease {
     const registration = await this.registerWithinBudget(lifecycle, deadline)
     if (!this.isCurrent(lifecycle)) return null
     this.snapshotValue = registration.snapshot
+    this.bindingIdValue = registration.bindingId ?? null
     this.ready = true
     this.setHostPhase(registration.snapshot.hostPhase)
-    this.readyCallbacks.forEach((callback) => callback())
+    await this.notifyReady()
     this.emitRegistrationFailures(registration)
     return registration.snapshot
   }
@@ -166,14 +180,17 @@ export class ClientLease {
       this.emitRegistrationFailures(registration)
       const lease = registration.snapshot.domains.find((item) => item.domain === this.options.domain)
       const replaced =
-        registration.snapshot.hostId !== this.snapshotValue?.hostId || !lease?.pageIds.includes(this.options.pageId)
+        registration.snapshot.hostId !== this.snapshotValue?.hostId ||
+        !lease?.pageIds.includes(this.options.pageId) ||
+        registration.bindingId !== this.bindingIdValue
+      this.bindingIdValue = registration.bindingId ?? null
       if (replaced) {
         // This exact RPC is the sole new admission. Adopt its current state directly instead of
         // issuing another probe or replaying an action through a recovery helper.
         this.snapshotValue = registration.snapshot
         this.ready = true
         this.setHostPhase(registration.snapshot.hostPhase)
-        this.readyCallbacks.forEach((callback) => callback())
+        await this.notifyReady()
         return
       }
       this.snapshotValue = registration.snapshot
@@ -191,6 +208,7 @@ export class ClientLease {
     const lifecycle = new AbortController()
     this.lifecycle = lifecycle
     this.ready = false
+    this.bindingIdValue = null
     this.setHostPhase('connecting')
     try {
       const snapshot = await this.attach(lifecycle)
@@ -210,6 +228,7 @@ export class ClientLease {
     this.lifecycle?.abort(new DOMException('Runtime lease detached', 'AbortError'))
     this.lifecycle = null
     this.ready = false
+    this.bindingIdValue = null
     this.setHostPhase('none')
   }
 
@@ -222,25 +241,34 @@ export class ClientLease {
     return this.snapshotValue?.hostId
   }
 
+  bindingId() {
+    return this.bindingIdValue ?? undefined
+  }
+
   /**
    * The Background asks a surviving Page to make a fresh ordinary registration after it restarts.
    * This deliberately shares the registration primitive with startup without turning `checkNow()`
    * into a production recovery oracle.
    */
-  async rebind() {
+  async rebind(rebindId?: string) {
     const lifecycle = this.lifecycle
     if (!lifecycle || !this.isCurrent(lifecycle)) return
     const deadline = Date.now() + this.startupTimeoutMs
     this.ready = false
     this.setHostPhase('connecting')
     try {
-      const registration = await this.registerWithinBudget(lifecycle, deadline)
+      const registration = await this.registerWithinBudget(lifecycle, deadline, rebindId)
       if (!this.isCurrent(lifecycle)) return
+      if (rebindId && registration.rebindId !== rebindId) {
+        throw new Error('Runtime rebind response is no longer current')
+      }
       this.snapshotValue = registration.snapshot
+      this.bindingIdValue = registration.bindingId ?? null
       this.ready = true
       this.setHostPhase(registration.snapshot.hostPhase)
-      this.readyCallbacks.forEach((callback) => callback())
+      await this.notifyReady()
       this.emitRegistrationFailures(registration)
+      return rebindId ? { rebindId } : undefined
     } catch (error) {
       if (!this.isCurrent(lifecycle)) return
       this.ready = false

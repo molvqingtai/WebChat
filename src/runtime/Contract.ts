@@ -53,6 +53,13 @@ export interface RuntimePageCall {
   pageId?: string
   runtimeHostId?: string
   caller?: RuntimeCaller
+  /** Service-private immutable identity of the Page binding that issued this call. */
+  bindingId?: string
+  /**
+   * Service-private correlation for one Background-initiated Page rebind. It is never attached
+   * to business Runtime calls or peer protocol frames.
+   */
+  rebindId?: string
 }
 
 export interface InboundEvent {
@@ -213,6 +220,10 @@ export interface RuntimeTab {
 export interface RuntimePageRegistration {
   snapshot: RuntimeSnapshot
   failures?: RuntimeErrorEvent[]
+  /** Returned only by registration and retained by the Page facade for private call fencing. */
+  bindingId?: string
+  /** Echoed only to the initiating private rebind control-plane request. */
+  rebindId?: string
 }
 
 export interface RuntimeCoordinator {

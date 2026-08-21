@@ -153,7 +153,7 @@ describe('RuntimeServer production Page admission and restart recovery', () => {
   const createAdmissionFixture = () => {
     const storageState: Record<string, unknown> = {}
     const tabs = new Map([[7, { id: 7, url: pageUrl }]])
-    const rebindPage = vi.fn(async () => {})
+    const rebindPage = vi.fn(async (_tabId: number, _pageId: string, rebindId: string) => ({ rebindId }))
     const ensureTransport = vi.fn(async () => {})
     const fake = createFakeTransport()
     const admission = {
@@ -175,10 +175,16 @@ describe('RuntimeServer production Page admission and restart recovery', () => {
       ensureTransport
     }
     const server = createServer({ transport: fake.transport, codec: jsonCodec, admission })
-    const attach = () => server.attachPage({ domain: DOMAIN, pageId, caller: { tab: tabs.get(7) } })
+    let bindingId: string | undefined
+    let bindingSequence = 0
+    const attach = async () => {
+      bindingId = `binding-${++bindingSequence}`
+      return server.attachPage({ domain: DOMAIN, pageId, bindingId, caller: { tab: tabs.get(7) } })
+    }
     const call = async () => ({
       pageId,
       runtimeHostId: (await server.getSnapshot()).hostId,
+      bindingId,
       caller: { tab: tabs.get(7) }
     })
     return { admission, attach, call, fake, rebindPage, server, storageState, tabs }
@@ -205,6 +211,34 @@ describe('RuntimeServer production Page admission and restart recovery', () => {
         caller: { tab: { id: 8, url: pageUrl } }
       })
     ).rejects.toThrow('binding is no longer current')
+    disposeServer(fixture.server)
+  })
+
+  it('keeps a same-tuple replacement binding independent from a stale callback identity', async () => {
+    const fixture = createAdmissionFixture()
+    await fixture.attach()
+    const staleCall = await fixture.call()
+    const replacementBindingId = 'binding-replacement'
+    await fixture.server.attachPage({
+      domain: DOMAIN,
+      pageId,
+      bindingId: replacementBindingId,
+      caller: { tab: fixture.tabs.get(7) }
+    })
+    const replacementCall = {
+      ...staleCall,
+      bindingId: replacementBindingId
+    }
+
+    await expect(fixture.server.onSessionEvent(staleCall, async () => {})).rejects.toThrow(
+      'binding is no longer current'
+    )
+    await fixture.server.onSessionEvent(replacementCall, async () => {})
+    await expect(
+      fixture.server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE, ...replacementCall })
+    ).resolves.toMatchObject({
+      domains: [expect.objectContaining({ chatRoomJoined: true })]
+    })
     disposeServer(fixture.server)
   })
 
@@ -272,7 +306,7 @@ describe('RuntimeServer production Page admission and restart recovery', () => {
     const secondFake = createFakeTransport()
     const second = createServer({ transport: secondFake.transport, admission: first.admission })
     await restoreServerPageBindings(second)
-    expect(first.rebindPage).toHaveBeenCalledWith(7, pageId)
+    expect(first.rebindPage).toHaveBeenCalledWith(7, pageId, expect.any(String))
 
     const oldCall = await first.call()
     await expect(second.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE, ...oldCall })).rejects.toThrow(
@@ -306,6 +340,72 @@ describe('RuntimeServer production Page admission and restart recovery', () => {
     )
     disposeServer(fixture.server)
   })
+
+  it.each(['rebind-then-transport', 'transport-then-rebind'] as const)(
+    'keeps a fresh successor effect-free behind a closed recovery across the %s schedule',
+    async (schedule) => {
+      const first = createAdmissionFixture()
+      await first.attach()
+      const rebind = deferred<{ rebindId: string }>()
+      first.rebindPage.mockImplementation(async (_tabId: number, _pageId: string, _rebindId: string) => rebind.promise)
+      first.tabs.set(8, { id: 8, url: pageUrl })
+      const secondFake = createFakeTransport({ physicalReady: false })
+      const second = createServer({ transport: secondFake.transport, codec: jsonCodec, admission: first.admission })
+      const restoring = restoreServerPageBindings(second)
+      await vi.waitFor(() => expect(first.rebindPage).toHaveBeenCalledOnce())
+
+      const successorPageId = 'successor-page'
+      const successorTab = first.tabs.get(8)
+      const successorBindingId = 'binding-successor'
+      await second.attachPage({
+        domain: DOMAIN,
+        pageId: successorPageId,
+        bindingId: successorBindingId,
+        caller: { tab: successorTab }
+      })
+      const successorCall = {
+        pageId: successorPageId,
+        runtimeHostId: (await second.getSnapshot()).hostId,
+        bindingId: successorBindingId,
+        caller: { tab: successorTab }
+      }
+      await second.onSessionEvent(successorCall, async () => {})
+
+      const timedOut = second.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE, ...successorCall }).then(
+        () => null,
+        (error: Error) => error
+      )
+      await secondFake.waitForDesiredRooms(2)
+      await vi.advanceTimersByTimeAsync(PHYSICAL_ROOM_JOIN_TIMEOUT_MS + 1)
+      await expect(timedOut).resolves.toEqual(new Error('Physical room join timed out'))
+
+      let successorSettled = false
+      const successor = second
+        .joinChatRoom({ domain: DOMAIN, user: USER, site: SITE, ...successorCall })
+        .then((snapshot) => {
+          successorSettled = true
+          return snapshot
+        })
+      await settle()
+      expect(successorSettled).toBe(false)
+      expect(secondFake.joinCalls).toHaveLength(2)
+
+      const rebindId = first.rebindPage.mock.calls[0]?.[2]
+      if (!rebindId) throw new Error('Expected exact rebind token')
+      if (schedule === 'transport-then-rebind') secondFake.open()
+      rebind.resolve({ rebindId })
+      await restoring
+      if (schedule === 'rebind-then-transport') {
+        await secondFake.waitForDesiredRooms(2)
+        secondFake.open()
+      }
+
+      await expect(successor).resolves.toMatchObject({ domains: [expect.objectContaining({ chatRoomJoined: true })] })
+      expect(secondFake.joinCalls).toHaveLength(4)
+      disposeServer(first.server)
+      disposeServer(second)
+    }
+  )
 })
 afterEach(() => {
   vi.useRealTimers()

@@ -1,5 +1,6 @@
 import { browser } from '#imports'
 import { defineProxy } from 'comctx'
+import { nanoid } from 'nanoid'
 import { ProvideAdapter } from '@/service/adapter/runtime'
 import { BackgroundInjectAdapter, type MessageApi } from '@/service/adapter/runtime/Core'
 import type { RuntimeCoordinator, RuntimePageRegistration } from '@/runtime/Contract'
@@ -51,8 +52,13 @@ const ensureChromeTransport = () => chromeTransportOwner.ensure()
 const admission = {
   tabs: browser.tabs,
   storage: browser.storage.session,
-  rebindPage: (tabId: number, pageId: string) =>
-    browser.tabs.sendMessage(tabId, { type: 'runtime:sessions-rebind', pageId }),
+  rebindPage: async (tabId: number, pageId: string, rebindId: string) => {
+    const outcome = await browser.tabs.sendMessage(tabId, { type: 'runtime:sessions-rebind', pageId, rebindId })
+    if (!outcome || typeof outcome !== 'object' || (outcome as { rebindId?: unknown }).rebindId !== rebindId) {
+      throw new Error('Runtime Page rebind response is no longer current')
+    }
+    return { rebindId }
+  },
   ensureTransport: async () => {
     if (!import.meta.env.FIREFOX) await ensureChromeTransport()
   }
@@ -75,8 +81,9 @@ export const registerPage: RuntimeCoordinator['registerPage'] = async (payload):
   await ensureBackgroundHost()
   const server = backgroundHost.server
   if (!server) throw new Error('Logical Runtime background host is unavailable')
-  const snapshot = await server.attachPage(payload)
-  return { snapshot }
+  const bindingId = nanoid()
+  const snapshot = await server.attachPage({ ...payload, bindingId })
+  return { snapshot, bindingId, ...(payload.rebindId ? { rebindId: payload.rebindId } : {}) }
 }
 
 /** Fresh Background startup restores only validated Page rebind targets, never old callback closures or actions. */
