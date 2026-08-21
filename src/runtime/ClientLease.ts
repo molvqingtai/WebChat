@@ -53,6 +53,9 @@ export class ClientLease {
   private ready = false
   private lifecycle: AbortController | null = null
   private readonly readyCallbacks = new Set<() => void>()
+  /** Internal attach-phase hooks (ChatRoom/WorldRoom attachment). Their completions are the
+   * readiness barrier: ready is published only after every one settled. */
+  private readonly attachCallbacks = new Set<() => void | Promise<void>>()
   private readonly hostPhaseCallbacks = new Set<(phase: HostPhase) => void>()
   private readonly failureCallbacks = new Set<(error: Error) => void>()
   private hostPhase: HostPhase = 'none'
@@ -68,6 +71,16 @@ export class ClientLease {
     this.readyCallbacks.add(callback)
     if (this.ready) callback()
     return () => this.readyCallbacks.delete(callback)
+  }
+
+  /**
+   * Page-internal attachment phase: callbacks start their exact attachment when a registration is
+   * admitted and must settle BEFORE ready is published. A rejection blocks ready and surfaces as
+   * the attach failure. Never a public/UI hook.
+   */
+  whenAttach(callback: () => void | Promise<void>) {
+    this.attachCallbacks.add(callback)
+    return () => this.attachCallbacks.delete(callback)
   }
 
   whenHostPhase(callback: (phase: HostPhase) => void) {
@@ -141,10 +154,32 @@ export class ClientLease {
     }
   }
 
+  /** Runs the attachment barrier: starts every registered attachment and resolves only after all
+   * of them settled. A rejection is a real attach failure. */
+  private async runAttachmentBarrier() {
+    const work = [...this.attachCallbacks].map((callback) => {
+      try {
+        return Promise.resolve(callback())
+      } catch (error) {
+        return Promise.reject(error)
+      }
+    })
+    const settled = await Promise.allSettled(work)
+    const failed = settled.find((entry): entry is PromiseRejectedResult => entry.status === 'rejected')
+    if (failed) throw failed.reason
+  }
+
   private async attach(lifecycle: AbortController, deadline = Date.now() + this.startupTimeoutMs) {
     const registration = await this.registerWithinBudget(lifecycle, deadline)
     if (!this.isCurrent(lifecycle)) return null
     this.snapshotValue = registration.snapshot
+    // Phase 1: attachments (ChatRoom registrations + replay, WorldRoom subscription + snapshot)
+    // must settle BEFORE the single ready publication below.
+    await this.runAttachmentBarrier()
+    if (!this.isCurrent(lifecycle)) return null
+    // Phase 2: the unique ready publication point — after World attach and with the exact
+    // binding still current (every attachment RPC re-validated it during phase 1, and every later
+    // business RPC re-validates it again at admission).
     this.ready = true
     this.setHostPhase(registration.snapshot.hostPhase)
     this.readyCallbacks.forEach((callback) => callback())
@@ -169,8 +204,11 @@ export class ClientLease {
         registration.snapshot.hostId !== this.snapshotValue?.hostId || !lease?.pageIds.includes(this.options.pageId)
       if (replaced) {
         // This exact RPC is the sole new admission. Adopt its current state directly instead of
-        // issuing another probe or replaying an action through a recovery helper.
+        // issuing another probe or replaying an action through a recovery helper. Attachments
+        // settle before the ready publication, exactly like the initial attach.
         this.snapshotValue = registration.snapshot
+        await this.runAttachmentBarrier()
+        if (!this.isCurrent(lifecycle)) return
         this.ready = true
         this.setHostPhase(registration.snapshot.hostPhase)
         this.readyCallbacks.forEach((callback) => callback())
@@ -237,6 +275,10 @@ export class ClientLease {
       const registration = await this.registerWithinBudget(lifecycle, deadline)
       if (!this.isCurrent(lifecycle)) return
       this.snapshotValue = registration.snapshot
+      // The rebind attachment barrier: existing ChatRoom/WorldRoom attachments complete before
+      // ready is published again.
+      await this.runAttachmentBarrier()
+      if (!this.isCurrent(lifecycle)) return
       this.ready = true
       this.setHostPhase(registration.snapshot.hostPhase)
       this.readyCallbacks.forEach((callback) => callback())

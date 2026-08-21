@@ -8,6 +8,7 @@ import WireDomain from '@/domain/runtime/Wire'
 import WorldDomain, { getWorldRoomId } from '@/domain/runtime/World'
 import type { ChatSite, ChatUser } from '@/protocol'
 import type { RuntimeSnapshot } from '@/runtime/Contract'
+import { CommitCapabilityExtern, type CommitCapability } from '@/domain/runtime/externs/CommitCapability'
 
 export interface ConnectionOptions {
   [key: string]: string | number | undefined
@@ -26,6 +27,9 @@ interface JoinAttempt {
   /** Preserved typed join input so a failed initial attempt can retry as a fresh generation. */
   user?: ChatUser
   site?: ChatSite
+  /** Exact consumed commit capability (K) carried from the Server envelope; absence means the
+   * attempt is an automatic recovery, not an envelope action. */
+  capability?: CommitCapability
 }
 
 interface DomainGeneration {
@@ -78,6 +82,7 @@ const ConnectionDomain = Remesh.domain({
     const worldDomain = domain.getDomain(WorldDomain({ sessionId: options.worldSessionId }))
     const deliveryDomain = domain.getDomain(DeliveryDomain())
     const historyDomain = domain.getDomain(HistoryDomain())
+    const commitAuthority = domain.getExtern(CommitCapabilityExtern)
 
     const AttemptsState = domain.state<JoinAttempt[]>({ name: 'Connection.AttemptsState', default: [] })
     const GenerationsState = domain.state<DomainGeneration[]>({
@@ -168,6 +173,7 @@ const ConnectionDomain = Remesh.domain({
         domain: string
         user?: ChatUser
         site?: ChatSite
+        capability?: CommitCapability
       }
     ) => {
       const attempts = get(AttemptsState())
@@ -190,7 +196,8 @@ const ConnectionDomain = Remesh.domain({
         domain: payload.domain,
         generation,
         user: payload.user,
-        site: payload.site
+        site: payload.site,
+        capability: payload.capability
       }
       return [
         GenerationsState().new(
@@ -225,7 +232,10 @@ const ConnectionDomain = Remesh.domain({
 
     const JoinDomainCommand = domain.command({
       name: 'Connection.JoinDomainCommand',
-      impl: ({ get }, payload: { operationId: string; domain: string; user: ChatUser; site: ChatSite }) =>
+      impl: (
+        { get },
+        payload: { operationId: string; domain: string; user: ChatUser; site: ChatSite; capability?: CommitCapability }
+      ) =>
         get(sessionDomain.query.ReleasingDomainQuery(payload.domain))
           ? OperationFailedEvent({
               operationId: payload.operationId,
@@ -237,7 +247,8 @@ const ConnectionDomain = Remesh.domain({
               mode: 'join',
               domain: payload.domain,
               user: payload.user,
-              site: payload.site
+              site: payload.site,
+              capability: payload.capability
             })
     })
 
@@ -287,7 +298,16 @@ const ConnectionDomain = Remesh.domain({
 
     const ReconnectDomainCommand = domain.command({
       name: 'Connection.ReconnectDomainCommand',
-      impl: ({ get }, payload: { operationId: string; domain: string; user?: ChatUser; site?: ChatSite }) => {
+      impl: (
+        { get },
+        payload: {
+          operationId: string
+          domain: string
+          user?: ChatUser
+          site?: ChatSite
+          capability?: CommitCapability
+        }
+      ) => {
         if (get(sessionDomain.query.ReleasingDomainQuery(payload.domain))) {
           return OperationFailedEvent({
             operationId: payload.operationId,
@@ -316,7 +336,8 @@ const ConnectionDomain = Remesh.domain({
             mode: 'reconnect',
             domain: payload.domain,
             user: runtime?.user ?? payload.user,
-            site: runtime?.site ?? payload.site
+            site: runtime?.site ?? payload.site,
+            capability: payload.capability
           })
         ]
       }
@@ -329,7 +350,16 @@ const ConnectionDomain = Remesh.domain({
     // clear their domain-owned work. World and every other domain are outside the aggregate.
     const DestroyDomainConnectionCommand = domain.command({
       name: 'Connection.DestroyDomainConnectionCommand',
-      impl: ({ get }, payload: { domain: string; operationId: string }) => {
+      impl: ({ get }, payload: { domain: string; operationId: string; capability?: CommitCapability }) => {
+        // K fence: when the reconnect envelope carries a capability, the first irreversible
+        // destruction may proceed only for the exact consumed token. A revoked/unconsumed token
+        // means the operation already lost admission and nothing may be destroyed.
+        if (payload.capability !== undefined && !commitAuthority.authorizes(payload.capability)) {
+          return OperationFailedEvent({
+            operationId: payload.operationId,
+            error: new Error('Domain connection reset lost its exact commit capability')
+          })
+        }
         const runtime = get(sessionDomain.query.DomainQuery(payload.domain))
         const retainedSeed = get(sessionDomain.query.RetainedLocalSeedQuery(payload.domain))
         // A retry after a failed reset persistence still re-honors the clear save: the Session
@@ -427,6 +457,14 @@ const ConnectionDomain = Remesh.domain({
         const attempt = attempts.find((item) => item.attemptId === payload.attemptId)
         if (!attempt || !get(lifecycleDomain.query.DomainLeaseQuery(attempt.domain))) {
           return null
+        }
+        // K fence: an envelope attempt commits only with its exact consumed capability; any other
+        // outcome (revoked, never consumed) aborts instead of committing.
+        if (attempt.capability !== undefined && !commitAuthority.authorizes(attempt.capability)) {
+          return AbortAttemptCommand({
+            attemptId: attempt.attemptId,
+            error: new Error('Domain join lost its exact commit capability')
+          })
         }
         return [
           AttemptsState().new(attempts.filter((item) => item.attemptId !== attempt.attemptId)),

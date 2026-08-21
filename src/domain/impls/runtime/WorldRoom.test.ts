@@ -55,7 +55,7 @@ const createFixture = (
     server,
     pageId: 'page-1',
     getSnapshot: () => initial,
-    whenReady: (ready) => {
+    whenAttach: (ready) => {
       ready()
       return () => {}
     }
@@ -86,7 +86,7 @@ describe('WorldRoom Runtime adapter', () => {
       } as unknown as RuntimeServer,
       pageId: 'page-1',
       getSnapshot: () => initial,
-      whenReady: (listener) => {
+      whenAttach: (listener) => {
         ready = listener
         return () => {}
       }

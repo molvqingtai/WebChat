@@ -316,7 +316,7 @@ const createStack = async (
     pageDomain: DOMAIN,
     pageId,
     getSnapshot: () => snapshot,
-    whenReady: (listener) => {
+    whenAttach: (listener) => {
       listener()
       return () => {}
     }

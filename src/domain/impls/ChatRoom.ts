@@ -1,7 +1,7 @@
 import type { Database } from '@/domain/externs/Database'
 import { createMessageStore, type MessageDatabaseSchema } from '@/domain/MessageStore'
 import { ChatRoom, type ChatRoomDependencies } from '@/domain/impls/runtime/ChatRoom'
-import { getSnapshot, pageDomain, pageId, server, whenReady } from '@/domain/impls/runtime/Client'
+import { getSnapshot, pageDomain, pageId, server, whenAttach } from '@/domain/impls/runtime/Client'
 
 export const createChatRoomImpl = (database: Database<MessageDatabaseSchema>) => {
   const dependencies: ChatRoomDependencies = {
@@ -10,7 +10,7 @@ export const createChatRoomImpl = (database: Database<MessageDatabaseSchema>) =>
     pageDomain,
     pageId,
     getSnapshot,
-    whenReady
+    whenAttach
   }
 
   const room = new ChatRoom(dependencies)

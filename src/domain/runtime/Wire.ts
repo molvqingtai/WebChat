@@ -796,6 +796,9 @@ const WireDomain = Remesh.domain({
       event: {
         RoomsJoinedEvent,
         RoomsJoinFailedEvent,
+        // Private seam for the Server execution envelope: observes exact Q issuance without any
+        // change to the event's semantics, topology, or payload.
+        JoinRoomsRequestedEvent,
         MessageSentEvent,
         MessageSendFailedEvent,
         MessageAcceptedEvent,

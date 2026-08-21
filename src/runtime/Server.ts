@@ -8,6 +8,11 @@ import SessionDomain, { getChatRoomId, type SessionOperationSucceeded } from '@/
 import WireDomain from '@/domain/runtime/Wire'
 import WorldDomain, { getWorldRoomId } from '@/domain/runtime/World'
 import { ClockExtern, type Clock } from '@/domain/runtime/externs/Clock'
+import {
+  CommitCapabilityExtern,
+  createCommitAuthority,
+  type CommitCapability
+} from '@/domain/runtime/externs/CommitCapability'
 import { IdentityExtern } from '@/domain/runtime/externs/Identity'
 import { PresenceStoreExtern, type PresenceStore } from '@/domain/runtime/externs/PresenceStore'
 import { RoomTransportExtern, WireCodecExtern } from '@/domain/runtime/externs/RoomTransport'
@@ -82,6 +87,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     ? createBoundedPresenceStore(config.presenceStore)
     : createMemoryPresenceStore()
   const worldSessionId = nanoid()
+  const commitAuthority = createCommitAuthority()
   const connectionOptions = {
     hostId: nanoid(),
     worldSessionId
@@ -90,6 +96,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   const store: RemeshStore = Remesh.store({
     externs: [
       ClockExtern.impl(clock),
+      CommitCapabilityExtern.impl(commitAuthority),
       IdentityExtern.impl({ nextId: nanoid }),
       PresenceStoreExtern.impl(presenceStore),
       RoomTransportExtern.impl(config.transport),
@@ -120,6 +127,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   store.igniteDomain(connectionAction)
 
   const lifecycleDomain = store.getDomain(lifecycleAction)
+  const wireDomain = store.getDomain(wireAction)
   const deliveryDomain = store.getDomain(deliveryAction)
   const sessionDomain = store.getDomain(sessionAction)
   const worldDomain = store.getDomain(worldAction)
@@ -173,6 +181,9 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     if (!isCurrentBinding(binding)) return
     pageBindings.delete(binding.pageId)
     tabBindings.delete(binding.tabId)
+    // Exact binding invalidation revokes only this binding's live unconsumed capabilities; a
+    // consumed K is authoritative and survives.
+    commitAuthority.revokeBinding(binding)
     pagePort.removePage(binding.pageId)
     store.send(lifecycleDomain.command.DetachPageCommand({ domain: binding.domain, pageId: binding.pageId }))
     await persistPageBindings()
@@ -304,13 +315,69 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   }
 
   const snapshot = (): RuntimeSnapshot => store.query(connectionDomain.query.SnapshotQuery())
-  const acquirePresence = async (domain: string, userId: string): Promise<'active' | 'acquired' | 'finalizing'> => {
+
+  /**
+   * Envelope P observer: armed before any Connection join/reconnect dispatch. P is created only by
+   * the exact `Wire.JoinRoomsRequestedEvent(Q)` for this operation and settles exactly once at its
+   * matching `RoomsJoined`/`RoomsJoinFailed` terminal. A request that was never issued creates no P.
+   */
+  const pendingPhysical = new Map<string, Map<string, { promise: Promise<void> }>>()
+  const joinRequestIdFor = (operationId: string) => `connection:join:${operationId}`
+  const observeConnectionPhysical = (domain: string, operationId: string) => {
+    const requestId = joinRequestIdFor(operationId)
+    const requested = store.subscribeEvent(wireDomain.event.JoinRoomsRequestedEvent, (event) => {
+      if (event.requestId !== requestId) return
+      requested.unsubscribe()
+      let settle!: () => void
+      const promise = new Promise<void>((resolve) => {
+        settle = resolve
+      })
+      let byDomain = pendingPhysical.get(domain)
+      if (!byDomain) {
+        byDomain = new Map()
+        pendingPhysical.set(domain, byDomain)
+      }
+      byDomain.set(requestId, { promise })
+      const terminal = () => {
+        if (!pendingPhysical.get(domain)?.has(requestId)) return
+        pendingPhysical.get(domain)!.delete(requestId)
+        joined.unsubscribe()
+        failed.unsubscribe()
+        settle()
+      }
+      const joined = store.subscribeEvent(wireDomain.event.RoomsJoinedEvent, (result) => {
+        if (result.requestId === requestId) terminal()
+      })
+      const failed = store.subscribeEvent(wireDomain.event.RoomsJoinFailedEvent, (result) => {
+        if (result.requestId === requestId) terminal()
+      })
+    })
+    // Disarms only the pre-issuance subscription; an issued P always runs to its exact terminal.
+    return () => requested.unsubscribe()
+  }
+  /** Cleanup conjunction term: every issued P of the domain must reach its exact terminal first. */
+  const drainPhysical = async (domain: string) => {
+    let pending = pendingPhysical.get(domain)
+    while (pending && pending.size > 0) {
+      await Promise.all([...pending.values()].map((entry) => entry.promise))
+      pending = pendingPhysical.get(domain)
+    }
+  }
+
+  const acquirePresence = async (
+    domain: string,
+    userId: string,
+    fence?: () => void
+  ): Promise<'active' | 'acquired' | 'finalizing'> => {
     if (store.query(sessionDomain.query.DomainQuery(domain))) {
       return store.query(sessionDomain.query.FinalizingPresenceQuery(domain)) ? 'finalizing' : 'active'
     }
     // No durable end journal: a rejoin always acquires the durable local lease or a fresh one and
     // hydrates the current generation. An in-memory release fenced the domain only for this generation.
     const stored = (await presenceStore.load(domain)) ?? { domain, lastJoinedAt: 0, observers: [] }
+    // Envelope fence: after every await and before the first durable effect, the captured exact
+    // binding must still be current. A superseded/invalidated caller performs zero save/hydrate.
+    fence?.()
     const local =
       stored.local?.userId === userId
         ? stored.local
@@ -327,15 +394,17 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       local
     }
     await presenceStore.save(record)
+    fence?.()
     store.send(sessionDomain.command.HydratePresenceCommand(record))
     return 'acquired'
   }
   const acquireCurrentPresence = async (
     domain: string,
-    userId: string
+    userId: string,
+    fence?: () => void
   ): Promise<'active' | 'acquired' | 'finalizing'> => {
     while (!disposed) {
-      const acquired = await acquirePresence(domain, userId)
+      const acquired = await acquirePresence(domain, userId, fence)
       if (store.query(sessionDomain.query.FinalizingPresenceQuery(domain))) return 'finalizing'
       if (store.query(sessionDomain.query.DomainQuery(domain))) return 'active'
       if (acquired === 'acquired') return 'acquired'
@@ -506,7 +575,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   })
   /** One shared in-flight reset settlement per domain: concurrent refreshes join the same owner. */
   const inFlightResets = new Map<string, Promise<{ ok: boolean; user?: ChatUser; site?: ChatSite }>>()
-  const performReset = async (domain: string, operationId: string) => {
+  const performReset = async (domain: string, operationId: string, capability?: CommitCapability) => {
     const runtime = store.query(sessionDomain.query.DomainQuery(domain))
     const retainedSeed = store.query(sessionDomain.query.RetainedLocalSeedQuery(domain))
 
@@ -524,7 +593,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
         resolve(event.error === undefined)
       })
     })
-    store.send(connectionDomain.command.DestroyDomainConnectionCommand({ domain, operationId }))
+    store.send(connectionDomain.command.DestroyDomainConnectionCommand({ domain, operationId, capability }))
     const settled = await persistence
     if (!settled) return { ok: false }
     // Active History supplies/jobs physically settle through their abort callbacks; the
@@ -537,11 +606,12 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   }
   const resetDomainConnection = (
     domain: string,
-    operationId: string
+    operationId: string,
+    capability?: CommitCapability
   ): Promise<{ ok: boolean; user?: ChatUser; site?: ChatSite }> => {
     const existing = inFlightResets.get(domain)
     if (existing) return existing
-    const task = performReset(domain, operationId)
+    const task = performReset(domain, operationId, capability)
     inFlightResets.set(domain, task)
     const releaseReset = () => {
       if (inFlightResets.get(domain) === task) inFlightResets.delete(domain)
@@ -576,12 +646,15 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       })
       store.send(connectionDomain.command.LeaveDomainCommand(domain))
     })
-    inFlightReleases.set(domain, task)
+    // Cleanup conjunction: the release completes only after every issued P of the domain reached
+    // its exact Wire terminal, so no successor can be admitted ahead of a pending physical join.
+    const settled = task.then(() => drainPhysical(domain))
+    inFlightReleases.set(domain, settled)
     const releaseDeparture = () => {
-      if (inFlightReleases.get(domain) === task) inFlightReleases.delete(domain)
+      if (inFlightReleases.get(domain) === settled) inFlightReleases.delete(domain)
     }
-    void task.then(releaseDeparture, releaseDeparture)
-    return task
+    void settled.then(releaseDeparture, releaseDeparture)
+    return settled
   }
 
   /** One shared in-flight join settlement per domain: overlapping same-domain joins coalesce. */
@@ -589,31 +662,53 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
 
   const joinChatRoomSettled = async (
     payload: Parameters<RuntimeServer['joinChatRoom']>[0],
-    revalidate?: () => Promise<void>
+    revalidate?: () => Promise<void>,
+    fence?: () => void,
+    binding?: PageBinding | null
   ) => {
     // Typed ChatUser/ChatSite values pass through unchanged; the application-to-protocol
     // mapping already happened before the value was narrowed to the schema-owned type.
     const recovery = beginPresenceRecovery(payload.domain)
     let recovered = false
     try {
+      // Cleanup conjunction at admission: when no live Connection attempt owns the domain's
+      // physical work, a (re)join may begin durable acquisition only after every previously issued
+      // P of this exact domain reached its Wire terminal — regardless of which path (grace
+      // release, explicit leave, abort) retired the old work. A live attempt instead keeps the
+      // existing newest-generation supersession rule: the fresh join supersedes it directly.
+      if (!store.query(connectionDomain.query.AttemptsQuery()).some((item) => item.domain === payload.domain)) {
+        await drainPhysical(payload.domain)
+      }
       const connect = () => {
         const operationId = nanoid()
+        // Envelope K: minted for this exact binding/operation and consumed synchronously at the
+        // first irreversible boundary (the join dispatch itself). P observation is armed before
+        // dispatch so an issued Q can never be missed.
+        const capability = commitAuthority.mint({
+          operationId,
+          domain: payload.domain,
+          kind: 'join',
+          binding: binding ?? null
+        })
+        if (!commitAuthority.consume(capability)) throw operationCancelled()
+        const disarm = observeConnectionPhysical(payload.domain, operationId)
         return runConnectionOperation(
           operationId,
-          connectionDomain.command.JoinDomainCommand({ operationId, ...payload }),
+          connectionDomain.command.JoinDomainCommand({ operationId, ...payload, capability }),
           () => true,
           () => false
-        )
+        ).finally(disarm)
       }
       while (true) {
         if (revalidate) await revalidate()
-        const presenceState = await acquireCurrentPresence(payload.domain, payload.user.id)
+        const presenceState = await acquireCurrentPresence(payload.domain, payload.user.id, fence)
         if (revalidate) await revalidate()
         if (presenceState === 'finalizing') {
           // A lease observed after the release fence started never bypasses the shared release:
           // it waits for the one live release owner to close, then starts fresh through the loop.
           if (store.query(sessionDomain.query.ReleasingDomainQuery(payload.domain))) {
             await completeInterruptedRelease(payload.domain)
+            fence?.()
             continue
           }
           if (!store.query(sessionDomain.query.DomainQuery(payload.domain))) {
@@ -622,16 +717,19 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
             continue
           }
           await completeInterruptedRelease(payload.domain)
+          fence?.()
           continue
         }
         if (store.query(sessionDomain.query.FinalizingPresenceQuery(payload.domain))) {
           await completeInterruptedRelease(payload.domain)
+          fence?.()
           continue
         }
         if (presenceState === 'active' && !store.query(sessionDomain.query.DomainQuery(payload.domain))) {
           continue
         }
         if (revalidate) await revalidate()
+        fence?.()
         if (!(await connect())) return null
         recovered = true
         return snapshot()
@@ -645,35 +743,57 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
    * operation (destruction through the replacement commit/failure/cancel) instead of running a
    * second destructive reset against an in-flight replacement. */
   const inFlightReconnects = new Map<string, Promise<undefined | null>>()
-  const performReconnect = async (domain: string, operationId: string): Promise<undefined | null> => {
-    // Phase 1: correlated destruction of the complete current-domain connection aggregate. The
-    // cleared-observer persistence must settle and the domain's History work must physically
-    // settle before the replacement may prepare; a persistence rejection fails the request
-    // retryably without committing a mixed old/new snapshot.
-    const reset = await resetDomainConnection(domain, operationId)
-    if (!reset.ok) {
+  const performReconnect = async (
+    domain: string,
+    operationId: string,
+    binding?: PageBinding | null
+  ): Promise<undefined | null> => {
+    // Envelope K: consumed synchronously BEFORE the first irreversible reset/destruction, so only
+    // this exact operation can perform the reset and only its consumed capability can commit the
+    // later replacement. P observation covers the replacement join exactly like an initial join.
+    const capability = commitAuthority.mint({ operationId, domain, kind: 'reconnect', binding: binding ?? null })
+    if (!commitAuthority.consume(capability)) throw operationCancelled()
+    const disarm = observeConnectionPhysical(domain, operationId)
+    try {
+      // Phase 1: correlated destruction of the complete current-domain connection aggregate. The
+      // cleared-observer persistence must settle and the domain's History work must physically
+      // settle before the replacement may prepare; a persistence rejection fails the request
+      // retryably without committing a mixed old/new snapshot.
+      const reset = await resetDomainConnection(domain, operationId, capability)
+      if (!reset.ok) {
+        return runConnectionOperation(
+          operationId,
+          connectionDomain.command.FailOperationCommand({
+            operationId,
+            error: new Error('Domain connection reset persistence failed')
+          }),
+          () => undefined,
+          () => null
+        )
+      }
+      // Phase 2: the canonical replacement attempt, seeded with the captured local identity.
       return runConnectionOperation(
         operationId,
-        connectionDomain.command.FailOperationCommand({
+        connectionDomain.command.ReconnectDomainCommand({
           operationId,
-          error: new Error('Domain connection reset persistence failed')
+          domain,
+          user: reset.user,
+          site: reset.site,
+          capability
         }),
         () => undefined,
         () => null
       )
+    } finally {
+      disarm()
     }
-    // Phase 2: the canonical replacement attempt, seeded with the captured local identity.
-    return runConnectionOperation(
-      operationId,
-      connectionDomain.command.ReconnectDomainCommand({
-        operationId,
-        domain,
-        user: reset.user,
-        site: reset.site
-      }),
-      () => undefined,
-      () => null
-    )
+  }
+
+  /** Exact-identity fence captured by an envelope: the suspended continuation may continue only
+   * while its exact binding object is still the current one. Throws the structured cancellation. */
+  const bindingFence = (binding: PageBinding | null) => () => {
+    if (disposed) throw operationCancelled()
+    if (binding && !isCurrentBinding(binding)) throw operationCancelled()
   }
 
   const server: RuntimeServer = {
@@ -693,13 +813,13 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     },
     getSnapshot: async () => snapshot(),
     joinChatRoom: (payload) => {
-      const settle = (revalidate?: () => Promise<void>) => {
+      const settle = (revalidate?: () => Promise<void>, fence?: () => void, binding?: PageBinding | null) => {
         // Overlapping same-domain joins observed while the domain's release is closing coalesce into
         // one shared settlement; fresh cold joins keep the existing newest-generation supersession.
         if (store.query(sessionDomain.query.ReleasingDomainQuery(payload.domain))) {
           const existing = inFlightJoins.get(payload.domain)
           if (existing) return existing
-          const task = joinChatRoomSettled(payload, revalidate)
+          const task = joinChatRoomSettled(payload, revalidate, fence, binding)
           inFlightJoins.set(payload.domain, task)
           const releaseJoin = () => {
             if (inFlightJoins.get(payload.domain) === task) inFlightJoins.delete(payload.domain)
@@ -707,14 +827,14 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
           void task.then(releaseJoin, releaseJoin)
           return task
         }
-        return joinChatRoomSettled(payload, revalidate)
+        return joinChatRoomSettled(payload, revalidate, fence, binding)
       }
       if (!config.admission) return settle()
       return (async () => {
         const binding = await requirePageBinding(payload, true)
-        const result = await settle(() => revalidateBinding(binding, payload))
-        await revalidateBinding(binding, payload)
-        return result
+        // The committed snapshot is the sole terminal: once the envelope settles, no post-effect
+        // binding revalidation may rewrite a completed success into failure.
+        return settle(() => revalidateBinding(binding, payload), bindingFence(binding), binding)
       })()
     },
     leaveChatRoom: (payload) => {
@@ -725,9 +845,9 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
         const binding = await requirePageBinding(payload, true)
         await revalidateBinding(binding, payload)
         // The leave resolves only after physical departure and rejects with the exact
-        // DomainReleaseFailedEvent when the active-record cleanup write fails.
+        // DomainReleaseFailedEvent when the active-record cleanup write fails. The settled release
+        // is the sole terminal; no post-effect revalidation may rewrite it.
         await completeInterruptedRelease(payload.domain)
-        await revalidateBinding(binding, payload)
       })()
     },
     allocateTextMessage: async (payload) => {
@@ -794,15 +914,15 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
         store.send(connectionDomain.command.RefreshWorldCommand())
       }
       const operationId = nanoid()
-      const task = performReconnect(payload.domain, operationId)
+      const task = performReconnect(payload.domain, operationId, binding)
       inFlightReconnects.set(payload.domain, task)
       const releaseReconnect = () => {
         if (inFlightReconnects.get(payload.domain) === task) inFlightReconnects.delete(payload.domain)
       }
       void task.then(releaseReconnect, releaseReconnect)
-      const result = await task
-      await revalidateBinding(binding, payload)
-      return result
+      // The reconnect settlement is the sole terminal; no post-effect binding revalidation may
+      // rewrite it.
+      return task
     },
     onInbound: async (payload, callback) => {
       await requirePageBinding(payload, false)

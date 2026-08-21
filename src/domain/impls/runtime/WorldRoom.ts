@@ -14,7 +14,8 @@ export interface WorldRoomDependencies {
   server: RuntimeServer
   pageId: string
   getSnapshot: () => RuntimeSnapshot
-  whenReady: (callback: () => void) => () => void
+  /** Attach-phase hook: the returned task must settle before the lease publishes ready. */
+  whenAttach: (callback: () => void | Promise<void>) => () => void
 }
 
 const contributionKey = (sourcePeerId: string, origin: string) => `${sourcePeerId}\u0000${origin}`
@@ -26,14 +27,18 @@ export class WorldRoom extends EventHub {
 
   constructor(private readonly dependencies: WorldRoomDependencies) {
     super()
-    dependencies.whenReady(() => {
+    dependencies.whenAttach(() => {
       const attachedHostId = dependencies.getSnapshot().hostId
       const attachCurrentHost = () => this.attachRuntime(attachedHostId)
       // The settled tail serializes both outcomes; this attachment's rejection is transferred
-      // exactly once to the room error owner and then becomes the next settled queue token.
-      this.attachmentTask = this.attachmentTask
-        .then(attachCurrentHost, attachCurrentHost)
-        .then(undefined, (error) => this.emitError(error))
+      // exactly once to the room error owner and then becomes the next settled queue token. The
+      // barrier receives the rejecting result so ready is never published on a failed attach.
+      const result = this.attachmentTask.then(attachCurrentHost, attachCurrentHost)
+      this.attachmentTask = result.then(undefined, (error) => this.emitError(error))
+      // Consumers that ignore the returned promise must not produce unhandled rejections; the
+      // barrier's own allSettled still observes the failure.
+      void result.catch(() => {})
+      return result
     })
   }
 

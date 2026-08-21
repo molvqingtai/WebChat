@@ -38,7 +38,8 @@ export interface ChatRoomDependencies {
   pageDomain: string
   pageId: string
   getSnapshot: () => RuntimeSnapshot
-  whenReady: (callback: () => void) => Unsubscribe
+  /** Attach-phase hook: the returned task must settle before the lease publishes ready. */
+  whenAttach: (callback: () => void | Promise<void>) => Unsubscribe
 }
 
 type RuntimeMessageStore = MessageStore & {
@@ -65,6 +66,9 @@ interface PageConnectionAttempt {
   hostId: string
   controller: AbortController
   timeout: ReturnType<typeof globalThis.setTimeout>
+  /** True once the Server RPC has been issued: from that point the Server envelope owns the sole
+   * terminal, and the Page timer/abort can never publish a competing one. */
+  issued: boolean
 }
 
 const PAGE_CONNECTION_ATTEMPT_TIMEOUT_MS = 10000
@@ -195,14 +199,25 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
 
   constructor(private readonly dependencies: ChatRoomDependencies) {
     super()
-    this.disposeReady = dependencies.whenReady(() => {
+    this.disposeReady = dependencies.whenAttach(() => {
       if (this.disposed) return
       this.readyGeneration += 1
       // Runtime generation replacement supersedes the old connection attempt; that is a structural
-      // cancellation fact for that attempt.
-      if (this.activeConnection) this.reportResult?.(this.activeConnection.resultToken, 'cancelled')
+      // cancellation fact for that attempt. An issued attempt instead belongs to its Server
+      // envelope, which owns the sole terminal.
+      const active = this.activeConnection
+      if (active && !active.issued) this.reportResult?.(active.resultToken, 'cancelled')
+      if (active) globalThis.clearTimeout(active.timeout)
       this.activeConnection?.controller.abort(abortError('Runtime host generation replaced'))
-      this.startAttachment(null)
+      const attachment = this.startAttachment(null)
+      // The attachment barrier must observe a genuine attach failure; `task` itself never rejects.
+      const barrierResult = attachment.task.then(() => {
+        if (attachment.state === 'failed') throw attachment.error
+      })
+      // Consumers that ignore the returned promise must not produce unhandled rejections; the
+      // barrier's own allSettled still observes the failure.
+      void barrierResult.catch(() => {})
+      return barrierResult
     })
   }
 
@@ -283,11 +298,18 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
 
   private beginConnectionAttempt(resultToken: number) {
     if (this.disposed) throw abortError('Runtime page detached')
-    if (this.activeConnection) {
-      // This attempt supersedes the in-flight one: report its own token `cancelled` BEFORE aborting it,
-      // so that first-terminal-wins keeps the structural cancellation rather than a later generic `failed`.
-      this.recordResult(this.activeConnection.resultToken, 'cancelled')
-      this.activeConnection.controller.abort(abortError('Page connection attempt superseded'))
+    const previous = this.activeConnection
+    if (previous && !previous.issued) {
+      // Supersession is an admission prerequisite only: a not-yet-issued attempt is cancelled
+      // BEFORE its Server RPC exists. Its own token terminal is recorded first so
+      // first-terminal-wins keeps the structural cancellation.
+      this.recordResult(previous.resultToken, 'cancelled')
+      previous.controller.abort(abortError('Page connection attempt superseded'))
+    } else if (previous) {
+      // An issued attempt already belongs to its Server envelope: it keeps its sole Server-owned
+      // terminal and is merely no longer the active UI owner. No competing 'cancelled'.
+      previous.controller.abort(abortError('Page connection attempt superseded'))
+      if (previous.timeout) globalThis.clearTimeout(previous.timeout)
     }
     const controller = new AbortController()
     const attempt: PageConnectionAttempt = {
@@ -295,12 +317,22 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
       resultToken,
       hostId: this.dependencies.getSnapshot().hostId,
       controller,
+      issued: false,
       timeout: globalThis.setTimeout(() => {
-        controller.abort(new Error('Page connection attempt timed out'))
+        // The Page deadline is admission-only: it can abort attachment waiting, never an issued
+        // Server action.
+        if (!attempt.issued) controller.abort(new Error('Page connection attempt timed out'))
       }, PAGE_CONNECTION_ATTEMPT_TIMEOUT_MS)
     }
     this.activeConnection = attempt
     return attempt
+  }
+
+  /** Marks the exact point the Server RPC is issued: the Page timer stops, and the returned
+   * promise is awaited linearly — the Server envelope owns the sole terminal from here. */
+  private markIssued(attempt: PageConnectionAttempt) {
+    attempt.issued = true
+    globalThis.clearTimeout(attempt.timeout)
   }
 
   private finishConnectionAttempt(attempt: PageConnectionAttempt, error?: unknown) {
@@ -629,48 +661,37 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
         this.recordResult(attempt.resultToken, 'cancelled')
         throw abortError('Page connection attempt superseded')
       }
-      const snapshot = await raceWithSignal(
-        this.dependencies.server.joinChatRoom({
-          domain: this.dependencies.pageDomain,
-          ...command
-        }),
-        attempt.controller.signal
-      )
+      // Issuance point: from here the Server envelope owns the sole terminal. The Page awaits the
+      // RPC linearly; local abort/timeout can no longer publish a competing outcome.
+      this.markIssued(attempt)
+      const snapshot = await this.dependencies.server.joinChatRoom({
+        domain: this.dependencies.pageDomain,
+        ...command
+      })
       if (!snapshot) {
         this.recordResult(attempt.resultToken, 'cancelled')
         throw abortError('ChatRoom operation cancelled')
       }
-      attempt.controller.signal.throwIfAborted()
-      if (
-        !this.isConnectionCurrent(attempt, attachment) ||
-        snapshot.hostId !== attempt.hostId ||
-        this.dependencies.getSnapshot().hostId !== attempt.hostId
-      ) {
-        this.recordResult(attempt.resultToken, 'cancelled')
-        throw abortError('Page connection attempt superseded')
-      }
       const domainSnapshot = snapshot.domains.find((item) => item.domain === this.dependencies.pageDomain)
       if (!domainSnapshot?.localSession) throw new Error('Runtime did not create a local session')
-      const generationKey = `${domainSnapshot.localSession.user.id}:${domainSnapshot.localSession.joinedAt}`
-      if (this.pendingSelfJoinGenerations.delete(generationKey)) {
-        try {
-          await persistSelfJoinNotice(
-            this.dependencies.messageStore,
-            domainSnapshot.localSession,
-            attempt.controller.signal
-          )
-        } catch (error) {
-          this.pendingSelfJoinGenerations.add(generationKey)
-          throw error
-        }
-      }
-      attempt.controller.signal.throwIfAborted()
-      if (!this.isConnectionCurrent(attempt, attachment)) {
-        this.recordResult(attempt.resultToken, 'cancelled')
-        throw abortError('Page connection attempt superseded')
-      }
+      // The Server success terminal is recorded immediately; everything below is presentation
+      // auxiliary work that can never rewrite it.
       this.recordResult(attempt.resultToken, 'succeeded')
       this.finishConnectionAttempt(attempt)
+      const generationKey = `${domainSnapshot.localSession.user.id}:${domainSnapshot.localSession.joinedAt}`
+      if (this.pendingSelfJoinGenerations.delete(generationKey)) {
+        const noticeAttachment = this.attachment
+        void persistSelfJoinNotice(
+          this.dependencies.messageStore,
+          domainSnapshot.localSession,
+          noticeAttachment?.controller.signal ?? new AbortController().signal
+        ).catch((error) => {
+          // Best-effort auxiliary: retain the generation key so a later join retries the notice;
+          // the failure is diagnostic-only and never becomes a second connection terminal.
+          this.pendingSelfJoinGenerations.add(generationKey)
+          if (!this.disposed) this.emitError(error)
+        })
+      }
     } catch (error) {
       this.recordResult(attempt.resultToken, 'failed')
       this.finishConnectionAttempt(attempt, error)
@@ -694,18 +715,13 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
         this.recordResult(attempt.resultToken, 'cancelled')
         throw abortError('Page connection attempt superseded')
       }
-      const result = await raceWithSignal(
-        this.dependencies.server.reconnectDomain({ domain: this.dependencies.pageDomain }),
-        attempt.controller.signal
-      )
+      // Issuance point: the Server envelope owns the sole terminal from here; the Page awaits the
+      // reconnect RPC linearly with no local timer/abort race.
+      this.markIssued(attempt)
+      const result = await this.dependencies.server.reconnectDomain({ domain: this.dependencies.pageDomain })
       if (result === null) {
         this.recordResult(attempt.resultToken, 'cancelled')
         throw abortError('ChatRoom operation cancelled')
-      }
-      attempt.controller.signal.throwIfAborted()
-      if (!this.isConnectionCurrent(attempt, attachment)) {
-        this.recordResult(attempt.resultToken, 'cancelled')
-        throw abortError('Page connection attempt superseded')
       }
       this.recordResult(attempt.resultToken, 'succeeded')
       this.finishConnectionAttempt(attempt)
