@@ -112,6 +112,9 @@ export const createTransportService = (transport: RoomTransport = createRoomTran
     },
     abortJoin: async (roomId, joinId) => {
       const pending = joining.get(roomId)
+      // A Q may include a room whose join already fulfilled. There is no exact pending H in that
+      // case, so it contributes no abort receipt and must not block another room's real receipt.
+      if (!pending && rooms.has(roomId)) return
       if (!pending || pending.joinId !== joinId || !transport.abortJoin) return new Promise<void>(() => {})
       try {
         await transport.abortJoin(roomId, joinId)

@@ -28,6 +28,7 @@ import { createMemoryMessageDatabase } from '@/domain/impls/database/Memory'
 import type {
   HistorySupplyRequest,
   HistorySupplyResult,
+  RuntimeAttachmentSnapshot,
   RuntimeErrorEvent,
   RuntimeServer,
   RuntimeSession,
@@ -150,12 +151,18 @@ describe('RuntimeServer production Page admission and restart recovery', () => {
   const pageId = 'admitted-page'
   const pageUrl = `${DOMAIN}/topic`
 
-  const createAdmissionFixture = () => {
+  const createAdmissionFixture = (
+    options: {
+      fake?: ReturnType<typeof createFakeTransport>
+      clock?: Clock
+      presenceStore?: PresenceStore
+    } = {}
+  ) => {
     const storageState: Record<string, unknown> = {}
     const tabs = new Map([[7, { id: 7, url: pageUrl }]])
     const rebindPage = vi.fn(async (_tabId: number, _pageId: string, rebindId: string) => ({ rebindId }))
     const ensureTransport = vi.fn(async () => {})
-    const fake = createFakeTransport()
+    const fake = options.fake ?? createFakeTransport()
     const admission = {
       tabs: {
         get: async (tabId: number) => {
@@ -174,7 +181,13 @@ describe('RuntimeServer production Page admission and restart recovery', () => {
       rebindPage,
       ensureTransport
     }
-    const server = createServer({ transport: fake.transport, codec: jsonCodec, admission })
+    const server = createServer({
+      transport: fake.transport,
+      codec: jsonCodec,
+      admission,
+      clock: options.clock,
+      presenceStore: options.presenceStore
+    })
     let bindingId: string | undefined
     let bindingRevision: number | undefined
     let bindingSequence = 0
@@ -269,6 +282,272 @@ describe('RuntimeServer production Page admission and restart recovery', () => {
     expect((await fixture.server.getSnapshot()).domains).toEqual([
       expect.objectContaining({ domain: DOMAIN, chatRoomJoined: false })
     ])
+    disposeServer(fixture.server)
+  })
+
+  it('keeps a B1 join success after K is consumed even when B2 replaces it from the committed Session callback', async () => {
+    const fixture = createAdmissionFixture()
+    await fixture.attach()
+    const firstCall = await fixture.call()
+    let replaceOnCommit = false
+    let replacement: Promise<RuntimeAttachmentSnapshot> | null = null
+    await fixture.server.onSessionEvent(firstCall, async (event) => {
+      if (!replaceOnCommit || event.type !== 'snapshot' || !event.snapshot.localSession) return
+      replacement = fixture.server.attachPage({
+        domain: DOMAIN,
+        pageId,
+        bindingId: 'binding-b2-consume-first',
+        caller: { tab: fixture.tabs.get(7) }
+      })
+      await replacement
+    })
+
+    replaceOnCommit = true
+    await expect(
+      fixture.server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE, ...firstCall })
+    ).resolves.toMatchObject({ domains: [expect.objectContaining({ chatRoomJoined: true })] })
+    const replacementTask = replacement as Promise<RuntimeAttachmentSnapshot> | null
+    if (!replacementTask) throw new Error('Expected B2 replacement from the committed Session callback')
+    await expect(replacementTask).resolves.toMatchObject({ bindingRevision: expect.any(Number) })
+    disposeServer(fixture.server)
+  })
+
+  it('settles every pre-close member from the shared C terminal before a delayed durable acquisition can issue a join', async () => {
+    const slowLoad = deferred<Awaited<ReturnType<PresenceStore['load']>>>()
+    let loads = 0
+    const presenceStore: PresenceStore = {
+      load: vi.fn(async () => (++loads === 1 ? null : slowLoad.promise)),
+      save: vi.fn(async () => {})
+    }
+    const fake = createFakeTransport({ physicalReady: false })
+    const fixture = createAdmissionFixture({ fake, presenceStore })
+    await fixture.attach()
+    const call = await fixture.call()
+    await fixture.server.onSessionEvent(call, async () => {})
+
+    const first = fixture.server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE, ...call })
+    const second = fixture.server.joinChatRoom({
+      domain: DOMAIN,
+      user: { ...USER, name: 'Second' },
+      site: SITE,
+      ...call
+    })
+    const firstResult = first.then(
+      () => null,
+      (error: Error) => error
+    )
+    const secondResult = second.then(
+      () => null,
+      (error: Error) => error
+    )
+    await vi.waitFor(() => expect(presenceStore.load).toHaveBeenCalledTimes(2))
+    await fake.waitForDesiredRooms(2)
+
+    const replacement = await fixture.server.attachPage({
+      domain: DOMAIN,
+      pageId,
+      bindingId: 'binding-b2-close-c',
+      caller: { tab: fixture.tabs.get(7) }
+    })
+    expect(replacement.bindingRevision).not.toBe(call.bindingRevision)
+    slowLoad.resolve(null)
+
+    const [firstError, secondError] = await Promise.all([firstResult, secondResult])
+    expect(firstError).toBeInstanceOf(Error)
+    expect(secondError).toBe(firstError)
+    // Releasing the second old stack after C closes cannot mint a second Connection operation.
+    expect(fake.joinCalls).toHaveLength(2)
+    disposeServer(fixture.server)
+  })
+
+  it('revokes the exact B1 capability before its pending manual reconnect can commit', async () => {
+    const fixture = createAdmissionFixture()
+    await fixture.attach()
+    const firstCall = await fixture.call()
+    await fixture.server.onSessionEvent(firstCall, async () => {})
+    await fixture.server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE, ...firstCall })
+
+    fixture.fake.makeNotReady()
+    const reconnect = fixture.server.reconnectDomain({ domain: DOMAIN, ...firstCall })
+    await fixture.fake.waitForJoinCalls(4)
+    await fixture.server.attachPage({
+      domain: DOMAIN,
+      pageId,
+      bindingId: 'binding-b2-reconnect',
+      caller: { tab: fixture.tabs.get(7) }
+    })
+    fixture.fake.open()
+
+    await expect(reconnect).rejects.toThrow('commit capability was revoked')
+    expect((await fixture.server.getSnapshot()).domains).toEqual([
+      expect.objectContaining({ domain: DOMAIN, chatRoomJoined: false, localSession: undefined })
+    ])
+    disposeServer(fixture.server)
+  })
+
+  it.each(['text allocation', 'reaction allocation', 'send'] as const)(
+    'waits through a fresh runtime lifecycle before one %s effect',
+    async (kind) => {
+      const fixture = createAdmissionFixture()
+      await fixture.attach()
+      const call = await fixture.call()
+      await fixture.server.onSessionEvent(call, async () => {})
+      await fixture.server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE, ...call })
+      const event =
+        kind === 'send'
+          ? (
+              await fixture.server.allocateTextMessage({
+                domain: DOMAIN,
+                body: 'send-after-recovery',
+                mentions: [],
+                ...call
+              })
+            ).message
+          : null
+
+      fixture.fake.makeNotReady()
+      const reconnect = fixture.server.reconnectDomain({ domain: DOMAIN, ...call })
+      await fixture.fake.waitForJoinCalls(4)
+      const effect =
+        kind === 'text allocation'
+          ? fixture.server.allocateTextMessage({ domain: DOMAIN, body: 'after-recovery', mentions: [], ...call })
+          : kind === 'reaction allocation'
+            ? fixture.server.allocateReactionMessage({
+                domain: DOMAIN,
+                targetId: 'target',
+                reaction: 'like',
+                active: true,
+                ...call
+              })
+            : fixture.server.sendChatMessage({ domain: DOMAIN, event: event!, ...call })
+      let settled = false
+      void effect.then(() => {
+        settled = true
+      })
+      await settle()
+      expect(settled).toBe(false)
+
+      fixture.fake.open()
+      await reconnect
+      await expect(effect).resolves.toBeDefined()
+      if (kind === 'send') {
+        expect(
+          fixture.fake.sendAttempts.filter((attempt) => JSON.parse(attempt.payload).type === MESSAGE_TYPE.TEXT)
+        ).toHaveLength(1)
+      }
+      disposeServer(fixture.server)
+    }
+  )
+
+  it.each(['text', 'reaction'] as const)(
+    'reports a %s allocation through the post-effect B fence after the effect runs exactly once',
+    async (kind) => {
+      let replaceAfterEffect: (() => void) | null = null
+      const clock: Clock = {
+        now: () => {
+          const replacement = replaceAfterEffect
+          replaceAfterEffect = null
+          replacement?.()
+          return NOW
+        }
+      }
+      const fixture = createAdmissionFixture({ clock })
+      await fixture.attach()
+      const firstCall = await fixture.call()
+      await fixture.server.onSessionEvent(firstCall, async () => {})
+      await fixture.server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE, ...firstCall })
+      let replacement: Promise<RuntimeAttachmentSnapshot> | null = null
+      const replacementId = `binding-b2-${kind}-post-effect`
+      replaceAfterEffect = () => {
+        replacement = fixture.server.attachPage({
+          domain: DOMAIN,
+          pageId,
+          bindingId: replacementId,
+          caller: { tab: fixture.tabs.get(7) }
+        })
+      }
+
+      const effect =
+        kind === 'text'
+          ? fixture.server.allocateTextMessage({ domain: DOMAIN, body: 'effect-first', mentions: [], ...firstCall })
+          : fixture.server.allocateReactionMessage({
+              domain: DOMAIN,
+              targetId: 'target',
+              reaction: 'like',
+              active: true,
+              ...firstCall
+            })
+      await expect(effect).rejects.toThrow(/binding|Browser tab navigation/)
+      const replacementTask = replacement as Promise<RuntimeAttachmentSnapshot> | null
+      if (!replacementTask) throw new Error('Expected B2 replacement from the allocation effect')
+      const replacementSnapshot = await replacementTask
+      const secondCall = {
+        ...firstCall,
+        bindingId: replacementId,
+        bindingRevision: replacementSnapshot.bindingRevision
+      }
+      await fixture.server.onSessionEvent(secondCall, async () => {})
+      const next =
+        kind === 'text'
+          ? await fixture.server.allocateTextMessage({
+              domain: DOMAIN,
+              body: 'effect-second',
+              mentions: [],
+              ...secondCall
+            })
+          : await fixture.server.allocateReactionMessage({
+              domain: DOMAIN,
+              targetId: 'target',
+              reaction: 'like',
+              active: false,
+              ...secondCall
+            })
+      expect(next.message.hlc).toEqual({ timestamp: NOW, counter: 1 })
+      disposeServer(fixture.server)
+    }
+  )
+
+  it('reports a send through the post-effect B fence without replaying the accepted message', async () => {
+    const fixture = createAdmissionFixture()
+    await fixture.attach()
+    const firstCall = await fixture.call()
+    await fixture.server.onSessionEvent(firstCall, async () => {})
+    await fixture.server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE, ...firstCall })
+    const record = await fixture.server.allocateReactionMessage({
+      domain: DOMAIN,
+      targetId: 'target',
+      reaction: 'like',
+      active: true,
+      ...firstCall
+    })
+    const roomId = getChatRoomId(DOMAIN)
+    fixture.fake.hangSendsTo(roomId)
+    let replacement: Promise<RuntimeAttachmentSnapshot> | null = null
+    const replacementId = 'binding-b2-send-post-effect'
+    fixture.fake.onNextSendAttempt(() => {
+      replacement = fixture.server.attachPage({
+        domain: DOMAIN,
+        pageId,
+        bindingId: replacementId,
+        caller: { tab: fixture.tabs.get(7) }
+      })
+    })
+
+    const sending = fixture.server.sendChatMessage({ domain: DOMAIN, event: record.message, ...firstCall })
+    await vi.waitFor(() => expect(replacement).not.toBeNull())
+    const replacementTask = replacement as Promise<RuntimeAttachmentSnapshot> | null
+    if (!replacementTask) throw new Error('Expected B2 replacement from the send effect')
+    const replacementSnapshot = await replacementTask
+    fixture.fake.releaseSends()
+    await expect(sending).rejects.toThrow(/binding|Browser tab navigation/)
+    expect(
+      fixture.fake.sendAttempts.filter((attempt) => JSON.parse(attempt.payload).type === MESSAGE_TYPE.REACTION)
+    ).toHaveLength(1)
+    const secondCall = { ...firstCall, bindingId: replacementId, bindingRevision: replacementSnapshot.bindingRevision }
+    await fixture.server.onSessionEvent(secondCall, async () => {})
+    await expect(
+      fixture.server.allocateTextMessage({ domain: DOMAIN, body: 'current-b2', mentions: [], ...secondCall })
+    ).resolves.toBeDefined()
     disposeServer(fixture.server)
   })
 
@@ -437,6 +716,56 @@ describe('RuntimeServer production Page admission and restart recovery', () => {
       disposeServer(second)
     }
   )
+
+  it('runs seeded one-to-three Page/call C-deadline schedules with one shared terminal per cohort', async () => {
+    const next = (state: number) => (state * 1664525 + 1013904223) >>> 0
+    const schedules = [0x1, 0x2, 0x3, 0x8].map((seed) => {
+      const pages = 1 + (next(seed) % 3)
+      const calls = 1 + (next(next(seed)) % 3)
+      return { seed, pages, calls }
+    })
+    expect(new Set(schedules.map((schedule) => schedule.pages))).toEqual(new Set([1, 2, 3]))
+    expect(new Set(schedules.map((schedule) => schedule.calls))).toEqual(new Set([1, 2, 3]))
+
+    for (const schedule of schedules) {
+      const fake = createFakeTransport({ physicalReady: false })
+      const server = createServer({ transport: fake.transport, codec: jsonCodec })
+      for (let page = 0; page < schedule.pages; page += 1) {
+        await server.attachPage({ domain: DOMAIN, pageId: `seed-${schedule.seed}-page-${page}` })
+      }
+      const calls: Promise<unknown>[] = [
+        server.joinChatRoom({ domain: DOMAIN, user: { ...USER, name: `Seed ${schedule.seed}` }, site: SITE })
+      ]
+      await fake.waitForDesiredRooms(2)
+      if (schedule.calls >= 2) {
+        calls.push(server.allocateTextMessage({ domain: DOMAIN, body: `seed-${schedule.seed}`, mentions: [] }))
+      }
+      if (schedule.calls >= 3) {
+        calls.push(
+          server.allocateReactionMessage({
+            domain: DOMAIN,
+            targetId: `seed-${schedule.seed}`,
+            reaction: 'like',
+            active: true
+          })
+        )
+      }
+      const terminals = calls.map((call) =>
+        call.then(
+          () => null,
+          (error: Error) => error
+        )
+      )
+      await vi.advanceTimersByTimeAsync(PHYSICAL_ROOM_JOIN_TIMEOUT_MS + 1)
+
+      const failures = await Promise.all(terminals)
+      expect(failures).toHaveLength(schedule.calls)
+      expect(failures).toEqual(Array.from({ length: schedule.calls }, () => failures[0]))
+      expect(failures[0]).toEqual(new Error('Physical room join timed out'))
+      expect(fake.physicalJoinCalls).toEqual([])
+      disposeServer(server)
+    }
+  })
 })
 afterEach(() => {
   vi.useRealTimers()
@@ -459,6 +788,7 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
     roomId?: string
     resolve: (attempt: (typeof sendAttempts)[number]) => void
   }[] = []
+  let nextSendAttemptHook: ((attempt: (typeof sendAttempts)[number]) => void) | null = null
   const pendingJoins = new Map<
     string,
     { promise: Promise<void>; resolve: () => void; reject: (error: Error) => void; joinId?: string }
@@ -571,6 +901,9 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
         ...sendAttemptWaiters.filter((waiter) => !matchingWaiters.includes(waiter))
       )
       matchingWaiters.forEach((waiter) => waiter.resolve(attempt))
+      const hook = nextSendAttemptHook
+      nextSendAttemptHook = null
+      hook?.(attempt)
       if (!joined.has(roomId)) throw new Error(`Room "${roomId}" not joined`)
       if (sendError && (!sendErrorRoomId || sendErrorRoomId === roomId)) throw sendError
       if (failedNextSends.delete(roomId)) throw new Error(`Room "${roomId}" send failed`)
@@ -640,6 +973,9 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
     sendAttempts,
     waitForSendAttempt: (roomId?: string) =>
       new Promise<(typeof sendAttempts)[number]>((resolve) => sendAttemptWaiters.push({ roomId, resolve })),
+    onNextSendAttempt: (callback: (attempt: (typeof sendAttempts)[number]) => void) => {
+      nextSendAttemptHook = callback
+    },
     waitForDesiredRooms: (count: number) =>
       desired.size >= count
         ? Promise.resolve()

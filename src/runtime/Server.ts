@@ -73,6 +73,7 @@ interface BindingSlot {
 
 type LogicalTerminal = 'success' | 'null' | { error: Error }
 type PhysicalTerminal = 'success' | 'failure' | 'cancelled'
+const PRESENCE_RECOVERY_TIMEOUT_MS = 10000
 
 interface PresenceMember {
   readonly id: string
@@ -106,6 +107,8 @@ interface PresenceAction {
   member: PresenceMember | null
   cleanupGate: PresenceRecovery | null
   physical: PresencePhysical | null
+  operationId: string | null
+  commitCapabilityId: string | null
   automaticJoinPending: boolean
   terminal: LogicalTerminal | null
   commit: 'not-started' | 'committing' | 'committed'
@@ -115,6 +118,8 @@ interface PresenceRecovery {
   readonly id: string
   readonly domain: string
   phase: 'open' | 'closed'
+  /** C is the sole logical terminal for every member admitted before it closes. */
+  terminal: LogicalTerminal | null
   readonly actions: Set<PresenceAction>
   readonly members: Set<PresenceMember>
   readonly physical: Set<PresencePhysical>
@@ -123,6 +128,9 @@ interface PresenceRecovery {
   automaticJoins: number
   readonly promise: Promise<void>
   readonly resolve: () => void
+  readonly successor: Promise<PresenceRecovery | null>
+  readonly resolveSuccessor: (successor: PresenceRecovery | null) => void
+  deadline: ReturnType<typeof globalThis.setTimeout> | null
 }
 
 interface PersistedPageBindings {
@@ -165,7 +173,6 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       if (!capability || capability.state !== 'live') return false
       capability.state = 'consumed'
       capability.binding?.capabilities.delete(capabilityId)
-      commitCapabilities.delete(capabilityId)
       return true
     },
     revoke: (capabilityId: string) => {
@@ -174,6 +181,11 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       capability.state = 'revoked'
       capability.binding?.capabilities.delete(capabilityId)
       commitCapabilities.delete(capabilityId)
+    },
+    consumed: (capabilityId: string | null) =>
+      capabilityId !== null && commitCapabilities.get(capabilityId)?.state === 'consumed',
+    release: (capabilityId: string | null) => {
+      if (capabilityId !== null) commitCapabilities.delete(capabilityId)
     }
   }
   const connectionOptions = {
@@ -222,6 +234,9 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   const historyDomain = store.getDomain(historyAction)
   const connectionDomain = store.getDomain(connectionAction)
   const presenceRecoveries = new Map<string, PresenceRecovery>()
+  /** A completed C remains observable until a fresh C replaces it, so a waiting business call
+   * continues into the successor lifecycle instead of sampling an empty domain between cohorts. */
+  const completedPresenceRecoveries = new Map<string, PresenceRecovery>()
   const pendingConnectionCancellations = new Set<() => void>()
   let disposed = false
   const pageBindings = new Map<string, PageBinding>()
@@ -432,10 +447,15 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     const promise = new Promise<void>((onResolve) => {
       resolve = onResolve
     })
+    let resolveSuccessor = (_successor: PresenceRecovery | null) => {}
+    const successor = new Promise<PresenceRecovery | null>((onResolve) => {
+      resolveSuccessor = onResolve
+    })
     const recovery: PresenceRecovery = {
       id: nanoid(),
       domain,
       phase: 'open',
+      terminal: null,
       actions: new Set(),
       members: new Set(),
       physical: new Set(),
@@ -443,9 +463,20 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       readiness: 0,
       automaticJoins: 0,
       promise,
-      resolve
+      resolve,
+      successor,
+      resolveSuccessor,
+      deadline: null
+    }
+    const previous = completedPresenceRecoveries.get(domain)
+    if (previous) {
+      completedPresenceRecoveries.delete(domain)
+      previous.resolveSuccessor(recovery)
     }
     presenceRecoveries.set(domain, recovery)
+    recovery.deadline = globalThis.setTimeout(() => {
+      settlePresenceRecoveryTerminal(recovery, { error: new Error('Physical room join timed out') })
+    }, PRESENCE_RECOVERY_TIMEOUT_MS)
     return recovery
   }
 
@@ -456,13 +487,17 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     const physicalSettled = [...recovery.physical].every((physical) => physical.terminal && physical.decremented)
     const callbacksSettled = recovery.callbacks === 0 && recovery.readiness === 0 && recovery.automaticJoins === 0
     const complete =
-      recovery.phase === 'closed'
-        ? [...recovery.members].every((member) => member.observed || member.retired) &&
-          physicalSettled &&
-          callbacksSettled
-        : [...recovery.actions].every((action) => action.terminal !== null) && physicalSettled && callbacksSettled
+      recovery.terminal !== null &&
+      [...recovery.members].every((member) => member.observed || member.retired) &&
+      physicalSettled &&
+      callbacksSettled
     if (!complete) return
     presenceRecoveries.delete(recovery.domain)
+    if (recovery.deadline !== null) {
+      globalThis.clearTimeout(recovery.deadline)
+      recovery.deadline = null
+    }
+    completedPresenceRecoveries.set(recovery.domain, recovery)
     recovery.resolve()
   }
 
@@ -491,6 +526,8 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       member: null,
       cleanupGate: null,
       physical: null,
+      operationId: null,
+      commitCapabilityId: null,
       automaticJoinPending: false,
       terminal: null,
       commit: 'not-started'
@@ -607,7 +644,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     }
   }
 
-  const settlePresenceAction = (action: PresenceAction, terminal: LogicalTerminal) => {
+  const markPresenceActionTerminal = (action: PresenceAction, terminal: LogicalTerminal) => {
     if (action.terminal) return
     action.terminal = terminal
     if (action.member) action.member.observed = true
@@ -616,30 +653,78 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       action.automaticJoinPending = false
       recovery.automaticJoins -= 1
     }
-    if (terminal !== 'success' && terminal !== 'null' && recovery?.phase === 'open') {
-      recovery.phase = 'closed'
-      if (action.member) action.member.observed = true
+    finishPresenceRecovery(recovery)
+  }
+
+  /** C closes every pre-close stack together. Only a Connection commit that already consumed K
+   * may continue independently, because that irreversible commit is its own authority. */
+  function settlePresenceRecoveryTerminal(recovery: PresenceRecovery, terminal: LogicalTerminal) {
+    if (recovery.terminal !== null) return
+    recovery.terminal = terminal
+    recovery.phase = 'closed'
+    if (recovery.deadline !== null) {
+      globalThis.clearTimeout(recovery.deadline)
+      recovery.deadline = null
+    }
+    for (const action of recovery.actions) {
+      if (action.commit === 'committing' && terminal !== 'success') continue
+      markPresenceActionTerminal(action, terminal)
+      // Once C has a terminal, only the operation that already consumed K may keep its
+      // irreversible commit. Every other issued operation is still governed by C, including
+      // a sibling closed by another member's authoritative success.
+      if (action.operationId !== null && action.commit === 'not-started') {
+        if (action.commitCapabilityId !== null) commitCapability.revoke(action.commitCapabilityId)
+        store.send(
+          connectionDomain.command.AbortOperationCommand({
+            operationId: action.operationId,
+            error: terminal === 'success' || terminal === 'null' ? operationCancelled() : terminal.error
+          })
+        )
+      }
     }
     finishPresenceRecovery(recovery)
   }
 
+  const settlePresenceAction = (action: PresenceAction, terminal: LogicalTerminal, closeRecovery = true) => {
+    const recovery = action.cohort
+    if (action.commit === 'committing') terminal = 'success'
+    if (recovery?.terminal === null && closeRecovery) settlePresenceRecoveryTerminal(recovery, terminal)
+    markPresenceActionTerminal(action, recovery?.terminal ?? terminal)
+    if (
+      recovery?.terminal === null &&
+      !closeRecovery &&
+      [...recovery.actions].every((candidate) => candidate.terminal !== null)
+    ) {
+      settlePresenceRecoveryTerminal(recovery, terminal)
+    }
+  }
+
+  const presenceActionTerminal = (action: PresenceAction) => action.terminal ?? action.cohort?.terminal ?? null
+
   const operationCancelled = () => new DOMException('Runtime presence is completing its final release', 'AbortError')
 
   const waitForLivePresence = async (domain: string) => {
-    if (disposed) throw operationCancelled()
-    const recovery = presenceRecoveries.get(domain)
-    if (!recovery) {
+    while (!disposed) {
+      const recovery = presenceRecoveries.get(domain) ?? completedPresenceRecoveries.get(domain)
+      if (!recovery) {
+        if (
+          store.query(sessionDomain.query.FinalizingPresenceQuery(domain)) ||
+          !store.query(sessionDomain.query.DomainQuery(domain))
+        ) {
+          throw operationCancelled()
+        }
+        return
+      }
+      await recovery.promise
+      const terminal = recovery.terminal
+      if (terminal === 'null') throw operationCancelled()
+      if (terminal && terminal !== 'success') throw terminal.error
       if (store.query(sessionDomain.query.FinalizingPresenceQuery(domain))) throw operationCancelled()
-      return
+      if (store.query(sessionDomain.query.DomainQuery(domain))) return
+      const successor = await recovery.successor
+      if (!successor) throw operationCancelled()
     }
-    await recovery.promise
-    if (
-      disposed ||
-      store.query(sessionDomain.query.FinalizingPresenceQuery(domain)) ||
-      !store.query(sessionDomain.query.DomainQuery(domain))
-    ) {
-      throw operationCancelled()
-    }
+    throw operationCancelled()
   }
 
   const snapshot = (): RuntimeSnapshot => store.query(connectionDomain.query.SnapshotQuery())
@@ -717,7 +802,8 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     operationId: string,
     command: RemeshAction,
     select: (result: ConnectionOperationSucceeded) => T,
-    cancelledResult: () => T
+    cancelledResult: () => T,
+    onSuccess?: () => void
   ): Promise<T> =>
     new Promise<T>((resolve, reject) => {
       let settled = false
@@ -737,6 +823,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
         if (result.operationId !== operationId || settled) return
         settled = true
         dispose()
+        onSuccess?.()
         resolve(select(result))
       })
       const failure = store.subscribeEvent(connectionDomain.event.OperationFailedEvent, (result) => {
@@ -933,18 +1020,43 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     const action = beginPresenceAction(payload.domain, binding)
     try {
       await admitPresenceAction(action, binding)
+      const settled = (): RuntimeSnapshot | null | undefined => {
+        const terminal = presenceActionTerminal(action)
+        if (!terminal) return undefined
+        settlePresenceAction(action, terminal)
+        if (terminal === 'success') {
+          if (commitCapability.consumed(action.commitCapabilityId)) {
+            action.commit = 'committed'
+            commitCapability.release(action.commitCapabilityId)
+          }
+          return snapshot()
+        }
+        if (terminal === 'null') return null
+        throw terminal.error
+      }
       const connect = async () => {
         const recovery = action.cohort
         if (!recovery) throw new Error('Runtime presence action has no recovery owner')
         const operationId = nanoid()
         const commitCapabilityId = mintCommitCapability(binding, operationId)
+        action.operationId = operationId
+        action.commitCapabilityId = commitCapabilityId ?? null
         const stopObserving = observeConnectionPhysical(recovery, binding, action, operationId)
         try {
           const connected = await runConnectionOperation(
             operationId,
-            connectionDomain.command.JoinDomainCommand({ operationId, ...payload, commitCapabilityId }),
+            connectionDomain.command.JoinDomainCommand({
+              operationId,
+              ...payload,
+              commitCapabilityId,
+              serverDeadline: true
+            }),
             () => true,
-            () => false
+            () => false,
+            () => {
+              action.commit = 'committing'
+              settlePresenceRecoveryTerminal(recovery, 'success')
+            }
           )
           // OperationCancelled/timeout only settle the logical A. If the exact Q was issued,
           // the retained observer waits for Wire's physical terminal before C can clean up.
@@ -952,12 +1064,20 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
           return connected
         } catch (error) {
           stopObserving()
+          const terminal = presenceActionTerminal(action)
+          if (terminal === 'success') return true
+          if (terminal === 'null') return false
+          if (terminal) throw terminal.error
           throw error
         }
       }
       while (true) {
+        const terminal = settled()
+        if (terminal !== undefined) return terminal
         if (revalidate) await revalidate()
         const presenceState = await acquireCurrentPresence(payload.domain, payload.user.id)
+        const afterAcquire = settled()
+        if (afterAcquire !== undefined) return afterAcquire
         if (revalidate) await revalidate()
         if (presenceState === 'finalizing') {
           // A lease observed after the release fence started never bypasses the shared release:
@@ -969,7 +1089,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
           if (!store.query(sessionDomain.query.DomainQuery(payload.domain))) {
             if (revalidate) await revalidate()
             if (!(await connect())) {
-              settlePresenceAction(action, 'null')
+              settlePresenceAction(action, 'null', false)
               return null
             }
             continue
@@ -986,17 +1106,17 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
         }
         if (revalidate) await revalidate()
         if (!(await connect())) {
-          settlePresenceAction(action, 'null')
+          settlePresenceAction(action, 'null', false)
           return null
         }
-        action.commit = 'committing'
-        if (revalidate) await revalidate()
         action.commit = 'committed'
         settlePresenceAction(action, 'success')
+        commitCapability.release(action.commitCapabilityId)
         return snapshot()
       }
     } catch (error) {
       settlePresenceAction(action, { error: error instanceof Error ? error : new Error(String(error)) })
+      commitCapability.release(action.commitCapabilityId)
       throw error
     }
   }
@@ -1026,13 +1146,19 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
    * operation (destruction through the replacement commit/failure/cancel) instead of running a
    * second destructive reset against an in-flight replacement. */
   const inFlightReconnects = new Map<string, Promise<undefined | null>>()
-  const performReconnect = async (domain: string, operationId: string): Promise<undefined | null> => {
+  const performReconnect = async (
+    domain: string,
+    operationId: string,
+    commitCapabilityId: string | undefined,
+    onSuccess: () => void
+  ): Promise<undefined | null> => {
     // Phase 1: correlated destruction of the complete current-domain connection aggregate. The
     // cleared-observer persistence must settle and the domain's History work must physically
     // settle before the replacement may prepare; a persistence rejection fails the request
     // retryably without committing a mixed old/new snapshot.
     const reset = await resetDomainConnection(domain, operationId)
     if (!reset.ok) {
+      if (commitCapabilityId) commitCapability.revoke(commitCapabilityId)
       return runConnectionOperation(
         operationId,
         connectionDomain.command.FailOperationCommand({
@@ -1050,10 +1176,13 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
         operationId,
         domain,
         user: reset.user,
-        site: reset.site
+        site: reset.site,
+        commitCapabilityId,
+        serverDeadline: true
       }),
       () => undefined,
-      () => null
+      () => null,
+      onSuccess
     )
   }
 
@@ -1080,10 +1209,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       if (!config.admission) return joinChatRoomCoalesced(payload, null)
       return (async () => {
         const binding = await requirePageBinding(payload, true)
-        const result = await joinChatRoomCoalesced(payload, binding, () => revalidateBinding(binding, payload))
-        if (result === null) return null
-        await revalidateBinding(binding, payload)
-        return result
+        return joinChatRoomCoalesced(payload, binding, () => revalidateBinding(binding, payload))
       })()
     },
     leaveChatRoom: (payload) => {
@@ -1105,11 +1231,14 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       await waitForLivePresence(payload.domain)
       await revalidateBinding(binding, payload)
       const operationId = nanoid()
-      return runAllocationOperation(
+      const result = await runAllocationOperation(
         operationId,
         sessionDomain.command.AllocateTextMessageCommand({ operationId, ...payload }),
         sessionDomain.event.TextMessageAllocatedEvent
       )
+      await revalidateBinding(binding, payload)
+      if (!store.query(sessionDomain.query.DomainQuery(payload.domain))) throw operationCancelled()
+      return result
     },
     allocateReactionMessage: async (payload) => {
       const binding = await requirePageBinding(payload, true)
@@ -1117,11 +1246,14 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       await waitForLivePresence(payload.domain)
       await revalidateBinding(binding, payload)
       const operationId = nanoid()
-      return runAllocationOperation(
+      const result = await runAllocationOperation(
         operationId,
         sessionDomain.command.AllocateReactionMessageCommand({ operationId, ...payload }),
         sessionDomain.event.ReactionMessageAllocatedEvent
       )
+      await revalidateBinding(binding, payload)
+      if (!store.query(sessionDomain.query.DomainQuery(payload.domain))) throw operationCancelled()
+      return result
     },
     sendChatMessage: async (payload) => {
       const binding = await requirePageBinding(payload, true)
@@ -1130,9 +1262,13 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       await revalidateBinding(binding, payload)
       const operationId = nanoid()
       const command = sessionDomain.command.SendChatMessageCommand({ operationId, ...payload })
-      if (payload.event.type === MESSAGE_TYPE.TEXT) return runTextAcceptanceOperation(operationId, command)
-      await runSessionOperation(operationId, command, () => undefined)
-      return payload.event
+      const result =
+        payload.event.type === MESSAGE_TYPE.TEXT
+          ? await runTextAcceptanceOperation(operationId, command)
+          : await runSessionOperation(operationId, command, () => payload.event)
+      await revalidateBinding(binding, payload)
+      if (!store.query(sessionDomain.query.DomainQuery(payload.domain))) throw operationCancelled()
+      return result
     },
     ackInbound: async (payload) => {
       const binding = await requirePageBinding(payload, true)
@@ -1146,30 +1282,58 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     reconnectDomain: async (payload) => {
       const binding = await requirePageBinding(payload, true)
       await revalidateBinding(binding, payload)
-      const existing = inFlightReconnects.get(payload.domain)
-      if (existing) return existing
-      // An accepted ready-state activation also starts the independently fenced World replacement
-      // alongside the Domain child: it is never awaited, never changes the Domain result or the
-      // button/loading/completion/error UI, and coalesces into the one current World operation
-      // (automatic recovery or a prior manual replacement). It fires only when the Domain refresh
-      // itself is admissible (a committed runtime or retained seed); pre-ready Retry never reaches
-      // here and starts no World replacement.
-      if (
-        store.query(sessionDomain.query.DomainQuery(payload.domain)) ||
-        store.query(sessionDomain.query.RetainedLocalSeedQuery(payload.domain))
-      ) {
-        store.send(connectionDomain.command.RefreshWorldCommand())
+      const action = beginPresenceAction(payload.domain, binding)
+      try {
+        await admitPresenceAction(action, binding)
+        const terminal = presenceActionTerminal(action)
+        if (terminal === 'success') return undefined
+        if (terminal === 'null') return null
+        if (terminal) throw terminal.error
+        const existing = inFlightReconnects.get(payload.domain)
+        if (existing) {
+          const result = await existing
+          settlePresenceAction(action, result === null ? 'null' : 'success')
+          return result
+        }
+        // An accepted ready-state activation also starts the independently fenced World replacement
+        // alongside the Domain child: it is never awaited, never changes the Domain result or the
+        // button/loading/completion/error UI, and coalesces into the one current World operation.
+        if (
+          store.query(sessionDomain.query.DomainQuery(payload.domain)) ||
+          store.query(sessionDomain.query.RetainedLocalSeedQuery(payload.domain))
+        ) {
+          store.send(connectionDomain.command.RefreshWorldCommand())
+        }
+        const operationId = nanoid()
+        const commitCapabilityId = mintCommitCapability(binding, operationId)
+        action.operationId = operationId
+        action.commitCapabilityId = commitCapabilityId ?? null
+        const recovery = action.cohort
+        if (!recovery) throw new Error('Runtime reconnect action has no recovery owner')
+        const task = performReconnect(payload.domain, operationId, commitCapabilityId, () => {
+          action.commit = 'committing'
+          settlePresenceRecoveryTerminal(recovery, 'success')
+        })
+        inFlightReconnects.set(payload.domain, task)
+        const releaseReconnect = () => {
+          if (inFlightReconnects.get(payload.domain) === task) inFlightReconnects.delete(payload.domain)
+        }
+        void task.then(releaseReconnect, releaseReconnect)
+        const result = await task
+        if (result === null) {
+          settlePresenceAction(action, 'null', false)
+          return null
+        }
+        if (!commitCapability.consumed(action.commitCapabilityId)) await revalidateBinding(binding, payload)
+        action.commit = 'committed'
+        settlePresenceAction(action, 'success')
+        commitCapability.release(action.commitCapabilityId)
+        return undefined
+      } catch (error) {
+        settlePresenceAction(action, { error: error instanceof Error ? error : new Error(String(error)) })
+        commitCapability.release(action.commitCapabilityId)
+        throw error
       }
-      const operationId = nanoid()
-      const task = performReconnect(payload.domain, operationId)
-      inFlightReconnects.set(payload.domain, task)
-      const releaseReconnect = () => {
-        if (inFlightReconnects.get(payload.domain) === task) inFlightReconnects.delete(payload.domain)
-      }
-      void task.then(releaseReconnect, releaseReconnect)
-      const result = await task
-      await revalidateBinding(binding, payload)
-      return result
     },
     onInbound: async (payload, callback) => {
       await requirePageBinding(payload, false)

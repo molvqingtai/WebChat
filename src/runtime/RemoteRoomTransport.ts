@@ -92,6 +92,9 @@ export class RemoteRoomTransport implements RoomTransport {
     const generation = this.generation
     await this.binding
     if (!this.isCurrent(generation)) return new Promise<void>(() => {})
+    // This Q's room join already fulfilled through the current Remote owner. It has no pending H
+    // to abort, so it is an applicable-step no-op rather than a non-receipt.
+    if (this.rooms.has(roomId)) return
     if (!this.service.abortJoin) return new Promise<void>(() => {})
     await this.service.abortJoin(roomId, joinId)
   }

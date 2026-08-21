@@ -61,17 +61,17 @@ interface RuntimeAttachment {
   repairs: Set<RegistrationKey>
 }
 
-interface PageConnectionAttempt {
+interface RuntimeInvocation {
   id: number
   resultToken: number
   hostId: string
-  controller: AbortController
-  timeout: ReturnType<typeof globalThis.setTimeout>
 }
 
-const PAGE_CONNECTION_ATTEMPT_TIMEOUT_MS = 10000
+const ATTACHMENT_REGISTRATION_TIMEOUT_MS = 10000
+const REGISTRATION_REPAIR_TIMEOUT_MS = 10000
 
 const abortError = (message: string): DOMException => new DOMException(message, 'AbortError')
+const isAttachmentCancellation = (error: unknown) => error instanceof DOMException && error.name === 'AbortError'
 
 const raceWithSignal = <Value>(task: Promise<Value>, signal: AbortSignal): Promise<Value> =>
   new Promise<Value>((resolve, reject) => {
@@ -100,10 +100,7 @@ const withDeadline = <Value>(task: Promise<Value>, message: string): Promise<Val
       globalThis.clearTimeout(timer)
       callback()
     }
-    const timer = globalThis.setTimeout(
-      () => finish(() => reject(new Error(message))),
-      PAGE_CONNECTION_ATTEMPT_TIMEOUT_MS
-    )
+    const timer = globalThis.setTimeout(() => finish(() => reject(new Error(message))), REGISTRATION_REPAIR_TIMEOUT_MS)
     task.then(
       (value) => finish(() => resolve(value)),
       (error) => finish(() => reject(error))
@@ -192,7 +189,6 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
   private standaloneMint: (() => number) | null = null
   private standaloneBind: ((task: Promise<void>, token: number) => void) | null = null
   private attachment: RuntimeAttachment | null = null
-  private activeConnection: PageConnectionAttempt | null = null
   private disposed = false
 
   constructor(private readonly dependencies: ChatRoomDependencies) {
@@ -200,10 +196,6 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
     this.disposeReady = dependencies.whenReady((scope) => {
       if (this.disposed) return
       this.readyGeneration += 1
-      // Runtime generation replacement supersedes the old connection attempt; that is a structural
-      // cancellation fact for that attempt.
-      if (this.activeConnection) this.reportResult?.(this.activeConnection.resultToken, 'cancelled')
-      this.activeConnection?.controller.abort(abortError('Runtime host generation replaced'))
       const attachment = this.startAttachment(null, scope ?? {})
       const readiness = attachment.task.then(() => {
         if (attachment.error !== undefined) throw attachment.error
@@ -272,9 +264,11 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
       repairs: new Set()
     }
     this.attachment = attachment
+    // This bounds only callback/replay admission before a Server RPC exists. It is not a
+    // connection-attempt terminal and can never race or settle an issued Server lifecycle.
     const timeout = globalThis.setTimeout(() => {
       controller.abort(new Error('Connection timed out'))
-    }, PAGE_CONNECTION_ATTEMPT_TIMEOUT_MS)
+    }, ATTACHMENT_REGISTRATION_TIMEOUT_MS)
     attachment.task = this.attachRuntime(attachment)
       .then(() => {
         attachment.state = 'ready'
@@ -292,48 +286,24 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
     return attachment
   }
 
-  private beginConnectionAttempt(resultToken: number) {
+  private beginConnectionAttempt(resultToken: number): RuntimeInvocation {
     if (this.disposed) throw abortError('Runtime page detached')
-    if (this.activeConnection) {
-      // This attempt supersedes the in-flight one: report its own token `cancelled` BEFORE aborting it,
-      // so that first-terminal-wins keeps the structural cancellation rather than a later generic `failed`.
-      this.recordResult(this.activeConnection.resultToken, 'cancelled')
-      this.activeConnection.controller.abort(abortError('Page connection attempt superseded'))
-    }
-    const controller = new AbortController()
-    const attempt: PageConnectionAttempt = {
+    return {
       id: ++this.connectionSequence,
       resultToken,
-      hostId: this.dependencies.getSnapshot().hostId,
-      controller,
-      timeout: globalThis.setTimeout(() => {
-        controller.abort(new Error('Page connection attempt timed out'))
-      }, PAGE_CONNECTION_ATTEMPT_TIMEOUT_MS)
+      hostId: this.dependencies.getSnapshot().hostId
     }
-    this.activeConnection = attempt
-    return attempt
   }
 
-  private finishConnectionAttempt(attempt: PageConnectionAttempt, error?: unknown) {
-    globalThis.clearTimeout(attempt.timeout)
+  private finishConnectionAttempt(attempt: RuntimeInvocation, error?: unknown) {
     const attachment = this.attachment
     if (error && attachment?.state === 'pending' && attachment.ownerAttemptId === attempt.id) {
       this.cancelAttachment(attachment, error)
     }
     if (!error && attachment?.ownerAttemptId === attempt.id) attachment.ownerAttemptId = null
-    if (this.activeConnection === attempt) this.activeConnection = null
   }
 
-  private isConnectionCurrent(attempt: PageConnectionAttempt, attachment: RuntimeAttachment) {
-    return (
-      this.activeConnection === attempt &&
-      !attempt.controller.signal.aborted &&
-      attempt.hostId === attachment.hostId &&
-      this.isAttachmentCurrent(attachment)
-    )
-  }
-
-  private async currentAttachment(attempt: PageConnectionAttempt) {
+  private async currentAttachment(attempt: RuntimeInvocation) {
     let attachment = this.attachment
     if (
       !attachment ||
@@ -343,16 +313,10 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
       attachment.controller.signal.aborted
     ) {
       attachment = this.startAttachment(attempt.id)
-    } else if (attachment.state === 'pending') {
-      if (attachment.ownerAttemptId !== null && attachment.ownerAttemptId !== attempt.id) {
-        attachment = this.startAttachment(attempt.id)
-      } else {
-        attachment.ownerAttemptId = attempt.id
-      }
     }
 
     try {
-      await raceWithSignal(attachment.task, attempt.controller.signal)
+      await raceWithSignal(attachment.task, attachment.controller.signal)
       if (attachment.error !== undefined) throw attachment.error
     } catch (error) {
       if (this.attachment === attachment && attachment.ownerAttemptId === attempt.id) {
@@ -360,7 +324,6 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
       }
       throw error
     }
-    attempt.controller.signal.throwIfAborted()
     if (!this.isAttachmentCurrent(attachment) || attachment.hostId !== attempt.hostId) {
       throw abortError('Runtime attachment superseded')
     }
@@ -649,29 +612,13 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
     const attempt = this.beginConnectionAttempt(resultToken)
     try {
       const attachment = await this.currentAttachment(attempt)
-      if (!this.isConnectionCurrent(attempt, attachment)) {
-        this.recordResult(attempt.resultToken, 'cancelled')
-        throw abortError('Page connection attempt superseded')
-      }
-      const snapshot = await raceWithSignal(
-        this.dependencies.server.joinChatRoom({
-          domain: this.dependencies.pageDomain,
-          ...command
-        }),
-        attempt.controller.signal
-      )
+      const snapshot = await this.dependencies.server.joinChatRoom({
+        domain: this.dependencies.pageDomain,
+        ...command
+      })
       if (!snapshot) {
         this.recordResult(attempt.resultToken, 'cancelled')
         throw abortError('ChatRoom operation cancelled')
-      }
-      attempt.controller.signal.throwIfAborted()
-      if (
-        !this.isConnectionCurrent(attempt, attachment) ||
-        snapshot.hostId !== attempt.hostId ||
-        this.dependencies.getSnapshot().hostId !== attempt.hostId
-      ) {
-        this.recordResult(attempt.resultToken, 'cancelled')
-        throw abortError('Page connection attempt superseded')
       }
       const domainSnapshot = snapshot.domains.find((item) => item.domain === this.dependencies.pageDomain)
       if (!domainSnapshot?.localSession) throw new Error('Runtime did not create a local session')
@@ -681,22 +628,17 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
           await persistSelfJoinNotice(
             this.dependencies.messageStore,
             domainSnapshot.localSession,
-            attempt.controller.signal
+            attachment.controller.signal
           )
         } catch (error) {
           this.pendingSelfJoinGenerations.add(generationKey)
           throw error
         }
       }
-      attempt.controller.signal.throwIfAborted()
-      if (!this.isConnectionCurrent(attempt, attachment)) {
-        this.recordResult(attempt.resultToken, 'cancelled')
-        throw abortError('Page connection attempt superseded')
-      }
       this.recordResult(attempt.resultToken, 'succeeded')
       this.finishConnectionAttempt(attempt)
     } catch (error) {
-      this.recordResult(attempt.resultToken, 'failed')
+      this.recordResult(attempt.resultToken, isAttachmentCancellation(error) ? 'cancelled' : 'failed')
       this.finishConnectionAttempt(attempt, error)
       throw error
     }
@@ -713,28 +655,16 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
   async leaveRoomWithToken(resultToken: number): Promise<void> {
     const attempt = this.beginConnectionAttempt(resultToken)
     try {
-      const attachment = await this.currentAttachment(attempt)
-      if (!this.isConnectionCurrent(attempt, attachment)) {
-        this.recordResult(attempt.resultToken, 'cancelled')
-        throw abortError('Page connection attempt superseded')
-      }
-      const result = await raceWithSignal(
-        this.dependencies.server.reconnectDomain({ domain: this.dependencies.pageDomain }),
-        attempt.controller.signal
-      )
+      await this.currentAttachment(attempt)
+      const result = await this.dependencies.server.reconnectDomain({ domain: this.dependencies.pageDomain })
       if (result === null) {
         this.recordResult(attempt.resultToken, 'cancelled')
         throw abortError('ChatRoom operation cancelled')
       }
-      attempt.controller.signal.throwIfAborted()
-      if (!this.isConnectionCurrent(attempt, attachment)) {
-        this.recordResult(attempt.resultToken, 'cancelled')
-        throw abortError('Page connection attempt superseded')
-      }
       this.recordResult(attempt.resultToken, 'succeeded')
       this.finishConnectionAttempt(attempt)
     } catch (error) {
-      this.recordResult(attempt.resultToken, 'failed')
+      this.recordResult(attempt.resultToken, isAttachmentCancellation(error) ? 'cancelled' : 'failed')
       this.finishConnectionAttempt(attempt, error)
       throw error
     }
@@ -800,12 +730,6 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
     this.disposed = true
     this.disposeReady()
     const reason = abortError('Runtime page detached')
-    const connection = this.activeConnection
-    if (connection) {
-      globalThis.clearTimeout(connection.timeout)
-      connection.controller.abort(reason)
-      this.activeConnection = null
-    }
     const attachment = this.attachment
     if (attachment) this.cancelAttachment(attachment, reason)
     this.pendingSelfJoinGenerations.clear()

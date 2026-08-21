@@ -2,13 +2,23 @@ import { describe, expect, it, vi } from 'vitest'
 import type { RoomTransport } from '@/runtime/RoomTransport'
 import { createTransportService } from '@/runtime/TransportHost'
 
+const deferred = <Value>() => {
+  let resolve!: (value: Value) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<Value>((onResolve, onReject) => {
+    resolve = onResolve
+    reject = onReject
+  })
+  return { promise, resolve, reject }
+}
+
 const createTransport = () => {
   let message: Parameters<RoomTransport['onMessage']>[0] = () => {}
   let join: Parameters<RoomTransport['onPeerJoin']>[0] = () => {}
   let leave: Parameters<RoomTransport['onPeerLeave']>[0] = () => {}
   let close: Parameters<RoomTransport['onRoomClose']>[0] = () => {}
   let error: Parameters<RoomTransport['onError']>[0] = () => {}
-  const joinTransport = vi.fn(async () => {})
+  const joinTransport = vi.fn<RoomTransport['join']>(async () => {})
   const transport: RoomTransport = {
     peerIdOf: (roomId) => `peer:${roomId}`,
     join: joinTransport,
@@ -148,5 +158,45 @@ describe('Offscreen TransportService', () => {
     await expect(second).rejects.toThrow('owned by a newer handle')
     await expect(service.join('room-a', 'handle-a', binding.admission)).resolves.toMatchObject({ handle: 'handle-a' })
     expect(fixture.join).toHaveBeenCalledOnce()
+  })
+
+  it('treats an already-settled Q room as inapplicable while the pending room supplies the abort receipt', async () => {
+    const fixture = createTransport()
+    const chatJoin = deferred<void>()
+    const abortReceipt = deferred<void>()
+    fixture.join.mockImplementation((roomId) => (roomId === 'chat' ? chatJoin.promise : Promise.resolve()))
+    fixture.transport.abortJoin = vi.fn(async (roomId) => {
+      if (roomId !== 'chat') throw new Error('only the pending Chat H may be aborted')
+      await abortReceipt.promise
+      chatJoin.reject(new Error('Chat H aborted'))
+    })
+    const service = createTransportService(fixture.transport)
+    const binding = await service.rebind(
+      () => {},
+      () => {},
+      () => {},
+      () => {},
+      () => {}
+    )
+
+    await service.join('world', 'world-owner', binding.admission, 'q:world')
+    const pendingChat = service.join('chat', 'chat-owner', binding.admission, 'q:chat')
+    const ignoredPendingChat = pendingChat.catch(() => undefined)
+    await Promise.resolve()
+
+    let settled = false
+    const qAbort = Promise.all([service.abortJoin!('world', 'q:world'), service.abortJoin!('chat', 'q:chat')]).then(
+      () => {
+        settled = true
+      }
+    )
+    await Promise.resolve()
+    expect(fixture.transport.abortJoin).toHaveBeenCalledWith('chat', 'q:chat')
+    expect(settled).toBe(false)
+
+    abortReceipt.resolve()
+    await qAbort
+    await ignoredPendingChat
+    expect(settled).toBe(true)
   })
 })

@@ -26,6 +26,7 @@ interface JoinAttempt {
   joinRequestId?: string
   joinTerminal?: boolean
   commitCapabilityId?: string
+  serverDeadline?: boolean
   /** Preserved typed join input so a failed initial attempt can retry as a fresh generation. */
   user?: ChatUser
   site?: ChatSite
@@ -65,7 +66,7 @@ export interface RuntimeFailure {
   domain?: string
 }
 
-const PHYSICAL_ROOM_JOIN_TIMEOUT_MS = 10000
+export const PHYSICAL_ROOM_JOIN_TIMEOUT_MS = 10000
 export const ROOM_RECOVERY_RETRY_INTERVAL_MS = 10000
 const replaceBy = <T>(items: T[], predicate: (item: T) => boolean, next: T): T[] =>
   items.some(predicate) ? items.map((item) => (predicate(item) ? next : item)) : [...items, next]
@@ -173,6 +174,7 @@ const ConnectionDomain = Remesh.domain({
         user?: ChatUser
         site?: ChatSite
         commitCapabilityId?: string
+        serverDeadline?: boolean
       }
     ) => {
       const attempts = get(AttemptsState())
@@ -197,7 +199,8 @@ const ConnectionDomain = Remesh.domain({
         generation,
         user: payload.user,
         site: payload.site,
-        commitCapabilityId: payload.commitCapabilityId
+        commitCapabilityId: payload.commitCapabilityId,
+        serverDeadline: payload.serverDeadline
       }
       if (currentAttempt?.commitCapabilityId) commitCapability.revoke(currentAttempt.commitCapabilityId)
       return [
@@ -243,7 +246,14 @@ const ConnectionDomain = Remesh.domain({
       name: 'Connection.JoinDomainCommand',
       impl: (
         { get },
-        payload: { operationId: string; domain: string; user: ChatUser; site: ChatSite; commitCapabilityId?: string }
+        payload: {
+          operationId: string
+          domain: string
+          user: ChatUser
+          site: ChatSite
+          commitCapabilityId?: string
+          serverDeadline?: boolean
+        }
       ) =>
         get(sessionDomain.query.ReleasingDomainQuery(payload.domain))
           ? OperationFailedEvent({
@@ -257,7 +267,8 @@ const ConnectionDomain = Remesh.domain({
               domain: payload.domain,
               user: payload.user,
               site: payload.site,
-              commitCapabilityId: payload.commitCapabilityId
+              commitCapabilityId: payload.commitCapabilityId,
+              serverDeadline: payload.serverDeadline
             })
     })
 
@@ -309,7 +320,14 @@ const ConnectionDomain = Remesh.domain({
       name: 'Connection.ReconnectDomainCommand',
       impl: (
         { get },
-        payload: { operationId: string; domain: string; user?: ChatUser; site?: ChatSite; commitCapabilityId?: string }
+        payload: {
+          operationId: string
+          domain: string
+          user?: ChatUser
+          site?: ChatSite
+          commitCapabilityId?: string
+          serverDeadline?: boolean
+        }
       ) => {
         if (get(sessionDomain.query.ReleasingDomainQuery(payload.domain))) {
           return OperationFailedEvent({
@@ -340,7 +358,8 @@ const ConnectionDomain = Remesh.domain({
             domain: payload.domain,
             user: runtime?.user ?? payload.user,
             site: runtime?.site ?? payload.site,
-            commitCapabilityId: payload.commitCapabilityId
+            commitCapabilityId: payload.commitCapabilityId,
+            serverDeadline: payload.serverDeadline
           })
         ]
       }
@@ -407,7 +426,9 @@ const ConnectionDomain = Remesh.domain({
             requestId,
             roomIds: [payload.roomId, getWorldRoomId()]
           }),
-          JoinTimeoutArmedEvent({ attemptId: attempt.attemptId, joinRequestId: requestId })
+          ...(attempt.serverDeadline
+            ? []
+            : [JoinTimeoutArmedEvent({ attemptId: attempt.attemptId, joinRequestId: requestId })])
         ]
       }
     })
@@ -539,6 +560,14 @@ const ConnectionDomain = Remesh.domain({
         return attempt
           ? AbortAttemptCommand({ attemptId: attempt.attemptId, error: new Error('Physical room join timed out') })
           : null
+      }
+    })
+
+    const AbortOperationCommand = domain.command({
+      name: 'Connection.AbortOperationCommand',
+      impl: ({ get }, payload: { operationId: string; error: Error }) => {
+        const attempt = get(AttemptsState()).find((item) => item.operationId === payload.operationId)
+        return attempt ? AbortAttemptCommand({ attemptId: attempt.attemptId, error: payload.error }) : null
       }
     })
 
@@ -1119,7 +1148,8 @@ const ConnectionDomain = Remesh.domain({
         ReconnectDomainCommand,
         RefreshWorldCommand,
         DestroyDomainConnectionCommand,
-        FailOperationCommand
+        FailOperationCommand,
+        AbortOperationCommand
       },
       event: {
         OperationSucceededEvent,
