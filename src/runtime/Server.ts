@@ -66,6 +66,18 @@ type PageCallback = 'inbound' | 'error' | 'history' | 'historyFeedback'
 
 const pageCallbacks = new Set<PageCallback>(['inbound', 'error', 'history', 'historyFeedback'])
 
+type PresenceRecoveryBinding = Pick<PageBinding, 'tabId' | 'pageId' | 'domain' | 'url'>
+
+/** A closed cohort member is its exact recovery attempt and the binding that attempt installed. */
+interface PresenceRecoveryMember {
+  candidate: PresenceRecoveryBinding
+  binding?: PageBinding
+  rebindAttempt: PageRecovery
+  observed: boolean
+  retired: boolean
+  inFlight: number
+}
+
 interface PageRecovery {
   tabId: number
   pageId: string
@@ -81,7 +93,9 @@ interface PresenceRecovery {
   attempts: number
   awaitingRestoringJoin: boolean
   restoringOwnerInFlight: boolean
-  restoringBinding?: Pick<PageBinding, 'tabId' | 'pageId' | 'domain' | 'url'>
+  restoringBinding?: PresenceRecoveryBinding
+  restoringMember?: PresenceRecoveryMember
+  members: PresenceRecoveryMember[]
   promise: Promise<void>
   resolve: () => void
   reject: (error: Error) => void
@@ -189,6 +203,65 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     pagePort.isSessionEventActive(binding.pageId, binding.sessionGeneration) &&
     [...pageCallbacks].every((callback) => binding.callbacks.has(callback))
 
+  const samePresenceRecoveryBinding = (left: PresenceRecoveryBinding, right: PresenceRecoveryBinding) =>
+    left.tabId === right.tabId &&
+    left.pageId === right.pageId &&
+    left.domain === right.domain &&
+    isSameNavigation(left.url, right.url)
+
+  const findPresenceRecoveryMember = (recovery: PresenceRecovery, binding: PageBinding) =>
+    recovery.members.find((member) => member.binding === binding)
+
+  const clearPresenceRecoveryTombstone = (domain: string, recovery: PresenceRecovery) => {
+    if (
+      !recovery.tombstone ||
+      presenceRecoveries.get(domain) !== recovery ||
+      recovery.members.some((member) => !member.observed && !member.retired) ||
+      recovery.members.some((member) => member.inFlight > 0)
+    ) {
+      return
+    }
+    presenceRecoveries.delete(domain)
+  }
+
+  const addPresenceRecoveryMember = (
+    recovery: PresenceRecovery,
+    candidate: PresenceRecoveryBinding,
+    rebindAttempt: PageRecovery
+  ) => {
+    if (recovery.tombstone || recovery.settled) return undefined
+    const existing = recovery.members.find((member) => member.rebindAttempt === rebindAttempt)
+    if (existing) return existing
+    const member: PresenceRecoveryMember = {
+      candidate,
+      rebindAttempt,
+      observed: false,
+      retired: false,
+      inFlight: 0
+    }
+    recovery.members.push(member)
+    return member
+  }
+
+  const bindPresenceRecoveryMember = (binding: PageBinding, rebindAttempt: PageRecovery) => {
+    const recovery = presenceRecoveries.get(binding.domain)
+    if (!recovery) return
+    const member = recovery.members.find(
+      (candidate) =>
+        candidate.rebindAttempt === rebindAttempt && samePresenceRecoveryBinding(candidate.candidate, binding)
+    )
+    if (member) member.binding = binding
+  }
+
+  const retirePresenceRecoveryMember = (binding: PresenceRecoveryBinding) => {
+    const recovery = presenceRecoveries.get(binding.domain)
+    if (!recovery?.tombstone) return
+    const member = recovery.members.find((candidate) => candidate.binding === binding)
+    if (!member) return
+    member.retired = true
+    clearPresenceRecoveryTombstone(binding.domain, recovery)
+  }
+
   const persistPageBindings = async () => {
     if (!config.admission) return
     const persist = () => {
@@ -235,6 +308,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
 
   const removeBinding = async (binding: PageBinding, retainedRecovery?: PageRecovery) => {
     if (!isCurrentBinding(binding)) return
+    retirePresenceRecoveryMember(binding)
     const recovery = pageRecoveries.get(binding.pageId)
     if (recovery && recovery !== retainedRecovery) {
       recovery.fail(new Error('Runtime Page recovery binding is no longer current'))
@@ -348,6 +422,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     rebindHints.delete(binding.tabId)
     pageBindings.set(binding.pageId, binding)
     tabBindings.set(binding.tabId, binding)
+    if (recovery) bindPresenceRecoveryMember(binding, recovery)
     store.send(lifecycleDomain.command.AttachPageCommand({ domain: binding.domain, pageId: binding.pageId }))
     await persistPageBindings()
   }
@@ -376,10 +451,14 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       fail: (error: Error) => {
         if (failed) return
         failed = true
-        if (presenceRecovery) failPresenceRecovery(candidate.domain, presenceRecovery, error)
+        if (presenceRecovery) failPresenceRecovery(candidate.domain, presenceRecovery, error, presenceMember)
         rejectCancellation(error)
       }
     } satisfies PageRecovery
+    const presenceMember = presenceRecovery
+      ? addPresenceRecoveryMember(presenceRecovery, candidate, recovery)
+      : undefined
+    if (presenceMember) presenceMember.inFlight += 1
     let start!: () => void
     const rebind = new Promise<void>((resolve, reject) => {
       start = () => {
@@ -400,7 +479,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
             resolve()
           } catch (error) {
             const failure = error instanceof Error ? error : new Error(String(error))
-            if (presenceRecovery) failPresenceRecovery(candidate.domain, presenceRecovery, failure)
+            if (presenceRecovery) failPresenceRecovery(candidate.domain, presenceRecovery, failure, presenceMember)
             const binding = pageBindings.get(candidate.pageId)
             if (binding && binding.tabId === candidate.tabId) await removeBinding(binding, recovery)
             else if (rebindHints.get(candidate.tabId)?.pageId === candidate.pageId) {
@@ -413,6 +492,13 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       }
     })
     recovery.promise = Promise.race([rebind, cancellation])
+    if (presenceMember) {
+      const releasePresenceMember = () => {
+        presenceMember.inFlight -= 1
+        clearPresenceRecoveryTombstone(candidate.domain, presenceRecovery!)
+      }
+      void recovery.promise.then(releasePresenceMember, releasePresenceMember)
+    }
     pageRecoveries.set(candidate.pageId, recovery)
     const releaseRecovery = () => {
       if (pageRecoveries.get(candidate.pageId) === recovery) pageRecoveries.delete(candidate.pageId)
@@ -447,10 +533,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     else recovery.resolve()
   }
 
-  const beginPresenceRecovery = (
-    domain: string,
-    restoringBinding?: Pick<PageBinding, 'tabId' | 'pageId' | 'domain' | 'url'>
-  ) => {
+  const beginPresenceRecovery = (domain: string, restoringBinding?: PresenceRecoveryBinding) => {
     const awaitRestoringJoin = restoringBinding !== undefined
     const current = presenceRecoveries.get(domain)
     if (current) {
@@ -472,6 +555,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       awaitingRestoringJoin: awaitRestoringJoin,
       restoringOwnerInFlight: false,
       ...(restoringBinding ? { restoringBinding } : {}),
+      members: [],
       promise,
       resolve,
       reject,
@@ -493,11 +577,23 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   const claimRestoringPresenceRecovery = (payload: RuntimePageCall & { domain: string }, binding: PageBinding) => {
     const recovery = presenceRecoveries.get(binding.domain)
     if (!recovery?.awaitingRestoringJoin) return null
+    const currentBinding =
+      payload.domain === binding.domain && payload.runtimeHostId === snapshot().hostId && bindingReady(binding)
+    if (recovery.tombstone) {
+      if (!currentBinding) throw new Error('Runtime current-domain recovery owner is no longer current')
+      const member = findPresenceRecoveryMember(recovery, binding)
+      if (member) {
+        member.observed = true
+        clearPresenceRecoveryTombstone(binding.domain, recovery)
+      }
+      throw recovery.failure ?? new Error('Runtime current-domain recovery timed out')
+    }
     const owner = recovery.restoringBinding
+    const member = findPresenceRecoveryMember(recovery, binding)
     if (
-      payload.domain !== binding.domain ||
-      payload.runtimeHostId !== snapshot().hostId ||
+      !currentBinding ||
       !owner ||
+      !member ||
       owner.pageId !== binding.pageId ||
       owner.tabId !== binding.tabId ||
       owner.domain !== binding.domain ||
@@ -506,11 +602,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     ) {
       throw new Error('Runtime current-domain recovery owner is no longer current')
     }
-    if (recovery.tombstone) {
-      presenceRecoveries.delete(binding.domain)
-      recovery.tombstone = false
-      throw recovery.failure ?? new Error('Runtime current-domain recovery timed out')
-    }
+    recovery.restoringMember = member
     recovery.awaitingRestoringJoin = false
     recovery.restoringOwnerInFlight = true
     return recovery
@@ -552,10 +644,15 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     settlePresenceRecovery(domain, recovery)
   }
 
-  const failPresenceRecovery = (domain: string, recovery: PresenceRecovery, error: Error) => {
+  const failPresenceRecovery = (
+    domain: string,
+    recovery: PresenceRecovery,
+    error: Error,
+    member?: PresenceRecoveryMember
+  ) => {
     if (recovery.tombstone) {
-      if (presenceRecoveries.get(domain) === recovery) presenceRecoveries.delete(domain)
-      recovery.tombstone = false
+      if (member) member.retired = true
+      clearPresenceRecoveryTombstone(domain, recovery)
       return
     }
     settlePresenceRecovery(domain, recovery, error)
@@ -569,7 +666,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     if (recovery.settled || presenceRecoveries.get(domain) !== recovery) throw operationCancelled()
   }
 
-  const waitForLivePresence = async (domain: string) => {
+  const waitForLivePresence = async (domain: string, binding: PageBinding | null) => {
     if (disposed) throw operationCancelled()
     const recovery = presenceRecoveries.get(domain)
     if (!recovery) {
@@ -581,7 +678,13 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       }
       return
     }
-    await recovery.promise
+    try {
+      await recovery.promise
+    } catch (error) {
+      const member = binding ? findPresenceRecoveryMember(recovery, binding) : undefined
+      if (recovery.tombstone && (member?.observed || member?.retired)) throw operationCancelled()
+      throw error
+    }
     if (recovery.cancelled) throw operationCancelled()
     if (
       disposed ||
@@ -984,7 +1087,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       }
     } catch (error) {
       const failure = recovery.failure ?? (error instanceof Error ? error : new Error(String(error)))
-      if (restoringOwner) failPresenceRecovery(payload.domain, recovery, failure)
+      if (restoringOwner) failPresenceRecovery(payload.domain, recovery, failure, recovery.restoringMember)
       throw failure
     } finally {
       finishPresenceRecovery(payload.domain, recovery, recovered, restoringOwner, cancelled)
@@ -1117,7 +1220,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     allocateTextMessage: async (payload) => {
       const binding = await requirePageBinding(payload, true)
       await revalidateBinding(binding, payload)
-      await waitForLivePresence(payload.domain)
+      await waitForLivePresence(payload.domain, binding)
       await revalidateBinding(binding, payload)
       const operationId = nanoid()
       return runAllocationOperation(
@@ -1129,7 +1232,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     allocateReactionMessage: async (payload) => {
       const binding = await requirePageBinding(payload, true)
       await revalidateBinding(binding, payload)
-      await waitForLivePresence(payload.domain)
+      await waitForLivePresence(payload.domain, binding)
       await revalidateBinding(binding, payload)
       const operationId = nanoid()
       return runAllocationOperation(
@@ -1141,7 +1244,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     sendChatMessage: async (payload) => {
       const binding = await requirePageBinding(payload, true)
       await revalidateBinding(binding, payload)
-      await waitForLivePresence(payload.domain)
+      await waitForLivePresence(payload.domain, binding)
       await revalidateBinding(binding, payload)
       const operationId = nanoid()
       const command = sessionDomain.command.SendChatMessageCommand({ operationId, ...payload })
