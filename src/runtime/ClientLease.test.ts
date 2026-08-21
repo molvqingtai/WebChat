@@ -251,11 +251,17 @@ const createTwoPageRecovery = async ({
   ownerSiteOrigin = domain,
   ownerJoinError,
   ownerJoinGate,
+  ownerRebindGate,
+  followerRebindGate,
+  holdOwnerLoad = true,
   stored = null
 }: {
   ownerSiteOrigin?: string
   ownerJoinError?: Error
   ownerJoinGate?: Promise<void>
+  ownerRebindGate?: Promise<void>
+  followerRebindGate?: Promise<void>
+  holdOwnerLoad?: boolean
   stored?: PresenceDomainRecord | null
 } = {}) => {
   vi.stubGlobal('document', {
@@ -281,7 +287,7 @@ const createTwoPageRecovery = async ({
       loadCount += 1
       if (loadCount === 1) {
         ownerLoadStarted.resolve()
-        await releaseOwnerLoad.promise
+        if (holdOwnerLoad) await releaseOwnerLoad.promise
       }
       return stored
     }),
@@ -306,7 +312,11 @@ const createTwoPageRecovery = async ({
       }
     },
     rebindPage: async (_tabId: number, pageId: string) => {
-      if (pageId === ownerPageId && ownerRecoveryStartedAt === 0) ownerRecoveryStartedAt = Date.now()
+      if (pageId === ownerPageId && ownerRecoveryStartedAt === 0) {
+        ownerRecoveryStartedAt = Date.now()
+      }
+      if (pageId === ownerPageId && ownerRebindGate) await ownerRebindGate
+      if (pageId === followerPageId && followerRebindGate) await followerRebindGate
       if (pageId === followerPageId) await ownerLoadStarted.promise
       await pages.get(pageId)?.client.rebind()
     },
@@ -337,8 +347,10 @@ const createTwoPageRecovery = async ({
   currentServer = second
   const automaticJoin = vi.spyOn(second, 'joinChatRoom')
   const restoring = restoreServerPageBindings(second)
-  await ownerLoadStarted.promise
-  await vi.waitFor(() => expect(automaticJoin).toHaveBeenCalledTimes(2))
+  if (!ownerRebindGate) {
+    await ownerLoadStarted.promise
+    await vi.waitFor(() => expect(automaticJoin).toHaveBeenCalledTimes(2))
+  }
 
   return {
     automaticJoin,
@@ -350,7 +362,9 @@ const createTwoPageRecovery = async ({
     },
     follower,
     owner,
-    ownerRecoveryStartedAt,
+    get ownerRecoveryStartedAt() {
+      return ownerRecoveryStartedAt
+    },
     presenceStore,
     releaseOwnerLoad,
     restoring,
@@ -685,6 +699,57 @@ describe('ClientLease event-driven Runtime admission', () => {
       (await recovery.second.getSnapshot()).domains.find((item) => item.domain === domain)?.localSession
     ).toBeUndefined()
     expect(recovery.secondTransport.sendCalls).toHaveLength(0)
+    await recovery.dispose()
+  })
+
+  it('keeps a preclaim timeout on its exact retained Page until its late automatic join observes it', async () => {
+    const ownerRebindGate = deferred<void>()
+    const followerRebindGate = deferred<void>()
+    const recovery = await createTwoPageRecovery({
+      ownerRebindGate: ownerRebindGate.promise,
+      followerRebindGate: followerRebindGate.promise,
+      holdOwnerLoad: false
+    })
+    const action = recovery.owner.chat.sendMessage({
+      type: MESSAGE_TYPE.TEXT,
+      body: 'must not escape the preclaim timeout',
+      mentions: []
+    })
+    const actionOutcome = action.catch((error) => error)
+
+    for (let turn = 0; turn < 20 && recovery.ownerRecoveryStartedAt === 0; turn += 1) {
+      await Promise.resolve()
+    }
+    expect(recovery.ownerRecoveryStartedAt).not.toBe(0)
+    const remainingDeadline = 10_000 - (Date.now() - recovery.ownerRecoveryStartedAt)
+    expect(remainingDeadline).toBeGreaterThan(0)
+    await vi.advanceTimersByTimeAsync(remainingDeadline)
+
+    expect(recovery.automaticJoin).not.toHaveBeenCalled()
+    expect(recovery.presenceStore.load).not.toHaveBeenCalled()
+    expect(recovery.presenceStore.save).not.toHaveBeenCalled()
+    expect(recovery.secondTransport.joinCalls).toHaveLength(0)
+    expect(recovery.secondTransport.sendCalls).toHaveLength(0)
+
+    ownerRebindGate.resolve()
+    await vi.waitFor(() => expect(recovery.automaticJoin).toHaveBeenCalledOnce())
+    const ownerJoin = recovery.automaticJoin.mock.results[0]?.value as Promise<unknown>
+    for (let turn = 0; turn < 20; turn += 1) await Promise.resolve()
+    const timeout = await ownerJoin.catch((error) => error)
+
+    expect(timeout).toMatchObject({ message: 'Runtime current-domain recovery timed out' })
+    expect(recovery.presenceStore.load).not.toHaveBeenCalled()
+    expect(recovery.presenceStore.save).not.toHaveBeenCalled()
+    expect(recovery.secondTransport.joinCalls).toHaveLength(0)
+    expect(recovery.secondTransport.sendCalls).toHaveLength(0)
+    expect(
+      (await recovery.second.getSnapshot()).domains.find((item) => item.domain === domain)?.localSession
+    ).toBeUndefined()
+    await expect(actionOutcome).resolves.toBeInstanceOf(DOMException)
+
+    await recovery.owner.chat.joinRoom({ user, site })
+    expect(recovery.presenceStore.load).toHaveBeenCalledOnce()
+    expect(recovery.secondTransport.joinCalls.filter((roomId) => roomId === getChatRoomId(domain))).toHaveLength(1)
     await recovery.dispose()
   })
 

@@ -86,7 +86,10 @@ interface PresenceRecovery {
   resolve: () => void
   reject: (error: Error) => void
   settled: boolean
+  cancelled?: boolean
   failure?: Error
+  /** A timed-out retained Page must observe its own terminal recovery before a new lifecycle may start. */
+  tombstone?: boolean
   timeout?: ReturnType<typeof globalThis.setTimeout>
 }
 
@@ -415,11 +418,18 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     return recovery
   }
 
-  const settlePresenceRecovery = (domain: string, recovery: PresenceRecovery, error?: Error) => {
+  const settlePresenceRecovery = (
+    domain: string,
+    recovery: PresenceRecovery,
+    error?: Error,
+    { cancelled = false, retainTombstone = false }: { cancelled?: boolean; retainTombstone?: boolean } = {}
+  ) => {
     if (presenceRecoveries.get(domain) !== recovery || recovery.settled) return
     recovery.settled = true
     if (error) recovery.failure = error
-    presenceRecoveries.delete(domain)
+    if (cancelled) recovery.cancelled = true
+    if (retainTombstone) recovery.tombstone = true
+    else presenceRecoveries.delete(domain)
     if (recovery.timeout) globalThis.clearTimeout(recovery.timeout)
     // A terminal restoring-owner failure must retire the exact provisional attempt as well as the
     // shared waiter promise. The Connection release path fences late room completions by identity.
@@ -463,7 +473,9 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     presenceRecoveries.set(domain, recovery)
     if (awaitRestoringJoin) {
       recovery.timeout = globalThis.setTimeout(() => {
-        settlePresenceRecovery(domain, recovery, new Error('Runtime current-domain recovery timed out'))
+        settlePresenceRecovery(domain, recovery, new Error('Runtime current-domain recovery timed out'), {
+          retainTombstone: recovery.awaitingRestoringJoin && !recovery.restoringOwnerInFlight
+        })
       }, PRESENCE_RECOVERY_TIMEOUT_MS)
     }
     void promise.catch(() => {})
@@ -487,6 +499,11 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     ) {
       throw new Error('Runtime current-domain recovery owner is no longer current')
     }
+    if (recovery.tombstone) {
+      presenceRecoveries.delete(binding.domain)
+      recovery.tombstone = false
+      throw recovery.failure ?? new Error('Runtime current-domain recovery timed out')
+    }
     recovery.awaitingRestoringJoin = false
     recovery.restoringOwnerInFlight = true
     return recovery
@@ -496,11 +513,17 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     domain: string,
     recovery: PresenceRecovery,
     succeeded: boolean,
-    restoringOwner = false
+    restoringOwner = false,
+    cancelled = false
   ) => {
     if (presenceRecoveries.get(domain) !== recovery) return
     if (recovery.restoringOwnerInFlight) {
       if (!restoringOwner) return
+      if (cancelled) {
+        recovery.restoringOwnerInFlight = false
+        settlePresenceRecovery(domain, recovery, undefined, { cancelled: true })
+        return
+      }
       if (!succeeded) {
         failPresenceRecovery(
           domain,
@@ -522,8 +545,14 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     settlePresenceRecovery(domain, recovery)
   }
 
-  const failPresenceRecovery = (domain: string, recovery: PresenceRecovery, error: Error) =>
+  const failPresenceRecovery = (domain: string, recovery: PresenceRecovery, error: Error) => {
+    if (recovery.tombstone) {
+      if (presenceRecoveries.get(domain) === recovery) presenceRecoveries.delete(domain)
+      recovery.tombstone = false
+      return
+    }
     settlePresenceRecovery(domain, recovery, error)
+  }
 
   const operationCancelled = () => new DOMException('Runtime presence is completing its final release', 'AbortError')
 
@@ -546,6 +575,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       return
     }
     await recovery.promise
+    if (recovery.cancelled) throw operationCancelled()
     if (
       disposed ||
       store.query(sessionDomain.query.FinalizingPresenceQuery(domain)) ||
@@ -881,6 +911,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     // Typed ChatUser/ChatSite values pass through unchanged; the application-to-protocol
     // mapping already happened before the value was narrowed to the schema-owned type.
     let recovered = false
+    let cancelled = false
     try {
       const connect = () => {
         const operationId = nanoid()
@@ -936,7 +967,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
         const connected = await connect()
         assertPresenceRecoveryActive(payload.domain, recovery)
         if (!connected) {
-          if (restoringOwner) throw new Error('Runtime current-domain recovery did not connect')
+          if (restoringOwner) cancelled = true
           return null
         }
         if (revalidate) await revalidate()
@@ -949,7 +980,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       if (restoringOwner) failPresenceRecovery(payload.domain, recovery, failure)
       throw failure
     } finally {
-      finishPresenceRecovery(payload.domain, recovery, recovered, restoringOwner)
+      finishPresenceRecovery(payload.domain, recovery, recovered, restoringOwner, cancelled)
     }
   }
 
@@ -1038,7 +1069,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
         if (!restoringRecovery && recovery.restoringOwnerInFlight) {
           await recovery.promise
           await revalidateBinding(binding, payload)
-          return snapshot()
+          return recovery.cancelled ? null : snapshot()
         }
         const validateStored = restoringRecovery
           ? async (stored: PresenceDomainRecord | null) => {
