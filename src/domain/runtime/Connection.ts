@@ -6,6 +6,7 @@ import DeliveryDomain from '@/domain/runtime/Delivery'
 import SessionDomain, { type SessionPreparationMode } from '@/domain/runtime/Session'
 import WireDomain from '@/domain/runtime/Wire'
 import WorldDomain, { getWorldRoomId } from '@/domain/runtime/World'
+import { CommitCapabilityExtern } from '@/domain/runtime/externs/CommitCapability'
 import type { ChatSite, ChatUser } from '@/protocol'
 import type { RuntimeSnapshot } from '@/runtime/Contract'
 
@@ -23,6 +24,8 @@ interface JoinAttempt {
   generation: number
   roomId?: string
   joinRequestId?: string
+  joinTerminal?: boolean
+  commitCapabilityId?: string
   /** Preserved typed join input so a failed initial attempt can retry as a fresh generation. */
   user?: ChatUser
   site?: ChatSite
@@ -78,6 +81,7 @@ const ConnectionDomain = Remesh.domain({
     const worldDomain = domain.getDomain(WorldDomain({ sessionId: options.worldSessionId }))
     const deliveryDomain = domain.getDomain(DeliveryDomain())
     const historyDomain = domain.getDomain(HistoryDomain())
+    const commitCapability = domain.getExtern(CommitCapabilityExtern)
 
     const AttemptsState = domain.state<JoinAttempt[]>({ name: 'Connection.AttemptsState', default: [] })
     const GenerationsState = domain.state<DomainGeneration[]>({
@@ -168,6 +172,7 @@ const ConnectionDomain = Remesh.domain({
         domain: string
         user?: ChatUser
         site?: ChatSite
+        commitCapabilityId?: string
       }
     ) => {
       const attempts = get(AttemptsState())
@@ -176,6 +181,7 @@ const ConnectionDomain = Remesh.domain({
       const generations = get(GenerationsState())
       const generation = (generations.find((item) => item.domain === payload.domain)?.generation ?? 0) + 1
       if (!Number.isSafeInteger(generation)) {
+        if (payload.commitCapabilityId) commitCapability.revoke(payload.commitCapabilityId)
         return payload.operationId
           ? OperationFailedEvent({
               operationId: payload.operationId,
@@ -190,8 +196,10 @@ const ConnectionDomain = Remesh.domain({
         domain: payload.domain,
         generation,
         user: payload.user,
-        site: payload.site
+        site: payload.site,
+        commitCapabilityId: payload.commitCapabilityId
       }
+      if (currentAttempt?.commitCapabilityId) commitCapability.revoke(currentAttempt.commitCapabilityId)
       return [
         GenerationsState().new(
           replaceBy(generations, (item) => item.domain === payload.domain, { domain: payload.domain, generation })
@@ -202,6 +210,14 @@ const ConnectionDomain = Remesh.domain({
           : []),
         ...(currentAttempt ? [sessionDomain.command.AbortPreparedCommand(currentAttempt.attemptId)] : []),
         ...(currentAttempt ? [worldDomain.command.AbortStagedCommand(currentAttempt.attemptId)] : []),
+        ...(currentAttempt?.joinRequestId
+          ? [
+              wireDomain.command.AbortJoinRoomsCommand({
+                requestId: currentAttempt.joinRequestId,
+                error: new Error('Domain join superseded')
+              })
+            ]
+          : []),
         ...(currentAttempt && !committed ? [historyDomain.command.ReleaseDomainCommand(payload.domain)] : []),
         ...(currentAttempt?.operationId
           ? [
@@ -225,7 +241,10 @@ const ConnectionDomain = Remesh.domain({
 
     const JoinDomainCommand = domain.command({
       name: 'Connection.JoinDomainCommand',
-      impl: ({ get }, payload: { operationId: string; domain: string; user: ChatUser; site: ChatSite }) =>
+      impl: (
+        { get },
+        payload: { operationId: string; domain: string; user: ChatUser; site: ChatSite; commitCapabilityId?: string }
+      ) =>
         get(sessionDomain.query.ReleasingDomainQuery(payload.domain))
           ? OperationFailedEvent({
               operationId: payload.operationId,
@@ -237,7 +256,8 @@ const ConnectionDomain = Remesh.domain({
               mode: 'join',
               domain: payload.domain,
               user: payload.user,
-              site: payload.site
+              site: payload.site,
+              commitCapabilityId: payload.commitCapabilityId
             })
     })
 
@@ -287,7 +307,10 @@ const ConnectionDomain = Remesh.domain({
 
     const ReconnectDomainCommand = domain.command({
       name: 'Connection.ReconnectDomainCommand',
-      impl: ({ get }, payload: { operationId: string; domain: string; user?: ChatUser; site?: ChatSite }) => {
+      impl: (
+        { get },
+        payload: { operationId: string; domain: string; user?: ChatUser; site?: ChatSite; commitCapabilityId?: string }
+      ) => {
         if (get(sessionDomain.query.ReleasingDomainQuery(payload.domain))) {
           return OperationFailedEvent({
             operationId: payload.operationId,
@@ -316,7 +339,8 @@ const ConnectionDomain = Remesh.domain({
             mode: 'reconnect',
             domain: payload.domain,
             user: runtime?.user ?? payload.user,
-            site: runtime?.site ?? payload.site
+            site: runtime?.site ?? payload.site,
+            commitCapabilityId: payload.commitCapabilityId
           })
         ]
       }
@@ -392,7 +416,17 @@ const ConnectionDomain = Remesh.domain({
       name: 'Connection.RoomsJoinedCommand',
       impl: ({ get }, payload: { requestId: string; roomIds: string[] }) => {
         const attempt = get(AttemptsState()).find((item) => item.joinRequestId === payload.requestId)
-        if (attempt) return sessionDomain.command.PublishPreparedCommand(attempt.attemptId)
+        if (attempt) {
+          return [
+            AttemptsState().new(
+              replaceBy(get(AttemptsState()), (item) => item.attemptId === attempt.attemptId, {
+                ...attempt,
+                joinTerminal: true
+              })
+            ),
+            sessionDomain.command.PublishPreparedCommand(attempt.attemptId)
+          ]
+        }
         const recovery = get(WorldRecoveryAttemptState())
         return recovery?.joinRequestId === payload.requestId
           ? worldDomain.command.PublishRecoveryCommand(recovery.requestId)
@@ -404,7 +438,17 @@ const ConnectionDomain = Remesh.domain({
       name: 'Connection.RoomsJoinFailedCommand',
       impl: ({ get }, payload: { requestId: string; error: Error }) => {
         const attempt = get(AttemptsState()).find((item) => item.joinRequestId === payload.requestId)
-        if (attempt) return AbortAttemptCommand({ attemptId: attempt.attemptId, error: payload.error })
+        if (attempt) {
+          return [
+            AttemptsState().new(
+              replaceBy(get(AttemptsState()), (item) => item.attemptId === attempt.attemptId, {
+                ...attempt,
+                joinTerminal: true
+              })
+            ),
+            AbortAttemptCommand({ attemptId: attempt.attemptId, error: payload.error })
+          ]
+        }
         const recovery = get(WorldRecoveryAttemptState())
         return recovery?.joinRequestId === payload.requestId
           ? AbortWorldRecoveryCommand({ requestId: recovery.requestId, error: payload.error })
@@ -428,6 +472,12 @@ const ConnectionDomain = Remesh.domain({
         if (!attempt || !get(lifecycleDomain.query.DomainLeaseQuery(attempt.domain))) {
           return null
         }
+        if (attempt.commitCapabilityId && !commitCapability.consume(attempt.commitCapabilityId)) {
+          return AbortAttemptCommand({
+            attemptId: attempt.attemptId,
+            error: new Error('Runtime binding commit capability was revoked')
+          })
+        }
         return [
           AttemptsState().new(attempts.filter((item) => item.attemptId !== attempt.attemptId)),
           sessionDomain.command.CommitPreparedCommand(attempt.attemptId),
@@ -446,6 +496,7 @@ const ConnectionDomain = Remesh.domain({
         const attempts = get(AttemptsState())
         const attempt = attempts.find((item) => item.attemptId === payload.attemptId)
         if (!attempt) return null
+        if (attempt.commitCapabilityId) commitCapability.revoke(attempt.commitCapabilityId)
         const committed = get(sessionDomain.query.DomainsQuery()).filter(
           (item) => !get(sessionDomain.query.ReleasingDomainQuery(item.domain))
         )
@@ -456,7 +507,12 @@ const ConnectionDomain = Remesh.domain({
           ...(!hasCommittedDomain ? [historyDomain.command.ReleaseDomainCommand(attempt.domain)] : []),
           sessionDomain.command.AbortPreparedCommand(attempt.attemptId),
           worldDomain.command.AbortStagedCommand(attempt.attemptId),
-          ...(attempt.roomId && (attempt.mode !== 'join' || !committed.some((item) => item.domain === attempt.domain))
+          ...(attempt.joinRequestId
+            ? [wireDomain.command.AbortJoinRoomsCommand({ requestId: attempt.joinRequestId, error: payload.error })]
+            : []),
+          ...(attempt.roomId &&
+          attempt.joinTerminal &&
+          (attempt.mode !== 'join' || !committed.some((item) => item.domain === attempt.domain))
             ? [wireDomain.command.LeaveRoomCommand({ roomId: attempt.roomId, preservePending: false })]
             : []),
           ...(committed.length === 0 && !hasOtherAttempt && !get(worldDomain.query.WorldDemandQuery(attempt.attemptId))
@@ -756,6 +812,7 @@ const ConnectionDomain = Remesh.domain({
         const generations = get(GenerationsState())
         const generation = (generations.find((item) => item.domain === releasedDomain)?.generation ?? 0) + 1
         const remainingAttempts = attempts.filter((item) => item.domain !== releasedDomain)
+        if (attempt?.commitCapabilityId) commitCapability.revoke(attempt.commitCapabilityId)
         return [
           AttemptsState().new(remainingAttempts),
           ...(Number.isSafeInteger(generation)
@@ -771,7 +828,15 @@ const ConnectionDomain = Remesh.domain({
           ...(attempt
             ? [
                 sessionDomain.command.AbortPreparedCommand(attempt.attemptId),
-                worldDomain.command.AbortStagedCommand(attempt.attemptId)
+                worldDomain.command.AbortStagedCommand(attempt.attemptId),
+                ...(attempt.joinRequestId
+                  ? [
+                      wireDomain.command.AbortJoinRoomsCommand({
+                        requestId: attempt.joinRequestId,
+                        error: new Error('Domain released during join')
+                      })
+                    ]
+                  : [])
               ]
             : []),
           sessionDomain.command.BeginReleaseDomainCommand(releasedDomain),

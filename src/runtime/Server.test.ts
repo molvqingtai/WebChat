@@ -176,15 +176,19 @@ describe('RuntimeServer production Page admission and restart recovery', () => {
     }
     const server = createServer({ transport: fake.transport, codec: jsonCodec, admission })
     let bindingId: string | undefined
+    let bindingRevision: number | undefined
     let bindingSequence = 0
     const attach = async () => {
       bindingId = `binding-${++bindingSequence}`
-      return server.attachPage({ domain: DOMAIN, pageId, bindingId, caller: { tab: tabs.get(7) } })
+      const snapshot = await server.attachPage({ domain: DOMAIN, pageId, bindingId, caller: { tab: tabs.get(7) } })
+      bindingRevision = snapshot.bindingRevision
+      return snapshot
     }
     const call = async () => ({
       pageId,
       runtimeHostId: (await server.getSnapshot()).hostId,
       bindingId,
+      bindingRevision,
       caller: { tab: tabs.get(7) }
     })
     return { admission, attach, call, fake, rebindPage, server, storageState, tabs }
@@ -219,7 +223,7 @@ describe('RuntimeServer production Page admission and restart recovery', () => {
     await fixture.attach()
     const staleCall = await fixture.call()
     const replacementBindingId = 'binding-replacement'
-    await fixture.server.attachPage({
+    const replacementSnapshot = await fixture.server.attachPage({
       domain: DOMAIN,
       pageId,
       bindingId: replacementBindingId,
@@ -227,7 +231,8 @@ describe('RuntimeServer production Page admission and restart recovery', () => {
     })
     const replacementCall = {
       ...staleCall,
-      bindingId: replacementBindingId
+      bindingId: replacementBindingId,
+      bindingRevision: replacementSnapshot.bindingRevision
     }
 
     await expect(fixture.server.onSessionEvent(staleCall, async () => {})).rejects.toThrow(
@@ -239,6 +244,31 @@ describe('RuntimeServer production Page admission and restart recovery', () => {
     ).resolves.toMatchObject({
       domains: [expect.objectContaining({ chatRoomJoined: true })]
     })
+    disposeServer(fixture.server)
+  })
+
+  it('revokes B1 commit authority before a same-tuple B2 can replace it', async () => {
+    const fixture = createAdmissionFixture()
+    fixture.fake.makeNotReady()
+    await fixture.attach()
+    const firstCall = await fixture.call()
+    await fixture.server.onSessionEvent(firstCall, async () => {})
+    const firstJoin = fixture.server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE, ...firstCall })
+    await fixture.fake.waitForDesiredRooms(2)
+
+    const replacement = await fixture.server.attachPage({
+      domain: DOMAIN,
+      pageId,
+      bindingId: 'binding-b2',
+      caller: { tab: fixture.tabs.get(7) }
+    })
+    expect(replacement.bindingRevision).not.toBe(firstCall.bindingRevision)
+    fixture.fake.open()
+
+    await expect(firstJoin).rejects.toThrow('commit capability was revoked')
+    expect((await fixture.server.getSnapshot()).domains).toEqual([
+      expect.objectContaining({ domain: DOMAIN, chatRoomJoined: false })
+    ])
     disposeServer(fixture.server)
   })
 
@@ -357,7 +387,7 @@ describe('RuntimeServer production Page admission and restart recovery', () => {
       const successorPageId = 'successor-page'
       const successorTab = first.tabs.get(8)
       const successorBindingId = 'binding-successor'
-      await second.attachPage({
+      const successorSnapshot = await second.attachPage({
         domain: DOMAIN,
         pageId: successorPageId,
         bindingId: successorBindingId,
@@ -367,6 +397,7 @@ describe('RuntimeServer production Page admission and restart recovery', () => {
         pageId: successorPageId,
         runtimeHostId: (await second.getSnapshot()).hostId,
         bindingId: successorBindingId,
+        bindingRevision: successorSnapshot.bindingRevision,
         caller: { tab: successorTab }
       }
       await second.onSessionEvent(successorCall, async () => {})
@@ -430,8 +461,9 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
   }[] = []
   const pendingJoins = new Map<
     string,
-    { promise: Promise<void>; resolve: () => void; reject: (error: Error) => void }
+    { promise: Promise<void>; resolve: () => void; reject: (error: Error) => void; joinId?: string }
   >()
+  const joinOwners = new Map<string, string | undefined>()
   const desiredWaiters: { count: number; resolve: () => void }[] = []
   const joinCallWaiters: { count: number; resolve: () => void }[] = []
   const peersByRoom = new Map<string, Set<string>>()
@@ -480,13 +512,14 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
 
   const transport: RoomTransport = {
     peerIdOf: (roomId) => (roomId === getWorldRoomId() ? 'local-peer' : `local-peer:${roomId}`),
-    join: (roomId) => {
+    join: (roomId, options) => {
       joinCalls.push(roomId)
       resolveJoinCallWaiters()
       desired.add(roomId)
       resolveDesiredWaiters()
       if (failedJoins.delete(roomId)) return Promise.reject(new Error(`Room "${roomId}" join failed`))
       if (joined.has(roomId)) return Promise.resolve()
+      if (!joinOwners.has(roomId)) joinOwners.set(roomId, options?.joinId)
       if (physicalReady) {
         joined.add(roomId)
         physicalJoinCalls.push(roomId)
@@ -497,14 +530,26 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
         })
         return Promise.resolve()
       }
-      const pending = pendingJoins.get(roomId) ?? createPendingJoin()
+      const pending = pendingJoins.get(roomId) ?? { ...createPendingJoin(), joinId: options?.joinId }
       pendingJoins.set(roomId, pending)
       return pending.promise
+    },
+    abortJoin: async (roomId, joinId) => {
+      const pending = pendingJoins.get(roomId)
+      if (joinOwners.get(roomId) !== joinId) return new Promise<void>(() => {})
+      desired.delete(roomId)
+      joined.delete(roomId)
+      joinOwners.delete(roomId)
+      if (pending?.joinId === joinId) {
+        pendingJoins.delete(roomId)
+        pending.reject(new Error(`Room "${roomId}" join cancelled`))
+      }
     },
     leave: (roomId, options) => {
       operationLog.push(`leave:${roomId}`)
       desired.delete(roomId)
       joined.delete(roomId)
+      joinOwners.delete(roomId)
       pendingJoins.get(roomId)?.reject(new Error(`Room "${roomId}" join cancelled`))
       pendingJoins.delete(roomId)
       const failure = failedLeaves.get(roomId)
@@ -570,6 +615,7 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
       joined.clear()
       pendingJoins.forEach((pending, roomId) => pending.reject(new Error(`Room "${roomId}" join cancelled`)))
       pendingJoins.clear()
+      joinOwners.clear()
       sendGates.forEach(({ release }) => release())
       sendGates.clear()
       desiredWaiters.splice(0).forEach((waiter) => waiter.resolve())

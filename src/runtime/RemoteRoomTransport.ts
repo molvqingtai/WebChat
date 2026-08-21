@@ -73,20 +73,27 @@ export class RemoteRoomTransport implements RoomTransport {
   }
 
   peerIdOf = (roomId: string) => this.rooms.get(roomId)?.peerId ?? ''
-  join = async (roomId: string) => {
+  join = async (roomId: string, options?: { joinId?: string }) => {
     const generation = this.generation
     const handle = nanoid()
     const admitted =
       this.acceptingGeneration === generation && !this.rooms.has(roomId)
-        ? this.service.join(roomId, handle, this.admission)
+        ? this.service.join(roomId, handle, this.admission, options?.joinId)
         : null
     await this.binding
     if (!this.isCurrent(generation)) throw new Error('Room transport generation is no longer current')
     const existing = this.rooms.get(roomId)
     if (existing) return
-    const room = await (admitted ?? this.service.join(roomId, handle, this.admission))
+    const room = await (admitted ?? this.service.join(roomId, handle, this.admission, options?.joinId))
     if (!this.isCurrent(generation)) throw new Error('Room transport generation is no longer current')
     this.rooms.set(roomId, room)
+  }
+  abortJoin = async (roomId: string, joinId: string) => {
+    const generation = this.generation
+    await this.binding
+    if (!this.isCurrent(generation)) return new Promise<void>(() => {})
+    if (!this.service.abortJoin) return new Promise<void>(() => {})
+    await this.service.abortJoin(roomId, joinId)
   }
   leave = async (roomId: string, options?: { diagnosticOnly?: boolean }) => {
     const generation = this.generation

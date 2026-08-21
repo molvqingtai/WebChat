@@ -83,7 +83,12 @@ export const registerPage: RuntimeCoordinator['registerPage'] = async (payload):
   if (!server) throw new Error('Logical Runtime background host is unavailable')
   const bindingId = nanoid()
   const snapshot = await server.attachPage({ ...payload, bindingId })
-  return { snapshot, bindingId, ...(payload.rebindId ? { rebindId: payload.rebindId } : {}) }
+  return {
+    snapshot,
+    bindingId,
+    ...(snapshot.bindingRevision === undefined ? {} : { bindingRevision: snapshot.bindingRevision }),
+    ...(payload.rebindId ? { rebindId: payload.rebindId } : {})
+  }
 }
 
 /** Fresh Background startup restores only validated Page rebind targets, never old callback closures or actions. */

@@ -2,7 +2,7 @@ import { browser } from '#imports'
 import { defineProxy } from 'comctx'
 import { nanoid } from 'nanoid'
 import { InjectAdapter, ownInjectRejections } from '@/service/adapter/runtime'
-import type { RuntimeCoordinator, RuntimeServer, RuntimeSnapshot } from '@/runtime/Contract'
+import type { RuntimeCoordinator, RuntimePageCall, RuntimeServer, RuntimeSnapshot } from '@/runtime/Contract'
 import { COORDINATOR_NAMESPACE, RUNTIME_NAMESPACE_PREFIX } from '@/runtime/Contract'
 import { ClientLease } from '@/runtime/ClientLease'
 
@@ -31,12 +31,28 @@ const rawServer = injectServer(new InjectAdapter())
 const client = new ClientLease({ coordinator, pageId, domain: pageDomain })
 ownInjectRejections((error) => client.observeTransportRejection(error))
 
-const bindPage = <Payload extends object>(payload: Payload) => ({
-  ...payload,
-  pageId,
+export interface RuntimeBindingScope {
+  runtimeHostId?: string
+  bindingId?: string
+  bindingRevision?: number
+}
+
+const bindingScope = (): RuntimeBindingScope => ({
   runtimeHostId: client.runtimeHostId(),
-  bindingId: client.bindingId()
+  bindingId: client.bindingId(),
+  bindingRevision: client.bindingRevision()
 })
+
+const bindPage = <Payload extends object>(payload: Payload) => {
+  const supplied = payload as Payload & RuntimePageCall
+  return {
+    ...payload,
+    pageId,
+    runtimeHostId: supplied.runtimeHostId ?? client.runtimeHostId(),
+    bindingId: supplied.bindingId ?? client.bindingId(),
+    bindingRevision: supplied.bindingRevision ?? client.bindingRevision()
+  }
+}
 
 /** Every Page-facing Runtime call carries its current logical binding. Browser caller facts are added by Provider. */
 export const server: RuntimeServer = {
@@ -80,3 +96,4 @@ export const whenFailure = (callback: Parameters<typeof client.whenFailure>[0]) 
 export const initClient = (): Promise<RuntimeSnapshot | null> => client.init()
 export const detachClient = () => client.detach()
 export const getSnapshot = (): RuntimeSnapshot => client.snapshot()
+export const getBindingScope = (): RuntimeBindingScope => bindingScope()

@@ -7,6 +7,7 @@ import LifecycleDomain from '@/domain/runtime/Lifecycle'
 import SessionDomain, { getChatRoomId, type SessionOperationSucceeded } from '@/domain/runtime/Session'
 import WireDomain from '@/domain/runtime/Wire'
 import WorldDomain, { getWorldRoomId } from '@/domain/runtime/World'
+import { CommitCapabilityExtern } from '@/domain/runtime/externs/CommitCapability'
 import { ClockExtern, type Clock } from '@/domain/runtime/externs/Clock'
 import { IdentityExtern } from '@/domain/runtime/externs/Identity'
 import { PresenceStoreExtern, type PresenceStore } from '@/domain/runtime/externs/PresenceStore'
@@ -52,6 +53,8 @@ export interface ServerConfig {
 interface PageBinding {
   /** Immutable registration identity; browser tuple fields below are validation data only. */
   readonly id: string
+  readonly revision: number
+  readonly slot: BindingSlot
   tabId: number
   pageId: string
   domain: string
@@ -59,6 +62,13 @@ interface PageBinding {
   sessionGeneration: number | null
   rebind: PresencePhysical | null
   members: Set<PresenceMember>
+  capabilities: Set<string>
+}
+
+/** A browser tuple only locates a slot; the captured head object owns authority. */
+interface BindingSlot {
+  nextRevision: number
+  head: PageBinding | PresencePhysical | null
 }
 
 type LogicalTerminal = 'success' | 'null' | { error: Error }
@@ -77,6 +87,12 @@ interface PresencePhysical {
   readonly cohort: PresenceRecovery
   binding: PageBinding | null
   readonly rebindTarget: Pick<PageBinding, 'tabId' | 'pageId' | 'domain' | 'url'> | null
+  readonly slot: BindingSlot | null
+  readonly revision: number | null
+  requestId: string | null
+  readonly rooms: { roomId: string; generation: number }[]
+  issued: boolean
+  disposeObserver: (() => void) | null
   callbackPending: boolean
   readinessPending: boolean
   terminal: PhysicalTerminal | null
@@ -134,6 +150,32 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     ? createBoundedPresenceStore(config.presenceStore)
     : createMemoryPresenceStore()
   const worldSessionId = nanoid()
+  const commitCapabilities = new Map<
+    string,
+    {
+      binding: PageBinding | null
+      revision: number | null
+      operationId: string
+      state: 'live' | 'consumed' | 'revoked'
+    }
+  >()
+  const commitCapability = {
+    consume: (capabilityId: string) => {
+      const capability = commitCapabilities.get(capabilityId)
+      if (!capability || capability.state !== 'live') return false
+      capability.state = 'consumed'
+      capability.binding?.capabilities.delete(capabilityId)
+      commitCapabilities.delete(capabilityId)
+      return true
+    },
+    revoke: (capabilityId: string) => {
+      const capability = commitCapabilities.get(capabilityId)
+      if (!capability || capability.state !== 'live') return
+      capability.state = 'revoked'
+      capability.binding?.capabilities.delete(capabilityId)
+      commitCapabilities.delete(capabilityId)
+    }
+  }
   const connectionOptions = {
     hostId: nanoid(),
     worldSessionId
@@ -143,6 +185,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     externs: [
       ClockExtern.impl(clock),
       IdentityExtern.impl({ nextId: nanoid }),
+      CommitCapabilityExtern.impl(commitCapability),
       PresenceStoreExtern.impl(presenceStore),
       RoomTransportExtern.impl(config.transport),
       WireCodecExtern.impl(config.codec ?? NativeWireCodec),
@@ -172,6 +215,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   store.igniteDomain(connectionAction)
 
   const lifecycleDomain = store.getDomain(lifecycleAction)
+  const wireDomain = store.getDomain(wireAction)
   const deliveryDomain = store.getDomain(deliveryAction)
   const sessionDomain = store.getDomain(sessionAction)
   const worldDomain = store.getDomain(worldAction)
@@ -182,12 +226,36 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   let disposed = false
   const pageBindings = new Map<string, PageBinding>()
   const tabBindings = new Map<number, PageBinding>()
+  const bindingSlots = new Map<string, BindingSlot>()
   const rebindHints = new Map<number, PersistedPageBindings['pages'][number]>()
   const rebindOperations = new Map<string, PresencePhysical>()
   let bindingPersistTail: Promise<void> = Promise.resolve()
 
+  const slotKey = (tabId: number, pageId: string) => `${tabId}\u0000${pageId}`
+  const bindingSlot = (tabId: number, pageId: string) => {
+    const key = slotKey(tabId, pageId)
+    const current = bindingSlots.get(key)
+    if (current) return current
+    const slot: BindingSlot = { nextRevision: 1, head: null }
+    bindingSlots.set(key, slot)
+    return slot
+  }
+  const releaseSlot = (owner: PageBinding | PresencePhysical) => {
+    if (owner.slot?.head === owner) owner.slot.head = null
+  }
   const isCurrentBinding = (binding: PageBinding) =>
-    pageBindings.get(binding.pageId) === binding && tabBindings.get(binding.tabId) === binding
+    binding.slot.head === binding &&
+    pageBindings.get(binding.pageId) === binding &&
+    tabBindings.get(binding.tabId) === binding
+
+  const mintCommitCapability = (binding: PageBinding | null, operationId: string) => {
+    if (!binding) return undefined
+    if (!isCurrentBinding(binding)) throw new Error('Runtime Page binding is no longer current')
+    const capabilityId = nanoid()
+    commitCapabilities.set(capabilityId, { binding, revision: binding.revision, operationId, state: 'live' })
+    binding.capabilities.add(capabilityId)
+    return capabilityId
+  }
 
   const persistPageBindings = async () => {
     if (!config.admission) return
@@ -217,9 +285,11 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   }
 
   const removeBinding = async (binding: PageBinding) => {
-    if (!isCurrentBinding(binding)) return
-    pageBindings.delete(binding.pageId)
-    tabBindings.delete(binding.tabId)
+    if (pageBindings.get(binding.pageId) !== binding && tabBindings.get(binding.tabId) !== binding) return
+    if (pageBindings.get(binding.pageId) === binding) pageBindings.delete(binding.pageId)
+    if (tabBindings.get(binding.tabId) === binding) tabBindings.delete(binding.tabId)
+    ;[...binding.capabilities].forEach((capabilityId) => commitCapability.revoke(capabilityId))
+    releaseSlot(binding)
     binding.members.forEach((member) => {
       member.retired = true
       finishPresenceRecovery(member.action.cohort)
@@ -243,7 +313,9 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       !binding ||
       binding.tabId !== callerTabId ||
       payload.runtimeHostId !== snapshot().hostId ||
-      payload.bindingId !== binding.id
+      payload.bindingId !== binding.id ||
+      payload.bindingRevision !== binding.revision ||
+      !isCurrentBinding(binding)
     ) {
       throw new Error('Runtime Page binding is no longer current')
     }
@@ -303,16 +375,30 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     ) {
       throw new Error('Runtime Page rebind is no longer current')
     }
-    return {
+    const slot = bindingSlot(tabId!, payload.pageId)
+    let revision: number
+    if (rebind) {
+      if (rebind.slot !== slot || slot.head !== rebind || rebind.revision === null) {
+        throw new Error('Runtime Page rebind was superseded')
+      }
+      revision = rebind.revision
+    } else {
+      revision = slot.nextRevision++
+    }
+    const binding: PageBinding = {
       id: payload.bindingId,
+      revision,
+      slot,
       tabId: tabId!,
       pageId: payload.pageId,
       domain: payload.domain,
       url,
       sessionGeneration: null,
       rebind,
-      members: new Set<PresenceMember>()
+      members: new Set<PresenceMember>(),
+      capabilities: new Set<string>()
     }
+    return binding
   }
 
   const revalidateBinding = async (binding: PageBinding | null, payload: RuntimePageCall, requireSession = true) => {
@@ -325,14 +411,20 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   const installBinding = async (binding: PageBinding) => {
     const previousPage = pageBindings.get(binding.pageId)
     const previousTab = tabBindings.get(binding.tabId)
+    if (binding.rebind && binding.slot.head !== binding.rebind) return false
     if (previousPage) await removeBinding(previousPage)
     if (previousTab && previousTab !== previousPage) await removeBinding(previousTab)
+    if (binding.rebind && binding.slot.head !== binding.rebind) return false
+    // Replacement first revokes and retires its captured predecessor. Only then may B2 become
+    // the slot head, so a same-turn Connection completion sees revoke-or-consume, never a tuple.
+    binding.slot.head = binding
     rebindHints.delete(binding.tabId)
     pageBindings.set(binding.pageId, binding)
     tabBindings.set(binding.tabId, binding)
     if (binding.rebind) binding.rebind.binding = binding
     store.send(lifecycleDomain.command.AttachPageCommand({ domain: binding.domain, pageId: binding.pageId }))
     await persistPageBindings()
+    return isCurrentBinding(binding)
   }
 
   const createPresenceRecovery = (domain: string) => {
@@ -405,7 +497,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     }
     const current = presenceRecoveries.get(domain)
     if (current?.phase === 'closed') {
-      action.cleanupGate = current
+      action.cleanupGate = current ?? null
       return action
     }
     enrollAction(action, current ?? createPresenceRecovery(domain), binding)
@@ -424,13 +516,22 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     recovery: PresenceRecovery,
     binding: PageBinding | null,
     rebindTarget: PresencePhysical['rebindTarget'] = null,
-    includesReadiness = false
+    includesReadiness = false,
+    slot: BindingSlot | null = null,
+    revision: number | null = null,
+    rooms: { roomId: string; generation: number }[] = []
   ): PresencePhysical => {
     const physical: PresencePhysical = {
       id: nanoid(),
       cohort: recovery,
       binding,
       rebindTarget,
+      slot,
+      revision,
+      requestId: null,
+      rooms,
+      issued: false,
+      disposeObserver: null,
       callbackPending: includesReadiness,
       readinessPending: includesReadiness,
       terminal: null,
@@ -448,6 +549,8 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     if (physical.terminal) return
     physical.terminal = terminal
     physical.decremented = true
+    physical.disposeObserver?.()
+    physical.disposeObserver = null
     if (physical.callbackPending) {
       physical.callbackPending = false
       physical.cohort.callbacks -= 1
@@ -459,9 +562,55 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     finishPresenceRecovery(physical.cohort)
   }
 
+  const observeConnectionPhysical = (
+    recovery: PresenceRecovery,
+    binding: PageBinding | null,
+    action: PresenceAction,
+    operationId: string
+  ) => {
+    const requestId = `connection:join:${operationId}`
+    let physical: PresencePhysical | null = null
+    const isExactRooms = (physical: PresencePhysical, rooms: { roomId: string; generation: number }[]) =>
+      rooms.length === physical.rooms.length &&
+      rooms.every(
+        (room, index) =>
+          room.roomId === physical.rooms[index]?.roomId && room.generation === physical.rooms[index]?.generation
+      )
+    const dispose = () => {
+      requested.unsubscribe()
+      joined.unsubscribe()
+      failed.unsubscribe()
+    }
+    const requested = store.subscribeEvent(wireDomain.event.JoinRoomsRequestedEvent, (event) => {
+      if (event.requestId !== requestId || physical) return
+      // P exists only after this exact request entered Wire with its captured room generations.
+      physical = beginPresencePhysical(recovery, binding, null, false, null, null, event.rooms)
+      physical.requestId = requestId
+      physical.issued = true
+      physical.disposeObserver = dispose
+      action.physical = physical
+    })
+    const joined = store.subscribeEvent(wireDomain.event.RoomsJoinedEvent, (event) => {
+      const current = physical
+      if (!current || event.requestId !== requestId || !isExactRooms(current, event.rooms)) return
+      settlePresencePhysical(current, 'success')
+    })
+    const failed = store.subscribeEvent(wireDomain.event.RoomsJoinFailedEvent, (event) => {
+      const current = physical
+      if (!current || event.requestId !== requestId || !event.rooms || !isExactRooms(current, event.rooms)) return
+      settlePresencePhysical(current, 'failure')
+    })
+    // Before Q admission there is no P. Logical preflight failure may release only these
+    // observers, never manufacture or decrement a physical operation.
+    return () => {
+      if (!physical) dispose()
+    }
+  }
+
   const settlePresenceAction = (action: PresenceAction, terminal: LogicalTerminal) => {
     if (action.terminal) return
     action.terminal = terminal
+    if (action.member) action.member.observed = true
     const recovery = action.cohort
     if (recovery && action.automaticJoinPending) {
       action.automaticJoinPending = false
@@ -774,9 +923,6 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     return task
   }
 
-  /** One shared in-flight join settlement per domain: overlapping same-domain joins coalesce. */
-  const inFlightJoins = new Map<string, Promise<Awaited<ReturnType<typeof snapshot>> | null>>()
-
   const joinChatRoomSettled = async (
     payload: Parameters<RuntimeServer['joinChatRoom']>[0],
     binding: PageBinding | null,
@@ -791,19 +937,21 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
         const recovery = action.cohort
         if (!recovery) throw new Error('Runtime presence action has no recovery owner')
         const operationId = nanoid()
-        const physical = beginPresencePhysical(recovery, binding)
-        action.physical = physical
+        const commitCapabilityId = mintCommitCapability(binding, operationId)
+        const stopObserving = observeConnectionPhysical(recovery, binding, action, operationId)
         try {
           const connected = await runConnectionOperation(
             operationId,
-            connectionDomain.command.JoinDomainCommand({ operationId, ...payload }),
+            connectionDomain.command.JoinDomainCommand({ operationId, ...payload, commitCapabilityId }),
             () => true,
             () => false
           )
-          settlePresencePhysical(physical, connected ? 'success' : 'cancelled')
+          // OperationCancelled/timeout only settle the logical A. If the exact Q was issued,
+          // the retained observer waits for Wire's physical terminal before C can clean up.
+          stopObserving()
           return connected
         } catch (error) {
-          settlePresencePhysical(physical, 'failure')
+          stopObserving()
           throw error
         }
       }
@@ -853,6 +1001,27 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     }
   }
 
+  /** Finalizing leases share one fresh, post-release admission per domain. */
+  const inFlightJoins = new Map<string, Promise<Awaited<ReturnType<typeof snapshot>> | null>>()
+  const joinChatRoomCoalesced = (
+    payload: Parameters<RuntimeServer['joinChatRoom']>[0],
+    binding: PageBinding | null,
+    revalidate?: () => Promise<void>
+  ) => {
+    if (!store.query(sessionDomain.query.ReleasingDomainQuery(payload.domain))) {
+      return joinChatRoomSettled(payload, binding, revalidate)
+    }
+    const existing = inFlightJoins.get(payload.domain)
+    if (existing) return existing
+    const task = joinChatRoomSettled(payload, binding, revalidate)
+    inFlightJoins.set(payload.domain, task)
+    const release = () => {
+      if (inFlightJoins.get(payload.domain) === task) inFlightJoins.delete(payload.domain)
+    }
+    void task.then(release, release)
+    return task
+  }
+
   /** One shared in-flight reconnect settlement per domain: a concurrent refresh joins the whole
    * operation (destruction through the replacement commit/failure/cancel) instead of running a
    * second destructive reset against an in-flight replacement. */
@@ -891,9 +1060,12 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   const server: RuntimeServer = {
     attachPage: async (payload) => {
       const binding = await requireAttachBinding(payload)
-      if (binding) await installBinding(binding)
-      else store.send(lifecycleDomain.command.AttachPageCommand(payload))
-      return snapshot()
+      if (binding) {
+        if (!(await installBinding(binding))) throw new Error('Runtime Page binding was superseded during installation')
+      } else {
+        store.send(lifecycleDomain.command.AttachPageCommand(payload))
+      }
+      return binding ? { ...snapshot(), bindingRevision: binding.revision } : snapshot()
     },
     detachPage: async (payload) => {
       const binding = await requirePageBinding(payload, false)
@@ -905,26 +1077,11 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     },
     getSnapshot: async () => snapshot(),
     joinChatRoom: (payload) => {
-      const settle = (binding: PageBinding | null, revalidate?: () => Promise<void>) => {
-        // Overlapping same-domain joins observed while the domain's release is closing coalesce into
-        // one shared settlement; fresh cold joins keep the existing newest-generation supersession.
-        if (store.query(sessionDomain.query.ReleasingDomainQuery(payload.domain))) {
-          const existing = inFlightJoins.get(payload.domain)
-          if (existing) return existing
-          const task = joinChatRoomSettled(payload, binding, revalidate)
-          inFlightJoins.set(payload.domain, task)
-          const releaseJoin = () => {
-            if (inFlightJoins.get(payload.domain) === task) inFlightJoins.delete(payload.domain)
-          }
-          void task.then(releaseJoin, releaseJoin)
-          return task
-        }
-        return joinChatRoomSettled(payload, binding, revalidate)
-      }
-      if (!config.admission) return settle(null)
+      if (!config.admission) return joinChatRoomCoalesced(payload, null)
       return (async () => {
         const binding = await requirePageBinding(payload, true)
-        const result = await settle(binding, () => revalidateBinding(binding, payload))
+        const result = await joinChatRoomCoalesced(payload, binding, () => revalidateBinding(binding, payload))
+        if (result === null) return null
         await revalidateBinding(binding, payload)
         return result
       })()
@@ -973,9 +1130,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       await revalidateBinding(binding, payload)
       const operationId = nanoid()
       const command = sessionDomain.command.SendChatMessageCommand({ operationId, ...payload })
-      if (payload.event.type === MESSAGE_TYPE.TEXT) {
-        return runTextAcceptanceOperation(operationId, command)
-      }
+      if (payload.event.type === MESSAGE_TYPE.TEXT) return runTextAcceptanceOperation(operationId, command)
       await runSessionOperation(operationId, command, () => undefined)
       return payload.event
     },
@@ -1135,7 +1290,10 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     await Promise.all(
       [...rebindHints.values()].map(async (hint) => {
         const recovery = currentPresenceRecovery(hint.domain)
-        const physical = beginPresencePhysical(recovery, null, hint, true)
+        const slot = bindingSlot(hint.tabId, hint.pageId)
+        const revision = slot.nextRevision++
+        const physical = beginPresencePhysical(recovery, null, hint, true, slot, revision)
+        slot.head = physical
         rebindOperations.set(physical.id, physical)
         try {
           const outcome = await admission.rebindPage(hint.tabId, hint.pageId, physical.id)
@@ -1143,6 +1301,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
           settlePresencePhysical(physical, 'success')
         } catch (error) {
           settlePresencePhysical(physical, 'failure')
+          releaseSlot(physical)
           if (physical.binding) await removeBinding(physical.binding)
           console.error(error)
         } finally {

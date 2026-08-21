@@ -3,7 +3,9 @@ export interface RoomTransport {
   /** The current physical peer identity of the exact room's owner, or '' when the room has none. */
   readonly peerIdOf: (roomId: string) => string
   /** Resolves only after the provider has created the physical room. */
-  join: (roomId: string) => Promise<void>
+  join: (roomId: string, options?: { joinId?: string }) => Promise<void>
+  /** Resolves only after this exact pending provider join can no longer create or use its room. */
+  abortJoin?: (roomId: string, joinId: string) => Promise<void>
   leave: (roomId: string, options?: { diagnosticOnly?: boolean }) => void
   /**
    * Passes the selected targets to the provider directly; an omitted target means the provider's

@@ -23,6 +23,23 @@ beforeEach(() => vi.useFakeTimers())
 afterEach(() => vi.useRealTimers())
 
 describe('ClientLease event-driven Runtime admission', () => {
+  it('starts every readiness owner and publishes ready only after every owner settles', async () => {
+    const registerPage = vi.fn<RuntimeCoordinator['registerPage']>().mockResolvedValue(registration())
+    const client = new ClientLease({ coordinator: coordinatorWith(registerPage), pageId, domain })
+    const failure = new Error('session registration failed')
+    let worldStarted = false
+    client.whenReady(() => {
+      throw failure
+    })
+    client.whenReady(async () => {
+      worldStarted = true
+    })
+
+    await expect(client.init()).rejects.toBe(failure)
+    expect(worldStarted).toBe(true)
+    expect(() => client.snapshot()).not.toThrow()
+  })
+
   it('initializes once and never starts a Page watchdog', async () => {
     const registerPage = vi.fn<RuntimeCoordinator['registerPage']>().mockResolvedValue(registration())
     const interval = vi.spyOn(globalThis, 'setInterval')

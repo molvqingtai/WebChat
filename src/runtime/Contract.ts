@@ -40,6 +40,9 @@ export interface RuntimeSnapshot {
   world: WorldSnapshot
 }
 
+/** Registration-only extension of the private Runtime snapshot. */
+export type RuntimeAttachmentSnapshot = RuntimeSnapshot & { bindingRevision?: number }
+
 /** Browser-delivery facts replace all Page-provided caller claims at the provider boundary. */
 export interface RuntimeCaller {
   tab?: RuntimeTab
@@ -55,6 +58,8 @@ export interface RuntimePageCall {
   caller?: RuntimeCaller
   /** Service-private immutable identity of the Page binding that issued this call. */
   bindingId?: string
+  /** Server-issued volatile incarnation paired with bindingId for exact Page ownership. */
+  bindingRevision?: number
   /**
    * Service-private correlation for one Background-initiated Page rebind. It is never attached
    * to business Runtime calls or peer protocol frames.
@@ -152,7 +157,7 @@ export interface RuntimeErrorEvent {
 }
 
 export interface RuntimeServer {
-  attachPage: (payload: { domain: string; pageId: string } & RuntimePageCall) => Promise<RuntimeSnapshot>
+  attachPage: (payload: { domain: string; pageId: string } & RuntimePageCall) => Promise<RuntimeAttachmentSnapshot>
   detachPage: (payload: { domain: string; pageId: string } & RuntimePageCall) => Promise<void>
   getSnapshot: () => Promise<RuntimeSnapshot>
   joinChatRoom: (
@@ -222,6 +227,8 @@ export interface RuntimePageRegistration {
   failures?: RuntimeErrorEvent[]
   /** Returned only by registration and retained by the Page facade for private call fencing. */
   bindingId?: string
+  /** Returned only to the initiating private registration response. */
+  bindingRevision?: number
   /** Echoed only to the initiating private rebind control-plane request. */
   rebindId?: string
 }

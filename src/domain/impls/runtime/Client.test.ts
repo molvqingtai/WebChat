@@ -32,6 +32,7 @@ vi.mock('@/runtime/ClientLease', () => ({
   ClientLease: class {
     runtimeHostId = () => 'host-a'
     bindingId = () => 'binding-a'
+    bindingRevision = () => 1
     whenReady = () => () => {}
     whenHostPhase = () => () => {}
     whenFailure = () => () => {}
@@ -83,7 +84,8 @@ describe('Page Runtime rebind ingress', () => {
       domain: 'https://example.com',
       pageId: 'page-a',
       runtimeHostId: 'host-a',
-      bindingId: 'binding-a'
+      bindingId: 'binding-a',
+      bindingRevision: 1
     })
   })
 })

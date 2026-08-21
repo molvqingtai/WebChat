@@ -223,6 +223,38 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers())
 
 describe('Artico RoomTransport', () => {
+  it('returns an exact pending-H receipt only after fencing the old peer from a late open', async () => {
+    fixture.peerStates.push('connecting')
+    const transport = createRoomTransport()
+    const joining = transport.join('room-a', { joinId: 'h-1' })
+
+    await transport.abortJoin!('room-a', 'h-1')
+    await expect(joining).rejects.toThrow('join cancelled')
+    fixture.peers[0]?.emit('open')
+
+    expect(fixture.peers[0]?.closed).toBe(true)
+    expect(fixture.rooms.has('room-a')).toBe(false)
+    transport.dispose()
+  })
+
+  it('keeps an exact H occupied when an applicable close throws', async () => {
+    fixture.peerStates.push('connecting')
+    const transport = createRoomTransport()
+    void transport.join('room-a', { joinId: 'h-1' }).catch(() => {})
+    fixture.closeShouldThrow = () => new Error('close failed')
+    let settled = false
+    void transport.abortJoin!('room-a', 'h-1').then(() => {
+      settled = true
+    })
+    await Promise.resolve()
+    fixture.peers[0]?.emit('open')
+    await Promise.resolve()
+
+    expect(settled).toBe(false)
+    expect(fixture.rooms.has('room-a')).toBe(false)
+    transport.dispose()
+  })
+
   it('uses one scoped peer and the fixed WebChat signaling endpoint per room', async () => {
     const transport = createRoomTransport()
 

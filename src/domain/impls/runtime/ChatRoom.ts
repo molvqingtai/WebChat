@@ -31,6 +31,7 @@ import type {
   RuntimeSessionSnapshot,
   RuntimeSnapshot
 } from '@/runtime/Contract'
+import type { RuntimeBindingScope } from '@/domain/impls/runtime/Client'
 
 export interface ChatRoomDependencies {
   server: RuntimeServer
@@ -38,7 +39,7 @@ export interface ChatRoomDependencies {
   pageDomain: string
   pageId: string
   getSnapshot: () => RuntimeSnapshot
-  whenReady: (callback: () => void | Promise<void>) => Unsubscribe
+  whenReady: (callback: (activation?: RuntimeBindingScope) => void | Promise<void>) => Unsubscribe
 }
 
 type RuntimeMessageStore = MessageStore & {
@@ -50,6 +51,7 @@ type RegistrationKey = 'inbound' | 'session' | 'error' | 'history' | 'historyFee
 interface RuntimeAttachment {
   readyGeneration: number
   hostId: string
+  scope: RuntimeBindingScope
   controller: AbortController
   ownerAttemptId: number | null
   state: 'pending' | 'ready' | 'failed'
@@ -195,14 +197,14 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
 
   constructor(private readonly dependencies: ChatRoomDependencies) {
     super()
-    this.disposeReady = dependencies.whenReady(() => {
+    this.disposeReady = dependencies.whenReady((scope) => {
       if (this.disposed) return
       this.readyGeneration += 1
       // Runtime generation replacement supersedes the old connection attempt; that is a structural
       // cancellation fact for that attempt.
       if (this.activeConnection) this.reportResult?.(this.activeConnection.resultToken, 'cancelled')
       this.activeConnection?.controller.abort(abortError('Runtime host generation replaced'))
-      const attachment = this.startAttachment(null)
+      const attachment = this.startAttachment(null, scope ?? {})
       const readiness = attachment.task.then(() => {
         if (attachment.error !== undefined) throw attachment.error
       })
@@ -253,7 +255,7 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
     }
   }
 
-  private startAttachment(ownerAttemptId: number | null) {
+  private startAttachment(ownerAttemptId: number | null, scope: RuntimeBindingScope = {}) {
     if (this.disposed) throw abortError('Runtime page detached')
     const previous = this.attachment
     if (previous) this.cancelAttachment(previous, abortError('Runtime attachment superseded'))
@@ -261,6 +263,7 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
     const attachment: RuntimeAttachment = {
       readyGeneration: this.readyGeneration,
       hostId: this.dependencies.getSnapshot().hostId,
+      scope,
       controller,
       ownerAttemptId,
       state: 'pending',
@@ -419,6 +422,7 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
     const { dependencies } = this
     const { signal } = attachment.controller
     const isCurrent = () => this.isAttachmentCurrent(attachment)
+    const withScope = <Payload extends object>(payload: Payload) => ({ ...payload, ...attachment.scope })
     const assertCurrent = () => {
       signal.throwIfAborted()
       if (!isCurrent()) throw abortError('Runtime attachment superseded')
@@ -453,7 +457,9 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
     const acknowledgeInbound = async (event: RuntimeInboundEvent, inserted: boolean) => {
       assertCurrent()
       await raceWithSignal(
-        dependencies.server.ackInbound({ domain: dependencies.pageDomain, sequence: event.sequence, inserted }),
+        dependencies.server.ackInbound(
+          withScope({ domain: dependencies.pageDomain, sequence: event.sequence, inserted })
+        ),
         signal
       )
       assertCurrent()
@@ -531,11 +537,13 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
           controller.signal.throwIfAborted()
           if (!isCurrent() || activeHistorySupplies.get(request.supplyId) !== controller) return
           await raceWithSignal(
-            dependencies.server.resolveHistorySupply({
-              pageId: dependencies.pageId,
-              supplyId: request.supplyId,
-              result
-            }),
+            dependencies.server.resolveHistorySupply(
+              withScope({
+                pageId: dependencies.pageId,
+                supplyId: request.supplyId,
+                result
+              })
+            ),
             controller.signal
           )
         })
@@ -545,11 +553,13 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
             // cancelled supplyId exactly once (the pending PagePort entry is in failover mode,
             // so this rejects the Runtime supplier promise and confirms settlement).
             await dependencies.server
-              .rejectHistorySupply({
-                pageId: dependencies.pageId,
-                supplyId: request.supplyId,
-                reason: (error as Error).message || 'History supply cancelled'
-              })
+              .rejectHistorySupply(
+                withScope({
+                  pageId: dependencies.pageId,
+                  supplyId: request.supplyId,
+                  reason: (error as Error).message || 'History supply cancelled'
+                })
+              )
               .catch((settleError) => {
                 if (isCurrent()) this.emitError(settleError)
               })
@@ -559,11 +569,13 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
             return
           }
           await raceWithSignal(
-            dependencies.server.rejectHistorySupply({
-              pageId: dependencies.pageId,
-              supplyId: request.supplyId,
-              reason: (error as Error).message
-            }),
+            dependencies.server.rejectHistorySupply(
+              withScope({
+                pageId: dependencies.pageId,
+                supplyId: request.supplyId,
+                reason: (error as Error).message
+              })
+            ),
             controller.signal
           )
         })
@@ -578,15 +590,15 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
     }
 
     attachment.registrations.inbound = () =>
-      dependencies.server.onInbound({ pageId: dependencies.pageId }, (event) => {
+      dependencies.server.onInbound(withScope({ pageId: dependencies.pageId }), (event) => {
         if (isCurrent()) return persistInbound(event, false)
       })
     attachment.registrations.session = () =>
-      dependencies.server.onSessionEvent({ pageId: dependencies.pageId }, (event) => {
+      dependencies.server.onSessionEvent(withScope({ pageId: dependencies.pageId }), (event) => {
         if (isCurrent() && event.domain === dependencies.pageDomain) this.emitSessionEvent(event)
       })
     attachment.registrations.error = () =>
-      dependencies.server.onError({ pageId: dependencies.pageId }, (event) => {
+      dependencies.server.onError(withScope({ pageId: dependencies.pageId }), (event) => {
         if (!isCurrent()) return
         // One failure event is displayed once per live content generation; transport repeats are
         // dropped, while every later distinct failure carries its own eventId and therefore a
@@ -597,23 +609,27 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
       })
     attachment.registrations.history = () =>
       dependencies.server.provideHistory(
-        { domain: dependencies.pageDomain, pageId: dependencies.pageId },
+        withScope({ domain: dependencies.pageDomain, pageId: dependencies.pageId }),
         provideHistory
       )
     attachment.registrations.historyFeedback = () =>
-      dependencies.server.onHistoryFeedback({ pageId: dependencies.pageId }, (event) => {
+      dependencies.server.onHistoryFeedback(withScope({ pageId: dependencies.pageId }), (event) => {
         if (isCurrent()) this.emit('historyFeedback', event)
       })
 
-    await Promise.all(
+    const registrations = await Promise.allSettled(
       (['inbound', 'session', 'error', 'history', 'historyFeedback'] as const).map((key) =>
         this.register(attachment, key)
       )
     )
+    const registrationFailure = registrations.find(
+      (result): result is PromiseRejectedResult => result.status === 'rejected'
+    )
+    if (registrationFailure) throw registrationFailure.reason
     assertCurrent()
 
     const replay = await raceWithSignal(
-      dependencies.server.replayInbound({ domain: dependencies.pageDomain, after: 0 }),
+      dependencies.server.replayInbound(withScope({ domain: dependencies.pageDomain, after: 0 })),
       signal
     )
     assertCurrent()
