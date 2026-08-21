@@ -14,6 +14,7 @@ import { SendLifecycleExtern } from '@/domain/externs/SendLifecycle'
 import { BrowserSyncStorageExtern, type Storage, type StorageValue } from '@/domain/externs/Storage'
 import { WorldRoomExtern } from '@/domain/externs/WorldRoom'
 import { createMessageStore, MessageDatabaseExtern } from '@/domain/MessageStore'
+import type { PresenceDomainRecord, PresenceStore } from '@/domain/runtime/externs/PresenceStore'
 import { MESSAGE_TYPE, type ChatUser } from '@/protocol'
 import type { RoomTransport } from '@/runtime/RoomTransport'
 import { createServer, disposeServer, getChatRoomId, restoreServerPageBindings } from '@/runtime/Server'
@@ -93,6 +94,7 @@ const coordinatorWith = (registerPage: RuntimeCoordinator['registerPage']): Runt
 const createRecoveryTransport = (holdJoin?: Promise<void>) => {
   const joined = new Set<string>()
   const joinCalls: string[] = []
+  const sendCalls: string[] = []
   const listeners = {
     message: new Set<(roomId: string, sourcePeerId: string, rawPayload: string) => void>(),
     peerJoin: new Set<(roomId: string, peerId: string) => void>(),
@@ -111,6 +113,7 @@ const createRecoveryTransport = (holdJoin?: Promise<void>) => {
       joined.delete(roomId)
     },
     send: async (roomId) => {
+      sendCalls.push(roomId)
       if (!joined.has(roomId)) throw new Error(`Room "${roomId}" is not joined`)
     },
     onMessage: (callback) => {
@@ -138,7 +141,214 @@ const createRecoveryTransport = (holdJoin?: Promise<void>) => {
       Object.values(listeners).forEach((items) => items.clear())
     }
   }
-  return { joinCalls, transport }
+  return { joinCalls, sendCalls, transport }
+}
+
+const createAutomaticRecoveryPage = ({
+  pageId,
+  tab,
+  getServer,
+  recoverySiteOrigin
+}: {
+  pageId: string
+  tab: { id: number; url: string }
+  getServer: () => RuntimeServer
+  recoverySiteOrigin?: () => string | undefined
+}) => {
+  const client = new ClientLease({
+    coordinator: coordinatorWith(async () => ({
+      snapshot: await getServer().attachPage({ domain, pageId, caller: { tab } })
+    })),
+    pageId,
+    domain
+  })
+  const bind = <Payload extends object>(payload: Payload) => ({
+    ...payload,
+    pageId,
+    runtimeHostId: client.runtimeHostId(),
+    caller: { tab }
+  })
+  const server = {
+    attachPage: (payload) => getServer().attachPage(bind(payload)),
+    detachPage: (payload) => getServer().detachPage(bind(payload)),
+    getSnapshot: () => getServer().getSnapshot(),
+    joinChatRoom: (payload) => {
+      const origin = recoverySiteOrigin?.()
+      return getServer().joinChatRoom(bind(origin ? { ...payload, site: { ...payload.site, origin } } : payload))
+    },
+    leaveChatRoom: (payload) => getServer().leaveChatRoom(bind(payload)),
+    allocateTextMessage: (payload) => getServer().allocateTextMessage(bind(payload)),
+    allocateReactionMessage: (payload) => getServer().allocateReactionMessage(bind(payload)),
+    sendChatMessage: (payload) => getServer().sendChatMessage(bind(payload)),
+    ackInbound: (payload) => getServer().ackInbound(bind(payload)),
+    replayInbound: (payload) => getServer().replayInbound(bind(payload)),
+    reconnectDomain: (payload) => getServer().reconnectDomain(bind(payload)),
+    onInbound: (payload, callback) => getServer().onInbound(bind(payload), callback),
+    onSessionEvent: (payload, callback) => getServer().onSessionEvent(bind(payload), callback),
+    onWorldPresence: (payload, callback) => getServer().onWorldPresence(bind(payload), callback),
+    onError: (payload, callback) => getServer().onError(bind(payload), callback),
+    onHistoryFeedback: (payload, callback) => getServer().onHistoryFeedback(bind(payload), callback),
+    provideHistory: (payload, callback) => getServer().provideHistory(bind(payload), callback),
+    resolveHistorySupply: (payload) => getServer().resolveHistorySupply(bind(payload)),
+    rejectHistorySupply: (payload) => getServer().rejectHistorySupply(bind(payload))
+  } as RuntimeServer
+  const database = createMemoryMessageDatabase(`client-lease-two-page-recovery-${databaseId++}`)
+  const chat = new ChatRoom({
+    server,
+    messageStore: createMessageStore(database),
+    pageDomain: domain,
+    pageId,
+    getSnapshot: () => client.snapshot(),
+    whenReady: (callback) => client.whenReady(callback)
+  })
+  const lifecycle = createConnectionLifecycle()
+  chat.bindConnectionResultReporter(lifecycle.report)
+  const storage: Storage = {
+    get: async <Value extends StorageValue>() => userInfo as Value,
+    set: async () => {},
+    watch: async () => async () => {}
+  }
+  const store = Remesh.store({
+    externs: [
+      ChatRoomExtern.impl(chat),
+      ConnectionLifecycleExtern.impl(lifecycle.value),
+      SendLifecycleExtern.impl(createSendLifecycle()),
+      ReadinessExtern.impl({
+        onState: (callback) =>
+          client.whenHostPhase((phase) => callback(phase === 'ready' || phase === 'unavailable' ? phase : 'connecting'))
+      }),
+      MessageDatabaseExtern.impl(database),
+      BrowserSyncStorageExtern.impl(storage),
+      WorldRoomExtern.impl({ getState: async () => [], onState: () => () => {}, onError: () => () => {} })
+    ]
+  })
+  const roomAction = ChatRoomDomain()
+  const userAction = UserInfoDomain()
+  const room = store.getDomain(roomAction)
+  const info = store.getDomain(userAction)
+  store.igniteDomain(roomAction)
+  store.send(info.command.UpdateUserInfoCommand(userInfo))
+
+  return {
+    chat,
+    client,
+    dispose: async () => {
+      store.discard()
+      chat.dispose()
+      client.detach()
+      await database.close()
+    },
+    initialize: async () => {
+      await client.init()
+      store.send(room.command.JoinRoomCommand())
+      await vi.waitFor(() => expect(store.query(room.query.JoinIsFinishedQuery())).toBe(true))
+    }
+  }
+}
+
+const createTwoPageRecovery = async ({
+  ownerSiteOrigin = domain,
+  stored = null
+}: {
+  ownerSiteOrigin?: string
+  stored?: PresenceDomainRecord | null
+} = {}) => {
+  vi.stubGlobal('document', {
+    location: { origin: domain },
+    title: 'Example',
+    querySelector: () => null
+  })
+  const storageState: Record<string, unknown> = {}
+  const ownerPageId = 'page-owner'
+  const followerPageId = 'page-follower'
+  const ownerTab = { id: 7, url: pageUrl }
+  const followerTab = { id: 8, url: `${domain}/second-topic` }
+  const tabs = new Map([
+    [ownerTab.id, ownerTab],
+    [followerTab.id, followerTab]
+  ])
+  const ownerLoadStarted = deferred<void>()
+  const releaseOwnerLoad = deferred<void>()
+  let loadCount = 0
+  const presenceStore: PresenceStore = {
+    load: vi.fn(async () => {
+      loadCount += 1
+      if (loadCount === 1) {
+        ownerLoadStarted.resolve()
+        await releaseOwnerLoad.promise
+      }
+      return stored
+    }),
+    save: vi.fn(async () => {})
+  }
+  let currentServer!: RuntimeServer
+  let activeOwnerSiteOrigin: string | undefined
+  const pages = new Map<string, ReturnType<typeof createAutomaticRecoveryPage>>()
+  const admission = {
+    tabs: {
+      get: async (tabId: number) => {
+        const tab = tabs.get(tabId)
+        if (!tab) throw new Error('tab missing')
+        return tab
+      },
+      sendMessage: async () => undefined
+    },
+    storage: {
+      get: async (key: string) => ({ [key]: storageState[key] }),
+      set: async (items: Record<string, unknown>) => {
+        Object.assign(storageState, items)
+      }
+    },
+    rebindPage: async (_tabId: number, pageId: string) => {
+      if (pageId === followerPageId) await ownerLoadStarted.promise
+      await pages.get(pageId)?.client.rebind()
+    },
+    ensureTransport: async () => {}
+  }
+  const firstTransport = createRecoveryTransport()
+  const first = createServer({ transport: firstTransport.transport, admission })
+  currentServer = first
+  const owner = createAutomaticRecoveryPage({
+    pageId: ownerPageId,
+    tab: ownerTab,
+    getServer: () => currentServer,
+    recoverySiteOrigin: () => activeOwnerSiteOrigin
+  })
+  const follower = createAutomaticRecoveryPage({
+    pageId: followerPageId,
+    tab: followerTab,
+    getServer: () => currentServer
+  })
+  pages.set(ownerPageId, owner)
+  pages.set(followerPageId, follower)
+  await owner.initialize()
+  await follower.initialize()
+  activeOwnerSiteOrigin = ownerSiteOrigin === domain ? undefined : ownerSiteOrigin
+
+  const secondTransport = createRecoveryTransport()
+  const second = createServer({ transport: secondTransport.transport, admission, presenceStore })
+  currentServer = second
+  const automaticJoin = vi.spyOn(second, 'joinChatRoom')
+  const restoring = restoreServerPageBindings(second)
+  await ownerLoadStarted.promise
+  await vi.waitFor(() => expect(automaticJoin).toHaveBeenCalledTimes(2))
+
+  return {
+    automaticJoin,
+    dispose: async () => {
+      await owner.dispose()
+      await follower.dispose()
+      disposeServer(first)
+      disposeServer(second)
+    },
+    follower,
+    owner,
+    presenceStore,
+    releaseOwnerLoad,
+    restoring,
+    second,
+    secondTransport
+  }
 }
 
 beforeEach(() => vi.useFakeTimers())
@@ -355,6 +565,86 @@ describe('ClientLease event-driven Runtime admission', () => {
     disposeServer(first)
     disposeServer(second)
   })
+
+  it('keeps the exact restoring owner exclusive while two surviving Pages automatically rejoin', async () => {
+    const recovery = await createTwoPageRecovery()
+    let settled = false
+    const action = recovery.owner.chat.sendMessage({
+      type: MESSAGE_TYPE.TEXT,
+      body: 'during owner fence',
+      mentions: []
+    })
+    const followerJoin = recovery.automaticJoin.mock.results[1]?.value as Promise<unknown>
+    let followerSettled = false
+    void action.then(() => {
+      settled = true
+    })
+    void followerJoin.then(() => {
+      followerSettled = true
+    })
+
+    await Promise.resolve()
+    expect(settled).toBe(false)
+    expect(followerSettled).toBe(false)
+    expect(recovery.presenceStore.load).toHaveBeenCalledOnce()
+    expect(recovery.presenceStore.save).not.toHaveBeenCalled()
+    expect(recovery.secondTransport.joinCalls.filter((roomId) => roomId === getChatRoomId(domain))).toHaveLength(0)
+    expect(recovery.secondTransport.sendCalls).toHaveLength(0)
+
+    recovery.releaseOwnerLoad.resolve()
+    await recovery.restoring
+    await expect(action).resolves.toMatchObject({ type: MESSAGE_TYPE.TEXT, body: 'during owner fence' })
+    await expect(followerJoin).resolves.toMatchObject({ hostId: expect.any(String) })
+    expect(recovery.automaticJoin).toHaveBeenCalledTimes(2)
+    expect(recovery.presenceStore.load).toHaveBeenCalledOnce()
+    expect(recovery.presenceStore.save).toHaveBeenCalledTimes(2)
+    expect(recovery.secondTransport.joinCalls.filter((roomId) => roomId === getChatRoomId(domain))).toHaveLength(1)
+    await recovery.dispose()
+  })
+
+  it.each([
+    ['site', otherDomain, null],
+    [
+      'durable local user',
+      domain,
+      {
+        domain,
+        lastJoinedAt: 1,
+        local: {
+          presenceId: 'retained-presence',
+          userId: 'different-user',
+          joinedAt: 1,
+          status: 'active' as const
+        },
+        observers: []
+      } satisfies PresenceDomainRecord
+    ]
+  ])(
+    'does not let a second surviving Page rescue a restoring owner %s conflict',
+    async (_kind, ownerSiteOrigin, stored) => {
+      const recovery = await createTwoPageRecovery({ ownerSiteOrigin, stored })
+      const action = recovery.owner.chat.sendMessage({ type: MESSAGE_TYPE.TEXT, body: 'must not rescue', mentions: [] })
+
+      await Promise.resolve()
+      expect(recovery.presenceStore.load).toHaveBeenCalledOnce()
+      expect(recovery.presenceStore.save).not.toHaveBeenCalled()
+      expect(recovery.secondTransport.joinCalls).toHaveLength(0)
+      expect(recovery.secondTransport.sendCalls).toHaveLength(0)
+
+      recovery.releaseOwnerLoad.resolve()
+      await recovery.restoring
+      await expect(action).rejects.toThrow('Runtime current-domain recovery identity is no longer current')
+      expect(recovery.automaticJoin).toHaveBeenCalledTimes(2)
+      expect(recovery.presenceStore.load).toHaveBeenCalledOnce()
+      expect(recovery.presenceStore.save).not.toHaveBeenCalled()
+      expect(recovery.secondTransport.joinCalls).toHaveLength(0)
+      expect(recovery.secondTransport.sendCalls).toHaveLength(0)
+      expect(
+        (await recovery.second.getSnapshot()).domains.find((item) => item.domain === domain)?.localSession
+      ).toBeUndefined()
+      await recovery.dispose()
+    }
+  )
 
   it('waits for the real ChatRoom callback registration before the lease is ready', async () => {
     const sessionRegistration = deferred<void>()

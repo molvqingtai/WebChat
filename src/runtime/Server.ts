@@ -80,6 +80,7 @@ interface PageRecovery {
 interface PresenceRecovery {
   attempts: number
   awaitingRestoringJoin: boolean
+  restoringOwnerInFlight: boolean
   restoringBinding?: Pick<PageBinding, 'tabId' | 'pageId' | 'domain' | 'url'>
   promise: Promise<void>
   resolve: () => void
@@ -430,7 +431,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       // A second surviving Page shares this domain's reservation. Only the existing automatic
       // ChatRoom join may claim it after the Page recovery has completed.
       if (awaitRestoringJoin) return current
-      if (current.awaitingRestoringJoin) return current
+      if (current.awaitingRestoringJoin || current.restoringOwnerInFlight) return current
       current.attempts += 1
       return current
     }
@@ -443,6 +444,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     const recovery: PresenceRecovery = {
       attempts: 1,
       awaitingRestoringJoin: awaitRestoringJoin,
+      restoringOwnerInFlight: false,
       ...(restoringBinding ? { restoringBinding } : {}),
       promise,
       resolve,
@@ -476,11 +478,23 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       throw new Error('Runtime current-domain recovery owner is no longer current')
     }
     recovery.awaitingRestoringJoin = false
+    recovery.restoringOwnerInFlight = true
     return recovery
   }
 
-  const finishPresenceRecovery = (domain: string, recovery: PresenceRecovery, succeeded: boolean) => {
+  const finishPresenceRecovery = (
+    domain: string,
+    recovery: PresenceRecovery,
+    succeeded: boolean,
+    restoringOwner = false
+  ) => {
     if (presenceRecoveries.get(domain) !== recovery) return
+    if (recovery.restoringOwnerInFlight) {
+      if (!restoringOwner) return
+      recovery.restoringOwnerInFlight = false
+      settlePresenceRecovery(domain, recovery)
+      return
+    }
     recovery.attempts -= 1
     if (!succeeded && recovery.attempts > 0) return
     settlePresenceRecovery(domain, recovery)
@@ -822,7 +836,8 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     payload: Parameters<RuntimeServer['joinChatRoom']>[0],
     revalidate?: () => Promise<void>,
     recovery = beginPresenceRecovery(payload.domain),
-    validateStored?: (stored: PresenceDomainRecord | null) => Promise<void>
+    validateStored?: (stored: PresenceDomainRecord | null) => Promise<void>,
+    restoringOwner = false
   ) => {
     // Typed ChatUser/ChatSite values pass through unchanged; the application-to-protocol
     // mapping already happened before the value was narrowed to the schema-owned type.
@@ -879,7 +894,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
         return snapshot()
       }
     } finally {
-      finishPresenceRecovery(payload.domain, recovery, recovered)
+      finishPresenceRecovery(payload.domain, recovery, recovered, restoringOwner)
     }
   }
 
@@ -938,17 +953,18 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       const settle = (
         revalidate?: () => Promise<void>,
         recovery?: PresenceRecovery,
-        validateStored?: (stored: PresenceDomainRecord | null) => Promise<void>
+        validateStored?: (stored: PresenceDomainRecord | null) => Promise<void>,
+        restoringOwner = false
       ) => {
         // Overlapping same-domain joins observed while the domain's release is closing coalesce into
         // one shared settlement; fresh cold joins keep the existing newest-generation supersession.
         if (store.query(sessionDomain.query.ReleasingDomainQuery(payload.domain))) {
           const existing = inFlightJoins.get(payload.domain)
           if (existing) {
-            if (recovery) finishPresenceRecovery(payload.domain, recovery, false)
+            if (recovery) finishPresenceRecovery(payload.domain, recovery, false, restoringOwner)
             return existing
           }
-          const task = joinChatRoomSettled(payload, revalidate, recovery, validateStored)
+          const task = joinChatRoomSettled(payload, revalidate, recovery, validateStored, restoringOwner)
           inFlightJoins.set(payload.domain, task)
           const releaseJoin = () => {
             if (inFlightJoins.get(payload.domain) === task) inFlightJoins.delete(payload.domain)
@@ -956,7 +972,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
           void task.then(releaseJoin, releaseJoin)
           return task
         }
-        return joinChatRoomSettled(payload, revalidate, recovery, validateStored)
+        return joinChatRoomSettled(payload, revalidate, recovery, validateStored, restoringOwner)
       }
       if (!config.admission) return settle()
       return (async () => {
@@ -964,6 +980,11 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
         if (!binding) return settle()
         const restoringRecovery = claimRestoringPresenceRecovery(payload, binding)
         const recovery = restoringRecovery ?? beginPresenceRecovery(payload.domain)
+        if (!restoringRecovery && recovery.restoringOwnerInFlight) {
+          await recovery.promise
+          await revalidateBinding(binding, payload)
+          return snapshot()
+        }
         const validateStored = restoringRecovery
           ? async (stored: PresenceDomainRecord | null) => {
               await revalidateBinding(binding, payload)
@@ -977,7 +998,12 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
               }
             }
           : undefined
-        const result = await settle(() => revalidateBinding(binding, payload), recovery, validateStored)
+        const result = await settle(
+          () => revalidateBinding(binding, payload),
+          recovery,
+          validateStored,
+          restoringRecovery !== null
+        )
         await revalidateBinding(binding, payload)
         return result
       })()
