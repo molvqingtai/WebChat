@@ -17,6 +17,8 @@ interface PeerOwner {
   pendingJoin?: PendingJoin
   restartTimer: ReturnType<typeof globalThis.setTimeout> | null
   disposed: boolean
+  /** A failed synchronous abort has no local-H receipt and remains non-reentrant. */
+  quarantined?: true
 }
 
 /**
@@ -152,37 +154,48 @@ export const createRoomTransport = (): RoomTransport => {
     return owner
   }
 
-  const dropOwner = (owner: PeerOwner, diagnosticOnly = false) => {
+  const dropOwner = (owner: PeerOwner, _diagnosticOnly = false) => {
     if (owner.disposed) return
     owner.disposed = true
-    owners.delete(owner.roomId)
     if (owner.restartTimer) {
       globalThis.clearTimeout(owner.restartTimer)
       owner.restartTimer = null
     }
-    owner.pendingJoin?.reject(new Error(`Room "${owner.roomId}" join cancelled`))
-    owner.pendingJoin = undefined
     const room = owner.room
     owner.room = undefined
+    let abortFailure: unknown
     if (room) {
       try {
         room.leave()
       } catch (error) {
-        if (diagnosticOnly) console.error(error)
-        else errorListeners.forEach((listener) => listener(error as Error, owner.roomId))
+        abortFailure = error
+        // A retired owner is no longer allowed to emit into a current room.
+        // A throw is deliberately not converted into a join terminal.
       }
     }
     try {
       owner.peer.close()
     } catch (error) {
-      // A disposed owner is already non-current: its close failure has no current user impact, but
-      // it must not disappear.
-      console.error(error)
+      abortFailure ??= error
     }
+    if (abortFailure !== undefined) {
+      // Safety over liveness: without normal returns from both close calls we
+      // cannot prove this Artico H is inert. Keep the exact pending join and
+      // its room occupancy quarantined; a successor must not create/use H2.
+      owner.quarantined = true
+      console.error(abortFailure)
+      return
+    }
+    owners.delete(owner.roomId)
+    owner.pendingJoin?.reject(new Error(`Room "${owner.roomId}" join cancelled`))
+    owner.pendingJoin = undefined
   }
 
   return {
-    peerIdOf: (roomId) => owners.get(roomId)?.peerId ?? '',
+    peerIdOf: (roomId) => {
+      const owner = owners.get(roomId)
+      return owner && !owner.disposed ? owner.peerId : ''
+    },
     join: (roomId) => {
       const owner = owners.get(roomId) ?? createOwner(roomId)
       repairDisconnectedPeer(owner)

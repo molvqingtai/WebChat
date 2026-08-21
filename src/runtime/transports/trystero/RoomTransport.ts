@@ -96,8 +96,9 @@ export const createRoomTransport = (): RoomTransport => {
         if (owners.get(owner.roomId) === owner) owners.delete(owner.roomId)
       },
       (error: unknown) => {
-        // A failed leave keeps the room occupied: the owner is retained so no second Room is
-        // ever created for this roomId, and later joins reject with this exact failure.
+        // Safety over liveness (Owner decision): a failed leave keeps the room occupied because
+        // Trystero provides no local force-close receipt. Do not release/retry/synthesize a
+        // terminal here; a second Room could otherwise use the old H concurrently.
         owner.leaveError = { value: error }
         if (owner.leaveDiagnostic) console.error(error)
         else errorListeners.forEach((listener) => listener(error as Error, owner.roomId))

@@ -623,6 +623,7 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
 
   async joinRoomWithToken(resultToken: number, command: JoinRoomCommand): Promise<void> {
     const attempt = this.beginConnectionAttempt(resultToken)
+    let serverTerminal = false
     try {
       const attachment = await this.currentAttachment(attempt)
       if (!this.isConnectionCurrent(attempt, attachment)) {
@@ -640,40 +641,35 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
         this.recordResult(attempt.resultToken, 'cancelled')
         throw abortError('ChatRoom operation cancelled')
       }
-      attempt.controller.signal.throwIfAborted()
-      if (
-        !this.isConnectionCurrent(attempt, attachment) ||
-        snapshot.hostId !== attempt.hostId ||
-        this.dependencies.getSnapshot().hostId !== attempt.hostId
-      ) {
-        this.recordResult(attempt.resultToken, 'cancelled')
-        throw abortError('Page connection attempt superseded')
-      }
       const domainSnapshot = snapshot.domains.find((item) => item.domain === this.dependencies.pageDomain)
       if (!domainSnapshot?.localSession) throw new Error('Runtime did not create a local session')
       const generationKey = `${domainSnapshot.localSession.user.id}:${domainSnapshot.localSession.joinedAt}`
-      if (this.pendingSelfJoinGenerations.delete(generationKey)) {
-        try {
-          await persistSelfJoinNotice(
-            this.dependencies.messageStore,
-            domainSnapshot.localSession,
-            attempt.controller.signal
-          )
-        } catch (error) {
-          this.pendingSelfJoinGenerations.add(generationKey)
-          throw error
-        }
-      }
-      attempt.controller.signal.throwIfAborted()
-      if (!this.isConnectionCurrent(attempt, attachment)) {
-        this.recordResult(attempt.resultToken, 'cancelled')
-        throw abortError('Page connection attempt superseded')
-      }
+      // Server is the logical owner once its RPC resolves.  Attachment work may
+      // still be cancelled, but it must never rewrite this completed outcome.
+      const persistNotice = this.pendingSelfJoinGenerations.delete(generationKey)
       this.recordResult(attempt.resultToken, 'succeeded')
       this.finishConnectionAttempt(attempt)
+      serverTerminal = true
+      if (!persistNotice) return
+      // This is presentation persistence, not part of the join result.  The
+      // accepted Server terminal remains immutable if the Page is replaced.
+      try {
+        await persistSelfJoinNotice(
+          this.dependencies.messageStore,
+          domainSnapshot.localSession,
+          attachment.controller.signal
+        )
+      } catch (error) {
+        this.pendingSelfJoinGenerations.add(generationKey)
+        if (this.isAttachmentCurrent(attachment) && !(error instanceof DOMException && error.name === 'AbortError')) {
+          this.emitError(error)
+        }
+      }
     } catch (error) {
-      this.recordResult(attempt.resultToken, 'failed')
-      this.finishConnectionAttempt(attempt, error)
+      if (!serverTerminal) {
+        this.recordResult(attempt.resultToken, 'failed')
+        this.finishConnectionAttempt(attempt, error)
+      }
       throw error
     }
   }

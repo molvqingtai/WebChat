@@ -473,6 +473,10 @@ describe('Runtime-backed ChatRoom application port', () => {
 
     await fixture.room.joinRoom({ user: USER, site: SITE })
 
+    await vi.waitFor(async () => {
+      const records = await fixture.messageStore.query()
+      expect(records.filter((record) => record.type === MESSAGE_RECORD_TYPE.SYSTEM_NOTICE)).toHaveLength(1)
+    })
     const records = await fixture.messageStore.query()
     const notices = records.filter((record) => record.type === MESSAGE_RECORD_TYPE.SYSTEM_NOTICE)
     expect(raced).toBe(true)
@@ -506,7 +510,10 @@ describe('Runtime-backed ChatRoom application port', () => {
     const fixture = await setup([], database)
     await settle()
     await fixture.room.joinRoom({ user: USER, site: SITE })
-    await settle()
+    await vi.waitFor(async () => {
+      const records = await fixture.messageStore.query()
+      expect(records.filter((record) => record.type === MESSAGE_RECORD_TYPE.SYSTEM_NOTICE)).toHaveLength(1)
+    })
     const records = await fixture.messageStore.query()
     const notices = records.filter((record) => record.type === MESSAGE_RECORD_TYPE.SYSTEM_NOTICE)
     expect(notices).toHaveLength(1)
@@ -515,6 +522,18 @@ describe('Runtime-backed ChatRoom application port', () => {
       notice: { type: NOTICE_TYPE.JOIN, body: '"Local" joined the chat' },
       user: USER
     })
+  })
+
+  it('keeps the Server join success when self-notice persistence fails afterward', async () => {
+    const fixture = await setup()
+    const results: string[] = []
+    fixture.room.bindConnectionResultReporter((_token, result) => results.push(result))
+    vi.spyOn(fixture.messageStore, 'insert').mockRejectedValueOnce(new Error('notice write failed'))
+    await settle()
+
+    await expect(fixture.room.joinRoom({ user: USER, site: SITE })).resolves.toBeUndefined()
+
+    expect(results).toEqual(['succeeded'])
   })
 
   it('publishes the new snapshot before each accepted live join and leave fact', async () => {

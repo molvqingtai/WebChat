@@ -6,6 +6,7 @@ import DeliveryDomain from '@/domain/runtime/Delivery'
 import SessionDomain, { type SessionPreparationMode } from '@/domain/runtime/Session'
 import WireDomain from '@/domain/runtime/Wire'
 import WorldDomain, { getWorldRoomId } from '@/domain/runtime/World'
+import { CommitCapabilityExtern } from '@/domain/runtime/externs/CommitCapability'
 import type { ChatSite, ChatUser } from '@/protocol'
 import type { RuntimeSnapshot } from '@/runtime/Contract'
 
@@ -78,6 +79,7 @@ const ConnectionDomain = Remesh.domain({
     const worldDomain = domain.getDomain(WorldDomain({ sessionId: options.worldSessionId }))
     const deliveryDomain = domain.getDomain(DeliveryDomain())
     const historyDomain = domain.getDomain(HistoryDomain())
+    const commitCapabilities = domain.getExtern(CommitCapabilityExtern)
 
     const AttemptsState = domain.state<JoinAttempt[]>({ name: 'Connection.AttemptsState', default: [] })
     const GenerationsState = domain.state<DomainGeneration[]>({
@@ -159,6 +161,9 @@ const ConnectionDomain = Remesh.domain({
       name: 'Connection.WorldRecoveryAbortedEvent'
     })
 
+    const operationAdmitted = (operationId: string | undefined) =>
+      operationId === undefined || commitCapabilities.get(operationId)?.allows() !== false
+
     const startAttempt = (
       get: Parameters<Parameters<typeof domain.command>[0]['impl']>[0]['get'],
       payload: {
@@ -226,19 +231,24 @@ const ConnectionDomain = Remesh.domain({
     const JoinDomainCommand = domain.command({
       name: 'Connection.JoinDomainCommand',
       impl: ({ get }, payload: { operationId: string; domain: string; user: ChatUser; site: ChatSite }) =>
-        get(sessionDomain.query.ReleasingDomainQuery(payload.domain))
+        !operationAdmitted(payload.operationId)
           ? OperationFailedEvent({
               operationId: payload.operationId,
-              error: new Error('Domain release is already in progress')
+              error: new Error('Connection operation admission was revoked')
             })
-          : startAttempt(get, {
-              attemptId: payload.operationId,
-              operationId: payload.operationId,
-              mode: 'join',
-              domain: payload.domain,
-              user: payload.user,
-              site: payload.site
-            })
+          : get(sessionDomain.query.ReleasingDomainQuery(payload.domain))
+            ? OperationFailedEvent({
+                operationId: payload.operationId,
+                error: new Error('Domain release is already in progress')
+              })
+            : startAttempt(get, {
+                attemptId: payload.operationId,
+                operationId: payload.operationId,
+                mode: 'join',
+                domain: payload.domain,
+                user: payload.user,
+                site: payload.site
+              })
     })
 
     const PendingWorldRefreshState = domain.state<boolean>({
@@ -288,6 +298,12 @@ const ConnectionDomain = Remesh.domain({
     const ReconnectDomainCommand = domain.command({
       name: 'Connection.ReconnectDomainCommand',
       impl: ({ get }, payload: { operationId: string; domain: string; user?: ChatUser; site?: ChatSite }) => {
+        if (!operationAdmitted(payload.operationId)) {
+          return OperationFailedEvent({
+            operationId: payload.operationId,
+            error: new Error('Connection operation admission was revoked')
+          })
+        }
         if (get(sessionDomain.query.ReleasingDomainQuery(payload.domain))) {
           return OperationFailedEvent({
             operationId: payload.operationId,
@@ -427,6 +443,12 @@ const ConnectionDomain = Remesh.domain({
         const attempt = attempts.find((item) => item.attemptId === payload.attemptId)
         if (!attempt || !get(lifecycleDomain.query.DomainLeaseQuery(attempt.domain))) {
           return null
+        }
+        if (!operationAdmitted(attempt.operationId)) {
+          return AbortAttemptCommand({
+            attemptId: attempt.attemptId,
+            error: new Error('Connection operation admission was revoked before commit')
+          })
         }
         return [
           AttemptsState().new(attempts.filter((item) => item.attemptId !== attempt.attemptId)),

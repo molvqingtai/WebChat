@@ -297,6 +297,35 @@ describe('Artico RoomTransport', () => {
     transport.dispose()
   })
 
+  it('keeps an exact pending join quarantined when its synchronous close has no receipt', async () => {
+    fixture.peerStates.push('connecting')
+    const transport = createRoomTransport()
+    const pending = transport.join('room-a')
+    void pending.catch(() => {})
+    const failure = new Error('close receipt unavailable')
+    fixture.closeShouldThrow = () => failure
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    transport.leave('room-a')
+    let successorSettled = false
+    const successor = transport.join('room-a').then(
+      () => {
+        successorSettled = true
+      },
+      () => {
+        successorSettled = true
+      }
+    )
+    void successor
+    await Promise.resolve()
+
+    expect(diagnostic).toHaveBeenCalledWith(failure)
+    expect(fixture.peers).toHaveLength(1)
+    expect(successorSettled).toBe(false)
+    diagnostic.mockRestore()
+    transport.dispose()
+  })
+
   it('converges initial and later full broadcasts without entering never-ready calls', async () => {
     const transport = createRoomTransport()
     await transport.join('room-a')
