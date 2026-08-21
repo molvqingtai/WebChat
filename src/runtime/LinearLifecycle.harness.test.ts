@@ -10,12 +10,16 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { vi } from 'vitest'
 import { getChatRoomId } from '@/runtime/Server'
+import { ClientLease } from '@/runtime/ClientLease'
+import type { RuntimeSnapshot } from '@/runtime/Contract'
 import {
   ALL_ORACLES,
   HARNESS_DOMAIN,
   HARNESS_SITE,
+  createHarnessWorld,
   generateSchedule,
   harnessUser,
+  oracleCohortFence,
   oracleHarnessValidity,
   oracleNoStalePresenceEffect,
   oracleNoticeNeverRewritesTerminal,
@@ -120,6 +124,154 @@ const class3Schedule: Schedule = {
   calls: [],
   steps: [{ kind: 'init-page', page: 0 }]
 }
+
+/**
+ * P1-1a (cohort): one sibling's success never publishes cleanup while another exact member stack
+ * is still live. Two joins suspend in load; join-0 runs to full success while join-1 stays held;
+ * the cohort must NOT clear, and a business send must not reach its sealed effect, until join-1's
+ * member self-observes from its own resumed stack.
+ */
+const cohortTwoMemberSchedule: Schedule = {
+  seed: 110,
+  pageCount: 1,
+  calls: [
+    { page: 0, op: 'join' },
+    { page: 0, op: 'join' },
+    { page: 0, op: 'sendText' }
+  ],
+  steps: [
+    { kind: 'init-page', page: 0 },
+    { kind: 'start-call', call: 0 },
+    { kind: 'start-call', call: 1 },
+    // Pending: [load(join0), load(join1)]. Run join-0 to completion while join-1's load stays held.
+    { kind: 'release-gate', pick: 0 }, // join-0 load
+    { kind: 'release-gate', pick: 1 }, // join-0 save (join-1 load stays oldest)
+    { kind: 'release-gate', pick: 1 }, // join-0 chat transport join
+    { kind: 'release-gate', pick: 1 }, // join-0 world transport join
+    { kind: 'start-call', call: 2 }, // business send: must wait for the full cleanup conjunction
+    { kind: 'release-gate', pick: 0 } // join-1 load finally resumes; drain completes the rest
+  ]
+}
+
+/**
+ * P1-1b (cohort deadline): an admission check that never settles cannot hold an issued action
+ * forever. The join completes durable acquisition, then hangs inside its post-acquisition
+ * revalidation (a gated tabs.get); C's deadline closes the cohort and the suspended stack settles
+ * with the structured null and zero connect/commit afterwards.
+ */
+const cohortDeadlineSchedule: Schedule = {
+  seed: 111,
+  pageCount: 1,
+  calls: [{ page: 0, op: 'join' }],
+  steps: [
+    { kind: 'init-page', page: 0 },
+    { kind: 'start-call', call: 0 },
+    { kind: 'arm-tabs-gate' }, // the post-acquisition revalidation's admission check will hang
+    { kind: 'release-gate', pick: 0 }, // presence.load
+    { kind: 'release-gate', pick: 0 }, // presence.save -> revalidation hangs in the gated tabs.get
+    { kind: 'advance', ms: 10000 } // only C's deadline may terminate the episode
+  ]
+}
+
+/**
+ * P1-2 (automatic-recovery Q): a room-close recovery attempt issues its own exact Q with no
+ * Server operation behind it. Release cleanup — and therefore any fresh successor — must wait for
+ * that Q's exact Wire terminal, not only for Server-issued joins.
+ */
+const automaticRecoveryQSchedule: Schedule = {
+  seed: 112,
+  pageCount: 1,
+  calls: [
+    { page: 0, op: 'join' },
+    { page: 0, op: 'join' }
+  ],
+  steps: [
+    { kind: 'init-page', page: 0 },
+    { kind: 'start-call', call: 0 },
+    { kind: 'release-gate', pick: 0 }, // join load
+    { kind: 'release-gate', pick: 0 }, // join save
+    { kind: 'release-gate', pick: 0 }, // join chat q1
+    { kind: 'release-gate', pick: 0 }, // join world q2
+    { kind: 'room-close' }, // automatic recovery issues q3(chat)/q4(world) with no Server operation
+    { kind: 'release-gate', pick: 1 }, // q4 world recovery join; q3 (chat) stays held
+    { kind: 'release-tab', page: 0 }, // browser release -> grace -> domain release chain
+    { kind: 'advance', ms: 5000 }, // grace expires; release chain reaches its gated clear-save
+    { kind: 'init-page', page: 0 }, // same-tuple B2 re-registers
+    { kind: 'start-call', call: 1 }, // successor joins; must wait for release + q3 terminal
+    { kind: 'release-gate', pick: 0 }, // q3 automatic-recovery chat join reaches its exact terminal
+    { kind: 'release-gate', pick: 0 } // release chain clear-save completes the release
+  ]
+}
+
+describe('Linear lifecycle generated harness — repair findings (P1-1 cohort, P1-2 automatic Q)', () => {
+  it('P1-1a: cleanup and business admission wait for every exact member self-observation', async () => {
+    const result = await runSchedule(cohortTwoMemberSchedule, driver)
+    expect(oracleHarnessValidity(result), report(result)).toEqual([])
+    expect(result.results[0].settled, report(result)).toBe('success')
+    expect(result.results[1].settled, report(result)).toBe('success')
+    const identity = result.log.entries.filter((entry) => entry.kind === 'identity')
+    const join0Settled = identity.find((entry) => entry.detail.phase === 'settled' && entry.detail.a === 0)
+    const cleared = identity.find((entry) => entry.detail.phase === 'cleared')
+    const join1Observed = identity.find((entry) => entry.detail.phase === 'observed' && entry.detail.a === 1)
+    const sendSealed = identity.find((entry) => entry.detail.phase === 'sealed' && entry.detail.a === 2)
+    expect(join0Settled, report(result)).toBeDefined()
+    expect(cleared, report(result)).toBeDefined()
+    expect(join1Observed, report(result)).toBeDefined()
+    // join-0's success did NOT publish cleanup: the cohort cleared only after join-1 self-observed.
+    expect(cleared!.seq > join0Settled!.seq && cleared!.seq > join1Observed!.seq, report(result)).toBe(true)
+    // The business send reached its sealed effect only after the full conjunction cleared.
+    expect(sendSealed, report(result)).toBeDefined()
+    expect(sendSealed!.seq > cleared!.seq, report(result)).toBe(true)
+    expect(result.results[2].settled, report(result)).toBe('success')
+  })
+
+  it('P1-1b: a hung admission revalidation settles null at the cohort deadline with zero connect', async () => {
+    const result = await runSchedule(cohortDeadlineSchedule, driver)
+    expect(oracleHarnessValidity(result), report(result)).toEqual([])
+    expect(result.results[0].settled, report(result)).toBe('null')
+    // The cohort closed at its deadline and cleared once the resumed stack self-observed.
+    const identity = result.log.entries.filter((entry) => entry.kind === 'identity')
+    expect(
+      identity.some((entry) => entry.detail.phase === 'closed'),
+      report(result)
+    ).toBe(true)
+    expect(
+      identity.some((entry) => entry.detail.phase === 'cleared'),
+      report(result)
+    ).toBe(true)
+    // Zero connect/commit was performed by the hung stack after the cohort closed.
+    expect(
+      result.log.entries.filter((entry) => entry.kind === 'transport.join.start'),
+      report(result)
+    ).toEqual([])
+    expect(oracleCohortFence(result), report(result)).toEqual([])
+  })
+
+  it('P1-2: release cleanup and the fresh successor wait for the automatic-recovery Q terminal', async () => {
+    const result = await runSchedule(automaticRecoveryQSchedule, driver)
+    expect(oracleHarnessValidity(result), report(result)).toEqual([])
+    // The automatic-recovery chat Q is the third physical join issuance overall (q1/q2 initial).
+    const joinSettles = result.log.entries.filter((entry) => entry.kind === 'transport.join.settle')
+    const q3Settle = joinSettles[2]
+    expect(q3Settle, report(result)).toBeDefined()
+    const successorLoad = result.log.entries.find(
+      (entry) => entry.kind === 'presence.load.start' && entry.detail.a === 1
+    )
+    expect(successorLoad, report(result)).toBeDefined()
+    expect(
+      successorLoad!.seq > q3Settle.seq,
+      `successor durable acquisition must begin only after the automatic-recovery Q terminal\n${report(result)}`
+    ).toBe(true)
+    expect(result.results[1].settled, report(result)).toBe('success')
+    // The automatic Q is a real observed P with an exact domain attribution.
+    const identity = result.log.entries.filter((entry) => entry.kind === 'identity')
+    const q3Requested = identity.find(
+      (entry) => entry.detail.phase === 'requested' && String(entry.detail.Q).includes('recovery')
+    )
+    expect(q3Requested, report(result)).toBeDefined()
+    expect(q3Requested!.detail.domain, report(result)).toBe(HARNESS_DOMAIN)
+  })
+})
 
 describe('Linear lifecycle generated harness — final Inspector failure classes (RED on baseline)', () => {
   it('class 1: an invalidated binding continuation performs zero save/hydrate after replacement', async () => {
@@ -366,3 +518,70 @@ describe('Linear lifecycle generated harness — seeded property sweep', () => {
 // Referenced to keep the named users/sites part of the harness contract surface.
 void harnessUser
 void HARNESS_SITE
+
+describe('Linear lifecycle generated harness — repair finding P1-3 (final bound ready validation)', () => {
+  it('bound getSnapshot rejects a superseded exact binding', async () => {
+    const world = createHarnessWorld({ seed: 120, pageCount: 1 })
+    try {
+      const page = world.pages[0]
+      await page.lease.init()
+      expect(page.readyPublished).toBe(true)
+      // Navigating away retires the exact B1 object; the Page's bound snapshot call must now fail
+      // instead of completing a stale attachment barrier.
+      await world.navigate(0)
+      await expect(page.server.getSnapshot()).rejects.toThrow('Runtime Page binding is no longer current')
+    } finally {
+      world.dispose()
+    }
+  })
+
+  it('bound getSnapshot with validateReadiness rejects an incomplete exact-B readiness fact', async () => {
+    const world = createHarnessWorld({ seed: 121, pageCount: 1 })
+    try {
+      const page = world.pages[0]
+      // The Page attaches its binding but never runs its attachment registrations.
+      await world.server.attachPage({
+        domain: HARNESS_DOMAIN,
+        pageId: page.pageId,
+        caller: { tab: { id: page.tabId, url: page.url } }
+      })
+      const hostId = (await world.server.getSnapshot()).hostId
+      const call = {
+        pageId: page.pageId,
+        runtimeHostId: hostId,
+        caller: { tab: { id: page.tabId, url: page.url } }
+      }
+      // Only the Session callback registers; the remaining exact-B readiness terms stay absent.
+      await world.server.onSessionEvent(call, () => undefined)
+      await expect(world.server.getSnapshot({ ...call, validateReadiness: true })).rejects.toThrow(
+        'Runtime Page readiness is incomplete'
+      )
+    } finally {
+      world.dispose()
+    }
+  })
+
+  it('ClientLease never publishes ready when the final Server-side validation fails', async () => {
+    const snapshot = {
+      hostId: 'h1',
+      hostPhase: 'active',
+      domains: []
+    } as unknown as RuntimeSnapshot
+    const coordinator = { registerPage: async () => ({ snapshot }) }
+    const lease = new ClientLease({
+      coordinator,
+      pageId: 'page-x',
+      domain: HARNESS_DOMAIN,
+      validateReady: async () => {
+        throw new Error('Runtime Page binding is no longer current')
+      }
+    })
+    let readyPublished = false
+    lease.whenReady(() => {
+      readyPublished = true
+    })
+    lease.whenAttach(() => undefined)
+    await expect(lease.init()).rejects.toThrow('Runtime Page binding is no longer current')
+    expect(readyPublished).toBe(false)
+  })
+})

@@ -8,6 +8,9 @@ export interface ClientLeaseOptions {
   domain: string
   startupTimeoutMs?: number
   startupRetryIntervalMs?: number
+  /** Final Server-side exact-binding + full-readiness validation, run after the attachment
+   * barrier and before the unique ready publication. Wired by the Page composition root. */
+  validateReady?: () => Promise<void>
 }
 
 const wait = (milliseconds: number, signal: AbortSignal) =>
@@ -177,9 +180,11 @@ export class ClientLease {
     // must settle BEFORE the single ready publication below.
     await this.runAttachmentBarrier()
     if (!this.isCurrent(lifecycle)) return null
-    // Phase 2: the unique ready publication point — after World attach and with the exact
-    // binding still current (every attachment RPC re-validated it during phase 1, and every later
-    // business RPC re-validates it again at admission).
+    // Phase 2: the unique ready publication point — after World attach AND the final Server-side
+    // exact-binding + full-readiness validation. A same-host B2 replacement installed during the
+    // barrier fails this check and blocks the stale B1 ready publication.
+    if (this.options.validateReady) await this.options.validateReady()
+    if (!this.isCurrent(lifecycle)) return null
     this.ready = true
     this.setHostPhase(registration.snapshot.hostPhase)
     this.readyCallbacks.forEach((callback) => callback())
@@ -208,6 +213,8 @@ export class ClientLease {
         // settle before the ready publication, exactly like the initial attach.
         this.snapshotValue = registration.snapshot
         await this.runAttachmentBarrier()
+        if (!this.isCurrent(lifecycle)) return
+        if (this.options.validateReady) await this.options.validateReady()
         if (!this.isCurrent(lifecycle)) return
         this.ready = true
         this.setHostPhase(registration.snapshot.hostPhase)
@@ -278,6 +285,8 @@ export class ClientLease {
       // The rebind attachment barrier: existing ChatRoom/WorldRoom attachments complete before
       // ready is published again.
       await this.runAttachmentBarrier()
+      if (!this.isCurrent(lifecycle)) return
+      if (this.options.validateReady) await this.options.validateReady()
       if (!this.isCurrent(lifecycle)) return
       this.ready = true
       this.setHostPhase(registration.snapshot.hostPhase)

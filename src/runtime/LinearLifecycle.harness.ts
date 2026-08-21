@@ -23,7 +23,14 @@ import { createConnectionLifecycle } from '@/domain/impls/ConnectionLifecycle'
 import type { ConnectionLifecycleResult } from '@/domain/externs/ConnectionLifecycle'
 import { ClientLease } from '@/runtime/ClientLease'
 import type { RuntimeServer, RuntimeSnapshot } from '@/runtime/Contract'
-import { createServer, disposeServer, removeServerTab } from '@/runtime/Server'
+import {
+  createServer,
+  disposeServer,
+  getChatRoomId,
+  observeServerLifecycleForTest,
+  removeServerTab,
+  type ServerLifecycleObservation
+} from '@/runtime/Server'
 import type { RoomTransport } from '@/runtime/RoomTransport'
 import type { WireCodec } from '@/protocol'
 import type { RuntimeCoordinator, RuntimePageCall } from '@/runtime/Contract'
@@ -73,6 +80,10 @@ export type LogEntry = {
     | 'presence.save'
     | 'binding.invalidate'
     | 'binding.attach'
+    | 'binding.replace'
+    | 'room.close'
+    | 'ready.validate'
+    | 'identity'
     | 'messagestore.insert.fail'
     | 'time.advance'
     | 'gate.release'
@@ -218,7 +229,7 @@ const createGatedTransport = (gates: GateHub, log: HarnessLog) => {
     },
     dispose: () => undefined
   }
-  return { transport }
+  return { transport, closeRoom: (roomId: string) => roomCloseListeners.forEach((listener) => listener(roomId)) }
 }
 
 /* --------------------------------------------------- Gated presence store --- */
@@ -285,10 +296,20 @@ export interface HarnessWorld {
   gates: GateHub
   server: RuntimeServer
   pages: HarnessPage[]
+  /** Every exact Server lifecycle observation with real object identities, in emission order. */
+  observations: ServerLifecycleObservation[]
+  /** Owning call index per exact envelope object, attributed at allocation time. */
+  envelopeOwners: WeakMap<object, number>
+  /** Stable identity label for a real runtime object (A/B/C/M/K/P/D/R), derived from identity. */
+  identityLabel: (prefix: string, object: object) => string
   /** Marks a Page's browser binding as navigated away (same tab, new navigation URL). */
   navigate: (pageIndex: number) => Promise<void>
   /** Releases the Page's tab entirely (browser release edge). */
   releaseTab: (pageIndex: number) => Promise<void>
+  /** Same-host B2 replacement: retires the exact B1 object and installs a fresh binding object. */
+  replacePage: (pageIndex: number) => Promise<void>
+  /** Triggers the provider room-close edge: the automatic-recovery Q issuance path. */
+  closeRoom: () => void
   /** Arms a one-shot gate on the next admission tabs.get — used to place an invalidation exactly
    * inside a post-effect revalidation window. */
   armTabsGate: () => void
@@ -305,8 +326,25 @@ let messageDatabaseSeq = 0
 export const createHarnessWorld = (config: WorldConfig): HarnessWorld => {
   const log = new HarnessLog()
   const gates = new GateHub(log)
-  const { transport } = createGatedTransport(gates, log)
+  const { transport, closeRoom } = createGatedTransport(gates, log)
   const presence = createGatedPresenceStore(gates, log)
+
+  // Real identity trace: every label is derived from the actual runtime object identity, never
+  // from a manufactured call index. A/B/C/M/K/P/R get identity-ordered serials; Q is the exact
+  // Wire request id; D labels the exact sealed effect admission of its envelope.
+  const identityLabels = new WeakMap<object, string>()
+  const identityCounts = new Map<string, number>()
+  const identityLabel = (prefix: string, object: object) => {
+    const existing = identityLabels.get(object)
+    if (existing) return existing
+    const next = (identityCounts.get(prefix) ?? 0) + 1
+    identityCounts.set(prefix, next)
+    const label = `${prefix}${next}`
+    identityLabels.set(object, label)
+    return label
+  }
+  const observations: ServerLifecycleObservation[] = []
+  const envelopeOwners = new WeakMap<object, number>()
 
   const tabs = new Map<number, { id: number; url: string }>()
   let tabsGateArmed = false
@@ -337,6 +375,47 @@ export const createHarnessWorld = (config: WorldConfig): HarnessWorld => {
 
   const server = createServer({ transport, codec: jsonCodec, presenceStore: presence.store, admission })
 
+  observeServerLifecycleForTest(server, (observation) => {
+    observations.push(observation)
+    const owner = callContext.getStore()?.a
+    if (observation.type === 'envelope' && observation.phase === 'allocated' && owner !== undefined) {
+      envelopeOwners.set(observation.envelope, owner)
+    }
+    const detail: Record<string, unknown> = { ...observation }
+    if (observation.type === 'envelope' || observation.type === 'effect') {
+      detail.A = identityLabel('A', observation.envelope)
+      if (observation.envelope.binding) detail.B = identityLabel('B', observation.envelope.binding)
+      if (observation.envelope.cohort) detail.C = identityLabel('C', observation.envelope.cohort)
+      if (observation.type === 'effect') detail.D = identityLabel('D', observation.envelope)
+    } else if (observation.type === 'cohort') {
+      detail.C = identityLabel('C', observation.cohort)
+      detail.domain = observation.cohort.domain
+    } else if (observation.type === 'member') {
+      detail.M = identityLabel('M', observation.member)
+      detail.A = identityLabel('A', observation.member.envelope)
+      if (observation.member.envelope.cohort) {
+        detail.C = identityLabel('C', observation.member.envelope.cohort)
+        detail.domain = observation.member.envelope.cohort.domain
+      }
+    } else if (observation.type === 'capability') {
+      detail.K = identityLabel('K', observation.capability)
+    } else if (observation.type === 'physical') {
+      detail.P = identityLabel('P', observation.record)
+      detail.Q = observation.requestId
+      detail.domain = observation.record.domain
+    } else if (observation.type === 'readiness') {
+      detail.R = identityLabel('R', observation.token)
+      detail.B = identityLabel('B', observation.token.binding)
+      detail.domain = observation.token.domain
+    } else if (observation.type === 'binding') {
+      detail.B = identityLabel('B', observation.binding)
+      detail.domain = observation.binding.domain
+    }
+    for (const key of ['envelope', 'cohort', 'member', 'capability', 'record', 'token', 'binding']) delete detail[key]
+    if (owner !== undefined) detail.a = owner
+    log.record('identity', detail)
+  })
+
   const attachedPages = new Map<string, number>()
   const coordinator: RuntimeCoordinator = {
     registerPage: async (payload) => {
@@ -366,7 +445,22 @@ export const createHarnessWorld = (config: WorldConfig): HarnessWorld => {
     const url = `${HARNESS_DOMAIN}/page-${index}`
     tabs.set(tabId, { id: tabId, url })
 
-    const lease = new ClientLease({ coordinator, pageId, domain: HARNESS_DOMAIN })
+    const lease = new ClientLease({
+      coordinator,
+      pageId,
+      domain: HARNESS_DOMAIN,
+      // Identical to the production composition root: the unique ready publication's final term is
+      // one bound Server-side exact-binding + full-readiness validation.
+      validateReady: async () => {
+        await server.getSnapshot({
+          pageId,
+          runtimeHostId: lease.runtimeHostId(),
+          caller: { tab: tabs.get(tabId)! },
+          validateReadiness: true
+        })
+        log.record('ready.validate', { page: index })
+      }
+    })
     const page: HarnessPage = {
       index,
       pageId,
@@ -389,7 +483,7 @@ export const createHarnessWorld = (config: WorldConfig): HarnessWorld => {
     const bound: RuntimeServer = {
       attachPage: (payload) => server.attachPage(withBinding(payload)),
       detachPage: (payload) => server.detachPage(withBinding(payload)),
-      getSnapshot: () => server.getSnapshot(),
+      getSnapshot: () => server.getSnapshot(withBinding({})),
       joinChatRoom: (payload) => server.joinChatRoom(withBinding(payload)),
       leaveChatRoom: (payload) => server.leaveChatRoom(withBinding(payload)),
       allocateTextMessage: (payload) => server.allocateTextMessage(withBinding(payload)),
@@ -471,6 +565,9 @@ export const createHarnessWorld = (config: WorldConfig): HarnessWorld => {
     gates,
     server,
     pages,
+    observations,
+    envelopeOwners,
+    identityLabel,
     navigate: async (pageIndex) => {
       const page = pages[pageIndex]
       navigateSeq += 1
@@ -485,6 +582,20 @@ export const createHarnessWorld = (config: WorldConfig): HarnessWorld => {
       const page = pages[pageIndex]
       log.record('binding.invalidate', { page: pageIndex, cause: 'release' })
       await removeServerTab(server, page.tabId)
+    },
+    replacePage: async (pageIndex) => {
+      const page = pages[pageIndex]
+      log.record('binding.replace', { page: pageIndex })
+      // Same-host B2: a fresh attach retires the exact B1 binding object and installs a new one.
+      await server.attachPage({
+        domain: HARNESS_DOMAIN,
+        pageId: page.pageId,
+        caller: { tab: tabs.get(page.tabId)! }
+      })
+    },
+    closeRoom: () => {
+      log.record('room.close', { domain: HARNESS_DOMAIN })
+      closeRoom(getChatRoomId(HARNESS_DOMAIN))
     },
     armTabsGate: () => {
       tabsGateArmed = true
@@ -506,9 +617,13 @@ export type ScheduleStep =
   | { kind: 'start-call'; call: number }
   | { kind: 'release-gate'; pick: number }
   | { kind: 'fail-gate'; pick: number }
+  | { kind: 'defer-release'; pick: number }
+  | { kind: 'defer-fail'; pick: number }
   | { kind: 'advance'; ms: number }
   | { kind: 'navigate'; page: number }
   | { kind: 'release-tab'; page: number }
+  | { kind: 'replace-page'; page: number }
+  | { kind: 'room-close' }
   | { kind: 'arm-insert-failure'; page: number }
   | { kind: 'arm-tabs-gate' }
 
@@ -550,11 +665,13 @@ export const generateSchedule = (seed: number): Schedule => {
   const envCount = 4 + Math.floor(rng() * 6)
   for (let i = 0; i < envCount; i += 1) {
     const roll = rng()
-    if (roll < 0.45) steps.push({ kind: 'release-gate', pick: Math.floor(rng() * 4) })
-    else if (roll < 0.6) steps.push({ kind: 'advance', ms: [1000, 5000, 10000][Math.floor(rng() * 3)] })
-    else if (roll < 0.75 && pageCount > 1) steps.push({ kind: 'navigate', page: Math.floor(rng() * pageCount) })
-    else if (roll < 0.85 && pageCount > 1) steps.push({ kind: 'release-tab', page: Math.floor(rng() * pageCount) })
-    else steps.push({ kind: 'fail-gate', pick: Math.floor(rng() * 3) })
+    if (roll < 0.38) steps.push({ kind: 'defer-release', pick: Math.floor(rng() * 4) })
+    else if (roll < 0.52) steps.push({ kind: 'advance', ms: [1000, 5000, 10000][Math.floor(rng() * 3)] })
+    else if (roll < 0.64 && pageCount > 1) steps.push({ kind: 'navigate', page: Math.floor(rng() * pageCount) })
+    else if (roll < 0.72) steps.push({ kind: 'release-tab', page: Math.floor(rng() * pageCount) })
+    else if (roll < 0.8) steps.push({ kind: 'replace-page', page: Math.floor(rng() * pageCount) })
+    else if (roll < 0.88) steps.push({ kind: 'room-close' })
+    else steps.push({ kind: 'defer-fail', pick: Math.floor(rng() * 3) })
   }
   // Interleave environment steps among the call starts deterministically.
   const interleaved: ScheduleStep[] = []
@@ -575,6 +692,12 @@ export interface RunResult {
   log: HarnessLog
   results: HarnessCallResult[]
   invalidSteps: ScheduleStep[]
+  /** Real Server lifecycle identity observations, in emission order. */
+  observations: ServerLifecycleObservation[]
+  /** Owning call index per exact envelope object. */
+  envelopeOwners: WeakMap<object, number>
+  /** Identity label of a real runtime object. */
+  identityLabel: (prefix: string, object: object) => string
   error?: unknown
 }
 
@@ -598,18 +721,19 @@ export const runSchedule = async (schedule: Schedule, driver: SchedulerDriver): 
 
   // Exact gate->call attribution via async context: the gate is owned by the call whose
   // continuation created it — even after that call settled Page-side (the Server stack outlives
-  // the Page terminal, exactly what classes 1/2 must observe). The unsettled-call list is only a
-  // fallback for gates created outside any call context (e.g. during Page init).
+  // the Page terminal, exactly what classes 1/2 must observe). Gates created outside any call
+  // context (release/reset chains, Page init, automatic recovery) are owned by the system, never
+  // guessed onto an unsettled call.
   const gateOwner = new Map<number, number>()
   const pendingGateByCall = new Map<number, number>()
   gates.onCreate = (gate) => {
-    const contextual = callContext.getStore()?.a
-    const owner =
-      contextual ?? results.find((result) => result.settled === 'unsettled' && !pendingGateByCall.has(result.a))?.a
+    const owner = callContext.getStore()?.a
     if (owner !== undefined) {
       gateOwner.set(gate.id, owner)
       pendingGateByCall.set(owner, gate.id)
       gate.meta.a = owner
+    } else {
+      gate.meta.a = 'system'
     }
   }
   gates.onSettle = (gate) => {
@@ -703,8 +827,27 @@ export const runSchedule = async (schedule: Schedule, driver: SchedulerDriver): 
   }
 
   let error: unknown
+  // Deferred generated releases: satisfied in order whenever a gate is pending; any leftover at
+  // the end of the drain is a causal violation. Handwritten `release-gate`/`fail-gate` steps are
+  // strict instead: no pending gate fails closed immediately.
+  const deferred: Array<{ mode: 'release' | 'fail'; pick: number; step: ScheduleStep }> = []
+  const satisfyDeferred = async () => {
+    while (deferred.length > 0 && gates.pending().length > 0) {
+      const next = deferred.shift()!
+      const pending = gates.pending()
+      const gate = pending[next.pick % pending.length]
+      log.record('gate.release', { gate: gate.label, meta: gate.meta, mode: next.mode })
+      if (next.mode === 'release') {
+        ;(gate as HarnessGate<unknown>).release(undefined as never)
+      } else {
+        gate.fail(new Error(`harness injected ${gate.label} failure`))
+      }
+      await driver.flush()
+    }
+  }
   try {
     for (const step of schedule.steps) {
+      await satisfyDeferred()
       if (step.kind === 'init-page') {
         if (!world.pages[step.page]) {
           invalidSteps.push(step)
@@ -722,9 +865,10 @@ export const runSchedule = async (schedule: Schedule, driver: SchedulerDriver): 
       } else if (step.kind === 'release-gate' || step.kind === 'fail-gate') {
         const pending = gates.pending()
         if (pending.length === 0) {
-          // No gated work can currently proceed: the step is a deterministic no-op, not a causal
-          // violation (a later step may still create gates).
-          log.record('gate.release', { gate: null, mode: 'noop' })
+          // Fail closed: releasing a gate when nothing is releasable is a causal violation, never
+          // a silent no-op. The step is rejected by the harness itself.
+          log.record('gate.release', { gate: null, mode: 'invalid' })
+          invalidSteps.push(step)
           continue
         }
         const gate = pending[step.pick % pending.length]
@@ -735,6 +879,8 @@ export const runSchedule = async (schedule: Schedule, driver: SchedulerDriver): 
           gate.fail(new Error(`harness injected ${gate.label} failure`))
         }
         await driver.flush()
+      } else if (step.kind === 'defer-release' || step.kind === 'defer-fail') {
+        deferred.push({ mode: step.kind === 'defer-release' ? 'release' : 'fail', pick: step.pick, step })
       } else if (step.kind === 'advance') {
         log.record('time.advance', { ms: step.ms })
         await driver.advanceTime(step.ms)
@@ -753,6 +899,16 @@ export const runSchedule = async (schedule: Schedule, driver: SchedulerDriver): 
         }
         await world.releaseTab(step.page)
         await driver.flush()
+      } else if (step.kind === 'replace-page') {
+        if (!world.pages[step.page]) {
+          invalidSteps.push(step)
+          continue
+        }
+        await world.replacePage(step.page)
+        await driver.flush()
+      } else if (step.kind === 'room-close') {
+        world.closeRoom()
+        await driver.flush()
       } else if (step.kind === 'arm-insert-failure') {
         if (!world.pages[step.page]) {
           invalidSteps.push(step)
@@ -766,6 +922,7 @@ export const runSchedule = async (schedule: Schedule, driver: SchedulerDriver): 
     // Deterministic drain: release remaining gates in creation order, advancing time only when no
     // gate can make progress, until every call settles or the drain cap trips.
     for (let round = 0; round < 200 && results.some((result) => result.settled === 'unsettled'); round += 1) {
+      await satisfyDeferred()
       const pending = gates.pending()
       if (pending.length > 0) {
         const gate = pending[0]
@@ -778,12 +935,27 @@ export const runSchedule = async (schedule: Schedule, driver: SchedulerDriver): 
         await driver.flush()
       }
     }
+    // A deferred release is a valid partial-order element ("release the next gate whenever one
+    // exists"); when no gate ever became pending it is simply unsatisfied, recorded in the trace.
+    // Strict `release-gate`/`fail-gate` no-pending steps above remain hard causal violations.
+    for (const leftover of deferred.splice(0)) {
+      log.record('gate.release', { gate: null, mode: 'unsatisfied', pick: leftover.pick })
+    }
   } catch (caught) {
     error = caught
   } finally {
     world.dispose()
   }
-  return { schedule, log, results, invalidSteps, error }
+  return {
+    schedule,
+    log,
+    results,
+    invalidSteps,
+    observations: world.observations,
+    envelopeOwners: world.envelopeOwners,
+    identityLabel: world.identityLabel,
+    error
+  }
 }
 
 /* -------------------------------------------------------------- Shrinker --- */
@@ -846,10 +1018,17 @@ export const shrinkSchedule = async (
  */
 export const oracleNoStalePresenceEffect = (result: RunResult): string[] => {
   const violations: string[] = []
+  const identity = result.log.entries.filter((entry) => entry.kind === 'identity')
+  // D seal order per call: a save after the envelope sealed its effect is the authoritative
+  // commit's own persistence (consumed K / sealed D is immune to later B events), never the stale
+  // acquisition continuation this oracle fences.
+  const sealedSeq = (a: unknown) =>
+    identity.find((entry) => entry.detail.phase === 'sealed' && entry.detail.a === a)?.seq ?? Number.POSITIVE_INFINITY
   const invalidations = result.log.entries.filter((entry) => entry.kind === 'binding.invalidate')
   for (const save of result.log.entries.filter((entry) => entry.kind === 'presence.save')) {
     const owner = save.detail.a
     if (typeof owner !== 'number') continue
+    if (save.seq > sealedSeq(owner)) continue
     const ownerCall = result.results[owner]
     if (!ownerCall) continue
     for (const invalid of invalidations) {
@@ -930,6 +1109,18 @@ export const oracleHarnessValidity = (result: RunResult): string[] => {
   if (callStarts.length !== result.schedule.calls.length) {
     violations.push(`only ${callStarts.length}/${result.schedule.calls.length} generated calls started`)
   }
+  // Identity coverage: every settled call must carry its exact Server envelope (A) allocation,
+  // attributed to that call — a count-only trace can never satisfy this.
+  const identity = result.log.entries.filter((entry) => entry.kind === 'identity')
+  for (const call of result.results) {
+    if (call.settled !== 'success' && call.settled !== 'null') continue
+    const allocated = identity.some((entry) => entry.detail.phase === 'allocated' && entry.detail.a === call.a)
+    if (!allocated) {
+      violations.push(
+        `call a=${call.a} (${call.op}) settled '${call.settled}' without an exact attributed envelope identity`
+      )
+    }
+  }
   return violations
 }
 
@@ -950,10 +1141,155 @@ export const oracleNoticeNeverRewritesTerminal = (result: RunResult): string[] =
   return violations
 }
 
+/**
+ * O6 (cleanup conjunction): a cohort clears only after every enrolled member self-observed, every
+ * issued Q of the domain reached its exact terminal, and every exact-B readiness owner completed.
+ */
+export const oracleCleanupConjunction = (result: RunResult): string[] => {
+  const violations: string[] = []
+  const identity = result.log.entries.filter((entry) => entry.kind === 'identity')
+  for (const cleared of identity.filter((entry) => entry.detail.phase === 'cleared')) {
+    const cohort = cleared.detail.C
+    const domain = cleared.detail.domain
+    for (const enrolled of identity.filter((entry) => entry.detail.phase === 'enrolled' && entry.detail.C === cohort)) {
+      const observed = identity.some(
+        (entry) => entry.detail.phase === 'observed' && entry.detail.M === enrolled.detail.M && entry.seq < cleared.seq
+      )
+      if (!observed) {
+        violations.push(
+          `cohort ${String(cohort)} cleared seq=${cleared.seq} before member ${String(enrolled.detail.M)} self-observed`
+        )
+      }
+    }
+    for (const requested of identity.filter(
+      (entry) => entry.detail.phase === 'requested' && entry.detail.domain === domain && entry.seq < cleared.seq
+    )) {
+      const terminal = identity.some(
+        (entry) => entry.detail.phase === 'terminal' && entry.detail.Q === requested.detail.Q && entry.seq < cleared.seq
+      )
+      if (!terminal) {
+        violations.push(
+          `cohort ${String(cohort)} cleared seq=${cleared.seq} before Q ${String(requested.detail.Q)} reached its terminal`
+        )
+      }
+    }
+    for (const begin of identity.filter(
+      (entry) => entry.detail.phase === 'begin' && entry.detail.domain === domain && entry.seq < cleared.seq
+    )) {
+      const end = identity.some(
+        (entry) => entry.detail.phase === 'end' && entry.detail.R === begin.detail.R && entry.seq < cleared.seq
+      )
+      if (!end) {
+        violations.push(
+          `cohort ${String(cohort)} cleared seq=${cleared.seq} before readiness owner ${String(begin.detail.R)} completed`
+        )
+      }
+    }
+  }
+  return violations
+}
+
+/**
+ * O7 (successor ordering): a fresh cohort for a domain is created only after the previous closed
+ * cohort's full cleanup conjunction cleared it.
+ */
+export const oracleSuccessorOrdering = (result: RunResult): string[] => {
+  const violations: string[] = []
+  const identity = result.log.entries.filter((entry) => entry.kind === 'identity')
+  const byCohort = new Map<unknown, { created?: number; closed?: number; cleared?: number; domain: unknown }>()
+  for (const entry of identity) {
+    if (entry.detail.phase !== 'created' && entry.detail.phase !== 'closed' && entry.detail.phase !== 'cleared')
+      continue
+    const record = byCohort.get(entry.detail.C) ?? { domain: entry.detail.domain }
+    record[entry.detail.phase as 'created' | 'closed' | 'cleared'] = entry.seq
+    byCohort.set(entry.detail.C, record)
+  }
+  for (const [cohort, record] of byCohort) {
+    if (record.created === undefined) continue
+    for (const [other, previous] of byCohort) {
+      if (other === cohort || previous.domain !== record.domain || previous.closed === undefined) continue
+      if (previous.closed < record.created && (previous.cleared === undefined || previous.cleared > record.created)) {
+        violations.push(
+          `cohort ${String(cohort)} created seq=${record.created} while predecessor ${String(other)} was closed seq=${previous.closed} but not cleared (cleared seq=${String(previous.cleared)})`
+        )
+      }
+    }
+  }
+  return violations
+}
+
+/**
+ * O8 (final ready validation): every ready publication is preceded by a successful final
+ * Server-side validation for the same Page, with no binding invalidation/replacement in between.
+ */
+export const oracleReadyFinalValidation = (result: RunResult): string[] => {
+  const violations: string[] = []
+  for (const publish of result.log.entries.filter((entry) => entry.kind === 'ready.publish')) {
+    const validate = [...result.log.entries]
+      .reverse()
+      .find(
+        (entry) =>
+          entry.kind === 'ready.validate' && entry.detail.page === publish.detail.page && entry.seq < publish.seq
+      )
+    if (!validate) {
+      violations.push(
+        `ready.publish seq=${publish.seq} page=${String(publish.detail.page)} has no preceding final Server-side validation`
+      )
+      continue
+    }
+    const invalidated = result.log.entries.some(
+      (entry) =>
+        (entry.kind === 'binding.invalidate' || entry.kind === 'binding.replace') &&
+        entry.detail.page === publish.detail.page &&
+        entry.seq > validate.seq &&
+        entry.seq < publish.seq
+    )
+    if (invalidated) {
+      violations.push(
+        `ready.publish seq=${publish.seq} page=${String(publish.detail.page)} fired after its binding was invalidated past the final validation seq=${validate.seq}`
+      )
+    }
+  }
+  return violations
+}
+
+/**
+ * O9 (cohort fence): no durable presence save/hydrate or connect effect is attributed to a member
+ * of a cohort after that cohort closed.
+ */
+export const oracleCohortFence = (result: RunResult): string[] => {
+  const violations: string[] = []
+  const identity = result.log.entries.filter((entry) => entry.kind === 'identity')
+  const cohortOf = (a: unknown) =>
+    identity.find((entry) => entry.detail.phase === 'enrolled' && entry.detail.a === a)?.detail.C
+  const closedSeq = (cohort: unknown) =>
+    identity.find((entry) => entry.detail.phase === 'closed' && entry.detail.C === cohort)?.seq
+  // Only the pre-seal acquisition continuation is fenced by its cohort; a post-seal save is the
+  // authoritative commit's persistence.
+  const sealedSeq = (a: unknown) =>
+    identity.find((entry) => entry.detail.phase === 'sealed' && entry.detail.a === a)?.seq ?? Number.POSITIVE_INFINITY
+  for (const save of result.log.entries.filter((entry) => entry.kind === 'presence.save')) {
+    if (save.seq > sealedSeq(save.detail.a)) continue
+    const cohort = cohortOf(save.detail.a)
+    if (cohort === undefined) continue
+    const closed = closedSeq(cohort)
+    if (closed !== undefined && closed < save.seq) {
+      violations.push(
+        `presence.save seq=${save.seq} attributed to call a=${String(save.detail.a)} executed after its cohort ${String(cohort)} closed seq=${closed}`
+      )
+    }
+  }
+  return violations
+}
+
 export const ALL_ORACLES = {
   O1_noStalePresenceEffect: oracleNoStalePresenceEffect,
   O2_singleTerminalOwner: oracleSingleTerminalOwner,
   O3_readyAfterWorldAttach: oracleReadyAfterWorldAttach,
   O5_noticeNeverRewritesTerminal: oracleNoticeNeverRewritesTerminal,
+  O6_cleanupConjunction: oracleCleanupConjunction,
+  O7_successorOrdering: oracleSuccessorOrdering,
+  O8_readyFinalValidation: oracleReadyFinalValidation,
+  O9_cohortFence: oracleCohortFence,
   O4_harnessValidity: oracleHarnessValidity
 } as const

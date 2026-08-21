@@ -340,6 +340,16 @@ export class PagePort implements PagePortContract {
     pending.confirmSettled()
   }
 
+  callbackReadiness(pageId: string) {
+    return {
+      inbound: this.inbound.has(pageId),
+      worldPresence: this.worldPresences.has(pageId),
+      error: this.runtimeErrors.has(pageId),
+      historyFeedback: this.historyFeedbacks.has(pageId),
+      historyDomain: this.historyProviders.get(pageId)?.domain ?? null
+    }
+  }
+
   pendingHistoryCountForTest() {
     return this.pendingHistory.size
   }

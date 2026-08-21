@@ -28,7 +28,16 @@ export const pageDomain = document.location.origin
 export const coordinator = injectCoordinator(new InjectAdapter())
 const rawServer = injectServer(new InjectAdapter())
 
-const client = new ClientLease({ coordinator, pageId, domain: pageDomain })
+const client = new ClientLease({
+  coordinator,
+  pageId,
+  domain: pageDomain,
+  // The final ready conjunction term: after every attachment settled, one bound Server-side
+  // validation of the exact current binding plus the complete readiness fact. No new RPC.
+  validateReady: async () => {
+    await rawServer.getSnapshot({ pageId, runtimeHostId: client.runtimeHostId(), validateReadiness: true })
+  }
+})
 ownInjectRejections((error) => client.observeTransportRejection(error))
 
 const bindPage = <Payload extends object>(payload: Payload) => ({
@@ -41,7 +50,7 @@ const bindPage = <Payload extends object>(payload: Payload) => ({
 export const server: RuntimeServer = {
   attachPage: (payload) => rawServer.attachPage(bindPage(payload)),
   detachPage: (payload) => rawServer.detachPage(bindPage(payload)),
-  getSnapshot: () => rawServer.getSnapshot(),
+  getSnapshot: () => rawServer.getSnapshot(bindPage({})),
   joinChatRoom: (payload) => rawServer.joinChatRoom(bindPage(payload)),
   leaveChatRoom: (payload) => rawServer.leaveChatRoom(bindPage(payload)),
   allocateTextMessage: (payload) => rawServer.allocateTextMessage(bindPage(payload)),

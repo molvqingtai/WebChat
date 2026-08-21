@@ -62,6 +62,88 @@ interface PageBinding {
   sessionGeneration: number | null
 }
 
+/**
+ * Envelope identity model (private, in-memory only):
+ * - `A` action envelope: allocated by Server admission for one business RPC; captures the exact
+ *   binding/cohort/member and owns the caller-visible logical terminal exactly once.
+ * - `C` cohort: one open→closed episode per domain; freezes its member set at close; publishes
+ *   its only logical deadline. It never marks members observed and never decrements anything.
+ * - `M` member: enrollment of one eligible pre-close envelope; self-observes only from its own
+ *   resumed stack.
+ * Nothing below crosses the Page RPC boundary, peer protocol, storage, or any durable structure.
+ */
+const COHORT_DEADLINE_MS = 10_000
+
+type EnvelopeKind = 'join' | 'reconnect' | 'leave' | 'allocate' | 'send'
+
+interface ActionEnvelope {
+  readonly id: string
+  readonly kind: EnvelopeKind
+  readonly binding: PageBinding | null
+  cohort: DomainCohort | null
+  member: CohortMember | null
+  effectSealed: boolean
+  settled: boolean
+}
+
+interface CohortMember {
+  readonly id: string
+  readonly envelope: ActionEnvelope
+  observed: boolean
+}
+
+interface DomainCohort {
+  readonly id: string
+  readonly domain: string
+  state: 'open' | 'closed'
+  readonly members: Set<CohortMember>
+  readonly closedPromise: Promise<void>
+  readonly settledPromise: Promise<void>
+  notifyClosed: () => void
+  notifySettled: () => void
+  timer: ReturnType<typeof setTimeout> | null
+}
+
+/** Test-only identity observation seam: emits the actual runtime object identities. */
+export type ServerLifecycleObservation =
+  | { readonly type: 'envelope'; readonly phase: 'allocated' | 'settled'; readonly envelope: ActionEnvelope }
+  | { readonly type: 'cohort'; readonly phase: 'created' | 'closed' | 'cleared'; readonly cohort: DomainCohort }
+  | { readonly type: 'member'; readonly phase: 'enrolled' | 'observed'; readonly member: CohortMember }
+  | { readonly type: 'effect'; readonly phase: 'sealed'; readonly envelope: ActionEnvelope }
+  | { readonly type: 'capability'; readonly phase: 'minted' | 'consumed' | 'revoked'; readonly capability: object }
+  | {
+      readonly type: 'physical'
+      readonly phase: 'requested' | 'terminal'
+      readonly requestId: string
+      readonly record: PhysicalRequest
+    }
+  | { readonly type: 'readiness'; readonly phase: 'begin' | 'end'; readonly token: ReadinessToken }
+  | { readonly type: 'binding'; readonly phase: 'installed' | 'removed'; readonly binding: PageBinding }
+
+interface PhysicalRequest {
+  readonly requestId: string
+  readonly domain: string | null
+  readonly promise: Promise<void>
+  readonly settle: () => void
+}
+
+interface ReadinessToken {
+  readonly binding: PageBinding
+  readonly domain: string
+  readonly promise: Promise<void>
+  readonly done: () => void
+}
+
+const serverObservers = new WeakMap<RuntimeServer, (observation: ServerLifecycleObservation) => void>()
+
+/** Test-only: subscribes to the Server's exact lifecycle object identities. No production caller. */
+export const observeServerLifecycleForTest = (
+  server: RuntimeServer,
+  observer: (observation: ServerLifecycleObservation) => void
+) => {
+  serverObservers.set(server, observer)
+}
+
 interface PersistedPageBindings {
   pages: Array<Pick<PageBinding, 'tabId' | 'pageId' | 'domain' | 'url'>>
 }
@@ -133,15 +215,187 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   const worldDomain = store.getDomain(worldAction)
   const historyDomain = store.getDomain(historyAction)
   const connectionDomain = store.getDomain(connectionAction)
-  interface PresenceRecovery {
-    attempts: number
-    promise: Promise<void>
-    resolve: () => void
-  }
-
-  const presenceRecoveries = new Map<string, PresenceRecovery>()
+  const domainCohorts = new Map<string, DomainCohort>()
   const pendingConnectionCancellations = new Set<() => void>()
   let disposed = false
+
+  const emit = (observation: ServerLifecycleObservation) => {
+    try {
+      serverObservers.get(server)?.(observation)
+    } catch (error) {
+      console.error(error)
+    }
+  }
+
+  /** P registry: every exact `Wire.JoinRoomsRequestedEvent(Q)` observed from arming time, keyed by Q. */
+  const physicalRequests = new Map<string, PhysicalRequest>()
+  /** Exact-B readiness owners per domain: registration/attach work decrements only on completion or exact-B retirement. */
+  const domainReadiness = new Map<string, Set<ReadinessToken>>()
+  const bindingReadiness = new Map<PageBinding, Set<ReadinessToken>>()
+
+  const pendingPhysicalFor = (domain: string) =>
+    [...physicalRequests.values()].filter((record) => record.domain === domain)
+  const readinessFor = (domain: string) => domainReadiness.get(domain) ?? new Set<ReadinessToken>()
+
+  /** Cleanup conjunction: read-only; true only when every retained exact owner of the domain stopped. */
+  const cleanupConjunction = (cohort: DomainCohort) =>
+    [...cohort.members].every((member) => member.observed) &&
+    pendingPhysicalFor(cohort.domain).length === 0 &&
+    readinessFor(cohort.domain).size === 0
+
+  const evaluateCohort = (cohort: DomainCohort) => {
+    if (domainCohorts.get(cohort.domain) !== cohort) return
+    if (cohort.state === 'open') {
+      // The cohort's deadline is due the moment no bounded work remains; the wall-clock deadline
+      // exists only to close hung stacks. Close publishes open→closed exactly once and freezes members.
+      if (!cleanupConjunction(cohort)) return
+      cohort.state = 'closed'
+      if (cohort.timer) {
+        clearTimeout(cohort.timer)
+        cohort.timer = null
+      }
+      emit({ type: 'cohort', phase: 'closed', cohort })
+      cohort.notifyClosed()
+    }
+    // Atomic closed → cleared removal under the full conjunction.
+    if (cohort.state === 'closed' && cleanupConjunction(cohort)) {
+      domainCohorts.delete(cohort.domain)
+      if (cohort.timer) {
+        clearTimeout(cohort.timer)
+        cohort.timer = null
+      }
+      emit({ type: 'cohort', phase: 'cleared', cohort })
+      cohort.notifySettled()
+    }
+  }
+
+  const createCohort = (domain: string) => {
+    let notifyClosed = () => {}
+    let notifySettled = () => {}
+    const cohort: DomainCohort = {
+      id: nanoid(),
+      domain,
+      state: 'open',
+      members: new Set(),
+      closedPromise: new Promise<void>((resolve) => {
+        notifyClosed = resolve
+      }),
+      settledPromise: new Promise<void>((resolve) => {
+        notifySettled = resolve
+      }),
+      notifyClosed: () => notifyClosed(),
+      notifySettled: () => notifySettled(),
+      // C's deadline is the only Server-side logical deadline: a provider load/save or stack that
+      // never settles can never hold the episode open past it.
+      timer: setTimeout(() => {
+        if (domainCohorts.get(domain) !== cohort || cohort.state !== 'open') return
+        cohort.state = 'closed'
+        cohort.timer = null
+        emit({ type: 'cohort', phase: 'closed', cohort })
+        cohort.notifyClosed()
+        evaluateCohort(cohort)
+      }, COHORT_DEADLINE_MS)
+    }
+    ;(cohort.timer as { unref?: () => void } | null)?.unref?.()
+    domainCohorts.set(domain, cohort)
+    emit({ type: 'cohort', phase: 'created', cohort })
+    return cohort
+  }
+
+  /** M enrolls only while its cohort is open; the member set freezes at close. */
+  const enrollMember = (cohort: DomainCohort, envelope: ActionEnvelope) => {
+    if (cohort.state !== 'open') return null
+    const member: CohortMember = { id: nanoid(), envelope, observed: false }
+    cohort.members.add(member)
+    envelope.cohort = cohort
+    envelope.member = member
+    emit({ type: 'member', phase: 'enrolled', member })
+    return member
+  }
+
+  /** M self-observes only from its own resumed stack; idempotent; never touches siblings. */
+  const observeMember = (member: CohortMember | null) => {
+    if (!member || member.observed) return
+    member.observed = true
+    emit({ type: 'member', phase: 'observed', member })
+    const cohort = member.envelope.cohort
+    if (cohort) evaluateCohort(cohort)
+  }
+
+  const allocateEnvelope = (kind: EnvelopeKind, binding: PageBinding | null): ActionEnvelope => {
+    const envelope: ActionEnvelope = {
+      id: nanoid(),
+      kind,
+      binding,
+      cohort: null,
+      member: null,
+      effectSealed: false,
+      settled: false
+    }
+    emit({ type: 'envelope', phase: 'allocated', envelope })
+    return envelope
+  }
+
+  const settleEnvelope = (envelope: ActionEnvelope) => {
+    if (envelope.settled) return
+    envelope.settled = true
+    emit({ type: 'envelope', phase: 'settled', envelope })
+  }
+
+  /** D: sealed immediately before the one real effect; the result maps to A exactly once. */
+  const sealEffect = (envelope: ActionEnvelope) => {
+    envelope.effectSealed = true
+    emit({ type: 'effect', phase: 'sealed', envelope })
+  }
+
+  const trackReadiness = (binding: PageBinding, domain: string) => {
+    let done = () => {}
+    const token: ReadinessToken = {
+      binding,
+      domain,
+      promise: new Promise<void>((resolve) => {
+        done = resolve
+      }),
+      done: () => done()
+    }
+    let byDomain = domainReadiness.get(domain)
+    if (!byDomain) {
+      byDomain = new Set()
+      domainReadiness.set(domain, byDomain)
+    }
+    byDomain.add(token)
+    let byBinding = bindingReadiness.get(binding)
+    if (!byBinding) {
+      byBinding = new Set()
+      bindingReadiness.set(binding, byBinding)
+    }
+    byBinding.add(token)
+    emit({ type: 'readiness', phase: 'begin', token })
+    let ended = false
+    return () => {
+      if (ended) return
+      ended = true
+      domainReadiness.get(domain)?.delete(token)
+      bindingReadiness.get(binding)?.delete(token)
+      emit({ type: 'readiness', phase: 'end', token })
+      token.done()
+      const cohort = domainCohorts.get(domain)
+      if (cohort) evaluateCohort(cohort)
+    }
+  }
+
+  /** Exact-B retirement decrements all of its outstanding readiness owners. */
+  const retireBindingReadiness = (binding: PageBinding) => {
+    // Copy first: the loop mutates the iterated set (exact-B retirement decrements each token).
+    // oxlint-disable-next-line no-useless-spread
+    for (const token of [...(bindingReadiness.get(binding) ?? [])]) {
+      domainReadiness.get(token.domain)?.delete(token)
+      bindingReadiness.get(binding)?.delete(token)
+      emit({ type: 'readiness', phase: 'end', token })
+      token.done()
+    }
+  }
+
   const pageBindings = new Map<string, PageBinding>()
   const tabBindings = new Map<number, PageBinding>()
   const rebindHints = new Map<number, PersistedPageBindings['pages'][number]>()
@@ -182,9 +436,11 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     pageBindings.delete(binding.pageId)
     tabBindings.delete(binding.tabId)
     // Exact binding invalidation revokes only this binding's live unconsumed capabilities; a
-    // consumed K is authoritative and survives.
+    // consumed K is authoritative and survives. Its outstanding readiness owners retire with it.
     commitAuthority.revokeBinding(binding)
+    retireBindingReadiness(binding)
     pagePort.removePage(binding.pageId)
+    emit({ type: 'binding', phase: 'removed', binding })
     store.send(lifecycleDomain.command.DetachPageCommand({ domain: binding.domain, pageId: binding.pageId }))
     await persistPageBindings()
   }
@@ -268,43 +524,23 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     rebindHints.delete(binding.tabId)
     pageBindings.set(binding.pageId, binding)
     tabBindings.set(binding.tabId, binding)
+    emit({ type: 'binding', phase: 'installed', binding })
     store.send(lifecycleDomain.command.AttachPageCommand({ domain: binding.domain, pageId: binding.pageId }))
     await persistPageBindings()
-  }
-
-  const beginPresenceRecovery = (domain: string) => {
-    const current = presenceRecoveries.get(domain)
-    if (current) {
-      current.attempts += 1
-      return current
-    }
-    let resolve = () => {}
-    const promise = new Promise<void>((onResolve) => {
-      resolve = onResolve
-    })
-    const recovery = { attempts: 1, promise, resolve }
-    presenceRecoveries.set(domain, recovery)
-    return recovery
-  }
-
-  const finishPresenceRecovery = (domain: string, recovery: PresenceRecovery, succeeded: boolean) => {
-    if (presenceRecoveries.get(domain) !== recovery) return
-    recovery.attempts -= 1
-    if (!succeeded && recovery.attempts > 0) return
-    presenceRecoveries.delete(domain)
-    recovery.resolve()
   }
 
   const operationCancelled = () => new DOMException('Runtime presence is completing its final release', 'AbortError')
 
   const waitForLivePresence = async (domain: string) => {
     if (disposed) throw operationCancelled()
-    const recovery = presenceRecoveries.get(domain)
-    if (!recovery) {
+    const cohort = domainCohorts.get(domain)
+    if (!cohort) {
       if (store.query(sessionDomain.query.FinalizingPresenceQuery(domain))) throw operationCancelled()
       return
     }
-    await recovery.promise
+    // Business admission waits for the full cleanup conjunction of the domain's live cohort:
+    // every member self-observed, every issued Q terminal, and every exact-B readiness owner done.
+    await cohort.settledPromise
     if (
       disposed ||
       store.query(sessionDomain.query.FinalizingPresenceQuery(domain)) ||
@@ -317,64 +553,87 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   const snapshot = (): RuntimeSnapshot => store.query(connectionDomain.query.SnapshotQuery())
 
   /**
-   * Envelope P observer: armed before any Connection join/reconnect dispatch. P is created only by
-   * the exact `Wire.JoinRoomsRequestedEvent(Q)` for this operation and settles exactly once at its
-   * matching `RoomsJoined`/`RoomsJoinFailed` terminal. A request that was never issued creates no P.
+   * Envelope P observation: armed globally before any Connection join/reconnect/recovery dispatch.
+   * Every exact `Wire.JoinRoomsRequestedEvent(Q)` — Server-issued or automatic-recovery — creates
+   * exactly one P, attributed to its exact domain, settling exactly once at its matching
+   * `RoomsJoined`/`RoomsJoinFailed` terminal. A request never issued creates no P.
    */
-  const pendingPhysical = new Map<string, Map<string, { promise: Promise<void> }>>()
-  const joinRequestIdFor = (operationId: string) => `connection:join:${operationId}`
-  const observeConnectionPhysical = (domain: string, operationId: string) => {
-    const requestId = joinRequestIdFor(operationId)
-    const requested = store.subscribeEvent(wireDomain.event.JoinRoomsRequestedEvent, (event) => {
-      if (event.requestId !== requestId) return
-      requested.unsubscribe()
-      let settle!: () => void
-      const promise = new Promise<void>((resolve) => {
-        settle = resolve
-      })
-      let byDomain = pendingPhysical.get(domain)
-      if (!byDomain) {
-        byDomain = new Map()
-        pendingPhysical.set(domain, byDomain)
+  const domainForRooms = (rooms: { roomId: string }[]): string | null => {
+    const candidates = new Set<string>()
+    for (const binding of pageBindings.values()) candidates.add(binding.domain)
+    for (const runtime of store.query(sessionDomain.query.DomainsQuery())) candidates.add(runtime.domain)
+    for (const attempt of store.query(connectionDomain.query.AttemptsQuery())) candidates.add(attempt.domain)
+    for (const domain of domainCohorts.keys()) candidates.add(domain)
+    for (const record of physicalRequests.values()) if (record.domain) candidates.add(record.domain)
+    for (const { roomId } of rooms) {
+      for (const domain of candidates) {
+        if (getChatRoomId(domain) === roomId) return domain
       }
-      byDomain.set(requestId, { promise })
-      const terminal = () => {
-        if (!pendingPhysical.get(domain)?.has(requestId)) return
-        pendingPhysical.get(domain)!.delete(requestId)
-        joined.unsubscribe()
-        failed.unsubscribe()
-        settle()
-      }
-      const joined = store.subscribeEvent(wireDomain.event.RoomsJoinedEvent, (result) => {
-        if (result.requestId === requestId) terminal()
-      })
-      const failed = store.subscribeEvent(wireDomain.event.RoomsJoinFailedEvent, (result) => {
-        if (result.requestId === requestId) terminal()
-      })
-    })
-    // Disarms only the pre-issuance subscription; an issued P always runs to its exact terminal.
-    return () => requested.unsubscribe()
+    }
+    return null
   }
+  store.subscribeEvent(wireDomain.event.JoinRoomsRequestedEvent, (event) => {
+    if (physicalRequests.has(event.requestId)) return
+    let settle = () => {}
+    const record: PhysicalRequest = {
+      requestId: event.requestId,
+      domain: domainForRooms(event.rooms),
+      promise: new Promise<void>((resolve) => {
+        settle = resolve
+      }),
+      settle: () => settle()
+    }
+    physicalRequests.set(event.requestId, record)
+    emit({ type: 'physical', phase: 'requested', requestId: event.requestId, record })
+  })
+  const settlePhysicalRequest = (requestId: string) => {
+    const record = physicalRequests.get(requestId)
+    if (!record) return
+    physicalRequests.delete(requestId)
+    emit({ type: 'physical', phase: 'terminal', requestId, record })
+    record.settle()
+    if (record.domain) {
+      const cohort = domainCohorts.get(record.domain)
+      if (cohort) evaluateCohort(cohort)
+    }
+  }
+  store.subscribeEvent(wireDomain.event.RoomsJoinedEvent, (event) => settlePhysicalRequest(event.requestId))
+  store.subscribeEvent(wireDomain.event.RoomsJoinFailedEvent, (event) => settlePhysicalRequest(event.requestId))
+
   /** Cleanup conjunction term: every issued P of the domain must reach its exact terminal first. */
   const drainPhysical = async (domain: string) => {
-    let pending = pendingPhysical.get(domain)
-    while (pending && pending.size > 0) {
-      await Promise.all([...pending.values()].map((entry) => entry.promise))
-      pending = pendingPhysical.get(domain)
+    let pending = pendingPhysicalFor(domain)
+    while (pending.length > 0) {
+      await Promise.all(pending.map((entry) => entry.promise))
+      pending = pendingPhysicalFor(domain)
+    }
+  }
+  /** Cleanup conjunction term: every outstanding exact-B readiness owner of the domain completes. */
+  const drainReadiness = async (domain: string) => {
+    let pending = [...readinessFor(domain)]
+    while (pending.length > 0) {
+      await Promise.all(pending.map((token) => token.promise))
+      pending = [...readinessFor(domain)]
     }
   }
 
   const acquirePresence = async (
     domain: string,
     userId: string,
-    fence?: () => void
+    fence?: () => void,
+    deadline?: Promise<void>
   ): Promise<'active' | 'acquired' | 'finalizing'> => {
+    // The cohort deadline bounds the only unbounded waits in the stack: a provider load/save that
+    // never settles. Its close is the one logical terminal here; every physical join keeps its own
+    // existing Connection timeout terminal.
+    const bounded = <T>(task: Promise<T>): Promise<T> =>
+      deadline ? Promise.race([task, deadline.then(() => Promise.reject(operationCancelled()))]) : task
     if (store.query(sessionDomain.query.DomainQuery(domain))) {
       return store.query(sessionDomain.query.FinalizingPresenceQuery(domain)) ? 'finalizing' : 'active'
     }
     // No durable end journal: a rejoin always acquires the durable local lease or a fresh one and
     // hydrates the current generation. An in-memory release fenced the domain only for this generation.
-    const stored = (await presenceStore.load(domain)) ?? { domain, lastJoinedAt: 0, observers: [] }
+    const stored = (await bounded(presenceStore.load(domain))) ?? { domain, lastJoinedAt: 0, observers: [] }
     // Envelope fence: after every await and before the first durable effect, the captured exact
     // binding must still be current. A superseded/invalidated caller performs zero save/hydrate.
     fence?.()
@@ -393,7 +652,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       lastJoinedAt: Math.max(stored.lastJoinedAt, local.joinedAt),
       local
     }
-    await presenceStore.save(record)
+    await bounded(presenceStore.save(record))
     fence?.()
     store.send(sessionDomain.command.HydratePresenceCommand(record))
     return 'acquired'
@@ -401,10 +660,11 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   const acquireCurrentPresence = async (
     domain: string,
     userId: string,
-    fence?: () => void
+    fence?: () => void,
+    deadline?: Promise<void>
   ): Promise<'active' | 'acquired' | 'finalizing'> => {
     while (!disposed) {
-      const acquired = await acquirePresence(domain, userId, fence)
+      const acquired = await acquirePresence(domain, userId, fence, deadline)
       if (store.query(sessionDomain.query.FinalizingPresenceQuery(domain))) return 'finalizing'
       if (store.query(sessionDomain.query.DomainQuery(domain))) return 'active'
       if (acquired === 'acquired') return 'acquired'
@@ -647,14 +907,40 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       store.send(connectionDomain.command.LeaveDomainCommand(domain))
     })
     // Cleanup conjunction: the release completes only after every issued P of the domain reached
-    // its exact Wire terminal, so no successor can be admitted ahead of a pending physical join.
-    const settled = task.then(() => drainPhysical(domain))
+    // its exact Wire terminal and every outstanding exact-B readiness owner of the domain
+    // completed, so no successor can be admitted ahead of pending physical or registration work.
+    const settled = task.then(async () => {
+      await drainPhysical(domain)
+      await drainReadiness(domain)
+    })
     inFlightReleases.set(domain, settled)
     const releaseDeparture = () => {
       if (inFlightReleases.get(domain) === settled) inFlightReleases.delete(domain)
     }
     void settled.then(releaseDeparture, releaseDeparture)
     return settled
+  }
+
+  /** Server admission fact: the complete exact-B readiness conjunction (active Session callback,
+   * ChatRoom's four sibling registrations incl. its History supply, and World attach registration). */
+  const requireFullReadiness = (binding: PageBinding | null) => {
+    if (!binding) return
+    const missing: string[] = []
+    if (
+      binding.sessionGeneration === null ||
+      !pagePort.isSessionEventActive(binding.pageId, binding.sessionGeneration)
+    ) {
+      missing.push('session')
+    }
+    const readiness = pagePort.callbackReadiness(binding.pageId)
+    if (!readiness.inbound) missing.push('inbound')
+    if (!readiness.error) missing.push('error')
+    if (!readiness.historyFeedback) missing.push('history-feedback')
+    if (readiness.historyDomain !== binding.domain) missing.push('history')
+    if (!readiness.worldPresence) missing.push('world')
+    if (missing.length > 0) {
+      throw new Error(`Runtime Page readiness is incomplete: ${missing.join(', ')}`)
+    }
   }
 
   /** One shared in-flight join settlement per domain: overlapping same-domain joins coalesce. */
@@ -668,74 +954,128 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   ) => {
     // Typed ChatUser/ChatSite values pass through unchanged; the application-to-protocol
     // mapping already happened before the value was narrowed to the schema-owned type.
-    const recovery = beginPresenceRecovery(payload.domain)
-    let recovered = false
-    try {
+    const envelope = allocateEnvelope('join', binding ?? null)
+    // A fresh successor enters only after a closed cohort's full cleanup conjunction cleared.
+    let cohort = domainCohorts.get(payload.domain)
+    if (cohort && cohort.state === 'closed') {
+      await cohort.settledPromise
+      cohort = domainCohorts.get(payload.domain)
+    }
+    if (!cohort) cohort = createCohort(payload.domain)
+    const member = enrollMember(cohort, envelope)
+    const activeCohort = cohort
+    // Envelope fence: after every await and before any durable effect, the captured cohort must
+    // still be open; a closed cohort settles this stack's own A per contract with zero effects.
+    const cohortFence = () => {
+      if (activeCohort.state === 'closed') throw operationCancelled()
+    }
+    const envelopeFence = () => {
+      fence?.()
+      cohortFence()
+    }
+    // Every unbounded wait inside the acquisition loop except the physical join itself is raced
+    // against the cohort deadline: a hung provider load/save or a hung admission check settles
+    // this A with the structured null instead of waiting forever. The physical join keeps its own
+    // existing Connection timeout terminal, so a real raw Error always wins over the deadline.
+    const raceDeadline = <T>(task: Promise<T>): Promise<T> =>
+      Promise.race([task, activeCohort.closedPromise.then(() => Promise.reject(operationCancelled()))])
+    const boundedRevalidate = revalidate ? () => raceDeadline(revalidate()) : undefined
+    const work = (async (): Promise<Awaited<ReturnType<typeof snapshot>> | null> => {
       // Cleanup conjunction at admission: when no live Connection attempt owns the domain's
       // physical work, a (re)join may begin durable acquisition only after every previously issued
       // P of this exact domain reached its Wire terminal — regardless of which path (grace
-      // release, explicit leave, abort) retired the old work. A live attempt instead keeps the
-      // existing newest-generation supersession rule: the fresh join supersedes it directly.
+      // release, explicit leave, abort, or automatic recovery) issued the old work. A live attempt
+      // instead keeps the existing newest-generation supersession rule: the fresh join supersedes
+      // it directly.
       if (!store.query(connectionDomain.query.AttemptsQuery()).some((item) => item.domain === payload.domain)) {
         await drainPhysical(payload.domain)
+        cohortFence()
       }
       const connect = () => {
         const operationId = nanoid()
         // Envelope K: minted for this exact binding/operation and consumed synchronously at the
-        // first irreversible boundary (the join dispatch itself). P observation is armed before
-        // dispatch so an issued Q can never be missed.
+        // first irreversible boundary (the join dispatch itself). P observation is armed globally
+        // before dispatch so an issued Q can never be missed, including automatic-recovery Qs.
         const capability = commitAuthority.mint({
           operationId,
           domain: payload.domain,
           kind: 'join',
           binding: binding ?? null
         })
+        emit({ type: 'capability', phase: 'minted', capability })
         if (!commitAuthority.consume(capability)) throw operationCancelled()
-        const disarm = observeConnectionPhysical(payload.domain, operationId)
+        emit({ type: 'capability', phase: 'consumed', capability })
+        sealEffect(envelope)
         return runConnectionOperation(
           operationId,
           connectionDomain.command.JoinDomainCommand({ operationId, ...payload, capability }),
           () => true,
           () => false
-        ).finally(disarm)
+        )
       }
       while (true) {
-        if (revalidate) await revalidate()
-        const presenceState = await acquireCurrentPresence(payload.domain, payload.user.id, fence)
-        if (revalidate) await revalidate()
+        if (boundedRevalidate) await boundedRevalidate()
+        cohortFence()
+        const presenceState = await acquireCurrentPresence(
+          payload.domain,
+          payload.user.id,
+          envelopeFence,
+          activeCohort.closedPromise
+        )
+        if (boundedRevalidate) await boundedRevalidate()
+        cohortFence()
         if (presenceState === 'finalizing') {
           // A lease observed after the release fence started never bypasses the shared release:
           // it waits for the one live release owner to close, then starts fresh through the loop.
           if (store.query(sessionDomain.query.ReleasingDomainQuery(payload.domain))) {
             await completeInterruptedRelease(payload.domain)
-            fence?.()
+            envelopeFence()
             continue
           }
           if (!store.query(sessionDomain.query.DomainQuery(payload.domain))) {
-            if (revalidate) await revalidate()
+            if (boundedRevalidate) await boundedRevalidate()
+            cohortFence()
             if (!(await connect())) return null
             continue
           }
           await completeInterruptedRelease(payload.domain)
-          fence?.()
+          envelopeFence()
           continue
         }
         if (store.query(sessionDomain.query.FinalizingPresenceQuery(payload.domain))) {
           await completeInterruptedRelease(payload.domain)
-          fence?.()
+          envelopeFence()
           continue
         }
         if (presenceState === 'active' && !store.query(sessionDomain.query.DomainQuery(payload.domain))) {
           continue
         }
-        if (revalidate) await revalidate()
-        fence?.()
+        if (boundedRevalidate) await boundedRevalidate()
+        envelopeFence()
         if (!(await connect())) return null
-        recovered = true
+        envelopeFence()
         return snapshot()
       }
+    })()
+    // C's deadline is the sole logical terminal for a stack whose provider load/save never
+    // settles: its close surfaces here as the structured cancellation, this resumed stack records
+    // its own M observed, and its A settles with the structured null. A late-resuming continuation
+    // hits the fences above and performs zero save/hydrate/connect/commit.
+    try {
+      return await work
+    } catch (error) {
+      if (
+        !disposed &&
+        activeCohort.state === 'closed' &&
+        error instanceof DOMException &&
+        error.name === 'AbortError'
+      ) {
+        return null
+      }
+      throw error
     } finally {
-      finishPresenceRecovery(payload.domain, recovery, recovered)
+      settleEnvelope(envelope)
+      observeMember(member)
     }
   }
 
@@ -748,18 +1088,30 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     operationId: string,
     binding?: PageBinding | null
   ): Promise<undefined | null> => {
+    const envelope = allocateEnvelope('reconnect', binding ?? null)
+    let cohort = domainCohorts.get(domain)
+    if (cohort && cohort.state === 'closed') {
+      await cohort.settledPromise
+      cohort = domainCohorts.get(domain)
+    }
+    if (!cohort) cohort = createCohort(domain)
+    const member = enrollMember(cohort, envelope)
+    const activeCohort = cohort
     // Envelope K: consumed synchronously BEFORE the first irreversible reset/destruction, so only
     // this exact operation can perform the reset and only its consumed capability can commit the
-    // later replacement. P observation covers the replacement join exactly like an initial join.
+    // later replacement. P observation is global and armed before any dispatch, exactly like an
+    // initial join.
     const capability = commitAuthority.mint({ operationId, domain, kind: 'reconnect', binding: binding ?? null })
+    emit({ type: 'capability', phase: 'minted', capability })
     if (!commitAuthority.consume(capability)) throw operationCancelled()
-    const disarm = observeConnectionPhysical(domain, operationId)
+    emit({ type: 'capability', phase: 'consumed', capability })
     try {
       // Phase 1: correlated destruction of the complete current-domain connection aggregate. The
       // cleared-observer persistence must settle and the domain's History work must physically
       // settle before the replacement may prepare; a persistence rejection fails the request
       // retryably without committing a mixed old/new snapshot.
       const reset = await resetDomainConnection(domain, operationId, capability)
+      if (activeCohort.state === 'closed') return null
       if (!reset.ok) {
         return runConnectionOperation(
           operationId,
@@ -772,7 +1124,8 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
         )
       }
       // Phase 2: the canonical replacement attempt, seeded with the captured local identity.
-      return runConnectionOperation(
+      sealEffect(envelope)
+      return await runConnectionOperation(
         operationId,
         connectionDomain.command.ReconnectDomainCommand({
           operationId,
@@ -785,7 +1138,8 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
         () => null
       )
     } finally {
-      disarm()
+      settleEnvelope(envelope)
+      observeMember(member)
     }
   }
 
@@ -811,7 +1165,16 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
         store.send(lifecycleDomain.command.DetachPageCommand(payload))
       }
     },
-    getSnapshot: async () => snapshot(),
+    getSnapshot: async (payload) => {
+      // Bound call: validates the exact current binding object (identity, host, browser
+      // navigation). `validateReadiness` additionally requires the complete exact-B readiness
+      // conjunction; the Page's unique ready publication rides on that final Server-side check.
+      if (payload?.pageId) {
+        const binding = await requirePageBinding(payload, payload.validateReadiness === true)
+        if (payload.validateReadiness === true) requireFullReadiness(binding)
+      }
+      return snapshot()
+    },
     joinChatRoom: (payload) => {
       const settle = (revalidate?: () => Promise<void>, fence?: () => void, binding?: PageBinding | null) => {
         // Overlapping same-domain joins observed while the domain's release is closing coalesce into
@@ -844,48 +1207,77 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       return (async () => {
         const binding = await requirePageBinding(payload, true)
         await revalidateBinding(binding, payload)
-        // The leave resolves only after physical departure and rejects with the exact
-        // DomainReleaseFailedEvent when the active-record cleanup write fails. The settled release
-        // is the sole terminal; no post-effect revalidation may rewrite it.
-        await completeInterruptedRelease(payload.domain)
+        // D-equivalent: the single shared release owner. The leave resolves only after physical
+        // departure and rejects with the exact DomainReleaseFailedEvent when the active-record
+        // cleanup write fails. The settled release is the sole terminal; no post-effect
+        // revalidation may rewrite it.
+        const envelope = allocateEnvelope('leave', binding)
+        try {
+          sealEffect(envelope)
+          await completeInterruptedRelease(payload.domain)
+        } finally {
+          settleEnvelope(envelope)
+        }
       })()
     },
     allocateTextMessage: async (payload) => {
       const binding = await requirePageBinding(payload, true)
       await revalidateBinding(binding, payload)
-      await waitForLivePresence(payload.domain)
-      await revalidateBinding(binding, payload)
-      const operationId = nanoid()
-      return runAllocationOperation(
-        operationId,
-        sessionDomain.command.AllocateTextMessageCommand({ operationId, ...payload }),
-        sessionDomain.event.TextMessageAllocatedEvent
-      )
+      // Business admission requires the complete exact-B readiness fact, not Session alone.
+      requireFullReadiness(binding)
+      const envelope = allocateEnvelope('allocate', binding)
+      try {
+        await waitForLivePresence(payload.domain)
+        await revalidateBinding(binding, payload)
+        const operationId = nanoid()
+        sealEffect(envelope)
+        return await runAllocationOperation(
+          operationId,
+          sessionDomain.command.AllocateTextMessageCommand({ operationId, ...payload }),
+          sessionDomain.event.TextMessageAllocatedEvent
+        )
+      } finally {
+        settleEnvelope(envelope)
+      }
     },
     allocateReactionMessage: async (payload) => {
       const binding = await requirePageBinding(payload, true)
       await revalidateBinding(binding, payload)
-      await waitForLivePresence(payload.domain)
-      await revalidateBinding(binding, payload)
-      const operationId = nanoid()
-      return runAllocationOperation(
-        operationId,
-        sessionDomain.command.AllocateReactionMessageCommand({ operationId, ...payload }),
-        sessionDomain.event.ReactionMessageAllocatedEvent
-      )
+      requireFullReadiness(binding)
+      const envelope = allocateEnvelope('allocate', binding)
+      try {
+        await waitForLivePresence(payload.domain)
+        await revalidateBinding(binding, payload)
+        const operationId = nanoid()
+        sealEffect(envelope)
+        return await runAllocationOperation(
+          operationId,
+          sessionDomain.command.AllocateReactionMessageCommand({ operationId, ...payload }),
+          sessionDomain.event.ReactionMessageAllocatedEvent
+        )
+      } finally {
+        settleEnvelope(envelope)
+      }
     },
     sendChatMessage: async (payload) => {
       const binding = await requirePageBinding(payload, true)
       await revalidateBinding(binding, payload)
-      await waitForLivePresence(payload.domain)
-      await revalidateBinding(binding, payload)
-      const operationId = nanoid()
-      const command = sessionDomain.command.SendChatMessageCommand({ operationId, ...payload })
-      if (payload.event.type === MESSAGE_TYPE.TEXT) {
-        return runTextAcceptanceOperation(operationId, command)
+      requireFullReadiness(binding)
+      const envelope = allocateEnvelope('send', binding)
+      try {
+        await waitForLivePresence(payload.domain)
+        await revalidateBinding(binding, payload)
+        const operationId = nanoid()
+        const command = sessionDomain.command.SendChatMessageCommand({ operationId, ...payload })
+        sealEffect(envelope)
+        if (payload.event.type === MESSAGE_TYPE.TEXT) {
+          return await runTextAcceptanceOperation(operationId, command)
+        }
+        await runSessionOperation(operationId, command, () => undefined)
+        return payload.event
+      } finally {
+        settleEnvelope(envelope)
       }
-      await runSessionOperation(operationId, command, () => undefined)
-      return payload.event
     },
     ackInbound: async (payload) => {
       const binding = await requirePageBinding(payload, true)
@@ -925,65 +1317,97 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       return task
     },
     onInbound: async (payload, callback) => {
-      await requirePageBinding(payload, false)
-      pagePort.onInbound(payload.pageId, callback)
+      const binding = await requirePageBinding(payload, false)
+      const endReadiness = binding ? trackReadiness(binding, binding.domain) : undefined
+      try {
+        pagePort.onInbound(payload.pageId, callback)
+      } finally {
+        endReadiness?.()
+      }
     },
     onSessionEvent: async (payload, callback) => {
       const binding = await requirePageBinding(payload, false)
-      const generation = pagePort.beginSessionEvent(payload.pageId, callback)
-      if (binding) binding.sessionGeneration = null
-      const lease = store
-        .query(lifecycleDomain.query.DomainLeasesQuery())
-        .find((candidate) => candidate.pageIds.includes(payload.pageId))
-      if (!lease) {
-        pagePort.cancelSessionEvent(payload.pageId, generation)
-        return
-      }
-      const runtime = snapshot().domains.find((candidate) => candidate.domain === lease.domain)
+      // An outstanding exact-B registration owner: release/cohort cleanup waits for this exact
+      // work; it decrements only on its own completion or exact-B retirement.
+      const endReadiness = binding ? trackReadiness(binding, binding.domain) : undefined
       try {
-        await callback({
-          type: 'snapshot',
-          domain: lease.domain,
-          snapshot: {
-            ...(runtime?.localSession ? { localSession: runtime.localSession } : {}),
-            sessions: runtime?.sessions ?? []
-          },
-          provenance: 'refresh'
-        })
-        const current = store
+        const generation = pagePort.beginSessionEvent(payload.pageId, callback)
+        if (binding) binding.sessionGeneration = null
+        const lease = store
           .query(lifecycleDomain.query.DomainLeasesQuery())
-          .find((candidate) => candidate.domain === lease.domain)
-        const currentBinding = await requirePageBinding(payload, false).catch(() => null)
-        if (
-          !current?.pageIds.includes(payload.pageId) ||
-          currentBinding !== binding ||
-          !(await pagePort.activateSessionEvent(payload.pageId, generation))
-        ) {
+          .find((candidate) => candidate.pageIds.includes(payload.pageId))
+        if (!lease) {
           pagePort.cancelSessionEvent(payload.pageId, generation)
-        } else if (binding) {
-          binding.sessionGeneration = generation
+          return
         }
-      } catch (error) {
-        pagePort.cancelSessionEvent(payload.pageId, generation)
-        if (binding) await removeBinding(binding)
-        throw error
+        const runtime = snapshot().domains.find((candidate) => candidate.domain === lease.domain)
+        try {
+          await callback({
+            type: 'snapshot',
+            domain: lease.domain,
+            snapshot: {
+              ...(runtime?.localSession ? { localSession: runtime.localSession } : {}),
+              sessions: runtime?.sessions ?? []
+            },
+            provenance: 'refresh'
+          })
+          const current = store
+            .query(lifecycleDomain.query.DomainLeasesQuery())
+            .find((candidate) => candidate.domain === lease.domain)
+          const currentBinding = await requirePageBinding(payload, false).catch(() => null)
+          if (
+            !current?.pageIds.includes(payload.pageId) ||
+            currentBinding !== binding ||
+            !(await pagePort.activateSessionEvent(payload.pageId, generation))
+          ) {
+            pagePort.cancelSessionEvent(payload.pageId, generation)
+          } else if (binding) {
+            binding.sessionGeneration = generation
+          }
+        } catch (error) {
+          pagePort.cancelSessionEvent(payload.pageId, generation)
+          if (binding) await removeBinding(binding)
+          throw error
+        }
+      } finally {
+        endReadiness?.()
       }
     },
     onWorldPresence: async (payload, callback) => {
-      await requirePageBinding(payload, false)
-      pagePort.onWorldPresence(payload.pageId, callback)
+      const binding = await requirePageBinding(payload, false)
+      const endReadiness = binding ? trackReadiness(binding, binding.domain) : undefined
+      try {
+        pagePort.onWorldPresence(payload.pageId, callback)
+      } finally {
+        endReadiness?.()
+      }
     },
     onError: async (payload, callback) => {
-      await requirePageBinding(payload, false)
-      pagePort.onError(payload.pageId, callback)
+      const binding = await requirePageBinding(payload, false)
+      const endReadiness = binding ? trackReadiness(binding, binding.domain) : undefined
+      try {
+        pagePort.onError(payload.pageId, callback)
+      } finally {
+        endReadiness?.()
+      }
     },
     onHistoryFeedback: async (payload, callback) => {
-      await requirePageBinding(payload, false)
-      pagePort.onHistoryFeedback(payload.pageId, callback)
+      const binding = await requirePageBinding(payload, false)
+      const endReadiness = binding ? trackReadiness(binding, binding.domain) : undefined
+      try {
+        pagePort.onHistoryFeedback(payload.pageId, callback)
+      } finally {
+        endReadiness?.()
+      }
     },
     provideHistory: async (payload, callback) => {
-      await requirePageBinding(payload, false)
-      pagePort.provideHistory(payload.pageId, payload.domain, callback)
+      const binding = await requirePageBinding(payload, false)
+      const endReadiness = binding ? trackReadiness(binding, binding.domain) : undefined
+      try {
+        pagePort.provideHistory(payload.pageId, payload.domain, callback)
+      } finally {
+        endReadiness?.()
+      }
     },
     resolveHistorySupply: async (payload) => {
       await requirePageBinding(payload, true)
@@ -1063,8 +1487,19 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   serverControls.set(server, { restorePageBindings, removeTab })
   serverDisposers.set(server, () => {
     disposed = true
-    presenceRecoveries.forEach((recovery) => recovery.resolve())
-    presenceRecoveries.clear()
+    for (const cohort of domainCohorts.values()) {
+      if (cohort.timer) clearTimeout(cohort.timer)
+      cohort.notifyClosed()
+      cohort.notifySettled()
+    }
+    domainCohorts.clear()
+    for (const record of physicalRequests.values()) record.settle()
+    physicalRequests.clear()
+    for (const tokens of domainReadiness.values()) {
+      for (const token of tokens) token.done()
+    }
+    domainReadiness.clear()
+    bindingReadiness.clear()
     ;[...pendingConnectionCancellations].forEach((cancel) => cancel())
     pageBridges.forEach((subscription) => subscription.unsubscribe())
     try {

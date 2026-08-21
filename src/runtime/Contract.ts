@@ -147,7 +147,7 @@ export interface RuntimeErrorEvent {
 export interface RuntimeServer {
   attachPage: (payload: { domain: string; pageId: string } & RuntimePageCall) => Promise<RuntimeSnapshot>
   detachPage: (payload: { domain: string; pageId: string } & RuntimePageCall) => Promise<void>
-  getSnapshot: () => Promise<RuntimeSnapshot>
+  getSnapshot: (payload?: RuntimePageCall & { validateReadiness?: boolean }) => Promise<RuntimeSnapshot>
   joinChatRoom: (
     payload: { domain: string; user: ChatUser; site: ChatSite } & RuntimePageCall
   ) => Promise<RuntimeSnapshot | null>
