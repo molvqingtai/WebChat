@@ -36,6 +36,11 @@ const client = new ClientLease({
   // validation of the exact current binding plus the complete readiness fact. No new RPC.
   validateReady: async () => {
     await rawServer.getSnapshot({ pageId, runtimeHostId: client.runtimeHostId(), validateReadiness: true })
+  },
+  // The exact-B failure terminal: an attachment failure retires the binding through the existing
+  // detachPage surface so its readiness owners end and cohort cleanup wakes.
+  retireBinding: async () => {
+    await rawServer.detachPage({ domain: pageDomain, pageId, runtimeHostId: client.runtimeHostId() })
   }
 })
 ownInjectRejections((error) => client.observeTransportRejection(error))

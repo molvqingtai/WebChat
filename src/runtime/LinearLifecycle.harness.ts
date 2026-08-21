@@ -318,6 +318,8 @@ export interface HarnessWorld {
   armTransportGate: () => void
   /** Arms a one-shot gate on the next replayInbound RPC — used to hold Chat replay across cleanup. */
   armReplayGate: () => void
+  /** Arms a one-shot gate inside the validation->ready publication window. */
+  armResponseGate: () => void
   dispose: () => void
 }
 
@@ -457,6 +459,7 @@ export const createHarnessWorld = (config: WorldConfig): HarnessWorld => {
   const pages: HarnessPage[] = []
   let navigateSeq = 0
   let replayGateArmed = false
+  let responseGateArmed = false
   for (let index = 0; index < config.pageCount; index += 1) {
     const pageId = `harness-page-${config.seed}-${index}`
     const tabId = 1000 + index
@@ -476,7 +479,23 @@ export const createHarnessWorld = (config: WorldConfig): HarnessWorld => {
           caller: { tab: tabs.get(tabId)! },
           validateReadiness: true
         })
+        if (responseGateArmed) {
+          responseGateArmed = false
+          // Holds the exact validation->publication window open: a same-tuple replacement may be
+          // installed only inside this window by a schedule that explicitly releases the gate.
+          const gate = gates.create<void>('validation.response', { page: index })
+          await gate.promise
+        }
         log.record('ready.validate', { page: index })
+      },
+      // The exact-B failure terminal, identical to the production wiring through detachPage.
+      retireBinding: async () => {
+        await server.detachPage({
+          domain: HARNESS_DOMAIN,
+          pageId,
+          runtimeHostId: lease.runtimeHostId(),
+          caller: { tab: tabs.get(tabId)! }
+        })
       }
     })
     const page: HarnessPage = {
@@ -633,6 +652,9 @@ export const createHarnessWorld = (config: WorldConfig): HarnessWorld => {
     },
     armReplayGate: () => {
       replayGateArmed = true
+    },
+    armResponseGate: () => {
+      responseGateArmed = true
     },
     dispose: () => {
       pages.forEach((page) => {

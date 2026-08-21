@@ -507,8 +507,9 @@ const ConnectionDomain = Remesh.domain({
             : []),
           ...(attempt.mode === 'reconnect' ? [lifecycleDomain.command.FinishReconnectCommand(attempt.domain)] : []),
           // A cohort-closed commit refusal is the structured cancellation, not a failure: the RPC
-          // maps it to null exactly like a superseded operation. Its supersession owner is the
-          // closed cohort deadline (there is no superseding operation).
+          // maps it to null exactly like a superseded operation, and its terminal is supersession
+          // (no retry is ever armed — a structured cancellation is not a failure/retry owner).
+          // Its supersession owner is the closed cohort deadline (there is no superseding operation).
           ...(attempt.operationId && payload.cancellation === true
             ? [
                 OperationCancelledEvent({
@@ -519,7 +520,9 @@ const ConnectionDomain = Remesh.domain({
             : attempt.operationId
               ? [OperationFailedEvent({ operationId: attempt.operationId, error: payload.error })]
               : [ErrorEvent({ error: payload.error, domain: attempt.domain })]),
-          AttemptFailedEvent({ ...attempt, error: payload.error })
+          ...(payload.cancellation === true
+            ? [AttemptSupersededEvent(attempt)]
+            : [AttemptFailedEvent({ ...attempt, error: payload.error })])
         ]
       }
     })

@@ -11,6 +11,9 @@ export interface ClientLeaseOptions {
   /** Final Server-side exact-binding + full-readiness validation, run after the attachment
    * barrier and before the unique ready publication. Wired by the Page composition root. */
   validateReady?: () => Promise<void>
+  /** The exact-B failure terminal: retires the binding whose attachment just failed, ending its
+   * readiness owners and waking cohort cleanup. Wired by the Page composition root. */
+  retireBinding?: () => Promise<void>
 }
 
 const wait = (milliseconds: number, signal: AbortSignal) =>
@@ -55,6 +58,9 @@ export class ClientLease {
   private snapshotValue: RuntimeSnapshot | null = null
   private ready = false
   private lifecycle: AbortController | null = null
+  /** Page-local attachment epoch: changes on every registration/rebind. A ready publication may
+   * only consume the exact barrier it started — never a same-tuple successor's. */
+  private attachEpoch = 0
   private readonly readyCallbacks = new Set<() => void>()
   /** Internal attach-phase hooks (ChatRoom/WorldRoom attachment). Their completions are the
    * readiness barrier: ready is published only after every one settled. */
@@ -172,19 +178,40 @@ export class ClientLease {
     if (failed) throw failed.reason
   }
 
+  private async retireCurrentBinding() {
+    if (!this.options.retireBinding) return
+    try {
+      await this.options.retireBinding()
+    } catch (error) {
+      // The binding may already be gone (navigation/replacement); the failure terminal is best
+      // effort and never masks the original attachment failure.
+      console.error(error)
+    }
+  }
+
   private async attach(lifecycle: AbortController, deadline = Date.now() + this.startupTimeoutMs) {
+    const epoch = ++this.attachEpoch
     const registration = await this.registerWithinBudget(lifecycle, deadline)
     if (!this.isCurrent(lifecycle)) return null
     this.snapshotValue = registration.snapshot
-    // Phase 1: attachments (ChatRoom registrations + replay, WorldRoom subscription + snapshot)
-    // must settle BEFORE the single ready publication below.
-    await this.runAttachmentBarrier()
-    if (!this.isCurrent(lifecycle)) return null
-    // Phase 2: the unique ready publication point — after World attach AND the final Server-side
-    // exact-binding + full-readiness validation. A same-host B2 replacement installed during the
-    // barrier fails this check and blocks the stale B1 ready publication.
-    if (this.options.validateReady) await this.options.validateReady()
-    if (!this.isCurrent(lifecycle)) return null
+    try {
+      // Phase 1: attachments (ChatRoom registrations + replay, WorldRoom subscription + snapshot)
+      // must settle BEFORE the single ready publication below.
+      await this.runAttachmentBarrier()
+      if (!this.isCurrent(lifecycle)) return null
+      // Phase 2: the unique ready publication point — after World attach AND the final Server-side
+      // exact-binding + full-readiness validation. A same-host B2 replacement installed during the
+      // barrier fails this check and blocks the stale B1 ready publication.
+      if (this.options.validateReady) await this.options.validateReady()
+    } catch (error) {
+      // The attachment failure terminal: retire the exact binding so its readiness owners end
+      // exactly once and cohort cleanup wakes. The original failure is preserved.
+      await this.retireCurrentBinding()
+      throw error
+    }
+    // A same-tuple successor registration (rebind/attach) changes the epoch: this barrier can no
+    // longer be published, even while the long-lived lifecycle controller still matches.
+    if (!this.isCurrent(lifecycle) || this.attachEpoch !== epoch) return null
     this.ready = true
     this.setHostPhase(registration.snapshot.hostPhase)
     this.readyCallbacks.forEach((callback) => callback())
@@ -199,6 +226,7 @@ export class ClientLease {
   async checkNow() {
     const lifecycle = this.lifecycle
     if (!lifecycle || !this.isCurrent(lifecycle)) return
+    const epoch = ++this.attachEpoch
     const deadline = Date.now() + this.startupTimeoutMs
     try {
       const registration = await this.registerWithinBudget(lifecycle, deadline)
@@ -212,10 +240,15 @@ export class ClientLease {
         // issuing another probe or replaying an action through a recovery helper. Attachments
         // settle before the ready publication, exactly like the initial attach.
         this.snapshotValue = registration.snapshot
-        await this.runAttachmentBarrier()
-        if (!this.isCurrent(lifecycle)) return
-        if (this.options.validateReady) await this.options.validateReady()
-        if (!this.isCurrent(lifecycle)) return
+        try {
+          await this.runAttachmentBarrier()
+          if (!this.isCurrent(lifecycle)) return
+          if (this.options.validateReady) await this.options.validateReady()
+        } catch (error) {
+          await this.retireCurrentBinding()
+          throw error
+        }
+        if (!this.isCurrent(lifecycle) || this.attachEpoch !== epoch) return
         this.ready = true
         this.setHostPhase(registration.snapshot.hostPhase)
         this.readyCallbacks.forEach((callback) => callback())
@@ -275,6 +308,7 @@ export class ClientLease {
   async rebind() {
     const lifecycle = this.lifecycle
     if (!lifecycle || !this.isCurrent(lifecycle)) return
+    const epoch = ++this.attachEpoch
     const deadline = Date.now() + this.startupTimeoutMs
     this.ready = false
     this.setHostPhase('connecting')
@@ -282,12 +316,17 @@ export class ClientLease {
       const registration = await this.registerWithinBudget(lifecycle, deadline)
       if (!this.isCurrent(lifecycle)) return
       this.snapshotValue = registration.snapshot
-      // The rebind attachment barrier: existing ChatRoom/WorldRoom attachments complete before
-      // ready is published again.
-      await this.runAttachmentBarrier()
-      if (!this.isCurrent(lifecycle)) return
-      if (this.options.validateReady) await this.options.validateReady()
-      if (!this.isCurrent(lifecycle)) return
+      try {
+        // The rebind attachment barrier: existing ChatRoom/WorldRoom attachments complete before
+        // ready is published again.
+        await this.runAttachmentBarrier()
+        if (!this.isCurrent(lifecycle)) return
+        if (this.options.validateReady) await this.options.validateReady()
+      } catch (error) {
+        await this.retireCurrentBinding()
+        throw error
+      }
+      if (!this.isCurrent(lifecycle) || this.attachEpoch !== epoch) return
       this.ready = true
       this.setHostPhase(registration.snapshot.hostPhase)
       this.readyCallbacks.forEach((callback) => callback())

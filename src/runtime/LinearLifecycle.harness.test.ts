@@ -608,7 +608,10 @@ const postKCommitSchedule: Schedule = {
     { kind: 'release-gate', pick: 0 }, // tabs.get resumes -> K consumed, Q dispatched ~t=9s
     { kind: 'advance', ms: 1000 }, // t=10s: C deadline closes while the provider join is pending
     { kind: 'release-gate', pick: 0 }, // chat transport join succeeds AFTER close (physical timeout ~t=19s)
-    { kind: 'release-gate', pick: 0 } // world transport join succeeds AFTER close
+    { kind: 'release-gate', pick: 0 }, // world transport join succeeds AFTER close
+    // The structured cancellation is a non-retrying terminal: advancing through the full recovery
+    // retry interval must not start any unfenced Q2.
+    { kind: 'advance', ms: 11000 }
   ]
 }
 
@@ -647,6 +650,12 @@ describe('Linear lifecycle generated harness — task #1544 killing schedules', 
     // The late physical terminal still arrived and was recorded exactly once (P decrements).
     const lateTerminals = identity.filter((entry) => entry.detail.phase === 'terminal' && entry.seq > closed!.seq)
     expect(lateTerminals.length, report(result)).toBeGreaterThan(0)
+    // No unfenced retry: after the structured null, advancing through the whole recovery retry
+    // interval issued no further Q and committed nothing for the dead action.
+    const joinStarts = result.log.entries.filter((entry) => entry.kind === 'transport.join.start')
+    expect(joinStarts.length, report(result)).toBe(2)
+    const lateRequested = identity.filter((entry) => entry.detail.phase === 'requested' && entry.seq > closed!.seq)
+    expect(lateRequested, report(result)).toEqual([])
   })
 
   it('K2: readiness owners cover replay; cleanup neither clears early nor sleeps after retirement', async () => {
@@ -739,6 +748,79 @@ describe('Linear lifecycle generated harness — task #1544 killing schedules', 
         if (gate.label === 'admission.ensureTransport') (gate as HarnessGate<unknown>).release(undefined as never)
       }
       await expect(validation).rejects.toThrow('Runtime Page binding is no longer current')
+    } finally {
+      world.dispose()
+    }
+  })
+})
+
+describe('Linear lifecycle generated harness — task #1546 terminals', () => {
+  it('K2-failure: an attachment failure retires the exact binding exactly once and preserves the failure', async () => {
+    const snapshot = { hostId: 'h1', hostPhase: 'active', domains: [] } as unknown as RuntimeSnapshot
+    const coordinator = { registerPage: async () => ({ snapshot }) }
+    let retireCalls = 0
+    const lease = new ClientLease({
+      coordinator,
+      pageId: 'page-x',
+      domain: HARNESS_DOMAIN,
+      retireBinding: async () => {
+        retireCalls += 1
+      }
+    })
+    let readyPublished = false
+    lease.whenReady(() => {
+      readyPublished = true
+    })
+    // The attachment fails after its registrations succeeded (replay/local persistence rejects).
+    lease.whenAttach(() => {
+      throw new Error('replay persistence failed')
+    })
+    await expect(lease.init()).rejects.toThrow('replay persistence failed')
+    expect(retireCalls).toBe(1)
+    expect(readyPublished).toBe(false)
+  })
+
+  it('K3-window: a same-tuple replacement inside the validation-publication window blocks the stale ready', async () => {
+    vi.useRealTimers()
+    const world = createHarnessWorld({ seed: 132, pageCount: 1 })
+    try {
+      const page = world.pages[0]
+      // Hold B1's validation-publication window open: Server validation passes, then the response
+      // continuation suspends inside the armed gate.
+      world.armResponseGate()
+      let initResult: unknown = 'unsettled'
+      const initTask = page.lease.init().then((value) => {
+        initResult = value
+        return value
+      })
+      await driveWorld(world, () => world.gates.pending().some((gate) => gate.label === 'validation.response'))
+      // A same-tuple B2 registration installs B2 (retiring B1) and starts its own attachment.
+      let rebindSettled = false
+      const rebindTask = page.lease.rebind().then(
+        () => {
+          rebindSettled = true
+        },
+        () => {
+          rebindSettled = true
+        }
+      )
+      await driveWorld(world, () => rebindSettled, ['validation.response'])
+      // Release B1's suspended response continuation: its barrier must no longer be publishable.
+      for (const gate of world.gates.pending()) {
+        if (gate.label === 'validation.response') (gate as HarnessGate<unknown>).release(undefined as never)
+      }
+      await initTask
+      expect(initResult, world.log.trace().join('\n')).toBeNull()
+      // Every ready publication (if any) belongs to B2's own complete barrier, never to B1's.
+      const publishes = world.log.entries.filter((entry) => entry.kind === 'ready.publish')
+      const b1Retired = world.log.entries.find(
+        (entry) => entry.kind === 'binding.invalidate' && entry.detail.cause === 'replacement'
+      )
+      expect(b1Retired).toBeDefined()
+      for (const publish of publishes) {
+        expect(publish.seq > b1Retired!.seq, world.log.trace().join('\n')).toBe(true)
+      }
+      void rebindTask
     } finally {
       world.dispose()
     }
