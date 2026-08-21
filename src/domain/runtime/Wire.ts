@@ -12,6 +12,7 @@ export type WireMessage = ChatRoomMessage | WorldRoomMessage
 export interface WireJoinResult {
   requestId: string
   roomIds: string[]
+  rooms: { roomId: string; generation: number }[]
 }
 
 export type WireFailureStage = 'preflight' | 'provider' | 'cancelled'
@@ -19,6 +20,8 @@ export type WireFailureStage = 'preflight' | 'provider' | 'cancelled'
 export interface WireFailure {
   requestId: string
   error: Error
+  /** Present only for JoinRooms terminals; send failures have no room-generation cohort. */
+  rooms?: { roomId: string; generation: number }[]
   stage?: WireFailureStage
 }
 
@@ -81,6 +84,13 @@ interface DropRecord {
   loggedAt: number
 }
 
+interface PendingJoinRequest {
+  requestId: string
+  rooms: { roomId: string; generation: number }[]
+  aborting: boolean
+  abortError: Error | null
+}
+
 const MAX_LOGGED_SOURCES = 256
 const LOG_INTERVAL_MS = 10000
 const worldRoomId = stringToHex(WORLD_ROOM_ID_V5)
@@ -113,6 +123,7 @@ const WireDomain = Remesh.domain({
     const SendQueuesState = domain.state<SendQueue[]>({ name: 'Wire.SendQueuesState', default: [] })
     const QueueSequenceState = domain.state<number>({ name: 'Wire.QueueSequenceState', default: 0 })
     const DropRecordsState = domain.state<DropRecord[]>({ name: 'Wire.DropRecordsState', default: [] })
+    const pendingJoins = new Map<string, PendingJoinRequest>()
     // Current physical source admission per room: a source is admitted only while it is a member
     // of the current room generation (PeerJoined added it and no PeerLeave/room close removed it).
     // This is the upstream fact the lawful-rebind classifier requires before an ended observation
@@ -165,6 +176,9 @@ const WireDomain = Remesh.domain({
       requestId: string
       rooms: { roomId: string; generation: number }[]
     }>({ name: 'Wire.JoinRoomsRequestedEvent' })
+    const AbortJoinRoomsRequestedEvent = domain.event<PendingJoinRequest>({
+      name: 'Wire.AbortJoinRoomsRequestedEvent'
+    })
     const LeaveRoomRequestedEvent = domain.event<{ roomId: string; diagnosticOnly?: boolean }>({
       name: 'Wire.LeaveRoomRequestedEvent'
     })
@@ -208,13 +222,29 @@ const WireDomain = Remesh.domain({
       name: 'Wire.JoinRoomsCommand',
       impl: ({ get }, payload: { requestId: string; roomIds: string[] }) => {
         const generations = get(RoomGenerationsState())
-        return JoinRoomsRequestedEvent({
+        if (pendingJoins.has(payload.requestId)) return null
+        const request: PendingJoinRequest = {
           requestId: payload.requestId,
           rooms: [...new Set(payload.roomIds)].map((roomId) => ({
             roomId,
             generation: generations.find((item) => item.roomId === roomId)?.generation ?? 0
-          }))
-        })
+          })),
+          aborting: false,
+          abortError: null
+        }
+        pendingJoins.set(request.requestId, request)
+        return JoinRoomsRequestedEvent(request)
+      }
+    })
+
+    const AbortJoinRoomsCommand = domain.command({
+      name: 'Wire.AbortJoinRoomsCommand',
+      impl: (_, payload: { requestId: string; error: Error }) => {
+        const request = pendingJoins.get(payload.requestId)
+        if (!request || request.aborting) return null
+        request.aborting = true
+        request.abortError = payload.error
+        return AbortJoinRoomsRequestedEvent(request)
       }
     })
 
@@ -300,12 +330,16 @@ const WireDomain = Remesh.domain({
     const CompleteJoinRoomsCommand = domain.command({
       name: 'Wire.CompleteJoinRoomsCommand',
       impl: ({ get }, payload: { requestId: string; rooms: { roomId: string; generation: number }[] }) => {
+        const request = pendingJoins.get(payload.requestId)
+        if (!request || request.aborting) return null
+        pendingJoins.delete(payload.requestId)
         const generations = get(RoomGenerationsState())
         const current = (roomId: string) => generations.find((item) => item.roomId === roomId)?.generation ?? 0
         if (payload.rooms.some((room) => current(room.roomId) !== room.generation)) {
           return RoomsJoinFailedEvent({
             requestId: payload.requestId,
-            error: new Error('Room join superseded')
+            error: new Error('Room join superseded'),
+            rooms: request.rooms
           })
         }
         const roomIds = payload.rooms.map((room) => room.roomId)
@@ -332,7 +366,8 @@ const WireDomain = Remesh.domain({
           ...(resumed.length ? [SendQueuesState().new(nextQueues)] : []),
           RoomsJoinedEvent({
             requestId: payload.requestId,
-            roomIds
+            roomIds,
+            rooms: request.rooms
           }),
           ...resumed
             .filter(({ queue }) => !queue.headInvoked)
@@ -344,6 +379,29 @@ const WireDomain = Remesh.domain({
               })
             )
         ]
+      }
+    })
+
+    const FailJoinRoomsCommand = domain.command({
+      name: 'Wire.FailJoinRoomsCommand',
+      impl: (_, payload: { requestId: string; error: Error }) => {
+        const request = pendingJoins.get(payload.requestId)
+        if (!request || request.aborting) return null
+        pendingJoins.delete(payload.requestId)
+        return RoomsJoinFailedEvent({ ...payload, rooms: request.rooms })
+      }
+    })
+
+    const CompleteAbortedJoinRoomsCommand = domain.command({
+      name: 'Wire.CompleteAbortedJoinRoomsCommand',
+      impl: (_, request: PendingJoinRequest) => {
+        if (pendingJoins.get(request.requestId) !== request || !request.aborting) return null
+        pendingJoins.delete(request.requestId)
+        return RoomsJoinFailedEvent({
+          requestId: request.requestId,
+          error: request.abortError ?? new Error('Physical room join aborted'),
+          rooms: request.rooms
+        })
       }
     })
 
@@ -657,11 +715,37 @@ const WireDomain = Remesh.domain({
         fromEvent(JoinRoomsRequestedEvent).pipe(
           mergeMap(async (request) => {
             try {
-              await Promise.all(request.rooms.map(({ roomId }) => transport.join(roomId)))
+              await Promise.all(
+                request.rooms.map(({ roomId, generation }) =>
+                  transport.join(roomId, { joinId: `${request.requestId}:${roomId}:${generation}` })
+                )
+              )
               return CompleteJoinRoomsCommand(request)
             } catch (error) {
-              return RoomsJoinFailedEvent({ requestId: request.requestId, error: error as Error })
+              return FailJoinRoomsCommand({ requestId: request.requestId, error: error as Error })
             }
+          })
+        )
+    })
+    domain.effect({
+      name: 'Wire.AbortJoinRoomsEffect',
+      impl: ({ fromEvent }) =>
+        fromEvent(AbortJoinRoomsRequestedEvent).pipe(
+          mergeMap(async (request) => {
+            const abort = transport.abortJoin
+            if (!abort) return new Promise<never>(() => {})
+            try {
+              await Promise.all(
+                request.rooms.map(({ roomId, generation }) =>
+                  abort(roomId, `${request.requestId}:${roomId}:${generation}`)
+                )
+              )
+            } catch {
+              // A rejected receipt is not a physical terminal. Keep the exact Q occupied forever
+              // rather than manufacturing a failure and admitting a successor over old work.
+              return new Promise<never>(() => {})
+            }
+            return CompleteAbortedJoinRoomsCommand(request)
           })
         )
     })
@@ -787,6 +871,7 @@ const WireDomain = Remesh.domain({
       query: { PeerIdQuery, TrustedRoomsQuery, IsRoomTrustedQuery, DecodeQueuesQuery, IsSourceAdmittedQuery },
       command: {
         JoinRoomsCommand,
+        AbortJoinRoomsCommand,
         LeaveRoomCommand,
         SendMessageCommand,
         DropProtocolCommand: RecordDropCommand,
@@ -794,6 +879,9 @@ const WireDomain = Remesh.domain({
         RemoveSourceCommand
       },
       event: {
+        // Service-private physical-operation admission. It is intentionally separate from peer
+        // protocol events so Server can retain exactly the issued provider operation.
+        JoinRoomsRequestedEvent,
         RoomsJoinedEvent,
         RoomsJoinFailedEvent,
         MessageSentEvent,

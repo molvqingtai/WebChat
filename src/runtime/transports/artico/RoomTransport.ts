@@ -11,6 +11,7 @@ interface PendingJoin {
 
 interface PeerOwner {
   roomId: string
+  joinId?: string
   peerId: string
   peer: Artico
   room?: Room
@@ -139,9 +140,10 @@ export const createRoomTransport = (): RoomTransport => {
     startPeer(owner)
   }
 
-  const createOwner = (roomId: string): PeerOwner => {
+  const createOwner = (roomId: string, joinId?: string): PeerOwner => {
     const owner: PeerOwner = {
       roomId,
+      joinId,
       peerId: nanoid(),
       peer: undefined as unknown as Artico,
       restartTimer: null,
@@ -181,10 +183,46 @@ export const createRoomTransport = (): RoomTransport => {
     }
   }
 
+  /**
+   * This is the only pending-join abort receipt. Marking the exact owner disposed fences every
+   * late provider callback first; the owner remains occupied unless every applicable close call
+   * returns normally, so a same-room successor cannot be admitted over uncertain old work.
+   */
+  const abortPendingJoin = async (roomId: string, joinId: string) => {
+    const owner = owners.get(roomId)
+    if (!owner || owner.joinId !== joinId || owner.disposed) return new Promise<void>(() => {})
+    owner.disposed = true
+    if (owner.restartTimer) {
+      globalThis.clearTimeout(owner.restartTimer)
+      owner.restartTimer = null
+    }
+    let failure: unknown
+    const room = owner.room
+    if (room) {
+      try {
+        room.leave()
+      } catch (error) {
+        failure = error
+      }
+    }
+    try {
+      owner.peer.close()
+    } catch (error) {
+      failure ??= error
+    }
+    if (failure !== undefined) return new Promise<void>(() => {})
+    owner.room = undefined
+    owner.pendingJoin?.reject(new Error(`Room "${roomId}" join cancelled`))
+    owner.pendingJoin = undefined
+    if (owners.get(roomId) === owner) owners.delete(roomId)
+  }
+
   return {
     peerIdOf: (roomId) => owners.get(roomId)?.peerId ?? '',
-    join: (roomId) => {
-      const owner = owners.get(roomId) ?? createOwner(roomId)
+    join: (roomId, options) => {
+      const current = owners.get(roomId)
+      if (current?.disposed) return new Promise<void>(() => {})
+      const owner = current ?? createOwner(roomId, options?.joinId)
       repairDisconnectedPeer(owner)
       if (owner.room) return Promise.resolve()
       const pending = owner.pendingJoin ?? createPendingJoin()
@@ -192,6 +230,7 @@ export const createRoomTransport = (): RoomTransport => {
       joinNow(owner)
       return pending.promise
     },
+    abortJoin: abortPendingJoin,
     leave: (roomId, options) => {
       const owner = owners.get(roomId)
       if (!owner) return

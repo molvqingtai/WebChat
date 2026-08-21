@@ -1109,8 +1109,11 @@ describe('Runtime-backed ChatRoom application port', () => {
     }
   })
 
-  it('reports a superseded attempt token cancelled before aborting it (real Runtime adapter)', async () => {
-    const heldJoin = new Promise<RuntimeSnapshot>(() => {})
+  it('keeps concurrent invocation tokens pending until their Server RPC terminal (real Runtime adapter)', async () => {
+    let resolveJoin!: (snapshot: RuntimeSnapshot) => void
+    const heldJoin = new Promise<RuntimeSnapshot>((resolve) => {
+      resolveJoin = resolve
+    })
     const database = createMemoryMessageDatabase(`supersede-${databaseId++}`)
     const messageStore = createMessageStore(database)
     const server: RuntimeServer = {
@@ -1132,23 +1135,28 @@ describe('Runtime-backed ChatRoom application port', () => {
     room.bindConnectionResultReporter(lifecycle.report)
     room.bindStandaloneInvocation(lifecycle.value.mint, lifecycle.value.bindTask)
 
-    // First join holds its provider call; a second join supersedes it by beginConnectionAttempt, which
-    // must report the predecessor token cancelled BEFORE aborting it (first-terminal-wins).
+    // A second Page invocation may not create its own cancellation terminal for the first RPC.
     const first = room.joinRoom({ user: USER, site: SITE })
     await settle()
     const second = room.joinRoom({ user: USER, site: SITE })
     await settle()
 
-    // Both task rejections keep their exact expected identity instead of a silent sink: the first
-    // rejects on supersession and the second on disposal-time page detachment.
-    const firstRejection = expect(first).rejects.toThrow('Page connection attempt superseded')
-    const secondRejection = expect(second).rejects.toThrow('Runtime page detached')
-    await settle()
-
-    expect(lifecycle.value.getTaskResult(first)).toBe('cancelled')
+    let firstSettled = false
+    let secondSettled = false
+    void first.then(() => {
+      firstSettled = true
+    })
+    void second.then(() => {
+      secondSettled = true
+    })
+    expect(firstSettled).toBe(false)
+    expect(secondSettled).toBe(false)
+    resolveJoin(domainSnapshot())
+    await expect(first).resolves.toBeUndefined()
+    await expect(second).resolves.toBeUndefined()
+    expect(lifecycle.value.getTaskResult(first)).toBe('succeeded')
+    expect(lifecycle.value.getTaskResult(second)).toBe('succeeded')
     room.dispose()
-    await firstRejection
-    await secondRejection
     await database.close()
   })
 })

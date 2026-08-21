@@ -1,595 +1,167 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ClientLease } from './ClientLease'
-import type { HostPhase, RuntimeCoordinator, RuntimePageRegistration, RuntimeSnapshot } from './Contract'
+import type { RuntimeCoordinator, RuntimePageRegistration, RuntimeSnapshot } from './Contract'
 
-const deferred = <T>() => {
-  let resolve!: (value: T) => void
-  let reject!: (reason?: unknown) => void
-  const promise = new Promise<T>((done, fail) => {
-    resolve = done
-    reject = fail
-  })
-  return { promise, resolve, reject }
-}
+const pageId = 'page-a'
+const domain = 'https://example.test'
 
-const snapshot: RuntimeSnapshot = {
-  hostId: 'host-a',
+const snapshot = (hostId = 'host-a'): RuntimeSnapshot => ({
+  hostId,
   hostPhase: 'ready',
   peerId: 'peer-a',
-  domains: [],
-  world: { joined: false, peerId: 'peer-a', presences: [] }
-}
-
-const registration = (value: RuntimeSnapshot = snapshot, generation = 1): RuntimePageRegistration => ({
-  phase: 'ready',
-  generation,
-  snapshot: value
+  domains: [{ domain, phase: 'active', pageIds: [pageId], chatRoomJoined: true, sessions: [] }],
+  world: { joined: true, peerId: 'peer-a', presences: [] }
 })
 
+const registration = (hostId = 'host-a'): RuntimePageRegistration => ({ snapshot: snapshot(hostId) })
+
 const coordinatorWith = (registerPage: RuntimeCoordinator['registerPage']): RuntimeCoordinator => ({
-  ensureHost: vi.fn(async () => ({ phase: 'ready' as const, generation: 1 })),
   registerPage
 })
 
 beforeEach(() => vi.useFakeTimers())
 afterEach(() => vi.useRealTimers())
 
-describe('ClientLease generation ownership', () => {
-  it('publishes connecting immediately and terminates a forever-pending registration inside the original budget', async () => {
-    const coordinator = coordinatorWith(vi.fn(() => new Promise<RuntimePageRegistration>(() => {})))
-    const phases: HostPhase[] = []
-    const client = new ClientLease({ coordinator, pageId: 'page-a', domain: 'https://example.test' })
-    client.whenHostPhase((phase) => phases.push(phase))
-    const initializing = client.init()
-    const rejected = expect(initializing).rejects.toEqual(new Error('Runtime control-plane request timed out'))
-
-    await vi.waitFor(() => expect(coordinator.registerPage).toHaveBeenCalledOnce())
-    try {
-      expect(phases).toEqual(['none', 'connecting'])
-      await vi.advanceTimersByTimeAsync(15000)
-      await rejected
-      expect(phases.at(-1)).toBe('unavailable')
-    } finally {
-      client.detach()
-      await Promise.allSettled([initializing])
-    }
-  })
-
-  it('isolates a throwing failure listener and continues the original failure lifecycle', async () => {
-    const providerError = new Error('runtime provider refused')
-    const listenerError = new Error('failure listener crashed')
-    const coordinator = coordinatorWith(vi.fn(async () => Promise.reject(providerError)))
-    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
-    const laterListener = vi.fn()
-    const phases: HostPhase[] = []
-    const client = new ClientLease({ coordinator, pageId: 'page-a', domain: 'https://example.test' })
-    client.whenHostPhase((phase) => phases.push(phase))
-    client.whenFailure(() => {
-      throw listenerError
+describe('ClientLease event-driven Runtime admission', () => {
+  it('starts every readiness owner and publishes ready only after every owner settles', async () => {
+    const registerPage = vi.fn<RuntimeCoordinator['registerPage']>().mockResolvedValue(registration())
+    const client = new ClientLease({ coordinator: coordinatorWith(registerPage), pageId, domain })
+    const failure = new Error('session registration failed')
+    let worldStarted = false
+    client.whenReady(() => {
+      throw failure
     })
-    client.whenFailure(laterListener)
+    client.whenReady(async () => {
+      worldStarted = true
+    })
 
-    const initializing = client.init()
-    const rejected = expect(initializing).rejects.toBe(providerError)
-    await vi.advanceTimersByTimeAsync(15000)
-    await rejected
-
-    expect(diagnostic).toHaveBeenCalledWith(listenerError)
-    expect(laterListener).toHaveBeenCalledOnce()
-    expect(laterListener).toHaveBeenCalledWith(providerError)
-    expect(phases).toEqual(['none', 'connecting', 'unavailable'])
-    client.detach()
-    diagnostic.mockRestore()
+    await expect(client.init()).rejects.toBe(failure)
+    expect(worldStarted).toBe(true)
+    expect(() => client.snapshot()).not.toThrow()
   })
 
-  it('does not publish ready or start a watchdog after init is detached', async () => {
-    const pending = deferred<RuntimePageRegistration>()
-    const coordinator = coordinatorWith(vi.fn(() => pending.promise))
+  it('initializes once and never starts a Page watchdog', async () => {
+    const registerPage = vi.fn<RuntimeCoordinator['registerPage']>().mockResolvedValue(registration())
     const interval = vi.spyOn(globalThis, 'setInterval')
-    const ready = vi.fn()
-    const client = new ClientLease({ coordinator, pageId: 'page-a', domain: 'https://example.test' })
-    client.whenReady(ready)
+    const client = new ClientLease({ coordinator: coordinatorWith(registerPage), pageId, domain })
 
-    const initializing = client.init()
-    await vi.waitFor(() => expect(coordinator.registerPage).toHaveBeenCalledOnce())
-    client.detach()
-    pending.resolve(registration())
-    await initializing
+    await client.init()
+    await vi.advanceTimersByTimeAsync(60_000)
 
-    expect(ready).not.toHaveBeenCalled()
+    expect(registerPage).toHaveBeenCalledOnce()
     expect(interval).not.toHaveBeenCalled()
+    client.detach()
   })
 
-  it('fences a registration result that resolves after its RPC deadline', async () => {
-    const late = deferred<RuntimePageRegistration>()
-    const replacementSnapshot = { ...snapshot, hostId: 'host-b' }
+  it('refreshes only from one explicit current Page event', async () => {
     const registerPage = vi
       .fn<RuntimeCoordinator['registerPage']>()
-      .mockReturnValueOnce(late.promise)
-      .mockResolvedValueOnce(registration(replacementSnapshot, 2))
-    const coordinator = coordinatorWith(registerPage)
+      .mockResolvedValueOnce(registration('host-a'))
+      .mockResolvedValueOnce(registration('host-b'))
     const ready = vi.fn()
-    const client = new ClientLease({
-      coordinator,
-      pageId: 'page-a',
-      domain: 'https://example.test',
-      startupTimeoutMs: 7000
-    })
+    const client = new ClientLease({ coordinator: coordinatorWith(registerPage), pageId, domain })
     client.whenReady(ready)
 
-    const initializing = client.init()
-    await vi.waitFor(() => expect(registerPage).toHaveBeenCalledOnce())
-    await vi.advanceTimersByTimeAsync(6000)
-    await initializing
-    expect(client.snapshot().hostId).toBe('host-b')
+    await client.init()
+    await client.checkNow()
 
-    late.resolve(registration(snapshot, 1))
+    expect(registerPage).toHaveBeenCalledTimes(2)
+    expect(client.snapshot()).toMatchObject({ hostId: 'host-b' })
+    expect(ready).toHaveBeenCalledTimes(2)
+    client.detach()
+  })
+
+  it('rebinds through a fresh ordinary registration without using the test-only refresh entry', async () => {
+    const registerPage = vi
+      .fn<RuntimeCoordinator['registerPage']>()
+      .mockResolvedValueOnce(registration('host-a'))
+      .mockResolvedValueOnce(registration('host-b'))
+    const ready = vi.fn()
+    const client = new ClientLease({ coordinator: coordinatorWith(registerPage), pageId, domain })
+    client.whenReady(ready)
+
+    await client.init()
+    await client.rebind()
+
+    expect(registerPage).toHaveBeenCalledTimes(2)
+    expect(client.snapshot()).toMatchObject({ hostId: 'host-b' })
+    expect(ready).toHaveBeenCalledTimes(2)
+    client.detach()
+  })
+
+  it('returns an exact rebind outcome only after every current readiness callback settles', async () => {
+    const registerPage = vi
+      .fn<RuntimeCoordinator['registerPage']>()
+      .mockResolvedValueOnce(registration('host-a'))
+      .mockResolvedValueOnce({ ...registration('host-b'), rebindId: 'rebind-a' })
+    let releaseReady!: () => void
+    const readiness = new Promise<void>((resolve) => {
+      releaseReady = resolve
+    })
+    let readyCalls = 0
+    const client = new ClientLease({ coordinator: coordinatorWith(registerPage), pageId, domain })
+    client.whenReady(() => {
+      readyCalls += 1
+      return readyCalls === 1 ? undefined : readiness
+    })
+
+    await client.init()
+    let settled = false
+    const rebind = client.rebind('rebind-a').then((outcome) => {
+      settled = true
+      return outcome
+    })
     await Promise.resolve()
 
-    expect(client.snapshot().hostId).toBe('host-b')
-    expect(ready).toHaveBeenCalledOnce()
+    expect(settled).toBe(false)
+    expect(registerPage).toHaveBeenLastCalledWith({ domain, pageId, rebindId: 'rebind-a' })
+    releaseReady()
+    await expect(rebind).resolves.toEqual({ rebindId: 'rebind-a' })
     client.detach()
   })
 
-  it('keeps checking a healthy lease without turning equal host snapshots into recovery', async () => {
-    const domain = 'https://example.test'
-    const pageId = 'page-a'
-    const healthySnapshot: RuntimeSnapshot = {
-      ...snapshot,
-      domains: [
-        {
-          domain,
-          phase: 'active',
-          pageIds: [pageId],
-          chatRoomJoined: true,
-          sessions: []
-        }
-      ]
-    }
-    const coordinator = coordinatorWith(vi.fn(async () => registration(healthySnapshot)))
-    const phases: HostPhase[] = []
-    const client = new ClientLease({ coordinator, pageId, domain })
-    client.whenHostPhase((phase) => phases.push(phase))
-
-    await client.init()
-    await vi.advanceTimersByTimeAsync(10000)
-
-    expect(coordinator.registerPage).toHaveBeenCalledTimes(3)
-    expect(phases).toEqual(['none', 'connecting', 'ready'])
-    client.detach()
-  })
-
-  it('projects one queued Coordinator failure through only the current page failure route', async () => {
-    const failure = {
-      eventId: 'rebuild-failure',
-      message: 'current page attachment failed',
-      subsystem: 'connection' as const,
-      operation: 'lifecycle' as const,
-      scope: 'https://example.test'
-    }
-    const coordinator = coordinatorWith(vi.fn(async () => ({ ...registration(), failures: [failure] })))
-    const failures: Error[] = []
-    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
-    const client = new ClientLease({
-      coordinator,
-      pageId: 'page-a',
-      domain: failure.scope
-    })
-    client.whenFailure((error) => failures.push(error))
-
-    await expect(client.init()).resolves.toEqual(snapshot)
-
-    expect(failures).toEqual([new Error(failure.message)])
-    expect(diagnostic).not.toHaveBeenCalled()
-    client.detach()
-    diagnostic.mockRestore()
-  })
-
-  it('projects a queued failure once before recovering a replaced host generation', async () => {
-    const domain = 'https://example.test'
-    const pageId = 'page-a'
-    const ownedSnapshot = (hostId: string): RuntimeSnapshot => ({
-      ...snapshot,
-      hostId,
-      domains: [
-        {
-          domain,
-          phase: 'active',
-          pageIds: [pageId],
-          chatRoomJoined: true,
-          sessions: []
-        }
-      ]
-    })
-    const failure = {
-      eventId: 'watchdog-rebuild-failure',
-      message: 'replacement attachment failed',
-      subsystem: 'connection' as const,
-      operation: 'lifecycle' as const,
-      scope: domain
-    }
-    const current = registration(ownedSnapshot('host-b'), 2)
-    const registerPage = vi
-      .fn<RuntimeCoordinator['registerPage']>()
-      .mockResolvedValueOnce(registration(ownedSnapshot('host-a'), 1))
-      .mockResolvedValueOnce({ ...current, failures: [failure] })
-      .mockResolvedValue(current)
-    const failures: string[] = []
-    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
-    const client = new ClientLease({
-      coordinator: coordinatorWith(registerPage),
-      pageId,
-      domain,
-      watchdogIntervalMs: 60000
-    })
-    client.whenFailure((error) => failures.push(error.message))
-
-    await client.init()
-    await client.checkNow()
-    await client.checkNow()
-
-    expect(registerPage).toHaveBeenCalledTimes(4)
-    expect(failures).toEqual([failure.message])
-    expect(diagnostic).not.toHaveBeenCalled()
-    expect(client.snapshot()).toMatchObject({ hostId: 'host-b', hostPhase: 'ready' })
-    client.detach()
-    diagnostic.mockRestore()
-  })
-
-  it('keeps bounded polling after a permanent control-plane failure and surfaces every failure with its original message', async () => {
-    const domain = 'https://example.test'
-    const pageId = 'page-a'
-    const healthySnapshot: RuntimeSnapshot = {
-      ...snapshot,
-      domains: [
-        {
-          domain,
-          phase: 'active',
-          pageIds: [pageId],
-          chatRoomJoined: true,
-          sessions: []
-        }
-      ]
-    }
-    const nativeError = new Error('Extension context invalidated.')
-    const registerPage = vi
-      .fn<RuntimeCoordinator['registerPage']>()
-      .mockResolvedValueOnce(registration(healthySnapshot))
-      .mockRejectedValue(nativeError)
-    const phases: HostPhase[] = []
-    const failures: string[] = []
-    const client = new ClientLease({
-      coordinator: coordinatorWith(registerPage),
-      pageId,
-      domain,
-      startupTimeoutMs: 1000,
-      startupRetryIntervalMs: 10,
-      watchdogIntervalMs: 3000
-    })
-    client.whenHostPhase((phase) => phases.push(phase))
-    client.whenFailure((error) => failures.push(error.message))
-    await client.init()
-    phases.length = 0
-
-    await vi.advanceTimersByTimeAsync(5000)
-    await vi.waitFor(() => expect(failures).toEqual([nativeError.message]))
-    expect(phases).toContain('unavailable')
-
-    await vi.advanceTimersByTimeAsync(3000)
-    await vi.waitFor(() => expect(failures).toEqual([nativeError.message, nativeError.message]))
-
-    // Error text never controls lifecycle: the same message must not stop polling.
-    await vi.advanceTimersByTimeAsync(3000)
-    await vi.waitFor(() => expect(failures.length).toBeGreaterThanOrEqual(3))
-
-    const replayed: HostPhase[] = []
-    client.whenHostPhase((phase) => replayed.push(phase))
-    expect(replayed).toEqual(['unavailable'])
-    client.detach()
-  })
-
-  it('recovers ready from continued polling once the control plane answers again', async () => {
-    const domain = 'https://example.test'
-    const pageId = 'page-a'
-    const healthySnapshot: RuntimeSnapshot = {
-      ...snapshot,
-      domains: [
-        {
-          domain,
-          phase: 'active',
-          pageIds: [pageId],
-          chatRoomJoined: true,
-          sessions: []
-        }
-      ]
-    }
-    const nativeError = new Error('Extension context invalidated.')
-    let failUntil = 0
-    const registerPage = vi.fn<RuntimeCoordinator['registerPage']>(async () => {
-      if (Date.now() < failUntil) throw nativeError
-      return registration(healthySnapshot)
-    })
-    const phases: HostPhase[] = []
-    const failures: string[] = []
-    const client = new ClientLease({
-      coordinator: coordinatorWith(registerPage),
-      pageId,
-      domain,
-      startupTimeoutMs: 1000,
-      startupRetryIntervalMs: 10,
-      watchdogIntervalMs: 3000
-    })
-    client.whenHostPhase((phase) => phases.push(phase))
-    client.whenFailure((error) => failures.push(error.message))
-    await client.init()
-    phases.length = 0
-    failUntil = Date.now() + 6500
-
-    await vi.advanceTimersByTimeAsync(5000)
-    await vi.waitFor(() => expect(failures.length).toBeGreaterThanOrEqual(1))
-    await vi.advanceTimersByTimeAsync(3000)
-    await vi.waitFor(() => expect(phases.at(-1)).toBe('ready'))
-
-    expect(client.snapshot().hostPhase).toBe('ready')
-    client.detach()
-  })
-
-  it('treats every transport rejection as diagnostic without changing the healthy lease', async () => {
-    const coordinator = coordinatorWith(vi.fn(async () => registration()))
-    const phases: HostPhase[] = []
-    const client = new ClientLease({
-      coordinator,
-      pageId: 'page-a',
-      domain: 'https://example.test',
-      watchdogIntervalMs: 60000
-    })
-    client.whenHostPhase((phase) => phases.push(phase))
-    await client.init()
-    phases.length = 0
-
-    expect(client.observeTransportRejection(new Error('Unknown transport failure'))).toBe(false)
-    expect(client.observeTransportRejection(new Error('Extension context invalidated.'))).toBe(false)
-
-    expect(phases).toEqual([])
-    expect(client.snapshot()).toEqual(snapshot)
-    client.detach()
-  })
-
-  it('single-flights overlapping checks and does not resurrect a detached lease', async () => {
-    const pending = deferred<RuntimePageRegistration>()
+  it('keeps an unrelated timeout from replaying an admitted action', async () => {
     const registerPage = vi
       .fn<RuntimeCoordinator['registerPage']>()
       .mockResolvedValueOnce(registration())
-      .mockReturnValueOnce(pending.promise)
-    const coordinator = coordinatorWith(registerPage)
-    const interval = vi.spyOn(globalThis, 'setInterval')
-    const ready = vi.fn()
-    const client = new ClientLease({ coordinator, pageId: 'page-a', domain: 'https://example.test' })
-    client.whenReady(ready)
-    await client.init()
-
-    const firstCheck = client.checkNow()
-    const secondCheck = client.checkNow()
-    expect(secondCheck).toBe(firstCheck)
-    await vi.waitFor(() => expect(registerPage).toHaveBeenCalledTimes(2))
-    client.detach()
-    pending.resolve(registration({ ...snapshot, hostId: 'host-b' }, 2))
-    await firstCheck
-
-    expect(ready).toHaveBeenCalledOnce()
-    expect(interval).toHaveBeenCalledOnce()
-  })
-
-  it('replaces the prior lifecycle watchdog after a second successful init', async () => {
-    const domain = 'https://example.test'
-    const pageId = 'page-a'
-    const ownedSnapshot = (hostId: string): RuntimeSnapshot => ({
-      ...snapshot,
-      hostId,
-      domains: [
-        {
-          domain,
-          phase: 'active',
-          pageIds: [pageId],
-          chatRoomJoined: true,
-          sessions: []
-        }
-      ]
-    })
-    const registerPage = vi
-      .fn<RuntimeCoordinator['registerPage']>()
-      .mockResolvedValueOnce(registration(ownedSnapshot('host-a'), 1))
-      .mockResolvedValueOnce(registration(ownedSnapshot('host-b'), 2))
-      .mockResolvedValueOnce(registration({ ...ownedSnapshot('host-c'), domains: [] }, 3))
-      .mockResolvedValueOnce(registration(ownedSnapshot('host-c'), 3))
-    const interval = vi.spyOn(globalThis, 'setInterval')
-    const phases: HostPhase[] = []
-    const client = new ClientLease({
-      coordinator: coordinatorWith(registerPage),
-      pageId,
-      domain,
-      watchdogIntervalMs: 1000
-    })
-    client.whenHostPhase((phase) => phases.push(phase))
-
-    await client.init()
-    await client.init()
-    phases.length = 0
-    await vi.advanceTimersByTimeAsync(1000)
-    await vi.waitFor(() => expect(registerPage).toHaveBeenCalledTimes(4))
-
-    expect(interval).toHaveBeenCalledTimes(2)
-    expect(phases).toEqual(['connecting', 'ready'])
-    expect(client.snapshot().hostId).toBe('host-c')
-    client.detach()
-  })
-
-  it('keeps a watchdog probe passive and charges its time to promoted recovery', async () => {
-    const domain = 'https://example.test'
-    const pageId = 'page-a'
-    const healthySnapshot: RuntimeSnapshot = {
-      ...snapshot,
-      domains: [
-        {
-          domain,
-          phase: 'active',
-          pageIds: [pageId],
-          chatRoomJoined: true,
-          sessions: []
-        }
-      ]
-    }
-    const registerPage = vi
-      .fn<RuntimeCoordinator['registerPage']>()
-      .mockResolvedValueOnce(registration(healthySnapshot))
-      .mockImplementation(() => new Promise<RuntimePageRegistration>(() => {}))
-    const coordinator = coordinatorWith(registerPage)
-    const phases: HostPhase[] = []
-    const client = new ClientLease({
-      coordinator,
-      pageId,
-      domain,
-      watchdogIntervalMs: 60000
-    })
-    client.whenHostPhase((phase) => phases.push(phase))
-    await client.init()
-    phases.length = 0
-
-    const checking = client.checkNow()
-    await vi.advanceTimersByTimeAsync(4999)
-    expect(phases).toEqual([])
-
-    await vi.advanceTimersByTimeAsync(1)
-    expect(phases).toEqual(['connecting'])
-
-    await vi.advanceTimersByTimeAsync(9999)
-    expect(phases).toEqual(['connecting'])
-
-    await vi.advanceTimersByTimeAsync(1)
-    expect(phases).toEqual(['connecting', 'unavailable'])
-    await checking
-    client.detach()
-  })
-
-  it('fences a suspended watchdog deadline before a fresh attachment succeeds', async () => {
-    const domain = 'https://example.test'
-    const pageId = 'page-a'
-    const ownedSnapshot = (hostId: string): RuntimeSnapshot => ({
-      ...snapshot,
-      hostId,
-      domains: [
-        {
-          domain,
-          phase: 'active',
-          pageIds: [pageId],
-          chatRoomJoined: true,
-          sessions: []
-        }
-      ]
-    })
-    const staleCheck = deferred<RuntimePageRegistration>()
-    const replacement = registration(ownedSnapshot('host-b'), 2)
-    const registerPage = vi
-      .fn<RuntimeCoordinator['registerPage']>()
-      .mockResolvedValueOnce(registration(ownedSnapshot('host-a'), 1))
-      .mockReturnValueOnce(staleCheck.promise)
-      .mockResolvedValueOnce(replacement)
-      .mockResolvedValueOnce(replacement)
+      .mockImplementationOnce(() => new Promise<RuntimePageRegistration>(() => {}))
     const failures: string[] = []
-    const phases: HostPhase[] = []
     const client = new ClientLease({
       coordinator: coordinatorWith(registerPage),
       pageId,
       domain,
-      watchdogIntervalMs: 60000
+      startupTimeoutMs: 10,
+      startupRetryIntervalMs: 1
     })
-    client.whenHostPhase((phase) => phases.push(phase))
     client.whenFailure((error) => failures.push(error.message))
+
     await client.init()
-    phases.length = 0
+    const refresh = client.checkNow()
+    await vi.advanceTimersByTimeAsync(10)
+    await refresh
 
-    const suspended = client.checkNow()
-    await vi.waitFor(() => expect(registerPage).toHaveBeenCalledTimes(2))
-    vi.setSystemTime(Date.now() + 15001)
-    staleCheck.reject(new Error('suspended probe failed'))
-    await suspended
-    await client.checkNow()
-
-    expect(registerPage).toHaveBeenCalledTimes(4)
-    expect(phases).toEqual(['unavailable', 'connecting', 'ready'])
-    expect(failures).toEqual(['suspended probe failed'])
-    expect(client.snapshot()).toMatchObject({ hostId: 'host-b', hostPhase: 'ready' })
+    expect(registerPage).toHaveBeenCalledTimes(2)
+    expect(failures).toEqual(['Runtime control-plane request timed out'])
     client.detach()
   })
 
-  it('hands an expired suspended check to current attachment before its stale result settles', async () => {
-    const domain = 'https://example.test'
-    const pageId = 'page-a'
-    const ownedSnapshot = (hostId: string): RuntimeSnapshot => ({
-      ...snapshot,
-      hostId,
-      domains: [
-        {
-          domain,
-          phase: 'active',
-          pageIds: [pageId],
-          chatRoomJoined: true,
-          sessions: []
-        }
-      ]
+  it('fences a stale explicit refresh after the Page detaches', async () => {
+    let resolve!: (value: RuntimePageRegistration) => void
+    const pending = new Promise<RuntimePageRegistration>((done) => {
+      resolve = done
     })
-    const staleCheck = deferred<RuntimePageRegistration>()
-    const replacement = registration(ownedSnapshot('host-b'), 2)
     const registerPage = vi
       .fn<RuntimeCoordinator['registerPage']>()
-      .mockResolvedValueOnce(registration(ownedSnapshot('host-a'), 1))
-      .mockReturnValueOnce(staleCheck.promise)
-      .mockResolvedValueOnce(replacement)
-      .mockResolvedValueOnce(replacement)
-    const failures: string[] = []
-    const phases: HostPhase[] = []
-    const client = new ClientLease({
-      coordinator: coordinatorWith(registerPage),
-      pageId,
-      domain,
-      watchdogIntervalMs: 60000
-    })
-    client.whenHostPhase((phase) => phases.push(phase))
-    client.whenFailure((error) => failures.push(error.message))
-    await client.init()
-    phases.length = 0
-
-    const suspended = client.checkNow()
-    await vi.waitFor(() => expect(registerPage).toHaveBeenCalledTimes(2))
-    vi.setSystemTime(Date.now() + 15001)
-    const current = client.checkNow()
-    try {
-      await vi.waitFor(() => expect(registerPage).toHaveBeenCalledTimes(4))
-      await current
-      staleCheck.reject(new Error('late suspended probe failed'))
-      await suspended
-
-      expect(phases).toEqual(['connecting', 'ready'])
-      expect(failures).toEqual([])
-      expect(client.snapshot()).toMatchObject({ hostId: 'host-b', hostPhase: 'ready' })
-    } finally {
-      staleCheck.reject(new Error('test cleanup'))
-      client.detach()
-      await Promise.allSettled([suspended, current])
-    }
-  })
-
-  it('treats page detach as connectivity cleanup without releasing the background tab owner', async () => {
-    const coordinator = coordinatorWith(vi.fn(async () => registration()))
-    const phases: HostPhase[] = []
-    const client = new ClientLease({ coordinator, pageId: 'page-a', domain: 'https://example.test' })
-    client.whenHostPhase((phase) => phases.push(phase))
+      .mockResolvedValueOnce(registration())
+      .mockReturnValueOnce(pending)
+    const client = new ClientLease({ coordinator: coordinatorWith(registerPage), pageId, domain })
 
     await client.init()
+    const refresh = client.checkNow()
     client.detach()
-    await Promise.resolve()
+    resolve(registration('host-b'))
+    await refresh
 
-    expect(coordinator.registerPage).toHaveBeenCalledOnce()
-    expect(phases.at(-1)).toBe('none')
+    expect(() => client.snapshot()).not.toThrow()
   })
 })

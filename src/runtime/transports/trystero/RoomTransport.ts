@@ -98,6 +98,8 @@ export const createRoomTransport = (): RoomTransport => {
       (error: unknown) => {
         // A failed leave keeps the room occupied: the owner is retained so no second Room is
         // ever created for this roomId, and later joins reject with this exact failure.
+        // leaveAction.send can reject before Trystero local cleanup. Retain this owner and error;
+        // do not claim that the old room completed local or remote leave.
         owner.leaveError = { value: error }
         if (owner.leaveDiagnostic) console.error(error)
         else errorListeners.forEach((listener) => listener(error as Error, owner.roomId))

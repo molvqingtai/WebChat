@@ -31,7 +31,8 @@ const fixture = (
   clock: Clock = { now: () => 0, sleep: async () => {} }
 ) => {
   const sent: { roomId: string; payload: string; to?: string | string[] }[] = []
-  let join: (roomId: string) => Promise<void> = async () => {}
+  let join: RoomTransport['join'] = async () => {}
+  let abortJoin: NonNullable<RoomTransport['abortJoin']> = async () => new Promise<void>(() => {})
   let send: RoomTransport['send'] = async (roomId, payload, to) => {
     sent.push({ roomId, payload, to })
   }
@@ -42,7 +43,8 @@ const fixture = (
   let onError: Parameters<RoomTransport['onError']>[0] = () => {}
   const transport: RoomTransport = {
     peerIdOf: () => 'local-peer',
-    join: (roomId) => join(roomId),
+    join: (roomId, options) => join(roomId, options),
+    abortJoin: (roomId, joinId) => abortJoin(roomId, joinId),
     leave: vi.fn(),
     send: (roomId, payload, to) => send(roomId, payload, to),
     onMessage: (callback) => {
@@ -89,6 +91,9 @@ const fixture = (
     setJoin: (next: typeof join) => {
       join = next
     },
+    setAbortJoin: (next: typeof abortJoin) => {
+      abortJoin = next
+    },
     setSend: (next: typeof send) => {
       send = next
     },
@@ -118,6 +123,41 @@ const invalidateRoom = (runtime: ReturnType<typeof fixture>, transition: 'leave'
 }
 
 describe('WireDomain anti-corruption boundary', () => {
+  it('waits for every exact H abort receipt before publishing the Q failure terminal', async () => {
+    const pending = deferred<void>()
+    const receipt = deferred<void>()
+    const runtime = fixture()
+    const aborts: Array<[string, string]> = []
+    runtime.setJoin(() => pending.promise)
+    runtime.setAbortJoin(async (roomId, joinId) => {
+      aborts.push([roomId, joinId])
+      await receipt.promise
+    })
+    const failures: Array<{ requestId: string; error: Error; rooms?: { roomId: string; generation: number }[] }> = []
+    runtime.store.subscribeEvent(runtime.wire.event.RoomsJoinFailedEvent, (failure) => failures.push(failure))
+
+    runtime.store.send(runtime.wire.command.JoinRoomsCommand({ requestId: 'q-1', roomIds: [ROOM] }))
+    runtime.store.send(
+      runtime.wire.command.AbortJoinRoomsCommand({ requestId: 'q-1', error: new Error('logical timeout') })
+    )
+    await vi.waitFor(() => expect(aborts).toEqual([[ROOM, `q-1:${ROOM}:0`]]))
+    expect(failures).toEqual([])
+
+    receipt.resolve()
+    await vi.waitFor(() =>
+      expect(failures).toEqual([
+        {
+          requestId: 'q-1',
+          error: new Error('logical timeout'),
+          rooms: [{ roomId: ROOM, generation: 0 }]
+        }
+      ])
+    )
+    pending.reject(new Error('late provider completion'))
+    await Promise.resolve()
+    expect(failures).toHaveLength(1)
+  })
+
   it('selects distinct non-self product peer ids in first-seen order', () => {
     expect(selectPeerIds(['peer-b', 'local-peer', 'peer-a', 'peer-b'], 'local-peer')).toEqual(['peer-b', 'peer-a'])
   })
@@ -464,7 +504,11 @@ describe('WireDomain anti-corruption boundary', () => {
     runtime.store.send(runtime.wire.command.LeaveRoomCommand({ roomId: ROOM, preservePending: false }))
     pending.resolve()
 
-    await expect(failed).resolves.toMatchObject({ requestId: 'late-join', error: new Error('Room join superseded') })
+    await expect(failed).resolves.toEqual({
+      requestId: 'late-join',
+      error: new Error('Room join superseded'),
+      rooms: [{ roomId: ROOM, generation: 0 }]
+    })
     expect(runtime.store.query(runtime.wire.query.IsRoomTrustedQuery(ROOM))).toBe(false)
   })
 

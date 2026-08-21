@@ -2,6 +2,7 @@ import EventHub from '@resreq/event-hub'
 import type { WorldState } from '@/domain/externs/WorldRoom'
 import type { ChatUser, ChatSite, WorldRoomMessage } from '@/protocol'
 import type { RuntimeServer, RuntimeSnapshot, WorldPresenceEvent } from '@/runtime/Contract'
+import type { RuntimeBindingScope } from '@/domain/impls/runtime/Client'
 
 interface Contribution {
   sourcePeerId: string
@@ -14,7 +15,7 @@ export interface WorldRoomDependencies {
   server: RuntimeServer
   pageId: string
   getSnapshot: () => RuntimeSnapshot
-  whenReady: (callback: () => void) => () => void
+  whenReady: (callback: (activation?: RuntimeBindingScope) => void | Promise<void>) => () => void
 }
 
 const contributionKey = (sourcePeerId: string, origin: string) => `${sourcePeerId}\u0000${origin}`
@@ -26,14 +27,14 @@ export class WorldRoom extends EventHub {
 
   constructor(private readonly dependencies: WorldRoomDependencies) {
     super()
-    dependencies.whenReady(() => {
+    dependencies.whenReady((scope) => {
       const attachedHostId = dependencies.getSnapshot().hostId
-      const attachCurrentHost = () => this.attachRuntime(attachedHostId)
+      const attachCurrentHost = () => this.attachRuntime(attachedHostId, scope ?? {})
       // The settled tail serializes both outcomes; this attachment's rejection is transferred
       // exactly once to the room error owner and then becomes the next settled queue token.
-      this.attachmentTask = this.attachmentTask
-        .then(attachCurrentHost, attachCurrentHost)
-        .then(undefined, (error) => this.emitError(error))
+      const attachment = this.attachmentTask.then(attachCurrentHost, attachCurrentHost)
+      this.attachmentTask = attachment.then(undefined, (error) => this.emitError(error))
+      return attachment
     })
   }
 
@@ -107,13 +108,13 @@ export class WorldRoom extends EventHub {
     this.emitState()
   }
 
-  private async attachRuntime(attachedHostId: string) {
+  private async attachRuntime(attachedHostId: string, scope: RuntimeBindingScope) {
     const bufferedEvents: WorldPresenceEvent[] = []
     const isCurrentHost = () => this.dependencies.getSnapshot().hostId === attachedHostId
     let isLive = false
     let isValidAttachment = true
 
-    await this.dependencies.server.onWorldPresence({ pageId: this.dependencies.pageId }, (event) => {
+    await this.dependencies.server.onWorldPresence({ pageId: this.dependencies.pageId, ...scope }, (event) => {
       if (!isValidAttachment || !isCurrentHost()) return
       if (isLive) this.applyPresence(event)
       else bufferedEvents.push(event)
