@@ -2,6 +2,16 @@ import { describe, expect, it, vi } from 'vitest'
 import type { HistorySupplyEvent } from '@/runtime/Contract'
 import { PagePort } from '@/runtime/PagePort'
 
+const deferred = <Value>() => {
+  let resolve!: (value: Value) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<Value>((onResolve, onReject) => {
+    resolve = onResolve
+    reject = onReject
+  })
+  return { promise, resolve, reject }
+}
+
 const request = {
   supplyId: 'supply-1',
   domain: 'https://example.com',
@@ -9,6 +19,31 @@ const request = {
   cutoff: 0,
   mode: 'provider' as const
 }
+
+const sharedEmitLanes = [
+  {
+    name: 'inbound',
+    register: (port: PagePort, callback: () => void | Promise<void>) => port.onInbound('page-a', () => callback()),
+    emit: (port: PagePort) => port.emitInbound(['page-a'], {} as never)
+  },
+  {
+    name: 'World presence',
+    register: (port: PagePort, callback: () => void | Promise<void>) =>
+      port.onWorldPresence('page-a', () => callback()),
+    emit: (port: PagePort) => port.emitWorldPresence(['page-a'], {} as never)
+  },
+  {
+    name: 'Runtime error',
+    register: (port: PagePort, callback: () => void | Promise<void>) => port.onError('page-a', () => callback()),
+    emit: (port: PagePort) => port.emitError(['page-a'], {} as never)
+  },
+  {
+    name: 'History feedback',
+    register: (port: PagePort, callback: () => void | Promise<void>) =>
+      port.onHistoryFeedback('page-a', () => callback()),
+    emit: (port: PagePort) => port.emitHistoryFeedback(['page-a'], {} as never)
+  }
+] as const
 
 describe('PagePort session-event lifecycle', () => {
   const event = {
@@ -57,6 +92,107 @@ describe('PagePort session-event lifecycle', () => {
     expect(diagnostic).toHaveBeenCalledWith(failure)
     diagnostic.mockRestore()
   })
+
+  it('keeps a replacement session-event callback active when a stale callback rejects', async () => {
+    const port = new PagePort()
+    const started = deferred<void>()
+    const release = deferred<void>()
+    const failure = new Error('page closed')
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const received: string[] = []
+    port.onSessionEvent('page-a', async () => {
+      started.resolve()
+      await release.promise
+      throw failure
+    })
+    const staleDelivery = port.emitSessionEvent(['page-a'], event)
+    await started.promise
+
+    const replacement = port.beginSessionEvent('page-a', (current) => {
+      received.push(current.type)
+    })
+    await expect(port.activateSessionEvent('page-a', replacement)).resolves.toBe(true)
+
+    release.resolve()
+    expect(await staleDelivery).toEqual([])
+    expect(port.isSessionEventActive('page-a', replacement)).toBe(true)
+    expect(await port.emitSessionEvent(['page-a'], event)).toEqual([])
+    expect(received).toEqual(['snapshot'])
+    expect(diagnostic).toHaveBeenCalledOnce()
+    expect(diagnostic).toHaveBeenCalledWith(failure)
+    diagnostic.mockRestore()
+  })
+
+  it('buffers session deltas until a replacement callback activates', async () => {
+    const port = new PagePort()
+    const received: string[] = []
+    const generation = port.beginSessionEvent('page-a', (current) => {
+      received.push(current.type)
+    })
+
+    expect(
+      await port.emitSessionEvent(['page-a'], {
+        type: 'join',
+        domain: request.domain,
+        snapshot: event.snapshot,
+        session: {
+          sourcePeerId: 'remote-peer',
+          sessionId: 'remote-session',
+          user: { id: 'remote-user', name: 'Remote', avatar: '' },
+          joinedAt: 11
+        },
+        provenance: 'live'
+      })
+    ).toEqual([])
+    expect(received).toEqual([])
+
+    await expect(port.activateSessionEvent('page-a', generation)).resolves.toBe(true)
+    expect(await port.emitSessionEvent(['page-a'], event)).toEqual([])
+    expect(received).toEqual(['join', 'snapshot'])
+  })
+
+  it('delivers active session deltas in commit order through one exact callback tail', async () => {
+    const port = new PagePort()
+    const firstStarted = deferred<void>()
+    const releaseFirst = deferred<void>()
+    const received: string[] = []
+    port.onSessionEvent('page-a', async (current) => {
+      received.push(`start:${current.type}`)
+      if (current.type === 'join') {
+        firstStarted.resolve()
+        await releaseFirst.promise
+      }
+      received.push(`end:${current.type}`)
+    })
+    const join = {
+      type: 'join' as const,
+      domain: request.domain,
+      snapshot: event.snapshot,
+      session: {
+        sourcePeerId: 'remote-peer',
+        sessionId: 'remote-session',
+        user: { id: 'remote-user', name: 'Remote', avatar: '' },
+        joinedAt: 11
+      },
+      provenance: 'live' as const
+    }
+
+    const first = port.emitSessionEvent(['page-a'], join)
+    await firstStarted.promise
+    const second = port.emitSessionEvent(['page-a'], event)
+    let secondSettled = false
+    void second.then(() => {
+      secondSettled = true
+    })
+    await Promise.resolve()
+
+    expect(received).toEqual(['start:join'])
+    expect(secondSettled).toBe(false)
+    releaseFirst.resolve()
+    await expect(first).resolves.toEqual([])
+    await expect(second).resolves.toEqual([])
+    expect(received).toEqual(['start:join', 'end:join', 'start:snapshot', 'end:snapshot'])
+  })
 })
 
 describe('PagePort Runtime error delivery', () => {
@@ -103,6 +239,44 @@ describe('PagePort Runtime error delivery', () => {
       expect(diagnostic).toHaveBeenCalledOnce()
       expect(diagnostic).toHaveBeenCalledWith(failure)
       expect(await port.emitError(['page-a'], {} as never)).toEqual([])
+      diagnostic.mockRestore()
+    }
+  )
+})
+
+describe('PagePort shared callback lifecycle', () => {
+  it.each(sharedEmitLanes)(
+    'keeps a replacement $name callback and Sessions generation active when a stale callback rejects',
+    async ({ register, emit }) => {
+      const port = new PagePort()
+      const started = deferred<void>()
+      const release = deferred<void>()
+      const failure = new Error('page closed')
+      const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+      const received: string[] = []
+      const sessions: string[] = []
+      port.onSessionEvent('page-a', () => {
+        sessions.push('current')
+      })
+      register(port, async () => {
+        started.resolve()
+        await release.promise
+        throw failure
+      })
+      const staleDelivery = emit(port)
+      await started.promise
+
+      register(port, () => {
+        received.push('current')
+      })
+      release.resolve()
+      expect(await staleDelivery).toEqual([])
+      expect(await emit(port)).toEqual([])
+      expect(received).toEqual(['current'])
+      expect(await port.emitSessionEvent(['page-a'], {} as never)).toEqual([])
+      expect(sessions).toEqual(['current'])
+      expect(diagnostic).toHaveBeenCalledOnce()
+      expect(diagnostic).toHaveBeenCalledWith(failure)
       diagnostic.mockRestore()
     }
   )

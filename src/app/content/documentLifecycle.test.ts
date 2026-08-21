@@ -125,13 +125,9 @@ describe('Content document-lifecycle owner composed parent control', () => {
       ],
       world: { joined: true, peerId: 'peer-a', presences: [] }
     }
-    const registerPage = vi.fn<RuntimeCoordinator['registerPage']>().mockResolvedValue({
-      phase: 'ready',
-      generation: 1,
-      snapshot: readySnapshot
-    })
+    const registerPage = vi.fn<RuntimeCoordinator['registerPage']>().mockResolvedValue({ snapshot: readySnapshot })
     const lease = new ClientLease({
-      coordinator: { ensureHost: vi.fn(), registerPage },
+      coordinator: { registerPage },
       pageId,
       domain
     })
@@ -261,10 +257,10 @@ describe('Content document-lifecycle owner composed parent control', () => {
     })
     const registerPage = vi
       .fn<RuntimeCoordinator['registerPage']>()
-      .mockResolvedValueOnce({ phase: 'ready', generation: 1, snapshot: readySnapshot })
+      .mockResolvedValueOnce({ snapshot: readySnapshot })
       .mockImplementationOnce(() => held)
     const lease = new ClientLease({
-      coordinator: { ensureHost: vi.fn(), registerPage },
+      coordinator: { registerPage },
       pageId,
       domain
     })
@@ -308,7 +304,7 @@ describe('Content document-lifecycle owner composed parent control', () => {
     await flushMicrotasks()
     owner.dispose()
     fixture.store.discard()
-    resolveHeld({ phase: 'ready', generation: 2, snapshot: readySnapshot })
+    resolveHeld({ snapshot: readySnapshot })
     await vi.advanceTimersByTimeAsync(6000)
     await flushMicrotasks()
     expect(fixture.toast.loading).not.toHaveBeenCalled()

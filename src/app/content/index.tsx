@@ -196,6 +196,7 @@ const createContentStore = () => {
   }
 
   const sendLifecycleInstance = createSendLifecycle()
+  let applicationDependenciesActivated = false
   const store = Remesh.store({
     externs: [
       LocalStorageImpl,
@@ -215,6 +216,7 @@ const createContentStore = () => {
   })
 
   const activateApplicationDependencies = () => {
+    if (applicationDependenciesActivated) return
     // A watcher failure on the page's own database owns a current visible/persistence-dependent
     // projection: it reaches this page's existing toast route once with the original message.
     const database = createIndexedDBMessageDatabase({
@@ -249,6 +251,7 @@ const createContentStore = () => {
     readiness.resolve(ReadinessImpl.value)
     currentConnectionLifecycle = lifecycleBundle.value
     connectionLifecycle.resolve(lifecycleBundle.value)
+    applicationDependenciesActivated = true
   }
 
   // Every distinct real control-plane failure surfaces as a fresh original-message toast while the

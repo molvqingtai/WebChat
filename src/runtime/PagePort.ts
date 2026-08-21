@@ -13,7 +13,27 @@ import type {
 
 export class PagePort implements PagePortContract {
   private readonly inbound = new Map<string, (event: InboundEvent) => void | Promise<void>>()
-  private readonly sessionEvents = new Map<string, (event: RuntimeSessionEvent) => void | Promise<void>>()
+  private readonly sessionEvents = new Map<
+    string,
+    {
+      generation: number
+      callback: (event: RuntimeSessionEvent) => void | Promise<void>
+      tail: Promise<void>
+      delivering: boolean
+    }
+  >()
+  private readonly activeSessionGenerations = new Map<string, number>()
+  private readonly provisionalSessionEvents = new Map<
+    string,
+    {
+      generation: number
+      callback: (event: RuntimeSessionEvent) => void | Promise<void>
+      tail: Promise<void>
+      delivering: boolean
+      buffered: RuntimeSessionEvent[]
+    }
+  >()
+  private sessionEventGeneration = 0
   private readonly worldPresences = new Map<string, (event: WorldPresenceEvent) => void | Promise<void>>()
   private readonly runtimeErrors = new Map<string, (event: RuntimeErrorEvent) => void | Promise<void>>()
   private readonly historyFeedbacks = new Map<string, (event: HistoryFeedbackEvent) => void | Promise<void>>()
@@ -38,7 +58,82 @@ export class PagePort implements PagePortContract {
   }
 
   onSessionEvent(pageId: string, callback: (event: RuntimeSessionEvent) => void | Promise<void>) {
-    this.sessionEvents.set(pageId, callback)
+    this.provisionalSessionEvents.delete(pageId)
+    const generation = ++this.sessionEventGeneration
+    this.sessionEvents.set(pageId, { generation, callback, tail: Promise.resolve(), delivering: false })
+    this.activeSessionGenerations.set(pageId, generation)
+  }
+
+  beginSessionEvent(pageId: string, callback: (event: RuntimeSessionEvent) => void | Promise<void>) {
+    const generation = ++this.sessionEventGeneration
+    this.sessionEvents.delete(pageId)
+    this.activeSessionGenerations.delete(pageId)
+    this.provisionalSessionEvents.set(pageId, {
+      generation,
+      callback,
+      tail: Promise.resolve(),
+      delivering: false,
+      buffered: []
+    })
+    return generation
+  }
+
+  private enqueueSessionEvent(
+    pageId: string,
+    binding: {
+      generation: number
+      callback: (event: RuntimeSessionEvent) => void | Promise<void>
+      tail: Promise<void>
+      delivering: boolean
+    },
+    event: RuntimeSessionEvent,
+    current: () => boolean
+  ) {
+    const invoke = async () => {
+      if (!current()) return
+      await binding.callback(event)
+    }
+    // Start the first active callback in this event turn; only overlapping deltas join the tail.
+    // This retains the event bridge's existing immediate observable delivery without permitting
+    // a second callback to overtake a pending first one.
+    const delivery = binding.delivering ? binding.tail.then(invoke) : invoke()
+    binding.delivering = true
+    // Keep the physical delivery tail live after an error so already queued exact events can
+    // observe removal/replacement fencing instead of becoming unhandled rejections.
+    const settled = delivery.catch(() => {})
+    binding.tail = settled
+    void settled.then(() => {
+      if (binding.tail === settled) binding.delivering = false
+    })
+    return delivery
+  }
+
+  async activateSessionEvent(pageId: string, generation: number) {
+    const provisional = this.provisionalSessionEvents.get(pageId)
+    if (!provisional || provisional.generation !== generation) return false
+    while (provisional.buffered.length > 0) {
+      await this.enqueueSessionEvent(
+        pageId,
+        provisional,
+        provisional.buffered.shift()!,
+        () => this.provisionalSessionEvents.get(pageId) === provisional
+      )
+      if (this.provisionalSessionEvents.get(pageId) !== provisional) return false
+    }
+    this.provisionalSessionEvents.delete(pageId)
+    this.sessionEvents.set(pageId, provisional)
+    this.activeSessionGenerations.set(pageId, generation)
+    return true
+  }
+
+  cancelSessionEvent(pageId: string, generation: number) {
+    if (this.provisionalSessionEvents.get(pageId)?.generation === generation) {
+      this.provisionalSessionEvents.delete(pageId)
+    }
+  }
+
+  isSessionEventActive(pageId: string, generation: number) {
+    return this.activeSessionGenerations.get(pageId) === generation
   }
 
   onWorldPresence(pageId: string, callback: (event: WorldPresenceEvent) => void | Promise<void>) {
@@ -72,6 +167,8 @@ export class PagePort implements PagePortContract {
   removePage(pageId: string) {
     this.inbound.delete(pageId)
     this.sessionEvents.delete(pageId)
+    this.activeSessionGenerations.delete(pageId)
+    this.provisionalSessionEvents.delete(pageId)
     this.worldPresences.delete(pageId)
     this.runtimeErrors.delete(pageId)
     this.historyFeedbacks.delete(pageId)
@@ -109,8 +206,10 @@ export class PagePort implements PagePortContract {
           // Error delivery cannot recursively create another page error; retain the original
           // callback failure as a direct diagnostic and continue removing independent dead pages.
           console.error(error)
-          this.removePage(pageId)
-          deadPageIds.push(pageId)
+          if (listeners.get(pageId) === listener) {
+            this.removePage(pageId)
+            deadPageIds.push(pageId)
+          }
         }
       })
     )
@@ -121,8 +220,27 @@ export class PagePort implements PagePortContract {
     return this.emit(this.inbound, pageIds, event)
   }
 
-  emitSessionEvent(pageIds: string[], event: RuntimeSessionEvent) {
-    return this.emit(this.sessionEvents, pageIds, event)
+  async emitSessionEvent(pageIds: string[], event: RuntimeSessionEvent) {
+    const deadPageIds: string[] = []
+    await Promise.all(
+      pageIds.map(async (pageId) => {
+        const listener = this.sessionEvents.get(pageId)
+        if (listener) {
+          try {
+            await this.enqueueSessionEvent(pageId, listener, event, () => this.sessionEvents.get(pageId) === listener)
+          } catch (error) {
+            console.error(error)
+            if (this.sessionEvents.get(pageId) === listener) {
+              this.removePage(pageId)
+              deadPageIds.push(pageId)
+            }
+          }
+          return
+        }
+        this.provisionalSessionEvents.get(pageId)?.buffered.push(event)
+      })
+    )
+    return deadPageIds
   }
 
   emitWorldPresence(pageIds: string[], event: WorldPresenceEvent) {
@@ -230,6 +348,7 @@ export class PagePort implements PagePortContract {
     const pageIds = new Set([
       ...this.inbound.keys(),
       ...this.sessionEvents.keys(),
+      ...this.provisionalSessionEvents.keys(),
       ...this.worldPresences.keys(),
       ...this.runtimeErrors.keys(),
       ...this.historyFeedbacks.keys(),

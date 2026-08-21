@@ -9,7 +9,6 @@ import {
   type CleanupAttempt,
   type CleanupFailureEvidence,
   delay,
-  evaluateRuntimeMessage,
   readDevToolsActivePort,
   terminateOwnedProcesses,
   waitFor,
@@ -62,10 +61,7 @@ type Evidence = {
   extensionPath: string
   startupMs: number | null
   targets: Array<Pick<TargetInfo, 'type' | 'title' | 'url'>>
-  relayed: string[]
   extensionErrors: RuntimeEvent[]
-  relayDiagnostics: RuntimeEvent[]
-  rawBoundaryMessages: { offscreen: number; content: number }
   presenceSourceBoundary?: {
     content: PortAttack
     options: PortAttack
@@ -86,17 +82,6 @@ type Evidence = {
 }
 
 type TargetSession = [sessionId: string, target: TargetInfo]
-
-type RelayMessage = {
-  type: string
-  sender: { type: string }
-  id: string
-  path: string[]
-  meta: { tab: { id: number; url: string } }
-  namespace: string
-  timeStamp: number
-  data: unknown
-}
 
 const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error))
 const errorStack = (error: unknown): string => (error instanceof Error ? (error.stack ?? error.message) : String(error))
@@ -206,10 +191,7 @@ const evidence: Evidence = {
   extensionPath,
   startupMs: null,
   targets: [],
-  relayed: [],
   extensionErrors: [],
-  relayDiagnostics: [],
-  rawBoundaryMessages: { offscreen: 0, content: 0 },
   sandbox: disableSandbox ? 'disabled-in-github-actions' : 'enabled',
   cleanup: { rootExited: false, residualProcesses: [], profileRemoved: false, errors: [] }
 }
@@ -447,7 +429,7 @@ try {
       const extensionId = new URL(contentContext.origin).host
       const extensionTargets = () =>
         [...targets.values()].filter((target) => target.url.startsWith('chrome-extension://'))
-      const offscreenTarget = await waitForUniqueTarget(
+      await waitForUniqueTarget(
         () =>
           extensionTargets().filter(
             (target) => new URL(target.url).host === extensionId && target.url.endsWith('/offscreen.html')
@@ -462,7 +444,6 @@ try {
         { timeoutMs: startupTimeoutMs, label: 'WebChat Runtime service worker target' }
       )
 
-      const offscreenSession = await sessionForTarget(offscreenTarget, 'Offscreen CDP session')
       const workerSession = await sessionForTarget(worker, 'Service Worker CDP session')
       const presenceNamespace = `WEB_CHAT_RUNTIME_PRESENCE_STORE_V1:${extensionId}`
       const forgedPresence = {
@@ -567,145 +548,9 @@ try {
       }
       await client.send('Target.closeTarget', { targetId: optionsTargetId })
 
-      await evaluate(
-        pageSession[0],
-        `globalThis.__webchatRelayMessages = [];
-     chrome.runtime.onMessage.addListener((message) => {
-       if (message?.id?.startsWith('relay-check-')) globalThis.__webchatRelayMessages.push(message.id)
-     });
-     true`,
-        contentContext.id
+      evidence.extensionErrors = runtimeEvents.filter(
+        (event) => event.event === 'exception' || (event.event === 'console' && event.type === 'error')
       )
-      await evaluate(
-        offscreenSession[0],
-        `globalThis.__webchatTargetTab = null;
-     chrome.runtime.onMessage.addListener((message, sender) => {
-       if (message?.__webchatResolveTargetTab) {
-         globalThis.__webchatTargetTab = { id: sender.tab?.id, url: sender.tab?.url }
-       }
-     });
-     true`
-      )
-      await evaluate(
-        pageSession[0],
-        `chrome.runtime.sendMessage({ __webchatResolveTargetTab: true })`,
-        contentContext.id
-      )
-      const targetTab = await waitFor(
-        () => evaluate<{ id?: number; url?: string } | null>(offscreenSession[0], 'globalThis.__webchatTargetTab'),
-        {
-          timeoutMs: 2000,
-          label: 'trusted content sender tab metadata'
-        }
-      )
-      if (
-        typeof targetTab?.id !== 'number' ||
-        !Number.isSafeInteger(targetTab.id) ||
-        targetTab.url !== 'https://example.com/'
-      ) {
-        throw new Error(`Could not resolve the exact target tab: ${JSON.stringify(targetTab)}`)
-      }
-      const exactTargetTab = { id: targetTab.id, url: targetTab.url }
-
-      const message = (id: string, overrides: Partial<RelayMessage> = {}): RelayMessage => ({
-        type: 'apply',
-        sender: { type: 'provider' },
-        id,
-        path: ['getSnapshot'],
-        meta: { tab: exactTargetTab },
-        namespace: `WEB_CHAT_RUNTIME_V2:${extensionId}`,
-        timeStamp: Date.now(),
-        data: {},
-        ...overrides
-      })
-      const relayEventStart = runtimeEvents.length
-      const validMessages = [
-        message('relay-check-valid-apply'),
-        message('relay-check-valid-callback', { type: 'callback', path: ['onInbound'], data: [] })
-      ]
-      for (const [index, item] of validMessages.entries()) {
-        await evaluate(offscreenSession[0], `chrome.runtime.sendMessage(${JSON.stringify(item)})`)
-        try {
-          await waitFor(
-            async () => {
-              const received = await evaluate(pageSession[0], 'globalThis.__webchatRelayMessages', contentContext.id)
-              return received.length > index ? received : null
-            },
-            { timeoutMs: 2000, label: `${item.type} provider relay` }
-          )
-        } catch (error) {
-          throw new Error(`${errorMessage(error)}; events: ${JSON.stringify(runtimeEvents.slice(-20))}`)
-        }
-      }
-
-      const rawBoundaryMessages = [null, 'raw-runtime-message']
-      for (const item of rawBoundaryMessages) {
-        await evaluateRuntimeMessage((expression) => evaluate(offscreenSession[0], expression), item)
-        await evaluateRuntimeMessage((expression) => evaluate(pageSession[0], expression, contentContext.id), item)
-      }
-      evidence.rawBoundaryMessages = {
-        offscreen: rawBoundaryMessages.length,
-        content: rawBoundaryMessages.length
-      }
-
-      const rejectedMessages = [
-        message('relay-check-wrong-namespace', { namespace: 'UNKNOWN_NAMESPACE' }),
-        message('relay-check-wrong-direction', { sender: { type: 'injector' } }),
-        message('relay-check-invalid-target', {
-          meta: { tab: { id: exactTargetTab.id, url: 'http://example.com/' } }
-        })
-      ]
-      await evaluate(
-        offscreenSession[0],
-        `Promise.all(${JSON.stringify(rejectedMessages)}.map((item) => chrome.runtime.sendMessage(item)))`
-      )
-      await evaluate(
-        pageSession[0],
-        `chrome.runtime.sendMessage(${JSON.stringify(message('relay-check-spoofed-content'))})`,
-        contentContext.id
-      )
-      // A trailing valid message proves the pipeline processed the rejects before it (in-order
-      // delivery from the same offscreen sender).
-      const trailingMessage = message('relay-check-after-rejects')
-      await evaluate(offscreenSession[0], `chrome.runtime.sendMessage(${JSON.stringify(trailingMessage)})`)
-      try {
-        await waitFor(
-          async () => {
-            const received = await evaluate(pageSession[0], 'globalThis.__webchatRelayMessages', contentContext.id)
-            return received.includes('relay-check-after-rejects') ? received : null
-          },
-          { timeoutMs: 2000, label: 'post-rejection provider relay' }
-        )
-      } catch (error) {
-        throw new Error(`${errorMessage(error)}; events: ${JSON.stringify(runtimeEvents.slice(-20))}`)
-      }
-
-      evidence.relayed = await evaluate(pageSession[0], 'globalThis.__webchatRelayMessages', contentContext.id)
-      const expectedRelay = ['relay-check-valid-apply', 'relay-check-valid-callback', 'relay-check-after-rejects']
-      if (JSON.stringify(evidence.relayed) !== JSON.stringify(expectedRelay)) {
-        throw new Error(
-          `Unexpected relayed messages: ${JSON.stringify(evidence.relayed)}; events: ${JSON.stringify(runtimeEvents.slice(-20))}`
-        )
-      }
-
-      evidence.extensionErrors = runtimeEvents
-        .slice(0, relayEventStart)
-        .filter(
-          (event) =>
-            event.event === 'exception' ||
-            (event.event === 'console' &&
-              event.type === 'error' &&
-              !String(event.args?.[0]).includes('Dropped v2 frame'))
-        )
-      evidence.relayDiagnostics = runtimeEvents
-        .slice(relayEventStart)
-        .filter((event) => event.event === 'exception' || (event.event === 'console' && event.type === 'error'))
-      const unexpectedRelayDiagnostics = evidence.relayDiagnostics.filter(
-        (event) => !JSON.stringify(event).includes('Could not establish connection. Receiving end does not exist.')
-      )
-      if (unexpectedRelayDiagnostics.length > 0) {
-        throw new Error(`Unexpected relay diagnostics: ${JSON.stringify(unexpectedRelayDiagnostics)}`)
-      }
       if (evidence.extensionErrors.length > 0) {
         throw new Error(`Extension runtime errors: ${JSON.stringify(evidence.extensionErrors)}`)
       }

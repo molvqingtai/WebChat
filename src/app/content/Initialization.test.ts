@@ -124,7 +124,8 @@ describe('initialization lifecycle ownership', () => {
       if (index <= stageIndex) expect(fixture.dependencies[name]).toHaveBeenCalledOnce()
       else expect(fixture.dependencies[name]).not.toHaveBeenCalled()
     })
-    expect(fixture.activateApplicationDependencies).not.toHaveBeenCalled()
+    if (stage === 'initializeRuntime') expect(fixture.activateApplicationDependencies).toHaveBeenCalledOnce()
+    else expect(fixture.activateApplicationDependencies).not.toHaveBeenCalled()
 
     work.reject(new Error(`${stage} unavailable`))
     await vi.waitFor(() => expect(phase(fixture)).toBe('unavailable'))
@@ -144,7 +145,8 @@ describe('initialization lifecycle ownership', () => {
         id: INITIALIZATION_TOAST_ID
       })
     }
-    expect(fixture.activateApplicationDependencies).not.toHaveBeenCalled()
+    if (stage === 'initializeRuntime') expect(fixture.activateApplicationDependencies).toHaveBeenCalledOnce()
+    else expect(fixture.activateApplicationDependencies).not.toHaveBeenCalled()
     stop()
   })
 
@@ -188,6 +190,9 @@ describe('initialization lifecycle ownership', () => {
       vi.mocked(fixture.dependencies.prepareMessageDatabase)
     )
     expect(vi.mocked(fixture.dependencies.prepareMessageDatabase)).toHaveBeenCalledBefore(
+      vi.mocked(fixture.dependencies.initializeRuntime)
+    )
+    expect(fixture.activateApplicationDependencies).toHaveBeenCalledBefore(
       vi.mocked(fixture.dependencies.initializeRuntime)
     )
     expect(fixture.toast.cancel).toHaveBeenCalledWith(INITIALIZATION_TOAST_ID)
@@ -303,7 +308,7 @@ describe('initialization lifecycle ownership', () => {
     await Promise.resolve()
 
     expect(fixture.dependencies.detachRuntime).toHaveBeenCalledOnce()
-    expect(fixture.activateApplicationDependencies).not.toHaveBeenCalled()
+    expect(fixture.activateApplicationDependencies).toHaveBeenCalledOnce()
     expect(fixture.toast.cancel).not.toHaveBeenCalled()
   })
 })

@@ -9,26 +9,129 @@ import WireDomain from '@/domain/runtime/Wire'
 import WorldDomain, { getWorldRoomId } from '@/domain/runtime/World'
 import { ClockExtern, type Clock } from '@/domain/runtime/externs/Clock'
 import { IdentityExtern } from '@/domain/runtime/externs/Identity'
-import { PresenceStoreExtern, type PresenceStore } from '@/domain/runtime/externs/PresenceStore'
+import {
+  PresenceStoreExtern,
+  type PresenceDomainRecord,
+  type PresenceStore
+} from '@/domain/runtime/externs/PresenceStore'
 import { RoomTransportExtern, WireCodecExtern } from '@/domain/runtime/externs/RoomTransport'
 import type { RoomTransport } from '@/runtime/RoomTransport'
 import { MESSAGE_TYPE, NativeWireCodec, type TextMessage, type WireCodec } from '@/protocol'
 import type { ChatSite, ChatUser } from '@/protocol'
-import type { RuntimeServer, RuntimeSnapshot } from '@/runtime/Contract'
+import type { RuntimePageCall, RuntimeServer, RuntimeSnapshot, RuntimeTab } from '@/runtime/Contract'
 import { PagePort, createPagePortImpl } from '@/runtime/PagePort'
 import { createBoundedPresenceStore, createMemoryPresenceStore } from '@/runtime/PresenceStore'
+import { canonicalNavigationUrl, isEligibleContentUrl, isSameNavigation } from '@/service/adapter/runtime/Navigation'
+
+export const RUNTIME_PAGE_BINDINGS_KEY = 'WEB_CHAT_RUNTIME_PAGE_BINDINGS_V1'
+
+export interface RuntimePageStorage {
+  get: (key: string) => Promise<Record<string, unknown>>
+  set: (items: Record<string, unknown>) => Promise<void>
+}
+
+export interface RuntimeTabsApi {
+  get: (tabId: number) => Promise<RuntimeTab>
+  sendMessage: (tabId: number, message: unknown) => Promise<unknown>
+}
+
+export interface RuntimeAdmission {
+  tabs: RuntimeTabsApi
+  storage: RuntimePageStorage
+  /** Re-establishes only a surviving Page's callback registrations after a fresh Background. */
+  rebindPage: (tabId: number, pageId: string) => Promise<void>
+  /** Reconciles a surviving Background with a restarted Offscreen transport before Page ingress. */
+  ensureTransport: () => Promise<void>
+}
 
 export interface ServerConfig {
   transport: RoomTransport
   clock?: Clock
   codec?: WireCodec
   presenceStore?: PresenceStore
+  /** Omitted only by isolated domain/server tests. Production always supplies Browser admission. */
+  admission?: RuntimeAdmission
+}
+
+interface PageBinding {
+  tabId: number
+  pageId: string
+  domain: string
+  url: string
+  callbacks: Set<PageCallback>
+  sessionGeneration: number | null
+}
+
+type PageCallback = 'inbound' | 'error' | 'history' | 'historyFeedback'
+
+const pageCallbacks = new Set<PageCallback>(['inbound', 'error', 'history', 'historyFeedback'])
+
+type PresenceRecoveryBinding = Pick<PageBinding, 'tabId' | 'pageId' | 'domain' | 'url'>
+
+/** A closed cohort member is its exact recovery attempt and the binding that attempt installed. */
+interface PresenceRecoveryMember {
+  candidate: PresenceRecoveryBinding
+  binding?: PageBinding
+  rebindAttempt: PageRecovery
+  observed: boolean
+  retired: boolean
+  inFlight: number
+}
+
+interface PageRecovery {
+  tabId: number
+  pageId: string
+  domain: string
+  url: string
+  /** Old host calls already admitted to this exact recovery remain fenced to its lifetime. */
+  pendingHostIds: Set<string>
+  promise: Promise<void>
+  fail: (error: Error) => void
+}
+
+interface PresenceRecovery {
+  attempts: number
+  awaitingRestoringJoin: boolean
+  restoringOwnerInFlight: boolean
+  restoringBinding?: PresenceRecoveryBinding
+  restoringMember?: PresenceRecoveryMember
+  members: PresenceRecoveryMember[]
+  promise: Promise<void>
+  resolve: () => void
+  reject: (error: Error) => void
+  settled: boolean
+  cancelled?: boolean
+  failure?: Error
+  /** A timed-out retained Page must observe its own terminal recovery before a new lifecycle may start. */
+  tombstone?: boolean
+  timeout?: ReturnType<typeof globalThis.setTimeout>
+}
+
+interface PersistedPageBindings {
+  pages: Array<Pick<PageBinding, 'tabId' | 'pageId' | 'domain' | 'url'>>
 }
 
 const defaultClock: Clock = { now: () => Date.now() }
+const PRESENCE_RECOVERY_TIMEOUT_MS = 10000
 const serverDisposers = new WeakMap<RuntimeServer, () => void>()
+interface ServerControl {
+  restorePageBindings: () => Promise<void>
+  removeTab: (tabId: number, url?: string) => Promise<void>
+  startJoin: (payload: { operationId: string; domain: string; user: ChatUser; site: ChatSite }) => Promise<boolean>
+}
+const serverControls = new WeakMap<RuntimeServer, ServerControl>()
 
 export const disposeServer = (server: RuntimeServer) => serverDisposers.get(server)?.()
+export const restoreServerPageBindings = (server: RuntimeServer) =>
+  serverControls.get(server)?.restorePageBindings() ?? Promise.resolve()
+export const removeServerTab = (server: RuntimeServer, tabId: number, url?: string) =>
+  serverControls.get(server)?.removeTab(tabId, url) ?? Promise.resolve()
+export const startServerJoin = (
+  server: RuntimeServer,
+  payload: { operationId: string; domain: string; user: ChatUser; site: ChatSite }
+) =>
+  serverControls.get(server)?.startJoin(payload) ??
+  Promise.reject(new Error('Runtime Server test control is unavailable'))
 
 export const createServer = (config: ServerConfig): RuntimeServer => {
   const clock = config.clock ?? defaultClock
@@ -80,51 +183,509 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   const worldDomain = store.getDomain(worldAction)
   const historyDomain = store.getDomain(historyAction)
   const connectionDomain = store.getDomain(connectionAction)
-  store.send(lifecycleDomain.command.HostReadyCommand())
-
-  interface PresenceRecovery {
-    attempts: number
-    promise: Promise<void>
-    resolve: () => void
-  }
-
   const presenceRecoveries = new Map<string, PresenceRecovery>()
   const pendingConnectionCancellations = new Set<() => void>()
   let disposed = false
+  const pageBindings = new Map<string, PageBinding>()
+  const tabBindings = new Map<number, PageBinding>()
+  const rebindHints = new Map<number, PersistedPageBindings['pages'][number]>()
+  const pageRecoveries = new Map<string, PageRecovery>()
+  const recoveryAdmissions = new WeakMap<object, PageRecovery>()
+  let restoreInFlight: Promise<void> | null = null
+  let recoveryHintsReady = Promise.resolve()
+  let bindingPersistTail: Promise<void> = Promise.resolve()
 
-  const beginPresenceRecovery = (domain: string) => {
-    const current = presenceRecoveries.get(domain)
-    if (current) {
-      current.attempts += 1
-      return current
+  const isCurrentBinding = (binding: PageBinding) =>
+    pageBindings.get(binding.pageId) === binding && tabBindings.get(binding.tabId) === binding
+
+  const bindingReady = (binding: PageBinding) =>
+    binding.sessionGeneration !== null &&
+    pagePort.isSessionEventActive(binding.pageId, binding.sessionGeneration) &&
+    [...pageCallbacks].every((callback) => binding.callbacks.has(callback))
+
+  const samePresenceRecoveryBinding = (left: PresenceRecoveryBinding, right: PresenceRecoveryBinding) =>
+    left.tabId === right.tabId &&
+    left.pageId === right.pageId &&
+    left.domain === right.domain &&
+    isSameNavigation(left.url, right.url)
+
+  const findPresenceRecoveryMember = (recovery: PresenceRecovery, binding: PageBinding) =>
+    recovery.members.find((member) => member.binding === binding)
+
+  const clearPresenceRecoveryTombstone = (domain: string, recovery: PresenceRecovery) => {
+    if (
+      !recovery.tombstone ||
+      presenceRecoveries.get(domain) !== recovery ||
+      recovery.members.some((member) => !member.observed && !member.retired) ||
+      recovery.members.some((member) => member.inFlight > 0)
+    ) {
+      return
     }
-    let resolve = () => {}
-    const promise = new Promise<void>((onResolve) => {
-      resolve = onResolve
-    })
-    const recovery = { attempts: 1, promise, resolve }
-    presenceRecoveries.set(domain, recovery)
+    presenceRecoveries.delete(domain)
+  }
+
+  const addPresenceRecoveryMember = (
+    recovery: PresenceRecovery,
+    candidate: PresenceRecoveryBinding,
+    rebindAttempt: PageRecovery
+  ) => {
+    if (recovery.tombstone || recovery.settled) return undefined
+    const existing = recovery.members.find((member) => member.rebindAttempt === rebindAttempt)
+    if (existing) return existing
+    const member: PresenceRecoveryMember = {
+      candidate,
+      rebindAttempt,
+      observed: false,
+      retired: false,
+      inFlight: 0
+    }
+    recovery.members.push(member)
+    return member
+  }
+
+  const bindPresenceRecoveryMember = (binding: PageBinding, rebindAttempt: PageRecovery) => {
+    const recovery = presenceRecoveries.get(binding.domain)
+    if (!recovery) return
+    const member = recovery.members.find(
+      (candidate) =>
+        candidate.rebindAttempt === rebindAttempt && samePresenceRecoveryBinding(candidate.candidate, binding)
+    )
+    if (member) member.binding = binding
+  }
+
+  const retirePresenceRecoveryMember = (binding: PresenceRecoveryBinding) => {
+    const recovery = presenceRecoveries.get(binding.domain)
+    if (!recovery?.tombstone) return
+    const member = recovery.members.find((candidate) => candidate.binding === binding)
+    if (!member) return
+    member.retired = true
+    clearPresenceRecoveryTombstone(binding.domain, recovery)
+  }
+
+  const persistPageBindings = async () => {
+    if (!config.admission) return
+    const persist = () => {
+      const pages = [
+        ...pageBindings.values().map(({ tabId, pageId, domain, url }) => ({ tabId, pageId, domain, url })),
+        ...[...rebindHints.values()].filter(({ tabId }) => !tabBindings.has(tabId))
+      ].sort((left, right) => left.tabId - right.tabId)
+      return config.admission!.storage.set({ [RUNTIME_PAGE_BINDINGS_KEY]: { pages } satisfies PersistedPageBindings })
+    }
+    bindingPersistTail = bindingPersistTail.then(persist, persist)
+    await bindingPersistTail
+  }
+
+  const browserBindingCurrent = async (binding: PageBinding) => {
+    const admission = config.admission
+    if (!admission) return true
+    const tab = await admission.tabs.get(binding.tabId)
+    const url = typeof tab.url === 'string' ? canonicalNavigationUrl(tab.url) : null
+    return (
+      tab.id === binding.tabId &&
+      url !== null &&
+      isEligibleContentUrl(url) &&
+      new URL(url).origin === binding.domain &&
+      isSameNavigation(url, binding.url)
+    )
+  }
+
+  const waitForPageRecovery = async (payload: RuntimePageCall) => {
+    const admitted = recoveryAdmissions.get(payload)
+    if (admitted) {
+      await admitted.promise
+      return admitted
+    }
+    await recoveryHintsReady
+    const pageId = payload.pageId
+    if (!pageId) return null
+    const recovery = pageRecoveries.get(pageId)
+    if (!recovery) return null
+    if (typeof payload.runtimeHostId === 'string') recovery.pendingHostIds.add(payload.runtimeHostId)
+    recoveryAdmissions.set(payload, recovery)
+    await recovery.promise
     return recovery
   }
 
-  const finishPresenceRecovery = (domain: string, recovery: PresenceRecovery, succeeded: boolean) => {
+  const removeBinding = async (binding: PageBinding, retainedRecovery?: PageRecovery) => {
+    if (!isCurrentBinding(binding)) return
+    retirePresenceRecoveryMember(binding)
+    const recovery = pageRecoveries.get(binding.pageId)
+    if (recovery && recovery !== retainedRecovery) {
+      recovery.fail(new Error('Runtime Page recovery binding is no longer current'))
+    }
+    pageBindings.delete(binding.pageId)
+    tabBindings.delete(binding.tabId)
+    pagePort.removePage(binding.pageId)
+    store.send(lifecycleDomain.command.DetachPageCommand({ domain: binding.domain, pageId: binding.pageId }))
+    await persistPageBindings()
+  }
+
+  const requirePageBinding = async (
+    payload: RuntimePageCall,
+    requireSessionCallback: boolean,
+    waitForRecovery = true
+  ) => {
+    const admission = config.admission
+    if (!admission) return null
+    await admission.ensureTransport()
+    const pageId = payload.pageId
+    const callerTabId = payload.caller?.tab?.id
+    if (!pageId || typeof callerTabId !== 'number' || !Number.isSafeInteger(callerTabId) || callerTabId < 0) {
+      throw new Error('Current Page browser caller is required')
+    }
+    const recovery = waitForRecovery ? await waitForPageRecovery(payload) : null
+    const binding = pageBindings.get(pageId)
+    const currentHost = payload.runtimeHostId === snapshot().hostId
+    const recoveredHost = recovery?.pendingHostIds.has(payload.runtimeHostId ?? '') ?? false
+    if (!binding || binding.tabId !== callerTabId || (!currentHost && !recoveredHost)) {
+      throw new Error('Runtime Page binding is no longer current')
+    }
+    if (requireSessionCallback) {
+      if (
+        binding.sessionGeneration === null ||
+        !pagePort.isSessionEventActive(binding.pageId, binding.sessionGeneration)
+      ) {
+        throw new Error('Runtime Page session callback is not active')
+      }
+    }
+    if (!(await browserBindingCurrent(binding)) || !isCurrentBinding(binding)) {
+      await removeBinding(binding)
+      throw new Error('Browser tab navigation is no longer current')
+    }
+    if (
+      requireSessionCallback &&
+      (binding.sessionGeneration === null || !pagePort.isSessionEventActive(binding.pageId, binding.sessionGeneration))
+    ) {
+      throw new Error('Runtime Page session callback is no longer current')
+    }
+    return binding
+  }
+
+  const requireAttachBinding = async (payload: { domain: string; pageId: string } & RuntimePageCall) => {
+    const admission = config.admission
+    if (!admission) return null
+    await admission.ensureTransport()
+    const callerTab = payload.caller?.tab
+    const tabId = callerTab?.id
+    const claimedUrl = callerTab?.url
+    if (!Number.isSafeInteger(tabId) || tabId! < 0 || typeof claimedUrl !== 'string') {
+      throw new Error('Trusted browser tab metadata is required')
+    }
+    const current = await admission.tabs.get(tabId!)
+    const url = typeof current.url === 'string' ? canonicalNavigationUrl(current.url) : null
+    if (
+      current.id !== tabId ||
+      !url ||
+      !isEligibleContentUrl(url) ||
+      !isSameNavigation(url, claimedUrl) ||
+      new URL(url).origin !== payload.domain
+    ) {
+      throw new Error('Browser tab navigation is no longer eligible')
+    }
+    const recovery = pageRecoveries.get(payload.pageId)
+    if (
+      recovery &&
+      (recovery.tabId !== tabId || recovery.domain !== payload.domain || !isSameNavigation(recovery.url, url))
+    ) {
+      throw new Error('Runtime Page recovery binding is no longer current')
+    }
+    return {
+      tabId: tabId!,
+      pageId: payload.pageId,
+      domain: payload.domain,
+      url,
+      callbacks: new Set<PageCallback>(),
+      sessionGeneration: null
+    }
+  }
+
+  const revalidateBinding = async (binding: PageBinding | null, payload: RuntimePageCall, requireSession = true) => {
+    if (!binding) return
+    if ((await requirePageBinding(payload, requireSession)) !== binding) {
+      throw new Error('Runtime Page binding was superseded')
+    }
+  }
+
+  const installBinding = async (binding: PageBinding) => {
+    const previousPage = pageBindings.get(binding.pageId)
+    const previousTab = tabBindings.get(binding.tabId)
+    const recovery = pageRecoveries.get(binding.pageId)
+    const retainsRecovery =
+      recovery &&
+      recovery.tabId === binding.tabId &&
+      recovery.domain === binding.domain &&
+      isSameNavigation(recovery.url, binding.url)
+        ? recovery
+        : undefined
+    if (previousPage) await removeBinding(previousPage, retainsRecovery)
+    if (previousTab && previousTab !== previousPage) await removeBinding(previousTab, retainsRecovery)
+    rebindHints.delete(binding.tabId)
+    pageBindings.set(binding.pageId, binding)
+    tabBindings.set(binding.tabId, binding)
+    if (recovery) bindPresenceRecoveryMember(binding, recovery)
+    store.send(lifecycleDomain.command.AttachPageCommand({ domain: binding.domain, pageId: binding.pageId }))
+    await persistPageBindings()
+  }
+
+  const beginPageRecovery = (candidate: Pick<PageBinding, 'tabId' | 'pageId' | 'domain' | 'url'>) => {
+    const existing = pageRecoveries.get(candidate.pageId)
+    if (existing) return existing
+    const admission = config.admission
+    if (!admission) throw new Error('Runtime Page admission is unavailable')
+    // Only a fresh Background lacks a current domain. Reserve that target before the Page rebind
+    // begins so the surviving Page's existing automatic join can claim it without duplicating an
+    // already-live callback recovery.
+    const presenceRecovery = store.query(sessionDomain.query.DomainQuery(candidate.domain))
+      ? null
+      : beginPresenceRecovery(candidate.domain, candidate)
+
+    let failed = false
+    let rejectCancellation!: (error: Error) => void
+    const cancellation = new Promise<never>((_resolve, reject) => {
+      rejectCancellation = reject
+    })
+    const recovery = {
+      ...candidate,
+      pendingHostIds: new Set<string>(),
+      promise: Promise.resolve(),
+      fail: (error: Error) => {
+        if (failed) return
+        failed = true
+        if (presenceRecovery) failPresenceRecovery(candidate.domain, presenceRecovery, error, presenceMember)
+        rejectCancellation(error)
+      }
+    } satisfies PageRecovery
+    const presenceMember = presenceRecovery
+      ? addPresenceRecoveryMember(presenceRecovery, candidate, recovery)
+      : undefined
+    if (presenceMember) presenceMember.inFlight += 1
+    let start!: () => void
+    const rebind = new Promise<void>((resolve, reject) => {
+      start = () => {
+        void (async () => {
+          try {
+            await admission.rebindPage(candidate.tabId, candidate.pageId)
+            const binding = pageBindings.get(candidate.pageId)
+            if (
+              !binding ||
+              !isCurrentBinding(binding) ||
+              binding.tabId !== candidate.tabId ||
+              binding.domain !== candidate.domain ||
+              !isSameNavigation(binding.url, candidate.url) ||
+              !bindingReady(binding)
+            ) {
+              throw new Error('Runtime Page recovery did not restore full callback readiness')
+            }
+            resolve()
+          } catch (error) {
+            const failure = error instanceof Error ? error : new Error(String(error))
+            if (presenceRecovery) failPresenceRecovery(candidate.domain, presenceRecovery, failure, presenceMember)
+            const binding = pageBindings.get(candidate.pageId)
+            if (binding && binding.tabId === candidate.tabId) await removeBinding(binding, recovery)
+            else if (rebindHints.get(candidate.tabId)?.pageId === candidate.pageId) {
+              rebindHints.delete(candidate.tabId)
+              await persistPageBindings()
+            }
+            reject(failure)
+          }
+        })()
+      }
+    })
+    recovery.promise = Promise.race([rebind, cancellation])
+    if (presenceMember) {
+      const releasePresenceMember = () => {
+        presenceMember.inFlight -= 1
+        clearPresenceRecoveryTombstone(candidate.domain, presenceRecovery!)
+      }
+      void recovery.promise.then(releasePresenceMember, releasePresenceMember)
+    }
+    pageRecoveries.set(candidate.pageId, recovery)
+    const releaseRecovery = () => {
+      if (pageRecoveries.get(candidate.pageId) === recovery) pageRecoveries.delete(candidate.pageId)
+    }
+    // A failed navigation keeps this exact fence until its already-issued rebind returns, so a
+    // late stale registration cannot recreate the retired binding with a newer tab URL.
+    void recovery.promise.catch(() => {})
+    void rebind.then(releaseRecovery, releaseRecovery)
+    start()
+    return recovery
+  }
+
+  const settlePresenceRecovery = (
+    domain: string,
+    recovery: PresenceRecovery,
+    error?: Error,
+    { cancelled = false, retainTombstone = false }: { cancelled?: boolean; retainTombstone?: boolean } = {}
+  ) => {
+    if (presenceRecoveries.get(domain) !== recovery || recovery.settled) return
+    recovery.settled = true
+    if (error) recovery.failure = error
+    if (cancelled) recovery.cancelled = true
+    if (retainTombstone) recovery.tombstone = true
+    else presenceRecoveries.delete(domain)
+    if (recovery.timeout) globalThis.clearTimeout(recovery.timeout)
+    // A terminal restoring-owner failure must retire the exact provisional attempt as well as the
+    // shared waiter promise. The Connection release path fences late room completions by identity.
+    if (error && recovery.restoringOwnerInFlight) {
+      store.send(connectionDomain.command.LeaveDomainCommand(domain))
+    }
+    if (error) recovery.reject(error)
+    else recovery.resolve()
+  }
+
+  const beginPresenceRecovery = (domain: string, restoringBinding?: PresenceRecoveryBinding) => {
+    const awaitRestoringJoin = restoringBinding !== undefined
+    const current = presenceRecoveries.get(domain)
+    if (current) {
+      // A second surviving Page shares this domain's reservation. Only the existing automatic
+      // ChatRoom join may claim it after the Page recovery has completed.
+      if (awaitRestoringJoin) return current
+      if (current.awaitingRestoringJoin || current.restoringOwnerInFlight) return current
+      current.attempts += 1
+      return current
+    }
+    let resolve!: () => void
+    let reject!: (error: Error) => void
+    const promise = new Promise<void>((onResolve, onReject) => {
+      resolve = onResolve
+      reject = onReject
+    })
+    const recovery: PresenceRecovery = {
+      attempts: 1,
+      awaitingRestoringJoin: awaitRestoringJoin,
+      restoringOwnerInFlight: false,
+      ...(restoringBinding ? { restoringBinding } : {}),
+      members: [],
+      promise,
+      resolve,
+      reject,
+      settled: false
+    }
+    presenceRecoveries.set(domain, recovery)
+    if (awaitRestoringJoin) {
+      recovery.timeout = globalThis.setTimeout(() => {
+        settlePresenceRecovery(domain, recovery, new Error('Runtime current-domain recovery timed out'), {
+          retainTombstone: recovery.awaitingRestoringJoin && !recovery.restoringOwnerInFlight
+        })
+      }, PRESENCE_RECOVERY_TIMEOUT_MS)
+    }
+    void promise.catch(() => {})
+    return recovery
+  }
+
+  /** Claims a pre-reserved recovery only for its exact newly activated Page owner. */
+  const claimRestoringPresenceRecovery = (payload: RuntimePageCall & { domain: string }, binding: PageBinding) => {
+    const recovery = presenceRecoveries.get(binding.domain)
+    if (!recovery?.awaitingRestoringJoin) return null
+    const currentBinding =
+      payload.domain === binding.domain && payload.runtimeHostId === snapshot().hostId && bindingReady(binding)
+    if (recovery.tombstone) {
+      if (!currentBinding) throw new Error('Runtime current-domain recovery owner is no longer current')
+      const member = findPresenceRecoveryMember(recovery, binding)
+      if (member) {
+        member.observed = true
+        clearPresenceRecoveryTombstone(binding.domain, recovery)
+      }
+      throw recovery.failure ?? new Error('Runtime current-domain recovery timed out')
+    }
+    const owner = recovery.restoringBinding
+    const member = findPresenceRecoveryMember(recovery, binding)
+    if (
+      !currentBinding ||
+      !owner ||
+      !member ||
+      owner.pageId !== binding.pageId ||
+      owner.tabId !== binding.tabId ||
+      owner.domain !== binding.domain ||
+      !isSameNavigation(owner.url, binding.url) ||
+      !bindingReady(binding)
+    ) {
+      throw new Error('Runtime current-domain recovery owner is no longer current')
+    }
+    recovery.restoringMember = member
+    recovery.awaitingRestoringJoin = false
+    recovery.restoringOwnerInFlight = true
+    return recovery
+  }
+
+  const finishPresenceRecovery = (
+    domain: string,
+    recovery: PresenceRecovery,
+    succeeded: boolean,
+    restoringOwner = false,
+    cancelled = false
+  ) => {
     if (presenceRecoveries.get(domain) !== recovery) return
+    if (recovery.restoringOwnerInFlight) {
+      if (!restoringOwner) return
+      if (cancelled) {
+        recovery.restoringOwnerInFlight = false
+        settlePresenceRecovery(domain, recovery, undefined, { cancelled: true })
+        return
+      }
+      if (!succeeded) {
+        failPresenceRecovery(
+          domain,
+          recovery,
+          recovery.failure ?? new Error('Runtime current-domain recovery did not complete')
+        )
+        return
+      }
+      if (!store.query(sessionDomain.query.DomainQuery(domain))) {
+        failPresenceRecovery(domain, recovery, new Error('Runtime current-domain recovery did not commit'))
+        return
+      }
+      recovery.restoringOwnerInFlight = false
+      settlePresenceRecovery(domain, recovery)
+      return
+    }
     recovery.attempts -= 1
     if (!succeeded && recovery.attempts > 0) return
-    presenceRecoveries.delete(domain)
-    recovery.resolve()
+    settlePresenceRecovery(domain, recovery)
+  }
+
+  const failPresenceRecovery = (
+    domain: string,
+    recovery: PresenceRecovery,
+    error: Error,
+    member?: PresenceRecoveryMember
+  ) => {
+    if (recovery.tombstone) {
+      if (member) member.retired = true
+      clearPresenceRecoveryTombstone(domain, recovery)
+      return
+    }
+    settlePresenceRecovery(domain, recovery, error)
   }
 
   const operationCancelled = () => new DOMException('Runtime presence is completing its final release', 'AbortError')
 
-  const waitForLivePresence = async (domain: string) => {
+  const assertPresenceRecoveryActive = (domain: string, recovery?: PresenceRecovery) => {
+    if (!recovery?.restoringOwnerInFlight) return
+    if (recovery.failure) throw recovery.failure
+    if (recovery.settled || presenceRecoveries.get(domain) !== recovery) throw operationCancelled()
+  }
+
+  const waitForLivePresence = async (domain: string, binding: PageBinding | null) => {
     if (disposed) throw operationCancelled()
     const recovery = presenceRecoveries.get(domain)
     if (!recovery) {
-      if (store.query(sessionDomain.query.FinalizingPresenceQuery(domain))) throw operationCancelled()
+      if (
+        store.query(sessionDomain.query.FinalizingPresenceQuery(domain)) ||
+        !store.query(sessionDomain.query.DomainQuery(domain))
+      ) {
+        throw operationCancelled()
+      }
       return
     }
-    await recovery.promise
+    try {
+      await recovery.promise
+    } catch (error) {
+      const member = binding ? findPresenceRecoveryMember(recovery, binding) : undefined
+      if (recovery.tombstone && (member?.observed || member?.retired)) throw operationCancelled()
+      throw error
+    }
+    if (recovery.cancelled) throw operationCancelled()
     if (
       disposed ||
       store.query(sessionDomain.query.FinalizingPresenceQuery(domain)) ||
@@ -135,38 +696,65 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   }
 
   const snapshot = (): RuntimeSnapshot => store.query(connectionDomain.query.SnapshotQuery())
-  const acquirePresence = async (domain: string, userId: string): Promise<'active' | 'acquired' | 'finalizing'> => {
+  const acquirePresence = async (
+    domain: string,
+    userId: string,
+    validateStored?: (stored: PresenceDomainRecord | null) => Promise<void>,
+    recovery?: PresenceRecovery
+  ): Promise<'active' | 'acquired' | 'finalizing'> => {
+    // A retained restoring owner validates its durable input immediately before this method can
+    // hydrate, persist, or start a connection. Ordinary cold/manual joins keep their existing
+    // in-memory-first identity behavior and never read here when already active.
+    let stored: PresenceDomainRecord | null | undefined
+    if (validateStored) {
+      assertPresenceRecoveryActive(domain, recovery)
+      stored = await presenceStore.load(domain)
+      assertPresenceRecoveryActive(domain, recovery)
+      await validateStored(stored)
+      assertPresenceRecoveryActive(domain, recovery)
+    }
+    assertPresenceRecoveryActive(domain, recovery)
     if (store.query(sessionDomain.query.DomainQuery(domain))) {
       return store.query(sessionDomain.query.FinalizingPresenceQuery(domain)) ? 'finalizing' : 'active'
     }
     // No durable end journal: a rejoin always acquires the durable local lease or a fresh one and
     // hydrates the current generation. An in-memory release fenced the domain only for this generation.
-    const stored = (await presenceStore.load(domain)) ?? { domain, lastJoinedAt: 0, observers: [] }
+    const recordBeforeAcquire =
+      stored === undefined
+        ? ((await presenceStore.load(domain)) ?? { domain, lastJoinedAt: 0, observers: [] })
+        : (stored ?? { domain, lastJoinedAt: 0, observers: [] })
+    assertPresenceRecoveryActive(domain, recovery)
     const local =
-      stored.local?.userId === userId
-        ? stored.local
+      recordBeforeAcquire.local?.userId === userId
+        ? recordBeforeAcquire.local
         : {
             presenceId: nanoid(),
             userId,
-            joinedAt: Math.max(clock.now(), stored.lastJoinedAt + 1),
+            joinedAt: Math.max(clock.now(), recordBeforeAcquire.lastJoinedAt + 1),
             status: 'pending' as const
           }
     const record = {
-      ...stored,
+      ...recordBeforeAcquire,
       domain,
-      lastJoinedAt: Math.max(stored.lastJoinedAt, local.joinedAt),
+      lastJoinedAt: Math.max(recordBeforeAcquire.lastJoinedAt, local.joinedAt),
       local
     }
+    assertPresenceRecoveryActive(domain, recovery)
     await presenceStore.save(record)
+    assertPresenceRecoveryActive(domain, recovery)
     store.send(sessionDomain.command.HydratePresenceCommand(record))
     return 'acquired'
   }
   const acquireCurrentPresence = async (
     domain: string,
-    userId: string
+    userId: string,
+    validateStored?: (stored: PresenceDomainRecord | null) => Promise<void>,
+    recovery?: PresenceRecovery
   ): Promise<'active' | 'acquired' | 'finalizing'> => {
     while (!disposed) {
-      const acquired = await acquirePresence(domain, userId)
+      assertPresenceRecoveryActive(domain, recovery)
+      const acquired = await acquirePresence(domain, userId, validateStored, recovery)
+      assertPresenceRecoveryActive(domain, recovery)
       if (store.query(sessionDomain.query.FinalizingPresenceQuery(domain))) return 'finalizing'
       if (store.query(sessionDomain.query.DomainQuery(domain))) return 'active'
       if (acquired === 'acquired') return 'acquired'
@@ -176,7 +764,12 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   const pageBridges = [
     store.subscribeEvent(sessionDomain.event.RuntimeSessionChangedEvent, (event) => {
       const pageIds = store.query(lifecycleDomain.query.DomainLeaseQuery(event.domain))?.pageIds ?? []
-      void pagePort.emitSessionEvent(pageIds, event)
+      void pagePort.emitSessionEvent(pageIds, event).then((deadPageIds) => {
+        deadPageIds.forEach((pageId) => {
+          const binding = pageBindings.get(pageId)
+          if (binding) beginPageRecovery(binding)
+        })
+      })
     }),
     store.subscribeEvent(worldDomain.event.PresenceChangedEvent, (event) => {
       const committed = new Set(store.query(sessionDomain.query.DomainsQuery()).map((runtime) => runtime.domain))
@@ -418,11 +1011,17 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   /** One shared in-flight join settlement per domain: overlapping same-domain joins coalesce. */
   const inFlightJoins = new Map<string, Promise<Awaited<ReturnType<typeof snapshot>> | null>>()
 
-  const joinChatRoomSettled = async (payload: Parameters<RuntimeServer['joinChatRoom']>[0]) => {
+  const joinChatRoomSettled = async (
+    payload: Parameters<RuntimeServer['joinChatRoom']>[0],
+    revalidate?: () => Promise<void>,
+    recovery = beginPresenceRecovery(payload.domain),
+    validateStored?: (stored: PresenceDomainRecord | null) => Promise<void>,
+    restoringOwner = false
+  ) => {
     // Typed ChatUser/ChatSite values pass through unchanged; the application-to-protocol
     // mapping already happened before the value was narrowed to the schema-owned type.
-    const recovery = beginPresenceRecovery(payload.domain)
     let recovered = false
+    let cancelled = false
     try {
       const connect = () => {
         const operationId = nanoid()
@@ -434,7 +1033,23 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
         )
       }
       while (true) {
-        const presenceState = await acquireCurrentPresence(payload.domain, payload.user.id)
+        assertPresenceRecoveryActive(payload.domain, recovery)
+        if (revalidate) await revalidate()
+        assertPresenceRecoveryActive(payload.domain, recovery)
+        let presenceState: Awaited<ReturnType<typeof acquireCurrentPresence>>
+        try {
+          presenceState = await acquireCurrentPresence(payload.domain, payload.user.id, validateStored, recovery)
+        } catch (error) {
+          // An exact restoring owner with missing or conflicting durable input rejects the one
+          // shared reservation before this join can persist, hydrate, connect, or release actions.
+          if (validateStored) {
+            failPresenceRecovery(payload.domain, recovery, error instanceof Error ? error : new Error(String(error)))
+          }
+          throw error
+        }
+        assertPresenceRecoveryActive(payload.domain, recovery)
+        if (revalidate) await revalidate()
+        assertPresenceRecoveryActive(payload.domain, recovery)
         if (presenceState === 'finalizing') {
           // A lease observed after the release fence started never bypasses the shared release:
           // it waits for the one live release owner to close, then starts fresh through the loop.
@@ -443,6 +1058,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
             continue
           }
           if (!store.query(sessionDomain.query.DomainQuery(payload.domain))) {
+            if (revalidate) await revalidate()
             if (!(await connect())) return null
             continue
           }
@@ -456,12 +1072,25 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
         if (presenceState === 'active' && !store.query(sessionDomain.query.DomainQuery(payload.domain))) {
           continue
         }
-        if (!(await connect())) return null
+        if (revalidate) await revalidate()
+        assertPresenceRecoveryActive(payload.domain, recovery)
+        const connected = await connect()
+        assertPresenceRecoveryActive(payload.domain, recovery)
+        if (!connected) {
+          if (restoringOwner) cancelled = true
+          return null
+        }
+        if (revalidate) await revalidate()
+        assertPresenceRecoveryActive(payload.domain, recovery)
         recovered = true
         return snapshot()
       }
+    } catch (error) {
+      const failure = recovery.failure ?? (error instanceof Error ? error : new Error(String(error)))
+      if (restoringOwner) failPresenceRecovery(payload.domain, recovery, failure, recovery.restoringMember)
+      throw failure
     } finally {
-      finishPresenceRecovery(payload.domain, recovery, recovered)
+      finishPresenceRecovery(payload.domain, recovery, recovered, restoringOwner, cancelled)
     }
   }
 
@@ -502,37 +1131,97 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
 
   const server: RuntimeServer = {
     attachPage: async (payload) => {
-      store.send(lifecycleDomain.command.AttachPageCommand(payload))
+      const binding = await requireAttachBinding(payload)
+      if (binding) await installBinding(binding)
+      else store.send(lifecycleDomain.command.AttachPageCommand(payload))
       return snapshot()
     },
     detachPage: async (payload) => {
-      pagePort.removePage(payload.pageId)
-      store.send(lifecycleDomain.command.DetachPageCommand(payload))
+      const binding = await requirePageBinding(payload, false, false)
+      if (binding) await removeBinding(binding)
+      else {
+        pagePort.removePage(payload.pageId)
+        store.send(lifecycleDomain.command.DetachPageCommand(payload))
+      }
     },
     getSnapshot: async () => snapshot(),
     joinChatRoom: (payload) => {
-      // Overlapping same-domain joins observed while the domain's release is closing coalesce into
-      // one shared settlement; fresh cold joins keep the existing newest-generation supersession.
-      if (store.query(sessionDomain.query.ReleasingDomainQuery(payload.domain))) {
-        const existing = inFlightJoins.get(payload.domain)
-        if (existing) return existing
-        const task = joinChatRoomSettled(payload)
-        inFlightJoins.set(payload.domain, task)
-        const releaseJoin = () => {
-          if (inFlightJoins.get(payload.domain) === task) inFlightJoins.delete(payload.domain)
+      const settle = (
+        revalidate?: () => Promise<void>,
+        recovery?: PresenceRecovery,
+        validateStored?: (stored: PresenceDomainRecord | null) => Promise<void>,
+        restoringOwner = false
+      ) => {
+        // Overlapping same-domain joins observed while the domain's release is closing coalesce into
+        // one shared settlement; fresh cold joins keep the existing newest-generation supersession.
+        if (store.query(sessionDomain.query.ReleasingDomainQuery(payload.domain))) {
+          const existing = inFlightJoins.get(payload.domain)
+          if (existing) {
+            if (recovery) finishPresenceRecovery(payload.domain, recovery, false, restoringOwner)
+            return existing
+          }
+          const task = joinChatRoomSettled(payload, revalidate, recovery, validateStored, restoringOwner)
+          inFlightJoins.set(payload.domain, task)
+          const releaseJoin = () => {
+            if (inFlightJoins.get(payload.domain) === task) inFlightJoins.delete(payload.domain)
+          }
+          void task.then(releaseJoin, releaseJoin)
+          return task
         }
-        void task.then(releaseJoin, releaseJoin)
-        return task
+        return joinChatRoomSettled(payload, revalidate, recovery, validateStored, restoringOwner)
       }
-      return joinChatRoomSettled(payload)
+      if (!config.admission) return settle()
+      return (async () => {
+        const binding = await requirePageBinding(payload, true)
+        if (!binding) return settle()
+        const restoringRecovery = claimRestoringPresenceRecovery(payload, binding)
+        const recovery = restoringRecovery ?? beginPresenceRecovery(payload.domain)
+        if (!restoringRecovery && recovery.restoringOwnerInFlight) {
+          await recovery.promise
+          await revalidateBinding(binding, payload)
+          return recovery.cancelled ? null : snapshot()
+        }
+        const validateStored = restoringRecovery
+          ? async (stored: PresenceDomainRecord | null) => {
+              await revalidateBinding(binding, payload)
+              if (
+                payload.domain !== binding.domain ||
+                payload.site.origin !== binding.domain ||
+                !payload.user.id ||
+                (stored?.local !== undefined && stored.local.userId !== payload.user.id)
+              ) {
+                throw new Error('Runtime current-domain recovery identity is no longer current')
+              }
+            }
+          : undefined
+        const result = await settle(
+          () => revalidateBinding(binding, payload),
+          recovery,
+          validateStored,
+          restoringRecovery !== null
+        )
+        await revalidateBinding(binding, payload)
+        return result
+      })()
     },
-    leaveChatRoom: async ({ domain }) => {
-      // The leave resolves only after physical departure and rejects with the exact
-      // DomainReleaseFailedEvent when the active-record cleanup write fails.
-      await completeInterruptedRelease(domain)
+    leaveChatRoom: (payload) => {
+      // Keep isolated Server/domain tests on the original direct timing. Production takes the
+      // admitted branch below, where a caller can never release a successor binding.
+      if (!config.admission) return completeInterruptedRelease(payload.domain)
+      return (async () => {
+        const binding = await requirePageBinding(payload, true)
+        await revalidateBinding(binding, payload)
+        // The leave resolves only after physical departure and rejects with the exact
+        // DomainReleaseFailedEvent when the active-record cleanup write fails.
+        await completeInterruptedRelease(payload.domain)
+        await revalidateBinding(binding, payload)
+      })()
     },
     allocateTextMessage: async (payload) => {
-      await waitForLivePresence(payload.domain)
+      const binding = await requirePageBinding(payload, true)
+      await revalidateBinding(binding, payload)
+      await waitForLivePresence(payload.domain, binding)
+      await revalidateBinding(binding, payload)
       const operationId = nanoid()
       return runAllocationOperation(
         operationId,
@@ -541,7 +1230,10 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       )
     },
     allocateReactionMessage: async (payload) => {
-      await waitForLivePresence(payload.domain)
+      const binding = await requirePageBinding(payload, true)
+      await revalidateBinding(binding, payload)
+      await waitForLivePresence(payload.domain, binding)
+      await revalidateBinding(binding, payload)
       const operationId = nanoid()
       return runAllocationOperation(
         operationId,
@@ -550,7 +1242,10 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       )
     },
     sendChatMessage: async (payload) => {
-      await waitForLivePresence(payload.domain)
+      const binding = await requirePageBinding(payload, true)
+      await revalidateBinding(binding, payload)
+      await waitForLivePresence(payload.domain, binding)
+      await revalidateBinding(binding, payload)
       const operationId = nanoid()
       const command = sessionDomain.command.SendChatMessageCommand({ operationId, ...payload })
       if (payload.event.type === MESSAGE_TYPE.TEXT) {
@@ -560,10 +1255,19 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       return payload.event
     },
     ackInbound: async (payload) => {
+      const binding = await requirePageBinding(payload, true)
+      await revalidateBinding(binding, payload)
       store.send(deliveryDomain.command.AckInboundCommand(payload))
     },
-    replayInbound: async (payload) => store.query(deliveryDomain.query.BufferedEventsQuery(payload)),
-    reconnectDomain: (payload) => {
+    replayInbound: async (payload) => {
+      // Replay is part of the Page's own callback activation. It must verify the exact active
+      // Session binding without waiting on the recovery whose completion depends on this replay.
+      await requirePageBinding(payload, true, false)
+      return store.query(deliveryDomain.query.BufferedEventsQuery(payload))
+    },
+    reconnectDomain: async (payload) => {
+      const binding = await requirePageBinding(payload, true)
+      await revalidateBinding(binding, payload)
       const existing = inFlightReconnects.get(payload.domain)
       if (existing) return existing
       // An accepted ready-state activation also starts the independently fenced World replacement
@@ -585,23 +1289,197 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
         if (inFlightReconnects.get(payload.domain) === task) inFlightReconnects.delete(payload.domain)
       }
       void task.then(releaseReconnect, releaseReconnect)
-      return task
+      const result = await task
+      await revalidateBinding(binding, payload)
+      return result
     },
-    onInbound: async (payload, callback) => pagePort.onInbound(payload.pageId, callback),
-    onSessionEvent: async (payload, callback) => pagePort.onSessionEvent(payload.pageId, callback),
-    onWorldPresence: async (payload, callback) => pagePort.onWorldPresence(payload.pageId, callback),
-    onError: async (payload, callback) => pagePort.onError(payload.pageId, callback),
-    onHistoryFeedback: async (payload, callback) => pagePort.onHistoryFeedback(payload.pageId, callback),
-    provideHistory: async (payload, callback) => pagePort.provideHistory(payload.pageId, payload.domain, callback),
-    resolveHistorySupply: async (payload) =>
-      pagePort.resolveHistorySupply(payload.pageId, payload.supplyId, payload.result),
-    rejectHistorySupply: async (payload) =>
+    onInbound: async (payload, callback) => {
+      const binding = await requirePageBinding(payload, false, false)
+      pagePort.onInbound(payload.pageId, callback)
+      binding?.callbacks.add('inbound')
+    },
+    onSessionEvent: async (payload, callback) => {
+      const binding = await requirePageBinding(payload, false, false)
+      const generation = pagePort.beginSessionEvent(payload.pageId, callback)
+      if (binding) binding.sessionGeneration = null
+      const lease = store
+        .query(lifecycleDomain.query.DomainLeasesQuery())
+        .find((candidate) => candidate.pageIds.includes(payload.pageId))
+      if (!lease) {
+        pagePort.cancelSessionEvent(payload.pageId, generation)
+        return
+      }
+      const runtime = snapshot().domains.find((candidate) => candidate.domain === lease.domain)
+      try {
+        await callback({
+          type: 'snapshot',
+          domain: lease.domain,
+          snapshot: {
+            ...(runtime?.localSession ? { localSession: runtime.localSession } : {}),
+            sessions: runtime?.sessions ?? []
+          },
+          provenance: 'refresh'
+        })
+        const current = store
+          .query(lifecycleDomain.query.DomainLeasesQuery())
+          .find((candidate) => candidate.domain === lease.domain)
+        const currentBinding = await requirePageBinding(payload, false, false).catch(() => null)
+        if (
+          !current?.pageIds.includes(payload.pageId) ||
+          currentBinding !== binding ||
+          !(await pagePort.activateSessionEvent(payload.pageId, generation))
+        ) {
+          pagePort.cancelSessionEvent(payload.pageId, generation)
+        } else if (binding) {
+          binding.sessionGeneration = generation
+        }
+      } catch (error) {
+        pagePort.cancelSessionEvent(payload.pageId, generation)
+        const currentRecovery = binding ? pageRecoveries.get(binding.pageId) : undefined
+        const retainedRecovery =
+          currentRecovery &&
+          binding &&
+          currentRecovery.tabId === binding.tabId &&
+          currentRecovery.domain === binding.domain &&
+          isSameNavigation(currentRecovery.url, binding.url)
+            ? currentRecovery
+            : undefined
+        if (binding) await removeBinding(binding, retainedRecovery)
+        throw error
+      }
+    },
+    onWorldPresence: async (payload, callback) => {
+      await requirePageBinding(payload, false, false)
+      pagePort.onWorldPresence(payload.pageId, callback)
+    },
+    onError: async (payload, callback) => {
+      const binding = await requirePageBinding(payload, false, false)
+      pagePort.onError(payload.pageId, callback)
+      binding?.callbacks.add('error')
+    },
+    onHistoryFeedback: async (payload, callback) => {
+      const binding = await requirePageBinding(payload, false, false)
+      pagePort.onHistoryFeedback(payload.pageId, callback)
+      binding?.callbacks.add('historyFeedback')
+    },
+    provideHistory: async (payload, callback) => {
+      const binding = await requirePageBinding(payload, false, false)
+      pagePort.provideHistory(payload.pageId, payload.domain, callback)
+      binding?.callbacks.add('history')
+    },
+    resolveHistorySupply: async (payload) => {
+      await requirePageBinding(payload, true)
+      pagePort.resolveHistorySupply(payload.pageId, payload.supplyId, payload.result)
+    },
+    rejectHistorySupply: async (payload) => {
+      await requirePageBinding(payload, true)
       pagePort.rejectHistorySupply(payload.pageId, payload.supplyId, payload.reason)
+    }
   }
 
+  const restorePageBindings = () => {
+    if (restoreInFlight) return restoreInFlight
+    let releaseRecoveryHints!: () => void
+    recoveryHintsReady = new Promise<void>((resolve) => {
+      releaseRecoveryHints = resolve
+    })
+    const task = (async () => {
+      const admission = config.admission
+      if (!admission) return
+      try {
+        const stored = (await admission.storage.get(RUNTIME_PAGE_BINDINGS_KEY))[RUNTIME_PAGE_BINDINGS_KEY]
+        const candidates =
+          stored && typeof stored === 'object' && !Array.isArray(stored)
+            ? (stored as Partial<PersistedPageBindings>).pages
+            : undefined
+        if (!Array.isArray(candidates)) return
+        const seenTabs = new Set<number>()
+        const seenPages = new Set<string>()
+        rebindHints.clear()
+        for (const candidate of candidates) {
+          if (
+            !candidate ||
+            !Number.isSafeInteger(candidate.tabId) ||
+            candidate.tabId < 0 ||
+            typeof candidate.pageId !== 'string' ||
+            typeof candidate.domain !== 'string' ||
+            typeof candidate.url !== 'string' ||
+            seenTabs.has(candidate.tabId) ||
+            seenPages.has(candidate.pageId)
+          ) {
+            continue
+          }
+          try {
+            const tab = await admission.tabs.get(candidate.tabId)
+            const url = typeof tab.url === 'string' ? canonicalNavigationUrl(tab.url) : null
+            if (
+              tab.id !== candidate.tabId ||
+              !url ||
+              !isEligibleContentUrl(url) ||
+              new URL(url).origin !== candidate.domain ||
+              !isSameNavigation(url, candidate.url)
+            ) {
+              continue
+            }
+            seenTabs.add(candidate.tabId)
+            seenPages.add(candidate.pageId)
+            if (!tabBindings.has(candidate.tabId)) rebindHints.set(candidate.tabId, { ...candidate, url })
+          } catch {
+            // Browser truth is unavailable for this hint. It is never promoted into a Runtime binding.
+          }
+        }
+        await persistPageBindings()
+        const recoveries = [...rebindHints.values()].map((hint) => beginPageRecovery(hint))
+        releaseRecoveryHints()
+        await Promise.all(
+          recoveries.map((recovery) =>
+            recovery.promise.catch((error) => {
+              console.error(error)
+            })
+          )
+        )
+      } finally {
+        releaseRecoveryHints()
+      }
+    })()
+    restoreInFlight = task
+    const releaseRestore = () => {
+      if (restoreInFlight === task) restoreInFlight = null
+    }
+    void task.then(releaseRestore, releaseRestore)
+    return task
+  }
+
+  const removeTab = async (tabId: number, url?: string) => {
+    const binding = tabBindings.get(tabId)
+    if (binding) {
+      if (url && isSameNavigation(url, binding.url)) return
+      await removeBinding(binding)
+      return
+    }
+    const hint = rebindHints.get(tabId)
+    if (!hint || !rebindHints.delete(tabId)) return
+    pageRecoveries.get(hint.pageId)?.fail(new Error('Runtime Page recovery binding is no longer current'))
+    await persistPageBindings()
+  }
+
+  serverControls.set(server, {
+    restorePageBindings,
+    removeTab,
+    startJoin: (payload) =>
+      runConnectionOperation(
+        payload.operationId,
+        connectionDomain.command.JoinDomainCommand(payload),
+        () => true,
+        () => false
+      )
+  })
   serverDisposers.set(server, () => {
     disposed = true
-    presenceRecoveries.forEach((recovery) => recovery.resolve())
+    presenceRecoveries.forEach((recovery) => {
+      if (recovery.timeout) globalThis.clearTimeout(recovery.timeout)
+      recovery.resolve()
+    })
     presenceRecoveries.clear()
     ;[...pendingConnectionCancellations].forEach((cancel) => cancel())
     pageBridges.forEach((subscription) => subscription.unsubscribe())
@@ -615,6 +1493,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
           config.transport.dispose()
         } finally {
           serverDisposers.delete(server)
+          serverControls.delete(server)
         }
       }
     }
