@@ -14,7 +14,7 @@ export const createChatRoomImpl = (database: Database<MessageDatabaseSchema>) =>
   // The sole document-local drain applies every pulled projection under one owner; registration
   // explicitly invalidates so this applier converges through the drain, never independently.
   registerApplier('chat', (projection) => room.applyChat(projection))
-  registerApplier('persistence', (projection) => room.applyPersistence(projection))
+  registerApplier('persistence', (projection, context) => room.applyPersistence(projection, context))
   return {
     value: room,
     epochSource: room

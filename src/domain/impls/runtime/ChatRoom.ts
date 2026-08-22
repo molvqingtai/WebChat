@@ -21,6 +21,7 @@ import {
 } from '@/domain/Message'
 import { stringToHex } from '@/utils'
 import type { ChatSession } from '@/protocol/Session'
+import type { ProjectionApplyContext } from '@/runtime/DocumentClient'
 import type {
   HistoryFeedbackEvent,
   HistorySupplyEvent,
@@ -108,15 +109,16 @@ const isTypedSelfJoinNotice = (record: MessageRecord, session: Pick<RuntimeSessi
 
 const persistSelfJoinNotice = async (
   messageStore: RuntimeMessageStore,
-  session: Pick<RuntimeSession, 'user' | 'joinedAt'>
+  session: Pick<RuntimeSession, 'user' | 'joinedAt'>,
+  signal?: AbortSignal
 ): Promise<void> => {
   for (let slot = 0; ; slot += 1) {
     const candidate = selfJoinNotice(session, slot)
-    const result = await messageStore.insert(candidate)
+    const result = await messageStore.insert(candidate, { signal })
     if (result.inserted) return
     // The raw conflict occupant stays opaque: the typed occupant is obtained only through the
     // authorized local-load boundary; continue to the next slot if it is absent.
-    const stored = await messageStore.query({ type: MESSAGE_RECORD_TYPE.SYSTEM_NOTICE })
+    const stored = await messageStore.query({ type: MESSAGE_RECORD_TYPE.SYSTEM_NOTICE, signal })
     const occupant = stored.find((item) => item.id === candidate.id)
     if (occupant && isTypedSelfJoinNotice(occupant, session)) return
   }
@@ -164,8 +166,10 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
   /** Dedups repeated current failure facts; reconciled to the projection's bounded window each pull. */
   private readonly seenErrorEventIds = new Set<string>()
   /** Records proven unable to become durable are acknowledged false once; retained only until that
-   * exact current event's ordinary ACK terminal or a Runtime replacement, never cross-Runtime. */
-  private readonly invalidInbound = new Set<number>()
+   * exact current event's ordinary ACK terminal or a Runtime replacement, never cross-Runtime.
+   * Keyed by sequence bound to the exact current record identity, so a same-sequence different
+   * record from a replacement buffer is never mistaken for the failed event. */
+  private readonly invalidInbound = new Map<number, string>()
   private readonly activeHistorySupplies = new Map<string, AbortController>()
   /** The Runtime host the appliers' host-local state belongs to. */
   private appliedHostId: string | null = null
@@ -317,8 +321,12 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
 
   // ── Local persistence projection stage (drain owner) ────────────────────────
 
-  async applyPersistence(projection: RuntimeSnapshot) {
+  async applyPersistence(projection: RuntimeSnapshot, context?: ProjectionApplyContext) {
     this.resetHostLocalStateIfReplaced(projection)
+    const current = context ?? {
+      signal: new AbortController().signal,
+      assertCurrent: () => {}
+    }
     const domain = projection.domains.find((item) => item.domain === this.dependencies.pageDomain)
 
     // The `fresh` current fact is owned by the projection: the one self-join notice is written
@@ -329,46 +337,63 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
       if (key !== this.appliedSelfJoinKey) {
         // The key is committed only after the idempotent write succeeds; a rejection keeps the
         // fact unapplied so a later explicit hint retries it through the same projection.
-        await persistSelfJoinNotice(this.dependencies.messageStore, localSession)
+        current.assertCurrent()
+        await persistSelfJoinNotice(this.dependencies.messageStore, localSession, current.signal)
+        current.assertCurrent()
         this.appliedSelfJoinKey = key
       }
     }
 
     if (domain && !this.historyProvided) {
+      current.assertCurrent()
       await this.dependencies.server.provideHistory({ domain: this.dependencies.pageDomain }, (event) =>
         this.provideHistory(event)
       )
+      current.assertCurrent()
       this.historyProvided = true
     }
 
     // Retry knowledge for an invalid record lives only while that exact current event still needs
     // its ordinary ACK terminal; a settled ACK (the event left the projection) clears it.
     const currentSequences = new Set((domain?.inbound ?? []).map((event) => event.sequence))
-    for (const sequence of this.invalidInbound) {
+    for (const sequence of this.invalidInbound.keys()) {
       if (!currentSequences.has(sequence)) this.invalidInbound.delete(sequence)
     }
 
     for (const event of domain?.inbound ?? []) {
-      await this.persistInbound(event)
+      await this.persistInbound(event, current)
     }
   }
 
-  private async persistInbound(event: RuntimeSnapshot['domains'][number]['inbound'][number]) {
+  private async persistInbound(
+    event: RuntimeSnapshot['domains'][number]['inbound'][number],
+    context: ProjectionApplyContext
+  ) {
     if (event.domain !== this.dependencies.pageDomain) return
-    if (this.invalidInbound.has(event.sequence)) {
+    const invalidRecordId = this.invalidInbound.get(event.sequence)
+    if (invalidRecordId !== undefined && invalidRecordId !== event.record.id) {
+      // A same-sequence different record comes from a replacement buffer: retire the stale pair
+      // and persist the new event normally.
+      this.invalidInbound.delete(event.sequence)
+    } else if (invalidRecordId !== undefined) {
       // Retry knowledge ends at this exact current event's ordinary ACK terminal: only an ACK
-      // failure retains the sequence for the same event's next projection attempt.
+      // failure retains the pair for the same event's next projection attempt.
+      context.assertCurrent()
       await this.dependencies.server.ackInbound({
         domain: this.dependencies.pageDomain,
         sequence: event.sequence,
         inserted: false
       })
+      context.assertCurrent()
       this.invalidInbound.delete(event.sequence)
       return
     }
     try {
-      const result = await this.dependencies.messageStore.insert(event.record)
+      context.assertCurrent()
+      const result = await this.dependencies.messageStore.insert(event.record, { signal: context.signal })
+      context.assertCurrent()
       if (result.inserted && event.source === 'live') this.emit('message', event.record.message)
+      context.assertCurrent()
       await this.dependencies.server.ackInbound({
         domain: this.dependencies.pageDomain,
         sequence: event.sequence,
@@ -377,13 +402,15 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
     } catch (error) {
       if (isInvalidMessageRecordError(error)) {
         // The record cannot become durable; ACK discards only this invalid Runtime event after diagnosis.
+        context.assertCurrent()
         this.emitError(error)
-        this.invalidInbound.add(event.sequence)
+        this.invalidInbound.set(event.sequence, event.record.id)
         await this.dependencies.server.ackInbound({
           domain: this.dependencies.pageDomain,
           sequence: event.sequence,
           inserted: false
         })
+        context.assertCurrent()
         // The invalid fact ends at its own successful negative ACK terminal.
         this.invalidInbound.delete(event.sequence)
         return

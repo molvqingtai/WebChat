@@ -6,7 +6,18 @@ export interface DocumentClientOptions {
   domain: string
 }
 
-export type ProjectionApplier = (projection: RuntimeSnapshot) => void | Promise<void>
+/**
+ * Document-local owner capability passed to every applier. It carries the current owner's abort
+ * signal (for cancellable persistence) and a current-owner assertion. A stale continuation throws
+ * a local AbortError and is silenced by the drain's stale fence — never a Page identity,
+ * cross-context generation, delivery receipt, or binding.
+ */
+export interface ProjectionApplyContext {
+  readonly signal: AbortSignal
+  readonly assertCurrent: () => void
+}
+
+export type ProjectionApplier = (projection: RuntimeSnapshot, context: ProjectionApplyContext) => void | Promise<void>
 
 /**
  * The one document-local registration/refresh drain owner (V17):
@@ -26,8 +37,8 @@ export class DocumentClient {
   private registered = false
   private currentHostId: string | null = null
   private dirty = false
-  /** The one live drain owner: a document-local exact token plus its task. Never exposed. */
-  private owner: { token: number; task: Promise<void> } | null = null
+  /** The one live drain owner: a document-local exact token, abort controller, and task. Never exposed. */
+  private owner: { token: number; controller: AbortController; task: Promise<void> } | null = null
   private ownerSequence = 0
   private readyPublished = false
   private detached = false
@@ -86,7 +97,7 @@ export class DocumentClient {
     // The owner token is installed before any fallible work: the drain body starts one microtask
     // later, so even a synchronous RPC throw lands inside the drain's own try/finally and the
     // common finally stays the last write to the slot.
-    const entry = { token: ++this.ownerSequence, task: Promise.resolve() }
+    const entry = { token: ++this.ownerSequence, controller: new AbortController(), task: Promise.resolve() }
     entry.task = Promise.resolve().then(() => this.drain(entry))
     this.owner = entry
   }
@@ -96,7 +107,18 @@ export class DocumentClient {
     return !this.detached && this.owner?.token === entry.token
   }
 
-  private async drain(entry: { token: number }) {
+  private applyContext(entry: { token: number; controller: AbortController }): ProjectionApplyContext {
+    return {
+      signal: entry.controller.signal,
+      assertCurrent: () => {
+        if (!this.isOwnerCurrent(entry)) {
+          throw new DOMException('Projection apply superseded', 'AbortError')
+        }
+      }
+    }
+  }
+
+  private async drain(entry: { token: number; controller: AbortController }) {
     try {
       do {
         this.dirty = false
@@ -117,11 +139,12 @@ export class DocumentClient {
         this.registered = true
         this.currentHostId = projection.hostId
         this.currentSnapshot = projection
-        await this.appliers.chat?.(projection)
+        const context = this.applyContext(entry)
+        await this.appliers.chat?.(projection, context)
         if (!this.isOwnerCurrent(entry)) return
-        await this.appliers.persistence?.(projection)
+        await this.appliers.persistence?.(projection, context)
         if (!this.isOwnerCurrent(entry)) return
-        await this.appliers.world?.(projection)
+        await this.appliers.world?.(projection, context)
         if (!this.isOwnerCurrent(entry)) return
         // The pulled host phase is a pending fact until every apply stage has settled.
         this.setHostPhase(projection.hostPhase)
@@ -199,8 +222,10 @@ export class DocumentClient {
     this.currentHostId = null
     this.readyPublished = false
     this.currentSnapshot = null
-    // Retire the live owner token immediately: its late continuation is fenced at every post-await
-    // checkpoint, and a later init starts a fresh register-and-read owner without waiting for it.
+    // Retire the live owner token immediately: abort its applier boundary, fence its late
+    // continuation at every post-await checkpoint, and let a later init start a fresh
+    // register-and-read owner without waiting for it.
+    this.owner?.controller.abort(new DOMException('Runtime client detached', 'AbortError'))
     this.owner = null
     const reason = new DOMException('Runtime client detached', 'AbortError')
     this.initWaiters.forEach((waiter) => waiter.reject(reason))

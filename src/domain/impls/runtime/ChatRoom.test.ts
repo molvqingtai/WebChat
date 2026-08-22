@@ -213,6 +213,12 @@ const setup = async (
     domain.inbound = [...domain.inbound, event]
     await room.applyPersistence(current)
   }
+  const setInbound = async (events: InboundEvent[]) => {
+    const domain = current.domains.find((item) => item.domain === DOMAIN)
+    if (!domain) throw new Error('domain missing')
+    domain.inbound = events
+    await room.applyPersistence(current)
+  }
   const emitFailure = async (event: RuntimeErrorEvent) => {
     current = { ...current, failures: [...current.failures, event] }
     room.applyChat(current)
@@ -227,6 +233,7 @@ const setup = async (
     resolvedHistory,
     apply,
     emitInbound,
+    setInbound,
     emitFailure,
     emitHistory: (event: HistorySupplyEvent) => history?.(event),
     leaveCount: () => leaves,
@@ -508,6 +515,44 @@ describe('Runtime-backed ChatRoom application port', () => {
 
     await expect(fixture.messageStore.query()).resolves.toEqual([valid])
     expect(fixture.server.ackInbound).toHaveBeenLastCalledWith({ domain: DOMAIN, sequence: 1, inserted: true })
+  })
+
+  it('a failed negative ACK retains only the exact invalid record pair, never a reusable sequence', async () => {
+    const fixture = await setup()
+
+    // The invalid record's negative ACK rejects transiently: only the exact (sequence, recordId)
+    // pair is retained for the same event's retry.
+    const invalid = textRecord('invalid-b1')
+    vi.spyOn(fixture.messageStore, 'insert').mockRejectedValueOnce(new InvalidMessageRecordError('not a record'))
+    vi.mocked(fixture.server.ackInbound).mockRejectedValueOnce(new Error('ack transport lost'))
+    await expect(fixture.emitInbound({ sequence: 1, domain: DOMAIN, record: invalid, source: 'live' })).rejects.toThrow(
+      'ack transport lost'
+    )
+
+    // Same host reset with no empty projection in between (the buffer is abandoned): a valid
+    // successor reusing sequence 1 with a different record identity must persist normally while
+    // the failed pair still survives.
+    const valid = textRecord('valid-b2')
+    await fixture.setInbound([{ sequence: 1, domain: DOMAIN, record: valid, source: 'live' }])
+    await expect(fixture.messageStore.query()).resolves.toEqual([valid])
+    expect(fixture.server.ackInbound).toHaveBeenLastCalledWith({ domain: DOMAIN, sequence: 1, inserted: true })
+  })
+
+  it('the surviving exact pair retries only its negative ACK, never a re-insert', async () => {
+    const fixture = await setup()
+    const invalid = textRecord('invalid')
+    vi.spyOn(fixture.messageStore, 'insert').mockRejectedValueOnce(new InvalidMessageRecordError('not a record'))
+    vi.mocked(fixture.server.ackInbound).mockRejectedValueOnce(new Error('ack transport lost'))
+    await expect(fixture.emitInbound({ sequence: 1, domain: DOMAIN, record: invalid, source: 'live' })).rejects.toThrow(
+      'ack transport lost'
+    )
+
+    // The same (sequence, recordId) event still in the projection retries only the negative ACK.
+    const insertCallsBefore = vi.mocked(fixture.messageStore.insert).mock.calls.length
+    await fixture.apply()
+    expect(fixture.server.ackInbound).toHaveBeenLastCalledWith({ domain: DOMAIN, sequence: 1, inserted: false })
+    expect(vi.mocked(fixture.messageStore.insert).mock.calls.length).toBe(insertCallsBefore)
+    await expect(fixture.messageStore.query()).resolves.toEqual([])
   })
 
   it('a host replacement dismisses every old History feedback owner and retires old supply work', async () => {

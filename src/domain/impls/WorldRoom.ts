@@ -4,6 +4,6 @@ import { WorldRoom } from '@/domain/impls/runtime/WorldRoom'
 
 export const createWorldRoomImpl = () => {
   const room = new WorldRoom()
-  registerApplier('world', (projection) => room.applyWorld(projection))
+  registerApplier('world', (projection, _context) => room.applyWorld(projection))
   return WorldRoomExtern.impl(room)
 }

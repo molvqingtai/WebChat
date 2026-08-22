@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { RuntimeSnapshot } from '@/runtime/Contract'
+import { ChatRoom } from '@/domain/impls/runtime/ChatRoom'
+import { createMemoryMessageDatabase } from '@/domain/impls/database/Memory'
+import { createMessageStore } from '@/domain/MessageStore'
+import { MESSAGE_RECORD_TYPE, type TextMessageRecord } from '@/domain/Message'
+import { MESSAGE_TYPE } from '@/protocol'
+import type { RuntimeServer, RuntimeSnapshot } from '@/runtime/Contract'
 import { DocumentClient } from '@/runtime/DocumentClient'
 
 const DOMAIN = 'https://example.com'
@@ -21,6 +26,21 @@ const snapshot = (marker: string): RuntimeSnapshot => ({
   ],
   world: { joined: true, peerId: 'peer-1', presences: [] },
   failures: marker ? [{ eventId: marker, message: marker, subsystem: 'connection', operation: 'lifecycle' }] : []
+})
+
+const inboundRecord = (id: string): TextMessageRecord => ({
+  type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE,
+  id,
+  message: {
+    type: MESSAGE_TYPE.TEXT,
+    id,
+    hlc: { timestamp: 1, counter: 0 },
+    userId: 'remote-user',
+    body: id,
+    mentions: []
+  },
+  user: { id: 'remote-user', name: 'Remote', avatar: '' },
+  receivedAt: 1
 })
 
 const deferred = <Value>() => {
@@ -470,6 +490,66 @@ describe('DocumentClient one-way current-state drain', () => {
 
     expect(stages).toEqual(['chat'])
     expect(phases).not.toContain('ready')
+  })
+
+  it('a detached applier continuation produces zero successor ACK/provider/dedup effects', async () => {
+    // A real ChatRoom + real message store persistence stage behind the drain.
+    const ackInbound = vi.fn(async () => {})
+    const provideHistory = vi.fn(async () => {})
+    const record = inboundRecord('stale-insert')
+    const projection = snapshot('')
+    projection.domains[0]!.inbound = [{ sequence: 1, domain: DOMAIN, record, source: 'live' }]
+    const registration = deferred<{ snapshot: RuntimeSnapshot }>()
+    const coordinator = { registerPage: vi.fn(() => registration.promise) }
+    const server = {
+      getSnapshot: vi.fn(async () => projection),
+      provideHistory: provideHistory as unknown as RuntimeServer['provideHistory'],
+      ackInbound: ackInbound as unknown as RuntimeServer['ackInbound']
+    }
+    const client = new DocumentClient({ coordinator: coordinator as never, server: server as never, domain: DOMAIN })
+    const messageStore = createMessageStore(createMemoryMessageDatabase('stale-applier'))
+    const room = new ChatRoom({ server: server as never, messageStore, pageDomain: DOMAIN })
+    const messages: string[] = []
+    room.onMessage((message) => messages.push(message.id))
+    client.registerApplier('chat', (p, context) => room.applyChat(p))
+    client.registerApplier('persistence', (p, context) => room.applyPersistence(p, context))
+
+    // Hold the real durable insert of the first owner's persistence stage.
+    const insertGate = Promise.withResolvers<void>()
+    const extendedInsert = messageStore.insert as unknown as (
+      input: Parameters<typeof messageStore.insert>[0],
+      options?: { signal?: AbortSignal }
+    ) => ReturnType<typeof messageStore.insert>
+    const originalInsert = extendedInsert.bind(messageStore)
+    let holdsFirst = true
+    vi.spyOn(messageStore, 'insert').mockImplementation((async (input: unknown, options?: unknown) => {
+      if (holdsFirst) await insertGate.promise
+      return originalInsert(input as never, options as never)
+    }) as typeof messageStore.insert)
+
+    const first = client.init()
+    await vi.waitFor(() => expect(coordinator.registerPage).toHaveBeenCalledTimes(1))
+    registration.resolve({ snapshot: projection })
+    await vi.waitFor(() => expect(provideHistory).toHaveBeenCalledTimes(1))
+
+    // Detach mid-insert, then immediately start the fresh owner (as a BFCache pageshow would).
+    client.detach()
+    await expect(first).rejects.toMatchObject({ name: 'AbortError' })
+    holdsFirst = false
+    const restored = client.init()
+    await vi.waitFor(() => expect(coordinator.registerPage).toHaveBeenCalledTimes(2))
+
+    // Let the old held insert settle last: its continuation must produce no successor effects.
+    insertGate.resolve()
+    await expect(restored).resolves.toBeTruthy()
+    await flush(30)
+
+    // Exactly one ACK and one live message projection — both from the fresh owner. The stale
+    // continuation wrote no dedup state, issued no ACK, and emitted no observer effect.
+    expect(ackInbound).toHaveBeenCalledTimes(1)
+    expect(messages).toEqual(['stale-insert'])
+    expect(provideHistory).toHaveBeenCalledTimes(1)
+    await expect(messageStore.query()).resolves.toEqual([record])
   })
 
   it('document detach discards the owner; a fresh document registers again instead of recovering the old owner', async () => {

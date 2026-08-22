@@ -348,7 +348,7 @@ const createStack = async (
     })
     adapter.applyChat(projection)
   })
-  client.registerApplier('persistence', (projection) => adapter.applyPersistence(projection))
+  client.registerApplier('persistence', (projection, context) => adapter.applyPersistence(projection, context))
   client.whenFailure((error) => errors.push(error.message))
   adapter.onError((error) => errors.push(error.message))
   await client.init()
