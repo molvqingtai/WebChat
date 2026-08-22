@@ -53,6 +53,13 @@ export interface RuntimePageCall {
   pageId?: string
   runtimeHostId?: string
   caller?: RuntimeCaller
+  /**
+   * Private binding generation: the Page-local attachment epoch captured when its current
+   * registration was admitted. Stored on the exact Server binding; any call whose epoch does not
+   * match the current binding's stored epoch is a stale continuation and fails closed. Never a
+   * public/peer/durable identity.
+   */
+  epoch?: number
 }
 
 export interface InboundEvent {
@@ -147,7 +154,9 @@ export interface RuntimeErrorEvent {
 export interface RuntimeServer {
   attachPage: (payload: { domain: string; pageId: string } & RuntimePageCall) => Promise<RuntimeSnapshot>
   detachPage: (payload: { domain: string; pageId: string } & RuntimePageCall) => Promise<void>
-  getSnapshot: (payload?: RuntimePageCall & { validateReadiness?: boolean }) => Promise<RuntimeSnapshot>
+  getSnapshot: (
+    payload?: RuntimePageCall & { validateReadiness?: boolean; settleReadiness?: boolean }
+  ) => Promise<RuntimeSnapshot>
   joinChatRoom: (
     payload: { domain: string; user: ChatUser; site: ChatSite } & RuntimePageCall
   ) => Promise<RuntimeSnapshot | null>

@@ -60,6 +60,8 @@ interface PageBinding {
   domain: string
   url: string
   sessionGeneration: number | null
+  /** Private binding generation: the Page's attachment epoch captured at registration. */
+  epoch: number | null
 }
 
 /**
@@ -486,6 +488,12 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     if (!binding || binding.tabId !== callerTabId || payload.runtimeHostId !== snapshot().hostId) {
       throw new Error('Runtime Page binding is no longer current')
     }
+    // Private binding generation: a payload that carries an epoch must match the exact stored
+    // generation. comctx has no FIFO: a stale B1 signal reordered behind a same-tuple B2
+    // registration fails closed here with zero side effects.
+    if (payload.epoch !== undefined && binding.epoch !== null && payload.epoch !== binding.epoch) {
+      throw new Error('Runtime Page binding is no longer current')
+    }
     await admission.ensureTransport()
     if (pageBindings.get(pageId) !== binding) {
       throw new Error('Runtime Page binding is no longer current')
@@ -537,7 +545,8 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       pageId: payload.pageId,
       domain: payload.domain,
       url,
-      sessionGeneration: null
+      sessionGeneration: null,
+      epoch: typeof payload.epoch === 'number' ? payload.epoch : null
     }
   }
 
@@ -1210,17 +1219,20 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       }
     },
     getSnapshot: async (payload) => {
-      // Bound call: captures the exact current binding object before any await and re-validates
-      // that same object after every suspension — a same-tuple successor is never adopted.
-      // `validateReadiness` additionally requires the complete exact-B readiness conjunction and
-      // settles that exact binding's outstanding attach/readiness owners: it is the final
-      // Server-side term of the Page's unique ready publication.
+      // Bound call: captures the exact current binding object (and its stored epoch) before any
+      // await and re-validates the same object after every suspension — a same-tuple successor is
+      // never adopted. `validateReadiness` only checks the complete exact-B readiness conjunction.
+      // `settleReadiness` is the post-publication terminal: after the same validation it ends the
+      // exact binding's attach/readiness owners and wakes cohort cleanup.
       if (payload?.pageId) {
-        const binding = await requirePageBinding(payload, payload.validateReadiness === true)
-        if (payload.validateReadiness === true) requireFullReadiness(binding)
+        const binding = await requirePageBinding(
+          payload,
+          payload.validateReadiness === true || payload.settleReadiness === true
+        )
+        if (payload.validateReadiness === true || payload.settleReadiness === true) requireFullReadiness(binding)
         if (binding) {
           emit({ type: 'validation', phase: 'passed', binding })
-          if (payload.validateReadiness === true) settleBindingReadiness(binding)
+          if (payload.settleReadiness === true) settleBindingReadiness(binding)
         }
       }
       return snapshot()

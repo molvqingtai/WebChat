@@ -34,13 +34,18 @@ const client = new ClientLease({
   domain: pageDomain,
   // The final ready conjunction term: after every attachment settled, one bound Server-side
   // validation of the exact current binding plus the complete readiness fact. No new RPC.
-  validateReady: async () => {
-    await rawServer.getSnapshot({ pageId, runtimeHostId: client.runtimeHostId(), validateReadiness: true })
+  validateReady: async (epoch) => {
+    await rawServer.getSnapshot({ pageId, runtimeHostId: client.runtimeHostId(), validateReadiness: true, epoch })
+  },
+  // The post-publication readiness terminal on the same existing surface: after this exact
+  // barrier published ready, the Server ends the exact-B readiness owners and wakes cleanup.
+  settleReady: async (epoch) => {
+    await rawServer.getSnapshot({ pageId, runtimeHostId: client.runtimeHostId(), settleReadiness: true, epoch })
   },
   // The exact-B failure terminal: an attachment failure retires the binding through the existing
   // detachPage surface so its readiness owners end and cohort cleanup wakes.
-  retireBinding: async () => {
-    await rawServer.detachPage({ domain: pageDomain, pageId, runtimeHostId: client.runtimeHostId() })
+  retireBinding: async (epoch) => {
+    await rawServer.detachPage({ domain: pageDomain, pageId, runtimeHostId: client.runtimeHostId(), epoch })
   }
 })
 ownInjectRejections((error) => client.observeTransportRejection(error))

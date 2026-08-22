@@ -83,6 +83,7 @@ export type LogEntry = {
     | 'binding.replace'
     | 'room.close'
     | 'ready.validate'
+    | 'ready.settle'
     | 'identity'
     | 'messagestore.insert.fail'
     | 'time.advance'
@@ -320,6 +321,9 @@ export interface HarnessWorld {
   armReplayGate: () => void
   /** Arms a one-shot gate inside the validation->ready publication window. */
   armResponseGate: () => void
+  /** Arms a one-shot gate holding the post-publication settle signal (models a reordered late
+   * arrival of the exact barrier's settle). */
+  armSettleGate: () => void
   dispose: () => void
 }
 
@@ -446,6 +450,8 @@ export const createHarnessWorld = (config: WorldConfig): HarnessWorld => {
       const snapshot = await server.attachPage({
         domain: payload.domain,
         pageId: payload.pageId!,
+        // The private binding generation travels with the existing registration payload.
+        ...(typeof payload.epoch === 'number' ? { epoch: payload.epoch } : {}),
         // The production comctx adapter injects trusted caller facts; the harness coordinator does
         // the same from its browser-tab table.
         caller: { tab: tabs.get(1000 + pageIndex)! }
@@ -460,6 +466,7 @@ export const createHarnessWorld = (config: WorldConfig): HarnessWorld => {
   let navigateSeq = 0
   let replayGateArmed = false
   let responseGateArmed = false
+  let settleGateArmed = false
   for (let index = 0; index < config.pageCount; index += 1) {
     const pageId = `harness-page-${config.seed}-${index}`
     const tabId = 1000 + index
@@ -471,13 +478,14 @@ export const createHarnessWorld = (config: WorldConfig): HarnessWorld => {
       pageId,
       domain: HARNESS_DOMAIN,
       // Identical to the production composition root: the unique ready publication's final term is
-      // one bound Server-side exact-binding + full-readiness validation.
-      validateReady: async () => {
+      // one bound Server-side exact-binding + full-readiness validation carrying the exact epoch.
+      validateReady: async (epoch) => {
         await server.getSnapshot({
           pageId,
           runtimeHostId: lease.runtimeHostId(),
           caller: { tab: tabs.get(tabId)! },
-          validateReadiness: true
+          validateReadiness: true,
+          epoch
         })
         if (responseGateArmed) {
           responseGateArmed = false
@@ -488,13 +496,31 @@ export const createHarnessWorld = (config: WorldConfig): HarnessWorld => {
         }
         log.record('ready.validate', { page: index })
       },
+      // The post-publication readiness terminal, identical to production wiring.
+      settleReady: async (epoch) => {
+        if (settleGateArmed) {
+          settleGateArmed = false
+          // Holds the settle signal back, modeling a reordered late arrival of B1's settle.
+          const gate = gates.create<void>('ready.settle', { page: index })
+          await gate.promise
+        }
+        await server.getSnapshot({
+          pageId,
+          runtimeHostId: lease.runtimeHostId(),
+          caller: { tab: tabs.get(tabId)! },
+          settleReadiness: true,
+          epoch
+        })
+        log.record('ready.settle', { page: index })
+      },
       // The exact-B failure terminal, identical to the production wiring through detachPage.
-      retireBinding: async () => {
+      retireBinding: async (epoch) => {
         await server.detachPage({
           domain: HARNESS_DOMAIN,
           pageId,
           runtimeHostId: lease.runtimeHostId(),
-          caller: { tab: tabs.get(tabId)! }
+          caller: { tab: tabs.get(tabId)! },
+          epoch
         })
       }
     })
@@ -655,6 +681,9 @@ export const createHarnessWorld = (config: WorldConfig): HarnessWorld => {
     },
     armResponseGate: () => {
       responseGateArmed = true
+    },
+    armSettleGate: () => {
+      settleGateArmed = true
     },
     dispose: () => {
       pages.forEach((page) => {

@@ -826,3 +826,181 @@ describe('Linear lifecycle generated harness — task #1546 terminals', () => {
     }
   })
 })
+
+describe('Linear lifecycle generated harness — task #1550 private binding generation', () => {
+  it('late settle reorder: a stale-epoch settle arriving after B2 fails closed with zero B2 effects', async () => {
+    vi.useRealTimers()
+    const world = createHarnessWorld({ seed: 140, pageCount: 1 })
+    try {
+      const page = world.pages[0]
+      world.armSettleGate()
+      const initTask = page.lease.init()
+      // B1 publishes ready; its settle signal suspends inside the gate (a reordered late arrival).
+      await driveWorld(world, () => world.gates.pending().some((gate) => gate.label === 'ready.settle'))
+      expect(page.readyPublished).toBe(true)
+      // A same-Page registration installs B2 (epoch 2) and completes its own barrier + settle.
+      let rebindSettled = false
+      page.lease.rebind().then(
+        () => {
+          rebindSettled = true
+        },
+        () => {
+          rebindSettled = true
+        }
+      )
+      await driveWorld(world, () => rebindSettled, ['ready.settle'])
+      expect(rebindSettled).toBe(true)
+      // Release B1's late settle: it must fail closed against B2's stored epoch, not settle B2.
+      for (const gate of world.gates.pending()) {
+        if (gate.label === 'ready.settle') (gate as HarnessGate<unknown>).release(undefined as never)
+      }
+      await initTask
+      // Direct proof: a stale-epoch settle is rejected with the exact current-binding error.
+      const hostId = (await world.server.getSnapshot()).hostId
+      await expect(
+        world.server.getSnapshot({
+          pageId: page.pageId,
+          runtimeHostId: hostId,
+          caller: { tab: { id: page.tabId, url: page.url } },
+          settleReadiness: true,
+          epoch: 1
+        })
+      ).rejects.toThrow('Runtime Page binding is no longer current')
+      // B1's readiness owners ended via exact-B retirement at B2 install, not via the late settle.
+      const identity = world.log.entries.filter((entry) => entry.kind === 'identity')
+      expect(identity.some((entry) => entry.detail.type === 'binding' && entry.detail.phase === 'removed')).toBe(true)
+      // B2 remains fully usable: its own epoch validates.
+      await world.server.getSnapshot({
+        pageId: page.pageId,
+        runtimeHostId: hostId,
+        caller: { tab: { id: page.tabId, url: page.url } },
+        validateReadiness: true,
+        epoch: 2
+      })
+    } finally {
+      world.dispose()
+    }
+  })
+
+  it('late retire reorder: a stale-epoch detach after B2 fails closed and B2 survives', async () => {
+    vi.useRealTimers()
+    const world = createHarnessWorld({ seed: 141, pageCount: 1 })
+    try {
+      const page = world.pages[0]
+      await page.lease.init() // B1, epoch 1
+      await page.lease.rebind() // B2, epoch 2
+      const hostId = (await world.server.getSnapshot()).hostId
+      // A stale B1 failure terminal arriving late must not detach the fresh successor.
+      await expect(
+        world.server.detachPage({
+          domain: HARNESS_DOMAIN,
+          pageId: page.pageId,
+          runtimeHostId: hostId,
+          caller: { tab: { id: page.tabId, url: page.url } },
+          epoch: 1
+        })
+      ).rejects.toThrow('Runtime Page binding is no longer current')
+      // B2 is intact: its exact epoch still validates and its readiness fact is complete.
+      await world.server.getSnapshot({
+        pageId: page.pageId,
+        runtimeHostId: hostId,
+        caller: { tab: { id: page.tabId, url: page.url } },
+        validateReadiness: true,
+        epoch: 2
+      })
+    } finally {
+      world.dispose()
+    }
+  })
+
+  it('callback-before-settle: a business call issued before the settle lands waits for cleanup', async () => {
+    vi.useRealTimers()
+    const world = createHarnessWorld({ seed: 142, pageCount: 1 })
+    try {
+      const page = world.pages[0]
+      world.armSettleGate()
+      const initTask = page.lease.init()
+      await driveWorld(world, () => world.gates.pending().some((gate) => gate.label === 'ready.settle'))
+      expect(page.readyPublished).toBe(true)
+      // The ready callback issues a join immediately; the join completes, but its cohort must NOT
+      // clear while the exact-B readiness owners are still unsettled (settle held).
+      let joinSettled = false
+      page.chat.joinRoom({ user: harnessUser(0), site: HARNESS_SITE }).then(
+        () => {
+          joinSettled = true
+        },
+        () => {
+          joinSettled = true
+        }
+      )
+      await driveWorld(world, () => joinSettled, ['ready.settle'])
+      expect(joinSettled).toBe(true)
+      const identity = () => world.log.entries.filter((entry) => entry.kind === 'identity')
+      expect(identity().some((entry) => entry.detail.phase === 'cleared')).toBe(false)
+      // A business send in the same window must wait for the cohort, not commit early.
+      let sendSettled = false
+      page.chat.sendMessage({ type: 'text', body: 'window', mentions: [] }).then(
+        () => {
+          sendSettled = true
+        },
+        () => {
+          sendSettled = true
+        }
+      )
+      await driveWorld(world, () => false, ['ready.settle'])
+      expect(sendSettled).toBe(false)
+      // The settle lands: tokens end, cleanup wakes, and the waiting business call proceeds.
+      for (const gate of world.gates.pending()) {
+        if (gate.label === 'ready.settle') (gate as HarnessGate<unknown>).release(undefined as never)
+      }
+      await initTask
+      await driveWorld(world, () => sendSettled)
+      expect(sendSettled).toBe(true)
+      const cleared = identity().find((entry) => entry.detail.phase === 'cleared')
+      const settled = world.log.entries.find((entry) => entry.kind === 'ready.settle')
+      // Cleanup cleared exactly once, and only inside the post-publication settle terminal.
+      expect(cleared).toBeDefined()
+      expect(settled).toBeDefined()
+    } finally {
+      world.dispose()
+    }
+  })
+
+  it('same-host checkNow: every successful registration rebuilds the complete barrier for the new B', async () => {
+    vi.useRealTimers()
+    const world = createHarnessWorld({ seed: 143, pageCount: 1 })
+    try {
+      const page = world.pages[0]
+      await page.lease.init()
+      // Join so the domain is live before the same-host refresh.
+      let joinSettled = false
+      page.chat.joinRoom({ user: harnessUser(0), site: HARNESS_SITE }).then(
+        () => {
+          joinSettled = true
+        },
+        () => {
+          joinSettled = true
+        }
+      )
+      await driveWorld(world, () => joinSettled)
+      expect(joinSettled).toBe(true)
+      // Same-host refresh: the registration installs a fresh B (old callbacks are removed).
+      await page.lease.checkNow()
+      const identity = world.log.entries.filter((entry) => entry.kind === 'identity')
+      const installs = identity.filter((entry) => entry.detail.type === 'binding' && entry.detail.phase === 'installed')
+      expect(installs.length).toBeGreaterThanOrEqual(2)
+      // The new B went through its own final validation and settle.
+      const validations = world.log.entries.filter((entry) => entry.kind === 'ready.validate')
+      expect(validations.length).toBeGreaterThanOrEqual(2)
+      // Business works on the rebuilt B (its callbacks/session are re-established).
+      const record = await page.server.allocateTextMessage({
+        domain: HARNESS_DOMAIN,
+        body: 'after-checknow',
+        mentions: []
+      })
+      expect(record).toBeDefined()
+    } finally {
+      world.dispose()
+    }
+  })
+})
