@@ -8,7 +8,7 @@ import { ChromiumTransportOwner } from '@/runtime/ChromiumTransportOwner'
 import { startHost } from '@/runtime/host'
 import { createBrowserPresenceStore } from '@/runtime/PresenceStore'
 import { RemoteRoomTransport } from '@/runtime/RemoteRoomTransport'
-import { removeServerTab, restoreServerPageBindings } from '@/runtime/Server'
+import { notifyServerTabs, removeServerTab } from '@/runtime/Server'
 import { TRANSPORT_NAMESPACE_PREFIX, type TransportService } from '@/runtime/TransportHost'
 
 const OFFSCREEN_URL = '/offscreen.html'
@@ -50,9 +50,6 @@ const ensureChromeTransport = () => chromeTransportOwner.ensure()
 
 const admission = {
   tabs: browser.tabs,
-  storage: browser.storage.session,
-  rebindPage: (tabId: number, pageId: string) =>
-    browser.tabs.sendMessage(tabId, { type: 'runtime:sessions-rebind', pageId }),
   ensureTransport: async () => {
     if (!import.meta.env.FIREFOX) await ensureChromeTransport()
   }
@@ -60,15 +57,8 @@ const admission = {
 
 const ensureBackgroundHost = async () => {
   const transport = import.meta.env.FIREFOX ? undefined : await ensureChromeTransport()
-  const { host, created } = backgroundHost.ensure(() =>
-    startHost(new ProvideAdapter(), presenceStore, transport, admission)
-  )
+  const { host } = backgroundHost.ensure(() => startHost(new ProvideAdapter(), presenceStore, transport, admission))
   await host.server.getSnapshot()
-  if (created) {
-    // Stored browser bindings are only rebind targets after their live tab/navigation facts validate.
-    // This side branch never delays the Page RPC that woke the Background.
-    void restoreServerPageBindings(host.server)?.catch((error) => console.error(error))
-  }
 }
 
 export const registerPage: RuntimeCoordinator['registerPage'] = async (payload): Promise<RuntimePageRegistration> => {
@@ -79,9 +69,15 @@ export const registerPage: RuntimeCoordinator['registerPage'] = async (payload):
   return { snapshot }
 }
 
-/** Fresh Background startup restores only validated Page rebind targets, never old callback closures or actions. */
+/**
+ * Fresh Background startup rebuilds the logical shell, then issues one best-effort content-free
+ * invalidation. Recovery never depends on the hint: a surviving Page registers on its next
+ * invalidation and pulls the current full projection.
+ */
 export const restore = async () => {
   await ensureBackgroundHost()
+  const server = backgroundHost.server
+  if (server) notifyServerTabs(server)
 }
 
 export const watchTabs = () => {

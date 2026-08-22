@@ -18,7 +18,7 @@ export type DomainPhase = 'active' | 'grace'
 export interface DomainLease {
   domain: string
   phase: DomainPhase
-  pageIds: string[]
+  tabIds: number[]
   reconnecting: boolean
   /** Increments on every grace start so stale timers can be ignored. */
   graceGeneration: number
@@ -52,14 +52,14 @@ const LifecycleDomain = Remesh.domain({
 
     const HasOnlinePagesQuery = domain.query({
       name: 'Lifecycle.HasOnlinePagesQuery',
-      impl: ({ get }) => get(DomainLeasesState()).some((lease) => lease.pageIds.length > 0)
+      impl: ({ get }) => get(DomainLeasesState()).some((lease) => lease.tabIds.length > 0)
     })
 
     // ============ Domain lease / grace ============
 
     const AttachPageCommand = domain.command({
       name: 'Lifecycle.AttachPageCommand',
-      impl: ({ get }, payload: { domain: string; pageId: string }) => {
+      impl: ({ get }, payload: { domain: string; tabId: number }) => {
         const leases = get(DomainLeasesState())
         const exist = leases.find((lease) => lease.domain === payload.domain)
 
@@ -67,7 +67,7 @@ const LifecycleDomain = Remesh.domain({
           const lease: DomainLease = {
             domain: payload.domain,
             phase: 'active',
-            pageIds: [payload.pageId],
+            tabIds: [payload.tabId],
             reconnecting: false,
             graceGeneration: 0
           }
@@ -78,7 +78,7 @@ const LifecycleDomain = Remesh.domain({
         const nextLease: DomainLease = {
           ...exist,
           phase: 'active',
-          pageIds: [...new Set([...exist.pageIds, payload.pageId])]
+          tabIds: [...new Set([...exist.tabIds, payload.tabId])]
         }
         return [
           DomainLeasesState().new(leases.map((lease) => (lease.domain === payload.domain ? nextLease : lease))),
@@ -90,18 +90,18 @@ const LifecycleDomain = Remesh.domain({
 
     const DetachPageCommand = domain.command({
       name: 'Lifecycle.DetachPageCommand',
-      impl: ({ get }, payload: { domain: string; pageId: string }) => {
+      impl: ({ get }, payload: { domain: string; tabId: number }) => {
         const leases = get(DomainLeasesState())
         const exist = leases.find((lease) => lease.domain === payload.domain)
         if (!exist) {
           return null
         }
 
-        const pageIds = exist.pageIds.filter((pageId) => pageId !== payload.pageId)
-        if (pageIds.length > 0) {
+        const tabIds = exist.tabIds.filter((tabId) => tabId !== payload.tabId)
+        if (tabIds.length > 0) {
           return [
             DomainLeasesState().new(
-              leases.map((lease) => (lease.domain === payload.domain ? { ...lease, pageIds } : lease))
+              leases.map((lease) => (lease.domain === payload.domain ? { ...lease, tabIds } : lease))
             ),
             PageDetachedEvent(payload)
           ]
@@ -111,7 +111,7 @@ const LifecycleDomain = Remesh.domain({
         const nextLease: DomainLease = {
           ...exist,
           phase: 'grace',
-          pageIds: [],
+          tabIds: [],
           graceGeneration: exist.graceGeneration + 1
         }
         return [
@@ -184,10 +184,10 @@ const LifecycleDomain = Remesh.domain({
     })
     const DomainReleasedEvent = domain.event<string>({ name: 'Lifecycle.DomainReleasedEvent' })
 
-    const PageAttachedEvent = domain.event<{ domain: string; pageId: string }>({
+    const PageAttachedEvent = domain.event<{ domain: string; tabId: number }>({
       name: 'Lifecycle.PageAttachedEvent'
     })
-    const PageDetachedEvent = domain.event<{ domain: string; pageId: string }>({
+    const PageDetachedEvent = domain.event<{ domain: string; tabId: number }>({
       name: 'Lifecycle.PageDetachedEvent'
     })
     const ReconnectRequestedEvent = domain.event<string>({ name: 'Lifecycle.ReconnectRequestedEvent' })

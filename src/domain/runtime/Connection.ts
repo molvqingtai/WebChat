@@ -102,7 +102,7 @@ const ConnectionDomain = Remesh.domain({
     })
     const SnapshotQuery = domain.query({
       name: 'Connection.SnapshotQuery',
-      impl: ({ get }): RuntimeSnapshot => {
+      impl: ({ get }): Omit<RuntimeSnapshot, 'failures'> => {
         const runtimes = get(sessionDomain.query.DomainsQuery())
         return {
           hostId: options.hostId,
@@ -113,12 +113,19 @@ const ConnectionDomain = Remesh.domain({
             return {
               domain: lease.domain,
               phase: lease.phase,
-              pageIds: lease.pageIds,
+              tabIds: lease.tabIds,
               chatRoomJoined: Boolean(runtime),
               localSession: runtime
-                ? { sessionId: runtime.sessionId, user: runtime.user, joinedAt: runtime.joinedAt }
+                ? {
+                    sessionId: runtime.sessionId,
+                    user: runtime.user,
+                    joinedAt: runtime.joinedAt,
+                    fresh: runtime.fresh
+                  }
                 : undefined,
-              sessions: runtime?.sessions ?? []
+              sessions: runtime?.sessions ?? [],
+              inbound: get(deliveryDomain.query.BufferedEventsQuery({ domain: lease.domain, after: 0 })),
+              historyFeedback: get(historyDomain.query.FeedbackOwnersQuery({ domain: lease.domain }))
             }
           }),
           world: {

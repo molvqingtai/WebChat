@@ -14,28 +14,26 @@ import { RoomTransportExtern, WireCodecExtern } from '@/domain/runtime/externs/R
 import type { RoomTransport } from '@/runtime/RoomTransport'
 import { MESSAGE_TYPE, NativeWireCodec, type TextMessage, type WireCodec } from '@/protocol'
 import type { ChatSite, ChatUser } from '@/protocol'
-import type { RuntimePageCall, RuntimeServer, RuntimeSnapshot, RuntimeTab } from '@/runtime/Contract'
+import {
+  STATE_CHANGED_MESSAGE_TYPE,
+  type RuntimeErrorEvent,
+  type RuntimePageCall,
+  type RuntimeServer,
+  type RuntimeSnapshot,
+  type RuntimeTab
+} from '@/runtime/Contract'
 import { PagePort, createPagePortImpl } from '@/runtime/PagePort'
 import { createBoundedPresenceStore, createMemoryPresenceStore } from '@/runtime/PresenceStore'
 import { canonicalNavigationUrl, isEligibleContentUrl, isSameNavigation } from '@/service/adapter/runtime/Navigation'
 
-export const RUNTIME_PAGE_BINDINGS_KEY = 'WEB_CHAT_RUNTIME_PAGE_BINDINGS_V1'
-
-export interface RuntimePageStorage {
-  get: (key: string) => Promise<Record<string, unknown>>
-  set: (items: Record<string, unknown>) => Promise<void>
-}
-
 export interface RuntimeTabsApi {
   get: (tabId: number) => Promise<RuntimeTab>
+  query: (queryInfo: { url?: string | string[] }) => Promise<RuntimeTab[]>
   sendMessage: (tabId: number, message: unknown) => Promise<unknown>
 }
 
 export interface RuntimeAdmission {
   tabs: RuntimeTabsApi
-  storage: RuntimePageStorage
-  /** Re-establishes only a surviving Page's callback registrations after a fresh Background. */
-  rebindPage: (tabId: number, pageId: string) => Promise<void>
   /** Reconciles a surviving Background with a restarted Offscreen transport before Page ingress. */
   ensureTransport: () => Promise<void>
 }
@@ -49,31 +47,22 @@ export interface ServerConfig {
   admission?: RuntimeAdmission
 }
 
-interface PageBinding {
-  tabId: number
-  pageId: string
-  domain: string
-  url: string
-  sessionGeneration: number | null
-}
-
-interface PersistedPageBindings {
-  pages: Array<Pick<PageBinding, 'tabId' | 'pageId' | 'domain' | 'url'>>
-}
+/** Bounded current Runtime failure facts exposed in every projection. */
+const MAX_RETAINED_FAILURES = 100
 
 const defaultClock: Clock = { now: () => Date.now() }
 const serverDisposers = new WeakMap<RuntimeServer, () => void>()
 interface ServerControl {
-  restorePageBindings: () => Promise<void>
   removeTab: (tabId: number, url?: string) => Promise<void>
+  notifyTabs: () => void
 }
 const serverControls = new WeakMap<RuntimeServer, ServerControl>()
 
 export const disposeServer = (server: RuntimeServer) => serverDisposers.get(server)?.()
-export const restoreServerPageBindings = (server: RuntimeServer) =>
-  serverControls.get(server)?.restorePageBindings() ?? Promise.resolve()
 export const removeServerTab = (server: RuntimeServer, tabId: number, url?: string) =>
   serverControls.get(server)?.removeTab(tabId, url) ?? Promise.resolve()
+/** Best-effort content-free invalidation of every supported current tab; fire-and-forget. */
+export const notifyServerTabs = (server: RuntimeServer) => serverControls.get(server)?.notifyTabs()
 
 export const createServer = (config: ServerConfig): RuntimeServer => {
   const clock = config.clock ?? defaultClock
@@ -134,131 +123,105 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   const presenceRecoveries = new Map<string, PresenceRecovery>()
   const pendingConnectionCancellations = new Set<() => void>()
   let disposed = false
-  const pageBindings = new Map<string, PageBinding>()
-  const tabBindings = new Map<number, PageBinding>()
-  const rebindHints = new Map<number, PersistedPageBindings['pages'][number]>()
-  let bindingPersistTail: Promise<void> = Promise.resolve()
+  /** Ephemeral browser-fact record of the domain/navigation each current tab registered for. */
+  const tabDomains = new Map<number, { domain: string; url: string }>()
+  /** Bounded current failure facts; idempotent presentation state, never a delivery ledger. */
+  const retainedFailures: RuntimeErrorEvent[] = []
 
-  const isCurrentBinding = (binding: PageBinding) =>
-    pageBindings.get(binding.pageId) === binding && tabBindings.get(binding.tabId) === binding
-
-  const persistPageBindings = async () => {
-    if (!config.admission) return
-    const persist = () => {
-      const pages = [
-        ...pageBindings.values().map(({ tabId, pageId, domain, url }) => ({ tabId, pageId, domain, url })),
-        ...[...rebindHints.values()].filter(({ tabId }) => !tabBindings.has(tabId))
-      ].sort((left, right) => left.tabId - right.tabId)
-      return config.admission!.storage.set({ [RUNTIME_PAGE_BINDINGS_KEY]: { pages } satisfies PersistedPageBindings })
-    }
-    bindingPersistTail = bindingPersistTail.then(persist, persist)
-    await bindingPersistTail
-  }
-
-  const browserBindingCurrent = async (binding: PageBinding) => {
+  // ── Fire-and-forget state-changed notification ──────────────────────────────
+  // Every trigger is a post-commit domain event; reads never schedule a notification.
+  let notifyScheduled = false
+  const notifyTabs = () => {
     const admission = config.admission
-    if (!admission) return true
-    const tab = await admission.tabs.get(binding.tabId)
-    const url = typeof tab.url === 'string' ? canonicalNavigationUrl(tab.url) : null
-    return (
-      tab.id === binding.tabId &&
-      url !== null &&
-      isEligibleContentUrl(url) &&
-      new URL(url).origin === binding.domain &&
-      isSameNavigation(url, binding.url)
-    )
+    if (!admission || notifyScheduled) return
+    notifyScheduled = true
+    // Microtask scheduling only coalesces content-free invalidation hints; it holds no payload,
+    // business state, replay item, or cleanup dependency.
+    queueMicrotask(() => {
+      notifyScheduled = false
+      void (async () => {
+        try {
+          const tabs = await admission.tabs.query({})
+          for (const tab of tabs) {
+            if (typeof tab.id !== 'number' || typeof tab.url !== 'string') continue
+            const url = canonicalNavigationUrl(tab.url)
+            if (!url || !isEligibleContentUrl(url)) continue
+            void admission.tabs.sendMessage(tab.id, { type: STATE_CHANGED_MESSAGE_TYPE }).catch(() => {})
+          }
+        } catch (error) {
+          console.error(error)
+        }
+      })()
+    })
   }
 
-  const removeBinding = async (binding: PageBinding) => {
-    if (!isCurrentBinding(binding)) return
-    pageBindings.delete(binding.pageId)
-    tabBindings.delete(binding.tabId)
-    pagePort.removePage(binding.pageId)
-    store.send(lifecycleDomain.command.DetachPageCommand({ domain: binding.domain, pageId: binding.pageId }))
-    await persistPageBindings()
-  }
+  const notificationTriggers = [
+    store.subscribeEvent(sessionDomain.event.RuntimeSessionChangedEvent, notifyTabs),
+    store.subscribeEvent(worldDomain.event.PresenceChangedEvent, notifyTabs),
+    store.subscribeEvent(lifecycleDomain.event.PageAttachedEvent, notifyTabs),
+    store.subscribeEvent(lifecycleDomain.event.PageDetachedEvent, notifyTabs),
+    store.subscribeEvent(lifecycleDomain.event.DomainActivatedEvent, notifyTabs),
+    store.subscribeEvent(lifecycleDomain.event.DomainResumedEvent, notifyTabs),
+    store.subscribeEvent(lifecycleDomain.event.DomainGraceStartedEvent, notifyTabs),
+    store.subscribeEvent(lifecycleDomain.event.DomainReleasedEvent, notifyTabs),
+    store.subscribeEvent(deliveryDomain.event.InboundAcceptedEvent, notifyTabs),
+    store.subscribeEvent(deliveryDomain.event.InboundAckedEvent, notifyTabs),
+    store.subscribeEvent(historyDomain.event.FeedbackChangedEvent, notifyTabs),
+    store.subscribeEvent(connectionDomain.event.ErrorEvent, ({ error, domain }) => {
+      retainedFailures.push({
+        eventId: nanoid(),
+        message: error.message,
+        subsystem: 'connection',
+        operation: 'lifecycle',
+        scope: domain
+      })
+      if (retainedFailures.length > MAX_RETAINED_FAILURES) {
+        retainedFailures.splice(0, retainedFailures.length - MAX_RETAINED_FAILURES)
+      }
+      notifyTabs()
+    })
+  ]
 
-  const requirePageBinding = async (payload: RuntimePageCall, requireSessionCallback: boolean) => {
-    const admission = config.admission
-    if (!admission) return null
-    await admission.ensureTransport()
-    const pageId = payload.pageId
-    const callerTabId = payload.caller?.tab?.id
-    if (!pageId || typeof callerTabId !== 'number' || !Number.isSafeInteger(callerTabId) || callerTabId < 0) {
+  /**
+   * Browser sender/tab facts are the sole caller identity. With production admission the current
+   * tab is revalidated against the tabs API; isolated tests may supply or omit caller facts.
+   */
+  const requireCallerTab = async (payload: RuntimePageCall, domain?: string): Promise<number | null> => {
+    const caller = payload.caller?.tab
+    const tabId = caller?.id
+    if (typeof tabId !== 'number' || !Number.isSafeInteger(tabId) || tabId < 0) {
+      if (!config.admission) return null
       throw new Error('Current Page browser caller is required')
     }
-    const binding = pageBindings.get(pageId)
-    if (!binding || binding.tabId !== callerTabId || payload.runtimeHostId !== snapshot().hostId) {
-      throw new Error('Runtime Page binding is no longer current')
-    }
-    if (requireSessionCallback) {
-      if (
-        binding.sessionGeneration === null ||
-        !pagePort.isSessionEventActive(binding.pageId, binding.sessionGeneration)
-      ) {
-        throw new Error('Runtime Page session callback is not active')
-      }
-    }
-    if (!(await browserBindingCurrent(binding)) || !isCurrentBinding(binding)) {
-      await removeBinding(binding)
-      throw new Error('Browser tab navigation is no longer current')
-    }
-    if (
-      requireSessionCallback &&
-      (binding.sessionGeneration === null || !pagePort.isSessionEventActive(binding.pageId, binding.sessionGeneration))
-    ) {
-      throw new Error('Runtime Page session callback is no longer current')
-    }
-    return binding
-  }
-
-  const requireAttachBinding = async (payload: { domain: string; pageId: string } & RuntimePageCall) => {
-    const admission = config.admission
-    if (!admission) return null
-    await admission.ensureTransport()
-    const callerTab = payload.caller?.tab
-    const tabId = callerTab?.id
-    const claimedUrl = callerTab?.url
-    if (!Number.isSafeInteger(tabId) || tabId! < 0 || typeof claimedUrl !== 'string') {
-      throw new Error('Trusted browser tab metadata is required')
-    }
-    const current = await admission.tabs.get(tabId!)
+    if (!config.admission) return tabId
+    await config.admission.ensureTransport()
+    const current = await config.admission.tabs.get(tabId)
     const url = typeof current.url === 'string' ? canonicalNavigationUrl(current.url) : null
     if (
       current.id !== tabId ||
       !url ||
       !isEligibleContentUrl(url) ||
-      !isSameNavigation(url, claimedUrl) ||
-      new URL(url).origin !== payload.domain
+      (typeof caller?.url === 'string' && !isSameNavigation(url, caller.url)) ||
+      (domain !== undefined && new URL(url).origin !== domain)
     ) {
       throw new Error('Browser tab navigation is no longer eligible')
     }
+    return tabId
+  }
+
+  const snapshot = (callerTabId?: number | null): RuntimeSnapshot => {
+    const base = store.query(connectionDomain.query.SnapshotQuery())
     return {
-      tabId: tabId!,
-      pageId: payload.pageId,
-      domain: payload.domain,
-      url,
-      sessionGeneration: null
+      ...base,
+      domains: base.domains.map((domain) => ({
+        ...domain,
+        historyFeedback:
+          typeof callerTabId === 'number' && pagePort.isHistoryProvider(callerTabId, domain.domain)
+            ? domain.historyFeedback
+            : []
+      })),
+      failures: [...retainedFailures]
     }
-  }
-
-  const revalidateBinding = async (binding: PageBinding | null, payload: RuntimePageCall, requireSession = true) => {
-    if (!binding) return
-    if ((await requirePageBinding(payload, requireSession)) !== binding) {
-      throw new Error('Runtime Page binding was superseded')
-    }
-  }
-
-  const installBinding = async (binding: PageBinding) => {
-    const previousPage = pageBindings.get(binding.pageId)
-    const previousTab = tabBindings.get(binding.tabId)
-    if (previousPage) await removeBinding(previousPage)
-    if (previousTab && previousTab !== previousPage) await removeBinding(previousTab)
-    rebindHints.delete(binding.tabId)
-    pageBindings.set(binding.pageId, binding)
-    tabBindings.set(binding.tabId, binding)
-    store.send(lifecycleDomain.command.AttachPageCommand({ domain: binding.domain, pageId: binding.pageId }))
-    await persistPageBindings()
   }
 
   const beginPresenceRecovery = (domain: string) => {
@@ -303,7 +266,6 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     }
   }
 
-  const snapshot = (): RuntimeSnapshot => store.query(connectionDomain.query.SnapshotQuery())
   const acquirePresence = async (domain: string, userId: string): Promise<'active' | 'acquired' | 'finalizing'> => {
     if (store.query(sessionDomain.query.DomainQuery(domain))) {
       return store.query(sessionDomain.query.FinalizingPresenceQuery(domain)) ? 'finalizing' : 'active'
@@ -342,37 +304,6 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     }
     throw operationCancelled()
   }
-  const pageBridges = [
-    store.subscribeEvent(sessionDomain.event.RuntimeSessionChangedEvent, (event) => {
-      const pageIds = store.query(lifecycleDomain.query.DomainLeaseQuery(event.domain))?.pageIds ?? []
-      void pagePort.emitSessionEvent(pageIds, event)
-    }),
-    store.subscribeEvent(worldDomain.event.PresenceChangedEvent, (event) => {
-      const committed = new Set(store.query(sessionDomain.query.DomainsQuery()).map((runtime) => runtime.domain))
-      const pageIds = store
-        .query(lifecycleDomain.query.DomainLeasesQuery())
-        .filter((lease) => committed.has(lease.domain))
-        .flatMap((lease) => lease.pageIds)
-      void pagePort.emitWorldPresence(pageIds, event)
-    }),
-    store.subscribeEvent(connectionDomain.event.ErrorEvent, ({ error, domain }) => {
-      const leases = store.query(lifecycleDomain.query.DomainLeasesQuery())
-      const pageIds = domain
-        ? (leases.find((lease) => lease.domain === domain)?.pageIds ?? [])
-        : leases.flatMap((lease) => lease.pageIds)
-      if (pageIds.length === 0) {
-        console.error('[WebChat] Runtime failure without a current affected page:', error)
-        return
-      }
-      void pagePort.emitError(pageIds, {
-        eventId: nanoid(),
-        message: error.message,
-        subsystem: 'connection',
-        operation: 'lifecycle',
-        scope: domain
-      })
-    })
-  ]
 
   const runConnectionOperation = <T>(
     operationId: string,
@@ -585,12 +516,9 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   }
 
   /** One shared in-flight join settlement per domain: overlapping same-domain joins coalesce. */
-  const inFlightJoins = new Map<string, Promise<Awaited<ReturnType<typeof snapshot>> | null>>()
+  const inFlightJoins = new Map<string, Promise<RuntimeSnapshot | null>>()
 
-  const joinChatRoomSettled = async (
-    payload: Parameters<RuntimeServer['joinChatRoom']>[0],
-    revalidate?: () => Promise<void>
-  ) => {
+  const joinChatRoomSettled = async (payload: Parameters<RuntimeServer['joinChatRoom']>[0]) => {
     // Typed ChatUser/ChatSite values pass through unchanged; the application-to-protocol
     // mapping already happened before the value was narrowed to the schema-owned type.
     const recovery = beginPresenceRecovery(payload.domain)
@@ -606,9 +534,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
         )
       }
       while (true) {
-        if (revalidate) await revalidate()
         const presenceState = await acquireCurrentPresence(payload.domain, payload.user.id)
-        if (revalidate) await revalidate()
         if (presenceState === 'finalizing') {
           // A lease observed after the release fence started never bypasses the shared release:
           // it waits for the one live release owner to close, then starts fresh through the loop.
@@ -617,7 +543,6 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
             continue
           }
           if (!store.query(sessionDomain.query.DomainQuery(payload.domain))) {
-            if (revalidate) await revalidate()
             if (!(await connect())) return null
             continue
           }
@@ -631,7 +556,6 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
         if (presenceState === 'active' && !store.query(sessionDomain.query.DomainQuery(payload.domain))) {
           continue
         }
-        if (revalidate) await revalidate()
         if (!(await connect())) return null
         recovered = true
         return snapshot()
@@ -676,65 +600,55 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     )
   }
 
+  const detachTab = async (tabId: number) => {
+    const entry = tabDomains.get(tabId)
+    if (!entry) return
+    tabDomains.delete(tabId)
+    pagePort.removePage(tabId)
+    store.send(lifecycleDomain.command.DetachPageCommand({ domain: entry.domain, tabId }))
+  }
+
   const server: RuntimeServer = {
     attachPage: async (payload) => {
-      const binding = await requireAttachBinding(payload)
-      if (binding) await installBinding(binding)
-      else store.send(lifecycleDomain.command.AttachPageCommand(payload))
-      return snapshot()
-    },
-    detachPage: async (payload) => {
-      const binding = await requirePageBinding(payload, false)
-      if (binding) await removeBinding(binding)
-      else {
-        pagePort.removePage(payload.pageId)
-        store.send(lifecycleDomain.command.DetachPageCommand(payload))
+      const tabId = await requireCallerTab(payload, payload.domain)
+      if (tabId !== null) {
+        const existing = tabDomains.get(tabId)
+        if (existing && existing.domain !== payload.domain) await detachTab(tabId)
+        const current = config.admission ? await config.admission.tabs.get(tabId) : null
+        const url = current?.url ?? payload.caller?.tab?.url ?? ''
+        tabDomains.set(tabId, { domain: payload.domain, url: canonicalNavigationUrl(url) ?? url })
+        store.send(lifecycleDomain.command.AttachPageCommand({ domain: payload.domain, tabId }))
       }
+      return snapshot(tabId)
     },
-    getSnapshot: async () => snapshot(),
-    joinChatRoom: (payload) => {
-      const settle = (revalidate?: () => Promise<void>) => {
-        // Overlapping same-domain joins observed while the domain's release is closing coalesce into
-        // one shared settlement; fresh cold joins keep the existing newest-generation supersession.
-        if (store.query(sessionDomain.query.ReleasingDomainQuery(payload.domain))) {
-          const existing = inFlightJoins.get(payload.domain)
-          if (existing) return existing
-          const task = joinChatRoomSettled(payload, revalidate)
-          inFlightJoins.set(payload.domain, task)
-          const releaseJoin = () => {
-            if (inFlightJoins.get(payload.domain) === task) inFlightJoins.delete(payload.domain)
-          }
-          void task.then(releaseJoin, releaseJoin)
-          return task
+    getSnapshot: async (payload) => {
+      const tabId = payload ? await requireCallerTab(payload) : null
+      return snapshot(tabId)
+    },
+    joinChatRoom: async (payload) => {
+      await requireCallerTab(payload, payload.domain)
+      if (store.query(sessionDomain.query.ReleasingDomainQuery(payload.domain))) {
+        const existing = inFlightJoins.get(payload.domain)
+        if (existing) return existing
+        const task = joinChatRoomSettled(payload)
+        inFlightJoins.set(payload.domain, task)
+        const releaseJoin = () => {
+          if (inFlightJoins.get(payload.domain) === task) inFlightJoins.delete(payload.domain)
         }
-        return joinChatRoomSettled(payload, revalidate)
+        void task.then(releaseJoin, releaseJoin)
+        return task
       }
-      if (!config.admission) return settle()
-      return (async () => {
-        const binding = await requirePageBinding(payload, true)
-        const result = await settle(() => revalidateBinding(binding, payload))
-        await revalidateBinding(binding, payload)
-        return result
-      })()
+      return joinChatRoomSettled(payload)
     },
-    leaveChatRoom: (payload) => {
-      // Keep isolated Server/domain tests on the original direct timing. Production takes the
-      // admitted branch below, where a caller can never release a successor binding.
-      if (!config.admission) return completeInterruptedRelease(payload.domain)
-      return (async () => {
-        const binding = await requirePageBinding(payload, true)
-        await revalidateBinding(binding, payload)
-        // The leave resolves only after physical departure and rejects with the exact
-        // DomainReleaseFailedEvent when the active-record cleanup write fails.
-        await completeInterruptedRelease(payload.domain)
-        await revalidateBinding(binding, payload)
-      })()
+    leaveChatRoom: async (payload) => {
+      await requireCallerTab(payload, payload.domain)
+      // The leave resolves only after physical departure and rejects with the exact
+      // DomainReleaseFailedEvent when the active-record cleanup write fails.
+      await completeInterruptedRelease(payload.domain)
     },
     allocateTextMessage: async (payload) => {
-      const binding = await requirePageBinding(payload, true)
-      await revalidateBinding(binding, payload)
+      await requireCallerTab(payload, payload.domain)
       await waitForLivePresence(payload.domain)
-      await revalidateBinding(binding, payload)
       const operationId = nanoid()
       return runAllocationOperation(
         operationId,
@@ -743,10 +657,8 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       )
     },
     allocateReactionMessage: async (payload) => {
-      const binding = await requirePageBinding(payload, true)
-      await revalidateBinding(binding, payload)
+      await requireCallerTab(payload, payload.domain)
       await waitForLivePresence(payload.domain)
-      await revalidateBinding(binding, payload)
       const operationId = nanoid()
       return runAllocationOperation(
         operationId,
@@ -755,10 +667,8 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       )
     },
     sendChatMessage: async (payload) => {
-      const binding = await requirePageBinding(payload, true)
-      await revalidateBinding(binding, payload)
+      await requireCallerTab(payload, payload.domain)
       await waitForLivePresence(payload.domain)
-      await revalidateBinding(binding, payload)
       const operationId = nanoid()
       const command = sessionDomain.command.SendChatMessageCommand({ operationId, ...payload })
       if (payload.event.type === MESSAGE_TYPE.TEXT) {
@@ -768,17 +678,11 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       return payload.event
     },
     ackInbound: async (payload) => {
-      const binding = await requirePageBinding(payload, true)
-      await revalidateBinding(binding, payload)
+      await requireCallerTab(payload, payload.domain)
       store.send(deliveryDomain.command.AckInboundCommand(payload))
     },
-    replayInbound: async (payload) => {
-      await requirePageBinding(payload, true)
-      return store.query(deliveryDomain.query.BufferedEventsQuery(payload))
-    },
     reconnectDomain: async (payload) => {
-      const binding = await requirePageBinding(payload, true)
-      await revalidateBinding(binding, payload)
+      await requireCallerTab(payload, payload.domain)
       const existing = inFlightReconnects.get(payload.domain)
       if (existing) return existing
       // An accepted ready-state activation also starts the independently fenced World replacement
@@ -800,153 +704,39 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
         if (inFlightReconnects.get(payload.domain) === task) inFlightReconnects.delete(payload.domain)
       }
       void task.then(releaseReconnect, releaseReconnect)
-      const result = await task
-      await revalidateBinding(binding, payload)
-      return result
-    },
-    onInbound: async (payload, callback) => {
-      await requirePageBinding(payload, false)
-      pagePort.onInbound(payload.pageId, callback)
-    },
-    onSessionEvent: async (payload, callback) => {
-      const binding = await requirePageBinding(payload, false)
-      const generation = pagePort.beginSessionEvent(payload.pageId, callback)
-      if (binding) binding.sessionGeneration = null
-      const lease = store
-        .query(lifecycleDomain.query.DomainLeasesQuery())
-        .find((candidate) => candidate.pageIds.includes(payload.pageId))
-      if (!lease) {
-        pagePort.cancelSessionEvent(payload.pageId, generation)
-        return
-      }
-      const runtime = snapshot().domains.find((candidate) => candidate.domain === lease.domain)
-      try {
-        await callback({
-          type: 'snapshot',
-          domain: lease.domain,
-          snapshot: {
-            ...(runtime?.localSession ? { localSession: runtime.localSession } : {}),
-            sessions: runtime?.sessions ?? []
-          },
-          provenance: 'refresh'
-        })
-        const current = store
-          .query(lifecycleDomain.query.DomainLeasesQuery())
-          .find((candidate) => candidate.domain === lease.domain)
-        const currentBinding = await requirePageBinding(payload, false).catch(() => null)
-        if (
-          !current?.pageIds.includes(payload.pageId) ||
-          currentBinding !== binding ||
-          !(await pagePort.activateSessionEvent(payload.pageId, generation))
-        ) {
-          pagePort.cancelSessionEvent(payload.pageId, generation)
-        } else if (binding) {
-          binding.sessionGeneration = generation
-        }
-      } catch (error) {
-        pagePort.cancelSessionEvent(payload.pageId, generation)
-        if (binding) await removeBinding(binding)
-        throw error
-      }
-    },
-    onWorldPresence: async (payload, callback) => {
-      await requirePageBinding(payload, false)
-      pagePort.onWorldPresence(payload.pageId, callback)
-    },
-    onError: async (payload, callback) => {
-      await requirePageBinding(payload, false)
-      pagePort.onError(payload.pageId, callback)
-    },
-    onHistoryFeedback: async (payload, callback) => {
-      await requirePageBinding(payload, false)
-      pagePort.onHistoryFeedback(payload.pageId, callback)
+      return task
     },
     provideHistory: async (payload, callback) => {
-      await requirePageBinding(payload, false)
-      pagePort.provideHistory(payload.pageId, payload.domain, callback)
+      const tabId = await requireCallerTab(payload, payload.domain)
+      if (tabId === null) throw new Error('Current Page browser caller is required')
+      pagePort.provideHistory(tabId, payload.domain, callback)
     },
     resolveHistorySupply: async (payload) => {
-      await requirePageBinding(payload, true)
-      pagePort.resolveHistorySupply(payload.pageId, payload.supplyId, payload.result)
+      const tabId = await requireCallerTab(payload)
+      if (tabId === null) throw new Error('Current Page browser caller is required')
+      pagePort.resolveHistorySupply(tabId, payload.supplyId, payload.result)
     },
     rejectHistorySupply: async (payload) => {
-      await requirePageBinding(payload, true)
-      pagePort.rejectHistorySupply(payload.pageId, payload.supplyId, payload.reason)
+      const tabId = await requireCallerTab(payload)
+      if (tabId === null) throw new Error('Current Page browser caller is required')
+      pagePort.rejectHistorySupply(tabId, payload.supplyId, payload.reason)
     }
-  }
-
-  const restorePageBindings = async () => {
-    const admission = config.admission
-    if (!admission) return
-    const stored = (await admission.storage.get(RUNTIME_PAGE_BINDINGS_KEY))[RUNTIME_PAGE_BINDINGS_KEY]
-    const candidates =
-      stored && typeof stored === 'object' && !Array.isArray(stored)
-        ? (stored as Partial<PersistedPageBindings>).pages
-        : undefined
-    if (!Array.isArray(candidates)) return
-    const restored: PersistedPageBindings['pages'] = []
-    const seenTabs = new Set<number>()
-    rebindHints.clear()
-    for (const candidate of candidates) {
-      if (
-        !candidate ||
-        !Number.isSafeInteger(candidate.tabId) ||
-        candidate.tabId < 0 ||
-        typeof candidate.pageId !== 'string' ||
-        typeof candidate.domain !== 'string' ||
-        typeof candidate.url !== 'string' ||
-        seenTabs.has(candidate.tabId)
-      ) {
-        continue
-      }
-      try {
-        const tab = await admission.tabs.get(candidate.tabId)
-        const url = typeof tab.url === 'string' ? canonicalNavigationUrl(tab.url) : null
-        if (
-          tab.id !== candidate.tabId ||
-          !url ||
-          !isEligibleContentUrl(url) ||
-          new URL(url).origin !== candidate.domain ||
-          !isSameNavigation(url, candidate.url)
-        ) {
-          continue
-        }
-        seenTabs.add(candidate.tabId)
-        const hint = { ...candidate, url }
-        restored.push(hint)
-        if (!tabBindings.has(candidate.tabId)) rebindHints.set(candidate.tabId, hint)
-      } catch {
-        // Browser truth is unavailable for this hint. It is never promoted into a Runtime binding.
-      }
-    }
-    await persistPageBindings()
-    await Promise.all(
-      [...rebindHints.values()].map(({ tabId, pageId }) =>
-        admission.rebindPage(tabId, pageId).catch((error) => {
-          console.error(error)
-        })
-      )
-    )
   }
 
   const removeTab = async (tabId: number, url?: string) => {
-    const binding = tabBindings.get(tabId)
-    if (binding) {
-      if (url && isSameNavigation(url, binding.url)) return
-      await removeBinding(binding)
-      return
-    }
-    if (!rebindHints.delete(tabId)) return
-    await persistPageBindings()
+    const entry = tabDomains.get(tabId)
+    if (!entry) return
+    if (url && isSameNavigation(url, entry.url)) return
+    await detachTab(tabId)
   }
 
-  serverControls.set(server, { restorePageBindings, removeTab })
+  serverControls.set(server, { removeTab, notifyTabs })
   serverDisposers.set(server, () => {
     disposed = true
     presenceRecoveries.forEach((recovery) => recovery.resolve())
     presenceRecoveries.clear()
     ;[...pendingConnectionCancellations].forEach((cancel) => cancel())
-    pageBridges.forEach((subscription) => subscription.unsubscribe())
+    notificationTriggers.forEach((subscription) => subscription.unsubscribe())
     try {
       store.discard()
     } finally {

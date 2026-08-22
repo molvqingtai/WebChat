@@ -1,10 +1,9 @@
 import { Remesh } from 'remesh'
-import { catchError, concatMap, defer, EMPTY, map } from 'rxjs'
+import { map } from 'rxjs'
 import { MAX_INBOUND_BUFFER_BYTES, MAX_INBOUND_BUFFER_EVENTS } from '@/constants/config'
 import type { ChatMessageRecord } from '@/domain/Message'
 import type { InboundEvent } from '@/runtime/Contract'
 import LifecycleDomain from '@/domain/runtime/Lifecycle'
-import { PagePortExtern } from '@/domain/runtime/externs/PagePort'
 import { getTextByteSize } from '@/utils/getTextByteSize'
 
 interface Delivery {
@@ -18,7 +17,6 @@ const DeliveryDomain = Remesh.domain({
   name: 'DeliveryDomain',
   impl: (domain) => {
     const lifecycleDomain = domain.getDomain(LifecycleDomain())
-    const pagePort = domain.getExtern(PagePortExtern)
     const DeliveriesState = domain.state<Delivery[]>({
       name: 'Delivery.DeliveriesState',
       default: []
@@ -210,21 +208,6 @@ const DeliveryDomain = Remesh.domain({
     })
     const InboundBatchDiscardedEvent = domain.event<{ domain: string; batchId: string }>({
       name: 'Delivery.InboundBatchDiscardedEvent'
-    })
-
-    domain.effect({
-      name: 'Delivery.PageEffect',
-      impl: ({ fromEvent, get }) =>
-        fromEvent(InboundAcceptedEvent).pipe(
-          concatMap((event) =>
-            defer(() =>
-              pagePort.emitInbound(get(lifecycleDomain.query.DomainLeaseQuery(event.domain))?.pageIds ?? [], event)
-            ).pipe(
-              map(() => null),
-              catchError(() => EMPTY)
-            )
-          )
-        )
     })
 
     domain.effect({

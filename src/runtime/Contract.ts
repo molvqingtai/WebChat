@@ -10,13 +10,34 @@ export interface RuntimeSession {
   joinedAt: number
 }
 
+export interface InboundEvent {
+  sequence: number
+  domain: string
+  record: ChatMessageRecord
+  source: 'live' | 'history'
+  /** All sequences from one history response share a batch id for durable page ACK backpressure. */
+  batchId?: string
+}
+
+export interface HistoryFeedbackState {
+  /** Complete attempt identity, so one sync can never dismiss another or an unrelated Toast. */
+  ownerId: string
+}
+
 export interface DomainSnapshot {
   domain: string
   phase: 'active' | 'grace'
-  pageIds: string[]
+  tabIds: number[]
   chatRoomJoined: boolean
-  localSession?: Omit<RuntimeSession, 'sourcePeerId'>
+  localSession?: Omit<RuntimeSession, 'sourcePeerId'> & {
+    /** True only when the current local generation was newly allocated (self-notice eligibility). */
+    fresh?: boolean
+  }
   sessions: RuntimeSession[]
+  /** Current retained inbound facts awaiting durable Page persistence. */
+  inbound: InboundEvent[]
+  /** Active History loading owners; present only when the reading tab supplies History. */
+  historyFeedback: HistoryFeedbackState[]
 }
 
 export interface WorldPresenceRecord {
@@ -31,6 +52,17 @@ export interface WorldSnapshot {
   presences: WorldPresenceRecord[]
 }
 
+export interface RuntimeErrorEvent {
+  eventId: string
+  message: string
+  /** Runtime boundary that produced this presentation event. */
+  subsystem: 'connection'
+  /** The current operation at that boundary; this never participates in control flow. */
+  operation: 'lifecycle' | 'send' | 'history'
+  /** Exact failure scope carried to the content so presentation is never cross-domain. */
+  scope?: string
+}
+
 export interface RuntimeSnapshot {
   /** Changes whenever the Background-owned logical Runtime is recreated. */
   hostId: string
@@ -38,6 +70,8 @@ export interface RuntimeSnapshot {
   peerId: string
   domains: DomainSnapshot[]
   world: WorldSnapshot
+  /** Bounded current Runtime failure facts; a Page presents each unseen eventId at most once. */
+  failures: RuntimeErrorEvent[]
 }
 
 /** Browser-delivery facts replace all Page-provided caller claims at the provider boundary. */
@@ -46,22 +80,11 @@ export interface RuntimeCaller {
 }
 
 /**
- * Private-by-convention fields added by the Page facade and provider adapter. They are intentionally
+ * Private-by-convention fields added by the provider adapter. They are intentionally
  * optional in the public port so isolated domain tests can keep constructing their local fake port.
  */
 export interface RuntimePageCall {
-  pageId?: string
-  runtimeHostId?: string
   caller?: RuntimeCaller
-}
-
-export interface InboundEvent {
-  sequence: number
-  domain: string
-  record: ChatMessageRecord
-  source: 'live' | 'history'
-  /** All sequences from one history response share a batch id for durable page ACK backpressure. */
-  batchId?: string
 }
 
 export interface RuntimeSessionSnapshot {
@@ -133,21 +156,9 @@ export interface HistoryFeedbackEvent {
   type: 'loading' | 'dismiss'
 }
 
-export interface RuntimeErrorEvent {
-  eventId: string
-  message: string
-  /** Runtime boundary that produced this presentation event. */
-  subsystem: 'connection'
-  /** The current operation at that boundary; this never participates in control flow. */
-  operation: 'lifecycle' | 'send' | 'history'
-  /** Exact failure scope carried to the content so presentation is never cross-domain. */
-  scope?: string
-}
-
 export interface RuntimeServer {
-  attachPage: (payload: { domain: string; pageId: string } & RuntimePageCall) => Promise<RuntimeSnapshot>
-  detachPage: (payload: { domain: string; pageId: string } & RuntimePageCall) => Promise<void>
-  getSnapshot: () => Promise<RuntimeSnapshot>
+  attachPage: (payload: { domain: string } & RuntimePageCall) => Promise<RuntimeSnapshot>
+  getSnapshot: (payload?: RuntimePageCall) => Promise<RuntimeSnapshot>
   joinChatRoom: (
     payload: { domain: string; user: ChatUser; site: ChatSite } & RuntimePageCall
   ) => Promise<RuntimeSnapshot | null>
@@ -169,38 +180,13 @@ export interface RuntimeServer {
   ) => Promise<ReactionMessageRecord>
   sendChatMessage: (payload: { domain: string; event: ChatMessage } & RuntimePageCall) => Promise<ChatMessage>
   ackInbound: (payload: { domain: string; sequence: number; inserted: boolean } & RuntimePageCall) => Promise<void>
-  replayInbound: (payload: { domain: string; after: number } & RuntimePageCall) => Promise<InboundEvent[]>
   reconnectDomain: (payload: { domain: string } & RuntimePageCall) => Promise<void | null>
-  onInbound: (
-    payload: { pageId: string } & RuntimePageCall,
-    callback: (event: InboundEvent) => void | Promise<void>
-  ) => Promise<void>
-  onSessionEvent: (
-    payload: { pageId: string } & RuntimePageCall,
-    callback: (event: RuntimeSessionEvent) => void | Promise<void>
-  ) => Promise<void>
-  onWorldPresence: (
-    payload: { pageId: string } & RuntimePageCall,
-    callback: (event: WorldPresenceEvent) => void
-  ) => Promise<void>
-  onError: (
-    payload: { pageId: string } & RuntimePageCall,
-    callback: (event: RuntimeErrorEvent) => void
-  ) => Promise<void>
-  onHistoryFeedback: (
-    payload: { pageId: string } & RuntimePageCall,
-    callback: (event: HistoryFeedbackEvent) => void
-  ) => Promise<void>
   provideHistory: (
-    payload: { domain: string; pageId: string } & RuntimePageCall,
+    payload: { domain: string } & RuntimePageCall,
     callback: (event: HistorySupplyEvent) => void
   ) => Promise<void>
-  resolveHistorySupply: (
-    payload: { pageId: string; supplyId: string; result: HistorySupplyResult } & RuntimePageCall
-  ) => Promise<void>
-  rejectHistorySupply: (
-    payload: { pageId: string; supplyId: string; reason: string } & RuntimePageCall
-  ) => Promise<void>
+  resolveHistorySupply: (payload: { supplyId: string; result: HistorySupplyResult } & RuntimePageCall) => Promise<void>
+  rejectHistorySupply: (payload: { supplyId: string; reason: string } & RuntimePageCall) => Promise<void>
 }
 
 export const RUNTIME_NAMESPACE_PREFIX = 'WEB_CHAT_RUNTIME_V2' as const
@@ -212,11 +198,13 @@ export interface RuntimeTab {
 
 export interface RuntimePageRegistration {
   snapshot: RuntimeSnapshot
-  failures?: RuntimeErrorEvent[]
 }
 
 export interface RuntimeCoordinator {
-  registerPage: (payload: { domain: string; pageId: string } & RuntimePageCall) => Promise<RuntimePageRegistration>
+  registerPage: (payload: { domain: string } & RuntimePageCall) => Promise<RuntimePageRegistration>
 }
 
 export const COORDINATOR_NAMESPACE = 'WEB_CHAT_RUNTIME_COORDINATOR_V2' as const
+
+/** The complete Runtime-to-Page notification is intentionally content-free. */
+export const STATE_CHANGED_MESSAGE_TYPE = 'runtime:state-changed' as const

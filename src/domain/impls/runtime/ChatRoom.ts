@@ -27,8 +27,6 @@ import type {
   HistorySupplyResult,
   RuntimeServer,
   RuntimeSession,
-  RuntimeSessionEvent,
-  RuntimeSessionSnapshot,
   RuntimeSnapshot
 } from '@/runtime/Contract'
 
@@ -36,33 +34,15 @@ export interface ChatRoomDependencies {
   server: RuntimeServer
   messageStore: RuntimeMessageStore
   pageDomain: string
-  pageId: string
-  getSnapshot: () => RuntimeSnapshot
-  whenReady: (callback: () => void) => Unsubscribe
 }
 
 type RuntimeMessageStore = MessageStore & {
   insert(record: MessageRecord, options?: { signal?: AbortSignal }): Promise<InsertMessageResult>
 }
 
-type RegistrationKey = 'inbound' | 'session' | 'error' | 'history' | 'historyFeedback'
-
-interface RuntimeAttachment {
-  readyGeneration: number
-  hostId: string
-  controller: AbortController
-  ownerAttemptId: number | null
-  state: 'pending' | 'ready' | 'failed'
-  error?: unknown
-  task: Promise<void>
-  registrations: Partial<Record<RegistrationKey, () => Promise<void>>>
-  repairs: Set<RegistrationKey>
-}
-
 interface PageConnectionAttempt {
   id: number
   resultToken: number
-  hostId: string
   controller: AbortController
   timeout: ReturnType<typeof globalThis.setTimeout>
 }
@@ -89,31 +69,15 @@ const raceWithSignal = <Value>(task: Promise<Value>, signal: AbortSignal): Promi
     if (signal.aborted) onAbort()
   })
 
-const withDeadline = <Value>(task: Promise<Value>, message: string): Promise<Value> =>
-  new Promise<Value>((resolve, reject) => {
-    let settled = false
-    const finish = (callback: () => void) => {
-      if (settled) return
-      settled = true
-      globalThis.clearTimeout(timer)
-      callback()
-    }
-    const timer = globalThis.setTimeout(
-      () => finish(() => reject(new Error(message))),
-      PAGE_CONNECTION_ATTEMPT_TIMEOUT_MS
-    )
-    task.then(
-      (value) => finish(() => resolve(value)),
-      (error) => finish(() => reject(error))
-    )
-  })
-
 const toChatSession = (session: Pick<RuntimeSession, 'sessionId' | 'user'>): ChatSession => ({
   sessionId: session.sessionId,
   user: session.user
 })
 
-const sessionsFrom = (snapshot: RuntimeSessionSnapshot): readonly ChatSession[] => [
+const sessionsFrom = (snapshot: {
+  localSession?: Omit<RuntimeSession, 'sourcePeerId'>
+  sessions: RuntimeSession[]
+}): readonly ChatSession[] => [
   ...(snapshot.localSession ? [toChatSession(snapshot.localSession)] : []),
   ...snapshot.sessions.map(toChatSession)
 ]
@@ -144,17 +108,15 @@ const isTypedSelfJoinNotice = (record: MessageRecord, session: Pick<RuntimeSessi
 
 const persistSelfJoinNotice = async (
   messageStore: RuntimeMessageStore,
-  session: Pick<RuntimeSession, 'user' | 'joinedAt'>,
-  signal: AbortSignal
+  session: Pick<RuntimeSession, 'user' | 'joinedAt'>
 ): Promise<void> => {
   for (let slot = 0; ; slot += 1) {
-    signal.throwIfAborted()
     const candidate = selfJoinNotice(session, slot)
-    const result = await raceWithSignal(messageStore.insert(candidate, { signal }), signal)
+    const result = await messageStore.insert(candidate)
     if (result.inserted) return
     // The raw conflict occupant stays opaque: the typed occupant is obtained only through the
     // authorized local-load boundary; continue to the next slot if it is absent.
-    const stored = await messageStore.query({ type: MESSAGE_RECORD_TYPE.SYSTEM_NOTICE, signal })
+    const stored = await messageStore.query({ type: MESSAGE_RECORD_TYPE.SYSTEM_NOTICE })
     const occupant = stored.find((item) => item.id === candidate.id)
     if (occupant && isTypedSelfJoinNotice(occupant, session)) return
   }
@@ -178,32 +140,35 @@ const projectHistory = (
   return { records: candidates, done: true }
 }
 
+/**
+ * Page-local Chat projection owner. It no longer holds any remote Runtime callback: the sole
+ * document-local drain pulls the current full projection and applies it here under one owner.
+ * Join/leave/sessions/feedback/failure projections are derived by diffing successive current
+ * projections; inbound persistence settles through the ordinary `ackInbound` action.
+ */
 export class ChatRoom extends EventHub implements ChatRoomPort {
-  private readonly disposeReady: Unsubscribe
-  private readonly pendingSelfJoinGenerations = new Set<string>()
-  /** Dedups transport repeats of one failure event for the whole live content generation (never evicts). */
-  private readonly seenErrorEventIds = new Set<string>()
-  private readyGeneration = 0
-  private connectionSequence = 0
-  private connectionTokenSequence = 0
   private reportResult: ((token: number, result: ConnectionLifecycleResult) => void) | null = null
   private standaloneMint: (() => number) | null = null
   private standaloneBind: ((task: Promise<void>, token: number) => void) | null = null
-  private attachment: RuntimeAttachment | null = null
+  private connectionSequence = 0
+  private connectionTokenSequence = 0
   private activeConnection: PageConnectionAttempt | null = null
   private disposed = false
 
+  /** Last applied current facts; diffed against the next projection. `null` until the first
+   * projection containing the domain establishes the notice baseline (first-pull sessions are
+   * current state, never live join/leave transitions). */
+  private appliedSessions: readonly RuntimeSession[] | null = null
+  private appliedFeedbackOwnerIds = new Set<string>()
+  private historyProvided = false
+  /** Dedups repeated projection facts for the whole live content generation (never evicts). */
+  private readonly seenErrorEventIds = new Set<string>()
+  /** Records proven unable to become durable are acknowledged false once and never re-attempted. */
+  private readonly invalidInbound = new Set<number>()
+  private readonly activeHistorySupplies = new Map<string, AbortController>()
+
   constructor(private readonly dependencies: ChatRoomDependencies) {
     super()
-    this.disposeReady = dependencies.whenReady(() => {
-      if (this.disposed) return
-      this.readyGeneration += 1
-      // Runtime generation replacement supersedes the old connection attempt; that is a structural
-      // cancellation fact for that attempt.
-      if (this.activeConnection) this.reportResult?.(this.activeConnection.resultToken, 'cancelled')
-      this.activeConnection?.controller.abort(abortError('Runtime host generation replaced'))
-      this.startAttachment(null)
-    })
   }
 
   bindConnectionResultReporter(reporter: ConnectionResultReporter) {
@@ -219,67 +184,217 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
     if (result !== 'active') this.reportResult?.(token, result)
   }
 
-  private isAttachmentCurrent(attachment: RuntimeAttachment) {
-    return (
-      !this.disposed &&
-      this.attachment === attachment &&
-      this.readyGeneration === attachment.readyGeneration &&
-      !attachment.controller.signal.aborted &&
-      this.dependencies.getSnapshot().hostId === attachment.hostId
-    )
-  }
-
-  private cancelAttachment(attachment: RuntimeAttachment, reason: unknown) {
-    if (!attachment.controller.signal.aborted) attachment.controller.abort(reason)
-    if (this.attachment === attachment) this.attachment = null
-  }
-
   private emitError(error: unknown) {
     const failure = error instanceof Error ? error : new Error(String(error))
     try {
       this.emit('error', failure)
     } catch (deliveryError) {
       // Error listeners are the terminal application projection. Their own failure cannot recurse
-      // into another room event or reject shared attachment/repair bookkeeping.
+      // into another room event or reject shared projection bookkeeping.
       console.error(deliveryError)
     }
   }
 
-  private startAttachment(ownerAttemptId: number | null) {
-    if (this.disposed) throw abortError('Runtime page detached')
-    const previous = this.attachment
-    if (previous) this.cancelAttachment(previous, abortError('Runtime attachment superseded'))
-    const controller = new AbortController()
-    const attachment: RuntimeAttachment = {
-      readyGeneration: this.readyGeneration,
-      hostId: this.dependencies.getSnapshot().hostId,
-      controller,
-      ownerAttemptId,
-      state: 'pending',
-      task: Promise.resolve(),
-      registrations: {},
-      repairs: new Set()
+  // ── Chat projection stage (drain owner) ─────────────────────────────────────
+
+  applyChat(projection: RuntimeSnapshot) {
+    const domain = projection.domains.find((item) => item.domain === this.dependencies.pageDomain)
+    const sessions = sessionsFrom({ localSession: domain?.localSession, sessions: domain?.sessions ?? [] })
+    // Join/leave lifecycle events derive only from remote sessions: the local self-join notice is
+    // owned once by the persistence stage's idempotent self-join projection.
+    const remoteSessions = domain?.sessions ?? []
+    const localJoinedAt = domain?.localSession?.joinedAt
+    if (!domain) {
+      // The released domain leaves no membership: a later rejoin starts from a fresh baseline.
+      this.appliedSessions = null
+      return
     }
-    this.attachment = attachment
-    const timeout = globalThis.setTimeout(() => {
-      controller.abort(new Error('Connection timed out'))
-    }, PAGE_CONNECTION_ATTEMPT_TIMEOUT_MS)
-    attachment.task = this.attachRuntime(attachment)
-      .then(() => {
-        attachment.state = 'ready'
+    if (!domain.chatRoomJoined) {
+      // An internal transition window (refresh/reset/provisional replacement) is not a live
+      // transition and cannot establish the notice baseline: only a committed runtime can.
+      return
+    }
+    const previous = this.appliedSessions
+    if (previous === null) {
+      // Baseline: the first committed projection cannot produce live join/leave notices;
+      // sessions present here are current state.
+      this.appliedSessions = remoteSessions
+      this.emit('sessions', sessions)
+    } else {
+      this.appliedSessions = remoteSessions
+      this.emit('sessions', sessions)
+      const localUserId = domain.localSession?.user.id
+      // Membership finality counts every presence of the user, including this page's own local
+      // session: a same-user local presence suppresses the final leave exactly like a remote one.
+      const countIn = (list: readonly RuntimeSession[], userId: string) =>
+        list.filter((session) => session.user.id === userId).length + (localUserId === userId ? 1 : 0)
+      const userIds = new Set([
+        ...previous.map((session) => session.user.id),
+        ...remoteSessions.map((session) => session.user.id)
+      ])
+      for (const userId of userIds) {
+        const before = countIn(previous, userId)
+        const after = countIn(remoteSessions, userId)
+        if (before === 0 && after > 0) {
+          // A live join notice exists only for a strictly later logical join while this page is
+          // a committed member; an older/equal generation converges silently as current state.
+          const joined = remoteSessions.find((session) => session.user.id === userId)
+          if (joined && localJoinedAt !== undefined && joined.joinedAt > localJoinedAt) {
+            this.emit('join', toChatSession(joined))
+          }
+        } else if (before > 0 && after === 0) {
+          const left = previous.find((session) => session.user.id === userId)
+          if (left) this.emit('leave', toChatSession(left))
+        }
+      }
+    }
+
+    // History loading owners are current state: activate on appearance, dismiss on disappearance.
+    const ownerIds = new Set((domain?.historyFeedback ?? []).map((item) => item.ownerId))
+    for (const ownerId of ownerIds) {
+      if (!this.appliedFeedbackOwnerIds.has(ownerId)) {
+        this.emit('historyFeedback', {
+          domain: this.dependencies.pageDomain,
+          ownerId,
+          type: 'loading'
+        } satisfies HistoryFeedbackEvent)
+      }
+    }
+    for (const ownerId of this.appliedFeedbackOwnerIds) {
+      if (!ownerIds.has(ownerId)) {
+        this.emit('historyFeedback', {
+          domain: this.dependencies.pageDomain,
+          ownerId,
+          type: 'dismiss'
+        } satisfies HistoryFeedbackEvent)
+      }
+    }
+    this.appliedFeedbackOwnerIds = ownerIds
+
+    // Retained Runtime failures are idempotent current facts: present each unseen eventId once.
+    for (const failure of projection.failures) {
+      if (failure.scope !== undefined && failure.scope !== this.dependencies.pageDomain) continue
+      if (this.seenErrorEventIds.has(failure.eventId)) continue
+      this.seenErrorEventIds.add(failure.eventId)
+      this.emitError(new Error(failure.message))
+    }
+  }
+
+  // ── Local persistence projection stage (drain owner) ────────────────────────
+
+  async applyPersistence(projection: RuntimeSnapshot) {
+    const domain = projection.domains.find((item) => item.domain === this.dependencies.pageDomain)
+
+    if (domain && !this.historyProvided) {
+      await this.dependencies.server.provideHistory({ domain: this.dependencies.pageDomain }, (event) =>
+        this.provideHistory(event)
+      )
+      this.historyProvided = true
+    }
+
+    for (const event of domain?.inbound ?? []) {
+      await this.persistInbound(event)
+    }
+  }
+
+  private async persistInbound(event: RuntimeSnapshot['domains'][number]['inbound'][number]) {
+    if (event.domain !== this.dependencies.pageDomain) return
+    if (this.invalidInbound.has(event.sequence)) {
+      await this.dependencies.server.ackInbound({
+        domain: this.dependencies.pageDomain,
+        sequence: event.sequence,
+        inserted: false
       })
-      .catch((error) => {
-        const failure = error instanceof Error ? error : new Error(String(error))
-        attachment.state = 'failed'
-        attachment.error = failure
-        if (!controller.signal.aborted) controller.abort(failure)
-        if (!this.disposed && attachment.ownerAttemptId === null && this.attachment === attachment) {
-          this.emitError(failure)
+      return
+    }
+    try {
+      const result = await this.dependencies.messageStore.insert(event.record)
+      if (result.inserted && event.source === 'live') this.emit('message', event.record.message)
+      await this.dependencies.server.ackInbound({
+        domain: this.dependencies.pageDomain,
+        sequence: event.sequence,
+        inserted: result.inserted
+      })
+    } catch (error) {
+      if (isInvalidMessageRecordError(error)) {
+        // The record cannot become durable; ACK discards only this invalid Runtime event after diagnosis.
+        this.emitError(error)
+        this.invalidInbound.add(event.sequence)
+        await this.dependencies.server.ackInbound({
+          domain: this.dependencies.pageDomain,
+          sequence: event.sequence,
+          inserted: false
+        })
+        return
+      }
+      throw error
+    }
+  }
+
+  private provideHistory(event: HistorySupplyEvent) {
+    if (this.disposed) return
+    if (event.type === 'cancel') {
+      const controller = this.activeHistorySupplies.get(event.supplyId)
+      if (!controller) return
+      // The AbortSignal fires immediately, but the supply owner is kept until the physical
+      // query/projection chain has exited: only that chain settles the cancelled supplyId,
+      // exactly once, so Runtime cancellation never precedes the page's actual work stop.
+      controller.abort(abortError('History supply cancelled'))
+      return
+    }
+    const { request } = event
+    this.activeHistorySupplies.get(request.supplyId)?.abort(abortError('History supply replaced'))
+    const controller = new AbortController()
+    this.activeHistorySupplies.set(request.supplyId, controller)
+    // Page-owned MessageStore supplies local history; Runtime owns only orchestration.
+    void this.dependencies.messageStore
+      .query({ type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE, signal: controller.signal })
+      .then((records) => projectHistory(records, request.cutoff, controller.signal))
+      .then(async (result) => {
+        controller.signal.throwIfAborted()
+        if (this.disposed || this.activeHistorySupplies.get(request.supplyId) !== controller) return
+        await raceWithSignal(
+          this.dependencies.server.resolveHistorySupply({ supplyId: request.supplyId, result }),
+          controller.signal
+        )
+      })
+      .catch(async (error) => {
+        if (controller.signal.aborted) {
+          // Physical query/projection chain has exited on the cancellation: settle the
+          // cancelled supplyId exactly once (the pending PagePort entry is in failover mode,
+          // so this rejects the Runtime supplier promise and confirms settlement).
+          await this.dependencies.server
+            .rejectHistorySupply({
+              supplyId: request.supplyId,
+              reason: (error as Error).message || 'History supply cancelled'
+            })
+            .catch((settleError) => {
+              if (!this.disposed) this.emitError(settleError)
+            })
+          return
+        }
+        if (this.disposed || this.activeHistorySupplies.get(request.supplyId) !== controller) {
+          return
+        }
+        await raceWithSignal(
+          this.dependencies.server.rejectHistorySupply({
+            supplyId: request.supplyId,
+            reason: (error as Error).message
+          }),
+          controller.signal
+        )
+      })
+      .finally(() => {
+        if (this.activeHistorySupplies.get(request.supplyId) === controller) {
+          this.activeHistorySupplies.delete(request.supplyId)
         }
       })
-      .finally(() => globalThis.clearTimeout(timeout))
-    return attachment
+      .catch((error) => {
+        if (!this.disposed) this.emitError(error)
+      })
   }
+
+  // ── Ordinary actions (request/response, no delivery coupling) ───────────────
 
   private beginConnectionAttempt(resultToken: number) {
     if (this.disposed) throw abortError('Runtime page detached')
@@ -293,7 +408,6 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
     const attempt: PageConnectionAttempt = {
       id: ++this.connectionSequence,
       resultToken,
-      hostId: this.dependencies.getSnapshot().hostId,
       controller,
       timeout: globalThis.setTimeout(() => {
         controller.abort(new Error('Page connection attempt timed out'))
@@ -303,314 +417,9 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
     return attempt
   }
 
-  private finishConnectionAttempt(attempt: PageConnectionAttempt, error?: unknown) {
+  private finishConnectionAttempt(attempt: PageConnectionAttempt) {
     globalThis.clearTimeout(attempt.timeout)
-    const attachment = this.attachment
-    if (error && attachment?.state === 'pending' && attachment.ownerAttemptId === attempt.id) {
-      this.cancelAttachment(attachment, error)
-    }
-    if (!error && attachment?.ownerAttemptId === attempt.id) attachment.ownerAttemptId = null
     if (this.activeConnection === attempt) this.activeConnection = null
-  }
-
-  private isConnectionCurrent(attempt: PageConnectionAttempt, attachment: RuntimeAttachment) {
-    return (
-      this.activeConnection === attempt &&
-      !attempt.controller.signal.aborted &&
-      attempt.hostId === attachment.hostId &&
-      this.isAttachmentCurrent(attachment)
-    )
-  }
-
-  private async currentAttachment(attempt: PageConnectionAttempt) {
-    let attachment = this.attachment
-    if (
-      !attachment ||
-      attachment.hostId !== attempt.hostId ||
-      attachment.readyGeneration !== this.readyGeneration ||
-      attachment.state === 'failed' ||
-      attachment.controller.signal.aborted
-    ) {
-      attachment = this.startAttachment(attempt.id)
-    } else if (attachment.state === 'pending') {
-      if (attachment.ownerAttemptId !== null && attachment.ownerAttemptId !== attempt.id) {
-        attachment = this.startAttachment(attempt.id)
-      } else {
-        attachment.ownerAttemptId = attempt.id
-      }
-    }
-
-    try {
-      await raceWithSignal(attachment.task, attempt.controller.signal)
-      if (attachment.error !== undefined) throw attachment.error
-    } catch (error) {
-      if (this.attachment === attachment && attachment.ownerAttemptId === attempt.id) {
-        this.cancelAttachment(attachment, error)
-      }
-      throw error
-    }
-    attempt.controller.signal.throwIfAborted()
-    if (!this.isAttachmentCurrent(attachment) || attachment.hostId !== attempt.hostId) {
-      throw abortError('Runtime attachment superseded')
-    }
-    return attachment
-  }
-
-  private repairRegistration(key: RegistrationKey) {
-    const attachment = this.attachment
-    if (
-      !attachment ||
-      !attachment.registrations[key] ||
-      !this.isAttachmentCurrent(attachment) ||
-      attachment.repairs.has(key)
-    ) {
-      return
-    }
-    attachment.repairs.add(key)
-    const repair = withDeadline(this.register(attachment, key), 'Page callback repair timed out')
-    void repair
-      .catch((error) => {
-        if (this.isAttachmentCurrent(attachment)) this.emitError(error)
-      })
-      .finally(() => attachment.repairs.delete(key))
-  }
-
-  private register(attachment: RuntimeAttachment, key: RegistrationKey) {
-    const registration = attachment.registrations[key]
-    if (!registration) throw new Error(`Missing Runtime ${key} registration`)
-    const physical = Promise.resolve().then(registration)
-    const repairIfOwnershipMoved = () => {
-      if (!this.isAttachmentCurrent(attachment)) this.repairRegistration(key)
-    }
-    // raceWithSignal owns the physical result; this side branch performs only the same
-    // post-settlement registration repair on both outcomes.
-    void physical.then(repairIfOwnershipMoved, repairIfOwnershipMoved)
-    return raceWithSignal(physical, attachment.controller.signal)
-  }
-
-  private emitSessionEvent(event: RuntimeSessionEvent) {
-    const sessions = sessionsFrom(event.snapshot)
-    const localSession = event.snapshot.localSession
-    if (event.provenance === 'join' && localSession) {
-      // Runtime generation classification is the sole owner of self-notice eligibility.
-      this.pendingSelfJoinGenerations.add(`${localSession.user.id}:${localSession.joinedAt}`)
-    }
-    const userSessionCount = (userId: string) => sessions.filter((session) => session.user.id === userId).length
-    this.emit('sessions', sessions)
-    if (event.type === 'join') {
-      if (userSessionCount(event.session.user.id) === 1) this.emit('join', toChatSession(event.session))
-    } else if (event.type === 'leave') {
-      if (userSessionCount(event.session.user.id) === 0) this.emit('leave', toChatSession(event.session))
-    } else if (event.type === 'replace' && event.previous.user.id !== event.session.user.id) {
-      if (userSessionCount(event.previous.user.id) === 0) this.emit('leave', toChatSession(event.previous))
-      if (userSessionCount(event.session.user.id) === 1) this.emit('join', toChatSession(event.session))
-    }
-  }
-
-  private async attachRuntime(attachment: RuntimeAttachment) {
-    const { dependencies } = this
-    const { signal } = attachment.controller
-    const isCurrent = () => this.isAttachmentCurrent(attachment)
-    const assertCurrent = () => {
-      signal.throwIfAborted()
-      if (!isCurrent()) throw abortError('Runtime attachment superseded')
-    }
-    type RuntimeInboundEvent = Awaited<ReturnType<RuntimeServer['replayInbound']>>[number]
-    const retryingInbound = new Set<number>()
-    const invalidInbound = new Set<number>()
-    const retryTimers = new Set<ReturnType<typeof globalThis.setTimeout>>()
-    const activeHistorySupplies = new Map<string, AbortController>()
-    const cleanup = () => {
-      retryTimers.forEach((timer) => globalThis.clearTimeout(timer))
-      retryTimers.clear()
-      retryingInbound.clear()
-      activeHistorySupplies.forEach((controller) =>
-        controller.abort(signal.reason ?? abortError('Runtime attachment cancelled'))
-      )
-      activeHistorySupplies.clear()
-    }
-    signal.addEventListener('abort', cleanup, { once: true })
-
-    const retryInbound = (event: RuntimeInboundEvent) => {
-      if (!isCurrent() || retryingInbound.has(event.sequence)) return
-      retryingInbound.add(event.sequence)
-      const timer = globalThis.setTimeout(() => {
-        retryTimers.delete(timer)
-        retryingInbound.delete(event.sequence)
-        if (isCurrent()) void persistInbound(event, false)
-      }, 1000)
-      retryTimers.add(timer)
-    }
-
-    const acknowledgeInbound = async (event: RuntimeInboundEvent, inserted: boolean) => {
-      assertCurrent()
-      await raceWithSignal(
-        dependencies.server.ackInbound({ domain: dependencies.pageDomain, sequence: event.sequence, inserted }),
-        signal
-      )
-      assertCurrent()
-      retryingInbound.delete(event.sequence)
-      invalidInbound.delete(event.sequence)
-    }
-
-    const persistInbound = async (event: RuntimeInboundEvent, prerequisite: boolean): Promise<void> => {
-      if (event.domain !== dependencies.pageDomain) return
-      if (!isCurrent()) {
-        if (prerequisite) assertCurrent()
-        return
-      }
-      if (invalidInbound.has(event.sequence)) {
-        try {
-          await acknowledgeInbound(event, false)
-        } catch (error) {
-          if (prerequisite) throw error
-          if (!isCurrent()) return
-          this.emitError(error)
-          retryInbound(event)
-        }
-        return
-      }
-      try {
-        const result = await raceWithSignal(dependencies.messageStore.insert(event.record, { signal }), signal)
-        assertCurrent()
-        if (result.inserted && event.source === 'live') this.emit('message', event.record.message)
-        await acknowledgeInbound(event, result.inserted)
-      } catch (error) {
-        if (!isCurrent()) {
-          if (prerequisite) assertCurrent()
-          return
-        }
-        if (isInvalidMessageRecordError(error)) {
-          // The record cannot become durable; ACK discards only this invalid Runtime event after diagnosis.
-          this.emitError(error)
-          invalidInbound.add(event.sequence)
-          try {
-            await acknowledgeInbound(event, false)
-          } catch (ackError) {
-            if (prerequisite) throw ackError
-            if (!isCurrent()) return
-            this.emitError(ackError)
-            retryInbound(event)
-          }
-          return
-        }
-        if (prerequisite) throw error
-        this.emitError(error)
-        retryInbound(event)
-      }
-    }
-
-    const provideHistory = (event: HistorySupplyEvent) => {
-      if (!isCurrent()) return
-      if (event.type === 'cancel') {
-        const controller = activeHistorySupplies.get(event.supplyId)
-        if (!controller) return
-        // The AbortSignal fires immediately, but the supply owner is kept until the physical
-        // query/projection chain has exited: only that chain settles the cancelled supplyId,
-        // exactly once, so Runtime cancellation never precedes the page's actual work stop.
-        controller.abort(abortError('History supply cancelled'))
-        return
-      }
-      const { request } = event
-      activeHistorySupplies.get(request.supplyId)?.abort(abortError('History supply replaced'))
-      const controller = new AbortController()
-      activeHistorySupplies.set(request.supplyId, controller)
-      // Page-owned MessageStore supplies local history; Runtime owns only orchestration.
-      void dependencies.messageStore
-        .query({ type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE, signal: controller.signal })
-        .then((records) => projectHistory(records, request.cutoff, controller.signal))
-        .then(async (result) => {
-          controller.signal.throwIfAborted()
-          if (!isCurrent() || activeHistorySupplies.get(request.supplyId) !== controller) return
-          await raceWithSignal(
-            dependencies.server.resolveHistorySupply({
-              pageId: dependencies.pageId,
-              supplyId: request.supplyId,
-              result
-            }),
-            controller.signal
-          )
-        })
-        .catch(async (error) => {
-          if (controller.signal.aborted) {
-            // Physical query/projection chain has exited on the cancellation: settle the
-            // cancelled supplyId exactly once (the pending PagePort entry is in failover mode,
-            // so this rejects the Runtime supplier promise and confirms settlement).
-            await dependencies.server
-              .rejectHistorySupply({
-                pageId: dependencies.pageId,
-                supplyId: request.supplyId,
-                reason: (error as Error).message || 'History supply cancelled'
-              })
-              .catch((settleError) => {
-                if (isCurrent()) this.emitError(settleError)
-              })
-            return
-          }
-          if (!isCurrent() || activeHistorySupplies.get(request.supplyId) !== controller) {
-            return
-          }
-          await raceWithSignal(
-            dependencies.server.rejectHistorySupply({
-              pageId: dependencies.pageId,
-              supplyId: request.supplyId,
-              reason: (error as Error).message
-            }),
-            controller.signal
-          )
-        })
-        .finally(() => {
-          if (activeHistorySupplies.get(request.supplyId) === controller) {
-            activeHistorySupplies.delete(request.supplyId)
-          }
-        })
-        .catch((error) => {
-          if (isCurrent()) this.emitError(error)
-        })
-    }
-
-    attachment.registrations.inbound = () =>
-      dependencies.server.onInbound({ pageId: dependencies.pageId }, (event) => {
-        if (isCurrent()) return persistInbound(event, false)
-      })
-    attachment.registrations.session = () =>
-      dependencies.server.onSessionEvent({ pageId: dependencies.pageId }, (event) => {
-        if (isCurrent() && event.domain === dependencies.pageDomain) this.emitSessionEvent(event)
-      })
-    attachment.registrations.error = () =>
-      dependencies.server.onError({ pageId: dependencies.pageId }, (event) => {
-        if (!isCurrent()) return
-        // One failure event is displayed once per live content generation; transport repeats are
-        // dropped, while every later distinct failure carries its own eventId and therefore a
-        // fresh toast. The identity never expires so a late transport repeat cannot reappear.
-        if (this.seenErrorEventIds.has(event.eventId)) return
-        this.seenErrorEventIds.add(event.eventId)
-        this.emitError(new Error(event.message))
-      })
-    attachment.registrations.history = () =>
-      dependencies.server.provideHistory(
-        { domain: dependencies.pageDomain, pageId: dependencies.pageId },
-        provideHistory
-      )
-    attachment.registrations.historyFeedback = () =>
-      dependencies.server.onHistoryFeedback({ pageId: dependencies.pageId }, (event) => {
-        if (isCurrent()) this.emit('historyFeedback', event)
-      })
-
-    await Promise.all(
-      (['inbound', 'session', 'error', 'history', 'historyFeedback'] as const).map((key) =>
-        this.register(attachment, key)
-      )
-    )
-    assertCurrent()
-
-    const replay = await raceWithSignal(
-      dependencies.server.replayInbound({ domain: dependencies.pageDomain, after: 0 }),
-      signal
-    )
-    assertCurrent()
-    await Promise.all(replay.map((event) => persistInbound(event, true)))
-    assertCurrent()
   }
 
   joinRoom(command: JoinRoomCommand): Promise<void> {
@@ -624,11 +433,6 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
   async joinRoomWithToken(resultToken: number, command: JoinRoomCommand): Promise<void> {
     const attempt = this.beginConnectionAttempt(resultToken)
     try {
-      const attachment = await this.currentAttachment(attempt)
-      if (!this.isConnectionCurrent(attempt, attachment)) {
-        this.recordResult(attempt.resultToken, 'cancelled')
-        throw abortError('Page connection attempt superseded')
-      }
       const snapshot = await raceWithSignal(
         this.dependencies.server.joinChatRoom({
           domain: this.dependencies.pageDomain,
@@ -641,39 +445,17 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
         throw abortError('ChatRoom operation cancelled')
       }
       attempt.controller.signal.throwIfAborted()
-      if (
-        !this.isConnectionCurrent(attempt, attachment) ||
-        snapshot.hostId !== attempt.hostId ||
-        this.dependencies.getSnapshot().hostId !== attempt.hostId
-      ) {
-        this.recordResult(attempt.resultToken, 'cancelled')
-        throw abortError('Page connection attempt superseded')
-      }
       const domainSnapshot = snapshot.domains.find((item) => item.domain === this.dependencies.pageDomain)
       if (!domainSnapshot?.localSession) throw new Error('Runtime did not create a local session')
-      const generationKey = `${domainSnapshot.localSession.user.id}:${domainSnapshot.localSession.joinedAt}`
-      if (this.pendingSelfJoinGenerations.delete(generationKey)) {
-        try {
-          await persistSelfJoinNotice(
-            this.dependencies.messageStore,
-            domainSnapshot.localSession,
-            attempt.controller.signal
-          )
-        } catch (error) {
-          this.pendingSelfJoinGenerations.add(generationKey)
-          throw error
-        }
-      }
-      attempt.controller.signal.throwIfAborted()
-      if (!this.isConnectionCurrent(attempt, attachment)) {
-        this.recordResult(attempt.resultToken, 'cancelled')
-        throw abortError('Page connection attempt superseded')
+      // Only a newly allocated logical presence owns a local self-notice (idempotent by content hash).
+      if (domainSnapshot.localSession.fresh) {
+        await persistSelfJoinNotice(this.dependencies.messageStore, domainSnapshot.localSession)
       }
       this.recordResult(attempt.resultToken, 'succeeded')
       this.finishConnectionAttempt(attempt)
     } catch (error) {
       this.recordResult(attempt.resultToken, 'failed')
-      this.finishConnectionAttempt(attempt, error)
+      this.finishConnectionAttempt(attempt)
       throw error
     }
   }
@@ -689,11 +471,6 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
   async leaveRoomWithToken(resultToken: number): Promise<void> {
     const attempt = this.beginConnectionAttempt(resultToken)
     try {
-      const attachment = await this.currentAttachment(attempt)
-      if (!this.isConnectionCurrent(attempt, attachment)) {
-        this.recordResult(attempt.resultToken, 'cancelled')
-        throw abortError('Page connection attempt superseded')
-      }
       const result = await raceWithSignal(
         this.dependencies.server.reconnectDomain({ domain: this.dependencies.pageDomain }),
         attempt.controller.signal
@@ -703,15 +480,11 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
         throw abortError('ChatRoom operation cancelled')
       }
       attempt.controller.signal.throwIfAborted()
-      if (!this.isConnectionCurrent(attempt, attachment)) {
-        this.recordResult(attempt.resultToken, 'cancelled')
-        throw abortError('Page connection attempt superseded')
-      }
       this.recordResult(attempt.resultToken, 'succeeded')
       this.finishConnectionAttempt(attempt)
     } catch (error) {
       this.recordResult(attempt.resultToken, 'failed')
-      this.finishConnectionAttempt(attempt, error)
+      this.finishConnectionAttempt(attempt)
       throw error
     }
   }
@@ -774,7 +547,6 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
   dispose() {
     if (this.disposed) return
     this.disposed = true
-    this.disposeReady()
     const reason = abortError('Runtime page detached')
     const connection = this.activeConnection
     if (connection) {
@@ -782,9 +554,8 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
       connection.controller.abort(reason)
       this.activeConnection = null
     }
-    const attachment = this.attachment
-    if (attachment) this.cancelAttachment(attachment, reason)
-    this.pendingSelfJoinGenerations.clear()
+    this.activeHistorySupplies.forEach((controller) => controller.abort(reason))
+    this.activeHistorySupplies.clear()
     this.off()
   }
 }

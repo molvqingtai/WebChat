@@ -18,7 +18,7 @@ import type {
   InboundEvent,
   RuntimeErrorEvent,
   RuntimeServer,
-  RuntimeSessionEvent,
+  RuntimeSession,
   RuntimeSnapshot
 } from '@/runtime/Contract'
 import { PagePort } from '@/runtime/PagePort'
@@ -53,7 +53,15 @@ const noticeRecord = (id: string, timestamp: number): SystemNoticeRecord => ({
   receivedAt: timestamp
 })
 
-const domainSnapshot = (remote = false): RuntimeSnapshot => ({
+const remoteSession = (overrides: Partial<RuntimeSession> = {}): RuntimeSession => ({
+  sourcePeerId: 'remote-peer',
+  sessionId: 'remote-session',
+  user: REMOTE,
+  joinedAt: 2,
+  ...overrides
+})
+
+const domainSnapshot = (sessions: RuntimeSession[] = []): RuntimeSnapshot => ({
   hostId: 'host-1',
   hostPhase: 'ready',
   peerId: 'local-peer',
@@ -61,13 +69,16 @@ const domainSnapshot = (remote = false): RuntimeSnapshot => ({
     {
       domain: DOMAIN,
       phase: 'active',
-      pageIds: ['page-1'],
+      tabIds: [1],
       chatRoomJoined: true,
-      localSession: { sessionId: 'local-session', user: USER, joinedAt: 1 },
-      sessions: remote ? [{ sourcePeerId: 'remote-peer', sessionId: 'remote-session', user: REMOTE, joinedAt: 2 }] : []
+      localSession: { sessionId: 'local-session', user: USER, joinedAt: 1, fresh: true },
+      sessions,
+      inbound: [],
+      historyFeedback: []
     }
   ],
-  world: { joined: true, peerId: 'local-peer', presences: [] }
+  world: { joined: true, peerId: 'local-peer', presences: [] },
+  failures: []
 })
 
 class ControlledDatabase implements Database<MessageDatabaseSchema> {
@@ -109,46 +120,26 @@ class ControlledDatabase implements Database<MessageDatabaseSchema> {
   }
 }
 
-interface ServerFixture {
-  server: RuntimeServer
-  emitInbound: (event: InboundEvent) => Promise<void>
-  emitSession: (event: RuntimeSessionEvent) => Promise<void>
-  emitError: (message: string) => Promise<void>
-  emitErrorEvent: (event: RuntimeErrorEvent) => Promise<void>
-  emitHistory: (event: HistorySupplyEvent) => void
-  resolvedHistory: { supplyId: string; ids: string[]; done: boolean }[]
-  sent: ChatMessage[]
-  leaveCount: () => number
-  reconnectCount: () => number
+const settle = async () => {
+  await Promise.resolve()
+  await Promise.resolve()
+  await Promise.resolve()
 }
 
-const serverFixture = (): ServerFixture => {
-  let inbound: ((event: InboundEvent) => void | Promise<void>) | undefined
-  let session: ((event: RuntimeSessionEvent) => void | Promise<void>) | undefined
-  let runtimeError: ((event: RuntimeErrorEvent) => void | Promise<void>) | undefined
-  let history: ((event: HistorySupplyEvent) => void) | undefined
+const setup = async (
+  records: readonly MessageRecord[] = [],
+  database: Database<MessageDatabaseSchema> = createMemoryMessageDatabase(`chat-room-${databaseId++}`)
+) => {
   let leaves = 0
   let reconnects = 0
-  let errorSequence = 0
-  const resolvedHistory: ServerFixture['resolvedHistory'] = []
+  const resolvedHistory: { supplyId: string; ids: string[]; done: boolean }[] = []
   const sent: ChatMessage[] = []
+  let history: ((event: HistorySupplyEvent) => void) | undefined
+  let current: RuntimeSnapshot = domainSnapshot()
   const server: RuntimeServer = {
-    attachPage: async () => domainSnapshot(),
-    detachPage: async () => {},
-    getSnapshot: async () => domainSnapshot(),
-    joinChatRoom: async () => {
-      const snapshot = domainSnapshot()
-      await session?.({
-        type: 'snapshot',
-        domain: DOMAIN,
-        snapshot: {
-          localSession: { sessionId: 'local-session', user: USER, joinedAt: 1 },
-          sessions: []
-        },
-        provenance: 'join'
-      })
-      return snapshot
-    },
+    attachPage: async () => current,
+    getSnapshot: async () => current,
+    joinChatRoom: async () => current,
     leaveChatRoom: async () => {
       leaves += 1
     },
@@ -175,20 +166,12 @@ const serverFixture = (): ServerFixture => {
       sent.push(event)
       return event
     }),
-    ackInbound: vi.fn(async () => {}),
-    replayInbound: async () => [],
+    ackInbound: vi.fn(async ({ sequence }) => {
+      const domain = current.domains.find((item) => item.domain === DOMAIN)
+      if (domain) domain.inbound = domain.inbound.filter((event) => event.sequence !== sequence)
+    }),
     reconnectDomain: async () => {
       reconnects += 1
-    },
-    onInbound: async (_payload, listener) => {
-      inbound = listener
-    },
-    onSessionEvent: async (_payload, listener) => {
-      session = listener
-    },
-    onWorldPresence: async () => {},
-    onError: async (_payload, listener) => {
-      runtimeError = listener
     },
     provideHistory: async (_payload, listener) => {
       history = listener
@@ -196,85 +179,58 @@ const serverFixture = (): ServerFixture => {
     resolveHistorySupply: async ({ supplyId, result }) => {
       resolvedHistory.push({ supplyId, ids: result.records.map((record) => record.message.id), done: result.done })
     },
-    rejectHistorySupply: async () => {},
-    onHistoryFeedback: async () => {}
+    rejectHistorySupply: async () => {}
   }
+  const messageStore = createMessageStore(database)
+  for (const record of records) await messageStore.insert(record)
+  const room = new ChatRoom({ server, messageStore, pageDomain: DOMAIN })
+
+  /** One drain cycle through the real applier path. */
+  const apply = async () => {
+    room.applyChat(current)
+    await room.applyPersistence(current)
+  }
+  const emitInbound = async (event: InboundEvent) => {
+    const domain = current.domains.find((item) => item.domain === DOMAIN)
+    if (!domain) throw new Error('domain missing')
+    domain.inbound = [...domain.inbound, event]
+    await room.applyPersistence(current)
+  }
+  const emitFailure = async (event: RuntimeErrorEvent) => {
+    current = { ...current, failures: [...current.failures, event] }
+    room.applyChat(current)
+    await Promise.resolve()
+  }
+
   return {
+    room,
+    messageStore,
     server,
-    emitInbound: async (event) => {
-      await inbound?.(event)
-    },
-    emitSession: async (event) => {
-      await session?.(event)
-    },
-    emitError: async (message) => {
-      errorSequence += 1
-      await runtimeError?.({
-        eventId: `test-error-${errorSequence}`,
-        message,
-        subsystem: 'connection',
-        operation: 'lifecycle'
-      })
-    },
-    emitErrorEvent: async (event) => {
-      await runtimeError?.(event)
-    },
-    emitHistory: (event) => history?.(event),
-    resolvedHistory,
     sent,
+    resolvedHistory,
+    apply,
+    emitInbound,
+    emitFailure,
+    emitHistory: (event: HistorySupplyEvent) => history?.(event),
     leaveCount: () => leaves,
     reconnectCount: () => reconnects
   }
 }
 
-const settle = async () => {
-  await Promise.resolve()
-  await Promise.resolve()
-  await Promise.resolve()
-}
-
-const setup = async (
-  records: readonly MessageRecord[] = [],
-  database: Database<MessageDatabaseSchema> = createMemoryMessageDatabase(`chat-room-${databaseId++}`)
-) => {
-  const server = serverFixture()
-  const messageStore = createMessageStore(database)
-  for (const record of records) await messageStore.insert(record)
-  let snapshot = domainSnapshot()
-  const room = new ChatRoom({
-    server: server.server,
-    messageStore,
-    pageDomain: DOMAIN,
-    pageId: 'page-1',
-    getSnapshot: () => snapshot,
-    whenReady: (listener) => {
-      listener()
-      return () => {}
-    }
-  })
-  return {
-    room,
-    messageStore,
-    setSnapshot: (next: RuntimeSnapshot) => {
-      snapshot = next
-    },
-    ...server
-  }
-}
-
 const setupHistoryCancellation = async () => {
-  const fixture = serverFixture()
+  const fixture = await setup()
   const pagePort = new PagePort()
+  const tabId = 1
   const server: RuntimeServer = {
     ...fixture.server,
-    provideHistory: async ({ pageId, domain }, listener) => {
-      pagePort.provideHistory(pageId, domain, listener)
+    provideHistory: async ({ domain }, listener) => {
+      pagePort.provideHistory(tabId, domain, listener)
     },
-    resolveHistorySupply: vi.fn(async ({ pageId, supplyId, result }) => {
-      pagePort.resolveHistorySupply(pageId, supplyId, result)
+    resolveHistorySupply: vi.fn(async ({ supplyId, result }) => {
+      pagePort.resolveHistorySupply(tabId, supplyId, result)
     }),
-    rejectHistorySupply: vi.fn(async ({ pageId, supplyId, reason }) => {
-      pagePort.rejectHistorySupply(pageId, supplyId, reason)
+    rejectHistorySupply: vi.fn(async ({ supplyId, reason }) => {
+      pagePort.rejectHistorySupply(tabId, supplyId, reason)
     })
   }
   const database = createMemoryMessageDatabase(`history-cancel-${databaseId++}`)
@@ -286,19 +242,11 @@ const setupHistoryCancellation = async () => {
     queryStarted.resolve(query.signal)
     return releaseQuery.promise
   })
-  const room = new ChatRoom({
-    server,
-    messageStore,
-    pageDomain: DOMAIN,
-    pageId: 'page-1',
-    getSnapshot: () => domainSnapshot(),
-    whenReady: (listener) => {
-      listener()
-      return () => {}
-    }
-  })
+  const room = new ChatRoom({ server, messageStore, pageDomain: DOMAIN })
+  room.applyChat(domainSnapshot())
+  await room.applyPersistence(domainSnapshot())
   await settle()
-  return { database, pagePort, queryStarted, releaseQuery, room, server }
+  return { database, pagePort, queryStarted, releaseQuery, room, server, tabId }
 }
 
 beforeEach(() => vi.useFakeTimers())
@@ -306,91 +254,69 @@ afterEach(() => vi.useRealTimers())
 
 describe('Runtime-backed ChatRoom application port', () => {
   it('reconstructs a transport-safe Runtime error message for domain listeners', async () => {
-    const { room, emitError } = await setup()
+    const { room, emitFailure } = await setup()
     const errors: Error[] = []
     room.onError((error) => errors.push(error))
-    await settle()
 
-    await emitError('Runtime transport disconnected')
+    await emitFailure({
+      eventId: 'event-1',
+      message: 'Runtime transport disconnected',
+      subsystem: 'connection',
+      operation: 'lifecycle'
+    })
 
     expect(errors).toEqual([new Error('Runtime transport disconnected')])
   })
 
-  it('deduplicates transport repeats of one failure event while fresh failures stay visible', async () => {
-    const { room, emitErrorEvent } = await setup()
+  it('deduplicates repeated current failure facts while fresh failures stay visible', async () => {
+    const { room, emitFailure } = await setup()
     const errors: Error[] = []
     room.onError((error) => errors.push(error))
-    await settle()
 
-    await emitErrorEvent({
+    const event = {
       eventId: 'event-a',
       message: 'Runtime transport disconnected',
-      subsystem: 'connection',
-      operation: 'lifecycle'
-    })
-    await emitErrorEvent({
-      eventId: 'event-a',
-      message: 'Runtime transport disconnected',
-      subsystem: 'connection',
-      operation: 'lifecycle'
-    })
-    await emitErrorEvent({
-      eventId: 'event-b',
-      message: 'Runtime transport disconnected',
-      subsystem: 'connection',
-      operation: 'lifecycle'
-    })
+      subsystem: 'connection' as const,
+      operation: 'lifecycle' as const
+    }
+    await emitFailure(event)
+    await emitFailure(event)
+    await emitFailure({ ...event, eventId: 'event-b' })
 
     expect(errors).toEqual([new Error('Runtime transport disconnected'), new Error('Runtime transport disconnected')])
   })
 
-  it('isolates a throwing error listener from shared attachment settlement', async () => {
-    const fixture = serverFixture()
-    const attachmentFailure = new Error('Runtime callback registration failed')
-    vi.spyOn(fixture.server, 'onInbound').mockRejectedValueOnce(attachmentFailure)
-    const database = createMemoryMessageDatabase(`throwing-error-listener-${databaseId++}`)
-    const messageStore = createMessageStore(database)
-    let ready = () => {}
-    const room = new ChatRoom({
-      server: fixture.server,
-      messageStore,
-      pageDomain: DOMAIN,
-      pageId: 'page-1',
-      getSnapshot: () => domainSnapshot(),
-      whenReady: (listener) => {
-        ready = listener
-        return () => {}
-      }
-    })
+  it('isolates a throwing error listener so projection work continues', async () => {
+    const fixture = await setup()
     const deliveryFailure = new Error('ChatRoom error listener failed')
     const listener = vi.fn(() => {
       throw deliveryFailure
     })
-    room.onError(listener)
+    fixture.room.onError(listener)
     const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
 
-    ready()
-    await vi.waitFor(() => expect(diagnostic).toHaveBeenCalledWith(deliveryFailure))
+    await fixture.emitFailure({
+      eventId: 'event-1',
+      message: 'Runtime callback registration failed',
+      subsystem: 'connection',
+      operation: 'lifecycle'
+    })
 
     expect(listener).toHaveBeenCalledOnce()
-    expect(listener).toHaveBeenCalledWith(attachmentFailure)
-    expect(diagnostic).toHaveBeenCalledOnce()
-    await expect(room.joinRoom({ user: USER, site: SITE })).resolves.toBeUndefined()
-    expect(diagnostic).toHaveBeenCalledOnce()
-
+    expect(diagnostic).toHaveBeenCalledWith(deliveryFailure)
+    await expect(fixture.room.joinRoom({ user: USER, site: SITE })).resolves.toBeUndefined()
     diagnostic.mockRestore()
-    room.dispose()
-    await database.close()
+    fixture.room.dispose()
   })
 
   it('publishes initialization as one session snapshot without a synthetic join fact', async () => {
-    const { room } = await setup()
+    const { room, apply } = await setup()
     const snapshots: Array<readonly ChatSession[]> = []
     const joins: ChatSession[] = []
     room.onSessions((sessions) => snapshots.push(sessions))
     room.onJoinRoom((session) => joins.push(session))
 
-    await settle()
+    await apply()
     await room.joinRoom({ user: USER, site: SITE })
 
     expect(snapshots).toEqual([[{ sessionId: 'local-session', user: USER }]])
@@ -401,7 +327,6 @@ describe('Runtime-backed ChatRoom application port', () => {
     const database = createMemoryMessageDatabase(`self-join-${databaseId++}`)
     const first = await setup([], database)
     const second = await setup([], database)
-    await settle()
 
     await Promise.all([
       first.room.joinRoom({ user: USER, site: SITE }),
@@ -433,7 +358,6 @@ describe('Runtime-backed ChatRoom application port', () => {
     await seedStore.insert(collision)
     const first = await setup([], database)
     const second = await setup([], database)
-    await settle()
 
     await Promise.all([
       first.room.joinRoom({ user: USER, site: SITE }),
@@ -442,7 +366,6 @@ describe('Runtime-backed ChatRoom application port', () => {
     await first.room.leaveRoom()
     await first.room.joinRoom({ user: USER, site: SITE })
     const reloaded = await setup([], database)
-    await settle()
     await reloaded.room.joinRoom({ user: USER, site: SITE })
 
     const records = await first.messageStore.query()
@@ -469,7 +392,6 @@ describe('Runtime-backed ChatRoom application port', () => {
       raced = true
       await competingStore.insert(collision)
     }
-    await settle()
 
     await fixture.room.joinRoom({ user: USER, site: SITE })
 
@@ -504,7 +426,6 @@ describe('Runtime-backed ChatRoom application port', () => {
       })
     )
     const fixture = await setup([], database)
-    await settle()
     await fixture.room.joinRoom({ user: USER, site: SITE })
     await settle()
     const records = await fixture.messageStore.query()
@@ -518,31 +439,17 @@ describe('Runtime-backed ChatRoom application port', () => {
   })
 
   it('publishes the new snapshot before each accepted live join and leave fact', async () => {
-    const { room, emitSession } = await setup()
+    const { room, apply } = await setup()
     const order: string[] = []
     room.onSessions((sessions) => order.push(`sessions:${sessions.map((item) => item.sessionId).join(',')}`))
     room.onJoinRoom((session) => order.push(`join:${session.sessionId}`))
     room.onLeaveRoom((session) => order.push(`leave:${session.sessionId}`))
-    await settle()
-    await room.joinRoom({ user: USER, site: SITE })
+    await apply()
     order.length = 0
 
-    const remote = { sourcePeerId: 'remote-peer', sessionId: 'remote-session', user: REMOTE, joinedAt: 2 }
-    await emitSession({
-      type: 'join',
-      domain: DOMAIN,
-      snapshot: { localSession: { sessionId: 'local-session', user: USER, joinedAt: 1 }, sessions: [remote] },
-      session: remote,
-      provenance: 'live'
-    })
-    await emitSession({
-      type: 'leave',
-      domain: DOMAIN,
-      snapshot: { localSession: { sessionId: 'local-session', user: USER, joinedAt: 1 }, sessions: [] },
-      session: remote,
-      occurredAt: 3,
-      provenance: 'live'
-    })
+    const remote = remoteSession()
+    room.applyChat(domainSnapshot([remote]))
+    room.applyChat(domainSnapshot([]))
 
     expect(order).toEqual([
       'sessions:local-session,remote-session',
@@ -553,108 +460,73 @@ describe('Runtime-backed ChatRoom application port', () => {
   })
 
   it('emits membership facts only for the first and final live session of each user', async () => {
-    const { room, emitSession } = await setup()
+    const { room, apply } = await setup()
     const joins: ChatSession[] = []
     const leaves: ChatSession[] = []
     room.onJoinRoom((session) => joins.push(session))
     room.onLeaveRoom((session) => leaves.push(session))
-    await settle()
+    await apply()
 
-    const first = { sourcePeerId: 'remote-peer-1', sessionId: 'remote-session-1', user: REMOTE, joinedAt: 2 }
-    const second = { sourcePeerId: 'remote-peer-2', sessionId: 'remote-session-2', user: REMOTE, joinedAt: 3 }
-    const localSession = { sessionId: 'local-session', user: USER, joinedAt: 1 }
-    await emitSession({
-      type: 'join',
-      domain: DOMAIN,
-      snapshot: { localSession, sessions: [first] },
-      session: first,
-      provenance: 'live'
-    })
-    await emitSession({
-      type: 'join',
-      domain: DOMAIN,
-      snapshot: { localSession, sessions: [first, second] },
-      session: second,
-      provenance: 'live'
-    })
-    await emitSession({
-      type: 'leave',
-      domain: DOMAIN,
-      snapshot: { localSession, sessions: [second] },
-      session: first,
-      occurredAt: 4,
-      provenance: 'live'
-    })
-    await emitSession({
-      type: 'leave',
-      domain: DOMAIN,
-      snapshot: { localSession, sessions: [] },
-      session: second,
-      occurredAt: 5,
-      provenance: 'live'
-    })
+    const first = remoteSession({ sourcePeerId: 'remote-peer-1', sessionId: 'remote-session-1', joinedAt: 2 })
+    const second = remoteSession({ sourcePeerId: 'remote-peer-2', sessionId: 'remote-session-2', joinedAt: 3 })
+    room.applyChat(domainSnapshot([first]))
+    room.applyChat(domainSnapshot([first, second]))
+    room.applyChat(domainSnapshot([second]))
+    room.applyChat(domainSnapshot([]))
 
     expect(joins).toEqual([{ sessionId: first.sessionId, user: REMOTE }])
     expect(leaves).toEqual([{ sessionId: second.sessionId, user: REMOTE }])
   })
 
   it('does not fabricate a leave and rejoin for a same-user incarnation replacement', async () => {
-    const { room, emitSession } = await setup()
+    const { room, apply } = await setup()
     const order: string[] = []
     room.onSessions((sessions) => order.push(`sessions:${sessions.map((item) => item.sessionId).join(',')}`))
     room.onJoinRoom((session) => order.push(`join:${session.sessionId}`))
     room.onLeaveRoom((session) => order.push(`leave:${session.sessionId}`))
-    await settle()
+    await apply()
 
-    const previous = { sourcePeerId: 'remote-peer', sessionId: 'remote-session-1', user: REMOTE, joinedAt: 2 }
+    const previous = remoteSession({ sessionId: 'remote-session-1', joinedAt: 2 })
     const replacement = { ...previous, sessionId: 'remote-session-2', joinedAt: 3 }
-    await emitSession({
-      type: 'replace',
-      domain: DOMAIN,
-      snapshot: {
-        localSession: { sessionId: 'local-session', user: USER, joinedAt: 1 },
-        sessions: [replacement]
-      },
-      previous,
-      session: replacement,
-      occurredAt: 3,
-      provenance: 'live'
-    })
+    room.applyChat(domainSnapshot([previous]))
+    order.length = 0
+    room.applyChat(domainSnapshot([replacement]))
 
     expect(order).toEqual(['sessions:local-session,remote-session-2'])
   })
 
   it('derives both sides of a changed-user replacement from the resulting snapshot', async () => {
-    const { room, emitSession } = await setup()
+    const { room, apply } = await setup()
     const order: string[] = []
     room.onSessions((sessions) => order.push(`sessions:${sessions.map((item) => item.sessionId).join(',')}`))
     room.onJoinRoom((session) => order.push(`join:${session.user.id}`))
     room.onLeaveRoom((session) => order.push(`leave:${session.user.id}`))
-    await settle()
+    await apply()
 
-    const previous = { sourcePeerId: 'remote-peer', sessionId: 'remote-session-1', user: REMOTE, joinedAt: 2 }
+    const previous = remoteSession({ sessionId: 'remote-session-1', joinedAt: 2 })
     const replacement = { ...previous, sessionId: 'remote-session-2', user: OTHER, joinedAt: 3 }
-    await emitSession({
-      type: 'replace',
-      domain: DOMAIN,
-      snapshot: {
-        localSession: { sessionId: 'local-session', user: USER, joinedAt: 1 },
-        sessions: [replacement]
-      },
-      previous,
-      session: replacement,
-      occurredAt: 3,
-      provenance: 'live'
-    })
+    room.applyChat(domainSnapshot([previous]))
+    order.length = 0
+    room.applyChat(domainSnapshot([replacement]))
 
     expect(order).toEqual(['sessions:local-session,remote-session-2', 'leave:remote-user', 'join:other-user'])
+  })
+
+  it('does not emit a live join for a remote generation not later than the local one', async () => {
+    const { room, apply } = await setup()
+    const joins: ChatSession[] = []
+    room.onJoinRoom((session) => joins.push(session))
+    await apply()
+
+    // An older/equal generation converges silently as current state (no notice).
+    room.applyChat(domainSnapshot([remoteSession({ joinedAt: 1 })]))
+    expect(joins).toEqual([])
   })
 
   it('emits only a first-inserted remote live message after persistence', async () => {
     const { room, emitInbound, messageStore } = await setup()
     const messages: ChatMessage[] = []
     room.onMessage((message) => messages.push(message))
-    await settle()
     const record = textRecord('remote-live')
 
     await emitInbound({ sequence: 1, domain: DOMAIN, record, source: 'live' })
@@ -665,35 +537,28 @@ describe('Runtime-backed ChatRoom application port', () => {
     await expect(messageStore.query()).resolves.toEqual([textRecord('history'), record])
   })
 
-  it('persists a runtime-accepted record through an ACK failure and recovers on the next event', async () => {
+  it('persists a runtime-accepted record through an ACK failure and recovers on the next projection', async () => {
     const { room, emitInbound, messageStore, server } = await setup()
     const messages: ChatMessage[] = []
-    const errors: Error[] = []
     room.onMessage((message) => messages.push(message))
-    room.onError((error) => errors.push(error))
     vi.mocked(server.ackInbound).mockRejectedValueOnce(new Error('invalid ACK failed'))
-    await settle()
 
     // The Runtime hands the adapter an already schema-accepted typed record: persistence write
-    // trusts it (the receiving boundary is authoritative), so the record is inserted and only
-    // the ACK transport failure surfaces as an error with a bounded retry.
+    // trusts it (the receiving boundary is authoritative), so the record is inserted; the ACK
+    // transport failure rejects the apply, and the next projection retries the same fact.
     const accepted = textRecord('accepted-inbound')
-    await emitInbound({ sequence: 1, domain: DOMAIN, record: accepted, source: 'live' })
+    await expect(emitInbound({ sequence: 1, domain: DOMAIN, record: accepted, source: 'live' })).rejects.toThrow(
+      'invalid ACK failed'
+    )
 
     expect(messages).toEqual([accepted.message])
-    expect(errors).toEqual([new Error('invalid ACK failed')])
     await expect(messageStore.query()).resolves.toEqual([accepted])
     expect(server.ackInbound).toHaveBeenCalledWith({ domain: DOMAIN, sequence: 1, inserted: true })
-
-    await vi.advanceTimersByTimeAsync(1000)
-    expect(server.ackInbound).toHaveBeenCalledTimes(2)
-    expect(errors).toHaveLength(1)
 
     const valid = textRecord('valid-after-retry')
     await emitInbound({ sequence: 2, domain: DOMAIN, record: valid, source: 'live' })
 
     expect(messages).toEqual([accepted.message, valid.message])
-    expect(errors).toHaveLength(1)
     await expect(messageStore.query()).resolves.toEqual([accepted, valid])
     expect(server.ackInbound).toHaveBeenCalledTimes(3)
   })
@@ -706,7 +571,6 @@ describe('Runtime-backed ChatRoom application port', () => {
     const secondMessages: ChatMessage[] = []
     first.room.onMessage((message) => firstMessages.push(message))
     second.room.onMessage((message) => secondMessages.push(message))
-    await settle()
     const record = textRecord('shared-live')
 
     await Promise.all([
@@ -718,45 +582,20 @@ describe('Runtime-backed ChatRoom application port', () => {
     await expect(first.messageStore.query()).resolves.toEqual([record])
   })
 
-  it('emits an inserted live message once even when its Runtime ACK needs retry', async () => {
-    const { room, emitInbound, server } = await setup()
+  it('emits an inserted live message once even when its Runtime ACK rejects the first apply', async () => {
+    const { room, emitInbound, apply, server } = await setup()
     const messages: ChatMessage[] = []
     room.onMessage((message) => messages.push(message))
     vi.mocked(server.ackInbound).mockRejectedValueOnce(new Error('ack failed'))
-    await settle()
     const record = textRecord('ack-retry')
 
-    await emitInbound({ sequence: 4, domain: DOMAIN, record, source: 'live' })
+    await expect(emitInbound({ sequence: 4, domain: DOMAIN, record, source: 'live' })).rejects.toThrow('ack failed')
     expect(messages).toEqual([record.message])
 
-    await vi.advanceTimersByTimeAsync(1000)
-    await settle()
+    // The next projection of the same retained fact re-persists idempotently and ACKs once more.
+    await apply()
     expect(server.ackInbound).toHaveBeenCalledTimes(2)
     expect(messages).toEqual([record.message])
-  })
-
-  it('persists but does not project a winning live insert from a stale host callback', async () => {
-    const controlled = new ControlledDatabase(createMemoryMessageDatabase(`host-swap-${databaseId++}`))
-    let release!: () => void
-    controlled.beforeWrite = () =>
-      new Promise<void>((resolve) => {
-        release = resolve
-      })
-    const fixture = await setup([], controlled)
-    const messages: ChatMessage[] = []
-    fixture.room.onMessage((message) => messages.push(message))
-    await settle()
-    const record = textRecord('host-swap')
-
-    const inbound = fixture.emitInbound({ sequence: 5, domain: DOMAIN, record, source: 'live' })
-    await settle()
-    fixture.setSnapshot({ ...domainSnapshot(), hostId: 'host-2' })
-    release()
-    await inbound
-
-    expect(messages).toEqual([])
-    await expect(fixture.messageStore.query()).resolves.toEqual([record])
-    expect(fixture.server.ackInbound).not.toHaveBeenCalled()
   })
 
   it('returns an accepted text before its independent insertion settles', async () => {
@@ -769,7 +608,6 @@ describe('Runtime-backed ChatRoom application port', () => {
       fixture.sent.push(event)
       return event
     })
-    await settle()
     await fixture.room.joinRoom({ user: USER, site: SITE })
     order.length = 0
     controlled.beforeWrite = async () => {
@@ -797,7 +635,6 @@ describe('Runtime-backed ChatRoom application port', () => {
     const controlled = new ControlledDatabase(createMemoryMessageDatabase(`reaction-settlement-${databaseId++}`))
     controlled.beforeWrite = () => insertion.promise
     const fixture = await setup([], controlled)
-    await settle()
 
     let settled = false
     const reactionTask = fixture.room
@@ -821,7 +658,6 @@ describe('Runtime-backed ChatRoom application port', () => {
   it('returns this call allocated message instead of a same-id canonical winner', async () => {
     const existing = textRecord('allocated-text', REMOTE)
     const fixture = await setup([existing])
-    await settle()
 
     const message = await fixture.room.sendMessage({ type: 'text', body: 'new body', mentions: [] })
 
@@ -841,7 +677,6 @@ describe('Runtime-backed ChatRoom application port', () => {
     controlled.beforeWrite = beforeWrite
     const fixture = await setup([], controlled)
     vi.mocked(fixture.server.sendChatMessage).mockRejectedValue(new Error('transport rejected'))
-    await settle()
 
     await expect(fixture.room.sendMessage({ type: 'text', body: 'hello', mentions: [] })).rejects.toThrow(
       'transport rejected'
@@ -859,7 +694,6 @@ describe('Runtime-backed ChatRoom application port', () => {
     const fixture = await setup([], controlled)
     const errors: Error[] = []
     fixture.room.onError((error) => errors.push(error))
-    await settle()
 
     await expect(fixture.room.sendMessage({ type: 'text', body: 'hello', mentions: [] })).resolves.toMatchObject({
       id: 'allocated-text',
@@ -875,7 +709,7 @@ describe('Runtime-backed ChatRoom application port', () => {
     const older = textRecord('older', REMOTE, 10)
     const fixture = await setup([older, noticeRecord('notice', 30), recent])
     const query = vi.spyOn(fixture.messageStore, 'query')
-    await settle()
+    await fixture.apply()
 
     fixture.emitHistory({
       type: 'request',
@@ -901,7 +735,7 @@ describe('Runtime-backed ChatRoom application port', () => {
       mode: 'provider' as const
     }
     let suppliedResult: Error | 'pending' = 'pending'
-    const supplied = fixture.pagePort.supplyHistory('page-1', request).then(
+    const supplied = fixture.pagePort.supplyHistory(`tab:${fixture.tabId}`, request).then(
       () => {
         suppliedResult = new Error('History supply unexpectedly resolved')
       },
@@ -932,7 +766,6 @@ describe('Runtime-backed ChatRoom application port', () => {
       // After physical exit the cancelled supply settles exactly once.
       expect(fixture.server.rejectHistorySupply).toHaveBeenCalledOnce()
       expect(fixture.server.rejectHistorySupply).toHaveBeenCalledWith({
-        pageId: 'page-1',
         supplyId: request.supplyId,
         reason: 'History supply cancelled'
       })
@@ -959,7 +792,7 @@ describe('Runtime-backed ChatRoom application port', () => {
       mode: 'provider' as const
     }
     let oldSupplyResult: Error | 'pending' | null = 'pending'
-    const oldSupply = fixture.pagePort.supplyHistory('page-1', oldRequest).then(
+    const oldSupply = fixture.pagePort.supplyHistory(`tab:${fixture.tabId}`, oldRequest).then(
       (result) => {
         oldSupplyResult = result === null ? null : new Error('Old history supply unexpectedly returned records')
       },
@@ -971,7 +804,7 @@ describe('Runtime-backed ChatRoom application port', () => {
     const replacementEvents: HistorySupplyEvent[] = []
 
     try {
-      await fixture.server.provideHistory({ pageId: 'page-1', domain: DOMAIN }, (event) => {
+      await fixture.server.provideHistory({ domain: DOMAIN }, (event) => {
         replacementEvents.push(event)
       })
       await settle()
@@ -989,7 +822,9 @@ describe('Runtime-backed ChatRoom application port', () => {
         cutoff: 0,
         mode: 'provider' as const
       }
-      const newSupply = fixture.pagePort.supplyHistory('page-1', newRequest).catch((error: Error) => error)
+      const newSupply = fixture.pagePort
+        .supplyHistory(`tab:${fixture.tabId}`, newRequest)
+        .catch((error: Error) => error)
       expect(replacementEvents).toEqual([{ type: 'request', request: newRequest }])
       fixture.releaseQuery.resolve([])
       await settle()
@@ -999,7 +834,6 @@ describe('Runtime-backed ChatRoom application port', () => {
       // while the new supply (owned by the replacement provider registration) stays pending.
       expect(fixture.server.rejectHistorySupply).toHaveBeenCalledOnce()
       expect(fixture.server.rejectHistorySupply).toHaveBeenCalledWith({
-        pageId: 'page-1',
         supplyId: oldRequest.supplyId,
         reason: 'History supply cancelled'
       })
@@ -1007,7 +841,7 @@ describe('Runtime-backed ChatRoom application port', () => {
       expect(fixture.pagePort.pendingHistoryCountForTest()).toBe(1)
       expect(fixture.server.resolveHistorySupply).not.toHaveBeenCalled()
 
-      fixture.pagePort.removePage('page-1')
+      fixture.pagePort.removePage(fixture.tabId)
       await expect(newSupply).resolves.toEqual(new Error('History supplier page detached'))
     } finally {
       fixture.releaseQuery.resolve([])
@@ -1019,12 +853,12 @@ describe('Runtime-backed ChatRoom application port', () => {
   })
 
   it('reconnects the current room without publishing a synthetic leave snapshot', async () => {
-    const { room, leaveCount, reconnectCount } = await setup()
+    const { room, leaveCount, reconnectCount, apply } = await setup()
     const snapshots: Array<readonly ChatSession[]> = []
     const leaves: ChatSession[] = []
     room.onSessions((sessions) => snapshots.push(sessions))
     room.onLeaveRoom((session) => leaves.push(session))
-    await settle()
+    await apply()
     await room.joinRoom({ user: USER, site: SITE })
 
     await room.leaveRoom()
@@ -1038,75 +872,8 @@ describe('Runtime-backed ChatRoom application port', () => {
   it('translates a cancelled Runtime reconnect into an AbortError', async () => {
     const { room, server } = await setup()
     vi.spyOn(server, 'reconnectDomain').mockResolvedValueOnce(null)
-    await settle()
 
     await expect(room.leaveRoom()).rejects.toMatchObject({ name: 'AbortError' })
-  })
-
-  it('cancels pending replay on page disposal without blocking a replacement page', async () => {
-    const fixture = serverFixture()
-    const replayStarted = Promise.withResolvers<void>()
-    const releaseReplay = Promise.withResolvers<void>()
-    let replayCalls = 0
-    let joinCalls = 0
-    const server: RuntimeServer = {
-      ...fixture.server,
-      joinChatRoom: async (payload) => {
-        joinCalls += 1
-        return fixture.server.joinChatRoom(payload)
-      },
-      replayInbound: async () => {
-        replayCalls += 1
-        if (replayCalls === 1) {
-          replayStarted.resolve()
-          await releaseReplay.promise
-        }
-        return []
-      }
-    }
-    const database = createMemoryMessageDatabase(`disposed-replay-${databaseId++}`)
-    const messageStore = createMessageStore(database)
-    const createRoom = () =>
-      new ChatRoom({
-        server,
-        messageStore,
-        pageDomain: DOMAIN,
-        pageId: 'page-1',
-        getSnapshot: () => domainSnapshot(),
-        whenReady: (listener) => {
-          listener()
-          return () => {}
-        }
-      })
-    const firstRoom = createRoom()
-    let firstResult: Error | 'pending' | null = 'pending'
-    const firstJoin = firstRoom.joinRoom({ user: USER, site: SITE }).then(
-      () => {
-        firstResult = null
-      },
-      (error: Error) => {
-        firstResult = error
-      }
-    )
-    await replayStarted.promise
-
-    try {
-      firstRoom.dispose()
-      await settle()
-      expect(firstResult).toMatchObject({ name: 'AbortError' })
-      expect(joinCalls).toBe(0)
-
-      const replacement = createRoom()
-      await replacement.joinRoom({ user: USER, site: SITE })
-      expect(replayCalls).toBe(2)
-      expect(joinCalls).toBe(1)
-      replacement.dispose()
-    } finally {
-      releaseReplay.resolve()
-      await firstJoin
-      firstRoom.dispose()
-      await database.close()
-    }
   })
 
   it('reports a superseded attempt token cancelled before aborting it (real Runtime adapter)', async () => {
@@ -1114,21 +881,11 @@ describe('Runtime-backed ChatRoom application port', () => {
     const database = createMemoryMessageDatabase(`supersede-${databaseId++}`)
     const messageStore = createMessageStore(database)
     const server: RuntimeServer = {
-      ...serverFixture().server,
+      ...(await setup()).server,
       joinChatRoom: async () => heldJoin
     }
     const lifecycle = createConnectionLifecycle()
-    const room = new ChatRoom({
-      server,
-      messageStore,
-      pageDomain: DOMAIN,
-      pageId: 'page-1',
-      getSnapshot: () => domainSnapshot(),
-      whenReady: (listener) => {
-        listener()
-        return () => {}
-      }
-    })
+    const room = new ChatRoom({ server, messageStore, pageDomain: DOMAIN })
     room.bindConnectionResultReporter(lifecycle.report)
     room.bindStandaloneInvocation(lifecycle.value.mint, lifecycle.value.bindTask)
 

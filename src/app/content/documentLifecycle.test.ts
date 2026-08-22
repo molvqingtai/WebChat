@@ -13,7 +13,7 @@ import { createMemoryMessageDatabase } from '@/domain/impls/database/Memory'
 import { SendLifecycleExtern } from '@/domain/externs/SendLifecycle'
 import { createSendLifecycle } from '@/domain/impls/SendLifecycle'
 import { MessageDatabaseExtern } from '@/domain/MessageStore'
-import { ClientLease } from '@/runtime/ClientLease'
+import { DocumentClient } from '@/runtime/DocumentClient'
 import type { RuntimeCoordinator, RuntimePageRegistration, RuntimeSnapshot } from '@/runtime/Contract'
 import { createDocumentLifecycleOwner } from './documentLifecycle'
 
@@ -37,7 +37,7 @@ const flushMicrotasks = async () => {
 let databaseId = 0
 const activeStores = new Set<RemeshStore>()
 
-const createComposedFixture = (lease: ClientLease) => {
+const createComposedFixture = (lease: DocumentClient) => {
   const toast = {
     success: vi.fn(() => 'success'),
     error: vi.fn(() => RUNTIME_TOAST_ID),
@@ -109,7 +109,6 @@ describe('Content document-lifecycle owner composed parent control', () => {
   it('proves exact-once release/cancel, single readiness owner, and late-restore silence through the real owner', async () => {
     vi.useFakeTimers()
     const domain = 'https://example.test'
-    const pageId = 'page-a'
     const readySnapshot: RuntimeSnapshot = {
       hostId: 'host-a',
       hostPhase: 'ready',
@@ -118,17 +117,20 @@ describe('Content document-lifecycle owner composed parent control', () => {
         {
           domain,
           phase: 'active',
-          pageIds: [pageId],
+          tabIds: [1],
+          inbound: [],
+          historyFeedback: [],
           chatRoomJoined: true,
           sessions: []
         }
       ],
-      world: { joined: true, peerId: 'peer-a', presences: [] }
+      world: { joined: true, peerId: 'peer-a', presences: [] },
+      failures: []
     }
     const registerPage = vi.fn<RuntimeCoordinator['registerPage']>().mockResolvedValue({ snapshot: readySnapshot })
-    const lease = new ClientLease({
+    const lease = new DocumentClient({
       coordinator: { registerPage },
-      pageId,
+      server: { getSnapshot: async () => readySnapshot } as never,
       domain
     })
     const detachSpy = vi.spyOn(lease, 'detach')
@@ -235,7 +237,6 @@ describe('Content document-lifecycle owner composed parent control', () => {
   it('does not revive feedback or ownership when a held restore settles after terminal teardown', async () => {
     vi.useFakeTimers()
     const domain = 'https://example.test'
-    const pageId = 'page-a'
     const readySnapshot: RuntimeSnapshot = {
       hostId: 'host-a',
       hostPhase: 'ready',
@@ -244,12 +245,15 @@ describe('Content document-lifecycle owner composed parent control', () => {
         {
           domain,
           phase: 'active',
-          pageIds: [pageId],
+          tabIds: [1],
+          inbound: [],
+          historyFeedback: [],
           chatRoomJoined: true,
           sessions: []
         }
       ],
-      world: { joined: true, peerId: 'peer-a', presences: [] }
+      world: { joined: true, peerId: 'peer-a', presences: [] },
+      failures: []
     }
     let resolveHeld!: (value: RuntimePageRegistration) => void
     const held = new Promise<RuntimePageRegistration>((resolve) => {
@@ -259,9 +263,9 @@ describe('Content document-lifecycle owner composed parent control', () => {
       .fn<RuntimeCoordinator['registerPage']>()
       .mockResolvedValueOnce({ snapshot: readySnapshot })
       .mockImplementationOnce(() => held)
-    const lease = new ClientLease({
+    const lease = new DocumentClient({
       coordinator: { registerPage },
-      pageId,
+      server: { getSnapshot: async () => readySnapshot } as never,
       domain
     })
     let readinessSubscriptions = 0

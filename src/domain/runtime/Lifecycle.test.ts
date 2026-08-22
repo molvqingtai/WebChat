@@ -29,23 +29,23 @@ const setup = () => {
 describe('LifecycleDomain', () => {
   it('tracks an attached page lease', () => {
     const { store, runtime } = setup()
-    store.send(runtime.command.AttachPageCommand({ domain: 'https://example.com', pageId: 'page-a' }))
-    expect(store.query(runtime.query.DomainLeaseQuery('https://example.com'))?.pageIds).toEqual(['page-a'])
+    store.send(runtime.command.AttachPageCommand({ domain: 'https://example.com', tabId: 1 }))
+    expect(store.query(runtime.query.DomainLeaseQuery('https://example.com'))?.tabIds).toEqual([1])
   })
 
   it('uses one idempotent lease per page and one grace generation for real two-tab cleanup', () => {
     const { clock, store, runtime } = setup()
     const domain = 'https://example.com'
-    store.send(runtime.command.AttachPageCommand({ domain, pageId: 'page-a' }))
-    store.send(runtime.command.AttachPageCommand({ domain, pageId: 'page-a' }))
-    store.send(runtime.command.AttachPageCommand({ domain, pageId: 'page-b' }))
-    expect(store.query(runtime.query.DomainLeaseQuery(domain))?.pageIds).toEqual(['page-a', 'page-b'])
+    store.send(runtime.command.AttachPageCommand({ domain, tabId: 1 }))
+    store.send(runtime.command.AttachPageCommand({ domain, tabId: 1 }))
+    store.send(runtime.command.AttachPageCommand({ domain, tabId: 2 }))
+    expect(store.query(runtime.query.DomainLeaseQuery(domain))?.tabIds).toEqual([1, 2])
 
-    store.send(runtime.command.DetachPageCommand({ domain, pageId: 'page-a' }))
+    store.send(runtime.command.DetachPageCommand({ domain, tabId: 1 }))
     clock.advance(RUNTIME_DOMAIN_GRACE_MS + 1)
     expect(store.query(runtime.query.DomainLeaseQuery(domain))?.phase).toBe('active')
 
-    store.send(runtime.command.DetachPageCommand({ domain, pageId: 'page-b' }))
+    store.send(runtime.command.DetachPageCommand({ domain, tabId: 2 }))
     expect(store.query(runtime.query.DomainLeaseQuery(domain))?.phase).toBe('grace')
     clock.advance(RUNTIME_DOMAIN_GRACE_MS + 1)
     expect(store.query(runtime.query.DomainLeaseQuery(domain))).toBeNull()
@@ -53,14 +53,14 @@ describe('LifecycleDomain', () => {
 
   it('rebuilds coordinator lease truth idempotently from persisted page facts', () => {
     const persisted = [
-      { domain: 'https://example.com', pageId: 'page-a' },
-      { domain: 'https://example.com', pageId: 'page-b' }
+      { domain: 'https://example.com', tabId: 1 },
+      { domain: 'https://example.com', tabId: 2 }
     ]
     const restarted = setup()
     persisted.forEach((lease) => restarted.store.send(restarted.runtime.command.AttachPageCommand(lease)))
     persisted.forEach((lease) => restarted.store.send(restarted.runtime.command.AttachPageCommand(lease)))
     const leases = restarted.store.query(restarted.runtime.query.DomainLeasesQuery())
     expect(leases).toHaveLength(1)
-    expect(leases[0].pageIds).toEqual(['page-a', 'page-b'])
+    expect(leases[0].tabIds).toEqual([1, 2])
   })
 })

@@ -48,6 +48,8 @@ export interface SessionDomainState {
   user: ChatUser
   site: ChatSite
   joinedAt: number
+  /** True only when the current local generation was newly allocated (not a retained recovery). */
+  fresh: boolean
   sessions: SessionBinding[]
 }
 
@@ -477,6 +479,7 @@ const SessionDomain = Remesh.domain({
           user,
           site,
           joinedAt: local.joinedAt,
+          fresh: !current && local.status === 'pending',
           sessions: payload.mode === 'join' ? (committed?.sessions ?? []) : []
         }
         const prepared: PreparedSession = {
@@ -576,6 +579,7 @@ const SessionDomain = Remesh.domain({
         ]
         const promotedRuntime: SessionDomainState = {
           ...prepared.runtime,
+          fresh: prepared.isNewPresence,
           sessions: [
             ...prepared.runtime.sessions,
             ...(previous?.sessions ?? []).filter(

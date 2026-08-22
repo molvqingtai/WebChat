@@ -274,6 +274,15 @@ const HistoryDomain = Remesh.domain({
       impl: ({ get }) => get(ProviderSupplyJobsState())
     })
 
+    /** Current active History loading owners per domain; the sole projection surface for Page feedback. */
+    const FeedbackOwnersQuery = domain.query({
+      name: 'History.FeedbackOwnersQuery',
+      impl: ({ get }, key: { domain: string }) =>
+        get(FeedbackOwnersState())
+          .filter((item) => item.domain === key.domain)
+          .map((item) => ({ ownerId: feedbackOwnerId(item) }))
+    })
+
     const SyncStartedEvent = domain.event<HistoryAttemptKey>({ name: 'History.SyncStartedEvent' })
     const RequesterSupplyStartedEvent = domain.event<HistoryAttemptKey>({
       name: 'History.RequesterSupplyStartedEvent'
@@ -2442,19 +2451,14 @@ const HistoryDomain = Remesh.domain({
       impl: ({ fromEvent }) =>
         fromEvent(deliveryDomain.event.InboundBatchDiscardedEvent).pipe(map(DiscardRequesterBatchCommand))
     })
-    domain.effect({
-      name: 'History.FeedbackProjectEffect',
-      impl: ({ fromEvent }) =>
-        fromEvent(FeedbackChangedEvent).pipe(
-          map((event) => {
-            void pagePort.emitHistoryFeedback(pagePort.historyPageIds(event.domain), event)
-            return null
-          })
-        )
-    })
-
     return {
-      query: { RequesterAttemptsQuery, ProviderAttemptsQuery, ProviderSupplyJobsQuery, DomainCleanupSettledQuery },
+      query: {
+        RequesterAttemptsQuery,
+        ProviderAttemptsQuery,
+        ProviderSupplyJobsQuery,
+        DomainCleanupSettledQuery,
+        FeedbackOwnersQuery
+      },
       command: {
         HistoryMessagesPullCommand,
         ResetPeerHistorySyncCommand,
@@ -2469,7 +2473,8 @@ const HistoryDomain = Remesh.domain({
         SyncStartedEvent,
         SyncCompletedEvent,
         DeadPagesEvent,
-        ErrorEvent
+        ErrorEvent,
+        FeedbackChangedEvent
       }
     }
   }

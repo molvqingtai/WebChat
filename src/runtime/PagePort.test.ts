@@ -2,16 +2,6 @@ import { describe, expect, it, vi } from 'vitest'
 import type { HistorySupplyEvent } from '@/runtime/Contract'
 import { PagePort } from '@/runtime/PagePort'
 
-const deferred = <Value>() => {
-  let resolve!: (value: Value) => void
-  let reject!: (reason?: unknown) => void
-  const promise = new Promise<Value>((onResolve, onReject) => {
-    resolve = onResolve
-    reject = onReject
-  })
-  return { promise, resolve, reject }
-}
-
 const request = {
   supplyId: 'supply-1',
   domain: 'https://example.com',
@@ -20,277 +10,15 @@ const request = {
   mode: 'provider' as const
 }
 
-const sharedEmitLanes = [
-  {
-    name: 'inbound',
-    register: (port: PagePort, callback: () => void | Promise<void>) => port.onInbound('page-a', () => callback()),
-    emit: (port: PagePort) => port.emitInbound(['page-a'], {} as never)
-  },
-  {
-    name: 'World presence',
-    register: (port: PagePort, callback: () => void | Promise<void>) =>
-      port.onWorldPresence('page-a', () => callback()),
-    emit: (port: PagePort) => port.emitWorldPresence(['page-a'], {} as never)
-  },
-  {
-    name: 'Runtime error',
-    register: (port: PagePort, callback: () => void | Promise<void>) => port.onError('page-a', () => callback()),
-    emit: (port: PagePort) => port.emitError(['page-a'], {} as never)
-  },
-  {
-    name: 'History feedback',
-    register: (port: PagePort, callback: () => void | Promise<void>) =>
-      port.onHistoryFeedback('page-a', () => callback()),
-    emit: (port: PagePort) => port.emitHistoryFeedback(['page-a'], {} as never)
-  }
-] as const
-
-describe('PagePort session-event lifecycle', () => {
-  const event = {
-    type: 'snapshot' as const,
-    domain: request.domain,
-    snapshot: {
-      localSession: {
-        sessionId: 'local-session',
-        user: { id: 'local-user', name: 'Local', avatar: '' },
-        joinedAt: 10
-      },
-      sessions: []
-    },
-    provenance: 'join' as const
-  }
-
-  it('removes session-event callbacks with their page and on host disposal', async () => {
-    const port = new PagePort()
-    const received: string[] = []
-    port.onSessionEvent('page-a', () => {
-      received.push('page-a')
-    })
-    port.onSessionEvent('page-b', () => {
-      received.push('page-b')
-    })
-
-    expect(await port.emitSessionEvent(['page-a', 'page-b'], event)).toEqual([])
-    port.removePage('page-a')
-    expect(await port.emitSessionEvent(['page-a', 'page-b'], event)).toEqual([])
-    port.dispose()
-    expect(await port.emitSessionEvent(['page-a', 'page-b'], event)).toEqual([])
-    expect(received).toEqual(['page-a', 'page-b', 'page-b'])
-  })
-
-  it('reports and removes a session-event callback that rejects', async () => {
-    const port = new PagePort()
-    const failure = new Error('page closed')
-    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
-    port.onSessionEvent('page-a', async () => {
-      throw failure
-    })
-
-    expect(await port.emitSessionEvent(['page-a'], event)).toEqual(['page-a'])
-    expect(await port.emitSessionEvent(['page-a'], event)).toEqual([])
-    expect(diagnostic).toHaveBeenCalledOnce()
-    expect(diagnostic).toHaveBeenCalledWith(failure)
-    diagnostic.mockRestore()
-  })
-
-  it('keeps a replacement session-event callback active when a stale callback rejects', async () => {
-    const port = new PagePort()
-    const started = deferred<void>()
-    const release = deferred<void>()
-    const failure = new Error('page closed')
-    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
-    const received: string[] = []
-    port.onSessionEvent('page-a', async () => {
-      started.resolve()
-      await release.promise
-      throw failure
-    })
-    const staleDelivery = port.emitSessionEvent(['page-a'], event)
-    await started.promise
-
-    const replacement = port.beginSessionEvent('page-a', (current) => {
-      received.push(current.type)
-    })
-    await expect(port.activateSessionEvent('page-a', replacement)).resolves.toBe(true)
-
-    release.resolve()
-    expect(await staleDelivery).toEqual([])
-    expect(port.isSessionEventActive('page-a', replacement)).toBe(true)
-    expect(await port.emitSessionEvent(['page-a'], event)).toEqual([])
-    expect(received).toEqual(['snapshot'])
-    expect(diagnostic).toHaveBeenCalledOnce()
-    expect(diagnostic).toHaveBeenCalledWith(failure)
-    diagnostic.mockRestore()
-  })
-
-  it('buffers session deltas until a replacement callback activates', async () => {
-    const port = new PagePort()
-    const received: string[] = []
-    const generation = port.beginSessionEvent('page-a', (current) => {
-      received.push(current.type)
-    })
-
-    expect(
-      await port.emitSessionEvent(['page-a'], {
-        type: 'join',
-        domain: request.domain,
-        snapshot: event.snapshot,
-        session: {
-          sourcePeerId: 'remote-peer',
-          sessionId: 'remote-session',
-          user: { id: 'remote-user', name: 'Remote', avatar: '' },
-          joinedAt: 11
-        },
-        provenance: 'live'
-      })
-    ).toEqual([])
-    expect(received).toEqual([])
-
-    await expect(port.activateSessionEvent('page-a', generation)).resolves.toBe(true)
-    expect(await port.emitSessionEvent(['page-a'], event)).toEqual([])
-    expect(received).toEqual(['join', 'snapshot'])
-  })
-
-  it('delivers active session deltas in commit order through one exact callback tail', async () => {
-    const port = new PagePort()
-    const firstStarted = deferred<void>()
-    const releaseFirst = deferred<void>()
-    const received: string[] = []
-    port.onSessionEvent('page-a', async (current) => {
-      received.push(`start:${current.type}`)
-      if (current.type === 'join') {
-        firstStarted.resolve()
-        await releaseFirst.promise
-      }
-      received.push(`end:${current.type}`)
-    })
-    const join = {
-      type: 'join' as const,
-      domain: request.domain,
-      snapshot: event.snapshot,
-      session: {
-        sourcePeerId: 'remote-peer',
-        sessionId: 'remote-session',
-        user: { id: 'remote-user', name: 'Remote', avatar: '' },
-        joinedAt: 11
-      },
-      provenance: 'live' as const
-    }
-
-    const first = port.emitSessionEvent(['page-a'], join)
-    await firstStarted.promise
-    const second = port.emitSessionEvent(['page-a'], event)
-    let secondSettled = false
-    void second.then(() => {
-      secondSettled = true
-    })
-    await Promise.resolve()
-
-    expect(received).toEqual(['start:join'])
-    expect(secondSettled).toBe(false)
-    releaseFirst.resolve()
-    await expect(first).resolves.toEqual([])
-    await expect(second).resolves.toEqual([])
-    expect(received).toEqual(['start:join', 'end:join', 'start:snapshot', 'end:snapshot'])
-  })
-})
-
-describe('PagePort Runtime error delivery', () => {
-  it('keeps the error message intact across the Chrome JSON transport boundary', async () => {
-    const port = new PagePort()
-    const received: unknown[] = []
-    port.onError('page-a', (error) => {
-      received.push(JSON.parse(JSON.stringify(error)))
-    })
-
-    expect(
-      await port.emitError(['page-a'], {
-        eventId: 'event-1',
-        message: 'Runtime transport disconnected',
-        subsystem: 'connection',
-        operation: 'lifecycle'
-      })
-    ).toEqual([])
-    expect(received).toEqual([
-      { eventId: 'event-1', message: 'Runtime transport disconnected', subsystem: 'connection', operation: 'lifecycle' }
-    ])
-  })
-
-  it.each(['synchronous', 'asynchronous'] as const)(
-    'keeps a %s error-delivery callback failure as one direct diagnostic',
-    async (mode) => {
-      const port = new PagePort()
-      const failure = new Error(`${mode} page error delivery failed`)
-      const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
-      port.onError('page-a', () => {
-        if (mode === 'synchronous') throw failure
-        return Promise.reject(failure)
-      })
-
-      await expect(
-        port.emitError(['page-a'], {
-          eventId: 'event-failed',
-          message: 'original Runtime failure',
-          subsystem: 'connection',
-          operation: 'lifecycle'
-        })
-      ).resolves.toEqual(['page-a'])
-
-      expect(diagnostic).toHaveBeenCalledOnce()
-      expect(diagnostic).toHaveBeenCalledWith(failure)
-      expect(await port.emitError(['page-a'], {} as never)).toEqual([])
-      diagnostic.mockRestore()
-    }
-  )
-})
-
-describe('PagePort shared callback lifecycle', () => {
-  it.each(sharedEmitLanes)(
-    'keeps a replacement $name callback and Sessions generation active when a stale callback rejects',
-    async ({ register, emit }) => {
-      const port = new PagePort()
-      const started = deferred<void>()
-      const release = deferred<void>()
-      const failure = new Error('page closed')
-      const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
-      const received: string[] = []
-      const sessions: string[] = []
-      port.onSessionEvent('page-a', () => {
-        sessions.push('current')
-      })
-      register(port, async () => {
-        started.resolve()
-        await release.promise
-        throw failure
-      })
-      const staleDelivery = emit(port)
-      await started.promise
-
-      register(port, () => {
-        received.push('current')
-      })
-      release.resolve()
-      expect(await staleDelivery).toEqual([])
-      expect(await emit(port)).toEqual([])
-      expect(received).toEqual(['current'])
-      expect(await port.emitSessionEvent(['page-a'], {} as never)).toEqual([])
-      expect(sessions).toEqual(['current'])
-      expect(diagnostic).toHaveBeenCalledOnce()
-      expect(diagnostic).toHaveBeenCalledWith(failure)
-      diagnostic.mockRestore()
-    }
-  )
-})
-
 describe('PagePort history request/response', () => {
   it('settles one supply id exactly once through the explicit response RPC', async () => {
     const port = new PagePort()
-    port.provideHistory('page-a', request.domain, () => {})
-    const pending = port.supplyHistory('page-a', request)
+    port.provideHistory(1, request.domain, () => {})
+    const pending = port.supplyHistory('tab:1', request)
 
-    port.resolveHistorySupply('page-a', request.supplyId, { records: [], done: true })
-    port.resolveHistorySupply('page-a', request.supplyId, { records: [], done: false })
-    port.rejectHistorySupply('page-a', request.supplyId, 'late rejection')
+    port.resolveHistorySupply(1, request.supplyId, { records: [], done: true })
+    port.resolveHistorySupply(1, request.supplyId, { records: [], done: false })
+    port.rejectHistorySupply(1, request.supplyId, 'late rejection')
 
     await expect(pending).resolves.toEqual({ records: [], done: true })
     expect(port.pendingHistoryCountForTest()).toBe(0)
@@ -299,21 +27,21 @@ describe('PagePort history request/response', () => {
   it('waits for explicit physical settlement after cancelling a correlated request', async () => {
     const port = new PagePort()
     const events: HistorySupplyEvent[] = []
-    port.provideHistory('page-a', request.domain, (event) => {
+    port.provideHistory(1, request.domain, (event) => {
       events.push(event)
     })
-    const pending = port.supplyHistory('page-a', request)
+    const pending = port.supplyHistory('tab:1', request)
     const rejected = expect(pending).rejects.toThrow('History supplier timed out')
 
     const cancelled = port.cancelHistorySupply(request.supplyId)
     await Promise.resolve()
     expect(port.pendingHistoryCountForTest()).toBe(1)
 
-    port.rejectHistorySupply('page-a', request.supplyId, 'IndexedDB transaction aborted')
+    port.rejectHistorySupply(1, request.supplyId, 'IndexedDB transaction aborted')
     await expect(cancelled).resolves.toBeUndefined()
     await rejected
-    port.resolveHistorySupply('page-a', request.supplyId, { records: [], done: true })
-    port.rejectHistorySupply('page-a', request.supplyId, 'late rejection')
+    port.resolveHistorySupply(1, request.supplyId, { records: [], done: true })
+    port.rejectHistorySupply(1, request.supplyId, 'late rejection')
 
     expect(port.pendingHistoryCountForTest()).toBe(0)
     expect(events).toEqual([
@@ -325,16 +53,16 @@ describe('PagePort history request/response', () => {
   it('cancels pending work before replacing the same page provider', async () => {
     const port = new PagePort()
     const oldEvents: HistorySupplyEvent[] = []
-    port.provideHistory('page-a', request.domain, (event) => {
+    port.provideHistory(1, request.domain, (event) => {
       oldEvents.push(event)
     })
-    const pending = port.supplyHistory('page-a', request)
+    const pending = port.supplyHistory('tab:1', request)
 
-    port.provideHistory('page-a', request.domain, () => {})
+    port.provideHistory(1, request.domain, () => {})
     await Promise.resolve()
     expect(port.pendingHistoryCountForTest()).toBe(1)
 
-    port.rejectHistorySupply('page-a', request.supplyId, 'old provider cancelled')
+    port.rejectHistorySupply(1, request.supplyId, 'old provider cancelled')
     await expect(pending).resolves.toBeNull()
     expect(port.pendingHistoryCountForTest()).toBe(0)
     expect(oldEvents.at(-1)).toEqual({ type: 'cancel', supplyId: request.supplyId })
@@ -343,17 +71,17 @@ describe('PagePort history request/response', () => {
   it('logs a detached page cancellation callback failure and still settles the pending supply', async () => {
     const port = new PagePort()
     const failure = new Error('detached page cancel exploded')
-    port.provideHistory('page-a', request.domain, (event) => {
+    port.provideHistory(1, request.domain, (event) => {
       if (event.type === 'cancel') throw failure
     })
-    const pending = port.supplyHistory('page-a', request)
+    const pending = port.supplyHistory('tab:1', request)
     const outcome = pending.then(
       () => ({ status: 'resolved' as const }),
       (error: unknown) => ({ status: 'rejected' as const, error })
     )
     const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
 
-    port.removePage('page-a')
+    port.removePage(1)
 
     // The detached page's callback failure is a direct diagnostic at its exact owner, never
     // swallowed and never rerouted, while the pending supply still settles by its own contract.
@@ -369,10 +97,10 @@ describe('PagePort history request/response', () => {
   it('logs an active cancellation callback failure and settles the pending supply', async () => {
     const port = new PagePort()
     const failure = new Error('active page cancel exploded')
-    port.provideHistory('page-a', request.domain, (event) => {
+    port.provideHistory(1, request.domain, (event) => {
       if (event.type === 'cancel') throw failure
     })
-    const pending = port.supplyHistory('page-a', request)
+    const pending = port.supplyHistory('tab:1', request)
     const outcome = pending.then(
       () => ({ status: 'resolved' as const }),
       (error: unknown) => ({ status: 'rejected' as const, error })
@@ -393,18 +121,18 @@ describe('PagePort history request/response', () => {
 
   it('releases a failed or host-disposed pending correlation', async () => {
     const rejectedPort = new PagePort()
-    rejectedPort.provideHistory('page-a', request.domain, () => {})
-    const rejected = rejectedPort.supplyHistory('page-a', request)
-    rejectedPort.rejectHistorySupply('page-a', request.supplyId, 'store failed')
+    rejectedPort.provideHistory(1, request.domain, () => {})
+    const rejected = rejectedPort.supplyHistory('tab:1', request)
+    rejectedPort.rejectHistorySupply(1, request.supplyId, 'store failed')
     await expect(rejected).rejects.toThrow('store failed')
     expect(rejectedPort.pendingHistoryCountForTest()).toBe(0)
 
     const disposedPort = new PagePort()
     const events: HistorySupplyEvent[] = []
-    disposedPort.provideHistory('page-a', request.domain, (event) => {
+    disposedPort.provideHistory(1, request.domain, (event) => {
       events.push(event)
     })
-    const disposed = disposedPort.supplyHistory('page-a', request)
+    const disposed = disposedPort.supplyHistory('tab:1', request)
     disposedPort.dispose()
     await expect(disposed).rejects.toThrow('History supplier page detached')
     expect(disposedPort.pendingHistoryCountForTest()).toBe(0)

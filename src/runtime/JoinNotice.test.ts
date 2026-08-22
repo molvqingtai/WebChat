@@ -15,7 +15,8 @@ import type { PresenceStore } from '@/domain/runtime/externs/PresenceStore'
 import { MESSAGE_TYPE, type ChatUser, type WireCodec } from '@/protocol'
 import { createMemoryPresenceStore } from '@/runtime/PresenceStore'
 import { createServer, disposeServer, getChatRoomId, getWorldRoomId } from '@/runtime/Server'
-import type { RuntimeServer, RuntimeSessionEvent, RuntimeSnapshot } from '@/runtime/Contract'
+import { DocumentClient } from '@/runtime/DocumentClient'
+import type { RuntimeServer, RuntimeSessionEvent } from '@/runtime/Contract'
 import type { RoomTransport } from '@/runtime/RoomTransport'
 
 const DOMAIN = 'https://example.test'
@@ -281,47 +282,76 @@ const createStack = async (
       await Promise.resolve()
     }
   }
+  // One fake browser tab per stack: commits notify it through the real fire-and-forget surface,
+  // and the hint drives the genuine document-local drain (register/read -> appliers).
+  const tabId = stacks.length + 1
+  const tabs = new Map([[tabId, { id: tabId, url: `${DOMAIN}/` }]])
+  const messageListeners = new Set<(message: unknown) => void>()
   const server = createServer({
     transport: network.transport(peerId),
     clock,
     codec: jsonCodec,
-    presenceStore: options.presenceStore
+    presenceStore: options.presenceStore,
+    admission: {
+      tabs: {
+        get: async (id: number) => {
+          const tab = tabs.get(id)
+          if (!tab) throw new Error('tab missing')
+          return tab
+        },
+        query: async () => [...tabs.values()],
+        sendMessage: async (_id: number, message: unknown) => {
+          messageListeners.forEach((listener) => listener(message))
+        }
+      },
+      ensureTransport: async () => {}
+    }
   })
-  const pageId = `page-${peerId}`
-  const initialSnapshot = await server.attachPage({ domain: DOMAIN, pageId })
+  const withCaller = <Payload extends object>(payload: Payload) => ({ ...payload, caller: { tab: tabs.get(tabId)! } })
+  const serverFacade: RuntimeServer = {
+    attachPage: (payload) => server.attachPage(withCaller(payload)),
+    getSnapshot: (payload) => server.getSnapshot(payload ? withCaller(payload) : withCaller({})),
+    joinChatRoom: (payload) => server.joinChatRoom(withCaller(payload)),
+    leaveChatRoom: (payload) => server.leaveChatRoom(withCaller(payload)),
+    allocateTextMessage: (payload) => server.allocateTextMessage(withCaller(payload)),
+    allocateReactionMessage: (payload) => server.allocateReactionMessage(withCaller(payload)),
+    sendChatMessage: (payload) => server.sendChatMessage(withCaller(payload)),
+    ackInbound: (payload) => server.ackInbound(withCaller(payload)),
+    reconnectDomain: (payload) => server.reconnectDomain(withCaller(payload)),
+    provideHistory: (payload, callback) => server.provideHistory(withCaller(payload), callback),
+    resolveHistorySupply: (payload) => server.resolveHistorySupply(withCaller(payload)),
+    rejectHistorySupply: (payload) => server.rejectHistorySupply(withCaller(payload))
+  }
+  const coordinator = {
+    registerPage: async (payload: { domain: string }) => ({ snapshot: await serverFacade.attachPage(payload) })
+  }
+  const client = new DocumentClient({ coordinator, server: serverFacade, domain: DOMAIN })
+  messageListeners.add((message) => {
+    if ((message as { type?: string }).type === 'runtime:state-changed') client.invalidate()
+  })
   const database = createMemoryMessageDatabase(`join-notice-${databaseId++}`)
   const messageStore = createMessageStore(database)
   const sessionEvents: RuntimeSessionEvent[] = []
   const errors: string[] = []
-  const observedServer: RuntimeServer = {
-    ...server,
-    allocateTextMessage: (payload) => {
-      options.onAllocateText?.()
-      return server.allocateTextMessage(payload)
-    },
-    allocateReactionMessage: (payload) => {
-      options.onAllocateReaction?.()
-      return server.allocateReactionMessage(payload)
-    },
-    onSessionEvent: (payload, listener) =>
-      server.onSessionEvent(payload, async (event) => {
-        sessionEvents.push(event)
-        await listener(event)
-      })
-  }
-  let snapshot: RuntimeSnapshot = initialSnapshot
   const adapter = new RuntimeChatRoom({
-    server: observedServer,
+    server: serverFacade,
     messageStore,
-    pageDomain: DOMAIN,
-    pageId,
-    getSnapshot: () => snapshot,
-    whenReady: (listener) => {
-      listener()
-      return () => {}
-    }
+    pageDomain: DOMAIN
   })
+  client.registerApplier('chat', (projection) => {
+    const current = projection.domains.find((item) => item.domain === DOMAIN)
+    sessionEvents.push({
+      type: 'snapshot',
+      domain: DOMAIN,
+      snapshot: { localSession: current?.localSession, sessions: current?.sessions ?? [] },
+      provenance: 'refresh'
+    })
+    adapter.applyChat(projection)
+  })
+  client.registerApplier('persistence', (projection) => adapter.applyPersistence(projection))
+  client.whenFailure((error) => errors.push(error.message))
   adapter.onError((error) => errors.push(error.message))
+  await client.init()
   const storage: Storage = {
     get: async <Value extends StorageValue>() => userInfo(user) as Value,
     set: async () => {},
@@ -346,7 +376,7 @@ const createStack = async (
 
   let serverDisposed = false
   const stack: ApplicationStack = {
-    server,
+    server: serverFacade,
     adapter,
     store,
     sessionEvents,
@@ -354,12 +384,10 @@ const createStack = async (
     join: async () => {
       store.send(room.command.JoinRoomCommand())
       await vi.waitFor(() => expect(store.query(room.query.JoinIsFinishedQuery())).toBe(true))
-      snapshot = await server.getSnapshot()
       await vi.waitFor(() => expect(store.query(list.query.LoadIsFinishedQuery())).toBe(true))
     },
     rejoin: async () => {
       await adapter.joinRoom({ user, site: SITE })
-      snapshot = await server.getSnapshot()
     },
     reload: () => store.send(list.command.ReloadCommand()),
     notices: async () =>
@@ -382,6 +410,7 @@ const createStack = async (
     dispose: async () => {
       store.discard()
       adapter.dispose()
+      client.detach()
       stack.crash()
       await database.close()
     }
@@ -475,7 +504,6 @@ describe('join notice observation baseline', () => {
 
     network.redeliverLastSession('peer-c', 'peer-b')
     b.reload()
-    await b.server.attachPage({ domain: DOMAIN, pageId: 'page-b-reattached' })
     await b.server.reconnectDomain({ domain: DOMAIN })
     await b.rejoin()
 

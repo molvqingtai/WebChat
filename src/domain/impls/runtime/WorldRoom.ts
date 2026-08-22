@@ -1,7 +1,7 @@
 import EventHub from '@resreq/event-hub'
 import type { WorldState } from '@/domain/externs/WorldRoom'
 import type { ChatUser, ChatSite, WorldRoomMessage } from '@/protocol'
-import type { RuntimeServer, RuntimeSnapshot, WorldPresenceEvent } from '@/runtime/Contract'
+import type { RuntimeSnapshot } from '@/runtime/Contract'
 
 interface Contribution {
   sourcePeerId: string
@@ -10,42 +10,13 @@ interface Contribution {
   order: number
 }
 
-export interface WorldRoomDependencies {
-  server: RuntimeServer
-  pageId: string
-  getSnapshot: () => RuntimeSnapshot
-  whenReady: (callback: () => void) => () => void
-}
-
-const contributionKey = (sourcePeerId: string, origin: string) => `${sourcePeerId}\u0000${origin}`
-
+/**
+ * Page-local World projection owner. It holds no remote Runtime callback: the sole
+ * document-local drain applies each pulled current projection here under one owner.
+ */
 export class WorldRoom extends EventHub {
   private readonly contributions = new Map<string, Contribution>()
   private nextOrder = 0
-  private attachmentTask: Promise<void> = Promise.resolve()
-
-  constructor(private readonly dependencies: WorldRoomDependencies) {
-    super()
-    dependencies.whenReady(() => {
-      const attachedHostId = dependencies.getSnapshot().hostId
-      const attachCurrentHost = () => this.attachRuntime(attachedHostId)
-      // The settled tail serializes both outcomes; this attachment's rejection is transferred
-      // exactly once to the room error owner and then becomes the next settled queue token.
-      this.attachmentTask = this.attachmentTask
-        .then(attachCurrentHost, attachCurrentHost)
-        .then(undefined, (error) => this.emitError(error))
-    })
-  }
-
-  private emitError(error: unknown) {
-    const failure = error instanceof Error ? error : new Error(String(error))
-    try {
-      this.emit('error', failure)
-    } catch (deliveryError) {
-      // A projection listener cannot reopen the serialized attachment tail or recursively emit.
-      console.error(deliveryError)
-    }
-  }
 
   private replaceSource(sourcePeerId: string, presence: WorldRoomMessage, activeKeys?: Set<string>) {
     const nextOrigins = new Set(presence.sites.map((site) => site.origin))
@@ -83,23 +54,14 @@ export class WorldRoom extends EventHub {
     this.emit('state', this.state())
   }
 
-  private applyPresence(event: WorldPresenceEvent) {
-    if (event.presence) this.replaceSource(event.sourcePeerId, event.presence.presence)
-    else {
-      this.contributions.forEach((contribution, key) => {
-        if (contribution.sourcePeerId === event.sourcePeerId) this.contributions.delete(key)
-      })
-    }
-    this.emitState()
-  }
-
-  private applySnapshot(snapshot: RuntimeSnapshot) {
+  /** Idempotent full-projection application; safe to invoke repeatedly under the drain owner. */
+  applyWorld(projection: RuntimeSnapshot) {
     const activeKeys = new Set<string>()
-    snapshot.world.presences.forEach(({ sourcePeerId, presence }) =>
+    projection.world.presences.forEach(({ sourcePeerId, presence }) =>
       this.replaceSource(sourcePeerId, presence, activeKeys)
     )
-    if (snapshot.world.localPresence) {
-      this.replaceSource(snapshot.peerId, snapshot.world.localPresence, activeKeys)
+    if (projection.world.localPresence) {
+      this.replaceSource(projection.peerId, projection.world.localPresence, activeKeys)
     }
     this.contributions.forEach((_contribution, key) => {
       if (!activeKeys.has(key)) this.contributions.delete(key)
@@ -107,31 +69,7 @@ export class WorldRoom extends EventHub {
     this.emitState()
   }
 
-  private async attachRuntime(attachedHostId: string) {
-    const bufferedEvents: WorldPresenceEvent[] = []
-    const isCurrentHost = () => this.dependencies.getSnapshot().hostId === attachedHostId
-    let isLive = false
-    let isValidAttachment = true
-
-    await this.dependencies.server.onWorldPresence({ pageId: this.dependencies.pageId }, (event) => {
-      if (!isValidAttachment || !isCurrentHost()) return
-      if (isLive) this.applyPresence(event)
-      else bufferedEvents.push(event)
-    })
-    const snapshot = await this.dependencies.server.getSnapshot()
-    if (!isCurrentHost() || snapshot.hostId !== attachedHostId) {
-      isValidAttachment = false
-      return
-    }
-
-    this.applySnapshot(snapshot)
-    bufferedEvents.forEach((event) => this.applyPresence(event))
-    bufferedEvents.length = 0
-    isLive = true
-  }
-
   async getState() {
-    await this.attachmentTask
     return this.state()
   }
 
@@ -145,3 +83,5 @@ export class WorldRoom extends EventHub {
     return () => this.off('error', callback)
   }
 }
+
+const contributionKey = (sourcePeerId: string, origin: string) => `${sourcePeerId}\u0000${origin}`
