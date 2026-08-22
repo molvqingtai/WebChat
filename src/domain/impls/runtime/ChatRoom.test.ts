@@ -126,6 +126,15 @@ const settle = async () => {
   await Promise.resolve()
 }
 
+const domainSnapshotWithFresh = (): RuntimeSnapshot => {
+  const base = domainSnapshot()
+  const domain = base.domains[0]!
+  return {
+    ...base,
+    domains: [{ ...domain, localSession: { ...domain.localSession!, fresh: true } }]
+  }
+}
+
 const setup = async (
   records: readonly MessageRecord[] = [],
   database: Database<MessageDatabaseSchema> = createMemoryMessageDatabase(`chat-room-${databaseId++}`),
@@ -461,6 +470,66 @@ describe('Runtime-backed ChatRoom application port', () => {
       notice: { type: NOTICE_TYPE.JOIN, body: '"Local" joined the chat' },
       user: USER
     })
+  })
+
+  it('a rejected self-join write stays unapplied so a later hint writes it exactly once', async () => {
+    const database = createMemoryMessageDatabase(`self-join-retry-${databaseId++}`)
+    const fixture = await setup([], database, { fresh: true })
+    const failure = new Error('transient insert failure')
+    vi.spyOn(fixture.messageStore, 'insert').mockRejectedValueOnce(failure)
+
+    await expect(fixture.room.applyPersistence(domainSnapshotWithFresh())).rejects.toBe(failure)
+
+    // A later explicit hint pulls the same `fresh` projection: the write is retried and succeeds.
+    await fixture.room.applyPersistence(domainSnapshotWithFresh())
+    await fixture.room.applyPersistence(domainSnapshotWithFresh())
+
+    const records = await fixture.messageStore.query()
+    expect(records).toHaveLength(1)
+    expect(records[0]).toMatchObject({
+      type: MESSAGE_RECORD_TYPE.SYSTEM_NOTICE,
+      notice: { type: NOTICE_TYPE.JOIN, body: '"Local" joined the chat' }
+    })
+  })
+
+  it('a valid same-host successor of an invalid sequence persists after the negative ACK terminal', async () => {
+    const fixture = await setup()
+
+    // An invalid record is classified, diagnosed, and ACKed false once (its ordinary terminal).
+    const invalid = textRecord('invalid')
+    vi.spyOn(fixture.messageStore, 'insert').mockRejectedValueOnce(new InvalidMessageRecordError('not a record'))
+    await fixture.emitInbound({ sequence: 1, domain: DOMAIN, record: invalid, source: 'live' })
+    expect(fixture.server.ackInbound).toHaveBeenCalledWith({ domain: DOMAIN, sequence: 1, inserted: false })
+
+    // Same host, no empty projection in between: a valid successor reusing sequence 1 must
+    // persist normally and ACK true (never discarded by the retired retry knowledge).
+    const valid = textRecord('valid-successor')
+    await fixture.emitInbound({ sequence: 1, domain: DOMAIN, record: valid, source: 'live' })
+
+    await expect(fixture.messageStore.query()).resolves.toEqual([valid])
+    expect(fixture.server.ackInbound).toHaveBeenLastCalledWith({ domain: DOMAIN, sequence: 1, inserted: true })
+  })
+
+  it('a host replacement dismisses every old History feedback owner and retires old supply work', async () => {
+    const fixture = await setup()
+    const events: { ownerId: string; type: string }[] = []
+    fixture.room.onHistoryFeedback((event) => events.push({ ownerId: event.ownerId, type: event.type }))
+    const withFeedback = domainSnapshot()
+    withFeedback.domains[0]!.historyFeedback = [{ ownerId: 'b1-owner-1' }, { ownerId: 'b1-owner-2' }]
+    fixture.room.applyChat(withFeedback)
+    expect(events.map((event) => event.type)).toEqual(['loading', 'loading'])
+
+    // The replacement projection has no owners: both old owners get exactly one dismiss.
+    const replacement = domainSnapshot()
+    replacement.hostId = 'host-2'
+    fixture.room.applyChat(replacement)
+
+    expect(events).toEqual([
+      { ownerId: 'b1-owner-1', type: 'loading' },
+      { ownerId: 'b1-owner-2', type: 'loading' },
+      { ownerId: 'b1-owner-1', type: 'dismiss' },
+      { ownerId: 'b1-owner-2', type: 'dismiss' }
+    ])
   })
 
   it('a Runtime replacement resets only host-local applier state and re-provides History', async () => {

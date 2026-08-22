@@ -294,6 +294,18 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
   /** A Runtime replacement retires only host-local projection state; durable business facts stay. */
   private resetHostLocalStateIfReplaced(projection: RuntimeSnapshot) {
     if (this.appliedHostId === projection.hostId) return
+    // Old-host terminal sweep first: every projected History loading owner gets exactly one
+    // dismiss, and old-host local supply work is retired through its existing cancel surface.
+    // Neither is a cross-host acknowledgement; no durable business fact is touched.
+    for (const ownerId of this.appliedFeedbackOwnerIds) {
+      this.emit('historyFeedback', {
+        domain: this.dependencies.pageDomain,
+        ownerId,
+        type: 'dismiss'
+      } satisfies HistoryFeedbackEvent)
+    }
+    this.activeHistorySupplies.forEach((controller) => controller.abort(abortError('Runtime host replaced')))
+    this.activeHistorySupplies.clear()
     this.appliedHostId = projection.hostId
     this.appliedSessions = null
     this.appliedFeedbackOwnerIds = new Set()
@@ -315,8 +327,10 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
     if (localSession?.fresh) {
       const key = `${localSession.user.id}:${localSession.joinedAt}`
       if (key !== this.appliedSelfJoinKey) {
-        this.appliedSelfJoinKey = key
+        // The key is committed only after the idempotent write succeeds; a rejection keeps the
+        // fact unapplied so a later explicit hint retries it through the same projection.
         await persistSelfJoinNotice(this.dependencies.messageStore, localSession)
+        this.appliedSelfJoinKey = key
       }
     }
 
@@ -342,11 +356,14 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
   private async persistInbound(event: RuntimeSnapshot['domains'][number]['inbound'][number]) {
     if (event.domain !== this.dependencies.pageDomain) return
     if (this.invalidInbound.has(event.sequence)) {
+      // Retry knowledge ends at this exact current event's ordinary ACK terminal: only an ACK
+      // failure retains the sequence for the same event's next projection attempt.
       await this.dependencies.server.ackInbound({
         domain: this.dependencies.pageDomain,
         sequence: event.sequence,
         inserted: false
       })
+      this.invalidInbound.delete(event.sequence)
       return
     }
     try {
@@ -367,6 +384,8 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
           sequence: event.sequence,
           inserted: false
         })
+        // The invalid fact ends at its own successful negative ACK terminal.
+        this.invalidInbound.delete(event.sequence)
         return
       }
       throw error

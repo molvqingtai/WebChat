@@ -8,7 +8,7 @@ import { ChromiumTransportOwner } from '@/runtime/ChromiumTransportOwner'
 import { startHost } from '@/runtime/host'
 import { createBrowserPresenceStore } from '@/runtime/PresenceStore'
 import { RemoteRoomTransport } from '@/runtime/RemoteRoomTransport'
-import { notifyServerTabs, removeServerTab } from '@/runtime/Server'
+import { notifyServerTabs, readServerSnapshot, removeServerTab } from '@/runtime/Server'
 import { TRANSPORT_NAMESPACE_PREFIX, type TransportService } from '@/runtime/TransportHost'
 
 const OFFSCREEN_URL = '/offscreen.html'
@@ -58,7 +58,7 @@ const admission = {
 const ensureBackgroundHost = async () => {
   const transport = import.meta.env.FIREFOX ? undefined : await ensureChromeTransport()
   const { host } = backgroundHost.ensure(() => startHost(new ProvideAdapter(), presenceStore, transport, admission))
-  await host.server.getSnapshot()
+  readServerSnapshot(host.server)
 }
 
 export const registerPage: RuntimeCoordinator['registerPage'] = async (payload): Promise<RuntimePageRegistration> => {

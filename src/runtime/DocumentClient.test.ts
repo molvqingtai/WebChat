@@ -413,6 +413,65 @@ describe('DocumentClient one-way current-state drain', () => {
     expect(phases).toEqual(['none', 'connecting', 'ready'])
   })
 
+  it('detach fences a pending registration: a late settlement writes nothing and init starts fresh immediately', async () => {
+    const { client, coordinator, registerQueue } = setup()
+    const applied: string[] = []
+    const phases: string[] = []
+    client.registerApplier('chat', (projection) => {
+      applied.push(projection.hostId)
+    })
+    client.whenHostPhase((phase) => phases.push(phase))
+
+    const init = client.init()
+    await vi.waitFor(() => expect(coordinator.registerPage).toHaveBeenCalledTimes(1))
+    // Detach while the first registration is still pending; the waiter settles as detached.
+    client.detach()
+    await expect(init).rejects.toMatchObject({ name: 'AbortError' })
+
+    // A later init starts a fresh register-and-read owner without waiting for the old Promise.
+    const restored = client.init()
+    await vi.waitFor(() => expect(coordinator.registerPage).toHaveBeenCalledTimes(2))
+
+    // The old registration settles late: zero snapshot/applier/readiness writes from its continuation.
+    registerQueue.shift()!.resolve({ snapshot: snapshot('') })
+    await flush(30)
+    expect(applied).toEqual([])
+    expect(phases).not.toContain('ready')
+
+    registerQueue.shift()!.resolve({ snapshot: snapshot('') })
+    await expect(restored).resolves.toBeTruthy()
+    expect(applied).toEqual(['host-1'])
+  })
+
+  it('detach inside an apply stage stops the remaining stages and never publishes', async () => {
+    const { client, registerQueue } = setup()
+    const stages: string[] = []
+    const phases: string[] = []
+    client.whenHostPhase((phase) => phases.push(phase))
+    const chatSeen = deferred<void>()
+    client.registerApplier('chat', () => {
+      stages.push('chat')
+      chatSeen.resolve()
+    })
+    client.registerApplier('persistence', () => {
+      stages.push('persistence')
+    })
+    client.registerApplier('world', () => {
+      stages.push('world')
+    })
+
+    const init = client.init()
+    await vi.waitFor(() => expect(registerQueue).toHaveLength(1))
+    registerQueue.shift()!.resolve({ snapshot: snapshot('') })
+    await chatSeen.promise
+    client.detach()
+    await expect(init).rejects.toMatchObject({ name: 'AbortError' })
+    await flush(30)
+
+    expect(stages).toEqual(['chat'])
+    expect(phases).not.toContain('ready')
+  })
+
   it('document detach discards the owner; a fresh document registers again instead of recovering the old owner', async () => {
     const { client, coordinator, server, registerQueue, readQueue } = setup()
     const init = client.init()

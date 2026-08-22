@@ -26,7 +26,9 @@ export class DocumentClient {
   private registered = false
   private currentHostId: string | null = null
   private dirty = false
-  private owner: Promise<void> | null = null
+  /** The one live drain owner: a document-local exact token plus its task. Never exposed. */
+  private owner: { token: number; task: Promise<void> } | null = null
+  private ownerSequence = 0
   private readyPublished = false
   private detached = false
   private currentSnapshot: RuntimeSnapshot | null = null
@@ -81,19 +83,27 @@ export class DocumentClient {
   private startDrainIfAbsent() {
     if (this.detached || this.owner) return
     if (!this.readyPublished && !this.currentSnapshot) this.setHostPhase('connecting')
-    // The owner slot is installed before any fallible work: the drain body starts one microtask
+    // The owner token is installed before any fallible work: the drain body starts one microtask
     // later, so even a synchronous RPC throw lands inside the drain's own try/finally and the
     // common finally stays the last write to the slot.
-    this.owner = Promise.resolve().then(() => this.drain())
+    const entry = { token: ++this.ownerSequence, task: Promise.resolve() }
+    entry.task = Promise.resolve().then(() => this.drain(entry))
+    this.owner = entry
   }
 
-  private async drain() {
+  /** A continuation may mutate only while its exact owner token is active and the document lives. */
+  private isOwnerCurrent(entry: { token: number }) {
+    return !this.detached && this.owner?.token === entry.token
+  }
+
+  private async drain(entry: { token: number }) {
     try {
       do {
         this.dirty = false
         const projection = this.registered
           ? await this.options.server.getSnapshot({ domain: this.options.domain })
           : (await this.options.coordinator.registerPage({ domain: this.options.domain })).snapshot
+        if (!this.isOwnerCurrent(entry)) return
         if (this.currentHostId !== null && projection.hostId !== this.currentHostId) {
           // The logical Background was replaced: drop only host-local drain identity and loop
           // through the register-and-read surface so the fresh Runtime rebuilds tab membership
@@ -108,21 +118,30 @@ export class DocumentClient {
         this.currentHostId = projection.hostId
         this.currentSnapshot = projection
         await this.appliers.chat?.(projection)
+        if (!this.isOwnerCurrent(entry)) return
         await this.appliers.persistence?.(projection)
+        if (!this.isOwnerCurrent(entry)) return
         await this.appliers.world?.(projection)
+        if (!this.isOwnerCurrent(entry)) return
         // The pulled host phase is a pending fact until every apply stage has settled.
         this.setHostPhase(projection.hostPhase)
       } while (this.dirty)
+      if (!this.isOwnerCurrent(entry)) return
       if (!this.readyPublished) {
         this.publishReady()
       }
     } catch (error) {
+      // A fenced late continuation is inert; only a current owner's failure is published.
+      if (!this.isOwnerCurrent(entry)) return
       this.publishFailure(error)
     } finally {
-      // One synchronous finalization cut, with no await: clear the owner, immediately recheck
-      // dirty, and restart only for an explicit invalidation already reflected by dirty.
-      this.owner = null
-      if (this.dirty) this.startDrainIfAbsent()
+      // One synchronous finalization cut, with no await: only the exact current owner clears its
+      // own slot, immediately rechecks dirty, and restarts; a detached owner never touches a
+      // successor's slot.
+      if (this.owner?.token === entry.token) {
+        this.owner = null
+        if (this.dirty) this.startDrainIfAbsent()
+      }
     }
   }
 
@@ -180,6 +199,9 @@ export class DocumentClient {
     this.currentHostId = null
     this.readyPublished = false
     this.currentSnapshot = null
+    // Retire the live owner token immediately: its late continuation is fenced at every post-await
+    // checkpoint, and a later init starts a fresh register-and-read owner without waiting for it.
+    this.owner = null
     const reason = new DOMException('Runtime client detached', 'AbortError')
     this.initWaiters.forEach((waiter) => waiter.reject(reason))
     this.initWaiters.clear()

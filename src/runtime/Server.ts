@@ -55,6 +55,8 @@ const serverDisposers = new WeakMap<RuntimeServer, () => void>()
 interface ServerControl {
   removeTab: (tabId: number, url?: string) => Promise<void>
   notifyTabs: () => void
+  /** Private in-process current-state read; never exported over comctx. */
+  readSnapshot: () => RuntimeSnapshot
 }
 const serverControls = new WeakMap<RuntimeServer, ServerControl>()
 
@@ -63,6 +65,12 @@ export const removeServerTab = (server: RuntimeServer, tabId: number, url?: stri
   serverControls.get(server)?.removeTab(tabId, url) ?? Promise.resolve()
 /** Best-effort content-free invalidation of every supported current tab; fire-and-forget. */
 export const notifyServerTabs = (server: RuntimeServer) => serverControls.get(server)?.notifyTabs()
+/** Private in-process current-state read for Background/tests; not part of the remote interface. */
+export const readServerSnapshot = (server: RuntimeServer): RuntimeSnapshot => {
+  const control = serverControls.get(server)
+  if (!control) throw new Error('Logical Runtime server is unavailable')
+  return control.readSnapshot()
+}
 
 export const createServer = (config: ServerConfig): RuntimeServer => {
   const clock = config.clock ?? defaultClock
@@ -622,7 +630,8 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
       return snapshot(tabId)
     },
     getSnapshot: async (payload) => {
-      const tabId = payload ? await requireCallerTab(payload) : null
+      if (!payload) throw new Error('Caller-bearing snapshot request is required')
+      const tabId = await requireCallerTab(payload)
       return snapshot(tabId)
     },
     joinChatRoom: async (payload) => {
@@ -730,7 +739,7 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
     await detachTab(tabId)
   }
 
-  serverControls.set(server, { removeTab, notifyTabs })
+  serverControls.set(server, { removeTab, notifyTabs, readSnapshot: () => snapshot() })
   serverDisposers.set(server, () => {
     disposed = true
     presenceRecoveries.forEach((recovery) => recovery.resolve())

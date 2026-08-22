@@ -4,7 +4,13 @@ import { createMemoryMessageDatabase } from '@/domain/impls/database/Memory'
 import { createMessageStore } from '@/domain/MessageStore'
 import type { RoomTransport } from '@/runtime/RoomTransport'
 import { DocumentClient } from '@/runtime/DocumentClient'
-import { createServer, disposeServer, notifyServerTabs, type RuntimeAdmission } from '@/runtime/Server'
+import {
+  createServer,
+  disposeServer,
+  notifyServerTabs,
+  readServerSnapshot,
+  type RuntimeAdmission
+} from '@/runtime/Server'
 import type { RuntimeServer } from '@/runtime/Contract'
 
 const DOMAIN = 'https://example.com'
@@ -75,24 +81,24 @@ describe('DocumentClient across a logical Background replacement', () => {
     client.registerApplier('persistence', (projection) => chat.applyPersistence(projection))
 
     await client.init()
-    const firstHostId = (await current.getSnapshot()).hostId
-    expect((await current.getSnapshot()).domains[0]?.tabIds).toEqual([1])
+    const firstHostId = (await readServerSnapshot(current)).hostId
+    expect((await readServerSnapshot(current)).domains[0]?.tabIds).toEqual([1])
     expect(provideHistory).toHaveBeenCalledTimes(1)
 
     // The logical Background is replaced (service-worker restart): the new Runtime has no lease
     // and no History provider. Its best-effort hint reaches the surviving document's listener.
     disposeServer(current)
     current = createServer({ transport, admission })
-    expect((await current.getSnapshot()).domains).toEqual([])
+    expect((await readServerSnapshot(current)).domains).toEqual([])
     notifyServerTabs(current)
 
     // The same document drain reads the host change, re-registers through the existing
     // register-and-read surface, and the persistence stage re-provides History — no Page
     // identity, generation, ACK, replay, or delivery ownership is involved.
     await vi.waitFor(async () => {
-      expect((await current.getSnapshot()).domains[0]?.tabIds).toEqual([1])
+      expect((await readServerSnapshot(current)).domains[0]?.tabIds).toEqual([1])
     })
-    expect((await current.getSnapshot()).hostId).not.toBe(firstHostId)
+    expect((await readServerSnapshot(current)).hostId).not.toBe(firstHostId)
     await vi.waitFor(() => expect(provideHistory).toHaveBeenCalledTimes(2))
     expect(hints.some((message) => (message as { type?: string }).type === 'runtime:state-changed')).toBe(true)
 

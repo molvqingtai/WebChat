@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createServer, disposeServer, getChatRoomId, getWorldRoomId, removeServerTab } from '@/runtime/Server'
+import {
+  createServer,
+  disposeServer,
+  getChatRoomId,
+  getWorldRoomId,
+  readServerSnapshot,
+  removeServerTab
+} from '@/runtime/Server'
 import type { Clock } from '@/domain/runtime/externs/Clock'
 import type { PresenceStore } from '@/domain/runtime/externs/PresenceStore'
 import type { RoomTransport } from '@/runtime/RoomTransport'
@@ -53,13 +60,13 @@ const domainSnapshot = (snapshot: RuntimeSnapshot, domain = DOMAIN) =>
 
 /** Reads the current retained inbound message ids from the projection (replaces the removed onInbound push). */
 const projectedInboundIds = async (server: RuntimeServer, domain = DOMAIN) =>
-  ((await server.getSnapshot()).domains.find((item) => item.domain === domain)?.inbound ?? []).map(
+  ((await readServerSnapshot(server)).domains.find((item) => item.domain === domain)?.inbound ?? []).map(
     (event) => event.record.message.id
   )
 
 /** ACKs every currently projected inbound event for the domain through the ordinary action. */
 const ackAllProjectedInbound = async (server: RuntimeServer, domain = DOMAIN, inserted = true) => {
-  const events = (await server.getSnapshot()).domains.find((item) => item.domain === domain)?.inbound ?? []
+  const events = (await readServerSnapshot(server)).domains.find((item) => item.domain === domain)?.inbound ?? []
   for (const event of events) {
     await server.ackInbound({ domain, sequence: event.sequence, inserted })
   }
@@ -172,6 +179,24 @@ describe('RuntimeServer production admission and one-way notification', () => {
     for (const { message } of fixture.hints()) {
       expect(message).toEqual({ type: 'runtime:state-changed' })
     }
+    disposeServer(fixture.server)
+  })
+
+  it('rejects a caller-free remote snapshot request while the private in-process read stays available', async () => {
+    const fixture = createAdmissionFixture()
+    await fixture.attach()
+
+    // The comctx-exported method requires a caller-bearing request at runtime and at the type level.
+    await expect((fixture.server.getSnapshot as (payload?: unknown) => Promise<unknown>)()).rejects.toThrow(
+      'Caller-bearing snapshot request is required'
+    )
+
+    // The private in-process read (never exported over comctx) still answers Background/tests.
+    const internal = readServerSnapshot(fixture.server)
+    expect(internal.domains[0]).toMatchObject({ domain: DOMAIN, phase: 'active', tabIds: [7] })
+    // A legitimate Page read validates the caller and projects provider-scoped feedback.
+    const page = await fixture.server.getSnapshot(fixture.call())
+    expect(page.domains[0]?.tabIds).toEqual([7])
     disposeServer(fixture.server)
   })
 
@@ -975,7 +1000,7 @@ describe('RuntimeServer lifecycle', () => {
         { id: 'user-3', name: 'User 3', avatar: '' }
       ]
       const memberCount = async () => {
-        const domain = (await server.getSnapshot()).domains[0]
+        const domain = (await readServerSnapshot(server)).domains[0]
         return new Set(domain.sessions.map((item) => item.user.id)).size + (domain.localSession ? 1 : 0)
       }
       const announce = (peerId: string, user: { id: string; name: string; avatar: string }, sessionId: string) => {
@@ -1028,7 +1053,7 @@ describe('RuntimeServer lifecycle', () => {
       const user1 = { id: 'user-1', name: 'User 1', avatar: '' }
       const user2 = { id: 'user-2', name: 'User 2', avatar: '' }
       const memberCount = async () => {
-        const domain = (await server.getSnapshot()).domains[0]
+        const domain = (await readServerSnapshot(server)).domains[0]
         return new Set(domain.sessions.map((item) => item.user.id)).size + (domain.localSession ? 1 : 0)
       }
       const announce = (peerId: string, user: { id: string; name: string; avatar: string }, sessionId: string) => {
@@ -1109,7 +1134,7 @@ describe('RuntimeServer lifecycle', () => {
       const { fake, server, roomId } = await setup()
       const user1 = { id: 'user-1', name: 'User 1', avatar: '' }
       const memberCount = async () => {
-        const domain = (await server.getSnapshot()).domains[0]
+        const domain = (await readServerSnapshot(server)).domains[0]
         return new Set(domain.sessions.map((item) => item.user.id)).size + (domain.localSession ? 1 : 0)
       }
       fake.peerJoin(roomId, 'peer-1')
@@ -1141,7 +1166,7 @@ describe('RuntimeServer lifecycle', () => {
       const { fake, server, roomId } = await setup()
       const user1 = { id: 'user-1', name: 'User 1', avatar: '' }
       const memberCount = async () => {
-        const domain = (await server.getSnapshot()).domains[0]
+        const domain = (await readServerSnapshot(server)).domains[0]
         return new Set(domain.sessions.map((item) => item.user.id)).size + (domain.localSession ? 1 : 0)
       }
       fake.peerJoin(roomId, 'peer-1')
@@ -1159,7 +1184,7 @@ describe('RuntimeServer lifecycle', () => {
       fake.receive(roomId, 'peer-1', { ...session(user1), sessionId: 'session-user-1-attach' })
       await settle()
       expect(await memberCount()).toBe(2)
-      expect((await server.getSnapshot()).domains[0].tabIds).toContain(2)
+      expect((await readServerSnapshot(server)).domains[0].tabIds).toContain(2)
       disposeServer(server)
     } finally {
       vi.useRealTimers()
@@ -1172,7 +1197,7 @@ describe('RuntimeServer lifecycle', () => {
       const user1 = { id: 'user-1', name: 'User 1', avatar: '' }
       const { clock, fake, server, roomId } = await setup()
       const memberCount = async () => {
-        const domain = (await server.getSnapshot()).domains[0]
+        const domain = (await readServerSnapshot(server)).domains[0]
         return new Set(domain.sessions.map((item) => item.user.id)).size + (domain.localSession ? 1 : 0)
       }
       fake.peerJoin(roomId, 'peer-1')
@@ -1203,7 +1228,7 @@ describe('RuntimeServer lifecycle', () => {
       const user1 = { id: 'user-1', name: 'User 1', avatar: '' }
       const { clock, fake, server, roomId } = await setup()
       const memberCount = async () => {
-        const domain = (await server.getSnapshot()).domains[0]
+        const domain = (await readServerSnapshot(server)).domains[0]
         return new Set(domain.sessions.map((item) => item.user.id)).size + (domain.localSession ? 1 : 0)
       }
       fake.peerJoin(roomId, 'peer-1')
@@ -1241,7 +1266,7 @@ describe('RuntimeServer lifecycle', () => {
       })
       const user1 = { id: 'user-1', name: 'User 1', avatar: '' }
       const memberCount = async (server: Awaited<ReturnType<typeof setup>>['server']) => {
-        const domain = (await server.getSnapshot()).domains[0]
+        const domain = (await readServerSnapshot(server)).domains[0]
         return new Set(domain.sessions.map((item) => item.user.id)).size + (domain.localSession ? 1 : 0)
       }
 
@@ -1338,7 +1363,7 @@ describe('RuntimeServer lifecycle', () => {
     const refreshB = server.reconnectDomain({ domain: DOMAIN })
     await settle()
     // B joined A's pending reset: no replacement may commit while the clear save is unsettled.
-    expect((await server.getSnapshot()).domains[0].chatRoomJoined).toBe(false)
+    expect((await readServerSnapshot(server)).domains[0].chatRoomJoined).toBe(false)
 
     releaseClearSave.resolve()
     await Promise.all([refreshA, refreshB])
@@ -1347,7 +1372,7 @@ describe('RuntimeServer lifecycle', () => {
     // whole operation (no second destructive reset, so exactly one reset-shaped save beyond the
     // baseline: A's reset save plus the replacement commit save), and the domain converged once.
     expect(clearSaveCount - resetShapedSavesBefore).toBe(2)
-    expect((await server.getSnapshot()).domains[0].chatRoomJoined).toBe(true)
+    expect((await readServerSnapshot(server)).domains[0].chatRoomJoined).toBe(true)
     disposeServer(server)
   })
 
@@ -1375,7 +1400,7 @@ describe('RuntimeServer lifecycle', () => {
     })
     await settle()
     expect(bSettled).toBe(false)
-    expect((await server.getSnapshot()).domains[0].chatRoomJoined).toBe(false)
+    expect((await readServerSnapshot(server)).domains[0].chatRoomJoined).toBe(false)
 
     fake.open()
     await Promise.all([refreshA, refreshB])
@@ -1383,7 +1408,7 @@ describe('RuntimeServer lifecycle', () => {
     // A's prepared session survived (no second reset), and the domain converged to one committed
     // replacement shared by both refreshes.
     expect(bSettled).toBe(true)
-    expect((await server.getSnapshot()).domains[0].chatRoomJoined).toBe(true)
+    expect((await readServerSnapshot(server)).domains[0].chatRoomJoined).toBe(true)
     expect(fake.physicalJoinCalls.filter((id) => id === getChatRoomId(DOMAIN))).toHaveLength(2)
     disposeServer(server)
   })
@@ -1416,7 +1441,7 @@ describe('RuntimeServer lifecycle', () => {
     await server.attachPage({ domain: DOMAIN, caller: { tab: { id: 1, url: '' } } })
     await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
     await settle()
-    expect((await server.getSnapshot()).domains[0].chatRoomJoined).toBe(true)
+    expect((await readServerSnapshot(server)).domains[0].chatRoomJoined).toBe(true)
 
     // The cleared-observer persistence rejects: the refresh must fail without committing a
     // replacement, and a later retry must recover through the canonical join.
@@ -1425,12 +1450,12 @@ describe('RuntimeServer lifecycle', () => {
       'Domain connection reset persistence failed'
     )
     await settle()
-    expect((await server.getSnapshot()).domains[0].chatRoomJoined).toBe(false)
+    expect((await readServerSnapshot(server)).domains[0].chatRoomJoined).toBe(false)
 
     rejectClearSave = false
     await server.reconnectDomain({ domain: DOMAIN })
     await settle()
-    expect((await server.getSnapshot()).domains[0].chatRoomJoined).toBe(true)
+    expect((await readServerSnapshot(server)).domains[0].chatRoomJoined).toBe(true)
     disposeServer(server)
   })
 
@@ -1460,7 +1485,7 @@ describe('RuntimeServer lifecycle', () => {
     await settle()
 
     const presenceIdBefore = (Object.values(values)[0] as { local: { presenceId: string } }).local.presenceId
-    const before = await server.getSnapshot()
+    const before = await readServerSnapshot(server)
     const beforeLocal = before.domains.find((item) => item.domain === DOMAIN)!.localSession!
     const beforeOther = before.domains.find((item) => item.domain === OTHER_DOMAIN)!
     const beforeWorld = before.world
@@ -1468,7 +1493,7 @@ describe('RuntimeServer lifecycle', () => {
     await server.reconnectDomain({ domain: DOMAIN })
     await settle()
 
-    const after = await server.getSnapshot()
+    const after = await readServerSnapshot(server)
     const afterLocal = after.domains.find((item) => item.domain === DOMAIN)!.localSession!
     const afterOther = after.domains.find((item) => item.domain === OTHER_DOMAIN)!
     const afterWorld = after.world
@@ -1491,7 +1516,7 @@ describe('RuntimeServer lifecycle', () => {
     expect(afterWorld.presences).toEqual([])
     emitRemoteWorldPresence(fake)
     await settle()
-    expect((await server.getSnapshot()).world.presences).toEqual(beforeWorld.presences)
+    expect((await readServerSnapshot(server)).world.presences).toEqual(beforeWorld.presences)
     // The other domain's connection, members, and local session are untouched.
     expect(afterOther.localSession).toEqual(beforeOther.localSession)
     expect(afterOther.sessions.map((item) => item.user.id)).toEqual(['user-x'])
@@ -1508,7 +1533,7 @@ describe('RuntimeServer lifecycle', () => {
     await settle()
     emitRemoteWorldPresence(fake)
     await settle()
-    const before = await server.getSnapshot()
+    const before = await readServerSnapshot(server)
     expect(before.world.joined).toBe(true)
     expect(before.world.presences.map((item) => item.sourcePeerId)).toContain('remote-peer')
 
@@ -1524,7 +1549,7 @@ describe('RuntimeServer lifecycle', () => {
     expect(fake.operationLog.filter((entry) => entry === `leave:${worldRoomId}`)).toHaveLength(1)
     expect(fake.physicalJoinCalls.filter((roomId) => roomId === worldRoomId)).toHaveLength(2)
 
-    const after = await server.getSnapshot()
+    const after = await readServerSnapshot(server)
     // Active registrations and the complete local presence survive and re-publish through the
     // fresh generation; the remote projection rebuilds only from current-generation facts.
     expect(after.world.joined).toBe(true)
@@ -1532,7 +1557,7 @@ describe('RuntimeServer lifecycle', () => {
     expect(after.world.presences).toEqual([])
     emitRemoteWorldPresence(fake)
     await settle()
-    expect((await server.getSnapshot()).world.presences.map((item) => item.sourcePeerId)).toContain('remote-peer')
+    expect((await readServerSnapshot(server)).world.presences.map((item) => item.sourcePeerId)).toContain('remote-peer')
 
     // A later activation after both children settled starts a distinct new replacement.
     await server.reconnectDomain({ domain: DOMAIN })
@@ -1568,7 +1593,7 @@ describe('RuntimeServer lifecycle', () => {
     await server.attachPage({ domain: DOMAIN, caller: { tab: { id: 1, url: '' } } })
     await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
     await settle()
-    expect((await server.getSnapshot()).world.joined).toBe(true)
+    expect((await readServerSnapshot(server)).world.joined).toBe(true)
 
     // World failure never changes the Domain result: the World child's own recovery join rejects
     // once while the Domain refresh still completes, and the World still converges to a fresh
@@ -1576,8 +1601,8 @@ describe('RuntimeServer lifecycle', () => {
     fake.failNextJoin(worldRoomId)
     await server.reconnectDomain({ domain: DOMAIN })
     await settle()
-    expect((await server.getSnapshot()).domains[0].chatRoomJoined).toBe(true)
-    expect((await server.getSnapshot()).world.joined).toBe(true)
+    expect((await readServerSnapshot(server)).domains[0].chatRoomJoined).toBe(true)
+    expect((await readServerSnapshot(server)).world.joined).toBe(true)
     expect(fake.physicalJoinCalls.filter((roomId) => roomId === worldRoomId)).toHaveLength(2)
 
     // A Domain terminal does not cancel the World operation: the reset persistence rejects the
@@ -1588,9 +1613,9 @@ describe('RuntimeServer lifecycle', () => {
       'Domain connection reset persistence failed'
     )
     await settle()
-    expect((await server.getSnapshot()).domains[0].chatRoomJoined).toBe(false)
+    expect((await readServerSnapshot(server)).domains[0].chatRoomJoined).toBe(false)
     expect(fake.physicalJoinCalls.filter((roomId) => roomId === worldRoomId)).toHaveLength(3)
-    expect((await server.getSnapshot()).world.joined).toBe(true)
+    expect((await readServerSnapshot(server)).world.joined).toBe(true)
     disposeServer(server)
   })
 
@@ -1605,7 +1630,7 @@ describe('RuntimeServer lifecycle', () => {
     emitRemoteWorldPresence(fake)
     await settle()
     const oldWorldPeerId = fake.transport.peerIdOf(worldRoomId)
-    expect((await server.getSnapshot()).world.presences.map((item) => item.sourcePeerId)).toContain('remote-peer')
+    expect((await readServerSnapshot(server)).world.presences.map((item) => item.sourcePeerId)).toContain('remote-peer')
 
     await server.reconnectDomain({ domain: DOMAIN })
     await settle()
@@ -1614,17 +1639,17 @@ describe('RuntimeServer lifecycle', () => {
     // local World peer id each lose their contribution, so the list rebuilds only from
     // current-generation facts (no stale remote, no duplicated local presence).
     // The prior remote source and prior local World peer id each lose their contribution.
-    const projectedSources = (await server.getSnapshot()).world.presences.map((item) => item.sourcePeerId)
+    const projectedSources = (await readServerSnapshot(server)).world.presences.map((item) => item.sourcePeerId)
     expect(projectedSources).not.toContain('remote-peer')
     expect(projectedSources).not.toContain(oldWorldPeerId)
-    expect((await server.getSnapshot()).world.presences).toEqual([])
+    expect((await readServerSnapshot(server)).world.presences).toEqual([])
     // The fresh local presence is committed under the replacement generation.
-    expect((await server.getSnapshot()).world.localPresence?.user).toEqual(USER)
+    expect((await readServerSnapshot(server)).world.localPresence?.user).toEqual(USER)
     // A current-generation re-publication rebuilds the remote projection; a never-republishing
     // remote stays absent.
     emitRemoteWorldPresence(fake)
     await settle()
-    expect((await server.getSnapshot()).world.presences.map((item) => item.sourcePeerId)).toContain('remote-peer')
+    expect((await readServerSnapshot(server)).world.presences.map((item) => item.sourcePeerId)).toContain('remote-peer')
     disposeServer(server)
   })
 
@@ -1644,8 +1669,8 @@ describe('RuntimeServer lifecycle', () => {
     fake.failNextJoin(worldRoomId)
     await server.reconnectDomain({ domain: DOMAIN })
     await settle()
-    expect((await server.getSnapshot()).domains[0].chatRoomJoined).toBe(true)
-    expect((await server.getSnapshot()).failures).toEqual([])
+    expect((await readServerSnapshot(server)).domains[0].chatRoomJoined).toBe(true)
+    expect((await readServerSnapshot(server)).failures).toEqual([])
     expect(diagnostic).toHaveBeenCalledWith(expect.objectContaining({ message: `Room "${worldRoomId}" join failed` }))
     diagnostic.mockRestore()
     disposeServer(server)
@@ -1666,9 +1691,9 @@ describe('RuntimeServer lifecycle', () => {
     await expect(server.reconnectDomain({ domain: DOMAIN })).resolves.toBeUndefined()
     await settle()
 
-    expect((await server.getSnapshot()).domains[0]).toMatchObject({ chatRoomJoined: true })
-    expect((await server.getSnapshot()).world.joined).toBe(true)
-    expect((await server.getSnapshot()).failures).toEqual([])
+    expect((await readServerSnapshot(server)).domains[0]).toMatchObject({ chatRoomJoined: true })
+    expect((await readServerSnapshot(server)).world.joined).toBe(true)
+    expect((await readServerSnapshot(server)).failures).toEqual([])
     expect(diagnostic).toHaveBeenCalledOnce()
     expect(diagnostic).toHaveBeenCalledWith(failure)
     diagnostic.mockRestore()
@@ -1683,7 +1708,7 @@ describe('RuntimeServer lifecycle', () => {
     await server.attachPage({ domain: DOMAIN, caller: { tab: { id: 1, url: '' } } })
     await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
     await settle()
-    expect((await server.getSnapshot()).world.joined).toBe(true)
+    expect((await readServerSnapshot(server)).world.joined).toBe(true)
 
     // The other Domain's combined Chat+World join pends provisionally with the current World
     // generation captured in its join fence.
@@ -1703,7 +1728,7 @@ describe('RuntimeServer lifecycle', () => {
     fake.open()
     await Promise.all([refresh, otherJoin])
     await settle()
-    const after = await server.getSnapshot()
+    const after = await readServerSnapshot(server)
     expect(after.domains.some((item) => item.domain === OTHER_DOMAIN && item.chatRoomJoined)).toBe(true)
     expect(fake.operationLog).toContain(`leave:${worldRoomId}`)
     expect(after.world.joined).toBe(true)
@@ -1730,8 +1755,8 @@ describe('RuntimeServer lifecycle', () => {
     fake.releaseSends()
     await refresh
     await settle()
-    expect((await server.getSnapshot()).failures).toEqual([])
-    const after = await server.getSnapshot()
+    expect((await readServerSnapshot(server)).failures).toEqual([])
+    const after = await readServerSnapshot(server)
     expect(after.world.joined).toBe(true)
     expect(after.world.localPresence?.sites.map((site) => site.origin)).toContain(DOMAIN)
     disposeServer(server)
@@ -1747,7 +1772,7 @@ describe('RuntimeServer lifecycle', () => {
     await server.attachPage({ domain: OTHER_DOMAIN, caller: { tab: { id: 2, url: '' } } })
     await server.joinChatRoom({ domain: OTHER_DOMAIN, user: USER, site: { origin: OTHER_DOMAIN } })
     await settle()
-    expect((await server.getSnapshot()).world.localPresence?.sites).toHaveLength(2)
+    expect((await readServerSnapshot(server)).world.localPresence?.sites).toHaveLength(2)
     emitRemoteWorldPresence(fake)
     await settle()
 
@@ -1765,7 +1790,7 @@ describe('RuntimeServer lifecycle', () => {
     await Promise.all([refresh, releaseB])
     await settle()
 
-    const after = await server.getSnapshot()
+    const after = await readServerSnapshot(server)
     expect(after.domains.some((item) => item.domain === DOMAIN && item.chatRoomJoined)).toBe(true)
     // B's release settled exactly once through the fresh generation (unjoined shell, no session).
     expect(after.domains.some((item) => item.domain === OTHER_DOMAIN && item.chatRoomJoined)).toBe(false)
@@ -1799,8 +1824,8 @@ describe('RuntimeServer lifecycle', () => {
     fake.releaseSends()
     await Promise.all([refresh, otherJoin])
     await settle()
-    expect((await server.getSnapshot()).failures).toEqual([])
-    const after = await server.getSnapshot()
+    expect((await readServerSnapshot(server)).failures).toEqual([])
+    const after = await readServerSnapshot(server)
     expect(after.world.joined).toBe(true)
     expect(after.world.localPresence?.sites.map((site) => site.origin)).toEqual(
       expect.arrayContaining([DOMAIN, OTHER_DOMAIN])
@@ -1823,8 +1848,8 @@ describe('RuntimeServer lifecycle', () => {
     fake.failNextSend(worldRoomId)
     await server.reconnectDomain({ domain: DOMAIN })
     await settle()
-    expect((await server.getSnapshot()).domains[0].chatRoomJoined).toBe(true)
-    expect((await server.getSnapshot()).failures).toEqual([])
+    expect((await readServerSnapshot(server)).domains[0].chatRoomJoined).toBe(true)
+    expect((await readServerSnapshot(server)).failures).toEqual([])
     disposeServer(server)
   })
 
@@ -1854,28 +1879,28 @@ describe('RuntimeServer lifecycle', () => {
     await server.attachPage({ domain: DOMAIN, caller: { tab: { id: 1, url: '' } } })
     await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
     await settle()
-    expect((await server.getSnapshot()).world.joined).toBe(true)
+    expect((await readServerSnapshot(server)).world.joined).toBe(true)
 
     rejectClearSave = true
     await expect(server.reconnectDomain({ domain: DOMAIN })).rejects.toThrow(
       'Domain connection reset persistence failed'
     )
     await settle()
-    expect((await server.getSnapshot()).domains[0].chatRoomJoined).toBe(false)
+    expect((await readServerSnapshot(server)).domains[0].chatRoomJoined).toBe(false)
     // The failed activation still ran exactly one World replacement, and it COMMITS through
     // preserved demand even while no Domain is committed: Domain failure never strands it.
     expect(fake.physicalJoinCalls.filter((roomId) => roomId === worldRoomId)).toHaveLength(2)
-    expect((await server.getSnapshot()).world.joined).toBe(true)
+    expect((await readServerSnapshot(server)).world.joined).toBe(true)
 
     // The retained-seed retry starts its own World child concurrently with the Domain retry — one
     // more replacement, never a re-rotation of a Domain-created owner.
     rejectClearSave = false
     await server.reconnectDomain({ domain: DOMAIN })
     await settle()
-    expect((await server.getSnapshot()).domains[0].chatRoomJoined).toBe(true)
+    expect((await readServerSnapshot(server)).domains[0].chatRoomJoined).toBe(true)
     expect(fake.physicalJoinCalls.filter((roomId) => roomId === worldRoomId)).toHaveLength(3)
     expect(fake.operationLog.filter((entry) => entry === `leave:${worldRoomId}`)).toHaveLength(2)
-    expect((await server.getSnapshot()).world.joined).toBe(true)
+    expect((await readServerSnapshot(server)).world.joined).toBe(true)
     disposeServer(server)
   })
 
@@ -1890,7 +1915,7 @@ describe('RuntimeServer lifecycle', () => {
     void server.reconnectDomain({ domain: DOMAIN })
     await settle()
     expect(fake.operationLog.filter((entry) => entry === `leave:${worldRoomId}`)).toHaveLength(0)
-    expect((await server.getSnapshot()).world.joined).toBe(false)
+    expect((await readServerSnapshot(server)).world.joined).toBe(false)
     disposeServer(server)
   })
 
@@ -1992,7 +2017,7 @@ describe('RuntimeServer lifecycle', () => {
     expect(fake.desired).toEqual(new Set([roomId, worldRoomId]))
     expect(fake.joined).toEqual(new Set())
     expect(fake.sendAttempts).toEqual([])
-    const provisional = await server.getSnapshot()
+    const provisional = await readServerSnapshot(server)
     expect(provisional.domains[0]).toMatchObject({ chatRoomJoined: false, localSession: undefined })
     expect(provisional.world).toMatchObject({ joined: false, localPresence: undefined })
 
@@ -2022,7 +2047,7 @@ describe('RuntimeServer lifecycle', () => {
     await settle()
 
     expect(fake.messages(worldRoomId).filter(isWorldPresence)).toHaveLength(1)
-    const converged = await server.getSnapshot()
+    const converged = await readServerSnapshot(server)
     expect(converged.domains[0]).toMatchObject({
       chatRoomJoined: true,
       localSession: { user: USER },
@@ -2062,7 +2087,7 @@ describe('RuntimeServer lifecycle', () => {
     })
     await settle()
 
-    expect((await server.getSnapshot()).domains[0]).toMatchObject({
+    expect((await readServerSnapshot(server)).domains[0]).toMatchObject({
       chatRoomJoined: false,
       localSession: undefined
     })
@@ -2106,12 +2131,12 @@ describe('RuntimeServer lifecycle', () => {
       joinedAt: NOW + 1
     })
     await settle()
-    expect((await server.getSnapshot()).domains[0]?.sessions).toEqual([])
+    expect((await readServerSnapshot(server)).domains[0]?.sessions).toEqual([])
 
     fake.releaseSends()
     await join
     await settle()
-    expect((await server.getSnapshot()).domains[0]?.sessions).toEqual([
+    expect((await readServerSnapshot(server)).domains[0]?.sessions).toEqual([
       expect.objectContaining({ sourcePeerId: 'later-peer', user: REMOTE_USER })
     ])
   })
@@ -2146,7 +2171,7 @@ describe('RuntimeServer lifecycle', () => {
     })
     await settle()
 
-    const sessions = (await server.getSnapshot()).domains[0].sessions.filter((item) =>
+    const sessions = (await readServerSnapshot(server)).domains[0].sessions.filter((item) =>
       ['remote-peer-a', 'remote-peer-b'].includes(item.sourcePeerId)
     )
     expect(sessions).toHaveLength(2)
@@ -2172,7 +2197,7 @@ describe('RuntimeServer lifecycle', () => {
     const secondJoin = server.joinChatRoom({ domain: DOMAIN, user: refreshedUser, site: SITE })
 
     await expect(firstJoin).resolves.toBeNull()
-    expect((await server.getSnapshot()).domains[0]?.localSession).toBeUndefined()
+    expect((await readServerSnapshot(server)).domains[0]?.localSession).toBeUndefined()
     fake.open()
     const snapshot = await secondJoin
     if (!snapshot) throw new Error('Join was cancelled')
@@ -2187,7 +2212,9 @@ describe('RuntimeServer lifecycle', () => {
     expect(fake.messages(worldRoomId).filter(isWorldPresence).at(-1)).toEqual(
       expect.objectContaining({ user: refreshedUser })
     )
-    expect((await server.getSnapshot()).world.presences.map((item) => item.sourcePeerId)).not.toContain('local-peer')
+    expect((await readServerSnapshot(server)).world.presences.map((item) => item.sourcePeerId)).not.toContain(
+      'local-peer'
+    )
     expect(snapshot.domains[0]).toMatchObject({ chatRoomJoined: true, localSession: { user: refreshedUser } })
   })
 
@@ -2211,7 +2238,7 @@ describe('RuntimeServer lifecycle', () => {
     fake.open()
     expect(fake.physicalJoinCalls).toEqual([])
     expect(fake.sendAttempts).toEqual([])
-    expect((await server.getSnapshot()).domains).toEqual([])
+    expect((await readServerSnapshot(server)).domains).toEqual([])
   })
 
   it('rolls back a bounded cold join timeout before a late physical open', async () => {
@@ -2230,7 +2257,7 @@ describe('RuntimeServer lifecycle', () => {
     expect(fake.desired).toEqual(new Set())
     expect(fake.joined).toEqual(new Set())
     expect(fake.sendAttempts).toEqual([])
-    expect((await server.getSnapshot()).domains[0]).toMatchObject({
+    expect((await readServerSnapshot(server)).domains[0]).toMatchObject({
       chatRoomJoined: false,
       localSession: undefined
     })
@@ -2269,7 +2296,7 @@ describe('RuntimeServer lifecycle', () => {
   it('keeps a reconnect provisional and commits one replacement session after physical recovery', async () => {
     const { fake, server, roomId } = await setup()
     const worldRoomId = getWorldRoomId()
-    const before = await server.getSnapshot()
+    const before = await readServerSnapshot(server)
     // A live remote target turns the reconnect revision into one wire publication.
     emitRemoteWorldPresence(fake)
     await settle()
@@ -2290,13 +2317,13 @@ describe('RuntimeServer lifecycle', () => {
     expect(fake.joined).toEqual(new Set())
     // The refresh destruction removed the committed aggregate: no prior session/readiness may
     // satisfy the replacement while it is still provisional.
-    expect((await server.getSnapshot()).domains[0].localSession).toBeUndefined()
+    expect((await readServerSnapshot(server)).domains[0].localSession).toBeUndefined()
     fake.open()
     await worldSendAttempt
     fake.releaseSends()
     await reconnect
 
-    const after = await server.getSnapshot()
+    const after = await readServerSnapshot(server)
     expect(reconnectResult).toBe('resolved')
     expect(after.domains[0].localSession?.sessionId).not.toBe(before.domains[0].localSession?.sessionId)
     expect(fake.physicalJoinCalls.filter((id) => id === roomId)).toHaveLength(2)
@@ -2321,13 +2348,13 @@ describe('RuntimeServer lifecycle', () => {
 
     await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
     await settle()
-    const first = (await server.getSnapshot()).domains[0]?.localSession
+    const first = (await readServerSnapshot(server)).domains[0]?.localSession
     expect(first).toMatchObject({ user: USER, joinedAt: NOW })
 
     // A later same-domain join retains the one authoritative identity in the current projection.
     await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
     await settle()
-    expect((await server.getSnapshot()).domains[0]?.localSession).toMatchObject({
+    expect((await readServerSnapshot(server)).domains[0]?.localSession).toMatchObject({
       sessionId: first!.sessionId,
       joinedAt: first!.joinedAt,
       user: first!.user
@@ -2336,16 +2363,20 @@ describe('RuntimeServer lifecycle', () => {
     const roomId = getChatRoomId(DOMAIN)
     fake.receive(roomId, 'remote-peer', session())
     await settle()
-    expect((await server.getSnapshot()).domains[0]?.sessions.map((item) => item.sourcePeerId)).toEqual(['remote-peer'])
+    expect((await readServerSnapshot(server)).domains[0]?.sessions.map((item) => item.sourcePeerId)).toEqual([
+      'remote-peer'
+    ])
 
     const refreshedUser = { ...USER, name: 'Refreshed', avatar: 'refreshed-avatar' }
     clock.advance(1)
     await server.joinChatRoom({ domain: DOMAIN, user: refreshedUser, site: SITE })
     await settle()
-    const refreshed = (await server.getSnapshot()).domains[0]?.localSession
+    const refreshed = (await readServerSnapshot(server)).domains[0]?.localSession
     expect(refreshed).toMatchObject({ user: refreshedUser, joinedAt: first!.joinedAt })
     expect(refreshed?.sessionId).toBe(first!.sessionId)
-    expect((await server.getSnapshot()).domains[0]?.sessions.map((item) => item.sourcePeerId)).toEqual(['remote-peer'])
+    expect((await readServerSnapshot(server)).domains[0]?.sessions.map((item) => item.sourcePeerId)).toEqual([
+      'remote-peer'
+    ])
     expect([...fake.joined].filter((id) => id === roomId)).toHaveLength(1)
   })
 
@@ -2357,17 +2388,17 @@ describe('RuntimeServer lifecycle', () => {
 
     await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
     await settle()
-    const first = (await server.getSnapshot()).domains[0]?.localSession
+    const first = (await readServerSnapshot(server)).domains[0]?.localSession
     expect(first?.user).toEqual(USER)
 
     await server.reconnectDomain({ domain: DOMAIN })
     await settle()
-    const second = (await server.getSnapshot()).domains[0]?.localSession
+    const second = (await readServerSnapshot(server)).domains[0]?.localSession
     expect(second?.sessionId).not.toBe(first?.sessionId)
 
     fake.roomClose(roomId)
     await vi.waitFor(async () => {
-      const third = (await server.getSnapshot()).domains[0]?.localSession
+      const third = (await readServerSnapshot(server)).domains[0]?.localSession
       expect(third?.sessionId).not.toBe(second?.sessionId)
     })
     expect(fake.joined.has(roomId)).toBe(true)
@@ -2381,7 +2412,7 @@ describe('RuntimeServer lifecycle', () => {
 
     await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
     await settle()
-    expect((await server.getSnapshot()).domains[0]).toMatchObject({ phase: 'active', tabIds: [1] })
+    expect((await readServerSnapshot(server)).domains[0]).toMatchObject({ phase: 'active', tabIds: [1] })
   })
 
   it('trusts typed identity at local production and joins without protocol revalidation', async () => {
@@ -2438,13 +2469,13 @@ describe('RuntimeServer lifecycle', () => {
     fake.receive(roomId, 'remote-peer', text('message-1'))
     await settle()
 
-    expect((await server.getSnapshot()).domains[0]).toMatchObject({ phase: 'active', tabIds: [1] })
+    expect((await readServerSnapshot(server)).domains[0]).toMatchObject({ phase: 'active', tabIds: [1] })
     expect(await projectedInboundIds(server)).toEqual(['message-1'])
     clock.advance(RUNTIME_DOMAIN_GRACE_MS + 1)
     expect(fake.joined.has(roomId)).toBe(true)
 
     await removeServerTab(server, 1)
-    expect((await server.getSnapshot()).domains[0].phase).toBe('grace')
+    expect((await readServerSnapshot(server)).domains[0].phase).toBe('grace')
     clock.advance(RUNTIME_DOMAIN_GRACE_MS + 1)
     await vi.waitFor(() => expect(fake.joined.has(roomId)).toBe(false))
   })
@@ -2518,7 +2549,7 @@ describe('RuntimeServer lifecycle', () => {
     fake.roomClose(roomId)
     await settle()
     await vi.waitFor(async () =>
-      expect((await server.getSnapshot()).failures.map((item) => item.message)).toEqual([
+      expect((await readServerSnapshot(server)).failures.map((item) => item.message)).toEqual([
         `Room "${roomId}" join failed`
       ])
     )
@@ -2528,8 +2559,8 @@ describe('RuntimeServer lifecycle', () => {
     await settle()
 
     expect(fake.joined.has(roomId)).toBe(true)
-    expect((await server.getSnapshot()).domains[0]).toMatchObject({ chatRoomJoined: true })
-    expect((await server.getSnapshot()).failures).toHaveLength(1)
+    expect((await readServerSnapshot(server)).domains[0]).toMatchObject({ chatRoomJoined: true })
+    expect((await readServerSnapshot(server)).failures).toHaveLength(1)
   })
 
   it('retries a failed World recovery at a bounded cadence until the room rejoins', async () => {
@@ -2540,17 +2571,17 @@ describe('RuntimeServer lifecycle', () => {
     fake.roomClose(worldRoomId)
     await settle()
     await vi.waitFor(async () =>
-      expect((await server.getSnapshot()).failures.map((item) => item.message)).toEqual([
+      expect((await readServerSnapshot(server)).failures.map((item) => item.message)).toEqual([
         `Room "${worldRoomId}" join failed`
       ])
     )
-    expect((await server.getSnapshot()).world.joined).toBe(false)
+    expect((await readServerSnapshot(server)).world.joined).toBe(false)
 
     await vi.advanceTimersByTimeAsync(10000)
     await settle()
 
-    expect((await server.getSnapshot()).world.joined).toBe(true)
-    expect((await server.getSnapshot()).failures).toHaveLength(1)
+    expect((await readServerSnapshot(server)).world.joined).toBe(true)
+    expect((await readServerSnapshot(server)).failures).toHaveLength(1)
   })
 
   it('retries a failed initial domain join at the bounded cadence with its preserved typed input', async () => {
@@ -2569,7 +2600,7 @@ describe('RuntimeServer lifecycle', () => {
 
     const joinsAfter = fake.joinCalls.filter((roomId) => roomId === chatRoomId).length
     expect(joinsAfter).toBeGreaterThan(joinsBefore)
-    expect((await server.getSnapshot()).domains[0]).toMatchObject({
+    expect((await readServerSnapshot(server)).domains[0]).toMatchObject({
       domain: DOMAIN,
       chatRoomJoined: true,
       localSession: { user: USER }
@@ -2593,7 +2624,7 @@ describe('RuntimeServer lifecycle', () => {
 
     const worldJoinsAfter = fake.joinCalls.filter((roomId) => roomId === worldRoomId).length
     expect(worldJoinsAfter).toBeGreaterThan(worldJoinsBefore)
-    expect((await server.getSnapshot()).world.joined).toBe(true)
+    expect((await readServerSnapshot(server)).world.joined).toBe(true)
     disposeServer(server)
   })
 
@@ -2615,7 +2646,7 @@ describe('RuntimeServer lifecycle', () => {
     const worldRemovalIndex = fake.operationLog.indexOf(`send:${worldRoomId}`)
     expect(chatLeaveIndex).toBeGreaterThanOrEqual(0)
     expect(worldRemovalIndex).toBeGreaterThan(chatLeaveIndex)
-    expect((await server.getSnapshot()).domains.map((item) => item.domain)).toEqual([OTHER_DOMAIN])
+    expect((await readServerSnapshot(server)).domains.map((item) => item.domain)).toEqual([OTHER_DOMAIN])
   })
 
   it('publishes the empty World snapshot before the final-site release owner closes', async () => {
@@ -2633,7 +2664,7 @@ describe('RuntimeServer lifecycle', () => {
     expect(fake.operationLog.indexOf(`leave:${worldRoomId}`)).toBeGreaterThan(
       fake.operationLog.lastIndexOf(`send:${worldRoomId}`)
     )
-    expect((await server.getSnapshot()).world.joined).toBe(false)
+    expect((await readServerSnapshot(server)).world.joined).toBe(false)
   })
 
   it("routes a Chat-domain provider error only to that domain's pages", async () => {
@@ -2647,7 +2678,7 @@ describe('RuntimeServer lifecycle', () => {
 
     // One retained current failure fact, scoped to its exact domain; a Page presents it only
     // when its own domain matches the scope.
-    expect((await server.getSnapshot()).failures).toEqual([
+    expect((await readServerSnapshot(server)).failures).toEqual([
       expect.objectContaining({ message: 'chat-a signaling failed', scope: DOMAIN })
     ])
   })
@@ -2661,11 +2692,11 @@ describe('RuntimeServer lifecycle', () => {
     fake.roomClose(roomId)
     await settle()
     await vi.waitFor(async () =>
-      expect((await server.getSnapshot()).failures.map((item) => item.message)).toEqual([
+      expect((await readServerSnapshot(server)).failures.map((item) => item.message)).toEqual([
         `Room "${roomId}" join failed`
       ])
     )
-    expect((await server.getSnapshot()).failures[0]?.scope).toBe(DOMAIN)
+    expect((await readServerSnapshot(server)).failures[0]?.scope).toBe(DOMAIN)
   })
 
   it('retains a Runtime failure as current state even when no affected tab is current', async () => {
@@ -2676,7 +2707,7 @@ describe('RuntimeServer lifecycle', () => {
 
     fake.roomClose(worldRoomId)
     await vi.waitFor(async () =>
-      expect((await server.getSnapshot()).failures.map((item) => item.message)).toEqual([
+      expect((await readServerSnapshot(server)).failures.map((item) => item.message)).toEqual([
         `Room "${worldRoomId}" join failed`
       ])
     )
@@ -2698,7 +2729,7 @@ describe('RuntimeServer lifecycle', () => {
     fake.emitError(new Error('chat-b provisional signaling failed'), roomIdB)
     await settle()
 
-    expect((await server.getSnapshot()).failures).toEqual([
+    expect((await readServerSnapshot(server)).failures).toEqual([
       expect.objectContaining({ message: 'chat-b provisional signaling failed', scope: OTHER_DOMAIN })
     ])
 
@@ -2725,7 +2756,7 @@ describe('RuntimeServer lifecycle', () => {
     await settle()
 
     // The failure is retained once with its exact domain scope; no other domain is implicated.
-    expect((await server.getSnapshot()).failures).toEqual([
+    expect((await readServerSnapshot(server)).failures).toEqual([
       expect.objectContaining({ message: 'chat-a closing leave failed', scope: DOMAIN })
     ])
 
@@ -2778,7 +2809,7 @@ describe('RuntimeServer lifecycle', () => {
     expect(fake.physicalJoinCalls.filter((id) => id === roomId)).toHaveLength(2)
     expect(fake.physicalJoinCalls.filter((id) => id === getWorldRoomId())).toHaveLength(2)
     expect(fake.operationLog.filter((entry) => entry === `leave:${roomId}`)).toHaveLength(1)
-    expect((await server.getSnapshot()).domains[0].tabIds.slice().sort()).toEqual([2, 3])
+    expect((await readServerSnapshot(server)).domains[0].tabIds.slice().sort()).toEqual([2, 3])
   })
 
   it('commits a staged cross-domain join only from a World snapshot containing its own site', async () => {
@@ -2807,7 +2838,7 @@ describe('RuntimeServer lifecycle', () => {
     // B must not become ready from the pending empty snapshot.
     expect(rejectedB).toBeUndefined()
     expect(
-      (await server.getSnapshot()).domains.find((item) => item.domain === OTHER_DOMAIN)?.chatRoomJoined ?? false
+      (await readServerSnapshot(server)).domains.find((item) => item.domain === OTHER_DOMAIN)?.chatRoomJoined ?? false
     ).toBe(false)
 
     fake.releaseSends()
@@ -2940,7 +2971,7 @@ describe('RuntimeServer lifecycle', () => {
     await vi.waitFor(() => expect(fake.joined.has(worldRoomId)).toBe(false))
     // The abort was the last World owner: the projection settles the same terminal truth as final
     // World departure instead of a false joined state with stale remote presences.
-    const world = (await server.getSnapshot()).world
+    const world = (await readServerSnapshot(server)).world
     expect(world.joined).toBe(false)
     expect(world.presences).toEqual([])
     expect(world.localPresence).toBeUndefined()
@@ -2971,7 +3002,7 @@ describe('RuntimeServer lifecycle', () => {
     // A live remote World presence arrives while the first join is provisional.
     emitRemoteWorldPresence(fake)
     await settle()
-    expect((await server.getSnapshot()).world.presences.map((item) => item.sourcePeerId)).toContain('remote-peer')
+    expect((await readServerSnapshot(server)).world.presences.map((item) => item.sourcePeerId)).toContain('remote-peer')
 
     // Supersede with a new same-domain join; the physical World owner stays live throughout.
     const refreshedUser = { ...USER, name: 'Refreshed' }
@@ -2984,7 +3015,7 @@ describe('RuntimeServer lifecycle', () => {
 
     expect(snapshot.domains[0]).toMatchObject({ domain: DOMAIN, chatRoomJoined: true })
     expect(fake.joined.has(worldRoomId)).toBe(true)
-    expect((await server.getSnapshot()).world.presences).toEqual([
+    expect((await readServerSnapshot(server)).world.presences).toEqual([
       expect.objectContaining({ sourcePeerId: 'remote-peer' })
     ])
     disposeServer(server)
@@ -3374,13 +3405,13 @@ describe('RuntimeServer provisional recovery races', () => {
     await expect(worldSendAttempt).resolves.toMatchObject({ roomId: worldRoomId })
     fake.receive(roomId, 'remote-peer', session())
     await settle()
-    const sessionsBeforeCommit = (await server.getSnapshot()).domains[0].sessions
+    const sessionsBeforeCommit = (await readServerSnapshot(server)).domains[0].sessions
     fake.releaseSends()
     await reconnect
     await settle()
 
     expect.soft(sessionsBeforeCommit).toEqual([])
-    expect((await server.getSnapshot()).domains[0].sessions).toEqual([
+    expect((await readServerSnapshot(server)).domains[0].sessions).toEqual([
       expect.objectContaining({ sourcePeerId: 'remote-peer', user: REMOTE_USER })
     ])
   })
@@ -3399,11 +3430,11 @@ describe('RuntimeServer provisional recovery races', () => {
     fake.receive(roomId, 'stale-remote-peer', session())
     await expect(worldSendAttempt).resolves.toMatchObject({ roomId: worldRoomId })
     await settle()
-    const retainedBeforeSupersede = (await server.getSnapshot()).domains[0].sessions
+    const retainedBeforeSupersede = (await readServerSnapshot(server)).domains[0].sessions
     const replacement = server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
     await expect(firstReconnect).resolves.toBeNull()
     await settle()
-    const retainedAfterSupersede = (await server.getSnapshot()).domains[0].sessions
+    const retainedAfterSupersede = (await readServerSnapshot(server)).domains[0].sessions
 
     fake.releaseSends()
     const replacementSnapshot = await replacement
@@ -3417,7 +3448,7 @@ describe('RuntimeServer provisional recovery races', () => {
       localSession: { user: USER },
       sessions: []
     })
-    expect((await server.getSnapshot()).domains[0].sessions).toEqual([])
+    expect((await readServerSnapshot(server)).domains[0].sessions).toEqual([])
   })
 
   it('sends one Session and one History Pull to a peer admitted by the replacement generation', async () => {
@@ -3467,7 +3498,7 @@ describe('RuntimeServer provisional recovery races', () => {
   it('catches up only peers that miss a provisional World recovery publication', async () => {
     const { clock, fake, server } = await setup()
     const worldRoomId = getWorldRoomId()
-    const currentPresence = (await server.getSnapshot()).world.localPresence
+    const currentPresence = (await readServerSnapshot(server)).world.localPresence
     if (!currentPresence) throw new Error('Committed local presence missing')
     // A known remote presence is active for the recovery-iterator publication.
     emitRemoteWorldPresence(fake)
@@ -3477,27 +3508,27 @@ describe('RuntimeServer provisional recovery races', () => {
 
     fake.roomClose(worldRoomId)
     await fake.waitForJoinCalls(3)
-    expect((await server.getSnapshot()).world.joined).toBe(false)
+    expect((await readServerSnapshot(server)).world.joined).toBe(false)
     fake.hangSendsTo(worldRoomId)
     fake.open()
     await fake.waitForSendAttempt(worldRoomId)
     fake.peerJoin(worldRoomId, 'missed-peer')
     await settle()
 
-    expect((await server.getSnapshot()).world.joined).toBe(false)
+    expect((await readServerSnapshot(server)).world.joined).toBe(false)
     expect(sentToPeer(fake, worldRoomId, 'missed-peer')).toEqual([])
     // The committed local presence fact survives the provisional recovery window.
-    expect((await server.getSnapshot()).world.localPresence).toEqual(currentPresence)
+    expect((await readServerSnapshot(server)).world.localPresence).toEqual(currentPresence)
 
     fake.releaseSends()
     await settle()
 
-    expect((await server.getSnapshot()).world.joined).toBe(true)
+    expect((await readServerSnapshot(server)).world.joined).toBe(true)
     // The recovery revision was broadcast exactly once more, and the peer that
     // joined mid-publication receives exactly one catch-up at commit.
     expect(sentToPeer(fake, worldRoomId, 'remote-peer')).toEqual([currentPresence, currentPresence])
     expect(sentToPeer(fake, worldRoomId, 'missed-peer')).toEqual([currentPresence])
-    expect((await server.getSnapshot()).world.localPresence).toEqual(currentPresence)
+    expect((await readServerSnapshot(server)).world.localPresence).toEqual(currentPresence)
   })
 
   it('fences a timed-out World rejoin or republishes before late-open commitment', async () => {
@@ -3511,7 +3542,7 @@ describe('RuntimeServer provisional recovery races', () => {
     clock.advance(PHYSICAL_ROOM_JOIN_TIMEOUT_MS + 1)
     await settle()
     expect.soft(fake.joined.has(worldRoomId)).toBe(false)
-    expect.soft((await server.getSnapshot()).world.joined).toBe(false)
+    expect.soft((await readServerSnapshot(server)).world.joined).toBe(false)
     expect.soft(fake.messages(worldRoomId).filter(isWorldPresence)).toHaveLength(presenceCount)
     fake.open()
     await settle()
@@ -3519,7 +3550,7 @@ describe('RuntimeServer provisional recovery races', () => {
     const outcome = {
       physicalJoined: fake.joined.has(worldRoomId),
       logicalDesired: fake.desired.has(worldRoomId),
-      snapshotJoined: (await server.getSnapshot()).world.joined,
+      snapshotJoined: (await readServerSnapshot(server)).world.joined,
       presenceDelta: fake.messages(worldRoomId).filter(isWorldPresence).length - presenceCount
     }
     expect([
@@ -3532,8 +3563,8 @@ describe('RuntimeServer provisional recovery races', () => {
 describe('RuntimeServer trusted delivery', () => {
   it('projects the current domain session snapshot on every current-state read', async () => {
     const { server } = await setup()
-    const first = await server.getSnapshot()
-    const replacement = await server.getSnapshot()
+    const first = await readServerSnapshot(server)
+    const replacement = await readServerSnapshot(server)
 
     expect(first.domains[0]).toMatchObject({
       domain: DOMAIN,
@@ -3567,7 +3598,7 @@ describe('RuntimeServer trusted delivery', () => {
     fake.receive(roomId, 'peer-a', { ...accepted, joinedAt: undefined } as unknown as TestWireMessage)
     await settle()
 
-    expect((await server.getSnapshot()).domains[0].sessions).toEqual([
+    expect((await readServerSnapshot(server)).domains[0].sessions).toEqual([
       expect.objectContaining({
         sourcePeerId: 'peer-a',
         sessionId: accepted.sessionId,
@@ -3651,7 +3682,7 @@ describe('RuntimeServer send reliability', () => {
     const { fake, server, roomId } = await setup()
     // No peers are planted, no session()/History is supplied: the whole join must complete on its own.
 
-    const snapshot = await server.getSnapshot()
+    const snapshot = await readServerSnapshot(server)
     const domain = snapshot.domains.find((item) => item.domain === DOMAIN)
     expect(domain?.phase).toBe('active')
     expect(domain?.chatRoomJoined).toBe(true)
@@ -3734,12 +3765,12 @@ describe('RuntimeServer send reliability', () => {
     await settle()
     expect(fake.messages(roomId).some((message) => message.type === MESSAGE_TYPE.TEXT)).toBe(true)
     expect(fake.sent.find((message) => JSON.parse(message.payload).type === MESSAGE_TYPE.TEXT)?.to).toEqual(['peer-a'])
-    expect((await server.getSnapshot()).failures).toEqual([])
+    expect((await readServerSnapshot(server)).failures).toEqual([])
 
     fake.failSend(new Error('partial send'))
     await expect(server.sendChatMessage({ domain: DOMAIN, event: record.message })).resolves.toBe(record.message)
     await settle()
-    expect((await server.getSnapshot()).failures.map((item) => item.message)).toEqual(['partial send'])
+    expect((await readServerSnapshot(server)).failures.map((item) => item.message)).toEqual(['partial send'])
     const next = await server.allocateTextMessage({ domain: DOMAIN, body: 'next', mentions: [] })
     expect(next.message.hlc).toEqual({ timestamp: NOW, counter: 1 })
   })
@@ -3820,7 +3851,7 @@ describe('RuntimeServer World presence', () => {
     await server.joinChatRoom({ domain: OTHER_DOMAIN, user: USER, site: { origin: OTHER_DOMAIN } })
     await settle()
 
-    const localPresence = (await server.getSnapshot()).world.localPresence
+    const localPresence = (await readServerSnapshot(server)).world.localPresence
     expect(localPresence?.user).toEqual(USER)
     expect(Object.keys(localPresence?.user ?? {})).toEqual(['id', 'name', 'avatar'])
     expect(localPresence?.sites).toEqual([SITE, { origin: OTHER_DOMAIN }])
@@ -3846,8 +3877,8 @@ describe('RuntimeServer World presence', () => {
     if (!snapshot) throw new Error('Join was cancelled')
 
     expect(snapshot.domains.map((domain) => domain.domain)).toEqual([DOMAIN, OTHER_DOMAIN])
-    expect((await server.getSnapshot()).failures.map((item) => item.message)).toEqual(['world send failed'])
-    expect((await server.getSnapshot()).world.localPresence?.sites).toEqual([SITE, { origin: OTHER_DOMAIN }])
+    expect((await readServerSnapshot(server)).failures.map((item) => item.message)).toEqual(['world send failed'])
+    expect((await readServerSnapshot(server)).world.localPresence?.sites).toEqual([SITE, { origin: OTHER_DOMAIN }])
   })
 
   it('publishes full privacy-bounded snapshots and atomically replaces/deletes remote presence', async () => {
@@ -3876,7 +3907,7 @@ describe('RuntimeServer World presence', () => {
     }
     fake.receive(worldRoomId, 'peer-a', first)
     await settle()
-    expect((await server.getSnapshot()).world.presences).toContainEqual(
+    expect((await readServerSnapshot(server)).world.presences).toContainEqual(
       expect.objectContaining({
         sourcePeerId: 'peer-a',
         presence: expect.objectContaining({ sites: [{ origin: DOMAIN }] })
@@ -3885,7 +3916,7 @@ describe('RuntimeServer World presence', () => {
     // A replacement atomically replaces the remote contribution; a departure deletes it.
     fake.receive(worldRoomId, 'peer-a', second)
     await settle()
-    expect((await server.getSnapshot()).world.presences).toContainEqual(
+    expect((await readServerSnapshot(server)).world.presences).toContainEqual(
       expect.objectContaining({
         sourcePeerId: 'peer-a',
         presence: expect.objectContaining({ sites: [{ origin: OTHER_DOMAIN }] })
@@ -3893,7 +3924,7 @@ describe('RuntimeServer World presence', () => {
     )
     fake.peerLeave(worldRoomId, 'peer-a')
     await settle()
-    expect((await server.getSnapshot()).world.presences.map((item) => item.sourcePeerId)).not.toContain('peer-a')
+    expect((await readServerSnapshot(server)).world.presences.map((item) => item.sourcePeerId)).not.toContain('peer-a')
   })
 })
 
@@ -4032,7 +4063,7 @@ describe('RuntimeServer concurrent World registration convergence', () => {
     await joinB
 
     expect(accepted.at(-1)?.sites.map(({ origin }) => origin)).toEqual([domainB])
-    expect((await server.getSnapshot()).world.localPresence?.sites.map(({ origin }) => origin)).toEqual([domainB])
+    expect((await readServerSnapshot(server)).world.localPresence?.sites.map(({ origin }) => origin)).toEqual([domainB])
     disposeServer(server)
   })
 
@@ -4078,9 +4109,9 @@ describe('RuntimeServer concurrent World registration convergence', () => {
         ?.sites.map(({ origin }) => origin)
         .toSorted()
     ).toEqual(expected)
-    expect((await server.getSnapshot()).world.localPresence?.sites.map(({ origin }) => origin).toSorted()).toEqual(
-      expected
-    )
+    expect(
+      (await readServerSnapshot(server)).world.localPresence?.sites.map(({ origin }) => origin).toSorted()
+    ).toEqual(expected)
     disposeServer(server)
   })
 
@@ -4108,7 +4139,9 @@ describe('RuntimeServer concurrent World registration convergence', () => {
     })
     await vi.waitFor(() => expect(joinCalls).toHaveLength(5))
     await settle()
-    expect((await server.getSnapshot()).domains.find(({ domain }) => domain === domainB)?.chatRoomJoined).toBe(false)
+    expect((await readServerSnapshot(server)).domains.find(({ domain }) => domain === domainB)?.chatRoomJoined).toBe(
+      false
+    )
 
     attempts[1].settle.resolve()
     await vi.waitFor(() => expect(attempts).toHaveLength(3))
@@ -4117,7 +4150,7 @@ describe('RuntimeServer concurrent World registration convergence', () => {
     attempts[2].settle.resolve()
     await joinB
 
-    const snapshot = await server.getSnapshot()
+    const snapshot = await readServerSnapshot(server)
     expect(snapshot.world.joined).toBe(true)
     expect(
       accepted
@@ -4162,7 +4195,7 @@ describe('RuntimeServer concurrent World registration convergence', () => {
 
     expect((await joinAResult)?.message).toBe('Domain released during join')
     expect(accepted.at(-1)?.sites.map(({ origin }) => origin)).toEqual([domainB])
-    expect((await server.getSnapshot()).world.localPresence?.sites.map(({ origin }) => origin)).toEqual([domainB])
+    expect((await readServerSnapshot(server)).world.localPresence?.sites.map(({ origin }) => origin)).toEqual([domainB])
     disposeServer(server)
   })
 
@@ -4195,7 +4228,7 @@ describe('RuntimeServer concurrent World registration convergence', () => {
 
     expect(attempts[2].message.sites.map(({ origin }) => origin)).toEqual([domainB])
     expect(accepted.at(-1)?.sites.map(({ origin }) => origin)).toEqual([domainB])
-    expect((await server.getSnapshot()).world.localPresence?.sites.map(({ origin }) => origin)).toEqual([domainB])
+    expect((await readServerSnapshot(server)).world.localPresence?.sites.map(({ origin }) => origin)).toEqual([domainB])
     disposeServer(server)
   })
 
@@ -4219,7 +4252,7 @@ describe('RuntimeServer concurrent World registration convergence', () => {
     const [snapshotA] = await Promise.all([joinA, joinB])
     if (!snapshotA) throw new Error('Join was cancelled')
 
-    expect((await server.getSnapshot()).failures.map((item) => item.message)).toEqual([
+    expect((await readServerSnapshot(server)).failures.map((item) => item.message)).toEqual([
       'first World publication failed'
     ])
     expect(
@@ -4228,7 +4261,7 @@ describe('RuntimeServer concurrent World registration convergence', () => {
         ?.sites.map(({ origin }) => origin)
         .toSorted()
     ).toEqual([domainA, domainB])
-    const snapshot = await server.getSnapshot()
+    const snapshot = await readServerSnapshot(server)
     expect(snapshot.world.localPresence?.sites.map(({ origin }) => origin).toSorted()).toEqual([domainA, domainB])
     expect(snapshot.domains.map(({ domain, chatRoomJoined }) => ({ domain, chatRoomJoined }))).toEqual([
       { domain: domainA, chatRoomJoined: true },
@@ -4284,7 +4317,7 @@ describe('RuntimeServer history', () => {
     fake.roomClose(roomId)
     await vi.waitFor(async () => {
       expect(fake.joined.has(roomId)).toBe(true)
-      expect((await server.getSnapshot()).domains[0]?.chatRoomJoined).toBe(true)
+      expect((await readServerSnapshot(server)).domains[0]?.chatRoomJoined).toBe(true)
     })
 
     fake.receive(roomId, 'provider-only-peer', request('provider-only-recovery', 0, [], true))
@@ -4439,7 +4472,7 @@ describe('RuntimeServer history', () => {
       done: true
     })
     await settle()
-    expect(domainSnapshot(await server.getSnapshot())?.historyFeedback ?? []).toEqual([])
+    expect(domainSnapshot(await readServerSnapshot(server))?.historyFeedback ?? []).toEqual([])
   })
 
   it('provides only records absent from the complete inventory in recent-first order', async () => {
@@ -5119,7 +5152,7 @@ describe('RuntimeServer history', () => {
     await reconnect
     await settle()
     // The commit cannot manufacture a current binding the attempt never observed: B is removed.
-    const snapshot = await server.getSnapshot()
+    const snapshot = await readServerSnapshot(server)
     expect(snapshot.domains[0].sessions.some((session) => session.user.id === 'user-b')).toBe(false)
     fake.receive(roomId, 'peer-b', { ...text('ghost-after-absent-reconnect'), userId: 'user-b' })
     await settle()
@@ -5158,7 +5191,7 @@ describe('RuntimeServer history', () => {
     await settle()
     // The refresh destroyed the grace ledger and the fresh B observation was displaced by C on
     // the same source without grace protection: the commit keeps only current C.
-    const snapshot = await server.getSnapshot()
+    const snapshot = await readServerSnapshot(server)
     const userIds = snapshot.domains[0].sessions.map((session) => session.user.id)
     expect(userIds).toEqual(['user-c'])
     // B's departed source stays untrusted (live) without a CURRENT valid B SESSION.
@@ -5173,7 +5206,7 @@ describe('RuntimeServer history', () => {
     // destroyed the grace ledger, so no graced generation remains to protect).
     fake.receive(roomId, 'peer-b', session({ id: 'user-c', name: 'User C', avatar: '' }))
     await settle()
-    const afterRepeat = (await server.getSnapshot()).domains[0].sessions.map((session) => session.user.id)
+    const afterRepeat = (await readServerSnapshot(server)).domains[0].sessions.map((session) => session.user.id)
     expect(afterRepeat.filter((id) => id === 'user-c')).toHaveLength(1)
     expect(afterRepeat.filter((id) => id === 'user-b')).toHaveLength(0)
     disposeServer(server)
@@ -5264,7 +5297,7 @@ describe('RuntimeServer history', () => {
       // NOT cancelled (the expiry never emits a source-removal event for a still-owned source).
       await vi.advanceTimersByTimeAsync(PENDING_LEAVE_GRACE_MS - 100)
       await vi.advanceTimersByTimeAsync(0)
-      const after = (await server.getSnapshot()).domains[0].sessions.map((session) => session.user.id)
+      const after = (await readServerSnapshot(server)).domains[0].sessions.map((session) => session.user.id)
       expect(after).not.toContain('user-b')
       expect(after).toContain('user-c')
       expect(cancelled).toEqual([])
@@ -5301,7 +5334,7 @@ describe('RuntimeServer history', () => {
     fake.receive(roomId, 'peer-c', session({ id: 'user-c', name: 'User C', avatar: '' }))
     await settle()
     // C's first real binding converges alongside B without replacing it.
-    const after = (await server.getSnapshot()).domains[0].sessions.map((session) => session.user.id)
+    const after = (await readServerSnapshot(server)).domains[0].sessions.map((session) => session.user.id)
     expect(after).toEqual(['user-b', 'user-c'])
     disposeServer(server)
   })
@@ -5340,7 +5373,7 @@ describe('RuntimeServer history', () => {
       // B stays continuously present past the original grace deadline (the rebind cancelled it).
       await vi.advanceTimersByTimeAsync(PENDING_LEAVE_GRACE_MS)
       await vi.advanceTimersByTimeAsync(0)
-      const after = (await server.getSnapshot()).domains[0].sessions.map((session) => session.user.id)
+      const after = (await readServerSnapshot(server)).domains[0].sessions.map((session) => session.user.id)
       expect(after).toContain('user-b')
       disposeServer(server)
     } finally {
@@ -5383,7 +5416,7 @@ describe('RuntimeServer history', () => {
     // Replaying B's exact generation from a new source is source-locally dropped.
     fake.receive(roomId, 'peer-b-new', session({ id: 'user-b', name: 'User B', avatar: '' }))
     await settle()
-    const after = (await server.getSnapshot()).domains[0].sessions.map((session) => session.user.id)
+    const after = (await readServerSnapshot(server)).domains[0].sessions.map((session) => session.user.id)
     expect(after).toEqual(['user-c'])
     disposeServer(server)
   })
@@ -5426,7 +5459,7 @@ describe('RuntimeServer history', () => {
       // the tombstone survived the unrelated reconciliation, and grace-preserved D stays shown.
       fake.receive(roomId, 'peer-b-new', session({ id: 'user-b', name: 'User B', avatar: '' }))
       await settle()
-      const after = (await server.getSnapshot()).domains[0].sessions.map((session) => session.user.id)
+      const after = (await readServerSnapshot(server)).domains[0].sessions.map((session) => session.user.id)
       expect(after).toEqual(['user-d'])
       disposeServer(server)
     } finally {
@@ -5463,7 +5496,7 @@ describe('RuntimeServer history', () => {
     // while grace-preserved D stays displayed.
     fake.receive(roomId, 'peer-b-new', session({ id: 'user-b', name: 'User B', avatar: '' }))
     await settle()
-    const after = (await server.getSnapshot()).domains[0].sessions.map((session) => session.user.id)
+    const after = (await readServerSnapshot(server)).domains[0].sessions.map((session) => session.user.id)
     expect(after).toEqual(['user-c', 'user-d'])
     disposeServer(server)
   })
@@ -5491,7 +5524,7 @@ describe('RuntimeServer history', () => {
     const snapshot = await join
     if (!snapshot) throw new Error('Join was cancelled')
     await settle()
-    const after = (await server.getSnapshot()).domains[0].sessions.map((session) => session.user.id)
+    const after = (await readServerSnapshot(server)).domains[0].sessions.map((session) => session.user.id)
     expect(after).toEqual(['user-b'])
     disposeServer(server)
   })
@@ -5532,7 +5565,7 @@ describe('RuntimeServer history', () => {
     const snapshot = await join
     if (!snapshot) throw new Error('Join was cancelled')
     await settle()
-    const after = (await server.getSnapshot()).domains[0].sessions.map((session) => session.user.id)
+    const after = (await readServerSnapshot(server)).domains[0].sessions.map((session) => session.user.id)
     expect(after).toEqual(['user-c', 'user-d'])
     // B's two displaced presences converge to exactly one remaining absence: no B session survives.
     expect(after).not.toContain('user-b')
@@ -5559,7 +5592,7 @@ describe('RuntimeServer history', () => {
     if (!snapshot) throw new Error('Join was cancelled')
     await settle()
     // The commit classifies the attempt-owned displaced fact: B is gone, only C survives.
-    const after = (await server.getSnapshot()).domains[0].sessions.map((session) => session.user.id)
+    const after = (await readServerSnapshot(server)).domains[0].sessions.map((session) => session.user.id)
     expect(after).toEqual(['user-c'])
     disposeServer(server)
   })
@@ -5589,7 +5622,7 @@ describe('RuntimeServer history', () => {
     const snapshot = await join
     if (!snapshot) throw new Error('Join was cancelled')
     await settle()
-    const after = (await server.getSnapshot()).domains[0].sessions.map((session) => session.user.id)
+    const after = (await readServerSnapshot(server)).domains[0].sessions.map((session) => session.user.id)
     expect(after).toEqual(['user-c'])
     disposeServer(server)
   })
@@ -5621,7 +5654,7 @@ describe('RuntimeServer history', () => {
     const snapshot = await join
     if (!snapshot) throw new Error('Join was cancelled')
     await settle()
-    const userIds = (await server.getSnapshot()).domains[0].sessions.map((session) => session.user.id)
+    const userIds = (await readServerSnapshot(server)).domains[0].sessions.map((session) => session.user.id)
     expect(userIds.filter((id) => id === 'user-c')).toHaveLength(1)
     expect(userIds.filter((id) => id === 'user-b')).toHaveLength(1)
     disposeServer(server)
@@ -5650,12 +5683,12 @@ describe('RuntimeServer history', () => {
     await settle()
     // The refresh destroyed the grace ledger; the fresh B rebind was displaced by C on the same
     // source without grace protection, so the commit keeps only current C.
-    const userIds = (await server.getSnapshot()).domains[0].sessions.map((session) => session.user.id)
+    const userIds = (await readServerSnapshot(server)).domains[0].sessions.map((session) => session.user.id)
     expect(userIds).toEqual(['user-c'])
     // A repeated valid C SESSION updates only the current C slot: C stays single, no graced B.
     fake.receive(roomId, 'peer-b', session({ id: 'user-c', name: 'User C', avatar: '' }))
     await settle()
-    const after = (await server.getSnapshot()).domains[0].sessions.map((session) => session.user.id)
+    const after = (await readServerSnapshot(server)).domains[0].sessions.map((session) => session.user.id)
     expect(after.filter((id) => id === 'user-c')).toHaveLength(1)
     expect(after.filter((id) => id === 'user-b')).toHaveLength(0)
     disposeServer(server)
@@ -5688,7 +5721,7 @@ describe('RuntimeServer history', () => {
     // The refresh destroyed the committed grace: the rebind source left again before commit and
     // no grace ledger remains to protect it, so B is not displayed and its authority is closed
     // without a CURRENT valid SESSION.
-    const snapshot = await server.getSnapshot()
+    const snapshot = await readServerSnapshot(server)
     expect(snapshot.domains[0].sessions.some((session) => session.user.id === 'user-b')).toBe(false)
     fake.receive(roomId, 'peer-b', { ...text('ghost-after-revoked-commit'), userId: 'user-b' })
     await settle()
@@ -5709,7 +5742,7 @@ describe('RuntimeServer history', () => {
     fake.receive(roomId, 'peer-b', session({ id: 'user-c', name: 'User C', avatar: '' }))
     await settle()
     // The snapshot contains only C (stale unprotected B is replaced, not appended).
-    const after = (await server.getSnapshot()).domains[0].sessions.map((session) => session.user.id)
+    const after = (await readServerSnapshot(server)).domains[0].sessions.map((session) => session.user.id)
     expect(after).toEqual(['user-c'])
     // Stale B live is rejected; current C live is admitted.
     fake.receive(roomId, 'peer-b', { ...text('stale-b-live'), userId: 'user-b' })
@@ -5729,7 +5762,7 @@ describe('RuntimeServer history', () => {
     // ended and the lifecycle is a replacement, not a second join.
     fake.receive(roomId, 'peer-b', session({ id: 'user-c', name: 'User C', avatar: '' }))
     await settle()
-    const after = (await server.getSnapshot()).domains[0].sessions.map((session) => session.user.id)
+    const after = (await readServerSnapshot(server)).domains[0].sessions.map((session) => session.user.id)
     expect(after).toEqual(['user-c'])
     disposeServer(server)
   })
@@ -5754,7 +5787,7 @@ describe('RuntimeServer history', () => {
     fake.receive(roomId, 'peer-b1', session({ id: 'user-c', name: 'User C', avatar: '' }))
     await settle()
     // The displaced B1 binding is removed, but the other B presence stays displayed.
-    const after = (await server.getSnapshot()).domains[0].sessions.map((session) => session.user.id)
+    const after = (await readServerSnapshot(server)).domains[0].sessions.map((session) => session.user.id)
     expect(after).toEqual(['user-c', 'user-b', 'user-c'])
     disposeServer(server)
   })
@@ -5778,7 +5811,7 @@ describe('RuntimeServer history', () => {
     // or replace) may encode B's one-to-zero transition.
     fake.receive(roomId, 'peer-b2', session({ id: 'user-c', name: 'User C', avatar: '' }))
     await settle()
-    const after = (await server.getSnapshot()).domains[0].sessions.map((session) => session.user.id)
+    const after = (await readServerSnapshot(server)).domains[0].sessions.map((session) => session.user.id)
     expect(after).toEqual(['user-b', 'user-c'])
     disposeServer(server)
   })
@@ -5794,7 +5827,7 @@ describe('RuntimeServer history', () => {
     fake.receive(roomId, 'peer-b', session({ id: 'user-c', name: 'User C', avatar: '' }))
     await settle()
     // The displaced B is finally gone even though incoming C was already active elsewhere.
-    const after = (await server.getSnapshot()).domains[0].sessions.map((session) => session.user.id)
+    const after = (await readServerSnapshot(server)).domains[0].sessions.map((session) => session.user.id)
     expect(after).toEqual(['user-c', 'user-c'])
     disposeServer(server)
   })
@@ -5813,7 +5846,7 @@ describe('RuntimeServer history', () => {
     })
     await settle()
     // C converges without a join notice, but B's final leave is still emitted.
-    const after = (await server.getSnapshot()).domains[0].sessions.map((session) => session.user.id)
+    const after = (await readServerSnapshot(server)).domains[0].sessions.map((session) => session.user.id)
     expect(after).toEqual(['user-c'])
     disposeServer(server)
   })
@@ -5850,7 +5883,7 @@ describe('RuntimeServer history', () => {
       await settle()
       await vi.advanceTimersByTimeAsync(PENDING_LEAVE_GRACE_MS)
       await vi.advanceTimersByTimeAsync(0)
-      const after = (await server.getSnapshot()).domains[0].sessions.map((session) => session.user.id)
+      const after = (await readServerSnapshot(server)).domains[0].sessions.map((session) => session.user.id)
       expect(after).toEqual([])
       disposeServer(server)
     } finally {
@@ -5875,7 +5908,7 @@ describe('RuntimeServer history', () => {
       // The SAME committed source directly receives current C.
       fake.receive(roomId, 'peer-b', session({ id: 'user-c', name: 'User C', avatar: '' }))
       await settle()
-      const afterSwitch = (await server.getSnapshot()).domains[0].sessions.map((session) => session.user.id)
+      const afterSwitch = (await readServerSnapshot(server)).domains[0].sessions.map((session) => session.user.id)
       expect(afterSwitch).toEqual(['user-b', 'user-c'])
       // C's live traffic is admitted (the current binding resolves the non-pending C).
       fake.receive(roomId, 'peer-b', { ...text('current-c-live'), userId: 'user-c' })
@@ -5886,7 +5919,7 @@ describe('RuntimeServer history', () => {
       await settle()
       await vi.advanceTimersByTimeAsync(PENDING_LEAVE_GRACE_MS)
       await vi.advanceTimersByTimeAsync(0)
-      const afterExpiry = (await server.getSnapshot()).domains[0].sessions.map((session) => session.user.id)
+      const afterExpiry = (await readServerSnapshot(server)).domains[0].sessions.map((session) => session.user.id)
       expect(afterExpiry).toEqual([])
       disposeServer(server)
     } finally {
