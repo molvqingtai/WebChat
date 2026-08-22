@@ -24,6 +24,7 @@ export type ProjectionApplier = (projection: RuntimeSnapshot) => void | Promise<
  */
 export class DocumentClient {
   private registered = false
+  private currentHostId: string | null = null
   private dirty = false
   private owner: Promise<void> | null = null
   private readyPublished = false
@@ -80,7 +81,10 @@ export class DocumentClient {
   private startDrainIfAbsent() {
     if (this.detached || this.owner) return
     if (!this.readyPublished && !this.currentSnapshot) this.setHostPhase('connecting')
-    this.owner = this.drain()
+    // The owner slot is installed before any fallible work: the drain body starts one microtask
+    // later, so even a synchronous RPC throw lands inside the drain's own try/finally and the
+    // common finally stays the last write to the slot.
+    this.owner = Promise.resolve().then(() => this.drain())
   }
 
   private async drain() {
@@ -88,15 +92,26 @@ export class DocumentClient {
       do {
         this.dirty = false
         const projection = this.registered
-          ? await this.options.server.getSnapshot()
+          ? await this.options.server.getSnapshot({ domain: this.options.domain })
           : (await this.options.coordinator.registerPage({ domain: this.options.domain })).snapshot
+        if (this.currentHostId !== null && projection.hostId !== this.currentHostId) {
+          // The logical Background was replaced: drop only host-local drain identity and loop
+          // through the register-and-read surface so the fresh Runtime rebuilds tab membership
+          // (and the History provider) before any projection is applied.
+          this.registered = false
+          this.currentHostId = null
+          this.dirty = true
+          continue
+        }
         // The registration/read response succeeded; a later apply failure never re-registers.
         this.registered = true
+        this.currentHostId = projection.hostId
         this.currentSnapshot = projection
-        this.setHostPhase(projection.hostPhase)
         await this.appliers.chat?.(projection)
         await this.appliers.persistence?.(projection)
         await this.appliers.world?.(projection)
+        // The pulled host phase is a pending fact until every apply stage has settled.
+        this.setHostPhase(projection.hostPhase)
       } while (this.dirty)
       if (!this.readyPublished) {
         this.publishReady()
@@ -162,6 +177,7 @@ export class DocumentClient {
     this.detached = true
     this.dirty = false
     this.registered = false
+    this.currentHostId = null
     this.readyPublished = false
     this.currentSnapshot = null
     const reason = new DOMException('Runtime client detached', 'AbortError')

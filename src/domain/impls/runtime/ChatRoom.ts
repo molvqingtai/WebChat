@@ -161,11 +161,16 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
   private appliedSessions: readonly RuntimeSession[] | null = null
   private appliedFeedbackOwnerIds = new Set<string>()
   private historyProvided = false
-  /** Dedups repeated projection facts for the whole live content generation (never evicts). */
+  /** Dedups repeated current failure facts; reconciled to the projection's bounded window each pull. */
   private readonly seenErrorEventIds = new Set<string>()
-  /** Records proven unable to become durable are acknowledged false once and never re-attempted. */
+  /** Records proven unable to become durable are acknowledged false once; retained only until that
+   * exact current event's ordinary ACK terminal or a Runtime replacement, never cross-Runtime. */
   private readonly invalidInbound = new Set<number>()
   private readonly activeHistorySupplies = new Map<string, AbortController>()
+  /** The Runtime host the appliers' host-local state belongs to. */
+  private appliedHostId: string | null = null
+  /** The self-join notice generation already persisted (or present) from the projection. */
+  private appliedSelfJoinKey: string | null = null
 
   constructor(private readonly dependencies: ChatRoomDependencies) {
     super()
@@ -198,6 +203,7 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
   // ── Chat projection stage (drain owner) ─────────────────────────────────────
 
   applyChat(projection: RuntimeSnapshot) {
+    this.resetHostLocalStateIfReplaced(projection)
     const domain = projection.domains.find((item) => item.domain === this.dependencies.pageDomain)
     const sessions = sessionsFrom({ localSession: domain?.localSession, sessions: domain?.sessions ?? [] })
     // Join/leave lifecycle events derive only from remote sessions: the local self-join notice is
@@ -271,7 +277,12 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
     }
     this.appliedFeedbackOwnerIds = ownerIds
 
-    // Retained Runtime failures are idempotent current facts: present each unseen eventId once.
+    // Retained Runtime failures are idempotent current facts: present each unseen eventId once,
+    // and reconcile the dedup window to the projection's own bounded current set (never unbounded).
+    const currentFailureIds = new Set(projection.failures.map((failure) => failure.eventId))
+    for (const eventId of this.seenErrorEventIds) {
+      if (!currentFailureIds.has(eventId)) this.seenErrorEventIds.delete(eventId)
+    }
     for (const failure of projection.failures) {
       if (failure.scope !== undefined && failure.scope !== this.dependencies.pageDomain) continue
       if (this.seenErrorEventIds.has(failure.eventId)) continue
@@ -280,16 +291,47 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
     }
   }
 
+  /** A Runtime replacement retires only host-local projection state; durable business facts stay. */
+  private resetHostLocalStateIfReplaced(projection: RuntimeSnapshot) {
+    if (this.appliedHostId === projection.hostId) return
+    this.appliedHostId = projection.hostId
+    this.appliedSessions = null
+    this.appliedFeedbackOwnerIds = new Set()
+    this.historyProvided = false
+    this.invalidInbound.clear()
+    this.seenErrorEventIds.clear()
+    this.appliedSelfJoinKey = null
+  }
+
   // ── Local persistence projection stage (drain owner) ────────────────────────
 
   async applyPersistence(projection: RuntimeSnapshot) {
+    this.resetHostLocalStateIfReplaced(projection)
     const domain = projection.domains.find((item) => item.domain === this.dependencies.pageDomain)
+
+    // The `fresh` current fact is owned by the projection: the one self-join notice is written
+    // idempotently from any full pull, so a lost join response or a later/new Page still converges.
+    const localSession = domain?.localSession
+    if (localSession?.fresh) {
+      const key = `${localSession.user.id}:${localSession.joinedAt}`
+      if (key !== this.appliedSelfJoinKey) {
+        this.appliedSelfJoinKey = key
+        await persistSelfJoinNotice(this.dependencies.messageStore, localSession)
+      }
+    }
 
     if (domain && !this.historyProvided) {
       await this.dependencies.server.provideHistory({ domain: this.dependencies.pageDomain }, (event) =>
         this.provideHistory(event)
       )
       this.historyProvided = true
+    }
+
+    // Retry knowledge for an invalid record lives only while that exact current event still needs
+    // its ordinary ACK terminal; a settled ACK (the event left the projection) clears it.
+    const currentSequences = new Set((domain?.inbound ?? []).map((event) => event.sequence))
+    for (const sequence of this.invalidInbound) {
+      if (!currentSequences.has(sequence)) this.invalidInbound.delete(sequence)
     }
 
     for (const event of domain?.inbound ?? []) {

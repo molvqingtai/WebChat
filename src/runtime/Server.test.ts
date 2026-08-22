@@ -175,6 +175,22 @@ describe('RuntimeServer production admission and one-way notification', () => {
     disposeServer(fixture.server)
   })
 
+  it('a stable duplicate attach performs no state commit and issues no new hint', async () => {
+    const fixture = createAdmissionFixture()
+    await fixture.attach()
+    await vi.waitFor(() => expect(fixture.hints().length).toBeGreaterThan(0))
+    const baseline = fixture.hints().length
+
+    // A same-tab, same-domain registration retry changes no authoritative state: no query/send.
+    await fixture.attach()
+    await fixture.attach()
+    await settle()
+    expect(fixture.hints()).toHaveLength(baseline)
+    const snapshot = await fixture.server.getSnapshot(fixture.call())
+    expect(snapshot.domains[0]).toMatchObject({ phase: 'active', tabIds: [7] })
+    disposeServer(fixture.server)
+  })
+
   it('never branches on a notification rejection', async () => {
     const fixture = createAdmissionFixture()
     fixture.admission.tabs.sendMessage = async () => {

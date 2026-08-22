@@ -108,6 +108,19 @@ describe('Runtime browser adapters', () => {
       meta: { tab: trustedTab }
     })
 
+    // The caller-bearing current-state read gets the same unforgeable injection.
+    const read = providerMessage('read-caller', {
+      sender: { type: 'injector' },
+      path: ['getSnapshot'],
+      args: [{ domain: 'https://example.com' }]
+    })
+    listeners.forEach((listener) => listener(read, { tab: trustedTab } as never))
+    expect(received).toHaveBeenLastCalledWith({
+      ...read,
+      args: [{ domain: 'https://example.com', caller: { tab: trustedTab } }],
+      meta: { tab: trustedTab }
+    })
+
     const mutation = providerMessage('mutation-caller', {
       sender: { type: 'injector' },
       path: ['sendChatMessage'],

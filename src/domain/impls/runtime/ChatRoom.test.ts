@@ -3,7 +3,7 @@ import type { Database, ReadTransaction, WriteTransaction } from '@/domain/exter
 import { ChatRoom } from '@/domain/impls/runtime/ChatRoom'
 import { createConnectionLifecycle } from '@/domain/impls/ConnectionLifecycle'
 import { createMemoryMessageDatabase } from '@/domain/impls/database/Memory'
-import { createMessageStore, type MessageDatabaseSchema } from '@/domain/MessageStore'
+import { createMessageStore, InvalidMessageRecordError, type MessageDatabaseSchema } from '@/domain/MessageStore'
 import {
   MESSAGE_RECORD_TYPE,
   NOTICE_TYPE,
@@ -71,7 +71,7 @@ const domainSnapshot = (sessions: RuntimeSession[] = []): RuntimeSnapshot => ({
       phase: 'active',
       tabIds: [1],
       chatRoomJoined: true,
-      localSession: { sessionId: 'local-session', user: USER, joinedAt: 1, fresh: true },
+      localSession: { sessionId: 'local-session', user: USER, joinedAt: 1, fresh: false },
       sessions,
       inbound: [],
       historyFeedback: []
@@ -128,7 +128,8 @@ const settle = async () => {
 
 const setup = async (
   records: readonly MessageRecord[] = [],
-  database: Database<MessageDatabaseSchema> = createMemoryMessageDatabase(`chat-room-${databaseId++}`)
+  database: Database<MessageDatabaseSchema> = createMemoryMessageDatabase(`chat-room-${databaseId++}`),
+  options: { fresh?: boolean } = {}
 ) => {
   let leaves = 0
   let reconnects = 0
@@ -136,6 +137,13 @@ const setup = async (
   const sent: ChatMessage[] = []
   let history: ((event: HistorySupplyEvent) => void) | undefined
   let current: RuntimeSnapshot = domainSnapshot()
+  if (options.fresh) {
+    const domain = current.domains[0]!
+    current = {
+      ...current,
+      domains: [{ ...domain, localSession: { ...domain.localSession!, fresh: true } }]
+    }
+  }
   const server: RuntimeServer = {
     attachPage: async () => current,
     getSnapshot: async () => current,
@@ -325,8 +333,8 @@ describe('Runtime-backed ChatRoom application port', () => {
 
   it('persists one canonical self-join notice across repeated and parallel page joins', async () => {
     const database = createMemoryMessageDatabase(`self-join-${databaseId++}`)
-    const first = await setup([], database)
-    const second = await setup([], database)
+    const first = await setup([], database, { fresh: true })
+    const second = await setup([], database, { fresh: true })
 
     await Promise.all([
       first.room.joinRoom({ user: USER, site: SITE }),
@@ -356,8 +364,8 @@ describe('Runtime-backed ChatRoom application port', () => {
     const collision = textRecord(stableNoticeId)
     const seedStore = createMessageStore(database)
     await seedStore.insert(collision)
-    const first = await setup([], database)
-    const second = await setup([], database)
+    const first = await setup([], database, { fresh: true })
+    const second = await setup([], database, { fresh: true })
 
     await Promise.all([
       first.room.joinRoom({ user: USER, site: SITE }),
@@ -365,7 +373,7 @@ describe('Runtime-backed ChatRoom application port', () => {
     ])
     await first.room.leaveRoom()
     await first.room.joinRoom({ user: USER, site: SITE })
-    const reloaded = await setup([], database)
+    const reloaded = await setup([], database, { fresh: true })
     await reloaded.room.joinRoom({ user: USER, site: SITE })
 
     const records = await first.messageStore.query()
@@ -382,7 +390,7 @@ describe('Runtime-backed ChatRoom application port', () => {
   it('preserves a Chat winner inserted immediately before the self-notice write', async () => {
     const databaseName = `self-join-racing-winner-${databaseId++}`
     const controlled = new ControlledDatabase(createMemoryMessageDatabase(databaseName))
-    const fixture = await setup([], controlled)
+    const fixture = await setup([], controlled, { fresh: true })
     const competingStore = createMessageStore(createMemoryMessageDatabase(databaseName))
     const stableNoticeId = `notice:${stringToHex(`self:join:${USER.id}:1`)}`
     const collision = textRecord(stableNoticeId)
@@ -425,7 +433,7 @@ describe('Runtime-backed ChatRoom application port', () => {
         unknownExtraKey: true
       })
     )
-    const fixture = await setup([], database)
+    const fixture = await setup([], database, { fresh: true })
     await fixture.room.joinRoom({ user: USER, site: SITE })
     await settle()
     const records = await fixture.messageStore.query()
@@ -436,6 +444,76 @@ describe('Runtime-backed ChatRoom application port', () => {
       notice: { type: NOTICE_TYPE.JOIN, body: '"Local" joined the chat' },
       user: USER
     })
+  })
+
+  it('persists the fresh self-join notice from the projection even when the join response is lost', async () => {
+    const database = createMemoryMessageDatabase(`self-join-projection-${databaseId++}`)
+    const fixture = await setup([], database, { fresh: true })
+
+    // No joinRoom action at all: the pulled current projection owns the one idempotent notice.
+    await fixture.apply()
+    await fixture.apply()
+
+    const records = await fixture.messageStore.query()
+    expect(records).toHaveLength(1)
+    expect(records[0]).toMatchObject({
+      type: MESSAGE_RECORD_TYPE.SYSTEM_NOTICE,
+      notice: { type: NOTICE_TYPE.JOIN, body: '"Local" joined the chat' },
+      user: USER
+    })
+  })
+
+  it('a Runtime replacement resets only host-local applier state and re-provides History', async () => {
+    const fixture = await setup([], createMemoryMessageDatabase(`host-replacement-${databaseId++}`))
+    const provideHistory = vi.spyOn(fixture.server, 'provideHistory')
+    await fixture.apply()
+    expect(provideHistory).toHaveBeenCalledTimes(1)
+    fixture.room.applyChat(domainSnapshot([remoteSession({ joinedAt: 2 })]))
+
+    // The replacement host resets the session baseline, the History provider registration, and
+    // the local dedup windows; durable business facts stay.
+    const replacement = {
+      ...domainSnapshot(),
+      hostId: 'host-2',
+      failures: [
+        {
+          eventId: 'new-host-failure',
+          message: 'new host failure',
+          subsystem: 'connection' as const,
+          operation: 'lifecycle' as const
+        }
+      ]
+    }
+    fixture.room.applyChat(replacement)
+    const joins: string[] = []
+    fixture.room.onJoinRoom((session) => joins.push(session.sessionId))
+    fixture.room.applyChat(replacement)
+    await fixture.room.applyPersistence(replacement)
+
+    expect(provideHistory).toHaveBeenCalledTimes(2)
+    // The replacement host's first committed projection is a fresh baseline: no join events.
+    expect(joins).toEqual([])
+  })
+
+  it('an invalid sequence from a replaced Runtime never discards the new Runtime valid record', async () => {
+    const fixture = await setup([], createMemoryMessageDatabase(`cross-host-seq-${databaseId++}`))
+
+    // B1: a record that cannot become durable is ACKed false once (ordinary terminal).
+    const invalid = textRecord('invalid-b1')
+    vi.spyOn(fixture.messageStore, 'insert').mockRejectedValueOnce(new InvalidMessageRecordError('not a record'))
+    await fixture.emitInbound({ sequence: 1, domain: DOMAIN, record: invalid, source: 'live' })
+    expect(fixture.server.ackInbound).toHaveBeenCalledWith({ domain: DOMAIN, sequence: 1, inserted: false })
+
+    // B2 (replacement host): the same sequence 1 is a valid record and must persist + ACK true.
+    const replacement = domainSnapshot()
+    replacement.hostId = 'host-2'
+    const valid = textRecord('valid-b2')
+    replacement.domains[0]!.inbound = [{ sequence: 1, domain: DOMAIN, record: valid, source: 'live' }]
+    fixture.room.applyChat(replacement)
+    await fixture.room.applyPersistence(replacement)
+
+    await expect(fixture.messageStore.query()).resolves.toEqual([valid])
+    expect(fixture.server.ackInbound).toHaveBeenLastCalledWith({ domain: DOMAIN, sequence: 1, inserted: true })
   })
 
   it('publishes the new snapshot before each accepted live join and leave fact', async () => {

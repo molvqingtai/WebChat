@@ -51,7 +51,7 @@ const setup = () => {
     })
   }
   const server = {
-    getSnapshot: vi.fn(() => {
+    getSnapshot: vi.fn((_payload?: { domain?: string }) => {
       readCalls.push('read')
       const pending = deferred<RuntimeSnapshot>()
       readQueue.push(pending)
@@ -73,7 +73,7 @@ describe('DocumentClient one-way current-state drain', () => {
     client.whenReady(ready)
 
     const init = client.init()
-    expect(coordinator.registerPage).toHaveBeenCalledTimes(1)
+    await vi.waitFor(() => expect(registerQueue).toHaveLength(1))
     registerQueue.shift()!.resolve({ snapshot: snapshot('') })
     await expect(init).resolves.toMatchObject({ hostPhase: 'ready' })
     expect(ready).toHaveBeenCalledTimes(1)
@@ -102,6 +102,7 @@ describe('DocumentClient one-way current-state drain', () => {
     })
 
     const init = client.init()
+    await vi.waitFor(() => expect(registerQueue).toHaveLength(1))
     // Three hints during the pending registration: only the dirty bit is set, no parallel owner.
     client.invalidate()
     client.invalidate()
@@ -121,6 +122,7 @@ describe('DocumentClient one-way current-state drain', () => {
   it('keeps pulling while hints arrive during a refresh, with no fixed follow-up cap', async () => {
     const { client, server, registerQueue, readQueue } = setup()
     const init = client.init()
+    await vi.waitFor(() => expect(registerQueue).toHaveLength(1))
     registerQueue.shift()!.resolve({ snapshot: snapshot('') })
     await expect(init).resolves.toBeTruthy()
 
@@ -144,6 +146,7 @@ describe('DocumentClient one-way current-state drain', () => {
     const original = new Error('background unavailable')
 
     const init = client.init()
+    await vi.waitFor(() => expect(registerQueue).toHaveLength(1))
     registerQueue.shift()!.reject(original)
     await expect(init).rejects.toBe(original)
     expect(failure).toHaveBeenCalledTimes(1)
@@ -166,6 +169,7 @@ describe('DocumentClient one-way current-state drain', () => {
     const failure = vi.fn()
     client.whenFailure(failure)
     const init = client.init()
+    await vi.waitFor(() => expect(registerQueue).toHaveLength(1))
     registerQueue.shift()!.resolve({ snapshot: snapshot('') })
     await expect(init).resolves.toBeTruthy()
 
@@ -196,6 +200,7 @@ describe('DocumentClient one-way current-state drain', () => {
       })
 
       const init = client.init()
+      await vi.waitFor(() => expect(registerQueue).toHaveLength(1))
       registerQueue.shift()!.resolve({ snapshot: snapshot('') })
       await expect(init).rejects.toBe(original)
       expect(failure).toHaveBeenCalledWith(original)
@@ -218,6 +223,7 @@ describe('DocumentClient one-way current-state drain', () => {
     client.whenReady(ready)
 
     const init = client.init()
+    await vi.waitFor(() => expect(registerQueue).toHaveLength(1))
     registerQueue.shift()!.resolve({ snapshot: snapshot('') })
     await expect(init).rejects.toBe(original)
     expect(failure).toHaveBeenCalledWith(original)
@@ -240,6 +246,7 @@ describe('DocumentClient one-way current-state drain', () => {
     })
 
     const init = client.init()
+    await vi.waitFor(() => expect(registerQueue).toHaveLength(1))
     registerQueue.shift()!.resolve({ snapshot: snapshot('') })
     await expect(init).resolves.toBeTruthy()
     // The hint set dirty after the last while-check: the synchronous finally recheck must restart.
@@ -253,6 +260,7 @@ describe('DocumentClient one-way current-state drain', () => {
   it('a failure without a concurrent explicit hint waits; it never restarts from the failure itself', async () => {
     const { client, server, registerQueue, readQueue } = setup()
     const init = client.init()
+    await vi.waitFor(() => expect(registerQueue).toHaveLength(1))
     registerQueue.shift()!.resolve({ snapshot: snapshot('') })
     await expect(init).resolves.toBeTruthy()
 
@@ -266,6 +274,7 @@ describe('DocumentClient one-way current-state drain', () => {
   it('a hint arriving during a failed operation is honored by the same finalization cut', async () => {
     const { client, server, registerQueue, readQueue } = setup()
     const init = client.init()
+    await vi.waitFor(() => expect(registerQueue).toHaveLength(1))
     registerQueue.shift()!.resolve({ snapshot: snapshot('') })
     await expect(init).resolves.toBeTruthy()
 
@@ -280,9 +289,134 @@ describe('DocumentClient one-way current-state drain', () => {
     await flush()
   })
 
+  it('survives a synchronous register throw and a synchronous read throw, recovering on the next explicit hint', async () => {
+    // A native adapter may throw synchronously before producing a Promise. The owner slot is
+    // already installed, so the common finally retires it and a later hint starts a fresh owner.
+    const syncThrowCoordinator = {
+      registerPage: vi.fn((_payload: { domain: string }): Promise<{ snapshot: RuntimeSnapshot }> => {
+        throw new Error('native register exploded')
+      })
+    }
+    const client = new DocumentClient({
+      coordinator: syncThrowCoordinator as never,
+      server: { getSnapshot: async () => snapshot('') } as never,
+      domain: DOMAIN
+    })
+    const failure = vi.fn()
+    client.whenFailure(failure)
+
+    await expect(client.init()).rejects.toThrow('native register exploded')
+    expect(failure).toHaveBeenCalledTimes(1)
+    await flush(50)
+    expect(syncThrowCoordinator.registerPage).toHaveBeenCalledTimes(1)
+
+    // The settled Promise was not reinstalled in the slot: an explicit hint starts a new owner.
+    syncThrowCoordinator.registerPage.mockImplementationOnce(async () => ({ snapshot: snapshot('') }))
+    client.invalidate()
+    await vi.waitFor(() => expect(syncThrowCoordinator.registerPage).toHaveBeenCalledTimes(2))
+
+    const { client: readClient, server, registerQueue } = setup()
+    const init = readClient.init()
+    await vi.waitFor(() => expect(registerQueue).toHaveLength(1))
+    registerQueue.shift()!.resolve({ snapshot: snapshot('') })
+    await expect(init).resolves.toBeTruthy()
+    server.getSnapshot.mockImplementationOnce(() => {
+      throw new Error('native read exploded')
+    })
+    const readFailure = vi.fn()
+    readClient.whenFailure(readFailure)
+    readClient.invalidate()
+    await vi.waitFor(() => expect(readFailure).toHaveBeenCalledTimes(1))
+    await flush(50)
+    expect(server.getSnapshot).toHaveBeenCalledTimes(1)
+    readClient.invalidate()
+    await vi.waitFor(() => expect(server.getSnapshot).toHaveBeenCalledTimes(2))
+  })
+
+  it('reads current state with a non-empty caller-bearing request', async () => {
+    const { client, server, registerQueue, readQueue } = setup()
+    const init = client.init()
+    await vi.waitFor(() => expect(registerQueue).toHaveLength(1))
+    registerQueue.shift()!.resolve({ snapshot: snapshot('') })
+    await expect(init).resolves.toBeTruthy()
+
+    client.invalidate()
+    await vi.waitFor(() => expect(server.getSnapshot).toHaveBeenCalledTimes(1))
+    expect(server.getSnapshot).toHaveBeenCalledWith({ domain: DOMAIN })
+    const readPayload = server.getSnapshot.mock.calls[0]?.[0] as unknown as Record<string, unknown>
+    expect(Object.keys(readPayload)).not.toHaveLength(0)
+    readQueue.shift()!.resolve(snapshot(''))
+    await flush()
+  })
+
+  it('a pulled host replacement re-registers through the register-and-read surface before applying', async () => {
+    const { client, coordinator, server, registerQueue, readQueue } = setup()
+    const applied: string[] = []
+    client.registerApplier('chat', (projection) => {
+      applied.push(projection.hostId)
+    })
+    const init = client.init()
+    await vi.waitFor(() => expect(registerQueue).toHaveLength(1))
+    registerQueue.shift()!.resolve({ snapshot: snapshot('') })
+    await expect(init).resolves.toBeTruthy()
+    expect(applied).toEqual(['host-1'])
+
+    // The Background was replaced: the same document must register with the new Runtime instead
+    // of merely reading it, so tab membership and the History provider are rebuilt.
+    server.getSnapshot.mockImplementation(async () => ({ ...snapshot(''), hostId: 'host-2' }))
+    coordinator.registerPage.mockImplementation(async () => ({ snapshot: { ...snapshot(''), hostId: 'host-2' } }))
+    client.invalidate()
+    await vi.waitFor(() => expect(coordinator.registerPage).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() => expect(applied).toEqual(['host-1', 'host-2']))
+    expect(server.getSnapshot).toHaveBeenCalledTimes(1)
+    await flush()
+  })
+
+  it.each(['chat', 'persistence', 'world'] as const)(
+    'publishes the pulled ready phase only after the %s stage has settled',
+    async (stage) => {
+      const { client, registerQueue } = setup()
+      const phases: string[] = []
+      client.whenHostPhase((phase) => phases.push(phase))
+      const hold = deferred<void>()
+      let released = false
+      client.registerApplier(stage, async () => {
+        if (!released) await hold.promise
+      })
+
+      const init = client.init()
+      await vi.waitFor(() => expect(registerQueue).toHaveLength(1))
+      registerQueue.shift()!.resolve({ snapshot: snapshot('') })
+      await flush(10)
+      // The registration response is back but one stage is still held: no ready phase yet.
+      expect(phases).toEqual(['none', 'connecting'])
+      released = true
+      hold.resolve()
+      await expect(init).resolves.toBeTruthy()
+      expect(phases).toEqual(['none', 'connecting', 'ready'])
+    }
+  )
+
+  it('publishes ready only after every synchronous ready observer returns', async () => {
+    const { client, registerQueue } = setup()
+    const phases: string[] = []
+    client.whenHostPhase((phase) => phases.push(phase))
+    const order: string[] = []
+    client.whenReady(() => order.push('first'))
+    client.whenReady(() => order.push('second'))
+
+    const init = client.init()
+    await vi.waitFor(() => expect(registerQueue).toHaveLength(1))
+    registerQueue.shift()!.resolve({ snapshot: snapshot('') })
+    await expect(init).resolves.toBeTruthy()
+    expect(order).toEqual(['first', 'second'])
+    expect(phases).toEqual(['none', 'connecting', 'ready'])
+  })
+
   it('document detach discards the owner; a fresh document registers again instead of recovering the old owner', async () => {
     const { client, coordinator, server, registerQueue, readQueue } = setup()
     const init = client.init()
+    await vi.waitFor(() => expect(registerQueue).toHaveLength(1))
     registerQueue.shift()!.resolve({ snapshot: snapshot('') })
     await expect(init).resolves.toBeTruthy()
 

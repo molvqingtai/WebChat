@@ -81,11 +81,15 @@ const preparationLockCoordinator = import.meta.env.FIREFOX
   ? createDirectPreparationCoordinator()
   : createWebLocksPreparationCoordinator()
 
+let initializeRuntimeImpl: () => Promise<unknown> = () => {
+  throw new Error('Content store has not been created')
+}
+
 const initializationDependencies: InitializationDependencies = {
   prepareBrowserSyncStorage: requestBrowserSyncStoragePreparation,
   prepareLocalStorage: () => prepareLocalConfigurationStorage(preparationLockCoordinator),
   prepareMessageDatabase: () => prepareIndexedDBMessageDatabase(preparationLockCoordinator),
-  initializeRuntime: initClient,
+  initializeRuntime: () => initializeRuntimeImpl(),
   detachRuntime: detachClient
 }
 
@@ -214,7 +218,10 @@ const createContentStore = () => {
     // inspectors: __DEV__ ? [RemeshLogger()] : []
   })
 
+  let applicationDependenciesActivated = false
   const activateApplicationDependencies = () => {
+    if (applicationDependenciesActivated) return
+    applicationDependenciesActivated = true
     // A watcher failure on the page's own database owns a current visible/persistence-dependent
     // projection: it reaches this page's existing toast route once with the original message.
     const database = createIndexedDBMessageDatabase({
@@ -256,6 +263,13 @@ const createContentStore = () => {
   whenFailure((error) => {
     store.send(store.getDomain(ToastDomain()).command.ErrorCommand(error.message))
   })
+
+  // The production readiness barrier: the Chat, persistence, and World appliers exist before the
+  // first drain pull, so initialization readiness is published only after every stage settles.
+  initializeRuntimeImpl = async () => {
+    activateApplicationDependencies()
+    return initClient()
+  }
 
   return { store, activateApplicationDependencies, sendLifecycle: sendLifecycleInstance }
 }

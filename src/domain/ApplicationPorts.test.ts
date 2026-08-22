@@ -88,7 +88,10 @@ describe('replaceable application boundaries', () => {
 
     expect(content.indexOf('createDocumentLifecycleOwner()')).toBeGreaterThan(-1)
     expect(content.indexOf('createDocumentLifecycleOwner()')).toBeLessThan(content.indexOf('createShadowRootUi(ctx'))
-    expect(content).toContain('initializeRuntime: initClient')
+    // The production readiness barrier: all three projection appliers are installed before the
+    // first drain pull, so initialization ready can only publish after every stage settles.
+    expect(content).toContain('initializeRuntime: () => initializeRuntimeImpl()')
+    expect(content.indexOf('activateApplicationDependencies()')).toBeLessThan(content.indexOf('return initClient()'))
     expect(content).toContain('detachRuntime: detachClient')
   })
 
@@ -245,7 +248,7 @@ describe('replaceable application boundaries', () => {
     expect(content).toContain(
       'prepareMessageDatabase: () => prepareIndexedDBMessageDatabase(preparationLockCoordinator)'
     )
-    expect(content).toContain('initializeRuntime: initClient')
+    expect(content).toContain('initializeRuntime: () => initializeRuntimeImpl()')
     expect(content).toContain('startInitializationLifecycle({')
     expect(content).toContain('dependencies: initializationDependencies')
     expect(content).toContain('activateApplicationDependencies')

@@ -75,6 +75,9 @@ const LifecycleDomain = Remesh.domain({
         }
 
         const resumedFromGrace = exist.phase === 'grace'
+        // A same-tab attach on an already active membership changes nothing: no state rewrite,
+        // no event, and therefore no downstream notification.
+        if (!resumedFromGrace && exist.tabIds.includes(payload.tabId)) return null
         const nextLease: DomainLease = {
           ...exist,
           phase: 'active',

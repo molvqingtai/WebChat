@@ -118,8 +118,6 @@ describe('DeliveryDomain resource and batch ACK boundaries', () => {
     const deliveryAction = DeliveryDomain()
     const lifecycle = store.getDomain(lifecycleAction)
     const delivery = store.getDomain(deliveryAction)
-    const replayed = vi.fn()
-    store.subscribeEvent(delivery.event.InboundReplayedEvent, replayed)
     store.subscribeDomain(lifecycleAction)
     store.subscribeDomain(deliveryAction)
     store.igniteDomain(lifecycleAction)
@@ -131,8 +129,10 @@ describe('DeliveryDomain resource and batch ACK boundaries', () => {
 
     // The buffer is the current-state authority a Page pull reads; nothing is pushed to a Page.
     expect(store.query(delivery.query.BufferedEventsQuery({ domain: DOMAIN, after: 0 }))).toHaveLength(2)
-    store.send(delivery.command.ReplayCommand({ domain: DOMAIN, after: 0 }))
-    expect(replayed).toHaveBeenCalledTimes(2)
+    // Static negative control: the replaced delivery replay compatibility path is gone — the
+    // current-state query plus the ordinary ACK are the only surviving buffer surfaces.
+    expect('ReplayCommand' in delivery.command).toBe(false)
+    expect('InboundReplayedEvent' in delivery.event).toBe(false)
     store.send(delivery.command.AckInboundCommand({ domain: DOMAIN, sequence: 1 }))
     expect(
       store

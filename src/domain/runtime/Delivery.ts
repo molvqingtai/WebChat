@@ -164,12 +164,6 @@ const DeliveryDomain = Remesh.domain({
       }
     })
 
-    const ReplayCommand = domain.command({
-      name: 'Delivery.ReplayCommand',
-      impl: ({ get }, payload: { domain: string; after: number }) =>
-        get(BufferedEventsQuery(payload)).map(InboundReplayedEvent)
-    })
-
     const ReleaseDomainCommand = domain.command({
       name: 'Delivery.ReleaseDomainCommand',
       impl: ({ get }, releasedDomain: string) => {
@@ -193,7 +187,6 @@ const DeliveryDomain = Remesh.domain({
     })
 
     const InboundAcceptedEvent = domain.event<InboundEvent>({ name: 'Delivery.InboundAcceptedEvent' })
-    const InboundReplayedEvent = domain.event<InboundEvent>({ name: 'Delivery.InboundReplayedEvent' })
     const InboundAckedEvent = domain.event<{ domain: string; sequence: number }>({
       name: 'Delivery.InboundAckedEvent'
     })
@@ -221,12 +214,10 @@ const DeliveryDomain = Remesh.domain({
         AcceptInboundCommand,
         AcceptInboundBatchCommand,
         AckInboundCommand,
-        ReplayCommand,
         ReleaseDomainCommand
       },
       event: {
         InboundAcceptedEvent,
-        InboundReplayedEvent,
         InboundAckedEvent,
         InboundDiscardedEvent,
         InboundBatchDiscardedEvent,

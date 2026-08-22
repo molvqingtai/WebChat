@@ -158,7 +158,7 @@ export interface HistoryFeedbackEvent {
 
 export interface RuntimeServer {
   attachPage: (payload: { domain: string } & RuntimePageCall) => Promise<RuntimeSnapshot>
-  getSnapshot: (payload?: RuntimePageCall) => Promise<RuntimeSnapshot>
+  getSnapshot: (payload?: { domain?: string } & RuntimePageCall) => Promise<RuntimeSnapshot>
   joinChatRoom: (
     payload: { domain: string; user: ChatUser; site: ChatSite } & RuntimePageCall
   ) => Promise<RuntimeSnapshot | null>

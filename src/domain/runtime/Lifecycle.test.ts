@@ -33,6 +33,21 @@ describe('LifecycleDomain', () => {
     expect(store.query(runtime.query.DomainLeaseQuery('https://example.com'))?.tabIds).toEqual([1])
   })
 
+  it('a stable same-tab attach on an active membership is a true no-op', () => {
+    const { store, runtime } = setup()
+    const attached = vi.fn()
+    store.subscribeEvent(runtime.event.PageAttachedEvent, attached)
+    store.send(runtime.command.AttachPageCommand({ domain: 'https://example.com', tabId: 1 }))
+    store.send(runtime.command.AttachPageCommand({ domain: 'https://example.com', tabId: 2 }))
+    expect(attached).toHaveBeenCalledTimes(1)
+
+    // An unchanged attach must not rewrite equivalent state or emit another attached event.
+    const before = store.query(runtime.query.DomainLeaseQuery('https://example.com'))
+    store.send(runtime.command.AttachPageCommand({ domain: 'https://example.com', tabId: 2 }))
+    expect(attached).toHaveBeenCalledTimes(1)
+    expect(store.query(runtime.query.DomainLeaseQuery('https://example.com'))).toEqual(before)
+  })
+
   it('uses one idempotent lease per page and one grace generation for real two-tab cleanup', () => {
     const { clock, store, runtime } = setup()
     const domain = 'https://example.com'
