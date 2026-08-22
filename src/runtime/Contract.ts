@@ -32,12 +32,34 @@ export interface WorldSnapshot {
 }
 
 export interface RuntimeSnapshot {
-  /** Changes whenever the physical Offscreen/Background Runtime is recreated. */
+  /** Changes whenever the Background-owned logical Runtime is recreated. */
   hostId: string
   hostPhase: HostPhase
   peerId: string
   domains: DomainSnapshot[]
   world: WorldSnapshot
+}
+
+/** Browser-delivery facts replace all Page-provided caller claims at the provider boundary. */
+export interface RuntimeCaller {
+  tab?: RuntimeTab
+}
+
+/**
+ * Private-by-convention fields added by the Page facade and provider adapter. They are intentionally
+ * optional in the public port so isolated domain tests can keep constructing their local fake port.
+ */
+export interface RuntimePageCall {
+  pageId?: string
+  runtimeHostId?: string
+  caller?: RuntimeCaller
+  /**
+   * Private binding generation: the Page-local attachment epoch captured when its current
+   * registration was admitted. Stored on the exact Server binding; any call whose epoch does not
+   * match the current binding's stored epoch is a stale continuation and fails closed. Never a
+   * public/peer/durable identity.
+   */
+  epoch?: number
 }
 
 export interface InboundEvent {
@@ -130,62 +152,80 @@ export interface RuntimeErrorEvent {
 }
 
 export interface RuntimeServer {
-  attachPage: (payload: { domain: string; pageId: string }) => Promise<RuntimeSnapshot>
-  detachPage: (payload: { domain: string; pageId: string }) => Promise<void>
-  getSnapshot: () => Promise<RuntimeSnapshot>
-  joinChatRoom: (payload: { domain: string; user: ChatUser; site: ChatSite }) => Promise<RuntimeSnapshot | null>
-  leaveChatRoom: (payload: { domain: string }) => Promise<void>
-  allocateTextMessage: (payload: {
-    domain: string
-    body: string
-    mentions: MentionedUser[]
-  }) => Promise<TextMessageRecord>
-  allocateReactionMessage: (payload: {
-    domain: string
-    targetId: string
-    reaction: ReactionType
-    active: boolean
-  }) => Promise<ReactionMessageRecord>
-  sendChatMessage: (payload: { domain: string; event: ChatMessage }) => Promise<ChatMessage>
-  ackInbound: (payload: { domain: string; sequence: number; inserted: boolean }) => Promise<void>
-  replayInbound: (payload: { domain: string; after: number }) => Promise<InboundEvent[]>
-  reconnectDomain: (payload: { domain: string }) => Promise<void | null>
-  onInbound: (payload: { pageId: string }, callback: (event: InboundEvent) => void | Promise<void>) => Promise<void>
+  attachPage: (payload: { domain: string; pageId: string } & RuntimePageCall) => Promise<RuntimeSnapshot>
+  detachPage: (payload: { domain: string; pageId: string } & RuntimePageCall) => Promise<void>
+  getSnapshot: (
+    payload?: RuntimePageCall & { validateReadiness?: boolean; settleReadiness?: boolean }
+  ) => Promise<RuntimeSnapshot>
+  joinChatRoom: (
+    payload: { domain: string; user: ChatUser; site: ChatSite } & RuntimePageCall
+  ) => Promise<RuntimeSnapshot | null>
+  leaveChatRoom: (payload: { domain: string } & RuntimePageCall) => Promise<void>
+  allocateTextMessage: (
+    payload: {
+      domain: string
+      body: string
+      mentions: MentionedUser[]
+    } & RuntimePageCall
+  ) => Promise<TextMessageRecord>
+  allocateReactionMessage: (
+    payload: {
+      domain: string
+      targetId: string
+      reaction: ReactionType
+      active: boolean
+    } & RuntimePageCall
+  ) => Promise<ReactionMessageRecord>
+  sendChatMessage: (payload: { domain: string; event: ChatMessage } & RuntimePageCall) => Promise<ChatMessage>
+  ackInbound: (payload: { domain: string; sequence: number; inserted: boolean } & RuntimePageCall) => Promise<void>
+  replayInbound: (payload: { domain: string; after: number } & RuntimePageCall) => Promise<InboundEvent[]>
+  reconnectDomain: (payload: { domain: string } & RuntimePageCall) => Promise<void | null>
+  onInbound: (
+    payload: { pageId: string } & RuntimePageCall,
+    callback: (event: InboundEvent) => void | Promise<void>
+  ) => Promise<void>
   onSessionEvent: (
-    payload: { pageId: string },
+    payload: { pageId: string } & RuntimePageCall,
     callback: (event: RuntimeSessionEvent) => void | Promise<void>
   ) => Promise<void>
-  onWorldPresence: (payload: { pageId: string }, callback: (event: WorldPresenceEvent) => void) => Promise<void>
-  onError: (payload: { pageId: string }, callback: (event: RuntimeErrorEvent) => void) => Promise<void>
-  onHistoryFeedback: (payload: { pageId: string }, callback: (event: HistoryFeedbackEvent) => void) => Promise<void>
+  onWorldPresence: (
+    payload: { pageId: string } & RuntimePageCall,
+    callback: (event: WorldPresenceEvent) => void
+  ) => Promise<void>
+  onError: (
+    payload: { pageId: string } & RuntimePageCall,
+    callback: (event: RuntimeErrorEvent) => void
+  ) => Promise<void>
+  onHistoryFeedback: (
+    payload: { pageId: string } & RuntimePageCall,
+    callback: (event: HistoryFeedbackEvent) => void
+  ) => Promise<void>
   provideHistory: (
-    payload: { domain: string; pageId: string },
+    payload: { domain: string; pageId: string } & RuntimePageCall,
     callback: (event: HistorySupplyEvent) => void
   ) => Promise<void>
-  resolveHistorySupply: (payload: { pageId: string; supplyId: string; result: HistorySupplyResult }) => Promise<void>
-  rejectHistorySupply: (payload: { pageId: string; supplyId: string; reason: string }) => Promise<void>
+  resolveHistorySupply: (
+    payload: { pageId: string; supplyId: string; result: HistorySupplyResult } & RuntimePageCall
+  ) => Promise<void>
+  rejectHistorySupply: (
+    payload: { pageId: string; supplyId: string; reason: string } & RuntimePageCall
+  ) => Promise<void>
 }
 
 export const RUNTIME_NAMESPACE_PREFIX = 'WEB_CHAT_RUNTIME_V2' as const
-
-export interface RuntimeHostStatus {
-  phase: HostPhase
-  generation: number
-}
 
 export interface RuntimeTab {
   id?: number
   url?: string
 }
 
-export interface RuntimePageRegistration extends RuntimeHostStatus {
+export interface RuntimePageRegistration {
   snapshot: RuntimeSnapshot
   failures?: RuntimeErrorEvent[]
 }
 
 export interface RuntimeCoordinator {
-  ensureHost: () => Promise<RuntimeHostStatus>
-  registerPage: (payload: { domain: string; pageId: string }) => Promise<RuntimePageRegistration>
+  registerPage: (payload: { domain: string; pageId: string } & RuntimePageCall) => Promise<RuntimePageRegistration>
 }
 
 export const COORDINATOR_NAMESPACE = 'WEB_CHAT_RUNTIME_COORDINATOR_V2' as const

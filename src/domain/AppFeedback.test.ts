@@ -291,8 +291,7 @@ describe('application feedback ownership', () => {
     expect(fixture.toast.cancel).not.toHaveBeenCalled()
   })
 
-  it('lets the lease watchdog own the only visible native error while an in-flight send rejects', async () => {
-    vi.useFakeTimers()
+  it('lets one explicit Runtime event own the only visible native error while an in-flight send rejects', async () => {
     const domain = 'https://example.test'
     const pageId = 'page-a'
     const nativeError = new Error('Extension context invalidated.')
@@ -313,13 +312,14 @@ describe('application feedback ownership', () => {
     }
     const registerPage = vi
       .fn<RuntimeCoordinator['registerPage']>()
-      .mockResolvedValueOnce({ phase: 'ready', generation: 1, snapshot })
+      .mockResolvedValueOnce({ snapshot })
       .mockRejectedValue(nativeError)
     const lease = new ClientLease({
-      coordinator: { ensureHost: vi.fn(), registerPage },
+      coordinator: { registerPage },
       pageId,
       domain,
-      watchdogIntervalMs: 1000
+      startupTimeoutMs: 1000,
+      startupRetryIntervalMs: 2000
     })
     await lease.init()
     const fixture = createFixture({
@@ -336,11 +336,11 @@ describe('application feedback ownership', () => {
     await flushMicrotasks()
     expect(fixture.chat.sendMessage).toHaveBeenCalledOnce()
 
-    vi.advanceTimersByTime(1000)
+    await lease.checkNow()
     sending.reject(nativeError)
     await flushMicrotasks()
 
-    expect(registerPage.mock.calls.length).toBeGreaterThanOrEqual(2)
+    expect(registerPage).toHaveBeenCalledTimes(2)
     expect(fixture.toast.error).toHaveBeenCalledOnce()
     expect(fixture.toast.error).toHaveBeenCalledWith('Extension context invalidated.')
     lease.detach()

@@ -8,6 +8,7 @@ import WireDomain from '@/domain/runtime/Wire'
 import WorldDomain, { getWorldRoomId } from '@/domain/runtime/World'
 import type { ChatSite, ChatUser } from '@/protocol'
 import type { RuntimeSnapshot } from '@/runtime/Contract'
+import { CommitCapabilityExtern, type CommitCapability } from '@/domain/runtime/externs/CommitCapability'
 
 export interface ConnectionOptions {
   [key: string]: string | number | undefined
@@ -21,12 +22,14 @@ interface JoinAttempt {
   mode: SessionPreparationMode
   domain: string
   generation: number
-  hostGeneration: number
   roomId?: string
   joinRequestId?: string
   /** Preserved typed join input so a failed initial attempt can retry as a fresh generation. */
   user?: ChatUser
   site?: ChatSite
+  /** Exact consumed commit capability (K) carried from the Server envelope; absence means the
+   * attempt is an automatic recovery, not an envelope action. */
+  capability?: CommitCapability
 }
 
 interface DomainGeneration {
@@ -37,7 +40,6 @@ interface DomainGeneration {
 interface WorldRecoveryAttempt {
   requestId: string
   generation: number
-  hostGeneration: number
   joinRequestId: string
   /** True only for an AppButton manual World replacement: its failure stays out of page UI/Toast
    * while automatic recovery keeps its existing diagnostics. */
@@ -80,6 +82,7 @@ const ConnectionDomain = Remesh.domain({
     const worldDomain = domain.getDomain(WorldDomain({ sessionId: options.worldSessionId }))
     const deliveryDomain = domain.getDomain(DeliveryDomain())
     const historyDomain = domain.getDomain(HistoryDomain())
+    const commitAuthority = domain.getExtern(CommitCapabilityExtern)
 
     const AttemptsState = domain.state<JoinAttempt[]>({ name: 'Connection.AttemptsState', default: [] })
     const GenerationsState = domain.state<DomainGeneration[]>({
@@ -108,7 +111,7 @@ const ConnectionDomain = Remesh.domain({
         const runtimes = get(sessionDomain.query.DomainsQuery())
         return {
           hostId: options.hostId,
-          hostPhase: get(lifecycleDomain.query.HostPhaseQuery()),
+          hostPhase: 'ready',
           peerId: get(wireDomain.query.PeerIdQuery(getWorldRoomId())),
           domains: get(lifecycleDomain.query.DomainLeasesQuery()).map((lease) => {
             const runtime = runtimes.find((item) => item.domain === lease.domain)
@@ -157,7 +160,7 @@ const ConnectionDomain = Remesh.domain({
       name: 'Connection.WorldRecoveryTimeoutArmedEvent'
     })
     const ErrorEvent = domain.event<RuntimeFailure>({ name: 'Connection.ErrorEvent' })
-    const WorldRecoveryAbortedEvent = domain.event<{ requestId: string; generation: number; hostGeneration: number }>({
+    const WorldRecoveryAbortedEvent = domain.event<{ requestId: string; generation: number }>({
       name: 'Connection.WorldRecoveryAbortedEvent'
     })
 
@@ -170,6 +173,7 @@ const ConnectionDomain = Remesh.domain({
         domain: string
         user?: ChatUser
         site?: ChatSite
+        capability?: CommitCapability
       }
     ) => {
       const attempts = get(AttemptsState())
@@ -191,9 +195,9 @@ const ConnectionDomain = Remesh.domain({
         mode: payload.mode,
         domain: payload.domain,
         generation,
-        hostGeneration: get(lifecycleDomain.query.HostGenerationQuery()),
         user: payload.user,
-        site: payload.site
+        site: payload.site,
+        capability: payload.capability
       }
       return [
         GenerationsState().new(
@@ -228,7 +232,10 @@ const ConnectionDomain = Remesh.domain({
 
     const JoinDomainCommand = domain.command({
       name: 'Connection.JoinDomainCommand',
-      impl: ({ get }, payload: { operationId: string; domain: string; user: ChatUser; site: ChatSite }) =>
+      impl: (
+        { get },
+        payload: { operationId: string; domain: string; user: ChatUser; site: ChatSite; capability?: CommitCapability }
+      ) =>
         get(sessionDomain.query.ReleasingDomainQuery(payload.domain))
           ? OperationFailedEvent({
               operationId: payload.operationId,
@@ -240,7 +247,8 @@ const ConnectionDomain = Remesh.domain({
               mode: 'join',
               domain: payload.domain,
               user: payload.user,
-              site: payload.site
+              site: payload.site,
+              capability: payload.capability
             })
     })
 
@@ -290,7 +298,16 @@ const ConnectionDomain = Remesh.domain({
 
     const ReconnectDomainCommand = domain.command({
       name: 'Connection.ReconnectDomainCommand',
-      impl: ({ get }, payload: { operationId: string; domain: string; user?: ChatUser; site?: ChatSite }) => {
+      impl: (
+        { get },
+        payload: {
+          operationId: string
+          domain: string
+          user?: ChatUser
+          site?: ChatSite
+          capability?: CommitCapability
+        }
+      ) => {
         if (get(sessionDomain.query.ReleasingDomainQuery(payload.domain))) {
           return OperationFailedEvent({
             operationId: payload.operationId,
@@ -319,7 +336,8 @@ const ConnectionDomain = Remesh.domain({
             mode: 'reconnect',
             domain: payload.domain,
             user: runtime?.user ?? payload.user,
-            site: runtime?.site ?? payload.site
+            site: runtime?.site ?? payload.site,
+            capability: payload.capability
           })
         ]
       }
@@ -332,7 +350,16 @@ const ConnectionDomain = Remesh.domain({
     // clear their domain-owned work. World and every other domain are outside the aggregate.
     const DestroyDomainConnectionCommand = domain.command({
       name: 'Connection.DestroyDomainConnectionCommand',
-      impl: ({ get }, payload: { domain: string; operationId: string }) => {
+      impl: ({ get }, payload: { domain: string; operationId: string; capability?: CommitCapability }) => {
+        // K fence: when the reconnect envelope carries a capability, the first irreversible
+        // destruction may proceed only for the exact consumed token. A revoked/unconsumed token
+        // means the operation already lost admission and nothing may be destroyed.
+        if (payload.capability !== undefined && !commitAuthority.authorizes(payload.capability)) {
+          return OperationFailedEvent({
+            operationId: payload.operationId,
+            error: new Error('Domain connection reset lost its exact commit capability')
+          })
+        }
         const runtime = get(sessionDomain.query.DomainQuery(payload.domain))
         const retainedSeed = get(sessionDomain.query.RetainedLocalSeedQuery(payload.domain))
         // A retry after a failed reset persistence still re-honors the clear save: the Session
@@ -428,12 +455,18 @@ const ConnectionDomain = Remesh.domain({
       impl: ({ get }, payload: { attemptId: string }) => {
         const attempts = get(AttemptsState())
         const attempt = attempts.find((item) => item.attemptId === payload.attemptId)
-        if (
-          !attempt ||
-          attempt.hostGeneration !== get(lifecycleDomain.query.HostGenerationQuery()) ||
-          !get(lifecycleDomain.query.DomainLeaseQuery(attempt.domain))
-        ) {
+        if (!attempt || !get(lifecycleDomain.query.DomainLeaseQuery(attempt.domain))) {
           return null
+        }
+        // K fence: an envelope attempt commits only with its exact consumed capability; any other
+        // outcome (revoked, never consumed, or a closed captured cohort) aborts instead of
+        // committing. The cohort-closed refusal is the structured cancellation.
+        if (attempt.capability !== undefined && !commitAuthority.authorizes(attempt.capability)) {
+          return AbortAttemptCommand({
+            attemptId: attempt.attemptId,
+            error: new Error('Domain join lost its exact commit capability'),
+            cancellation: true
+          })
         }
         return [
           AttemptsState().new(attempts.filter((item) => item.attemptId !== attempt.attemptId)),
@@ -449,7 +482,7 @@ const ConnectionDomain = Remesh.domain({
 
     const AbortAttemptCommand = domain.command({
       name: 'Connection.AbortAttemptCommand',
-      impl: ({ get }, payload: { attemptId: string; error: Error }) => {
+      impl: ({ get }, payload: { attemptId: string; error: Error; cancellation?: boolean }) => {
         const attempts = get(AttemptsState())
         const attempt = attempts.find((item) => item.attemptId === payload.attemptId)
         if (!attempt) return null
@@ -473,30 +506,23 @@ const ConnectionDomain = Remesh.domain({
               ]
             : []),
           ...(attempt.mode === 'reconnect' ? [lifecycleDomain.command.FinishReconnectCommand(attempt.domain)] : []),
-          ...(attempt.operationId
-            ? [OperationFailedEvent({ operationId: attempt.operationId, error: payload.error })]
-            : [ErrorEvent({ error: payload.error, domain: attempt.domain })]),
-          AttemptFailedEvent({ ...attempt, error: payload.error })
-        ]
-      }
-    })
-
-    const AbortHostAttemptsCommand = domain.command({
-      name: 'Connection.AbortHostAttemptsCommand',
-      impl: ({ get }) => {
-        const attempts = get(AttemptsState())
-        if (attempts.length === 0) return null
-        const domains = [...new Set(attempts.map((attempt) => attempt.domain))]
-        return [
-          ...attempts.map((attempt) =>
-            AbortAttemptCommand({
-              attemptId: attempt.attemptId,
-              error: new Error('Runtime host destroyed during join')
-            })
-          ),
-          // Host loss invalidates every History owner attached to an in-flight attempt, including
-          // a committed recovery lane whose physical room generation is no longer usable.
-          ...domains.map((runtimeDomain) => historyDomain.command.ReleaseDomainCommand(runtimeDomain))
+          // A cohort-closed commit refusal is the structured cancellation, not a failure: the RPC
+          // maps it to null exactly like a superseded operation, and its terminal is supersession
+          // (no retry is ever armed — a structured cancellation is not a failure/retry owner).
+          // Its supersession owner is the closed cohort deadline (there is no superseding operation).
+          ...(attempt.operationId && payload.cancellation === true
+            ? [
+                OperationCancelledEvent({
+                  operationId: attempt.operationId,
+                  supersedingOperationId: attempt.operationId
+                })
+              ]
+            : attempt.operationId
+              ? [OperationFailedEvent({ operationId: attempt.operationId, error: payload.error })]
+              : [ErrorEvent({ error: payload.error, domain: attempt.domain })]),
+          ...(payload.cancellation === true
+            ? [AttemptSupersededEvent(attempt)]
+            : [AttemptFailedEvent({ ...attempt, error: payload.error })])
         ]
       }
     })
@@ -595,7 +621,6 @@ const ConnectionDomain = Remesh.domain({
       const recovery: WorldRecoveryAttempt = {
         requestId,
         generation,
-        hostGeneration: get(lifecycleDomain.query.HostGenerationQuery()),
         joinRequestId: worldJoinRequestId(requestId),
         ...(manual ? { manual: true } : {})
       }
@@ -628,11 +653,7 @@ const ConnectionDomain = Remesh.domain({
 
     const RetryDomainRecoveryCommand = domain.command({
       name: 'Connection.RetryDomainRecoveryCommand',
-      impl: (
-        { get },
-        payload: { domain: string; generation: number; hostGeneration: number; user?: ChatUser; site?: ChatSite }
-      ) => {
-        if (get(lifecycleDomain.query.HostGenerationQuery()) !== payload.hostGeneration) return null
+      impl: ({ get }, payload: { domain: string; generation: number; user?: ChatUser; site?: ChatSite }) => {
         if (!get(lifecycleDomain.query.DomainLeaseQuery(payload.domain))) return null
         if (get(AttemptsState()).some((item) => item.domain === payload.domain)) return null
         const current = get(GenerationsState()).find((item) => item.domain === payload.domain)?.generation ?? 0
@@ -652,8 +673,7 @@ const ConnectionDomain = Remesh.domain({
 
     const RetryWorldRecoveryCommand = domain.command({
       name: 'Connection.RetryWorldRecoveryCommand',
-      impl: ({ get }, payload: { generation: number; hostGeneration: number }) => {
-        if (get(lifecycleDomain.query.HostGenerationQuery()) !== payload.hostGeneration) return null
+      impl: ({ get }, payload: { generation: number }) => {
         if (get(WorldRecoveryGenerationState()) !== payload.generation) return null
         if (get(WorldRecoveryAttemptState())) return null
         // Recovery proceeds from preserved World demand (active registrations/local presence), never
@@ -670,7 +690,6 @@ const ConnectionDomain = Remesh.domain({
         if (
           !recovery ||
           recovery.requestId !== payload.requestId ||
-          recovery.hostGeneration !== get(lifecycleDomain.query.HostGenerationQuery()) ||
           // The completion gate is preserved World registration/demand and exact recovery identity:
           // a Domain reset's zero-committed-Domain interval never strands a settled World child.
           get(worldDomain.query.LocalPresenceQuery()) === null
@@ -702,8 +721,7 @@ const ConnectionDomain = Remesh.domain({
           ...(recovery.manual ? [] : [ErrorEvent({ error: payload.error })]),
           WorldRecoveryAbortedEvent({
             requestId: recovery.requestId,
-            generation: recovery.generation,
-            hostGeneration: recovery.hostGeneration
+            generation: recovery.generation
           })
         ]
       }
@@ -919,8 +937,7 @@ const ConnectionDomain = Remesh.domain({
               fromEvent(wireDomain.event.PeerLeftEvent).pipe(
                 filter((event) => event.roomId === payload.roomId && event.sourcePeerId === payload.sourcePeerId)
               ),
-              fromEvent(wireDomain.event.ErrorEvent).pipe(filter((event) => event.roomId === payload.roomId)),
-              fromEvent(lifecycleDomain.event.HostDestroyedEvent)
+              fromEvent(wireDomain.event.ErrorEvent).pipe(filter((event) => event.roomId === payload.roomId))
             )
 
             const roomReady$: Observable<null> = trusted
@@ -954,10 +971,6 @@ const ConnectionDomain = Remesh.domain({
     domain.effect({
       name: 'Connection.PeerLeaveEffect',
       impl: ({ fromEvent }) => fromEvent(wireDomain.event.PeerLeftEvent).pipe(map(PeerLeftCommand))
-    })
-    domain.effect({
-      name: 'Connection.HostDestroyedEffect',
-      impl: ({ fromEvent }) => fromEvent(lifecycleDomain.event.HostDestroyedEvent).pipe(map(AbortHostAttemptsCommand))
     })
     domain.effect({
       name: 'Connection.RoomCloseEffect',
@@ -1054,7 +1067,6 @@ const ConnectionDomain = Remesh.domain({
             RetryDomainRecoveryCommand({
               domain: attempt.domain,
               generation: attempt.generation,
-              hostGeneration: attempt.hostGeneration,
               user: attempt.user,
               site: attempt.site
             })
@@ -1083,9 +1095,7 @@ const ConnectionDomain = Remesh.domain({
                 return () => globalThis.clearTimeout(timerId)
               })
           ),
-          map((payload) =>
-            RetryWorldRecoveryCommand({ generation: payload.generation, hostGeneration: payload.hostGeneration })
-          )
+          map((payload) => RetryWorldRecoveryCommand({ generation: payload.generation }))
         )
     })
 

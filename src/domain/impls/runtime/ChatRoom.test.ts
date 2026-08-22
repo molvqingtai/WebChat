@@ -233,6 +233,12 @@ const settle = async () => {
   await Promise.resolve()
 }
 
+/** Best-effort auxiliary self-join notice persistence runs after the join terminal; flush its
+ * conflict-retry chain fully. */
+const settleAuxiliary = async () => {
+  for (let i = 0; i < 30; i += 1) await Promise.resolve()
+}
+
 const setup = async (
   records: readonly MessageRecord[] = [],
   database: Database<MessageDatabaseSchema> = createMemoryMessageDatabase(`chat-room-${databaseId++}`)
@@ -247,7 +253,7 @@ const setup = async (
     pageDomain: DOMAIN,
     pageId: 'page-1',
     getSnapshot: () => snapshot,
-    whenReady: (listener) => {
+    whenAttach: (listener) => {
       listener()
       return () => {}
     }
@@ -292,7 +298,7 @@ const setupHistoryCancellation = async () => {
     pageDomain: DOMAIN,
     pageId: 'page-1',
     getSnapshot: () => domainSnapshot(),
-    whenReady: (listener) => {
+    whenAttach: (listener) => {
       listener()
       return () => {}
     }
@@ -357,7 +363,7 @@ describe('Runtime-backed ChatRoom application port', () => {
       pageDomain: DOMAIN,
       pageId: 'page-1',
       getSnapshot: () => domainSnapshot(),
-      whenReady: (listener) => {
+      whenAttach: (listener) => {
         ready = listener
         return () => {}
       }
@@ -472,6 +478,8 @@ describe('Runtime-backed ChatRoom application port', () => {
     await settle()
 
     await fixture.room.joinRoom({ user: USER, site: SITE })
+    // The self-join notice is best-effort auxiliary work after the Server terminal: flush it.
+    await settleAuxiliary()
 
     const records = await fixture.messageStore.query()
     const notices = records.filter((record) => record.type === MESSAGE_RECORD_TYPE.SYSTEM_NOTICE)
@@ -506,7 +514,7 @@ describe('Runtime-backed ChatRoom application port', () => {
     const fixture = await setup([], database)
     await settle()
     await fixture.room.joinRoom({ user: USER, site: SITE })
-    await settle()
+    await settleAuxiliary()
     const records = await fixture.messageStore.query()
     const notices = records.filter((record) => record.type === MESSAGE_RECORD_TYPE.SYSTEM_NOTICE)
     expect(notices).toHaveLength(1)
@@ -1073,7 +1081,7 @@ describe('Runtime-backed ChatRoom application port', () => {
         pageDomain: DOMAIN,
         pageId: 'page-1',
         getSnapshot: () => domainSnapshot(),
-        whenReady: (listener) => {
+        whenAttach: (listener) => {
           listener()
           return () => {}
         }
@@ -1124,7 +1132,7 @@ describe('Runtime-backed ChatRoom application port', () => {
       pageDomain: DOMAIN,
       pageId: 'page-1',
       getSnapshot: () => domainSnapshot(),
-      whenReady: (listener) => {
+      whenAttach: (listener) => {
         listener()
         return () => {}
       }

@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createServer, disposeServer, getChatRoomId, getWorldRoomId } from '@/runtime/Server'
+import {
+  createServer,
+  disposeServer,
+  getChatRoomId,
+  getWorldRoomId,
+  restoreServerPageBindings,
+  RUNTIME_PAGE_BINDINGS_KEY
+} from '@/runtime/Server'
 import type { Clock } from '@/domain/runtime/externs/Clock'
 import type { PresenceStore } from '@/domain/runtime/externs/PresenceStore'
 import type { RoomTransport } from '@/runtime/RoomTransport'
@@ -79,8 +86,13 @@ const sessionObservers = (server: RuntimeServer, pageId: string): SessionObserve
 const registerSessionObservers = async (server: RuntimeServer, pageId: string, observers: SessionObservers) => {
   if (observers.registered) return
   observers.registered = true
+  let initialRefreshPending = true
   await server.onSessionEvent({ pageId }, async (event: RuntimeSessionEvent) => {
-    if (event.type === 'snapshot' && event.snapshot.localSession) {
+    // These observers model lifecycle commits. Callback binding emits its first refresh projection
+    // before later join/reconnect refreshes, which retain their existing lifecycle coverage.
+    const initialRefresh = initialRefreshPending && event.type === 'snapshot' && event.provenance === 'refresh'
+    initialRefreshPending = false
+    if (event.type === 'snapshot' && !initialRefresh && event.snapshot.localSession) {
       for (const listener of observers.local) {
         await listener({ domain: event.domain, session: event.snapshot.localSession })
       }
@@ -132,6 +144,168 @@ class FakeClock implements Clock {
 
 beforeEach(() => {
   vi.useFakeTimers()
+})
+
+describe('RuntimeServer production Page admission and restart recovery', () => {
+  const pageId = 'admitted-page'
+  const pageUrl = `${DOMAIN}/topic`
+
+  const createAdmissionFixture = () => {
+    const storageState: Record<string, unknown> = {}
+    const tabs = new Map([[7, { id: 7, url: pageUrl }]])
+    const rebindPage = vi.fn(async () => {})
+    const ensureTransport = vi.fn(async () => {})
+    const fake = createFakeTransport()
+    const admission = {
+      tabs: {
+        get: async (tabId: number) => {
+          const tab = tabs.get(tabId)
+          if (!tab) throw new Error('tab missing')
+          return tab
+        },
+        sendMessage: async () => undefined
+      },
+      storage: {
+        get: async (key: string) => ({ [key]: storageState[key] }),
+        set: async (items: Record<string, unknown>) => {
+          Object.assign(storageState, items)
+        }
+      },
+      rebindPage,
+      ensureTransport
+    }
+    const server = createServer({ transport: fake.transport, codec: jsonCodec, admission })
+    const attach = () => server.attachPage({ domain: DOMAIN, pageId, caller: { tab: tabs.get(7) } })
+    const call = async () => ({
+      pageId,
+      runtimeHostId: (await server.getSnapshot()).hostId,
+      caller: { tab: tabs.get(7) }
+    })
+    return { admission, attach, call, fake, rebindPage, server, storageState, tabs }
+  }
+
+  it('admits a Page mutation only after exact browser binding and full callback snapshot activation', async () => {
+    const fixture = createAdmissionFixture()
+    await fixture.attach()
+    const call = await fixture.call()
+
+    await expect(fixture.server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE, ...call })).rejects.toThrow(
+      'session callback is not active'
+    )
+
+    await fixture.server.onSessionEvent(call, async () => {})
+    await fixture.server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE, ...call })
+    expect(fixture.fake.joinCalls.filter((roomId) => roomId === getChatRoomId(DOMAIN))).toHaveLength(1)
+
+    await expect(
+      fixture.server.sendChatMessage({
+        domain: DOMAIN,
+        event: text('forged', USER.id),
+        ...call,
+        caller: { tab: { id: 8, url: pageUrl } }
+      })
+    ).rejects.toThrow('binding is no longer current')
+    disposeServer(fixture.server)
+  })
+
+  it('replays every Session delta that arrives while an exact replacement snapshot is pending', async () => {
+    const fixture = createAdmissionFixture()
+    await fixture.attach()
+    const call = await fixture.call()
+    await fixture.server.onSessionEvent(call, async () => {})
+    await fixture.server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE, ...call })
+
+    const events: RuntimeSessionEvent[] = []
+    const snapshotStarted = deferred<void>()
+    let releaseSnapshot!: () => void
+    const snapshotReleased = new Promise<void>((resolve) => {
+      releaseSnapshot = resolve
+    })
+    const replacement = fixture.server.onSessionEvent(call, async (event) => {
+      events.push(event)
+      if (event.type !== 'snapshot') return
+      snapshotStarted.resolve()
+      await snapshotReleased
+    })
+    await snapshotStarted.promise
+
+    fixture.fake.peerJoin(getChatRoomId(DOMAIN), 'queued-peer')
+    await settle()
+    fixture.fake.receive(getChatRoomId(DOMAIN), 'queued-peer', session(REMOTE_USER))
+    await settle()
+    expect((await fixture.server.getSnapshot()).domains[0]?.sessions).toEqual([
+      expect.objectContaining({ sourcePeerId: 'queued-peer' })
+    ])
+    expect(events).toHaveLength(1)
+
+    releaseSnapshot()
+    await replacement
+    expect(events).toEqual([
+      expect.objectContaining({ type: 'snapshot', provenance: 'refresh' }),
+      expect.objectContaining({ type: 'join', session: expect.objectContaining({ sourcePeerId: 'queued-peer' }) })
+    ])
+    disposeServer(fixture.server)
+  })
+
+  it('retires the exact browser binding when its initial Session callback rejects', async () => {
+    const fixture = createAdmissionFixture()
+    await fixture.attach()
+    const call = await fixture.call()
+    const failure = new Error('initial session projection failed')
+
+    await expect(fixture.server.onSessionEvent(call, async () => Promise.reject(failure))).rejects.toBe(failure)
+    await expect(fixture.server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE, ...call })).rejects.toThrow(
+      'binding is no longer current'
+    )
+    expect(fixture.storageState[RUNTIME_PAGE_BINDINGS_KEY]).toEqual({ pages: [] })
+    expect((await fixture.server.getSnapshot()).domains[0]).toMatchObject({ phase: 'grace', pageIds: [] })
+    disposeServer(fixture.server)
+  })
+
+  it('sends a real exact Page rebind after a fresh Background and never promotes stale hints', async () => {
+    const first = createAdmissionFixture()
+    await first.attach()
+    expect(first.storageState[RUNTIME_PAGE_BINDINGS_KEY]).toEqual({
+      pages: [{ tabId: 7, pageId, domain: DOMAIN, url: pageUrl }]
+    })
+
+    const secondFake = createFakeTransport()
+    const second = createServer({ transport: secondFake.transport, admission: first.admission })
+    await restoreServerPageBindings(second)
+    expect(first.rebindPage).toHaveBeenCalledWith(7, pageId)
+
+    const oldCall = await first.call()
+    await expect(second.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE, ...oldCall })).rejects.toThrow(
+      'binding is no longer current'
+    )
+
+    first.tabs.set(7, { id: 7, url: `${DOMAIN}/new-topic` })
+    await restoreServerPageBindings(second)
+    expect(first.storageState[RUNTIME_PAGE_BINDINGS_KEY]).toEqual({ pages: [] })
+    disposeServer(first.server)
+    disposeServer(second)
+  })
+
+  it('retires a provisional callback when its exact browser binding drifts during the full snapshot', async () => {
+    const fixture = createAdmissionFixture()
+    await fixture.attach()
+    const call = await fixture.call()
+    let releaseSnapshot!: () => void
+    const snapshotGate = new Promise<void>((resolve) => {
+      releaseSnapshot = resolve
+    })
+
+    const registration = fixture.server.onSessionEvent(call, async () => snapshotGate)
+    await Promise.resolve()
+    fixture.tabs.set(7, { id: 7, url: `${DOMAIN}/other-topic` })
+    releaseSnapshot()
+    await registration
+
+    await expect(fixture.server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE, ...call })).rejects.toThrow(
+      'binding is no longer current'
+    )
+    disposeServer(fixture.server)
+  })
 })
 afterEach(() => {
   vi.useRealTimers()
@@ -1968,6 +2142,7 @@ describe('RuntimeServer lifecycle', () => {
     const remoteSessions: string[] = []
     const worldPresences: string[] = []
     const localSessionSeen = deferred<void>()
+    const remoteSessionSeen = deferred<void>()
     const localPresenceSeen = deferred<void>()
     const remotePresenceSeen = deferred<void>()
     await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
@@ -1977,6 +2152,7 @@ describe('RuntimeServer lifecycle', () => {
     })
     await observeRemoteSessions(server, { pageId: 'page-a' }, (event) => {
       remoteSessions.push(event.session.sourcePeerId)
+      remoteSessionSeen.resolve()
     })
     await server.onWorldPresence({ pageId: 'page-a' }, (event) => {
       worldPresences.push(event.sourcePeerId)
@@ -2014,6 +2190,7 @@ describe('RuntimeServer lifecycle', () => {
     const [snapshot] = await Promise.all([
       join,
       localSessionSeen.promise,
+      remoteSessionSeen.promise,
       localPresenceSeen.promise,
       remotePresenceSeen.promise
     ])
@@ -2042,9 +2219,11 @@ describe('RuntimeServer lifecycle', () => {
     const server = createServer({ transport: fake.transport, clock, codec: jsonCodec })
     const roomId = getChatRoomId(DOMAIN)
     const remoteSessions: RuntimeSession[] = []
+    const remoteSessionSeen = deferred<void>()
     await server.attachPage({ domain: DOMAIN, pageId: 'page-a' })
     await observeRemoteSessions(server, { pageId: 'page-a' }, ({ session }) => {
       remoteSessions.push(session)
+      remoteSessionSeen.resolve()
     })
     const worldRoomId = getWorldRoomId()
     fake.hangSendsTo(worldRoomId)
@@ -2066,6 +2245,7 @@ describe('RuntimeServer lifecycle', () => {
 
     fake.releaseSends()
     await join
+    await remoteSessionSeen.promise
     expect(remoteSessions).toEqual([expect.objectContaining({ sourcePeerId: 'later-peer', user: REMOTE_USER })])
   })
 
@@ -3577,6 +3757,30 @@ describe('RuntimeServer provisional recovery races', () => {
 })
 
 describe('RuntimeServer trusted delivery', () => {
+  it('projects the current domain session snapshot whenever a Page callback binds', async () => {
+    const { server } = await setup()
+    const first: RuntimeSessionEvent[] = []
+    const replacement: RuntimeSessionEvent[] = []
+
+    await server.onSessionEvent({ pageId: 'page-a' }, (event) => {
+      first.push(event)
+    })
+    await server.onSessionEvent({ pageId: 'page-a' }, (event) => {
+      replacement.push(event)
+    })
+
+    expect(first).toEqual([
+      expect.objectContaining({
+        type: 'snapshot',
+        domain: DOMAIN,
+        provenance: 'refresh',
+        snapshot: expect.objectContaining({ localSession: expect.objectContaining({ user: USER }) })
+      })
+    ])
+    expect(replacement).toEqual(first)
+    disposeServer(server)
+  })
+
   it('binds live authors to the transport source session and ignores payload identity claims', async () => {
     const { fake, server, roomId } = await setup()
     const received: string[] = []
@@ -3608,7 +3812,7 @@ describe('RuntimeServer trusted delivery', () => {
     fake.receive(roomId, 'peer-a', { ...accepted, joinedAt: undefined } as unknown as TestWireMessage)
     await settle()
 
-    expect(events.map(({ type }) => type)).toEqual(['join', 'snapshot'])
+    expect(events.map(({ type }) => type)).toEqual(['snapshot', 'join', 'snapshot'])
     expect((await server.getSnapshot()).domains[0].sessions).toEqual([
       expect.objectContaining({
         sourcePeerId: 'peer-a',

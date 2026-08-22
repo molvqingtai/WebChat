@@ -54,18 +54,16 @@ describe('replaceable application boundaries', () => {
     expect(implementation).not.toMatch(/setTimeout:|clearTimeout:/)
   })
 
-  it('keeps production lease timers global instead of injectable', async () => {
-    const [clientLease, coordinator, background] = await Promise.all([
+  it('keeps production lease timing free of intervals', async () => {
+    const [clientLease, server, background] = await Promise.all([
       source('src/runtime/ClientLease.ts'),
-      source('src/runtime/Coordinator.ts'),
+      source('src/runtime/Server.ts'),
       source('src/runtime/Background.ts')
     ])
 
     expect(clientLease).not.toMatch(/\bsetInterval\??:|\bclearInterval\??:/)
-    expect(coordinator).not.toMatch(/\bsetInterval:|\bclearInterval:/)
+    expect(server).not.toMatch(/\bsetInterval:|\bclearInterval:/)
     expect(background).not.toMatch(/\bsetInterval:|\bclearInterval:/)
-    expect(`${clientLease}\n${coordinator}`).toContain('globalThis.setInterval')
-    expect(`${clientLease}\n${coordinator}`).toContain('globalThis.clearInterval')
   })
 
   it('never clears the canonical message database from startup or setup state', async () => {

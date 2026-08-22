@@ -374,7 +374,7 @@ const createPendingConnectionFixture = (stage: PendingConnectionStage) => {
     pageDomain: domain,
     pageId: 'page-1',
     getSnapshot: connectedSnapshot,
-    whenReady: (listener) => {
+    whenAttach: (listener) => {
       readyListener = listener
       listener()
       return () => {
@@ -992,7 +992,7 @@ describe('ChatRoomDomain exact application port', () => {
       pageDomain: domain,
       pageId: 'page-1',
       getSnapshot: () => runtimeSnapshot,
-      whenReady: (listener) => {
+      whenAttach: (listener) => {
         listener()
         return () => {}
       }
@@ -1237,7 +1237,7 @@ describe('ChatRoomDomain exact application port', () => {
       pageDomain,
       pageId: 'accepted-transport-page',
       getSnapshot: () => runtimeSnapshot,
-      whenReady: (listener) => {
+      whenAttach: (listener) => {
         listener()
         return () => {}
       }
