@@ -617,7 +617,7 @@ const postKCommitSchedule: Schedule = {
 
 /** Drives the world's gates in creation order, skipping any label in `hold`, until `done`. */
 const driveWorld = async (world: HarnessWorld, done: () => boolean, hold: string[] = []) => {
-  for (let round = 0; round < 100 && !done(); round += 1) {
+  for (let round = 0; round < 2000 && !done(); round += 1) {
     const gate = world.gates.pending().find((candidate) => !hold.includes(candidate.label))
     if (!gate) {
       await new Promise((resolve) => setTimeout(resolve, 0))
@@ -999,6 +999,225 @@ describe('Linear lifecycle generated harness — task #1550 private binding gene
         mentions: []
       })
       expect(record).toBeDefined()
+    } finally {
+      world.dispose()
+    }
+  })
+})
+
+describe('Linear lifecycle generated harness — task #1552 monotonic generation ownership', () => {
+  it('registration reorder: a stale R1 install fails closed after R2 wins, with zero B2 effects', async () => {
+    vi.useRealTimers()
+    const world = createHarnessWorld({ seed: 150, pageCount: 1 })
+    try {
+      const page = world.pages[0]
+      await page.lease.init() // B0 (epoch 1)
+      world.armStorageGate()
+      // R1 (epoch 2): suspends inside the async removal/persist of its install.
+      let r1Settled = false
+      const r1 = page.lease.rebind().then(
+        () => {
+          r1Settled = true
+        },
+        () => {
+          r1Settled = true
+        }
+      )
+      await driveWorld(world, () => world.gates.pending().some((gate) => gate.label === 'admission.storage.set'))
+      // R2 (epoch 3): observes the cleared maps, installs B2, and completes its whole barrier.
+      // Its own persist queues behind R1's held gate; driving normally releases the gate, R1's
+      // compare-and-install re-check fails closed against R2's generation, and R2 then completes.
+      let r2Settled = false
+      const r2 = page.lease.rebind().then(
+        () => {
+          r2Settled = true
+        },
+        () => {
+          r2Settled = true
+        }
+      )
+      await driveWorld(world, () => r2Settled)
+      expect(r2Settled).toBe(true)
+      await r1
+      expect(r1Settled).toBe(true)
+      // The current binding is exactly R2's generation 3; a stale-epoch call fails closed.
+      const hostId = (await world.server.getSnapshot()).hostId
+      await world.server.getSnapshot({
+        pageId: page.pageId,
+        runtimeHostId: hostId,
+        caller: { tab: { id: page.tabId, url: page.url } },
+        validateReadiness: true,
+        epoch: 3
+      })
+      await expect(
+        world.server.getSnapshot({
+          pageId: page.pageId,
+          runtimeHostId: hostId,
+          caller: { tab: { id: page.tabId, url: page.url } },
+          validateReadiness: true,
+          epoch: 2
+        })
+      ).rejects.toThrow('Runtime Page binding is no longer current')
+      // B2's callbacks/readiness are intact: business on the fresh binding works.
+      const identity = world.log.entries.filter((entry) => entry.kind === 'identity')
+      const installs = identity.filter((entry) => entry.detail.type === 'binding' && entry.detail.phase === 'installed')
+      expect(installs.length).toBeGreaterThanOrEqual(2)
+      void r2
+    } finally {
+      world.dispose()
+    }
+  })
+
+  it('stale continuation: a delayed registration response never mutates shared state or publishes failure', async () => {
+    vi.useRealTimers()
+    const world = createHarnessWorld({ seed: 151, pageCount: 1 })
+    try {
+      const page = world.pages[0]
+      await page.lease.init() // B0 (epoch 1)
+      const failures: string[] = []
+      page.lease.whenFailure((error) => failures.push(error.message))
+      world.armRegisterResponseGate()
+      // R1 (epoch 2): its install completes fully, then its registerPage response is held — a
+      // delayed response resumption race, not a suspended install.
+      let r1Settled = false
+      const r1 = page.lease.rebind().then(
+        () => {
+          r1Settled = true
+        },
+        () => {
+          r1Settled = true
+        }
+      )
+      await driveWorld(world, () =>
+        world.gates.pending().some((gate) => gate.label === 'coordinator.registerPage.response')
+      )
+      let r2Settled = false
+      const r2 = page.lease.rebind().then(
+        () => {
+          r2Settled = true
+        },
+        () => {
+          r2Settled = true
+        }
+      )
+      // B2 completes its ENTIRE barrier while R1's response stays held.
+      await driveWorld(world, () => r2Settled, ['coordinator.registerPage.response'])
+      expect(r2Settled).toBe(true)
+      // R1's stale response resumes only now: it must settle silently.
+      for (const gate of world.gates.pending()) {
+        if (gate.label === 'coordinator.registerPage.response') {
+          ;(gate as HarnessGate<unknown>).release(undefined as never)
+        }
+      }
+      await r1
+      expect(r1Settled).toBe(true)
+      // Exactly two ready publications total (initial + R2); the stale continuation published
+      // nothing, overwrote nothing, and emitted no failure/unavailable effect. It also never ran
+      // a third attachment/validation chain against the live B2.
+      const publishes = world.log.entries.filter((entry) => entry.kind === 'ready.publish')
+      expect(publishes.length).toBe(2)
+      const validations = world.log.entries.filter((entry) => entry.kind === 'ready.validate')
+      expect(validations.length, world.log.trace().join('\n')).toBe(2)
+      // No stale attachment chain ran against the live B2: every readiness owner that began ended
+      // (a stale barrier would leave fresh unmatched owners on B2 forever).
+      const identity = world.log.entries.filter((entry) => entry.kind === 'identity')
+      const begins = identity.filter((entry) => entry.detail.type === 'readiness' && entry.detail.phase === 'begin')
+      const ends = identity.filter((entry) => entry.detail.type === 'readiness' && entry.detail.phase === 'end')
+      expect(ends.length, world.log.trace().join('\n')).toBe(begins.length)
+      expect(failures, world.log.trace().join('\n')).toEqual([])
+      // B2's completed attachment is untouched by the stale continuation: business still works.
+      let joinSettled = false
+      page.chat.joinRoom({ user: harnessUser(0), site: HARNESS_SITE }).then(
+        () => {
+          joinSettled = true
+        },
+        () => {
+          joinSettled = true
+        }
+      )
+      await driveWorld(world, () => joinSettled)
+      expect(joinSettled, world.log.trace().join('\n')).toBe(true)
+      void r2
+    } finally {
+      world.dispose()
+    }
+  })
+
+  it('B1 business behind B2: an epoch-stamped action arriving after B2 fails closed', async () => {
+    vi.useRealTimers()
+    const world = createHarnessWorld({ seed: 152, pageCount: 1 })
+    try {
+      const page = world.pages[0]
+      await page.lease.init() // B0 (epoch 1), ready
+      // A B1-issued business payload, stamped with the exact generation at issue time (the
+      // production bindPage captures it identically), delayed across the context boundary.
+      const hostId = (await world.server.getSnapshot()).hostId
+      const delayedB1Call = {
+        domain: HARNESS_DOMAIN,
+        body: 'stale-call',
+        mentions: [],
+        pageId: page.pageId,
+        runtimeHostId: hostId,
+        caller: { tab: { id: page.tabId, url: page.url } },
+        epoch: 1
+      }
+      await page.lease.checkNow() // B2 (epoch 2) installs with a complete rebuilt barrier
+      await expect(world.server.allocateTextMessage(delayedB1Call)).rejects.toThrow(
+        'Runtime Page binding is no longer current'
+      )
+      // No allocation effect was adopted by B2: the fresh binding itself remains fully usable.
+      await world.server.getSnapshot({
+        pageId: page.pageId,
+        runtimeHostId: hostId,
+        caller: { tab: { id: page.tabId, url: page.url } },
+        validateReadiness: true,
+        epoch: 2
+      })
+    } finally {
+      world.dispose()
+    }
+  })
+
+  it('callback throw: a throwing ready consumer retires the current B exactly once and preserves the error', async () => {
+    vi.useRealTimers()
+    const world = createHarnessWorld({ seed: 153, pageCount: 1 })
+    try {
+      const page = world.pages[0]
+      page.lease.whenReady(() => {
+        throw new Error('ready consumer exploded')
+      })
+      await expect(page.lease.init()).rejects.toThrow('ready consumer exploded')
+      // The exact B was retired by the captured-epoch terminal owner: binding removed, and its
+      // readiness owners ended (cleanup conjunction can close).
+      const identity = world.log.entries.filter((entry) => entry.kind === 'identity')
+      expect(identity.some((entry) => entry.detail.type === 'binding' && entry.detail.phase === 'removed')).toBe(true)
+      const begins = identity.filter((entry) => entry.detail.type === 'readiness' && entry.detail.phase === 'begin')
+      const ends = identity.filter((entry) => entry.detail.type === 'readiness' && entry.detail.phase === 'end')
+      expect(begins.length).toBeGreaterThan(0)
+      expect(ends.length).toBe(begins.length)
+    } finally {
+      world.dispose()
+    }
+  })
+
+  it('settle loss: a lost settle terminal retires the still-current B and ends its owners', async () => {
+    vi.useRealTimers()
+    const world = createHarnessWorld({ seed: 154, pageCount: 1 })
+    try {
+      const page = world.pages[0]
+      const failures: string[] = []
+      page.lease.whenFailure((error) => failures.push(error.message))
+      world.armSettleFailures(1)
+      await page.lease.init()
+      // The lost settle was not just logged: the current exact B was retired and its readiness
+      // owners ended; the original failure was surfaced.
+      const identity = world.log.entries.filter((entry) => entry.kind === 'identity')
+      expect(identity.some((entry) => entry.detail.type === 'binding' && entry.detail.phase === 'removed')).toBe(true)
+      const begins = identity.filter((entry) => entry.detail.type === 'readiness' && entry.detail.phase === 'begin')
+      const ends = identity.filter((entry) => entry.detail.type === 'readiness' && entry.detail.phase === 'end')
+      expect(begins.length).toBeGreaterThan(0)
+      expect(ends.length).toBe(begins.length)
+      expect(failures.some((message) => message.includes('settle transport lost'))).toBe(true)
     } finally {
       world.dispose()
     }

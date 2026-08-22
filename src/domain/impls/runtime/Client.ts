@@ -53,7 +53,10 @@ ownInjectRejections((error) => client.observeTransportRejection(error))
 const bindPage = <Payload extends object>(payload: Payload) => ({
   ...payload,
   pageId,
-  runtimeHostId: client.runtimeHostId()
+  runtimeHostId: client.runtimeHostId(),
+  // The private binding generation captured at issue time: a call delayed across the context
+  // boundary fails closed Server-side if its generation is no longer the current binding's.
+  epoch: client.currentEpoch()
 })
 
 /** Every Page-facing Runtime call carries its current logical binding. Browser caller facts are added by Provider. */

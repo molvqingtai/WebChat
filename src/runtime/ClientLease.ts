@@ -118,6 +118,11 @@ export class ClientLease {
     return this.lifecycle === lifecycle && !lifecycle.signal.aborted
   }
 
+  /** The Page-local binding generation: bumped before every registration admission. */
+  currentEpoch() {
+    return this.attachEpoch
+  }
+
   private setHostPhase(phase: HostPhase) {
     if (this.hostPhase === phase) return
     this.hostPhase = phase
@@ -167,6 +172,8 @@ export class ClientLease {
       } catch (error) {
         lifecycle.signal.throwIfAborted()
         lastError = error
+        // A stale continuation never retries: its registration belongs to a superseded epoch.
+        if (this.attachEpoch !== epoch) throw error
         if (Date.now() + this.startupRetryIntervalMs > deadline) throw error
         await wait(this.startupRetryIntervalMs, lifecycle.signal)
       }
@@ -201,28 +208,34 @@ export class ClientLease {
     }
   }
 
-  /** The unique readiness terminal: issued once after this exact barrier published ready. */
+  /** The unique readiness terminal: issued once after this exact barrier published ready. A
+   * stale rejection means the binding was already replaced and its owners retired — terminal.
+   * Any other rejection retires the still-current exact B (preserving the original failure):
+   * logging alone is never a terminal. No retry timer is introduced. */
   private async settleReadyPublication(lifecycle: AbortController, epoch: number) {
     if (!this.options.settleReady || this.attachEpoch !== epoch || !this.isCurrent(lifecycle)) return
     try {
       await this.options.settleReady(epoch)
     } catch (error) {
-      // A stale/missing binding fails closed Server-side; its readiness owners end via the
-      // exact-B retirement path, so cohort cleanup still wakes.
+      if (error instanceof Error && error.message.includes('binding is no longer current')) return
       console.error(error)
+      this.emitFailure(error)
+      await this.retireCurrentBinding(epoch)
     }
   }
 
   private async attach(lifecycle: AbortController, deadline = Date.now() + this.startupTimeoutMs) {
     const epoch = ++this.attachEpoch
     const registration = await this.registerWithinBudget(lifecycle, deadline, epoch)
-    if (!this.isCurrent(lifecycle)) return null
+    // Every post-registration continuation must re-prove its captured epoch before any shared
+    // mutation or effect; a stale continuation settles silently without touching B2.
+    if (!this.isCurrent(lifecycle) || this.attachEpoch !== epoch) return null
     this.snapshotValue = registration.snapshot
     try {
       // Phase 1: attachments (ChatRoom registrations + replay, WorldRoom subscription + snapshot)
       // must settle BEFORE the single ready publication below.
       await this.runAttachmentBarrier()
-      if (!this.isCurrent(lifecycle)) return null
+      if (!this.isCurrent(lifecycle) || this.attachEpoch !== epoch) return null
       // Phase 2: the unique ready publication point — after World attach AND the final Server-side
       // exact-binding + full-readiness validation. A same-host B2 replacement installed during the
       // barrier fails this check and blocks the stale B1 ready publication.
@@ -238,9 +251,18 @@ export class ClientLease {
     if (!this.isCurrent(lifecycle) || this.attachEpoch !== epoch) return null
     this.ready = true
     this.setHostPhase(registration.snapshot.hostPhase)
-    this.readyCallbacks.forEach((callback) => callback())
+    try {
+      this.readyCallbacks.forEach((callback) => callback())
+    } catch (error) {
+      // The same captured-epoch terminal owner: a throwing ready consumer retires the current
+      // exact B (ending its readiness owners and waking cleanup) and preserves the original
+      // failure. It never detaches a successor.
+      await this.retireCurrentBinding(epoch)
+      throw error
+    }
     this.emitRegistrationFailures(registration)
-    // The readiness owners end only now, at the real cross-context terminal, never at validation.
+    // Post-publication settle: the readiness owners end exactly once, only after the publication
+    // terminal completed — never at validation, never skipped by a callback failure.
     await this.settleReadyPublication(lifecycle, epoch)
     return registration.snapshot
   }
@@ -256,7 +278,7 @@ export class ClientLease {
     const deadline = Date.now() + this.startupTimeoutMs
     try {
       const registration = await this.registerWithinBudget(lifecycle, deadline, epoch)
-      if (!this.isCurrent(lifecycle)) return
+      if (!this.isCurrent(lifecycle) || this.attachEpoch !== epoch) return
       this.emitRegistrationFailures(registration)
       // Every successful registration installs a fresh exact binding object (the Server removes
       // the prior B and its callbacks at install). A same-host refresh is never detectable from
@@ -265,7 +287,7 @@ export class ClientLease {
       this.snapshotValue = registration.snapshot
       try {
         await this.runAttachmentBarrier()
-        if (!this.isCurrent(lifecycle)) return
+        if (!this.isCurrent(lifecycle) || this.attachEpoch !== epoch) return
         if (this.options.validateReady) await this.options.validateReady(epoch)
       } catch (error) {
         await this.retireCurrentBinding(epoch)
@@ -274,10 +296,15 @@ export class ClientLease {
       if (!this.isCurrent(lifecycle) || this.attachEpoch !== epoch) return
       this.ready = true
       this.setHostPhase(registration.snapshot.hostPhase)
-      this.readyCallbacks.forEach((callback) => callback())
+      try {
+        this.readyCallbacks.forEach((callback) => callback())
+      } catch (error) {
+        await this.retireCurrentBinding(epoch)
+        throw error
+      }
       await this.settleReadyPublication(lifecycle, epoch)
     } catch (error) {
-      if (!this.isCurrent(lifecycle)) return
+      if (!this.isCurrent(lifecycle) || this.attachEpoch !== epoch) return
       this.ready = false
       this.setHostPhase('unavailable')
       this.emitFailure(error)
@@ -334,13 +361,13 @@ export class ClientLease {
     this.setHostPhase('connecting')
     try {
       const registration = await this.registerWithinBudget(lifecycle, deadline, epoch)
-      if (!this.isCurrent(lifecycle)) return
+      if (!this.isCurrent(lifecycle) || this.attachEpoch !== epoch) return
       this.snapshotValue = registration.snapshot
       try {
         // The rebind attachment barrier: existing ChatRoom/WorldRoom attachments complete before
         // ready is published again.
         await this.runAttachmentBarrier()
-        if (!this.isCurrent(lifecycle)) return
+        if (!this.isCurrent(lifecycle) || this.attachEpoch !== epoch) return
         if (this.options.validateReady) await this.options.validateReady(epoch)
       } catch (error) {
         await this.retireCurrentBinding(epoch)
@@ -349,11 +376,16 @@ export class ClientLease {
       if (!this.isCurrent(lifecycle) || this.attachEpoch !== epoch) return
       this.ready = true
       this.setHostPhase(registration.snapshot.hostPhase)
-      this.readyCallbacks.forEach((callback) => callback())
+      try {
+        this.readyCallbacks.forEach((callback) => callback())
+      } catch (error) {
+        await this.retireCurrentBinding(epoch)
+        throw error
+      }
       this.emitRegistrationFailures(registration)
       await this.settleReadyPublication(lifecycle, epoch)
     } catch (error) {
-      if (!this.isCurrent(lifecycle)) return
+      if (!this.isCurrent(lifecycle) || this.attachEpoch !== epoch) return
       this.ready = false
       this.setHostPhase('unavailable')
       this.emitFailure(error)

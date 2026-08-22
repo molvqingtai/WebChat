@@ -426,6 +426,9 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
 
   const pageBindings = new Map<string, PageBinding>()
   const tabBindings = new Map<number, PageBinding>()
+  /** Monotonic install fence: the highest binding generation admitted per Page. A stale
+   * registration can never replace, remove, persist, or emit effects for a newer successor. */
+  const admittedGenerations = new Map<string, number>()
   const rebindHints = new Map<number, PersistedPageBindings['pages'][number]>()
   let bindingPersistTail: Promise<void> = Promise.resolve()
 
@@ -558,11 +561,22 @@ export const createServer = (config: ServerConfig): RuntimeServer => {
   }
 
   const installBinding = async (binding: PageBinding) => {
+    // Compare-and-install: the captured generation is re-validated after every removal/persist
+    // await. A stale registration fails closed before any further effect.
+    const staleInstall = () => {
+      if (binding.epoch === null) return false
+      const admitted = admittedGenerations.get(binding.pageId)
+      return admitted !== undefined && binding.epoch < admitted
+    }
+    if (staleInstall()) throw new Error('Runtime Page registration is no longer current')
     const previousPage = pageBindings.get(binding.pageId)
     const previousTab = tabBindings.get(binding.tabId)
     if (previousPage) await removeBinding(previousPage)
+    if (staleInstall()) throw new Error('Runtime Page registration is no longer current')
     if (previousTab && previousTab !== previousPage) await removeBinding(previousTab)
+    if (staleInstall()) throw new Error('Runtime Page registration is no longer current')
     rebindHints.delete(binding.tabId)
+    if (binding.epoch !== null) admittedGenerations.set(binding.pageId, binding.epoch)
     pageBindings.set(binding.pageId, binding)
     tabBindings.set(binding.tabId, binding)
     emit({ type: 'binding', phase: 'installed', binding })

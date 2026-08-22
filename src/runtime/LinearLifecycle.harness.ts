@@ -324,6 +324,12 @@ export interface HarnessWorld {
   /** Arms a one-shot gate holding the post-publication settle signal (models a reordered late
    * arrival of the exact barrier's settle). */
   armSettleGate: () => void
+  /** Arms a one-shot gate on the Nth admission storage persist (models a suspended install). */
+  armStorageGate: (sets?: number) => void
+  /** Arms a one-shot gate holding the next registration response after its install completed. */
+  armRegisterResponseGate: () => void
+  /** Makes the next N settle calls reject with a transport loss before reaching the Server. */
+  armSettleFailures: (count: number) => void
   dispose: () => void
 }
 
@@ -378,6 +384,13 @@ export const createHarnessWorld = (config: WorldConfig): HarnessWorld => {
     storage: {
       get: async (key: string) => ({ [key]: storageState[key] }),
       set: async (items: Record<string, unknown>) => {
+        if (storageGateArmed > 0) {
+          storageGateArmed -= 1
+          if (storageGateArmed === 0) {
+            const gate = gates.create<void>('admission.storage.set', {})
+            await gate.promise
+          }
+        }
         Object.assign(storageState, items)
       }
     },
@@ -458,6 +471,13 @@ export const createHarnessWorld = (config: WorldConfig): HarnessWorld => {
       })
       attachedPages.set(payload.pageId!, pageIndex)
       log.record('binding.attach', { page: pageIndex })
+      if (registerResponseGateArmed) {
+        registerResponseGateArmed = false
+        // Holds the registration response back after the install completed: a delayed response
+        // resumption race, not a delayed install.
+        const gate = gates.create<void>('coordinator.registerPage.response', { page: pageIndex })
+        await gate.promise
+      }
       return { snapshot }
     }
   }
@@ -467,6 +487,9 @@ export const createHarnessWorld = (config: WorldConfig): HarnessWorld => {
   let replayGateArmed = false
   let responseGateArmed = false
   let settleGateArmed = false
+  let settleFailures = 0
+  let storageGateArmed = 0
+  let registerResponseGateArmed = false
   for (let index = 0; index < config.pageCount; index += 1) {
     const pageId = `harness-page-${config.seed}-${index}`
     const tabId = 1000 + index
@@ -498,6 +521,10 @@ export const createHarnessWorld = (config: WorldConfig): HarnessWorld => {
       },
       // The post-publication readiness terminal, identical to production wiring.
       settleReady: async (epoch) => {
+        if (settleFailures > 0) {
+          settleFailures -= 1
+          throw new Error('settle transport lost')
+        }
         if (settleGateArmed) {
           settleGateArmed = false
           // Holds the settle signal back, modeling a reordered late arrival of B1's settle.
@@ -536,11 +563,13 @@ export const createHarnessWorld = (config: WorldConfig): HarnessWorld => {
     } as HarnessPage
 
     // Page facade: identical to src/domain/impls/runtime/Client.ts bindPage, plus identity log taps.
+    // The epoch is captured at issue time exactly like production bindPage.
     const withBinding = <Payload extends object>(payload: Payload): Payload & RuntimePageCall =>
       ({
         ...payload,
         pageId,
         runtimeHostId: lease.runtimeHostId(),
+        epoch: lease.currentEpoch(),
         caller: { tab: tabs.get(tabId)! }
       }) as Payload & RuntimePageCall
     const bound: RuntimeServer = {
@@ -684,6 +713,15 @@ export const createHarnessWorld = (config: WorldConfig): HarnessWorld => {
     },
     armSettleGate: () => {
       settleGateArmed = true
+    },
+    armStorageGate: (sets = 1) => {
+      storageGateArmed = sets
+    },
+    armRegisterResponseGate: () => {
+      registerResponseGateArmed = true
+    },
+    armSettleFailures: (count: number) => {
+      settleFailures = count
     },
     dispose: () => {
       pages.forEach((page) => {
