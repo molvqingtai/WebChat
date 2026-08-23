@@ -459,12 +459,15 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
       }
     }
     // Page-owned MessageStore supplies local history; Runtime owns only orchestration.
+    // Every terminal/effect is live-rechecked against document + exact slot ownership at its own
+    // settle time, before the exact-entry finally retires this controller's entry.
+    const ownershipCurrent = () => documentAlive() && this.activeHistorySupplies.get(request.supplyId) === controller
     void this.dependencies.messageStore
       .query({ type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE, signal: controller.signal })
       .then((records) => projectHistory(records, request.cutoff, controller.signal))
       .then(async (result) => {
         controller.signal.throwIfAborted()
-        if (this.disposed || !documentAlive() || this.activeHistorySupplies.get(request.supplyId) !== controller) {
+        if (this.disposed || !ownershipCurrent()) {
           return
         }
         await raceWithSignal(
@@ -478,34 +481,36 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
           // cancelled supplyId exactly once, but only while this exact controller still owns
           // the slot and the document still owns this supplier — a detached/stale terminal
           // never reaches a successor facade or a successor's pending entry.
-          if (documentAlive() && this.activeHistorySupplies.get(request.supplyId) === controller) {
+          if (ownershipCurrent()) {
             await this.dependencies.server
               .rejectHistorySupply({
                 supplyId: request.supplyId,
                 reason: (error as Error).message || 'History supply cancelled'
               })
               .catch((settleError) => {
-                if (
-                  !this.disposed &&
-                  documentAlive() &&
-                  this.activeHistorySupplies.get(request.supplyId) === controller
-                ) {
+                if (!this.disposed && ownershipCurrent()) {
                   this.emitError(settleError)
                 }
               })
           }
           return
         }
-        if (this.disposed || !documentAlive() || this.activeHistorySupplies.get(request.supplyId) !== controller) {
+        if (this.disposed || !ownershipCurrent()) {
           return
         }
+        // A failed terminal RPC publishes the original Error only while this exact controller
+        // still owns the slot at its own settle time.
         await raceWithSignal(
           this.dependencies.server.rejectHistorySupply({
             supplyId: request.supplyId,
             reason: (error as Error).message
           }),
           controller.signal
-        )
+        ).catch((settleError) => {
+          if (!this.disposed && ownershipCurrent()) {
+            this.emitError(settleError)
+          }
+        })
       })
       .finally(() => {
         document?.signal.removeEventListener('abort', abortFromDocument)
@@ -514,7 +519,9 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
         }
       })
       .catch((error) => {
-        if (!this.disposed && documentAlive()) this.emitError(error)
+        // The final sink live-rechecks ownership at its own settle time; any stale terminal is
+        // silent. (This covers rejections that escape the branches above.)
+        if (!this.disposed && ownershipCurrent()) this.emitError(error)
       })
   }
 

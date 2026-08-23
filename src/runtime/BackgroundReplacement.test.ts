@@ -137,6 +137,12 @@ describe('DocumentClient across a logical Background replacement', () => {
       const resolveHistorySupply = vi.fn()
       const rejectHistorySupply = vi.fn()
       const b1SupplyIds = new Set<string>()
+      const b2SupplyIds = new Set<string>()
+      const b1Terminal = Promise.withResolvers<never>()
+      // The terminal hold arms only after the held query, so the join-time supply settlement and
+      // the requester attempt admission are never blocked by the gate.
+      let armTerminalHold = false
+      let b1TerminalHeldConsumed = false
       const coordinator = {
         registerPage: async (payload: { domain: string }) => ({
           snapshot: await current.attachPage({ ...payload, caller })
@@ -151,18 +157,27 @@ describe('DocumentClient across a logical Background replacement', () => {
           provideHistory(payload)
           const observingCallback: Parameters<RuntimeServer['provideHistory']>[1] = (event) => {
             if (event.type === 'request' && registration === 1) b1SupplyIds.add(event.request.supplyId)
+            if (event.type === 'request' && registration !== 1) b2SupplyIds.add(event.request.supplyId)
             callback(event)
           }
           return current.provideHistory({ ...payload, caller }, observingCallback)
         },
         ackInbound: (payload: { domain: string; sequence: number; inserted: boolean }) =>
           current.ackInbound({ ...payload, caller }),
-        resolveHistorySupply: (payload: { supplyId: string; result: { records: never[]; done: boolean } }) => {
+        resolveHistorySupply: async (payload: { supplyId: string; result: { records: never[]; done: boolean } }) => {
           resolveHistorySupply(payload)
+          if (armTerminalHold && !b1TerminalHeldConsumed && b1SupplyIds.has(payload.supplyId)) {
+            b1TerminalHeldConsumed = true
+            await b1Terminal.promise
+          }
           return current.resolveHistorySupply({ ...payload, caller })
         },
-        rejectHistorySupply: (payload: { supplyId: string; reason: string }) => {
+        rejectHistorySupply: async (payload: { supplyId: string; reason: string }) => {
           rejectHistorySupply(payload)
+          if (armTerminalHold && !b1TerminalHeldConsumed && b1SupplyIds.has(payload.supplyId)) {
+            b1TerminalHeldConsumed = true
+            await b1Terminal.promise
+          }
           return current.rejectHistorySupply({ ...payload, caller })
         }
       } as unknown as RuntimeServer
@@ -175,6 +190,8 @@ describe('DocumentClient across a logical Background replacement', () => {
       const chat = new ChatRoom({ server: facade, messageStore, pageDomain: DOMAIN })
       const feedback: Array<{ ownerId: string; type: string }> = []
       chat.onHistoryFeedback((event) => feedback.push({ ownerId: event.ownerId, type: event.type }))
+      const errors: Error[] = []
+      chat.onError((error) => errors.push(error))
       client.registerApplier('chat', (projection) => chat.applyChat(projection))
       client.registerApplier('persistence', (projection, context) => chat.applyPersistence(projection, context))
 
@@ -219,13 +236,16 @@ describe('DocumentClient across a logical Background replacement', () => {
       })
       // A genuine requester pull now loads one record so the attempt owns a live loading feedback
       // owner (done=false keeps the attempt active through the replacement).
-      const requesterPull = await vi.waitFor(() => {
-        const pull = fake.sent.find(
-          (frame) => (JSON.parse(frame.payload) as { type?: string }).type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL
-        )
-        expect(pull).toBeDefined()
-        return JSON.parse(pull!.payload) as { syncId: string }
-      })
+      const requesterPull = await vi.waitFor(
+        () => {
+          const pull = fake.sent.find(
+            (frame) => (JSON.parse(frame.payload) as { type?: string }).type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL
+          )
+          expect(pull).toBeDefined()
+          return JSON.parse(pull!.payload) as { syncId: string }
+        },
+        { timeout: 5000 }
+      )
       fake.receive(getChatRoomId(DOMAIN), 'peer-a', {
         type: MESSAGE_TYPE.HISTORY_MESSAGES_PUSH,
         syncId: requesterPull.syncId,
@@ -251,12 +271,21 @@ describe('DocumentClient across a logical Background replacement', () => {
 
       const querySignal = await queryStarted.promise
 
-      // Logical Background replacement arrives while B1's supply is still physically pending:
-      // the reset owner (not a disposal path) must abort the old-host controller before the same
-      // document re-registers and re-provides into the new Runtime.
+      // The B1 physical query settles, but its terminal RPC is held: the chain now parks at a
+      // real pending terminal (exactly one pre-cut B1 facade call).
+      armTerminalHold = true
+      if (branch === 'resolve') releaseQuery.resolve([])
+      else releaseQuery.reject(new Error('B1 query failed before replacement'))
+      const held = branch === 'resolve' ? resolveHistorySupply : rejectHistorySupply
+      await vi.waitFor(() => {
+        expect(held.mock.calls.filter((call) => b1SupplyIds.has(call[0]!.supplyId))).toHaveLength(1)
+      })
+
+      // Logical Background replacement arrives with B1's terminal RPC still pending: the reset
+      // owner aborts the old controller before the document re-registers and re-provides.
       const b1 = current
       current = createServer({ transport: fake.transport, admission, codec: jsonCodec })
-      // Terminal assertions scope to after the replacement; earlier supplies settled legitimately.
+      // Terminal assertions scope to after the replacement; the held B1 call happened pre-cut.
       resolveHistorySupply.mockClear()
       rejectHistorySupply.mockClear()
       notifyServerTabs(current)
@@ -266,15 +295,40 @@ describe('DocumentClient across a logical Background replacement', () => {
       expect(querySignal.aborted).toBe(true)
       await vi.waitFor(() => expect(provideHistory).toHaveBeenCalledTimes(2))
 
-      // The B1 physical query now settles late (resolve branch): the old chain must not supply or
-      // fail the replacement host, and B2 readiness/failures stay unchanged.
-      if (branch === 'resolve') releaseQuery.resolve([])
-      else releaseQuery.reject(new Error('B1 query late rejection'))
+      // B2 converges through the ordinary rejoin flow: the peer re-commits, the fresh Runtime
+      // restarts its token sequence, and its own supply request lands on the SAME supply slot.
+      await facade.joinChatRoom({
+        domain: DOMAIN,
+        user: { id: 'local-user', name: 'Local', avatar: '' } as never,
+        site: { origin: DOMAIN, title: 'Example' } as never
+      })
+      fake.receive(getChatRoomId(DOMAIN), 'peer-a', {
+        type: MESSAGE_TYPE.SESSION,
+        sessionId: 'session-a',
+        presenceId: 'presence-a',
+        joinedAt: Date.now() + 1,
+        user: { id: 'user-a', name: 'A', avatar: '' }
+      })
+      fake.peerJoin(getChatRoomId(DOMAIN), 'peer-a')
+      fake.receive(getChatRoomId(DOMAIN), 'peer-a', {
+        type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
+        syncId: 'sync-1',
+        page: 0,
+        messageIds: [],
+        done: true
+      })
+      await vi.waitFor(() => expect(b2SupplyIds.size).toBeGreaterThan(0))
+      expect([...b2SupplyIds].some((supplyId) => b1SupplyIds.has(supplyId))).toBe(true)
+
+      // The held B1 terminal now settles late (its transport rejects): the stale chain must not
+      // publish any error, add any post-cut facade call for B1 identity, or disturb B2's entry.
+      b1Terminal.reject(new Error('B1 terminal transport lost') as never)
       await new Promise((resolve) => setTimeout(resolve, 0))
-      // The stale B1 terminal never reaches the current facade: zero old resolve/reject calls
-      // for B1's exact supply identity; B2's fresh provider may resolve its own supplies.
-      expect(resolveHistorySupply.mock.calls.filter((call) => b1SupplyIds.has(call[0]!.supplyId))).toEqual([])
-      expect(rejectHistorySupply.mock.calls.filter((call) => b1SupplyIds.has(call[0]!.supplyId))).toEqual([])
+      expect(errors).toEqual([])
+      // Post-cut window: the stale chain's continuation is fully silent — no reject call at all,
+      // and B2's own same-slot supplies keep settling through their own current terminals.
+      expect(rejectHistorySupply).not.toHaveBeenCalled()
+
       // The genuine attempt's loading owner is dismissed exactly once across the replacement.
       expect(feedback.filter((event) => event.ownerId === loadingOwner && event.type === 'dismiss')).toHaveLength(1)
       expect((await readServerSnapshot(current)).failures).toEqual([])
