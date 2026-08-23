@@ -230,15 +230,15 @@ const createContentStore = () => {
           store.getDomain(ToastDomain()).command.ErrorCommand(error instanceof Error ? error.message : String(error))
         )
     })
-    const ChatRoomImpl = createChatRoomImpl(database)
+    const runtimeChatRoom = createChatRoomImpl(database)
     const WorldRoomImpl = createWorldRoomImpl()
     const ReadinessImpl = createReadinessImpl(whenHostPhase)
     const lifecycleBundle = createConnectionLifecycle()
-    ChatRoomImpl.epochSource.bindConnectionResultReporter(lifecycleBundle.report)
+    runtimeChatRoom.bindConnectionResultReporter(lifecycleBundle.report)
     // One attempt-owned History loading Toast per incoming sync: the Runtime projects activate/dismiss
     // with a complete attempt owner id, and the page maps it to the generic loading Toast (no count,
     // no fixed duration). The owner id guarantees one sync never dismisses another or an unrelated Toast.
-    ChatRoomImpl.epochSource.onHistoryFeedback((event) => {
+    runtimeChatRoom.onHistoryFeedback((event) => {
       store.send(
         event.type === 'loading'
           ? store
@@ -250,8 +250,8 @@ const createContentStore = () => {
 
     browserSyncStorage.resolve(BrowserSyncStorageImpl.value)
     messageDatabase.resolve(database)
-    chatRoom.resolve(ChatRoomImpl.value)
-    realizedChatRoom = ChatRoomImpl.epochSource
+    chatRoom.resolve(runtimeChatRoom)
+    realizedChatRoom = runtimeChatRoom
     worldRoom.resolve(WorldRoomImpl.value)
     readiness.resolve(ReadinessImpl.value)
     currentConnectionLifecycle = lifecycleBundle.value
@@ -298,7 +298,7 @@ export default defineContentScript({
         container.append(app)
         const root = createRoot(app)
         const { store, activateApplicationDependencies, sendLifecycle } = createContentStore()
-        documentLifecycle.bind({ store, sendLifecycle, initLease: initClient, detachLease: detachClient })
+        documentLifecycle.bind({ store, sendLifecycle, initRuntime: initClient, detachRuntime: detachClient })
         root.render(
           <StrictMode>
             <RemeshRoot store={store}>

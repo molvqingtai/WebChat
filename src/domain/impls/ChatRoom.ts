@@ -15,8 +15,5 @@ export const createChatRoomImpl = (database: Database<MessageDatabaseSchema>) =>
   // explicitly invalidates so this applier converges through the drain, never independently.
   registerApplier('chat', (projection) => room.applyChat(projection))
   registerApplier('persistence', (projection, context) => room.applyPersistence(projection, context))
-  return {
-    value: room,
-    epochSource: room
-  }
+  return room
 }

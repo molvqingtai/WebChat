@@ -155,8 +155,8 @@ describe('Content document-lifecycle owner composed parent control', () => {
     owner.bind({
       store: fixture.store,
       sendLifecycle: fixture.sendLifecycle,
-      initLease: () => lease.init(),
-      detachLease: () => lease.detach()
+      initRuntime: () => lease.init(),
+      detachRuntime: () => lease.detach()
     })
     fixture.store.send(fixture.appStatus.command.MarkReadyCommand())
     await vi.advanceTimersByTimeAsync(0)
@@ -286,8 +286,8 @@ describe('Content document-lifecycle owner composed parent control', () => {
     owner.bind({
       store: fixture.store,
       sendLifecycle: fixture.sendLifecycle,
-      initLease: () => lease.init(),
-      detachLease: () => lease.detach()
+      initRuntime: () => lease.init(),
+      detachRuntime: () => lease.detach()
     })
     fixture.store.send(fixture.appStatus.command.MarkReadyCommand())
     await vi.advanceTimersByTimeAsync(0)
