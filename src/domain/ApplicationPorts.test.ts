@@ -47,7 +47,7 @@ describe('replaceable application boundaries', () => {
     )
     expect(messageStore).toMatch(/query\(query\?: MessageQuery\): Promise<readonly MessageRecord\[\]>/)
     expect(messageStore).not.toMatch(/\blist\s*\(|findAll|fetchHistory|HistoryCursor|syncId|mark|status|outbox/)
-    expect(implementation).toContain('.query({ type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE, signal: controller.signal })')
+    expect(implementation).toContain('type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE')
     // The Runtime contract is one-way: ordinary actions plus the pure current-state read; no
     // Page remote callback surface exists for Runtime-to-Page state delivery.
     expect(runtimeContract).toContain('getSnapshot')

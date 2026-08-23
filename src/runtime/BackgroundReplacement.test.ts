@@ -16,7 +16,7 @@ import {
   readServerSnapshot,
   type RuntimeAdmission
 } from '@/runtime/Server'
-import type { RuntimeServer } from '@/runtime/Contract'
+import type { HistorySupplyEvent, RuntimeServer } from '@/runtime/Contract'
 
 const DOMAIN = 'https://example.com'
 
@@ -143,6 +143,10 @@ describe('DocumentClient across a logical Background replacement', () => {
       // the requester attempt admission are never blocked by the gate.
       let armTerminalHold = false
       let b1TerminalHeldConsumed = false
+      // B2's terminal gets its own independent gate: it is held (and only the first call) until
+      // the test releases it after proving B1's late settlement cannot touch it.
+      const b2Terminal = Promise.withResolvers<void>()
+      let b2TerminalHeld = false
       const coordinator = {
         registerPage: async (payload: { domain: string }) => ({
           snapshot: await current.attachPage({ ...payload, caller })
@@ -166,6 +170,7 @@ describe('DocumentClient across a logical Background replacement', () => {
           current.ackInbound({ ...payload, caller }),
         resolveHistorySupply: async (payload: { supplyId: string; result: { records: never[]; done: boolean } }) => {
           resolveHistorySupply(payload)
+          if (b2TerminalHeld && b2SupplyIds.has(payload.supplyId)) await b2Terminal.promise
           if (armTerminalHold && !b1TerminalHeldConsumed && b1SupplyIds.has(payload.supplyId)) {
             b1TerminalHeldConsumed = true
             await b1Terminal.promise
@@ -317,8 +322,18 @@ describe('DocumentClient across a logical Background replacement', () => {
         messageIds: [],
         done: true
       })
+      b2TerminalHeld = true
       await vi.waitFor(() => expect(b2SupplyIds.size).toBeGreaterThan(0))
       expect([...b2SupplyIds].some((supplyId) => b1SupplyIds.has(supplyId))).toBe(true)
+
+      // B2's terminal RPC is still pending on the same supply slot while B1's held terminal is
+      // about to settle late.
+      // B2's fresh supply settles through its own resolve terminal; it is held by the gate.
+      await vi.waitFor(() => {
+        expect(
+          resolveHistorySupply.mock.calls.filter((call) => b2SupplyIds.has(call[0]!.supplyId)).length
+        ).toBeGreaterThan(0)
+      })
 
       // The held B1 terminal now settles late (its transport rejects): the stale chain must not
       // publish any error, add any post-cut facade call for B1 identity, or disturb B2's entry.
@@ -329,6 +344,15 @@ describe('DocumentClient across a logical Background replacement', () => {
       // and B2's own same-slot supplies keep settling through their own current terminals.
       expect(rejectHistorySupply).not.toHaveBeenCalled()
 
+      // B2 then settles independently through its own current terminal with its true result.
+      b2TerminalHeld = false
+      b2Terminal.resolve()
+      await vi.waitFor(() => {
+        expect(
+          resolveHistorySupply.mock.calls.filter((call) => b2SupplyIds.has(call[0]!.supplyId)).length
+        ).toBeGreaterThan(0)
+      })
+
       // The genuine attempt's loading owner is dismissed exactly once across the replacement.
       expect(feedback.filter((event) => event.ownerId === loadingOwner && event.type === 'dismiss')).toHaveLength(1)
       expect((await readServerSnapshot(current)).failures).toEqual([])
@@ -338,6 +362,74 @@ describe('DocumentClient across a logical Background replacement', () => {
       disposeServer(current)
     }
   )
+
+  it("a current exact owner's escaping terminal Error is published, never self-suppressed", async () => {
+    const errors: Error[] = []
+    const original = new Error('terminal facade exploded')
+    let handler: ((event: HistorySupplyEvent) => void) | null = null
+    const server: RuntimeServer = {
+      attachPage: async () => {
+        throw new Error('not used')
+      },
+      getSnapshot: async () => {
+        throw new Error('not used')
+      },
+      joinChatRoom: async () => {
+        throw new Error('not used')
+      },
+      leaveChatRoom: async () => {},
+      allocateTextMessage: async () => {
+        throw new Error('not used')
+      },
+      allocateReactionMessage: async () => {
+        throw new Error('not used')
+      },
+      sendChatMessage: async ({ event }) => event,
+      ackInbound: async () => {},
+      reconnectDomain: async () => {},
+      provideHistory: async (_payload, callback) => {
+        handler = callback
+      },
+      resolveHistorySupply: () => {
+        // A synchronous facade throw escapes the normal Promise-rejection path entirely.
+        throw original
+      },
+      rejectHistorySupply: () => {
+        throw original
+      }
+    }
+    const messageStore = createMessageStore(createMemoryMessageDatabase('current-owner-sink'))
+    const room = new ChatRoom({ server, messageStore, pageDomain: DOMAIN })
+    room.onError((error) => errors.push(error))
+    const projection = {
+      hostId: 'host-1',
+      hostPhase: 'ready' as const,
+      peerId: 'local-peer',
+      domains: [
+        {
+          domain: DOMAIN,
+          phase: 'active' as const,
+          tabIds: [1],
+          chatRoomJoined: true,
+          sessions: [],
+          inbound: [],
+          historyFeedback: []
+        }
+      ],
+      world: { joined: true, peerId: 'local-peer', presences: [] },
+      failures: []
+    }
+    await room.applyPersistence(projection)
+
+    // The current exact owner's resolve RPC throws synchronously before producing a Promise:
+    // the escaping failure reaches the pre-retirement sink and publishes the original Error.
+    handler!({
+      type: 'request',
+      request: { supplyId: 'supply-current', domain: DOMAIN, syncId: 'sync-current', cutoff: 0, mode: 'provider' }
+    })
+    await vi.waitFor(() => expect(errors).toEqual([original]))
+    room.dispose()
+  })
 
   it('a valid same-sequence successor persists through the real Server/Delivery reconnect chain', async () => {
     const listeners = new Set<(message: unknown) => void>()

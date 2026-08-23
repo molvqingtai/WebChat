@@ -1195,7 +1195,7 @@ describe('RuntimeServer lifecycle', () => {
     vi.useFakeTimers()
     try {
       const user1 = { id: 'user-1', name: 'User 1', avatar: '' }
-      const { clock, fake, server, roomId } = await setup()
+      const { fake, server, roomId } = await setup()
       const memberCount = async () => {
         const domain = (await readServerSnapshot(server)).domains[0]
         return new Set(domain.sessions.map((item) => item.user.id)).size + (domain.localSession ? 1 : 0)
@@ -2434,7 +2434,7 @@ describe('RuntimeServer lifecycle', () => {
   })
 
   it('disposes the Remesh host and physical transport exactly once', async () => {
-    const { clock, fake, server } = await setup()
+    const { fake, server } = await setup()
 
     disposeServer(server)
     disposeServer(server)
@@ -2700,7 +2700,7 @@ describe('RuntimeServer lifecycle', () => {
   })
 
   it('retains a Runtime failure as current state even when no affected tab is current', async () => {
-    const { clock, fake, server } = await setup()
+    const { fake, server } = await setup()
     const worldRoomId = getWorldRoomId()
     await removeServerTab(server, 1)
     fake.failNextJoin(worldRoomId)
@@ -2714,7 +2714,7 @@ describe('RuntimeServer lifecycle', () => {
   })
 
   it("routes a provisional domain's provider error only to its joining page", async () => {
-    const { clock, fake, server } = await setup()
+    const { fake, server } = await setup()
     const roomIdB = getChatRoomId(OTHER_DOMAIN)
     await server.attachPage({ domain: OTHER_DOMAIN, caller: { tab: { id: 2, url: '' } } })
     // Keep Chat(B) provisional: the physical room joined but its session broadcast stays hung
@@ -3496,7 +3496,7 @@ describe('RuntimeServer provisional recovery races', () => {
   })
 
   it('catches up only peers that miss a provisional World recovery publication', async () => {
-    const { clock, fake, server } = await setup()
+    const { fake, server } = await setup()
     const worldRoomId = getWorldRoomId()
     const currentPresence = (await readServerSnapshot(server)).world.localPresence
     if (!currentPresence) throw new Error('Committed local presence missing')
