@@ -112,37 +112,50 @@ describe('PagePort history request/response', () => {
     await expect(followUp).resolves.toEqual({ records: [], done: true })
   })
 
-  it('cancels pending work before replacing the same page provider', async () => {
-    const port = new PagePort()
-    const oldEvents: HistorySupplyEvent[] = []
-    port.provideHistory(1, request.domain, (event) => {
-      oldEvents.push(event)
-    })
-    const pending = port.supplyHistory('tab:1', request)
-    const isPendingSettled = watchSettlement(pending)
+  it.each(['reject', 'resolve'] as const)(
+    'cancels pending work before replacing the same page provider (old %s terminal)',
+    async (terminal) => {
+      const port = new PagePort()
+      const oldEvents: HistorySupplyEvent[] = []
+      port.provideHistory(1, request.domain, (event) => {
+        oldEvents.push(event)
+      })
+      const pending = port.supplyHistory('tab:1', request)
+      const isPendingSettled = watchSettlement(pending)
 
-    const newEvents: HistorySupplyEvent[] = []
-    port.provideHistory(1, request.domain, (event) => {
-      newEvents.push(event)
-    })
-    await Promise.resolve()
-    // The old supply is cancelled but still physically running: it has not settled.
-    expect(isPendingSettled()).toBe(false)
+      const newEvents: HistorySupplyEvent[] = []
+      port.provideHistory(1, request.domain, (event) => {
+        newEvents.push(event)
+      })
+      await Promise.resolve()
+      // The old supply is cancelled but still physically running: it has not settled.
+      expect(isPendingSettled()).toBe(false)
 
-    port.rejectHistorySupply(1, request.supplyId, 'old provider cancelled')
-    await expect(pending).resolves.toBeNull()
-    expect(oldEvents).toEqual([
-      { type: 'request', request },
-      { type: 'cancel', supplyId: request.supplyId }
-    ])
-    await expectRetired(port, request.supplyId)
-    // The replacement provider is live and serves the next supply through the public path.
-    const next = { ...request, supplyId: 'supply-2' }
-    const followUp = port.supplyHistory('tab:1', next)
-    expect(newEvents).toEqual([{ type: 'request', request: next }])
-    port.resolveHistorySupply(1, next.supplyId, { records: [], done: true })
-    await expect(followUp).resolves.toEqual({ records: [], done: true })
-  })
+      if (terminal === 'reject') port.rejectHistorySupply(1, request.supplyId, 'old provider cancelled')
+      else port.resolveHistorySupply(1, request.supplyId, { records: [], done: true })
+      await expect(pending).resolves.toBeNull()
+      expect(oldEvents).toEqual([
+        { type: 'request', request },
+        { type: 'cancel', supplyId: request.supplyId }
+      ])
+      // Retirement proof BEFORE anything else: re-registering the same tab's callback and
+      // publicly removing it must not cancel the retired old exact id a second time.
+      expectRetiredSilentOnRemoval(port, request.domain)
+      await expectRetired(port, request.supplyId)
+      // The replacement-time provider observed nothing while registered.
+      expect(newEvents).toEqual([])
+      // The replacement provider is re-registered and serves the next supply through the public path.
+      const aliveEvents: HistorySupplyEvent[] = []
+      port.provideHistory(1, request.domain, (event) => {
+        aliveEvents.push(event)
+      })
+      const next = { ...request, supplyId: 'supply-2' }
+      const followUp = port.supplyHistory('tab:1', next)
+      expect(aliveEvents).toEqual([{ type: 'request', request: next }])
+      port.resolveHistorySupply(1, next.supplyId, { records: [], done: true })
+      await expect(followUp).resolves.toEqual({ records: [], done: true })
+    }
+  )
 
   it('logs a detached page cancellation callback failure and still settles the pending supply', async () => {
     const port = new PagePort()
