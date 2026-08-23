@@ -196,7 +196,12 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
   }
 
   private emitError(error: unknown) {
-    const failure = error instanceof Error ? error : new Error(String(error))
+    let failure: Error
+    try {
+      failure = error instanceof Error ? error : new Error('Unknown failure', { cause: error })
+    } catch {
+      failure = new Error('Unknown failure', { cause: error })
+    }
     try {
       this.emit('error', failure)
     } catch (deliveryError) {
@@ -463,6 +468,15 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
     // settle time. The final error sink runs BEFORE the exact-entry finally retires this
     // controller's entry, so a current owner's original Error is never self-suppressed.
     const ownershipCurrent = () => documentAlive() && this.activeHistorySupplies.get(request.supplyId) === controller
+    // Safe normalization: any property access on an unknown rejection happens inside one
+    // controlled try; a fallible custom Error/proxy can never escape this boundary.
+    const reasonOf = (value: unknown): string => {
+      try {
+        return value instanceof Error ? value.message : 'History supply failed'
+      } catch {
+        return 'History supply failed'
+      }
+    }
     void (async () => {
       try {
         const records = await this.dependencies.messageStore.query({
@@ -502,7 +516,7 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
         }
         // A failed terminal RPC publishes the original Error only while this exact controller
         // still owns the slot at its own settle time.
-        const reason = error instanceof Error ? error.message : String(error)
+        const reason = reasonOf(error)
         await raceWithSignal(
           this.dependencies.server.rejectHistorySupply({ supplyId: request.supplyId, reason }),
           controller.signal
