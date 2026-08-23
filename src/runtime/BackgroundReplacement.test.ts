@@ -426,19 +426,23 @@ describe('DocumentClient across a logical Background replacement', () => {
     room.dispose()
   })
 
-  it('a fallible rejection value is normalized safely before entry retirement, keeping cause', async () => {
-    const errors: Error[] = []
-    // A rejection value whose property access throws on every read (message and stringification).
-    const fallible = new Proxy(
-      {},
-      {
-        get() {
-          throw new Error('fallible property read')
-        }
+  it('an Error-shaped value with a throwing message getter is normalized via the controlled path', async () => {
+    class FallibleError extends Error {
+      constructor() {
+        super()
+        // An own throwing getter shadows the safe Error.prototype property path.
+        Object.defineProperty(this, 'message', {
+          get() {
+            throw new Error('fallible message getter')
+          }
+        })
       }
-    )
-    let handler: ((event: HistorySupplyEvent) => void) | null = null
+      override toString(): string {
+        throw new Error('fallible toString')
+      }
+    }
     const reasons: string[] = []
+    let handler: ((event: HistorySupplyEvent) => void) | null = null
     const server: RuntimeServer = {
       attachPage: async () => {
         throw new Error('not used')
@@ -467,9 +471,83 @@ describe('DocumentClient across a logical Background replacement', () => {
         reasons.push(reason)
       }
     }
-    const messageStore = createMessageStore(createMemoryMessageDatabase('fallible-normalization'))
-    // The physical query itself rejects with the fallible value.
-    vi.spyOn(messageStore, 'query').mockRejectedValue(fallible)
+    const messageStore = createMessageStore(createMemoryMessageDatabase('fallible-error-shape'))
+    // The physical query itself rejects with the Error-shaped fallible value.
+    vi.spyOn(messageStore, 'query').mockRejectedValue(new FallibleError())
+    const room = new ChatRoom({ server, messageStore, pageDomain: DOMAIN })
+    const projection = {
+      hostId: 'host-1',
+      hostPhase: 'ready' as const,
+      peerId: 'local-peer',
+      domains: [
+        {
+          domain: DOMAIN,
+          phase: 'active' as const,
+          tabIds: [1],
+          chatRoomJoined: true,
+          sessions: [],
+          inbound: [],
+          historyFeedback: []
+        }
+      ],
+      world: { joined: true, peerId: 'local-peer', presences: [] },
+      failures: []
+    }
+    await room.applyPersistence(projection)
+
+    handler!({
+      type: 'request',
+      request: {
+        supplyId: 'supply-fallible-error',
+        domain: DOMAIN,
+        syncId: 'sync-fallible-error',
+        cutoff: 0,
+        mode: 'provider'
+      }
+    })
+
+    // reasonOf enters the controlled Error branch, the throwing getter is contained, and the
+    // fixed fallback reaches the ordinary reject terminal without any escape.
+    await vi.waitFor(() => expect(reasons).toEqual(['History supply failed']))
+    room.dispose()
+  })
+
+  it("a non-Error value keeps its identity as cause through the owner's final error sink", async () => {
+    const errors: Error[] = []
+    const strangeValue = { kind: 'strange-terminal' }
+    let handler: ((event: HistorySupplyEvent) => void) | null = null
+    const server: RuntimeServer = {
+      attachPage: async () => {
+        throw new Error('not used')
+      },
+      getSnapshot: async () => {
+        throw new Error('not used')
+      },
+      joinChatRoom: async () => {
+        throw new Error('not used')
+      },
+      leaveChatRoom: async () => {},
+      allocateTextMessage: async () => {
+        throw new Error('not used')
+      },
+      allocateReactionMessage: async () => {
+        throw new Error('not used')
+      },
+      sendChatMessage: async ({ event }) => event,
+      ackInbound: async () => {},
+      reconnectDomain: async () => {},
+      provideHistory: async (_payload, callback) => {
+        handler = callback
+      },
+      resolveHistorySupply: async () => {},
+      rejectHistorySupply: async () => {
+        // The terminal RPC itself rejects with a non-Error value.
+        return Promise.reject(strangeValue)
+      }
+    }
+    const messageStore = createMessageStore(createMemoryMessageDatabase('cause-preservation'))
+    // The physical query fails normally, so the terminal reject RPC is genuinely invoked.
+    vi.spyOn(messageStore, 'query').mockRejectedValue(new Error('query failed'))
     const room = new ChatRoom({ server, messageStore, pageDomain: DOMAIN })
     room.onError((error) => errors.push(error))
     const projection = {
@@ -494,13 +572,26 @@ describe('DocumentClient across a logical Background replacement', () => {
 
     handler!({
       type: 'request',
-      request: { supplyId: 'supply-fallible', domain: DOMAIN, syncId: 'sync-fallible', cutoff: 0, mode: 'provider' }
+      request: { supplyId: 'supply-cause', domain: DOMAIN, syncId: 'sync-cause', cutoff: 0, mode: 'provider' }
     })
 
-    // The safe normalization publishes the fixed fallback through the ordinary reject terminal —
-    // no fallible read escapes, and the current owner retires its entry normally.
-    await vi.waitFor(() => expect(reasons).toEqual(['History supply failed']))
-    expect(errors).toEqual([])
+    // The final sink publishes one safe Error preserving the original value as its cause.
+    await vi.waitFor(() => expect(errors).toHaveLength(1))
+    expect(errors[0]).toBeInstanceOf(Error)
+    expect(errors[0]?.cause).toBe(strangeValue)
+
+    // The owner retired normally: a new supply request on the same slot is accepted again.
+    handler!({
+      type: 'request',
+      request: {
+        supplyId: 'supply-after-retire',
+        domain: DOMAIN,
+        syncId: 'sync-after-retire',
+        cutoff: 0,
+        mode: 'provider'
+      }
+    })
+    await vi.waitFor(() => expect(errors).toHaveLength(1))
     room.dispose()
   })
 

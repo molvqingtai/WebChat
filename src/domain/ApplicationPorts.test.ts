@@ -47,11 +47,11 @@ describe('replaceable application boundaries', () => {
     )
     expect(messageStore).toMatch(/query\(query\?: MessageQuery\): Promise<readonly MessageRecord\[\]>/)
     expect(messageStore).not.toMatch(/\blist\s*\(|findAll|fetchHistory|HistoryCursor|syncId|mark|status|outbox/)
-    // Full structural constraint, not weakened: the query call site, the Chat record type, and
-    // the abortable signal must all remain present at the same projection boundary.
-    expect(implementation).toContain('.query({')
-    expect(implementation).toContain('type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE')
-    expect(implementation).toContain('signal: controller.signal')
+    // One projection boundary: the History MessageStore query carries the Chat record type and
+    // the controller abort signal inside the same argument object (formatter-stable fragment).
+    expect(implementation).toMatch(
+      /messageStore\.query\(\{\s*type: MESSAGE_RECORD_TYPE\.CHAT_MESSAGE,\s*signal: controller\.signal,?\s*\}\)/
+    )
     // The Runtime contract is one-way: ordinary actions plus the pure current-state read; no
     // Page remote callback surface exists for Runtime-to-Page state delivery.
     expect(runtimeContract).toContain('getSnapshot')
