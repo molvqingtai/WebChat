@@ -813,6 +813,43 @@ describe('DocumentClient one-way current-state drain', () => {
     }
   )
 
+  it('reuses one exact attached-document capability across drains and replaces it only at detach', async () => {
+    const { client, coordinator, registerQueue, readQueue } = setup()
+    const seen: Array<{ signal: AbortSignal; assertActive: () => void }> = []
+    client.registerApplier('chat', (_projection, context) => {
+      seen.push(context.document)
+    })
+
+    const init = client.init()
+    await vi.waitFor(() => expect(coordinator.registerPage).toHaveBeenCalledTimes(1))
+    registerQueue.shift()!.resolve({ snapshot: snapshot('') })
+    await expect(init).resolves.toBeTruthy()
+
+    client.invalidate()
+    await vi.waitFor(() => expect(readQueue).toHaveLength(1))
+    readQueue.shift()!.resolve(snapshot(''))
+    await flush()
+
+    // Every drain of the same document receives the identical capability object (no re-wrapping).
+    expect(seen.length).toBeGreaterThanOrEqual(2)
+    const first = seen[0]!
+    expect(seen.every((capability) => capability === first)).toBe(true)
+    expect(() => first.assertActive()).not.toThrow()
+
+    // Detach aborts and clears the slot; re-init installs a NEW exact object, and the old
+    // reference can never become active again (slot mismatch AND aborted).
+    client.detach()
+    expect(() => first.assertActive()).toThrow()
+    const restored = client.init()
+    await vi.waitFor(() => expect(coordinator.registerPage).toHaveBeenCalledTimes(2))
+    registerQueue.shift()!.resolve({ snapshot: snapshot('') })
+    await expect(restored).resolves.toBeTruthy()
+    const replacement = seen.at(-1)!
+    expect(replacement).not.toBe(first)
+    expect(() => replacement.assertActive()).not.toThrow()
+    expect(() => first.assertActive()).toThrow()
+  })
+
   it('document detach discards the owner; a fresh document registers again instead of recovering the old owner', async () => {
     const { client, coordinator, server, registerQueue, readQueue } = setup()
     const init = client.init()

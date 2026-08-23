@@ -325,11 +325,13 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
 
   async applyPersistence(projection: RuntimeSnapshot, context?: ProjectionApplyContext) {
     this.resetHostLocalStateIfReplaced(projection)
+    const fallbackController = new AbortController()
     const current = context ?? {
-      signal: new AbortController().signal,
+      signal: fallbackController.signal,
       assertCurrent: () => {},
       document: {
-        signal: new AbortController().signal,
+        controller: fallbackController,
+        signal: fallbackController.signal,
         assertActive: () => {}
       }
     }
@@ -447,7 +449,15 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
     const document = this.documentCapability
     const abortFromDocument = () => controller.abort(abortError('Runtime client detached'))
     document?.signal.addEventListener('abort', abortFromDocument, { once: true })
-    const documentAlive = () => document !== null && !document.signal.aborted
+    const documentAlive = () => {
+      if (this.documentCapability !== document || document === null) return false
+      try {
+        document.assertActive()
+        return true
+      } catch {
+        return false
+      }
+    }
     // Page-owned MessageStore supplies local history; Runtime owns only orchestration.
     void this.dependencies.messageStore
       .query({ type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE, signal: controller.signal })

@@ -12,18 +12,24 @@ export interface DocumentClientOptions {
  * a local AbortError and is silenced by the drain's stale fence — never a Page identity,
  * cross-context generation, delivery receipt, or binding.
  */
+/**
+ * The one attached-document capability for this document's lifetime: created once, reused by
+ * every drain of the same document, and replaced only by detach + fresh init. `assertActive()`
+ * proves exact slot identity (`slot === this capability`) and liveness. Long-lived applier work
+ * captures exactly this object — never a Page identity, generation, cross-context binding, or
+ * delivery receipt.
+ */
+export interface AttachedDocumentCapability {
+  /** Internal abort owner; consumers use `signal`/`assertActive` only. */
+  readonly controller: AbortController
+  readonly signal: AbortSignal
+  readonly assertActive: () => void
+}
+
 export interface ProjectionApplyContext {
   readonly signal: AbortSignal
   readonly assertCurrent: () => void
-  /**
-   * The attached-document capability: it survives a clean drain completion and is invalidated
-   * only by document detach. Long-lived applier work (e.g. a History supplier) captures exactly
-   * this — never a Page identity, generation, cross-context binding, or delivery receipt.
-   */
-  readonly document: {
-    readonly signal: AbortSignal
-    readonly assertActive: () => void
-  }
+  readonly document: AttachedDocumentCapability
 }
 
 export type ProjectionApplier = (projection: RuntimeSnapshot, context: ProjectionApplyContext) => void | Promise<void>
@@ -49,8 +55,25 @@ export class DocumentClient {
   /** The one live drain owner: a document-local exact token, abort controller, and task. Never exposed. */
   private owner: { token: number; controller: AbortController; task: Promise<void> } | null = null
   private ownerSequence = 0
-  /** Attached-document capability: lives across clean drains; aborted only by detach. */
-  private documentController: AbortController | null = null
+  /** The exact attached-document capability slot for this document lifetime. */
+  private documentCapability: AttachedDocumentCapability | null = null
+
+  /** Installs the one exact capability object for this document lifetime (detach replaces it). */
+  private ensureDocumentCapability(): AttachedDocumentCapability {
+    if (this.documentCapability) return this.documentCapability
+    const controller = new AbortController()
+    const capability: AttachedDocumentCapability = {
+      controller,
+      signal: controller.signal,
+      assertActive: () => {
+        if (this.documentCapability !== capability || controller.signal.aborted) {
+          throw new DOMException('Runtime client detached', 'AbortError')
+        }
+      }
+    }
+    this.documentCapability = capability
+    return capability
+  }
   private readyPublished = false
   private detached = false
   private currentSnapshot: RuntimeSnapshot | null = null
@@ -104,7 +127,7 @@ export class DocumentClient {
 
   private startDrainIfAbsent() {
     if (this.detached || this.owner) return
-    this.documentController ??= new AbortController()
+    this.ensureDocumentCapability()
     if (!this.readyPublished && !this.currentSnapshot) this.setHostPhase('connecting')
     // The owner token is installed before any fallible work: the drain body starts one microtask
     // later, so even a synchronous RPC throw lands inside the drain's own try/finally and the
@@ -120,8 +143,6 @@ export class DocumentClient {
   }
 
   private applyContext(entry: { token: number; controller: AbortController }): ProjectionApplyContext {
-    const documentController = this.documentController ?? new AbortController()
-    this.documentController = documentController
     return {
       signal: entry.controller.signal,
       assertCurrent: () => {
@@ -129,14 +150,7 @@ export class DocumentClient {
           throw new DOMException('Projection apply superseded', 'AbortError')
         }
       },
-      document: {
-        signal: documentController.signal,
-        assertActive: () => {
-          if (documentController.signal.aborted) {
-            throw new DOMException('Runtime client detached', 'AbortError')
-          }
-        }
-      }
+      document: this.ensureDocumentCapability()
     }
   }
 
@@ -250,8 +264,8 @@ export class DocumentClient {
     // the document, so long-lived applier work (History suppliers) terminates here too.
     this.owner?.controller.abort(new DOMException('Runtime client detached', 'AbortError'))
     this.owner = null
-    this.documentController?.abort(new DOMException('Runtime client detached', 'AbortError'))
-    this.documentController = null
+    this.documentCapability?.controller.abort(new DOMException('Runtime client detached', 'AbortError'))
+    this.documentCapability = null
     const reason = new DOMException('Runtime client detached', 'AbortError')
     this.initWaiters.forEach((waiter) => waiter.reject(reason))
     this.initWaiters.clear()

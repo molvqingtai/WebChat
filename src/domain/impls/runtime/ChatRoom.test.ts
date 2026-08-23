@@ -1044,6 +1044,71 @@ describe('Runtime-backed ChatRoom application port', () => {
     }
   })
 
+  it('a replaced supplier late finally never deletes the new exact entry; the new supplier cancels normally', async () => {
+    const fixture = await setup()
+    const database = createMemoryMessageDatabase(`supplier-finally-${databaseId++}`)
+    const messageStore = createMessageStore(database)
+    const firstQuery = Promise.withResolvers<AbortSignal>()
+    const secondQuery = Promise.withResolvers<AbortSignal>()
+    const firstRelease = Promise.withResolvers<readonly MessageRecord[]>()
+    const secondRelease = Promise.withResolvers<readonly MessageRecord[]>()
+    let queryCount = 0
+    vi.spyOn(messageStore, 'query').mockImplementation(async (query) => {
+      queryCount += 1
+      if (queryCount === 1) {
+        firstQuery.resolve(query?.signal ?? new AbortController().signal)
+        return firstRelease.promise
+      }
+      if (queryCount === 2) {
+        secondQuery.resolve(query?.signal ?? new AbortController().signal)
+        return secondRelease.promise
+      }
+      return []
+    })
+    let handler: ((event: HistorySupplyEvent) => void) | null = null
+    const server: RuntimeServer = {
+      ...fixture.server,
+      provideHistory: async (_payload, listener) => {
+        handler = listener
+      }
+    }
+    const room = new ChatRoom({ server, messageStore, pageDomain: DOMAIN })
+    room.applyChat(domainSnapshot())
+    await room.applyPersistence(domainSnapshot())
+
+    const request = {
+      supplyId: 'supply-shared',
+      domain: DOMAIN,
+      syncId: 'sync-shared',
+      cutoff: 0,
+      mode: 'provider' as const
+    }
+    // Runtime request on the slot; a Runtime cancel aborts the old controller while its physical
+    // query (and the old chain's finally) is still held.
+    handler!({ type: 'request', request })
+    const oldSignal = await firstQuery.promise
+    handler!({ type: 'cancel', supplyId: request.supplyId })
+    await vi.waitFor(() => expect(oldSignal.aborted).toBe(true))
+
+    // A replacement Runtime request takes the SAME slot before the old finally runs.
+    handler!({ type: 'request', request })
+    const newSignal = await secondQuery.promise
+
+    // The old chain's finally now runs late: it must retire only its own exact entry.
+    firstRelease.resolve([])
+    await settle()
+    await settle()
+
+    // The CURRENT controller is still on the slot: a later Runtime cancel reaches it and aborts
+    // the new physical query through the ordinary cancel surface.
+    handler!({ type: 'cancel', supplyId: request.supplyId })
+    await vi.waitFor(() => expect(newSignal.aborted).toBe(true))
+    secondRelease.resolve([])
+
+    room.dispose()
+    await database.close()
+  })
+
   it('reconnects the current room without publishing a synthetic leave snapshot', async () => {
     const { room, leaveCount, reconnectCount, apply } = await setup()
     const snapshots: Array<readonly ChatSession[]> = []
