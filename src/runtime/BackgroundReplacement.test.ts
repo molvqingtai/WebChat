@@ -443,6 +443,10 @@ describe('DocumentClient across a logical Background replacement', () => {
     }
     const reasons: string[] = []
     let handler: ((event: HistorySupplyEvent) => void) | null = null
+    const firstTerminal = Promise.withResolvers<void>()
+    let firstTerminalHeld = true
+    const successorStarted = Promise.withResolvers<AbortSignal>()
+    const successorRelease = Promise.withResolvers<readonly never[]>()
     const server: RuntimeServer = {
       attachPage: async () => {
         throw new Error('not used')
@@ -469,11 +473,19 @@ describe('DocumentClient across a logical Background replacement', () => {
       resolveHistorySupply: async () => {},
       rejectHistorySupply: async ({ reason }) => {
         reasons.push(reason)
+        if (firstTerminalHeld) await firstTerminal.promise
       }
     }
     const messageStore = createMessageStore(createMemoryMessageDatabase('fallible-error-shape'))
-    // The physical query itself rejects with the Error-shaped fallible value.
-    vi.spyOn(messageStore, 'query').mockRejectedValue(new FallibleError())
+    let queryCall = 0
+    vi.spyOn(messageStore, 'query').mockImplementation(async (query) => {
+      queryCall += 1
+      // The first attempt's query rejects with the fallible value; the successor's own query is
+      // held with its exact signal.
+      if (queryCall === 1) throw new FallibleError()
+      successorStarted.resolve(query?.signal ?? new AbortController().signal)
+      return successorRelease.promise as never
+    })
     const room = new ChatRoom({ server, messageStore, pageDomain: DOMAIN })
     const projection = {
       hostId: 'host-1',
@@ -507,8 +519,35 @@ describe('DocumentClient across a logical Background replacement', () => {
     })
 
     // reasonOf enters the controlled Error branch, the throwing getter is contained, and the
-    // fixed fallback reaches the ordinary reject terminal without any escape.
+    // fixed fallback message reaches the terminal while its RPC is still held.
     await vi.waitFor(() => expect(reasons).toEqual(['History supply failed']))
+    expect(reasons[0]).toBe('History supply failed')
+
+    // The successor takes the SAME supply slot while the first chain's exact-entry finally is
+    // still pending (its terminal RPC held): only the guard keeps the successor's controller.
+    handler!({
+      type: 'request',
+      request: {
+        supplyId: 'supply-fallible-error',
+        domain: DOMAIN,
+        syncId: 'sync-fallible-error',
+        cutoff: 0,
+        mode: 'provider'
+      }
+    })
+    const successorSignal = await successorStarted.promise
+    firstTerminalHeld = false
+    firstTerminal.resolve()
+    // Let the first chain's exact-entry finally complete before the Runtime cancel: with the
+    // guard, only the first controller retires; without it, the successor's entry is stolen.
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    handler!({ type: 'cancel', supplyId: 'supply-fallible-error' })
+    await vi.waitFor(() => expect(successorSignal.aborted).toBe(true))
+    // The cancelled physical query exits: the successor settles through its ordinary cancelled
+    // terminal with the cancellation reason.
+    successorRelease.reject(new DOMException('History supply cancelled', 'AbortError') as never)
+    await vi.waitFor(() => expect(reasons).toEqual(['History supply failed', 'History supply cancelled']))
     room.dispose()
   })
 
