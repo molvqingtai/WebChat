@@ -173,6 +173,8 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
   private readonly activeHistorySupplies = new Map<string, AbortController>()
   /** The Runtime host the appliers' host-local state belongs to. */
   private appliedHostId: string | null = null
+  /** The exact attached-document capability captured by long-lived History supply work. */
+  private documentCapability: ProjectionApplyContext['document'] | null = null
   /** The self-join notice generation already persisted (or present) from the projection. */
   private appliedSelfJoinKey: string | null = null
 
@@ -325,8 +327,14 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
     this.resetHostLocalStateIfReplaced(projection)
     const current = context ?? {
       signal: new AbortController().signal,
-      assertCurrent: () => {}
+      assertCurrent: () => {},
+      document: {
+        signal: new AbortController().signal,
+        assertActive: () => {}
+      }
     }
+    // Long-lived supplier work captures exactly this document capability.
+    this.documentCapability = current.document
     const domain = projection.domains.find((item) => item.domain === this.dependencies.pageDomain)
 
     // The `fresh` current fact is owned by the projection: the one self-join notice is written
@@ -434,13 +442,21 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
     this.activeHistorySupplies.get(request.supplyId)?.abort(abortError('History supply replaced'))
     const controller = new AbortController()
     this.activeHistorySupplies.set(request.supplyId, controller)
+    // The long-lived supply binds the exact attached-document capability: a document detach and
+    // a Runtime cancel both terminate the same physical query, and a stale terminal stays silent.
+    const document = this.documentCapability
+    const abortFromDocument = () => controller.abort(abortError('Runtime client detached'))
+    document?.signal.addEventListener('abort', abortFromDocument, { once: true })
+    const documentAlive = () => document !== null && !document.signal.aborted
     // Page-owned MessageStore supplies local history; Runtime owns only orchestration.
     void this.dependencies.messageStore
       .query({ type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE, signal: controller.signal })
       .then((records) => projectHistory(records, request.cutoff, controller.signal))
       .then(async (result) => {
         controller.signal.throwIfAborted()
-        if (this.disposed || this.activeHistorySupplies.get(request.supplyId) !== controller) return
+        if (this.disposed || !documentAlive() || this.activeHistorySupplies.get(request.supplyId) !== controller) {
+          return
+        }
         await raceWithSignal(
           this.dependencies.server.resolveHistorySupply({ supplyId: request.supplyId, result }),
           controller.signal
@@ -449,19 +465,21 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
       .catch(async (error) => {
         if (controller.signal.aborted) {
           // Physical query/projection chain has exited on the cancellation: settle the
-          // cancelled supplyId exactly once (the pending PagePort entry is in failover mode,
-          // so this rejects the Runtime supplier promise and confirms settlement).
-          await this.dependencies.server
-            .rejectHistorySupply({
-              supplyId: request.supplyId,
-              reason: (error as Error).message || 'History supply cancelled'
-            })
-            .catch((settleError) => {
-              if (!this.disposed) this.emitError(settleError)
-            })
+          // cancelled supplyId exactly once, but only while the document still owns this
+          // supplier — a detached/stale terminal never reaches a successor facade.
+          if (documentAlive()) {
+            await this.dependencies.server
+              .rejectHistorySupply({
+                supplyId: request.supplyId,
+                reason: (error as Error).message || 'History supply cancelled'
+              })
+              .catch((settleError) => {
+                if (!this.disposed && documentAlive()) this.emitError(settleError)
+              })
+          }
           return
         }
-        if (this.disposed || this.activeHistorySupplies.get(request.supplyId) !== controller) {
+        if (this.disposed || !documentAlive() || this.activeHistorySupplies.get(request.supplyId) !== controller) {
           return
         }
         await raceWithSignal(
@@ -473,12 +491,13 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
         )
       })
       .finally(() => {
+        document?.signal.removeEventListener('abort', abortFromDocument)
         if (this.activeHistorySupplies.get(request.supplyId) === controller) {
           this.activeHistorySupplies.delete(request.supplyId)
         }
       })
       .catch((error) => {
-        if (!this.disposed) this.emitError(error)
+        if (!this.disposed && documentAlive()) this.emitError(error)
       })
   }
 

@@ -552,6 +552,267 @@ describe('DocumentClient one-way current-state drain', () => {
     await expect(messageStore.query()).resolves.toEqual([record])
   })
 
+  it('passes the current owner signal into cancellable persistence and aborts it at detach', async () => {
+    const registration = deferred<{ snapshot: RuntimeSnapshot }>()
+    const coordinator = { registerPage: vi.fn(() => registration.promise) }
+    const server = {
+      getSnapshot: vi.fn(async () => snapshot('')),
+      provideHistory: vi.fn(async () => {}),
+      ackInbound: vi.fn(async () => {})
+    }
+    const client = new DocumentClient({ coordinator: coordinator as never, server: server as never, domain: DOMAIN })
+    const messageStore = createMessageStore(createMemoryMessageDatabase('signal-plumbing'))
+    const room = new ChatRoom({ server: server as never, messageStore, pageDomain: DOMAIN })
+    client.registerApplier('chat', (p) => room.applyChat(p))
+    client.registerApplier('persistence', (p, context) => room.applyPersistence(p, context))
+
+    const insertGate = Promise.withResolvers<void>()
+    const seenSignals: Array<AbortSignal | undefined> = []
+    const originalInsert = messageStore.insert.bind(messageStore) as unknown as (
+      input: unknown,
+      options?: { signal?: AbortSignal }
+    ) => ReturnType<typeof messageStore.insert>
+    vi.spyOn(messageStore, 'insert').mockImplementation(((input: unknown, options?: { signal?: AbortSignal }) => {
+      seenSignals.push(options?.signal)
+      return (async () => {
+        await insertGate.promise
+        return originalInsert(input, options)
+      })()
+    }) as typeof messageStore.insert)
+
+    // A fresh local session forces the self-join insert through the current owner context.
+    const fresh = snapshot('')
+    fresh.domains[0]!.localSession = {
+      sessionId: 'local-session',
+      user: { id: 'u', name: 'U', avatar: '' },
+      joinedAt: 1,
+      fresh: true
+    }
+    const init = client.init()
+    await vi.waitFor(() => expect(coordinator.registerPage).toHaveBeenCalledTimes(1))
+    registration.resolve({ snapshot: fresh })
+    await vi.waitFor(() => expect(seenSignals.length).toBeGreaterThan(0))
+
+    // Detach while the live owner's persistence insert is pending: the context signal it
+    // received must abort synchronously.
+    const ownerSignal = seenSignals[0]
+    expect(ownerSignal).toBeDefined()
+    expect(ownerSignal?.aborted).toBe(false)
+    client.detach()
+    expect(ownerSignal?.aborted).toBe(true)
+    insertGate.resolve()
+    await expect(init).rejects.toMatchObject({ name: 'AbortError' })
+  })
+
+  it('a late self-join insert settlement never commits the stale dedup key; a fresh hint writes once', async () => {
+    const fresh = snapshot('')
+    fresh.domains[0]!.localSession = {
+      sessionId: 'local-session',
+      user: { id: 'u', name: 'U', avatar: '' },
+      joinedAt: 1,
+      fresh: true
+    }
+    const registration = deferred<{ snapshot: RuntimeSnapshot }>()
+    const coordinator = { registerPage: vi.fn(() => registration.promise) }
+    const server = {
+      getSnapshot: vi.fn(async () => fresh),
+      provideHistory: vi.fn(async () => {}),
+      ackInbound: vi.fn(async () => {})
+    }
+    const client = new DocumentClient({ coordinator: coordinator as never, server: server as never, domain: DOMAIN })
+    const messageStore = createMessageStore(createMemoryMessageDatabase('self-join-stale'))
+    const room = new ChatRoom({ server: server as never, messageStore, pageDomain: DOMAIN })
+    client.registerApplier('chat', (p) => room.applyChat(p))
+    client.registerApplier('persistence', (p, context) => room.applyPersistence(p, context))
+
+    // Hold the continuation AFTER the physical write completes: the aborted signal cannot undo
+    // a completed write, so only the post-await owner assertion fences the stale settlement.
+    const insertGate = Promise.withResolvers<void>()
+    let holdsFirst = true
+    const originalInsert = messageStore.insert.bind(messageStore) as unknown as (
+      input: unknown,
+      options?: { signal?: AbortSignal }
+    ) => ReturnType<typeof messageStore.insert>
+    const spy = vi.spyOn(messageStore, 'insert').mockImplementation(((
+      input: unknown,
+      options?: { signal?: AbortSignal }
+    ) => {
+      return (async () => {
+        const result = await originalInsert(input, options)
+        if (holdsFirst) await insertGate.promise
+        return result
+      })()
+    }) as typeof messageStore.insert)
+
+    const first = client.init()
+    await vi.waitFor(() => expect(coordinator.registerPage).toHaveBeenCalledTimes(1))
+    registration.resolve({ snapshot: fresh })
+    await vi.waitFor(() => expect(spy).toHaveBeenCalledTimes(1))
+
+    // Detach mid-insert, then let the stale write settle late: the key must stay uncommitted.
+    client.detach()
+    await expect(first).rejects.toMatchObject({ name: 'AbortError' })
+    holdsFirst = false
+    insertGate.resolve()
+    const restored = client.init()
+    await vi.waitFor(() => expect(coordinator.registerPage).toHaveBeenCalledTimes(2))
+    await expect(restored).resolves.toBeTruthy()
+
+    // The fresh hint re-executes the idempotent write (key was never stale-committed), and the
+    // total durable side effect is exactly one notice.
+    expect(spy).toHaveBeenCalledTimes(2)
+    const notices = await messageStore.query({ type: MESSAGE_RECORD_TYPE.SYSTEM_NOTICE })
+    expect(notices).toHaveLength(1)
+  })
+
+  it('a late provideHistory settlement never marks the provider stale-registered; the fresh owner re-provides', async () => {
+    const registration = deferred<{ snapshot: RuntimeSnapshot }>()
+    const coordinator = { registerPage: vi.fn(() => registration.promise) }
+    const provideGate = Promise.withResolvers<void>()
+    const provideHistory = vi.fn(async () => provideGate.promise)
+    const server = { getSnapshot: vi.fn(async () => snapshot('')), provideHistory, ackInbound: vi.fn(async () => {}) }
+    const client = new DocumentClient({ coordinator: coordinator as never, server: server as never, domain: DOMAIN })
+    const messageStore = createMessageStore(createMemoryMessageDatabase('provide-stale'))
+    const room = new ChatRoom({ server: server as never, messageStore, pageDomain: DOMAIN })
+    client.registerApplier('chat', (p) => room.applyChat(p))
+    client.registerApplier('persistence', (p, context) => room.applyPersistence(p, context))
+
+    const first = client.init()
+    await vi.waitFor(() => expect(coordinator.registerPage).toHaveBeenCalledTimes(1))
+    registration.resolve({ snapshot: snapshot('') })
+    await vi.waitFor(() => expect(provideHistory).toHaveBeenCalledTimes(1))
+
+    client.detach()
+    await expect(first).rejects.toMatchObject({ name: 'AbortError' })
+    provideGate.resolve()
+    const restored = client.init()
+    await vi.waitFor(() => expect(coordinator.registerPage).toHaveBeenCalledTimes(2))
+    await expect(restored).resolves.toBeTruthy()
+
+    // The stale continuation was fenced before marking the provider registered: the fresh owner
+    // registers the real provider again.
+    expect(provideHistory).toHaveBeenCalledTimes(2)
+  })
+
+  it('a late negative-ACK settlement never retires the stale invalid pair; the fresh owner retries it', async () => {
+    const invalid = inboundRecord('invalid-stale')
+    const projection = snapshot('')
+    projection.domains[0]!.inbound = [{ sequence: 1, domain: DOMAIN, record: invalid, source: 'live' }]
+    const registration = deferred<{ snapshot: RuntimeSnapshot }>()
+    const coordinator = { registerPage: vi.fn(() => registration.promise) }
+    const ackGate = Promise.withResolvers<void>()
+    let holdAck = true
+    const ackInbound = vi.fn(async () => {
+      if (holdAck) await ackGate.promise
+    })
+    const server = { getSnapshot: vi.fn(async () => projection), provideHistory: vi.fn(async () => {}), ackInbound }
+    const client = new DocumentClient({ coordinator: coordinator as never, server: server as never, domain: DOMAIN })
+    const messageStore = createMessageStore(createMemoryMessageDatabase('ack-stale'))
+    const room = new ChatRoom({ server: server as never, messageStore, pageDomain: DOMAIN })
+    client.registerApplier('chat', (p) => room.applyChat(p))
+    client.registerApplier('persistence', (p, context) => room.applyPersistence(p, context))
+    const insertSpy = vi.spyOn(messageStore, 'insert')
+    const { InvalidMessageRecordError } = await import('@/domain/MessageStore')
+    insertSpy.mockRejectedValueOnce(new InvalidMessageRecordError('not a record'))
+
+    const first = client.init()
+    await vi.waitFor(() => expect(coordinator.registerPage).toHaveBeenCalledTimes(1))
+    registration.resolve({ snapshot: projection })
+    await vi.waitFor(() => expect(ackInbound).toHaveBeenCalledTimes(1))
+
+    // Detach with the negative ACK pending, then let it settle late: the exact invalid pair must
+    // survive (the stale continuation cannot retire it).
+    client.detach()
+    await expect(first).rejects.toMatchObject({ name: 'AbortError' })
+    holdAck = false
+    ackGate.resolve()
+    const restored = client.init()
+    await vi.waitFor(() => expect(coordinator.registerPage).toHaveBeenCalledTimes(2))
+    await expect(restored).resolves.toBeTruthy()
+
+    // The fresh owner re-attempts only the exact pair's negative ACK — no second insert attempt.
+    expect(insertSpy).toHaveBeenCalledTimes(1)
+    const ackCalls = (ackInbound.mock.calls as Array<[{ inserted?: boolean }?]>).filter(
+      (call) => call[0]?.inserted === false
+    )
+    expect(ackCalls.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it.each(['resolve', 'reject'] as const)(
+    'an ordinary detach aborts a pending History supply; the late %s terminal stays silent for the fresh document',
+    async (branch) => {
+      const registration = deferred<{ snapshot: RuntimeSnapshot }>()
+      const coordinator = { registerPage: vi.fn(() => registration.promise) }
+      const resolveHistorySupply = vi.fn(async () => {})
+      const rejectHistorySupply = vi.fn(async () => {})
+      let supplyCallback:
+        | ((event: {
+            type: string
+            request?: { supplyId: string; domain: string; syncId: string; cutoff: number; mode: 'provider' }
+          }) => void)
+        | null = null
+      const server = {
+        getSnapshot: vi.fn(async () => snapshot('')),
+        provideHistory: vi.fn(async (_payload: { domain: string }, callback: NonNullable<typeof supplyCallback>) => {
+          supplyCallback = callback
+        }),
+        ackInbound: vi.fn(async () => {}),
+        resolveHistorySupply: resolveHistorySupply as never,
+        rejectHistorySupply: rejectHistorySupply as never
+      }
+      const client = new DocumentClient({ coordinator: coordinator as never, server: server as never, domain: DOMAIN })
+      const messageStore = createMessageStore(createMemoryMessageDatabase(`detach-supply-${branch}`))
+      const room = new ChatRoom({ server: server as never, messageStore, pageDomain: DOMAIN })
+      client.registerApplier('chat', (p) => room.applyChat(p))
+      client.registerApplier('persistence', (p, context) => room.applyPersistence(p, context))
+
+      // The drain completes cleanly; the long-lived supplier is registered afterwards.
+      const init = client.init()
+      await vi.waitFor(() => expect(coordinator.registerPage).toHaveBeenCalledTimes(1))
+      registration.resolve({ snapshot: snapshot('') })
+      await expect(init).resolves.toBeTruthy()
+      await vi.waitFor(() => expect(server.provideHistory).toHaveBeenCalledTimes(1))
+
+      // A real supply request holds the physical MessageStore query.
+      const queryStarted = Promise.withResolvers<AbortSignal>()
+      const releaseQuery = Promise.withResolvers<readonly never[]>()
+      let queryCount = 0
+      vi.spyOn(messageStore, 'query').mockImplementation(async (query) => {
+        queryCount += 1
+        if (queryCount === 1) {
+          queryStarted.resolve(query?.signal ?? new AbortController().signal)
+          return releaseQuery.promise as never
+        }
+        return [] as never
+      })
+      supplyCallback!({
+        type: 'request',
+        request: { supplyId: 'supply-1', domain: DOMAIN, syncId: 'sync-1', cutoff: 0, mode: 'provider' }
+      })
+      const querySignal = await queryStarted.promise
+
+      // Ordinary document detach (BFCache): the exact document capability aborts the pending
+      // query without any drain owner being live.
+      expect(querySignal.aborted).toBe(false)
+      client.detach()
+      expect(querySignal.aborted).toBe(true)
+
+      // The fresh document re-registers and becomes ready without waiting for B1.
+      const restored = client.init()
+      await vi.waitFor(() => expect(coordinator.registerPage).toHaveBeenCalledTimes(2))
+      await expect(restored).resolves.toBeTruthy()
+
+      // The stale supply settles late in either direction: zero resolve/fail effects, and the
+      // fresh document's provider/dedup/readiness are untouched.
+      if (branch === 'resolve') releaseQuery.resolve([])
+      else releaseQuery.reject(new Error('late query failure'))
+      await flush(20)
+      expect(resolveHistorySupply).not.toHaveBeenCalled()
+      expect(rejectHistorySupply).not.toHaveBeenCalled()
+      expect(server.provideHistory).toHaveBeenCalledTimes(1)
+    }
+  )
+
   it('document detach discards the owner; a fresh document registers again instead of recovering the old owner', async () => {
     const { client, coordinator, server, registerQueue, readQueue } = setup()
     const init = client.init()

@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 import { MESSAGE_TYPE } from '@/protocol'
 import { getChatRoomId } from '@/runtime/Server'
+import { MESSAGE_RECORD_TYPE, type TextMessageRecord } from '@/domain/Message'
+import type { WireCodec } from '@/protocol'
+import { InvalidMessageRecordError } from '@/domain/MessageStore'
 import { ChatRoom } from '@/domain/impls/runtime/ChatRoom'
 import { createMemoryMessageDatabase } from '@/domain/impls/database/Memory'
 import { createMessageStore } from '@/domain/MessageStore'
@@ -68,121 +71,270 @@ const createTransport = () => {
 
 const caller = { tab: { id: 1, url: `${DOMAIN}/` } }
 
+const flush = async (turns = 10) => {
+  for (let index = 0; index < turns; index += 1) await Promise.resolve()
+}
+
+const jsonCodec: WireCodec = {
+  encode: async (value) => JSON.stringify(value),
+  decode: async (payload) => JSON.parse(payload as string)
+}
+
 /**
  * One real DocumentClient survives a logical Background replacement through the same proxies:
  * the fake tab listener is the only notification path, exactly like the browser message bus.
  */
+const textRecord = (id: string, timestamp = 1): TextMessageRecord => ({
+  type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE,
+  id,
+  message: {
+    type: MESSAGE_TYPE.TEXT,
+    id,
+    hlc: { timestamp, counter: 0 },
+    userId: 'user-a',
+    body: id,
+    mentions: []
+  },
+  user: { id: 'user-a', name: 'A', avatar: '' },
+  receivedAt: timestamp
+})
+
 describe('DocumentClient across a logical Background replacement', () => {
-  it('retires a physically pending B1 History supply on replacement without touching B2', async () => {
-    const hints: unknown[] = []
+  it.each(['resolve', 'reject'] as const)(
+    'retires a physically pending B1 History supply on replacement without touching B2 (late %s)',
+    async (branch) => {
+      const hints: unknown[] = []
+      const listeners = new Set<(message: unknown) => void>()
+      const admission: RuntimeAdmission = {
+        tabs: {
+          get: async (tabId: number) => ({ id: tabId, url: `${DOMAIN}/` }),
+          query: async () => [{ id: 1, url: `${DOMAIN}/` }],
+          sendMessage: async (_tabId: number, message: unknown) => {
+            hints.push(message)
+            listeners.forEach((listener) => listener(message))
+          }
+        },
+        ensureTransport: async () => {}
+      }
+      const fake = createTransport()
+      let current = createServer({ transport: fake.transport, admission })
+      const provideHistory = vi.fn()
+      const resolveHistorySupply = vi.fn()
+      const rejectHistorySupply = vi.fn()
+      const coordinator = {
+        registerPage: async (payload: { domain: string }) => ({
+          snapshot: await current.attachPage({ ...payload, caller })
+        })
+      }
+      const facade = {
+        getSnapshot: (payload?: { domain?: string }) => current.getSnapshot({ ...payload, caller }),
+        joinChatRoom: (payload: { domain: string; user: never; site: never }) =>
+          current.joinChatRoom({ ...payload, caller }),
+        provideHistory: (payload: { domain: string }, callback: Parameters<RuntimeServer['provideHistory']>[1]) => {
+          provideHistory(payload)
+          return current.provideHistory({ ...payload, caller }, callback)
+        },
+        ackInbound: (payload: { domain: string; sequence: number; inserted: boolean }) =>
+          current.ackInbound({ ...payload, caller }),
+        resolveHistorySupply: (payload: { supplyId: string; result: { records: never[]; done: boolean } }) => {
+          resolveHistorySupply(payload)
+          return current.resolveHistorySupply({ ...payload, caller })
+        },
+        rejectHistorySupply: (payload: { supplyId: string; reason: string }) => {
+          rejectHistorySupply(payload)
+          return current.rejectHistorySupply({ ...payload, caller })
+        }
+      } as unknown as RuntimeServer
+
+      const client = new DocumentClient({ coordinator, server: facade, domain: DOMAIN })
+      listeners.add((message) => {
+        if ((message as { type?: string }).type === 'runtime:state-changed') client.invalidate()
+      })
+      const messageStore = createMessageStore(createMemoryMessageDatabase('history-retirement'))
+      const chat = new ChatRoom({ server: facade, messageStore, pageDomain: DOMAIN })
+      client.registerApplier('chat', (projection) => chat.applyChat(projection))
+      client.registerApplier('persistence', (projection, context) => chat.applyPersistence(projection, context))
+
+      await client.init()
+      // Join the room so the History domain admits a real peer requester pull.
+      await facade.joinChatRoom({
+        domain: DOMAIN,
+        user: { id: 'local-user', name: 'Local', avatar: '' } as never,
+        site: { origin: DOMAIN, title: 'Example' } as never
+      })
+      expect(provideHistory).toHaveBeenCalledTimes(1)
+
+      // A real peer binds and issues a genuine History inventory pull; the ChatRoom's physical
+      // MessageStore query starts and is held with its exact signal.
+      const queryStarted = Promise.withResolvers<AbortSignal>()
+      const releaseQuery = Promise.withResolvers<readonly never[]>()
+      let supplyCount = 0
+      vi.spyOn(messageStore, 'query').mockImplementation(async (query) => {
+        supplyCount += 1
+        if (supplyCount === 1) {
+          queryStarted.resolve(query?.signal ?? new AbortController().signal)
+          return releaseQuery.promise as never
+        }
+        return [] as never
+      })
+      fake.peerJoin(getChatRoomId(DOMAIN), 'peer-a')
+      fake.receive(getChatRoomId(DOMAIN), 'peer-a', {
+        type: MESSAGE_TYPE.SESSION,
+        sessionId: 'session-a',
+        presenceId: 'presence-a',
+        joinedAt: 1,
+        user: { id: 'user-a', name: 'A', avatar: '' }
+      })
+      fake.receive(getChatRoomId(DOMAIN), 'peer-a', {
+        type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
+        syncId: 'sync-1',
+        page: 0,
+        messageIds: [],
+        done: true
+      })
+      const querySignal = await queryStarted.promise
+
+      // Logical Background replacement arrives while B1's supply is still physically pending:
+      // the reset owner (not a disposal path) must abort the old-host controller before the same
+      // document re-registers and re-provides into the new Runtime.
+      const b1 = current
+      current = createServer({ transport: fake.transport, admission })
+      notifyServerTabs(current)
+      await vi.waitFor(async () => {
+        expect((await readServerSnapshot(current)).domains[0]?.tabIds).toEqual([1])
+      })
+      expect(querySignal.aborted).toBe(true)
+      await vi.waitFor(() => expect(provideHistory).toHaveBeenCalledTimes(2))
+
+      // The B1 physical query now settles late (resolve branch): the old chain must not supply or
+      // fail the replacement host, and B2 readiness/failures stay unchanged.
+      if (branch === 'resolve') releaseQuery.resolve([])
+      else releaseQuery.reject(new Error('B1 query late rejection'))
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(resolveHistorySupply).not.toHaveBeenCalled()
+      // The old chain still settles its own cancelled supply exactly once (through the existing
+      // reject surface, inert against B2's unknown supplyId); it never fails B2.
+      expect(rejectHistorySupply).toHaveBeenCalledTimes(1)
+      expect(rejectHistorySupply.mock.calls[0]?.[0]?.reason).toMatch(/Runtime host replaced|B1 query late rejection/)
+      expect((await readServerSnapshot(current)).failures).toEqual([])
+      expect((await readServerSnapshot(current)).hostPhase).toBe('ready')
+
+      disposeServer(b1)
+      disposeServer(current)
+    }
+  )
+
+  it('a valid same-sequence successor persists through the real Server/Delivery reconnect chain', async () => {
     const listeners = new Set<(message: unknown) => void>()
     const admission: RuntimeAdmission = {
       tabs: {
         get: async (tabId: number) => ({ id: tabId, url: `${DOMAIN}/` }),
         query: async () => [{ id: 1, url: `${DOMAIN}/` }],
         sendMessage: async (_tabId: number, message: unknown) => {
-          hints.push(message)
           listeners.forEach((listener) => listener(message))
         }
       },
       ensureTransport: async () => {}
     }
     const fake = createTransport()
-    let current = createServer({ transport: fake.transport, admission })
-    const provideHistory = vi.fn()
-    const resolveHistorySupply = vi.fn()
+    const server = createServer({ transport: fake.transport, admission, codec: jsonCodec })
+    const ackInbound = vi.fn()
+    let rejectNextAck = true
     const coordinator = {
       registerPage: async (payload: { domain: string }) => ({
-        snapshot: await current.attachPage({ ...payload, caller })
+        snapshot: await server.attachPage({ ...payload, caller })
       })
     }
     const facade = {
-      getSnapshot: (payload?: { domain?: string }) => current.getSnapshot({ ...payload, caller }),
+      getSnapshot: (payload?: { domain?: string }) => server.getSnapshot({ ...payload, caller }),
       joinChatRoom: (payload: { domain: string; user: never; site: never }) =>
-        current.joinChatRoom({ ...payload, caller }),
-      provideHistory: (payload: { domain: string }, callback: Parameters<RuntimeServer['provideHistory']>[1]) => {
-        provideHistory(payload)
-        return current.provideHistory({ ...payload, caller }, callback)
+        server.joinChatRoom({ ...payload, caller }),
+      reconnectDomain: (payload: { domain: string }) => server.reconnectDomain({ ...payload, caller }),
+      provideHistory: (payload: { domain: string }, callback: Parameters<RuntimeServer['provideHistory']>[1]) =>
+        server.provideHistory({ ...payload, caller }, callback),
+      ackInbound: async (payload: { domain: string; sequence: number; inserted: boolean }) => {
+        ackInbound(payload)
+        if (rejectNextAck) {
+          rejectNextAck = false
+          throw new Error('ACK transport lost')
+        }
+        return server.ackInbound({ ...payload, caller })
       },
-      ackInbound: (payload: { domain: string; sequence: number; inserted: boolean }) =>
-        current.ackInbound({ ...payload, caller }),
-      resolveHistorySupply: (payload: { supplyId: string; result: { records: never[]; done: boolean } }) => {
-        resolveHistorySupply(payload)
-        return current.resolveHistorySupply({ ...payload, caller })
-      },
+      resolveHistorySupply: (payload: { supplyId: string; result: { records: never[]; done: boolean } }) =>
+        server.resolveHistorySupply({ ...payload, caller }),
       rejectHistorySupply: (payload: { supplyId: string; reason: string }) =>
-        current.rejectHistorySupply({ ...payload, caller })
+        server.rejectHistorySupply({ ...payload, caller })
     } as unknown as RuntimeServer
 
     const client = new DocumentClient({ coordinator, server: facade, domain: DOMAIN })
     listeners.add((message) => {
       if ((message as { type?: string }).type === 'runtime:state-changed') client.invalidate()
     })
-    const messageStore = createMessageStore(createMemoryMessageDatabase('history-retirement'))
+    const messageStore = createMessageStore(createMemoryMessageDatabase('delivery-retry-chain'))
     const chat = new ChatRoom({ server: facade, messageStore, pageDomain: DOMAIN })
     client.registerApplier('chat', (projection) => chat.applyChat(projection))
     client.registerApplier('persistence', (projection, context) => chat.applyPersistence(projection, context))
 
     await client.init()
-    // Join the room so the History domain admits a real peer requester pull.
+    const roomId = getChatRoomId(DOMAIN)
     await facade.joinChatRoom({
       domain: DOMAIN,
       user: { id: 'local-user', name: 'Local', avatar: '' } as never,
       site: { origin: DOMAIN, title: 'Example' } as never
     })
-    expect(provideHistory).toHaveBeenCalledTimes(1)
-
-    // A real peer binds and issues a genuine History inventory pull; the ChatRoom's physical
-    // MessageStore query starts and is held.
-    const queryStarted = Promise.withResolvers<AbortSignal>()
-    const releaseQuery = Promise.withResolvers<readonly never[]>()
-    let supplyCount = 0
-    vi.spyOn(messageStore, 'query').mockImplementation(async (query) => {
-      supplyCount += 1
-      if (supplyCount === 1) {
-        queryStarted.resolve(query?.signal ?? new AbortController().signal)
-        return releaseQuery.promise as never
-      }
-      return [] as never
-    })
-    fake.peerJoin(getChatRoomId(DOMAIN), 'peer-a')
-    fake.receive(getChatRoomId(DOMAIN), 'peer-a', {
+    fake.peerJoin(roomId, 'peer-a')
+    fake.receive(roomId, 'peer-a', {
       type: MESSAGE_TYPE.SESSION,
       sessionId: 'session-a',
       presenceId: 'presence-a',
-      joinedAt: 1,
+      joinedAt: Date.now() + 1,
       user: { id: 'user-a', name: 'A', avatar: '' }
     })
-    fake.receive(getChatRoomId(DOMAIN), 'peer-a', {
-      type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
-      syncId: 'sync-1',
-      page: 0,
-      messageIds: [],
-      done: true
-    })
-    const querySignal = await queryStarted.promise
 
-    // Logical Background replacement arrives while B1's supply is still physically pending:
-    // the reset owner (not a disposal path) must abort the old-host controller before the same
-    // document re-registers and re-provides into the new Runtime.
-    const b1 = current
-    current = createServer({ transport: fake.transport, admission })
-    notifyServerTabs(current)
+    // The remote session must be committed before its text is admitted.
     await vi.waitFor(async () => {
-      expect((await readServerSnapshot(current)).domains[0]?.tabIds).toEqual([1])
+      const current = await facade.getSnapshot({ domain: DOMAIN })
+      expect(current.domains[0]?.sessions.some((session) => session.user.id === 'user-a')).toBe(true)
     })
-    expect(querySignal.aborted).toBe(true)
-    await vi.waitFor(() => expect(provideHistory).toHaveBeenCalledTimes(2))
 
-    // The B1 physical query now settles late (resolve branch): the old chain must not supply or
-    // fail the replacement host, and must not mutate B2 provider/dedup state.
-    releaseQuery.resolve([])
-    await new Promise((resolve) => setTimeout(resolve, 0))
-    expect(resolveHistorySupply).not.toHaveBeenCalled()
-    expect((await readServerSnapshot(current)).failures).toEqual([])
+    // B1: an invalid record enters the real Delivery buffer as sequence 1; durable validation
+    // fails and its negative ACK is lost in transit.
+    const invalid = textRecord('invalid-record')
+    const insertSpy = vi.spyOn(messageStore, 'insert')
+    insertSpy.mockRejectedValueOnce(new InvalidMessageRecordError('not a record'))
+    fake.receive(roomId, 'peer-a', invalid.message)
+    await vi.waitFor(() => expect(ackInbound).toHaveBeenCalledTimes(1))
+    await flush()
 
-    disposeServer(b1)
-    disposeServer(current)
+    // A real same-host reconnect abandons the Delivery buffer (sequence restarts) with no
+    // intermediate empty pull; the surviving invalid pair is keyed to the old record identity.
+    await facade.reconnectDomain({ domain: DOMAIN })
+
+    // The peer rebinds on the replacement connection before its text is admitted again.
+    fake.peerJoin(roomId, 'peer-a')
+    fake.receive(roomId, 'peer-a', {
+      type: MESSAGE_TYPE.SESSION,
+      sessionId: 'session-a-2',
+      presenceId: 'presence-a',
+      joinedAt: Date.now() + 2,
+      user: { id: 'user-a', name: 'A', avatar: '' }
+    })
+    await vi.waitFor(async () => {
+      const current = await facade.getSnapshot({ domain: DOMAIN })
+      expect(current.domains[0]?.sessions.some((session) => session.user.id === 'user-a')).toBe(true)
+    })
+
+    // The replacement accepts a valid sequence 1 with a different record identity through the
+    // real wire: it must persist normally and ACK true.
+    const valid = textRecord('valid-successor', 2)
+    fake.receive(roomId, 'peer-a', valid.message)
+    await vi.waitFor(() => expect(ackInbound).toHaveBeenCalledTimes(2))
+    expect(ackInbound).toHaveBeenLastCalledWith({ domain: DOMAIN, sequence: 1, inserted: true })
+    const chats = await messageStore.query({ type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE })
+    expect(chats).toHaveLength(1)
+    expect(chats[0]).toMatchObject({ id: valid.id, message: valid.message, user: valid.user })
+
+    disposeServer(server)
   })
 
   it('re-registers through the real register-and-read surface and rebuilds lease and History provider', async () => {
@@ -203,6 +355,7 @@ describe('DocumentClient across a logical Background replacement', () => {
     const fake = createTransport()
     let current = createServer({ transport: fake.transport, admission })
     const provideHistory = vi.fn()
+    const rejectHistorySupply = vi.fn()
     const coordinator = {
       registerPage: async (payload: { domain: string }) => ({
         snapshot: await current.attachPage({ ...payload, caller })
@@ -218,8 +371,10 @@ describe('DocumentClient across a logical Background replacement', () => {
         current.ackInbound({ ...payload, caller }),
       resolveHistorySupply: (payload: { supplyId: string; result: { records: never[]; done: boolean } }) =>
         current.resolveHistorySupply({ ...payload, caller }),
-      rejectHistorySupply: (payload: { supplyId: string; reason: string }) =>
-        current.rejectHistorySupply({ ...payload, caller })
+      rejectHistorySupply: (payload: { supplyId: string; reason: string }) => {
+        rejectHistorySupply(payload)
+        return current.rejectHistorySupply({ ...payload, caller })
+      }
     } as unknown as RuntimeServer
 
     const client = new DocumentClient({ coordinator, server: facade, domain: DOMAIN })

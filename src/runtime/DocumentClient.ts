@@ -15,6 +15,15 @@ export interface DocumentClientOptions {
 export interface ProjectionApplyContext {
   readonly signal: AbortSignal
   readonly assertCurrent: () => void
+  /**
+   * The attached-document capability: it survives a clean drain completion and is invalidated
+   * only by document detach. Long-lived applier work (e.g. a History supplier) captures exactly
+   * this — never a Page identity, generation, cross-context binding, or delivery receipt.
+   */
+  readonly document: {
+    readonly signal: AbortSignal
+    readonly assertActive: () => void
+  }
 }
 
 export type ProjectionApplier = (projection: RuntimeSnapshot, context: ProjectionApplyContext) => void | Promise<void>
@@ -40,6 +49,8 @@ export class DocumentClient {
   /** The one live drain owner: a document-local exact token, abort controller, and task. Never exposed. */
   private owner: { token: number; controller: AbortController; task: Promise<void> } | null = null
   private ownerSequence = 0
+  /** Attached-document capability: lives across clean drains; aborted only by detach. */
+  private documentController: AbortController | null = null
   private readyPublished = false
   private detached = false
   private currentSnapshot: RuntimeSnapshot | null = null
@@ -93,6 +104,7 @@ export class DocumentClient {
 
   private startDrainIfAbsent() {
     if (this.detached || this.owner) return
+    this.documentController ??= new AbortController()
     if (!this.readyPublished && !this.currentSnapshot) this.setHostPhase('connecting')
     // The owner token is installed before any fallible work: the drain body starts one microtask
     // later, so even a synchronous RPC throw lands inside the drain's own try/finally and the
@@ -108,11 +120,21 @@ export class DocumentClient {
   }
 
   private applyContext(entry: { token: number; controller: AbortController }): ProjectionApplyContext {
+    const documentController = this.documentController ?? new AbortController()
+    this.documentController = documentController
     return {
       signal: entry.controller.signal,
       assertCurrent: () => {
         if (!this.isOwnerCurrent(entry)) {
           throw new DOMException('Projection apply superseded', 'AbortError')
+        }
+      },
+      document: {
+        signal: documentController.signal,
+        assertActive: () => {
+          if (documentController.signal.aborted) {
+            throw new DOMException('Runtime client detached', 'AbortError')
+          }
         }
       }
     }
@@ -224,9 +246,12 @@ export class DocumentClient {
     this.currentSnapshot = null
     // Retire the live owner token immediately: abort its applier boundary, fence its late
     // continuation at every post-await checkpoint, and let a later init start a fresh
-    // register-and-read owner without waiting for it.
+    // register-and-read owner without waiting for it. The attached-document capability dies with
+    // the document, so long-lived applier work (History suppliers) terminates here too.
     this.owner?.controller.abort(new DOMException('Runtime client detached', 'AbortError'))
     this.owner = null
+    this.documentController?.abort(new DOMException('Runtime client detached', 'AbortError'))
+    this.documentController = null
     const reason = new DOMException('Runtime client detached', 'AbortError')
     this.initWaiters.forEach((waiter) => waiter.reject(reason))
     this.initWaiters.clear()
