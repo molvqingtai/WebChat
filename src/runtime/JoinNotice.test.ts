@@ -323,7 +323,7 @@ const createStack = async (
     rejectHistorySupply: (payload) => server.rejectHistorySupply(withCaller(payload))
   }
   const coordinator = {
-    registerPage: async (payload: { domain: string }) => ({ snapshot: await serverFacade.attachPage(payload) })
+    registerPage: async (payload: { domain: string }) => serverFacade.attachPage(payload)
   }
   const client = new DocumentClient({ coordinator, server: serverFacade, domain: DOMAIN })
   messageListeners.add((message) => {

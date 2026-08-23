@@ -314,7 +314,7 @@ describe('application feedback ownership', () => {
     }
     const registerPage = vi
       .fn<RuntimeCoordinator['registerPage']>()
-      .mockResolvedValueOnce({ snapshot })
+      .mockResolvedValueOnce(snapshot)
       .mockRejectedValue(nativeError)
     const lease = new DocumentClient({
       coordinator: { registerPage },

@@ -7,21 +7,14 @@ export interface DocumentClientOptions {
 }
 
 /**
- * Document-local owner capability passed to every applier. It carries the current owner's abort
- * signal (for cancellable persistence) and a current-owner assertion. A stale continuation throws
- * a local AbortError and is silenced by the drain's stale fence — never a Page identity,
- * cross-context generation, delivery receipt, or binding.
- */
-/**
  * The one attached-document capability for this document's lifetime: created once, reused by
- * every drain of the same document, and replaced only by detach + fresh init. `assertActive()`
- * proves exact slot identity (`slot === this capability`) and liveness. Long-lived applier work
- * captures exactly this object — never a Page identity, generation, cross-context binding, or
- * delivery receipt.
+ * every drain of the same document, and replaced only by detach + fresh init. It carries the
+ * current document's abort signal (for cancellable persistence) and `assertActive()`, which
+ * proves exact slot identity and liveness. Long-lived applier work captures exactly this object
+ * — never a Page identity, generation, cross-context binding, or delivery receipt. A stale
+ * continuation throws a local AbortError and is silenced by the drain's stale fence.
  */
 export interface AttachedDocumentCapability {
-  /** Internal abort owner; consumers use `signal`/`assertActive` only. */
-  readonly controller: AbortController
   readonly signal: AbortSignal
   readonly assertActive: () => void
 }
@@ -52,26 +45,25 @@ export class DocumentClient {
   private registered = false
   private currentHostId: string | null = null
   private dirty = false
-  /** The one live drain owner: a document-local exact token, abort controller, and task. Never exposed. */
-  private owner: { token: number; controller: AbortController; task: Promise<void> } | null = null
-  private ownerSequence = 0
-  /** The exact attached-document capability slot for this document lifetime. */
-  private documentCapability: AttachedDocumentCapability | null = null
+  /** The one live drain owner: a document-local exact entry, abort controller, and task. Never exposed. */
+  private owner: { controller: AbortController; task: Promise<void> } | null = null
+  /** The exact attached-document slot for this document lifetime: private abort owner plus the
+   * capability exposed to appliers (`signal`/`assertActive` only). */
+  private documentSlot: { controller: AbortController; capability: AttachedDocumentCapability } | null = null
 
   /** Installs the one exact capability object for this document lifetime (detach replaces it). */
   private ensureDocumentCapability(): AttachedDocumentCapability {
-    if (this.documentCapability) return this.documentCapability
+    if (this.documentSlot) return this.documentSlot.capability
     const controller = new AbortController()
     const capability: AttachedDocumentCapability = {
-      controller,
       signal: controller.signal,
       assertActive: () => {
-        if (this.documentCapability !== capability || controller.signal.aborted) {
+        if (this.documentSlot?.capability !== capability || controller.signal.aborted) {
           throw new DOMException('Runtime client detached', 'AbortError')
         }
       }
     }
-    this.documentCapability = capability
+    this.documentSlot = { controller, capability }
     return capability
   }
   private readyPublished = false
@@ -129,20 +121,20 @@ export class DocumentClient {
     if (this.detached || this.owner) return
     this.ensureDocumentCapability()
     if (!this.readyPublished && !this.currentSnapshot) this.setHostPhase('connecting')
-    // The owner token is installed before any fallible work: the drain body starts one microtask
+    // The owner entry is installed before any fallible work: the drain body starts one microtask
     // later, so even a synchronous RPC throw lands inside the drain's own try/finally and the
     // common finally stays the last write to the slot.
-    const entry = { token: ++this.ownerSequence, controller: new AbortController(), task: Promise.resolve() }
+    const entry = { controller: new AbortController(), task: Promise.resolve() }
     entry.task = Promise.resolve().then(() => this.drain(entry))
     this.owner = entry
   }
 
-  /** A continuation may mutate only while its exact owner token is active and the document lives. */
-  private isOwnerCurrent(entry: { token: number }) {
-    return !this.detached && this.owner?.token === entry.token
+  /** A continuation may mutate only while its exact owner entry is active and the document lives. */
+  private isOwnerCurrent(entry: { controller: AbortController }) {
+    return !this.detached && this.owner === entry
   }
 
-  private applyContext(entry: { token: number; controller: AbortController }): ProjectionApplyContext {
+  private applyContext(entry: { controller: AbortController }): ProjectionApplyContext {
     return {
       signal: entry.controller.signal,
       assertCurrent: () => {
@@ -154,13 +146,13 @@ export class DocumentClient {
     }
   }
 
-  private async drain(entry: { token: number; controller: AbortController }) {
+  private async drain(entry: { controller: AbortController }) {
     try {
       do {
         this.dirty = false
         const projection = this.registered
           ? await this.options.server.getSnapshot({ domain: this.options.domain })
-          : (await this.options.coordinator.registerPage({ domain: this.options.domain })).snapshot
+          : await this.options.coordinator.registerPage({ domain: this.options.domain })
         if (!this.isOwnerCurrent(entry)) return
         if (this.currentHostId !== null && projection.hostId !== this.currentHostId) {
           // The logical Background was replaced: drop only host-local drain identity and loop
@@ -197,7 +189,7 @@ export class DocumentClient {
       // One synchronous finalization cut, with no await: only the exact current owner clears its
       // own slot, immediately rechecks dirty, and restarts; a detached owner never touches a
       // successor's slot.
-      if (this.owner?.token === entry.token) {
+      if (this.owner === entry) {
         this.owner = null
         if (this.dirty) this.startDrainIfAbsent()
       }
@@ -258,14 +250,14 @@ export class DocumentClient {
     this.currentHostId = null
     this.readyPublished = false
     this.currentSnapshot = null
-    // Retire the live owner token immediately: abort its applier boundary, fence its late
+    // Retire the live owner entry immediately: abort its applier boundary, fence its late
     // continuation at every post-await checkpoint, and let a later init start a fresh
     // register-and-read owner without waiting for it. The attached-document capability dies with
     // the document, so long-lived applier work (History suppliers) terminates here too.
     this.owner?.controller.abort(new DOMException('Runtime client detached', 'AbortError'))
     this.owner = null
-    this.documentCapability?.controller.abort(new DOMException('Runtime client detached', 'AbortError'))
-    this.documentCapability = null
+    this.documentSlot?.controller.abort(new DOMException('Runtime client detached', 'AbortError'))
+    this.documentSlot = null
     const reason = new DOMException('Runtime client detached', 'AbortError')
     this.initWaiters.forEach((waiter) => waiter.reject(reason))
     this.initWaiters.clear()

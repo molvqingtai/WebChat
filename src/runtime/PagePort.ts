@@ -154,10 +154,6 @@ export class PagePort implements PagePortContract {
     pending.confirmSettled()
   }
 
-  pendingHistoryCountForTest() {
-    return this.pendingHistory.size
-  }
-
   dispose() {
     const tabIds = new Set([...this.historyProviders.values()].map((provider) => provider.tabId))
     tabIds.forEach((tabId) => this.removePage(tabId))

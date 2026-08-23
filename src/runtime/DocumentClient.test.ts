@@ -60,12 +60,12 @@ const flush = async (turns = 20) => {
 const setup = () => {
   const registerCalls: string[] = []
   const readCalls: string[] = []
-  const registerQueue: Array<ReturnType<typeof deferred<{ snapshot: RuntimeSnapshot }>>> = []
+  const registerQueue: Array<ReturnType<typeof deferred<RuntimeSnapshot>>> = []
   const readQueue: Array<ReturnType<typeof deferred<RuntimeSnapshot>>> = []
   const coordinator = {
     registerPage: vi.fn((_payload: { domain: string }) => {
       registerCalls.push('register')
-      const pending = deferred<{ snapshot: RuntimeSnapshot }>()
+      const pending = deferred<RuntimeSnapshot>()
       registerQueue.push(pending)
       return pending.promise
     })
@@ -94,7 +94,7 @@ describe('DocumentClient one-way current-state drain', () => {
 
     const init = client.init()
     await vi.waitFor(() => expect(registerQueue).toHaveLength(1))
-    registerQueue.shift()!.resolve({ snapshot: snapshot('') })
+    registerQueue.shift()!.resolve(snapshot(''))
     await expect(init).resolves.toMatchObject({ hostPhase: 'ready' })
     expect(ready).toHaveBeenCalledTimes(1)
     expect(server.getSnapshot).not.toHaveBeenCalled()
@@ -127,7 +127,7 @@ describe('DocumentClient one-way current-state drain', () => {
     client.invalidate()
     client.invalidate()
     client.invalidate()
-    registerQueue.shift()!.resolve({ snapshot: snapshot('s1') })
+    registerQueue.shift()!.resolve(snapshot('s1'))
     await vi.waitFor(() => expect(server.getSnapshot).toHaveBeenCalledTimes(1))
     // The s1 registration response was applied, dirty observed, and the owner pulled current s2.
     readQueue.shift()!.resolve(snapshot('s2'))
@@ -143,7 +143,7 @@ describe('DocumentClient one-way current-state drain', () => {
     const { client, server, registerQueue, readQueue } = setup()
     const init = client.init()
     await vi.waitFor(() => expect(registerQueue).toHaveLength(1))
-    registerQueue.shift()!.resolve({ snapshot: snapshot('') })
+    registerQueue.shift()!.resolve(snapshot(''))
     await expect(init).resolves.toBeTruthy()
 
     client.invalidate()
@@ -180,7 +180,7 @@ describe('DocumentClient one-way current-state drain', () => {
     // A failed registration leaves `registered` false: the next hint registers again.
     client.invalidate()
     await vi.waitFor(() => expect(coordinator.registerPage).toHaveBeenCalledTimes(2))
-    registerQueue.shift()!.resolve({ snapshot: snapshot('') })
+    registerQueue.shift()!.resolve(snapshot(''))
     await flush()
   })
 
@@ -190,7 +190,7 @@ describe('DocumentClient one-way current-state drain', () => {
     client.whenFailure(failure)
     const init = client.init()
     await vi.waitFor(() => expect(registerQueue).toHaveLength(1))
-    registerQueue.shift()!.resolve({ snapshot: snapshot('') })
+    registerQueue.shift()!.resolve(snapshot(''))
     await expect(init).resolves.toBeTruthy()
 
     client.invalidate()
@@ -221,7 +221,7 @@ describe('DocumentClient one-way current-state drain', () => {
 
       const init = client.init()
       await vi.waitFor(() => expect(registerQueue).toHaveLength(1))
-      registerQueue.shift()!.resolve({ snapshot: snapshot('') })
+      registerQueue.shift()!.resolve(snapshot(''))
       await expect(init).rejects.toBe(original)
       expect(failure).toHaveBeenCalledWith(original)
       await flush(50)
@@ -244,7 +244,7 @@ describe('DocumentClient one-way current-state drain', () => {
 
     const init = client.init()
     await vi.waitFor(() => expect(registerQueue).toHaveLength(1))
-    registerQueue.shift()!.resolve({ snapshot: snapshot('') })
+    registerQueue.shift()!.resolve(snapshot(''))
     await expect(init).rejects.toBe(original)
     expect(failure).toHaveBeenCalledWith(original)
 
@@ -267,7 +267,7 @@ describe('DocumentClient one-way current-state drain', () => {
 
     const init = client.init()
     await vi.waitFor(() => expect(registerQueue).toHaveLength(1))
-    registerQueue.shift()!.resolve({ snapshot: snapshot('') })
+    registerQueue.shift()!.resolve(snapshot(''))
     await expect(init).resolves.toBeTruthy()
     // The hint set dirty after the last while-check: the synchronous finally recheck must restart.
     await vi.waitFor(() => expect(server.getSnapshot).toHaveBeenCalledTimes(1))
@@ -281,7 +281,7 @@ describe('DocumentClient one-way current-state drain', () => {
     const { client, server, registerQueue, readQueue } = setup()
     const init = client.init()
     await vi.waitFor(() => expect(registerQueue).toHaveLength(1))
-    registerQueue.shift()!.resolve({ snapshot: snapshot('') })
+    registerQueue.shift()!.resolve(snapshot(''))
     await expect(init).resolves.toBeTruthy()
 
     client.invalidate()
@@ -295,7 +295,7 @@ describe('DocumentClient one-way current-state drain', () => {
     const { client, server, registerQueue, readQueue } = setup()
     const init = client.init()
     await vi.waitFor(() => expect(registerQueue).toHaveLength(1))
-    registerQueue.shift()!.resolve({ snapshot: snapshot('') })
+    registerQueue.shift()!.resolve(snapshot(''))
     await expect(init).resolves.toBeTruthy()
 
     client.invalidate()
@@ -313,7 +313,7 @@ describe('DocumentClient one-way current-state drain', () => {
     // A native adapter may throw synchronously before producing a Promise. The owner slot is
     // already installed, so the common finally retires it and a later hint starts a fresh owner.
     const syncThrowCoordinator = {
-      registerPage: vi.fn((_payload: { domain: string }): Promise<{ snapshot: RuntimeSnapshot }> => {
+      registerPage: vi.fn((_payload: { domain: string }): Promise<RuntimeSnapshot> => {
         throw new Error('native register exploded')
       })
     }
@@ -331,14 +331,14 @@ describe('DocumentClient one-way current-state drain', () => {
     expect(syncThrowCoordinator.registerPage).toHaveBeenCalledTimes(1)
 
     // The settled Promise was not reinstalled in the slot: an explicit hint starts a new owner.
-    syncThrowCoordinator.registerPage.mockImplementationOnce(async () => ({ snapshot: snapshot('') }))
+    syncThrowCoordinator.registerPage.mockImplementationOnce(async () => snapshot(''))
     client.invalidate()
     await vi.waitFor(() => expect(syncThrowCoordinator.registerPage).toHaveBeenCalledTimes(2))
 
     const { client: readClient, server, registerQueue } = setup()
     const init = readClient.init()
     await vi.waitFor(() => expect(registerQueue).toHaveLength(1))
-    registerQueue.shift()!.resolve({ snapshot: snapshot('') })
+    registerQueue.shift()!.resolve(snapshot(''))
     await expect(init).resolves.toBeTruthy()
     server.getSnapshot.mockImplementationOnce(() => {
       throw new Error('native read exploded')
@@ -357,7 +357,7 @@ describe('DocumentClient one-way current-state drain', () => {
     const { client, server, registerQueue, readQueue } = setup()
     const init = client.init()
     await vi.waitFor(() => expect(registerQueue).toHaveLength(1))
-    registerQueue.shift()!.resolve({ snapshot: snapshot('') })
+    registerQueue.shift()!.resolve(snapshot(''))
     await expect(init).resolves.toBeTruthy()
 
     client.invalidate()
@@ -377,14 +377,14 @@ describe('DocumentClient one-way current-state drain', () => {
     })
     const init = client.init()
     await vi.waitFor(() => expect(registerQueue).toHaveLength(1))
-    registerQueue.shift()!.resolve({ snapshot: snapshot('') })
+    registerQueue.shift()!.resolve(snapshot(''))
     await expect(init).resolves.toBeTruthy()
     expect(applied).toEqual(['host-1'])
 
     // The Background was replaced: the same document must register with the new Runtime instead
     // of merely reading it, so tab membership and the History provider are rebuilt.
     server.getSnapshot.mockImplementation(async () => ({ ...snapshot(''), hostId: 'host-2' }))
-    coordinator.registerPage.mockImplementation(async () => ({ snapshot: { ...snapshot(''), hostId: 'host-2' } }))
+    coordinator.registerPage.mockImplementation(async () => ({ ...snapshot(''), hostId: 'host-2' }))
     client.invalidate()
     await vi.waitFor(() => expect(coordinator.registerPage).toHaveBeenCalledTimes(2))
     await vi.waitFor(() => expect(applied).toEqual(['host-1', 'host-2']))
@@ -406,7 +406,7 @@ describe('DocumentClient one-way current-state drain', () => {
 
       const init = client.init()
       await vi.waitFor(() => expect(registerQueue).toHaveLength(1))
-      registerQueue.shift()!.resolve({ snapshot: snapshot('') })
+      registerQueue.shift()!.resolve(snapshot(''))
       await flush(10)
       // The registration response is back but one stage is still held: no ready phase yet.
       expect(phases).toEqual(['none', 'connecting'])
@@ -427,7 +427,7 @@ describe('DocumentClient one-way current-state drain', () => {
 
     const init = client.init()
     await vi.waitFor(() => expect(registerQueue).toHaveLength(1))
-    registerQueue.shift()!.resolve({ snapshot: snapshot('') })
+    registerQueue.shift()!.resolve(snapshot(''))
     await expect(init).resolves.toBeTruthy()
     expect(order).toEqual(['first', 'second'])
     expect(phases).toEqual(['none', 'connecting', 'ready'])
@@ -453,12 +453,12 @@ describe('DocumentClient one-way current-state drain', () => {
     await vi.waitFor(() => expect(coordinator.registerPage).toHaveBeenCalledTimes(2))
 
     // The old registration settles late: zero snapshot/applier/readiness writes from its continuation.
-    registerQueue.shift()!.resolve({ snapshot: snapshot('') })
+    registerQueue.shift()!.resolve(snapshot(''))
     await flush(30)
     expect(applied).toEqual([])
     expect(phases).not.toContain('ready')
 
-    registerQueue.shift()!.resolve({ snapshot: snapshot('') })
+    registerQueue.shift()!.resolve(snapshot(''))
     await expect(restored).resolves.toBeTruthy()
     expect(applied).toEqual(['host-1'])
   })
@@ -482,7 +482,7 @@ describe('DocumentClient one-way current-state drain', () => {
 
     const init = client.init()
     await vi.waitFor(() => expect(registerQueue).toHaveLength(1))
-    registerQueue.shift()!.resolve({ snapshot: snapshot('') })
+    registerQueue.shift()!.resolve(snapshot(''))
     await chatSeen.promise
     client.detach()
     await expect(init).rejects.toMatchObject({ name: 'AbortError' })
@@ -499,7 +499,7 @@ describe('DocumentClient one-way current-state drain', () => {
     const record = inboundRecord('stale-insert')
     const projection = snapshot('')
     projection.domains[0]!.inbound = [{ sequence: 1, domain: DOMAIN, record, source: 'live' }]
-    const registration = deferred<{ snapshot: RuntimeSnapshot }>()
+    const registration = deferred<RuntimeSnapshot>()
     const coordinator = { registerPage: vi.fn(() => registration.promise) }
     const server = {
       getSnapshot: vi.fn(async () => projection),
@@ -529,7 +529,7 @@ describe('DocumentClient one-way current-state drain', () => {
 
     const first = client.init()
     await vi.waitFor(() => expect(coordinator.registerPage).toHaveBeenCalledTimes(1))
-    registration.resolve({ snapshot: projection })
+    registration.resolve(projection)
     await vi.waitFor(() => expect(provideHistory).toHaveBeenCalledTimes(1))
 
     // Detach mid-insert, then immediately start the fresh owner (as a BFCache pageshow would).
@@ -553,7 +553,7 @@ describe('DocumentClient one-way current-state drain', () => {
   })
 
   it('passes the current owner signal into cancellable persistence and aborts it at detach', async () => {
-    const registration = deferred<{ snapshot: RuntimeSnapshot }>()
+    const registration = deferred<RuntimeSnapshot>()
     const coordinator = { registerPage: vi.fn(() => registration.promise) }
     const server = {
       getSnapshot: vi.fn(async () => snapshot('')),
@@ -590,7 +590,7 @@ describe('DocumentClient one-way current-state drain', () => {
     }
     const init = client.init()
     await vi.waitFor(() => expect(coordinator.registerPage).toHaveBeenCalledTimes(1))
-    registration.resolve({ snapshot: fresh })
+    registration.resolve(fresh)
     await vi.waitFor(() => expect(seenSignals.length).toBeGreaterThan(0))
 
     // Detach while the live owner's persistence insert is pending: the context signal it
@@ -612,7 +612,7 @@ describe('DocumentClient one-way current-state drain', () => {
       joinedAt: 1,
       fresh: true
     }
-    const registration = deferred<{ snapshot: RuntimeSnapshot }>()
+    const registration = deferred<RuntimeSnapshot>()
     const coordinator = { registerPage: vi.fn(() => registration.promise) }
     const server = {
       getSnapshot: vi.fn(async () => fresh),
@@ -646,7 +646,7 @@ describe('DocumentClient one-way current-state drain', () => {
 
     const first = client.init()
     await vi.waitFor(() => expect(coordinator.registerPage).toHaveBeenCalledTimes(1))
-    registration.resolve({ snapshot: fresh })
+    registration.resolve(fresh)
     await vi.waitFor(() => expect(spy).toHaveBeenCalledTimes(1))
 
     // Detach mid-insert, then let the stale write settle late: the key must stay uncommitted.
@@ -666,7 +666,7 @@ describe('DocumentClient one-way current-state drain', () => {
   })
 
   it('a late provideHistory settlement never marks the provider stale-registered; the fresh owner re-provides', async () => {
-    const registration = deferred<{ snapshot: RuntimeSnapshot }>()
+    const registration = deferred<RuntimeSnapshot>()
     const coordinator = { registerPage: vi.fn(() => registration.promise) }
     const provideGate = Promise.withResolvers<void>()
     const provideHistory = vi.fn(async () => provideGate.promise)
@@ -679,7 +679,7 @@ describe('DocumentClient one-way current-state drain', () => {
 
     const first = client.init()
     await vi.waitFor(() => expect(coordinator.registerPage).toHaveBeenCalledTimes(1))
-    registration.resolve({ snapshot: snapshot('') })
+    registration.resolve(snapshot(''))
     await vi.waitFor(() => expect(provideHistory).toHaveBeenCalledTimes(1))
 
     client.detach()
@@ -698,7 +698,7 @@ describe('DocumentClient one-way current-state drain', () => {
     const invalid = inboundRecord('invalid-stale')
     const projection = snapshot('')
     projection.domains[0]!.inbound = [{ sequence: 1, domain: DOMAIN, record: invalid, source: 'live' }]
-    const registration = deferred<{ snapshot: RuntimeSnapshot }>()
+    const registration = deferred<RuntimeSnapshot>()
     const coordinator = { registerPage: vi.fn(() => registration.promise) }
     const ackGate = Promise.withResolvers<void>()
     let holdAck = true
@@ -717,7 +717,7 @@ describe('DocumentClient one-way current-state drain', () => {
 
     const first = client.init()
     await vi.waitFor(() => expect(coordinator.registerPage).toHaveBeenCalledTimes(1))
-    registration.resolve({ snapshot: projection })
+    registration.resolve(projection)
     await vi.waitFor(() => expect(ackInbound).toHaveBeenCalledTimes(1))
 
     // Detach with the negative ACK pending, then let it settle late: the exact invalid pair must
@@ -741,7 +741,7 @@ describe('DocumentClient one-way current-state drain', () => {
   it.each(['resolve', 'reject'] as const)(
     'an ordinary detach aborts a pending History supply; the late %s terminal stays silent for the fresh document',
     async (branch) => {
-      const registration = deferred<{ snapshot: RuntimeSnapshot }>()
+      const registration = deferred<RuntimeSnapshot>()
       const coordinator = { registerPage: vi.fn(() => registration.promise) }
       const resolveHistorySupply = vi.fn(async () => {})
       const rejectHistorySupply = vi.fn(async () => {})
@@ -769,7 +769,7 @@ describe('DocumentClient one-way current-state drain', () => {
       // The drain completes cleanly; the long-lived supplier is registered afterwards.
       const init = client.init()
       await vi.waitFor(() => expect(coordinator.registerPage).toHaveBeenCalledTimes(1))
-      registration.resolve({ snapshot: snapshot('') })
+      registration.resolve(snapshot(''))
       await expect(init).resolves.toBeTruthy()
       await vi.waitFor(() => expect(server.provideHistory).toHaveBeenCalledTimes(1))
 
@@ -822,7 +822,7 @@ describe('DocumentClient one-way current-state drain', () => {
 
     const init = client.init()
     await vi.waitFor(() => expect(coordinator.registerPage).toHaveBeenCalledTimes(1))
-    registerQueue.shift()!.resolve({ snapshot: snapshot('') })
+    registerQueue.shift()!.resolve(snapshot(''))
     await expect(init).resolves.toBeTruthy()
 
     client.invalidate()
@@ -842,7 +842,7 @@ describe('DocumentClient one-way current-state drain', () => {
     expect(() => first.assertActive()).toThrow()
     const restored = client.init()
     await vi.waitFor(() => expect(coordinator.registerPage).toHaveBeenCalledTimes(2))
-    registerQueue.shift()!.resolve({ snapshot: snapshot('') })
+    registerQueue.shift()!.resolve(snapshot(''))
     await expect(restored).resolves.toBeTruthy()
     const replacement = seen.at(-1)!
     expect(replacement).not.toBe(first)
@@ -854,14 +854,14 @@ describe('DocumentClient one-way current-state drain', () => {
     const { client, coordinator, server, registerQueue, readQueue } = setup()
     const init = client.init()
     await vi.waitFor(() => expect(registerQueue).toHaveLength(1))
-    registerQueue.shift()!.resolve({ snapshot: snapshot('') })
+    registerQueue.shift()!.resolve(snapshot(''))
     await expect(init).resolves.toBeTruthy()
 
     client.detach()
     const next = client.init()
     await vi.waitFor(() => expect(coordinator.registerPage).toHaveBeenCalledTimes(2))
     expect(server.getSnapshot).not.toHaveBeenCalled()
-    registerQueue.shift()!.resolve({ snapshot: snapshot('') })
+    registerQueue.shift()!.resolve(snapshot(''))
     await expect(next).resolves.toBeTruthy()
     await flush()
     expect(readQueue).toHaveLength(0)

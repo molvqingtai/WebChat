@@ -328,18 +328,9 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
 
   // ── Local persistence projection stage (drain owner) ────────────────────────
 
-  async applyPersistence(projection: RuntimeSnapshot, context?: ProjectionApplyContext) {
+  async applyPersistence(projection: RuntimeSnapshot, context: ProjectionApplyContext) {
     this.resetHostLocalStateIfReplaced(projection)
-    const fallbackController = new AbortController()
-    const current = context ?? {
-      signal: fallbackController.signal,
-      assertCurrent: () => {},
-      document: {
-        controller: fallbackController,
-        signal: fallbackController.signal,
-        assertActive: () => {}
-      }
-    }
+    const current = context
     // Long-lived supplier work captures exactly this document capability.
     this.documentCapability = current.document
     const domain = projection.domains.find((item) => item.domain === this.dependencies.pageDomain)

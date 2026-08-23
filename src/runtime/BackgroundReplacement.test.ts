@@ -114,6 +114,18 @@ const textRecord = (id: string, timestamp = 1): TextMessageRecord => ({
   receivedAt: timestamp
 })
 
+/** Explicit, real-shaped current-document apply context for direct persistence-stage calls. */
+const createApplyContext = () => {
+  const controller = new AbortController()
+  const document = {
+    signal: controller.signal,
+    assertActive: () => {
+      if (controller.signal.aborted) throw new DOMException('Runtime client detached', 'AbortError')
+    }
+  }
+  return { signal: controller.signal, assertCurrent: () => {}, document }
+}
+
 describe('DocumentClient across a logical Background replacement', () => {
   it.each(['resolve', 'reject'] as const)(
     'retires a physically pending B1 History supply on replacement without touching B2 (late %s)',
@@ -152,9 +164,7 @@ describe('DocumentClient across a logical Background replacement', () => {
       const b2ProductionTerminals = new Map<string, Promise<void>>()
       const b2ProductionTerminalSettledIds = new Set<string>()
       const coordinator = {
-        registerPage: async (payload: { domain: string }) => ({
-          snapshot: await current.attachPage({ ...payload, caller })
-        })
+        registerPage: async (payload: { domain: string }) => current.attachPage({ ...payload, caller })
       }
       const facade = {
         getSnapshot: (payload?: { domain?: string }) => current.getSnapshot({ ...payload, caller }),
@@ -462,7 +472,7 @@ describe('DocumentClient across a logical Background replacement', () => {
       world: { joined: true, peerId: 'local-peer', presences: [] },
       failures: []
     }
-    await room.applyPersistence(projection)
+    await room.applyPersistence(projection, createApplyContext())
 
     handler!({
       type: 'request',
@@ -559,7 +569,7 @@ describe('DocumentClient across a logical Background replacement', () => {
       world: { joined: true, peerId: 'local-peer', presences: [] },
       failures: []
     }
-    await room.applyPersistence(projection)
+    await room.applyPersistence(projection, createApplyContext())
 
     handler!({
       type: 'request',
@@ -672,7 +682,7 @@ describe('DocumentClient across a logical Background replacement', () => {
       world: { joined: true, peerId: 'local-peer', presences: [] },
       failures: []
     }
-    await room.applyPersistence(projection)
+    await room.applyPersistence(projection, createApplyContext())
 
     handler!({
       type: 'request',
@@ -716,9 +726,7 @@ describe('DocumentClient across a logical Background replacement', () => {
     const ackInbound = vi.fn()
     let rejectNextAck = true
     const coordinator = {
-      registerPage: async (payload: { domain: string }) => ({
-        snapshot: await server.attachPage({ ...payload, caller })
-      })
+      registerPage: async (payload: { domain: string }) => server.attachPage({ ...payload, caller })
     }
     const facade = {
       getSnapshot: (payload?: { domain?: string }) => server.getSnapshot({ ...payload, caller }),
@@ -832,9 +840,7 @@ describe('DocumentClient across a logical Background replacement', () => {
     const provideHistory = vi.fn()
     const rejectHistorySupply = vi.fn()
     const coordinator = {
-      registerPage: async (payload: { domain: string }) => ({
-        snapshot: await current.attachPage({ ...payload, caller })
-      })
+      registerPage: async (payload: { domain: string }) => current.attachPage({ ...payload, caller })
     }
     const facade = {
       getSnapshot: (payload?: { domain?: string }) => current.getSnapshot({ ...payload, caller }),

@@ -106,7 +106,7 @@ describe('content Runtime rejection ownership', () => {
           ...message,
           type: message.type === 'ping' ? 'pong' : 'apply',
           sender: { type: 'provider' },
-          data: message.type === 'apply' ? { snapshot } : undefined
+          data: message.type === 'apply' ? snapshot : undefined
         }
         queueMicrotask(() => listeners.forEach((listener) => listener(response)))
         return Promise.resolve()

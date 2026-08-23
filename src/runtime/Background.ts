@@ -2,7 +2,7 @@ import { browser } from '#imports'
 import { defineProxy } from 'comctx'
 import { ProvideAdapter } from '@/service/adapter/runtime'
 import { BackgroundInjectAdapter, type MessageApi } from '@/service/adapter/runtime/Core'
-import type { RuntimeCoordinator, RuntimePageRegistration } from '@/runtime/Contract'
+import type { RuntimeCoordinator } from '@/runtime/Contract'
 import { HostOwner } from '@/runtime/HostOwner'
 import { ChromiumTransportOwner } from '@/runtime/ChromiumTransportOwner'
 import { startHost } from '@/runtime/host'
@@ -61,12 +61,11 @@ const ensureBackgroundHost = async () => {
   readServerSnapshot(host.server)
 }
 
-export const registerPage: RuntimeCoordinator['registerPage'] = async (payload): Promise<RuntimePageRegistration> => {
+export const registerPage: RuntimeCoordinator['registerPage'] = async (payload) => {
   await ensureBackgroundHost()
   const server = backgroundHost.server
   if (!server) throw new Error('Logical Runtime background host is unavailable')
-  const snapshot = await server.attachPage(payload)
-  return { snapshot }
+  return server.attachPage(payload)
 }
 
 /**

@@ -259,7 +259,7 @@ const createContentStore = () => {
   }
 
   // Every distinct real control-plane failure surfaces as a fresh original-message toast while the
-  // lease keeps its bounded polling; detach ends the lifecycle and therefore further failures.
+  // runtime attachment is active; detach ends the lifecycle and therefore further failures.
   whenFailure((error) => {
     store.send(store.getDomain(ToastDomain()).command.ErrorCommand(error.message))
   })

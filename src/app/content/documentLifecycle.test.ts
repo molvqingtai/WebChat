@@ -14,7 +14,7 @@ import { SendLifecycleExtern } from '@/domain/externs/SendLifecycle'
 import { createSendLifecycle } from '@/domain/impls/SendLifecycle'
 import { MessageDatabaseExtern } from '@/domain/MessageStore'
 import { DocumentClient } from '@/runtime/DocumentClient'
-import type { RuntimeCoordinator, RuntimePageRegistration, RuntimeSnapshot } from '@/runtime/Contract'
+import type { RuntimeCoordinator, RuntimeSnapshot } from '@/runtime/Contract'
 import { createDocumentLifecycleOwner } from './documentLifecycle'
 
 const RUNTIME_TOAST_ID = 'webchat-runtime-readiness'
@@ -127,7 +127,7 @@ describe('Content document-lifecycle owner composed parent control', () => {
       world: { joined: true, peerId: 'peer-a', presences: [] },
       failures: []
     }
-    const registerPage = vi.fn<RuntimeCoordinator['registerPage']>().mockResolvedValue({ snapshot: readySnapshot })
+    const registerPage = vi.fn<RuntimeCoordinator['registerPage']>().mockResolvedValue(readySnapshot)
     const lease = new DocumentClient({
       coordinator: { registerPage },
       server: { getSnapshot: async () => readySnapshot } as never,
@@ -255,13 +255,13 @@ describe('Content document-lifecycle owner composed parent control', () => {
       world: { joined: true, peerId: 'peer-a', presences: [] },
       failures: []
     }
-    let resolveHeld!: (value: RuntimePageRegistration) => void
-    const held = new Promise<RuntimePageRegistration>((resolve) => {
+    let resolveHeld!: (value: RuntimeSnapshot) => void
+    const held = new Promise<RuntimeSnapshot>((resolve) => {
       resolveHeld = resolve
     })
     const registerPage = vi
       .fn<RuntimeCoordinator['registerPage']>()
-      .mockResolvedValueOnce({ snapshot: readySnapshot })
+      .mockResolvedValueOnce(readySnapshot)
       .mockImplementationOnce(() => held)
     const lease = new DocumentClient({
       coordinator: { registerPage },
@@ -308,7 +308,7 @@ describe('Content document-lifecycle owner composed parent control', () => {
     await flushMicrotasks()
     owner.dispose()
     fixture.store.discard()
-    resolveHeld({ snapshot: readySnapshot })
+    resolveHeld(readySnapshot)
     await vi.advanceTimersByTimeAsync(6000)
     await flushMicrotasks()
     expect(fixture.toast.loading).not.toHaveBeenCalled()

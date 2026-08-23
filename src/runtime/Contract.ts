@@ -196,12 +196,8 @@ export interface RuntimeTab {
   url?: string
 }
 
-export interface RuntimePageRegistration {
-  snapshot: RuntimeSnapshot
-}
-
 export interface RuntimeCoordinator {
-  registerPage: (payload: { domain: string } & RuntimePageCall) => Promise<RuntimePageRegistration>
+  registerPage: (payload: { domain: string } & RuntimePageCall) => Promise<RuntimeSnapshot>
 }
 
 export const COORDINATOR_NAMESPACE = 'WEB_CHAT_RUNTIME_COORDINATOR_V2' as const

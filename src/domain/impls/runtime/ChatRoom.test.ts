@@ -205,19 +205,19 @@ const setup = async (
   /** One drain cycle through the real applier path. */
   const apply = async () => {
     room.applyChat(current)
-    await room.applyPersistence(current)
+    await room.applyPersistence(current, createApplyContext())
   }
   const emitInbound = async (event: InboundEvent) => {
     const domain = current.domains.find((item) => item.domain === DOMAIN)
     if (!domain) throw new Error('domain missing')
     domain.inbound = [...domain.inbound, event]
-    await room.applyPersistence(current)
+    await room.applyPersistence(current, createApplyContext())
   }
   const setInbound = async (events: InboundEvent[]) => {
     const domain = current.domains.find((item) => item.domain === DOMAIN)
     if (!domain) throw new Error('domain missing')
     domain.inbound = events
-    await room.applyPersistence(current)
+    await room.applyPersistence(current, createApplyContext())
   }
   const emitFailure = async (event: RuntimeErrorEvent) => {
     current = { ...current, failures: [...current.failures, event] }
@@ -268,13 +268,25 @@ const setupHistoryCancellation = async () => {
   })
   const room = new ChatRoom({ server, messageStore, pageDomain: DOMAIN })
   room.applyChat(domainSnapshot())
-  await room.applyPersistence(domainSnapshot())
+  await room.applyPersistence(domainSnapshot(), createApplyContext())
   await settle()
   return { database, pagePort, queryStarted, releaseQuery, room, server, tabId }
 }
 
 beforeEach(() => vi.useFakeTimers())
 afterEach(() => vi.useRealTimers())
+
+/** Explicit, real-shaped current-document apply context for direct persistence-stage calls. */
+const createApplyContext = () => {
+  const controller = new AbortController()
+  const document = {
+    signal: controller.signal,
+    assertActive: () => {
+      if (controller.signal.aborted) throw new DOMException('Runtime client detached', 'AbortError')
+    }
+  }
+  return { signal: controller.signal, assertCurrent: () => {}, document }
+}
 
 describe('Runtime-backed ChatRoom application port', () => {
   it('reconstructs a transport-safe Runtime error message for domain listeners', async () => {
@@ -485,11 +497,11 @@ describe('Runtime-backed ChatRoom application port', () => {
     const failure = new Error('transient insert failure')
     vi.spyOn(fixture.messageStore, 'insert').mockRejectedValueOnce(failure)
 
-    await expect(fixture.room.applyPersistence(domainSnapshotWithFresh())).rejects.toBe(failure)
+    await expect(fixture.room.applyPersistence(domainSnapshotWithFresh(), createApplyContext())).rejects.toBe(failure)
 
     // A later explicit hint pulls the same `fresh` projection: the write is retried and succeeds.
-    await fixture.room.applyPersistence(domainSnapshotWithFresh())
-    await fixture.room.applyPersistence(domainSnapshotWithFresh())
+    await fixture.room.applyPersistence(domainSnapshotWithFresh(), createApplyContext())
+    await fixture.room.applyPersistence(domainSnapshotWithFresh(), createApplyContext())
 
     const records = await fixture.messageStore.query()
     expect(records).toHaveLength(1)
@@ -602,7 +614,7 @@ describe('Runtime-backed ChatRoom application port', () => {
     const joins: string[] = []
     fixture.room.onJoinRoom((session) => joins.push(session.sessionId))
     fixture.room.applyChat(replacement)
-    await fixture.room.applyPersistence(replacement)
+    await fixture.room.applyPersistence(replacement, createApplyContext())
 
     expect(provideHistory).toHaveBeenCalledTimes(2)
     // The replacement host's first committed projection is a fresh baseline: no join events.
@@ -624,7 +636,7 @@ describe('Runtime-backed ChatRoom application port', () => {
     const valid = textRecord('valid-b2')
     replacement.domains[0]!.inbound = [{ sequence: 1, domain: DOMAIN, record: valid, source: 'live' }]
     fixture.room.applyChat(replacement)
-    await fixture.room.applyPersistence(replacement)
+    await fixture.room.applyPersistence(replacement, createApplyContext())
 
     await expect(fixture.messageStore.query()).resolves.toEqual([valid])
     expect(fixture.server.ackInbound).toHaveBeenLastCalledWith({ domain: DOMAIN, sequence: 1, inserted: true })
@@ -950,7 +962,14 @@ describe('Runtime-backed ChatRoom application port', () => {
       expect(fixture.server.rejectHistorySupply).not.toHaveBeenCalled()
       expect(cancellationSettled).toBe(false)
       expect(suppliedResult).toBe('pending')
-      expect(fixture.pagePort.pendingHistoryCountForTest()).toBe(1)
+      // The correlation is still physically pending: a duplicate cancel joins the same unsettled
+      // settlement instead of completing on its own.
+      let duplicateCancelSettled = false
+      void fixture.pagePort.cancelHistorySupply(request.supplyId).then(() => {
+        duplicateCancelSettled = true
+      })
+      await settle()
+      expect(duplicateCancelSettled).toBe(false)
 
       fixture.releaseQuery.resolve([])
       await settle()
@@ -963,7 +982,14 @@ describe('Runtime-backed ChatRoom application port', () => {
       })
       expect(cancellationSettled).toBe(true)
       expect(suppliedResult).toEqual(new Error('History supplier timed out'))
-      expect(fixture.pagePort.pendingHistoryCountForTest()).toBe(0)
+      // The retired id has no pending correlation left: a further cancel settles immediately and
+      // the exact-once terminal above stays the only settlement.
+      let retiredCancelSettled = false
+      void fixture.pagePort.cancelHistorySupply(request.supplyId).then(() => {
+        retiredCancelSettled = true
+      })
+      await settle()
+      expect(retiredCancelSettled).toBe(true)
       expect(fixture.server.resolveHistorySupply).not.toHaveBeenCalled()
     } finally {
       fixture.releaseQuery.resolve([])
@@ -1030,7 +1056,13 @@ describe('Runtime-backed ChatRoom application port', () => {
         reason: 'History supply cancelled'
       })
       expect(oldSupplyResult).toBeNull()
-      expect(fixture.pagePort.pendingHistoryCountForTest()).toBe(1)
+      // The new supply (owned by the replacement provider registration) stays pending.
+      let newSupplySettled = false
+      void newSupply.then(() => {
+        newSupplySettled = true
+      })
+      await settle()
+      expect(newSupplySettled).toBe(false)
       expect(fixture.server.resolveHistorySupply).not.toHaveBeenCalled()
 
       fixture.pagePort.removePage(fixture.tabId)
@@ -1074,7 +1106,7 @@ describe('Runtime-backed ChatRoom application port', () => {
     }
     const room = new ChatRoom({ server, messageStore, pageDomain: DOMAIN })
     room.applyChat(domainSnapshot())
-    await room.applyPersistence(domainSnapshot())
+    await room.applyPersistence(domainSnapshot(), createApplyContext())
 
     const request = {
       supplyId: 'supply-shared',
@@ -1151,7 +1183,7 @@ describe('Runtime-backed ChatRoom application port', () => {
     }
     const room = new ChatRoom({ server: serverWithHandler, messageStore, pageDomain: DOMAIN })
     room.applyChat(domainSnapshot())
-    await room.applyPersistence(domainSnapshot())
+    await room.applyPersistence(domainSnapshot(), createApplyContext())
 
     const request = {
       supplyId: 'supply-shared',
