@@ -34,6 +34,17 @@ const expectRetired = async (port: PagePort, supplyId: string) => {
   expect(cancelSettled).toBe(true)
 }
 
+/**
+ * Public retirement proof for the exact id: re-register the same tab's provider and publicly
+ * remove it — a leaked pending entry would be cancelled again here, so zero events must fire.
+ */
+const expectRetiredSilentOnRemoval = (port: PagePort, domain: string) => {
+  const removalEvents: HistorySupplyEvent[] = []
+  port.provideHistory(1, domain, (event) => removalEvents.push(event))
+  port.removePage(1)
+  expect(removalEvents).toEqual([])
+}
+
 /** The provider survived every late terminal: a fresh supply is served through the public path. */
 const expectProviderAlive = async (port: PagePort, events: HistorySupplyEvent[], next: typeof request) => {
   const followUp = port.supplyHistory('tab:1', next)
@@ -81,6 +92,9 @@ describe('PagePort history request/response', () => {
     port.rejectHistorySupply(1, request.supplyId, 'IndexedDB transaction aborted')
     await expect(cancelled).resolves.toBeUndefined()
     await rejected
+    // Retirement proof comes BEFORE the late terminals so they cannot clean up a leaked entry:
+    // re-registering the same tab's provider and publicly removing it must cancel nothing.
+    expectRetiredSilentOnRemoval(port, request.domain)
     port.resolveHistorySupply(1, request.supplyId, { records: [], done: true })
     port.rejectHistorySupply(1, request.supplyId, 'late rejection')
 
@@ -89,7 +103,13 @@ describe('PagePort history request/response', () => {
       { type: 'cancel', supplyId: request.supplyId }
     ])
     await expectRetired(port, request.supplyId)
-    await expectProviderAlive(port, events, { ...request, supplyId: 'supply-2' })
+    // The provider was publicly removed above: re-register to prove it still serves a fresh supply.
+    const aliveEvents: HistorySupplyEvent[] = []
+    port.provideHistory(1, request.domain, (event) => aliveEvents.push(event))
+    const followUp = port.supplyHistory('tab:1', { ...request, supplyId: 'supply-2' })
+    expect(aliveEvents).toEqual([{ type: 'request', request: { ...request, supplyId: 'supply-2' } }])
+    port.resolveHistorySupply(1, 'supply-2', { records: [], done: true })
+    await expect(followUp).resolves.toEqual({ records: [], done: true })
   })
 
   it('cancels pending work before replacing the same page provider', async () => {
@@ -147,6 +167,9 @@ describe('PagePort history request/response', () => {
       error: new Error('History supplier page detached')
     })
     await expectRetired(port, request.supplyId)
+    // The detached removal really retired the exact id: re-registering the same tab and publicly
+    // removing it cancels nothing.
+    expectRetiredSilentOnRemoval(port, request.domain)
     diagnostic.mockRestore()
   })
 
@@ -172,6 +195,8 @@ describe('PagePort history request/response', () => {
       error: new Error('History supplier page detached')
     })
     await expectRetired(port, request.supplyId)
+    // The active-cancellation removal path really retired the exact id.
+    expectRetiredSilentOnRemoval(port, request.domain)
     diagnostic.mockRestore()
   })
 
@@ -194,6 +219,8 @@ describe('PagePort history request/response', () => {
     expect(rejectedEvents.at(-1)).toEqual({ type: 'request', request: next })
     rejectedPort.resolveHistorySupply(1, next.supplyId, { records: [], done: true })
     await expect(followUp).resolves.toEqual({ records: [], done: true })
+    // The failed terminal really retired the exact id: public re-registration + removal cancels nothing.
+    expectRetiredSilentOnRemoval(rejectedPort, request.domain)
 
     const disposedPort = new PagePort()
     const events: HistorySupplyEvent[] = []
@@ -205,5 +232,7 @@ describe('PagePort history request/response', () => {
     await expect(disposed).rejects.toThrow('History supplier page detached')
     expect(events.at(-1)).toEqual({ type: 'cancel', supplyId: request.supplyId })
     await expectRetired(disposedPort, request.supplyId)
+    // Disposal really retired the exact id.
+    expectRetiredSilentOnRemoval(disposedPort, request.domain)
   })
 })
