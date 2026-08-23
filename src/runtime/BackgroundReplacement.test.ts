@@ -147,6 +147,10 @@ describe('DocumentClient across a logical Background replacement', () => {
       // B1's late settlement proves it cannot be touched.
       const b2Terminal = Promise.withResolvers<void>()
       let b2TerminalHeld = false
+      // B2's production-returned terminal Promises, captured per exact supplyId at the facade's
+      // downstream boundary; a settled flag is flipped only by the production Promise itself.
+      const b2ProductionTerminals = new Map<string, Promise<void>>()
+      const b2ProductionTerminalSettledIds = new Set<string>()
       const coordinator = {
         registerPage: async (payload: { domain: string }) => ({
           snapshot: await current.attachPage({ ...payload, caller })
@@ -168,14 +172,26 @@ describe('DocumentClient across a logical Background replacement', () => {
         },
         ackInbound: (payload: { domain: string; sequence: number; inserted: boolean }) =>
           current.ackInbound({ ...payload, caller }),
-        resolveHistorySupply: async (payload: { supplyId: string; result: { records: never[]; done: boolean } }) => {
+        resolveHistorySupply: (payload: { supplyId: string; result: { records: never[]; done: boolean } }) => {
           resolveHistorySupply(payload)
-          if (b2TerminalHeld && b2SupplyIds.has(payload.supplyId)) await b2Terminal.promise
-          if (armTerminalHold && !b1TerminalHeldConsumed && b1SupplyIds.has(payload.supplyId)) {
-            b1TerminalHeldConsumed = true
-            await b1Terminal.promise
+          const terminal = (async () => {
+            if (b2TerminalHeld && b2SupplyIds.has(payload.supplyId)) await b2Terminal.promise
+            if (armTerminalHold && !b1TerminalHeldConsumed && b1SupplyIds.has(payload.supplyId)) {
+              b1TerminalHeldConsumed = true
+              await b1Terminal.promise
+            }
+            return current.resolveHistorySupply({ ...payload, caller })
+          })()
+          if (b2SupplyIds.has(payload.supplyId)) {
+            b2ProductionTerminals.set(payload.supplyId, terminal)
+            void terminal.then(
+              () => {
+                b2ProductionTerminalSettledIds.add(payload.supplyId)
+              },
+              () => {}
+            )
           }
-          return current.resolveHistorySupply({ ...payload, caller })
+          return terminal
         },
         rejectHistorySupply: async (payload: { supplyId: string; reason: string }) => {
           rejectHistorySupply(payload)
@@ -290,6 +306,25 @@ describe('DocumentClient across a logical Background replacement', () => {
       // owner aborts the old controller before the document re-registers and re-provides.
       const b1 = current
       current = createServer({ transport: fake.transport, admission, codec: jsonCodec })
+      // B2-only completion receipt on the REAL current method, installed before any B2 History
+      // flow: a receipt exists only when the exact current resolveHistorySupply was genuinely
+      // invoked AND its returned Promise has come back. The outer facade's call log, pre-gate
+      // records, or B1's calls can never produce it.
+      const originalB2ResolveHistorySupply = current.resolveHistorySupply
+      let frozenB2SupplyId: string | null = null
+      let b2CompletionSettled = false
+      const b2Receipts: Array<{ supplyId: string; result: unknown; returnValue: unknown }> = []
+      const b2Completion = Promise.withResolvers<{ supplyId: string; result: unknown; returnValue: unknown }>()
+      current.resolveHistorySupply = async (payload) => {
+        const returnValue = await originalB2ResolveHistorySupply(payload)
+        if (payload.supplyId === frozenB2SupplyId) {
+          const receipt = { supplyId: payload.supplyId, result: payload.result, returnValue }
+          b2Receipts.push(receipt)
+          b2CompletionSettled = true
+          b2Completion.resolve(receipt)
+        }
+        return returnValue
+      }
       // Terminal assertions scope to after the replacement; the held B1 call happened pre-cut.
       resolveHistorySupply.mockClear()
       rejectHistorySupply.mockClear()
@@ -325,15 +360,15 @@ describe('DocumentClient across a logical Background replacement', () => {
       b2TerminalHeld = true
       await vi.waitFor(() => expect(b2SupplyIds.size).toBeGreaterThan(0))
       expect([...b2SupplyIds].some((supplyId) => b1SupplyIds.has(supplyId))).toBe(true)
-      // B2's terminal RPC is pending on the same supply slot before B1's late settlement.
-      await vi.waitFor(
-        () => {
-          expect(
-            resolveHistorySupply.mock.calls.filter((call) => b2SupplyIds.has(call[0]!.supplyId)).length
-          ).toBeGreaterThan(0)
-        },
-        { timeout: 5000 }
-      )
+      // Freeze the single B2 supply identity BEFORE any terminal settlement: it is the exact
+      // same slot as B1's held supply, its production terminal is already pending at the B2 gate,
+      // and no completion receipt exists yet.
+      frozenB2SupplyId = [...b2SupplyIds].find((supplyId) => b1SupplyIds.has(supplyId)) ?? null
+      expect(frozenB2SupplyId).not.toBeNull()
+      await vi.waitFor(() => expect(b2ProductionTerminals.has(frozenB2SupplyId!)).toBe(true))
+      expect(b2ProductionTerminalSettledIds.has(frozenB2SupplyId!)).toBe(false)
+      expect(b2CompletionSettled).toBe(false)
+      expect(b2Receipts).toHaveLength(0)
 
       // The held B1 terminal now settles late (its transport rejects): the stale chain must not
       // publish any error, add any post-cut facade call for B1 identity, or disturb B2's entry.
@@ -344,14 +379,22 @@ describe('DocumentClient across a logical Background replacement', () => {
       // and B2's terminal stays pending on the same slot.
       expect(rejectHistorySupply).not.toHaveBeenCalled()
 
-      // B2 then settles independently through its own current terminal with its true result.
+      // B2 then settles independently through its own REAL current terminal with its true
+      // result. Awaiting the captured production terminal Promise is the only wait; every receipt
+      // assertion below is synchronous and must already hold — skipping the real current call
+      // leaves settled=false/count=0 and fails right here (no waitFor, no timeout).
       b2TerminalHeld = false
       b2Terminal.resolve()
-      await vi.waitFor(() => {
-        expect(
-          resolveHistorySupply.mock.calls.filter((call) => b2SupplyIds.has(call[0]!.supplyId)).length
-        ).toBeGreaterThan(0)
-      })
+      await b2ProductionTerminals.get(frozenB2SupplyId!)!
+      expect(b2ProductionTerminalSettledIds.has(frozenB2SupplyId!)).toBe(true)
+      expect(b2CompletionSettled).toBe(true)
+      expect(b2Receipts).toHaveLength(1)
+      const receipt = await b2Completion.promise
+      expect(receipt.supplyId).toBe(frozenB2SupplyId)
+      expect(receipt.result).toEqual({ records: [], done: true })
+      expect(receipt.returnValue).toBeUndefined()
+      await Promise.resolve()
+      expect(b2Receipts).toHaveLength(1)
 
       // The genuine attempt's loading owner is dismissed exactly once across the replacement.
       expect(feedback.filter((event) => event.ownerId === loadingOwner && event.type === 'dismiss')).toHaveLength(1)
@@ -480,12 +523,20 @@ describe('DocumentClient across a logical Background replacement', () => {
       }
     }
     const messageStore = createMessageStore(createMemoryMessageDatabase('fallible-error-shape'))
+    // Abort-count witness for the first controller's exact signal: with a complete retirement
+    // the later same-id cancel surface has no stale controller to abort.
+    let firstSignalAbortCount = 0
     let queryCall = 0
     vi.spyOn(messageStore, 'query').mockImplementation(async (query) => {
       queryCall += 1
       // The first attempt's query rejects with the fallible value; the successor's own query is
       // held with its exact signal.
-      if (queryCall === 1) throw new FallibleError()
+      if (queryCall === 1) {
+        query?.signal?.addEventListener('abort', () => {
+          firstSignalAbortCount += 1
+        })
+        throw new FallibleError()
+      }
       successorStarted.resolve(query?.signal ?? new AbortController().signal)
       return successorRelease.promise as never
     })
@@ -526,6 +577,22 @@ describe('DocumentClient across a logical Background replacement', () => {
     await vi.waitFor(() => expect(reasons).toEqual(['History supply failed']))
     expect(reasons[0]).toBe('History supply failed')
 
+    // Baseline before any later lifecycle surface: the first controller has not been aborted.
+    expect(firstSignalAbortCount).toBe(0)
+
+    // Release the first terminal and let the first chain's exact-entry finally retire its own
+    // controller before any same-id lifecycle surface.
+    firstTerminalHeld = false
+    firstTerminal.resolve()
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    // Empty-slot proof through the ordinary cancel surface: after a complete retirement, a
+    // same-id cancel finds no stale controller and aborts nothing. A skipped first-entry
+    // retirement leaves the old controller behind and this cancel aborts it.
+    handler!({ type: 'cancel', supplyId: 'supply-fallible-error' })
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(firstSignalAbortCount).toBe(0)
+
     // The successor takes the SAME supply slot while the first chain's exact-entry finally is
     // still pending (its terminal RPC held): only the guard keeps the successor's controller.
     handler!({
@@ -539,11 +606,6 @@ describe('DocumentClient across a logical Background replacement', () => {
       }
     })
     const successorSignal = await successorStarted.promise
-    firstTerminalHeld = false
-    firstTerminal.resolve()
-    // Let the first chain's exact-entry finally complete before the Runtime cancel: with the
-    // guard, only the first controller retires; without it, the successor's entry is stolen.
-    await new Promise((resolve) => setTimeout(resolve, 10))
     await new Promise((resolve) => setTimeout(resolve, 10))
     handler!({ type: 'cancel', supplyId: 'supply-fallible-error' })
     await vi.waitFor(() => expect(successorSignal.aborted).toBe(true))
