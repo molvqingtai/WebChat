@@ -196,7 +196,12 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
   }
 
   private emitError(error: unknown) {
-    const failure = error instanceof Error ? error : new Error(String(error))
+    let failure: Error
+    try {
+      failure = error instanceof Error ? error : new Error('Unknown failure', { cause: error })
+    } catch {
+      failure = new Error('Unknown failure', { cause: error })
+    }
     try {
       this.emit('error', failure)
     } catch (deliveryError) {
@@ -460,12 +465,25 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
     }
     // Page-owned MessageStore supplies local history; Runtime owns only orchestration.
     // Every terminal/effect is live-rechecked against document + exact slot ownership at its own
-    // settle time, before the exact-entry finally retires this controller's entry.
+    // settle time. The final error sink runs BEFORE the exact-entry finally retires this
+    // controller's entry, so a current owner's original Error is never self-suppressed.
     const ownershipCurrent = () => documentAlive() && this.activeHistorySupplies.get(request.supplyId) === controller
-    void this.dependencies.messageStore
-      .query({ type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE, signal: controller.signal })
-      .then((records) => projectHistory(records, request.cutoff, controller.signal))
-      .then(async (result) => {
+    // Safe normalization: any property access on an unknown rejection happens inside one
+    // controlled try; a fallible custom Error/proxy can never escape this boundary.
+    const reasonOf = (value: unknown): string => {
+      try {
+        return value instanceof Error ? value.message : 'History supply failed'
+      } catch {
+        return 'History supply failed'
+      }
+    }
+    void (async () => {
+      try {
+        const records = await this.dependencies.messageStore.query({
+          type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE,
+          signal: controller.signal
+        })
+        const result = projectHistory(records, request.cutoff, controller.signal)
         controller.signal.throwIfAborted()
         if (this.disposed || !ownershipCurrent()) {
           return
@@ -474,19 +492,16 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
           this.dependencies.server.resolveHistorySupply({ supplyId: request.supplyId, result }),
           controller.signal
         )
-      })
-      .catch(async (error) => {
+      } catch (error) {
         if (controller.signal.aborted) {
           // Physical query/projection chain has exited on the cancellation: settle the
           // cancelled supplyId exactly once, but only while this exact controller still owns
           // the slot and the document still owns this supplier — a detached/stale terminal
           // never reaches a successor facade or a successor's pending entry.
           if (ownershipCurrent()) {
+            const reason = reasonOf(error) || 'History supply cancelled'
             await this.dependencies.server
-              .rejectHistorySupply({
-                supplyId: request.supplyId,
-                reason: (error as Error).message || 'History supply cancelled'
-              })
+              .rejectHistorySupply({ supplyId: request.supplyId, reason })
               .catch((settleError) => {
                 if (!this.disposed && ownershipCurrent()) {
                   this.emitError(settleError)
@@ -503,7 +518,7 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
         await raceWithSignal(
           this.dependencies.server.rejectHistorySupply({
             supplyId: request.supplyId,
-            reason: (error as Error).message
+            reason: reasonOf(error)
           }),
           controller.signal
         ).catch((settleError) => {
@@ -511,17 +526,18 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
             this.emitError(settleError)
           }
         })
+      }
+    })()
+      .catch((error) => {
+        // Final sink for any escaping terminal failure (synchronous facade throw, non-standard
+        // rejection shapes): live-verify ownership at settle time, BEFORE exact-entry retirement.
+        if (!this.disposed && ownershipCurrent()) this.emitError(error)
       })
       .finally(() => {
         document?.signal.removeEventListener('abort', abortFromDocument)
         if (this.activeHistorySupplies.get(request.supplyId) === controller) {
           this.activeHistorySupplies.delete(request.supplyId)
         }
-      })
-      .catch((error) => {
-        // The final sink live-rechecks ownership at its own settle time; any stale terminal is
-        // silent. (This covers rejections that escape the branches above.)
-        if (!this.disposed && ownershipCurrent()) this.emitError(error)
       })
   }
 
