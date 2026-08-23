@@ -23,6 +23,8 @@ const DOMAIN = 'https://example.com'
 const createTransport = () => {
   const joined = new Set<string>()
   const messageListeners = new Set<(roomId: string, sourcePeerId: string, payload: string) => void>()
+  const sent: Array<{ roomId: string; payload: string }> = []
+  const peersByRoom = new Map<string, Set<string>>()
   const joinListeners = new Set<(roomId: string, peerId: string) => void>()
   const leaveListeners = new Set<(roomId: string, peerId: string) => void>()
   const closeListeners = new Set<(roomId: string) => void>()
@@ -31,11 +33,18 @@ const createTransport = () => {
     peerIdOf: (roomId) => (roomId.startsWith('WEB_CHAT_WORLD') ? 'local-peer' : `local-peer:${roomId}`),
     join: async (roomId) => {
       joined.add(roomId)
+      const members = [...(peersByRoom.get(roomId) ?? [])]
+      queueMicrotask(() => {
+        if (joined.has(roomId))
+          members.forEach((peerId) => joinListeners.forEach((listener) => listener(roomId, peerId)))
+      })
     },
     leave: (roomId) => {
       joined.delete(roomId)
     },
-    send: async () => {},
+    send: async (roomId, payload) => {
+      sent.push({ roomId, payload })
+    },
     onMessage: (listener) => {
       messageListeners.add(listener)
       return () => messageListeners.delete(listener)
@@ -63,6 +72,12 @@ const createTransport = () => {
   return {
     transport,
     joined,
+    sent,
+    plantPeer: (roomId: string, peerId: string) => {
+      const peers = peersByRoom.get(roomId) ?? new Set<string>()
+      peers.add(peerId)
+      peersByRoom.set(roomId, peers)
+    },
     peerJoin: (roomId: string, peerId: string) => joinListeners.forEach((listener) => listener(roomId, peerId)),
     receive: (roomId: string, sourcePeerId: string, message: unknown) =>
       messageListeners.forEach((listener) => listener(roomId, sourcePeerId, JSON.stringify(message)))
@@ -117,10 +132,11 @@ describe('DocumentClient across a logical Background replacement', () => {
         ensureTransport: async () => {}
       }
       const fake = createTransport()
-      let current = createServer({ transport: fake.transport, admission })
+      let current = createServer({ transport: fake.transport, admission, codec: jsonCodec })
       const provideHistory = vi.fn()
       const resolveHistorySupply = vi.fn()
       const rejectHistorySupply = vi.fn()
+      const b1SupplyIds = new Set<string>()
       const coordinator = {
         registerPage: async (payload: { domain: string }) => ({
           snapshot: await current.attachPage({ ...payload, caller })
@@ -131,8 +147,13 @@ describe('DocumentClient across a logical Background replacement', () => {
         joinChatRoom: (payload: { domain: string; user: never; site: never }) =>
           current.joinChatRoom({ ...payload, caller }),
         provideHistory: (payload: { domain: string }, callback: Parameters<RuntimeServer['provideHistory']>[1]) => {
+          const registration = provideHistory.mock.calls.length + 1
           provideHistory(payload)
-          return current.provideHistory({ ...payload, caller }, callback)
+          const observingCallback: Parameters<RuntimeServer['provideHistory']>[1] = (event) => {
+            if (event.type === 'request' && registration === 1) b1SupplyIds.add(event.request.supplyId)
+            callback(event)
+          }
+          return current.provideHistory({ ...payload, caller }, observingCallback)
         },
         ackInbound: (payload: { domain: string; sequence: number; inserted: boolean }) =>
           current.ackInbound({ ...payload, caller }),
@@ -150,12 +171,15 @@ describe('DocumentClient across a logical Background replacement', () => {
       listeners.add((message) => {
         if ((message as { type?: string }).type === 'runtime:state-changed') client.invalidate()
       })
-      const messageStore = createMessageStore(createMemoryMessageDatabase('history-retirement'))
+      const messageStore = createMessageStore(createMemoryMessageDatabase(`history-retirement-${branch}`))
       const chat = new ChatRoom({ server: facade, messageStore, pageDomain: DOMAIN })
+      const feedback: Array<{ ownerId: string; type: string }> = []
+      chat.onHistoryFeedback((event) => feedback.push({ ownerId: event.ownerId, type: event.type }))
       client.registerApplier('chat', (projection) => chat.applyChat(projection))
       client.registerApplier('persistence', (projection, context) => chat.applyPersistence(projection, context))
 
       await client.init()
+      fake.plantPeer(getChatRoomId(DOMAIN), 'peer-a')
       // Join the room so the History domain admits a real peer requester pull.
       await facade.joinChatRoom({
         domain: DOMAIN,
@@ -177,14 +201,15 @@ describe('DocumentClient across a logical Background replacement', () => {
         }
         return [] as never
       })
-      fake.peerJoin(getChatRoomId(DOMAIN), 'peer-a')
+      fake.plantPeer(getChatRoomId(DOMAIN), 'peer-a')
       fake.receive(getChatRoomId(DOMAIN), 'peer-a', {
         type: MESSAGE_TYPE.SESSION,
         sessionId: 'session-a',
         presenceId: 'presence-a',
-        joinedAt: 1,
+        joinedAt: Date.now() + 1,
         user: { id: 'user-a', name: 'A', avatar: '' }
       })
+      fake.peerJoin(getChatRoomId(DOMAIN), 'peer-a')
       fake.receive(getChatRoomId(DOMAIN), 'peer-a', {
         type: MESSAGE_TYPE.HISTORY_MESSAGES_PULL,
         syncId: 'sync-1',
@@ -192,13 +217,48 @@ describe('DocumentClient across a logical Background replacement', () => {
         messageIds: [],
         done: true
       })
+      // A genuine requester pull now loads one record so the attempt owns a live loading feedback
+      // owner (done=false keeps the attempt active through the replacement).
+      const requesterPull = await vi.waitFor(() => {
+        const pull = fake.sent.find(
+          (frame) => (JSON.parse(frame.payload) as { type?: string }).type === MESSAGE_TYPE.HISTORY_MESSAGES_PULL
+        )
+        expect(pull).toBeDefined()
+        return JSON.parse(pull!.payload) as { syncId: string }
+      })
+      fake.receive(getChatRoomId(DOMAIN), 'peer-a', {
+        type: MESSAGE_TYPE.HISTORY_MESSAGES_PUSH,
+        syncId: requesterPull.syncId,
+        page: 0,
+        users: [{ id: 'user-a', name: 'A', avatar: '' }],
+        messages: [
+          {
+            type: MESSAGE_TYPE.TEXT,
+            id: 'history-record-1',
+            hlc: { timestamp: Date.now(), counter: 0 },
+            userId: 'user-a',
+            body: 'history-record-1',
+            mentions: []
+          }
+        ],
+        done: false
+      })
+      await vi.waitFor(() => expect(feedback.some((event) => event.type === 'loading')).toBe(true), {
+        timeout: 5000
+      })
+      expect(feedback.filter((event) => event.type === 'loading')).toHaveLength(1)
+      const loadingOwner = feedback.find((event) => event.type === 'loading')!.ownerId
+
       const querySignal = await queryStarted.promise
 
       // Logical Background replacement arrives while B1's supply is still physically pending:
       // the reset owner (not a disposal path) must abort the old-host controller before the same
       // document re-registers and re-provides into the new Runtime.
       const b1 = current
-      current = createServer({ transport: fake.transport, admission })
+      current = createServer({ transport: fake.transport, admission, codec: jsonCodec })
+      // Terminal assertions scope to after the replacement; earlier supplies settled legitimately.
+      resolveHistorySupply.mockClear()
+      rejectHistorySupply.mockClear()
       notifyServerTabs(current)
       await vi.waitFor(async () => {
         expect((await readServerSnapshot(current)).domains[0]?.tabIds).toEqual([1])
@@ -211,11 +271,12 @@ describe('DocumentClient across a logical Background replacement', () => {
       if (branch === 'resolve') releaseQuery.resolve([])
       else releaseQuery.reject(new Error('B1 query late rejection'))
       await new Promise((resolve) => setTimeout(resolve, 0))
-      expect(resolveHistorySupply).not.toHaveBeenCalled()
-      // The old chain still settles its own cancelled supply exactly once (through the existing
-      // reject surface, inert against B2's unknown supplyId); it never fails B2.
-      expect(rejectHistorySupply).toHaveBeenCalledTimes(1)
-      expect(rejectHistorySupply.mock.calls[0]?.[0]?.reason).toMatch(/Runtime host replaced|B1 query late rejection/)
+      // The stale B1 terminal never reaches the current facade: zero old resolve/reject calls
+      // for B1's exact supply identity; B2's fresh provider may resolve its own supplies.
+      expect(resolveHistorySupply.mock.calls.filter((call) => b1SupplyIds.has(call[0]!.supplyId))).toEqual([])
+      expect(rejectHistorySupply.mock.calls.filter((call) => b1SupplyIds.has(call[0]!.supplyId))).toEqual([])
+      // The genuine attempt's loading owner is dismissed exactly once across the replacement.
+      expect(feedback.filter((event) => event.ownerId === loadingOwner && event.type === 'dismiss')).toHaveLength(1)
       expect((await readServerSnapshot(current)).failures).toEqual([])
       expect((await readServerSnapshot(current)).hostPhase).toBe('ready')
 
@@ -353,7 +414,7 @@ describe('DocumentClient across a logical Background replacement', () => {
     }
 
     const fake = createTransport()
-    let current = createServer({ transport: fake.transport, admission })
+    let current = createServer({ transport: fake.transport, admission, codec: jsonCodec })
     const provideHistory = vi.fn()
     const rejectHistorySupply = vi.fn()
     const coordinator = {
@@ -394,7 +455,7 @@ describe('DocumentClient across a logical Background replacement', () => {
     // The logical Background is replaced (service-worker restart): the new Runtime has no lease
     // and no History provider. Its best-effort hint reaches the surviving document's listener.
     disposeServer(current)
-    current = createServer({ transport: fake.transport, admission })
+    current = createServer({ transport: fake.transport, admission, codec: jsonCodec })
     expect((await readServerSnapshot(current)).domains).toEqual([])
     notifyServerTabs(current)
 

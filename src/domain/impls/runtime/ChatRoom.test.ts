@@ -1109,6 +1109,94 @@ describe('Runtime-backed ChatRoom application port', () => {
     await database.close()
   })
 
+  it('a host-cleared stale terminal never retires the new PagePort entry on the same supply slot', async () => {
+    const fixture = await setup()
+    const pagePort = new PagePort()
+    const tabId = 1
+    const server: RuntimeServer = {
+      ...fixture.server,
+      provideHistory: async ({ domain }, listener) => {
+        pagePort.provideHistory(tabId, domain, listener)
+      },
+      resolveHistorySupply: vi.fn(async ({ supplyId, result }) => {
+        pagePort.resolveHistorySupply(tabId, supplyId, result)
+      }),
+      rejectHistorySupply: vi.fn(async ({ supplyId, reason }) => {
+        pagePort.rejectHistorySupply(tabId, supplyId, reason)
+      })
+    }
+    const database = createMemoryMessageDatabase(`stale-terminal-${databaseId++}`)
+    const messageStore = createMessageStore(database)
+    const queryStarted = Promise.withResolvers<AbortSignal>()
+    const releaseQuery = Promise.withResolvers<readonly MessageRecord[]>()
+    const secondStarted = Promise.withResolvers<AbortSignal>()
+    const secondRelease = Promise.withResolvers<readonly MessageRecord[]>()
+    let queryCount = 0
+    vi.spyOn(messageStore, 'query').mockImplementation(async (query) => {
+      queryCount += 1
+      if (queryCount === 1) {
+        queryStarted.resolve(query?.signal ?? new AbortController().signal)
+        return releaseQuery.promise
+      }
+      secondStarted.resolve(query?.signal ?? new AbortController().signal)
+      return secondRelease.promise
+    })
+    let handler: ((event: HistorySupplyEvent) => void) | null = null
+    const serverWithHandler: RuntimeServer = {
+      ...server,
+      provideHistory: async (payload, listener) => {
+        handler = listener
+        return server.provideHistory(payload, listener)
+      }
+    }
+    const room = new ChatRoom({ server: serverWithHandler, messageStore, pageDomain: DOMAIN })
+    room.applyChat(domainSnapshot())
+    await room.applyPersistence(domainSnapshot())
+
+    const request = {
+      supplyId: 'supply-shared',
+      domain: DOMAIN,
+      syncId: 'sync-shared',
+      cutoff: 0,
+      mode: 'provider' as const
+    }
+    handler!({ type: 'request', request })
+    await queryStarted.promise
+
+    // Host replacement clears the old supplier's slot; the replacement host's PagePort takes a
+    // pending entry on the SAME supply slot.
+    const replacement = domainSnapshot()
+    replacement.hostId = 'host-2'
+    room.applyChat(replacement)
+    const b2Pending = pagePort.supplyHistory(`tab:${tabId}`, request)
+    await secondStarted.promise
+    const b2Outcome = b2Pending.then(
+      (result) => ({ status: 'resolved' as const, result }),
+      (error: Error) => ({ status: 'rejected' as const, error })
+    )
+
+    // The B1 query settles late: the stale chain must stay silent — zero resolve/reject through
+    // the current facade, and B2's pending entry is untouched.
+    releaseQuery.resolve([])
+    await settle()
+    await settle()
+    expect(server.resolveHistorySupply).not.toHaveBeenCalled()
+    expect(server.rejectHistorySupply).not.toHaveBeenCalled()
+
+    // B2's current entry still settles through its ordinary cancel terminal.
+    const cancel = pagePort.cancelHistorySupply(request.supplyId)
+    secondRelease.resolve([])
+    await expect(b2Outcome).resolves.toEqual({
+      status: 'rejected',
+      error: new Error('History supplier timed out')
+    })
+    await cancel
+
+    room.dispose()
+    pagePort.dispose()
+    await database.close()
+  })
+
   it('reconnects the current room without publishing a synthetic leave snapshot', async () => {
     const { room, leaveCount, reconnectCount, apply } = await setup()
     const snapshots: Array<readonly ChatSession[]> = []

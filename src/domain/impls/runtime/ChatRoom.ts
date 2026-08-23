@@ -475,16 +475,23 @@ export class ChatRoom extends EventHub implements ChatRoomPort {
       .catch(async (error) => {
         if (controller.signal.aborted) {
           // Physical query/projection chain has exited on the cancellation: settle the
-          // cancelled supplyId exactly once, but only while the document still owns this
-          // supplier — a detached/stale terminal never reaches a successor facade.
-          if (documentAlive()) {
+          // cancelled supplyId exactly once, but only while this exact controller still owns
+          // the slot and the document still owns this supplier — a detached/stale terminal
+          // never reaches a successor facade or a successor's pending entry.
+          if (documentAlive() && this.activeHistorySupplies.get(request.supplyId) === controller) {
             await this.dependencies.server
               .rejectHistorySupply({
                 supplyId: request.supplyId,
                 reason: (error as Error).message || 'History supply cancelled'
               })
               .catch((settleError) => {
-                if (!this.disposed && documentAlive()) this.emitError(settleError)
+                if (
+                  !this.disposed &&
+                  documentAlive() &&
+                  this.activeHistorySupplies.get(request.supplyId) === controller
+                ) {
+                  this.emitError(settleError)
+                }
               })
           }
           return
