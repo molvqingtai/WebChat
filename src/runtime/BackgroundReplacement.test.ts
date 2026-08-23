@@ -477,12 +477,20 @@ describe('DocumentClient across a logical Background replacement', () => {
       }
     }
     const messageStore = createMessageStore(createMemoryMessageDatabase('fallible-error-shape'))
+    // Abort-count witness for the first controller's exact signal: with a complete retirement
+    // the later same-id cancel surface has no stale controller to abort.
+    let firstSignalAbortCount = 0
     let queryCall = 0
     vi.spyOn(messageStore, 'query').mockImplementation(async (query) => {
       queryCall += 1
       // The first attempt's query rejects with the fallible value; the successor's own query is
       // held with its exact signal.
-      if (queryCall === 1) throw new FallibleError()
+      if (queryCall === 1) {
+        query?.signal?.addEventListener('abort', () => {
+          firstSignalAbortCount += 1
+        })
+        throw new FallibleError()
+      }
       successorStarted.resolve(query?.signal ?? new AbortController().signal)
       return successorRelease.promise as never
     })
@@ -523,6 +531,22 @@ describe('DocumentClient across a logical Background replacement', () => {
     await vi.waitFor(() => expect(reasons).toEqual(['History supply failed']))
     expect(reasons[0]).toBe('History supply failed')
 
+    // Baseline before any later lifecycle surface: the first controller has not been aborted.
+    expect(firstSignalAbortCount).toBe(0)
+
+    // Release the first terminal and let the first chain's exact-entry finally retire its own
+    // controller before any same-id lifecycle surface.
+    firstTerminalHeld = false
+    firstTerminal.resolve()
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    // Empty-slot proof through the ordinary cancel surface: after a complete retirement, a
+    // same-id cancel finds no stale controller and aborts nothing. A skipped first-entry
+    // retirement leaves the old controller behind and this cancel aborts it.
+    handler!({ type: 'cancel', supplyId: 'supply-fallible-error' })
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(firstSignalAbortCount).toBe(0)
+
     // The successor takes the SAME supply slot while the first chain's exact-entry finally is
     // still pending (its terminal RPC held): only the guard keeps the successor's controller.
     handler!({
@@ -536,11 +560,6 @@ describe('DocumentClient across a logical Background replacement', () => {
       }
     })
     const successorSignal = await successorStarted.promise
-    firstTerminalHeld = false
-    firstTerminal.resolve()
-    // Let the first chain's exact-entry finally complete before the Runtime cancel: with the
-    // guard, only the first controller retires; without it, the successor's entry is stolen.
-    await new Promise((resolve) => setTimeout(resolve, 10))
     await new Promise((resolve) => setTimeout(resolve, 10))
     handler!({ type: 'cancel', supplyId: 'supply-fallible-error' })
     await vi.waitFor(() => expect(successorSignal.aborted).toBe(true))
