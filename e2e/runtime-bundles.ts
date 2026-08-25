@@ -32,6 +32,7 @@ const prohibitedCodecResidue = [
 
 const staticEsmSpecifierPattern =
   /(?:^|[;\n])\s*(?:import\s*(?:[\w$*{},\s]+?\s*from\s*)?|export\s*(?:[\w$*{},\s]+?\s*from\s*))(['"])([^'"\\]+)\1/g
+const dynamicImportPattern = /\bimport\s*\(/
 
 const staticEsmSpecifiers = (source: string): string[] =>
   [...source.matchAll(staticEsmSpecifierPattern)].map((match) => match[2])
@@ -77,6 +78,7 @@ const collectStaticLocalEsmClosure = async (
     } catch {
       throw new Error(`Unable to resolve static local module: ${modulePath}`)
     }
+    assert(!dynamicImportPattern.test(source), `Dynamic import is not allowed in static module closure: ${modulePath}`)
     closure.set(modulePath, source)
     pending.push(...staticLocalDependencies(resolvedRoot, modulePath, source))
   }
@@ -91,11 +93,11 @@ const assertCodecBoundary = (target: string, sources: Iterable<string>) => {
   )
 }
 
-const expectRejected = async (operation: () => Promise<unknown>, message: string) => {
+const expectRejected = async (operation: () => Promise<unknown>, message: string): Promise<unknown> => {
   try {
     await operation()
-  } catch {
-    return
+  } catch (error) {
+    return error
   }
   throw new Error(message)
 }
@@ -151,6 +153,17 @@ const runStaticClosureControls = async () => {
   await expectRejected(
     async () => assertCodecBoundary('Dynamic import control', (await collectFixture(dynamicOnlyImport)).values()),
     'A dynamic import must not satisfy the static closure'
+  )
+
+  const staticAndDynamicImport = new Map(completeFiles)
+  staticAndDynamicImport.set(entryPath, "import './chunks/codec.js'; import('./chunks/dynamic.js')")
+  const dynamicImportError = await expectRejected(
+    () => collectFixture(staticAndDynamicImport),
+    'A complete static codec dependency with a dynamic import must fail the static closure'
+  )
+  assert(
+    dynamicImportError instanceof Error && dynamicImportError.message.includes('Dynamic import is not allowed'),
+    'A dynamic import must reject before any dynamic dependency is traversed'
   )
 
   const cycleAPath = join(fixtureRoot, 'chunks', 'cycle-a.js')
