@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { MESSAGE_TYPE } from '@/protocol'
+import { MESSAGE_TYPE, NativeWireCodec } from '@/protocol'
 import { getChatRoomId } from '@/runtime/Server'
 import { MESSAGE_RECORD_TYPE, type TextMessageRecord } from '@/domain/Message'
 import type { WireCodec } from '@/protocol'
@@ -7,8 +7,11 @@ import { InvalidMessageRecordError } from '@/domain/MessageStore'
 import { ChatRoom } from '@/domain/impls/runtime/ChatRoom'
 import { createMemoryMessageDatabase } from '@/domain/impls/database/Memory'
 import { createMessageStore } from '@/domain/MessageStore'
+import { createMemoryPresenceStore } from '@/runtime/PresenceStore'
+import { getWorldRoomId } from '@/domain/runtime/World'
 import type { RoomTransport } from '@/runtime/RoomTransport'
 import { DocumentClient } from '@/runtime/DocumentClient'
+import { RemoteRoomTransport } from '@/runtime/RemoteRoomTransport'
 import {
   createServer,
   disposeServer,
@@ -16,12 +19,20 @@ import {
   readServerSnapshot,
   type RuntimeAdmission
 } from '@/runtime/Server'
+import { createTransportService } from '@/runtime/TransportHost'
 import type { HistorySupplyEvent, RuntimeServer } from '@/runtime/Contract'
 
 const DOMAIN = 'https://example.com'
 
 const createTransport = () => {
   const joined = new Set<string>()
+  const joinCalls: string[] = []
+  const leaveControls = new Map<
+    string,
+    { promise: Promise<void>; resolve: () => void; reject: (reason?: unknown) => void }
+  >()
+  const leaveTerminals = new Map<string, Promise<void>>()
+  const leaveFailures = new Map<string, unknown>()
   const messageListeners = new Set<(roomId: string, sourcePeerId: string, payload: string) => void>()
   const sent: Array<{ roomId: string; payload: string }> = []
   const peersByRoom = new Map<string, Set<string>>()
@@ -29,10 +40,38 @@ const createTransport = () => {
   const leaveListeners = new Set<(roomId: string, peerId: string) => void>()
   const closeListeners = new Set<(roomId: string) => void>()
   const errorListeners = new Set<(error: Error, roomId: string) => void>()
+
+  const leaveOwner = (roomId: string): Promise<void> => {
+    const pending = leaveTerminals.get(roomId)
+    if (pending) return pending
+    if (!joined.delete(roomId)) return Promise.resolve()
+    const controlled = leaveControls.get(roomId)
+    const terminal = (controlled?.promise ?? Promise.resolve()).then(
+      () => {
+        if (leaveTerminals.get(roomId) === terminal) leaveTerminals.delete(roomId)
+      },
+      (error: unknown) => {
+        leaveFailures.set(roomId, error)
+        if (leaveTerminals.get(roomId) === terminal) leaveTerminals.delete(roomId)
+        throw error
+      }
+    )
+    leaveTerminals.set(roomId, terminal)
+    return terminal
+  }
+
   const transport: RoomTransport = {
-    peerIdOf: (roomId) => (roomId.startsWith('WEB_CHAT_WORLD') ? 'local-peer' : `local-peer:${roomId}`),
+    peerIdOf: (roomId) => {
+      if (!joined.has(roomId)) return ''
+      return roomId.startsWith('WEB_CHAT_WORLD') ? 'local-peer' : `local-peer:${roomId}`
+    },
     join: async (roomId) => {
+      const pending = leaveTerminals.get(roomId)
+      if (pending) await pending
+      const failure = leaveFailures.get(roomId)
+      if (failure) throw failure
       joined.add(roomId)
+      joinCalls.push(roomId)
       const members = [...(peersByRoom.get(roomId) ?? [])]
       queueMicrotask(() => {
         if (joined.has(roomId))
@@ -40,7 +79,12 @@ const createTransport = () => {
       })
     },
     leave: (roomId) => {
-      joined.delete(roomId)
+      void leaveOwner(roomId).catch(() => {})
+    },
+    // A direct provider removes local routing first but retains a physical leave terminal. The
+    // replacement path must await every exact terminal before any successor can be prepared.
+    retireRoomsForPreparation: async (roomIds) => {
+      await Promise.all([...new Set(roomIds)].map((roomId) => leaveOwner(roomId)))
     },
     send: async (roomId, payload) => {
       sent.push({ roomId, payload })
@@ -72,6 +116,18 @@ const createTransport = () => {
   return {
     transport,
     joined,
+    joinCalls,
+    deferLeave: (roomId: string) => {
+      let resolve!: () => void
+      let reject!: (reason?: unknown) => void
+      const promise = new Promise<void>((onResolve, onReject) => {
+        resolve = onResolve
+        reject = onReject
+      })
+      leaveControls.set(roomId, { promise, resolve, reject })
+    },
+    resolveLeave: (roomId: string) => leaveControls.get(roomId)?.resolve(),
+    rejectLeave: (roomId: string, reason: unknown) => leaveControls.get(roomId)?.reject(reason),
     sent,
     plantPeer: (roomId: string, peerId: string) => {
       const peers = peersByRoom.get(roomId) ?? new Set<string>()
@@ -79,6 +135,10 @@ const createTransport = () => {
       peersByRoom.set(roomId, peers)
     },
     peerJoin: (roomId: string, peerId: string) => joinListeners.forEach((listener) => listener(roomId, peerId)),
+    peerLeave: (roomId: string, peerId: string) => {
+      peersByRoom.get(roomId)?.delete(peerId)
+      leaveListeners.forEach((listener) => listener(roomId, peerId))
+    },
     receive: (roomId: string, sourcePeerId: string, message: unknown) =>
       messageListeners.forEach((listener) => listener(roomId, sourcePeerId, JSON.stringify(message)))
   }
@@ -125,6 +185,67 @@ const createApplyContext = () => {
   }
   return { signal: controller.signal, assertCurrent: () => {}, document }
 }
+
+describe('Offscreen physical retirement through the Runtime replacement path', () => {
+  it('waits for both real provider terminals and returns the first error only after both settle', async () => {
+    const fake = createTransport()
+    const service = createTransportService(fake.transport)
+    const transport = new RemoteRoomTransport(service)
+    await transport.rebind()
+    const server = createServer({ transport, codec: jsonCodec })
+    const roomId = getChatRoomId(DOMAIN)
+    const worldRoomId = getWorldRoomId()
+    let reconnect: Promise<void> | undefined
+
+    try {
+      await server.attachPage({ domain: DOMAIN, caller })
+      await server.joinChatRoom({
+        domain: DOMAIN,
+        user: { id: 'local-user', name: 'Local', avatar: '' } as never,
+        site: { origin: DOMAIN, title: 'Example' } as never,
+        caller
+      })
+      fake.deferLeave(roomId)
+      fake.deferLeave(worldRoomId)
+      const joinsBeforeReconnect = fake.joinCalls.length
+      const failure = new Error('Chat provider retirement rejected')
+      let reconnectSettled = false
+      let reconnectError: unknown
+      reconnect = server.reconnectDomain({ domain: DOMAIN, caller }).then(
+        () => {
+          reconnectSettled = true
+        },
+        (error: unknown) => {
+          reconnectSettled = true
+          reconnectError = error
+        }
+      )
+
+      await flush()
+      expect(reconnectSettled).toBe(false)
+      expect(readServerSnapshot(server).domains[0]).toMatchObject({ chatRoomJoined: true })
+      expect(readServerSnapshot(server).world.joined).toBe(true)
+      expect(fake.joinCalls).toHaveLength(joinsBeforeReconnect)
+
+      fake.rejectLeave(roomId, failure)
+      await flush()
+      expect(reconnectSettled).toBe(false)
+      expect(readServerSnapshot(server).domains[0]).toMatchObject({ chatRoomJoined: true })
+      expect(readServerSnapshot(server).world.joined).toBe(true)
+      expect(fake.joinCalls).toHaveLength(joinsBeforeReconnect)
+
+      fake.resolveLeave(worldRoomId)
+      await reconnect
+      expect(reconnectError).toBe(failure)
+      expect(fake.joinCalls).toHaveLength(joinsBeforeReconnect)
+    } finally {
+      fake.resolveLeave(roomId)
+      fake.resolveLeave(worldRoomId)
+      await reconnect
+      disposeServer(server)
+    }
+  })
+})
 
 describe('DocumentClient across a logical Background replacement', () => {
   it.each(['resolve', 'reject'] as const)(
@@ -783,15 +904,42 @@ describe('DocumentClient across a logical Background replacement', () => {
     // B1: an invalid record enters the real Delivery buffer as sequence 1; durable validation
     // fails and its negative ACK is lost in transit.
     const invalid = textRecord('invalid-record')
-    const insertSpy = vi.spyOn(messageStore, 'insert')
-    insertSpy.mockRejectedValueOnce(new InvalidMessageRecordError('not a record'))
+    const invalidInsertSpy = vi.spyOn(messageStore, 'insert')
+    invalidInsertSpy.mockRejectedValueOnce(new InvalidMessageRecordError('not a record'))
     fake.receive(roomId, 'peer-a', invalid.message)
     await vi.waitFor(() => expect(ackInbound).toHaveBeenCalledTimes(1))
     await flush()
+    invalidInsertSpy.mockRestore()
+
+    // Durable history belongs to the Page store, not the Runtime delivery buffer. Replacement
+    // must retain this exact persisted record without re-inserting or rewriting it.
+    const durable = textRecord('durable-before-replacement', 0)
+    await messageStore.insert(durable)
+    await flush()
+    const replacementInsertSpy = vi.spyOn(messageStore, 'insert')
 
     // A real same-host reconnect abandons the Delivery buffer (sequence restarts) with no
     // intermediate empty pull; the surviving invalid pair is keyed to the old record identity.
-    await facade.reconnectDomain({ domain: DOMAIN })
+    // This is a direct physical owner: both exact provider leaves must settle before either
+    // successor is joined, rather than a test shim deleting the local room set immediately.
+    const worldRoomId = getWorldRoomId()
+    fake.deferLeave(roomId)
+    fake.deferLeave(worldRoomId)
+    const joinsBeforeReconnect = fake.joinCalls.length
+    let reconnectSettled = false
+    const reconnecting = facade.reconnectDomain({ domain: DOMAIN }).then(() => {
+      reconnectSettled = true
+    })
+    await flush()
+    expect(reconnectSettled).toBe(false)
+    expect(fake.joinCalls).toHaveLength(joinsBeforeReconnect)
+    fake.resolveLeave(roomId)
+    await flush()
+    expect(reconnectSettled).toBe(false)
+    expect(fake.joinCalls).toHaveLength(joinsBeforeReconnect)
+    fake.resolveLeave(worldRoomId)
+    await reconnecting
+    expect(fake.joinCalls).toHaveLength(joinsBeforeReconnect + 2)
 
     // The peer rebinds on the replacement connection before its text is admitted again.
     fake.peerJoin(roomId, 'peer-a')
@@ -814,8 +962,14 @@ describe('DocumentClient across a logical Background replacement', () => {
     await vi.waitFor(() => expect(ackInbound).toHaveBeenCalledTimes(2))
     expect(ackInbound).toHaveBeenLastCalledWith({ domain: DOMAIN, sequence: 1, inserted: true })
     const chats = await messageStore.query({ type: MESSAGE_RECORD_TYPE.CHAT_MESSAGE })
-    expect(chats).toHaveLength(1)
-    expect(chats[0]).toMatchObject({ id: valid.id, message: valid.message, user: valid.user })
+    expect(chats).toHaveLength(2)
+    expect(chats).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: durable.id, message: durable.message, user: durable.user }),
+        expect.objectContaining({ id: valid.id, message: valid.message, user: valid.user })
+      ])
+    )
+    expect(replacementInsertSpy.mock.calls.map(([record]) => record.id)).toEqual([valid.id])
 
     disposeServer(server)
   })
@@ -890,5 +1044,700 @@ describe('DocumentClient across a logical Background replacement', () => {
     expect(hints.some((message) => (message as { type?: string }).type === 'runtime:state-changed')).toBe(true)
 
     disposeServer(current)
+  })
+})
+
+describe('World recovery across a logical Background replacement', () => {
+  it('hydrates the committed ROOM owner before a logical replacement opens reads', async () => {
+    const fake = createTransport()
+    const service = createTransportService(fake.transport)
+    const presenceStore = createMemoryPresenceStore()
+    const firstTransport = new RemoteRoomTransport(service)
+    await firstTransport.rebind()
+    const first = createServer({ transport: firstTransport, codec: NativeWireCodec, presenceStore })
+    await first.attachPage({ domain: DOMAIN, caller })
+    await first.joinChatRoom({
+      domain: DOMAIN,
+      user: { id: 'local-user', name: 'Local', avatar: '' },
+      site: { origin: DOMAIN, title: 'Example' },
+      caller
+    })
+    await flush()
+
+    const replacementTransport = new RemoteRoomTransport(service)
+    await replacementTransport.rebind()
+    expect(replacementTransport.roomRecovery().rooms).toHaveLength(1)
+    const replacement = createServer({ transport: replacementTransport, codec: NativeWireCodec, presenceStore })
+    expect((await replacement.attachPage({ domain: DOMAIN, caller })).domains).toEqual([
+      expect.objectContaining({ domain: DOMAIN, chatRoomJoined: true })
+    ])
+    disposeServer(first)
+    disposeServer(replacement)
+  })
+
+  it('keeps current World presence when the Offscreen mesh survives without a new peer join', async () => {
+    let onMessage: Parameters<RoomTransport['onMessage']>[0] = () => {}
+    let onPeerJoin: Parameters<RoomTransport['onPeerJoin']>[0] = () => {}
+    let onPeerLeave: Parameters<RoomTransport['onPeerLeave']>[0] = () => {}
+    const physical: RoomTransport = {
+      peerIdOf: (roomId) => `local:${roomId}`,
+      join: async () => {},
+      leave: () => {},
+      retireRoomsForPreparation: async (roomIds) => {
+        roomIds.forEach((roomId) => physical.leave(roomId))
+      },
+      send: async () => {},
+      onMessage: (callback) => {
+        onMessage = callback
+        return () => {}
+      },
+      onPeerJoin: (callback) => {
+        onPeerJoin = callback
+        return () => {}
+      },
+      onPeerLeave: (callback) => {
+        onPeerLeave = callback
+        return () => {}
+      },
+      onRoomClose: () => () => {},
+      onError: () => () => {},
+      dispose: () => {}
+    }
+    const service = createTransportService(physical)
+    const firstTransport = new RemoteRoomTransport(service)
+    await firstTransport.rebind()
+    let current = createServer({ transport: firstTransport, codec: NativeWireCodec })
+    const coordinator = {
+      registerPage: (payload: { domain: string }) => current.attachPage({ ...payload, caller })
+    }
+    const server = {
+      getSnapshot: (payload?: { domain?: string }) => current.getSnapshot({ ...payload, caller })
+    } as RuntimeServer
+    const applied: string[][] = []
+    const client = new DocumentClient({ coordinator, server, domain: DOMAIN })
+    client.registerApplier('world', (projection) => {
+      applied.push(projection.world.presences.map(({ sourcePeerId }) => sourcePeerId))
+    })
+
+    await client.init()
+    await current.joinChatRoom({
+      domain: DOMAIN,
+      user: { id: 'local-user', name: 'Local', avatar: '' },
+      site: { origin: DOMAIN, title: 'Example' },
+      caller
+    })
+    const worldRoomId = getWorldRoomId()
+    onPeerJoin(worldRoomId, 'remote-peer')
+    onMessage(
+      worldRoomId,
+      'remote-peer',
+      await NativeWireCodec.encode({
+        sessionId: 'remote-session',
+        user: { id: 'remote-user', name: 'Remote', avatar: '' },
+        sites: [{ origin: 'https://remote.example', title: 'Remote' }]
+      })
+    )
+    await vi.waitFor(async () => expect((await current.getSnapshot({ caller })).world.presences).toHaveLength(1))
+    const beforeReplacement = applied.length
+    client.invalidate()
+    await vi.waitFor(() => {
+      expect(applied).toHaveLength(beforeReplacement + 1)
+      expect(applied.at(-1)).toEqual(['remote-peer'])
+    })
+
+    const replacementTransport = new RemoteRoomTransport(service)
+    await replacementTransport.rebind()
+    const replacement = createServer({ transport: replacementTransport, codec: NativeWireCodec })
+    current = replacement
+    const beforeReplacementApply = applied.length
+    client.invalidate()
+
+    await vi.waitFor(() => {
+      expect(applied).toHaveLength(beforeReplacementApply + 1)
+      expect(applied.at(-1)).toEqual(['remote-peer'])
+      expect(applied.at(-1)).not.toEqual([])
+    })
+
+    // A second natural replacement still starts from the same surviving mesh state; no new
+    // peer event is injected between either replacement.
+    const secondReplacementTransport = new RemoteRoomTransport(service)
+    await secondReplacementTransport.rebind()
+    const secondReplacement = createServer({ transport: secondReplacementTransport, codec: NativeWireCodec })
+    current = secondReplacement
+    const beforeSecondReplacementApply = applied.length
+    client.invalidate()
+    await vi.waitFor(async () => {
+      expect(applied).toHaveLength(beforeSecondReplacementApply + 1)
+      expect(applied.at(-1)).toEqual(['remote-peer'])
+      expect((await current.getSnapshot({ caller })).domains[0]?.sessions).toEqual([])
+    })
+
+    // A real physical departure clears the cache and remains an empty projection after another
+    // replacement; the fix restores only current Offscreen state and never masks a valid empty room.
+    onPeerLeave(worldRoomId, 'remote-peer')
+    await vi.waitFor(async () => expect((await current.getSnapshot({ caller })).world.presences).toEqual([]))
+    const beforeEmptyApply = applied.length
+    client.invalidate()
+    await vi.waitFor(() => {
+      expect(applied).toHaveLength(beforeEmptyApply + 1)
+      expect(applied.at(-1)).toEqual([])
+    })
+    const emptyReplacementTransport = new RemoteRoomTransport(service)
+    await emptyReplacementTransport.rebind()
+    const emptyReplacement = createServer({ transport: emptyReplacementTransport, codec: NativeWireCodec })
+    current = emptyReplacement
+    const beforeEmptyReplacementApply = applied.length
+    client.invalidate()
+    await vi.waitFor(() => {
+      expect(applied).toHaveLength(beforeEmptyReplacementApply + 1)
+      expect(applied.at(-1)).toEqual([])
+    })
+    disposeServer(replacement)
+    disposeServer(secondReplacement)
+    disposeServer(emptyReplacement)
+  })
+
+  it('does not checkpoint a schema-valid World frame the Domain owner rejects', async () => {
+    const fake = createTransport()
+    const service = createTransportService(fake.transport)
+    const firstTransport = new RemoteRoomTransport(service)
+    await firstTransport.rebind()
+    const first = createServer({ transport: firstTransport, codec: jsonCodec })
+    await first.attachPage({ domain: DOMAIN, caller })
+    await first.joinChatRoom({
+      domain: DOMAIN,
+      user: { id: 'local-user', name: 'Local', avatar: '' },
+      site: { origin: DOMAIN, title: 'Example' },
+      caller
+    })
+    const roomId = getWorldRoomId()
+    fake.peerJoin(roomId, 'remote-peer')
+    fake.receive(roomId, 'remote-peer', {
+      sessionId: 'remote-session',
+      user: { id: 'accepted-user', name: 'Accepted', avatar: '' },
+      sites: [{ origin: 'https://accepted.example', title: 'Accepted' }]
+    })
+    await vi.waitFor(async () => {
+      expect((await first.getSnapshot({ caller })).world.presences).toEqual([
+        expect.objectContaining({
+          presence: expect.objectContaining({ user: expect.objectContaining({ id: 'accepted-user' }) })
+        })
+      ])
+    })
+
+    // Native decode/schema accepts this frame, but the World owner rejects the same session id
+    // changing user identity. A checkpoint may only retain the already committed owner fact.
+    fake.receive(roomId, 'remote-peer', {
+      sessionId: 'remote-session',
+      user: { id: 'forbidden-user', name: 'Forbidden', avatar: '' },
+      sites: [{ origin: 'https://forbidden.example', title: 'Forbidden' }]
+    })
+    await flush()
+    expect((await first.getSnapshot({ caller })).world.presences).toEqual([
+      expect.objectContaining({
+        presence: expect.objectContaining({ user: expect.objectContaining({ id: 'accepted-user' }) })
+      })
+    ])
+
+    const replacementTransport = new RemoteRoomTransport(service)
+    await replacementTransport.rebind()
+    const replacement = createServer({ transport: replacementTransport, codec: jsonCodec })
+    const snapshot = await replacement.attachPage({ domain: DOMAIN, caller })
+    expect(snapshot.world.presences).toEqual([
+      expect.objectContaining({
+        presence: expect.objectContaining({ user: expect.objectContaining({ id: 'accepted-user' }) })
+      })
+    ])
+    expect(snapshot.world.presences).not.toEqual([
+      expect.objectContaining({
+        presence: expect.objectContaining({ user: expect.objectContaining({ id: 'forbidden-user' }) })
+      })
+    ])
+    disposeServer(first)
+    disposeServer(replacement)
+  })
+
+  it('drops an old decode after the same World peer id leaves and rejoins before replacement', async () => {
+    const fake = createTransport()
+    const delayed = Promise.withResolvers<unknown>()
+    let delayOld = true
+    const codec: WireCodec = {
+      encode: async (value) => JSON.stringify(value),
+      decode: (payload) => {
+        const value = JSON.parse(payload as string)
+        if (delayOld) {
+          delayOld = false
+          return delayed.promise
+        }
+        return Promise.resolve(value)
+      }
+    }
+    const service = createTransportService(fake.transport)
+    const firstTransport = new RemoteRoomTransport(service)
+    await firstTransport.rebind()
+    const first = createServer({ transport: firstTransport, codec })
+    await first.attachPage({ domain: DOMAIN, caller })
+    await first.joinChatRoom({
+      domain: DOMAIN,
+      user: { id: 'local-user', name: 'Local', avatar: '' },
+      site: { origin: DOMAIN, title: 'Example' },
+      caller
+    })
+    const roomId = getWorldRoomId()
+    fake.peerJoin(roomId, 'remote-peer')
+    fake.receive(roomId, 'remote-peer', {
+      sessionId: 'old-session',
+      user: { id: 'old-user', name: 'Old', avatar: '' },
+      sites: [{ origin: 'https://old.example', title: 'Old' }]
+    })
+    await Promise.resolve()
+    fake.peerLeave(roomId, 'remote-peer')
+    fake.peerJoin(roomId, 'remote-peer')
+    delayed.resolve({
+      sessionId: 'old-session',
+      user: { id: 'old-user', name: 'Old', avatar: '' },
+      sites: [{ origin: 'https://old.example', title: 'Old' }]
+    })
+    await flush()
+    expect((await first.getSnapshot({ caller })).world.presences).toEqual([])
+
+    const replacementTransport = new RemoteRoomTransport(service)
+    await replacementTransport.rebind()
+    const replacement = createServer({ transport: replacementTransport, codec })
+    const snapshot = await replacement.attachPage({ domain: DOMAIN, caller })
+    expect(snapshot.world.presences).toEqual([])
+    disposeServer(first)
+    disposeServer(replacement)
+  })
+
+  it('evicts the owner-committed World checkpoint after local leave before a replacement', async () => {
+    const fake = createTransport()
+    const service = createTransportService(fake.transport)
+    const firstTransport = new RemoteRoomTransport(service)
+    await firstTransport.rebind()
+    const first = createServer({ transport: firstTransport, codec: jsonCodec })
+    await first.attachPage({ domain: DOMAIN, caller })
+    await first.joinChatRoom({
+      domain: DOMAIN,
+      user: { id: 'local-user', name: 'Local', avatar: '' },
+      site: { origin: DOMAIN, title: 'Example' },
+      caller
+    })
+    const roomId = getWorldRoomId()
+    fake.peerJoin(roomId, 'remote-peer')
+    fake.receive(roomId, 'remote-peer', {
+      sessionId: 'remote-session',
+      user: { id: 'remote-user', name: 'Remote', avatar: '' },
+      sites: [{ origin: 'https://remote.example', title: 'Remote' }]
+    })
+    await vi.waitFor(async () => expect((await first.getSnapshot({ caller })).world.presences).toHaveLength(1))
+
+    await first.leaveChatRoom({ domain: DOMAIN, caller })
+    await vi.waitFor(async () => expect((await first.getSnapshot({ caller })).world.presences).toEqual([]))
+
+    const replacementTransport = new RemoteRoomTransport(service)
+    await replacementTransport.rebind()
+    const replacement = createServer({ transport: replacementTransport, codec: jsonCodec })
+    const snapshot = await replacement.attachPage({ domain: DOMAIN, caller })
+    expect(snapshot.world.presences).toEqual([])
+    disposeServer(first)
+    disposeServer(replacement)
+  })
+
+  it('holds normal replacement publication through a slow pre-cut frame and drains the cut-time frame in order', async () => {
+    let onMessage: Parameters<RoomTransport['onMessage']>[0] = () => {}
+    let onPeerJoin: Parameters<RoomTransport['onPeerJoin']>[0] = () => {}
+    const physical: RoomTransport = {
+      peerIdOf: (roomId) => `local:${roomId}`,
+      join: async () => {},
+      leave: () => {},
+      retireRoomsForPreparation: async (roomIds) => {
+        roomIds.forEach((roomId) => physical.leave(roomId))
+      },
+      send: async () => {},
+      onMessage: (callback) => {
+        onMessage = callback
+        return () => {}
+      },
+      onPeerJoin: (callback) => {
+        onPeerJoin = callback
+        return () => {}
+      },
+      onPeerLeave: () => () => {},
+      onRoomClose: () => () => {},
+      onError: () => () => {},
+      dispose: () => {}
+    }
+    const service = createTransportService(physical)
+    const firstTransport = new RemoteRoomTransport(service)
+    await firstTransport.rebind()
+    const first = createServer({ transport: firstTransport, codec: NativeWireCodec })
+    await first.attachPage({ domain: DOMAIN, caller })
+    await first.joinChatRoom({
+      domain: DOMAIN,
+      user: { id: 'local-user', name: 'Local', avatar: '' },
+      site: { origin: DOMAIN, title: 'Example' },
+      caller
+    })
+    const roomId = getWorldRoomId()
+    onPeerJoin(roomId, 'remote-peer')
+    const base = await NativeWireCodec.encode({
+      sessionId: 'base-presence',
+      user: { id: 'remote', name: 'Base', avatar: '' },
+      sites: [{ origin: 'https://base.example', title: 'Base' }]
+    })
+    onMessage(roomId, 'remote-peer', base)
+    await vi.waitFor(async () => expect((await first.getSnapshot({ caller })).world.presences).toHaveLength(1))
+
+    const a = await NativeWireCodec.encode({
+      sessionId: 'presence-a',
+      user: { id: 'remote', name: 'A', avatar: '' },
+      sites: [{ origin: 'https://a.example', title: 'A' }]
+    })
+    const b = await NativeWireCodec.encode({
+      sessionId: 'presence-b',
+      user: { id: 'remote', name: 'B', avatar: '' },
+      sites: [{ origin: 'https://b.example', title: 'B' }]
+    })
+    const pendingA = Promise.withResolvers<unknown>()
+    const pendingB = Promise.withResolvers<unknown>()
+    const originalDecode = NativeWireCodec.decode
+    const slowDecode = vi
+      .spyOn(NativeWireCodec, 'decode')
+      // Host classifies A before the old Runtime decodes it.
+      .mockImplementationOnce(() => pendingA.promise)
+      .mockImplementationOnce((payload) => originalDecode!(payload))
+      // A reached the old owner checkpoint; B alone follows through the new cut buffer.
+      .mockImplementationOnce(() => pendingB.promise)
+    onMessage(roomId, 'remote-peer', a)
+
+    const replacementTransport = new RemoteRoomTransport(service)
+    const rebinding = replacementTransport.rebind()
+    let rebound = false
+    void rebinding.then(() => {
+      rebound = true
+    })
+    await Promise.resolve()
+    expect(rebound).toBe(false)
+    onMessage(roomId, 'remote-peer', b)
+    expect(rebound).toBe(false)
+
+    pendingA.resolve(await originalDecode!(a))
+    await rebinding
+    const replacement = createServer({ transport: replacementTransport, codec: NativeWireCodec })
+    let attached = false
+    const attaching = replacement.attachPage({ domain: DOMAIN, caller }).then((snapshot) => {
+      attached = true
+      return snapshot
+    })
+    // A reached the previous World owner, so its committed checkpoint seeds the replacement;
+    // only B crosses the new cut buffer and decodes in the fresh owner.
+    await vi.waitFor(() => expect(slowDecode).toHaveBeenCalledTimes(3))
+    expect(attached).toBe(false)
+    pendingB.resolve(await originalDecode!(b))
+    const firstSnapshot = await attaching
+    slowDecode.mockRestore()
+    expect(firstSnapshot.world.presences).toEqual([
+      expect.objectContaining({
+        sourcePeerId: 'remote-peer',
+        presence: expect.objectContaining({ sessionId: 'presence-b' })
+      })
+    ])
+    disposeServer(first)
+    disposeServer(replacement)
+  })
+})
+
+describe('ROOM recovery across a logical Background replacement', () => {
+  it('recovers only the current source incarnation after a same-id leave and rejoin', async () => {
+    const fake = createTransport()
+    const service = createTransportService(fake.transport)
+    const firstTransport = new RemoteRoomTransport(service)
+    await firstTransport.rebind()
+    const first = createServer({ transport: firstTransport, codec: jsonCodec })
+    await first.attachPage({ domain: DOMAIN, caller })
+    await first.joinChatRoom({
+      domain: DOMAIN,
+      user: { id: 'local-user', name: 'Local', avatar: '' },
+      site: { origin: DOMAIN, title: 'Example' },
+      caller
+    })
+    const roomId = getChatRoomId(DOMAIN)
+    fake.peerJoin(roomId, 'remote-peer')
+    fake.receive(roomId, 'remote-peer', {
+      type: MESSAGE_TYPE.SESSION,
+      sessionId: 'old-session',
+      presenceId: 'old-presence',
+      user: { id: 'old-user', name: 'Old', avatar: '' },
+      joinedAt: 1
+    })
+    await vi.waitFor(async () =>
+      expect((await first.getSnapshot({ caller })).domains.find((item) => item.domain === DOMAIN)?.sessions).toEqual([
+        expect.objectContaining({ sessionId: 'old-session' })
+      ])
+    )
+    fake.peerLeave(roomId, 'remote-peer')
+    fake.peerJoin(roomId, 'remote-peer')
+    fake.receive(roomId, 'remote-peer', {
+      type: MESSAGE_TYPE.SESSION,
+      sessionId: 'current-session',
+      presenceId: 'current-presence',
+      user: { id: 'current-user', name: 'Current', avatar: '' },
+      joinedAt: 2
+    })
+    await vi.waitFor(async () =>
+      expect((await first.getSnapshot({ caller })).domains.find((item) => item.domain === DOMAIN)?.sessions).toEqual(
+        expect.arrayContaining([expect.objectContaining({ sessionId: 'current-session' })])
+      )
+    )
+
+    const replacementTransport = new RemoteRoomTransport(service)
+    await replacementTransport.rebind()
+    const replacement = createServer({ transport: replacementTransport, codec: jsonCodec })
+    const snapshot = await replacement.attachPage({ domain: DOMAIN, caller })
+    expect(snapshot.domains.find((item) => item.domain === DOMAIN)?.sessions).toEqual([
+      expect.objectContaining({ sessionId: 'current-session', sourcePeerId: 'remote-peer' })
+    ])
+    disposeServer(first)
+    disposeServer(replacement)
+  })
+
+  it('keeps a validated remote session and local joined state when the Offscreen mesh survives without a new event', async () => {
+    let onMessage: Parameters<RoomTransport['onMessage']>[0] = () => {}
+    let onPeerJoin: Parameters<RoomTransport['onPeerJoin']>[0] = () => {}
+    let onPeerLeave: Parameters<RoomTransport['onPeerLeave']>[0] = () => {}
+    const sent: string[] = []
+    const physical: RoomTransport = {
+      peerIdOf: (roomId) => `local:${roomId}`,
+      join: async () => {},
+      leave: () => {},
+      retireRoomsForPreparation: async (roomIds) => {
+        roomIds.forEach((roomId) => physical.leave(roomId))
+      },
+      send: async (_roomId, payload) => {
+        sent.push(payload)
+      },
+      onMessage: (callback) => {
+        onMessage = callback
+        return () => {}
+      },
+      onPeerJoin: (callback) => {
+        onPeerJoin = callback
+        return () => {}
+      },
+      onPeerLeave: (callback) => {
+        onPeerLeave = callback
+        return () => {}
+      },
+      onRoomClose: () => () => {},
+      onError: () => () => {},
+      dispose: () => {}
+    }
+    const service = createTransportService(physical)
+    const firstTransport = new RemoteRoomTransport(service)
+    await firstTransport.rebind()
+    let current = createServer({ transport: firstTransport, codec: NativeWireCodec })
+    const coordinator = {
+      registerPage: (payload: { domain: string }) => current.attachPage({ ...payload, caller })
+    }
+    const server = {
+      getSnapshot: (payload?: { domain?: string }) => current.getSnapshot({ ...payload, caller })
+    } as RuntimeServer
+    const applied: Array<{ joined: boolean; sessions: string[] }> = []
+    const client = new DocumentClient({ coordinator, server, domain: DOMAIN })
+    client.registerApplier('chat', (projection) => {
+      const domain = projection.domains.find((item) => item.domain === DOMAIN)
+      applied.push({
+        joined: domain?.chatRoomJoined ?? false,
+        sessions: domain?.sessions.map(({ sourcePeerId }) => sourcePeerId) ?? []
+      })
+    })
+
+    await client.init()
+    await current.joinChatRoom({
+      domain: DOMAIN,
+      user: { id: 'local-user', name: 'Local', avatar: '' },
+      site: { origin: DOMAIN, title: 'Example' },
+      caller
+    })
+    const roomId = getChatRoomId(DOMAIN)
+    onPeerJoin(roomId, 'remote-peer')
+    onMessage(
+      roomId,
+      'remote-peer',
+      await NativeWireCodec.encode({
+        type: MESSAGE_TYPE.SESSION,
+        sessionId: 'remote-session',
+        presenceId: 'remote-presence',
+        user: { id: 'remote-user', name: 'Remote', avatar: '' },
+        joinedAt: 1
+      })
+    )
+    await vi.waitFor(async () => {
+      const domain = (await current.getSnapshot({ caller })).domains.find((item) => item.domain === DOMAIN)
+      expect(domain).toMatchObject({ chatRoomJoined: true })
+      expect(domain?.sessions.map(({ sourcePeerId }) => sourcePeerId)).toEqual(['remote-peer'])
+    })
+    const beforeReplacement = applied.length
+    client.invalidate()
+    await vi.waitFor(() => {
+      expect(applied).toHaveLength(beforeReplacement + 1)
+      expect(applied.at(-1)).toEqual({ joined: true, sessions: ['remote-peer'] })
+    })
+    const sentBeforeReplacement = [...sent]
+
+    const replacementTransport = new RemoteRoomTransport(service)
+    await replacementTransport.rebind()
+    const replacement = createServer({ transport: replacementTransport, codec: NativeWireCodec })
+    current = replacement
+    const beforeReplacementApply = applied.length
+    client.invalidate()
+
+    await vi.waitFor(() => {
+      expect(applied).toHaveLength(beforeReplacementApply + 1)
+      expect(applied.at(-1)).toEqual({ joined: true, sessions: ['remote-peer'] })
+    })
+    expect(sent).toEqual(sentBeforeReplacement)
+
+    // A second replacement has no new peer or session event either, and recovery itself sends
+    // no session/history frame or persistence-side effect.
+    const secondReplacementTransport = new RemoteRoomTransport(service)
+    await secondReplacementTransport.rebind()
+    const secondReplacement = createServer({ transport: secondReplacementTransport, codec: NativeWireCodec })
+    current = secondReplacement
+    const beforeSecondReplacementApply = applied.length
+    client.invalidate()
+    await vi.waitFor(() => {
+      expect(applied).toHaveLength(beforeSecondReplacementApply + 1)
+      expect(applied.at(-1)).toEqual({ joined: true, sessions: ['remote-peer'] })
+    })
+    expect(sent).toEqual(sentBeforeReplacement)
+
+    // Physical departure removes the Offscreen current-session fact. A later replacement must
+    // retain the local Room join but never revive the departed peer.
+    onPeerLeave(roomId, 'remote-peer')
+    const emptyReplacementTransport = new RemoteRoomTransport(service)
+    await emptyReplacementTransport.rebind()
+    const emptyReplacement = createServer({ transport: emptyReplacementTransport, codec: NativeWireCodec })
+    current = emptyReplacement
+    const beforeEmptyReplacementApply = applied.length
+    client.invalidate()
+    await vi.waitFor(() => {
+      expect(applied).toHaveLength(beforeEmptyReplacementApply + 1)
+      expect(applied.at(-1)).toEqual({ joined: true, sessions: [] })
+    })
+
+    disposeServer(replacement)
+    disposeServer(secondReplacement)
+    disposeServer(emptyReplacement)
+  })
+
+  it('merges durable ended observers and the greatest joined timestamp before recovered ROOM ingress', async () => {
+    let onMessage: Parameters<RoomTransport['onMessage']>[0] = () => {}
+    let onPeerJoin: Parameters<RoomTransport['onPeerJoin']>[0] = () => {}
+    const physical: RoomTransport = {
+      peerIdOf: (roomId) => `local:${roomId}`,
+      join: async () => {},
+      leave: () => {},
+      retireRoomsForPreparation: async (roomIds) => {
+        roomIds.forEach((roomId) => physical.leave(roomId))
+      },
+      send: async () => {},
+      onMessage: (callback) => {
+        onMessage = callback
+        return () => {}
+      },
+      onPeerJoin: (callback) => {
+        onPeerJoin = callback
+        return () => {}
+      },
+      onPeerLeave: () => () => {},
+      onRoomClose: () => () => {},
+      onError: () => () => {},
+      dispose: () => {}
+    }
+    const presenceStore = createMemoryPresenceStore()
+    const service = createTransportService(physical)
+    const firstTransport = new RemoteRoomTransport(service)
+    await firstTransport.rebind()
+    const first = createServer({ transport: firstTransport, codec: NativeWireCodec, presenceStore })
+    await first.attachPage({ domain: DOMAIN, caller })
+    await first.joinChatRoom({
+      domain: DOMAIN,
+      user: { id: 'local-user', name: 'Local', avatar: '' },
+      site: { origin: DOMAIN, title: 'Example' },
+      caller
+    })
+    const roomId = getChatRoomId(DOMAIN)
+    onPeerJoin(roomId, 'remote-peer')
+    onMessage(
+      roomId,
+      'remote-peer',
+      await NativeWireCodec.encode({
+        type: MESSAGE_TYPE.SESSION,
+        sessionId: 'recovered-session',
+        presenceId: 'recovered-presence',
+        user: { id: 'remote-user', name: 'Recovered', avatar: '' },
+        joinedAt: 10
+      })
+    )
+    await vi.waitFor(async () => {
+      const domain = (await first.getSnapshot({ caller })).domains.find((item) => item.domain === DOMAIN)
+      expect(domain?.sessions.map(({ sourcePeerId }) => sourcePeerId)).toEqual(['remote-peer'])
+    })
+
+    await presenceStore.save({
+      domain: DOMAIN,
+      lastJoinedAt: 8_000_000_000_000_000,
+      observers: [
+        {
+          presenceId: 'ended-presence',
+          sessionId: 'ended-session',
+          user: { id: 'ended-user', name: 'Ended', avatar: '' },
+          joinedAt: 7_000_000_000_000_000,
+          status: 'ended'
+        }
+      ]
+    })
+
+    const replacementTransport = new RemoteRoomTransport(service)
+    await replacementTransport.rebind()
+    expect(replacementTransport.roomRecovery().rooms).toHaveLength(1)
+    const replacement = createServer({ transport: replacementTransport, codec: NativeWireCodec, presenceStore })
+    const initial = await replacement.attachPage({ domain: DOMAIN, caller })
+    expect(initial.domains.find((item) => item.domain === DOMAIN)).toMatchObject({
+      chatRoomJoined: true,
+      sessions: [expect.objectContaining({ sourcePeerId: 'remote-peer' })]
+    })
+
+    // The first ordinary SESSION after recovery causes the normal owner persistence write. It
+    // must merge rather than replace the durable ended observer/history HLC seed.
+    onMessage(
+      roomId,
+      'remote-peer',
+      await NativeWireCodec.encode({
+        type: MESSAGE_TYPE.SESSION,
+        sessionId: 'current-session',
+        presenceId: 'current-presence',
+        user: { id: 'current-user', name: 'Current', avatar: '' },
+        joinedAt: 20
+      })
+    )
+    await vi.waitFor(async () => {
+      const record = await presenceStore.load(DOMAIN)
+      expect(record?.lastJoinedAt).toBe(8_000_000_000_000_000)
+      expect(record?.observers).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            presenceId: 'ended-presence',
+            status: 'ended',
+            joinedAt: 7_000_000_000_000_000
+          }),
+          expect.objectContaining({ presenceId: 'current-presence', status: 'active', joinedAt: 20 })
+        ])
+      )
+    })
+    disposeServer(first)
+    disposeServer(replacement)
   })
 })

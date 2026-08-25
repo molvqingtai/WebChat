@@ -33,6 +33,7 @@ const setup = async () => {
         peerIdOf: () => 'local-peer',
         join: async () => {},
         leave: () => {},
+        retireRoomsForPreparation: async () => {},
         send: async () => {},
         onMessage: (callback) => {
           messageListener = callback
@@ -89,6 +90,41 @@ const setup = async () => {
 }
 
 describe('Session prepared rebind markers (Wire boundary)', () => {
+  it('stages an epoch-bound local owner without entering the ordinary PreparedEvent path', async () => {
+    const { store, session } = await setup()
+    const normal: unknown[] = []
+    const privateTerminals: unknown[] = []
+    store.subscribeEvent(session.event.PreparedEvent, (event) => normal.push(event))
+    store.subscribeEvent(session.event.EpochPreparedEvent, (event) => privateTerminals.push(event))
+
+    store.send(
+      session.command.PrepareEpochDomainCommand({
+        attemptId: 'epoch-attempt',
+        epoch: 'epoch-1',
+        chatGeneration: 4,
+        domain: DOMAIN,
+        roomId: getChatRoomId(DOMAIN),
+        local: {
+          sessionId: 'local-session',
+          presenceId: 'presence-1',
+          user: USER,
+          site: { origin: DOMAIN },
+          joinedAt: 1
+        }
+      })
+    )
+
+    expect(normal).toEqual([])
+    expect(privateTerminals).toEqual([
+      { attemptId: 'epoch-attempt', epoch: 'epoch-1', domain: DOMAIN, roomId: getChatRoomId(DOMAIN) }
+    ])
+    expect(store.query(session.query.PreparedSessionQuery('epoch-attempt'))).toMatchObject({
+      stagedEpoch: 'epoch-1',
+      stagedChatGeneration: 4,
+      runtime: { sessionId: 'local-session' }
+    })
+  })
+
   it('deduplicates repeated same-presence prepared SESSION frames into one structural rebind marker', async () => {
     const { store, session, receive } = await setup()
     const roomId = getChatRoomId(DOMAIN)

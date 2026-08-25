@@ -148,6 +148,86 @@ beforeEach(() => {
 })
 
 describe('Trystero RoomTransport', () => {
+  it('waits for both direct physical leaves before successors can join', async () => {
+    const transport = createRoomTransport()
+    await transport.join('chat-a')
+    await transport.join('world-a')
+    trysteroFixture.deferLeave('chat-a')
+    trysteroFixture.deferLeave('world-a')
+
+    let retired = false
+    const retiring = transport.retireRoomsForPreparation(['chat-a', 'world-a']).then(() => {
+      retired = true
+    })
+    await settle()
+
+    expect(retired).toBe(false)
+    expect(roomOf('chat-a').left).toBe(true)
+    expect(roomOf('world-a').left).toBe(true)
+    expect(trysteroFixture.joinCalls).toEqual(['chat-a', 'world-a'])
+    expect(transport.peerIdOf('chat-a')).toBe('')
+    expect(transport.peerIdOf('world-a')).toBe('')
+
+    trysteroFixture.leaveControls.get('chat-a')?.resolve()
+    await settle()
+    expect(retired).toBe(false)
+    expect(trysteroFixture.joinCalls).toEqual(['chat-a', 'world-a'])
+
+    trysteroFixture.leaveControls.get('world-a')?.resolve()
+    await retiring
+    await transport.join('chat-a')
+    await transport.join('world-a')
+    expect(trysteroFixture.joinCalls).toEqual(['chat-a', 'world-a', 'chat-a', 'world-a'])
+    transport.dispose()
+  })
+
+  it('rejects by exact physical leave error without creating a successor', async () => {
+    const transport = createRoomTransport()
+    await transport.join('chat-a')
+    await transport.join('world-a')
+    trysteroFixture.deferLeave('chat-a')
+    trysteroFixture.deferLeave('world-a')
+    const failure = new Error('world leave rejected')
+
+    const retiring = transport.retireRoomsForPreparation(['chat-a', 'world-a'])
+    trysteroFixture.leaveControls.get('chat-a')?.resolve()
+    trysteroFixture.leaveControls.get('world-a')?.reject(failure)
+
+    await expect(retiring).rejects.toBe(failure)
+    await expect(transport.join('world-a')).rejects.toBe(failure)
+    expect(trysteroFixture.joinCalls).toEqual(['chat-a', 'world-a'])
+  })
+
+  it("waits for World after Chat fails before surfacing Chat's exact terminal", async () => {
+    const transport = createRoomTransport()
+    await transport.join('chat-a')
+    await transport.join('world-a')
+    trysteroFixture.deferLeave('chat-a')
+    trysteroFixture.deferLeave('world-a')
+    const failure = new Error('chat leave rejected first')
+    let settled = false
+    let observed: unknown
+    const retiring = transport.retireRoomsForPreparation(['chat-a', 'world-a']).then(
+      () => {
+        settled = true
+      },
+      (error: unknown) => {
+        settled = true
+        observed = error
+      }
+    )
+
+    trysteroFixture.leaveControls.get('chat-a')?.reject(failure)
+    await settle()
+    expect(settled).toBe(false)
+    expect(trysteroFixture.joinCalls).toEqual(['chat-a', 'world-a'])
+
+    trysteroFixture.leaveControls.get('world-a')?.resolve()
+    await retiring
+    expect(observed).toBe(failure)
+    expect(trysteroFixture.joinCalls).toEqual(['chat-a', 'world-a'])
+  })
+
   it('maps an omitted target to the provider broadcast null', async () => {
     const transport = createRoomTransport()
     await transport.join('room-a')

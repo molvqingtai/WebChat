@@ -33,12 +33,29 @@ export type WireSendRequest = WireSendRequestBase & { targetPeerIds?: string[] }
 export interface WireMessageEvent {
   roomId: string
   sourcePeerId: string
+  /** Present for provider ingress; internal callers that do not cross a physical peer fence omit it. */
+  sourceGeneration?: number
   message: WireMessage
+}
+
+/** Server-private ingress route used only while a dual replacement is preparing. */
+export interface WirePreparedMessageEvent extends WireMessageEvent {
+  epoch: string
+  /** Physical room incarnation chosen by the prepared route, distinct from source generation. */
+  roomGeneration: number
 }
 
 interface RoomGeneration {
   roomId: string
   generation: number
+}
+
+interface PreparedRoute {
+  epoch: string
+  requestId: string
+  rooms: RoomGeneration[]
+  /** Provider joins completed for every room; only ready routes may admit staged ingress or commit. */
+  ready: boolean
 }
 
 interface QueueIdentity {
@@ -49,8 +66,11 @@ interface QueueIdentity {
 interface RawFrame extends QueueIdentity {
   roomId: string
   sourcePeerId: string
+  sourceGeneration: number
   rawPayload: string
   wireBytes: number
+  /** Internal ingress-drain settlement; never enters protocol state or a projection. */
+  settle?: () => void
 }
 
 type QueuedSendRequest = WireSendRequest & QueueIdentity
@@ -81,12 +101,30 @@ interface DropRecord {
   loggedAt: number
 }
 
+interface RoomSource {
+  sourcePeerId: string
+  generation: number
+}
+
+interface RoomSources {
+  roomId: string
+  sources: RoomSource[]
+}
+
+interface SourceIncarnation {
+  roomId: string
+  sourcePeerId: string
+  generation: number
+}
+
 const MAX_LOGGED_SOURCES = 256
 const LOG_INTERVAL_MS = 10000
 const worldRoomId = stringToHex(WORLD_ROOM_ID_V5)
 const queueId = (roomId: string, sourcePeerId: string) => JSON.stringify([roomId, sourcePeerId])
 const generationFor = (generations: RoomGeneration[], roomId: string) =>
   generations.find((item) => item.roomId === roomId)?.generation ?? 0
+const sourceGenerationFor = (sources: RoomSources[], roomId: string, sourcePeerId: string) =>
+  sources.find((item) => item.roomId === roomId)?.sources.find((item) => item.sourcePeerId === sourcePeerId)?.generation
 const replaceBy = <T>(items: T[], predicate: (item: T) => boolean, next: T): T[] =>
   items.some(predicate) ? items.map((item) => (predicate(item) ? next : item)) : [...items, next]
 
@@ -117,10 +155,19 @@ const WireDomain = Remesh.domain({
     // of the current room generation (PeerJoined added it and no PeerLeave/room close removed it).
     // This is the upstream fact the lawful-rebind classifier requires before an ended observation
     // may be re-activated; a departed source without a fresh PeerJoin is never admitted.
-    const RoomSourcesState = domain.state<{ roomId: string; sourcePeerIds: string[] }[]>({
+    const RoomSourcesState = domain.state<RoomSources[]>({
       name: 'Wire.RoomSourcesState',
       default: []
     })
+    // Kept after a leave for the current room lifecycle so a reused peer id gets a fresh
+    // physical incarnation and an old asynchronous decode can never settle into it.
+    const SourceIncarnationsState = domain.state<SourceIncarnation[]>({
+      name: 'Wire.SourceIncarnationsState',
+      default: []
+    })
+    // Prepared routes intentionally sit outside TrustedRoomsState. Their decoded frames may be
+    // consumed only by the matching staged Session/World owners until Server commits both sides.
+    const PreparedRoutesState = domain.state<PreparedRoute[]>({ name: 'Wire.PreparedRoutesState', default: [] })
 
     const PeerIdQuery = domain.query({
       name: 'Wire.PeerIdQuery',
@@ -131,11 +178,22 @@ const WireDomain = Remesh.domain({
       impl: ({ get }, payload: { roomId: string; sourcePeerId: string }) =>
         get(RoomSourcesState())
           .find((item) => item.roomId === payload.roomId)
-          ?.sourcePeerIds.includes(payload.sourcePeerId) ?? false
+          ?.sources.some((item) => item.sourcePeerId === payload.sourcePeerId) ?? false
+    })
+    const SourcesQuery = domain.query({
+      name: 'Wire.SourcesQuery',
+      impl: ({ get }, roomId: string) =>
+        get(RoomSourcesState())
+          .find((item) => item.roomId === roomId)
+          ?.sources.map((source) => ({ ...source })) ?? []
     })
     const TrustedRoomsQuery = domain.query({
       name: 'Wire.TrustedRoomsQuery',
       impl: ({ get }) => get(TrustedRoomsState())
+    })
+    const RoomGenerationQuery = domain.query({
+      name: 'Wire.RoomGenerationQuery',
+      impl: ({ get }, roomId: string) => generationFor(get(RoomGenerationsState()), roomId)
     })
     const IsRoomTrustedQuery = domain.query({
       name: 'Wire.IsRoomTrustedQuery',
@@ -146,12 +204,31 @@ const WireDomain = Remesh.domain({
       impl: ({ get }) =>
         get(DecodeQueuesState()).map(({ id, frameCount, wireBytes }) => ({ id, frameCount, wireBytes }))
     })
+    const PreparedRouteQuery = domain.query({
+      name: 'Wire.PreparedRouteQuery',
+      impl: ({ get }, epoch: string) => get(PreparedRoutesState()).find((route) => route.epoch === epoch) ?? null
+    })
+    const IsPreparedRouteCurrentQuery = domain.query({
+      name: 'Wire.IsPreparedRouteCurrentQuery',
+      impl: ({ get }, epoch: string) => {
+        const route = get(PreparedRoutesState()).find((item) => item.epoch === epoch)
+        return Boolean(
+          route?.ready &&
+          route.rooms.every((room) => generationFor(get(RoomGenerationsState()), room.roomId) === room.generation)
+        )
+      }
+    })
 
     const RoomsJoinedEvent = domain.event<WireJoinResult>({ name: 'Wire.RoomsJoinedEvent' })
+    /** Private terminal. It is not a public Wire completion and never reaches Page consumers. */
+    const RoomsPreparedEvent = domain.event<WireJoinResult & { epoch: string }>({ name: 'Wire.RoomsPreparedEvent' })
     const RoomsJoinFailedEvent = domain.event<WireFailure>({ name: 'Wire.RoomsJoinFailedEvent' })
     const MessageSentEvent = domain.event<{ requestId: string }>({ name: 'Wire.MessageSentEvent' })
     const MessageSendFailedEvent = domain.event<WireFailure>({ name: 'Wire.MessageSendFailedEvent' })
     const MessageAcceptedEvent = domain.event<WireMessageEvent>({ name: 'Wire.MessageAcceptedEvent' })
+    const PreparedMessageAcceptedEvent = domain.event<WirePreparedMessageEvent>({
+      name: 'Wire.PreparedMessageAcceptedEvent'
+    })
     const PeerJoinedEvent = domain.event<{ roomId: string; sourcePeerId: string }>({
       name: 'Wire.PeerJoinedEvent'
     })
@@ -165,6 +242,7 @@ const WireDomain = Remesh.domain({
       requestId: string
       rooms: { roomId: string; generation: number }[]
     }>({ name: 'Wire.JoinRoomsRequestedEvent' })
+    const PrepareRoomsRequestedEvent = domain.event<PreparedRoute>({ name: 'Wire.PrepareRoomsRequestedEvent' })
     const LeaveRoomRequestedEvent = domain.event<{ roomId: string; diagnosticOnly?: boolean }>({
       name: 'Wire.LeaveRoomRequestedEvent'
     })
@@ -218,6 +296,67 @@ const WireDomain = Remesh.domain({
       }
     })
 
+    const PrepareRoomsCommand = domain.command({
+      name: 'Wire.PrepareRoomsCommand',
+      impl: ({ get }, payload: { epoch: string; requestId: string; roomIds: string[] }) => {
+        if (!payload.epoch || get(PreparedRoutesState()).some((route) => route.epoch === payload.epoch)) return null
+        const generations = get(RoomGenerationsState())
+        const route: PreparedRoute = {
+          epoch: payload.epoch,
+          requestId: payload.requestId,
+          rooms: [...new Set(payload.roomIds)].map((roomId) => ({
+            roomId,
+            generation: generationFor(generations, roomId)
+          })),
+          ready: false
+        }
+        return [PreparedRoutesState().new([...get(PreparedRoutesState()), route]), PrepareRoomsRequestedEvent(route)]
+      }
+    })
+
+    /**
+     * A replacement's logical cut. It deliberately has no provider call or public terminal: the
+     * Server invokes it only after the transport has retired every selected physical owner.
+     * Source-incarnation tombstones remain, so an old peer id cannot speak again without a fresh
+     * post-cut PeerJoined admission.
+     */
+    const BeginEpochReplacementCommand = domain.command({
+      name: 'Wire.BeginEpochReplacementCommand',
+      impl: ({ get }, payload: { rooms: RoomGeneration[] }) => {
+        const selected = [...new Map(payload.rooms.map((room) => [room.roomId, room])).values()]
+        const selectedIds = selected.map((room) => room.roomId)
+        const generations = get(RoomGenerationsState())
+        if (
+          selected.length !== payload.rooms.length ||
+          selected.some((room) => room.generation !== generationFor(generations, room.roomId) + 1)
+        ) {
+          return null
+        }
+        const decodeQueues = get(DecodeQueuesState())
+        decodeQueues
+          .filter((queue) => queue.frames.some((frame) => selectedIds.includes(frame.roomId)))
+          .flatMap((queue) => queue.frames)
+          .forEach((frame) => frame.settle?.())
+        return [
+          RoomGenerationsState().new(
+            selected.reduce(
+              (current, room) => replaceBy(current, (item) => item.roomId === room.roomId, room),
+              generations
+            )
+          ),
+          TrustedRoomsState().new(get(TrustedRoomsState()).filter((roomId) => !selectedIds.includes(roomId))),
+          RoomSourcesState().new(get(RoomSourcesState()).filter((room) => !selectedIds.includes(room.roomId))),
+          DecodeQueuesState().new(
+            decodeQueues.filter((queue) => !queue.frames.some((frame) => selectedIds.includes(frame.roomId)))
+          ),
+          SendQueuesState().new(get(SendQueuesState()).filter((queue) => !selectedIds.includes(queue.roomId))),
+          PreparedRoutesState().new(
+            get(PreparedRoutesState()).filter((route) => !route.rooms.some((room) => selectedIds.includes(room.roomId)))
+          )
+        ]
+      }
+    })
+
     /**
      * A provider call that already started must settle its target once. It pops the head and emits the
      * result even if the room generation changed meanwhile; it is never re-sent into a new generation.
@@ -225,21 +364,38 @@ const WireDomain = Remesh.domain({
     const AdmitSourceCommand = domain.command({
       name: 'Wire.AdmitSourceCommand',
       impl: ({ get }, payload: { roomId: string; sourcePeerId: string }) => {
+        const prepared = get(PreparedRoutesState()).some((route) =>
+          route.rooms.some(
+            (room) =>
+              room.roomId === payload.roomId &&
+              room.generation === generationFor(get(RoomGenerationsState()), room.roomId)
+          )
+        )
+        if (!get(TrustedRoomsState()).includes(payload.roomId) && !prepared) return null
         const sources = get(RoomSourcesState())
         const room = sources.find((item) => item.roomId === payload.roomId)
+        if (room?.sources.some((source) => source.sourcePeerId === payload.sourcePeerId)) return null
+        const incarnations = get(SourceIncarnationsState())
+        const prior = incarnations.find(
+          (item) => item.roomId === payload.roomId && item.sourcePeerId === payload.sourcePeerId
+        )
+        const source = { sourcePeerId: payload.sourcePeerId, generation: (prior?.generation ?? 0) + 1 }
+        const nextIncarnations = replaceBy(
+          incarnations,
+          (item) => item.roomId === payload.roomId && item.sourcePeerId === payload.sourcePeerId,
+          { roomId: payload.roomId, ...source }
+        )
         const next = room
           ? sources.map((item) =>
               item.roomId === payload.roomId
                 ? {
                     roomId: item.roomId,
-                    sourcePeerIds: item.sourcePeerIds.includes(payload.sourcePeerId)
-                      ? item.sourcePeerIds
-                      : [...item.sourcePeerIds, payload.sourcePeerId]
+                    sources: [...item.sources, source]
                   }
                 : item
             )
-          : [...sources, { roomId: payload.roomId, sourcePeerIds: [payload.sourcePeerId] }]
-        return RoomSourcesState().new(next)
+          : [...sources, { roomId: payload.roomId, sources: [source] }]
+        return [SourceIncarnationsState().new(nextIncarnations), RoomSourcesState().new(next)]
       }
     })
 
@@ -249,14 +405,39 @@ const WireDomain = Remesh.domain({
         const sources = get(RoomSourcesState())
         const room = sources.find((item) => item.roomId === payload.roomId)
         if (!room) return null
-        const remaining = room.sourcePeerIds.filter((item) => item !== payload.sourcePeerId)
+        const remaining = room.sources.filter((item) => item.sourcePeerId !== payload.sourcePeerId)
         return RoomSourcesState().new(
           remaining.length === 0
             ? sources.filter((item) => item.roomId !== payload.roomId)
             : sources.map((item) =>
-                item.roomId === payload.roomId ? { roomId: item.roomId, sourcePeerIds: remaining } : item
+                item.roomId === payload.roomId ? { roomId: item.roomId, sources: remaining } : item
               )
         )
+      }
+    })
+
+    /** Rehydrates only current physical admission facts from an atomic transport rebind cut. */
+    const RecoverTransportStateCommand = domain.command({
+      name: 'Wire.RecoverTransportStateCommand',
+      impl: ({ get }, payload: Array<{ roomId: string; sources: RoomSource[] }>) => {
+        const recovered = payload
+          .filter(({ roomId }) => roomId.length > 0)
+          .map(({ roomId, sources }) => ({
+            roomId,
+            sources: [...new Map(sources.map((source) => [source.sourcePeerId, source])).values()]
+          }))
+        if (recovered.length === 0) return null
+        const roomIds = [...new Set(recovered.map(({ roomId }) => roomId))]
+        const sources = get(RoomSourcesState()).filter((item) => !roomIds.includes(item.roomId))
+        const incarnations = get(SourceIncarnationsState()).filter((item) => !roomIds.includes(item.roomId))
+        return [
+          TrustedRoomsState().new([...new Set([...get(TrustedRoomsState()), ...roomIds])]),
+          RoomSourcesState().new([...sources, ...recovered]),
+          SourceIncarnationsState().new([
+            ...incarnations,
+            ...recovered.flatMap(({ roomId, sources }) => sources.map((source) => ({ roomId, ...source })))
+          ])
+        ]
       }
     })
 
@@ -347,6 +528,109 @@ const WireDomain = Remesh.domain({
       }
     })
 
+    const CompletePreparedRoomsCommand = domain.command({
+      name: 'Wire.CompletePreparedRoomsCommand',
+      impl: ({ get }, route: PreparedRoute) => {
+        const current = (roomId: string) => generationFor(get(RoomGenerationsState()), roomId)
+        const prepared = get(PreparedRoutesState()).find((item) => item.epoch === route.epoch)
+        if (
+          !prepared ||
+          prepared.requestId !== route.requestId ||
+          route.rooms.some((room) => current(room.roomId) !== room.generation)
+        ) {
+          return RoomsJoinFailedEvent({ requestId: route.requestId, error: new Error('Prepared room join superseded') })
+        }
+        if (prepared.ready) return null
+        // No TrustedRoomsState, queue resumption, public event, or projection mutation belongs to
+        // prepare. Server is the only consumer of this private terminal.
+        return [
+          PreparedRoutesState().new(
+            get(PreparedRoutesState()).map((item) => (item.epoch === route.epoch ? { ...item, ready: true } : item))
+          ),
+          RoomsPreparedEvent({
+            epoch: route.epoch,
+            requestId: route.requestId,
+            roomIds: route.rooms.map((room) => room.roomId)
+          })
+        ]
+      }
+    })
+
+    const AbortPreparedRoomsCommand = domain.command({
+      name: 'Wire.AbortPreparedRoomsCommand',
+      impl: ({ get }, epoch: string) => {
+        const routes = get(PreparedRoutesState())
+        return routes.some((route) => route.epoch === epoch)
+          ? PreparedRoutesState().new(routes.filter((route) => route.epoch !== epoch))
+          : null
+      }
+    })
+
+    const AbortEpochPreparedRoomsCommand = domain.command({
+      name: 'Wire.AbortEpochPreparedRoomsCommand',
+      impl: ({ get }, payload: { epoch: string; rooms: RoomGeneration[] }) => {
+        const routes = get(PreparedRoutesState())
+        const route = routes.find((item) => item.epoch === payload.epoch)
+        if (
+          !route ||
+          route.rooms.length !== payload.rooms.length ||
+          route.rooms.some(
+            (room) =>
+              payload.rooms.find((candidate) => candidate.roomId === room.roomId)?.generation !== room.generation
+          )
+        ) {
+          return null
+        }
+        return PreparedRoutesState().new(routes.filter((item) => item.epoch !== payload.epoch))
+      }
+    })
+
+    const CommitPreparedRoomsCommand = domain.command({
+      name: 'Wire.CommitPreparedRoomsCommand',
+      impl: ({ get }, epoch: string) => {
+        const route = get(PreparedRoutesState()).find((item) => item.epoch === epoch)
+        if (!route?.ready) return null
+        const current = (roomId: string) => generationFor(get(RoomGenerationsState()), roomId)
+        if (route.rooms.some((room) => current(room.roomId) !== room.generation)) {
+          return [
+            PreparedRoutesState().new(get(PreparedRoutesState()).filter((item) => item.epoch !== epoch)),
+            RoomsJoinFailedEvent({ requestId: route.requestId, error: new Error('Prepared room commit superseded') })
+          ]
+        }
+        const roomIds = route.rooms.map((room) => room.roomId)
+        return [
+          PreparedRoutesState().new(get(PreparedRoutesState()).filter((item) => item.epoch !== epoch)),
+          TrustedRoomsState().new([...new Set([...get(TrustedRoomsState()), ...roomIds])]),
+          RoomsJoinedEvent({ requestId: route.requestId, roomIds })
+        ]
+      }
+    })
+
+    const SilentInstallPreparedRoomsCommand = domain.command({
+      name: 'Wire.SilentInstallPreparedRoomsCommand',
+      impl: ({ get }, payload: { epoch: string; rooms: RoomGeneration[] }) => {
+        const route = get(PreparedRoutesState()).find((item) => item.epoch === payload.epoch)
+        if (
+          !route ||
+          !route.ready ||
+          route.rooms.length !== payload.rooms.length ||
+          route.rooms.some(
+            (room) =>
+              payload.rooms.find((candidate) => candidate.roomId === room.roomId)?.generation !== room.generation ||
+              generationFor(get(RoomGenerationsState()), room.roomId) !== room.generation
+          )
+        ) {
+          return null
+        }
+        return [
+          PreparedRoutesState().new(get(PreparedRoutesState()).filter((item) => item.epoch !== payload.epoch)),
+          TrustedRoomsState().new([
+            ...new Set([...get(TrustedRoomsState()), ...route.rooms.map((room) => room.roomId)])
+          ])
+        ]
+      }
+    })
+
     const ResumeSendAfterJoinCommand = domain.command({
       name: 'Wire.ResumeSendAfterJoinCommand',
       impl: ({ get }, identity: QueueIdentity & { roomId: string }) => {
@@ -392,6 +676,7 @@ const WireDomain = Remesh.domain({
           RoomGenerationsState().new(replaceBy(generations, (item) => item.roomId === roomId, { roomId, generation })),
           TrustedRoomsState().new(get(TrustedRoomsState()).filter((item) => item !== roomId)),
           RoomSourcesState().new(get(RoomSourcesState()).filter((item) => item.roomId !== roomId)),
+          SourceIncarnationsState().new(get(SourceIncarnationsState()).filter((item) => item.roomId !== roomId)),
           ...(payload.preservePending
             ? [
                 SendQueuesState().new(
@@ -542,9 +827,60 @@ const WireDomain = Remesh.domain({
 
     const AcceptRawFrameCommand = domain.command({
       name: 'Wire.AcceptRawFrameCommand',
-      impl: ({ get }, payload: { roomId: string; sourcePeerId: string; rawPayload: string }) => {
-        if (!get(TrustedRoomsState()).includes(payload.roomId)) {
+      impl: ({ get }, payload: { roomId: string; sourcePeerId: string; rawPayload: string; settle?: () => void }) => {
+        const prepared = get(PreparedRoutesState()).some(
+          (route) =>
+            route.ready &&
+            route.rooms.some(
+              (room) =>
+                room.roomId === payload.roomId &&
+                room.generation === generationFor(get(RoomGenerationsState()), room.roomId)
+            )
+        )
+        if (!get(TrustedRoomsState()).includes(payload.roomId) && !prepared) {
+          payload.settle?.()
           return RecordDropCommand({ sourcePeerId: payload.sourcePeerId, reason: 'message from an unjoined room' })
+        }
+        const sources = get(RoomSourcesState())
+        const incarnations = get(SourceIncarnationsState())
+        let sourceGeneration = sourceGenerationFor(sources, payload.roomId, payload.sourcePeerId)
+        const sourceAdmission = []
+        if (sourceGeneration === undefined) {
+          // Some providers surface a first data frame before their separate peerJoin callback.
+          // It is a one-time physical admission only; once a source has left, a reusable id needs
+          // a fresh PeerJoined event and can never revive an old asynchronous decode by speaking.
+          const prior = incarnations.find(
+            (item) => item.roomId === payload.roomId && item.sourcePeerId === payload.sourcePeerId
+          )
+          if (prior) {
+            payload.settle?.()
+            return RecordDropCommand({
+              sourcePeerId: payload.sourcePeerId,
+              reason: 'message from an unadmitted source'
+            })
+          }
+          sourceGeneration = 1
+          const room = sources.find((item) => item.roomId === payload.roomId)
+          sourceAdmission.push(
+            RoomSourcesState().new(
+              room
+                ? replaceBy(sources, (item) => item.roomId === payload.roomId, {
+                    roomId: payload.roomId,
+                    sources: [...room.sources, { sourcePeerId: payload.sourcePeerId, generation: sourceGeneration }]
+                  })
+                : [
+                    ...sources,
+                    {
+                      roomId: payload.roomId,
+                      sources: [{ sourcePeerId: payload.sourcePeerId, generation: sourceGeneration }]
+                    }
+                  ]
+            ),
+            SourceIncarnationsState().new([
+              ...incarnations,
+              { roomId: payload.roomId, sourcePeerId: payload.sourcePeerId, generation: sourceGeneration }
+            ])
+          )
         }
         const wireBytes = getTextByteSize(payload.rawPayload)
         const id = queueId(payload.roomId, payload.sourcePeerId)
@@ -554,12 +890,14 @@ const WireDomain = Remesh.domain({
           (current?.frameCount ?? 0) >= MAX_DECODE_QUEUE_FRAMES ||
           (current?.wireBytes ?? 0) + wireBytes > MAX_DECODE_QUEUE_BYTES
         ) {
+          payload.settle?.()
           return RecordDropCommand({ sourcePeerId: payload.sourcePeerId, reason: 'queue-overflow' })
         }
         const sequence = get(QueueSequenceState()) + 1
         const frame: RawFrame = {
           ...payload,
           wireBytes,
+          sourceGeneration,
           generation: generationFor(get(RoomGenerationsState()), payload.roomId),
           sequence
         }
@@ -571,7 +909,12 @@ const WireDomain = Remesh.domain({
           frames
         }
         const nextState = DecodeQueuesState().new(replaceBy(queues, (item) => item.id === id, next))
-        return [QueueSequenceState().new(sequence), nextState, ...(current ? [] : [RawFrameAdmittedEvent(frame)])]
+        return [
+          ...sourceAdmission,
+          QueueSequenceState().new(sequence),
+          nextState,
+          ...(current ? [] : [RawFrameAdmittedEvent(frame)])
+        ]
       }
     })
 
@@ -581,7 +924,10 @@ const WireDomain = Remesh.domain({
         const id = queueId(payload.roomId, payload.sourcePeerId)
         const queues = get(DecodeQueuesState())
         const current = queues.find((item) => item.id === id)
-        if (current?.frames[0]?.sequence !== payload.sequence) return null
+        if (current?.frames[0]?.sequence !== payload.sequence) {
+          payload.settle?.()
+          return null
+        }
         const frames = current.frames.slice(1)
         const nextBytes = Math.max(0, current.wireBytes - payload.wireBytes)
         const nextQueues =
@@ -596,13 +942,22 @@ const WireDomain = Remesh.domain({
         const queueOutput = frames[0]
           ? [DecodeQueuesState().new(nextQueues), RawFrameAdmittedEvent(frames[0])]
           : [DecodeQueuesState().new(nextQueues)]
+        const preparedRoute = get(PreparedRoutesState()).find(
+          (route) =>
+            route.ready &&
+            route.rooms.some((room) => room.roomId === payload.roomId && room.generation === payload.generation)
+        )
         if (
-          !get(TrustedRoomsState()).includes(payload.roomId) ||
-          generationFor(get(RoomGenerationsState()), payload.roomId) !== payload.generation
+          (!get(TrustedRoomsState()).includes(payload.roomId) && !preparedRoute) ||
+          generationFor(get(RoomGenerationsState()), payload.roomId) !== payload.generation ||
+          sourceGenerationFor(get(RoomSourcesState()), payload.roomId, payload.sourcePeerId) !==
+            payload.sourceGeneration
         ) {
+          payload.settle?.()
           return queueOutput
         }
         if (payload.error) {
+          payload.settle?.()
           return [
             ...queueOutput,
             RecordDropCommand({ sourcePeerId: payload.sourcePeerId, reason: 'invalid-frame', error: payload.error })
@@ -610,11 +965,30 @@ const WireDomain = Remesh.domain({
         }
         const message = parseMessage(payload.roomId, payload.value)
         if (!message) {
+          payload.settle?.()
           return [...queueOutput, RecordDropCommand({ sourcePeerId: payload.sourcePeerId, reason: 'invalid message' })]
+        }
+        // MessageAccepted subscribers synchronously submit the owning Session/World command in
+        // this store turn. Deferring settlement one microtask makes the ingress terminal follow
+        // that owner command instead of the preceding codec/schema completion.
+        queueMicrotask(() => payload.settle?.())
+        const accepted: WireMessageEvent = {
+          roomId: payload.roomId,
+          sourcePeerId: payload.sourcePeerId,
+          sourceGeneration: payload.sourceGeneration,
+          message
         }
         return [
           ...queueOutput,
-          MessageAcceptedEvent({ roomId: payload.roomId, sourcePeerId: payload.sourcePeerId, message })
+          ...(preparedRoute
+            ? [
+                PreparedMessageAcceptedEvent({
+                  ...accepted,
+                  epoch: preparedRoute.epoch,
+                  roomGeneration: payload.generation
+                })
+              ]
+            : [MessageAcceptedEvent(accepted)])
         ]
       }
     })
@@ -627,10 +1001,15 @@ const WireDomain = Remesh.domain({
         const sendQueues = get(SendQueuesState())
         const worldRequests =
           roomId === worldRoomId ? (sendQueues.find((item) => item.roomId === roomId)?.requests ?? []) : []
+        get(DecodeQueuesState())
+          .filter((item) => item.frames.some((frame) => frame.roomId === roomId))
+          .flatMap((item) => item.frames)
+          .forEach((frame) => frame.settle?.())
         return [
           RoomGenerationsState().new(replaceBy(generations, (item) => item.roomId === roomId, { roomId, generation })),
           TrustedRoomsState().new(get(TrustedRoomsState()).filter((item) => item !== roomId)),
           RoomSourcesState().new(get(RoomSourcesState()).filter((item) => item.roomId !== roomId)),
+          SourceIncarnationsState().new(get(SourceIncarnationsState()).filter((item) => item.roomId !== roomId)),
           ...(roomId === worldRoomId
             ? [SendQueuesState().new(sendQueues.filter((item) => item.roomId !== roomId))]
             : [
@@ -650,7 +1029,6 @@ const WireDomain = Remesh.domain({
         ]
       }
     })
-
     domain.effect({
       name: 'Wire.JoinRoomsEffect',
       impl: ({ fromEvent }) =>
@@ -661,6 +1039,20 @@ const WireDomain = Remesh.domain({
               return CompleteJoinRoomsCommand(request)
             } catch (error) {
               return RoomsJoinFailedEvent({ requestId: request.requestId, error: error as Error })
+            }
+          })
+        )
+    })
+    domain.effect({
+      name: 'Wire.PrepareRoomsEffect',
+      impl: ({ fromEvent }) =>
+        fromEvent(PrepareRoomsRequestedEvent).pipe(
+          mergeMap(async (route) => {
+            try {
+              await Promise.all(route.rooms.map(({ roomId }) => transport.join(roomId)))
+              return CompletePreparedRoomsCommand(route)
+            } catch (error) {
+              return RoomsJoinFailedEvent({ requestId: route.requestId, error: error as Error })
             }
           })
         )
@@ -716,9 +1108,12 @@ const WireDomain = Remesh.domain({
     domain.effect({
       name: 'Wire.ProviderMessageEffect',
       impl: () =>
-        fromEventPattern<{ roomId: string; sourcePeerId: string; rawPayload: string }>(
+        fromEventPattern<{ roomId: string; sourcePeerId: string; rawPayload: string; settle: () => void }>(
           (handler) =>
-            transport.onMessage((roomId, sourcePeerId, rawPayload) => handler({ roomId, sourcePeerId, rawPayload })),
+            transport.onMessage(
+              (roomId, sourcePeerId, rawPayload) =>
+                new Promise<void>((resolve) => handler({ roomId, sourcePeerId, rawPayload, settle: resolve }))
+            ),
           (_handler, dispose) => dispose()
         ).pipe(map(AcceptRawFrameCommand))
     })
@@ -784,21 +1179,40 @@ const WireDomain = Remesh.domain({
     })
 
     return {
-      query: { PeerIdQuery, TrustedRoomsQuery, IsRoomTrustedQuery, DecodeQueuesQuery, IsSourceAdmittedQuery },
+      query: {
+        PeerIdQuery,
+        TrustedRoomsQuery,
+        IsRoomTrustedQuery,
+        RoomGenerationQuery,
+        DecodeQueuesQuery,
+        IsSourceAdmittedQuery,
+        SourcesQuery,
+        PreparedRouteQuery,
+        IsPreparedRouteCurrentQuery
+      },
       command: {
         JoinRoomsCommand,
+        PrepareRoomsCommand,
+        BeginEpochReplacementCommand,
+        CommitPreparedRoomsCommand,
+        SilentInstallPreparedRoomsCommand,
+        AbortPreparedRoomsCommand,
+        AbortEpochPreparedRoomsCommand,
         LeaveRoomCommand,
         SendMessageCommand,
         DropProtocolCommand: RecordDropCommand,
         AdmitSourceCommand,
+        RecoverTransportStateCommand,
         RemoveSourceCommand
       },
       event: {
         RoomsJoinedEvent,
+        RoomsPreparedEvent,
         RoomsJoinFailedEvent,
         MessageSentEvent,
         MessageSendFailedEvent,
         MessageAcceptedEvent,
+        PreparedMessageAcceptedEvent,
         PeerJoinedEvent,
         PeerLeftEvent,
         RoomClosedEvent,

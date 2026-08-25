@@ -153,21 +153,26 @@ class DeterministicNetwork {
       return () => listeners.delete(listener)
     }
 
+    const leave = (roomId: string) => {
+      if (!endpoint.rooms.delete(roomId)) return
+      this.recordLifecycle(`physical-leave:${peerId}:${roomId}`)
+      this.endpoints.forEach((other, otherPeerId) => {
+        if (otherPeerId !== peerId && other.rooms.has(roomId)) {
+          this.announcedPairs.delete(this.pairKey(roomId, peerId, otherPeerId))
+          other.leaves.forEach((listener) => listener(roomId, peerId))
+        }
+      })
+    }
+
     return {
       peerIdOf: () => peerId,
       join: async (roomId) => {
         endpoint.rooms.add(roomId)
         this.discover(roomId, peerId)
       },
-      leave: (roomId) => {
-        if (!endpoint.rooms.delete(roomId)) return
-        this.recordLifecycle(`physical-leave:${peerId}:${roomId}`)
-        this.endpoints.forEach((other, otherPeerId) => {
-          if (otherPeerId !== peerId && other.rooms.has(roomId)) {
-            this.announcedPairs.delete(this.pairKey(roomId, peerId, otherPeerId))
-            other.leaves.forEach((listener) => listener(roomId, peerId))
-          }
-        })
+      leave,
+      retireRoomsForPreparation: async (roomIds) => {
+        roomIds.forEach(leave)
       },
       send: async (roomId, payload, to) => {
         const selected = to === undefined ? null : new Set(Array.isArray(to) ? to : [to])
@@ -760,7 +765,8 @@ describe('single live release owner', () => {
       b.crash()
       // Let the reconnect reach its prepared phase (its SESSION publication stays held).
       for (const _flush of Array.from({ length: 20 }, (_, index) => index)) await vi.advanceTimersByTimeAsync(0)
-      // B's valid same-presence SESSION arrives during A's prepared phase.
+      // B reconnects under the same peer id before its valid same-presence SESSION arrives.
+      await network.transport('prepared-rebind-peer-b').join(getChatRoomId(DOMAIN))
       network.redeliverLastSession('prepared-rebind-peer-b', 'prepared-rebind-peer-a')
       await vi.advanceTimersByTimeAsync(0)
       network.releaseSession('prepared-rebind-peer-a', 'prepared-rebind-peer-b')

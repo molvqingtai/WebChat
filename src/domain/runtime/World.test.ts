@@ -35,10 +35,12 @@ const createFixture = (options?: { failNextEncode?: () => boolean }) => {
     decode: async (payload) => JSON.parse(payload)
   }
   let messageListener: ((roomId: string, sourcePeerId: string, rawPayload: string) => void) | null = null
+  let peerJoinListener: ((roomId: string, sourcePeerId: string) => void) | null = null
   const transport: RoomTransport = {
     peerIdOf: () => 'local-peer',
     join: async () => {},
     leave: async () => {},
+    retireRoomsForPreparation: async () => {},
     send: async (roomId, payload, targetPeerIds) => {
       if (roomId !== getWorldRoomId()) return
       const settle = deferred<void>()
@@ -55,7 +57,12 @@ const createFixture = (options?: { failNextEncode?: () => boolean }) => {
         messageListener = null
       }
     },
-    onPeerJoin: () => () => {},
+    onPeerJoin: (callback) => {
+      peerJoinListener = callback
+      return () => {
+        peerJoinListener = null
+      }
+    },
     onPeerLeave: () => () => {},
     onRoomClose: () => () => {},
     onError: () => () => {},
@@ -92,6 +99,30 @@ const createFixture = (options?: { failNextEncode?: () => boolean }) => {
       if (!joinedPeers.includes(sourcePeerId)) joinedPeers.push(sourcePeerId)
       fixture.store.send(fixture.world.command.PeerJoinedCommand({ roomId: getWorldRoomId(), sourcePeerId }))
       messageListener?.(getWorldRoomId(), sourcePeerId, JSON.stringify(presence))
+    },
+    prepareRemotePresence: async (epoch: string, sourcePeerId: string, origin: string) => {
+      let prepared = false
+      fixture.store.subscribeEvent(fixture.wire.event.RoomsPreparedEvent, (event) => {
+        if (event.epoch === epoch) prepared = true
+      })
+      fixture.store.send(
+        fixture.wire.command.PrepareRoomsCommand({
+          epoch,
+          requestId: `prepare:${epoch}`,
+          roomIds: [getWorldRoomId()]
+        })
+      )
+      await vi.waitFor(() => expect(prepared).toBe(true))
+      peerJoinListener?.(getWorldRoomId(), sourcePeerId)
+      messageListener?.(
+        getWorldRoomId(),
+        sourcePeerId,
+        JSON.stringify({
+          sessionId: `session-${sourcePeerId}`,
+          user: { id: `user-${sourcePeerId}`, name: sourcePeerId, avatar: '' },
+          sites: [{ origin }]
+        } satisfies WorldRoomMessage)
+      )
     }
   }
   return fixture
@@ -114,6 +145,24 @@ const settleAll = async () => {
 }
 
 describe('WorldDomain single native-broadcast publication iterator', () => {
+  it('keeps a dual-replacement World frame out of the current projection until the private commit', async () => {
+    const fixture = createFixture()
+    await fixture.prepareRemotePresence('epoch-a', 'remote-peer', 'https://staged.example')
+    await vi.waitFor(() =>
+      expect(fixture.store.query(fixture.world.query.StagedPresencesQuery('epoch-a'))).toEqual([
+        expect.objectContaining({ sourcePeerId: 'remote-peer' })
+      ])
+    )
+    expect(fixture.store.query(fixture.world.query.PresencesQuery())).toEqual([])
+
+    fixture.store.send(fixture.world.command.CommitStagedPresencesCommand({ epoch: 'epoch-a', worldGeneration: 0 }))
+    expect(fixture.store.query(fixture.world.query.PresencesQuery())).toEqual([
+      expect.objectContaining({ sourcePeerId: 'remote-peer' })
+    ])
+    expect(fixture.store.query(fixture.world.query.StagedPresencesQuery('epoch-a'))).toEqual([])
+    fixture.store.discard()
+  })
+
   it('broadcasts the full snapshot natively even with zero active peers and settles with the provider no-op', async () => {
     const fixture = createFixture()
     await fixture.joinWorldRoom()
@@ -227,6 +276,41 @@ describe('WorldDomain single native-broadcast publication iterator', () => {
 
     fixture.attempts[2].settle.resolve()
     await vi.waitFor(() => expect(released).toEqual(['https://b.example']))
+    fixture.store.discard()
+  })
+
+  it('retains an already-started release continuation as World demand through a later epoch cut', async () => {
+    const fixture = createFixture()
+    await fixture.joinWorldRoom()
+    fixture.emitRemotePresence('peer-1', 'https://one.example')
+    await settleAll()
+    const released: string[] = []
+    fixture.store.subscribeEvent(fixture.world.event.DomainReleasedEvent, (runtimeDomain) =>
+      released.push(runtimeDomain)
+    )
+
+    stage(fixture, 'attempt-a', 'https://a.example')
+    await vi.waitFor(() => expect(fixture.attempts).toHaveLength(1))
+    fixture.attempts[0].settle.resolve()
+    await settleAll()
+    fixture.store.send(fixture.world.command.CommitStagedCommand('attempt-a'))
+
+    stage(fixture, 'attempt-b', 'https://b.example')
+    await vi.waitFor(() => expect(fixture.attempts).toHaveLength(2))
+    fixture.attempts[1].settle.resolve()
+    await settleAll()
+    fixture.store.send(fixture.world.command.CommitStagedCommand('attempt-b'))
+
+    fixture.store.send(fixture.world.command.ReleaseDomainCommand('https://b.example'))
+    await vi.waitFor(() => expect(fixture.attempts).toHaveLength(3))
+    fixture.store.send(fixture.world.command.BeginEpochReplacementCommand({ epoch: 'manual-cut' }))
+
+    // Server's release barrier makes this cut unreachable in production, but the low-level cut
+    // still must not erase a foreign release owner or synthesize its terminal. The owner remains
+    // World demand until its own ordinary publication path settles.
+    expect(fixture.store.query(fixture.world.query.WorldDemandQuery())).toBe(true)
+    expect(released).toEqual([])
+    fixture.attempts[2].settle.resolve()
     fixture.store.discard()
   })
 

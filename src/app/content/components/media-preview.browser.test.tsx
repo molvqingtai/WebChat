@@ -343,7 +343,7 @@ describe('MediaPreview production browser boundary', () => {
     await page.elementLocator(trigger).click()
     await vi.waitFor(() => expect(fixture.viewTransitions).toHaveLength(1))
     const openingTransition = fixture.viewTransitions[0]!
-    await openingTransition.ready
+    await openingTransition.updateCallbackDone
 
     const { shadow, shadowHost } = currentUi()
     const dialog = previewDialog()!
@@ -362,6 +362,7 @@ describe('MediaPreview production browser boundary', () => {
     expect(getComputedStyle(image).viewTransitionName).toBe(previewTransitionName)
     const transitionStyle = document.head.querySelector<HTMLStyleElement>('[data-webchat-media-preview-transition]')
     expect(transitionStyle?.textContent).toContain(`${shadowHost.localName}::part(${MEDIA_PREVIEW_TRANSITION_PART})`)
+    await openingTransition.ready
     const documentPseudos = activeViewTransitionPseudos(document)
     const shadowPseudos = activeViewTransitionPseudos(shadow)
     expect(documentPseudos.some((pseudo) => pseudo.includes('view-transition') && pseudo.includes('root'))).toBe(true)

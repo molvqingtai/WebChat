@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { Remesh, type RemeshAction } from 'remesh'
 import {
   createServer,
   disposeServer,
@@ -28,6 +29,8 @@ import { createMemoryMessageDatabase } from '@/domain/impls/database/Memory'
 import type { HistorySupplyRequest, HistorySupplyResult, RuntimeServer, RuntimeSnapshot } from '@/runtime/Contract'
 import { HISTORY_REQUEST_TIMEOUT_MS, RUNTIME_DOMAIN_GRACE_MS, PENDING_LEAVE_GRACE_MS } from '@/constants/config'
 import { createBrowserPresenceStore } from '@/runtime/PresenceStore'
+import { ROOM_RECOVERY_RETRY_INTERVAL_MS } from '@/domain/runtime/Connection'
+import { DocumentClient } from '@/runtime/DocumentClient'
 
 const NOW = 1_800_000_000_000
 const PHYSICAL_ROOM_JOIN_TIMEOUT_MS = 10000
@@ -47,6 +50,37 @@ const SITE = { origin: DOMAIN, title: 'Example', icon: 'https://example.com/favi
 
 type TestWireMessage = ChatRoomMessage | (WorldRoomMessage & { type?: never })
 const isWorldPresence = (message: TestWireMessage): message is WorldRoomMessage & { type?: never } => 'sites' in message
+
+type ObservedDualEpochGate = {
+  epoch: string
+  domain: string
+  attemptId: string
+  chatGeneration: number
+  worldGeneration: number
+}
+
+/** Test-only dispatch observer: it records the real action and delegates it unchanged. */
+const observeDualEpochGateDispatches = () => {
+  const begins: ObservedDualEpochGate[] = []
+  const aborts: ObservedDualEpochGate[] = []
+  const originalStore = Remesh.store
+  const storeSpy = vi.spyOn(Remesh, 'store').mockImplementation((...args) => {
+    const store = originalStore(...args)
+    const send = store.send
+    store.send = (output: RemeshAction) => {
+      if (!output || Array.isArray(output) || output.type !== 'RemeshCommandAction') return send(output)
+      if (output.Command.commandName === 'Connection.BeginDualEpochReplacementCommand') {
+        begins.push(output.arg as ObservedDualEpochGate)
+      }
+      if (output.Command.commandName === 'Connection.AbortDualEpochCommand') {
+        aborts.push(output.arg as ObservedDualEpochGate)
+      }
+      return send(output)
+    }
+    return store
+  })
+  return { begins, aborts, restore: () => storeSpy.mockRestore() }
+}
 
 /** Attaches one current tab lease through trusted browser caller facts (no admission in isolated tests). */
 const attachTab = (server: RuntimeServer, domain: string, tabId: number) =>
@@ -307,6 +341,13 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
   let activeHistorySends = 0
   let maxActiveHistorySends = 0
   let disposeCount = 0
+  let retireGate: Promise<void> | null = null
+  let releaseRetireGate = () => {}
+  let retireFailure: Error | null = null
+  let ingressGate: Promise<void> | null = null
+  let releaseIngressGate = () => {}
+  let ingressFailure: Error | null = null
+  const replacementFailures = new Map<string, Error>()
 
   const createPendingJoin = () => {
     let resolve!: () => void
@@ -334,7 +375,7 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
     )
   }
 
-  const transport: RoomTransport = {
+  const transport: RoomTransport & { takeReplacementFailure: (stage: string) => Error | undefined } = {
     peerIdOf: (roomId) => (roomId === getWorldRoomId() ? 'local-peer' : `local-peer:${roomId}`),
     join: (roomId) => {
       joinCalls.push(roomId)
@@ -368,6 +409,29 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
       failedLeaves.delete(roomId)
       if (options?.diagnosticOnly) console.error(failure)
       else errorListeners.forEach((listener) => listener(failure, roomId))
+    },
+    retireRoomsForPreparation: async (roomIds) => {
+      operationLog.push(`retire:${roomIds.join(',')}`)
+      await retireGate
+      if (retireFailure) {
+        const failure = retireFailure
+        retireFailure = null
+        throw failure
+      }
+      roomIds.forEach((roomId) => transport.leave(roomId))
+    },
+    activateIngress: async () => {
+      await ingressGate
+      if (ingressFailure) {
+        const failure = ingressFailure
+        ingressFailure = null
+        throw failure
+      }
+    },
+    takeReplacementFailure: (stage: string) => {
+      const failure = replacementFailures.get(stage)
+      if (failure) replacementFailures.delete(stage)
+      return failure
     },
     send: async (roomId, payload, to) => {
       // A broadcast records its actual recipients: the room's current members at send time.
@@ -422,6 +486,12 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
     },
     dispose: () => {
       disposeCount += 1
+      releaseRetireGate()
+      retireGate = null
+      releaseRetireGate = () => {}
+      releaseIngressGate()
+      ingressGate = null
+      releaseIngressGate = () => {}
       desired.clear()
       joined.clear()
       pendingJoins.forEach((pending, roomId) => pending.reject(new Error(`Room "${roomId}" join cancelled`)))
@@ -474,6 +544,39 @@ const createFakeTransport = ({ physicalReady = true }: { physicalReady?: boolean
     },
     makeNotReady: () => {
       physicalReady = false
+    },
+    holdRetires: () => {
+      if (retireGate) throw new Error('Retire gate is already held')
+      retireGate = new Promise<void>((resolve) => {
+        releaseRetireGate = resolve
+      })
+      return () => {
+        const release = releaseRetireGate
+        retireGate = null
+        releaseRetireGate = () => {}
+        release()
+      }
+    },
+    failNextRetire: (error: Error) => {
+      retireFailure = error
+    },
+    holdIngressActivation: () => {
+      if (ingressGate) throw new Error('Ingress activation gate is already held')
+      ingressGate = new Promise<void>((resolve) => {
+        releaseIngressGate = resolve
+      })
+      return () => {
+        const release = releaseIngressGate
+        ingressGate = null
+        releaseIngressGate = () => {}
+        release()
+      }
+    },
+    failNextIngressActivation: (error: Error) => {
+      ingressFailure = error
+    },
+    failReplacementAt: (stage: string, error: Error) => {
+      replacementFailures.set(stage, error)
     },
     failNextJoin: (roomId: string) => {
       failedJoins.add(roomId)
@@ -688,6 +791,21 @@ const sessionAllocationEventFixture = () => {
 void sessionAllocationEventFixture
 
 describe('RuntimeServer lifecycle', () => {
+  it('fails closed before a direct replacement cut when the mandatory retirement capability is malformed', async () => {
+    const { fake, server } = await setup()
+    const joinsBeforeReplacement = fake.joinCalls.length
+    const malformed = fake.transport as unknown as { retireRoomsForPreparation?: unknown }
+    malformed.retireRoomsForPreparation = undefined
+
+    await expect(server.reconnectDomain({ domain: DOMAIN, ...callerOf(1) })).rejects.toThrow(
+      'retireRoomsForPreparation is not a function'
+    )
+
+    expect(fake.operationLog.filter((entry) => entry.startsWith('retire:'))).toEqual([])
+    expect(fake.joinCalls).toHaveLength(joinsBeforeReplacement)
+    disposeServer(server)
+  })
+
   it('starts Session and History only for admitted peer edges on a direct join', async () => {
     const fake = createFakeTransport()
     const server = createServer({ transport: fake.transport, clock: new FakeClock(), codec: jsonCodec })
@@ -1022,9 +1140,11 @@ describe('RuntimeServer lifecycle', () => {
       // survives the released reconnect, so the count remains three).
       await server.reconnectDomain({ domain: DOMAIN })
       await settle()
-      remoteUsers.forEach((user, index) =>
-        fake.receive(roomId, `peer-${index + 1}`, { ...session(user), sessionId: `session-${user.id}-fresh` })
-      )
+      remoteUsers.forEach((user, index) => {
+        const peerId = `peer-${index + 1}`
+        fake.peerJoin(roomId, peerId)
+        fake.receive(roomId, peerId, { ...session(user), sessionId: `session-${user.id}-fresh` })
+      })
       await settle()
       expect(await memberCount()).toBe(4)
 
@@ -1315,65 +1435,460 @@ describe('RuntimeServer lifecycle', () => {
     }
   })
 
-  it('joins the in-flight reset owner so a concurrent refresh cannot skip persistence', async () => {
-    const clock = new FakeClock()
-    const fake = createFakeTransport()
-    const values: Record<string, unknown> = {}
-    let holdClearSave = false
-    const clearSaveStarted = deferred<void>()
-    const releaseClearSave = deferred<void>()
-    // A's reset persistence is held; B starts a concurrent refresh while it is pending.
-    holdClearSave = true
-    let clearSaveCount = 0
-    const presenceStore = createBrowserPresenceStore({
-      get: async (key) => ({ [key]: values[key] }),
-      set: async (items) => {
-        const record = Object.values(items)[0] as { local?: { status?: string }; observers?: unknown[] }
-        if (
-          record &&
-          typeof record === 'object' &&
-          record.local?.status === 'active' &&
-          (record.observers ?? []).length === 0
-        ) {
-          clearSaveCount += 1
-        }
-        if (
-          holdClearSave &&
-          record &&
-          typeof record === 'object' &&
-          record.local?.status === 'active' &&
-          (record.observers ?? []).length === 0
-        ) {
-          clearSaveStarted.resolve()
-          await releaseClearSave.promise
-        }
-        Object.assign(values, items)
-      }
+  it('joins an in-flight dual replacement so a concurrent refresh cannot expose a partial owner', async () => {
+    const { fake, server, roomId } = await setup()
+    const worldRoomId = getWorldRoomId()
+    fake.makeNotReady()
+
+    const refreshA = server.reconnectDomain({ domain: DOMAIN, ...callerOf(1) })
+    await vi.waitFor(() =>
+      expect(fake.operationLog.filter((entry) => entry === `retire:${worldRoomId},${roomId}`)).toHaveLength(1)
+    )
+    let refreshBSettled = false
+    const refreshB = server.reconnectDomain({ domain: DOMAIN, ...callerOf(1) }).then(() => {
+      refreshBSettled = true
     })
-    const server = createServer({ transport: fake.transport, clock, codec: jsonCodec, presenceStore })
-    await server.attachPage({ domain: DOMAIN, caller: { tab: { id: 1, url: '' } } })
-    await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
-    await settle()
-    const resetShapedSavesBefore = clearSaveCount
+    let readSettled = false
+    const read = server.getSnapshot(callerOf(1)).then((snapshot) => {
+      readSettled = true
+      return snapshot
+    })
 
-    // A's reset persistence is held; B starts a concurrent refresh while it is pending.
-    holdClearSave = true
-    const refreshA = server.reconnectDomain({ domain: DOMAIN })
-    await clearSaveStarted.promise
-    const refreshB = server.reconnectDomain({ domain: DOMAIN })
     await settle()
-    // B joined A's pending reset: no replacement may commit while the clear save is unsettled.
-    expect((await readServerSnapshot(server)).domains[0].chatRoomJoined).toBe(false)
+    expect(refreshBSettled).toBe(false)
+    expect(readSettled).toBe(false)
+    expect(fake.operationLog.filter((entry) => entry === `retire:${worldRoomId},${roomId}`)).toHaveLength(1)
 
-    releaseClearSave.resolve()
+    fake.open()
     await Promise.all([refreshA, refreshB])
-    await settle()
-    // One shared destruction + persistence + replacement served both refreshes; B joined A's
-    // whole operation (no second destructive reset, so exactly one reset-shaped save beyond the
-    // baseline: A's reset save plus the replacement commit save), and the domain converged once.
-    expect(clearSaveCount - resetShapedSavesBefore).toBe(2)
-    expect((await readServerSnapshot(server)).domains[0].chatRoomJoined).toBe(true)
+    const snapshot = await read
+    expect(snapshot.domains.find((item) => item.domain === DOMAIN)?.chatRoomJoined).toBe(true)
+    expect(snapshot.world.joined).toBe(true)
+    expect(fake.operationLog.filter((entry) => entry === `retire:${worldRoomId},${roomId}`)).toHaveLength(1)
     disposeServer(server)
+  })
+
+  it("does not let an older pending replacement block the newer World epoch's stable read", async () => {
+    const fake = createFakeTransport()
+    const roomId = getChatRoomId(DOMAIN)
+    const blockedRetireStarted = deferred<void>()
+    const releaseBlockedRetire = deferred<void>()
+    let blockFirstDomainRetire = false
+    const transport: RoomTransport = {
+      ...fake.transport,
+      retireRoomsForPreparation: async (roomIds) => {
+        if (blockFirstDomainRetire && roomIds.includes(roomId)) {
+          blockedRetireStarted.resolve()
+          await releaseBlockedRetire.promise
+        }
+        await fake.transport.retireRoomsForPreparation(roomIds)
+      }
+    }
+    const server = createServer({ transport, codec: jsonCodec })
+    await attachTab(server, DOMAIN, 1)
+    await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE, ...callerOf(1) })
+    await attachTab(server, OTHER_DOMAIN, 2)
+    await server.joinChatRoom({
+      domain: OTHER_DOMAIN,
+      user: USER,
+      site: { ...SITE, origin: OTHER_DOMAIN },
+      ...callerOf(2, OTHER_DOMAIN)
+    })
+
+    blockFirstDomainRetire = true
+    const olderRefresh = server.reconnectDomain({ domain: DOMAIN, ...callerOf(1) })
+    await blockedRetireStarted.promise
+    let olderReadSettled = false
+    let olderReadError: unknown
+    const olderRead = server.getSnapshot(callerOf(1)).then(
+      () => {
+        olderReadSettled = true
+      },
+      (error: unknown) => {
+        olderReadSettled = true
+        olderReadError = error
+      }
+    )
+    await settle()
+    expect(olderReadSettled).toBe(false)
+
+    try {
+      // B owns the newer shared World epoch while A remains before its first physical retire.
+      await expect(
+        server.reconnectDomain({ domain: OTHER_DOMAIN, ...callerOf(2, OTHER_DOMAIN) })
+      ).resolves.toBeUndefined()
+
+      let newerReadSettled = false
+      let newerReadError: unknown
+      const newerRead = server.getSnapshot(callerOf(2, OTHER_DOMAIN)).then(
+        (snapshot) => {
+          newerReadSettled = true
+          return snapshot
+        },
+        (error: unknown) => {
+          newerReadSettled = true
+          newerReadError = error
+          return undefined
+        }
+      )
+      for (let index = 0; index < 8; index += 1) await Promise.resolve()
+      const newerReadSettledBeforeOlderRelease = newerReadSettled
+      const newerReadErrorBeforeOlderRelease = newerReadError
+
+      blockFirstDomainRetire = false
+      releaseBlockedRetire.resolve()
+      await expect(olderRefresh).rejects.toMatchObject({ name: 'AbortError' })
+      await olderRead
+      expect(olderReadError).toMatchObject({ name: 'AbortError' })
+      const snapshot = await newerRead
+
+      expect(newerReadSettledBeforeOlderRelease).toBe(true)
+      expect(newerReadErrorBeforeOlderRelease).toBeUndefined()
+      expect(newerReadError).toBeUndefined()
+      expect(snapshot).toBeDefined()
+      expect(domainSnapshot(snapshot!, OTHER_DOMAIN)).toMatchObject({ chatRoomJoined: true })
+      expect(snapshot!.world.joined).toBe(true)
+
+      // Only A's next explicit click clears its own cancelled fence. B remains a current owner.
+      await expect(server.reconnectDomain({ domain: DOMAIN, ...callerOf(1) })).resolves.toBeUndefined()
+      expect(domainSnapshot(await server.getSnapshot(callerOf(1)))).toMatchObject({ chatRoomJoined: true })
+      expect(domainSnapshot(await server.getSnapshot(callerOf(2, OTHER_DOMAIN)), OTHER_DOMAIN)).toMatchObject({
+        chatRoomJoined: true
+      })
+    } finally {
+      blockFirstDomainRetire = false
+      releaseBlockedRetire.resolve()
+      await olderRefresh.catch(() => undefined)
+      await olderRead
+      disposeServer(server)
+    }
+  })
+
+  it('keeps a late World terminal distinct from an unrelated ROOM success', async () => {
+    const fake = createFakeTransport()
+    const server = createServer({ transport: fake.transport, codec: jsonCodec })
+    await attachTab(server, DOMAIN, 1)
+    await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE, ...callerOf(1) })
+    await attachTab(server, OTHER_DOMAIN, 2)
+    await server.joinChatRoom({
+      domain: OTHER_DOMAIN,
+      user: USER,
+      site: { ...SITE, origin: OTHER_DOMAIN },
+      ...callerOf(2, OTHER_DOMAIN)
+    })
+
+    const releaseIngress = fake.holdIngressActivation()
+    const joinsBeforeOlderWorld = fake.joinCalls.length
+    const olderWorld = server.reconnectDomain({ domain: DOMAIN, ...callerOf(1) })
+    await fake.waitForJoinCalls(joinsBeforeOlderWorld + 2)
+
+    // B has no relationship to A's manual epoch. Its ROOM ownership must not be turned into
+    // either a stale success for A or A's later World terminal.
+    let newerRoomSettled = false
+    const newerRoom = server
+      .joinChatRoom({
+        domain: OTHER_DOMAIN,
+        user: USER,
+        site: { ...SITE, origin: OTHER_DOMAIN },
+        ...callerOf(2, OTHER_DOMAIN)
+      })
+      .then((snapshot) => {
+        newerRoomSettled = true
+        return snapshot
+      })
+    await settle()
+    expect(newerRoomSettled).toBe(true)
+
+    const originalWorldError = new Error('older World activation failed')
+    fake.failNextIngressActivation(originalWorldError)
+    releaseIngress()
+
+    await expect(olderWorld).rejects.toBe(originalWorldError)
+    const newerSnapshot = await newerRoom
+    expect(newerSnapshot?.domains.find((item) => item.domain === OTHER_DOMAIN)).toMatchObject({ chatRoomJoined: true })
+    expect((await readServerSnapshot(server)).domains.find((item) => item.domain === OTHER_DOMAIN)).toMatchObject({
+      chatRoomJoined: true
+    })
+    disposeServer(server)
+  })
+
+  it('returns the original World error after ROOM preparation succeeds', async () => {
+    const fake = createFakeTransport()
+    const server = createServer({ transport: fake.transport, codec: jsonCodec })
+    const roomId = getChatRoomId(DOMAIN)
+    const worldRoomId = getWorldRoomId()
+    await attachTab(server, DOMAIN, 1)
+    await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE, ...callerOf(1) })
+    const roomPhysicalJoins = fake.physicalJoinCalls.filter((id) => id === roomId).length
+
+    const releaseIngress = fake.holdIngressActivation()
+    const joinsBeforeRefresh = fake.joinCalls.length
+    const refresh = server.reconnectDomain({ domain: DOMAIN, ...callerOf(1) })
+    await fake.waitForJoinCalls(joinsBeforeRefresh + 2)
+    const originalWorldError = new Error('World precommit failed after ROOM success')
+    fake.failReplacementAt('world-precommit', originalWorldError)
+    releaseIngress()
+
+    await expect(refresh).rejects.toBe(originalWorldError)
+    expect(fake.operationLog.filter((entry) => entry.startsWith('retire:'))).toEqual([
+      `retire:${worldRoomId},${roomId}`,
+      `retire:${worldRoomId},${roomId}`
+    ])
+    expect(fake.physicalJoinCalls.filter((id) => id === roomId)).toHaveLength(roomPhysicalJoins + 1)
+    await expect(server.getSnapshot(callerOf(1))).rejects.toBe(originalWorldError)
+    disposeServer(server)
+  })
+
+  it('keeps mixed domain replacement failures fenced to their own next explicit click', async () => {
+    const fake = createFakeTransport()
+    const roomId = getChatRoomId(DOMAIN)
+    const blockedRetireStarted = deferred<void>()
+    const releaseBlockedRetire = deferred<void>()
+    let blockDomainRetire = false
+    const transport: RoomTransport = {
+      ...fake.transport,
+      retireRoomsForPreparation: async (roomIds) => {
+        if (blockDomainRetire && roomIds.includes(roomId)) {
+          blockedRetireStarted.resolve()
+          await releaseBlockedRetire.promise
+        }
+        await fake.transport.retireRoomsForPreparation(roomIds)
+      }
+    }
+    const server = createServer({ transport, codec: jsonCodec })
+    await attachTab(server, DOMAIN, 1)
+    await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE, ...callerOf(1) })
+    await attachTab(server, OTHER_DOMAIN, 2)
+    await server.joinChatRoom({
+      domain: OTHER_DOMAIN,
+      user: USER,
+      site: { ...SITE, origin: OTHER_DOMAIN },
+      ...callerOf(2, OTHER_DOMAIN)
+    })
+
+    blockDomainRetire = true
+    const olderDomain = server.reconnectDomain({ domain: DOMAIN, ...callerOf(1) })
+    await blockedRetireStarted.promise
+
+    const otherWorldError = new Error('OTHER_DOMAIN World precommit failed')
+    fake.failReplacementAt('world-precommit', otherWorldError)
+    try {
+      await expect(server.reconnectDomain({ domain: OTHER_DOMAIN, ...callerOf(2, OTHER_DOMAIN) })).rejects.toBe(
+        otherWorldError
+      )
+
+      blockDomainRetire = false
+      releaseBlockedRetire.resolve()
+      await expect(olderDomain).rejects.toMatchObject({ name: 'AbortError' })
+      await expect(server.getSnapshot(callerOf(1))).rejects.toMatchObject({ name: 'AbortError' })
+      await expect(server.getSnapshot(callerOf(2, OTHER_DOMAIN))).rejects.toBe(otherWorldError)
+
+      // B's retry clears only B's own fence; A's stale epoch remains rejected until A clicks again.
+      await expect(
+        server.reconnectDomain({ domain: OTHER_DOMAIN, ...callerOf(2, OTHER_DOMAIN) })
+      ).resolves.toBeUndefined()
+      await expect(server.getSnapshot(callerOf(2, OTHER_DOMAIN))).resolves.toMatchObject({ world: { joined: true } })
+      await expect(server.getSnapshot(callerOf(1))).rejects.toMatchObject({ name: 'AbortError' })
+    } finally {
+      blockDomainRetire = false
+      releaseBlockedRetire.resolve()
+      await olderDomain.catch(() => undefined)
+      disposeServer(server)
+    }
+  })
+
+  it('lets another active domain recover the full shared World intent after a post-cut failure', async () => {
+    const fake = createFakeTransport()
+    const server = createServer({ transport: fake.transport, codec: jsonCodec })
+    try {
+      await attachTab(server, DOMAIN, 1)
+      await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE, ...callerOf(1) })
+      await attachTab(server, OTHER_DOMAIN, 2)
+      await server.joinChatRoom({
+        domain: OTHER_DOMAIN,
+        user: USER,
+        site: { ...SITE, origin: OTHER_DOMAIN },
+        ...callerOf(2, OTHER_DOMAIN)
+      })
+      const failure = new Error('A World precommit failed after the shared cut')
+      fake.failReplacementAt('world-precommit', failure)
+
+      await expect(server.reconnectDomain({ domain: DOMAIN, ...callerOf(1) })).rejects.toBe(failure)
+      await expect(server.getSnapshot(callerOf(1))).rejects.toBe(failure)
+
+      await expect(
+        server.reconnectDomain({ domain: OTHER_DOMAIN, ...callerOf(2, OTHER_DOMAIN) })
+      ).resolves.toBeUndefined()
+      const snapshot = await server.getSnapshot(callerOf(2, OTHER_DOMAIN))
+      expect(snapshot.world.joined).toBe(true)
+      expect(snapshot.world.localPresence?.sites.map((site) => site.origin)).toEqual(
+        expect.arrayContaining([DOMAIN, OTHER_DOMAIN])
+      )
+    } finally {
+      disposeServer(server)
+    }
+  })
+
+  it('preserves a failed participant retry seed through another domain shared World recovery', async () => {
+    const fake = createFakeTransport()
+    const server = createServer({ transport: fake.transport, codec: jsonCodec })
+    const roomId = getChatRoomId(DOMAIN)
+    const worldRoomId = getWorldRoomId()
+    try {
+      await attachTab(server, DOMAIN, 1)
+      await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE, ...callerOf(1) })
+      await attachTab(server, OTHER_DOMAIN, 2)
+      await server.joinChatRoom({
+        domain: OTHER_DOMAIN,
+        user: USER,
+        site: { ...SITE, origin: OTHER_DOMAIN },
+        ...callerOf(2, OTHER_DOMAIN)
+      })
+      fake.peerJoin(roomId, 'remote-room-peer')
+      fake.receive(roomId, 'remote-room-peer', session())
+      emitRemoteWorldPresence(fake, 'remote-world-peer')
+      await settle()
+      expect(domainSnapshot(await readServerSnapshot(server))?.sessions).toHaveLength(1)
+      expect((await readServerSnapshot(server)).world.presences).toHaveLength(1)
+
+      const failure = new Error('A World precommit failed after the shared cut')
+      fake.failReplacementAt('world-precommit', failure)
+      await expect(server.reconnectDomain({ domain: DOMAIN, ...callerOf(1) })).rejects.toBe(failure)
+
+      await expect(
+        server.reconnectDomain({ domain: OTHER_DOMAIN, ...callerOf(2, OTHER_DOMAIN) })
+      ).resolves.toBeUndefined()
+      const afterOtherRecovery = await readServerSnapshot(server)
+      expect(domainSnapshot(afterOtherRecovery)).toMatchObject({
+        chatRoomJoined: false,
+        localSession: undefined,
+        sessions: []
+      })
+      expect(domainSnapshot(afterOtherRecovery, OTHER_DOMAIN)).toMatchObject({ chatRoomJoined: true })
+      expect(afterOtherRecovery.world.localPresence?.sites.map((site) => site.origin)).toEqual([DOMAIN, OTHER_DOMAIN])
+      expect(afterOtherRecovery.world.presences).toEqual([])
+
+      const retiresBeforeWrongDocument = fake.operationLog.filter(
+        (entry) => entry === `retire:${worldRoomId},${roomId}`
+      ).length
+      await expect(
+        server.reconnectDomain({
+          domain: DOMAIN,
+          caller: { tab: { id: 1, url: `${DOMAIN}/other-document` } }
+        })
+      ).rejects.toThrow('Dual replacement retry seed does not match this caller binding')
+      expect(fake.operationLog.filter((entry) => entry === `retire:${worldRoomId},${roomId}`)).toHaveLength(
+        retiresBeforeWrongDocument
+      )
+
+      await expect(server.reconnectDomain({ domain: DOMAIN, ...callerOf(1) })).resolves.toBeUndefined()
+      const retried = await readServerSnapshot(server)
+      expect(domainSnapshot(retried)).toMatchObject({
+        chatRoomJoined: true,
+        localSession: expect.any(Object),
+        sessions: []
+      })
+      expect(retried.world.localPresence?.sites.map((site) => site.origin)).toEqual([DOMAIN, OTHER_DOMAIN])
+      expect(retried.world.presences).toEqual([])
+    } finally {
+      disposeServer(server)
+    }
+  })
+
+  it('consumes a participant seed only after its same-document retry through shared World recovery', async () => {
+    const fake = createFakeTransport()
+    const server = createServer({ transport: fake.transport, codec: jsonCodec })
+    const roomId = getChatRoomId(DOMAIN)
+    const worldRoomId = getWorldRoomId()
+    try {
+      await attachTab(server, DOMAIN, 1)
+      await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE, ...callerOf(1) })
+      await attachTab(server, OTHER_DOMAIN, 2)
+      await server.joinChatRoom({
+        domain: OTHER_DOMAIN,
+        user: USER,
+        site: { ...SITE, origin: OTHER_DOMAIN },
+        ...callerOf(2, OTHER_DOMAIN)
+      })
+      fake.peerJoin(roomId, 'remote-room-peer')
+      fake.receive(roomId, 'remote-room-peer', session())
+      emitRemoteWorldPresence(fake, 'remote-world-peer')
+      await settle()
+
+      const failure = new Error('A World precommit failed after the shared cut')
+      fake.failReplacementAt('world-precommit', failure)
+      await expect(server.reconnectDomain({ domain: DOMAIN, ...callerOf(1) })).rejects.toBe(failure)
+
+      await expect(
+        server.reconnectDomain({ domain: OTHER_DOMAIN, ...callerOf(2, OTHER_DOMAIN) })
+      ).resolves.toBeUndefined()
+      const afterOtherRecovery = await readServerSnapshot(server)
+      expect(domainSnapshot(afterOtherRecovery)).toMatchObject({
+        chatRoomJoined: false,
+        localSession: undefined,
+        sessions: []
+      })
+      expect(domainSnapshot(afterOtherRecovery, OTHER_DOMAIN)).toMatchObject({ chatRoomJoined: true, sessions: [] })
+      expect(afterOtherRecovery.world.localPresence?.sites.map((site) => site.origin)).toEqual([DOMAIN, OTHER_DOMAIN])
+      expect(afterOtherRecovery.world.presences).toEqual([])
+
+      const retiresBeforeWrongDocument = fake.operationLog.filter(
+        (entry) => entry === `retire:${worldRoomId},${roomId}`
+      ).length
+      await expect(
+        server.reconnectDomain({
+          domain: DOMAIN,
+          caller: { tab: { id: 1, url: `${DOMAIN}/other-document` } }
+        })
+      ).rejects.toThrow('Dual replacement retry seed does not match this caller binding')
+      expect(fake.operationLog.filter((entry) => entry === `retire:${worldRoomId},${roomId}`)).toHaveLength(
+        retiresBeforeWrongDocument
+      )
+
+      await expect(server.reconnectDomain({ domain: DOMAIN, ...callerOf(1) })).resolves.toBeUndefined()
+      const afterSameDocumentRetry = await readServerSnapshot(server)
+      expect(domainSnapshot(afterSameDocumentRetry)).toMatchObject({
+        chatRoomJoined: true,
+        localSession: expect.any(Object),
+        sessions: []
+      })
+      expect(domainSnapshot(afterSameDocumentRetry, OTHER_DOMAIN)).toMatchObject({ chatRoomJoined: true, sessions: [] })
+      expect(afterSameDocumentRetry.world.localPresence?.sites.map((site) => site.origin)).toEqual([
+        DOMAIN,
+        OTHER_DOMAIN
+      ])
+      expect(afterSameDocumentRetry.world.presences).toEqual([])
+
+      const retiresBeforeFreshDocument = fake.operationLog.filter(
+        (entry) => entry === `retire:${worldRoomId},${roomId}`
+      ).length
+      await expect(
+        server.reconnectDomain({
+          domain: DOMAIN,
+          caller: { tab: { id: 1, url: `${DOMAIN}/fresh-after-retry` } }
+        })
+      ).resolves.toBeUndefined()
+      expect(fake.operationLog.filter((entry) => entry === `retire:${worldRoomId},${roomId}`)).toHaveLength(
+        retiresBeforeFreshDocument + 1
+      )
+      const afterFreshDocumentRetry = await readServerSnapshot(server)
+      expect(domainSnapshot(afterFreshDocumentRetry)).toMatchObject({
+        chatRoomJoined: true,
+        localSession: expect.any(Object),
+        sessions: []
+      })
+      expect(domainSnapshot(afterFreshDocumentRetry, OTHER_DOMAIN)).toMatchObject({
+        chatRoomJoined: true,
+        sessions: []
+      })
+      expect(afterFreshDocumentRetry.world.localPresence?.sites.map((site) => site.origin)).toEqual([
+        DOMAIN,
+        OTHER_DOMAIN
+      ])
+      expect(afterFreshDocumentRetry.world.presences).toEqual([])
+    } finally {
+      disposeServer(server)
+    }
   })
 
   it('joins an in-flight replacement attempt instead of running a second destructive reset', async () => {
@@ -1413,7 +1928,7 @@ describe('RuntimeServer lifecycle', () => {
     disposeServer(server)
   })
 
-  it('fails the refresh request retryably when the reset persistence rejects', async () => {
+  it('does not use reset persistence while an AppButton performs the dual replacement', async () => {
     const clock = new FakeClock()
     const fake = createFakeTransport()
     const values: Record<string, unknown> = {}
@@ -1443,19 +1958,13 @@ describe('RuntimeServer lifecycle', () => {
     await settle()
     expect((await readServerSnapshot(server)).domains[0].chatRoomJoined).toBe(true)
 
-    // The cleared-observer persistence rejects: the refresh must fail without committing a
-    // replacement, and a later retry must recover through the canonical join.
+    // A manual replacement retains only its local ROOM/World intent and must not route through
+    // the legacy destructive reset persistence path.
     rejectClearSave = true
-    await expect(server.reconnectDomain({ domain: DOMAIN })).rejects.toThrow(
-      'Domain connection reset persistence failed'
-    )
-    await settle()
-    expect((await readServerSnapshot(server)).domains[0].chatRoomJoined).toBe(false)
-
-    rejectClearSave = false
-    await server.reconnectDomain({ domain: DOMAIN })
+    await expect(server.reconnectDomain({ domain: DOMAIN })).resolves.toBeUndefined()
     await settle()
     expect((await readServerSnapshot(server)).domains[0].chatRoomJoined).toBe(true)
+    expect((await readServerSnapshot(server)).world.joined).toBe(true)
     disposeServer(server)
   })
 
@@ -1567,54 +2076,36 @@ describe('RuntimeServer lifecycle', () => {
     disposeServer(server)
   })
 
-  it('keeps the Domain refresh result independent of World success and failure', async () => {
+  it('requires both AppButton replacements to reach a terminal success', async () => {
     const clock = new FakeClock()
     const fake = createFakeTransport()
-    const values: Record<string, unknown> = {}
-    let rejectClearSave = false
-    const presenceStore = createBrowserPresenceStore({
-      get: async (key) => ({ [key]: values[key] }),
-      set: async (items) => {
-        const record = Object.values(items)[0] as { local?: { status?: string }; observers?: unknown[] }
-        if (
-          rejectClearSave &&
-          record &&
-          typeof record === 'object' &&
-          record.local?.status === 'active' &&
-          (record.observers ?? []).length === 0
-        ) {
-          throw new Error('clear save rejected')
-        }
-        Object.assign(values, items)
-      }
-    })
-    const server = createServer({ transport: fake.transport, clock, codec: jsonCodec, presenceStore })
+    const server = createServer({ transport: fake.transport, clock, codec: jsonCodec })
     const worldRoomId = getWorldRoomId()
     await server.attachPage({ domain: DOMAIN, caller: { tab: { id: 1, url: '' } } })
     await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
     await settle()
     expect((await readServerSnapshot(server)).world.joined).toBe(true)
 
-    // World failure never changes the Domain result: the World child's own recovery join rejects
-    // once while the Domain refresh still completes, and the World still converges to a fresh
-    // physical generation through the replacement's canonical re-join — with exactly one leave.
+    // A World child failure makes this AppButton invocation fail closed. Neither old owner may
+    // remain readable, and no automatic retry can publish a partial replacement.
     fake.failNextJoin(worldRoomId)
-    await server.reconnectDomain({ domain: DOMAIN })
+    await expect(server.reconnectDomain({ domain: DOMAIN })).rejects.toThrow(`Room "${worldRoomId}" join failed`)
     await settle()
-    expect((await readServerSnapshot(server)).domains[0].chatRoomJoined).toBe(true)
-    expect((await readServerSnapshot(server)).world.joined).toBe(true)
-    expect(fake.physicalJoinCalls.filter((roomId) => roomId === worldRoomId)).toHaveLength(2)
-
-    // A Domain terminal does not cancel the World operation: the reset persistence rejects the
-    // Domain child while the World replacement still completes AND COMMITS its fresh generation —
-    // preserved World demand, not transient Domain presence, settles the recovery.
-    rejectClearSave = true
-    await expect(server.reconnectDomain({ domain: DOMAIN })).rejects.toThrow(
-      'Domain connection reset persistence failed'
+    await expect(server.getSnapshot({ caller: { tab: { id: 1, url: '' } } })).rejects.toThrow(
+      `Room "${worldRoomId}" join failed`
     )
+    const joinsAfterFailure = fake.physicalJoinCalls.filter((roomId) => roomId === worldRoomId).length
+    clock.advance(ROOM_RECOVERY_RETRY_INTERVAL_MS)
     await settle()
+    expect(fake.physicalJoinCalls.filter((roomId) => roomId === worldRoomId)).toHaveLength(joinsAfterFailure)
     expect((await readServerSnapshot(server)).domains[0].chatRoomJoined).toBe(false)
-    expect(fake.physicalJoinCalls.filter((roomId) => roomId === worldRoomId)).toHaveLength(3)
+    expect((await readServerSnapshot(server)).world.joined).toBe(false)
+
+    // Only a fresh explicit click can consume the local-only retry seed and publish both owners.
+    await expect(server.reconnectDomain({ domain: DOMAIN })).resolves.toBeUndefined()
+    await settle()
+    expect(fake.physicalJoinCalls.filter((roomId) => roomId === worldRoomId)).toHaveLength(joinsAfterFailure + 1)
+    expect((await readServerSnapshot(server)).domains[0].chatRoomJoined).toBe(true)
     expect((await readServerSnapshot(server)).world.joined).toBe(true)
     disposeServer(server)
   })
@@ -1653,7 +2144,7 @@ describe('RuntimeServer lifecycle', () => {
     disposeServer(server)
   })
 
-  it('keeps manual World failure out of the page error stream', async () => {
+  it('fails the AppButton operation closed when its World replacement cannot complete', async () => {
     const clock = new FakeClock()
     const fake = createFakeTransport()
     const server = createServer({ transport: fake.transport, clock, codec: jsonCodec })
@@ -1663,15 +2154,25 @@ describe('RuntimeServer lifecycle', () => {
     await settle()
     const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
 
-    // The World child's own recovery join rejects once: the Domain refresh still completes, no
-    // World failure reaches the page error stream that feeds UI/Toast, and the manual failure is
-    // retained as a direct console diagnostic (UI-silent, never evidence-silent).
+    // A genuine World replacement failure does not publish a partial ROOM-success result. It
+    // remains UI-silent and diagnostic-visible, while the AppButton operation rejects rather
+    // than letting DocumentClient pull a half-replaced projection.
     fake.failNextJoin(worldRoomId)
-    await server.reconnectDomain({ domain: DOMAIN })
+    await expect(server.reconnectDomain({ domain: DOMAIN })).rejects.toThrow(`Room "${worldRoomId}" join failed`)
     await settle()
-    expect((await readServerSnapshot(server)).domains[0].chatRoomJoined).toBe(true)
-    expect((await readServerSnapshot(server)).failures).toEqual([])
-    expect(diagnostic).toHaveBeenCalledWith(expect.objectContaining({ message: `Room "${worldRoomId}" join failed` }))
+    await expect(server.getSnapshot({ caller: { tab: { id: 1, url: '' } } })).rejects.toThrow(
+      `Room "${worldRoomId}" join failed`
+    )
+    expect((await readServerSnapshot(server)).domains[0].chatRoomJoined).toBe(false)
+    expect((await readServerSnapshot(server)).world.joined).toBe(false)
+    expect(diagnostic).not.toHaveBeenCalled()
+
+    // A subsequent explicit AppButton replacement owns fresh ROOM and World terminals; only its
+    // success clears the old failure fence and makes stable current-state reads available again.
+    await expect(server.reconnectDomain({ domain: DOMAIN })).resolves.toBeUndefined()
+    await expect(server.getSnapshot({ caller: { tab: { id: 1, url: '' } } })).resolves.toMatchObject({
+      world: { joined: true }
+    })
     diagnostic.mockRestore()
     disposeServer(server)
   })
@@ -1693,14 +2194,15 @@ describe('RuntimeServer lifecycle', () => {
 
     expect((await readServerSnapshot(server)).domains[0]).toMatchObject({ chatRoomJoined: true })
     expect((await readServerSnapshot(server)).world.joined).toBe(true)
-    expect((await readServerSnapshot(server)).failures).toEqual([])
-    expect(diagnostic).toHaveBeenCalledOnce()
-    expect(diagnostic).toHaveBeenCalledWith(failure)
+    expect((await readServerSnapshot(server)).failures).toEqual(
+      expect.arrayContaining([expect.objectContaining({ message: failure.message })])
+    )
+    expect(diagnostic).not.toHaveBeenCalled()
     diagnostic.mockRestore()
     disposeServer(server)
   })
 
-  it('does not invalidate another Domain provisional join across a manual World replacement', async () => {
+  it('supersedes another Domain provisional join before the manual dual replacement commits', async () => {
     const clock = new FakeClock()
     const fake = createFakeTransport()
     const server = createServer({ transport: fake.transport, clock, codec: jsonCodec })
@@ -1714,24 +2216,37 @@ describe('RuntimeServer lifecycle', () => {
     // generation captured in its join fence.
     await server.attachPage({ domain: OTHER_DOMAIN, caller: { tab: { id: 2, url: '' } } })
     fake.makeNotReady()
-    const otherJoin = server.joinChatRoom({ domain: OTHER_DOMAIN, user: USER, site: { origin: OTHER_DOMAIN } })
+    const otherJoin = server.joinChatRoom({ domain: OTHER_DOMAIN, user: USER, site: { origin: OTHER_DOMAIN } }).then(
+      () => ({ kind: 'joined' as const }),
+      (error: Error) => ({ kind: 'failed' as const, error })
+    )
     await vi.waitFor(() => expect(fake.joinCalls).toContain(getChatRoomId(OTHER_DOMAIN)))
 
-    // With an in-flight attempt, the manual World replacement defers instead of superseding the
-    // unrelated provisional join: no World generation change happens yet.
-    const refresh = server.reconnectDomain({ domain: DOMAIN })
+    // The dual cut wins the shared physical World generation. The old provisional owner must
+    // fail rather than continue toward a mixed publish; a fresh normal join may run afterward.
+    const refresh = server.reconnectDomain({ domain: DOMAIN }).then(
+      () => ({ kind: 'committed' as const }),
+      (error: Error) => ({ kind: 'failed' as const, error })
+    )
     await settle()
-    expect(fake.operationLog.filter((entry) => entry === `leave:${worldRoomId}`)).toHaveLength(0)
+    expect(fake.operationLog.filter((entry) => entry === `leave:${worldRoomId}`)).toHaveLength(1)
 
-    // Every attempt settles unharmed; the deferred World replacement then runs to a fresh
-    // generation while both Domains stay joined.
     fake.open()
-    await Promise.all([refresh, otherJoin])
+    const [refreshResult, otherResult] = await Promise.all([refresh, otherJoin])
     await settle()
+    expect(refreshResult).toEqual({ kind: 'committed' })
+    expect(otherResult).toMatchObject({ kind: 'failed', error: expect.any(Error) })
     const after = await readServerSnapshot(server)
-    expect(after.domains.some((item) => item.domain === OTHER_DOMAIN && item.chatRoomJoined)).toBe(true)
+    expect(after.domains.some((item) => item.domain === OTHER_DOMAIN && item.chatRoomJoined)).toBe(false)
     expect(fake.operationLog).toContain(`leave:${worldRoomId}`)
     expect(after.world.joined).toBe(true)
+
+    const retriedOther = await server.joinChatRoom({
+      domain: OTHER_DOMAIN,
+      user: USER,
+      site: { origin: OTHER_DOMAIN }
+    })
+    expect(retriedOther?.domains.some((item) => item.domain === OTHER_DOMAIN && item.chatRoomJoined)).toBe(true)
     disposeServer(server)
   })
 
@@ -1762,10 +2277,33 @@ describe('RuntimeServer lifecycle', () => {
     disposeServer(server)
   })
 
-  it('settles another Domain release through the fresh generation across a manual World replacement', async () => {
+  it('waits for another Domain release once before recapturing the manual World replacement', async () => {
     const clock = new FakeClock()
     const fake = createFakeTransport()
-    const server = createServer({ transport: fake.transport, clock, codec: jsonCodec })
+    const values: Record<string, unknown> = {}
+    let holdOtherCleanup = false
+    const otherCleanupStarted = deferred<void>()
+    const releaseOtherCleanup = deferred<void>()
+    const presenceStore = createBrowserPresenceStore({
+      get: async (key) => ({ [key]: values[key] }),
+      set: async (items) => {
+        const record = Object.values(items)[0] as
+          | { domain?: string; local?: unknown; observers?: unknown[] }
+          | undefined
+        if (
+          holdOtherCleanup &&
+          record?.domain === OTHER_DOMAIN &&
+          !record.local &&
+          Array.isArray(record.observers) &&
+          record.observers.length === 0
+        ) {
+          otherCleanupStarted.resolve()
+          await releaseOtherCleanup.promise
+        }
+        Object.assign(values, items)
+      }
+    })
+    const server = createServer({ transport: fake.transport, clock, codec: jsonCodec, presenceStore })
     const worldRoomId = getWorldRoomId()
     await server.attachPage({ domain: DOMAIN, caller: { tab: { id: 1, url: '' } } })
     await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
@@ -1776,31 +2314,370 @@ describe('RuntimeServer lifecycle', () => {
     emitRemoteWorldPresence(fake)
     await settle()
 
-    // Domain B's release starts; its World removal publication (the live release continuation that
-    // owns B's remaining release settlement) is invoked and held at the wire.
-    fake.hangSendsTo(worldRoomId)
+    // B starts its ordinary explicit release first and remains held in its existing cleanup
+    // owner. A must publish neither a cut nor an intermediate snapshot while it waits.
+    holdOtherCleanup = true
     const releaseB = server.leaveChatRoom({ domain: OTHER_DOMAIN })
-    await vi.waitFor(() => expect(fake.sent.filter((item) => item.roomId === worldRoomId).length).toBeGreaterThan(0))
-
-    // A's manual World replacement runs across B's held release: the old publication request loses
-    // authority, but B's release ownership migrates and settles exactly once through the fresh
-    // generation's own current-snapshot publication; A's registration and result stay intact.
+    await otherCleanupStarted.promise
+    let refreshSettled = false
     const refresh = server.reconnectDomain({ domain: DOMAIN })
-    fake.releaseSends()
-    await Promise.all([refresh, releaseB])
+    void refresh.then(
+      () => {
+        refreshSettled = true
+      },
+      () => {}
+    )
+    await settle()
+    let readSettled = false
+    const read = server.getSnapshot({ caller: { tab: { id: 1, url: '' } } }).then(() => {
+      readSettled = true
+    })
+    void read.catch(() => {})
+    await settle()
+    expect(refreshSettled).toBe(false)
+    expect(readSettled).toBe(false)
+    expect(
+      fake.operationLog.filter((entry) => entry === `retire:${worldRoomId},${getChatRoomId(DOMAIN)}`)
+    ).toHaveLength(0)
+
+    releaseOtherCleanup.resolve()
+    await Promise.all([refresh, releaseB, read])
     await settle()
 
     const after = await readServerSnapshot(server)
     expect(after.domains.some((item) => item.domain === DOMAIN && item.chatRoomJoined)).toBe(true)
-    // B's release settled exactly once through the fresh generation (unjoined shell, no session).
+    // B's ordinary release settled exactly once; A then recaptured current local intent and its
+    // fresh World contains no departed B registration.
     expect(after.domains.some((item) => item.domain === OTHER_DOMAIN && item.chatRoomJoined)).toBe(false)
     expect(after.domains.find((item) => item.domain === OTHER_DOMAIN)?.localSession).toBeUndefined()
     expect(after.world.joined).toBe(true)
     expect(after.world.localPresence?.sites.map((site) => site.origin)).toEqual([DOMAIN])
+    expect(fake.operationLog.filter((entry) => entry === `leave:${getChatRoomId(OTHER_DOMAIN)}`)).toHaveLength(1)
+    expect(
+      fake.operationLog.filter((entry) => entry === `retire:${worldRoomId},${getChatRoomId(DOMAIN)}`)
+    ).toHaveLength(1)
     disposeServer(server)
   })
 
-  it('revokes the held old full-publication owner across a manual replacement', async () => {
+  it('does not reuse an A+B retry seed after B finishes its explicit release', async () => {
+    const clock = new FakeClock()
+    const fake = createFakeTransport()
+    const values: Record<string, unknown> = {}
+    let holdOtherCleanup = false
+    const otherCleanupStarted = deferred<void>()
+    const releaseOtherCleanup = deferred<void>()
+    const presenceStore = createBrowserPresenceStore({
+      get: async (key) => ({ [key]: values[key] }),
+      set: async (items) => {
+        const record = Object.values(items)[0] as
+          | { domain?: string; local?: unknown; observers?: unknown[] }
+          | undefined
+        if (
+          holdOtherCleanup &&
+          record?.domain === OTHER_DOMAIN &&
+          !record.local &&
+          Array.isArray(record.observers) &&
+          record.observers.length === 0
+        ) {
+          otherCleanupStarted.resolve()
+          await releaseOtherCleanup.promise
+        }
+        Object.assign(values, items)
+      }
+    })
+    const server = createServer({ transport: fake.transport, clock, codec: jsonCodec, presenceStore })
+    const worldRoomId = getWorldRoomId()
+    await server.attachPage({ domain: DOMAIN, caller: { tab: { id: 1, url: '' } } })
+    await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
+    await server.attachPage({ domain: OTHER_DOMAIN, caller: { tab: { id: 2, url: '' } } })
+    await server.joinChatRoom({ domain: OTHER_DOMAIN, user: USER, site: { origin: OTHER_DOMAIN } })
+    await settle()
+
+    // A pre-cut retire failure creates the normal local-only retry seed while A+B current state
+    // remains intact. That seed therefore contains an old B World registration.
+    const retireError = new Error('first dual retire rejected')
+    fake.failNextRetire(retireError)
+    await expect(server.reconnectDomain({ domain: DOMAIN })).rejects.toBe(retireError)
+    expect((await readServerSnapshot(server)).world.localPresence?.sites.map((site) => site.origin).toSorted()).toEqual(
+      [DOMAIN, OTHER_DOMAIN]
+    )
+
+    holdOtherCleanup = true
+    const releaseB = server.leaveChatRoom({ domain: OTHER_DOMAIN })
+    await otherCleanupStarted.promise
+    const refresh = server.reconnectDomain({ domain: DOMAIN })
+    releaseOtherCleanup.resolve()
+    await Promise.all([releaseB, refresh])
+    await settle()
+
+    expect((await readServerSnapshot(server)).world.localPresence?.sites.map((site) => site.origin)).toEqual([DOMAIN])
+    expect(
+      fake.operationLog.filter((entry) => entry === `retire:${worldRoomId},${getChatRoomId(DOMAIN)}`)
+    ).toHaveLength(2)
+    disposeServer(server)
+  })
+
+  it('clears a pre-release retry seed before a post-barrier failure permits a fresh document retry', async () => {
+    const clock = new FakeClock()
+    const fake = createFakeTransport()
+    const values: Record<string, unknown> = {}
+    let holdOtherCleanup = false
+    const otherCleanupStarted = deferred<void>()
+    const releaseOtherCleanup = deferred<void>()
+    const presenceStore = createBrowserPresenceStore({
+      get: async (key) => ({ [key]: values[key] }),
+      set: async (items) => {
+        const record = Object.values(items)[0] as
+          | { domain?: string; local?: unknown; observers?: unknown[] }
+          | undefined
+        if (
+          holdOtherCleanup &&
+          record?.domain === OTHER_DOMAIN &&
+          !record.local &&
+          Array.isArray(record.observers) &&
+          record.observers.length === 0
+        ) {
+          otherCleanupStarted.resolve()
+          await releaseOtherCleanup.promise
+        }
+        Object.assign(values, items)
+      }
+    })
+    const tabs = new Map<number, { id: number; url: string }>([
+      [1, { id: 1, url: `${DOMAIN}/topic` }],
+      [2, { id: 2, url: `${OTHER_DOMAIN}/topic` }]
+    ])
+    let ensureCalls = 0
+    let failEnsureCall = -1
+    const postBarrierFailure = new Error('post-release caller revalidation failed')
+    const admission = {
+      tabs: {
+        get: async (tabId: number) => {
+          const tab = tabs.get(tabId)
+          if (!tab) throw new Error('tab missing')
+          return tab
+        },
+        query: async () => [...tabs.values()],
+        sendMessage: async () => undefined
+      },
+      ensureTransport: async () => {
+        ensureCalls += 1
+        if (ensureCalls === failEnsureCall) throw postBarrierFailure
+      }
+    }
+    const callerOf = (tabId: number) => ({ caller: { tab: tabs.get(tabId)! } })
+    const server = createServer({ transport: fake.transport, clock, codec: jsonCodec, presenceStore, admission })
+    const roomId = getChatRoomId(DOMAIN)
+    const worldRoomId = getWorldRoomId()
+    await server.attachPage({ domain: DOMAIN, ...callerOf(1) })
+    await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE, ...callerOf(1) })
+    await server.attachPage({ domain: OTHER_DOMAIN, ...callerOf(2) })
+    await server.joinChatRoom({
+      domain: OTHER_DOMAIN,
+      user: USER,
+      site: { origin: OTHER_DOMAIN },
+      ...callerOf(2)
+    })
+    fake.peerJoin(roomId, 'remote-room-peer')
+    fake.receive(roomId, 'remote-room-peer', session())
+    emitRemoteWorldPresence(fake)
+    await settle()
+
+    // A fails before the cut, preserving only its local intent plus the exact caller binding.
+    // Its old World intent still includes B, while remote facts stay outside the retry seed.
+    const retireFailure = new Error('first dual retire rejected')
+    fake.failNextRetire(retireFailure)
+    await expect(server.reconnectDomain({ domain: DOMAIN, ...callerOf(1) })).rejects.toBe(retireFailure)
+    const beforeRelease = await readServerSnapshot(server)
+    expect(beforeRelease.world.localPresence?.sites.map((site) => site.origin).toSorted()).toEqual([
+      DOMAIN,
+      OTHER_DOMAIN
+    ])
+    expect(domainSnapshot(beforeRelease)?.sessions).toHaveLength(1)
+    expect(beforeRelease.world.presences).toHaveLength(1)
+
+    // B's active release is the barrier. The existing browser-admission hook fails only during
+    // A's post-barrier revalidation, before retained-seed lookup, fresh capture, or commit.
+    holdOtherCleanup = true
+    const releaseB = server.leaveChatRoom({ domain: OTHER_DOMAIN, ...callerOf(2) })
+    await otherCleanupStarted.promise
+    failEnsureCall = ensureCalls + 2
+    const interruptedA = server.reconnectDomain({ domain: DOMAIN, ...callerOf(1) })
+    void interruptedA.catch(() => {})
+    releaseOtherCleanup.resolve()
+    await Promise.all([
+      expect(releaseB).resolves.toBeUndefined(),
+      expect(interruptedA).rejects.toBe(postBarrierFailure)
+    ])
+    expect(fake.operationLog.filter((entry) => entry === `retire:${worldRoomId},${roomId}`)).toHaveLength(1)
+
+    // With the barrier's early invalidation, a new document is a fresh A click, not an old-seed
+    // binding failure. Its new World capture excludes departed B and all old remote facts.
+    failEnsureCall = -1
+    const differentDocument = { id: 1, url: `${DOMAIN}/different-after-release` }
+    tabs.set(1, differentDocument)
+    await expect(
+      server.reconnectDomain({ domain: DOMAIN, caller: { tab: differentDocument } })
+    ).resolves.toBeUndefined()
+    const after = await readServerSnapshot(server)
+    expect(domainSnapshot(after)).toMatchObject({ chatRoomJoined: true, sessions: [] })
+    expect(after.domains.some((item) => item.domain === OTHER_DOMAIN && item.chatRoomJoined)).toBe(false)
+    expect(after.world.localPresence?.sites.map((site) => site.origin)).toEqual([DOMAIN])
+    expect(after.world.presences).toEqual([])
+    expect(fake.operationLog.filter((entry) => entry === `retire:${worldRoomId},${roomId}`)).toHaveLength(2)
+    disposeServer(server)
+  })
+
+  it('returns an in-flight other Domain release failure before the manual replacement cuts', async () => {
+    const clock = new FakeClock()
+    const fake = createFakeTransport()
+    const values: Record<string, unknown> = {}
+    const otherCleanupStarted = deferred<void>()
+    const rejectOtherCleanup = deferred<void>()
+    const releaseError = new Error('other domain release cleanup rejected')
+    let rejectOther = false
+    const presenceStore = createBrowserPresenceStore({
+      get: async (key) => ({ [key]: values[key] }),
+      set: async (items) => {
+        const record = Object.values(items)[0] as
+          | { domain?: string; local?: unknown; observers?: unknown[] }
+          | undefined
+        if (
+          rejectOther &&
+          record?.domain === OTHER_DOMAIN &&
+          !record.local &&
+          Array.isArray(record.observers) &&
+          record.observers.length === 0
+        ) {
+          otherCleanupStarted.resolve()
+          await rejectOtherCleanup.promise
+        }
+        Object.assign(values, items)
+      }
+    })
+    const server = createServer({ transport: fake.transport, clock, codec: jsonCodec, presenceStore })
+    const worldRoomId = getWorldRoomId()
+    await server.attachPage({ domain: DOMAIN, caller: { tab: { id: 1, url: '' } } })
+    await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
+    await server.attachPage({ domain: OTHER_DOMAIN, caller: { tab: { id: 2, url: '' } } })
+    await server.joinChatRoom({ domain: OTHER_DOMAIN, user: USER, site: { origin: OTHER_DOMAIN } })
+    await settle()
+
+    rejectOther = true
+    const releaseB = server.leaveChatRoom({ domain: OTHER_DOMAIN })
+    await otherCleanupStarted.promise
+    const refresh = server.reconnectDomain({ domain: DOMAIN })
+    await settle()
+    expect(
+      fake.operationLog.filter((entry) => entry === `retire:${worldRoomId},${getChatRoomId(DOMAIN)}`)
+    ).toHaveLength(0)
+
+    rejectOtherCleanup.reject(releaseError)
+    await expect(releaseB).rejects.toBe(releaseError)
+    await expect(refresh).rejects.toBe(releaseError)
+    expect(
+      fake.operationLog.filter((entry) => entry === `retire:${worldRoomId},${getChatRoomId(DOMAIN)}`)
+    ).toHaveLength(0)
+    await expect(server.getSnapshot({ caller: { tab: { id: 1, url: '' } } })).rejects.toBe(releaseError)
+    const after = await readServerSnapshot(server)
+    expect(after.domains.find((item) => item.domain === DOMAIN)?.chatRoomJoined).toBe(true)
+    expect(after.world.localPresence?.sites.map((site) => site.origin).toSorted()).toEqual([DOMAIN, OTHER_DOMAIN])
+    disposeServer(server)
+  })
+
+  it('fails the same click before cut when a newer release begins after the barrier', async () => {
+    const clock = new FakeClock()
+    const fake = createFakeTransport()
+    const thirdDomain = 'https://third.example'
+    const values: Record<string, unknown> = {}
+    const otherCleanupStarted = deferred<void>()
+    const releaseOtherCleanup = deferred<void>()
+    const thirdCleanupStarted = deferred<void>()
+    const releaseThirdCleanup = deferred<void>()
+    const presenceStore = createBrowserPresenceStore({
+      get: async (key) => ({ [key]: values[key] }),
+      set: async (items) => {
+        const record = Object.values(items)[0] as
+          | { domain?: string; local?: unknown; observers?: unknown[] }
+          | undefined
+        if (!record?.local && Array.isArray(record?.observers) && record.observers.length === 0) {
+          if (record.domain === OTHER_DOMAIN) {
+            otherCleanupStarted.resolve()
+            await releaseOtherCleanup.promise
+          }
+          if (record.domain === thirdDomain) {
+            thirdCleanupStarted.resolve()
+            await releaseThirdCleanup.promise
+          }
+        }
+        Object.assign(values, items)
+      }
+    })
+    const tabs = new Map<number, { id: number; url: string }>([
+      [1, { id: 1, url: `${DOMAIN}/topic` }],
+      [2, { id: 2, url: `${OTHER_DOMAIN}/topic` }],
+      [3, { id: 3, url: `${thirdDomain}/topic` }]
+    ])
+    let ensureCalls = 0
+    let heldEnsureCall = -1
+    const postBarrierValidationStarted = deferred<void>()
+    const releasePostBarrierValidation = deferred<void>()
+    const admission = {
+      tabs: {
+        get: async (tabId: number) => {
+          const tab = tabs.get(tabId)
+          if (!tab) throw new Error('tab missing')
+          return tab
+        },
+        query: async () => [...tabs.values()],
+        sendMessage: async () => undefined
+      },
+      ensureTransport: async () => {
+        ensureCalls += 1
+        if (ensureCalls !== heldEnsureCall) return
+        postBarrierValidationStarted.resolve()
+        await releasePostBarrierValidation.promise
+      }
+    }
+    const callerOf = (tabId: number) => ({ caller: { tab: tabs.get(tabId)! } })
+    const server = createServer({ transport: fake.transport, clock, codec: jsonCodec, presenceStore, admission })
+    const worldRoomId = getWorldRoomId()
+    await server.attachPage({ domain: DOMAIN, ...callerOf(1) })
+    await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE, ...callerOf(1) })
+    await server.attachPage({ domain: OTHER_DOMAIN, ...callerOf(2) })
+    await server.joinChatRoom({ domain: OTHER_DOMAIN, user: USER, site: { origin: OTHER_DOMAIN }, ...callerOf(2) })
+    await server.attachPage({ domain: thirdDomain, ...callerOf(3) })
+    await server.joinChatRoom({ domain: thirdDomain, user: USER, site: { origin: thirdDomain }, ...callerOf(3) })
+    await settle()
+
+    const releaseB = server.leaveChatRoom({ domain: OTHER_DOMAIN, ...callerOf(2) })
+    await otherCleanupStarted.promise
+    // reconnect's initial caller check is one call; its post-release revalidation is the second.
+    heldEnsureCall = ensureCalls + 2
+    const refresh = server.reconnectDomain({ domain: DOMAIN, ...callerOf(1) })
+    releaseOtherCleanup.resolve()
+    await postBarrierValidationStarted.promise
+
+    // C starts only after B's exact terminal. It advances the private release generation while
+    // A is held immediately before its first cut, so A must fail closed rather than cut C.
+    const releaseC = server.leaveChatRoom({ domain: thirdDomain, ...callerOf(3) })
+    await thirdCleanupStarted.promise
+    releasePostBarrierValidation.resolve()
+    await expect(refresh).rejects.toThrow('Runtime release lifecycle changed before the dual replacement cut')
+    expect(
+      fake.operationLog.filter((entry) => entry === `retire:${worldRoomId},${getChatRoomId(DOMAIN)}`)
+    ).toHaveLength(0)
+
+    releaseThirdCleanup.resolve()
+    await Promise.all([releaseB, releaseC])
+    await settle()
+    const after = await readServerSnapshot(server)
+    expect(after.domains.find((item) => item.domain === DOMAIN)?.chatRoomJoined).toBe(true)
+    expect(after.world.localPresence?.sites.map((site) => site.origin)).toEqual([DOMAIN])
+    disposeServer(server)
+  })
+
+  it('supersedes the held old full-publication owner across a manual replacement', async () => {
     const clock = new FakeClock()
     const fake = createFakeTransport()
     const server = createServer({ transport: fake.transport, clock, codec: jsonCodec })
@@ -1814,26 +2691,39 @@ describe('RuntimeServer lifecycle', () => {
     // A new registration publishes one full snapshot: that broadcast owner is invoked and held.
     await server.attachPage({ domain: OTHER_DOMAIN, caller: { tab: { id: 2, url: '' } } })
     fake.hangSendsTo(worldRoomId)
-    const otherJoin = server.joinChatRoom({ domain: OTHER_DOMAIN, user: USER, site: { origin: OTHER_DOMAIN } })
+    const otherJoin = server.joinChatRoom({ domain: OTHER_DOMAIN, user: USER, site: { origin: OTHER_DOMAIN } }).then(
+      () => ({ kind: 'joined' as const }),
+      (error: Error) => ({ kind: 'failed' as const, error })
+    )
     await vi.waitFor(() => expect(fake.sent.filter((item) => item.roomId === worldRoomId).length).toBeGreaterThan(0))
 
-    // The manual replacement revokes the old full-publication owner: its late settlement can no
-    // longer settle old ownership or surface an error, and the fresh generation publishes its own
-    // current full snapshot once released.
-    const refresh = server.reconnectDomain({ domain: DOMAIN })
+    // The manual cut revokes this old publisher. Its late terminal cannot complete the old normal
+    // join; a fresh normal join is required after the shared manual commit.
+    const refresh = server.reconnectDomain({ domain: DOMAIN }).then(
+      () => ({ kind: 'committed' as const }),
+      (error: Error) => ({ kind: 'failed' as const, error })
+    )
     fake.releaseSends()
-    await Promise.all([refresh, otherJoin])
+    const [refreshResult, otherResult] = await Promise.all([refresh, otherJoin])
     await settle()
-    expect((await readServerSnapshot(server)).failures).toEqual([])
+    expect(refreshResult).toEqual({ kind: 'committed' })
+    expect(otherResult).toMatchObject({ kind: 'failed', error: expect.any(Error) })
     const after = await readServerSnapshot(server)
     expect(after.world.joined).toBe(true)
-    expect(after.world.localPresence?.sites.map((site) => site.origin)).toEqual(
+    expect(after.world.localPresence?.sites.map((site) => site.origin)).toEqual([DOMAIN])
+
+    const retriedOther = await server.joinChatRoom({
+      domain: OTHER_DOMAIN,
+      user: USER,
+      site: { origin: OTHER_DOMAIN }
+    })
+    expect(retriedOther?.world.localPresence?.sites.map((site) => site.origin)).toEqual(
       expect.arrayContaining([DOMAIN, OTHER_DOMAIN])
     )
     disposeServer(server)
   })
 
-  it('keeps a failed manual full publication out of the page error stream', async () => {
+  it('keeps the committed owners readable when a post-commit World publication fails', async () => {
     const clock = new FakeClock()
     const fake = createFakeTransport()
     const server = createServer({ transport: fake.transport, clock, codec: jsonCodec })
@@ -1842,18 +2732,21 @@ describe('RuntimeServer lifecycle', () => {
     await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
     await settle()
 
-    // The recovery's required full snapshot send fails once at the provider: the Domain refresh
-    // still completes and no World failure reaches the page error stream that feeds UI/Toast; the
-    // Domain attempt's own staged publication then succeeds through the ordinary diagnostic path.
+    // The post-commit catch-up is no longer a replacement terminal. Its failure may be retained
+    // diagnostically, but it cannot revoke either already-shared current owner or block a pull.
     fake.failNextSend(worldRoomId)
     await server.reconnectDomain({ domain: DOMAIN })
     await settle()
     expect((await readServerSnapshot(server)).domains[0].chatRoomJoined).toBe(true)
-    expect((await readServerSnapshot(server)).failures).toEqual([])
+    expect((await readServerSnapshot(server)).world.joined).toBe(true)
+    expect((await readServerSnapshot(server)).failures).toEqual(
+      expect.arrayContaining([expect.objectContaining({ message: `Room "${worldRoomId}" send failed` })])
+    )
+    await expect(server.getSnapshot(callerOf(1))).resolves.toMatchObject({ world: { joined: true } })
     disposeServer(server)
   })
 
-  it('includes the World replacement in a retained-seed retry after reset persistence failure', async () => {
+  it('replaces World through the dual path when legacy reset persistence would reject', async () => {
     const clock = new FakeClock()
     const fake = createFakeTransport()
     const values: Record<string, unknown> = {}
@@ -1882,24 +2775,12 @@ describe('RuntimeServer lifecycle', () => {
     expect((await readServerSnapshot(server)).world.joined).toBe(true)
 
     rejectClearSave = true
-    await expect(server.reconnectDomain({ domain: DOMAIN })).rejects.toThrow(
-      'Domain connection reset persistence failed'
-    )
-    await settle()
-    expect((await readServerSnapshot(server)).domains[0].chatRoomJoined).toBe(false)
-    // The failed activation still ran exactly one World replacement, and it COMMITS through
-    // preserved demand even while no Domain is committed: Domain failure never strands it.
-    expect(fake.physicalJoinCalls.filter((roomId) => roomId === worldRoomId)).toHaveLength(2)
-    expect((await readServerSnapshot(server)).world.joined).toBe(true)
-
-    // The retained-seed retry starts its own World child concurrently with the Domain retry — one
-    // more replacement, never a re-rotation of a Domain-created owner.
-    rejectClearSave = false
-    await server.reconnectDomain({ domain: DOMAIN })
+    await expect(server.reconnectDomain({ domain: DOMAIN })).resolves.toBeUndefined()
     await settle()
     expect((await readServerSnapshot(server)).domains[0].chatRoomJoined).toBe(true)
-    expect(fake.physicalJoinCalls.filter((roomId) => roomId === worldRoomId)).toHaveLength(3)
-    expect(fake.operationLog.filter((entry) => entry === `leave:${worldRoomId}`)).toHaveLength(2)
+    expect(fake.physicalJoinCalls.filter((roomId) => roomId === worldRoomId)).toHaveLength(2)
+    expect((await readServerSnapshot(server)).world.joined).toBe(true)
+    expect(fake.operationLog.filter((entry) => entry === `leave:${worldRoomId}`)).toHaveLength(1)
     expect((await readServerSnapshot(server)).world.joined).toBe(true)
     disposeServer(server)
   })
@@ -2339,6 +3220,628 @@ describe('RuntimeServer lifecycle', () => {
     expect(worldMessages.at(-1)).toEqual(after.world.localPresence)
   })
 
+  it('opens the AppButton current-state pull at the shared commit before ordinary World catch-up settles', async () => {
+    const { fake, server, roomId } = await setup()
+    const worldRoomId = getWorldRoomId()
+    fake.plantPeer(roomId, 'remote-peer')
+    fake.makeNotReady()
+    fake.hangSendsTo(worldRoomId)
+    const worldPublicationStarted = fake.waitForSendAttempt(worldRoomId)
+
+    let reconnectSettled = false
+    const reconnect = server.reconnectDomain({ domain: DOMAIN }).then(() => {
+      reconnectSettled = true
+    })
+    await fake.waitForJoinCalls(4)
+    fake.open()
+    await expect(worldPublicationStarted).resolves.toMatchObject({ roomId: worldRoomId })
+
+    let readSettled = false
+    const currentRead = server.getSnapshot(callerOf(1)).then((snapshot) => {
+      readSettled = true
+      return snapshot
+    })
+    await settle()
+    expect(reconnectSettled).toBe(true)
+    expect(readSettled).toBe(true)
+
+    await reconnect
+    const snapshot = await currentRead
+    expect(snapshot.domains.find((item) => item.domain === DOMAIN)?.chatRoomJoined).toBe(true)
+    expect(snapshot.world.joined).toBe(true)
+    fake.releaseSends()
+    disposeServer(server)
+  })
+
+  it('waits for both physical retires before one silent current-owner cut', async () => {
+    const { fake, server, roomId } = await setup()
+    const worldRoomId = getWorldRoomId()
+    const releaseRetires = fake.holdRetires()
+    fake.makeNotReady()
+    const joinsBefore = fake.joinCalls.length
+    const reconnect = server.reconnectDomain({ domain: DOMAIN })
+    const reconnectTerminal = reconnect.then(
+      () => ({ kind: 'reconnect-resolved' as const }),
+      (error) => ({ kind: 'reconnect-rejected' as const, error })
+    )
+    await vi.waitFor(() =>
+      expect(fake.operationLog.filter((entry) => entry === `retire:${worldRoomId},${roomId}`)).toHaveLength(1)
+    )
+
+    let readSettled = false
+    const blockedRead = server.getSnapshot(callerOf(1)).then((value) => {
+      readSettled = true
+      return value
+    })
+    const blockedReadTerminal = blockedRead.then(
+      () => ({ kind: 'read-resolved' as const }),
+      (error) => ({ kind: 'read-rejected' as const, error })
+    )
+    await settle()
+    expect(readSettled).toBe(false)
+    expect((await readServerSnapshot(server)).domains[0]?.chatRoomJoined).toBe(true)
+    expect((await readServerSnapshot(server)).world.joined).toBe(true)
+
+    releaseRetires()
+    const successorJoins = fake.waitForJoinCalls(joinsBefore + 2)
+    const firstCompletion = await Promise.race([
+      successorJoins.then(() => ({ kind: 'successor-joins' as const })),
+      reconnectTerminal,
+      blockedReadTerminal
+    ])
+    expect(firstCompletion).toEqual({ kind: 'successor-joins' })
+    await successorJoins
+    await settle()
+    expect((await readServerSnapshot(server)).domains[0]).toMatchObject({
+      chatRoomJoined: false,
+      localSession: undefined,
+      sessions: []
+    })
+    expect((await readServerSnapshot(server)).world.joined).toBe(false)
+    expect(readSettled).toBe(false)
+
+    fake.open()
+    await reconnect
+    const snapshot = await blockedRead
+    expect(snapshot.domains[0]).toMatchObject({ chatRoomJoined: true })
+    expect(snapshot.world.joined).toBe(true)
+    expect(fake.operationLog.filter((entry) => entry === `retire:${worldRoomId},${roomId}`)).toHaveLength(1)
+    disposeServer(server)
+  })
+
+  it('binds a dual-retire retry seed to its exact caller and document before its one fresh retry', async () => {
+    const { fake, server, roomId } = await setup()
+    const worldRoomId = getWorldRoomId()
+    emitRemoteWorldPresence(fake)
+    await settle()
+    const before = readServerSnapshot(server)
+    const joinsBefore = fake.joinCalls.length
+    const failure = new Error('physical dual-retire rejected')
+    fake.failNextRetire(failure)
+
+    await expect(server.reconnectDomain({ domain: DOMAIN, ...callerOf(1) })).rejects.toBe(failure)
+
+    expect(fake.joinCalls).toHaveLength(joinsBefore)
+    expect(fake.operationLog.filter((entry) => entry === `retire:${worldRoomId},${roomId}`)).toHaveLength(1)
+    expect(
+      fake.operationLog.filter((entry) => entry === `leave:${roomId}` || entry === `leave:${worldRoomId}`)
+    ).toEqual([])
+    expect(readServerSnapshot(server)).toEqual(before)
+    await expect(server.getSnapshot(callerOf(1))).rejects.toBe(failure)
+
+    await expect(
+      server.reconnectDomain({
+        domain: DOMAIN,
+        caller: { tab: { id: 1, url: `${DOMAIN}/other-document` } }
+      })
+    ).rejects.toThrow('Dual replacement retry seed does not match this caller binding')
+    expect(fake.operationLog.filter((entry) => entry === `retire:${worldRoomId},${roomId}`)).toHaveLength(1)
+
+    await expect(server.reconnectDomain({ domain: DOMAIN, ...callerOf(1) })).resolves.toBeUndefined()
+    expect((await readServerSnapshot(server)).domains[0]).toMatchObject({ chatRoomJoined: true })
+    expect((await readServerSnapshot(server)).world.joined).toBe(true)
+    disposeServer(server)
+  })
+
+  it('refuses a late dual-retire terminal after its caller binding is invalidated', async () => {
+    const { fake, server, roomId } = await setup()
+    const worldRoomId = getWorldRoomId()
+    const releaseRetires = fake.holdRetires()
+    fake.makeNotReady()
+    const joinsBefore = fake.joinCalls.length
+    const reconnect = server.reconnectDomain({ domain: DOMAIN, ...callerOf(1) })
+    await vi.waitFor(() =>
+      expect(fake.operationLog.filter((entry) => entry === `retire:${worldRoomId},${roomId}`)).toHaveLength(1)
+    )
+
+    await removeServerTab(server, 1)
+    releaseRetires()
+
+    await expect(reconnect).rejects.toThrow('Runtime presence is completing its final release')
+    await settle()
+    expect(fake.joinCalls).toHaveLength(joinsBefore)
+    expect(fake.joined).toEqual(new Set())
+    await expect(server.getSnapshot(callerOf(1))).rejects.toThrow('Runtime presence is completing its final release')
+    disposeServer(server)
+  })
+
+  it('cancels a cut dual replacement when the same domain explicitly leaves before shared commit', async () => {
+    const { fake, server, roomId } = await setup()
+    const worldRoomId = getWorldRoomId()
+    const releaseIngress = fake.holdIngressActivation()
+    const reconnect = server.reconnectDomain({ domain: DOMAIN, ...callerOf(1) })
+
+    await vi.waitFor(() =>
+      expect(fake.operationLog.filter((entry) => entry === `retire:${worldRoomId},${roomId}`)).toHaveLength(1)
+    )
+    await vi.waitFor(() =>
+      expect(readServerSnapshot(server).domains[0]).toMatchObject({ chatRoomJoined: false, localSession: undefined })
+    )
+    expect(readServerSnapshot(server).world).toMatchObject({ joined: false, localPresence: undefined, presences: [] })
+
+    const leave = server.leaveChatRoom({ domain: DOMAIN, ...callerOf(1) })
+    releaseIngress()
+
+    await expect(leave).resolves.toBeUndefined()
+    await expect(reconnect).rejects.toThrow('Runtime presence is completing its final release')
+    await settle()
+    expect(readServerSnapshot(server).domains[0]).toMatchObject({ chatRoomJoined: false, localSession: undefined })
+    expect(readServerSnapshot(server).world).toMatchObject({ joined: false, localPresence: undefined, presences: [] })
+    expect(fake.joined.has(roomId)).toBe(false)
+    expect(fake.joined.has(worldRoomId)).toBe(false)
+    disposeServer(server)
+  })
+
+  it('cancels a cut dual replacement when its Server host is disposed', async () => {
+    const { fake, server, roomId } = await setup()
+    const worldRoomId = getWorldRoomId()
+    const releaseIngress = fake.holdIngressActivation()
+    const reconnect = server.reconnectDomain({ domain: DOMAIN, ...callerOf(1) })
+
+    await vi.waitFor(() =>
+      expect(fake.operationLog.filter((entry) => entry === `retire:${worldRoomId},${roomId}`)).toHaveLength(1)
+    )
+    await vi.waitFor(() =>
+      expect(readServerSnapshot(server).domains[0]).toMatchObject({ chatRoomJoined: false, localSession: undefined })
+    )
+
+    disposeServer(server)
+    releaseIngress()
+
+    await expect(reconnect).rejects.toThrow('Runtime presence is completing its final release')
+    expect(fake.joined).toEqual(new Set())
+  })
+
+  it.each([
+    ['ROOM', (roomId: string, _worldRoomId: string) => roomId],
+    ['World', (_roomId: string, worldRoomId: string) => worldRoomId]
+  ] as const)(
+    'aborts a cut dual replacement when its prepared %s room closes before shared commit',
+    async (_owner, closedRoom) => {
+      const { fake, server, roomId } = await setup()
+      const worldRoomId = getWorldRoomId()
+      const releaseIngress = fake.holdIngressActivation()
+      const reconnect = server.reconnectDomain({ domain: DOMAIN, ...callerOf(1) })
+
+      await vi.waitFor(() =>
+        expect(fake.operationLog.filter((entry) => entry === `retire:${worldRoomId},${roomId}`)).toHaveLength(1)
+      )
+      await vi.waitFor(() =>
+        expect(readServerSnapshot(server).domains[0]).toMatchObject({ chatRoomJoined: false, localSession: undefined })
+      )
+
+      fake.roomClose(closedRoom(roomId, worldRoomId))
+      releaseIngress()
+
+      await expect(reconnect).rejects.toThrow()
+      await settle()
+      expect(readServerSnapshot(server).domains[0]).toMatchObject({ chatRoomJoined: false, localSession: undefined })
+      expect(readServerSnapshot(server).world).toMatchObject({ joined: false, localPresence: undefined, presences: [] })
+      expect(fake.joined.has(roomId)).toBe(false)
+      expect(fake.joined.has(worldRoomId)).toBe(false)
+      disposeServer(server)
+    }
+  )
+
+  it('drops a late old World frame after a manual cut and accepts only the fresh room generation', async () => {
+    const oldDecode = deferred<unknown>()
+    let oldDecodeStarted = false
+    const codec: WireCodec = {
+      encode: async (value) => JSON.stringify(value),
+      decode: async (payload) => {
+        const value = JSON.parse(payload as string) as { sessionId?: string }
+        if (value.sessionId === 'old-world-session') {
+          oldDecodeStarted = true
+          return oldDecode.promise
+        }
+        return value
+      }
+    }
+    const { fake, server, roomId } = await setup(DOMAIN, NOW, codec)
+    const worldRoomId = getWorldRoomId()
+    fake.peerJoin(worldRoomId, 'remote-peer')
+    fake.receive(worldRoomId, 'remote-peer', {
+      sessionId: 'old-world-session',
+      user: REMOTE_USER,
+      sites: [{ origin: 'https://old.example', title: 'Old' }]
+    })
+    await vi.waitFor(() => expect(oldDecodeStarted).toBe(true))
+
+    const releaseIngress = fake.holdIngressActivation()
+    const reconnect = server.reconnectDomain({ domain: DOMAIN, ...callerOf(1) })
+    await vi.waitFor(() =>
+      expect(fake.operationLog.filter((entry) => entry === `retire:${worldRoomId},${roomId}`)).toHaveLength(1)
+    )
+    await vi.waitFor(() => expect(readServerSnapshot(server).world.presences).toEqual([]))
+
+    oldDecode.resolve({
+      sessionId: 'old-world-session',
+      user: REMOTE_USER,
+      sites: [{ origin: 'https://old.example', title: 'Old' }]
+    })
+    await settle()
+    expect(readServerSnapshot(server).world.presences).toEqual([])
+
+    releaseIngress()
+    await reconnect
+    await settle()
+    expect(readServerSnapshot(server).world.presences).toEqual([])
+
+    fake.receive(worldRoomId, 'remote-peer', {
+      sessionId: 'fresh-world-session',
+      user: REMOTE_USER,
+      sites: [{ origin: 'https://fresh.example', title: 'Fresh' }]
+    })
+    await vi.waitFor(() =>
+      expect(readServerSnapshot(server).world.presences).toEqual([
+        expect.objectContaining({
+          sourcePeerId: 'remote-peer',
+          presence: expect.objectContaining({ sessionId: 'fresh-world-session' })
+        })
+      ])
+    )
+    disposeServer(server)
+  })
+
+  it('does not create a retry seed when recovered ROOM local intent has no World counterpart', async () => {
+    const fake = createFakeTransport()
+    const roomId = getChatRoomId(DOMAIN)
+    const server = createServer({
+      transport: {
+        ...fake.transport,
+        roomRecovery: () => ({
+          rooms: [
+            {
+              roomId,
+              domain: DOMAIN,
+              local: {
+                sessionId: 'recovered-session',
+                presenceId: 'recovered-presence',
+                user: USER,
+                site: SITE,
+                joinedAt: NOW
+              },
+              sessions: []
+            }
+          ]
+        })
+      }
+    })
+    await attachTab(server, DOMAIN, 1)
+
+    await expect(server.reconnectDomain({ domain: DOMAIN, ...callerOf(1) })).resolves.toBeUndefined()
+
+    expect(readServerSnapshot(server).domains[0]).toMatchObject({ chatRoomJoined: true })
+    expect(readServerSnapshot(server).world).toMatchObject({ joined: false, localPresence: undefined })
+    expect(fake.operationLog.filter((entry) => entry.startsWith('retire:'))).toEqual([])
+    disposeServer(server)
+  })
+
+  it('does not create a retry seed when recovered World local intent has no ROOM counterpart', async () => {
+    const fake = createFakeTransport()
+    const server = createServer({
+      transport: {
+        ...fake.transport,
+        worldRecovery: () => ({
+          members: [],
+          presences: [],
+          local: {
+            peerId: 'recovered-world-peer',
+            handle: 'recovered-world-handle',
+            registrations: [{ domain: DOMAIN, user: USER, site: SITE }]
+          }
+        })
+      }
+    })
+    await attachTab(server, DOMAIN, 1)
+
+    await expect(server.reconnectDomain({ domain: DOMAIN, ...callerOf(1) })).resolves.toBeUndefined()
+
+    expect(readServerSnapshot(server).domains[0]).toMatchObject({ chatRoomJoined: false, localSession: undefined })
+    expect(readServerSnapshot(server).world.joined).toBe(true)
+    expect(fake.operationLog.filter((entry) => entry.startsWith('retire:'))).toEqual([])
+    disposeServer(server)
+  })
+
+  it.each([
+    ['ROOM', (roomId: string, _worldRoomId: string) => roomId],
+    ['World', (_roomId: string, worldRoomId: string) => worldRoomId]
+  ] as const)(
+    'cross-aborts both prepared owners on a %s admission failure and retries only by a new AppButton click',
+    async (_owner, failedRoom) => {
+      const { fake, server, roomId } = await setup()
+      const worldRoomId = getWorldRoomId()
+      const failedRoomId = failedRoom(roomId, worldRoomId)
+      fake.failNextJoin(failedRoomId)
+
+      await expect(server.reconnectDomain({ domain: DOMAIN, ...callerOf(1) })).rejects.toThrow(
+        `Room "${failedRoomId}" join failed`
+      )
+      const failed = await readServerSnapshot(server)
+      expect(failed.domains[0]).toMatchObject({ chatRoomJoined: false, localSession: undefined, sessions: [] })
+      expect(failed.world).toMatchObject({ joined: false, presences: [] })
+      expect(fake.joined.has(roomId)).toBe(false)
+      expect(fake.joined.has(worldRoomId)).toBe(false)
+      await expect(server.getSnapshot(callerOf(1))).rejects.toThrow(`Room "${failedRoomId}" join failed`)
+
+      const retiresBeforeRejectedCaller = fake.operationLog.filter(
+        (entry) => entry === `retire:${worldRoomId},${roomId}`
+      ).length
+      await expect(
+        server.reconnectDomain({
+          domain: DOMAIN,
+          caller: { tab: { id: 1, url: `${DOMAIN}/other-document` } }
+        })
+      ).rejects.toThrow('Dual replacement retry seed does not match this caller binding')
+      expect(fake.operationLog.filter((entry) => entry === `retire:${worldRoomId},${roomId}`)).toHaveLength(
+        retiresBeforeRejectedCaller
+      )
+
+      await expect(server.reconnectDomain({ domain: DOMAIN, ...callerOf(1) })).resolves.toBeUndefined()
+      const retried = await readServerSnapshot(server)
+      expect(retried.domains[0]).toMatchObject({ chatRoomJoined: true, localSession: expect.any(Object) })
+      expect(retried.world.joined).toBe(true)
+      expect(fake.operationLog.filter((entry) => entry === `retire:${worldRoomId},${roomId}`)).toHaveLength(3)
+      disposeServer(server)
+    }
+  )
+
+  it('cross-aborts both staged owners when ingress activation rejects and allows only a fresh retry', async () => {
+    const { fake, server, roomId } = await setup()
+    const worldRoomId = getWorldRoomId()
+    const failure = new Error('prepared ingress activation rejected')
+    fake.failNextIngressActivation(failure)
+
+    await expect(server.reconnectDomain({ domain: DOMAIN })).rejects.toBe(failure)
+    const failed = await readServerSnapshot(server)
+    expect(failed.domains[0]).toMatchObject({ chatRoomJoined: false, localSession: undefined, sessions: [] })
+    expect(failed.world).toMatchObject({ joined: false, presences: [] })
+    expect(fake.joined.has(roomId)).toBe(false)
+    expect(fake.joined.has(worldRoomId)).toBe(false)
+    await expect(server.getSnapshot(callerOf(1))).rejects.toBe(failure)
+
+    await expect(server.reconnectDomain({ domain: DOMAIN })).resolves.toBeUndefined()
+    expect((await readServerSnapshot(server)).domains[0]).toMatchObject({ chatRoomJoined: true })
+    expect((await readServerSnapshot(server)).world.joined).toBe(true)
+    disposeServer(server)
+  })
+
+  it.each([
+    ['ROOM hydrate', 'room-hydrate'],
+    ['World hydrate', 'world-hydrate'],
+    ['ROOM precommit', 'room-precommit'],
+    ['World precommit', 'world-precommit']
+  ] as const)(
+    'cross-aborts without publication when private %s fails, then succeeds through one fresh retry',
+    async (_label, stage) => {
+      const observer = stage === 'room-hydrate' ? observeDualEpochGateDispatches() : undefined
+      const worldObserver = stage === 'world-hydrate' ? observeDualEpochGateDispatches() : undefined
+      const precommitObserver = stage === 'room-precommit' ? observeDualEpochGateDispatches() : undefined
+      const worldPrecommitObserver = stage === 'world-precommit' ? observeDualEpochGateDispatches() : undefined
+      const { fake, server, roomId } = await setup()
+      observer?.restore()
+      worldObserver?.restore()
+      precommitObserver?.restore()
+      worldPrecommitObserver?.restore()
+      const worldRoomId = getWorldRoomId()
+      const failure = new Error(`${stage} injected failure`)
+      const sentBefore = fake.sent.length
+      fake.failReplacementAt(stage, failure)
+
+      await expect(server.reconnectDomain({ domain: DOMAIN, ...callerOf(1) })).rejects.toBe(failure)
+      if (observer) {
+        expect(observer.begins).toHaveLength(1)
+        expect(observer.aborts).toHaveLength(1)
+        expect(observer.aborts[0]).toBe(observer.begins[0])
+        expect(observer.aborts[0]).toMatchObject({ domain: DOMAIN, epoch: observer.begins[0]?.epoch })
+      }
+      if (worldObserver) {
+        expect(worldObserver.begins).toHaveLength(1)
+        expect(worldObserver.aborts).toHaveLength(1)
+        expect(worldObserver.aborts[0]).toBe(worldObserver.begins[0])
+        expect(worldObserver.aborts[0]).toMatchObject({ domain: DOMAIN, epoch: worldObserver.begins[0]?.epoch })
+      }
+      if (precommitObserver) {
+        expect(precommitObserver.begins).toHaveLength(1)
+        expect(precommitObserver.aborts).toHaveLength(1)
+        expect(precommitObserver.aborts[0]).toBe(precommitObserver.begins[0])
+        expect(precommitObserver.aborts[0]).toMatchObject({ domain: DOMAIN, epoch: precommitObserver.begins[0]?.epoch })
+      }
+      if (worldPrecommitObserver) {
+        expect(worldPrecommitObserver.begins).toHaveLength(1)
+        expect(worldPrecommitObserver.aborts).toHaveLength(1)
+        expect(worldPrecommitObserver.aborts[0]).toBe(worldPrecommitObserver.begins[0])
+        expect(worldPrecommitObserver.aborts[0]).toMatchObject({
+          domain: DOMAIN,
+          epoch: worldPrecommitObserver.begins[0]?.epoch
+        })
+      }
+      const failed = await readServerSnapshot(server)
+      expect(failed.domains[0]).toMatchObject({ chatRoomJoined: false, localSession: undefined, sessions: [] })
+      expect(failed.world).toMatchObject({ joined: false, presences: [], localPresence: undefined })
+      expect(fake.joined.has(roomId)).toBe(false)
+      expect(fake.joined.has(worldRoomId)).toBe(false)
+      expect(fake.sent).toHaveLength(sentBefore)
+      await expect(server.getSnapshot(callerOf(1))).rejects.toBe(failure)
+
+      await expect(server.reconnectDomain({ domain: DOMAIN, ...callerOf(1) })).resolves.toBeUndefined()
+      expect((await readServerSnapshot(server)).domains[0]).toMatchObject({ chatRoomJoined: true })
+      expect((await readServerSnapshot(server)).world.joined).toBe(true)
+      disposeServer(server)
+    }
+  )
+
+  it('consumes a successful retry seed once and never carries old remote ROOM or World facts', async () => {
+    const { fake, server, roomId } = await setup()
+    const worldRoomId = getWorldRoomId()
+    fake.peerJoin(roomId, 'remote-room-peer')
+    fake.receive(roomId, 'remote-room-peer', session())
+    emitRemoteWorldPresence(fake, 'remote-world-peer')
+    await settle()
+    expect((await readServerSnapshot(server)).domains[0]?.sessions).toHaveLength(1)
+    expect((await readServerSnapshot(server)).world.presences).toHaveLength(1)
+
+    fake.failNextJoin(worldRoomId)
+    await expect(server.reconnectDomain({ domain: DOMAIN, ...callerOf(1) })).rejects.toThrow(
+      `Room "${worldRoomId}" join failed`
+    )
+    await expect(server.reconnectDomain({ domain: DOMAIN, ...callerOf(1) })).resolves.toBeUndefined()
+    const retried = await readServerSnapshot(server)
+    expect(retried.domains[0]).toMatchObject({ chatRoomJoined: true, sessions: [] })
+    expect(retried.world.presences).toEqual([])
+
+    const retiresBeforeDifferentDocument = fake.operationLog.filter(
+      (entry) => entry === `retire:${worldRoomId},${roomId}`
+    ).length
+    await expect(
+      server.reconnectDomain({
+        domain: DOMAIN,
+        caller: { tab: { id: 1, url: `${DOMAIN}/different-after-success` } }
+      })
+    ).resolves.toBeUndefined()
+    expect(fake.operationLog.filter((entry) => entry === `retire:${worldRoomId},${roomId}`)).toHaveLength(
+      retiresBeforeDifferentDocument + 1
+    )
+    disposeServer(server)
+  })
+
+  it('clears a failed retry seed on detach instead of allowing its caller to reuse it', async () => {
+    const { fake, server, roomId } = await setup()
+    const worldRoomId = getWorldRoomId()
+    fake.failNextJoin(worldRoomId)
+    await expect(server.reconnectDomain({ domain: DOMAIN, ...callerOf(1) })).rejects.toThrow(
+      `Room "${worldRoomId}" join failed`
+    )
+    const retiresBeforeDetach = fake.operationLog.filter((entry) => entry === `retire:${worldRoomId},${roomId}`).length
+
+    await removeServerTab(server, 1)
+    await expect(server.reconnectDomain({ domain: DOMAIN, ...callerOf(1) })).resolves.toBeUndefined()
+
+    expect(fake.operationLog.filter((entry) => entry === `retire:${worldRoomId},${roomId}`)).toHaveLength(
+      retiresBeforeDetach
+    )
+    disposeServer(server)
+  })
+
+  it('does not transfer a failed retry seed to a replacement Server host', async () => {
+    const { fake, server } = await setup()
+    const worldRoomId = getWorldRoomId()
+    fake.failNextJoin(worldRoomId)
+    await expect(server.reconnectDomain({ domain: DOMAIN, ...callerOf(1) })).rejects.toThrow(
+      `Room "${worldRoomId}" join failed`
+    )
+    disposeServer(server)
+
+    const replacement = createServer({ transport: fake.transport, clock: new FakeClock(), codec: jsonCodec })
+    await attachTab(replacement, DOMAIN, 1)
+    await expect(replacement.reconnectDomain({ domain: DOMAIN, ...callerOf(1) })).resolves.toBeUndefined()
+    expect(fake.operationLog.filter((entry) => entry.startsWith('retire:'))).toHaveLength(2)
+    disposeServer(replacement)
+  })
+
+  it('applies the latest two-owner state on DocumentClient first pull after an AppButton replacement', async () => {
+    const fake = createFakeTransport()
+    const listeners = new Set<(message: unknown) => void>()
+    const tabs = new Map<number, { id: number; url: string }>([
+      [1, { id: 1, url: `${DOMAIN}/` }],
+      [2, { id: 2, url: `${OTHER_DOMAIN}/` }]
+    ])
+    const server = createServer({
+      transport: fake.transport,
+      codec: jsonCodec,
+      admission: {
+        tabs: {
+          get: async (tabId) => {
+            const tab = tabs.get(tabId)
+            if (!tab) throw new Error('tab missing')
+            return tab
+          },
+          query: async () => [...tabs.values()],
+          sendMessage: async (_tabId, message) => listeners.forEach((listener) => listener(message))
+        },
+        ensureTransport: async () => {}
+      }
+    })
+    const localCaller = { tab: tabs.get(1)! }
+    const client = new DocumentClient({
+      coordinator: {
+        registerPage: (payload) => server.attachPage({ ...payload, caller: localCaller })
+      },
+      server: {
+        getSnapshot: (payload) => server.getSnapshot({ ...payload, caller: localCaller })
+      } as RuntimeServer,
+      domain: DOMAIN
+    })
+    const applies: Array<{ sessionId?: string; sites: string[] }> = []
+    client.registerApplier('world', (projection) => {
+      const domain = projection.domains.find((item) => item.domain === DOMAIN)
+      applies.push({
+        sessionId: domain?.localSession?.sessionId,
+        sites: projection.world.localPresence?.sites.map((site) => site.origin) ?? []
+      })
+    })
+    listeners.add((message) => {
+      if ((message as { type?: string }).type === 'runtime:state-changed') client.invalidate()
+    })
+
+    await client.init()
+    await server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE, caller: localCaller })
+    await server.attachPage({ domain: OTHER_DOMAIN, caller: { tab: tabs.get(2)! } })
+    await server.joinChatRoom({
+      domain: OTHER_DOMAIN,
+      user: USER,
+      site: { origin: OTHER_DOMAIN },
+      caller: { tab: tabs.get(2)! }
+    })
+    await vi.waitFor(() => expect(applies.at(-1)?.sites).toEqual([DOMAIN, OTHER_DOMAIN]))
+    const beforeClick = applies.length
+    const oldSessionId = applies.at(-1)?.sessionId
+
+    const worldRoomId = getWorldRoomId()
+    fake.plantPeer(worldRoomId, 'world-peer')
+    fake.makeNotReady()
+    fake.hangSendsTo(worldRoomId)
+    const worldPublicationStarted = fake.waitForSendAttempt(worldRoomId)
+    const joinsBeforeClick = fake.joinCalls.length
+    const reconnect = server.reconnectDomain({ domain: DOMAIN, caller: localCaller })
+    await fake.waitForJoinCalls(joinsBeforeClick + 2)
+    await settle()
+    expect(applies).toHaveLength(beforeClick)
+    fake.open()
+    await expect(worldPublicationStarted).resolves.toMatchObject({ roomId: worldRoomId })
+    await vi.waitFor(() => expect(applies.length).toBeGreaterThan(beforeClick))
+    expect(applies[beforeClick]).toEqual({
+      sessionId: expect.any(String),
+      sites: [DOMAIN, OTHER_DOMAIN]
+    })
+    expect(applies[beforeClick]?.sessionId).not.toBe(oldSessionId)
+
+    fake.releaseSends()
+    await reconnect
+    client.detach()
+    disposeServer(server)
+  })
+
   it('projects one authoritative local identity to every attached tab without replacing remote sessions', async () => {
     const clock = new FakeClock()
     const fake = createFakeTransport()
@@ -2514,7 +4017,7 @@ describe('RuntimeServer lifecycle', () => {
 
     // The refreshed domain re-publishes once and the World replacement publishes its one current
     // full snapshot through the fresh generation; other rooms stay joined.
-    expect(fake.messages(worldRoomId).filter(isWorldPresence)).toHaveLength(presenceCount + 2)
+    expect(fake.messages(worldRoomId).filter(isWorldPresence)).toHaveLength(presenceCount + 1)
     expect(fake.joined.has(roomId)).toBe(true)
     expect(fake.joined.has(getChatRoomId(OTHER_DOMAIN))).toBe(true)
     expect(fake.joined.has(worldRoomId)).toBe(true)
@@ -2529,6 +4032,33 @@ describe('RuntimeServer lifecycle', () => {
 
     expect(fake.joined.has(worldRoomId)).toBe(true)
     expect(fake.joined.has(roomId)).toBe(true)
+  })
+
+  it('uses distinct valid generations after a World-only recovery for one AppButton replacement', async () => {
+    const observer = observeDualEpochGateDispatches()
+    const { fake, server, roomId } = await setup()
+    observer.restore()
+    const worldRoomId = getWorldRoomId()
+    const worldJoinsBeforeRecovery = fake.joinCalls.filter((id) => id === worldRoomId).length
+
+    fake.roomClose(worldRoomId)
+    await vi.waitFor(() =>
+      expect(fake.joinCalls.filter((id) => id === worldRoomId)).toHaveLength(worldJoinsBeforeRecovery + 1)
+    )
+    await settle()
+
+    await expect(server.reconnectDomain({ domain: DOMAIN, ...callerOf(1) })).resolves.toBeUndefined()
+
+    expect(observer.begins).toHaveLength(1)
+    expect(observer.begins[0]).toMatchObject({ domain: DOMAIN })
+    expect(observer.begins[0]?.chatGeneration).not.toBe(observer.begins[0]?.worldGeneration)
+    expect(observer.aborts).toEqual([])
+    const snapshot = await readServerSnapshot(server)
+    expect(snapshot.domains[0]).toMatchObject({ chatRoomJoined: true, localSession: expect.any(Object) })
+    expect(snapshot.world).toMatchObject({ joined: true })
+    expect(fake.joined.has(roomId)).toBe(true)
+    expect(fake.joined.has(worldRoomId)).toBe(true)
+    disposeServer(server)
   })
 
   it('self-recovers an unexpectedly closed domain room without rebuilding World', async () => {
@@ -3401,6 +4931,7 @@ describe('RuntimeServer provisional recovery races', () => {
     const reconnect = server.reconnectDomain({ domain: DOMAIN })
     await fake.waitForJoinCalls(4)
     fake.open()
+    fake.peerJoin(roomId, 'remote-peer')
     // The provisional World publication is hung at the provider while the remote session lands.
     await expect(worldSendAttempt).resolves.toMatchObject({ roomId: worldRoomId })
     fake.receive(roomId, 'remote-peer', session())
@@ -3410,7 +4941,9 @@ describe('RuntimeServer provisional recovery races', () => {
     await reconnect
     await settle()
 
-    expect.soft(sessionsBeforeCommit).toEqual([])
+    expect
+      .soft(sessionsBeforeCommit)
+      .toEqual([expect.objectContaining({ sourcePeerId: 'remote-peer', user: REMOTE_USER })])
     expect((await readServerSnapshot(server)).domains[0].sessions).toEqual([
       expect.objectContaining({ sourcePeerId: 'remote-peer', user: REMOTE_USER })
     ])
@@ -3432,7 +4965,7 @@ describe('RuntimeServer provisional recovery races', () => {
     await settle()
     const retainedBeforeSupersede = (await readServerSnapshot(server)).domains[0].sessions
     const replacement = server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
-    await expect(firstReconnect).resolves.toBeNull()
+    await expect(firstReconnect).resolves.toBeUndefined()
     await settle()
     const retainedAfterSupersede = (await readServerSnapshot(server)).domains[0].sessions
 
@@ -3467,7 +5000,7 @@ describe('RuntimeServer provisional recovery races', () => {
     await firstWorldSend
 
     const replacement = server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
-    await expect(firstReconnect).resolves.toBeNull()
+    await expect(firstReconnect).resolves.toBeUndefined()
     await fake.waitForJoinCalls(6)
     await vi.waitFor(() => expect(fake.joined.has(roomId)).toBe(true))
 
@@ -3945,6 +5478,7 @@ describe('RuntimeServer concurrent World registration convergence', () => {
         if (joinGate) await joinGate
       },
       leave,
+      retireRoomsForPreparation: async () => {},
       send: async (roomId, payload) => {
         if (roomId !== getWorldRoomId()) return
         const message = JSON.parse(payload) as WorldRoomMessage
@@ -5070,6 +6604,7 @@ describe('RuntimeServer history', () => {
     expect(cancelled).toEqual(['old-a'])
     // A fresh session submits a replacement request with a DIFFERENT syncId: it becomes one
     // dormant successor while the old active supply is still unsettled (no parallel supply).
+    fake.peerJoin(roomId, 'peer-0')
     fake.receive(roomId, 'peer-0', session({ id: 'user-0b', name: 'User 0b', avatar: '' }))
     await settle()
     fake.receive(roomId, 'peer-0', {
@@ -5101,6 +6636,7 @@ describe('RuntimeServer history', () => {
     const reconnect = server.reconnectDomain({ domain: DOMAIN })
     await fake.waitForJoinCalls(4)
     fake.open()
+    fake.peerJoin(roomId, 'peer-b')
     fake.receive(roomId, 'peer-b', session({ id: 'user-b', name: 'User B', avatar: '' }))
     await expect(worldPublicationStarted).resolves.toMatchObject({ roomId: getWorldRoomId() })
     // B's valid same-presence SESSION arrived during the prepared phase.
@@ -5112,7 +6648,7 @@ describe('RuntimeServer history', () => {
     // The prepared attempt is superseded (rolled back): the committed deadline is preserved, so
     // the retained committed binding stays untrusted after the rollback too.
     const replacement = server.joinChatRoom({ domain: DOMAIN, user: USER, site: SITE })
-    await expect(reconnect).resolves.toBeNull()
+    await expect(reconnect).resolves.toBeUndefined()
     await settle()
     fake.receive(roomId, 'peer-b', { ...text('post-rollback-live'), userId: 'user-b' })
     await settle()
@@ -5180,6 +6716,7 @@ describe('RuntimeServer history', () => {
     const reconnect = server.reconnectDomain({ domain: DOMAIN })
     await fake.waitForJoinCalls(4)
     fake.open()
+    fake.peerJoin(roomId, 'peer-b')
     fake.receive(roomId, 'peer-b', session({ id: 'user-b', name: 'User B', avatar: '' }))
     await expect(worldPublicationStarted).resolves.toMatchObject({ roomId: getWorldRoomId() })
     await settle()
@@ -5225,6 +6762,7 @@ describe('RuntimeServer history', () => {
     const reconnect = server.reconnectDomain({ domain: DOMAIN })
     await fake.waitForJoinCalls(4)
     fake.open()
+    fake.peerJoin(roomId, 'peer-b')
     const rebind = session({ id: 'user-b', name: 'User B', avatar: '' })
     fake.receive(roomId, 'peer-b', rebind)
     await expect(worldPublicationStarted).resolves.toMatchObject({ roomId: getWorldRoomId() })
@@ -5262,6 +6800,7 @@ describe('RuntimeServer history', () => {
       const reconnect = server.reconnectDomain({ domain: DOMAIN })
       await fake.waitForJoinCalls(4)
       fake.open()
+      fake.peerJoin(roomId, 'peer-b')
       // The provisional Session broadcast is hung at the provider while the reused source's
       // current-C session lands in the prepared attempt.
       await expect(worldPublicationStarted).resolves.toMatchObject({ roomId: getWorldRoomId() })
@@ -5673,6 +7212,7 @@ describe('RuntimeServer history', () => {
     const reconnect = server.reconnectDomain({ domain: DOMAIN })
     await fake.waitForJoinCalls(4)
     fake.open()
+    fake.peerJoin(roomId, 'peer-b')
     fake.receive(roomId, 'peer-b', session({ id: 'user-b', name: 'User B', avatar: '' }))
     await expect(chatBroadcastStarted).resolves.toMatchObject({ roomId })
     // B's same-presence rebind then the SAME source switches to C before commit.
@@ -5709,6 +7249,7 @@ describe('RuntimeServer history', () => {
     const reconnect = server.reconnectDomain({ domain: DOMAIN })
     await fake.waitForJoinCalls(4)
     fake.open()
+    fake.peerJoin(roomId, 'peer-b')
     fake.receive(roomId, 'peer-b', session({ id: 'user-b', name: 'User B', avatar: '' }))
     await expect(chatBroadcastStarted).resolves.toMatchObject({ roomId })
     await settle()
@@ -5723,6 +7264,7 @@ describe('RuntimeServer history', () => {
     // without a CURRENT valid SESSION.
     const snapshot = await readServerSnapshot(server)
     expect(snapshot.domains[0].sessions.some((session) => session.user.id === 'user-b')).toBe(false)
+    fake.peerJoin(roomId, 'peer-b')
     fake.receive(roomId, 'peer-b', { ...text('ghost-after-revoked-commit'), userId: 'user-b' })
     await settle()
     expect(await projectedInboundIds(server)).toEqual([])
@@ -5906,6 +7448,7 @@ describe('RuntimeServer history', () => {
       fake.peerLeave(roomId, 'peer-b')
       await settle()
       // The SAME committed source directly receives current C.
+      fake.peerJoin(roomId, 'peer-b')
       fake.receive(roomId, 'peer-b', session({ id: 'user-c', name: 'User C', avatar: '' }))
       await settle()
       const afterSwitch = (await readServerSnapshot(server)).domains[0].sessions.map((session) => session.user.id)
@@ -5990,7 +7533,7 @@ describe('RuntimeServer history', () => {
     await settle()
   })
 
-  it('drops live messages from a source retained only by the leave grace until a valid rebind', async () => {
+  it('drops live messages from a source retained only by the leave grace without a new physical incarnation', async () => {
     const { fake, server, roomId } = await setup()
     fake.receive(roomId, 'peer-0', session({ id: 'user-0', name: 'User 0', avatar: '' }))
     await settle()
@@ -6000,12 +7543,15 @@ describe('RuntimeServer history', () => {
     fake.receive(roomId, 'peer-0', { ...text('after-peer-leave'), userId: 'user-0' })
     await settle()
     expect(await projectedInboundIds(server)).toEqual([])
-    // A valid SESSION rebind restores authority; a later live message is admitted.
-    fake.receive(roomId, 'peer-0', session({ id: 'user-0', name: 'User 0', avatar: '' }))
+    // A plain source callback is not a physical rejoin. It must not revive the grace binding.
+    fake.receive(roomId, 'peer-0', {
+      ...session({ id: 'user-0', name: 'User 0', avatar: '' }),
+      sessionId: 'session-user-0-rejoined'
+    })
     await settle()
     fake.receive(roomId, 'peer-0', { ...text('after-rebind'), userId: 'user-0' })
     await settle()
-    expect(await projectedInboundIds(server)).toEqual(['after-rebind'])
+    expect(await projectedInboundIds(server)).toEqual([])
   })
 
   it('ignores a delayed same-sync page after cleanup without a parallel token or supply', async () => {
@@ -6194,6 +7740,7 @@ describe('RuntimeServer history', () => {
     await settle()
     expect(cancelled).toEqual(['old-a'])
     // A PARTIAL replacement (page zero, done:false) becomes a dormant successor.
+    fake.peerJoin(roomId, 'peer-0')
     fake.receive(roomId, 'peer-0', session({ id: 'user-0b', name: 'User 0b', avatar: '' }))
     await settle()
     fake.receive(roomId, 'peer-0', {
@@ -6381,6 +7928,7 @@ describe('RuntimeServer history', () => {
     // FRESH syncId is the positive re-admission case (the overflowed capacity was released).
     fake.peerLeave(roomId, 'peer-0')
     await settle()
+    fake.peerJoin(roomId, 'peer-0')
     fake.receive(roomId, 'peer-0', session({ id: 'user-0b', name: 'User 0b', avatar: '' }))
     await settle()
     fake.receive(roomId, 'peer-0', {

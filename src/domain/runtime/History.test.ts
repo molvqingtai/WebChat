@@ -46,6 +46,7 @@ const fakeTransport = (localPeerId = 'local-peer'): TransportFixture => {
     peerIdOf: () => localPeerId,
     join: async () => {},
     leave: () => {},
+    retireRoomsForPreparation: async () => {},
     send: async (roomId, payload, targetPeerIds) => {
       sent.push({ roomId, targetPeerIds, message: JSON.parse(payload) as ChatRoomMessage })
     },
@@ -183,6 +184,9 @@ const connectedNetwork = () => {
           if (other.peerId === peerId || !other.joinedRooms.has(roomId)) return
           other.peerLeaveListeners.forEach((listener) => listener(roomId, peerId))
         })
+      },
+      retireRoomsForPreparation: async (roomIds) => {
+        roomIds.forEach((roomId) => transport.leave(roomId))
       },
       send: async (roomId, payload, targetPeerIds) => {
         const requested =

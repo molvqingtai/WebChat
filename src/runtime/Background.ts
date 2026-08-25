@@ -5,6 +5,7 @@ import { BackgroundInjectAdapter, type MessageApi } from '@/service/adapter/runt
 import type { RuntimeCoordinator } from '@/runtime/Contract'
 import { HostOwner } from '@/runtime/HostOwner'
 import { ChromiumTransportOwner } from '@/runtime/ChromiumTransportOwner'
+import { selectBackgroundTransport } from '@/runtime/BackgroundTransport'
 import { startHost } from '@/runtime/host'
 import { createBrowserPresenceStore } from '@/runtime/PresenceStore'
 import { RemoteRoomTransport } from '@/runtime/RemoteRoomTransport'
@@ -56,7 +57,7 @@ const admission = {
 }
 
 const ensureBackgroundHost = async () => {
-  const transport = import.meta.env.FIREFOX ? undefined : await ensureChromeTransport()
+  const transport = await selectBackgroundTransport(import.meta.env.FIREFOX, ensureChromeTransport)
   const { host } = backgroundHost.ensure(() => startHost(new ProvideAdapter(), presenceStore, transport, admission))
   readServerSnapshot(host.server)
 }
