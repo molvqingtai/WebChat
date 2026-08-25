@@ -389,16 +389,11 @@ export const createTransportService = (transport: RoomTransport = createRoomTran
         // The final empty observation, projection, and admission publication are one cut.
         while (joining.size > 0) await Promise.allSettled(joining.values())
         if (
-          worldMembers.size > 0 &&
-          (worldRecovery.members.length !== worldMembers.size ||
-            worldRecovery.members.some(
-              ({ sourcePeerId, sourceGeneration }) => worldMembers.get(sourcePeerId) !== sourceGeneration
-            ))
+          worldRecovery.members.some(
+            ({ sourcePeerId, sourceGeneration }) => worldMembers.get(sourcePeerId) !== sourceGeneration
+          )
         ) {
           throw new Error('Transport World recovery is incomplete')
-        }
-        if (rooms.has(worldRoomId) && roomRecoveryRequirements.size > 0 && !worldRecovery.local) {
-          throw new Error('Transport World local recovery is incomplete')
         }
         const preCutFrames = [...pendingFrames.values()]
         if (preCutFrames.length > 0) await Promise.allSettled(preCutFrames.map((frame) => frame.task))
