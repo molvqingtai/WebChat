@@ -270,6 +270,72 @@ describe('Offscreen TransportService', () => {
     expect(closed.roomRecovery.rooms).toEqual([])
   })
 
+  it('keeps a World recovery source current across a replayed active-peer join', async () => {
+    const fixture = createTransport()
+    const service = createTransportService(fixture.transport)
+    const joins = vi.fn()
+    const binding = await service.rebind(
+      () => {},
+      joins,
+      () => {},
+      () => {},
+      () => {}
+    )
+    const roomId = getWorldRoomId()
+    await service.join(roomId, 'world', binding.admission)
+    fixture.emit.join(roomId, 'remote-peer')
+    const recovery = {
+      members: [{ sourcePeerId: 'remote-peer', sourceGeneration: 1 }],
+      presences: []
+    }
+    await service.rememberWorldRecovery!(binding.admission, recovery)
+
+    fixture.emit.join(roomId, 'remote-peer')
+
+    const rebound = await service.rebind(
+      () => {},
+      () => {},
+      () => {},
+      () => {},
+      () => {}
+    )
+    expect(joins).toHaveBeenCalledTimes(2)
+    expect(rebound.worldRecovery.members).toEqual(recovery.members)
+  })
+
+  it('fences an old World recovery source after its explicit leave and same-id rejoin', async () => {
+    const fixture = createTransport()
+    const service = createTransportService(fixture.transport)
+    const binding = await service.rebind(
+      () => {},
+      () => {},
+      () => {},
+      () => {},
+      () => {}
+    )
+    const roomId = getWorldRoomId()
+    await service.join(roomId, 'world', binding.admission)
+    fixture.emit.join(roomId, 'remote-peer')
+    const recovery = {
+      members: [{ sourcePeerId: 'remote-peer', sourceGeneration: 1 }],
+      presences: []
+    }
+    await service.rememberWorldRecovery!(binding.admission, recovery)
+
+    fixture.emit.leave(roomId, 'remote-peer')
+    fixture.emit.join(roomId, 'remote-peer')
+
+    await expect(service.rememberWorldRecovery!(binding.admission, recovery)).rejects.toThrow('source is no longer current')
+    const rebound = await service.rebind(
+      () => {},
+      () => {},
+      () => {},
+      () => {},
+      () => {}
+    )
+    expect(rebound.worldRecovery.members).toEqual([{ sourcePeerId: 'remote-peer', sourceGeneration: 2 }])
+  })
+
   it('holds a normal rebind for a pre-cut slow state frame and keeps the cut-time frame distinct', async () => {
     const fixture = createTransport()
     const service = createTransportService(fixture.transport)

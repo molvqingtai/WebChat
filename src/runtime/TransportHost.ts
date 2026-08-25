@@ -216,9 +216,11 @@ export const createTransportService = (transport: RoomTransport = createRoomTran
   })
   transport.onPeerJoin((roomId, peerId) => {
     if (roomId === worldRoomId) {
-      const sourceGeneration = (worldIncarnations.get(peerId) ?? 0) + 1
-      worldIncarnations.set(peerId, sourceGeneration)
-      worldMembers.set(peerId, sourceGeneration)
+      if (!worldMembers.has(peerId)) {
+        const sourceGeneration = (worldIncarnations.get(peerId) ?? 0) + 1
+        worldIncarnations.set(peerId, sourceGeneration)
+        worldMembers.set(peerId, sourceGeneration)
+      }
     } else if (rooms.has(roomId) || roomRecoveryRequirements.has(roomId)) {
       const members = roomMembers.get(roomId) ?? new Map<string, number>()
       const incarnations = roomIncarnations.get(roomId) ?? new Map<string, number>()
