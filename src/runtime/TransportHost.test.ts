@@ -325,7 +325,9 @@ describe('Offscreen TransportService', () => {
     fixture.emit.leave(roomId, 'remote-peer')
     fixture.emit.join(roomId, 'remote-peer')
 
-    await expect(service.rememberWorldRecovery!(binding.admission, recovery)).rejects.toThrow('source is no longer current')
+    await expect(service.rememberWorldRecovery!(binding.admission, recovery)).rejects.toThrow(
+      'source is no longer current'
+    )
     const rebound = await service.rebind(
       () => {},
       () => {},
