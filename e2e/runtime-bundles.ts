@@ -1,6 +1,7 @@
 import { readdir, readFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
-import { createScanner, SyntaxKind } from 'typescript/unstable/ast'
+import { API } from 'typescript/unstable/sync'
+import { isCallExpression, SyntaxKind, type Node } from 'typescript/unstable/ast'
 
 type ExtensionManifest = {
   manifest_version?: number
@@ -34,69 +35,35 @@ const prohibitedCodecResidue = [
 const staticEsmSpecifierPattern =
   /(?:^|[;\n])\s*(?:import\s*(?:[\w$*{},\s]+?\s*from\s*)?|export\s*(?:[\w$*{},\s]+?\s*from\s*))(['"])([^'"\\]+)\1/g
 
-const canEndExpression = (token: SyntaxKind): boolean =>
-  [
-    SyntaxKind.Identifier,
-    SyntaxKind.PrivateIdentifier,
-    SyntaxKind.NumericLiteral,
-    SyntaxKind.BigIntLiteral,
-    SyntaxKind.StringLiteral,
-    SyntaxKind.RegularExpressionLiteral,
-    SyntaxKind.NoSubstitutionTemplateLiteral,
-    SyntaxKind.TemplateTail,
-    SyntaxKind.TrueKeyword,
-    SyntaxKind.FalseKeyword,
-    SyntaxKind.NullKeyword,
-    SyntaxKind.ThisKeyword,
-    SyntaxKind.SuperKeyword,
-    SyntaxKind.CloseParenToken,
-    SyntaxKind.CloseBracketToken,
-    SyntaxKind.CloseBraceToken,
-    SyntaxKind.PlusPlusToken,
-    SyntaxKind.MinusMinusToken
-  ].includes(token)
+const dynamicImportSources = new Map<string, string>()
+const dynamicImportParser = new API({
+  fs: {
+    readFile: (path) => dynamicImportSources.get(path),
+    fileExists: (path) => (dynamicImportSources.has(path) ? true : undefined)
+  }
+})
+let dynamicImportSourceIndex = 0
+
+const containsDynamicImportCall = (node: Node): boolean =>
+  (isCallExpression(node) && node.expression.kind === SyntaxKind.ImportKeyword) ||
+  node.forEachChild(containsDynamicImportCall) === true
 
 const hasDynamicImport = (source: string): boolean => {
-  const scanner = createScanner(true, undefined, source)
-  const templateBraceDepths: number[] = []
-  const scan = (previousToken: SyntaxKind): SyntaxKind => {
-    let token = scanner.scan()
-    if (token === SyntaxKind.SlashToken && !canEndExpression(previousToken)) token = scanner.reScanSlashToken()
-    if (token === SyntaxKind.TemplateHead) {
-      templateBraceDepths.push(0)
-    } else if (templateBraceDepths.length > 0) {
-      const templateIndex = templateBraceDepths.length - 1
-      if (token === SyntaxKind.OpenBraceToken) {
-        templateBraceDepths[templateIndex] += 1
-      } else if (token === SyntaxKind.CloseBraceToken) {
-        if (templateBraceDepths[templateIndex] === 0) {
-          token = scanner.reScanTemplateToken(false)
-          if (token === SyntaxKind.TemplateTail) templateBraceDepths.pop()
-        } else {
-          templateBraceDepths[templateIndex] -= 1
-        }
-      }
+  const sourcePath = resolve('.runtime-bundles-parser', `${dynamicImportSourceIndex++}.js`)
+  dynamicImportSources.set(sourcePath, source)
+  try {
+    const snapshot = dynamicImportParser.updateSnapshot({ openFiles: [sourcePath] })
+    try {
+      const project = snapshot.getDefaultProjectForFile(sourcePath)
+      const sourceFile = project?.program.getSourceFile(sourcePath)
+      if (project === undefined || sourceFile === undefined) return true
+      return project.program.getSyntacticDiagnostics(sourcePath).length > 0 || containsDynamicImportCall(sourceFile)
+    } finally {
+      snapshot.dispose()
     }
-    return token
+  } catch {
+    return true
   }
-
-  let previousToken = SyntaxKind.Unknown
-  for (let token = scan(previousToken); token !== SyntaxKind.EndOfFile; token = scan(previousToken)) {
-    if (token === SyntaxKind.ImportKeyword) {
-      const followingToken = scan(token)
-      if (
-        followingToken === SyntaxKind.OpenParenToken &&
-        previousToken !== SyntaxKind.DotToken &&
-        previousToken !== SyntaxKind.QuestionDotToken
-      ) {
-        return true
-      }
-      previousToken = followingToken
-      continue
-    }
-    previousToken = token
-  }
-  return false
 }
 
 const staticEsmSpecifiers = (source: string): string[] =>
@@ -243,6 +210,13 @@ const runStaticClosureControls = async () => {
     'A comment-separated dynamic import must reject before any dynamic dependency is traversed'
   )
 
+  const unparsableStaticModule = new Map(completeFiles)
+  unparsableStaticModule.set(entryPath, "import './chunks/codec.js'; const =")
+  await expectRejected(
+    () => collectFixture(unparsableStaticModule),
+    'A static module with syntax diagnostics must fail closed'
+  )
+
   const nonCodeImportText = new Map(completeFiles)
   nonCodeImportText.set(
     entryPath,
@@ -253,6 +227,8 @@ const runStaticClosureControls = async () => {
       "// import /* lazy */ ('./chunks/lazy.js')",
       "/* import ('./chunks/lazy.js') */",
       'const loader = { import: () => undefined }',
+      'const methodLoader = { import() { return undefined } }',
+      'class MethodLoader { import() { return undefined } }',
       'loader.import()',
       'loader?.import()'
     ].join('\n')
@@ -356,6 +332,7 @@ const codecPolyfillMarkers = [...requiredCodecMarkers, 'setFromBase64', 'fromHex
 )
 assertCodecBoundary('Chrome background static module closure', chromeRuntimeClosure.values())
 assertCodecBoundary('Firefox background', [firefoxBackground])
+dynamicImportParser.close()
 
 console.log(
   JSON.stringify({
