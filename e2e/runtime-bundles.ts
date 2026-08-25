@@ -1,5 +1,6 @@
 import { readdir, readFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { createScanner, SyntaxKind } from 'typescript/unstable/ast'
 
 type ExtensionManifest = {
   manifest_version?: number
@@ -32,7 +33,71 @@ const prohibitedCodecResidue = [
 
 const staticEsmSpecifierPattern =
   /(?:^|[;\n])\s*(?:import\s*(?:[\w$*{},\s]+?\s*from\s*)?|export\s*(?:[\w$*{},\s]+?\s*from\s*))(['"])([^'"\\]+)\1/g
-const dynamicImportPattern = /\bimport\s*\(/
+
+const canEndExpression = (token: SyntaxKind): boolean =>
+  [
+    SyntaxKind.Identifier,
+    SyntaxKind.PrivateIdentifier,
+    SyntaxKind.NumericLiteral,
+    SyntaxKind.BigIntLiteral,
+    SyntaxKind.StringLiteral,
+    SyntaxKind.RegularExpressionLiteral,
+    SyntaxKind.NoSubstitutionTemplateLiteral,
+    SyntaxKind.TemplateTail,
+    SyntaxKind.TrueKeyword,
+    SyntaxKind.FalseKeyword,
+    SyntaxKind.NullKeyword,
+    SyntaxKind.ThisKeyword,
+    SyntaxKind.SuperKeyword,
+    SyntaxKind.CloseParenToken,
+    SyntaxKind.CloseBracketToken,
+    SyntaxKind.CloseBraceToken,
+    SyntaxKind.PlusPlusToken,
+    SyntaxKind.MinusMinusToken
+  ].includes(token)
+
+const hasDynamicImport = (source: string): boolean => {
+  const scanner = createScanner(true, undefined, source)
+  const templateBraceDepths: number[] = []
+  const scan = (previousToken: SyntaxKind): SyntaxKind => {
+    let token = scanner.scan()
+    if (token === SyntaxKind.SlashToken && !canEndExpression(previousToken)) token = scanner.reScanSlashToken()
+    if (token === SyntaxKind.TemplateHead) {
+      templateBraceDepths.push(0)
+    } else if (templateBraceDepths.length > 0) {
+      const templateIndex = templateBraceDepths.length - 1
+      if (token === SyntaxKind.OpenBraceToken) {
+        templateBraceDepths[templateIndex] += 1
+      } else if (token === SyntaxKind.CloseBraceToken) {
+        if (templateBraceDepths[templateIndex] === 0) {
+          token = scanner.reScanTemplateToken(false)
+          if (token === SyntaxKind.TemplateTail) templateBraceDepths.pop()
+        } else {
+          templateBraceDepths[templateIndex] -= 1
+        }
+      }
+    }
+    return token
+  }
+
+  let previousToken = SyntaxKind.Unknown
+  for (let token = scan(previousToken); token !== SyntaxKind.EndOfFile; token = scan(previousToken)) {
+    if (token === SyntaxKind.ImportKeyword) {
+      const followingToken = scan(token)
+      if (
+        followingToken === SyntaxKind.OpenParenToken &&
+        previousToken !== SyntaxKind.DotToken &&
+        previousToken !== SyntaxKind.QuestionDotToken
+      ) {
+        return true
+      }
+      previousToken = followingToken
+      continue
+    }
+    previousToken = token
+  }
+  return false
+}
 
 const staticEsmSpecifiers = (source: string): string[] =>
   [...source.matchAll(staticEsmSpecifierPattern)].map((match) => match[2])
@@ -78,7 +143,7 @@ const collectStaticLocalEsmClosure = async (
     } catch {
       throw new Error(`Unable to resolve static local module: ${modulePath}`)
     }
-    assert(!dynamicImportPattern.test(source), `Dynamic import is not allowed in static module closure: ${modulePath}`)
+    assert(!hasDynamicImport(source), `Dynamic import is not allowed in static module closure: ${modulePath}`)
     closure.set(modulePath, source)
     pending.push(...staticLocalDependencies(resolvedRoot, modulePath, source))
   }
@@ -165,6 +230,34 @@ const runStaticClosureControls = async () => {
     dynamicImportError instanceof Error && dynamicImportError.message.includes('Dynamic import is not allowed'),
     'A dynamic import must reject before any dynamic dependency is traversed'
   )
+
+  const staticAndCommentDynamicImport = new Map(completeFiles)
+  staticAndCommentDynamicImport.set(entryPath, "import './chunks/codec.js'; import /* lazy */ ('./chunks/dynamic.js')")
+  const commentDynamicImportError = await expectRejected(
+    () => collectFixture(staticAndCommentDynamicImport),
+    'A complete static codec dependency with a comment-separated dynamic import must fail the static closure'
+  )
+  assert(
+    commentDynamicImportError instanceof Error &&
+      commentDynamicImportError.message.includes('Dynamic import is not allowed'),
+    'A comment-separated dynamic import must reject before any dynamic dependency is traversed'
+  )
+
+  const nonCodeImportText = new Map(completeFiles)
+  nonCodeImportText.set(
+    entryPath,
+    [
+      "import './chunks/codec.js'",
+      'const quoted = "import /* lazy */ (\'./chunks/lazy.js\')"',
+      "const templated = `import /* lazy */ ('./chunks/lazy.js')`",
+      "// import /* lazy */ ('./chunks/lazy.js')",
+      "/* import ('./chunks/lazy.js') */",
+      'const loader = { import: () => undefined }',
+      'loader.import()',
+      'loader?.import()'
+    ].join('\n')
+  )
+  assertCodecBoundary('Non-code import control', (await collectFixture(nonCodeImportText)).values())
 
   const cycleAPath = join(fixtureRoot, 'chunks', 'cycle-a.js')
   const cycleBPath = join(fixtureRoot, 'chunks', 'cycle-b.js')
