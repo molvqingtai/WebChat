@@ -86,6 +86,30 @@ The five Offscreen callback lanes SHALL share one Runtime-private transport admi
 - **THEN** Offscreen SHALL synchronously observe no remaining old admission, capture the complete current Room projection, and publish the successor epoch as one operation
 - **AND** any later old-epoch join SHALL fail before physical provider work or Room commit, while all pre-cut committed Rooms SHALL appear in the returned projection
 
+### Requirement: World recovery is obligation-scoped and generation-fenced
+
+Physical World peer membership SHALL be treated as a transport observation, not proof that a corresponding logical World recovery fact has been committed. `worldRecovery.members` MAY therefore contain fewer entries than the current physical peer map. Rebind SHALL validate every existing recovery entry by exact `sourcePeerId + sourceGeneration`; it SHALL NOT require physical and logical collections to have equal cardinality, infer missing World recovery from an adjacent ROOM obligation, or synthesize recovery for an uncommitted physical peer. A missing recovery snapshot SHALL fail closed only when an explicit obligation exists in that same recovery domain.
+
+A duplicate join observation for an already-active World peer SHALL be idempotent and SHALL NOT advance its source generation. An explicit leave SHALL end that active membership; a later join with the same peer ID SHALL advance the generation and make recovery from the previous generation stale.
+
+#### Scenario: Physical membership does not imply logical recovery
+
+- **GIVEN** the surviving transport observes current World peers A and B, but only A has an owner-confirmed committed recovery entry
+- **WHEN** a fresh logical Runtime rebinds to that transport
+- **THEN** rebind SHALL validate and restore A, SHALL NOT invent recovery for B, and SHALL NOT reject merely because the physical and logical member counts differ
+
+#### Scenario: Duplicate active join preserves committed recovery
+
+- **GIVEN** an active World peer has a current committed recovery entry bound to its peer ID and generation
+- **WHEN** the provider reports another join for that same peer without an intervening leave
+- **THEN** the join SHALL retain the current generation and the committed recovery entry SHALL remain current
+
+#### Scenario: Explicit leave and same-ID rejoin invalidate old recovery
+
+- **GIVEN** a World recovery entry is bound to the current generation of an active peer
+- **WHEN** that peer explicitly leaves and later joins again with the same peer ID
+- **THEN** the new membership SHALL use the next generation and recovery bound to the old generation SHALL fail closed as stale
+
 ### Requirement: onSessionsChange is immediate initial load and exact rebind
 
 A new Page SHALL call the existing `runtime.onSessionsChange(callback)` method as both subscription and initial load. After a fresh Background invalidates old callback IDs, it SHALL send `runtime:sessions-rebind` to each exact restored provisional Page, and each Page SHALL re-execute the same method with a new callback. An Offscreen-only replacement SHALL NOT trigger this rebind.
