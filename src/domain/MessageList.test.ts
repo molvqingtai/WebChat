@@ -235,8 +235,7 @@ describe('MessageList Database-backed pipeline', () => {
         return result
       }) as typeof database.read,
       write: database.write.bind(database),
-      watch: () => () => {},
-      close: database.close.bind(database)
+      watch: () => () => {}
     }
     const store = Remesh.store({ externs: [MessageDatabaseExtern.impl(failingDatabase)] })
     const action = MessageListDomain()
@@ -271,7 +270,7 @@ describe('MessageList Database-backed pipeline', () => {
     errorSubscription.unsubscribe()
     domainSubscription.unsubscribe()
     store.discardDomain(action)
-    await failingDatabase.close()
+    await database.close()
   })
 
   it('retains durable history when local watch is delivered before insert returns', async () => {
@@ -301,8 +300,7 @@ describe('MessageList Database-backed pipeline', () => {
         return () => {
           if (watchListener === listener) watchListener = undefined
         }
-      },
-      close: database.close.bind(database)
+      }
     }
     const store = Remesh.store({ externs: [MessageDatabaseExtern.impl(controlledDatabase)] })
     const action = MessageListDomain()
@@ -343,7 +341,7 @@ describe('MessageList Database-backed pipeline', () => {
     errorSubscription.unsubscribe()
     domainSubscription.unsubscribe()
     store.discardDomain(action)
-    await controlledDatabase.close()
+    await database.close()
   })
 
   it('clears canonical records only through the explicit command', async () => {
@@ -376,8 +374,7 @@ describe('MessageList Database-backed pipeline', () => {
         }
         return write(stores, operation, signal)
       }) as typeof database.write,
-      watch: database.watch.bind(database),
-      close: database.close.bind(database)
+      watch: database.watch.bind(database)
     }
     const store = Remesh.store({ externs: [MessageDatabaseExtern.impl(failingDatabase)] })
     const action = MessageListDomain()
@@ -410,6 +407,6 @@ describe('MessageList Database-backed pipeline', () => {
     syncSubscription.unsubscribe()
     domainSubscription.unsubscribe()
     store.discardDomain(action)
-    await failingDatabase.close()
+    await database.close()
   })
 })

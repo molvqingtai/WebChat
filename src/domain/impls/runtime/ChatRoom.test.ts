@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Database, ReadTransaction, WriteTransaction } from '@/domain/externs/Database'
 import { ChatRoom } from '@/domain/impls/runtime/ChatRoom'
 import { createConnectionLifecycle } from '@/domain/impls/ConnectionLifecycle'
-import { createMemoryMessageDatabase } from '@/domain/impls/database/Memory'
+import { createMemoryMessageDatabase, type MemoryDatabase } from '@/domain/impls/database/Memory'
 import { createMessageStore, InvalidMessageRecordError, type MessageDatabaseSchema } from '@/domain/MessageStore'
 import {
   MESSAGE_RECORD_TYPE,
@@ -84,7 +84,7 @@ const domainSnapshot = (sessions: RuntimeSession[] = []): RuntimeSnapshot => ({
 class ControlledDatabase implements Database<MessageDatabaseSchema> {
   beforeWrite: (() => void | Promise<void>) | null = null
 
-  constructor(private readonly inner: Database<MessageDatabaseSchema>) {}
+  constructor(private readonly inner: MemoryDatabase<MessageDatabaseSchema>) {}
 
   read<
     const Stores extends readonly [keyof MessageDatabaseSchema & string, ...(keyof MessageDatabaseSchema & string)[]],

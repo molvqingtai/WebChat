@@ -146,8 +146,7 @@ const createContentStore = () => {
   const deferredMessageDatabase: Database<MessageDatabaseSchema> = {
     read: async (stores, operation, signal) => (await messageDatabase.get()).read(stores, operation, signal),
     write: async (stores, operation, signal) => (await messageDatabase.get()).write(stores, operation, signal),
-    watch: (stores, listener) => subscribeDeferred(messageDatabase, (database) => database.watch(stores, listener)),
-    close: async () => (await messageDatabase.get()).close()
+    watch: (stores, listener) => subscribeDeferred(messageDatabase, (database) => database.watch(stores, listener))
   }
   async function deferredSendMessage(command: SendTextCommand): Promise<TextMessage>
   async function deferredSendMessage(command: SendReactionCommand): Promise<ReactionMessage>

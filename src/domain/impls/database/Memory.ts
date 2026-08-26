@@ -369,9 +369,9 @@ export class MemoryDatabase<Schema extends DatabaseSchema<Schema>> implements Da
 export const createMemoryDatabase = <Schema extends DatabaseSchema<Schema>>(
   definition: DatabaseDefinition<Schema>,
   options?: { onWatcherError?: (error: unknown) => void }
-): Database<Schema> => new MemoryDatabase(definition, options?.onWatcherError)
+): MemoryDatabase<Schema> => new MemoryDatabase(definition, options?.onWatcherError)
 
 export const createMemoryMessageDatabase = (
   name: string,
   options?: { onWatcherError?: (error: unknown) => void }
-): Database<MessageDatabaseSchema> => createMemoryDatabase(createMessageDatabaseDefinition(name, 2), options)
+): MemoryDatabase<MessageDatabaseSchema> => createMemoryDatabase(createMessageDatabaseDefinition(name, 2), options)
