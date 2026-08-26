@@ -3343,7 +3343,7 @@ describe('RuntimeServer lifecycle', () => {
     disposeServer(server)
   })
 
-  it('refuses a late dual-retire terminal after its caller binding is invalidated', async () => {
+  it('silently cancels a late dual-retire terminal after its caller binding is invalidated', async () => {
     const { fake, server, roomId } = await setup()
     const worldRoomId = getWorldRoomId()
     const releaseRetires = fake.holdRetires()
@@ -3357,11 +3357,51 @@ describe('RuntimeServer lifecycle', () => {
     await removeServerTab(server, 1)
     releaseRetires()
 
-    await expect(reconnect).rejects.toThrow('Runtime presence is completing its final release')
+    await expect(reconnect).resolves.toBeNull()
     await settle()
     expect(fake.joinCalls).toHaveLength(joinsBefore)
     expect(fake.joined).toEqual(new Set())
-    await expect(server.getSnapshot(callerOf(1))).rejects.toThrow('Runtime presence is completing its final release')
+    disposeServer(server)
+  })
+
+  it('keeps a dual replacement live while its exact caller remains current', async () => {
+    const { fake, server, roomId } = await setup()
+    const worldRoomId = getWorldRoomId()
+    const releaseRetires = fake.holdRetires()
+    fake.makeNotReady()
+    const joinsBefore = fake.joinCalls.length
+    const reconnect = server.reconnectDomain({ domain: DOMAIN, ...callerOf(1) })
+
+    await vi.waitFor(() =>
+      expect(fake.operationLog.filter((entry) => entry === `retire:${worldRoomId},${roomId}`)).toHaveLength(1)
+    )
+    releaseRetires()
+    await fake.waitForJoinCalls(joinsBefore + 2)
+    fake.open()
+
+    await expect(reconnect).resolves.toBeUndefined()
+    expect((await readServerSnapshot(server)).domains[0]).toMatchObject({ chatRoomJoined: true })
+    expect((await readServerSnapshot(server)).world.joined).toBe(true)
+    disposeServer(server)
+  })
+
+  it('allows a reattached caller to start a fresh replacement after its old attempt is cancelled', async () => {
+    const { fake, server, roomId } = await setup()
+    const worldRoomId = getWorldRoomId()
+    const releaseRetires = fake.holdRetires()
+    const first = server.reconnectDomain({ domain: DOMAIN, ...callerOf(1) })
+
+    await vi.waitFor(() =>
+      expect(fake.operationLog.filter((entry) => entry === `retire:${worldRoomId},${roomId}`)).toHaveLength(1)
+    )
+    await removeServerTab(server, 1)
+    releaseRetires()
+
+    await expect(first).resolves.toBeNull()
+    await attachTab(server, DOMAIN, 1)
+    await expect(server.reconnectDomain({ domain: DOMAIN, ...callerOf(1) })).resolves.toBeUndefined()
+    expect((await readServerSnapshot(server)).domains[0]).toMatchObject({ chatRoomJoined: true })
+    expect((await readServerSnapshot(server)).world.joined).toBe(true)
     disposeServer(server)
   })
 
@@ -3383,7 +3423,7 @@ describe('RuntimeServer lifecycle', () => {
     releaseIngress()
 
     await expect(leave).resolves.toBeUndefined()
-    await expect(reconnect).rejects.toThrow('Runtime presence is completing its final release')
+    await expect(reconnect).resolves.toBeNull()
     await settle()
     expect(readServerSnapshot(server).domains[0]).toMatchObject({ chatRoomJoined: false, localSession: undefined })
     expect(readServerSnapshot(server).world).toMatchObject({ joined: false, localPresence: undefined, presences: [] })
@@ -3408,7 +3448,7 @@ describe('RuntimeServer lifecycle', () => {
     disposeServer(server)
     releaseIngress()
 
-    await expect(reconnect).rejects.toThrow('Runtime presence is completing its final release')
+    await expect(reconnect).resolves.toBeNull()
     expect(fake.joined).toEqual(new Set())
   })
 

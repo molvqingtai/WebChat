@@ -15,6 +15,12 @@ import type {
   TransportService
 } from '@/runtime/TransportHost'
 
+type PendingJoin = {
+  generation: number
+  admission: number
+  task: Promise<void>
+}
+
 /** Background-side facade over Offscreen's physical transport; its rooms are callback-aligned projections. */
 export class RemoteRoomTransport implements RoomTransport {
   private readonly rooms = new Map<string, TransportRoomState>()
@@ -23,6 +29,7 @@ export class RemoteRoomTransport implements RoomTransport {
   private readonly leaves = new Set<(roomId: string, peerId: string) => void>()
   private readonly closes = new Set<(roomId: string) => void>()
   private readonly errors = new Set<(error: Error, roomId: string) => void>()
+  private readonly pendingJoins = new Map<string, PendingJoin>()
   private binding: Promise<void> = Promise.resolve()
   private generation = 0
   private acceptingGeneration = 0
@@ -44,6 +51,7 @@ export class RemoteRoomTransport implements RoomTransport {
   rebind() {
     this.recoveryCapabilityEpoch += 1
     this.invalidateOwner(this.generation)
+    this.pendingJoins.clear()
     const generation = ++this.generation
     this.acceptingGeneration = 0
     const align = (projection: TransportProjection) => {
@@ -280,20 +288,34 @@ export class RemoteRoomTransport implements RoomTransport {
       this.recoveryCapabilityEpoch += 1
     }
   }
-  join = async (roomId: string) => {
+  join = (roomId: string) => {
     const generation = this.generation
+    const existing = this.pendingJoins.get(roomId)
+    if (existing && existing.generation === generation && existing.admission === this.admission) return existing.task
+
     const handle = nanoid()
     const admitted =
       this.acceptingGeneration === generation && !this.rooms.has(roomId)
         ? this.service.join(roomId, handle, this.admission)
         : null
-    await this.binding
-    if (!this.isCurrent(generation)) throw new Error('Room transport generation is no longer current')
-    const existing = this.rooms.get(roomId)
-    if (existing) return
-    const room = await (admitted ?? this.service.join(roomId, handle, this.admission))
-    if (!this.isCurrent(generation)) throw new Error('Room transport generation is no longer current')
-    this.rooms.set(roomId, room)
+    let pending!: PendingJoin
+    const task = (async () => {
+      await this.binding
+      if (!this.isCurrent(generation)) throw new Error('Room transport generation is no longer current')
+      pending.admission = this.admission
+      const current = this.rooms.get(roomId)
+      if (current) return
+      const room = await (admitted ?? this.service.join(roomId, handle, pending.admission))
+      if (!this.isCurrent(generation)) throw new Error('Room transport generation is no longer current')
+      this.rooms.set(roomId, room)
+    })()
+    pending = { generation, admission: this.admission, task }
+    this.pendingJoins.set(roomId, pending)
+    const release = () => {
+      if (this.pendingJoins.get(roomId) === pending) this.pendingJoins.delete(roomId)
+    }
+    void task.then(release, release)
+    return task
   }
   leave = async (roomId: string, options?: { diagnosticOnly?: boolean }) => {
     const generation = this.generation
@@ -371,6 +393,7 @@ export class RemoteRoomTransport implements RoomTransport {
     this.generation += 1
     this.acceptingGeneration = 0
     this.recoveryCapabilityEpoch += 1
+    this.pendingJoins.clear()
     this.pendingIngress = []
     this.rooms.clear()
     this.worldRecoveryState = { members: [], presences: [] }
